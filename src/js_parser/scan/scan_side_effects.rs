@@ -266,6 +266,8 @@ impl SideEffects {
             }
 
             ExprData::EBinary(mut bin) => {
+                // `bin` at `loc` is `expr`, until the loop for `&&`, `||` and `??` moves both.
+                let mut loc = expr.loc;
                 match bin.op {
                     // These operators must not have any type conversions that can execute code
                     // such as "toString" or "valueOf". They must also never throw any exceptions.
@@ -326,7 +328,7 @@ impl SideEffects {
 
                     Op::Code::BinLogicalAnd
                     | Op::Code::BinLogicalOr
-                    | Op::Code::BinNullishCoalescing => {
+                    | Op::Code::BinNullishCoalescing => loop {
                         let right = bin.right;
                         bin.right = Self::simplify_unused_expr(p, right)
                             .unwrap_or_else(|| right.to_empty());
@@ -334,10 +336,28 @@ impl SideEffects {
                         // the right expression can be completely removed. Otherwise, the left
                         // expression is important for the branch.
 
-                        if bin.right.is_empty() {
-                            return Self::simplify_unused_expr(p, bin.left);
+                        if !bin.right.is_empty() {
+                            return Some(Expr {
+                                data: ExprData::EBinary(bin),
+                                loc,
+                            });
                         }
-                    }
+                        // A chain of these nests in `left`: the next pass takes that link.
+                        match bin.left.data {
+                            ExprData::EBinary(left)
+                                if matches!(
+                                    left.op,
+                                    Op::Code::BinLogicalAnd
+                                        | Op::Code::BinLogicalOr
+                                        | Op::Code::BinNullishCoalescing
+                                ) =>
+                            {
+                                loc = bin.left.loc;
+                                bin = left;
+                            }
+                            _ => return Self::simplify_unused_expr(p, bin.left),
+                        }
+                    },
 
                     _ => {}
                 }

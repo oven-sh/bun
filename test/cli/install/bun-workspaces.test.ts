@@ -3557,6 +3557,63 @@ test.concurrent("overrides in workspace packages and root pnpm.overrides are ign
   expect(exitCode).toBe(0);
 });
 
+// A rule with a version selector (`no-deps@1`) is compared with the range that a dependency declares. A range that
+// links a member is stored as that link, so no selector matches it. A rule without a selector replaces the link.
+test.concurrent("a version-scoped override does not apply to a range that links a member", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "root",
+        workspaces: ["packages/*"],
+        // one-dep depends on no-deps@1.0.1, which the member does not satisfy.
+        dependencies: { "one-dep": "1.0.0" },
+        overrides: { "no-deps@1": "1.0.0" },
+      }),
+    ),
+    write(join(packageDir, "packages", "m", "package.json"), JSON.stringify({ name: "no-deps", version: "1.0.5" })),
+    write(
+      join(packageDir, "packages", "bar", "package.json"),
+      JSON.stringify({ name: "bar", dependencies: { "no-deps": "^1.0.0" } }),
+    ),
+  ]);
+  const install = async (...args: string[]) => {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", ...args],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("warn:");
+    expect(exitCode).toBe(0);
+  };
+  const installed = async () => ({
+    // bar has no copy of its own. It finds the member that the root links.
+    barHasCopy: existsSync(join(packageDir, "packages", "bar", "node_modules", "no-deps")),
+    linked: realpathSync(join(packageDir, "node_modules", "no-deps")),
+    oneDep: await file(join(packageDir, "node_modules", "one-dep", "node_modules", "no-deps", "package.json")).json(),
+  });
+  const expected = {
+    barHasCopy: false,
+    linked: realpathSync(join(packageDir, "packages", "m")),
+    oneDep: { name: "no-deps", version: "1.0.0" },
+  };
+
+  await install();
+  expect(await installed()).toEqual(expected);
+  const lockfile = await file(join(packageDir, "bun.lock")).text();
+
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await install("--frozen-lockfile");
+  expect(await installed()).toEqual(expected);
+  expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+});
+
 test.concurrent(
   "workspace: dependencies declared inside a tarball package do not create workspace packages",
   async () => {

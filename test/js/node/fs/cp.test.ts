@@ -1,6 +1,17 @@
 import { describe, expect, jest, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, type DirectoryTree, isLinux, isPosix, isWindows, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  type DirectoryTree,
+  isLinux,
+  isMacOS,
+  isPosix,
+  isRoot,
+  isWindows,
+  tempDir,
+  unprivilegedSpawnOptions,
+} from "harness";
 import { mkfifo } from "mkfifo";
 import { isAbsolute, join } from "path";
 
@@ -422,6 +433,84 @@ for (const [name, copy] of impls) {
     });
   });
 }
+
+// The other preserveTimestamps cases are in cp-preserve-timestamps.test.ts, which also runs under node.
+// utimes with explicit times needs the owner of the directory, so the copy stops at the first directory that is not
+// the caller's: its entries are in, its parent is not stamped, and what the walk had not reached is not copied.
+// Node v26.12.1 stops the same way.
+test.if(isPosix && isRoot)(
+  "cp with preserveTimestamps stops at an existing directory whose times it cannot set",
+  async () => {
+    const forms = ["cpSync", "promises", "callback"];
+    using dir = tempDir("cp-times-owner", {
+      "from/a/f.txt": "f",
+      ...Object.fromEntries(forms.map(form => [`to-${form}/a`, {}])),
+      "copy.mjs": `
+        import fs from "node:fs";
+        import { join } from "node:path";
+        const options = { recursive: true, preserveTimestamps: true };
+        const forms = {
+          cpSync: async (src, dest) => fs.cpSync(src, dest, options),
+          promises: (src, dest) => fs.promises.cp(src, dest, options),
+          callback: (src, dest) =>
+            new Promise((resolve, reject) => fs.cp(src, dest, options, err => (err ? reject(err) : resolve()))),
+        };
+        const past = new Date("2001-02-03T04:05:06Z");
+        const from = join(import.meta.dirname, "from");
+        for (const entry of ["a/f.txt", "a", ""]) fs.utimesSync(join(from, entry), past, past);
+        const results = {};
+        for (const [form, copy] of Object.entries(forms)) {
+          const to = join(import.meta.dirname, "to-" + form);
+          try {
+            await copy(from, to);
+            results[form] = "copied";
+          } catch (err) {
+            results[form] = {
+              code: err.code,
+              syscall: err.syscall,
+              path: err.path,
+              fileCopied: fs.existsSync(join(to, "a", "f.txt")),
+              parentStamped: fs.statSync(to).mtime.getTime() === past.getTime(),
+            };
+          }
+        }
+        console.log(JSON.stringify(results));
+      `,
+    });
+    using unprivileged = unprivilegedSpawnOptions(String(dir));
+    for (const form of forms) {
+      fs.chownSync(join(dir, `to-${form}`, "a"), 0, 0);
+      fs.chmodSync(join(dir, `to-${form}`, "a"), 0o777);
+    }
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "copy.mjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      ...unprivileged,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ results: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+      results: Object.fromEntries(
+        forms.map(form => [
+          form,
+          {
+            code: isMacOS ? "EACCES" : "EPERM",
+            syscall: "utime",
+            path: join(dir, `to-${form}`, "a"),
+            fileCopied: true,
+            parentStamped: false,
+          },
+        ]),
+      ),
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
 
 test("cp with missing callback throws", () => {
   expect(() => {

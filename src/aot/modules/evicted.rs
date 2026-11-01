@@ -234,22 +234,6 @@ fn find_when_call_runs(
     }
 }
 
-/// `await import("./a.ts")`: nobody but the `await` holds the promise, so what the file throws goes on from there as it does from an import statement.
-fn is_awaited_at_once(hir: &bun_sema::hir::File<'_>, bound: &Bound<'_>, call: ExprId) -> bool {
-    let mut inner = call;
-    while let Parent::Expr(outer) = bound.parent_of_expr(inner) {
-        match hir[outer].kind {
-            ExprKind::Await(_) => return true,
-            ExprKind::As { .. }
-            | ExprKind::Satisfies { .. }
-            | ExprKind::AsConst(_)
-            | ExprKind::NonNull(_) => inner = outer,
-            _ => return false,
-        }
-    }
-    false
-}
-
 fn add_all_that_they_load(
     files: &mut FxHashSet<FileId>,
     loaded_by: &FxHashMap<FileId, Vec<FileId>>,
@@ -340,9 +324,6 @@ pub(super) fn find_files_that_run_again(
                 ImportSiteKind::ImportCall(call) | ImportSiteKind::ImportByTestRunner(call) => {
                     match find_when_call_runs(hir, bound, call) {
                         LoadedWhen::Later => LoadedWhen::Later,
-                        LoadedWhen::AtTheTop if is_awaited_at_once(hir, bound, call) => {
-                            LoadedWhen::AtTheTop
-                        }
                         LoadedWhen::AtTheTop | LoadedWhen::AtTheTopAndCaught => {
                             LoadedWhen::AtTheTopAndCaught
                         }
@@ -414,18 +395,11 @@ pub(super) fn find_files_that_run_again(
         at_the_top.contains(&file)
     });
     caught_at_the_top.extend(loaded_later);
-    let run_again: Vec<ModuleRef> = caught_at_the_top
+    caught_at_the_top
         .into_iter()
         .map(ModuleRef::File)
         .filter(|&file| modules.find_commonjs_file(file).is_some() && !evicted.contains(file))
-        .collect();
-    if logs_stages() {
-        bun_core::print_errorln!(
-            "AOT modules | CommonJS files that may run again {}",
-            run_again.len(),
-        );
-    }
-    run_again
+        .collect()
 }
 
 /// `import("./a.js?again")` loads the file once more, from disk. What stands in front of the `?` in each specifier that has one.

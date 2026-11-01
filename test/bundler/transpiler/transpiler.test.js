@@ -517,9 +517,12 @@ describe("Bun.Transpiler", () => {
       exp("import type from = require('bar'); x", "x;\n");
 
       // "type" is a regular binding name here
-      exp("import type = bar; type", "const type = bar;\n");
-      exp("import type = foo.bar; type", "const type = foo.bar;\n");
-      exp("import type = require('type'); type", 'const type = require("type");\n');
+      exp("import type = bar; type", "const type = bar;\ntype;\n");
+      exp("import type = foo.bar; type", "const type = foo.bar;\ntype;\n");
+      exp("import type = require('type'); type", 'const type = require("type");\ntype;\n');
+      ts.expectPrintedMin_("import type = bar; type", "const type = bar;\n");
+      ts.expectPrintedMin_("import type = foo.bar; type", "const type = foo.bar;\n");
+      ts.expectPrintedMin_("import type = require('type'); type", 'const type = require("type");\n');
       exp("import type from 'bar'; type", 'import type from "bar";\ntype;\n');
       exp("import type from `bar`; type", 'import type from "bar";\ntype;\n');
       exp("import type, { a } from 'mod'; type, a", 'import type, { a } from "mod";\ntype, a;\n');
@@ -537,7 +540,8 @@ describe("Bun.Transpiler", () => {
       errStartsWith("export import type from 'mod'", 'Expected "=" but found "from"');
       errStartsWith("namespace N { import type from 'mod' }", 'Expected "=" but found "from"');
       exp("export import type from = require('mod'); x", "x;\n");
-      exp("export import type = require('mod'); type", 'export const type = require("mod");\n');
+      exp("export import type = require('mod'); type", 'export const type = require("mod");\ntype;\n');
+      ts.expectPrintedMin_("export import type = require('mod'); type", 'export const type = require("mod");\n');
     });
 
     it("runs TypeScript that tsc accepts at these parse edges", async () => {
@@ -707,6 +711,8 @@ describe("Bun.Transpiler", () => {
       const exp = ts.expectPrinted_;
       const err = ts.expectParseError;
 
+      const expMin = ts.expectPrintedMin_;
+
       exp(
         "declare = (...t) => R;e((a) => {(u=> uge);\r\n})",
         "declare = (...t) => R;\ne((a) => {\n  (u) => uge;\n});\n",
@@ -717,6 +723,10 @@ describe("Bun.Transpiler", () => {
         "declare = t => 0; function f() { () => 0; }\nf();",
         "declare = (t) => 0;\nfunction f() {\n  () => 0;\n}\nf();\n",
       );
+      expMin("declare = (...t) => R;e((a) => {(u=> uge);\r\n})", "declare = (...t) => R;\ne((a) => {});\n");
+      expMin("declare = t => 0; () => () => 0", "declare = (t) => 0;\n");
+      expMin("declare = function () {}; () => () => 0", "declare = function() {};\n");
+      expMin("declare = t => 0; function f() { () => 0; }\nf();", "declare = (t) => 0;\nfunction f() {}\nf();\n");
 
       exp(
         "abstract = (t) => 0\nclass Foo { m() { return () => () => 0 } }",
@@ -1413,6 +1423,7 @@ function foo() {}
 
       exp("a as any ? b : c;", "a ? b : c;\n");
       exp("a as any ? async () => b : c;", "a ? async () => b : c;\n");
+      ts.expectPrintedMin_("a as any ? async () => b : c;", "a || c;\n");
 
       exp("foo as number extends Object ? any : any;", "foo;\n");
       exp("foo as number extends Object ? () => void : any;", "foo;\n");
@@ -2875,42 +2886,6 @@ console.log(<div {...obj} key="after" />);`),
     );
   });
 
-  // https://github.com/oven-sh/bun/issues/14789
-  it("preserves bare expression statements when minify.syntax is off", async () => {
-    const jsx = new Bun.Transpiler({ loader: "jsx" });
-    // JSX lowers to a call the parser marks as pure; without minify.syntax
-    // that annotation must not cause the statement to be dropped.
-    expect(jsx.transformSync("<div>first</div>")).toBe(
-      'jsxDEV_7x81h0kn("div", {\n  children: "first"\n}, undefined, false, undefined, this);\n',
-    );
-    expect(await jsx.transform("<div>first</div>")).toBe(
-      'jsxDEV_7x81h0kn("div", {\n  children: "first"\n}, undefined, false, undefined, this);\n',
-    );
-    expect(jsx.transformSync("<>a</>")).toBe(
-      'jsxDEV_7x81h0kn(Fragment_8vg9x3sq, {\n  children: "a"\n}, undefined, false, undefined, this);\n',
-    );
-
-    // Classic runtime goes through the same code path.
-    const classic = new Bun.Transpiler({
-      loader: "jsx",
-      tsconfig: JSON.stringify({ compilerOptions: { jsx: "react" } }),
-    });
-    expect(classic.transformSync("<div>first</div>")).toBe('React.createElement("div", null, "first");\n');
-
-    // Other side-effect-free expression statements are likewise kept.
-    const js = new Bun.Transpiler({ loader: "js" });
-    expect(js.transformSync("/* @__PURE__ */ foo();")).toBe("foo();\n");
-    expect(js.transformSync("1;")).toBe("1;\n");
-    expect(js.transformSync("[1, 2, 3];")).toBe("[1, 2, 3];\n");
-    expect(js.transformSync("a === b;")).toBe("a === b;\n");
-
-    // Opting into minify.syntax restores the simplification.
-    const min = new Bun.Transpiler({ loader: "jsx", minify: { syntax: true } });
-    expect(min.transformSync("<div>first</div>")).toBe("");
-    expect(min.transformSync("/* @__PURE__ */ foo();")).toBe("");
-    expect(min.transformSync("1;")).toBe("");
-  });
-
   // Non-bundle transpile without `minify.identifiers` uses NoOpRenamer
   // (prints symbol.original_name verbatim), so the `generatedSymbolName`
   // hash suffix on the automatic JSX runtime import is the sole collision
@@ -3427,7 +3402,9 @@ console.log(<div {...obj} key="after" />);`),
       const plain = new Bun.Transpiler({ loader: "js" });
       expect(await plain.transform("++x;")).toBe("++x;\n");
       expect(await plain.transform("x;")).toBe("x;\n");
-      expect(await plain.transform("1;")).toBe("");
+      expect(await plain.transform("1;")).toBe("1;\n");
+      // A statement that folds to a primitive is the one that prints nothing.
+      expect(await plain.transform("!0;")).toBe("");
 
       // The rules themselves still apply between two tokens
       const minify = new Bun.Transpiler({ loader: "js", minifyWhitespace: true });
@@ -3992,18 +3969,18 @@ console.log(resolve.length)
     describe("dead code elimination", () => {
       const transpilerNoDCE = new Bun.Transpiler({ deadCodeElimination: false });
       it("should DCE with deadCodeElimination: true or by default", () => {
-        // Trimming side-effect-free expression statements additionally requires
-        // minify.syntax; by default the transpiler preserves what was written.
-        expect(parsed("123", true, false, transpilerMinifySyntax)).toBe("");
-        expect(parsed("[-1, 2n, null]", true, false, transpilerMinifySyntax)).toBe("");
-        expect(parsed("true", true, false, transpilerMinifySyntax)).toBe("");
-        expect(parsed("!0", true, false, transpilerMinifySyntax)).toBe("");
-        expect(parsed("123", true, false)).toBe("123");
-        expect(parsed("[-1, 2n, null]", true, false)).toBe("[-1, 2n, null]");
-        // Dead branches are still eliminated without minify.syntax.
+        expect(parsed("!0", true, false)).toBe("");
         expect(parsed('if (!1) "dead";', true, false)).toBe("if (false)");
         expect(parsed("if (!1) var x = 2;", true, false)).toBe("if (false)\n  var x");
         expect(parsed("if (undefined) { let y = Math.random(); }", true, false)).toBe("if (undefined) {}");
+      });
+      it("keeps a statement that has no side effects unless minify.syntax is on", () => {
+        expect(parsed("123", true, false)).toBe("123");
+        expect(parsed("[-1, 2n, null]", true, false)).toBe("[-1, 2n, null]");
+        expect(parsed("true", true, false)).toBe("true");
+        expect(parsed("123", true, false, transpilerMinifySyntax)).toBe("");
+        expect(parsed("[-1, 2n, null]", true, false, transpilerMinifySyntax)).toBe("");
+        expect(parsed("true", true, false, transpilerMinifySyntax)).toBe("");
       });
       it("should not DCE with deadCodeElimination: false", () => {
         expect(parsed("123", true, false, transpilerNoDCE)).toBe("123");
@@ -4015,6 +3992,152 @@ console.log(resolve.length)
         expect(parsed("if (undefined) { let y = Math.random(); }", true, false, transpilerNoDCE)).toBe(
           "if (undefined) {\n  let y = Math.random();\n}",
         );
+      });
+
+      // https://github.com/oven-sh/bun/issues/14789
+      describe("an expression statement whose value nothing uses", () => {
+        const div = (props = "{}") => `jsxDEV_7x81h0kn("div", ${props}, undefined, false, undefined, this)`;
+        // `written` is what a transpile prints. `simplified` is what minify.syntax or tree shaking leaves of it.
+        const statements = [
+          { input: "<div>first</div>", written: `${div('{\n  children: "first"\n}')};\n`, simplified: "" },
+          { input: "/* @__PURE__ */ foo()", written: "foo();\n", simplified: "" },
+          { input: "1", written: "1;\n", simplified: "" },
+          { input: "[1, 2, 3]", written: "[1, 2, 3];\n", simplified: "" },
+          { input: "a === b", written: "a === b;\n", simplified: "a, b;\n" },
+          { input: "(<div/>, foo())", written: `${div()}, foo();\n`, simplified: "foo();\n" },
+          {
+            input: "function f() { <div/>; return 1 }",
+            written: `function f() {\n  ${div()};\n  return 1;\n}\n`,
+            simplified: "function f() {\n  return 1;\n}\n",
+          },
+          { input: "x; let x = 1;", written: "x;\nlet x = 1;\n", simplified: "let x = 1;\n" },
+          { input: "(<div/>, true) ? a() : b()", written: `(${div()}, true) ? a() : b();\n`, simplified: "a();\n" },
+        ];
+        const expected = form => Object.fromEntries(statements.map(statement => [statement.input, statement[form]]));
+        const transformEach = async options => {
+          const transpiler = new Bun.Transpiler({ loader: "jsx", autoImportJSX: false, ...options });
+          const transformSync = {};
+          const transform = {};
+          for (const { input } of statements) {
+            transformSync[input] = transpiler.transformSync(input);
+            transform[input] = await transpiler.transform(input);
+          }
+          return { transformSync, transform };
+        };
+
+        it("the transform of a lone JSX element is not empty", async () => {
+          const transpiler = new Bun.Transpiler({ loader: "jsx" });
+          const call = `${div('{\n  children: "first"\n}')};\n`;
+          expect(await transpiler.transform("<div>first</div>")).toContain(call);
+          expect(transpiler.transformSync("<div>first</div>")).toContain(call);
+        });
+
+        it.each([
+          ["by default", {}],
+          ['with target: "node"', { target: "node" }],
+          ["with minify: false", { minify: false }],
+          ['with target: "bun" and minify: false', { target: "bun", minify: false }],
+          ['with target: "bun" and minify: { syntax: false }', { target: "bun", minify: { syntax: false } }],
+          ["with deadCodeElimination: false", { deadCodeElimination: false }],
+        ])("is kept as written %s", async (_, options) => {
+          expect(await transformEach(options)).toEqual({
+            transformSync: expected("written"),
+            transform: expected("written"),
+          });
+        });
+
+        it.each([
+          ["minify: { syntax: true }", { minify: { syntax: true } }],
+          // Target "bun" transpiles as the runtime does, and the runtime minifies syntax.
+          ['target: "bun"', { target: "bun" }],
+          ['target: "bun" and minify: { whitespace: false }', { target: "bun", minify: { whitespace: false } }],
+          ["treeShaking: true", { treeShaking: true }],
+        ])("is simplified with %s", async (_, options) => {
+          expect(await transformEach(options)).toEqual({
+            transformSync: expected("simplified"),
+            transform: expected("simplified"),
+          });
+        });
+
+        it("goes when the visit folds it to a primitive, and only then", () => {
+          const options = { loader: "js", define: { DEBUG: "false" } };
+          const inputs = ["!0;", "undefined;", "DEBUG && foo(); bar();"];
+          const print = transpiler => Object.fromEntries(inputs.map(input => [input, transpiler.transformSync(input)]));
+          expect(print(new Bun.Transpiler(options))).toEqual({
+            "!0;": "",
+            "undefined;": "",
+            "DEBUG && foo(); bar();": "bar();\n",
+          });
+          expect(print(new Bun.Transpiler({ ...options, deadCodeElimination: false }))).toEqual({
+            "!0;": "!0;\n",
+            "undefined;": "undefined;\n",
+            "DEBUG && foo(); bar();": "false && foo();\nbar();\n",
+          });
+        });
+
+        it("a call through a decided conditional keeps its `this`", () => {
+          const print = options =>
+            new Bun.Transpiler({ loader: "js", ...options }).transformSync("((0, true) ? o.f : g)()");
+          expect({ written: print({}), minified: print({ minify: { syntax: true } }) }).toEqual({
+            written: "((0, true) ? o.f : g)();\n",
+            minified: "(0, o.f)();\n",
+          });
+        });
+
+        it('target: "bun" minifies syntax unless minify says not to', () => {
+          const print = options =>
+            new Bun.Transpiler({ loader: "js", target: "bun", ...options }).transformSync("x = [true, undefined];");
+          expect({
+            "unset": print({}),
+            "minify: { whitespace: true }": print({ minify: { whitespace: true } }),
+            "minify: { syntax: true }": print({ minify: { syntax: true } }),
+            "minify: { syntax: false }": print({ minify: { syntax: false } }),
+            "minify: false": print({ minify: false }),
+          }).toEqual({
+            "unset": "x = [!0, void 0];\n",
+            "minify: { whitespace: true }": "x=[!0,void 0];",
+            "minify: { syntax: true }": "x = [!0, void 0];\n",
+            "minify: { syntax: false }": "x = [true, undefined];\n",
+            "minify: false": "x = [true, undefined];\n",
+          });
+        });
+
+        const kept =
+          'function g(name) {\n  console.log(name);\n}\nfunction f() {\n  /* @__PURE__ */ g("marked");\n  return 1;\n}\nconsole.log(f());\n';
+        const gone = "function g(name) {\n  console.log(name);\n}\nfunction f() {\n  return 1;\n}\nconsole.log(f());\n";
+
+        describe.concurrent("bun build", () => {
+          it.each([
+            ["--no-bundle keeps it", ["--no-bundle"], kept],
+            ["--no-bundle --target=node keeps it", ["--no-bundle", "--target=node"], kept],
+            ["--no-bundle --minify-syntax removes it", ["--no-bundle", "--minify-syntax"], gone],
+            // A bundle tree-shakes, so the statement goes with and without --minify-syntax.
+            ["a bundle removes it", [], `// entry.js\n${gone}`],
+            ["a bundle with --minify-syntax removes it", ["--minify-syntax"], `// entry.js\n${gone}`],
+          ])("%s", async (_, flags, output) => {
+            using dir = tempDir("transpiler-unused-statement", { "entry.js": kept });
+            await using proc = Bun.spawn({
+              cmd: [bunExe(), "build", ...flags, "entry.js"],
+              env: bunEnv,
+              cwd: String(dir),
+              stdout: "pipe",
+              stderr: "pipe",
+            });
+            const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+            expect({ stdout, stderr }).toEqual({ stdout: output, stderr: "" });
+            expect(exitCode).toBe(0);
+          });
+        });
+
+        it("Bun.build keeps it only when tree shaking is off", async () => {
+          using dir = tempDir("transpiler-unused-statement-api", { "entry.js": kept });
+          const build = async treeShaking => {
+            const result = await Bun.build({ entrypoints: [join(String(dir), "entry.js")], treeShaking });
+            // The first line is a comment that names the file.
+            return (await result.outputs[0].text()).replace(/^\/\/ .*\n/, "");
+          };
+          expect({ off: await build(false), on: await build(true) }).toEqual({ off: kept, on: gone });
+        });
       });
     });
   });

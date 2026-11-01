@@ -248,6 +248,25 @@ const MINIFY_SYNTAX_DIVERGENCE: Record<string, { compiledFunctions: number; buil
       compiledFunctions: 0,
       reason: "the statement that holds the function is dead code",
     },
+    // In each of these four the only JSX of the function is a statement such as `<div>{x}</div>;`. These builds do not
+    // tree-shake, so without minify the statement stays and the compiler takes the function for a component, as
+    // upstream does. minify.syntax removes the statement before the compiler runs, and the function is not compiled.
+    "array-map-frozen-array": {
+      compiledFunctions: 0,
+      reason: "the JSX statement that makes the function a component is removed",
+    },
+    "array-map-frozen-array-noAlias": {
+      compiledFunctions: 0,
+      reason: "the JSX statement that makes the function a component is removed",
+    },
+    "computed-load-primitive-as-dependency": {
+      compiledFunctions: 0,
+      reason: "the JSX statement that makes the function a component is removed",
+    },
+    "transitive-freeze-array": {
+      compiledFunctions: 0,
+      reason: "the JSX statement that makes the function a component is removed",
+    },
     // minify.syntax constant-folds `const x = 0` into the `useMemo` dependency
     // array, turning `[x]` into `[0]`; the manual-memoization parser only accepts
     // identifier / member expressions as dependencies, so it errors. This is a
@@ -257,26 +276,6 @@ const MINIFY_SYNTAX_DIVERGENCE: Record<string, { compiledFunctions: number; buil
       compiledFunctions: 0,
       buildError: true,
       reason: "constant folding rewrites the useMemo deps array entry `x` to the literal `0`",
-    },
-    // minify.syntax drops a bare `<div>{x}</div>;` expression statement before the
-    // compiler sees it, so `infer` mode no longer recognises the function as a
-    // component. Without minify the statement is preserved and the function is
-    // compiled, matching upstream.
-    "array-map-frozen-array": {
-      compiledFunctions: 0,
-      reason: "bare JSX expression statement dropped before compiler inference",
-    },
-    "array-map-frozen-array-noAlias": {
-      compiledFunctions: 0,
-      reason: "bare JSX expression statement dropped before compiler inference",
-    },
-    "computed-load-primitive-as-dependency": {
-      compiledFunctions: 0,
-      reason: "bare JSX expression statement dropped before compiler inference",
-    },
-    "transitive-freeze-array": {
-      compiledFunctions: 0,
-      reason: "bare JSX expression statement dropped before compiler inference",
     },
   });
 

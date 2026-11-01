@@ -6575,6 +6575,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         features.minify_syntax || (features.is_library && features.dead_code_elimination)
     }
 
+    /// Whether an expression whose value nothing uses is reduced to its side effects: an
+    /// expression statement, and the test of a conditional that is decided. A parse that
+    /// neither minifies nor tree-shakes is a transpile, and keeps both as written.
+    pub(crate) fn should_simplify_unused_expr(&self) -> bool {
+        self.should_remove_dead_statements()
+            || (self.options.tree_shaking && self.options.features.dead_code_elimination)
+    }
+
     pub(crate) fn select_local_kind(&self, kind: js_ast::s::Kind) -> js_ast::s::Kind {
         // Use "var" instead of "let" and "const" if the variable declaration may
         // need to be separated from the initializer. This allows us to safely move

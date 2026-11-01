@@ -1457,6 +1457,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmt: &mut Stmt,
         data: &mut S::SExpr,
     ) -> Result<(), Error> {
+        let simplify = p.should_simplify_unused_expr();
+        // Without it, only a statement that the visit folds to a primitive goes (a define, --drop).
+        let trim_folded_primitive = !simplify
+            && p.options.features.dead_code_elimination
+            && !data.value.is_primitive_literal();
         p.stmt_expr_value = data.value.data;
 
         let is_top_level = p.current_scope == p.module_scope && !p.is_inside_single_stmt_body;
@@ -1506,7 +1511,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             };
         }
 
-        if p.options.features.minify_syntax {
+        if trim_folded_primitive && data.value.is_primitive_literal() {
+            restore_stmt_expr!();
+            return Ok(());
+        }
+
+        if simplify {
             let Some(simplified) = SideEffects::simplify_unused_expr(p, data.value) else {
                 restore_stmt_expr!();
                 return Ok(());

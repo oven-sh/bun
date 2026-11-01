@@ -18,8 +18,18 @@ const helpers: [name: string, file: string, text: string, stays: "closed" | "ope
   ["typeof require", "helper.cjs", `exports.mark = typeof require;`, "closed"],
   ["require.resolve", "helper.cjs", `exports.mark = require.resolve("./other.cjs");`, "closed"],
   ["import.meta.require", "helper.mjs", `export const mark = import.meta.require("node:path").sep;`, "closed"],
-  ["process.getBuiltinModule", "helper.mjs", `export const mark = process.getBuiltinModule("node:path").sep;`, "closed"],
-  ["require under a name that nobody knows", "helper.cjs", `exports.mark = process.env.NOBODY_SETS_THIS ? require(process.env.NOBODY_SETS_THIS) : 1;`, "open"],
+  [
+    "process.getBuiltinModule",
+    "helper.mjs",
+    `export const mark = process.getBuiltinModule("node:path").sep;`,
+    "closed",
+  ],
+  [
+    "require under a name that nobody knows",
+    "helper.cjs",
+    `exports.mark = process.env.NOBODY_SETS_THIS ? require(process.env.NOBODY_SETS_THIS) : 1;`,
+    "open",
+  ],
   ["require handed on", "helper.cjs", `exports.mark = 1; globalThis.kept = [require];`, "open"],
   ["text that is evaluated", "helper.cjs", `exports.mark = (0, eval)("1");`, "open"],
 ];
@@ -38,9 +48,17 @@ import { mark } from "./${file}";
 import { load } from "../src/load.cjs";
 test("t", () => console.log("SEEN", mark !== undefined, typeof load(process.env.NOBODY_SETS_THIS_EITHER ?? "node:os").EOL));`,
     });
-    const { stdout, stderr, exitCode } = await run([bunExe(), "test", "--aot"], String(dir), { ...bunEnv, BUN_JSC_logAOTPhaseTimes: "1" });
+    const { stdout, stderr, exitCode } = await run([bunExe(), "test", "--aot"], String(dir), {
+      ...bunEnv,
+      BUN_JSC_logAOTPhaseTimes: "1",
+    });
     const [, open, closed] = /loads code by name (\d+) \| loads compiled files by name (\d+)/.exec(stderr) ?? [];
-    const found = Number(open) > 0 && closed === "0" ? "open" : open === "0" && closed === "1" ? "closed" : `${open} | ${closed}`;
-    expect({ found, seen: stdout.includes("SEEN true string"), exitCode }).toEqual({ found: stays, seen: true, exitCode: 0 });
+    const found =
+      Number(open) > 0 && closed === "0" ? "open" : open === "0" && closed === "1" ? "closed" : `${open} | ${closed}`;
+    expect({ found, seen: stdout.includes("SEEN true string"), exitCode }).toEqual({
+      found: stays,
+      seen: true,
+      exitCode: 0,
+    });
   });
 }

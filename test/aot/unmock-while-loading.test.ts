@@ -85,7 +85,9 @@ for (const [way, words] of [
       ...files,
       "x.test.js": `import { test, vi } from "bun:test";\ntest("x", async () => {\n  ${start}\n  ${body}\n});\n`,
     };
-    let ran: Promise<{ plain: Awaited<ReturnType<typeof runTests>>; compiled: Awaited<ReturnType<typeof runTests>> }> | undefined;
+    let ran:
+      | Promise<{ plain: Awaited<ReturnType<typeof runTests>>; compiled: Awaited<ReturnType<typeof runTests>> }>
+      | undefined;
     const run = () =>
       (ran ??= (async () => {
         using dir = tempDir("aot-unmock-while-loading", project);
@@ -99,7 +101,10 @@ for (const [way, words] of [
     (printsAsPlain ? test : test.failing)(`${name}, ${way}: it prints what bun test prints`, async () => {
       const { plain, compiled } = await run();
       expect(plain.lines.at(-1)).toMatch(/^(seen|k again) /);
-      expect({ lines: compiled.lines, exitCode: compiled.exitCode }).toEqual({ lines: plain.lines, exitCode: plain.exitCode });
+      expect({ lines: compiled.lines, exitCode: compiled.exitCode }).toEqual({
+        lines: plain.lines,
+        exitCode: plain.exitCode,
+      });
     });
   }
 }

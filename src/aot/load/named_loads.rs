@@ -291,8 +291,11 @@ impl FilesOfTests {
 fn file_mentions_evaluator_or_loader(application: &Files<'_>, file: FileId) -> bool {
     parsed_source(application, file).is_none_or(|source| {
         source.builtins.loads_unknown_modules()
-            || (source.builtins.mentioned().iter())
-                .any(|&id| table::entry(id).flags.contains(BuiltinFlags::EVALUATES_TEXT))
+            || (source.builtins.mentioned().iter()).any(|&id| {
+                table::entry(id)
+                    .flags
+                    .contains(BuiltinFlags::EVALUATES_TEXT)
+            })
     })
 }
 

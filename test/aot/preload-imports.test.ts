@@ -53,7 +53,10 @@ const waysOut: [string, Record<string, string>][] = [
       "tests/utils/patch.ts": helperBesideTheTests["test-utils/patch.ts"],
     },
   ],
-  ["it is named as a preload", { ...helperBesideTheTests, "bunfig.toml": `[test]\npreload = ["./test-utils/patch.ts"]\n` }],
+  [
+    "it is named as a preload",
+    { ...helperBesideTheTests, "bunfig.toml": `[test]\npreload = ["./test-utils/patch.ts"]\n` },
+  ],
 ];
 
 async function run(files: Record<string, string>, words: string) {
@@ -82,24 +85,29 @@ for (const [form, words] of [
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent(`what the product imports too stays the product's, and the run says how it ended, ${form}`, async () => {
-    const { stderr, exitCode } = await run(reachedByProductToo, words);
-    // The build of one program sees that the assignment always runs. Over layers it throws where it runs.
-    expect(stderr).toMatch(
-      /TS100014|TypeError: Cannot assign to Buffer\.isEncoding because built-in objects are read-only in a compiled executable/,
-    );
-    expect(stderr).toContain("src/patch.ts:1:1");
-    expect(stderr).toContain(" 0 pass");
-    expect(stderr).toContain(" 2 fail");
-    expect(stderr).toContain("Ran 2 tests across 2 files.");
-    expect(exitCode).toBe(1);
-  });
+  test.concurrent(
+    `what the product imports too stays the product's, and the run says how it ended, ${form}`,
+    async () => {
+      const { stderr, exitCode } = await run(reachedByProductToo, words);
+      // The build of one program sees that the assignment always runs. Over layers it throws where it runs.
+      expect(stderr).toMatch(
+        /TS100014|TypeError: Cannot assign to Buffer\.isEncoding because built-in objects are read-only in a compiled executable/,
+      );
+      expect(stderr).toContain("src/patch.ts:1:1");
+      expect(stderr).toContain(" 0 pass");
+      expect(stderr).toContain(" 2 fail");
+      expect(stderr).toContain("Ran 2 tests across 2 files.");
+      expect(exitCode).toBe(1);
+    },
+  );
 }
 
 test.concurrent("a helper in a folder beside the tests is the product's, and the run says what to do", async () => {
   const { stderr, exitCode } = await run(helperBesideTheTests, "");
   expect(stderr).toContain("TypeError: Cannot assign to Buffer.isEncoding");
-  expect(stderr).toContain(`move it into a test file's folder or below it, import from "bun:test" in it, or name it as a preload`);
+  expect(stderr).toContain(
+    `move it into a test file's folder or below it, import from "bun:test" in it, or name it as a preload`,
+  );
   expect(exitCode).toBe(1);
 });
 

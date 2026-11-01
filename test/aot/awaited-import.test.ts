@@ -18,13 +18,48 @@ const { createRequire } = await import("node:module");
 console.log("again:", createRequire(import.meta.url)("./lib/a.cjs").value, globalThis.ran.join());`;
 
 const entries: [name: string, file: string, text: string, mayRunAgain: number][] = [
-  ["an import statement", "main.mjs", `import { value } from "./lib/a.cjs"; console.log(value, globalThis.ran.join());`, 0],
-  ["awaited at once", "main.mjs", `const { value } = await import("./lib/a.cjs"); console.log(value, globalThis.ran.join());`, 0],
-  ["awaited at once through a type assertion", "main.ts", `const { value } = await (import("./lib/a.cjs") as Promise<{ value: number }>); console.log(value, (globalThis as any).ran.join());`, 0],
-  ["awaited at once, and it throws", "main.mjs", `globalThis.throws = true; console.log("begins"); await import("./lib/a.cjs"); console.log("not reached");`, 0],
-  ["awaited with a handler around it", "main.mjs", `globalThis.throws = true; try { await import("./lib/a.cjs"); } catch (error) { console.log("caught:", error.message); }${again}`, 2],
-  ["the promise has a handler of its own", "main.mjs", `globalThis.throws = true; await import("./lib/a.cjs").catch(error => console.log("caught:", error.message));${again}`, 2],
-  ["the promise is kept", "main.mjs", `globalThis.throws = true; const kept = import("./lib/a.cjs"); await kept.then(() => {}, error => console.log("caught:", error.message));${again}`, 2],
+  [
+    "an import statement",
+    "main.mjs",
+    `import { value } from "./lib/a.cjs"; console.log(value, globalThis.ran.join());`,
+    0,
+  ],
+  [
+    "awaited at once",
+    "main.mjs",
+    `const { value } = await import("./lib/a.cjs"); console.log(value, globalThis.ran.join());`,
+    0,
+  ],
+  [
+    "awaited at once through a type assertion",
+    "main.ts",
+    `const { value } = await (import("./lib/a.cjs") as Promise<{ value: number }>); console.log(value, (globalThis as any).ran.join());`,
+    0,
+  ],
+  [
+    "awaited at once, and it throws",
+    "main.mjs",
+    `globalThis.throws = true; console.log("begins"); await import("./lib/a.cjs"); console.log("not reached");`,
+    0,
+  ],
+  [
+    "awaited with a handler around it",
+    "main.mjs",
+    `globalThis.throws = true; try { await import("./lib/a.cjs"); } catch (error) { console.log("caught:", error.message); }${again}`,
+    2,
+  ],
+  [
+    "the promise has a handler of its own",
+    "main.mjs",
+    `globalThis.throws = true; await import("./lib/a.cjs").catch(error => console.log("caught:", error.message));${again}`,
+    2,
+  ],
+  [
+    "the promise is kept",
+    "main.mjs",
+    `globalThis.throws = true; const kept = import("./lib/a.cjs"); await kept.then(() => {}, error => console.log("caught:", error.message));${again}`,
+    2,
+  ],
   [
     "awaited in a function",
     "main.mjs",
@@ -43,11 +78,21 @@ for (const [name, file, text, mayRunAgain] of entries) {
       [file]: text,
     });
     const program = join(String(dir), isWindows ? "program.exe" : "program");
-    const build = await run([bunExe(), ...compileCommand, `./${file}`, "--outfile", program], String(dir), { ...bunEnv, [buildEnvironment.logsPhaseTimes]: "1" });
+    const build = await run([bunExe(), ...compileCommand, `./${file}`, "--outfile", program], String(dir), {
+      ...bunEnv,
+      [buildEnvironment.logsPhaseTimes]: "1",
+    });
     expect(build.exitCode).toBe(0);
     expect(/CommonJS files that may run again (\d+)/.exec(build.stderr)?.[1]).toBe(String(mayRunAgain));
-    const [plain, compiled] = await Promise.all([run([bunExe(), `./${file}`], String(dir), bunEnv), run([program], String(dir), bunEnv)]);
+    const [plain, compiled] = await Promise.all([
+      run([bunExe(), `./${file}`], String(dir), bunEnv),
+      run([program], String(dir), bunEnv),
+    ]);
     expect(plain.stdout).not.toBe("");
-    expect({ stdout: compiled.stdout, exitCode: compiled.exitCode, says: compiled.stderr.includes("thrown by b") }).toEqual({ stdout: plain.stdout, exitCode: plain.exitCode, says: plain.stderr.includes("thrown by b") });
+    expect({
+      stdout: compiled.stdout,
+      exitCode: compiled.exitCode,
+      says: compiled.stderr.includes("thrown by b"),
+    }).toEqual({ stdout: plain.stdout, exitCode: plain.exitCode, says: plain.stderr.includes("thrown by b") });
   });
 }

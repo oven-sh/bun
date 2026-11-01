@@ -22,7 +22,10 @@ const testFile = (filter: string, imported: string) => `
   });`;
 
 async function runTests(folder: string, flags: string[]) {
-  const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags, "."], folder, { ...bunEnv, NO_COLOR: "1" });
+  const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags, "."], folder, {
+    ...bunEnv,
+    NO_COLOR: "1",
+  });
   return { printed: stdout.replace(/^bun test .*\n/, ""), counts: stderr.match(/^ \d+ (pass|fail)$/gm), exitCode };
 }
 

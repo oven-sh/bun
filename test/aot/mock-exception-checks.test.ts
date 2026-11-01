@@ -42,6 +42,10 @@ for (const [way, words] of [
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const unchecked = /Unchecked JS exception:\s*[^\n]*\n[^\n]*\n[^\n]*/.exec(stdout + stderr)?.[0] ?? null;
-    expect({ unchecked, seen: /^seen .*$/m.exec(stdout)?.[0]?.startsWith("seen mock") ?? false, exitCode }).toEqual({ unchecked: null, seen: true, exitCode: 0 });
+    expect({ unchecked, seen: /^seen .*$/m.exec(stdout)?.[0]?.startsWith("seen mock") ?? false, exitCode }).toEqual({
+      unchecked: null,
+      seen: true,
+      exitCode: 0,
+    });
   });
 }

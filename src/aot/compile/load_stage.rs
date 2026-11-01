@@ -37,8 +37,7 @@ use crate::load::worker_files::{
 use crate::load::{PerProject, ProjectId, SourceKind, Sources};
 use crate::options::{LoadOptions, PathOptions};
 use crate::statistics::{
-    LimitId, LimitValues, Stage, StatisticId, Statistics, StepClock,
-    log_why_files_are_loaded_again,
+    LimitId, LimitValues, Stage, StatisticId, Statistics, StepClock, log_why_files_are_loaded_again,
 };
 use bun_ast::Loader;
 use bun_builtin_sources::{Archive, Manifest, VIRTUAL_ROOT};

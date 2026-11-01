@@ -1595,6 +1595,7 @@ enum ClauseItemAs {
 // ───────────────────────────────────────────────────────────────────────────
 pub(crate) mod __gated_printer {
     use super::*;
+    use bun_ast::FrameToken;
     use bun_ast::ImportRecordTag;
     use bun_ptr::BackRef;
     use js_ast::Symbol;
@@ -2415,6 +2416,47 @@ pub(crate) mod __gated_printer {
             }
             self.source_map_builder
                 .add_source_mapping(location, self.writer.slice());
+        }
+
+        /// `add_source_mapping(location)` for the name or index that is printed right behind `token`, of which
+        /// `printed_len` bytes were just printed. The token is mapped too where `location` starts a line.
+        #[inline]
+        pub(crate) fn add_source_mapping_behind(
+            &mut self,
+            location: bun_ast::Loc,
+            token: FrameToken,
+            printed_len: u8,
+            first: bun_ast::Loc,
+        ) {
+            if !GENERATE_SOURCE_MAP {
+                return;
+            }
+            self.source_map_builder.add_source_mapping_behind(
+                location,
+                self.writer.slice(),
+                token,
+                printed_len,
+                first,
+            );
+        }
+
+        /// Maps `token`, which is printed next, where `anchor` is on another line than what was mapped last.
+        #[inline(always)]
+        pub(crate) fn add_source_mapping_on_new_line(
+            &mut self,
+            anchor: bun_ast::Loc,
+            token: FrameToken,
+            first: bun_ast::Loc,
+        ) {
+            if !GENERATE_SOURCE_MAP
+                || self
+                    .source_map_builder
+                    .is_on_line_of_previous_mapping(anchor)
+            {
+                return;
+            }
+            self.source_map_builder
+                .add_source_mapping_off_previous_line(anchor, self.writer.slice(), token, first);
         }
 
         #[inline]
@@ -3508,11 +3550,48 @@ pub(crate) mod __gated_printer {
                         self.print_expr(e.target, Level::Postfix, target_flags);
                     }
 
-                    if e.optional_chain == Some(js_ast::OptionalChain::Start) {
+                    let args = e.args.slice();
+                    let is_optional = e.optional_chain == Some(js_ast::OptionalChain::Start);
+                    if is_optional {
                         self.print(b"?.");
                     }
+                    if GENERATE_SOURCE_MAP {
+                        // JSC reports the call at the name its callee ends in, which is mapped. Behind any other
+                        // callee it reports the call in front of the `(`, and an optional one behind its `?.`.
+                        let behind = || args.first().map_or(e.close_paren_loc, |arg| arg.loc);
+                        if is_optional {
+                            self.add_source_mapping_on_new_line(
+                                behind(),
+                                FrameToken::OptionalCall,
+                                e.target.loc,
+                            );
+                        } else if !matches!(
+                            e.target.data,
+                            ExprData::EIdentifier(_)
+                                | ExprData::EImportIdentifier(_)
+                                | ExprData::EDot(_)
+                                | ExprData::ECommonjsExportIdentifier(..)
+                                | ExprData::ESuper(_)
+                                | ExprData::ERequireCallTarget
+                                | ExprData::ERequireResolveCallTarget
+                        ) {
+                            if e.target.loc.start < expr.loc.start {
+                                // A callee that was written in front of the call is printed in place of a name.
+                                self.add_source_mapping_on_new_line(
+                                    expr.loc,
+                                    FrameToken::Known,
+                                    expr.loc,
+                                );
+                            } else {
+                                self.add_source_mapping_on_new_line(
+                                    behind(),
+                                    FrameToken::EndOfCallee,
+                                    e.target.loc,
+                                );
+                            }
+                        }
+                    }
                     self.print(b"(");
-                    let args = e.args.slice();
 
                     if !args.is_empty() {
                         self.print_expr(args[0], Level::Comma, ExprFlag::none());
@@ -3694,14 +3773,23 @@ pub(crate) mod __gated_printer {
                             self.print(b".");
                         }
 
-                        self.add_source_mapping(e.name_loc);
+                        self.add_source_mapping_behind(
+                            e.name_loc,
+                            FrameToken::Member,
+                            if is_optional_chain { 2 } else { 1 },
+                            e.target.loc,
+                        );
                         self.print_identifier(&e.name);
                     } else {
                         if is_optional_chain {
-                            self.print(b"?.[");
-                        } else {
-                            self.print(b"[");
+                            self.print(b"?.");
                         }
+                        self.add_source_mapping_on_new_line(
+                            e.name_loc,
+                            FrameToken::Member,
+                            e.target.loc,
+                        );
+                        self.print(b"[");
                         self.print_string_literal_utf8(&e.name, false);
                         self.print(b"]");
                     }
@@ -3759,12 +3847,22 @@ pub(crate) mod __gated_printer {
                             if !is_optional_chain_start {
                                 self.print(b".");
                             }
-                            self.add_source_mapping(e.index.loc);
+                            self.add_source_mapping_behind(
+                                e.index.loc,
+                                FrameToken::Member,
+                                if is_optional_chain_start { 2 } else { 1 },
+                                e.target.loc,
+                            );
                             self.print_symbol(priv_.ref_);
                         }
                         _ => {
                             self.print(b"[");
-                            self.add_source_mapping(e.index.loc);
+                            self.add_source_mapping_behind(
+                                e.index.loc,
+                                FrameToken::Member,
+                                1,
+                                e.target.loc,
+                            );
                             self.print_expr(e.index, Level::Lowest, ExprFlag::none());
                             self.print(b"]");
                         }
@@ -4199,6 +4297,15 @@ pub(crate) mod __gated_printer {
                             self.print_commonjs_export_identifier(id, tag.loc, true);
                         } else {
                             self.print_expr(*tag, Level::Postfix, ExprFlag::none());
+                        }
+                        // JSC reports the call of the tag at the backquote.
+                        if GENERATE_SOURCE_MAP && let E::TemplateContents::Raw(raw) = &e.head {
+                            self.source_map_builder
+                                .add_source_mapping_in_front_of_text_on_new_line(
+                                    raw,
+                                    1,
+                                    self.writer.slice(),
+                                );
                         }
                     } else {
                         self.add_source_mapping(expr.loc);
@@ -4846,12 +4953,15 @@ pub(crate) mod __gated_printer {
             };
             if !IS_JSON {
                 if item.kind == G::PropertyKind::Spread {
-                    self.print(b"...");
-                    self.print_expr(
-                        item.value.expect("infallible: prop has value"),
-                        Level::Comma,
-                        ExprFlag::none(),
+                    let value = item.value.expect("infallible: prop has value");
+                    // JSC reports what the spread calls at the `...`.
+                    self.add_source_mapping_on_new_line(
+                        value.loc,
+                        FrameToken::Spread,
+                        bun_ast::Loc::EMPTY,
                     );
+                    self.print(b"...");
+                    self.print_expr(value, Level::Comma, ExprFlag::none());
                     return;
                 }
 
@@ -5166,6 +5276,11 @@ pub(crate) mod __gated_printer {
                 BindingData::BArray(b) => {
                     let b = b.get();
                     let items = slice_of(b.items);
+                    self.add_source_mapping_on_new_line(
+                        binding.loc,
+                        FrameToken::Known,
+                        binding.loc,
+                    );
                     self.print(b"[");
                     if !items.is_empty() {
                         if !b.is_single_line {
@@ -5917,6 +6032,7 @@ pub(crate) mod __gated_printer {
                     self.print_for_loop_init(s.init, ExprFlag::is_followed_by_of());
                     self.print_space();
                     self.print_space_before_identifier();
+                    self.add_source_mapping_on_new_line(s.value.loc, FrameToken::Of, stmt.loc);
                     self.print(b"of");
                     self.print_space();
                     self.print_expr(s.value, Level::Comma, ExprFlag::none());
@@ -7667,6 +7783,7 @@ pub(crate) fn get_source_map_builder<'a, const IS_BUN_PLATFORM: bool>(
         ),
         cover_lines_without_mappings: true,
         prepend_count: IS_BUN_PLATFORM && generate_source_map == GenerateSourceMap::Lazy,
+        source_contents: source.contents(),
         line_offset_tables: match opts.line_offset_tables.take() {
             Some(table) => LineOffsetTables::Borrowed(table),
             None if generate_source_map == GenerateSourceMap::Lazy => LineOffsetTables::Deferred {

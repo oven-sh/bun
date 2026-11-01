@@ -46,10 +46,7 @@ struct StateField {
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(crate) fn emit_private_get(&mut self, object: ValueId, access: ExprId) -> ValueId {
         // JSC reports it where it reports the read of any other member: behind the object.
-        let position = match self.file.hir.member_key(access) {
-            Some((object, _)) => self.file.member_position(object),
-            None => self.file.hir[access].pos,
-        };
+        let position = self.file.member_position(access);
         self.set_position(position);
         match self.file.bound.private_name_of_reference(access) {
             Some(name) => self.emit_name_get(object, name, self.file.hir[access].pos),

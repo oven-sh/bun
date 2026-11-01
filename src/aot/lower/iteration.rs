@@ -1,3 +1,4 @@
+use bun_ast::FrameToken;
 use bun_sema::check::aot::{CheckedType, GaveUp};
 use bun_sema::hir::{ExprId, NameKind, PatId, PatKind, PatProp, StmtId, StmtKind, VarKind};
 use smallvec::SmallVec;
@@ -156,7 +157,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             false => IteratorKind::Sync,
         };
         let iterable = self.lower_loop_subject(statement, expr);
-        let position = self.file.last_mapped_head_position(statement, left);
+        let position = self.file.iteration_position(statement, left, expr);
         self.set_position(position);
         let iterator = self.emit_iterator_open(iterable, kind, None);
         let header = self.begin_loop(statement);
@@ -269,8 +270,9 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // JSC reports the calls of the iteration protocol at the `of`, which the source map takes back to the last token before it.
-    fn last_mapped_head_position(&self, statement: StmtId, left: StmtId) -> u32 {
+    // JSC reports the calls of the iteration protocol at the `of`. The source map knows the `of` where the iterable stands on another line than
+    // the last token in front of the `of`, and takes it back to that last token anywhere else.
+    fn iteration_position(&self, statement: StmtId, left: StmtId, iterable: ExprId) -> u32 {
         let hir = self.hir;
         if self.is_shown_without_source_map() {
             return self.next_token_position(hir[left].loc.end);
@@ -283,7 +285,10 @@ impl FileLowering<'_, '_, '_, '_> {
             StmtKind::Expr(target) => Some(self.last_mapped_position(target)),
             _ => None,
         };
-        position.unwrap_or(hir[statement].start)
+        let in_front = position.unwrap_or(hir[statement].start);
+        let iterable = self.first_position(iterable);
+        self.find_token_on_new_line(FrameToken::Of, iterable, hir[statement].start, in_front)
+            .unwrap_or(in_front)
     }
 
     pub(in crate::lower) fn last_mapped_pattern_position(&self, pattern: PatId) -> Option<u32> {

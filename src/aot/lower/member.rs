@@ -86,10 +86,8 @@ impl FileLowering<'_, '_, '_, '_> {
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     // Where the member is known ahead of time: JSC reads it from the object, and records the read, but for the tag of a template.
     pub(in crate::lower) fn record_read_from_object(&mut self, access: ExprId) {
-        if let (Some((object, _)), false) =
-            (self.file.hir.member_key(access), self.file.is_tag(access))
-        {
-            let position = self.file.member_position(object);
+        if let (Some(_), false) = (self.file.hir.member_key(access), self.file.is_tag(access)) {
+            let position = self.file.member_position(access);
             self.builder.record_position(position);
         }
     }
@@ -333,10 +331,11 @@ pub(in crate::lower) fn emit_member_read(
     name: PropertyName,
 ) -> ValueId {
     let hir = lowering.file.hir;
-    let Some((object_expression, _)) = hir.member_key(access) else {
-        unreachable!("emit_member_read takes a Dot or an Index expression");
-    };
-    let object_position = lowering.file.member_position(object_expression);
+    debug_assert!(
+        hir.member_key(access).is_some(),
+        "emit_member_read takes a Dot or an Index expression"
+    );
+    let object_position = lowering.file.member_position(access);
     // JSC records no position for the read of the tag of a template.
     let is_tag = lowering.file.is_tag(access);
     if is_tag {

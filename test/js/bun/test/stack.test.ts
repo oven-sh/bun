@@ -75,9 +75,9 @@ test("err.line and err.column are set", async () => {
     JSON.stringify(
       {
         line: 3,
-        column: 17,
+        column: 13,
         originalLine: 1,
-        originalColumn: 18,
+        originalColumn: 13,
       },
       null,
       2,

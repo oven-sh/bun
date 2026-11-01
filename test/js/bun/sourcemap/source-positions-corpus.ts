@@ -5,6 +5,9 @@
 // runtime says `e` was thrown, which has to be the first "text" of the file. Neither position is written down anywhere:
 // the test looks for the call in the text. A call in tail position has no caller to report, so `at()` is never returned.
 // `ran()` only counts its calls, for the initializer of a field: JSC keeps the function it is in out of stack traces.
+//
+// `caught(e, "text", 1)` is about the frame of the file above that one: where the function that threw was called.
+// What `fails` has throws in the file of the probes, so the first frame of a program is where it used `fails`.
 
 export type Case = {
   /** Functions that ran / functions in the file. */
@@ -1043,8 +1046,130 @@ export const cases: Record<string, Case> = {
  1|try { empty.notFunction(); } catch (e) { caught(e, "notFunction"); }
  1|try { new empty.notConstructor(); } catch (e) { caught(e, "new empty"); }
  1|try { tooEarly; let tooEarly = 1; } catch (e) { caught(e, "tooEarly"); }
- 1|try { throw new RangeError("thrown"); } catch (e) { caught(e, "RangeError"); }
+ 1|try { throw new RangeError("thrown"); } catch (e) { caught(e, "new RangeError"); }
  1|try { null!.ofNull; } catch (e) { caught(e, "null!"); }
+`,
+  },
+  // An expression on several lines is printed on one. Each frame is on the line of the token that it belongs to:
+  // a member at its `.` or `[`, a name at the name, a call at the name its callee ends in or behind any other callee,
+  // `new` at the `new`.
+  "line-breaks.ts": {
+    functions: "4/4",
+    lines: `
+ 1|const empty: any = { missing: null, self() { return this; }, nothing() {} };
+ 1|try {
+ 1|  empty
+ 1|    .self()
+ 1|    .nothing()
+ 1|    .first;
+ 1|} catch (e) {
+ 1|  caught(e, ".first");
+ -|}
+ 1|try {
+ 1|  empty
+ 1|    .missing
+ 1|    [0];
+ 1|} catch (e) {
+ 1|  caught(e, "[0]");
+ -|}
+ 1|try {
+ 1|  empty
+ 1|    .missing
+ 1|    .stored = 1;
+ 1|} catch (e) {
+ 1|  caught(e, ".stored");
+ -|}
+ 1|try {
+ 1|  fails
+ 1|    .self()
+ 1|    .value;
+ 1|} catch (e) {
+ 1|  caught(e, ".value");
+ -|}
+ 1|try {
+ 1|  String(
+ 1|    notDeclared
+ 1|  );
+ 1|} catch (e) {
+ 1|  caught(e, "notDeclared");
+ -|}
+ 1|try {
+ 1|  notDeclaredEither
+ 1|    .member;
+ 1|} catch (e) {
+ 1|  caught(e, "notDeclaredEither");
+ -|}
+ 1|try {
+ 1|  String(...
+ 1|    (1 as any));
+ 1|} catch (e) {
+ 1|  caught(e, "...");
+ -|}
+ 1|try {
+ 1|  fails
+ 1|    .self()
+ 1|    .call();
+ 1|} catch (e) {
+ 1|  caught(e, "call()");
+ -|}
+ 1|try {
+ 1|  fails.make(
+ 1|    1,
+ 1|  )(23);
+ 1|} catch (e) {
+ 1|  caught(e, ")(23)");
+ -|}
+ 1|try {
+ 1|  (() => {
+ 1|    fails.call();
+ 1|  })(45);
+ 1|} catch (e) {
+ 1|  caught(e, "(45)", 1);
+ -|}
+ 1|try {
+ 1|  const once = () => {
+ 1|    fails.call();
+ -|  };
+ 1|  once(67);
+ 1|} catch (e) {
+ 1|  caught(e, "once(67)", 1);
+ -|}
+ 1|try {
+ 1|  fails.call
+ 1|    ?.(89);
+ 1|} catch (e) {
+ 1|  caught(e, "(89)");
+ -|}
+ 1|try {
+ 1|  new /* first */
+ 1|    fails.Made(1);
+ 1|} catch (e) {
+ 1|  caught(e, "new /* first */");
+ -|}
+ 1|try {
+ 1|  throw new /* second */
+ 1|    RangeError("thrown");
+ 1|} catch (e) {
+ 1|  caught(e, "new /* second */");
+ -|}
+ 1|try {
+ 1|  fails.tag
+ 1|    \`tagged\`;
+ 1|} catch (e) {
+ 1|  caught(e, "\`tagged\`");
+ -|}
+ 1|try {
+ 1|  for (const each
+ 1|    of (1 as any)) void each;
+ 1|} catch (e) {
+ 1|  caught(e, "of (1");
+ -|}
+ 1|try {
+ 1|  const
+ 1|    [first] = 1 as any;
+ 1|} catch (e) {
+ 1|  caught(e, "[first]");
+ -|}
 `,
   },
   "common.cjs": {

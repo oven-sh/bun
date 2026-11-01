@@ -7404,8 +7404,8 @@ CPP_DECL [[ZIG_EXPORT(nothrow)]] unsigned int JSC__JSGlobalObject__getCallerLine
     if (!sourceURL.isEmpty() && lineColumn.line > 0) {
         Bun::OwnedZigStackFrames remappedFrames(1);
         ZigStackFrame& remappedFrame = remappedFrames[0];
-        remappedFrame.position.line_zero_based = lineColumn.line - 1;
-        remappedFrame.position.column_zero_based = lineColumn.column;
+        remappedFrame.position.line_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.line).zeroBasedInt();
+        remappedFrame.position.column_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.column).zeroBasedInt();
         remappedFrame.source_url = Bun::toStringRef(sourceURL);
 
         remappedFrames.remap(Bun::vm(globalObject));

@@ -1,4 +1,4 @@
-use bun_ast::{Loc, Source};
+use bun_ast::{FrameToken, Loc, Source};
 use bun_core::{MutableString, strings};
 use bun_paths::fs::FileSystem;
 use bun_ptr::RawSlice;
@@ -344,6 +344,8 @@ impl LineOffsetTables<'_> {
 pub struct NewBuilder<'a, T: SourceMapFormatCtx> {
     pub source_map: SourceMapFormat<T>,
     pub line_offset_tables: LineOffsetTables<'a>,
+    /// The text the positions of a mapping lie in. Read only to find a [`FrameToken`].
+    pub source_contents: &'a [u8],
 
     pub prev_state: SourceMapState,
     pub last_generated_update: u32,
@@ -382,6 +384,7 @@ impl<T: SourceMapFormatCtx + Default> Default for NewBuilder<'_, T> {
         Self {
             source_map: SourceMapFormat { ctx: T::default() },
             line_offset_tables: LineOffsetTables::None,
+            source_contents: &[],
             prev_state: SourceMapState::default(),
             last_generated_update: 0,
             generated_column: 0,
@@ -480,7 +483,7 @@ impl NewBuilder<'_, VLQSourceMap> {
     // into the per-token callers (see the impl-level PERF note); the per-rune
     // WTF-8 decode loop is out of line in `_slow` and reached only when a
     // newline or non-ASCII byte actually exists in the window.
-    #[inline]
+    #[inline(always)]
     pub(crate) fn update_generated_line_and_column(&mut self, output: &[u8]) {
         let slice = &output[self.last_generated_update as usize..];
         // The window between consecutive mappings is usually a handful of bytes
@@ -616,17 +619,132 @@ impl NewBuilder<'_, VLQSourceMap> {
 
     #[inline(never)]
     pub fn add_source_mapping(&mut self, loc: Loc, output: &[u8]) {
-        if
-        // don't insert mappings for same location twice
-        self.prev_loc.eql(loc) ||
-            // exclude generated code from source
-            loc.start == Loc::EMPTY.start
-        {
+        let Some((original_line, original_column)) = self.resolve(loc) else {
+            return;
+        };
+        self.update_generated_line_and_column(output);
+        self.append_at_column(self.generated_column, original_line, original_column);
+    }
+
+    /// [`add_source_mapping`](Self::add_source_mapping) for the name or index at `loc`, which the printer writes
+    /// right behind `token`: `output` ends with the `printed_len` bytes of that token.
+    ///
+    /// JSC reports a read of the member at the token. Where `loc` is on the source line of the mapping before it, a
+    /// lookup of the token finds that mapping and names the line. Where it is not, the token is mapped too.
+    #[inline(never)]
+    pub fn add_source_mapping_behind(
+        &mut self,
+        loc: Loc,
+        output: &[u8],
+        token: FrameToken,
+        printed_len: u8,
+        first: Loc,
+    ) {
+        let Some((original_line, original_column)) = self.resolve(loc) else {
+            return;
+        };
+        self.update_generated_line_and_column(output);
+        if original_line != self.prev_state.original_line {
+            self.map_token_on_new_line(token, loc, first, i32::from(printed_len));
+        }
+        self.append_at_column(self.generated_column, original_line, original_column);
+    }
+
+    /// Maps `token`, which the printer writes next, where `anchor` is on another source line than the mapping
+    /// before it. `anchor` is the position of what is mapped behind the token, or of the token itself
+    /// ([`FrameToken::Known`]). On one line nothing is added, and that is all the caller pays for.
+    #[inline(always)]
+    pub fn add_source_mapping_on_new_line(
+        &mut self,
+        anchor: Loc,
+        output: &[u8],
+        token: FrameToken,
+        first: Loc,
+    ) {
+        if self.is_on_line_of_previous_mapping(anchor) {
             return;
         }
+        self.add_source_mapping_off_previous_line(anchor, output, token, first);
+    }
 
-        self.prev_loc = loc;
+    /// Whether `loc` is on the source line of the mapping before it. False before the first mapping.
+    #[inline(always)]
+    pub fn is_on_line_of_previous_mapping(&self, loc: Loc) -> bool {
+        let line_starts = self.line_offset_table_byte_offset_list.slice();
+        let offset = loc.start as u32;
+        match line_starts.get(self.prev_state.original_line as usize..) {
+            Some([start, later @ ..]) => {
+                *start <= offset && later.first().is_none_or(|next| offset < *next)
+            }
+            _ => false,
+        }
+    }
 
+    /// [`add_source_mapping_on_new_line`](Self::add_source_mapping_on_new_line) behind its test of the line.
+    #[cold]
+    #[inline(never)]
+    pub fn add_source_mapping_off_previous_line(
+        &mut self,
+        anchor: Loc,
+        output: &[u8],
+        token: FrameToken,
+        first: Loc,
+    ) {
+        if anchor.start == Loc::EMPTY.start || !self.has_line_offset_table() {
+            return;
+        }
+        let byte_offsets = self.line_offset_table_byte_offset_list.slice();
+        let hint = self.prev_state.original_line as u32;
+        if LineOffsetTable::find_line_with_hint(byte_offsets, anchor, hint) as u32 == hint {
+            return;
+        }
+        self.update_generated_line_and_column(output);
+        self.map_token_on_new_line(token, anchor, first, 0);
+    }
+
+    /// [`add_source_mapping_on_new_line`](Self::add_source_mapping_on_new_line) for the token that stands `back`
+    /// bytes in front of `text`, where `text` is a piece of the source: the backquote of a template in front of
+    /// its first characters.
+    pub fn add_source_mapping_in_front_of_text_on_new_line(
+        &mut self,
+        text: &[u8],
+        back: usize,
+        output: &[u8],
+    ) {
+        let offset = (text.as_ptr() as usize).wrapping_sub(self.source_contents.as_ptr() as usize);
+        if offset < back || offset > self.source_contents.len() {
+            return;
+        }
+        let Ok(start) = i32::try_from(offset - back) else {
+            return;
+        };
+        let token = Loc { start };
+        self.add_source_mapping_on_new_line(token, output, FrameToken::Known, token);
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn map_token_on_new_line(
+        &mut self,
+        token: FrameToken,
+        anchor: Loc,
+        first: Loc,
+        printed_len: i32,
+    ) {
+        let Some(found) = token.find(self.source_contents, anchor, first) else {
+            return;
+        };
+        let (line, column) = self.position_of(found);
+        // A token on the line of the mapping before it is found by a lookup as it is.
+        if line == self.prev_state.original_line && self.has_prev_state {
+            return;
+        }
+        self.append_at_column(self.generated_column - printed_len, line, column);
+    }
+
+    /// False where nothing is mapped: no table was given, or the source has no line.
+    #[inline(always)]
+    fn has_line_offset_table(&mut self) -> bool {
         if let LineOffsetTables::Deferred {
             contents,
             approximate_line_count,
@@ -651,7 +769,7 @@ impl NewBuilder<'_, VLQSourceMap> {
         // import foo from "./foo.png";
         //
         if list_len == 0 {
-            return;
+            return false;
         }
 
         if self.line_offset_table_byte_offset_list.len() != list_len {
@@ -659,6 +777,32 @@ impl NewBuilder<'_, VLQSourceMap> {
             self.line_offset_table_byte_offset_list = RawSlice::new(start);
             self.line_offset_table_first_non_ascii = RawSlice::new(first_na);
         }
+        true
+    }
+
+    /// The line and column of `loc` in the source, or None where `loc` gets no mapping.
+    #[inline(always)]
+    fn resolve(&mut self, loc: Loc) -> Option<(i32, i32)> {
+        if
+        // don't insert mappings for same location twice
+        self.prev_loc.eql(loc) ||
+            // exclude generated code from source
+            loc.start == Loc::EMPTY.start
+        {
+            return None;
+        }
+
+        self.prev_loc = loc;
+
+        if !self.has_line_offset_table() {
+            return None;
+        }
+        Some(self.position_of(loc))
+    }
+
+    /// The line and column of `loc` in the source. The caller has seen that there is a table.
+    #[inline(always)]
+    fn position_of(&self, loc: Loc) -> (i32, i32) {
         let byte_offsets = self.line_offset_table_byte_offset_list.slice();
 
         // The printer emits mappings in (mostly) source order, so the previous
@@ -690,14 +834,22 @@ impl NewBuilder<'_, VLQSourceMap> {
                 }
             }
         }
+        (original_line, original_column)
+    }
 
-        self.update_generated_line_and_column(output);
-
+    /// Appends a mapping at `generated_column` of the line the output is on.
+    #[inline(always)]
+    fn append_at_column(
+        &mut self,
+        generated_column: i32,
+        original_line: i32,
+        original_column: i32,
+    ) {
         // If this line doesn't start with a mapping and we're about to add a mapping
         // that's not at the start, insert a mapping first so the line starts with one.
         if self.cover_lines_without_mappings
             && !self.line_starts_with_mapping
-            && self.generated_column > 0
+            && generated_column > 0
             && self.has_prev_state
         {
             self.append_mapping_without_remapping(SourceMapState {
@@ -711,7 +863,7 @@ impl NewBuilder<'_, VLQSourceMap> {
 
         self.append_mapping(SourceMapState {
             generated_line: self.prev_state.generated_line,
-            generated_column: self.generated_column.max(0),
+            generated_column: generated_column.max(0),
             source_index: self.prev_state.source_index,
             original_line: original_line.max(0),
             original_column: original_column.max(0),

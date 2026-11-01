@@ -1,3 +1,5 @@
+use bun_ast::FrameToken;
+
 use super::PatternNode;
 use super::view::NodeShape;
 use crate::ir::generated::{BlockRole, IteratorCompletion, IteratorKind};
@@ -12,11 +14,15 @@ pub(super) fn destructure_array(
     value: ValueId,
     mapped: u32,
 ) {
-    // The `[` of an assignment is the start of an expression, which the source map knows.
+    // The `[` of an assignment is the start of an expression, which the source map knows. It knows the `[` of a binding where that stands on
+    // another line than what is mapped in front of it.
     // `const [[x]] = v`: both lists are reported at `const`, and an error quotes the one that was given no list.
     if let PatternNode::Binding(_) = node {
         let written = lowering.file.node_position(node);
-        match lowering.file.is_shown_without_source_map() {
+        let file = &*lowering.file;
+        let on_new_line =
+            || file.find_token_on_new_line(FrameToken::Known, written, written, mapped);
+        match file.is_shown_without_source_map() || on_new_line().is_some() {
             true => lowering.set_position(written),
             false => lowering.set_position_of_text_elsewhere(mapped, written),
         }

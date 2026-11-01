@@ -148,7 +148,7 @@ console.log(new WithFields().read(), new BelowSuperMember().read(), new Bottom()
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="late"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] captures=[{type=[[L_10]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=undefined|null|[[L_10]] site=[[w_11]] flags=[OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_12]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] captures=[{type=[[L_10]] flags=[IsFromCompiler] variableName="this"}] thisType={type=anything} results=[{type=undefined|null|[[L_10]] site=[[w_11]] flags=[OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_12]]] {
 // CHECK-NEXT: b0(v0: [[L_10]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

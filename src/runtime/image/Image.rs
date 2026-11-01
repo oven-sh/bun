@@ -1,5 +1,5 @@
 //! `Bun.Image` — Sharp-shaped image pipeline backed by the statically linked
-//! bun_jpeg / libspng / libwebp codecs and the highway resize kernel.
+//! `bun_jpeg`, `bun_png` and libwebp codecs and the highway resize kernel.
 //!
 //! Shape: the constructor only captures the *input* (path or bytes). Chainable
 //! mutators (`resize`, `rotate`, `flip`, `flop`, `jpeg`/`png`/`webp`) each

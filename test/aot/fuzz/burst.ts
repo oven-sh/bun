@@ -1,43 +1,44 @@
-// One command for one machine and a stretch of time. One run of run.ts looks at one way to build; this starts several side by side, each with other options, shares the cores among them,
-// and lists what they found in one file.
+// Runs many fuzzing runs side by side on one machine. One run of run.ts tests one way to build; this script starts
+// several, each with different options, shares the cores among them, and lists what they found in one file.
 //
 //   bun test/aot/fuzz/burst.ts --minutes 60 --out /tmp/burst
 //
-//   --minutes <n>   how long (default 60); a file STOP in --out ends it sooner
-//   --out <folder>  <out>/<lane>/ is the --out of each run; <out>/NEW.tsv has a line for each find, the lane in front; <out>/as-tests/ has each find as a file of ../parallel
-//   --cores <n>     how many cores to fill (default: all). A lane gets four or more; on a small machine the lanes further down the list are left out
+//   --minutes <n>   how long to run (default 60). A file named STOP in --out ends it sooner
+//   --out <folder>  each run writes to <out>/<lane>/. <out>/NEW.tsv has one line per finding, prefixed with the lane; <out>/as-tests/ has each finding in the format of ../parallel
+//   --cores <n>     how many cores to use (default: all). A lane gets at least four; on a small machine the lanes at the end of the list are dropped
 //   --bun <path>    the Bun under test (default: the one that runs this script)
-//   --lanes a,b     only these
-//   what else stands on the command line goes to every run of run.ts: --sources a,b say
+//   --lanes a,b     only these lanes
+//   Any other argument is passed to every run of run.ts, for example --sources a,b
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
 
 const runner = join(import.meta.dir, "run.ts");
 const scenes = join(import.meta.dir, "fuzzilli", "lane.ts");
-const damagedText = join(import.meta.dir, "damaged-text.ts");
+const malformedSource = join(import.meta.dir, "malformed-source.ts");
 
 /**
- * What each lane looks at stands in README.md, "Run it". `share`: its part of the cores. The ones that have found most come first.
- * `script`: what runs it in place of run.ts. It takes --minutes, --jobs, --out and --bun as run.ts does and leaves findings.tsv, as-tests/ and status.txt in its --out.
+ * README.md, "Options that find different bugs", explains the options. `share` is the lane's share of the cores. The
+ * lanes that have found the most come first. `script` runs instead of run.ts. It must accept --minutes, --jobs, --out
+ * and --bun like run.ts and write findings.tsv, as-tests/ and status.txt to its --out.
  */
 const lanes: { name: string; options: string[]; share: number; script?: string }[] = [
   { name: "default", options: [], share: 3 },
   { name: "scenes-few-to-a-build", script: scenes, options: ["--kind", "few"], share: 3 },
-  { name: "written-again", options: ["--written-again"], share: 2 },
+  { name: "rewritten", options: ["--rewritten"], share: 2 },
   { name: "scenes-many-to-a-build", script: scenes, options: ["--kind", "many"], share: 2 },
-  { name: "heats", options: ["--modes", "default,every-function-hot,every-function-cold"], share: 2 },
+  { name: "heats", options: ["--modes", "default,hot,cold"], share: 2 },
   { name: "validated", options: ["--validate"], share: 2 },
   {
-    name: "collector-stress",
-    options: ["--collector-stress", "1,2,3,5,7,11", "--compiled-run-seconds", "60"],
+    name: "gc-stress",
+    options: ["--gc-stress", "1,2,3,5,7,11", "--compiled-run-seconds", "60"],
     share: 2,
   },
-  { name: "very-large", options: ["--modes", "counts-as-very-large,cold-and-very-large"], share: 1 },
-  { name: "checked", options: ["--modes", "moved-loads-checked,claims-checked"], share: 1 },
+  { name: "very-large", options: ["--modes", "large,cold-large"], share: 1 },
+  { name: "checked", options: ["--modes", "check-moved-loads,check-claims"], share: 1 },
   { name: "failed-predictions", options: ["--fail-predictions", "1,2,7"], share: 1 },
   { name: "lowered-limits", options: ["--lowered-limits"], share: 1 },
-  { name: "damaged-text", script: damagedText, options: [], share: 1 },
+  { name: "malformed-source", script: malformedSource, options: [], share: 1 },
   { name: "scenes-in-packages", script: scenes, options: ["--kind", "packages"], share: 1 },
   { name: "scenes-beside-an-external", script: scenes, options: ["--kind", "external"], share: 1 },
 ];

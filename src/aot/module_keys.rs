@@ -4,6 +4,15 @@ use bun_ast::Loader;
 use bun_paths::fs::PathName;
 use std::hash::{DefaultHasher, Hasher};
 
+/// Differs where a file was written since: of when it was last written, and how long it is. The build makes one of each file that the run may read again
+/// from disk, and the run time another before it loads the compiled file for the first time. Never zero, which stands for no file.
+pub fn stamp_of_file(written_seconds: i64, written_nanoseconds: i64, size: u64) -> u64 {
+    let written = (written_seconds as u64)
+        .wrapping_mul(1_000_000_000)
+        .wrapping_add(written_nanoseconds as u64);
+    (written ^ size.rotate_left(44)) | 1
+}
+
 pub const DEFAULT_LOADERS: &[(&[u8], Loader)] = &[
     (b".cjs", Loader::Js),
     (b".css", Loader::Css),
@@ -31,6 +40,11 @@ pub const DEFAULT_LOADERS: &[(&[u8], Loader)] = &[
 /// What an import without attributes gets.
 pub fn loader_by_name(path: &[u8]) -> Loader {
     loader_by_path_or(DEFAULT_LOADERS, path, Loader::File)
+}
+
+/// `bun run` reads `./a.ts?raw` as text unless a `type` attribute says otherwise. No other query names a loader.
+pub fn loader_by_query(query: &[u8]) -> Option<Loader> {
+    (query == b"?raw").then_some(Loader::Text)
 }
 
 /// `unnamed`: the loader of a file whose extension names none.
@@ -69,6 +83,15 @@ fn is_jsonc_file_name(file_name: &[u8]) -> bool {
 
 pub fn loader_name(loader: Loader) -> &'static str {
     loader.into()
+}
+
+/// What `bun run` writes for the `type` of an import statement whose attribute names the loader.
+pub fn type_attribute_of(loader: Loader) -> &'static str {
+    match loader {
+        Loader::Bunsh => "sh",
+        Loader::SqliteEmbedded => "sqlite",
+        _ => loader_name(loader),
+    }
 }
 
 /// A file stands under its path as what an import without attributes gets. As anything else it stands here.
@@ -162,6 +185,21 @@ mod tests {
     fn places(path: &[u8], type_attribute: &[u8]) -> Option<(Vec<u8>, bool)> {
         let places = places_of_form(path, type_attribute)?;
         Some((places.path_of_form, places.is_form_without_attributes))
+    }
+
+    #[test]
+    fn the_type_written_for_a_loader_names_the_loader() {
+        for loader in [
+            Loader::Toml,
+            Loader::Json,
+            Loader::Text,
+            Loader::Bunsh,
+            Loader::Sqlite,
+        ] {
+            let written = type_attribute_of(loader).as_bytes();
+            assert_eq!(Loader::from_string(written), Some(loader));
+        }
+        assert_eq!(type_attribute_of(Loader::SqliteEmbedded), "sqlite");
     }
 
     #[test]

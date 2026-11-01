@@ -34,7 +34,7 @@ const HAS_SYSTEM_BACKEND: bool = cfg!(any(target_os = "macos", windows));
 /// Process-global selector exposed as `Bun.Image.backend`.
 ///
 /// `.system` (default on darwin/windows) is the perf-optimal hybrid:
-///   • jpeg/png/webp decode+encode → static codecs (bun_jpeg/spng/libwebp),
+///   • jpeg/png/webp decode+encode → static codecs (bun_jpeg/bun_png/libwebp),
 ///     so that output bytes and the `quality` scale match Linux. For PNG,
 ///     profiling on M-series found ImageIO no faster: inflate dominates,
 ///     isn't AMX-amenable, and ImageIO bottoms out in stock libz vs our
@@ -435,7 +435,7 @@ pub(crate) struct EncodeOptions {
     pub(crate) quality: u8,
     /// WebP only: emit lossless VP8L instead of lossy VP8.
     pub(crate) lossless: bool,
-    /// PNG only: zlib level 0–9. -1 = libspng default.
+    /// PNG only: zlib level 0–9. -1 = zlib's default.
     pub(crate) compression_level: i8,
     /// PNG only: quantize to ≤ `colors` and emit an indexed PNG.
     pub(crate) palette: bool,
@@ -462,8 +462,8 @@ impl Default for EncodeOptions {
 }
 
 /// Encoded output paired with the free function for its allocator. The C
-/// codecs each malloc internally (libwebp's allocator, libc for
-/// libspng); rather than dupe into the global allocator so JS can own it,
+/// codec mallocs internally (libwebp's allocator); rather than dupe into
+/// the global allocator so JS can own it,
 /// we hand the original buffer to JS via `ArrayBuffer.toJSWithContext` with
 /// the matching free — one allocation, zero copies, for the final output.
 ///
@@ -488,7 +488,7 @@ impl Drop for Encoded {
     }
 }
 
-/// Adapt a 1-arg C free (`WebPFree`, libc `free`) to the
+/// Adapt a 1-arg C free (`WebPFree`) to the
 /// 2-arg JSC deallocator signature.
 // Rust cannot capture a runtime fn pointer in a non-capturing `extern "C" fn`,
 // so this is a macro that mints a static trampoline per call site.

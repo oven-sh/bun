@@ -207,11 +207,11 @@ attempt("a function", () => [sum(function (a, b) {}), last(function (a) {})]);
 
 // GENERATED: doubled Foo length [Symbol.iterator]
 // CHECK-LABEL: function {{*}}name="doubled"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[IsExpected]}] results=[{type=undefined|null|Array<number> flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: undefined|null|Array<number>):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]]|Array<number>|Uint8Array flags=[IsExpected]}] results=[{type=undefined|null|Array<number> flags=[IsExpected]}] {
+// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]|Array<number>|Uint8Array):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Data data=[[d_1]]
+// CHECK-NEXT: v1 = Data data=[[d_2]]
 // CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|Array<never> flags=[IsExpected]}
 // CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|Array flags=[IsExpected]}
 // CHECK-NEXT: v4 = Integer
@@ -227,7 +227,7 @@ attempt("a function", () => [sum(function (a, b) {}), last(function (a) {})]);
 // CHECK-NEXT: Jump -> next b4()
 // CHECK-NEXT: b4():
 // CHECK-NEXT: v12 = PropGet v3 key="push"
-// CHECK-NEXT: v13 = Convert v12 declared={type=undefined|null|[[f_2]] flags=[IsExpected]}
+// CHECK-NEXT: v13 = Convert v12 declared={type=undefined|null|[[f_3]] flags=[IsExpected]}
 // CHECK-NEXT: v14 = ElemGet v0, v11
 // CHECK-NEXT: v15 = Convert v14 declared={type=number flags=[IsExpected]}
 // CHECK-NEXT: v16 = Integer integer=2
@@ -250,25 +250,9 @@ attempt("a function", () => [sum(function (a, b) {}), last(function (a) {})]);
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_3]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_3]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_4]]
+// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_4]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
 // CHECK-NEXT: Return v5
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="length"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] captures=[{type=env [[L_4]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=number flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: env [[L_4]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetEnvironmentField v0 layout=[[L_4]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="reads"
-// CHECK-NEXT: v3 = Increment v2
-// CHECK-NEXT: v4 = Convert v3 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v5 = GetEnvironmentField v0 layout=[[L_4]]
-// CHECK-NEXT: v6 = CheckInitialized v5 name="reads"
-// CHECK-NEXT: PutEnvironmentField v0, v4 layout=[[L_4]]
-// CHECK-NEXT: v8 = Integer integer=2
-// CHECK-NEXT: v9 = Convert v8 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Return v9
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="length"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] captures=[{type=env [[L_5]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=number flags=[IsExpected]}] {
@@ -276,13 +260,29 @@ attempt("a function", () => [sum(function (a, b) {}), last(function (a) {})]);
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = GetEnvironmentField v0 layout=[[L_5]]
+// CHECK-NEXT: v2 = CheckInitialized v1 name="reads"
+// CHECK-NEXT: v3 = Increment v2
+// CHECK-NEXT: v4 = Convert v3 declared={type=number flags=[IsExpected]}
+// CHECK-NEXT: v5 = GetEnvironmentField v0 layout=[[L_5]]
+// CHECK-NEXT: v6 = CheckInitialized v5 name="reads"
+// CHECK-NEXT: PutEnvironmentField v0, v4 layout=[[L_5]]
+// CHECK-NEXT: v8 = Integer integer=2
+// CHECK-NEXT: v9 = Convert v8 declared={type=number flags=[IsExpected]}
+// CHECK-NEXT: Return v9
+// CHECK-NEXT: }
+// CHECK-LABEL: function {{*}}name="length"
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] captures=[{type=env [[L_6]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=number flags=[IsExpected]}] {
+// CHECK-NEXT: b0(v0: env [[L_6]]):
+// CHECK-NEXT: Jump -> next b1()
+// CHECK-NEXT: b1():
+// CHECK-NEXT: v1 = GetEnvironmentField v0 layout=[[L_6]]
 // CHECK-NEXT: v2 = CheckInitialized v1 name="length"
 // CHECK-NEXT: v3 = ToNumeric v2
 // CHECK-NEXT: v4 = Decrement v3
 // CHECK-NEXT: v5 = Convert v4 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v6 = GetEnvironmentField v0 layout=[[L_5]]
+// CHECK-NEXT: v6 = GetEnvironmentField v0 layout=[[L_6]]
 // CHECK-NEXT: v7 = CheckInitialized v6 name="length"
-// CHECK-NEXT: PutEnvironmentField v0, v5 layout=[[L_5]]
+// CHECK-NEXT: PutEnvironmentField v0, v5 layout=[[L_6]]
 // CHECK-NEXT: v9 = Convert v3 declared={type=number flags=[IsExpected]}
 // CHECK-NEXT: Return v9
 // CHECK-NEXT: }

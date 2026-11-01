@@ -71,6 +71,32 @@ const waysToTheConstructor = {
   "shared.ts": `export const name: string = "a file that it imports";`,
 };
 
+// Each namespace has been handed to code nobody sees, and is read through a receiver that may be any object. Every form has a file of its own, so that none is compiled on account of another.
+const offNamespacesThatHaveEscaped = {
+  "main.js": `
+    import * as a from "./a.js" with { type: "file" };
+    import * as b from "./b.js" with { type: "file" };
+    import * as c from "./c.js" with { type: "file" };
+    import * as d from "./d.js" with { type: "file" };
+    ${report}
+    const hidden = text => JSON.parse(JSON.stringify(text));
+    const first = process.argv.length > 100 ? 1 : 0;
+    const orAnyObject = namespace => [namespace, JSON.parse("{}")][first];
+    globalThis[hidden("kept")] = [a, b, c, d];
+    JSON.parse("{}").keep?.(a, b, c, d);
+    report([
+      new Worker(orAnyObject(a).default),
+      new Worker(globalThis[hidden("kept")][1].default),
+      new Worker({ ...orAnyObject(c) }.default),
+      new Worker(orAnyObject(d)[hidden("default")]),
+    ]);
+  `,
+  "a.js": `postMessage("a: by name");`,
+  "b.js": `postMessage("b: out of a global under a hidden name");`,
+  "c.js": `postMessage("c: out of a copy");`,
+  "d.js": `postMessage("d: under a hidden key");`,
+};
+
 // How a library that supports several runtimes does it: no single file shows that the imported path reaches the constructor.
 const throughALibrary = {
   "main.js": `
@@ -251,6 +277,22 @@ function serverWithPagesAndItsOwnWorker(count: number) {
   };
 }
 
+// The path of the server's own Worker passes through the helper that the paths of the pages pass through.
+function serverWithPagesAndItsOwnWorkerBehindTheHelper(count: number) {
+  return {
+    ...serverWithPages(count, ""),
+    "main.ts": `
+      import table from "./table.ts";
+      import job from "./job.js" with { type: "file" };
+      const settings: any = JSON.parse(process.env.SETTINGS ?? "{}");
+      function later<T>(value: T): Promise<T> { return new Promise(resolve => setTimeout(() => resolve(value), 0)); }
+      console.log((await Bun.file(await later(table[settings.page ?? "page-1"]!)).text()).trim());
+      const worker = new Worker(await later(job));
+      worker.onmessage = event => { console.log(event.data); worker.terminate(); };
+    `,
+  };
+}
+
 // What a build did: the files of untyped code that it compiled, in all its programs, how often it ran the engine, and which embedded files it says it left out, and where.
 async function countCompiled(folder: string, entryPoint: string) {
   const executable = join(folder, isWindows ? "server.exe" : "server");
@@ -383,6 +425,20 @@ describe.concurrent("a Worker started by the path of a file that is embedded wit
   );
 
   test(
+    "is compiled when the path is read off a namespace that has escaped, through a receiver that may be any object",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-worker-from-embedded-file", offNamespacesThatHaveEscaped);
+        const { stdout, exitCode } = await compileAndRun(String(dir), ["--aot"], ["./main.js"], compiledOnly);
+        expect({ lines: stdout.trim().split("\n").sort(), exitCode }).toEqual({
+          lines: ["a: by name", "b: out of a global under a hidden name", "c: out of a copy", "d: under a hidden key"],
+          exitCode: 0,
+        });
+      }),
+    timeout,
+  );
+
+  test(
     "is compiled when the path reaches the constructor through several files",
     () =>
       slot(async () => {
@@ -436,16 +492,16 @@ describe.concurrent("a Worker started by the path of a file that is embedded wit
   );
 
   test.each([
-    [100, "", { untypedFiles: 0, engineRuns: 1, leftOut: '"page-1.js", "page-10.js", "page-100.js" and 97 more' }],
-    // The one file is what `preload` names.
+    // The pages are one program, however many they are. The other two are the server and what it hands to the helper whose answer starts the Worker.
+    [1000, "", { untypedFiles: 1001, engineRuns: 3, leftOut: undefined }],
+    [100, "", { untypedFiles: 101, engineRuns: 3, leftOut: undefined }],
+    [5, "", { untypedFiles: 6, engineRuns: 3, leftOut: undefined }],
+    [4, "", { untypedFiles: 5, engineRuns: 3, leftOut: undefined }],
+    // `preload` makes one program of the server and its Workers. The one file is what it names.
     [100, preload, { untypedFiles: 1, engineRuns: 1, leftOut: '"page-1.js", "page-10.js", "page-100.js" and 97 more' }],
-    [5, "", { untypedFiles: 0, engineRuns: 1, leftOut: '"page-1.js", "page-2.js", "page-3.js" and 2 more' }],
-    // Few enough to try: each is a program of its own, and both numbers see it.
-    [4, "", { untypedFiles: 4, engineRuns: 5, leftOut: undefined }],
-    // Not worth a second build of the whole program.
     [4, preload, { untypedFiles: 1, engineRuns: 1, leftOut: '"page-1.js", "page-2.js", "page-3.js" and 1 more' }],
   ])(
-    "compiles none of many embedded pages that the program reads: %d pages, new Worker(path%s)",
+    "compiles the embedded pages whose paths may reach a Worker as one program: %d pages, new Worker(path%s)",
     (pages, workerOptions, counts) =>
       slot(async () => {
         using dir = tempDir("aot-worker-from-embedded-file", serverWithPages(pages, workerOptions));
@@ -460,13 +516,30 @@ describe.concurrent("a Worker started by the path of a file that is embedded wit
   );
 
   test(
-    "compiles the one file that starts a Worker beside many embedded pages, and warns about nothing",
+    "compiles the file that starts a Worker as a program of its own beside many embedded pages, and warns about nothing",
     () =>
       slot(async () => {
         using dir = tempDir("aot-worker-from-embedded-file", serverWithPagesAndItsOwnWorker(100));
         expect(await countCompiled(String(dir), "./main.ts")).toEqual({
-          untypedFiles: 1,
-          engineRuns: 2,
+          untypedFiles: 101,
+          engineRuns: 3,
+          leftOut: undefined,
+          leftOutAt: undefined,
+          stdout: 'document.title = "page-1";\nfrom the job\n',
+          exitCode: 0,
+        });
+      }),
+    timeout,
+  );
+
+  test(
+    "compiles the file that the program hands to a helper whose answer starts a Worker, beside many embedded pages that pass through the helper too",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-worker-from-embedded-file", serverWithPagesAndItsOwnWorkerBehindTheHelper(100));
+        expect(await countCompiled(String(dir), "./main.ts")).toEqual({
+          untypedFiles: 101,
+          engineRuns: 3,
           leftOut: undefined,
           leftOutAt: undefined,
           stdout: 'document.title = "page-1";\nfrom the job\n',

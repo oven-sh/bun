@@ -1,6 +1,6 @@
-// Writes a program of ordinary code, laid out over several lines the way a formatter does it: classes, callbacks of built-ins, async functions,
-// generators, patterns, optional chains, templates, handlers that throw again. Every value passes through `step()`, which throws at the call whose
-// number the program asks for. The program runs each of its scenarios once per call and prints the function, line and column of every frame.
+// Ordinary code formatted over several lines: classes, callbacks of built-ins, async functions, generators,
+// destructuring, optional chains, templates, handlers that rethrow. Every value passes through `step()`, which throws
+// at a chosen call; the stack trace must match plain Bun's.
 import type { Random } from "./random";
 
 type Doc =
@@ -61,14 +61,14 @@ const block = (statements: Doc[]): Doc =>
   statements.length ? ["{", indent(statements.map(statement => [hardline, statement])), hardline, "}"] : "{}";
 
 export interface Callable {
-  // How the file that calls it writes it: a name, or an expression such as `library.work1`.
+  // How the calling file refers to it: a name, or an expression such as `library.work1`.
   name: string;
   arity: number;
-  // The name that the last parameter, a pattern, takes out of an object.
+  // The name that the last parameter, a destructuring pattern, takes from an object.
   recordKey: string | null;
   isAsync: boolean;
   yields: boolean;
-  // Its name holds an `await`.
+  // Its name contains an `await`.
   isAwaited?: boolean;
 }
 
@@ -81,12 +81,12 @@ export interface Member extends Callable {
 
 export interface Shape {
   name: string;
-  // How a typed file writes the type of its instances, where that is not its name. Nothing: it writes no type.
+  // How a typed file writes its instance type, if that is not its name. Nothing: it writes no type.
   typeName?: string | null;
   arity: number;
   members: Member[];
   base: Shape | null;
-  // To TypeScript the class is `any`, and an heir of it that writes no constructor takes no arguments.
+  // To TypeScript the class is `any`, and a subclass without a constructor takes no arguments.
   isAny?: boolean;
 }
 
@@ -102,7 +102,7 @@ interface Scope {
   depth: number;
 }
 
-// In a program of several files it is a file of its own, which only untyped files use.
+// In a multi-file program it is a separate file that only untyped files use.
 export const constructorFunction = `function Legacy(value) {
   this.value = step(value);
 }
@@ -123,25 +123,25 @@ Legacy.of = function (value) {
 };
 `;
 
-// One file of a program of several files (stack-positions-across-files.ts).
+// One file of a multi-file program (stack-positions-across-files.ts).
 export interface Part {
-  // `helpers` holds `step()` and what every file uses. `loaded` runs its calls while it is loaded, outside any handler.
+  // `helpers` holds `step()` and what every file uses. `loaded` runs its calls while loading, outside any handler.
   role: "helpers" | "library" | "loaded" | "main";
   // No two files of a program declare the same name.
   counters: { names: number; literals: number };
-  // The lines that bring in what it uses of other files.
+  // The lines that import what it uses from other files.
   heading: string;
   functions: Callable[];
   shapes: Shape[];
-  // It may wait at its top level.
+  // It may have top-level await.
   mayAwait: boolean;
-  // In `main`: statements that load the files which throw while they are loaded.
+  // In `main`: statements that load the files that throw while loading.
   loads: string;
-  // A class or a function that is the default export may have no name. The file itself cannot reach it then.
+  // A class or function that is the default export may be anonymous. The file itself then cannot refer to it.
   mayOmitNames: boolean;
 }
 
-// What the file `helpers` declares for a file that is typed or not.
+// What the file `helpers` declares for a typed or an untyped file.
 export const helperNames = (isTyped: boolean, isBroad: boolean) => [
   ..."state step Chain emitted framesOf caught seen sum pick tag maybe later counter holder stream total".split(" "),
   ...(isTyped ? ["same", "Level", "Units"] : []),
@@ -149,7 +149,7 @@ export const helperNames = (isTyped: boolean, isBroad: boolean) => [
 ];
 
 export interface Exported {
-  // `default`, or the name that another file asks for.
+  // `default`, or the name that another file imports.
   exportedAs: string;
   callable?: Callable;
   shape?: Shape;
@@ -167,10 +167,10 @@ export function generate(random: Random, isTyped = false, isWide = false, isComm
   return write(random, { isTyped, isWide, isCommonJs, isBroad }).text;
 }
 
-// `isWide` adds what an executable shows otherwise than `bun run` today: members of enums that call, parameters of async functions that call, and async
-// generators that another async function steps.
-// `isCommonJs` writes a CommonJS file of sloppy code.
-// `isBroad` adds proxies, accessors on prototypes, constructor functions, tagged templates of classes, generators that are spread, and callbacks of more built-ins.
+// `isWide` adds what an executable shows differently from `bun run` today: enum members that call, async function
+// parameters that call, and async generators stepped by another async function. `isCommonJs` writes a CommonJS file of
+// sloppy code. `isBroad` adds proxies, accessors on prototypes, constructor functions, tagged templates of classes,
+// generators that are spread, and callbacks of more built-ins.
 export function write(
   random: Random,
   { isTyped = false, isWide = false, isCommonJs = false, isBroad = false, part }: Options,
@@ -301,7 +301,7 @@ export function write(
     return list("{", parts, "}", line);
   }
 
-  // `list.map(..).filter(..)`, which ends in a list or in a number.
+  // `list.map(..).filter(..)`, which ends in an array or a number.
   function chain(scope: Scope, endsInList: boolean): Doc {
     const next = inner(scope);
     const links: Doc[] = [];
@@ -334,7 +334,7 @@ export function write(
         ])(),
       );
     }
-    // A list of nothing but members of an enum takes no other number.
+    // An array of only enum members accepts no other number.
     const head = takesList ? parenthesized([listOf(next), typed(" as number[]")]) : listOf(next);
     const whole = group(head, links.length > 1 ? indent(links.map(link => [softline, link])) : links);
     return isLoose ? parenthesized(whole) : whole;
@@ -1070,7 +1070,7 @@ export function write(
       [
         2,
         () => {
-          // A function that a block or a body declares, called twice or once.
+          // A function declared in a block or a body, called twice or once.
           const isOnce = random.chance(0.5);
           const name = fresh(isOnce ? "onceDeclared" : "declared");
           const parameter = fresh("given");
@@ -1218,7 +1218,8 @@ export function write(
           () => {
             const name = fresh("Kind");
             const use = fresh("value");
-            // Bun's transpiler wraps an enum in a function, which has a frame of its own under `bun run`. So no member calls anything.
+            // Bun's transpiler wraps an enum in a function, which has its own frame under `bun run`. So no member calls
+            // anything.
             const first = isWide
               ? number(inner(scope, { isAsync: false, yields: false, self: null }))
               : scope.numbers.length
@@ -1254,7 +1255,7 @@ export function write(
 
   function parametersOf(outer: Scope, body: Scope, target: Callable): Doc {
     const parts: Doc[] = [];
-    // Under `bun run` the stack of what the parameters of an async function throw lacks the function.
+    // Under `bun run` the stack of an exception from an async function's parameters lacks the function.
     const isQuiet = target.isAsync && !isWide;
     const initial = () => (isQuiet ? literal() : number(outer));
     for (let index = 0; index < target.arity; index++) {
@@ -1289,7 +1290,7 @@ export function write(
     if (random.chance(0.4)) members.push(["#hidden", typed(": number"), " = ", number(own()), ";"]);
     if (random.chance(0.4))
       members.push(["static count", typed(": number"), " = ", number(own({ isStaticSelf: true })), ";"]);
-    // A class may leave its constructor to the language.
+    // A class may have an implicit constructor.
     if (shape.arity !== (base ? base.arity : 0) || random.chance(0.6) || (isTyped && base?.isAny && base.arity > 0)) {
       const body = own();
       const parts: Doc[] = [];
@@ -1466,12 +1467,12 @@ export function write(
   };
   const parts: Doc[] = [];
   const exports: Exported[] = [];
-  // What the end of the file exports: `[its name in the file, the name that another file asks for]`.
+  // What the end of the file exports: `[local name, exported name]`.
   const listed: [string, string][] = [];
   let hasDefault = false;
   const listsAtEnd = part ? random.chance(0.3) : false;
-  // How a declaration at the top of one file of several reaches the others. `head` stands ahead of `function`, `class` or the arrow, `tail` behind the
-  // declaration, and `local` is how the file itself writes the name.
+  // How a top-level declaration in one file reaches the others. `head` goes before `function`, `class` or the arrow,
+  // `tail` after the declaration, and `local` is the name inside the file.
   function exportOf(name: string, kind: "function" | "arrow" | "class") {
     const plain = { head: kind === "arrow" ? `const ${name} = ` : "", tail: [] as Doc[], local: name, isNamed: true };
     const as = random.chance(0.2) ? fresh(kind === "class" ? "Renamed" : "renamed") : name;
@@ -1862,7 +1863,7 @@ namespace Units {
 }
 `;
   const mayAwait = !isCommonJs && (part?.mayAwait ?? true);
-  // Code at the top of the module runs once, so each block has one call that throws.
+  // Top-level code runs once, so each block has one call that throws.
   const blocks = !part
     ? random.between(1, 3)
     : part.role === "main" || part.role === "library"
@@ -1876,7 +1877,7 @@ namespace Units {
       `${calls} = 0;`,
       hardline,
       "try ",
-      // While a file waits, the files beside it run.
+      // While a file awaits, its sibling files run.
       block(statements(inner(top, { isAsync: mayAwait && part?.role !== "library" }), random.between(2, 4), false)),
       " catch (error) ",
       block([`console.log("${label}", framesOf(error));`]),

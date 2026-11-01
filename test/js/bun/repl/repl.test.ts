@@ -1,7 +1,17 @@
 // Tests for Bun REPL
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
-import { chmodSync, statSync } from "node:fs";
+import {
+  bunEnv,
+  bunExe,
+  collectOutput,
+  isWindows,
+  normalizeBunSnapshot,
+  spawnWithNonBlockingStdin,
+  tempDir,
+  untilBunWaitsForInput,
+} from "harness";
+import { chmodSync, closeSync, constants, openSync, statSync } from "node:fs";
+import { connect } from "node:net";
 import path from "path";
 
 const stripAnsi = Bun.stripANSI;
@@ -215,7 +225,12 @@ async function withTerminalRepl(
     resize: (cols: number) => void;
     allOutput: () => string;
   }) => Promise<void>,
-  options: { env?: Record<string, string | undefined>; cols?: number } = {},
+  options: {
+    env?: Record<string, string | undefined>;
+    cols?: number;
+    /** The terminal is in non-blocking mode, as an earlier program of the same shell can leave it. */
+    nonBlocking?: boolean;
+  } = {},
 ) {
   const received: string[] = [];
   const cols = options.cols ?? 120;
@@ -240,9 +255,22 @@ async function withTerminalRepl(
     },
   });
 
+  // O_NONBLOCK is on the open file description. Bun.spawn clears it on what becomes fd 0, 1 and 2 of the child, so the
+  // REPL gets a second, non-blocking description of the pty as fd 3, and `sh` moves it to fd 0, 1 and 2.
+  let nonBlocking: number | undefined;
+  if (options.nonBlocking) {
+    await using tty = Bun.spawn({ cmd: ["tty"], terminal });
+    let path: RegExpMatchArray | null;
+    while (!(path = received.join("").match(/(\/dev\/\S+)\r?\n/))) {
+      await new Promise<void>(resolve => (resolveWaiter = resolve));
+    }
+    nonBlocking = openSync(path[1], constants.O_RDWR | constants.O_NONBLOCK | constants.O_NOCTTY);
+  }
+
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "repl"],
+    cmd: nonBlocking === undefined ? [bunExe(), "repl"] : ["sh", "-c", 'exec "$0" repl <&3 >&3 2>&3', bunExe()],
     terminal,
+    ...(nonBlocking !== undefined && { stdio: ["inherit", "inherit", "inherit", nonBlocking] }),
     env: {
       ...bunEnv,
       TERM: "xterm-256color",
@@ -251,6 +279,7 @@ async function withTerminalRepl(
       USERPROFILE: String(home),
     },
   });
+  if (nonBlocking !== undefined) closeSync(nonBlocking);
 
   const send = (text: string) => terminal.write(text);
 
@@ -1828,6 +1857,116 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
       send('".length\n');
       await waitFor(/\n\s*2\b/);
     });
+  });
+});
+
+// O_NONBLOCK is on the open file description, which fd 0 shares with fd 1 and 2 and with every program on the same
+// terminal. A read of stdin then fails with EAGAIN while there is no input. That is not the end of the input.
+describe.skipIf(isWindows).concurrent("Bun REPL on a non-blocking stdin", () => {
+  /**
+   * Spawns `cmd` with its fd 3 on a socket, and talks to it over that socket. Stderr is a pipe.
+   *
+   * `sh -c 'exec "$0" <&3 >&3'` gives a command one open file description for stdin and stdout, as inetd or
+   * `socat EXEC:` do. Its `process.stdout` then makes its stdin O_NONBLOCK too.
+   */
+  function spawnWithSocket(cmd: string[], env: Record<string, string | undefined>) {
+    const proc = Bun.spawn({ cmd, env, stdio: ["ignore", "ignore", "pipe", "pipe"] });
+    const socket = connect({ fd: proc.stdio[3] });
+    const output = collectOutput();
+    socket.setEncoding("utf8");
+    socket.on("data", output.push);
+    socket.on("error", () => {});
+    socket.on("close", output.end);
+    return {
+      proc,
+      write: (text: string) => void socket.write(text),
+      /** Ends the input of the child. What the child still writes arrives. */
+      end: () => void socket.end(),
+      waitFor: output.waitFor,
+      async [Symbol.asyncDispose]() {
+        socket.destroy();
+        proc.kill();
+        await proc.exited;
+      },
+    };
+  }
+
+  // Sends each line once the REPL waits for it, then ends the input while the REPL waits for more.
+  async function evaluateLinesThenEnd(
+    repl: ReturnType<typeof spawnWithSocket | typeof spawnWithNonBlockingStdin>,
+    lines: [input: string, output: string][],
+  ) {
+    for (const [input, output] of lines) {
+      await repl.waitFor("> ");
+      await untilBunWaitsForInput(repl.proc);
+      repl.write(input + "\n");
+      await repl.waitFor(output);
+    }
+    await repl.waitFor("> ");
+    await untilBunWaitsForInput(repl.proc);
+    repl.end();
+    const [stderr, exitCode] = await Promise.all([repl.proc.stderr.text(), repl.proc.exited]);
+    expect({ stderr, exitCode, signalCode: repl.proc.signalCode }).toEqual({
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  }
+
+  test("keeps reading after process.stdout made the socket that is also stdin non-blocking", async () => {
+    using home = tempDir("repl-home", {});
+    await using repl = spawnWithSocket(["sh", "-c", 'exec "$0" repl <&3 >&3', bunExe()], {
+      ...bunEnv,
+      TERM: "dumb",
+      NO_COLOR: "1",
+      HOME: String(home),
+    });
+    await repl.waitFor("> ");
+    repl.write("process.stdout.write('one socket\\n')\n");
+    await repl.waitFor("one socket\ntrue\n");
+    await evaluateLinesThenEnd(repl, [
+      ["6 * 7", "42\n"],
+      ["[1, 2, 3].length", "3\n"],
+      ["2 ** 10", "1024\n"],
+    ]);
+  });
+
+  test("reads a FIFO that is in non-blocking mode, to its end", async () => {
+    using home = tempDir("repl-home", {});
+    await using repl = spawnWithNonBlockingStdin(["sh", "-c", 'exec "$0" repl <&3', bunExe()], {
+      env: { ...bunEnv, TERM: "dumb", NO_COLOR: "1", HOME: String(home) },
+    });
+    await evaluateLinesThenEnd(repl, [
+      ["6 * 7", "42\n"],
+      ["2 ** 10", "1024\n"],
+    ]);
+  });
+
+  test("reads from a terminal that is in non-blocking mode", async () => {
+    await withTerminalRepl(
+      async ({ send, waitFor, proc }) => {
+        for (const [input, output] of [
+          ["6 * 7", "42"],
+          ["2 ** 10", "1024"],
+        ]) {
+          await untilBunWaitsForInput(proc);
+          send(input + "\n");
+          await waitFor(output);
+        }
+      },
+      { nonBlocking: true },
+    );
+  });
+
+  test("ends when the terminal goes away while it waits for input", async () => {
+    await withTerminalRepl(
+      async ({ terminal, proc }) => {
+        await untilBunWaitsForInput(proc);
+        terminal.close();
+        expect({ exitCode: await proc.exited, signalCode: proc.signalCode }).toEqual({ exitCode: 0, signalCode: null });
+      },
+      { nonBlocking: true },
+    );
   });
 });
 

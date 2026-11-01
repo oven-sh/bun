@@ -617,6 +617,7 @@ function expectBundled(
     !bundleWarnings &&
     bundling &&
     !ESBUILD &&
+    jsx.runtime !== "preserve" &&
     format === "esm" &&
     entryPoints.length === 1 &&
     (Array.isArray(run) ? run : [run]).every(({ file, bunArgs, runtime }) => !file && !bunArgs && runtime !== "node")
@@ -1984,7 +1985,8 @@ for (const [key, blob] of build.outputs) {
 /** An executable has one entry point. */
 function splitByEntryPoint(id: string, opts: BundlerTestInput): [id: string, opts: BundlerTestInput][] | undefined {
   const { entryPoints = [], run, outdir = "/out" } = opts;
-  if (!COMPILES_AHEAD_OF_TIME || entryPoints.length < 2 || !Array.isArray(run)) return undefined;
+  if (!COMPILES_AHEAD_OF_TIME || opts.jsx?.runtime === "preserve" || entryPoints.length < 2 || !Array.isArray(run))
+    return undefined;
   const parts: [string, BundlerTestInput][] = [];
   for (const { file, ...rest } of run) {
     const entryPoint = entryPoints.find(

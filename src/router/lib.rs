@@ -148,7 +148,7 @@ impl Routes {
     ) -> bun_sys::Result<Option<Routes>> {
         let root = match bun_sys::Dir::open(dir) {
             Ok(root) => root,
-            Err(err) if is_absent(&err) => return Ok(None),
+            Err(err) if is_no_directory(&err) => return Ok(None),
             Err(err) => return Err(err.with_path(dir)),
         };
         let real_dir: Box<[u8]> = {
@@ -158,7 +158,7 @@ impl Routes {
         let listing = match DirListing::read(root, dir) {
             Ok(listing) => listing,
             // Removed after it was opened.
-            Err(err) if is_absent(&err) => return Ok(None),
+            Err(err) if is_no_directory(&err) => return Ok(None),
             Err(err) => return Err(err),
         };
 
@@ -355,6 +355,11 @@ impl WalkedDir {
     fn real_path(&self) -> &[u8] {
         self.real_path.as_deref().unwrap_or(&self.path)
     }
+}
+
+/// Whether `err` says that no directory is at the path: nothing is there, or a file is.
+fn is_no_directory(err: &bun_sys::Error) -> bool {
+    matches!(err.get_errno(), E::ENOENT | E::ENOTDIR)
 }
 
 /// Whether `err` says that there is nothing at the path.

@@ -225,8 +225,13 @@ impl DirInfo {
 
     pub fn get_file_descriptor(&self) -> Fd {
         if FeatureFlags::STORE_FILE_DESCRIPTORS {
-            // Scalar field read; see `get_entries_const` for the contract.
-            return self.get_entries_const().map_or(Fd::INVALID, |e| e.fd);
+            // Scalar field read: no lock and no generation check needed.
+            return fs::FileSystem::instance()
+                .fs
+                .entries
+                .at_index(self.entries)
+                .and_then(|e| e.as_entries())
+                .map_or(Fd::INVALID, |e| e.fd);
         }
         Fd::INVALID
     }
@@ -244,6 +249,21 @@ impl DirInfo {
             .fs
             .entries_at_locked(self.entries, generation)?
             .as_entries()
+    }
+
+    /// [`get_entries_ref_locked`](Self::get_entries_ref_locked) that hands
+    /// out a probe-only listing as it is, for `DirEntry::get_or_probe`.
+    pub(crate) fn get_entries_mut_locked_allow_partial(
+        &self,
+        generation: Generation,
+    ) -> Option<&'static mut fs::DirEntry> {
+        match fs::FileSystem::instance()
+            .fs
+            .entries_at_locked_allow_partial(self.entries, generation)?
+        {
+            fs::EntriesOption::Entries(entries) => Some(&mut **entries),
+            fs::EntriesOption::Err(_) => None,
+        }
     }
 
     /// Generation-checked lookup of one basename in this directory's cached
@@ -268,15 +288,12 @@ impl DirInfo {
             .get(query)
     }
 
-    /// As-cached listing access with no generation check and no locking.
-    /// Scalar fields (`fd`, `dir`) may be read through this unlocked; the
-    /// `.data` map must only be probed/iterated while `entries_mutex` is held
-    /// (a concurrent stale-generation re-read rewrites it in place).
+    /// As-cached listing access with no generation check. The caller must
+    /// hold `entries_mutex`. A probe-only listing is read in full first.
     pub fn get_entries_const(&self) -> Option<&fs::DirEntry> {
         fs::FileSystem::instance()
             .fs
-            .entries
-            .at_index(self.entries)?
+            .entries_at_locked(self.entries, 0)?
             .as_entries()
     }
 

@@ -1022,7 +1022,13 @@ pub mod fs {
                 }
             }
 
-            // debug("readdir({}, {}) = {}", handle, dir_, dir.data.count());
+            bun_core::scoped_log!(
+                crate::fs_full::Fs,
+                "readdir({}, {}) = {}",
+                handle,
+                bstr::BStr::new(dir_),
+                dir.data.count()
+            );
 
             Ok(dir)
         }
@@ -1099,6 +1105,16 @@ pub mod fs {
                     // scrutinee directly so no second `&mut *cached_ptr` is materialized
                     // while the first is on the borrow stack (Stacked Borrows hygiene).
                     match unsafe { &mut *cached_ptr } {
+                        EntriesOption::Entries(e) if !e.complete => {
+                            // Read in full without `iterator`, so the caller
+                            // sees this as a cache hit (the test scanner sorts
+                            // a cached listing and takes an iterated one as is).
+                            let out = self
+                                .entries_at_locked(cache_result.index, generation)
+                                .ok_or(crate::Error::Sys(bun_errno::SystemErrno::ENOENT))?;
+                            // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
+                            return Ok(unsafe { &mut *std::ptr::from_mut::<EntriesOption>(out) });
+                        }
                         EntriesOption::Entries(e) if e.generation < generation => {
                             in_place = Some(std::ptr::from_mut::<DirEntry>(*e));
                         }
@@ -1462,6 +1478,25 @@ pub mod fs {
             index: bun_alloc::IndexType,
             generation: Generation,
         ) -> Option<&mut EntriesOption> {
+            self.entries_at_locked_impl(index, generation, false)
+        }
+
+        /// [`entries_at_locked`](Self::entries_at_locked) that hands out a
+        /// probe-only listing as it is, for `DirEntry::get_or_probe`.
+        pub(crate) fn entries_at_locked_allow_partial(
+            &mut self,
+            index: bun_alloc::IndexType,
+            generation: Generation,
+        ) -> Option<&mut EntriesOption> {
+            self.entries_at_locked_impl(index, generation, true)
+        }
+
+        fn entries_at_locked_impl(
+            &mut self,
+            index: bun_alloc::IndexType,
+            generation: Generation,
+            allow_partial: bool,
+        ) -> Option<&mut EntriesOption> {
             debug_assert!(
                 self.entries_mutex.is_held_by_current_thread(),
                 "entries_at_locked: caller must hold entries_mutex",
@@ -1472,7 +1507,8 @@ pub mod fs {
             let result_ptr = std::ptr::from_mut::<EntriesOption>(self.entries.at_index(index)?);
             // SAFETY: BSSMap-owned slot; uniquely held under `entries_mutex`.
             if let EntriesOption::Entries(existing) = unsafe { &mut *result_ptr } {
-                if existing.generation < generation {
+                if existing.generation < generation || !(allow_partial || existing.complete) {
+                    let generation = generation.max(existing.generation);
                     let e_ptr: *mut DirEntry = std::ptr::from_mut::<DirEntry>(*existing);
                     // SAFETY: BSSMap-owned `DirEntry` (boxed/leaked into `EntriesOption`); `entries_mutex` held.
                     let dir = unsafe { (*e_ptr).dir };
@@ -1490,7 +1526,7 @@ pub mod fs {
                         let _ = bun_sys::close(h);
                     });
                     // SAFETY: see above — exclusive `&mut` on the prev map for the duration of `readdir`.
-                    let prev = Some(unsafe { &mut (*e_ptr).data });
+                    let prev = unsafe { (*e_ptr).complete }.then(|| unsafe { &mut (*e_ptr).data });
                     match self.readdir(false, prev, dir, generation, handle, &mut ()) {
                         Ok(new_entry) => {
                             // SAFETY: see above.

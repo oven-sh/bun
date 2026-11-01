@@ -118,13 +118,15 @@ function getFunctionName(frame: string): string {
   if (frame.startsWith("<")) return frame;
   let depth = 0;
   let name = "";
-  for (const character of frame) {
-    if (character === "<" || character === "(") depth++;
-    else if (character === ">" || character === ")") depth--;
-    else if (depth === 0) name += character;
+  for (let index = 0; index < frame.length; index++) {
+    if (frame[index] === "<" || frame[index] === "(") depth++;
+    // The `>` of `->` closes nothing: `fn(u8) -> u8`.
+    else if ((frame[index] === ">" && frame[index - 1] !== "-") || frame[index] === ")") depth--;
+    else if (depth === 0) name += frame[index];
   }
   const words = name
-    .replace(/ requires .*$/, "")
+    // The constraint of a function ends where a lambda that is written in the function begins.
+    .replace(/ requires .*?(?=::['$]|$)/, "")
     .replace(/(?: (?:const|volatile|&&?))+(?=::|$)/g, "")
     .trim()
     .split(" ");
@@ -138,12 +140,13 @@ const containers = /^(WTF|bmalloc|std|alloc|core|hashbrown|smallvec|__rustc)$/;
 
 /**
  * The crate that has the code of a method of Rust, which a symbolizer writes `<Type>::method` or `<Type as Trait>::method`.
+ * `core` stands for the language and for an allocator.
  *
- * The trait says it when it is written in a method, or when its crate is none of `containers`: the language has
+ * A method of a trait `Allocator` is an allocator's, in whatever crate its type is. Any other trait says whose the code is
+ * when it is written in a method, or when its crate is none of `containers`: the language has
  * `<T as <[_]>::to_vec_in::ConvertVec>::to_vec` for every `T`, and Bun has `<&[u8] as bun_js_printer::PrintArg>::print_into`.
- * Any other trait does not say it, for a crate may give a trait of the language to its own type. Then the type says it. A
- * reference and a `dyn` are of the crate of what they are of. A slice, a tuple, a pointer and a number are the language's,
- * which `core` stands for.
+ * A trait of the language does not say it, for a crate may give one to its own type. Then the type says it. A reference and a
+ * `dyn` are of the crate of what they are of. A slice, a tuple, a pointer and a number are the language's.
  */
 function getCrateOfMethod(method: string): string {
   // Where the first `<` closes, and where ` as ` is in no other `<`.
@@ -152,12 +155,13 @@ function getCrateOfMethod(method: string): string {
   let cut = -1;
   for (; end < method.length; end++) {
     if (method[end] === "<") depth++;
-    else if (method[end] === ">" && --depth === 0) break;
+    else if (method[end] === ">" && method[end - 1] !== "-" && --depth === 0) break;
     else if (depth === 1 && method.startsWith(" as ", end)) cut = end;
   }
   const getCrate = (path: string) =>
     path.startsWith("<") ? getCrateOfMethod(path) : (/^(\w+)::/.exec(path)?.[1] ?? "core");
   const trait = cut < 0 ? "" : method.slice(cut + 4, end);
+  if (trait.endsWith("::Allocator")) return "core";
   if (trait.startsWith("<") || (trait && !containers.test(getCrate(trait)))) return getCrate(trait);
   return getCrate(method.slice(1, cut < 0 ? end : cut).replace(/^(?:&(?:mut )?|dyn )+/, ""));
 }
@@ -369,6 +373,15 @@ const writtenRecords: [what: string, allocatedBy: string, record: string][] = [
 `,
   ],
   [
+    "the function is written in one that has a constraint",
+    "app::fill::'lambda'::operator",
+    `Direct leak of 49 byte(s) in 1 object(s) allocated from:
+    #0 0x55bea8aba4f8 in malloc (/tmp/constrained/fill+0xde4f8) (BuildId: 31f08aa8b9ad162b9fef3596516bb8665727d648)
+    #1 0x55bea8aff068 in char* app::fill<int>(int) requires std::integral<int>::'lambda'(unsigned long)::operator()(unsigned long) const /tmp/constrained/fill.cpp:11:92
+    #2 0x55bea8afee42 in char* app::fill<int>(int) requires std::integral<int> /tmp/constrained/fill.cpp:14:10
+`,
+  ],
+  [
     "inlined functions of Rust have their last word for a name",
     "<bun_runtime::server::NewServer<false, true>>::init",
     `Direct leak of 3080704 byte(s) in 2 object(s) allocated from:
@@ -420,6 +433,17 @@ const writtenRecords: [what: string, allocatedBy: string, record: string][] = [
     #16 0x0000003ddc89 in app::leak /tmp/rust-app/src/main.rs:35:17
 `,
   ],
+  [
+    "a function of Rust has a function pointer among its arguments",
+    "app::collect_with::",
+    `Direct leak of 37 byte(s) in 1 object(s) allocated from:
+    #0 0x0000002e4a04 in malloc (/tmp/rust-methods/target/x86_64-unknown-linux-gnu/release/app+0x2e4a04) (BuildId: 5f553fe5966a1991bd5def08e2a0d660400714a5)
+    #2 0x0000003358ba in __rustc::__rdl_alloc /opt/rust/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/alloc.rs:472:13
+    #11 0x000000312d4c in with_capacity<u8> /opt/rust/toolchains/nightly-2026-09-15-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:525:9
+    #12 0x000000312d4c in app::collect_with::<fn(u8) -> u8> /tmp/rust-methods/src/main.rs:57:23
+    #13 0x00000031373a in app::leak_collected /tmp/rust-methods/src/main.rs:166:22
+`,
+  ],
 ];
 
 testAnywhere.each(writtenRecords)(
@@ -429,25 +453,29 @@ testAnywhere.each(writtenRecords)(
   },
 );
 
-// Methods of Rust as a symbolizer wrote them for a small program, `app`. The crate has the code of the first ones. The language
-// has the code of the others, and names a type or a closure of the crate in them.
+// Methods of Rust as a symbolizer wrote them: for a small program, `app`, and the last two for a debug build of Bun. The crate
+// has the code of the first ones. The others allocate for the function that called them: the language has their code, and
+// names a type or a closure of the crate in them, or they are what a type does as an allocator.
 const methodsOfACrate = [
   "<[u8] as app::Checksum>::sums",
   "<alloc::vec::Vec<app::Thing> as app::Checksum>::sums",
+  "<alloc::vec::Vec<fn(u8) -> u8> as app::Checksum>::sums",
   "<&app::Names as core::iter::traits::collect::IntoIterator>::into_iter",
   "<&mut app::fill::{closure#0} as core::ops::function::FnMut<(usize,)>>::call_mut",
   "<dyn app::Shape>::describe",
   "<<app::Names>::later::{closure#0} as core::ops::function::FnOnce<()>>::call_once::{shim:vtable#0}",
 ];
-const methodsOfTheLanguage = [
+const methodsOfAllocatorsAndContainers = [
   "<[app::Thing]>::to_vec",
   "<app::Thing as <[_]>::to_vec_in::ConvertVec>::to_vec::<alloc::alloc::Global>",
   "<alloc::vec::Vec<alloc::vec::Vec<u8>> as alloc::vec::spec_extend::SpecExtend<alloc::vec::Vec<u8>, core::iter::adapters::map::Map<core::slice::iter::Iter<u8>, <[u8] as app::Checksum>::parts::{closure#0}>>>::spec_extend",
+  "<bun_alloc::DefaultAlloc as core::alloc::Allocator>::allocate",
+  "<bun_alloc::DefaultAlloc as allocator_api2::stable::alloc::Allocator>::allocate",
 ];
 
-testAnywhere("a method of Rust is a container's where the language has its code", () => {
+testAnywhere("a method of Rust is an allocator's or a container's where no other crate has its code", () => {
   expect(methodsOfACrate.filter(isAllocator)).toEqual([]);
-  expect(methodsOfTheLanguage.filter(method => !isAllocator(method))).toEqual([]);
+  expect(methodsOfAllocatorsAndContainers.filter(method => !isAllocator(method))).toEqual([]);
 });
 
 test.skipIf(!isASAN).each(Object.keys(programs))(

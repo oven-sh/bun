@@ -296,7 +296,7 @@ impl Sources {
         &self.entries[file.idx()].diagnostic_path
     }
 
-    /// Is `path` a package file to `bun test --coverage`? The rule of its gate, `BunTest__shouldGenerateCodeCoverage`.
+    /// Is `path` a package file to `bun test --coverage`? By the rule of its gate, not by `is_in_node_modules`: the project may be a package folder itself.
     pub fn is_package_file_to_coverage(&self, path: &[u8]) -> bool {
         contains(path, b"node_modules")
             && NodeModulesScope::below_root(&self.project_root).file_is_inside_node_modules(path)

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { isBroken, isWindows, tempDir, withoutAggressiveGC } from "harness";
+import { getFDCount, isBroken, isLinux, isPosix, isWindows, tempDir, withoutAggressiveGC } from "harness";
+import { closeSync, fstatSync, openSync, readdirSync, readlinkSync, realpathSync } from "node:fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -220,6 +221,216 @@ describe("Bun.file().slice() upload sends the slice's Content-Length", () => {
     expect(res.status).toBe(200);
     expect({ contentLength, received }).toEqual({ contentLength: String(fileSize - 10), received: fileSize - 10 });
   });
+});
+
+// fetch() opens the file of a Bun.file() body. A window with nothing to send must
+// not take the sendfile fast path (plain http, backing file >= 32 KiB):
+// sendfile(2) reads a length of 0 as "until end of file" on macOS and FreeBSD.
+describe.skipIf(!isPosix)("the file behind a Bun.file() upload", () => {
+  const fileSize = 64 * 1024;
+  const emptyWindows = [
+    [0, 0],
+    [100, 100],
+  ];
+  const nothingReceived = { contentLength: "0", received: 0 };
+
+  // Answers with the Content-Length and the body size it received.
+  const echoServer = () =>
+    Bun.serve({
+      port: 0,
+      development: false,
+      async fetch(req) {
+        const received = (await req.arrayBuffer()).byteLength;
+        return Response.json({ contentLength: req.headers.get("content-length"), received });
+      },
+    });
+
+  describe("is closed after the request", () => {
+    // A leak of one descriptor per call shows up as `iterations`.
+    const iterations = 16;
+    async function expectNoLeakedDescriptors(upload: () => Promise<void>) {
+      // The keep-alive socket and anything opened lazily belong in the baseline.
+      for (let i = 0; i < 2; i++) await upload();
+      const before = getFDCount();
+      for (let i = 0; i < iterations; i++) await upload();
+      expect(getFDCount() - before).toBeLessThan(iterations / 4);
+    }
+
+    // The only case here that sendfile serves: the tasklet closes the file when the request ends.
+    test("slice(0, 40000), which goes through sendfile", async () => {
+      using dir = tempDir("fetch-file-slice-closed", { "f.bin": Buffer.alloc(fileSize, 7) });
+      const p = join(String(dir), "f.bin");
+      await using server = echoServer();
+
+      await expectNoLeakedDescriptors(async () => {
+        const res = await fetch(server.url, { method: "POST", body: Bun.file(p).slice(0, 40000) });
+        expect(await res.json()).toEqual({ contentLength: "40000", received: 40000 });
+      });
+    });
+
+    for (const [start, end] of emptyWindows) {
+      test(`slice(${start}, ${end})`, async () => {
+        using dir = tempDir("fetch-file-empty-slice", { "f.bin": Buffer.alloc(fileSize, 7) });
+        const p = join(String(dir), "f.bin");
+        await using server = echoServer();
+
+        await expectNoLeakedDescriptors(async () => {
+          const res = await fetch(server.url, { method: "POST", body: Bun.file(p).slice(start, end) });
+          expect(await res.json()).toEqual(nothingReceived);
+        });
+      });
+    }
+
+    test("slice(0, 0) as the body of a Request", async () => {
+      using dir = tempDir("fetch-file-empty-slice-request", { "f.bin": Buffer.alloc(fileSize, 7) });
+      const p = join(String(dir), "f.bin");
+      await using server = echoServer();
+
+      await expectNoLeakedDescriptors(async () => {
+        const res = await fetch(new Request(server.url.href, { method: "POST", body: Bun.file(p).slice(0, 0) }));
+        expect(await res.json()).toEqual(nothingReceived);
+      });
+    });
+
+    test("Bun.file(fd).slice(0, 0), and the caller's descriptor stays open", async () => {
+      using dir = tempDir("fetch-file-empty-slice-fd", { "f.bin": Buffer.alloc(fileSize, 7) });
+      await using server = echoServer();
+
+      const fd = openSync(join(String(dir), "f.bin"), "r");
+      try {
+        await expectNoLeakedDescriptors(async () => {
+          const res = await fetch(server.url, { method: "POST", body: Bun.file(fd).slice(0, 0) });
+          expect(await res.json()).toEqual(nothingReceived);
+        });
+        expect(fstatSync(fd).size).toBe(fileSize);
+      } finally {
+        closeSync(fd);
+      }
+    });
+
+    test("a handle whose size was read before the file was written", async () => {
+      using dir = tempDir("fetch-file-stale-size", {});
+      await using server = echoServer();
+
+      let files = 0;
+      await expectNoLeakedDescriptors(async () => {
+        const file = Bun.file(join(String(dir), `f${files++}.bin`));
+        expect(await file.exists()).toBe(false);
+        await Bun.write(file, Buffer.alloc(fileSize, 7));
+        // This is an empty window only while the handle keeps the size 0 it read (#4930),
+        // so the size of the upload is not asserted.
+        const res = await fetch(server.url, { method: "POST", body: file });
+        const seen = (await res.json()) as typeof nothingReceived;
+        expect(seen.received).toBe(Number(seen.contentLength));
+      });
+    });
+
+    test("slice(0, 0) when the connection cannot be opened", async () => {
+      using dir = tempDir("fetch-file-no-socket", { "f.bin": Buffer.alloc(fileSize, 7) });
+      const p = join(String(dir), "f.bin");
+      // Nothing listens on this path.
+      const unix = join(String(dir), "no.sock");
+
+      await expectNoLeakedDescriptors(async () => {
+        const err = await fetch("http://localhost/", { unix, method: "POST", body: Bun.file(p).slice(0, 0) }).catch(
+          e => e,
+        );
+        // `path` tells the failed connect from a failed open of the body file, which is ENOENT too.
+        expect({ code: err.code, path: err.path }).toEqual({ code: "ENOENT", path: "http://localhost/" });
+      });
+    });
+  });
+
+  // Linux names the file behind every descriptor, so this count is exact. It is
+  // taken before the event loop turns: no request has finished yet.
+  test.skipIf(!isLinux)("is not held while a request with nothing to send is in flight", async () => {
+    const bytes = Buffer.alloc(fileSize, 7);
+    using dir = tempDir("fetch-file-empty-slice-in-flight", {
+      "empty.bin": bytes,
+      "empty-at-100.bin": bytes,
+      "past-the-end.bin": bytes,
+      "bytes.bin": bytes,
+    });
+    await using server = echoServer();
+
+    const descriptorsOn = (path: string) =>
+      readdirSync("/proc/self/fd").filter(fd => {
+        try {
+          return readlinkSync(`/proc/self/fd/${fd}`) === path;
+        } catch {
+          // The descriptor readdirSync listed the directory with is gone by now.
+          return false;
+        }
+      }).length;
+
+    const uploads = (
+      [
+        ["empty.bin", 0, 0],
+        ["empty-at-100.bin", 100, 100],
+        ["past-the-end.bin", 70000, 80000],
+        ["bytes.bin", 0, 40000],
+      ] as const
+    ).map(([name, start, end]) => {
+      const p = realpathSync(join(String(dir), name));
+      const body = Bun.file(p).slice(start, end);
+      const size = body.size;
+      const response = fetch(server.url, { method: "POST", body });
+      return { size, held: descriptorsOn(p), response };
+    });
+    const results = await Promise.all(
+      uploads.map(async ({ size, held, response }) => ({ size, held, seen: await (await response).json() })),
+    );
+
+    expect(results).toEqual([
+      { size: 0, held: 0, seen: nothingReceived },
+      { size: 0, held: 0, seen: nothingReceived },
+      // This window has a size. It is empty only after it is clamped to the file.
+      { size: 10000, held: 0, seen: nothingReceived },
+      // The control: it shows that the count sees an open file. It does not promise that sendfile holds one.
+      { size: 40000, held: 1, seen: { contentLength: "40000", received: 40000 } },
+    ]);
+  });
+
+  for (const [start, end] of emptyWindows) {
+    test(`slice(${start}, ${end}) sends nothing after the request head`, async () => {
+      using dir = tempDir("fetch-file-empty-slice-wire", { "f.bin": Buffer.alloc(fileSize, "x") });
+      const p = join(String(dir), "f.bin");
+
+      // Records every byte of the one connection and answers once the head is complete.
+      let wire = "";
+      const closed = Promise.withResolvers<void>();
+      using listener = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          data(socket, chunk) {
+            const answered = wire.includes("\r\n\r\n");
+            wire += chunk.toString("latin1");
+            if (!answered && wire.includes("\r\n\r\n")) {
+              socket.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+            }
+          },
+          close: () => closed.resolve(),
+          error: (_, err) => closed.reject(err),
+        },
+      });
+
+      const res = await fetch(`http://127.0.0.1:${listener.port}/`, {
+        method: "POST",
+        body: Bun.file(p).slice(start, end),
+        keepalive: false,
+      });
+      expect(await res.text()).toBe("ok");
+      // Without keep-alive the client closes the socket after the response, so the record is complete.
+      await closed.promise;
+
+      const headEnd = wire.indexOf("\r\n\r\n") + 4;
+      expect({
+        contentLength: /\r\ncontent-length: (\d+)\r\n/i.exec(wire.slice(0, headEnd))?.[1],
+        bytesAfterHead: wire.length - headEnd,
+      }).toEqual({ contentLength: "0", bytesAfterHead: 0 });
+    });
+  }
 });
 
 test("missing file throws the expected error", async () => {

@@ -1194,7 +1194,7 @@ impl<'a> LinkerContext<'a> {
             .expect("TODO: handle error");
     }
 
-    /// The relative path from the chunk directory to a file source, as written
+    /// The relative path from the directory of the file that carries the map to a file source, as written
     /// into the source map's `sources` array. `sources` entries are URLs, so the
     /// host separator is normalized to `/` (the invariant `Path::pretty` holds).
     fn source_map_relative_path(
@@ -1206,15 +1206,85 @@ impl<'a> LinkerContext<'a> {
         Ok(rel)
     }
 
+    /// The directory of the file that carries `chunk`'s map, when the `sources` are not relative to `output_dir` as given.
+    fn source_map_base_dir(
+        &self,
+        chunk: &Chunk<'_>,
+        chunk_index: usize,
+        chunks: &[Chunk<'_>],
+    ) -> Option<Box<[u8]>> {
+        let output_dir: &[u8] = &self.resolver().opts.output_dir;
+        // An executable prints these entries as they are, and without an outdir no map file exists to be relative to.
+        if self.options.compile_mode.is_executable() || output_dir.is_empty() {
+            return None;
+        }
+
+        // Standalone HTML inlines the chunk, and an inline map with it, into the HTML file.
+        let mut template = &chunk.template;
+        if self.options.compile_mode.is_standalone_html()
+            && self.options.source_maps == SourceMapOption::Inline
+        {
+            let entry_point_id = chunk.entry_point.entry_point_id();
+            // `compute_chunks` puts that HTML chunk directly after its JS chunk, so the search starts there.
+            let (before, after) = chunks.split_at(chunk_index + 1);
+            if let Some(html) = after.iter().chain(before).find(|html| {
+                matches!(html.content, crate::chunk::Content::Html)
+                    && html.entry_point.entry_point_id() == entry_point_id
+            }) {
+                template = &html.template;
+            }
+        }
+
+        // `final_rel_path` is not assigned yet: its `[hash]` needs every chunk post-processed.
+        let sanitize_parent_dirs = !self.options.compile_mode.is_executable();
+        let mut pooled = bun_paths::path_buffer_pool::get();
+        let mut spill = Vec::new();
+        let mut fixed = bun_io::FixedBufferStream::new_mut(&mut pooled[..]);
+        let rel_path: &mut [u8] = if template
+            .print_with_stand_in_hash(&mut fixed, sanitize_parent_dirs)
+            .is_ok()
+        {
+            let len = fixed.pos;
+            &mut pooled[..len]
+        } else {
+            template
+                .print_with_stand_in_hash(&mut spill, sanitize_parent_dirs)
+                .expect("write to Vec<u8>");
+            &mut spill
+        };
+        bun_paths::resolve_path::platform_to_posix_in_place::<u8>(rel_path);
+        let dir =
+            bun_paths::resolve_path::dirname::<bun_paths::resolve_path::platform::Posix>(rel_path);
+        if dir.is_empty() || dir == b"." {
+            return None;
+        }
+
+        let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
+        let mut long_path = Vec::new();
+        Some(Box::from(bun_paths::resolve_path::join_abs_string_spill::<
+            bun_paths::resolve_path::platform::Auto,
+        >(
+            top_level_dir,
+            &mut long_path,
+            &[output_dir, dir],
+        )))
+    }
+
     pub(crate) fn generate_source_map_for_chunk(
         &mut self,
-        isolated_hash: u64,
-        _worker: &mut crate::thread_pool::Worker,
+        chunk: &Chunk<'_>,
+        chunk_index: usize,
+        chunks: &[Chunk<'_>],
         results: &MultiArrayList<CompileResultForSourceMap<'_>>,
-        chunk_abs_dir: &[u8],
         can_have_shifts: bool,
     ) -> Result<SourceMapPieces, BunError> {
         let _trace = bun::perf::trace("Bundler.generateSourceMapForChunk");
+
+        let base_dir = self.source_map_base_dir(chunk, chunk_index, chunks);
+        let chunk_abs_dir: &[u8] = match &base_dir {
+            Some(dir) => dir,
+            None => &self.resolver().opts.output_dir,
+        };
 
         let mut j = StringJoiner::default();
 
@@ -1356,6 +1426,7 @@ impl<'a> LinkerContext<'a> {
             j.push_static(b"\",\n  \"debugId\": \"");
             let mut buf = Vec::<u8>::new();
             use std::io::Write;
+            let isolated_hash = chunk.isolated_hash;
             write!(&mut buf, "{}", DebugIDFormatter { id: isolated_hash })
                 .expect("infallible: in-memory write");
             j.push_owned(buf.into_boxed_slice());

@@ -808,6 +808,9 @@ pub(crate) struct WriteContext {
 impl TaskContext for WriteContext {
     fn run(&mut self) {
         self.result = self.do_run();
+        if let WriteData::Owned(data) = &mut self.data {
+            drop(bun_core::vec::take_for_pool_release(data));
+        }
     }
 
     fn run_from_js(&mut self, global: &JSGlobalObject) -> JsResult<PromiseResult> {

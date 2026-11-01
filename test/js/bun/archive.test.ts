@@ -1,5 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMacOS, isRoot, isWindows, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  expectRssDeltaOfPendingCallsBelow,
+  isLinux,
+  isMacOS,
+  isRoot,
+  isWindows,
+  tempDir,
+} from "harness";
 import { randomBytes } from "node:crypto";
 import {
   chmodSync,
@@ -1813,6 +1822,37 @@ describe("Bun.Archive", () => {
           new Bun.Archive({ "file.txt": "content" }, { compress: "gzip", level: 13 }),
         );
       }).toThrow();
+    });
+
+    // The write job has its own copy of a typed array, and of the archive it makes from an
+    // object. The pool thread frees a large copy when it is done with the write. If the copy
+    // stayed until the JS thread completes the write, a caller that starts many writes before
+    // it returns to the event loop would hold every copy.
+    test.concurrent.each([
+      ["a typed array", `Bun.Archive.write(out, bytes)`, 0, `fs.readFileSync(out).equals(bytes)`],
+      [
+        "an object of files",
+        `Bun.Archive.write(out, { "a.bin": bytes })`,
+        512,
+        `Buffer.from(await (await new Bun.Archive(fs.readFileSync(out)).files()).get("a.bin").bytes()).equals(bytes)`,
+      ],
+    ])("frees its copy of %s when the write is done", async (_, call, header, verify) => {
+      using dir = tempDir("archive-write-copy", {});
+      // 48 copies of 2 MiB are 96 MiB, if every copy stays.
+      await expectRssDeltaOfPendingCallsBelow(
+        {
+          setup: `
+            const out = ${JSON.stringify(join(String(dir), "out.tar"))};
+            const bytes = Buffer.alloc(2 * 1024 * 1024, 0x61);
+          `,
+          // The file is empty before each call. It has the last byte of the data again when the pool thread has written it.
+          call: `(fs.writeFileSync(out, ""), ${call})`,
+          done: `byteAt(out, ${header} + bytes.length - 1) === 0x61`,
+          verify,
+          count: 48,
+        },
+        { release: 48, debug: 64 },
+      );
     });
   });
 

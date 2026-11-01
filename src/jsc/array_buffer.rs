@@ -795,6 +795,25 @@ impl PinnedArrayBuffer {
         true
     }
 
+    /// The read-only copy, if [`bun_core::vec::releases_on_pool`] says so. The view is then empty.
+    #[inline]
+    pub fn take_copy_for_pool_release(&mut self) -> Vec<u8> {
+        let Some(copy) = self.copy.as_deref_mut() else {
+            return Vec::new();
+        };
+        debug_assert!(
+            copy.write_back_to.is_none(),
+            "the JS thread writes a read scratch back"
+        );
+        if !bun_core::vec::releases_on_pool(copy.bytes.capacity()) {
+            return Vec::new();
+        }
+        self.buffer.ptr = ptr::null_mut();
+        self.buffer.len = 0;
+        self.buffer.byte_len = 0;
+        core::mem::take(&mut copy.bytes)
+    }
+
     /// Swaps in `len` bytes of scratch space if `grow()` could free the block while a job writes to
     /// it. If this returns true, the job writes from index 0 and [`write_back`](Self::write_back)
     /// copies the bytes to `offset`, even if `grow()` detached the view.

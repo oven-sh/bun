@@ -449,6 +449,25 @@ pub mod vec {
         v.truncate(len - n);
     }
 
+    /// mimalloc's `MI_LARGE_MAX_OBJ_SIZE`: a larger block has a page of its own, which every thread frees the same way.
+    const POOL_RELEASE_MIN_BYTES: usize = 512 * 1024;
+
+    /// Whether a work-pool job frees its own copy of an input on the pool thread after its last read. Otherwise the JS thread frees it at completion.
+    #[inline]
+    pub fn releases_on_pool(capacity: usize) -> bool {
+        capacity > POOL_RELEASE_MIN_BYTES
+    }
+
+    /// The bytes for the job to drop on the pool thread, if [`releases_on_pool`] says so.
+    #[inline]
+    pub fn take_for_pool_release(bytes: &mut Vec<u8>) -> Vec<u8> {
+        if releases_on_pool(bytes.capacity()) {
+            core::mem::take(bytes)
+        } else {
+            Vec::new()
+        }
+    }
+
     // ── Spare-capacity fill helpers ────────────────────────────────────────
     // Consolidates 11 hand-rolled `spare_capacity_mut().as_mut_ptr().cast::<u8>()`
     // + `set_len(len+n)` copies: `spare_capacity_mut` returns

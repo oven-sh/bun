@@ -289,6 +289,16 @@ impl StringOrBuffer<'static> {
         unsafe { ThreadIsolated::new(Self::owned(bytes)) }
     }
 
+    /// The job's own copy of the bytes, if [`bun_core::vec::take_for_pool_release`] moves it out. The bytes are then empty.
+    #[inline]
+    pub(crate) fn take_owned_for_pool_release(&mut self) -> Vec<u8> {
+        match self {
+            Self::Utf8(Utf8Bytes::Owned(bytes)) => bun_core::vec::take_for_pool_release(bytes),
+            Self::PinnedBuffer(buffer) => buffer.take_copy_for_pool_release(),
+            _ => Vec::new(),
+        }
+    }
+
     /// `value` is ArrayBuffer-like (the caller checked): borrowed for `Sync`,
     /// [`PinnedArrayBuffer::root_read_only`] for `Async`.
     pub(crate) fn buffer_from_js(
@@ -1505,6 +1515,18 @@ impl VectorArrayBuffer {
             _ => {
                 Err(global_object
                     .throw_invalid_arguments(format_args!("Expected ArrayBufferView[]")))
+            }
+        }
+    }
+
+    /// Runs on the pool thread after a write. See [`PinnedArrayBuffer::take_copy_for_pool_release`].
+    pub(crate) fn release_copies_on_pool(&mut self) {
+        for element in &mut self.wasm {
+            let Some(pinned) = &mut element.native else {
+                continue;
+            };
+            if pinned.take_copy_for_pool_release().capacity() != 0 {
+                self.buffers[element.index] = bun_sys::platform_iovec_create(&mut []);
             }
         }
     }

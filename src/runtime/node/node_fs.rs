@@ -1389,6 +1389,9 @@ mod _async_tasks {
         }
         /// Runs on the JS thread before the result reaches JS. See [`PinnedArrayBuffer::write_back`].
         fn write_back(&mut self, _bytes_read: u64) {}
+        /// Runs on the pool thread after the operation. See [`StringOrBuffer::take_owned_for_pool_release`].
+        #[inline]
+        fn release_data_on_pool(&mut self) {}
         fn paths(&self) -> [Option<&PathLike<'static>>; 2] {
             [None, None]
         }
@@ -1404,7 +1407,7 @@ mod _async_tasks {
     /// Forward [`FsArgument`] to the inherent `from_js` each `args::*` struct
     /// already defines.
     macro_rules! impl_fs_argument {
-    ( $( $ty:ty $( => |$args:ident| [$first:expr, $second:expr] )? ),+ $(,)? ) => {
+    ( $( $ty:ty $( => |$args:ident| [$first:expr, $second:expr] )? $( ; release = |$this:ident| $release:expr )? ),+ $(,)? ) => {
         $(
         // SAFETY: `from_js_async` parses paths and data thread-isolated / pinned
         // and rooted; the remaining fields are plain data.
@@ -1412,6 +1415,7 @@ mod _async_tasks {
         impl FsArgument for $ty {
             #[inline] fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> { <$ty>::from_js(ctx, arguments) }
             $( fn paths(&self) -> [Option<&PathLike<'static>>; 2] { let $args = self; [$first, $second] } )?
+            $( #[inline] fn release_data_on_pool(&mut self) { let $this = self; $release } )?
         } )+
     };
 }
@@ -1440,9 +1444,9 @@ mod _async_tasks {
         args::Cp<'static> => |args| [Some(&args.src), Some(&args.dest)],
     );
     impl_fs_argument!(
-        args::Writev,
+        args::Writev; release = |args| args.buffers.release_copies_on_pool(),
         args::FTruncate,
-        args::Write<'static>,
+        args::Write<'static>; release = |args| drop(args.buffer.take_owned_for_pool_release()),
         args::Fchown,
         args::FChmod,
         args::Fstat,
@@ -1510,6 +1514,10 @@ mod _async_tasks {
         fn signal(&self) -> Option<&AbortSignal> {
             self.signal.as_deref()
         }
+        #[inline]
+        fn release_data_on_pool(&mut self) {
+            drop(self.data.take_owned_for_pool_release());
+        }
         fn paths(&self) -> [Option<&PathLike<'static>>; 2] {
             [path_of(&self.file), None]
         }
@@ -1524,6 +1532,10 @@ mod _async_tasks {
         #[inline]
         fn signal(&self) -> Option<&AbortSignal> {
             self.0.signal.as_deref()
+        }
+        #[inline]
+        fn release_data_on_pool(&mut self) {
+            drop(self.0.data.take_owned_for_pool_release());
         }
         fn paths(&self) -> [Option<&PathLike<'static>>; 2] {
             [path_of(&self.0.file), None]
@@ -1805,8 +1817,12 @@ mod _async_tasks {
             this: &mut Self,
             done: bun_jsc::Completion<Self>,
         ) -> Option<bun_jsc::Completion<Self>> {
-            let mut node_fs = NodeFS::default();
-            this.result = NodeFS::dispatch::<R, A, F>(&mut node_fs, &this.args, Flavor::Async);
+            this.result = {
+                let mut node_fs = NodeFS::default();
+                NodeFS::dispatch::<R, A, F>(&mut node_fs, &this.args, Flavor::Async)
+            };
+            // After `node_fs` is gone: what a pool thread allocates after the release can take the freed range.
+            this.args.release_data_on_pool();
             Some(done)
         }
 

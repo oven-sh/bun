@@ -1,5 +1,6 @@
 /// # Safety
 /// Its JS buffers are pinned and GC-rooted and its strings thread-isolated: a work-pool job may read it and the JS thread drops it.
+/// The job may move bytes that the value alone owns out as a `Vec<u8>` and drop that on its own thread.
 pub unsafe trait ThreadIsolatedArg {}
 
 /// A `T` built as [`ThreadIsolatedArg`] describes.

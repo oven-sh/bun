@@ -1167,6 +1167,22 @@ Date)
     expect(exitCode).toBe(0);
     expect(readFileSync(tester.tmpdir + "/returns-passed-in.js", "utf-8")).toBe(returns_passed_in_js);
   });
+  // The call is a tail call there, so the update looks for the matcher where the test file calls the helper.
+  it("a module that uses no test API leaves a stale snapshot as it is", async () => {
+    await tester.testError(
+      {
+        update: true,
+        msg: "error: Failed to update inline snapshot: Could not find 'toMatchInlineSnapshot' here",
+      },
+      /*js*/ `
+        import {returnsCall} from "./returns-passed-in";
+        test("cases", () => {
+          returnsCall(expect, "new", '"old"');
+        });
+      `,
+    );
+    expect(readFileSync(tester.tmpdir + "/returns-passed-in.js", "utf-8")).toBe(returns_passed_in_js);
+  });
   it("is right file", async () => {
     await tester.test(
       v => /*js*/ `

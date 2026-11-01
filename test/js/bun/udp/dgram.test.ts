@@ -875,6 +875,7 @@ test.skipIf(isWindows)("bind({ fd }): 'message' runs in the store of createSocke
     socket.on("message", () => message.resolve(String(storage.getStore())));
     storage.run("bind()", () => socket.bind({ fd: wrap.fd }));
     const seen = { "'listening'": await listening.promise };
+    socket.on("error", message.reject);
     sender.send("x", socket.address().port, "127.0.0.1");
     expect({ ...seen, "'message'": await message.promise }).toEqual({
       "'listening'": "bind()",

@@ -2046,3 +2046,137 @@ it.each(["7", ""])("checkPrime(%j) does not take a string", candidate => {
   expect(() => crypto.checkPrimeSync(candidate)).toThrow(error);
   expect(() => crypto.checkPrime(candidate, () => {})).toThrow(error);
 });
+
+describe("Sign and Verify", () => {
+  const data = Buffer.from("data");
+  const rsa = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const ec = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const ed = crypto.generateKeyPairSync("ed25519");
+  const rsaSignature = crypto.sign("sha256", data, rsa.privateKey);
+  const verifier = () => crypto.createVerify("sha256").update(data);
+
+  it("can be used once", () => {
+    const notInitialised = expect.objectContaining({ code: "ERR_CRYPTO_INVALID_STATE", message: "Not initialised" });
+    const sign = crypto.createSign("sha256").update(data);
+    sign.sign(rsa.privateKey);
+    expect(() => sign.sign(rsa.privateKey)).toThrow(notInitialised);
+    expect(() => sign.update(data)).toThrow(notInitialised);
+    const verify = verifier();
+    expect(verify.verify(rsa.publicKey, rsaSignature)).toBe(true);
+    expect(() => verify.verify(rsa.publicKey, rsaSignature)).toThrow(notInitialised);
+    expect(() => verify.update(data)).toThrow(notInitialised);
+  });
+
+  it("do not take a key that signs the message itself", () => {
+    const unsupported = expect.objectContaining({
+      code: "ERR_CRYPTO_UNSUPPORTED_OPERATION",
+      message: "Unsupported crypto operation",
+    });
+    expect(() => crypto.createSign("sha256").update(data).sign(ed.privateKey)).toThrow(unsupported);
+    expect(() => verifier().verify(ed.publicKey, Buffer.alloc(64))).toThrow(unsupported);
+  });
+
+  it("sign() refuses an output encoding it does not know", () => {
+    expect(() => crypto.createSign("sha256").update(data).sign(rsa.privateKey, "nope")).toThrow(
+      expect.objectContaining({ code: "ERR_UNKNOWN_ENCODING", message: "Unknown encoding: nope" }),
+    );
+    expect(crypto.createSign("sha256").update(data).sign(rsa.privateKey, "hex")).toBe(rsaSignature.toString("hex"));
+  });
+
+  it("sign() reports why BoringSSL did not sign", () => {
+    const options = { key: rsa.privateKey, padding: crypto.constants.RSA_PKCS1_PSS_PADDING, saltLength: 9999 };
+    expect(() => crypto.createSign("sha256").update(data).sign(options)).toThrow(
+      expect.objectContaining({ name: "Error", code: "ERR_OSSL_RSA_DATA_TOO_LARGE_FOR_KEY_SIZE" }),
+    );
+  });
+
+  it.each([
+    ["an unknown padding", { padding: 99 }],
+    ["no padding", { padding: crypto.constants.RSA_NO_PADDING }],
+    ["a negative salt length", { padding: crypto.constants.RSA_PKCS1_PSS_PADDING, saltLength: -5 }],
+  ])("verify() is false with %s", (_, options) => {
+    expect(verifier().verify({ key: rsa.publicKey, ...options }, rsaSignature)).toBe(false);
+  });
+
+  it("verify() throws for an ieee-p1363 signature of the wrong length", () => {
+    const key = { key: ec.publicKey, dsaEncoding: "ieee-p1363" };
+    const signature = crypto.sign("sha256", data, { key: ec.privateKey, dsaEncoding: "ieee-p1363" });
+    expect(verifier().verify(key, signature)).toBe(true);
+    for (const malformed of [signature.subarray(1), Buffer.alloc(0), Buffer.concat([signature, Buffer.alloc(1)])]) {
+      expect(() => verifier().verify(key, malformed)).toThrow(
+        expect.objectContaining({ code: "ERR_CRYPTO_OPERATION_FAILED", message: "Malformed signature" }),
+      );
+    }
+  });
+
+  it("read dsaEncoding from any object", () => {
+    class Options {
+      dsaEncoding = "ieee-p1363";
+      constructor(key) {
+        this.key = key;
+      }
+    }
+    for (const wrap of [key => new Proxy({ key, dsaEncoding: "ieee-p1363" }, {}), key => new Options(key)]) {
+      const signature = crypto.sign("sha256", data, wrap(ec.privateKey));
+      expect(signature).toHaveLength(64);
+      expect(crypto.createSign("sha256").update(data).sign(wrap(ec.privateKey))).toHaveLength(64);
+      expect(crypto.verify("sha256", data, wrap(ec.publicKey), signature)).toBe(true);
+      expect(verifier().verify(wrap(ec.publicKey), signature)).toBe(true);
+    }
+  });
+});
+
+describe("crypto.diffieHellman()", () => {
+  const alice = crypto.generateKeyPairSync("x25519");
+  const bob = crypto.generateKeyPairSync("x25519");
+  const secret = crypto.diffieHellman({ privateKey: alice.privateKey, publicKey: bob.publicKey });
+
+  it.each([
+    ["PEM", { type: "pkcs8", format: "pem" }, { type: "spki", format: "pem" }],
+    ["DER", { type: "pkcs8", format: "der" }, { type: "spki", format: "der" }],
+    ["JWK", { format: "jwk" }, { format: "jwk" }],
+  ])("takes keys as %s", async (_, privateEncoding, publicEncoding) => {
+    const options = {
+      privateKey: { key: alice.privateKey.export(privateEncoding), ...privateEncoding },
+      publicKey: { key: bob.publicKey.export(publicEncoding), ...publicEncoding },
+    };
+    expect(crypto.diffieHellman(options)).toEqual(secret);
+    expect(crypto.diffieHellman({ ...options, publicKey: bob.publicKey })).toEqual(secret);
+    expect(crypto.diffieHellman({ ...options, privateKey: alice.privateKey })).toEqual(secret);
+    expect(await util.promisify(crypto.diffieHellman)(options)).toEqual(secret);
+  });
+
+  it("takes a PEM string, and a passphrase", () => {
+    const pem = alice.privateKey.export({ type: "pkcs8", format: "pem" });
+    expect(crypto.diffieHellman({ privateKey: pem, publicKey: bob.publicKey })).toEqual(secret);
+    const encrypted = alice.privateKey.export({ type: "pkcs8", format: "pem", cipher: "aes-256-cbc", passphrase: "x" });
+    const privateKey = { key: encrypted, passphrase: "x" };
+    expect(crypto.diffieHellman({ privateKey, publicKey: bob.publicKey })).toEqual(secret);
+  });
+
+  it("names the option and the kinds of key in its errors", () => {
+    const ec = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+    const ed = crypto.generateKeyPairSync("ed25519");
+    expect(() => crypto.diffieHellman({ privateKey: alice.privateKey, publicKey: ec.publicKey })).toThrow(
+      expect.objectContaining({
+        code: "ERR_CRYPTO_INCOMPATIBLE_KEY",
+        message: "Incompatible key types for Diffie-Hellman: x25519 and ec",
+      }),
+    );
+    expect(() => crypto.diffieHellman(ed)).toThrow(
+      expect.objectContaining({
+        code: "ERR_CRYPTO_INCOMPATIBLE_KEY",
+        message: "Incompatible key types for Diffie-Hellman: ed25519 and ed25519",
+      }),
+    );
+    expect(() => crypto.diffieHellman({ privateKey: alice.privateKey, publicKey: 5 })).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: expect.stringContaining('The "options.publicKey" property must be of type string or an instance of'),
+      }),
+    );
+    expect(() => crypto.diffieHellman({ privateKey: null, publicKey: bob.publicKey })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+    );
+  });
+});

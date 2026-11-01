@@ -766,13 +766,13 @@ assert.throws(
   for (const { publicKey, privateKey } of keys) {
     assert.throws(() => {
       crypto.createSign('SHA256').update('Test123').sign(privateKey);
-    }, { code: common.openSSLIsBoringSSL ? 'ERR_OSSL_EVP_COMMAND_NOT_SUPPORTED' : 'ERR_CRYPTO_UNSUPPORTED_OPERATION', message: common.openSSLIsBoringSSL ? /public key.*COMMAND_NOT_SUPPORTED/ : 'Unsupported crypto operation' });
+    }, { code: 'ERR_CRYPTO_UNSUPPORTED_OPERATION', message: 'Unsupported crypto operation' });
     assert.throws(() => {
       crypto.createVerify('SHA256').update('Test123').verify(privateKey, 'sig');
-    }, { code: common.openSSLIsBoringSSL ? 'ERR_OSSL_EVP_COMMAND_NOT_SUPPORTED' : 'ERR_CRYPTO_UNSUPPORTED_OPERATION', message: common.openSSLIsBoringSSL ? /public key.*COMMAND_NOT_SUPPORTED/ : 'Unsupported crypto operation' });
+    }, { code: 'ERR_CRYPTO_UNSUPPORTED_OPERATION', message: 'Unsupported crypto operation' });
     assert.throws(() => {
       crypto.createVerify('SHA256').update('Test123').verify(publicKey, 'sig');
-    }, { code: common.openSSLIsBoringSSL ? 'ERR_OSSL_EVP_COMMAND_NOT_SUPPORTED' : 'ERR_CRYPTO_UNSUPPORTED_OPERATION', message: common.openSSLIsBoringSSL ? /public key.*COMMAND_NOT_SUPPORTED/ : 'Unsupported crypto operation' });
+    }, { code: 'ERR_CRYPTO_UNSUPPORTED_OPERATION', message: 'Unsupported crypto operation' });
   }
 }
 

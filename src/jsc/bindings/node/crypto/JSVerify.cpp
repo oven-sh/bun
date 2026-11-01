@@ -270,6 +270,10 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncUpdate, (JSGlobalObject * globalObject
             .len = byteLength,
         };
 
+        if (!thisObject->m_mdCtx) {
+            return ERR::CRYPTO_INVALID_STATE(scope, globalObject, "Not initialised"_s);
+        }
+
         ncrypto::ClearErrorOnReturn clearErrorOnReturn;
         if (!thisObject->m_mdCtx.digestUpdate(buffer)) {
             throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to update digest");
@@ -294,6 +298,10 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncUpdate, (JSGlobalObject * globalObject
         .data = view->vector(),
         .len = byteLength,
     };
+
+    if (!thisObject->m_mdCtx) {
+        return ERR::CRYPTO_INVALID_STATE(scope, globalObject, "Not initialised"_s);
+    }
 
     ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     if (!thisObject->m_mdCtx.digestUpdate(buffer)) {
@@ -320,8 +328,7 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
 
     // Check if the context is initialized
     if (!thisObject->m_mdCtx) {
-        throwTypeError(globalObject, scope, "Verify.prototype.verify cannot be called before Verify.prototype.init"_s);
-        return {};
+        return ERR::CRYPTO_INVALID_STATE(scope, globalObject, "Not initialised"_s);
     }
 
     // This function receives two arguments: options and signature
@@ -353,6 +360,10 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
 
     const auto& keyPtr = keyObject.asymmetricKey();
 
+    if (keyPtr.isOneShotVariant()) {
+        return ERR::CRYPTO_UNSUPPORTED_OPERATION(scope, globalObject);
+    }
+
     // Get RSA padding mode and salt length if applicable
     int32_t padding = getPadding(globalObject, scope, options, keyPtr);
     RETURN_IF_EXCEPTION(scope, {});
@@ -363,6 +374,20 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
     // Get DSA signature encoding format
     DSASigEnc dsaSigEnc = getDSASigEnc(globalObject, scope, options);
     RETURN_IF_EXCEPTION(scope, {});
+
+    // https://github.com/nodejs/node/blob/v26.12.1/src/crypto/crypto_sig.cc#L530-L607
+    ncrypto::Buffer<const unsigned char> sigBuf {
+        .data = static_cast<const unsigned char*>(signatureBuffer->vector()),
+        .len = signatureBuffer->byteLength(),
+    };
+
+    WTF::Vector<uint8_t> derBuffer;
+    if (dsaSigEnc == DSASigEnc::P1363 && keyPtr.isSigVariant()) {
+        if (!convertP1363ToDER(sigBuf, keyPtr, derBuffer)) {
+            return ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "Malformed signature"_s);
+        }
+        sigBuf = { .data = derBuffer.begin(), .len = derBuffer.size() };
+    }
 
     // Move mdCtx out of JSVerify object to finalize it
     ncrypto::EVPMDCtxPointer mdCtx = WTF::move(thisObject->m_mdCtx);
@@ -383,61 +408,28 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
 
     // Create verification context
     auto pkctx = keyPtr.newCtx();
-    if (!pkctx || pkctx.initForVerify() <= 0) {
+    if (!pkctx) {
+        return JSValue::encode(jsBoolean(false));
+    }
+
+    const int initResult = pkctx.initForVerify();
+    if (initResult == -2) {
         throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to initialize verification context"_s);
         return {};
     }
 
-    // Set RSA padding mode and salt length if applicable
-    if (keyPtr.isRsaVariant()) {
-        std::optional<int> effective_salt_len = saltLen;
-
-        // For PSS padding without explicit salt length for verification,
-        // we don't need to calculate - use RSA_PSS_SALTLEN_AUTO (-2) to auto-detect
-        // This matches Node.js behavior for verification
-        if (padding == RSA_PKCS1_PSS_PADDING && !saltLen.has_value()) {
-            effective_salt_len = RSA_PSS_SALTLEN_AUTO;
-        }
-
-        if (!ncrypto::EVPKeyCtxPointer::setRsaPadding(pkctx.get(), padding, effective_salt_len)) {
-            throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to set RSA padding"_s);
-            return {};
-        }
+    // For PSS padding without explicit salt length for verification,
+    // we don't need to calculate - use RSA_PSS_SALTLEN_AUTO (-2) to auto-detect
+    // This matches Node.js behavior for verification
+    if (padding == RSA_PKCS1_PSS_PADDING && !saltLen.has_value()) {
+        saltLen = RSA_PSS_SALTLEN_AUTO;
     }
 
-    // Set signature MD from the digest context
-    if (!pkctx.setSignatureMd(mdCtx)) {
-        throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to set signature message digest"_s);
-        return {};
-    }
-
-    // Handle P1363 format conversion for EC keys if needed
-    ncrypto::Buffer<const unsigned char> sigBuf {
-        .data = static_cast<const unsigned char*>(signatureBuffer->vector()),
-        .len = signatureBuffer->byteLength(),
-    };
-
-    if (dsaSigEnc == DSASigEnc::P1363 && keyPtr.isSigVariant()) {
-        WTF::Vector<uint8_t> derBuffer;
-
-        // If the signature cannot be converted to DER (e.g. its length is not
-        // 2 * bytesOfRS), fail verification instead of reinterpreting the raw
-        // bytes as a DER signature, matching Node.js.
-        if (!convertP1363ToDER(sigBuf, keyPtr, derBuffer)) {
-            return JSValue::encode(jsBoolean(false));
-        }
-
-        ncrypto::Buffer<const uint8_t> derSigBuf {
-            .data = derBuffer.begin(),
-            .len = derBuffer.size(),
-        };
-
-        bool result = pkctx.verify(derSigBuf, data);
-        return JSValue::encode(jsBoolean(result));
-    }
-
-    // Perform verification with the original signature
-    bool result = pkctx.verify(sigBuf, data);
+    // Options that the key does not take are a signature that does not verify, not an error.
+    bool result = initResult > 0
+        && (!keyPtr.isRsaVariant() || ncrypto::EVPKeyCtxPointer::setRsaPadding(pkctx.get(), padding, saltLen))
+        && pkctx.setSignatureMd(mdCtx)
+        && pkctx.verify(sigBuf, data);
     return JSValue::encode(jsBoolean(result));
 }
 

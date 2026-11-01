@@ -529,6 +529,7 @@ impl FileSink {
         }
         if let Some(context) = vm.as_context_that_stops_early(context) {
             self.closes_with_test_file.set(true);
+            self.abort_handle.set_only_waits_to_be_closed();
             // SAFETY: a started sink is heap-allocated; it leaves its context in `on_close`.
             unsafe {
                 bun_jsc::AbortHandle::arm_owner(core::ptr::from_ref(self).cast_mut(), context);

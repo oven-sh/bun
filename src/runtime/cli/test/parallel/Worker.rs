@@ -440,6 +440,11 @@ bun_spawn::link_impl_ProcessExit! {
 
 bun_core::intrusive_field!(Worker, ipc: Channel<Worker>);
 impl ChannelOwner for Worker {
+    fn on_channel_data(&mut self) {
+        // Once per read of the channel is enough: the frames of one read are all of one file.
+        self.read_output_written_so_far();
+    }
+
     fn on_channel_frame(&mut self, kind: frame::Kind, rd: &mut frame::Reader<'_>) {
         // SAFETY: coord backref valid; mutation — see `coord` field doc (provenance caveats).
         unsafe { (*self.coord.cast_mut()).on_frame(self, kind, rd) };

@@ -55,6 +55,12 @@ describe("toMatchSnapshot errors", () => {
     expect(() => {
       expect({ a: 3 }).toMatchSnapshot({ a: expect.any(BigInt) });
     }).toThrow();
+    expect(() => {
+      expect({ a: new Date(5) }).toMatchSnapshot({ a: new Date(6) });
+    }).toThrow("to match properties from received object");
+    expect(() => {
+      expect({ a: new Error("x") }).toMatchSnapshot({ a: new Error("y") });
+    }).toThrow("to match properties from received object");
   });
   it("should throw if arguments are in the wrong order", () => {
     expect(() => {

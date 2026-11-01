@@ -2937,6 +2937,9 @@ declare module "bun" {
    * Returns true if all properties in the subset exist in the
    * other and have equal values.
    *
+   * A `Date` in the subset matches a `Date` with the same time value.
+   * An `Error` in the subset matches an `Error` with the same message.
+   *
    * This also powers expect().toMatchObject in `bun:test`
    */
   function deepMatch(subset: unknown, a: unknown): boolean;

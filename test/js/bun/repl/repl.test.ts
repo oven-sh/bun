@@ -1,7 +1,7 @@
 // Tests for Bun REPL
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
-import { chmodSync, statSync } from "node:fs";
+import { chmodSync, existsSync, statSync } from "node:fs";
 import path from "path";
 
 const stripAnsi = Bun.stripANSI;
@@ -54,6 +54,12 @@ async function runRepl(
     .map(chunk => chunk.replace(/^ +at .*\n?/gm, "").trim());
 
   return { stdout, stderr, exitCode, outputs };
+}
+
+/** What a non-TTY REPL wrote to stdout after its welcome message. */
+function afterWelcome(stdout: string): string {
+  const text = stripAnsi(stdout);
+  return text.slice(text.indexOf("\n\n") + 2);
 }
 
 interface Screen {
@@ -215,7 +221,12 @@ async function withTerminalRepl(
     resize: (cols: number) => void;
     allOutput: () => string;
   }) => Promise<void>,
-  options: { env?: Record<string, string | undefined>; cols?: number } = {},
+  options: {
+    env?: Record<string, string | undefined>;
+    cols?: number;
+    /** Defaults to `bun repl` with stdin, stdout and stderr on the pty. */
+    cmd?: string[];
+  } = {},
 ) {
   const received: string[] = [];
   const cols = options.cols ?? 120;
@@ -241,7 +252,7 @@ async function withTerminalRepl(
   });
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "repl"],
+    cmd: options.cmd ?? [bunExe(), "repl"],
     terminal,
     env: {
       ...bunEnv,
@@ -348,6 +359,69 @@ describe.concurrent("Bun REPL", () => {
       expect(outputs).toEqual(["2", "6", "4", '"HELLO"', "{\n  a: 1,\n  b: 2,\n}", "[ 2, 4, 6 ]", '"use strict"']);
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
+    });
+  });
+
+  // These inputs end without `.exit`: the REPL reads the end of stdin.
+  describe("end of input", () => {
+    test.each([
+      { last: "the only line", input: "1 + 1", outputs: ["2"] },
+      {
+        last: "the second of two lines",
+        input: `console.log("one")\nconsole.log("two")`,
+        outputs: ["one\nundefined", "two\nundefined"],
+      },
+      {
+        last: "the brace that closes a block",
+        input: `if (true) {\n  console.log("two")\n}`,
+        outputs: ["two\nundefined"],
+      },
+      { last: "a REPL command", input: "1 + 1\n.history", outputs: ["2", "Command History:\n     1  1 + 1"] },
+      { last: "spaces", input: "1 + 1\n   ", outputs: ["2", "undefined"] },
+    ])("evaluates a last line that has no newline: $last", async ({ input, outputs }) => {
+      const result = await runRepl(input);
+      expect(result.outputs).toEqual(outputs);
+      expect(result.stderr).toBe("");
+      expect(result.exitCode).toBe(0);
+    });
+
+    // The REPL writes a newline after each line it takes, and one more when the input ends. Nothing follows `.exit`.
+    test.each([
+      { name: "no input", input: "", transcript: "> \n" },
+      { name: "a last line that leaves a call open", input: "foo(", transcript: "> \n\n" },
+      { name: "a last line that is .exit", input: "1 + 1\n.exit", transcript: "> \n2\n> \n" },
+    ])("writes no result and no error for $name", async ({ input, transcript }) => {
+      const { stdout, stderr, exitCode } = await runRepl(input);
+      expect({ transcript: afterWelcome(stdout), stderr, exitCode }).toEqual({ transcript, stderr: "", exitCode: 0 });
+    });
+
+    // Not on Windows: fs.closeSync(0) does nothing there (libuv keeps fds 0 to 2 open), so no read fails.
+    test.skipIf(isWindows)("evaluates the last line at a clean end of input, not after a failed read", async () => {
+      using dir = tempDir("repl-failed-read", {});
+      const ran = path.join(String(dir), "ran");
+      const failed = path.join(String(dir), "failed");
+      const lastLine = `require("fs").writeFileSync(process.env.MARKER, "")`;
+      // Both lines are in the REPL's buffer when the first one runs. After it closes fd 0, the next read fails.
+      const [cleanEnd, failedRead] = await Promise.all([
+        runRepl(`1\n${lastLine}`, { env: { MARKER: ran } }),
+        runRepl(`require("fs").closeSync(0)\n${lastLine}`, { env: { MARKER: failed } }),
+      ]);
+      expect({
+        cleanEnd: { ran: existsSync(ran), stderr: cleanEnd.stderr, exitCode: cleanEnd.exitCode },
+        failedRead: { ran: existsSync(failed), stderr: failedRead.stderr, exitCode: failedRead.exitCode },
+      }).toEqual({
+        cleanEnd: { ran: true, stderr: "", exitCode: 0 },
+        failedRead: { ran: false, stderr: "", exitCode: 0 },
+      });
+    });
+
+    test("saves a last line that has no newline to the history file", async () => {
+      using home = tempDir("repl-home", {});
+      const { outputs, stderr, exitCode } = await runRepl("1 + 1\n2 + 2", { home: String(home) });
+      expect(outputs).toEqual(["2", "4"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      expect(await Bun.file(path.join(String(home), ".bun_repl_history")).text()).toBe("1 + 1\n2 + 2\n");
     });
   });
 
@@ -1086,6 +1160,38 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
       send("\x04"); // Ctrl+D
       expect(await proc.exited).toBe(0);
     });
+  });
+
+  // On a terminal only a key ends a line. A terminal that goes away is not the end of a line.
+  test("a terminal that goes away does not evaluate the line that is being typed", async () => {
+    using dir = tempDir("repl-hang-up", {});
+    const marker = path.join(String(dir), "ran");
+    const line = `require("fs").writeFileSync(process.env.MARKER, "")`;
+    await withTerminalRepl(
+      async ({ terminal, proc, send, waitForScreen }) => {
+        send(line);
+        await waitForScreen(s => s.rows.at(-1) === `> ${line}`);
+        // The shell ignores SIGHUP, so the REPL lives to read the end of its input.
+        terminal.close();
+        expect(await proc.exited).toBe(0);
+        expect(existsSync(marker)).toBe(false);
+      },
+      { cmd: ["sh", "-c", `trap "" HUP; exec "$0" repl`, bunExe()], env: { MARKER: marker } },
+    );
+  });
+
+  // `repl | cat` leaves the terminal in line mode: Ctrl+D twice is the half line, then a read of no bytes.
+  test("Ctrl+D twice on a terminal in line mode does not evaluate the line that is being typed", async () => {
+    using dir = tempDir("repl-line-mode", {});
+    const marker = path.join(String(dir), "ran");
+    await withTerminalRepl(
+      async ({ proc, send }) => {
+        send(`require("fs").writeFileSync(process.env.MARKER, "")\x04\x04`);
+        await proc.exited;
+        expect(existsSync(marker)).toBe(false);
+      },
+      { cmd: ["sh", "-c", `"$0" repl | cat`, bunExe()], env: { MARKER: marker } },
+    );
   });
 
   test("require works in terminal", async () => {

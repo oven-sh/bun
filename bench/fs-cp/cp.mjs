@@ -73,6 +73,35 @@ recursiveCopyBench(`fs.promises.cp recursive (${totalFiles} files, tree contains
   promises.cp(symlinkSrc, dest, { recursive: true }),
 );
 
+// One small file: most of the time is cpSync's checks of the two paths. The
+// destination two directories away has two more folders above it to check.
+const fileSrc = join(root, "file-src.txt");
+writeFileSync(fileSrc, data);
+const nearDest = join(root, "file-dest.txt");
+const farDest = join(root, "far", "away", "file-dest.txt");
+mkdirSync(join(root, "far", "away"), { recursive: true });
+
+// Each copy makes a new file: the computed parameter removes the last one
+// without counting towards the measured time.
+function singleFileBench(label, dest, options) {
+  bench(label, function* () {
+    yield {
+      [0]() {
+        rmSync(dest, { force: true });
+        return dest;
+      },
+      bench(dest) {
+        return cpSync(fileSrc, dest, options);
+      },
+    };
+  });
+}
+
+singleFileBench("cpSync single file (dest in the same directory)", nearDest);
+singleFileBench("cpSync single file (dest two directories away)", farDest);
+singleFileBench("cpSync single file (with a filter)", nearDest, { filter: () => true });
+bench("cpSync single file (over an existing file)", () => cpSync(fileSrc, nearDest));
+
 try {
   await run();
 } finally {

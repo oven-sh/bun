@@ -2,6 +2,7 @@ use core::ptr::NonNull;
 
 use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::call_frame::ArgumentsSlice;
+use bun_jsc::js_global_object::SysErrOptions;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSPromise, JSValue, JsCell, JsResult, SysErrorJsc as _};
 use bun_sys_jsc::SystemErrorJsc as _;
@@ -9,8 +10,8 @@ use bun_sys_jsc::SystemErrorJsc as _;
 use crate::generated_bindgen::node_fs_binding::RmOptions;
 use crate::node::ThreadIsolated;
 use crate::node::fs::{
-    self, AsyncCpTask, AsyncReaddirRecursiveTask, Flavor, FsArgument, FsReturn, NodeFS,
-    NodeFSDispatch, NodeFSFunctionEnum, Op, args, async_, ret,
+    self, AsyncCpTask, AsyncReaddirRecursiveTask, CpSyncRefusal, Flavor, FsArgument, FsReturn,
+    NodeFS, NodeFSDispatch, NodeFSFunctionEnum, Op, args, async_, ret,
 };
 
 // The (`args::*`, `ret::*`, `NodeFS::<method>`, `async_::*`) quadruples are
@@ -193,6 +194,34 @@ impl Binding {
         match self.node_fs.with_mut(|nfs| nfs.cp(&cp_args, Flavor::Sync)) {
             Err(ref err) => Err(global.throw_value(err.to_js(global))),
             Ok(()) => Ok(JSValue::UNDEFINED),
+        }
+    }
+
+    /// `fs.cpSync`'s checks of its two paths: [`NodeFS::cp_sync_check_paths`].
+    pub(crate) fn cp_sync_check_paths(
+        &self,
+        cx: &mut JsScope<'_>,
+        args: &[JsLocal<'_>],
+    ) -> JsResult<JSValue> {
+        let global = cx.global();
+        let vm: &VirtualMachine = global.bun_vm();
+        let mut slice = ArgumentsSlice::init(vm, JsLocal::to_js_slice(args));
+        let check_args = args::CpSyncCheckPaths::from_js(global, &mut slice)?;
+
+        match self
+            .node_fs
+            .with_mut(|nfs| nfs.cp_sync_check_paths(&check_args))
+        {
+            Ok(paths) => Ok(JSValue::js_number_from_int32(paths.bits())),
+            Err(CpSyncRefusal::System(ref err)) => Err(global.throw_value(err.to_js(global))),
+            Err(CpSyncRefusal::Verdict { code, message }) => Err(global.throw_sys_error(
+                &SysErrOptions {
+                    code,
+                    errno: None,
+                    name: None,
+                },
+                format_args!("{}", bstr::BStr::new(&message)),
+            )),
         }
     }
 

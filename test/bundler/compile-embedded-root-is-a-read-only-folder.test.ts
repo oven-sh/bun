@@ -44,6 +44,14 @@ test.skipIf(isWindows)("the embedded root of an executable can be entered and ca
       result.rename = code(() => fs.renameSync(asset, asset + "2"));
       result.chmod = code(() => fs.chmodSync(asset, 0o600));
       result.bunWrite = await Bun.write(asset, "x").then(() => "fine", error => error.code);
+      const refusal = (run: () => unknown) => { try { run(); return "fine"; } catch (error: any) { return error.message.replaceAll(path.basename(asset), "asset.txt"); } };
+      result.cpSyncRoot = refusal(() => fs.cpSync(root, before + "/copy"));
+      result.cpSyncAssetOntoRoot = refusal(() => fs.cpSync(asset, root));
+      result.cpSyncBelowAsset = code(() => fs.cpSync(before + "/main.ts", asset + "/below"));
+      result.cpSyncDirectoryBelowAsset = code(() => fs.cpSync(before, asset + "/below"));
+      process.chdir(root);
+      result.cpSyncRelative = refusal(() => fs.cpSync(".", path.basename(asset)));
+      process.chdir(before);
       result.stillThere = fs.readFileSync(asset, "utf8");
       console.log(JSON.stringify(result));
     `,
@@ -85,6 +93,11 @@ test.skipIf(isWindows)("the embedded root of an executable can be entered and ca
       rename: "EROFS",
       chmod: "EROFS",
       bunWrite: "EROFS",
+      cpSyncRoot: "Recursive option not enabled, cannot copy a directory: /$bunfs/root/",
+      cpSyncAssetOntoRoot: "Cannot overwrite directory /$bunfs/root with non-directory /$bunfs/root/asset.txt",
+      cpSyncBelowAsset: "ENOTDIR",
+      cpSyncDirectoryBelowAsset: "ERR_FS_EISDIR",
+      cpSyncRelative: "Cannot overwrite non-directory asset.txt with directory .",
       stillThere: "hello asset",
     },
     stderr: "",

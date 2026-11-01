@@ -926,11 +926,21 @@ describe("spawn stdin ReadableStream", () => {
         "a reader that a later option getter acquires on a child's stdout",
         "hello 0",
         `
-          const stream = Bun.spawn({ cmd: [exe, "-e", "await Bun.write(Bun.stdout, 'hello')"], stdout: "pipe", stderr: "inherit" }).stdout;
+          // The child writes only after its stdin ends, which is after the second spawn. A stream whose source
+          // has already ended holds its whole payload, and Bun.spawn takes that payload when it validates the
+          // stdin option. The getter then finds the stream locked.
+          const source = Bun.spawn({
+            cmd: [exe, "-e", "await Bun.stdin.bytes(); await Bun.write(Bun.stdout, 'hello')"],
+            stdin: "pipe",
+            stdout: "pipe",
+            stderr: "inherit",
+          });
+          const stream = source.stdout;
           let reader, refused;
           try {
             refused = Bun.spawn({ cmd: count, stdin: stream, get stdout() { reader ??= stream.getReader(); return "pipe"; }, stderr: "inherit" });
           } catch (error) { threw(error); }
+          source.stdin.end();
           (async () => {
             let text = "";
             for (let chunk; !(chunk = await reader.read()).done; ) text += decode(chunk.value);

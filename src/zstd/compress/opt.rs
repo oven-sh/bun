@@ -1,6 +1,6 @@
 //! `zstd_opt.c`: the `btopt`, `btultra` and `btultra2` strategies, which look for the cheapest parse.
 
-use core::hint::{Locality, cold_path, prefetch_read};
+use core::hint::{Locality, black_box, cold_path, prefetch_read};
 use core::mem;
 
 use super::hist;
@@ -663,7 +663,7 @@ impl<'a> Trees<'a> {
     }
 
     /// `ZSTD_updateTree_internal`: adds the positions from `next_to_update` up to `target` to the trees. `OLDER` is not
-    /// for a long run in a long current segment, where HTML takes 1 to 2% longer with anything but a call.
+    /// for [`Hints::Bytes`], where HTML takes 2.5% longer without the call, though records of 1 KB 15% less.
     #[inline(always)]
     fn update_tree<const OLDER: Older>(&mut self, target: u32) -> Result<()> {
         if target.saturating_sub(self.next_to_update) < LONG_RUN || !self.input.far {
@@ -672,7 +672,7 @@ impl<'a> Trees<'a> {
         } else if self.nb_compares > SHORT_WAY_DOWN {
             self.update_tree_in_part::<{ Hints::Bytes }, { Older::Called }>(target, target)?;
         } else {
-            self.update_tree_in_part::<{ Hints::None }, { Older::Called }>(target, target)?;
+            self.update_tree_in_part::<{ Hints::None }, OLDER>(target, target)?;
         }
         self.next_to_update = target;
         Ok(())
@@ -687,7 +687,15 @@ impl<'a> Trees<'a> {
     ) -> Result<()> {
         let mut idx = self.next_to_update;
         while idx < up_to {
-            idx = idx.wrapping_add(self.insert_bt1::<HINTS, OLDER>(idx, target)?);
+            let forward = self.insert_bt1::<HINTS, OLDER>(idx, target)?;
+            // A branch, so that the next position does not wait for what this one met: on x86-64, records take up to
+            // 20% less time. Without `black_box` it is folded into one addition.
+            idx = if forward == 1 {
+                idx.wrapping_add(1)
+            } else {
+                cold_path();
+                idx.wrapping_add(black_box(forward))
+            };
         }
         self.next_to_update = idx;
         Ok(())

@@ -1339,6 +1339,7 @@ JSValue errorIfDebuggerIsRefused(JSGlobalObject*, ASCIILiteral) { return {}; }
 void willSetRequireCacheEntry(Zig::GlobalObject*, const String&, JSValue) {}
 void willStoreLoaderOfExtension(Zig::GlobalObject*, StringView) {}
 void didDeleteRequireCacheEntry(Zig::GlobalObject*, const String&) {}
+void willResetModules(Zig::GlobalObject*, ASCIILiteral, bool) {}
 bool requireCacheListsCompiledFiles() { return false; }
 bool isLibraryModuleInRequireCache(Zig::GlobalObject*, const String&) { return false; }
 bool isEvaluatedCompiledFile(Zig::GlobalObject*, const String&) { return false; }

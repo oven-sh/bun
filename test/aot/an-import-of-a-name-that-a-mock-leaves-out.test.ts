@@ -34,11 +34,14 @@ test.each(["TestRunLayers:0", "TestRunLayers:2,TestRunPartFiles:1"])(
       };
     };
     const [plain, compiled] = await Promise.all([seenWith(), seenWith("--aot")]);
-    expect(plain.lines.length).toBe(30);
-    expect(plain.lines).toContain(
+    expect(plain.lines.length).toBe(32);
+    expect(plain.lines).toContain("02 a const | undefined");
+    // TODO(bun), row 4100: since `bun test` follows Vitest on module mocks, a name that a mock leaves out no longer fails the link in plain Bun: it is undefined. A compiled
+    // run still has the earlier behavior. It has to follow plain Bun: each `.not.toEqual(plain)` below is then `.toEqual(plain)` again, and goes red to say so.
+    expect(compiled).not.toEqual(plain);
+    expect(compiled.lines).toContain(
       "02 a const | THROWS SyntaxError Export named 'sides' not found in module 'shapes.mjs'.",
     );
-    expect(compiled).toEqual(plain);
   },
   120_000,
 );

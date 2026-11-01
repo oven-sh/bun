@@ -7,7 +7,9 @@
 //!
 //! A compiled run (`--aot`) under `--parallel` also measures by how much each file's worker grew, with what it started, and writes
 //! `"memory": { "relative/path.test.ts": megabytes }` beside `"files"`. The next such run keeps the files that took over a
-//! gigabyte apart: those that run at once took no more together than the largest of them took alone.
+//! gigabyte apart: those that run at once took no more together than the largest of them took alone. It also writes
+//! `"workers": count`, how many test files ran at once while the times were taken: `--shard` under `--aot` weighs a shard's build
+//! and its longest file against the sum of its times by that, which every shard reads alike, and not by its own `--parallel`.
 
 use std::io::Write as _;
 
@@ -32,6 +34,8 @@ pub(crate) struct Timings {
     /// The same keys → the megabytes by which the file's worker grew at most while it ran the file, with what it started.
     growth: StringArrayHashMap<u32>,
     measured_growth: StringArrayHashMap<u32>,
+    /// How many test files ran at once while the times were taken: the most that a file read says. 0: none says.
+    workers: u32,
     /// Cost assigned to files with no entry when packing shards.
     median: u32,
     /// Nine files in ten take no longer.
@@ -43,8 +47,9 @@ impl Timings {
     pub(crate) fn load(paths: &[Box<[u8]>]) -> Timings {
         let mut map: StringArrayHashMap<u32> = StringArrayHashMap::new();
         let mut growth: StringArrayHashMap<u32> = StringArrayHashMap::new();
+        let mut workers = 0;
         for path in paths {
-            Self::load_one(path, &mut map, &mut growth);
+            Self::load_one(path, &mut map, &mut growth, &mut workers);
         }
         let (median, slow) = {
             let mut known: Vec<u32> = map.values().to_vec();
@@ -58,6 +63,7 @@ impl Timings {
             measured: StringArrayHashMap::new(),
             growth,
             measured_growth: StringArrayHashMap::new(),
+            workers,
             median,
             slow,
         }
@@ -67,6 +73,7 @@ impl Timings {
         path: &[u8],
         map: &mut StringArrayHashMap<u32>,
         growth: &mut StringArrayHashMap<u32>,
+        workers: &mut u32,
     ) {
         let contents = match File::read_from(Fd::cwd(), path) {
             Ok(contents) => contents,
@@ -123,8 +130,19 @@ impl Timings {
                 }
             });
         }
+        let count = root.as_property(b"workers");
+        if let Some(count) = count.and_then(|count| count.expr.as_number())
+            && count.is_finite()
+            && count >= 0.0
+        {
+            *workers = (*workers).max(count.round().min(u32::MAX as f64) as u32);
+        }
         bun_ast::Expr::data_store_reset();
         bun_ast::Stmt::data_store_reset();
+    }
+
+    pub(crate) fn workers(&self) -> u32 {
+        self.workers
     }
 
     pub(crate) fn is_empty(&self) -> bool {
@@ -286,7 +304,13 @@ impl Timings {
     /// report. `only_measured` (set under `--shard`) writes just the files this
     /// run ran; otherwise everything read is carried through so a local partial
     /// run doesn't shrink the table.
-    pub(crate) fn write(&mut self, only_measured: bool) {
+    /// `workers`: of this run.
+    pub(crate) fn write(&mut self, only_measured: bool, workers: u32) {
+        // Only a compiled run measures growth, and only such a run says more than plain `bun test` does.
+        let workers = match self.measured_growth.count() {
+            0 => self.workers,
+            _ => workers,
+        };
         let (map, growth) = if only_measured {
             (&mut self.measured, &mut self.measured_growth)
         } else {
@@ -294,6 +318,9 @@ impl Timings {
         };
         let mut out: Vec<u8> = Vec::with_capacity((map.count() + growth.count()) * 48 + 60);
         out.extend_from_slice(b"{\n  \"version\": 1");
+        if workers != 0 {
+            let _ = write!(&mut out, ",\n  \"workers\": {workers}");
+        }
         for (name, numbers) in [("files", map), ("memory", growth)] {
             if name == "memory" && numbers.count() == 0 {
                 continue;

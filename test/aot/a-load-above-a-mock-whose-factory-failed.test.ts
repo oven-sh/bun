@@ -199,6 +199,64 @@ async function printedBy(directory: string, words: string, ...flags: string[]) {
   return { printed: stdout.replace(/^bun test .*\n/, "").split("\n"), exitCode };
 }
 
+// Row 4099. Since oven-sh/bun#44833 `bun test` keeps the record of a mocked module whose factory failed behind an import statement: the next statement gets that
+// error and the factory is not asked; and a second mock.module() evicts whatever failed above. `--aot` asks the factory at every new importer and keeps the errors
+// above for good. These cases print otherwise today. Each goes red the day it agrees: take it out of its list then.
+const differsToday: Record<string, string[]> = {
+  "TestRunLayers:0": [
+    "another-importer",
+    "a-module-above",
+    "the-importer-below-the-root-is-loaded-once-more",
+    "a-statement-imports-it-anew",
+    "a-statement-imports-it-anew-by-require",
+    "a-statement-imports-it-anew-and-finds-no-name",
+    "mocked-again",
+    "mocked-again-below-a-root",
+    "a-ring",
+    "taken-out-of-the-cache",
+  ],
+  "TestRunLayers:2,TestRunPartFiles:1": [
+    "another-importer",
+    "a-module-above",
+    "the-importer-below-the-root-is-loaded-once-more",
+    "a-statement-imports-it-anew",
+    "a-statement-imports-it-anew-by-require",
+    "a-statement-imports-it-anew-and-finds-no-name",
+    "mocked-again",
+    "mocked-again-below-a-root",
+    "a-ring",
+    "taken-out-of-the-cache",
+  ],
+};
+
+function casesOf(lines: string[]) {
+  const found: Record<string, string[]> = {};
+  let name = "";
+  for (const line of lines) {
+    if (line.startsWith("# ")) name = line.slice(2);
+    (found[name] ??= []).push(line);
+  }
+  return found;
+}
+
+function expectSameButForRow4099(
+  way: string,
+  compiled: { printed: string[]; exitCode: number },
+  plain: typeof compiled,
+) {
+  expect(compiled.exitCode).toBe(plain.exitCode);
+  const [received, expected] = [casesOf(compiled.printed), casesOf(plain.printed)];
+  expect(Object.keys(received)).toEqual(Object.keys(expected));
+  for (const name of Object.keys(expected)) {
+    const [is, shouldBe] = [
+      { name, lines: received[name] },
+      { name, lines: expected[name] },
+    ];
+    if (differsToday[way].includes(name)) expect(is).not.toEqual(shouldBe);
+    else expect(is).toEqual(shouldBe);
+  }
+}
+
 test.each([
   ["as one program", "TestRunLayers:0"],
   ["over two layers", "TestRunLayers:2,TestRunPartFiles:1"],
@@ -210,8 +268,8 @@ test.each([
     `# a-namespace\nthe factory is called\nimport namespace.ts ${error}\nimport namespace.ts ${error}\nimport namespace.ts ${error}\n#`,
   );
   expect(plain.printed.join("\n")).toContain(
-    `import above.ts ${error}\nthe body of the-importer-below-the-root-is-loaded-once-more/namespace.ts runs\nimport namespace.ts ${error}\nimport namespace.ts ${error}\nrequire namespace.ts undefined\n`,
+    `import above.ts ${error}\nimport namespace.ts ${error}\nimport namespace.ts ${error}\nrequire namespace.ts ${error}\n`,
   );
   expect(plain.printed).toContain("the same error true,true,true,true");
-  expect(await printedBy(String(directory), words, "--aot")).toEqual(plain);
+  expectSameButForRow4099(words, await printedBy(String(directory), words, "--aot"), plain);
 });

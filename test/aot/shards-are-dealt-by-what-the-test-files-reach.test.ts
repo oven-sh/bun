@@ -91,7 +91,11 @@ test("with --timings a shard that has more to build gets fewer files", async () 
   const reachesLibrary = (index: number) => index % 3 === 0;
   using dir = project(index => (reachesLibrary(index) ? ["a"] : []), {
     "lib/a.ts": library("a", 4_000_000),
-    "timings.json": JSON.stringify({ version: 1, files: Object.fromEntries(names.map(name => [name, 10])) }),
+    "timings.json": JSON.stringify({
+      version: 1,
+      workers: 2,
+      files: Object.fromEntries(names.map(name => [name, 10])),
+    }),
   });
   const flags = ["--timings=timings.json", "--parallel=2"];
   const [plain, compiled] = await Promise.all([
@@ -108,7 +112,7 @@ test("with --timings a shard that has more to build gets fewer files", async () 
 test("a file that takes long does not wait behind a long build", async () => {
   // Four files reach a large library. One reaches a small one and takes 3 s, seven reach nothing and take 2.9 s each. By the sums
   // of their times the shards are most equal with the file of 3 s behind the large library. But a shard isn't through before
-  // its longest file is, and four files run at once.
+  // its longest file is, and four files ran at once when the times were taken.
   const reachesLibrary = (index: number) => index % 3 === 0;
   const long = 1;
   const time = (index: number) => (reachesLibrary(index) ? 10 : index === long ? 3000 : 2900);
@@ -117,11 +121,17 @@ test("a file that takes long does not wait behind a long build", async () => {
     "lib/b.ts": library("b", 20_000),
     "timings.json": JSON.stringify({
       version: 1,
+      workers: 4,
       files: Object.fromEntries(names.map((name, index) => [name, time(index)])),
     }),
   });
   const compiled = await deal(String(dir), 2, "--aot", "--timings=timings.json", "--parallel=4");
   expect(compiled.flat().sort()).toEqual(names);
+  // Each machine deals for itself, and `--parallel=$(nproc)` is another number on another machine. A file that one gives to the
+  // other's shard, and the other to the first's, would run on neither, and both would report success.
+  for (const flags of [[], ["--parallel=1"], ["--parallel=8"], ["--parallel=16"], ["--parallel"]]) {
+    expect(await deal(String(dir), 2, "--aot", "--timings=timings.json", ...flags)).toEqual(compiled);
+  }
   const withLong = compiled.find(files => files.includes(names[long]))!;
   expect(withLong.filter(name => reachesLibrary(names.indexOf(name)))).toEqual([]);
 }, 240_000);

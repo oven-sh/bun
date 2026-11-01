@@ -38,10 +38,13 @@ const files = [...Object.keys(product), "product/view.cjs"].flatMap(name =>
   name.startsWith("product/") ? [name.slice("product".length)] : [],
 );
 
-/** `file:position name form` of each function written below product/. */
+/**
+ * `file:position name form` of each function written below product/. A piece that the engine cuts out of functions which share it is none: whether it pays to cut one out
+ * depends on how often the rest of the program has the same piece, and a test run holds the code of bun:test too. The piece bears the position of one of its users.
+ */
 function functionsOfProduct(mapPath: string): string[] {
   const rows = readFileSync(mapPath, "latin1").split("\n");
-  const functions = rows.map(row => row.split("\t")).filter(columns => columns[0] === "F");
+  const functions = rows.map(row => row.split("\t")).filter(columns => columns[0] === "F" && columns[8] !== "outlined");
   return functions
     .flatMap(columns => {
       const file = files.find(name => (columns[10] ?? "").endsWith(name));

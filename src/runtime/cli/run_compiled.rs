@@ -1374,16 +1374,6 @@ impl TestPartKind {
     }
 }
 
-static WORKERS_THAT_WERE_TYPED: AtomicU32 = AtomicU32::new(0);
-
-pub(crate) fn note_workers_that_were_typed(count: u32) {
-    WORKERS_THAT_WERE_TYPED.store(count, Ordering::Relaxed);
-}
-
-pub(crate) fn workers_that_were_typed() -> u32 {
-    WORKERS_THAT_WERE_TYPED.load(Ordering::Relaxed)
-}
-
 struct WordsThatNameTestFiles {
     paths_and_filters: Vec<&'static [u8]>,
     lists: Vec<&'static [u8]>,

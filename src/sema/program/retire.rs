@@ -20,6 +20,8 @@ const GONE: u8 = 2;
 /// Here for good.
 const KEPT: u8 = 3;
 
+const OWN_COMMIT: u32 = 1 << 31;
+
 /// Entry in the list of all modules. A `Module` is thousands of bytes, so it's boxed in the arena of the thread that
 /// loaded it and never moved. The `UnsafeCell` lets `Files::free_tree` and this file mutate it through `&Files`.
 pub struct ModuleCell<'s> {
@@ -29,10 +31,10 @@ pub struct ModuleCell<'s> {
     /// The tasks that ran when the watch began have ended.
     is_ripe: AtomicBool,
     state: AtomicU8,
-    /// The commits to wait for: its own, or, if it has none, that of each file that refers to it.
     awaited: AtomicU32,
     /// `let_trees_go_behind` has listed it.
     is_committed: AtomicBool,
+    has_come_back: AtomicBool,
     /// The tasks that have read the module since it is watched and still run.
     readers: [AtomicU64; WORDS],
     /// Held by whoever lets the trees go or brings them back.
@@ -157,6 +159,7 @@ impl<'s> ModuleCell<'s> {
             state: AtomicU8::new(HERE),
             awaited: AtomicU32::new(0),
             is_committed: AtomicBool::new(false),
+            has_come_back: AtomicBool::new(false),
             readers: [const { AtomicU64::new(0) }; WORDS],
             set_aside: Guarded::new(None),
             #[cfg(any(test, feature = "test_support"))]
@@ -168,11 +171,20 @@ impl<'s> ModuleCell<'s> {
         std::ptr::from_ref(self).cast()
     }
 
-    /// Before `awaited` goes down: a listed file awaits its own commit and no other.
-    fn await_own_commit_no_more(&self) {
-        if self.is_committed.load(Relaxed) && self.awaited.load(Relaxed) != 0 {
+    fn await_own_commit_no_more(&self) -> bool {
+        let did = self.awaited.fetch_and(!OWN_COMMIT, SeqCst) & OWN_COMMIT != 0;
+        if did {
             AWAITED_COMMITS.fetch_sub(1, SeqCst);
         }
+        did
+    }
+
+    fn begin_watch(&self) {
+        self.unwatched.store(std::ptr::null_mut(), SeqCst);
+        let mut tasks = TASKS.lock();
+        let time = tasks.time;
+        tasks.time += 1;
+        tasks.unripe.push((time, self.erased()));
     }
 
     fn end_watch(&self) {
@@ -220,6 +232,7 @@ impl<'s> ModuleCell<'s> {
             return;
         }
         let set_aside = set_aside.expect("the trees went there");
+        self.has_come_back.store(true, SeqCst);
         #[cfg(any(test, feature = "test_support"))]
         self.times_brought_back.fetch_add(1, Relaxed);
         // SAFETY: everybody who wants to read the module waits for the lock.
@@ -251,6 +264,9 @@ impl<'s> ModuleCell<'s> {
     fn let_go(&self) {
         let mut set_aside = self.set_aside.lock();
         if self.state.load(Relaxed) != HERE {
+            return;
+        }
+        if self.has_come_back.load(SeqCst) && self.awaited.load(SeqCst) != 0 {
             return;
         }
         self.state.store(LEAVING, SeqCst);
@@ -435,12 +451,12 @@ impl<'s> Module<'s> {
 }
 
 impl Files<'_> {
-    fn for_each_awaiting(&self, file: FileId, each: &mut dyn FnMut(&ModuleCell<'_>)) {
+    fn for_each_file_referred_to(&self, file: FileId, each: &mut dyn FnMut(&ModuleCell<'_>)) {
+        let _reading = ReadingNoTrees::begin();
         let module = &self.modules[file.idx()];
-        each(module);
         for &read in module.edges.iter().chain(module.code_edges) {
             let read = &self.modules[read.idx()];
-            if !read.is_committed.load(Relaxed) {
+            if !std::ptr::eq(read, module) {
                 each(read);
             }
         }
@@ -450,25 +466,33 @@ impl Files<'_> {
     /// file once the files that refer to it are. No task runs.
     pub fn let_trees_go_behind(&self, files: &[FileId]) {
         for &file in files {
-            self.modules[file.idx()].is_committed.store(true, Relaxed);
+            let module = &self.modules[file.idx()];
+            module.is_committed.store(true, Relaxed);
+            module.awaited.fetch_or(OWN_COMMIT, Relaxed);
         }
         AWAITED_COMMITS.fetch_add(files.len(), SeqCst);
         for &file in files {
-            self.for_each_awaiting(file, &mut |module| {
-                module.awaited.fetch_add(1, Relaxed);
+            self.for_each_file_referred_to(file, &mut |read| {
+                read.awaited.fetch_add(1, Relaxed);
             });
         }
     }
 
     pub fn note_commit(&self, file: FileId) {
-        self.modules[file.idx()].await_own_commit_no_more();
-        self.for_each_awaiting(file, &mut |module| {
-            if module.awaited.load(Relaxed) != 0 && module.awaited.fetch_sub(1, SeqCst) == 1 {
-                module.unwatched.store(std::ptr::null_mut(), SeqCst);
-                let mut tasks = TASKS.lock();
-                let time = tasks.time;
-                tasks.time += 1;
-                tasks.unripe.push((time, module.erased()));
+        let module = &self.modules[file.idx()];
+        if module.await_own_commit_no_more() {
+            module.begin_watch();
+        }
+        let is_more_to_lower = AWAITED_COMMITS.load(SeqCst) != 0;
+        self.for_each_file_referred_to(file, &mut |read| {
+            let is_awaited = read.awaited.load(Relaxed) & !OWN_COMMIT != 0;
+            if !is_awaited || read.awaited.fetch_sub(1, SeqCst) != 1 {
+                return;
+            }
+            if !read.is_committed.load(Relaxed) {
+                read.begin_watch();
+            } else if is_more_to_lower && read.is_ripe.load(SeqCst) {
+                read.let_go();
             }
         });
     }
@@ -515,6 +539,7 @@ impl Files<'_> {
             cell.await_own_commit_no_more();
             cell.awaited.store(0, Relaxed);
             cell.is_committed.store(false, Relaxed);
+            cell.has_come_back.store(false, Relaxed);
             let _lock = cell.set_aside.lock();
             if cell.state.load(SeqCst) == HERE {
                 cell.state.store(KEPT, SeqCst);

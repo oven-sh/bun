@@ -1,7 +1,7 @@
 use bun_jsc::JSValue;
 use bun_jsc::virtual_machine::VirtualMachine;
 
-use super::{Kind, TimerObjectInternals};
+use super::{Clock, Kind, TimerObjectInternals};
 
 // `Immediate`, declared in `Timer.bind.ts`.
 super::impl_timer_object!(ImmediateObject);
@@ -12,8 +12,9 @@ impl ImmediateObject {
         id: u64,
         callback: JSValue,
         arguments: JSValue,
+        clock: Clock,
     ) -> JSValue {
-        Self::init_with(cx, id, Kind::SetImmediate, 0, callback, arguments)
+        Self::init_with(cx, id, Kind::SetImmediate, 0, callback, arguments, clock)
     }
 
     /// Thin forwarder to

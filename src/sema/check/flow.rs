@@ -155,6 +155,7 @@ pub(super) struct FlowMemo {
     first_narrowing_node: Vec<u32>,
     in_call_statements: Vec<u64>,
     call_statements_by_symbol: Vec<(SymbolId, FlowId)>,
+    idle_call_statements_in_front: Vec<u32>,
     /// Indexed by flow node: an upper bound on the node numbers reachable through its antecedents.
     /// (Only the back edge of a loop leads to a higher one.)
     max_antecedent: Vec<u32>,
@@ -5550,6 +5551,9 @@ impl<'p, 's> Checker<'p, 's> {
         call_statements_by_symbol.shared_sort_unstable_by_key(|&(symbol, flow)| (symbol.0, flow.0));
         let memo = &mut self.flow_memo;
         memo.narrowing_index_file = Some(file);
+        memo.idle_call_statements_in_front.clear();
+        memo.idle_call_statements_in_front
+            .resize(call_statements_by_symbol.len() + 1, 0);
         (
             memo.first_narrowing_node,
             memo.in_call_statements,
@@ -5786,26 +5790,30 @@ impl<'p, 's> Checker<'p, 's> {
     /// in progress, and tsgo resolves it when a walk reaches it.
     #[inline(never)]
     fn are_call_statements_idle(&mut self, file: FileId, s: SymbolId, highest: u32) -> bool {
-        let memo = &self.flow_memo;
+        let memo = &mut self.flow_memo;
         let from = memo
             .call_statements_by_symbol
             .partition_point(|about| about.0.0 < s.0);
-        let calls = memo.call_statements_by_symbol[from..]
-            .iter()
-            .take_while(|about| about.0 == s);
-        let mut is_all = true;
-        for &(_, flow) in calls {
-            if !memo.is_idle_call(file, flow) {
-                if flow.0 <= highest {
-                    return false;
+        let mut next = from + memo.idle_call_statements_in_front[from] as usize;
+        let first_busy = loop {
+            match memo.call_statements_by_symbol.get(next) {
+                Some(&(symbol, flow)) if symbol == s => {
+                    if !memo.is_idle_call(file, flow) {
+                        break Some(flow);
+                    }
+                    next += 1;
                 }
-                is_all = false;
+                _ => break None,
+            }
+        };
+        memo.idle_call_statements_in_front[from] = (next - from) as u32;
+        match first_busy {
+            Some(flow) => flow.0 > highest,
+            None => {
+                memo.in_call_statements[s.idx() / 64] &= !(1 << (s.idx() % 64));
+                true
             }
         }
-        if is_all {
-            self.flow_memo.in_call_statements[s.idx() / 64] &= !(1 << (s.idx() % 64));
-        }
-        true
     }
 
     /// Not in tsgo. True if the walk for `reference` (the expression `e`), which passes no node
@@ -8991,6 +8999,7 @@ impl<'p, 's> Checker<'p, 's> {
             memo.settled_calls_of = Some(file);
             memo.settled_calls.clear();
             memo.settled_calls.resize(words, (0, 0));
+            memo.idle_call_statements_in_front.fill(0);
             memo.idle_runs.clear();
             memo.runs.file = None;
         }

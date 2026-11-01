@@ -154,6 +154,8 @@ pub struct AotOptions {
     pub checks_only: bool,
     /// `bun test --aot`: `@jest/globals` and `vitest` are `bun:test`, as in `bun test`.
     pub runs_tests: bool,
+    /// `bun test --globals=vitest`.
+    pub has_globals_of_vitest: bool,
     /// `bun test --aot --coverage`: the files that the report is about count how often their parts run.
     pub counts_executions: bool,
     /// `--watch` starts to watch each file here.
@@ -444,6 +446,7 @@ impl Default for AotOptions {
             missing_tsconfig_override: None,
             checks_only: false,
             runs_tests: false,
+            has_globals_of_vitest: false,
             counts_executions: false,
             before_read: None,
             test_run_part_files: None,
@@ -596,6 +599,7 @@ mod tests {
             missing_tsconfig_override,
             checks_only,
             runs_tests,
+            has_globals_of_vitest,
             counts_executions,
             before_read,
             test_run_part_files,
@@ -653,6 +657,7 @@ mod tests {
         assert!(missing_tsconfig_override.is_none());
         assert!(!checks_only);
         assert!(!runs_tests);
+        assert!(!has_globals_of_vitest);
         assert!(!counts_executions);
         assert!(before_read.is_none());
         assert!(test_run_part_files.is_none());

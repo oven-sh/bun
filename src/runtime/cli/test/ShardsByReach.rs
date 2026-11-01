@@ -4,8 +4,9 @@
 //! the files that reach a part of the project are spread over all shards, and every shard builds nearly all of it: the tests are
 //! divided by the number of shards and the build by nothing. So the files that reach the same go into the same shard.
 //!
-//! Every machine deals for itself, so the deal hangs on the files, their sizes and the recorded times alone: whole numbers, and
-//! where two are equal the file that comes first.
+//! Every machine deals for itself, so the deal hangs on what all of them have alike and on nothing else: the files, their sizes and
+//! the table of recorded times. Not on the machine, and not on a flag that may be written otherwise from one to the next, as
+//! `--parallel` is. Whole numbers, and where two are equal the file that comes first.
 
 /// What the test files of all shards reach.
 pub(crate) struct Reach<'a> {
@@ -309,19 +310,39 @@ pub(crate) fn deal(
     let shortest = dealer.cost(dealer.tails.core_bytes, least);
     let mut too_short = shortest.saturating_sub(1);
     let mut reached = best.longest;
-    if let Some(shard_of) = dealer.deal_within(reached) {
-        keep_if_better(&mut best, dealer.weigh(shard_of));
-        reached = best.longest;
-    }
-    while reached.saturating_sub(too_short) > 1 + reached / 256 {
-        let limit = too_short + (reached - too_short) / 2;
-        match dealer.deal_within(limit) {
-            Some(shard_of) => {
-                keep_if_better(&mut best, dealer.weigh(shard_of));
-                reached = limit.min(best.longest);
-            }
-            None => too_short = limit,
+    // So many limits are tried at once, each by itself, and the lowest that has a deal counts: which thread is through first has
+    // no say. The first time, the length of the other deal is among them: a deal as long with less to build is the better one.
+    const LIMITS_AT_ONCE: u64 = 15;
+    let mut tries_what_is_reached = true;
+    while tries_what_is_reached || reached.saturating_sub(too_short) > 1 + reached / 256 {
+        let step = (reached.saturating_sub(too_short) / (LIMITS_AT_ONCE + 1)).max(1);
+        let mut limits: Vec<u64> = (1..=LIMITS_AT_ONCE)
+            .map(|nth| too_short + nth * step)
+            .take_while(|&limit| limit < reached)
+            .collect();
+        if core::mem::take(&mut tries_what_is_reached) {
+            limits.push(reached);
         }
+        let mut found: Vec<Option<Vec<u32>>> = std::thread::scope(|scope| {
+            let dealer = &dealer;
+            let mut tries = Vec::with_capacity(limits.len());
+            for &limit in &limits {
+                tries.push(scope.spawn(move || dealer.deal_within(limit)));
+            }
+            (tries.into_iter())
+                .map(|it| it.join().expect("dealing does not panic"))
+                .collect()
+        });
+        let Some(at) = found.iter().position(Option::is_some) else {
+            too_short = limits.last().copied().unwrap_or(reached);
+            continue;
+        };
+        if at > 0 {
+            too_short = limits[at - 1];
+        }
+        let shard_of = found[at].take().expect("found above");
+        keep_if_better(&mut best, dealer.weigh(shard_of));
+        reached = limits[at].min(best.longest);
     }
     best
 }

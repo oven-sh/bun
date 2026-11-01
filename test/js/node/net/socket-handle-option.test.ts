@@ -1,11 +1,12 @@
 import { expect, test } from "bun:test";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { once } from "node:events";
 import { createServer, Socket, type AddressInfo } from "node:net";
 import { getSystemErrorMap } from "node:util";
 
 // net.Socket over a handle with Node's LibuvStreamWrap surface: readStart() and
 // readStop() answer a libuv errno, reads arrive through onread(nread, buffer),
-// and writeBuffer(null, data) answers a number for a write that is complete.
+// and writeBuffer(null, data) answers 0 or a negative libuv errno for a write that is complete.
 // The native handle with this surface is tty_wrap.TTY. This handle is a mock,
 // so these run on every platform.
 const UV_EOF = -4095;
@@ -19,7 +20,9 @@ function mockHandle(overrides: Record<string, unknown> = {}) {
     written,
     bytesRead: 0,
     bytesWritten: 0,
+    writeQueueSize: 0,
     onread: undefined as undefined | ((nread: number, buffer?: Buffer) => void),
+    onwritecomplete: undefined as undefined | ((status: number) => void),
     readStart() {
       calls.readStart++;
       return 0;
@@ -271,32 +274,27 @@ test("a write goes to writeBuffer(null, data), and the number that it answers co
   });
 });
 
-// Node hands a corked batch to the handle in one writev() call. Here it is one writeBuffer() call.
-// What the native handle does for a write that its descriptor does not take whole: it answers no number,
-// and calls oncomplete(status, context) from the loop once the rest is out, or cancelled, or failed.
+// What the native handle does for a write that its descriptor does not take whole: it answers 1, and calls its
+// onwritecomplete(status) from the loop once the rest is out, or cancelled, or failed. Node answers a WriteWrap
+// there, and calls the oncomplete(status) of that.
 function handleThatFinishesLater() {
   const later: ((status: number) => void)[] = [];
   const handle = mockHandle({
-    writeBuffer(
-      req: unknown,
-      data: Uint8Array,
-      oncomplete: (this: unknown, status: number, context: unknown) => void,
-      context: unknown,
-    ) {
+    writeBuffer(req: unknown, data: Uint8Array) {
       handle.written.push([req, Buffer.from(data).toString()]);
       handle.bytesWritten += data.length;
-      later.push(status => oncomplete.call(handle, status, context));
-      return undefined;
+      later.push(status => handle.onwritecomplete!.call(handle, status));
+      return 1;
     },
   });
   return { handle, later };
 }
+const codeOf = (err?: Error | null) => (err ? (err as NodeJS.ErrnoException).code : null);
 
 test("a write that the handle finishes later completes when the handle says so", async () => {
   const { handle, later } = handleThatFinishesLater();
   const socket = new Socket({ handle, manualStart: true } as never);
   const order: string[] = [];
-  const codeOf = (err?: Error | null) => (err ? (err as NodeJS.ErrnoException).code : null);
   socket.write("one", err => order.push("one " + codeOf(err)));
   socket.write("two", err => order.push("two " + codeOf(err)));
   // The second write waits in the stream behind the first.
@@ -341,6 +339,87 @@ test("a write that the close of the handle cancels tells its callback and emits 
   expect(events).toEqual(["callback ECANCELED"]);
 });
 
+// Node's WriteWrap is an AsyncResource that the write creates. So the callback continues the context of its write,
+// wherever the handle is when it says that the write is complete or cancelled.
+test("the callback of a write that the handle finishes later runs in the async context of the write", () => {
+  const { handle, later } = handleThatFinishesLater();
+  const storage = new AsyncLocalStorage<string>();
+  const stores: string[] = [];
+  const record = (name: string) => (err?: Error | null) => stores.push(`${name} ${codeOf(err)} ${storage.getStore()}`);
+
+  const inStore = new Socket({ handle, manualStart: true } as never);
+  storage.run("of the write", () => inStore.write("one", record("complete")));
+  storage.run("of the handle", () => later.shift()!(0));
+  storage.run("of the write", () => inStore.write("two", record("cancelled")));
+  storage.run("of the destroy", () => {
+    inStore.destroy();
+    later.shift()!(uvErrno("ECANCELED"));
+  });
+
+  const outside = new Socket({ handle, manualStart: true } as never);
+  outside.write("three", record("outside"));
+  storage.run("of the handle", () => later.shift()!(0));
+  outside.destroy();
+
+  expect(stores).toEqual([
+    "complete null of the write",
+    "cancelled ECANCELED of the write",
+    "outside null undefined",
+  ]);
+});
+
+// Node keeps the callback in the request of each write, so two streams over one handle do not take each other's.
+test("the handle completes the writes of two sockets in the order of the writes", () => {
+  const { handle, later } = handleThatFinishesLater();
+  const first = new Socket({ handle, manualStart: true } as never);
+  const second = new Socket({ handle, manualStart: true } as never);
+  const order: string[] = [];
+  first.write("one", err => order.push("first " + codeOf(err)));
+  second.write("two", err => order.push("second " + codeOf(err)));
+  expect(handle.written).toEqual([
+    [null, "one"],
+    [null, "two"],
+  ]);
+  later.shift()!(0);
+  expect(order).toEqual(["first null"]);
+  later.shift()!(0);
+  expect(order).toEqual(["first null", "second null"]);
+  first.destroy();
+  second.destroy();
+});
+
+// https://github.com/nodejs/node/blob/v26.12.1/lib/net.js#L872-L887
+test("'timeout' waits while the write queue of the handle moves", () => {
+  const { handle, later } = handleThatFinishesLater();
+  const socket = new Socket({ handle, manualStart: true } as never) as Socket & { _onTimeout(): void };
+  const timeouts: string[] = [];
+  socket.on("timeout", () => timeouts.push("timeout"));
+
+  socket.write("hello");
+  handle.writeQueueSize = 3;
+  socket._onTimeout();
+  timeouts.push("the queue moved");
+  socket._onTimeout();
+  timeouts.push("the queue stood still");
+  handle.writeQueueSize = 0;
+  later.shift()!(0);
+  socket._onTimeout();
+  timeouts.push("the write is complete");
+
+  expect(timeouts).toEqual(["the queue moved", "timeout", "the queue stood still", "timeout", "the write is complete"]);
+  socket.destroy();
+});
+
+// Only 1 says that the handle finishes the write later. Node throws a TypeError for an answer that is no number and no request.
+test("a write is complete when writeBuffer() answers nothing", async () => {
+  const handle = mockHandle({ writeBuffer() {} });
+  const socket = new Socket({ handle, manualStart: true } as never);
+  const err = await new Promise<Error | null | undefined>(resolve => socket.write("one", resolve));
+  expect({ err, writableLength: socket.writableLength }).toEqual({ err: null, writableLength: 0 });
+  socket.destroy();
+});
+
+// Node hands a corked batch to the handle in one writev() call. Here it is one writeBuffer() call.
 test("a corked batch is one write, and every callback of it runs", async () => {
   const handle = mockHandle();
   const socket = new Socket({ handle, manualStart: true } as never);

@@ -11,6 +11,7 @@ export const TTY = b.class({
   rustPath: "crate::node::tty_wrap::TTY",
   refCounted: true,
   finalize: true,
+  memoryCost: true,
   /** `ctx` gets `errno`, `code`, `syscall` and `message` where `uv_tty_init` would have failed. */
   construct: {
     passStructure: true,
@@ -26,31 +27,13 @@ export const TTY = b.class({
       ],
     },
   },
-  internalFields: ["onread"],
+  internalFields: ["onread", "onwritecomplete"],
   proto: {
     /** 0, or a negative libuv errno. `onread(nread, buffer)` gets what is read. */
     readStart: { returns: b.i32, capability: "js" },
     readStop: { returns: b.i32, capability: "js" },
-    /** Node's `writeBuffer(req, data)`: `req` is null. A number says that the write is complete: 0, or a negative libuv errno. `undefined` says that the rest goes out from the loop: `oncomplete(status, context)` runs then, with the handle as `this`. */
-    writeBuffer: {
-      args: { req: b.any, data: b.bytes({ from: ["buffer"] }), oncomplete: b.any, context: b.any },
-      returns: b.i32.optional,
-      length: 2,
-      capability: "heap",
-      uses: {
-        oncomplete: [
-          table.retained,
-          table.called({
-            afterwards: "TouchesOnlyWhatRowNames",
-            times: "Later",
-            this: table.operand("this"),
-            args: [table.i32, table.operand("context")],
-            result: "Ignored",
-          }),
-        ],
-        context: table.handedOver,
-      },
-    },
+    /** Node's `writeBuffer(req, data)`, with null for `req`. 0: the write is complete. Negative: a libuv errno. 1: the rest goes out from the loop, and the handle then calls `onwritecomplete(status)`. Node answers a `WriteWrap` there and calls its `oncomplete(status)`: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/stream_base_commons.js#L129-L152 */
+    writeBuffer: { args: { req: b.any, data: b.bytes({ from: ["buffer"] }) }, returns: b.i32 },
     /** `mode` is a `uv_tty_mode_t`. 0, or a negative libuv errno. */
     setRawMode: { args: { mode: b.i32.wrap }, returns: b.i32 },
     /** Fills `size` with [columns, rows]. 0, or a negative libuv errno. */
@@ -66,7 +49,7 @@ export const TTY = b.class({
     hasRef: { returns: b.bool },
     /** 0: Bun has no async ids. */
     getAsyncId: { returns: b.f64 },
-    /** libuv's `uv_stream_set_blocking()`: with `true` every write is complete when `writeBuffer()` returns. 0, or a negative libuv errno. */
+    /** How the writes of this handle complete: with `true` each is complete when `writeBuffer()` returns. It changes `O_NONBLOCK` of a descriptor that the handle opened, never of the one that `fd` answers, which libuv's `uv_stream_set_blocking()` changes. 0, or a negative libuv errno. */
     setBlocking: { args: { enable: b.any }, returns: b.i32 },
     /** Node's `HandleWrap::Close`: `callback` runs once, from the loop, with the handle as `this`. A handle that is closed already takes none. */
     close: {
@@ -90,8 +73,12 @@ export const TTY = b.class({
     },
     /** `onread(nread, buffer)`. It continues the async context that set it, as Node's `MakeCallback` continues the handle's. */
     onread: { getter: b.any, setter: { capability: "js" }, passThis: true },
+    /** `onwritecomplete(status)`, with the handle as `this`: once for each `writeBuffer()` that answered 1, in the order of the calls. `status` is 0 or a negative libuv errno. */
+    onwritecomplete: { setter: true, internalField: "onwritecomplete" },
     bytesRead: { getter: b.f64 },
     bytesWritten: { getter: b.f64 },
+    /** libuv's `write_queue_size`: the bytes that wait for the loop. */
+    writeQueueSize: { getter: b.u32 },
     fd: { getter: b.i32 },
   },
 });

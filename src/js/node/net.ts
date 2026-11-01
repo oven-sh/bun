@@ -183,13 +183,13 @@ declare global {
       /** 0, or a negative libuv errno. */
       readStart(): number;
       readStop(): number;
-      /** Node's `writeBuffer(req, data)`. A number answers a write that is complete: 0, or a negative libuv errno. `undefined`: the handle finishes the write from the loop and then calls `oncomplete(status, context)`. */
-      writeBuffer<Context>(
-        req: null,
-        data: Uint8Array,
-        oncomplete?: (this: StreamWrapHandle, status: number, context: Context) => void,
-        context?: Context,
-      ): number | undefined;
+      /** Node's `writeBuffer(req, data)`. 0: the write is complete. Negative: a libuv errno. 1: the handle finishes the write from the loop and then calls `onwritecomplete(status)`, where Node answers a `WriteWrap` and calls its `oncomplete(status)`. */
+      writeBuffer(req: null, data: Uint8Array): number;
+      /** Called once for each `writeBuffer()` that answered 1, in the order of the calls. */
+      onwritecomplete?: (this: StreamWrapHandle, status: number) => void;
+      /** libuv's `write_queue_size`: the bytes that wait for the loop. */
+      readonly writeQueueSize?: number;
+      [kWriteReqs]?: { callback: WriteCallback; frame: unknown }[];
       /** `mode` is a `uv_tty_mode_t`. 0, or a negative libuv errno. */
       setRawMode(mode: number): number;
       /** Fills `size` with [columns, rows]. 0, or a negative libuv errno. */
@@ -315,6 +315,7 @@ declare global {
       [kclosed]: boolean;
       [kended]: boolean;
       [kwriteCallback]: WriteCallback | null | undefined;
+      [kLastWriteQueueSize]?: number;
       [kRejectedWrite]?: Error;
       [ksocket]: Socket | undefined;
       [kSyncWriteFd]?: number;
@@ -1418,12 +1419,27 @@ function onStreamRead(this: $Node.StreamWrapHandle, nread: number, buffer?: Buff
   }
   if (!deferEndForOnreadTail(self)) finishSocketEnd(self);
 }
-// Node's onWriteComplete, for a write that the handle finished from the loop. https://github.com/nodejs/node/blob/v26.12.1/lib/internal/stream_base_commons.js#L45-L70
-function onStreamWriteComplete(this: $Node.StreamWrapHandle, status: number, callback: WriteCallback) {
-  if (status < 0) return callback(new ErrnoException(status, "write"));
-  const self: $Node.Socket | undefined = this[owner_symbol];
-  if (self && !self.destroyed) self._unrefTimer();
-  callback(null);
+// What writeBuffer() of a stream-wrap handle answers for a write that it finishes from the loop.
+const kStreamWritePending = 1;
+// The writes of a stream-wrap handle that wait for the loop, oldest first, on the handle: { callback, frame }. Node keeps the two in the WriteWrap of each write.
+const kWriteReqs = Symbol("kWriteReqs");
+// Socket.prototype._onTimeout reads it, as in Node: the size of the write that waits, then what the handle had queued at the last timeout.
+const kLastWriteQueueSize = Symbol("kLastWriteQueueSize");
+// After Node's onWriteComplete: the handle calls it with a status alone, and the stream callback and its async context come from kWriteReqs. https://github.com/nodejs/node/blob/v26.12.1/lib/internal/stream_base_commons.js#L45-L70
+function onStreamWriteComplete(this: $Node.StreamWrapHandle, status: number) {
+  const req = this[kWriteReqs]?.shift();
+  if (!req) return;
+  let err: Error | null = null;
+  if (status < 0) {
+    err = new ErrnoException(status, "write");
+  } else {
+    const self: $Node.Socket | undefined = this[owner_symbol];
+    if (self && !self.destroyed) {
+      self._unrefTimer();
+      self[kLastWriteQueueSize] = 0;
+    }
+  }
+  require("internal/async_context_frame").run(req.frame, req.callback, undefined, err);
 }
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L191-L198; a stopped handle does not hold the loop, a pending write still does.
 function readStop(self: $Node.Socket, handle: SocketHandle | null) {
@@ -2710,6 +2726,16 @@ Socket.prototype._onTimeout = function (this: $Node.Socket) {
   }
 
   const handle = this._handle;
+  // A write queue of a stream-wrap handle that moved since the last timeout is still going out. https://github.com/nodejs/node/blob/v26.12.1/lib/net.js#L872-L887
+  const lastWriteQueueSize = this[kLastWriteQueueSize];
+  if (lastWriteQueueSize && handle) {
+    const { writeQueueSize } = handle as $Node.StreamWrapHandle;
+    if (lastWriteQueueSize !== writeQueueSize) {
+      this[kLastWriteQueueSize] = writeQueueSize;
+      this._unrefTimer();
+      return;
+    }
+  }
   // if there is a handle, and it has pending data,
   // we suppress the timeout because a write is in progress
   if (handle && getBufferedAmount(handle) > 0) {
@@ -3597,12 +3623,22 @@ Socket.prototype._write = function _write(
     callback(er);
     return false;
   }
-  // A stream-wrap handle takes no request. A number from writeBuffer() completes the write here: 0, or a negative libuv errno. Anything else: the handle finishes it from the loop and calls onStreamWriteComplete. https://github.com/nodejs/node/blob/v26.12.1/lib/internal/stream_base_commons.js#L93-L143
+  // After Node's writeGeneric and afterWriteDispatched: 0 or a negative libuv errno from writeBuffer() completes the write here. For 1 the handle finishes it from the loop and calls onStreamWriteComplete, where Node gets a WriteWrap. https://github.com/nodejs/node/blob/v26.12.1/lib/internal/stream_base_commons.js#L93-L152
   if (isStreamWrapHandle(socket)) {
     const data = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
-    const err = socket.writeBuffer(null, data, onStreamWriteComplete, callback);
+    const err = socket.writeBuffer(null, data);
     this[kBytesWritten] = socket.bytesWritten;
-    if (typeof err === "number") callback(err ? new ErrnoException(err, "write") : null);
+    if (err !== kStreamWritePending) {
+      callback(err ? new ErrnoException(err, "write") : null);
+      return;
+    }
+    // Node's WriteWrap is an AsyncResource that the write creates.
+    const req = { callback, frame: require("internal/async_context_frame").current() };
+    const reqs = socket[kWriteReqs];
+    if (reqs) reqs.push(req);
+    else socket[kWriteReqs] = [req];
+    socket.onwritecomplete = onStreamWriteComplete;
+    this[kLastWriteQueueSize] = data.byteLength;
     return;
   }
   const res = socket.$write(chunk, encoding);

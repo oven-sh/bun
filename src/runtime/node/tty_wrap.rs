@@ -14,7 +14,7 @@ use bun_io::pipe_reader::PosixFlags;
 #[cfg(unix)]
 use bun_io::posix_event_loop::{FilePoll, Flags as PollFlag, Owner, PollTag};
 use bun_io::{BufferedReader, ReadState};
-use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope, JsStructure, JsWrapper};
+use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
 use bun_jsc::{
     self as jsc, EventLoopHandle, JSGlobalObject, JSValue, JsCell, JsRef, JsResult,
     MarkedArrayBuffer, StringJsc as _,
@@ -28,6 +28,18 @@ bun_output::declare_scope!(TTYWrap, hidden);
 pub(crate) use crate::generated_bindgen::tty_wrap::js_TTY as js;
 
 const UV_EOF: i32 = -4095;
+
+/// What `writeBuffer()` answers for a write that the loop finishes. A libuv status is 0 or negative.
+#[cfg(unix)]
+const WRITE_PENDING: i32 = 1;
+
+/// What the loop answers for a kind of descriptor that it cannot poll: `EPERM` from `epoll_ctl`, `EINVAL` from `kevent`.
+#[cfg(unix)]
+const UNPOLLABLE_KIND: sys::E = if cfg!(any(target_os = "linux", target_os = "android")) {
+    sys::E::EPERM
+} else {
+    sys::E::EINVAL
+};
 
 unsafe extern "C" {
     safe fn Bun__ttyGetWindowSize(fd: i32, width: *mut usize, height: *mut usize) -> i32;
@@ -50,17 +62,17 @@ bitflags::bitflags! {
         const FINALIZED      = 1 << 5;
         /// The loop refused to poll the fd (kqueue on the macOS `/dev/tty` alias): `readStart()` reports `ENOTSUP`, everything else works.
         const UNPOLLABLE     = 1 << 6;
-        /// `close()` closes `fd` too: libuv owns a non-stdio fd it could not reopen.
+        /// `close()` closes `fd` too: libuv owns a non-stdio fd it could not reopen. Off once a descriptor of the handle has taken that number, which the caller had closed.
         const OWNS_FD        = 1 << 7;
         /// Inside `with_reader`: a done/error the reader reports is parked.
         const IN_READER      = 1 << 8;
         /// `uv_tty_init` refused the fd: the handle was never open.
         const INIT_FAILED    = 1 << 9;
-        /// libuv's `UV_HANDLE_READABLE`: the caller's fd is open for reading.
+        /// libuv's `UV_HANDLE_READABLE`: on POSIX the caller's fd is open for reading. On Windows both are set, and the console refuses what it cannot do.
         const READABLE       = 1 << 10;
-        /// libuv's `UV_HANDLE_WRITABLE`: the caller's fd is open for writing.
+        /// libuv's `UV_HANDLE_WRITABLE`: on POSIX the caller's fd is open for writing.
         const WRITABLE       = 1 << 11;
-        /// libuv's `UV_HANDLE_BLOCKING_WRITES`: a write waits in place. A tty that could not be reopened (a pty master, a terminal without a name to open), a blocking description that the handle shares with the caller, or one that the loop cannot poll.
+        /// libuv's `UV_HANDLE_BLOCKING_WRITES`: a write waits in place. Set for a tty that the handle could not reopen (a pty master, a terminal without a name to open), and for a descriptor that the loop cannot poll. Off Linux also for every description that is not a reopened tty.
         const BLOCKING_WRITES = 1 << 12;
         /// `setBlocking(true)`: a write waits in place until `setBlocking(false)`.
         const BLOCKING_ASKED = 1 << 13;
@@ -69,27 +81,26 @@ bitflags::bitflags! {
     }
 }
 
-/// One `writeBuffer()` that the descriptor did not take whole.
-#[cfg(unix)]
-struct PendingWrite {
-    /// How many of the queued bytes are of this write.
-    len: usize,
-    /// `oncomplete(status, context)`, in the async context of the write.
-    oncomplete: Option<jsc::Strong>,
-    context: Option<jsc::Strong>,
-}
-
 /// What the descriptor refused, in call order, and the poll that says when it takes more.
 #[cfg(unix)]
 #[derive(Default)]
 struct WriteQueue {
-    bytes: Vec<u8>,
-    /// `bytes[..head]` is written.
-    head: usize,
-    pending: VecDeque<PendingWrite>,
+    bytes: bun_io::StreamBuffer,
+    /// How many of the bytes each `writeBuffer()` that waits still has, oldest first.
+    pending: VecDeque<usize>,
     /// A dup of `own_fd` for the poll alone: the reader's poll has the number of `own_fd`, and epoll keys on the number.
     poll_fd: Option<Fd>,
     poll: Option<NonNull<FilePoll>>,
+}
+
+/// What the loop answered when the handle asked it to say when the descriptor takes more.
+#[cfg(unix)]
+enum WritePoll {
+    Armed,
+    /// The loop cannot poll this kind of descriptor: its writes wait in place from here on.
+    Unpollable,
+    /// A negative libuv errno: the write fails with it.
+    Failed(i32),
 }
 
 #[derive(bun_ptr::RefCounted)]
@@ -106,7 +117,7 @@ pub(crate) struct TTY {
     reader: JsCell<BufferedReader>,
     event_loop_handle: EventLoopHandle,
     global_this: bun_ptr::BackRef<JSGlobalObject>,
-    /// Strong while reading, while a write is queued, and while the handle holds the snapshot of the process: `close()` or the end of the context puts the terminal back, not the collector. On Windows strong until `close()`: there the reader's handle is the caller's fd.
+    /// Strong while reading, until the last queued write is told, and while the handle holds the snapshot of the process: `close()` or the end of the context puts the terminal back, not the collector. On Windows strong until `close()`: there the reader's handle is the caller's fd.
     this_value: JsCell<JsRef>,
     bytes_read: Cell<u64>,
     bytes_written: Cell<u64>,
@@ -231,7 +242,6 @@ fn write_until_refused(fd: Fd, mut rest: &[u8]) -> Result<&[u8], i32> {
         match sys::write(fd, rest) {
             Ok(0) => return Err(uv_errno(sys::E::EIO as u16)),
             Ok(n) => rest = &rest[n..],
-            Err(err) if err.get_errno() == sys::E::EINTR => {}
             Err(err) if err.get_errno() == sys::E::EAGAIN => break,
             Err(err) => return Err(uv_errno(err.errno)),
         }
@@ -240,28 +250,11 @@ fn write_until_refused(fd: Fd, mut rest: &[u8]) -> Result<&[u8], i32> {
 }
 
 /// Writes all of `rest` before it returns, as a libuv stream with blocking writes does. 0, or a negative libuv errno.
-fn write_in_place(fd: Fd, mut rest: &[u8]) -> i32 {
-    while !rest.is_empty() {
-        match sys::write(fd, rest) {
-            Ok(0) => return uv_errno(sys::E::EIO as u16),
-            Ok(n) => rest = &rest[n..],
-            Err(err) if err.get_errno() == sys::E::EINTR => {}
-            // A nonblocking fd that is full (a pty master whose other side is slow to read) is waited for.
-            #[cfg(unix)]
-            Err(err) if err.get_errno() == sys::E::EAGAIN => {
-                let mut pfd = [sys::posix::PollFd {
-                    fd: fd.native(),
-                    events: sys::posix::POLL_OUT,
-                    revents: 0,
-                }];
-                if let Err(err) = sys::posix::poll(&mut pfd, -1) {
-                    return uv_errno(err.errno);
-                }
-            }
-            Err(err) => return uv_errno(err.errno),
-        }
+fn write_in_place(fd: Fd, rest: &[u8]) -> i32 {
+    match sys::write_all_waiting(fd, rest) {
+        Ok(()) => 0,
+        Err(err) => uv_errno(err.errno),
     }
-    0
 }
 
 impl TTY {
@@ -403,8 +396,24 @@ impl TTY {
 
     /// What `uv_tty_init` does with the fd: the handle gets a descriptor of its own, and the reader starts on it, paused. On success the reader holds a ref.
     fn start_reader(&self, is_tty: bool) -> Result<(), StartError> {
+        #[cfg(windows)]
+        {
+            let _ = is_tty;
+            self.own_fd.set(self.fd);
+            self.update_flags(|f| f.insert(Flags::READABLE | Flags::WRITABLE));
+            // No read before `readStart()`: libuv cancels a pending console read by typing an Enter.
+            if let Err(err) = self.with_reader(|r| r.open(self.fd)) {
+                self.own_fd.set(Fd::INVALID);
+                return Err(StartError::Sys(err));
+            }
+            if self.flags.get().contains(Flags::READER_DONE) {
+                self.with_reader(|r| r.close());
+                self.own_fd.set(Fd::INVALID);
+                return Err(StartError::Unpollable);
+            }
+        }
         #[cfg(unix)]
-        let nonblocking = {
+        {
             // The access mode for the reopen, and whether a description that the handle shares is nonblocking.
             let caller_flags = sys::get_fcntl_flags(self.fd).map_err(StartError::Sys)?;
             let access = caller_flags as i32 & libc::O_ACCMODE;
@@ -418,6 +427,8 @@ impl TTY {
                 (duped, caller_flags & sys::O::NONBLOCK as isize != 0)
             };
             self.own_fd.set(own_fd);
+            // kqueue takes the filter of a FIFO and can stay silent, so off Linux the loop finishes the writes of a reopened tty alone.
+            let polls_shared = cfg!(any(target_os = "linux", target_os = "android"));
             self.update_flags(|f| {
                 f.set(Flags::READABLE, access != sys::O::WRONLY);
                 f.set(Flags::WRITABLE, access != sys::O::RDONLY);
@@ -425,55 +436,49 @@ impl TTY {
                 f.set(Flags::OWNS_FD, reopened == -1 && self.fd.native() > 2);
                 f.set(
                     Flags::BLOCKING_WRITES,
-                    reopened == -1 && (is_tty || !nonblocking),
+                    reopened == -1 && (is_tty || !polls_shared),
                 );
             });
             let mut state = self.tty_state.get();
             state.own_descriptor(self.fd.native());
             self.tty_state.set(state);
-            nonblocking
-        };
-        #[cfg(windows)]
-        {
-            let _ = is_tty;
-            self.own_fd.set(self.fd);
-            self.update_flags(|f| f.insert(Flags::READABLE | Flags::WRITABLE));
-        }
-        let own_fd = self.own_fd.get();
-        // A fd that is open for writing alone has nothing to read: `readStart()` answers `UV_ENOTCONN`.
-        if !self.flags.get().contains(Flags::READABLE) {
-            return Ok(());
-        }
+            // A fd that is open for writing alone has nothing to read: `readStart()` answers `UV_ENOTCONN`.
+            if !self.flags.get().contains(Flags::READABLE) {
+                return Ok(());
+            }
 
-        let started = self.with_reader(|r| {
-            #[cfg(unix)]
-            {
+            // Not `with_reader`: what the loop says to the first registration is decided here, and no JS hears of it.
+            self.update_flags(|fl| fl.insert(Flags::IN_READER));
+            let started = self.reader.with_mut(|r| {
                 r.flags.set(PosixFlags::NONBLOCKING, nonblocking);
                 r.flags
                     .insert(PosixFlags::POLLABLE | PosixFlags::ONE_READ_PER_WAKEUP);
                 // The descriptor is the handle's: the reader polls and reads it, and never closes it.
                 r.flags.remove(PosixFlags::CLOSE_HANDLE);
-                // epoll takes every fd that `uv_tty_init` accepts, so the poll is made at the first `readStart()`. kqueue can refuse one: there the first registration is the probe.
+                // epoll takes every kind of fd that `uv_tty_init` accepts, so the poll is made at the first `readStart()`. kqueue can refuse one: there the first registration is the probe.
                 #[cfg(any(target_os = "linux", target_os = "android"))]
                 r.flags.insert(PosixFlags::IS_PAUSED);
                 r.start(own_fd, true)
+            });
+            self.update_flags(|fl| fl.remove(Flags::IN_READER));
+            let started = match self.parked_finish.take() {
+                Some(nread) if started.is_ok() => {
+                    self.stop_reader();
+                    // The loop cannot poll this kind of descriptor, which stays for writes and the mode.
+                    if nread == uv_errno(UNPOLLABLE_KIND as u16) {
+                        self.update_flags(|f| f.insert(Flags::BLOCKING_WRITES));
+                        return Err(StartError::Unpollable);
+                    }
+                    // Any other answer of the loop fails the handle, as it fails `uv_tty_init`.
+                    Err(sys::Error::from_code_int(-nread, sys::Tag::kevent))
+                }
+                _ => started,
+            };
+            if let Err(err) = started {
+                own_fd.close();
+                self.own_fd.set(Fd::INVALID);
+                return Err(StartError::Sys(err));
             }
-            // No read before `readStart()`: libuv cancels a pending console read by typing an Enter.
-            #[cfg(windows)]
-            {
-                r.open(own_fd)
-            }
-        });
-        if let Err(err) = started {
-            #[cfg(unix)]
-            own_fd.close();
-            self.own_fd.set(Fd::INVALID);
-            return Err(StartError::Sys(err));
-        }
-        // The loop refused the poll (`on_reader_error` ran, and `finish()` let the poll go): the descriptor stays for writes and the mode.
-        if self.flags.get().contains(Flags::READER_DONE) {
-            self.update_flags(|f| f.insert(Flags::BLOCKING_WRITES));
-            return Err(StartError::Unpollable);
         }
         self.ref_();
         self.update_flags(|f| f.insert(Flags::READER_STARTED));
@@ -556,7 +561,7 @@ impl TTY {
         0.0
     }
 
-    /// libuv's `uv_stream_set_blocking()`. A description of the handle's own changes its mode. One that the caller shares keeps it, and a write then waits in place for it.
+    /// How the writes of this handle complete: after `true` each waits in place. The mode of the handle's reopen follows. `O_NONBLOCK` of the descriptor that `fd` answers never changes here, which libuv's `uv_stream_set_blocking()` changes.
     pub(crate) fn set_blocking(&self, enable: JsLocal<'_>) -> i32 {
         if self.flags.get().contains(Flags::CLOSED) {
             return uv_errno(sys::E::EBADF as u16);
@@ -612,7 +617,7 @@ impl TTY {
         }
     }
 
-    /// Strong while a read, a queued write or the snapshot of the process needs the handle after JS lets go of it: `close()` alone ends those, as it ends every handle in Node. Weak otherwise.
+    /// Strong while a read, a queued write or the snapshot of the process needs the handle after JS lets go of it: `close()` alone ends those, as it ends every handle in Node. Weak otherwise. `drain_writes` keeps the wrapper itself until it has told the last write that went out.
     fn sync_wrapper_hold(&self) {
         let flags = self.flags.get();
         if flags.contains(Flags::FINALIZED) {
@@ -661,51 +666,60 @@ impl TTY {
         Ok(0)
     }
 
-    /// Node's `StreamBase::WriteBuffer`. A number: the write is complete, 0 or a negative libuv errno. `None`: the descriptor did not take all of it, the rest goes out from the loop, and `oncomplete(status, context)` runs then with the handle as `this`. `_req` is Node's request object, which this handle does not read.
-    pub(crate) fn write_buffer(
-        &self,
-        _heap: &JsHeap<'_>,
-        _req: JsLocal<'_>,
-        data: &[u8],
-        oncomplete: JsLocal<'_>,
-        context: JsLocal<'_>,
-    ) -> Option<i32> {
-        let flags = self.flags.get();
-        if flags.contains(Flags::CLOSED) {
-            return Some(uv_errno(sys::E::EBADF as u16));
-        }
-        // `uv_write()` on a stream that is not writable.
-        if !flags.contains(Flags::WRITABLE) {
-            return Some(uv_errno(sys::E::EPIPE as u16));
-        }
-        // As libuv: the whole chunk counts when the handle takes the write.
-        self.bytes_written
-            .set(self.bytes_written.get().wrapping_add(data.len() as u64));
+    /// Node's `StreamBase::WriteBuffer`. 0 or a negative libuv errno: the write is complete. `WRITE_PENDING`: the descriptor did not take all of it, the rest goes out from the loop, and `onwritecomplete(status)` runs then. Node answers a `WriteWrap` for that, and `_req` is the null that `net` passes for one.
+    pub(crate) fn write_buffer(&self, _req: JsLocal<'_>, data: &[u8]) -> i32 {
         #[cfg(windows)]
         {
-            let _ = (oncomplete, context);
-            Some(write_in_place(self.fd, data))
+            if self.flags.get().contains(Flags::CLOSED) {
+                return uv_errno(sys::E::EBADF as u16);
+            }
+            let status = write_in_place(self.fd, data);
+            if status == 0 {
+                self.bytes_written
+                    .set(self.bytes_written.get().wrapping_add(data.len() as u64));
+            }
+            status
         }
         #[cfg(unix)]
         {
+            // Node's `StreamBase::Write` counts the chunk before libuv looks at the stream.
+            self.bytes_written
+                .set(self.bytes_written.get().wrapping_add(data.len() as u64));
+            let flags = self.flags.get();
+            if flags.contains(Flags::CLOSED) {
+                return uv_errno(sys::E::EBADF as u16);
+            }
+            // `uv_write()` on a stream that is not writable.
+            if !flags.contains(Flags::WRITABLE) {
+                return uv_errno(sys::E::EPIPE as u16);
+            }
             let fd = self.own_fd.get();
             let mut rest = data;
             // Behind bytes that wait already, nothing is tried: the order of the writes holds.
             if !self.has_queued_writes() {
                 rest = match write_until_refused(fd, data) {
                     Ok(rest) => rest,
-                    Err(errno) => return Some(errno),
+                    Err(errno) => return errno,
                 };
                 if rest.is_empty() {
-                    return Some(0);
+                    return 0;
                 }
-                let in_place = flags.intersects(Flags::BLOCKING_WRITES | Flags::BLOCKING_ASKED);
-                if in_place || !self.arm_write_poll() {
-                    return Some(write_in_place(fd, rest));
+                if flags.intersects(Flags::BLOCKING_WRITES | Flags::BLOCKING_ASKED) {
+                    return write_in_place(fd, rest);
+                }
+                match self.arm_write_poll() {
+                    WritePoll::Armed => {}
+                    WritePoll::Unpollable => return write_in_place(fd, rest),
+                    WritePoll::Failed(errno) => return errno,
                 }
             }
-            self.queue_write(rest, oncomplete.to_js(), context.to_js());
-            None
+            self.writes.with_mut(|q| {
+                let q = q.get_or_insert_default();
+                q.bytes.write(rest).unwrap_or_oom();
+                q.pending.push_back(rest.len());
+            });
+            self.sync_wrapper_hold();
+            WRITE_PENDING
         }
     }
 
@@ -717,74 +731,49 @@ impl TTY {
             .is_some_and(|q| !q.pending.is_empty())
     }
 
-    /// Keeps what the descriptor refused, and whom to tell when it is out.
+    /// Asks the loop to say when the descriptor takes more, until `idle_write_poll`. A queued write holds the loop whatever `unref()` said, as an active `uv_write_t` does.
     #[cfg(unix)]
-    fn queue_write(&self, rest: &[u8], oncomplete: JSValue, context: JSValue) {
-        let global = self.global();
-        let write = PendingWrite {
-            len: rest.len(),
-            oncomplete: oncomplete.is_callable().then(|| {
-                jsc::Strong::create(oncomplete.with_async_context_if_needed(global), global)
-            }),
-            context: (!context.is_undefined()).then(|| jsc::Strong::create(context, global)),
-        };
-        self.writes.with_mut(|q| {
-            let q = q.get_or_insert_default();
-            q.bytes.try_reserve(rest.len()).unwrap_or_oom();
-            q.bytes.extend_from_slice(rest);
-            q.pending.push_back(write);
-        });
-        self.sync_wrapper_hold();
-    }
-
-    /// Asks the loop to say when the descriptor takes more, until `idle_write_poll`. A queued write holds the loop whatever `unref()` said, as an active `uv_write_t` does. `false`: the loop takes no poll of it, and the caller waits in place.
-    #[cfg(unix)]
-    fn arm_write_poll(&self) -> bool {
+    fn arm_write_poll(&self) -> WritePoll {
         let ctx = self.event_loop_handle.as_event_loop_ctx();
-        let owner = Owner::new(PollTag::TtyWrite, self.as_ctx_ptr().cast());
         let own_fd = self.own_fd.get();
-        let (has_descriptor, armed) = self.writes.with_mut(|q| {
+        let armed = self.writes.with_mut(|q| {
             let q = q.get_or_insert_default();
             let poll_fd = match q.poll_fd {
                 Some(fd) => fd,
                 None => {
-                    let Ok(fd) = sys::dup_at_least(own_fd, 3) else {
-                        return (false, false);
-                    };
+                    let fd = sys::dup_at_least(own_fd, 3)?;
                     q.poll_fd = Some(fd);
                     fd
                 }
             };
-            let poll = match q.poll {
-                Some(poll) => poll,
-                None => {
-                    let Some(poll) =
-                        NonNull::new(FilePoll::init(ctx, poll_fd, Default::default(), owner))
-                    else {
-                        return (true, false);
-                    };
-                    q.poll = Some(poll);
-                    poll
-                }
-            };
+            let poll = *q.poll.get_or_insert_with(|| {
+                let owner = Owner::new(PollTag::TtyWrite, self.as_ctx_ptr().cast());
+                NonNull::new(FilePoll::init(ctx, poll_fd, Default::default(), owner))
+                    .expect("FilePoll::init returns a fresh hive slot")
+            });
             // SAFETY: the poll is live until `release_write_poll`, and the loop outlives every handle of its thread.
-            let armed = unsafe {
+            unsafe {
                 let poll = &mut *poll.as_ptr();
-                let armed = poll
-                    .register(ctx.platform_event_loop(), PollFlag::Writable, false)
-                    .is_ok();
-                if armed {
-                    poll.enable_keeping_process_alive(ctx);
-                }
-                armed
-            };
-            (true, armed)
+                poll.register(ctx.platform_event_loop(), PollFlag::Writable, false)?;
+                poll.enable_keeping_process_alive(ctx);
+            }
+            Ok::<Fd, sys::Error>(poll_fd)
         });
-        // A descriptor that the loop refuses once is refused every time: its writes wait in place from here on.
-        if has_descriptor && !armed {
-            self.update_flags(|f| f.insert(Flags::BLOCKING_WRITES));
+        match armed {
+            Ok(poll_fd) => {
+                // The caller closed its fd, and the dup took that number: it is the handle's now, and `close()` closes it once.
+                if poll_fd == self.fd {
+                    self.update_flags(|f| f.remove(Flags::OWNS_FD));
+                }
+                WritePoll::Armed
+            }
+            Err(err) if err.get_errno() == UNPOLLABLE_KIND => {
+                self.update_flags(|f| f.insert(Flags::BLOCKING_WRITES));
+                WritePoll::Unpollable
+            }
+            // No descriptor or no memory for the poll: nothing says that the next write fails too.
+            Err(err) => WritePoll::Failed(uv_errno(err.errno)),
         }
-        armed
     }
 
     /// The loop says that the descriptor takes more. SAFETY: `this` is the owner of a poll that `arm_write_poll` made and that `release_write_poll` has not dropped.
@@ -802,47 +791,51 @@ impl TTY {
     #[cfg(unix)]
     fn drain_writes(&self) {
         let fd = self.own_fd.get();
-        let mut completed: Vec<(PendingWrite, i32)> = Vec::new();
+        // Each write that is complete now, oldest first, with its status.
+        let mut completed: Vec<i32> = Vec::new();
         let drained = self.writes.with_mut(|q| {
             let Some(q) = q.as_mut() else {
                 return true;
             };
-            let status = loop {
-                match sys::write(fd, &q.bytes[q.head..]) {
-                    Ok(0) => break Some(uv_errno(sys::E::EIO as u16)),
-                    Ok(n) => {
-                        q.head += n;
-                        let mut written = n;
-                        while let Some(front) = q.pending.front_mut() {
-                            if front.len > written {
-                                front.len -= written;
-                                break;
-                            }
-                            written -= front.len;
-                            completed.extend(q.pending.pop_front().map(|write| (write, 0)));
+            let failed = match sys::write(fd, q.bytes.slice()) {
+                Ok(0) => Some(uv_errno(sys::E::EIO as u16)),
+                Ok(n) => {
+                    q.bytes.wrote(n);
+                    let mut written = n;
+                    while let Some(front) = q.pending.front_mut() {
+                        if *front > written {
+                            *front -= written;
+                            break;
                         }
-                        break None;
+                        written -= *front;
+                        q.pending.pop_front();
+                        completed.push(0);
                     }
-                    Err(err) if err.get_errno() == sys::E::EINTR => {}
-                    Err(err) if err.get_errno() == sys::E::EAGAIN => break None,
-                    Err(err) => break Some(uv_errno(err.errno)),
+                    None
                 }
+                Err(err) if err.get_errno() == sys::E::EAGAIN => None,
+                Err(err) => Some(uv_errno(err.errno)),
             };
-            if let Some(status) = status {
-                completed.extend(q.pending.drain(..).map(|write| (write, status)));
+            // libuv fails the write at the head and leaves the rest for `close()` to cancel. Here the rest gets the same answer: it waits for the same descriptor.
+            if let Some(status) = failed {
+                completed.extend(q.pending.drain(..).map(|_| status));
             }
             if q.pending.is_empty() {
-                q.bytes.clear();
-                q.head = 0;
+                q.bytes.reset();
             }
             q.pending.is_empty()
         });
         if drained {
             self.idle_write_poll();
         }
+        // The wrapper is strong here: a write was queued. It stays on this stack until each of these writes is told, whatever the first of them does to the handle.
+        let this_value = self.this_value.get().try_get();
         self.sync_wrapper_hold();
-        for (write, status) in completed {
-            self.complete_write(write, status);
+        if let Some(this_value) = this_value {
+            for status in completed {
+                self.call_onwritecomplete(this_value, status);
+            }
+            this_value.ensure_still_alive();
         }
     }
 
@@ -878,26 +871,20 @@ impl TTY {
     }
 
     #[cfg(unix)]
-    fn complete_write(&self, write: PendingWrite, status: i32) {
-        if self.flags.get().contains(Flags::FINALIZED) {
-            return;
-        }
-        let (Some(oncomplete), Some(this_value)) =
-            (write.oncomplete, self.this_value.get().try_get())
-        else {
+    fn call_onwritecomplete(&self, this_value: JSValue, status: i32) {
+        let Some(callback) = js::onwritecomplete_get_cached(this_value) else {
             return;
         };
+        if !callback.is_callable() {
+            return;
+        }
         let global = self.global();
-        let context = write
-            .context
-            .map_or(JSValue::UNDEFINED, |context| context.get());
-        // `oncomplete` carries the context of its write (`queue_write`).
         global.bun_vm().event_loop_mut().run_callback(
             bun_event_loop::ContextId::NONE,
-            oncomplete.get(),
+            callback,
             global,
             this_value,
-            &[JSValue::js_number_from_int32(status), context],
+            &[JSValue::js_number_from_int32(status)],
         );
     }
 
@@ -914,30 +901,32 @@ impl TTY {
         #[cfg(unix)]
         let cancelled = self.writes.with_mut(|q| {
             q.as_mut()
-                .map(|q| core::mem::take(&mut q.pending))
-                .unwrap_or_default()
+                .map_or(0, |q| core::mem::take(&mut q.pending).len())
         });
         self.close_by_owner();
         // libuv's `uv__stream_flush_write_queue(stream, UV_ECANCELED)`: each queued write is told from the loop, before the close callback.
         #[cfg(unix)]
-        for write in cancelled {
-            let Some(oncomplete) = write.oncomplete else {
-                continue;
-            };
-            let context = write
-                .context
-                .map_or(JSValue::UNDEFINED, |context| context.get());
-            let bound = oncomplete.get().without_async_context().bind(
-                cx.global(),
-                this_value.to_js(),
-                &bun_core::String::static_("oncomplete"),
-                0.0,
-                &[
-                    JSValue::js_number_from_int32(uv_errno(sys::E::ECANCELED as u16)),
-                    context,
-                ],
-            )?;
-            crate::timer::All::set_immediate(&cx.js_thread(), bound, JSValue::UNDEFINED)?;
+        if cancelled > 0 {
+            let oncomplete = js::onwritecomplete_get_cached(this_value.to_js());
+            if let Some(oncomplete) = oncomplete.filter(|f| f.is_callable()) {
+                let bound = oncomplete.bind(
+                    cx.global(),
+                    this_value.to_js(),
+                    &bun_core::String::static_("onwritecomplete"),
+                    0.0,
+                    &[JSValue::js_number_from_int32(uv_errno(
+                        sys::E::ECANCELED as u16,
+                    ))],
+                )?;
+                for _ in 0..cancelled {
+                    crate::timer::All::set_immediate(
+                        &cx.js_thread(),
+                        bound,
+                        JSValue::UNDEFINED,
+                        crate::timer::Clock::Real,
+                    )?;
+                }
+            }
         }
         let callback = callback.to_js();
         if !callback.is_callable() {
@@ -950,7 +939,12 @@ impl TTY {
             0.0,
             &[],
         )?;
-        crate::timer::All::set_immediate(&cx.js_thread(), bound, JSValue::UNDEFINED)?;
+        crate::timer::All::set_immediate(
+            &cx.js_thread(),
+            bound,
+            JSValue::UNDEFINED,
+            crate::timer::Clock::Real,
+        )?;
         Ok(())
     }
 
@@ -981,6 +975,30 @@ impl TTY {
         self.bytes_written.get() as f64
     }
 
+    pub(crate) fn get_write_queue_size(&self) -> u32 {
+        #[cfg(unix)]
+        {
+            let queued = self.writes.get().as_ref().map_or(0, |q| q.bytes.size());
+            u32::try_from(queued).unwrap_or(u32::MAX)
+        }
+        #[cfg(windows)]
+        {
+            0
+        }
+    }
+
+    pub(crate) fn memory_cost(&self) -> usize {
+        #[cfg(unix)]
+        {
+            let queue = self.writes.get().as_ref();
+            queue.map_or(0, |q| size_of::<WriteQueue>() + q.bytes.memory_cost())
+        }
+        #[cfg(windows)]
+        {
+            0
+        }
+    }
+
     /// The caller's fd (Node answers its reopened one). As Node: -1 once closed, `UV_EINVAL` for a handle that was never open.
     pub(crate) fn get_fd(&self) -> i32 {
         let flags = self.flags.get();
@@ -1000,6 +1018,12 @@ impl TTY {
         if self.flags.get().contains(Flags::CLOSED) {
             return;
         }
+        #[cfg(unix)]
+        debug_assert!(
+            !self.flags.get().contains(Flags::OWNS_FD)
+                || self.writes.get().as_ref().and_then(|q| q.poll_fd) != Some(self.fd),
+            "close() would close a descriptor of the handle twice"
+        );
         self.close_internal();
         #[cfg(unix)]
         if self.flags.get().contains(Flags::OWNS_FD) {

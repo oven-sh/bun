@@ -79,7 +79,7 @@ test("process.binding('tty_wrap')", () => {
 });
 
 // Bun's handle has a part of the names of Node's. This is the part that it leaves out, and why.
-// Node must have exactly Bun's names and these, so a new name goes into the handle or into this list.
+// Node must have exactly the names of inBun and these, so a new name of Node goes into the handle or into this list.
 const onlyInNode = [
   // AsyncWrap: Bun has no async id to reset, no provider type and no context frame.
   "asyncReset",
@@ -92,7 +92,6 @@ const onlyInNode = [
   "useUserBuffer",
   "writeAsciiString",
   "writeLatin1String",
-  "writeQueueSize",
   "writeUcs2String",
   "writeUtf8String",
   "writev",
@@ -115,7 +114,10 @@ const inBun = [
   "setRawMode",
   "unref",
   "writeBuffer",
+  "writeQueueSize",
 ];
+// Node answers a WriteWrap for a write that waits, and calls the oncomplete of that. Bun's handle calls this one function of its own.
+const onlyInBun = ["onwritecomplete"];
 // Not compared: the numbers that lib/tty.js of Node reads from the binding since v26.8. https://github.com/oven-sh/bun/pull/47318 gives them to Bun.
 const modeConstant = /^UV_TTY_MODE_/;
 const namesFixture = `
@@ -141,7 +143,7 @@ function nodeOfTheVersionOfBun(): string | null {
 }
 
 describe.each([
-  ["bun", bunExe(), inBun],
+  ["bun", bunExe(), [...inBun, ...onlyInBun].sort()],
   ["node", nodeOfTheVersionOfBun(), [...inBun, ...onlyInNode].sort()],
 ] as const)("the names of the tty_wrap binding and of its handle (%s)", (name, runtime, members) => {
   test.skipIf(!runtime)("are the ones that are listed", async () => {

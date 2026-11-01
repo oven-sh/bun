@@ -262,7 +262,7 @@ pub(crate) fn usage_error(command: &str, message: &[u8]) -> ! {
 /// `bun fmt --stdin-filepath f < f > f.tmp && mv f.tmp f` would then lose `f` on a full disk. So that's an error here.
 /// A reader that has gone away (`| head`) isn't.
 pub(crate) fn print(stdout: &[u8], stderr: &[u8], exit_code: u8) -> u8 {
-    let write_result = bun_sys::write_all_to_stdio(bun_core::Fd::stdout(), stdout);
+    let write_result = bun_sys::write_all_waiting(bun_core::Fd::stdout(), stdout);
     let _ = Output::error_writer().write_all(stderr);
     let exit_code = match write_result {
         Err(error) if error.get_errno() != bun_sys::E::EPIPE => {

@@ -39,9 +39,9 @@ use crate::hir::reactive::{
 use crate::hir::{
     ArrayElement, ArrayPattern, BlockId, DeclarationId, FunctionExpressionType, HirVec,
     IdentifierId, IdentifierName, InstructionKind, InstructionValue, JsxAttribute, JsxTag,
-    LogicalOperator, NonLocalKind, ObjectPattern, ObjectPropertyKey, ObjectPropertyOrSpread,
-    ObjectPropertyType, ParamPattern, Pattern, Place, PlaceOrSpread, PrimitiveValue,
-    PropertyLiteral, ScopeId,
+    LogicalOperator, MemberUpdate, NonLocalKind, ObjectPattern, ObjectPropertyKey,
+    ObjectPropertyOrSpread, ObjectPropertyType, ParamPattern, Pattern, Place, PlaceOrSpread,
+    PrimitiveValue, PropertyLiteral, ScopeId,
 };
 use crate::reactive_scopes::visitors::{ReactiveFunctionVisitor, visit_reactive_function};
 use crate::reactive_scopes::{
@@ -2007,8 +2007,13 @@ fn codegen_base_instruction_value(
             object,
             property,
             value,
+            update,
             ..
         } => {
+            if let Some(update) = *update {
+                let key = MemberKey::Literal(property);
+                return codegen_member_update(cx, object, key, value, update, loc);
+            }
             let obj = codegen_place_to_expression(cx, object)?;
             let val = codegen_place_to_expression(cx, value)?;
             Ok(Expr::init(
@@ -2053,8 +2058,13 @@ fn codegen_base_instruction_value(
             object,
             property,
             value,
+            update,
             ..
         } => {
+            if let Some(update) = *update {
+                let key = MemberKey::Computed(property);
+                return codegen_member_update(cx, object, key, value, update, loc);
+            }
             let obj = codegen_place_to_expression(cx, object)?;
             let prop = codegen_place_to_expression(cx, property)?;
             let val = codegen_place_to_expression(cx, value)?;
@@ -3223,6 +3233,143 @@ fn convert_update_operator(op: crate::hir::UpdateOperator, prefix: bool) -> OpCo
         (U::Decrement, true) => OpCode::UnPreDec,
         (U::Decrement, false) => OpCode::UnPostDec,
     }
+}
+
+#[derive(Clone, Copy)]
+enum MemberKey<'a> {
+    Literal(&'a PropertyLiteral),
+    Computed(&'a Place),
+}
+
+/// Not in upstream: see `MemberUpdate`.
+fn codegen_member_update(
+    cx: &mut Context,
+    object: &Place,
+    key: MemberKey<'_>,
+    value: &Place,
+    update: MemberUpdate,
+    loc: Loc,
+) -> Result<Expr, CompilerError> {
+    let val = codegen_place_to_expression(cx, value)?;
+    // `value` is `load op right` while the load is inline. Its node is the target.
+    if let ExprData::EBinary(binary) = val.data
+        && matches!(binary.left.data, ExprData::EDot(_) | ExprData::EIndex(_))
+    {
+        match update {
+            MemberUpdate::UpdateExpression { operation, prefix } => {
+                if binary.op == convert_binary_operator(operation.binary_operator()) {
+                    return Ok(Expr::init(
+                        E::Unary {
+                            op: convert_update_operator(operation, prefix),
+                            value: binary.left,
+                            flags: E::UnaryFlags::empty(),
+                        },
+                        loc,
+                    ));
+                }
+            }
+            MemberUpdate::AssignmentExpression { operator } => {
+                if binary.op == convert_binary_operator(operator)
+                    && let Some(op) = convert_compound_assignment_operator(operator)
+                {
+                    return Ok(Expr::init(
+                        E::Binary {
+                            op,
+                            left: binary.left,
+                            right: binary.right,
+                        },
+                        loc,
+                    ));
+                }
+            }
+        }
+    }
+    // The load is not inline, so the store prints `target = value` and the target prints again.
+    let (obj, mut prints_again) = codegen_place_to_print_again(cx, object)?;
+    let target = match key {
+        MemberKey::Literal(property) => property_access_expr(obj, property, loc, None),
+        MemberKey::Computed(property) => {
+            let (index, index_prints_again) = codegen_place_to_print_again(cx, property)?;
+            prints_again &= index_prints_again;
+            Expr::init(
+                E::Index {
+                    target: obj,
+                    index,
+                    optional_chain: None,
+                    is_import_property_use: false,
+                },
+                loc,
+            )
+        }
+    };
+    // `target = load + 1` is not `target++`, and a target that is no name or literal would run twice.
+    if matches!(update, MemberUpdate::UpdateExpression { .. }) || !prints_again {
+        cx.record_error(CompilerErrorDetail {
+            category: ErrorCategory::Todo,
+            reason: "(CodegenReactiveFunction) Support a member update whose load is not inline"
+                .to_string(),
+            description: None,
+            loc: value.loc,
+            suggestions: None,
+        })?;
+    }
+    Ok(Expr::init(
+        E::Binary {
+            op: OpCode::BinAssign,
+            left: target,
+            right: val,
+        },
+        loc,
+    ))
+}
+
+/// The expression of `place`, and whether it can print a second time: only a name or a literal can.
+fn codegen_place_to_print_again(
+    cx: &mut Context,
+    place: &Place,
+) -> Result<(Expr, bool), CompilerError> {
+    let is_temporary = cx.env.identifiers[place.identifier.0 as usize]
+        .name
+        .is_none();
+    let expr = codegen_place_to_expression(cx, place)?;
+    let identifier = match expr.data {
+        ExprData::EIdentifier(identifier) => identifier.ref_,
+        ExprData::EImportIdentifier(identifier) => identifier.ref_,
+        _ => return Ok((expr, expr.is_primitive_literal())),
+    };
+    // Each print of a name is a use: the minifier puts a declaration with one use in its place.
+    if is_temporary {
+        cx.cg.host.record_usage(identifier);
+    }
+    Ok((expr, true))
+}
+
+fn convert_compound_assignment_operator(op: crate::hir::BinaryOperator) -> Option<OpCode> {
+    use crate::hir::BinaryOperator as B;
+    Some(match op {
+        B::ShiftLeft => OpCode::BinShlAssign,
+        B::ShiftRight => OpCode::BinShrAssign,
+        B::UnsignedShiftRight => OpCode::BinUShrAssign,
+        B::Add => OpCode::BinAddAssign,
+        B::Subtract => OpCode::BinSubAssign,
+        B::Multiply => OpCode::BinMulAssign,
+        B::Divide => OpCode::BinDivAssign,
+        B::Modulo => OpCode::BinRemAssign,
+        B::Exponent => OpCode::BinPowAssign,
+        B::BitwiseOr => OpCode::BinBitwiseOrAssign,
+        B::BitwiseXor => OpCode::BinBitwiseXorAssign,
+        B::BitwiseAnd => OpCode::BinBitwiseAndAssign,
+        B::Equal
+        | B::NotEqual
+        | B::StrictEqual
+        | B::StrictNotEqual
+        | B::LessThan
+        | B::LessEqual
+        | B::GreaterThan
+        | B::GreaterEqual
+        | B::In
+        | B::InstanceOf => return None,
+    })
 }
 
 // =============================================================================

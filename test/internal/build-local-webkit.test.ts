@@ -6,7 +6,7 @@
 import { describe, expect, test } from "bun:test";
 import { isWindows, tempDir } from "harness";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 
 import { validateBunConfig } from "../../scripts/build/bun.ts";
 import { cxx } from "../../scripts/build/compile.ts";
@@ -26,6 +26,7 @@ import {
 import { hostZstdPath, zstd } from "../../scripts/build/deps/zstd.ts";
 import { cachedTreeDir } from "../../scripts/build/download.ts";
 import { BuildError } from "../../scripts/build/error.ts";
+import { alpineClangDefaults, computeFlags } from "../../scripts/build/flags.ts";
 import { copyWritable } from "../../scripts/build/fs.ts";
 import { Ninja, readManifest } from "../../scripts/build/ninja.ts";
 import { getProfile } from "../../scripts/build/profiles.ts";
@@ -148,6 +149,25 @@ describe("which builds compile WebKit", () => {
     } finally {
       for (const path of readOnly.toReversed()) chmodSync(path, statSync(path).mode | 0o200);
     }
+  });
+
+  test("in CI a file of the pinned trees is named as one of vendor/, however the compiler is given it", () => {
+    const cfg = linux({ ci: true, buildDir: "/work/build/release", cacheDir: "/opt/image/extracted" });
+    const webkitDir = cfg.localDeps.WebKit!;
+    expect(webkitDir).toStartWith(resolve("/opt/image/extracted") + sep);
+    expect(computeFlags(cfg).cxxflags).toEqual(
+      expect.arrayContaining([
+        `-ffile-prefix-map=${webkitDir}=vendor/WebKit`,
+        `-ffile-prefix-map=${join("..", "..", "..", relative(resolve("/"), webkitDir))}=vendor/WebKit`,
+      ]),
+    );
+  });
+
+  test("for musl, JSC and ICU keep the stack protection that Alpine's clang gave the prebuilt ones", () => {
+    const protection = ["-fstack-protector-strong", "-fstack-clash-protection"];
+    // Not resolved as such: that takes a musl sysroot.
+    expect(alpineClangDefaults({ ...linux({}), abi: "musl" })).toEqual(protection);
+    expect(alpineClangDefaults(linux({}))).toEqual([]);
   });
 
   test("nothing reads the pinned trees before configure has fetched them", () => {

@@ -11,7 +11,7 @@
  * that apply uniformly to bun's own C/C++ sources.
  */
 
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { bunExeName, linksWithLld, type Config } from "./config.ts";
 import { overridesDarwinAllocator, replacedOperatorNewSymbols } from "./deps/mimalloc.ts";
 import { quote, slash } from "./shell.ts";
@@ -700,8 +700,13 @@ export const globalFlags: Flag[] = [
       `-ffile-prefix-map=${c.cwd}=.`,
       `-ffile-prefix-map=${c.vendorDir}=vendor`,
       `-ffile-prefix-map=${c.cacheDir}=cache`,
-      // The trees configure fetches into the cache. Last: of the prefixes that match, clang takes the last.
-      ...Object.entries(c.localDeps).map(([name, dir]) => `-ffile-prefix-map=${dir}=vendor/${name}`),
+      // The trees configure fetches into the cache, or reads out of the image. Last: of the prefixes that match, clang
+      // takes the last. Also as ninja spells a source on the command line, which is what __FILE__ says: relative to the
+      // build directory. That of a dep in vendor/ is the same on every machine, and this one is not.
+      ...Object.entries(c.localDeps).flatMap(([name, dir]) => [
+        `-ffile-prefix-map=${dir}=vendor/${name}`,
+        `-ffile-prefix-map=${relative(c.buildDir, dir)}=vendor/${name}`,
+      ]),
     ],
     when: c => c.unix && c.ci,
     desc: "Remap source paths in debug info (reproducible builds)",
@@ -2119,6 +2124,15 @@ export function computeTargetLinkFlags(cfg: Config): string[] {
   }
   if (!cfg.windows) out.push(cfg.darwin ? "-Wl,-dead_strip" : "-Wl,--gc-sections");
   return out;
+}
+
+/**
+ * What Alpine's clang passes by itself, so what the JSC and ICU of a prebuilt WebKit for musl have always been compiled
+ * with (oven-sh/WebKit's Dockerfile.musl). They come after the dep flags' -fno-stack-protector. Not its
+ * _FORTIFY_SOURCE=2, which does nothing without Alpine's fortify-headers.
+ */
+export function alpineClangDefaults(cfg: Config): string[] {
+  return cfg.abi === "musl" && !cfg.hardened ? ["-fstack-protector-strong", "-fstack-clash-protection"] : [];
 }
 
 export function computeHardeningFlags(cfg: Config): string[] {

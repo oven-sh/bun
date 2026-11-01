@@ -16,6 +16,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Config } from "../config.ts";
 import { assert } from "../error.ts";
+import { alpineClangDefaults } from "../flags.ts";
 import { type Dependency, depBuildDir, depSourceDir } from "../source.ts";
 import { hostZstdPath } from "./zstd.ts";
 
@@ -81,7 +82,7 @@ export const icu: Dependency = {
             // dep flags' own level. _CRT_SECURE_NO_DEPRECATE: ICU's Visual Studio projects set it.
             ...(cfg.windows
               ? ["/std:c++20", "/GR", "/O2", "-D_CRT_SECURE_NO_DEPRECATE"]
-              : ["-std=c++20", "-frtti", "-Os"]),
+              : ["-std=c++20", "-frtti", "-Os", ...alpineClangDefaults(cfg)]),
             // What ICU's own build passes for a static library (icudefs.mk). In one, the two that name a library only
             // say that the file is ICU's own.
             ...["-DU_STATIC_IMPLEMENTATION", "-DU_ALL_IMPLEMENTATION", "-DU_ATTRIBUTE_DEPRECATED=", "-D_REENTRANT"],

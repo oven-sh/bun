@@ -35,7 +35,7 @@ import type { EngineSources } from "../aot.ts";
 import { evaluateCMake, type CMakeEvaluation } from "../cmake.ts";
 import { linksWithLld, webkitVersionName, type Config } from "../config.ts";
 import { assert, BuildError } from "../error.ts";
-import { computeCpuTargetFlags, computeHardeningFlags, fuzzilliCoverageFlags } from "../flags.ts";
+import { alpineClangDefaults, computeCpuTargetFlags, computeHardeningFlags, fuzzilliCoverageFlags } from "../flags.ts";
 import { writeIfChanged } from "../fs.ts";
 import { quote } from "../shell.ts";
 import {
@@ -1034,6 +1034,7 @@ function webkitFlags(wk: WebKitBuild): WebKitFlags {
         // musl: optimized for size (-Os wins over the dep-global -O level), as
         // the Alpine builds have always shipped JSC.
         ...(cfg.abi === "musl" && cfg.release ? ["-Os"] : []),
+        ...alpineClangDefaults(cfg),
       ];
   // Release: WebKit's <iostream> ban (an #error stub found before the real
   // header — OptionsJSCOnly.cmake), so no TU drags std::ios_base::Init in.

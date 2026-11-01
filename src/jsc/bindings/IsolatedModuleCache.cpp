@@ -32,9 +32,6 @@ static uint64_t madeFromHash(JSC::VM& vm, const WTF::String& key, const CodeStri
     BunString borrowedKey = Bun::toString(key);
     if (Bun__VM__isTestEntryPoint(bunVM, &borrowedKey))
         hash ^= 0x9e3779b97f4a7c15ULL;
-    // What is transpiled while the source maps switch asks for a module's own source map keeps the URL of that map.
-    if (Bun__VM__sourceMapsApplyTo(bunVM, &borrowedKey))
-        hash ^= 0xbf58476d1ce4e5b9ULL;
     return Bun__VM__hasGlobalsOfVitest(bunVM) ? ~hash : hash;
 }
 
@@ -46,7 +43,16 @@ Zig::SourceProvider* IsolatedModuleCache::lookup(JSC::VM& vm, const WTF::String&
         return nullptr;
     ASSERT(it->value);
     auto* provider = static_cast<Zig::SourceProvider*>(it->value.get());
-    return provider->m_madeFromHash == madeFromHash(vm, key, pluginContents) ? provider : nullptr;
+    if (provider->m_madeFromHash != madeFromHash(vm, key, pluginContents))
+        return nullptr;
+    // A module with a sourceMappingURL comment is transpiled again when the source maps switch asks another thing of it than it did then.
+    if (provider->m_ownSourceMap != BunOwnSourceMapBinding::None) {
+        BunString borrowedKey = Bun::toString(key);
+        bool kept = provider->m_ownSourceMap == BunOwnSourceMapBinding::Kept;
+        if (Bun__VM__sourceMapsApplyTo(WebCore::clientData(vm)->bunVM, &borrowedKey) != kept)
+            return nullptr;
+    }
+    return provider;
 }
 
 void IsolatedModuleCache::insert(JSC::VM& vm, const WTF::String& key, Zig::SourceProvider& provider, const CodeString* pluginContents)

@@ -125,10 +125,17 @@ struct bun_ModuleInfoDeserialized;
 // Every BunString here is owned by whichever frame holds the struct (see
 // ~ErrorableResolvedSource / Rust `Drop`). Consumers that keep a string take it
 // with `transferToWTFString()`, which leaves the field empty.
+// Mirrors `OwnSourceMapBinding` in bun_jsc: whether a module has a sourceMappingURL comment that can name a source map of its own, and whether the source maps switch asked for that map when the module was transpiled.
+enum class BunOwnSourceMapBinding : uint8_t {
+    None = 0,
+    NotKept = 1,
+    Kept = 2,
+};
 typedef struct ResolvedSource {
     BunString source_code;
     BunString source_url;
     bool isCommonJSModule;
+    BunOwnSourceMapBinding own_source_map;
     // `bun build --compile`: StringImpl::hash() of source_code computed at build time (0 = unknown).
     uint32_t source_code_hash;
     JSC::EncodedJSValue cjsCustomExtension;
@@ -158,7 +165,7 @@ typedef struct ResolvedSource {
     // validated against). If empty, origin is derived from source_url.
     BunString origin_path;
 } ResolvedSource;
-static_assert(sizeof(ResolvedSource) == 136 && offsetof(ResolvedSource, is_prelinked_module) == 77 && offsetof(ResolvedSource, depends_on_more_than_source) == 78 && offsetof(ResolvedSource, is_static) == 79 && offsetof(ResolvedSource, bytecode_cache) == 80 && offsetof(ResolvedSource, bytecode_cache_persistent) == 97 && offsetof(ResolvedSource, bytecode_cache_entry_offset) == 100 && offsetof(ResolvedSource, module_info) == 104, "ResolvedSource layout is mirrored in src/jsc/ResolvedSource.rs");
+static_assert(sizeof(ResolvedSource) == 136 && offsetof(ResolvedSource, own_source_map) == 49 && offsetof(ResolvedSource, is_prelinked_module) == 77 && offsetof(ResolvedSource, depends_on_more_than_source) == 78 && offsetof(ResolvedSource, is_static) == 79 && offsetof(ResolvedSource, bytecode_cache) == 80 && offsetof(ResolvedSource, bytecode_cache_persistent) == 97 && offsetof(ResolvedSource, bytecode_cache_entry_offset) == 100 && offsetof(ResolvedSource, module_info) == 104, "ResolvedSource layout is mirrored in src/jsc/ResolvedSource.rs");
 inline constexpr uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 typedef union ErrorableResolvedSourceResult {
     ResolvedSource value;

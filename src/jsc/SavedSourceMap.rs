@@ -14,6 +14,8 @@ use bun_sourcemap::{self as SourceMap, InternalSourceMap, ParsedSourceMap};
 use bun_threading::Mutex;
 use bun_wyhash::hash;
 
+use crate::resolved_source::OwnSourceMapBinding;
+
 #[derive(Default)]
 pub struct SavedSourceMap {
     /// Only accessed between [`Self::lock`] and [`Self::unlock`].
@@ -312,15 +314,30 @@ fn shown_source_name(base: &bun_core::String, source: &[u8]) -> Box<[u8]> {
     Box::from(shown.to_utf8().slice())
 }
 
+/// What [`SavedSourceMap::put_mappings`] does with the `sourceMappingURL` comment at `url` in `source` while the switch is `support`.
+pub fn own_source_map_binding(
+    source: &bun_ast::Source,
+    url: bun_ast::Range,
+    support: SourceMapsSupport,
+) -> OwnSourceMapBinding {
+    let path = source.path.text;
+    let is_file = source.path.namespace.is_empty() || source.path.namespace == b"file";
+    if url.len <= 0 || !is_file || !bun_paths::is_absolute(path) {
+        OwnSourceMapBinding::None
+    } else if support.applies_to(path) {
+        OwnSourceMapBinding::Kept
+    } else {
+        OwnSourceMapBinding::NotKept
+    }
+}
+
 /// The URL of the `sourceMappingURL` comment at `url` in `source`, if `support` asks for the own source map of that module.
 fn own_source_map_url<'a>(
     source: &'a bun_ast::Source,
     url: bun_ast::Range,
     support: SourceMapsSupport,
 ) -> Option<&'a [u8]> {
-    let path = source.path.text;
-    let is_file = source.path.namespace.is_empty() || source.path.namespace == b"file";
-    if url.len <= 0 || !is_file || !bun_paths::is_absolute(path) || !support.applies_to(path) {
+    if own_source_map_binding(source, url, support) != OwnSourceMapBinding::Kept {
         return None;
     }
     let start = usize::try_from(url.loc.start).ok()?;

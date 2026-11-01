@@ -52,6 +52,7 @@ public:
     uint32_t m_tag { 0 };
     bool m_alreadyBundled { false };
     bool m_dependsOnMoreThanSource { false };
+    BunOwnSourceMapBinding m_ownSourceMap { BunOwnSourceMapBinding::None };
     // Set by IsolatedModuleCache::insert() and compared by lookup().
     uint64_t m_madeFromHash { 0 };
 
@@ -65,6 +66,7 @@ private:
         , m_tag(resolvedSource.tag)
         , m_alreadyBundled(resolvedSource.already_bundled)
         , m_dependsOnMoreThanSource(resolvedSource.depends_on_more_than_source)
+        , m_ownSourceMap(resolvedSource.own_source_map)
         , m_bunVM(bunVM)
         , m_source(WTF::move(sourceImpl))
     {

@@ -3013,13 +3013,19 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread
                     // VM; `source_mappings` is only touched from the JS thread.
                     let source_mappings = unsafe { &mut (*jsc_vm).source_mappings };
+                    let source_maps_support = source_mappings.source_maps_support();
+                    let own_source_map = bun_jsc::saved_source_map::own_source_map_binding(
+                        source,
+                        entry.metadata.source_mapping_url,
+                        source_maps_support,
+                    );
                     let _ = source_mappings.put_mappings(
                         source,
                         bun_core::MutableString {
                             list: core::mem::take(&mut entry.sourcemap).into_vec(),
                         },
                         entry.metadata.source_mapping_url,
-                        source_mappings.source_maps_support(),
+                        source_maps_support,
                     );
                     // Rebuild the cached ESM record for the
                     // isolation source-provider cache (same shape as
@@ -3107,6 +3113,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                         source_code,
                         source_url: input_specifier.create_if_different(path.text),
                         is_commonjs_module,
+                        own_source_map,
                         module_info,
                         tag,
                         bytecode_cache: node_compile_cache_blob.unwrap_or_default(),
@@ -3183,7 +3190,15 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     return Err(crate::Error::AsyncModule);
                 }
 
-                let printed_ast = bun_jsc::resolved_source::PrintedAst::new(&parse_result.ast);
+                let printed_ast = bun_jsc::resolved_source::PrintedAst::new(
+                    &parse_result.ast,
+                    bun_jsc::saved_source_map::own_source_map_binding(
+                        &parse_result.source,
+                        parse_result.ast.source_mapping_url,
+                        // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM. The printer's handler reads the same switch below.
+                        unsafe { (*jsc_vm).source_mappings.source_maps_support() },
+                    ),
+                );
                 let is_commonjs_module = printed_ast.is_commonjs_module;
                 // Collect the ESM record while printing, for the isolation
                 // source-provider cache (same shape as `RuntimeTranspilerStore`).

@@ -1063,7 +1063,15 @@ impl AsyncModule {
             )?;
         }
         // Read before `print_with_source_map` moves `ast` into `print_ast`.
-        let printed_ast = PrintedAst::new(&parse_result.ast);
+        let printed_ast = PrintedAst::new(
+            &parse_result.ast,
+            crate::saved_source_map::own_source_map_binding(
+                &parse_result.source,
+                parse_result.ast.source_mapping_url,
+                // SAFETY: per-thread VM.
+                unsafe { (*jsc_vm).source_mappings.source_maps_support() },
+            ),
+        );
 
         // `VirtualMachine.source_code_printer` is a thread-local
         // `?*BufferPrinter` (see `SOURCE_CODE_PRINTER`). `BufferPrinter` is `!Clone`, so

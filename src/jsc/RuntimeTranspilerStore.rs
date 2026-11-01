@@ -1040,6 +1040,11 @@ impl TranspilerJob {
             self.resolved_source = ResolvedSource {
                 source_code: core::mem::take(&mut entry.output_code),
                 is_commonjs_module: entry.metadata.module_type == CacheModuleType::Cjs,
+                own_source_map: crate::saved_source_map::own_source_map_binding(
+                    &parse_result.source,
+                    entry.metadata.source_mapping_url,
+                    self.source_maps_support,
+                ),
                 module_info,
                 tag: this_tag,
                 ..Default::default()
@@ -1116,7 +1121,14 @@ impl TranspilerJob {
             );
         }
 
-        let printed_ast = PrintedAst::new(&parse_result.ast);
+        let printed_ast = PrintedAst::new(
+            &parse_result.ast,
+            crate::saved_source_map::own_source_map_binding(
+                &parse_result.source,
+                parse_result.ast.source_mapping_url,
+                self.source_maps_support,
+            ),
+        );
         let is_commonjs_module = printed_ast.is_commonjs_module;
         let mut module_info: Option<Box<analyze_transpiled_module::ModuleInfo>> =
             if use_isolation_source_provider_cache

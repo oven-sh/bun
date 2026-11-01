@@ -1963,6 +1963,364 @@ describe("bundler", () => {
     },
   });
 
+  // A static read of an object literal that has only plain data properties is
+  // the value of the last property with that name. The first group folds. The
+  // second group stays: a program can tell that the literal is gone, the value
+  // is a literal or the object of another read (an older fold would take it
+  // next), or the property is written in shorthand, which the one-property
+  // rule keeps too.
+  itBundled("minify/ReadOfObjectLiteral", {
+    files: {
+      "/entry.js": /* js */ `
+        var x = g(), y = g(), proto = g(), k = g(), rest = g(), fn = g(), __proto__ = g();
+        capture({a: 1, b: 2, c: 3}.c);
+        capture({a: 1, b: 2, c: 3}["a"]);
+        capture({"a-b": 1, c: 2}["a-b"]);
+        capture({a: 1, a: 2}.a);
+        capture({a: x, b: y}.a);
+        capture({x: x, y: y}.y);
+        capture({a: "s", b: null}.b);
+        capture({__proto__: null, a: 1}.a);
+        capture({__proto__: proto, a: 1}.a);
+        capture({"\\u00e9": 1, b: 2}.b);
+        capture({a: 1, b: 2}?.a);
+        capture(typeof {a: 1, b: 2}.a);
+        capture(new {a: fn, b: 2}.a());
+        capture(delete {a: x, b: 1}.a.y);
+
+        capture({a: 1, b: 2}.missing);
+        capture({__proto__: null, a: 1}.missing);
+        capture({a: 1, b: 2}.__proto__);
+        capture({a: 1, b: side()}.a);
+        capture({a: 1, get b() { return 2; }}.a);
+        capture({a: 1, set b(v) {}}.a);
+        capture({a: 1, b() {}}.a);
+        capture({a: 1, ...rest}.a);
+        capture({a: 1, [k]: 2}.a);
+        capture({a: 1, ["b"]: 2}.a);
+        capture({a: 1, 2: 3}.a);
+        capture({a: () => 1, b: 2}.a);
+        capture({a: function () {}, b: 2}.a);
+        capture({a: class {}, b: 2}.a);
+        capture({a: 1, b: 2}.a = 5);
+        capture({a: 1, b: 2}.a++);
+        capture({a: fn, b: 2}.a());
+        capture({a: fn, b: 2}.a\`x\`);
+        capture(delete {a: 1, b: 2}.a);
+        capture({a: 1, b: 2}.é);
+        capture({"\\u00e9": 1, b: 2}.é);
+        capture({"\\u00c3\\u00a9": 1, b: 2}.é);
+        capture({x, y}.y);
+        capture({__proto__: null, a: 1}.__proto__);
+        capture({"__proto__": null, a: 1}.__proto__);
+        capture({__proto__, a: 1}.__proto__);
+        capture({a: [x], b: 1}.a);
+        capture({a: {c: x}, b: 1}.a);
+        capture({a: [x], b: 1}.a[0]);
+        capture({a: {c: x}, b: 1}.a.c);
+        capture({a: x, b: 1}.a.y);
+        capture({a: "str", b: 1}.a.length);
+        capture({a: "str", b: 1}.a[0]);
+      `,
+    },
+    capture: [
+      "3",
+      "1",
+      "1",
+      "2",
+      "x",
+      "y",
+      "null",
+      "1",
+      "1",
+      "2",
+      "1",
+      '"number"',
+      "new fn",
+      "delete x.y",
+
+      "{a:1,b:2}.missing",
+      "{__proto__:null,a:1}.missing",
+      "{a:1,b:2}.__proto__",
+      "{a:1,b:side()}.a",
+      "{a:1,get b(){return 2}}.a",
+      "{a:1,set b(v){}}.a",
+      "{a:1,b(){}}.a",
+      "{a:1,...rest}.a",
+      "{a:1,[k]:2}.a",
+      '{a:1,["b"]:2}.a',
+      "{a:1,2:3}.a",
+      "{a:()=>1,b:2}.a",
+      "{a:function(){},b:2}.a",
+      "{a:class{},b:2}.a",
+      "{a:1,b:2}.a=5",
+      "{a:1,b:2}.a++",
+      "{a:fn,b:2}.a()",
+      "{a:fn,b:2}.a`x`",
+      "delete{a:1,b:2}.a",
+      "{a:1,b:2}.é",
+      '{"\u00e9":1,b:2}.\u00e9',
+      '{"Ã©":1,b:2}.é',
+      "{x,y}.y",
+      "{__proto__:null,a:1}.__proto__",
+      "{__proto__:null,a:1}.__proto__",
+      "{__proto__,a:1}.__proto__",
+      "{a:[x],b:1}.a",
+      "{a:{c:x},b:1}.a",
+      "{a:[x],b:1}.a[0]",
+      "{a:{c:x},b:1}.a.c",
+      "{a:x,b:1}.a.y",
+      '{a:"str",b:1}.a.length',
+      '{a:"str",b:1}.a[0]',
+    ],
+    minifySyntax: true,
+    minifyWhitespace: true,
+  });
+
+  // Each read gives the value that node gives for the source. The reads of
+  // the second part use what the first read gives: as the object of a call, a
+  // tag, a write or a `delete`.
+  itBundled("minify/ReadOfObjectLiteralKeepsBehavior", {
+    files: {
+      "/entry.js": /* js */ `
+        var hits = 0;
+        const eff = v => { hits++; return v; };
+        const proto = { inherited: "proto" };
+        function thisKind() { return this === undefined ? "undefined" : typeof this; }
+        const attempt = fn => { try { return fn(); } catch (e) { return e.constructor.name; } };
+        const results = {
+          last: {a: 1, b: 2, c: 3}.c,
+          bracket: {a: 1, b: 2, c: 3}["a"],
+          dashed: {"a-b": 1, c: 2}["a-b"],
+          duplicate: {a: 1, a: 2}.a,
+          nullValue: {a: "s", b: null}.b,
+          protoNullHit: {__proto__: null, a: 1}.a,
+          protoNullMiss: {__proto__: null, a: 1}.missing,
+          protoHit: {__proto__: proto, a: 1}.a,
+          protoInherited: {__proto__: proto, a: 1}.inherited,
+          protoRead: {a: 1, b: 2}.__proto__ === Object.prototype,
+          miss: {a: 1, b: 2}.missing,
+          inheritedMethod: typeof {a: 1, b: 2}.toString,
+          sideEffectSibling: [{a: 1, b: eff(7)}.a, hits],
+          getter: {a: 1, get b() { return eff(2); }}.a,
+          arrowName: {a: () => 1, b: 2}.a.name,
+          functionName: {a: function () {}, b: 2}.a.name,
+          className: {a: class {}, b: 2}.a.name,
+          callThis: {a: thisKind, b: 2}.a(),
+          tagThis: {a: thisKind, b: 2}.a\`x\`,
+          newTarget: new {a: Date, b: 2}.a(0).getTime(),
+          assigned: ({a: 1, b: 2}.a = 5),
+          deleted: delete {a: 1, b: 2}.a,
+          typeOf: typeof {a: 1, b: 2}.a,
+          optional: {a: 1, b: 2}?.a,
+          nonAsciiKey: {"\\u00e9": 1, b: 2}.b,
+          nonAsciiRead: {"\\u00e9": 1, b: 2}.é,
+          latin1Twin: {"\\u00c3\\u00a9": 1, b: 2}.é,
+          numeric: {a: 1, 2: 3}[2],
+          computed: {a: 1, ["b"]: 2}.b,
+          spread: {a: 1, ...{b: 2}}.b,
+          shorthand: ((a, b) => ({a, b}.b))(1, 2),
+
+          memberOfName: {a: proto, b: 1}.a.inherited,
+          lengthOfText: {a: "str", b: 1}.a.length,
+          charOfText: {a: "str", b: 1}.a[0],
+          writeLengthOfText: attempt(() => ({a: "str", b: 1}.a.length = 5)),
+          bumpLengthOfText: attempt(() => ({a: "str", b: 1}).a.length++),
+          deleteLengthOfText: attempt(() => delete {a: "str", b: 1}.a.length),
+          deleteCharOfText: attempt(() => delete {a: "str", b: 1}.a[0]),
+          deleteThroughList: (v => delete {a: [v], b: 1}.a[0])(1),
+          writeThroughList: (v => ({a: [v], b: 1}.a[0] = 5))(1),
+          callThroughList: {a: [thisKind], b: 1}.a[0](),
+          tagThroughList: {a: [thisKind], b: 1}.a[0]\`x\`,
+          callThroughObject: {a: {c: thisKind}, b: 2}.a.c(),
+          tagThroughObject: {a: {c: thisKind}, b: 2}.a.c\`x\`,
+          nameThroughObject: {a: {f: () => {}}, b: 1}.a.f.name,
+          deleteThroughObject: delete {a: {c: 1}, b: 2}.a.c,
+        };
+        console.log(JSON.stringify(results, (k, v) => (v === undefined ? "<undefined>" : v)));
+        console.log("hits=" + hits);
+      `,
+    },
+    minifySyntax: true,
+    run: {
+      stdout:
+        '{"last":3,"bracket":1,"dashed":1,"duplicate":2,"nullValue":null,"protoNullHit":1,"protoNullMiss":"<undefined>","protoHit":1,"protoInherited":"proto","protoRead":true,"miss":"<undefined>","inheritedMethod":"function","sideEffectSibling":[1,1],"getter":1,"arrowName":"a","functionName":"a","className":"a","callThis":"object","tagThis":"object","newTarget":0,"assigned":5,"deleted":true,"typeOf":"number","optional":1,"nonAsciiKey":2,"nonAsciiRead":1,"latin1Twin":"<undefined>","numeric":3,"computed":2,"spread":2,"shorthand":2,"memberOfName":"proto","lengthOfText":3,"charOfText":"s","writeLengthOfText":"TypeError","bumpLengthOfText":"TypeError","deleteLengthOfText":"TypeError","deleteCharOfText":"TypeError","deleteThroughList":true,"writeThroughList":5,"callThroughList":"object","tagThroughList":"object","callThroughObject":"object","tagThroughObject":"object","nameThroughObject":"f","deleteThroughObject":true}\nhits=1',
+    },
+  });
+
+  // An object define is a literal at each read, so its reads fold too and a
+  // branch on one becomes dead code.
+  itBundled("minify/ReadOfObjectDefine", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(CFG.a);
+        capture(CFG["b"]);
+        capture(CFG.missing);
+        if (CFG.b === "x") capture("live"); else capture("dead");
+      `,
+    },
+    define: { CFG: '{"a":"abc","b":"x"}' },
+    capture: ['"abc"', '"x"', '{a:"abc",b:"x"}.missing', '"live"'],
+    minifySyntax: true,
+    minifyWhitespace: true,
+  });
+
+  // An object define holds 8-bit text. A read of it folds, also where the text
+  // is not ASCII. A fold that indexes text by byte leaves such text for run
+  // time, and `<` and unary `+` read it as the engine does.
+  itBundled("minify/ReadOfObjectDefineNonAsciiText", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(CFG.s);
+        capture((CFG.t + CFG.s).length);
+        capture((CFG.t + CFG.s)[1]);
+        capture((CFG.s + CFG.t)[3]);
+        capture((CFG.s + CFG.t).charCodeAt(3));
+        capture(CFG.high < CFG.low);
+        capture(+CFG.space);
+      `,
+    },
+    define: { CFG: '{"s":"a\u00e9b","t":"xy","high":"\u{1F600}","low":"\uffee","space":"\u00a01"}' },
+    capture: ['"a\u00e9b"', '"xya\u00e9b".length', '"y"', '"a\u00e9bxy"[3]', '"a\u00e9bxy".charCodeAt(3)', "!0", "1"],
+    minifySyntax: true,
+    minifyWhitespace: true,
+  });
+
+  // The bundle prints what node prints for the source. A folded string can be
+  // joined to 8-bit text that is not ASCII: the folds of `.length`, an index,
+  // `.charCodeAt`, `<` and unary `+` then see text that main kept from them.
+  itBundled("minify/ReadOfObjectLiteralJoinedToNonAsciiText", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(JSON.stringify(CFG.s[1]), (CFG.s + "x").length, CFG.n);
+        console.log(JSON.stringify(CFG.o.s[1]), JSON.stringify(CFG.l[0][1]), {a: "x" + TEXT, b: 1}.a.length);
+        console.log(({a: "x", b: 1}.a + TEXT).length, (TEXT + {a: "x", b: 1}.a)[3], (CFG.n + TEXT).length);
+        console.log((TEXT + {a: "x", b: 1}.a).charCodeAt(3), \`\${{a: "x", b: 1}.a}\${TEXT}\`.charCodeAt(4));
+        console.log(({a: "x", b: 1}.a + HIGH) < ("x" + LOW), +\`\${{a: "1", b: 1}.a}\${SPACE}\`, CFG.s === TEXT);
+      `,
+    },
+    define: {
+      CFG: '{"s":"a\u00e9b","n":1,"o":{"s":"a\u00e9b","k":1},"l":["a\u00e9b"]}',
+      TEXT: '"a\u00e9b"',
+      HIGH: '"\u{1F600}"',
+      LOW: '"\uffee"',
+      SPACE: '"\u00a0"',
+    },
+    minifySyntax: true,
+    run: { stdout: '"\u00e9" 4 1\n"\u00e9" "\u00e9" 4\n4 x 4\n120 NaN\ntrue 1 true' },
+  });
+
+  // The parser reads an import, `import.meta` and the namespace of an `import()`
+  // by where they stand: `delete ns.missing` is a build error in a bundle. So a
+  // read whose value is one of them stays in the literal.
+  itBundled("minify/ReadOfObjectLiteralKeepsImport", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from "./lib.js";
+        import { who, value } from "./lib.js";
+        const later = await import("./lib.js");
+        console.log(
+          typeof { a: ns, b: 1 }.a,
+          delete { a: ns, b: 1 }.a.missing,
+          typeof { a: who, b: 1 }.a,
+          { a: value, b: 1 }.a,
+          [{ a: later, b: 1 }.a][0].who(),
+          delete { a: import.meta, b: 1 }.a.missing,
+        );
+      `,
+      "/lib.js": /* js */ `
+        export function who() { return this === undefined ? "undefined" : typeof this; }
+        export const value = 7;
+      `,
+    },
+    minifySyntax: true,
+    format: "esm",
+    target: "bun",
+    run: { stdout: "object true function 7 object true" },
+  });
+
+  // A read that folds to a string is a static module specifier, as it is for
+  // a literal with one property: the bundle holds the module.
+  itBundled("minify/ReadOfObjectLiteralAsModuleSpecifier", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(require({ a: "./dep.js", b: 1 }.a).value);
+      `,
+      "/dep.js": /* js */ `
+        exports.value = "dep";
+      `,
+    },
+    minifySyntax: true,
+    target: "bun",
+    run: { stdout: "dep" },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).not.toContain("./dep.js");
+    },
+  });
+
+  // A folded string that is joined to another one is kept in parts, and three
+  // readers take the first part alone (#38944): `require.resolve()`, an import
+  // attribute and the dead-code check of `feature()`. Main keeps the read, so
+  // it does not reach them.
+  itBundled("minify/ReadOfObjectLiteralInJoinedSpecifier", {
+    todo: true,
+    files: {
+      "/entry.js": /* js */ `
+        const { basename } = require("path");
+        console.log(
+          basename(require.resolve({ a: "./lib", b: 1 }.a + "/dep.js")),
+          basename(require.resolve("./lib" + "/dep.js")),
+        );
+      `,
+      "/lib/dep.js": /* js */ `
+        exports.value = "dep";
+      `,
+      "/lib/index.js": /* js */ `
+        exports.value = "index";
+      `,
+    },
+    minifySyntax: true,
+    target: "bun",
+    run: { stdout: "dep.js dep.js" },
+  });
+
+  itBundled("minify/ReadOfObjectDefineInJoinedImportAttribute", {
+    todo: true,
+    files: {
+      "/entry.ts": /* ts */ `
+        const data = await import("./data.json", { with: { type: CFG.kind + "on" } });
+        console.log(data.default.n);
+      `,
+      "/data.json": `{ "n": 41 }`,
+    },
+    define: { CFG: '{"kind":"js","x":1}' },
+    minifySyntax: true,
+    target: "bun",
+    run: { stdout: "41" },
+  });
+
+  // A folded `false` makes this statement dead, and main removes a dead
+  // statement without the tracked use of `handlers` in it (#45345). Main has
+  // the same fault for `if (handlers && DEBUG)` with `--define DEBUG=false`.
+  itBundled("minify/ReadOfObjectDefineInDeadStatementKeepsNamespace", {
+    todo: true,
+    files: {
+      "/entry.js": /* js */ `
+        const handlers = require("./handlers.js");
+        if (handlers && CFG.debug) console.log("loaded");
+        const call = name => handlers[name]();
+        console.log(call("get"));
+      `,
+      "/handlers.js": /* js */ `
+        export function get() { return "GET ok"; }
+      `,
+    },
+    define: { CFG: '{"debug":false,"on":true}' },
+    minifySyntax: true,
+    target: "bun",
+    run: { stdout: "GET ok" },
+  });
+
   // Every top-level statement of /esm.js hoists, so it gets no `init_esm()`
   // wrapper and `require("./esm.js")` prints as `__toCommonJS(exports_esm)`
   // alone: the first token after whichever keyword comes before it.

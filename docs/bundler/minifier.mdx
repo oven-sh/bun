@@ -917,6 +917,30 @@ Inlines property access for objects with a single property.
 () => console.log('hi')
 ```
 
+### Object literal property inlining
+
+**Mode:** `--minify-syntax`
+
+Inlines a property read on an object literal with several properties when every property is a plain `key: value` pair and no value has a side effect. The read stays when its value is called or read from again, and when the value is a function without a name.
+
+```ts Input
+({a: 1, b: 2}).b
+({a: 1, b: f()}).a
+({a: 1, 2: 3}).a
+({a: "x", b: 1}).a.length
+({a: f, b: 2}).a()
+({fn: () => {}, n: 1}).fn
+```
+
+```js Output
+2
+{a:1,b:f()}.a
+{a:1,2:3}.a
+{a:"x",b:1}.a.length
+{a:f,b:2}.a()
+{fn:()=>{},n:1}.fn
+```
+
 ### String charCodeAt constant folding
 
 **Mode:** Always active

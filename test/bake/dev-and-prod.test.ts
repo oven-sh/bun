@@ -137,6 +137,116 @@ devAndProductionTest("inline script and styles appear", {
     await c.style("body").backgroundColor.expect.toBe("red");
   },
 });
+// The dev server and a production bundle must give the same value to an import of a module
+// that is switched off for the browser. Each import form below reads it.
+devAndProductionTest("imports of a module that the browser target disables", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      // No "browser" map covers this file. The browser target disables "fs" and every
+      // "node:" builtin that has no polyfill.
+      import bareFs from "fs";
+      import builtinDefault, { readFileSync as builtinNamed } from "node:fs";
+      import * as builtinStar from "node:child_process";
+      // The "timers" polyfill re-exports "node:timers/promises", which has no polyfill.
+      import { setTimeout as polyfilled, promises as polyfillReexport } from "timers";
+      import { atLoad, reexportedDefault, reexportedNamed, reexportedStar, shapes, store } from "iso";
+
+      console.log({
+        ...shapes(),
+        atLoad,
+        store: store(),
+        reexportedDefault: typeof reexportedDefault,
+        reexportedNamed: typeof reexportedNamed,
+        reexportedStar: typeof reexportedStar,
+        bareFs: typeof bareFs,
+        builtinDefault: typeof builtinDefault,
+        builtinNamed: typeof builtinNamed,
+        builtinStar: typeof builtinStar,
+        polyfilled: typeof polyfilled,
+        polyfillReexport: typeof polyfillReexport,
+      });
+    `,
+    "node_modules/iso/package.json": JSON.stringify({
+      name: "iso",
+      version: "1.0.0",
+      type: "module",
+      main: "index.js",
+      browser: {
+        "fs": false,
+        "./disk.js": false,
+        "crypto": false,
+      },
+    }),
+    "node_modules/iso/disk.js": `
+      export function write() {}
+    `,
+    "node_modules/iso/index.js": `
+      import fs from "fs";
+      import * as fsStar from "fs";
+      import { readFileSync } from "fs";
+      // The "fs" entry of the map also covers "node:fs".
+      import prefixedFs, { promises } from "node:fs";
+      import * as disk from "./disk.js";
+      import * as crypto from "crypto";
+
+      export { fs as reexportedDefault };
+      export { writeFileSync as reexportedNamed } from "fs";
+      export * as reexportedStar from "fs";
+
+      // Read while the module loads.
+      export const atLoad = typeof fsStar;
+
+      // Read later, when the page calls it.
+      export function store() {
+        return fs && fs.writeFileSync ? "disk" : "memory";
+      }
+
+      export function shapes() {
+        return {
+          default: typeof fs,
+          star: typeof fsStar,
+          starKeys: Object.keys(fsStar),
+          named: typeof readFileSync,
+          prefixedDefault: typeof prefixedFs,
+          prefixedNamed: typeof promises,
+          relativeStar: typeof disk,
+          relativeNamed: typeof disk.write,
+          // The page has a "crypto" global. The import must hide it.
+          sameNameAsGlobal: typeof crypto.subtle,
+        };
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage({
+      default: "undefined",
+      star: "function",
+      starKeys: [],
+      named: "undefined",
+      prefixedDefault: "undefined",
+      prefixedNamed: "undefined",
+      relativeStar: "function",
+      relativeNamed: "undefined",
+      sameNameAsGlobal: "undefined",
+      atLoad: "function",
+      store: "memory",
+      reexportedDefault: "undefined",
+      reexportedNamed: "undefined",
+      reexportedStar: "function",
+      bareFs: "undefined",
+      builtinDefault: "undefined",
+      builtinNamed: "undefined",
+      builtinStar: "function",
+      polyfilled: "function",
+      polyfillReexport: "function",
+    });
+  },
+});
 // TODO: revive production
 devTest("using runtime import", {
   files: {

@@ -5932,6 +5932,9 @@ pub mod bv2_impl {
                                     // The importer isn't bundled again when the stylesheet is fixed, so its
                                     // output must treat this import the same as a stylesheet that didn't fail.
                                     record.path.is_disabled = true;
+                                    record.flags.insert(
+                                        bun_ast::ImportRecordFlags::IS_DEV_SERVER_STYLESHEET,
+                                    );
                                     continue;
                                 }
 
@@ -7123,6 +7126,10 @@ pub mod bv2_impl {
                                     || entry.kind == bake_types::CacheKind::Css
                                 {
                                     import_record.path.is_disabled = true;
+                                    import_record.flags.set(
+                                        bun_ast::ImportRecordFlags::IS_DEV_SERVER_STYLESHEET,
+                                        entry.kind == bake_types::CacheKind::Css,
+                                    );
                                 }
                             }
                             continue 'outer;

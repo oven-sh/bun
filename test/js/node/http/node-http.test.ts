@@ -4787,6 +4787,49 @@ it("statusCode = 204 with an empty first write still discards the body", async (
   }
 });
 
+it("writeHead(200) followed by write('') terminates the header section", async () => {
+  // Node's _send("") prepends the rendered header block, so the client sees
+  // the status line, the headers and the empty line without waiting for a
+  // non-empty write (the SSE pattern writeHead(200); write("")).
+  const headSeen = Promise.withResolvers<void>();
+  const server = createServer(async (req, res) => {
+    res.writeHead(200, { "Content-Type": "text/event-stream" });
+    res.write("");
+    await headSeen.promise;
+    res.end("data: bye\n\n");
+  });
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const { head, tail } = await new Promise<{ head: string; tail: string }>((resolve, reject) => {
+      const socket = connect(port, "127.0.0.1");
+      let data = "";
+      let head: string | undefined;
+      socket.on("data", chunk => {
+        data += chunk;
+        if (head !== undefined) return;
+        // Without the fix the empty line never comes before end(), and this waits until the test times out.
+        const end = data.indexOf("\r\n\r\n");
+        if (end === -1) return;
+        head = data.slice(0, end + 4);
+        headSeen.resolve();
+      });
+      socket.on("end", () => resolve({ head: head!, tail: data.slice(head!.length) }));
+      socket.on("error", reject);
+      socket.on("close", () => reject(new Error("closed before the response ended")));
+      socket.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+    });
+
+    expect(head).toStartWith("HTTP/1.1 200 OK\r\n");
+    expect(head).toContain("Transfer-Encoding: chunked\r\n");
+    expect(tail).toBe("b\r\ndata: bye\n\n\r\n0\r\n\r\n");
+  } finally {
+    server.close();
+  }
+});
+
 it("res.shouldKeepAlive = false renders Connection: close and ends the socket", async () => {
   // Graceful-shutdown helpers (stoppable, http-terminator) clear
   // shouldKeepAlive on in-flight responses; the rendered header and the

@@ -3806,6 +3806,11 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoMod
         if (scope.exception()) [[unlikely]]
             (void)scope.tryClearException();
     }
+#if ENABLE(AOT)
+    JSC::AOT::letGoOfMocksThatEnded(globalObject);
+    if (scope.exception()) [[unlikely]]
+        (void)scope.tryClearException();
+#endif
 
     giveBackPreloadModules(globalObject);
     if (scope.exception()) [[unlikely]]

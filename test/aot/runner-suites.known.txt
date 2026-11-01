@@ -205,7 +205,6 @@ test/js/bun/test/mock/mock-module.test.ts: the original of a mocked module > wha
 test/js/bun/test/mock/mock-module.test.ts: unmock > the modules that imported the mock are loaded again ["--isolate"]
 test/js/bun/test/mock/mock-module.test.ts: unmock > the modules that imported the mock are loaded again ["--isolate=modules"]
 test/js/bun/test/mock/mock-module.test.ts: unmock > the modules that imported the mock are loaded again []
-test/js/bun/test/mock/mock-module.test.ts: unmock > the next import or require() of a module that was loaded as the mock loads the original
 test/js/bun/test/mock/mock-module.test.ts: vi.doMock() from bun:test leaves a module that is already loaded as it is
 test/js/bun/test/mock/mock-module.test.ts: vi.doMock() from vitest leaves a module that is already loaded as it is
 test/js/bun/test/mock/mock-module.test.ts: vi.doMock() of a module that a preload has loaded and the file has patched before > with jest.doMock(), undoes the patch of dep.cjs

@@ -355,6 +355,7 @@ impl DirEntryIterator for () {
 /// `fstat` of a directory when its listing was read: a later reader keeps the listing while it holds.
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) struct ListingIdentity {
+    dev: u64,
     ino: u64,
     mtime_ns: i64,
     /// A tool that restores a directory's mtime still moves its ctime.
@@ -366,9 +367,9 @@ pub(crate) struct ListingIdentity {
 impl ListingIdentity {
     const SETTLED_AFTER_NS: i128 = 2 * bun_core::time::NS_PER_S as i128;
 
-    /// 0 when no read recorded an identity.
-    pub(crate) fn ino(&self) -> u64 {
-        self.ino
+    /// `(st_dev, st_ino)`, `(0, 0)` when no read recorded an identity.
+    pub(crate) fn file_id(&self) -> (u64, u64) {
+        (self.dev, self.ino)
     }
 
     /// `None` when the file system keeps no change time (FAT reports 0): such a listing is never kept.
@@ -385,6 +386,7 @@ impl ListingIdentity {
         }
         let settled = bun_core::time::nano_timestamp() - ctime_ns as i128 > Self::SETTLED_AFTER_NS;
         Some(Self {
+            dev: stat.dev,
             ino: stat.ino,
             mtime_ns: ns(stat.mtime()),
             ctime_ns,
@@ -396,7 +398,8 @@ impl ListingIdentity {
     pub(crate) fn still_current(&self, fd: Fd) -> bool {
         self.settled
             && Self::read(fd).is_some_and(|now| {
-                now.ino == self.ino
+                now.dev == self.dev
+                    && now.ino == self.ino
                     && now.ctime_ns == self.ctime_ns
                     && now.mtime_ns == self.mtime_ns
             })

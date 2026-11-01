@@ -268,6 +268,19 @@ impl DirInfo {
             .get(query)
     }
 
+    /// `(st_dev, st_ino)` the last re-read of the listing recorded. `(0, 0)` before any re-read.
+    pub(crate) fn listing_file_id(&self) -> Option<(u64, u64)> {
+        let rfs = &mut fs::FileSystem::instance().fs;
+        let _lock = rfs.entries_mutex.lock_guard();
+        Some(
+            rfs.entries
+                .at_index(self.entries)?
+                .as_entries()?
+                .identity
+                .file_id(),
+        )
+    }
+
     /// As-cached listing access with no generation check and no locking.
     /// Scalar fields (`fd`, `dir`) may be read through this unlocked; the
     /// `.data` map must only be probed/iterated while `entries_mutex` is held

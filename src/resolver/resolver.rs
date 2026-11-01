@@ -2788,7 +2788,8 @@ impl<'a> Resolver<'a> {
 
     /// Drops each `DirInfo` from `dir` up whose listing-derived facts changed, with the levels below it.
     pub fn drop_stale_dir_info_chain(&mut self, dir: &[u8]) {
-        if !bun_paths::is_absolute(dir) {
+        // A lookup reads no `DirInfo` for a path that does not fit a path buffer.
+        if !bun_paths::is_absolute(dir) || dir.len() >= MAX_PATH_BYTES {
             return;
         }
         let mut levels: Vec<DirInfoRef> = Vec::new();
@@ -2839,13 +2840,13 @@ impl<'a> Resolver<'a> {
             info.get_entry(this.generation, name)
                 .map(|e| e.entry().kind(this.rfs_ref(), this.store_fd))
         };
-        // Another inode after the re-read (a retargeted link) invalidates the real path in the DirInfo.
-        let ino_before = info.get_entries_const().map(|e| e.identity.ino());
+        // Another device or inode after the re-read (a retargeted link) invalidates the real path in the DirInfo.
+        let id_before = info.listing_file_id();
         let has_node_modules_now = kind_of(self, b"node_modules") == Some(Fs::EntryKind::Dir);
-        let ino_after = info.get_entries_const().map(|e| e.identity.ino());
-        if let (Some(before), Some(after)) = (ino_before, ino_after)
-            && before != 0
-            && after != 0
+        let id_after = info.listing_file_id();
+        if let (Some(before), Some(after)) = (id_before, id_after)
+            && before.1 != 0
+            && after.1 != 0
             && before != after
         {
             return true;

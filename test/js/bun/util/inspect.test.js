@@ -9,6 +9,7 @@ import {
   tmpdirSync,
   withoutAggressiveGC,
 } from "harness";
+import dns from "node:dns";
 import { join } from "path";
 import util from "util";
 import vm from "vm";
@@ -1635,6 +1636,14 @@ it("expect.objectContaining(fn) prints the function when it has no properties to
   );
 });
 
+// A React element without React. The formatter reads `$$typeof`, `type`, `key` and `props`.
+const jsxElement = (type, children) => ({
+  $$typeof: Symbol.for("react.element"),
+  type,
+  key: null,
+  props: { children },
+});
+
 describe("compact prints one line", () => {
   it("an array of more than 100 items", () => {
     expect(Bun.inspect(Array(150).fill(0), { compact: true })).toBe(
@@ -1648,6 +1657,199 @@ describe("compact prints one line", () => {
   it("an object past the depth", () => {
     expect(Bun.inspect({ a: { b: 1 }, z: 1 }, { compact: true, depth: 0 })).toBe("{ a: [Object ...], z: 1 }");
     expect(Bun.inspect([{ b: 1 }, { c: 2 }], { compact: true, depth: 0 })).toBe("[ [Object ...], [Object ...] ]");
+  });
+
+  describe("a JSX element with its children", () => {
+    const longText = Buffer.alloc(130, "x").toString();
+    function Named() {}
+
+    it.each([
+      ["a text child", <b>bold</b>, "<b>bold</b>"],
+      ["a text child of 128 characters or more", <p>{longText}</p>, `<p>${longText}</p>`],
+      [
+        "an element child",
+        <div>
+          <span>a</span>
+        </div>,
+        "<div><span>a</span></div>",
+      ],
+      [
+        "a list of elements",
+        <div id="x">
+          <span>a</span>
+          <span>b</span>
+        </div>,
+        '<div id="x"><span>a</span><span>b</span></div>',
+      ],
+      [
+        "text between elements",
+        <p>
+          Hello <b>world</b>!
+        </p>,
+        "<p>Hello <b>world</b>!</p>",
+      ],
+      [
+        "a list of other values",
+        <div>
+          a{1}
+          {null}
+          {true}
+          {[<i key="k">i</i>, "s"]}
+          {{ o: 1 }}
+        </div>,
+        '<div>a1nulltrue[ <i key="k">i</i>, "s" ]{ o: 1 }</div>',
+      ],
+      [
+        "nested elements",
+        <a>
+          <b>
+            <c>deep</c>
+          </b>
+        </a>,
+        "<a><b><c>deep</c></b></a>",
+      ],
+      ["a fragment", <>foo bar</>, "<>foo bar</>"],
+      [
+        "a fragment with a list",
+        <>
+          <b>a</b>
+          <i>b</i>
+        </>,
+        "<><b>a</b><i>b</i></>",
+      ],
+      [
+        "a key and a prop",
+        <li key="k" id="x">
+          y
+        </li>,
+        '<li key="k" id="x">y</li>',
+      ],
+      [
+        "more than 5 props",
+        <div a="1" b="2" c="3" d="4" e="5" f="6" g="7">
+          kid
+        </div>,
+        '<div a="1" b="2" c="3" d="4" e="5" f="6" g="7">kid</div>',
+      ],
+      ["a component", <Named a={1}>x</Named>, "<Named a=1>x</Named>"],
+      ["an element that is a plain object", jsxElement("b", "x"), "<b>x</b>"],
+      ["an element in a prop", <div icon={<b>x</b>} />, "<div icon=<b>x</b> />"],
+      ["an element in an object", { el: <b>x</b> }, "{ el: <b>x</b> }"],
+      ["elements in an array", [<b>x</b>, <i>y</i>], "[ <b>x</b>, <i>y</i> ]"],
+      ["an element in a Map", new Map([["k", <b>x</b>]]), 'Map(1) { "k": <b>x</b> }'],
+      ["an element in a Set", new Set([<b>x</b>]), "Set(1) { <b>x</b> }"],
+      ["no children", <b />, "<b />"],
+      ["an empty text child", <b>{""}</b>, "<b />"],
+      ["an empty list of children", <b>{[]}</b>, "<b />"],
+    ])("%s", (_, value, expected) => {
+      expect(Bun.inspect(value, { compact: true })).toBe(expected);
+    });
+
+    it("prints the colors of the default layout", () => {
+      const nested = (
+        <div id="x">
+          <span>a</span>
+          <p>{longText}</p>
+        </div>
+      );
+      expect(Bun.inspect(<b>bold</b>, { compact: true, colors: true })).toBe(
+        Bun.inspect(<b>bold</b>, { colors: true }),
+      );
+      expect(Bun.inspect(nested, { compact: true, colors: true })).toBe(
+        Bun.inspect(nested, { colors: true }).replaceAll(/\n */g, ""),
+      );
+    });
+
+    it("prints 100 children of a list, then how many more it has", () => {
+      const list = length =>
+        jsxElement(
+          "ul",
+          Array.from({ length }, () => jsxElement("li", "x")),
+        );
+      const items = Buffer.alloc("<li>x</li>".length * 100, "<li>x</li>").toString();
+      expect(Bun.inspect(list(100), { compact: true })).toBe(`<ul>${items}</ul>`);
+      expect(Bun.inspect(list(101), { compact: true })).toBe(`<ul>${items}... 1 more items</ul>`);
+      expect(Bun.inspect(list(250), { compact: true })).toBe(`<ul>${items}... 150 more items</ul>`);
+      // The default layout prints every child: the two tags and a line for each child.
+      expect(Bun.inspect(list(101)).split("\n")).toHaveLength(103);
+
+      // A list of the longest length: the walk stops after 100 indexes.
+      const sparse = new Array(2 ** 32 - 1);
+      sparse[0] = "first";
+      const text = Bun.inspect(jsxElement("ul", sparse), { compact: true });
+      expect(text).toStartWith("<ul>first");
+      expect(text).toEndWith("... 4294967195 more items</ul>");
+    });
+
+    it("in a property of a Buffer", () => {
+      const buffer = Buffer.from("ab");
+      buffer.el = <b>bold</b>;
+      expect(Bun.inspect(buffer)).toBe("<Buffer 61 62, el: <b>bold</b>>");
+    });
+
+    it("in an error message", () => {
+      const nested = (
+        <div id="x">
+          <span>a</span>
+          <span>b</span>
+        </div>
+      );
+      expect(() => dns.setDefaultResultOrder(nested)).toThrow(
+        `The argument 'order' is invalid. Received <div id="x"><span>a</span><span>b</span></div>`,
+      );
+      expect(() => new MessageEvent("message", { source: <b>bold</b> })).toThrow(
+        'MessageEvent constructor: Expected eventInitDict.source ("<b>bold</b>") to be an instance of MessagePort.',
+      );
+    });
+  });
+});
+
+describe("a JSX element in the default layout", () => {
+  const longText = Buffer.alloc(130, "x").toString();
+
+  it("puts a text child of 128 characters or more on its own line", () => {
+    expect(Bun.inspect(<p>{longText}</p>)).toBe(`<p>\n  ${longText}\n</p>`);
+    expect(
+      Bun.inspect(
+        <div>
+          <p>{longText}</p>
+        </div>,
+      ),
+    ).toBe(`<div>\n  <p>\n    ${longText}\n  </p>\n</div>`);
+  });
+
+  it("indents children nested more than 32 levels", () => {
+    const depth = 40;
+    const indent = level => Buffer.alloc(level * 2, " ").toString();
+    const open = Array.from({ length: depth }, (_, level) => indent(level) + "<div>");
+    const leaf = indent(depth) + "<b>leaf</b>";
+
+    let chain = jsxElement("b", "leaf");
+    let lists = jsxElement("b", "leaf");
+    const closeChain = [];
+    const closeLists = [];
+    for (let level = depth - 1; level >= 0; level--) {
+      chain = jsxElement("div", chain);
+      lists = jsxElement("div", [lists, "text"]);
+      closeChain.push(indent(level) + "</div>");
+      closeLists.push(indent(level + 1) + "text", indent(level) + "</div>");
+    }
+    expect(Bun.inspect(chain)).toBe([...open, leaf, ...closeChain].join("\n"));
+    expect(Bun.inspect(lists)).toBe([...open, leaf, ...closeLists].join("\n"));
+  });
+
+  it("keeps its line breaks with colors", () => {
+    const strip = text => text.replaceAll(/\x1b\[[0-9;]*m/g, "");
+    const nested = (
+      <div id="x">
+        <span>a</span>
+        <p>{longText}</p>
+        text
+      </div>
+    );
+    expect(strip(Bun.inspect(nested, { colors: true }))).toBe(
+      `<div id="x">\n  <span>a</span>\n  <p>\n    ${longText}\n  </p>\n  text\n</div>`,
+    );
   });
 });
 
@@ -1740,6 +1942,13 @@ it.concurrent.each([
     "<div>\n  [Circular]\n</div>\n<div key=[Circular] />",
   ],
   [
+    "circular jsx on one line",
+    `const children = { $$typeof: Symbol.for("react.element"), type: "div", key: null };
+     children.props = { children };
+     console.log(Bun.inspect(children, { compact: true }));`,
+    "<div>[Circular]</div>",
+  ],
+  [
     "a deep Proxy chain",
     `let proxy = { ok: 1 };
      for (let i = 0; i < 100000; i++) proxy = new Proxy(proxy, {});
@@ -1752,6 +1961,14 @@ it.concurrent.each([
      for (let i = 0; i < 100000; i++)
        element = { $$typeof: Symbol.for("react.element"), type: "div", props: { children: element }, key: null };
      try { Bun.inspect(element); } catch (e) { console.log(e.name); }`,
+    "RangeError",
+  ],
+  [
+    "deep jsx on one line",
+    `let element = { $$typeof: Symbol.for("react.element"), type: "div", props: {}, key: null };
+     for (let i = 0; i < 100000; i++)
+       element = { $$typeof: Symbol.for("react.element"), type: "div", props: { children: element }, key: null };
+     try { Bun.inspect(element, { compact: true }); } catch (e) { console.log(e.name); }`,
     "RangeError",
   ],
 ])("Bun.inspect of %s doesn't overflow the stack", async (_, script, expected) => {

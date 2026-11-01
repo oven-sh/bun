@@ -1457,8 +1457,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmt: &mut Stmt,
         data: &mut S::SExpr,
     ) -> Result<(), Error> {
-        let should_trim_primitive = p.options.features.dead_code_elimination
-            && (p.options.features.minify_syntax && data.value.is_primitive_literal());
+        let simplify = p.should_simplify_unused_expr();
+        // A transpile removes only the statement that the visit folds to a primitive (a define, --drop).
+        let trim_folded_primitive = !simplify
+            && p.options.features.dead_code_elimination
+            && !data.value.is_primitive_literal();
         p.stmt_expr_value = data.value.data;
 
         let is_top_level = p.current_scope == p.module_scope && !p.is_inside_single_stmt_body;
@@ -1508,17 +1511,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             };
         }
 
-        if should_trim_primitive && data.value.is_primitive_literal() {
+        if trim_folded_primitive && data.value.is_primitive_literal() {
             restore_stmt_expr!();
             return Ok(());
         }
 
-        // simplify unused
-        let Some(simplified) = SideEffects::simplify_unused_expr(p, data.value) else {
-            restore_stmt_expr!();
-            return Ok(());
-        };
-        data.value = simplified;
+        if simplify {
+            let Some(simplified) = SideEffects::simplify_unused_expr(p, data.value) else {
+                restore_stmt_expr!();
+                return Ok(());
+            };
+            data.value = simplified;
+        } else if p.options.features.dead_code_elimination
+            && let js_ast::ExprData::EString(string) = data.value.data
+            && !string.prefer_template
+        {
+            // At the head of a body a string would print as a directive. A template literal is never one.
+            let mut template = string.shallow_clone();
+            template.prefer_template = true;
+            data.value = p.new_expr(template, data.value.loc);
+        }
 
         if p.should_unwrap_common_js_to_esm() {
             if is_top_level {

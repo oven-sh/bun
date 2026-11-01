@@ -472,7 +472,13 @@ async function start() {
           ObjectDefineProperty(options, key, { value, writable: true, enumerable: true, configurable: true });
         own("routes", routes);
         own("fetch", fetch);
-        own("development", { console: flags.console, hmr: undefined });
+        // The export's `development` may be a boolean. Only `allowedHosts` is carried over.
+        const exportedDevelopment = exported?.development;
+        own("development", {
+          console: flags.console,
+          hmr: undefined,
+          allowedHosts: typeof exportedDevelopment === "object" ? exportedDevelopment?.allowedHosts : undefined,
+        });
         if (useUnix) {
           own("hostname", undefined);
           own("host", undefined);

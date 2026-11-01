@@ -2673,9 +2673,7 @@ pub mod formatter {
             }
         }
 
-        /// Starts a new line of JSX children at `indent`. On one line the
-        /// children follow each other with nothing between them, as in markup.
-        // Out of line: one copy for the seven breaks in each color variant of `print_jsx`.
+        /// Starts a line of JSX children. An element on one line has no break: its children follow each other.
         #[inline(never)]
         pub(crate) fn jsx_line_break(&mut self, single_line: bool, indent: u32) {
             if single_line {
@@ -2688,8 +2686,7 @@ pub mod formatter {
             }
         }
 
-        /// Stands for the `count` items after the first `MAX_ITEMS_PRINTED`.
-        // Inlined: behind a call, `print_array` keeps this writer in memory.
+        // Inlined: behind a call, `print_array` keeps its writer in memory.
         #[inline(always)]
         pub(crate) fn more_items<const ENABLE_ANSI_COLORS: bool>(&mut self, count: u64) {
             self.pretty::<ENABLE_ANSI_COLORS>(
@@ -2754,8 +2751,7 @@ pub mod formatter {
         buf
     };
 
-    /// An Array prints this many of its items. A JSX element on one line prints
-    /// this many children of a list. `... N more items` stands for the rest.
+    /// The items of an Array, and the children of a JSX list on one line, that print before `... N more items`.
     const MAX_ITEMS_PRINTED: u32 = 100;
 
     /// Free-function indent writer for callsites where a `WrappedWriter`

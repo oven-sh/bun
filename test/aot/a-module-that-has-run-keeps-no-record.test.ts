@@ -21,11 +21,19 @@ export async function counts() {
   }
   return least.join(" ");
 }
+// For an entry point that has not come to its first await.
+export function countsNow() {
+  Bun.gc(true);
+  const all = heapStats().objectTypeCounts;
+  return ["CompiledModuleRecord", "ModuleRegistryEntry", "Promise"].map(name => all[name] ?? 0).join(" ");
+}
 `;
 
 type Shape = {
   /** The text of the entry point behind its imports: it adds to \`sum\`. */
   entry: (n: number) => string;
+  /** The text runs in front of the first await of the entry point, while the host evaluates it. \`before\` is counted in front of it, with no turn. */
+  runsInFrontOfFirstAwait?: boolean;
   files: (i: number) => Record<string, string>;
   shared?: Record<string, string>;
   sum: (n: number) => number;
@@ -39,6 +47,18 @@ const feature = (i: number) => ({
 });
 const cases = (n: number, arm: (i: number) => string) =>
   `switch (index) {\n${Array.from({ length: n }, (_, i) => `    case ${i}: ${arm(i)}`).join("\n")}\n  }`;
+// Where a require() runs such a module, the loader takes every step of the import() before the require() returns: the load settles there, where no record is retired.
+const importsWhileItRuns = (i: number) => ({
+  [`running${i}.ts`]: `import("./other${i}.ts");\nexport function run() { return ${i}; }\n`,
+  [`other${i}.ts`]: `export const other = ${i};\n`,
+});
+const required = (n: number) => `
+function required(index: number) {
+  ${cases(n, i => `return require("./running${i}.ts").run();`)}
+  return 0;
+}
+`;
+const requireEach = (n: number) => `${required(n)}for (let index = 0; index < ${n}; index++) sum += required(index);\n`;
 
 const shapes: Record<string, Shape> = {
   "one import() after the other": {
@@ -132,6 +152,49 @@ for (let index = 0; index < ${n}; index++) {
     }),
     sum: sumOfAll,
   },
+  // No load settles behind the require(), so nothing asks again there: the records go when the VM is idle.
+  "a require() of a module that calls import() while it runs": {
+    entry: requireEach,
+    files: importsWhileItRuns,
+    sum: sumOfAll,
+  },
+  // The entry point has not run to its end when the records are counted, so the load of the host has not settled either.
+  "the same require() in the body of the entry point, which awaits behind it": {
+    entry: requireEach,
+    runsInFrontOfFirstAwait: true,
+    files: importsWhileItRuns,
+    sum: sumOfAll,
+  },
+  // The import() of outer takes no step of the loader, and the require() returns under the evaluation of outer.
+  "the same require() in the body of a module that an import() evaluates": {
+    entry: n => `
+async function later(index: number) {
+  ${cases(n, i => `return (await import("./outer${i}.ts")).run();`)}
+  return 0;
+}
+for (let index = 0; index < ${n}; index++) sum += await later(index);
+`,
+    files: i => ({
+      ...importsWhileItRuns(i),
+      [`outer${i}.ts`]: `const running = require("./running${i}.ts");\nexport function run() { return running.run(); }\n`,
+    }),
+    sum: sumOfAll,
+  },
+  // Each call is the only one of its timer: the records of one go before the next call.
+  "the same require(), each in a timer of its own": {
+    entry: n => `${required(n)}await new Promise<void>(resolve => {
+  let index = 0;
+  const next = () => {
+    if (index === ${n}) return resolve();
+    sum += required(index++);
+    setTimeout(next, 0);
+  };
+  setTimeout(next, 0);
+});
+`,
+    files: importsWhileItRuns,
+    sum: sumOfAll,
+  },
 };
 
 for (const [name, shape] of Object.entries(shapes)) {
@@ -141,8 +204,9 @@ for (const [name, shape] of Object.entries(shapes)) {
       const n = 120;
       const files: Record<string, string> = { "counts.ts": counts, ...shape.shared };
       for (let i = 0; i < n; i++) Object.assign(files, shape.files(i));
+      const first = shape.runsInFrontOfFirstAwait ? "countsNow()" : "await counts()";
       files["main.ts"] =
-        `import { counts } from "./counts.ts";\nlet sum = 0;\nconst before = await counts();\n${shape.entry(n)}\nconsole.log(sum);\nconsole.log(before);\nconsole.log(await counts());\n`;
+        `import { counts, countsNow } from "./counts.ts";\nlet sum = 0;\nconst before = ${first};\n${shape.entry(n)}\nconsole.log(sum);\nconsole.log(before);\nconsole.log(await counts());\n`;
       using dir = tempDir("aot-records-of-modules-that-have-run", files);
       const executable = join(String(dir), "main" + (isWindows ? ".exe" : ""));
       const built = await run(

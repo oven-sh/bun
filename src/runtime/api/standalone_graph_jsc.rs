@@ -35,7 +35,9 @@ fn template_blob(file: &File) -> NonNull<bun_standalone_graph::StandaloneModuleG
                 bun_alloc::basic::C_ALLOCATOR,
             )
         };
-        bytes.stored_name = file.name.to_vec().into_boxed_slice();
+        // A copy without a name of its own (a structured clone, a Blob read
+        // back from a stream) reads the name of its store as its `name`.
+        bytes.stored_name = file.display_name().to_vec().into_boxed_slice();
         let mut store = Store {
             data: Data::Bytes(bytes),
             mime_type: MimeType::NONE,

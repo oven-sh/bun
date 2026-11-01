@@ -409,6 +409,8 @@ pub struct VirtualMachine {
     /// A set of extensions that exist in the require.extensions map.
     pub commonjs_custom_extensions:
         bun_collections::StringArrayHashMap<crate::node_module_module::CustomLoader>,
+    /// The `NODE_PATH` entries of the last `Module._initPaths()` call. CommonJS searches them before the start `NODE_PATH`.
+    pub extra_cjs_global_folders: Box<[Box<[u8]>]>,
     pub has_mutated_built_in_extensions: u32,
 
     pub initial_script_execution_context_identifier: i32,
@@ -3525,6 +3527,7 @@ impl VirtualMachine {
             addr_of_mut!((*vm).entered_context).write(Cell::new(None));
             addr_of_mut!((*vm).dead_context).write(crate::ScriptExecutionContext::dead());
             addr_of_mut!((*vm).commonjs_custom_extensions).write(Default::default());
+            addr_of_mut!((*vm).extra_cjs_global_folders).write(Box::default());
             addr_of_mut!((*vm).entry_point).write(Default::default());
             addr_of_mut!((*vm).origin).write(Default::default());
             addr_of_mut!((*vm).ref_strings).write(Default::default());
@@ -3580,6 +3583,11 @@ impl VirtualMachine {
             // bailing out before the CLI reads it turns the old segfault into a
             // clean error + non-zero exit.
             unsafe { (*vm).runtime_state = (hooks.init_runtime_state)(vm, &mut opts)? };
+            // SAFETY: the hook wrote `transpiler`. The VM never moves and outlives its resolver.
+            unsafe {
+                (*vm).transpiler.resolver.extra_cjs_global_folders =
+                    Some(NonNull::new_unchecked(&raw mut (*vm).extra_cjs_global_folders).into());
+            }
         }
 
         // JSGlobalObject creation. `ensure_waker()` must run before the FFI.
@@ -6099,6 +6107,7 @@ impl VirtualMachine {
         // time and `load_preloads` clears the boxes but keeps the Vec buffer,
         // so reclaim it here or every Worker leaks it.
         drop(core::mem::take(&mut self.preload));
+        drop(core::mem::take(&mut self.extra_cjs_global_folders));
 
         // SAFETY: this VM is raw-`dealloc`'d (no field `Drop` runs), so
         // `transpiler` is never auto-dropped after `deinit` clears its fields.
@@ -6520,6 +6529,8 @@ impl VirtualMachine {
         self.entry_point_result.evaluated_as_cjs = false;
         self.set_pending_internal_promise(None);
         self.has_patched_run_main = false;
+        // The outgoing file's `Module._initPaths()` directories.
+        self.extra_cjs_global_folders = Box::default();
         self.set_main(None);
         self.main_resolved_path = bun_core::String::EMPTY;
         self.unhandled_error_counter = 0;

@@ -756,6 +756,8 @@ impl TranspilerJob {
         // Note: the resolver already shares opts with the parent
         // Transpiler via raw pointer; set_arena/set_log keep them in sync.
         transpiler.macro_context = None;
+        // The list of `Module._initPaths()` is for the JS thread, which replaces it while a job runs.
+        transpiler.resolver.extra_cjs_global_folders = None;
         // The JS thread may have been in macro mode when its options were copied, but a job is never part of a macro.
         transpiler.options.target = bun_ast::Target::Bun;
         if self.has_plugins {

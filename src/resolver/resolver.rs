@@ -573,6 +573,9 @@ pub struct Resolver<'a> {
     /// When this is null, it is as if it is set to `&.{ path.dirname(referrer) }`.
     pub custom_dir_paths: Option<&'a [bun_core::String]>,
 
+    /// The `NODE_PATH` entries of the last `Module._initPaths()` call, which the VM of this resolver owns.
+    pub extra_cjs_global_folders: Option<bun_ptr::BackRef<Box<[Box<[u8]>]>>>,
+
     /// Why "exports" or "imports" led to no file: the first time since this was last `None`.
     pub esm_failure: Option<crate::package_json::Status>,
 }
@@ -652,6 +655,7 @@ impl<'a> Resolver<'a> {
             // Transient per-resolve scratch (only set for `require(..., {paths})`);
             // never carried across worker init.
             custom_dir_paths: None,
+            extra_cjs_global_folders: None,
             esm_failure: None,
         }
     }
@@ -1007,6 +1011,7 @@ impl<'a> Resolver<'a> {
             standalone_module_graph: None,
             prefer_module_field: true,
             custom_dir_paths: None,
+            extra_cjs_global_folders: None,
             esm_failure: None,
         }
     }
@@ -3136,9 +3141,17 @@ impl<'a> Resolver<'a> {
             .env_loader()
             .and_then(|env| env.get(b"NODE_PATH"))
             .unwrap_or(b"");
-        if !node_path.is_empty() {
+        // BACKREF: the JS thread replaces the list in `Module._initPaths()` and between test files, never during a resolve.
+        let listed = match self.extra_cjs_global_folders {
+            Some(list) if kind.is_common_js() => bun_ptr::RawSlice::new(&**list),
+            _ => bun_ptr::RawSlice::EMPTY,
+        };
+        if !node_path.is_empty() || !listed.is_empty() {
             let delim = if cfg!(windows) { b';' } else { b':' };
-            for path in node_path.split(|&b| b == delim).filter(|s| !s.is_empty()) {
+            let node_path = node_path
+                .split(|&b| b == delim)
+                .filter(|s| !s.is_empty() && !listed.iter().any(|folder| **folder == **s));
+            for path in listed.iter().map(|folder| &**folder).chain(node_path) {
                 let Some(abs_path) = self
                     .fs_ref()
                     .abs_buf_checked(&[path, import_path], bufs!(node_modules_check))

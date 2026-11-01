@@ -2362,6 +2362,10 @@ impl JSValue {
         }
         JSC__JSValue__isClass(self, global)
     }
+    /// Whether `Object.prototype.toString.call(self)` is `"[object Object]"` or `"[object Module]"`. It reads `Symbol.toStringTag`, so it can run user code.
+    pub fn to_string_tag_is_object_or_module(self, global: &JSGlobalObject) -> JsResult<bool> {
+        crate::cpp::JSC__JSValue__toStringTagIsObjectOrModule(self, global)
+    }
 
     // ── Iteration. ────────────────────────────────
     /// `JSValue.isIterable`.

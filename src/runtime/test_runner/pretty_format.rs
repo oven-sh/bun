@@ -390,6 +390,11 @@ impl<'a> Formatter<'a> {
     pub(crate) fn add_for_new_line(&mut self, len: usize) {
         self.estimated_line_length = self.estimated_line_length.saturating_add(len);
     }
+
+    /// A snapshot of a value keeps `Headers {}` and `URL {}`, which older versions stored. A failure message prints what `deepEquals` compares.
+    fn is_failure_message(&self) -> bool {
+        self.output_length.is_some()
+    }
 }
 
 // The node is acquired lazily inside `print_as` via `visited::Pool::get_node()`;
@@ -893,6 +898,8 @@ pub(crate) struct PropertyIterator<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_C
     pub(crate) i: usize,
     pub(crate) always_newline: bool,
     pub(crate) parent: JSValue,
+    /// See `Formatter::print_as_with_native_state`. The class name is the only name that `parent` prints.
+    pub(crate) has_native_state: bool,
 }
 
 impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
@@ -903,7 +910,7 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
         global_this: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<()> {
-        if !value.js_type().is_function() {
+        if !self.has_native_state && !value.js_type().is_function() {
             let mut writer = WrappedWriter::new(self.writer);
             let name_str = value.get_name_property(global_this)?;
             if !name_str.is_empty() && !name_str.eq_ascii(b"Object") {
@@ -1073,11 +1080,23 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
 }
 
 impl<'a> Formatter<'a> {
+    #[inline]
     pub(crate) fn print_as<W: bun_io::Write, const FORMAT: Tag, const ENABLE_ANSI_COLORS: bool>(
         &mut self,
         writer_: &mut W,
         value: JSValue,
         js_type: JSType,
+    ) -> JsResult<()> {
+        self.print_as_with_native_state::<W, FORMAT, ENABLE_ANSI_COLORS>(writer_, value, js_type, None)
+    }
+
+    /// An object prints the properties of `native_state` before its own.
+    fn print_as_with_native_state<W: bun_io::Write, const FORMAT: Tag, const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        writer_: &mut W,
+        value: JSValue,
+        js_type: JSType,
+        native_state: Option<JSValue>,
     ) -> JsResult<()> {
         if self.failed {
             return Ok(());
@@ -1721,8 +1740,30 @@ impl<'a> Formatter<'a> {
                             writer.ctx, value, js_type,
                         );
                     }
-                    return self.print_as::<W, { Tag::Object }, ENABLE_ANSI_COLORS>(
-                        writer.ctx, value, JSType::Event,
+                    // `deepEquals` compares the entries of a `Headers` and the href of a `URL`, then their own properties.
+                    let mut native_state = None;
+                    if self.is_failure_message() {
+                        let vm = self.global_this.vm();
+                        let is_url = bun_jsc::DOMURL::cast_(value, vm).is_some();
+                        if (is_url
+                            || bun_jsc::FetchHeaders::cast_(value, vm)
+                                .is_some_and(|headers| !bun_opaque::opaque_deref_mut(headers.as_ptr()).is_empty()))
+                            && let Some(to_json) = value
+                                .get(self.global_this, "toJSON")?
+                                .filter(|to_json| to_json.is_callable())
+                        {
+                            let json = to_json.call(self.global_this, value, &[])?;
+                            native_state = Some(if is_url {
+                                let state = JSValue::create_empty_object(self.global_this, 1);
+                                state.put(self.global_this, b"href", json);
+                                state
+                            } else {
+                                json
+                            });
+                        }
+                    }
+                    return self.print_as_with_native_state::<W, { Tag::Object }, ENABLE_ANSI_COLORS>(
+                        writer.ctx, value, JSType::Event, native_state,
                     );
                 }
                 Tag::NativeCode => {
@@ -2371,6 +2412,7 @@ impl<'a> Formatter<'a> {
                         i: 0,
                         always_newline,
                         parent: value,
+                        has_native_state: native_state.is_some(),
                     };
 
                     let each = PropertyIterator::<W, ENABLE_ANSI_COLORS>::for_each;
@@ -2379,7 +2421,13 @@ impl<'a> Formatter<'a> {
                             .for_each_property_ordered_with_non_enumerable(global, (&raw mut iter).cast::<c_void>(), each)
                             .map(|()| true)
                     } else {
-                        value.for_each_property_ordered_calling_getters(global, (&raw mut iter).cast::<c_void>(), each)
+                        native_state
+                            .map_or(Ok(true), |state| {
+                                state.for_each_property_ordered_calling_getters(global, (&raw mut iter).cast::<c_void>(), each)
+                            })
+                            .and_then(|_| {
+                                value.for_each_property_ordered_calling_getters(global, (&raw mut iter).cast::<c_void>(), each)
+                            })
                     };
 
                     let iter_i = iter.i;

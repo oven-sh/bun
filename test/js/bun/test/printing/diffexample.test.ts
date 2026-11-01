@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, mock, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 function cleanOutput(output: string) {
@@ -922,6 +922,236 @@ test("prints a Response once", () => {
 +   },
   }
 `);
+});
+
+// The tests below that pin a whole message keep every unchanged line next to a changed one.
+// With AGENT=1 in the environment, the diff leaves out the other unchanged lines.
+function failureMessage(fail: () => void): string {
+  try {
+    fail();
+  } catch (e) {
+    return cleanAnsiEscapes((e as Error).message);
+  }
+  throw new Error("the matcher did not fail");
+}
+
+test("prints the entries of a Headers, then its own properties", () => {
+  class Subclass extends Headers {}
+  const tagged = (a: string, tag: string) => Object.assign(new Subclass({ a }), { tag });
+
+  expect(failureMessage(() => expect(tagged("1", "x")).toEqual(tagged("2", "y"))))
+    .toBe(`expect(received).toEqual(expected)
+
+  Subclass {
+-   "a": "2",
+-   "tag": "y",
++   "a": "1",
++   "tag": "x",
+  }
+
+- Expected  - 2
++ Received  + 2
+`);
+  expect(failureMessage(() => expect(tagged("1", "x")).toEqual(tagged("1", "y")))).toEndWith(`
+    "a": "1",
+-   "tag": "y",
++   "tag": "x",
+  }
+
+- Expected  - 1
++ Received  + 1
+`);
+  expect(failureMessage(() => expect(new Headers({ a: "1" })).toMatchObject(new Headers({ a: "1", b: "2" }))))
+    .toEndWith(`
+    "a": "1",
+-   "b": "2",
+  }
+
+- Expected  - 1
++ Received  + 0
+`);
+
+  const cookies = new Headers({ "X-Up": "v" });
+  cookies.append("set-cookie", "a=1");
+  cookies.append("set-cookie", "b=2");
+  expect(failureMessage(() => expect<unknown>([cookies, new Headers()]).toEqual([])))
+    .toBe(`expect(received).toEqual(expected)
+
+- []
++ [
++   Headers {
++     "set-cookie": [
++       "a=1",
++       "b=2",
++     ],
++     "x-up": "v",
++   },
++   Headers {},
++ ]
+
+- Expected  - 1
++ Received  + 10
+`);
+});
+
+test("prints the headers of a Request and of a Response", () => {
+  const request = (a: string) => new Request("http://example.com/", { headers: { a } });
+  expect(failureMessage(() => expect<unknown>(request("1")).toEqual(1))).toBe(`expect(received).toEqual(expected)
+
+- 1
++ Request (0 KB) {
++   method: "GET",
++   url: "http://example.com/",
++   headers: Headers {
++     "a": "1",
++   }
++ }
+
+- Expected  - 1
++ Received  + 7
+`);
+  expect(failureMessage(() => expect<unknown>(Response.json(1)).toEqual(1))).toBe(`expect(received).toEqual(expected)
+
+- 1
++ Response (1 bytes) {
++   ok: true,
++   url: "",
++   status: 200,
++   statusText: "",
++   headers: Headers {
++     "content-type": "application/json;charset=utf-8",
++   },
++   redirected: false,
++   bodyUsed: false,
++   Blob (1 bytes)
++ }
+
+- Expected  - 1
++ Received  + 12
+`);
+
+  // toEqual does not compare the headers of two Requests. A custom tester can.
+  expect.extend({
+    toHaveTheHeadersOf(received: unknown, expected: unknown) {
+      const sameHeaders = (a: unknown, b: unknown) =>
+        a instanceof Request && b instanceof Request ? Bun.deepEquals(a.headers, b.headers) : undefined;
+      return {
+        pass: this.equals(received, expected, [sameHeaders]),
+        message: () => this.utils.diff(expected, received)!,
+      };
+    },
+  });
+  expect(failureMessage(() => (expect(request("1")) as any).toHaveTheHeadersOf(request("2")))).toContain(`
+    headers: Headers {
+-     "a": "2",
++     "a": "1",
+    }
+`);
+});
+
+test("prints the href of a URL, then its own properties", () => {
+  // https://github.com/oven-sh/bun/issues/7253
+  expect(failureMessage(() => expect(new URL("https://www.google.com")).toStrictEqual(new URL("https://github.com"))))
+    .toBe(`expect(received).toStrictEqual(expected)
+
+  URL {
+-   "href": "https://github.com/",
++   "href": "https://www.google.com/",
+  }
+
+- Expected  - 1
++ Received  + 1
+`);
+
+  class Subclass extends URL {
+    extra = 1;
+  }
+  expect(failureMessage(() => expect<unknown>(new Subclass("http://example.com/a")).toEqual("http://example.com/a")))
+    .toBe(`expect(received).toEqual(expected)
+
+- "http://example.com/a"
++ Subclass {
++   "href": "http://example.com/a",
++   "extra": 1,
++ }
+
+- Expected  - 1
++ Received  + 4
+`);
+});
+
+test("prints a URL and a Headers in the arguments of a mock call", () => {
+  const fetched = mock();
+  fetched(new URL("http://example.com/a"), new Headers({ a: "1" }));
+  expect(
+    failureMessage(() =>
+      expect(fetched).toHaveBeenCalledWith(new URL("http://example.com/b"), new Headers({ a: "2" })),
+    ),
+  ).toContain(`
+    URL {
+-     "href": "http://example.com/b",
++     "href": "http://example.com/a",
+    },
+    Headers {
+-     "a": "2",
++     "a": "1",
+    },
+`);
+});
+
+test("keeps `Headers {}` and `URL {}` in a snapshot of a value, and calls toJSON only for a failure message", () => {
+  const toJSON = Headers.prototype.toJSON;
+  let calls = 0;
+  Headers.prototype.toJSON = function (this: Headers) {
+    calls++;
+    return toJSON.call(this);
+  };
+  try {
+    expect(new Headers({ a: "1" })).toEqual(new Headers({ a: "1" }));
+    expect(new Request("http://example.com/", { headers: { a: "1" } })).toMatchInlineSnapshot(`Request (0 KB) {
+  method: "GET",
+  url: "http://example.com/",
+  headers: Headers {}
+}`);
+    // The Blob makes this differ from what Jest prints, which an inline snapshot also accepts.
+    expect([new Blob(["a"]), new Headers({ a: "1" }), new URL("http://example.com/")]).toMatchInlineSnapshot(`
+      [
+        Blob (1 bytes),
+        Headers {},
+        URL {},
+      ]
+    `);
+    expect(failureMessage(() => expect<unknown>(new Headers()).toEqual(1))).toBe(
+      "expect(received).toEqual(expected)\n\nExpected: 1\nReceived: Headers {}\n",
+    );
+    expect(calls).toBe(0);
+
+    failureMessage(() => expect<unknown>([new Headers({ a: "1" }), new Headers({ b: "2" })]).toEqual(1));
+    expect(calls).toBe(2);
+
+    Headers.prototype.toJSON = () => {
+      throw new Error("from toJSON");
+    };
+    expect(() => expect<unknown>(new Headers({ a: "1" })).toEqual(1)).toThrow("from toJSON");
+    expect(() => expect<unknown>(new Request("http://example.com/", { headers: { a: "1" } })).toEqual(1)).toThrow(
+      "from toJSON",
+    );
+    expect(() => expect<unknown>(Response.json(1)).toEqual(1)).toThrow("from toJSON");
+  } finally {
+    Headers.prototype.toJSON = toJSON;
+  }
+});
+
+test("prints `Headers {}` and `URL {}` when toJSON gives nothing to print", () => {
+  const withToJSON = (value: object, toJSON: unknown) => Object.defineProperty(value, "toJSON", { value: toJSON });
+  for (const toJSON of [1, () => "text", () => ({})]) {
+    expect(failureMessage(() => expect<unknown>(withToJSON(new Headers({ a: "1" }), toJSON)).toEqual(1))).toBe(
+      "expect(received).toEqual(expected)\n\nExpected: 1\nReceived: Headers {}\n",
+    );
+  }
+  expect(failureMessage(() => expect<unknown>(withToJSON(new URL("http://example.com/"), 1)).toEqual(1))).toBe(
+    "expect(received).toEqual(expected)\n\nExpected: 1\nReceived: URL {}\n",
+  );
 });
 
 test("prints a React 19 element as JSX, without the fiber in its _owner", () => {

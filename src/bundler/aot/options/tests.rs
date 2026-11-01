@@ -157,7 +157,7 @@ fn set_framework(options: &mut BundleOptions<'_>) {
 
 fn set_root_and_compile_name(options: &mut BundleOptions<'_>) {
     options.root_dir = Box::from(&b"src"[..]);
-    options.compile_entry_point_name = Box::from(&b"app"[..]);
+    options.entry_point_file_name = Box::from(&b"app"[..]);
 }
 
 #[test]

@@ -94,7 +94,7 @@ fn report_unsupported_options(options: &BundleOptions<'_>, log: &mut Log) -> boo
         loaders: _, jsx: _, react_compiler: _, react_compiler_filter: _, root_dir: _, preserve_symlinks: _,
         tsconfig_override: _, main_fields: _, transform_options: _, external: _, packages: _,
         extension_order: _, main_field_extension_order: _, no_macros: _, custom_conditions: _,
-        entry_naming: _, compile_entry_point_name: _, force_node_env: _,
+        entry_naming: _, entry_point_file_name: _, force_node_env: _,
         emit_decorator_metadata: _, experimental_decorators: _, use_define_for_class_fields: _,
         define: _, drop: _, bundler_feature_flags: _, asset_naming: _,
         auto_import_jsx: _, allow_runtime: _,
@@ -628,7 +628,7 @@ pub(crate) fn embedded_entry_point_names(
     root_directory: &[u8],
     log: &mut Log,
 ) -> Option<Vec<Vec<u8>>> {
-    let compile_name = Some(&options.compile_entry_point_name[..]).filter(|name| !name.is_empty());
+    let compile_name = Some(&options.entry_point_file_name[..]).filter(|name| !name.is_empty());
     let mut template = output_name_template(&options.entry_naming);
     let names = entry_points
         .iter()

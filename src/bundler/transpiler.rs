@@ -3028,6 +3028,10 @@ impl<'a> Transpiler<'a> {
         loader: options::Loader,
         output: &[u8],
     ) -> Box<[u8]> {
+        if !self.options.entry_point_file_name.is_empty() {
+            return self.options.entry_point_file_name.clone();
+        }
+
         let rel_to_root = bun_paths::resolve_path::relative_platform::<
             bun_paths::resolve_path::platform::Auto,
             false,

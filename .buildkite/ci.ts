@@ -1330,7 +1330,6 @@ interface PipelineOptions {
   skipTests?: OptionFlag;
   skipSizeCheck?: OptionFlag;
   forceBuilds?: OptionFlag;
-  signWindows?: OptionFlag;
   canary?: number;
   buildPlatforms?: Platform[];
   testPlatforms?: Platform[];
@@ -1597,7 +1596,6 @@ async function getPipelineOptions(): Promise<PipelineOptions | undefined> {
     forceBuilds: parseOption(/\[(force builds?)\]/i),
     skipTests: parseOption(/\[(skip tests?|no tests?|only builds?)\]/i),
     skipSizeCheck: parseOption(/\[(skip size( check)?|allow size)\]/i),
-    signWindows: parseOption(/\[(sign windows)\]/i),
     buildPlatforms: Array.from(buildPlatformsMap.values()),
     testPlatforms: Array.from(testPlatformsMap.values()),
   };
@@ -1718,10 +1716,9 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
   }
 
   const { buildPlatforms = [], testPlatforms = [] } = options;
-  // Sign with [sign windows] in the commit message (for testing the sign step
-  // on a branch). DigiCert charges per signature, so canary builds are never signed.
+  // DigiCert charges per signature, so canary builds are never signed.
   const windowsPlatforms = buildPlatforms.filter(p => p.os === "windows");
-  const signWindows = ((isMainBranch() && !options.canary) || !!options.signWindows) && windowsPlatforms.length > 0;
+  const signWindows = isMainBranch() && !options.canary && windowsPlatforms.length > 0;
 
   // A build makes sure every image of the spec exists, not only the ones its
   // own steps start from: which steps a build has depends on its options (a

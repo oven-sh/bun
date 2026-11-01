@@ -1,0 +1,11 @@
+// A parameter is checked where it is used, behind an arm that every call leaves out. Typing the split body cuts that arm, and the values that stay get other numbers: the check is asked for under its new one.
+class Kind { size = 1; name = "k"; }
+
+function outer(p: unknown, parent: number | null): string {
+  let head = ""; if (parent !== null) head = "<part 0=" + parent + ">" + "<part 1=" + parent + ">" + "<part 2=" + parent + ">" + "<part 3=" + parent + ">" + "<part 4=" + parent + ">" + "<part 5=" + parent + ">" + "<part 6=" + parent + ">" + "<part 7=" + parent + ">" + "<part 8=" + parent + ">" + "<part 9=" + parent + ">" + "<part 10=" + parent + ">" + "<part 11=" + parent + ">" + "<part 12=" + parent + ">" + "<part 13=" + parent + ">" + "<part 14=" + parent + ">" + "<part 15=" + parent + ">" + "<part 16=" + parent + ">" + "<part 17=" + parent + ">" + "<part 18=" + parent + ">" + "<part 19=" + parent + ">" + "<part 20=" + parent + ">" + "<part 21=" + parent + ">" + "<part 22=" + parent + ">" + "<part 23=" + parent + ">" + "<part 24=" + parent + ">" + "<part 25=" + parent + ">" + "<part 26=" + parent + ">" + "<part 27=" + parent + ">" + "<part 28=" + parent + ">" + "<part 29=" + parent + ">" + "<part 30=" + parent + ">" + "<part 31=" + parent + ">" + "<part 32=" + parent + ">" + "<part 33=" + parent + ">" + "<part 34=" + parent + ">" + "<part 35=" + parent + ">" + "<part 36=" + parent + ">" + "<part 37=" + parent + ">" + "<part 38=" + parent + ">" + "<part 39=" + parent + ">" + "<part 40=" + parent + ">" + "<part 41=" + parent + ">" + "<part 42=" + parent + ">" + "<part 43=" + parent + ">" + "<part 44=" + parent + ">" + "<part 45=" + parent + ">" + "<part 46=" + parent + ">" + "<part 47=" + parent + ">" + "<part 48=" + parent + ">" + "<part 49=" + parent + ">" + "<part 50=" + parent + ">" + "<part 51=" + parent + ">" + "<part 52=" + parent + ">" + "<part 53=" + parent + ">" + "<part 54=" + parent + ">" + "<part 55=" + parent + ">" + "<part 56=" + parent + ">" + "<part 57=" + parent + ">" + "<part 58=" + parent + ">" + "<part 59=" + parent + ">";
+  return head + (p as Kind).name;
+}
+const given: any = process.argv.length > 9 ? JSON.parse(process.argv[9]) : new Kind();
+let length = 0;
+for (let turn = 0; turn < 5000; turn++) length += outer(given, null).length;
+console.log(length);

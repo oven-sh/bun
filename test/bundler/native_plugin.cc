@@ -1,6 +1,6 @@
 /*
-  Dummy plugin which counts the occurrences of the word "foo" in the source code,
-  replacing it with "boo".
+  Dummy plugin which counts the occurrences of the word "foo" in the source
+  code, replacing it with "qoo".
 
   It stores the number of occurrences in the External struct.
 */
@@ -22,6 +22,18 @@
 extern "C" BUN_PLUGIN_EXPORT const char *BUN_PLUGIN_NAME = "native_plugin_test";
 
 static std::atomic<int> g_external_finalized_count{0};
+
+// The source is not NUL-terminated and may hold NUL bytes (binary assets), so
+// the scan is bounded by its length instead of using strstr.
+static char *find_needle(const char *haystack, size_t haystack_len,
+                         const char *needle, size_t needle_len) {
+  for (size_t i = 0; i + needle_len <= haystack_len; i++) {
+    if (memcmp(haystack + i, needle, needle_len) == 0) {
+      return (char *)haystack + i;
+    }
+  }
+  return nullptr;
+}
 
 struct External {
   std::atomic<size_t> foo_count;
@@ -107,35 +119,28 @@ plugin_impl_with_needle(const OnBeforeParseArguments *args,
   }
 
   size_t needle_len = strlen(needle);
+  size_t source_len = result->source_len;
+  const char *source = (const char *)result->source_ptr;
 
   int needle_count = 0;
-
-  const char *end = (const char *)result->source_ptr + result->source_len;
-
-  char *cursor = (char *)strstr((const char *)result->source_ptr, needle);
-  while (cursor != nullptr) {
+  size_t offset = 0;
+  while (const char *hit = find_needle(source + offset, source_len - offset,
+                                       needle, needle_len)) {
     needle_count++;
-    cursor += needle_len;
-    if (cursor + needle_len < end) {
-      cursor = (char *)strstr((const char *)cursor, needle);
-    } else
-      break;
+    offset = (size_t)(hit - source) + needle_len;
   }
 
   if (needle_count > 0) {
-    char *new_source = (char *)malloc(result->source_len);
+    char *new_source = (char *)malloc(source_len);
     if (new_source == nullptr) {
       exit(1);
     }
-    memcpy(new_source, result->source_ptr, result->source_len);
-    cursor = strstr(new_source, needle);
-    while (cursor != nullptr) {
-      cursor[0] = 'q';
-      cursor += 3;
-      if (cursor + 3 < end) {
-        cursor = (char *)strstr((const char *)cursor, needle);
-      } else
-        break;
+    memcpy(new_source, source, source_len);
+    offset = 0;
+    while (char *hit = find_needle(new_source + offset, source_len - offset,
+                                   needle, needle_len)) {
+      hit[0] = 'q';
+      offset = (size_t)(hit - new_source) + needle_len;
     }
     std::atomic<size_t> *free_counter = nullptr;
     if (args->external) {

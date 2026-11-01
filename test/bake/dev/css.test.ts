@@ -1,7 +1,7 @@
 // CSS tests concern bundling bugs with CSS files
 import { expect } from "bun:test";
 import assert from "node:assert";
-import { devTest, emptyHtmlFile, imageFixtures } from "../bake-harness";
+import { devTest, emptyHtmlFile, imageFixtures, minimalFramework } from "../bake-harness";
 
 devTest("css file with syntax error does not kill old styles", {
   files: {
@@ -95,6 +95,53 @@ devTest("css file with initial syntax error gets recovered", {
     );
   },
 });
+// The server graph owns this build error. It goes when a bundle of the page inserts the stylesheet there again.
+for (const assumePerfectIncremental of ["0", "1"]) {
+  devTest(
+    `a framework route recovers from a stylesheet that failed on its first load (BUN_ASSUME_PERFECT_INCREMENTAL=${assumePerfectIncremental})`,
+    {
+      framework: minimalFramework,
+      env: { BUN_ASSUME_PERFECT_INCREMENTAL: assumePerfectIncremental },
+      files: {
+        "routes/index.ts": `
+          import "../styles.css";
+          export default function (req, meta) {
+            return new Response("index stylesheets: " + meta.styles.length);
+          }
+        `,
+        "routes/broken.ts": `export default function (`,
+        "styles.css": `
+          .one {
+            color: red;
+          }}
+        `,
+      },
+      async test(dev) {
+        expect((await dev.fetch("/")).status).toBe(500);
+        await dev.write("styles.css", `.one { color: red; }`, { errors: null });
+        if (assumePerfectIncremental === "1") {
+          // With this setting a request does not bundle the page again. A save of the page does.
+          await dev.write(
+            "routes/index.ts",
+            `
+              import "../styles.css";
+              export default function (req, meta) {
+                return new Response("index stylesheets: " + meta.styles.length);
+              }
+              export const saved = true;
+            `,
+            { errors: null },
+          );
+        }
+        await dev.fetch("/").equals("index stylesheets: 1");
+        // A "Build Failed" page lists each build error that the dev server holds.
+        await using c = await dev.client("/broken", {
+          errors: ["routes/broken.ts:1:25: error: Expected identifier but found end of file"],
+        });
+      },
+    },
+  );
+}
 devTest("add new css import later", {
   files: {
     "index.html": emptyHtmlFile({

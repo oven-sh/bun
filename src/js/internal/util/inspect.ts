@@ -1935,7 +1935,7 @@ function getDuplicateErrorFrameRanges(frames: string[]): number[] {
 
   // names[k][i] names the 2 ** k lines from i: two indexes have the same name if and only if those lines are equal.
   const names: Int32Array[] = [ids];
-  // nexts[k][i] is the next index with the name of i, or `slots`. A level is built when an index first needs it.
+  // nexts[k][i] is the next index with the name of i, or `slots`. The search builds a level when it first reaches it.
   const nexts: Int32Array[] = [new Int32ArrayCtor(slots)];
   let count = idPastEnd === distinct ? distinct + 1 : distinct;
   let first = chainEqualNames(ids, count, nexts[0], slots);
@@ -1952,8 +1952,7 @@ function getDuplicateErrorFrameRanges(frames: string[]): number[] {
       if (size * 2 - 1 <= reach) {
         continue;
       }
-      // Where every name is different, no block of that size or more occurs twice.
-      while (nexts.length <= k && count !== slots) {
+      while (nexts.length <= k) {
         const top = nexts.length - 1;
         const doubled = new Int32ArrayCtor(slots);
         const chain = new Int32ArrayCtor(slots);
@@ -1962,11 +1961,12 @@ function getDuplicateErrorFrameRanges(frames: string[]): number[] {
         $putByValDirect(names, top + 1, doubled);
         $putByValDirect(nexts, top + 1, chain);
       }
-      if (nexts.length <= k) {
-        break;
-      }
       const name = names[k];
       const next = nexts[k];
+      // A block that does not stand again within `farthest` starts no longer block that does.
+      if (next[i] > i + farthest) {
+        break;
+      }
       const windowEnd = i + $min(farthest, size * 2 - 1);
       for (let j = next[i] | 0; j <= windowEnd; j = next[j] | 0) {
         const range = j - i;

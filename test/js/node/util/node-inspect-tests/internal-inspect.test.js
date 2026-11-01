@@ -346,6 +346,46 @@ test("util.inspect hides the same stack frames as the functions of Node.js on se
   expect(collapsed).toBe(count === 200 ? 175 : 3_506);
 });
 
+// The seeded stacks repeat blocks of up to 20 lines. util.inspect compares longer blocks in another way.
+test("util.inspect hides blocks of 32 and more stack frames as the functions of Node.js do", () => {
+  const lines = (count, name) => Array.from({ length: count }, (_, i) => at(name(i)));
+  const cycle = (length, times) => lines(length * times, i => `f${i % length}`);
+  const recursion = count => lines(count, i => "ab"[i % 2]);
+  const stacks = {
+    "a cycle of 64 functions three times": [...cycle(64, 3), at("main")],
+    "a cycle of 100 functions four times, one line of the third copy changed": cycle(100, 4).with(250, at("other")),
+    "two functions 256 times and a line of its own, three times": lines(3 * 513, i =>
+      i % 513 === 512 ? `own${i}` : "ab"[(i % 513) % 2],
+    ),
+    "150 lines twice, then 40 of them again": [...cycle(150, 2), ...cycle(150, 1).slice(20, 60), at("main")],
+    "a line on both sides of a recursion of two functions": [at("map"), ...recursion(400), at("map"), at("main")],
+    "a recursion of two functions that the stack holds twice": [
+      ...recursion(200),
+      at("x"),
+      ...recursion(240),
+      at("main"),
+    ],
+    "300 lines twice but for the last one": lines(600, i => (i === 599 ? "last" : `line${i % 300}`)),
+  };
+  const printed = {};
+  for (const [name, frames] of Object.entries(stacks)) {
+    const text = util.inspect(errorWithFrames(frames));
+    expect(text).toBe(textOfNode(frames));
+    printed[name] = text.split("\n").length - 1;
+  }
+
+  // The lines that Node.js v26.3.0 prints for each stack.
+  expect(printed).toEqual({
+    "a cycle of 64 functions three times": 66,
+    "a cycle of 100 functions four times, one line of the third copy changed": 301,
+    "two functions 256 times and a line of its own, three times": 12,
+    "150 lines twice, then 40 of them again": 192,
+    "a line on both sides of a recursion of two functions": 6,
+    "a recursion of two functions that the stack holds twice": 8,
+    "300 lines twice but for the last one": 600,
+  });
+});
+
 test("util.inspect hides the repeated frames of a stack that the program did not write", async () => {
   const withoutPositions = error =>
     util
@@ -438,15 +478,17 @@ test("util.inspect hides the repeated frames of a stack of very many lines", () 
   const lines = isDebug || isASAN ? 10_000 : 100_000;
   const stackOf = line => Array.from({ length: lines }, (_, i) => at(line(i)));
   const callEachOther = errorWithFrames([...stackOf(i => "ab"[i % 2]), at("main")]);
+  const underOneCaller = errorWithFrames([at("map"), ...stackOf(i => "ab"[i % 2]), at("map"), at("main")]);
   const twoThenItsOwn = errorWithFrames(stackOf(i => (i % 3 === 2 ? `u${i}` : "ab"[i % 3])));
   const oneThenItsOwn = errorWithFrames(stackOf(i => (i % 2 ? `u${i}` : "a")));
+  const once =
+    "    at a (file.js:1:1)\n" +
+    "    at b (file.js:1:1)\n" +
+    `    ... collapsed ${lines - 2} duplicate lines matching above 2 lines ${lines / 2 - 1} times...\n`;
 
-  expect(util.inspect(callEachOther)).toBe(
-    "Error: m\n" +
-      "    at a (file.js:1:1)\n" +
-      "    at b (file.js:1:1)\n" +
-      `    ... collapsed ${lines - 2} duplicate lines matching above 2 lines ${lines / 2 - 1} times...\n` +
-      "    at main (file.js:1:1)",
+  expect(util.inspect(callEachOther)).toBe(`Error: m\n${once}    at main (file.js:1:1)`);
+  expect(util.inspect(underOneCaller)).toBe(
+    `Error: m\n    at map (file.js:1:1)\n${once}    at map (file.js:1:1)\n    at main (file.js:1:1)`,
   );
   expect(util.inspect(twoThenItsOwn) === twoThenItsOwn.stack).toBe(true);
   expect(util.inspect(oneThenItsOwn) === oneThenItsOwn.stack).toBe(true);
@@ -474,6 +516,49 @@ test.skipIf(!hidesFramesOfCause)(
         "\n" +
         "<    ... collapsed 3 duplicate lines matching above lines ...>",
     );
+  },
+);
+
+test.skipIf(!hidesFramesOfCause)(
+  "util.inspect hides the same frames as the functions of Node.js around a line for the frames of a cause that is `undefined`",
+  () => {
+    let seed = 11;
+    const int = below => {
+      // xorshift32
+      seed ^= seed << 13;
+      seed >>>= 0;
+      seed ^= seed >>> 17;
+      seed ^= seed << 5;
+      seed >>>= 0;
+      return Math.floor((seed / 0x100000000) * below);
+    };
+    // `c1` and `c6` are the frames of the cause that stay around its line.
+    const names = ["a", "c1", "c6"];
+    const some = most => Array.from({ length: int(most + 1) }, () => at(names[int(names.length)]));
+    const stylize = text => (text.includes("cause stack trace") ? undefined : `<${text}>`);
+    const different = [];
+    let collapsed = 0;
+    for (let stack = 0; stack < 300; stack++) {
+      let before = some(12);
+      let after = some(12);
+      if (stack % 2) {
+        // The block that ends with the line of the cause stands again at the end of the stack, without its last line.
+        const between = some(2);
+        before = [...before, at("c6"), ...between];
+        after = [...between, at("c1")];
+      }
+      const error = errorWithFrames([...before, ...framesOf("c1 c2 c3 c4 c5 c6"), ...after]);
+      error.cause = causeWithFrames;
+      // What the step for the cause leaves of the stack.
+      const left = [...before, at("c1"), undefined, at("c6"), ...after];
+      const expected = ["Error: m", ...getStackFramesOfNode({ stylize }, left)].join("\n");
+      if (expected.includes("collapsed")) collapsed++;
+      const text = util.inspect(error, { stylize }).split(" {\n")[0];
+      if (text !== expected) different.push(`${text}\n--- Node.js:\n${expected}`);
+    }
+    expect(different).toEqual([]);
+    // Node.js v26.3.0 hides frames in this many of the 300 stacks. 66 of them need the line past the end.
+    expect(collapsed).toBe(139);
   },
 );
 

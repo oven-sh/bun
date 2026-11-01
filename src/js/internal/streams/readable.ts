@@ -503,6 +503,8 @@ Readable.prototype.setEncoding = function (this: $Node.Readable, enc: string) {
     for (const data of state.buffer.slice(state.bufferIndex)) {
       content += decoder.write(data);
     }
+    // Node has this after its unguarded loop: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/streams/readable.js#L646-L647
+    if ((state[kState] & Flag.Ended) !== 0) content += decoder.end();
   }
   state.buffer.length = 0;
   state.bufferIndex = 0;
@@ -1306,7 +1308,7 @@ Readable.prototype.wrap = function (this: $Node.Readable, stream: $Node.LegacyRe
 
   // Proxy all the other methods. Important when wrapping filters and duplexes.
   const streamKeys = ObjectKeys(stream);
-  for (let j = 1; j < streamKeys.length; j++) {
+  for (let j = 0; j < streamKeys.length; j++) {
     const i = streamKeys[j];
     if (this[i] === undefined && typeof stream[i] === "function") {
       this[i] = (stream[i] as (...args: unknown[]) => unknown).bind(stream);

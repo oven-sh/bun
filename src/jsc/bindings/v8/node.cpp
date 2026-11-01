@@ -1,5 +1,6 @@
 #include "node.h"
 #include "V8HandleScope.h"
+#include "ErrorCode.h"
 
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/CallData.h"
@@ -114,16 +115,35 @@ void node_module_register(void* opaque_mod)
     globalObject->napiModuleRegisterCallCount++;
 }
 
-void executePendingV8Module(Zig::GlobalObject* globalObject, node_module* mod, JSObject* object)
+// 13.0.0 moved to Node-API and ships prebuilt binaries. 13.0.2 is the first that installs without a node-gyp step ("gypfile": false).
+static constexpr ASCIILiteral betterSqlite3Remedy = "\nbetter-sqlite3 13 uses Node-API. Upgrade to 13.0.2 or later, or use bun:sqlite, which has a similar API."_s;
+
+WTF::String loaderErrorMessage(WTF::String&& loaderError, const WTF::String& filename)
+{
+    // The Itanium mangling of every member of v8:: and node:: starts with one of these.
+    if (!loaderError.contains("_ZN2v8"_s) && !loaderError.contains("_ZNK2v8"_s) && !loaderError.contains("_ZN4node"_s) && !loaderError.contains("_ZNK4node"_s))
+        return WTF::move(loaderError);
+    // Nothing registered before the loader failed, so the file name is the only sign of a better-sqlite3 build.
+    bool isBetterSqlite3 = filename.endsWith("better_sqlite3.node"_s);
+    return makeString(loaderError, "\nBun does not export this V8 or Node.js C++ API function. Either the addon was built for another Node.js version (this version of Bun requires NODE_MODULE_VERSION " STRINGIZE_VALUE_OF(REPORTED_NODEJS_ABI_VERSION) "), or it uses a function that is not yet supported in Bun (https://github.com/oven-sh/bun/issues/4290)."_s, isBetterSqlite3 ? betterSqlite3Remedy : ""_s);
+}
+
+void executePendingV8Module(Zig::GlobalObject* globalObject, node_module* mod, JSObject* object, const WTF::String& filename)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto keyStr = WTF::String::fromUTF8(mod->nm_modname);
+
+    // Node runs this module. In Bun the loader ends the process at its first call of a v8:: or node:: function that Bun does not export. Remove this when better-sqlite3 12.11.1 runs a query: https://github.com/oven-sh/bun/issues/4290
+    if (mod->nm_modname && !strcmp(mod->nm_modname, "better_sqlite3")) {
+        Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_DLOPEN_FAILED,
+            makeString("Cannot load native addon '"_s, filename, "': this build of better-sqlite3 uses V8 C++ API functions that are not yet supported in Bun (https://github.com/oven-sh/bun/issues/4290)."_s, betterSqlite3Remedy));
+        return;
+    }
 
     if (mod->nm_version != REPORTED_NODEJS_ABI_VERSION) {
         auto* error = JSC::createError(globalObject,
             WTF::makeString("The module '"_s,
-                keyStr,
+                WTF::String::fromUTF8(mod->nm_modname),
                 "' was compiled against a different Node.js ABI version using NODE_MODULE_VERSION "_s,
                 mod->nm_version,
                 ". This version of Bun requires NODE_MODULE_VERSION "_s,
@@ -155,7 +175,7 @@ void executePendingV8Module(Zig::GlobalObject* globalObject, node_module* mod, J
     } else if (mod->nm_register_func) {
         mod->nm_register_func(exports, module, mod->nm_priv);
     } else {
-        auto* error = JSC::createError(globalObject, WTF::makeString("The module '"_s, keyStr, "' has no declared entry point."_s));
+        auto* error = JSC::createError(globalObject, WTF::makeString("The module '"_s, WTF::String::fromUTF8(mod->nm_modname), "' has no declared entry point."_s));
         JSC::throwException(globalObject, scope, error);
         return;
     }

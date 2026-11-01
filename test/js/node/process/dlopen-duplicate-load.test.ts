@@ -1,10 +1,10 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, test } from "bun:test";
-import { copyFileSync } from "fs";
-import { bunEnv, bunExe, canBuildNodeAddons, isWindows, tempDirWithFiles } from "harness";
+import { copyFileSync, mkdirSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, canBuildNodeAddons, isLinux, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 
-// These tests share one node-gyp build of two V8 addons (the compile
+// These tests share one node-gyp build of a few addons (the compile
 // dominates the wall time). They cover:
 // - duplicate loads: the second dlopen of the same module used to fail with
 //   "symbol 'napi_register_module_v1' not found" because static constructors
@@ -17,13 +17,28 @@ import { join } from "path";
 //   from an init function, must not steal the outer call's registration
 // - static constructor order: the init function must run after dlopen() returns,
 //   once the static constructors after the module registration have run
+// - better-sqlite3: a Node-API build loads under the file name that node-gyp
+//   gives it, and a V8 C++ API build is refused by the name it registers under
 
 describe.skipIf(!canBuildNodeAddons())("process.dlopen native addon", () => {
   let addonPath: string;
   let nonContextAwarePath: string;
   let workerFixturePath: string;
+  let everyWayFixturePath: string;
   // A copy of the same addon at a second path, which the loader treats as a different library.
   let addonCopyPath: string;
+  // Stand-ins for builds of better-sqlite3. node-gyp names the binary of every version better_sqlite3.node.
+  let napiBetterSqlite3Path: string;
+  let v8BetterSqlite3Path: string;
+  let v8BetterSqlite3NamedPath: string;
+  let v8BetterSqlite3OtherAbiPath: string;
+  // Linux only: addons linked with -z now that call a function nothing defines.
+  let missingV8FunctionPath: string;
+  let missingV8FunctionNamedPath: string;
+  let missingOtherFunctionPath: string;
+  let missingOtherFunctionNamedPath: string;
+  let missingBetterSqlite3Path: string;
+  let notALibraryBetterSqlite3Path: string;
 
   beforeAll(() => {
     const addonSource = `
@@ -148,6 +163,75 @@ void Initialize(Local<Object> exports, Local<Value> module, void* priv) {
 NODE_MODULE(non_context_aware, demo::Initialize)
 `;
 
+    // What better-sqlite3 13 is: a Node-API addon.
+    const napiBetterSqlite3Source = `
+#include <node_api.h>
+
+static napi_value Hello(napi_env env, napi_callback_info info) {
+  napi_value result;
+  napi_create_string_utf8(env, "world", NAPI_AUTO_LENGTH, &result);
+  return result;
+}
+
+NAPI_MODULE_INIT() {
+  napi_value hello;
+  napi_create_function(env, "hello", NAPI_AUTO_LENGTH, Hello, NULL, &hello);
+  napi_set_named_property(env, exports, "hello", hello);
+  return exports;
+}
+`;
+
+    // What better-sqlite3 12 and older are: a V8 addon that registers as better_sqlite3.
+    // The real one calls V8 functions that Bun does not export. This one calls abort().
+    const v8BetterSqlite3Source = `
+#include <node.h>
+#include <cstdlib>
+
+#if defined(CALL_MISSING_V8_FUNCTION)
+namespace v8 {
+// Stands for a V8 function that Bun does not export. Nothing defines it.
+void FunctionThatBunDoesNotExport();
+}
+#elif defined(CALL_MISSING_OTHER_FUNCTION)
+// Not a member of v8:: or node::, but its mangled name has "N2v8" in it.
+void FunctionThatNothingDefines(v8::Local<v8::Value>);
+#endif
+
+static void Initialize(v8::Local<v8::Object> exports,
+                       v8::Local<v8::Value> module,
+                       v8::Local<v8::Context> context,
+                       void* priv) {
+#if defined(CALL_MISSING_V8_FUNCTION)
+  v8::FunctionThatBunDoesNotExport();
+#elif defined(CALL_MISSING_OTHER_FUNCTION)
+  FunctionThatNothingDefines(module);
+#endif
+  // Bun must refuse the module before it runs this.
+  std::abort();
+}
+
+#ifdef OTHER_ABI
+// What a better-sqlite3 binary for Node.js 22 registers.
+extern "C" {
+static node::node_module module_for_node_22 = {
+    127,               // nm_version
+    0,                 // nm_flags
+    nullptr,           // nm_dso_handle
+    __FILE__,          // nm_filename
+    nullptr,           // nm_register_func
+    Initialize,        // nm_context_register_func
+    "better_sqlite3",  // nm_modname
+    nullptr,           // nm_priv
+    nullptr,           // nm_link
+};
+
+NODE_C_CTOR(register_module_for_node_22) { node_module_register(&module_for_node_22); }
+}
+#else
+NODE_MODULE_CONTEXT_AWARE(better_sqlite3, Initialize)
+#endif
+`;
+
     const bindingGyp = `
 {
   "targets": [
@@ -158,7 +242,38 @@ NODE_MODULE(non_context_aware, demo::Initialize)
     {
       "target_name": "non_context_aware",
       "sources": [ "non_context_aware.cpp" ]
+    },
+    {
+      "target_name": "better_sqlite3",
+      "sources": [ "napi_better_sqlite3.c" ]
+    },
+    {
+      "target_name": "better_sqlite3_v8",
+      "sources": [ "better_sqlite3_v8.cpp" ]
+    },
+    {
+      "target_name": "better_sqlite3_v8_other_abi",
+      "sources": [ "better_sqlite3_v8.cpp" ],
+      "defines": [ "OTHER_ABI" ]
     }
+  ],
+  "conditions": [
+    ["OS=='linux'", {
+      "targets": [
+        {
+          "target_name": "missing_v8_function",
+          "sources": [ "better_sqlite3_v8.cpp" ],
+          "defines": [ "CALL_MISSING_V8_FUNCTION" ],
+          "ldflags": [ "-Wl,-z,now" ]
+        },
+        {
+          "target_name": "missing_other_function",
+          "sources": [ "better_sqlite3_v8.cpp" ],
+          "defines": [ "CALL_MISSING_OTHER_FUNCTION" ],
+          "ldflags": [ "-Wl,-z,now" ]
+        }
+      ]
+    }]
   ]
 }
 `;
@@ -225,10 +340,51 @@ if (!isMainThread) {
 }
 `;
 
+    // Loads the addon at $ADDON_PATH in every way and prints one JSON report: process.dlopen,
+    // process.dlopen again, require(), and process.dlopen in a Worker.
+    const everyWayFixture = `
+const { Worker, isMainThread, parentPort } = require("node:worker_threads");
+
+function attempt(load) {
+  try {
+    return { loaded: true, hello: load().hello() };
+  } catch (e) {
+    return { loaded: false, code: e.code, message: e.message };
+  }
+}
+
+function dlopen() {
+  const m = { exports: {} };
+  process.dlopen(m, process.env.ADDON_PATH);
+  return m.exports;
+}
+
+if (!isMainThread) {
+  parentPort.postMessage(attempt(dlopen));
+} else {
+  const result = {
+    dlopen: attempt(dlopen),
+    dlopenAgain: attempt(dlopen),
+    require: attempt(() => require(process.env.ADDON_PATH)),
+  };
+  const worker = new Worker(__filename);
+  worker.on("message", report => {
+    result.worker = report;
+  });
+  worker.on("error", e => {
+    result.workerError = e.message;
+  });
+  worker.on("exit", () => console.log(JSON.stringify(result)));
+}
+`;
+
     const dir = tempDirWithFiles("dlopen-duplicate-test", {
       "addon.cpp": addonSource,
       "non_context_aware.cpp": nonContextAwareSource,
+      "napi_better_sqlite3.c": napiBetterSqlite3Source,
+      "better_sqlite3_v8.cpp": v8BetterSqlite3Source,
       "worker-fixture.js": workerFixture,
+      "every-way-fixture.js": everyWayFixture,
       "binding.gyp": bindingGyp,
       "package.json": JSON.stringify({
         name: "test",
@@ -265,9 +421,44 @@ if (!isMainThread) {
     addonPath = join(dir, "build", "Release", "addon.node");
     nonContextAwarePath = join(dir, "build", "Release", "non_context_aware.node");
     workerFixturePath = join(dir, "worker-fixture.js");
+    everyWayFixturePath = join(dir, "every-way-fixture.js");
     addonCopyPath = join(dir, "build", "Release", "addon-copy.node");
     copyFileSync(addonPath, addonCopyPath);
+
+    // A copy of `from` in its own directory, with the file name of a better-sqlite3 build.
+    const namedBetterSqlite3 = (from: string, directory: string) => {
+      mkdirSync(join(dir, directory));
+      const to = join(dir, directory, "better_sqlite3.node");
+      copyFileSync(from, to);
+      return to;
+    };
+    napiBetterSqlite3Path = join(dir, "build", "Release", "better_sqlite3.node");
+    v8BetterSqlite3Path = join(dir, "build", "Release", "better_sqlite3_v8.node");
+    v8BetterSqlite3NamedPath = namedBetterSqlite3(v8BetterSqlite3Path, "v8");
+    v8BetterSqlite3OtherAbiPath = join(dir, "build", "Release", "better_sqlite3_v8_other_abi.node");
+    if (isLinux) {
+      missingV8FunctionPath = join(dir, "build", "Release", "missing_v8_function.node");
+      missingV8FunctionNamedPath = namedBetterSqlite3(missingV8FunctionPath, "missing-v8-function");
+      missingOtherFunctionPath = join(dir, "build", "Release", "missing_other_function.node");
+      missingOtherFunctionNamedPath = namedBetterSqlite3(missingOtherFunctionPath, "missing-other-function");
+    }
+    missingBetterSqlite3Path = join(dir, "missing", "better_sqlite3.node");
+    mkdirSync(join(dir, "not-a-library"));
+    notALibraryBetterSqlite3Path = join(dir, "not-a-library", "better_sqlite3.node");
+    writeFileSync(notALibraryBetterSqlite3Path, "not a library");
   }, 180_000);
+
+  async function runJsonFixture(cmd: string[], env: Record<string, string>) {
+    await using proc = Bun.spawn({
+      cmd,
+      env: { ...bunEnv, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ exe: cmd[0], stderr, exitCode }).toEqual({ exe: cmd[0], stderr: "", exitCode: 0 });
+    return JSON.parse(stdout);
+  }
 
   // Each test spawns an isolated child (dlopen state is process-global), so
   // they are safe to run in parallel once the addon has been built.
@@ -573,18 +764,6 @@ if (!isMainThread) {
   });
 
   describe.concurrent("process.dlopen of an addon that is already loaded", () => {
-    async function runJsonFixture(cmd: string[], env: Record<string, string>) {
-      await using proc = Bun.spawn({
-        cmd,
-        env: { ...bunEnv, ...env },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ exe: cmd[0], stderr, exitCode }).toEqual({ exe: cmd[0], stderr: "", exitCode: 0 });
-      return JSON.parse(stdout);
-    }
-
     const selfRegisterError = {
       loaded: false,
       code: "ERR_DLOPEN_FAILED",
@@ -625,6 +804,142 @@ if (!isMainThread) {
       expect(await runJsonFixture([bunExe(), "-e", script], { ADDON_PATH: nonContextAwarePath })).toEqual({
         first: { hello: "world", initCount: 1, instance: "object" },
         second: { hello: "world", initCount: 2, instance: "object" },
+      });
+    });
+  });
+
+  // better-sqlite3 13 uses Node-API and works. 12 and older use the V8 C++ API and call functions that
+  // Bun does not export. Only what a build registers tells the two apart.
+  //
+  // Not concurrent: more children at the same time make the crash report tests above exceed their
+  // time limit on a debug build.
+  describe("process.dlopen of a better-sqlite3 build", () => {
+    const remedy =
+      "\nbetter-sqlite3 13 uses Node-API. Upgrade to 13.0.2 or later, or use bun:sqlite, which has a similar API.";
+    const refusal = (path: string) => ({
+      loaded: false,
+      code: "ERR_DLOPEN_FAILED",
+      message:
+        `Cannot load native addon '${path}': this build of better-sqlite3 uses V8 C++ API functions that ` +
+        `are not yet supported in Bun (https://github.com/oven-sh/bun/issues/4290).` +
+        remedy,
+    });
+    const loadEveryWay = (path: string) => runJsonFixture([bunExe(), everyWayFixturePath], { ADDON_PATH: path });
+
+    test("a Node-API build named better_sqlite3.node loads", async () => {
+      const loaded = { loaded: true, hello: "world" };
+      expect(await loadEveryWay(napiBetterSqlite3Path)).toEqual({
+        dlopen: loaded,
+        dlopenAgain: loaded,
+        require: loaded,
+        worker: loaded,
+      });
+    });
+
+    test.each([
+      ["with another file name", () => v8BetterSqlite3Path],
+      ["named better_sqlite3.node", () => v8BetterSqlite3NamedPath],
+      // Re-compiling does not help, so the refusal comes before the check of the Node.js version.
+      ["for another Node.js version", () => v8BetterSqlite3OtherAbiPath],
+    ])("a V8 C++ API build %s is refused with an error that says what to do", async (_, path) => {
+      const refused = refusal(path());
+      const result = await loadEveryWay(path());
+      expect(result).toEqual({
+        dlopen: refused,
+        dlopenAgain: refused,
+        require: {
+          ...refused,
+          message: expect.stringContaining("uses V8 C++ API functions that are not yet supported in Bun"),
+        },
+        worker: refused,
+      });
+      // Code in the wild matches this phrase to fall back to bun:sqlite.
+      expect(result.dlopen.message).toMatch(/not yet supported in Bun/i);
+    });
+
+    test(
+      "a compiled executable loads the Node-API build and refuses the V8 C++ API build that it embeds",
+      async () => {
+        const entry = `
+          const attempt = load => {
+            try {
+              return { loaded: true, hello: load().hello() };
+            } catch (e) {
+              return { loaded: false, code: e.code, message: e.message };
+            }
+          };
+          console.log(JSON.stringify({
+            napi: attempt(() => require(${JSON.stringify(napiBetterSqlite3Path)})),
+            v8: attempt(() => require(${JSON.stringify(v8BetterSqlite3Path)})),
+          }));
+        `;
+        using dir = tempDir("dlopen-better-sqlite3-compile", { "entry.js": entry, "tmp": {} });
+        const exe = join(String(dir), isWindows ? "app.exe" : "app");
+        await using build = Bun.spawn({
+          cmd: [bunExe(), "build", "--compile", "entry.js", "--outfile", exe],
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [, buildStderr, buildExitCode] = await Promise.all([
+          build.stdout.text(),
+          build.stderr.text(),
+          build.exited,
+        ]);
+        expect({ buildStderr, buildExitCode }).toEqual({ buildStderr: expect.any(String), buildExitCode: 0 });
+
+        // The executable loads each embedded addon from a copy in the temporary directory, under another name.
+        const tmp = join(String(dir), "tmp");
+        expect(await runJsonFixture([exe], { BUN_TMPDIR: tmp, TMPDIR: tmp })).toEqual({
+          napi: { loaded: true, hello: "world" },
+          v8: {
+            loaded: false,
+            code: "ERR_DLOPEN_FAILED",
+            message: expect.stringMatching(
+              /^Cannot load native addon '.+': this build of better-sqlite3 uses V8 C\+\+ API functions that are not yet supported in Bun /,
+            ),
+          },
+        });
+      },
+      // Like the --compile test in test/napi/napi.test.ts: CI copies and rewrites a bun of about 700 MB here.
+      30 * 1000,
+    );
+
+    test.each([
+      ["a missing file", () => missingBetterSqlite3Path],
+      ["a file that is not a library", () => notALibraryBetterSqlite3Path],
+    ])("%s named better_sqlite3.node gets the loader's error", async (_, path) => {
+      const { dlopen } = await loadEveryWay(path());
+      expect(dlopen).toEqual({
+        loaded: false,
+        code: "ERR_DLOPEN_FAILED",
+        message: expect.not.stringMatching(/better-sqlite3|bun:sqlite/),
+      });
+    });
+
+    // Linked with -z now, like the better-sqlite3 12 binaries for musl: the loader looks up every function
+    // when it opens the file, so the load fails before the module registers.
+    describe.skipIf(!isLinux)("an addon that the loader rejects for a missing function", () => {
+      const cause =
+        "\nBun does not export this V8 or Node.js C++ API function. Either the addon was built for another " +
+        `Node.js version (this version of Bun requires NODE_MODULE_VERSION ${process.versions.modules}), or it ` +
+        "uses a function that is not yet supported in Bun (https://github.com/oven-sh/bun/issues/4290).";
+      const v8Function = "_ZN2v828FunctionThatBunDoesNotExportEv";
+      const otherFunction = "_Z26FunctionThatNothingDefinesN2v85LocalINS_5ValueEEE";
+
+      test.each([
+        ["a V8 function", () => missingV8FunctionPath, v8Function, cause],
+        ["a V8 function, named better_sqlite3.node", () => missingV8FunctionNamedPath, v8Function, cause + remedy],
+        ["another function", () => missingOtherFunctionPath, otherFunction, ""],
+        ["another function, named better_sqlite3.node", () => missingOtherFunctionNamedPath, otherFunction, ""],
+      ])("%s: the loader's error comes first, then the cause if Bun knows it", async (_, path, symbol, added) => {
+        const { dlopen } = await loadEveryWay(path());
+        expect(dlopen).toEqual({ loaded: false, code: "ERR_DLOPEN_FAILED", message: expect.any(String) });
+        const [loaderError, ...rest] = dlopen.message.split("\n");
+        expect(loaderError).toContain(path());
+        expect(loaderError).toContain(symbol);
+        expect(rest.map(line => "\n" + line).join("")).toBe(added);
       });
     });
   });

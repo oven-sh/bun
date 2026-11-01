@@ -405,27 +405,17 @@ extern "C" int __pthread_key_create(pthread_key_t*, void (*)(void*));
 extern "C" int __wrap___pthread_key_create(pthread_key_t* k, void (*d)(void*)) { return __pthread_key_create(k, d); }
 
 // Group B: stat family became real symbols in 2.33. Before that they were
-// header inlines around __fxstat*/__xmknod, which still exist at ≤ 2.17.
+// header inlines around __fxstat*, which still exist at ≤ 2.17.
 extern "C" int __fxstat(int, int, struct stat*);
 extern "C" int __fxstat64(int, int, struct stat64*);
-extern "C" int __fxstatat(int, int, const char*, struct stat*, int);
 extern "C" int __fxstatat64(int, int, const char*, struct stat64*, int);
-extern "C" int __xmknod(int, const char*, mode_t, dev_t*);
 BUN_SYMVER(__fxstat, BUN_GLIBC_BASE);
 BUN_SYMVER(__fxstat64, BUN_GLIBC_BASE);
-BUN_SYMVER(__fxstatat, BUN_GLIBC_2_4);
 BUN_SYMVER(__fxstatat64, BUN_GLIBC_2_4);
-BUN_SYMVER(__xmknod, BUN_GLIBC_BASE);
-
-#ifndef _MKNOD_VER
-#define _MKNOD_VER 0
-#endif
 
 extern "C" int __wrap_fstat(int fd, struct stat* st) { return __fxstat(_STAT_VER, fd, st); }
 extern "C" int __wrap_fstat64(int fd, struct stat64* st) { return __fxstat64(_STAT_VER, fd, st); }
-extern "C" int __wrap_fstatat(int dfd, const char* p, struct stat* st, int f) { return __fxstatat(_STAT_VER, dfd, p, st, f); }
 extern "C" int __wrap_fstatat64(int dfd, const char* p, struct stat64* st, int f) { return __fxstatat64(_STAT_VER, dfd, p, st, f); }
-extern "C" int __wrap_mknod(const char* p, mode_t m, dev_t d) { return __xmknod(_MKNOD_VER, p, m, &d); }
 
 // Group C: thin syscall wrappers added in 2.27/2.28. Kernel has had the
 // syscalls since 4.5 (copy_file_range), 3.17 (memfd_create), 4.11 (statx);

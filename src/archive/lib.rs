@@ -443,7 +443,7 @@ pub mod archiver {
     }
 }
 
-pub use archiver::{Context, ExtractOptions, Plucker};
+pub use archiver::{Context, ExtractOptions};
 
 pub trait ArchiveAppender {
     /// Mirrors `@hasDecl(Child, "onFirstDirectoryName")`.

@@ -594,9 +594,7 @@ pub(crate) fn warn_unlocked_dependencies(
     }
 }
 
-/// A fresh resolve never records `os`/`cpu`/`libc` for a workspace
-/// (`Package::parse_with_json`), and bun.lock does not write them for one.
-/// Workspaces install unconditionally, so a migrated lockfile must not constrain them.
+/// A workspace always installs: a fresh resolve records no `os`/`cpu`/`libc` for one.
 pub(crate) fn clear_workspace_platform_constraints(lockfile: &mut Lockfile) {
     for i in 0..lockfile.packages.len() {
         if lockfile.packages.items_resolution()[i].tag == resolution::Tag::Workspace {

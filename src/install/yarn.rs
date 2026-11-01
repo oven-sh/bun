@@ -790,8 +790,7 @@ pub(crate) fn migrate_yarn_lockfile(
             bin: Bin::init(),
             scripts: Default::default(),
         };
-        // yarn.lock records neither bins nor `os`/`cpu`/`libc`. For a `file:` folder or a `link:`,
-        // they are read from the package.json on disk.
+        // yarn.lock records neither bins nor a platform. A folder's package.json on disk has both.
         if matches!(
             resolution.tag,
             crate::resolution::Tag::Folder | crate::resolution::Tag::Symlink

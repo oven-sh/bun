@@ -4928,8 +4928,8 @@ describe.concurrent("what onResolve and onLoad are asked about", () => {
     ["virtual:thing.js?t=12:30", "virtual thing.js?t=12:30", "file virtual:thing.js?t=12:30"],
     ...(isWindows ? [] : ([["./with:colon/note.txt"], ["<dir>/with:colon/note.txt"]] satisfies [string][])),
   ];
-  // Wherever the temporary directory is, nothing after the last dot of the path of `bin/cli` or of the source of
-  // -e is an extension: they are under a directory whose name ends in a dot and a digit.
+  // Wherever the temporary directory is, nothing after the last dot of the path of `bin/cli` is an extension: it is
+  // under a directory whose name ends in a dot and a digit.
   const fixture = {
     "app-1.2/bin/cli": `exports.from = "disk";`,
     "app-1.2/node_modules/a-package/index.js": "",
@@ -4942,7 +4942,7 @@ describe.concurrent("what onResolve and onLoad are asked about", () => {
               if (globalThis.logs) console.log(namespace, path.replace(import.meta.dir, "<dir>"));
             });
           build.onResolve({ filter: /\\.answer$/ }, () => ({ path: "served@1.2" }));
-          build.onLoad({ filter: /cli$|\\[eval\\]$|^served/ }, () => ({ contents: "exports.from = 'onLoad';", loader: "js" }));
+          build.onLoad({ filter: /cli$|^served/ }, () => ({ contents: "exports.from = 'onLoad';", loader: "js" }));
         },
       });
     `,
@@ -4969,9 +4969,22 @@ describe.concurrent("what onResolve and onLoad are asked about", () => {
     });
   });
 
-  it("is not the source of -e", async () => {
-    expect(await run(fixture, ["--preload", "./plugin.ts", "-e", "console.log('ran')"], "app-1.2")).toEqual({
-      stdout: "ran\n",
+  // The source of -e is "[eval]" in the working directory: a path without an extension, under "app-1.2" too.
+  it("is the source of -e for onResolve, and is not for onLoad", async () => {
+    const files = {
+      "app-1.2/plugin.ts": `
+        import { basename } from "node:path";
+        Bun.plugin({
+          name: "asked",
+          setup(build) {
+            build.onResolve({ filter: /.*/ }, ({ path }) => console.log("onResolve", basename(path)));
+            build.onLoad({ filter: /.*/ }, ({ path }) => console.log("onLoad", basename(path)));
+          },
+        });
+      `,
+    };
+    expect(await run(files, ["--preload", "./plugin.ts", "-e", "console.log('ran')"], "app-1.2")).toEqual({
+      stdout: "onResolve [eval]\nran\n",
       stderr: "",
       exitCode: 0,
     });

@@ -250,6 +250,61 @@ describe.concurrent(`bun lint: the React Compiler rules match oxlint ${expected.
     expect(exit).toBe(1);
   });
 
+  // A store to `w` after scopes that merge keeps `w` an output of the merged block, as a read of `w` does. The scopes
+  // after it then merge as they do with the read, so the two files get the same memo blocks and the same finding.
+  // Before, store.jsx had a finding in `MemoAfterTheMergedBlock` (12:39) and none in `LoopTestStoreInAMemoCallback`.
+  // oxlint reports this location for both files.
+  test("a store after scopes that merge is checked like a read after them", async () => {
+    const components = (read: string) => `import { useMemo } from "react";
+const count = x => x.length;
+const next = i => (i < 3 ? [i] : null);
+
+export function MemoAfterTheMergedBlock({ c }) {
+  let w = [c];
+  const v = w.length;
+  count(w);
+  const pair = [];
+  pair.push(c);
+  const x = {};
+  const memo = useMemo(() => [pair], [pair]);
+  x.memo = memo;
+  x.v = v;
+  const n = count((w = pair));
+  return <div>{v}{n}{x.memo.length}${read}</div>;
+}
+export function LoopTestStoreInAMemoCallback({ c }) {
+  return useMemo(() => {
+    let w = [c];
+    const v = w.length;
+    count(w);
+    const pair = [];
+    let m;
+    let k = 0;
+    while ((m = next(k)) && k < c) {
+      pair.push(m);
+      k++;
+    }
+    const u = [pair, m, v];
+    let u2;
+    const n = (u2 = w = pair).length;
+    return <div>{v}{n}{u.length}${read}</div>;
+  }, [c]);
+}
+`;
+    const { diagnostics, exit } = await report({
+      ".oxlintrc.json": rc(),
+      "store.jsx": components(""),
+      "read.jsx": components("{w.length}"),
+    });
+    // The dependency list of the second component: `m`, which the loop test assigns, counts as a dependency.
+    const found = [["react(preserve-manual-memoization)", 34, 6]];
+    expect({ store: locationsOf(diagnostics["store.jsx"]), read: locationsOf(diagnostics["read.jsx"]) }).toEqual({
+      store: found,
+      read: found,
+    });
+    expect(exit).toBe(1);
+  });
+
   test(
     "a long component is compiled",
     async () => {

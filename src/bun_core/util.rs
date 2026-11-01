@@ -3777,6 +3777,29 @@ pub fn argv() -> Argv {
     Argv(argv_view())
 }
 
+/// `argv()` for the report of a crash, which may be a crash of the first `argv()` call: it allocates nothing and does
+/// not wait for that call. Until the call has returned, these are the arguments as `main` received them, which on
+/// Windows is none.
+pub fn argv_without_init() -> impl Iterator<Item = &'static [u8]> {
+    let is_ready = ARGV_INIT.is_completed();
+    let view: &'static [&'static ZStr] = if is_ready {
+        // SAFETY: as in `argv_view`.
+        unsafe { ARGV.read() }
+    } else {
+        &[]
+    };
+    #[cfg(not(windows))]
+    let of_main = raw_os_argv().filter(|_| !is_ready).unwrap_or(&[]);
+    #[cfg(windows)]
+    let of_main: &'static [*const core::ffi::c_char] = &[];
+    view.iter()
+        .map(|arg| arg.as_bytes())
+        .chain(of_main.iter().map(|&arg| {
+            // SAFETY: `init_argv` guarantees NUL-terminated strings that live for the process.
+            unsafe { core::ffi::CStr::from_ptr(arg) }.to_bytes()
+        }))
+}
+
 // ─── BUN_OPTIONS argv injection ──────────────────────────────────────────────
 /// Number of arguments injected into `argv` by the `BUN_OPTIONS` environment
 /// variable. Set once during single-threaded startup (`init_argv`).

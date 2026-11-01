@@ -14,3 +14,4 @@ libc.workspace = true
 bitflags.workspace = true
 bun_core.workspace = true
 bun_semver.workspace = true
+bun_threading.workspace = true

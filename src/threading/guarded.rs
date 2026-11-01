@@ -54,6 +54,13 @@ impl<Value> GuardedBy<Value, Mutex> {
             mutex: Mutex::new(),
         }
     }
+
+    /// The guard if the mutex is free, and `None` without a wait if a thread holds it.
+    pub fn try_lock(&self) -> Option<GuardedLock<'_, Value, Mutex>> {
+        self.mutex
+            .try_lock()
+            .then_some(GuardedLock { guarded: self })
+    }
 }
 
 impl<Value, M: RawMutex> GuardedBy<Value, M> {

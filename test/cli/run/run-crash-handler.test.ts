@@ -14,6 +14,7 @@ import {
 } from "harness";
 import { rmSync } from "node:fs";
 import { constants as osConstants } from "node:os";
+import { inflateSync } from "node:zlib";
 import path from "path";
 const { getMachOImageZeroOffset } = crash_handler;
 
@@ -43,9 +44,9 @@ test.if(isDebug && isLinux && hasSymbolizer)(
     expect(exitCode).not.toBe(0);
 
     // The innermost frame of the trace must be the code that crashed (the
-    // js_panic test hook)...
+    // `panic` test hook)...
     const firstFrame = stdout.split("\n").find(line => line.trim().length > 0);
-    expect(firstFrame ?? "<no frames printed>").toContain("js_panic");
+    expect(firstFrame ?? "<no frames printed>").toContain("crash_handler_jsc::panic");
 
     // ...not the capture machinery. A mismatched trim anchor used to leave
     // `capture_stack_trace` → `crash_handler` → `panic_impl` as the innermost
@@ -684,6 +685,115 @@ int eventfd(unsigned int initval, int flags) {
     expect(exitCode).toBe(1);
   });
 });
+
+// The last line of a report: a link that starts with BUN_CRASH_REPORT_URL, which `noReportEnv` leaves empty.
+const linkOfReport = /^ \/\d+\.\d+\.\d+\/\S+$/m;
+
+// The thread of an out-of-memory crash gets nothing more from the allocator. The handler has to write the whole report
+// all the same, and end the process with the signal of the cause. Its first allocation used to end the process after
+// "oh no" with `memory allocation of 8 bytes failed` and SIGABRT.
+//
+// AddressSanitizer's allocator returns NULL while the process holds more than `soft_rss_limit_mb`. It compares the two
+// ten times a second, on Linux only.
+describe.if(isLinux && isASAN)("crash report when malloc returns NULL", () => {
+  // More than a debug build holds before the fixture asks for memory.
+  const softRssLimitMb = 1024;
+
+  async function crash(approach: string, colors: boolean, ...where: ["in-signal-handler"] | []) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        path.join(import.meta.dir, "fixture-crash-without-memory.js"),
+        approach,
+        ...where,
+        "--debug-crash-handler-use-trace-string",
+      ],
+      env: {
+        ...noReportEnv,
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, `soft_rss_limit_mb=${softRssLimitMb}`, "allocator_may_return_null=1"]
+          .filter(Boolean)
+          .join(":"),
+        NO_COLOR: colors ? undefined : "1",
+        FORCE_COLOR: colors ? "1" : undefined,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stderr] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { report: Bun.stripANSI(stderr), signalCode: proc.signalCode };
+  }
+
+  // Each child holds a gigabyte, so they run one after another.
+  describe.each([
+    ["without colors", false],
+    ["with colors", true],
+  ] as const)("%s", (_, colors) => {
+    test.each([
+      ["segfault", "Segmentation fault at address 0xDEADBEEF", "SIGSEGV"],
+      ["abort", "abort() called", "SIGABRT"],
+      ["trap", "Trap instruction at address 0x0", "SIGTRAP"],
+      ["panic", "invoked crashByPanic() handler", "SIGABRT"],
+      ["outOfMemory", "Bun has run out of memory", "SIGABRT"],
+    ] as const)("%s", async (approach, message, signal) => {
+      const { report, signalCode } = await crash(approach, colors);
+
+      expect(report).toContain(message);
+      expect(report).toMatch(linkOfReport);
+      if (approach === "panic") {
+        // zlib has no memory to compress the message with, so the link holds it in a block that is not compressed.
+        const link = linkOfReport.exec(report)![0];
+        const stream = Buffer.from(link.slice(link.lastIndexOf("0eAEB") + 1), "base64");
+        expect(inflateSync(stream).toString()).toBe(message);
+      }
+      expect(signalCode).toBe(signal);
+    });
+  });
+
+  // The handler used to copy the name of the object of each frame outside the executable: 31 bytes for libc.
+  test.if(isGlibc)("segfault with a frame of libc on the stack", async () => {
+    const { report, signalCode } = await crash("segfault", false, "in-signal-handler");
+
+    expect(report).toContain("Segmentation fault at address 0xDEADBEEF");
+    expect(report).toMatch(linkOfReport);
+    expect(signalCode).toBe("SIGSEGV");
+  });
+});
+
+// The same with mimalloc and no test hook. mimalloc may take 256 MiB from the system and no more, and the program fills
+// them. The garbage collector then starts 64 threads, and `fastMalloc` has nothing for one of them: a crash at
+// 0xBBADBEEF on a thread whose stack ends in libc.
+test.if(isLinux && isGlibc && process.arch === "x64" && !isASAN && !isDebug)(
+  "an out-of-memory crash on a thread of the garbage collector writes the whole report",
+  async () => {
+    const program = `
+      const hold = [];
+      for (const size of [1 << 24, 1 << 20, 1 << 16]) {
+        for (;;) {
+          try {
+            hold.push(new ArrayBuffer(size));
+          } catch {
+            break;
+          }
+        }
+      }
+      for (let i = 0; i < 1000; i++) Bun.gc(true);
+    `;
+    await using proc = Bun.spawn({
+      cmd: noCoreCmd([bunExe(), "-e", program]),
+      env: {
+        ...noReportEnv,
+        MIMALLOC_DISALLOW_OS_ALLOC: "1",
+        MIMALLOC_RESERVE_OS_MEMORY: "256MiB",
+        BUN_JSC_numberOfGCMarkers: "64",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stderr] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("Segmentation fault at address 0xBBADBEEF");
+    expect(stderr).toMatch(linkOfReport);
+    expect(proc.signalCode).toBe("SIGSEGV");
+  },
+);
 
 describe("automatic crash reporter", () => {
   for (const approach of ["panic", "segfault", "outOfMemory"]) {

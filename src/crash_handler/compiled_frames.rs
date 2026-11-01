@@ -19,7 +19,8 @@ unsafe extern "C" {
 }
 
 const SECONDS_TO_DESCRIBE_FRAMES: u32 = 2;
-const OBJECT_NAME: &[u8] = b"aot";
+/// The object of a frame in compiled code, as the link of a crash report names it.
+pub(crate) const OBJECT_NAME: &[u8] = b"aot";
 const ID_DIGITS_IN_REPORT: usize = 16;
 
 /// The start of a build ID, as a report has it.
@@ -31,12 +32,17 @@ fn own_short_build_id() -> Option<ShortBuildId> {
     Some(digits)
 }
 
-/// The object of a frame in compiled code, as the link of a crash report names it.
-pub(crate) fn object_name(names_build: bool) -> Box<[u8]> {
-    match own_short_build_id().filter(|_| names_build) {
-        Some(id) => [OBJECT_NAME, &id[..]].concat().into_boxed_slice(),
-        None => Box::from(OBJECT_NAME),
-    }
+pub(crate) type ObjectNameWithBuild = [u8; OBJECT_NAME.len() + ID_DIGITS_IN_REPORT];
+
+/// `OBJECT_NAME` with the start of the build ID, for the one frame of a link that says which build its offsets are in.
+pub(crate) fn object_name_with_build(name: &mut ObjectNameWithBuild) -> &[u8] {
+    let Some(id) = own_short_build_id() else {
+        return OBJECT_NAME;
+    };
+    let (object, build) = name.split_at_mut(OBJECT_NAME.len());
+    object.copy_from_slice(OBJECT_NAME);
+    build.copy_from_slice(&id);
+    name
 }
 
 pub(crate) fn offset_in_code(address: usize) -> Option<i32> {

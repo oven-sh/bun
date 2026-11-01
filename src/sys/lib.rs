@@ -8514,15 +8514,29 @@ pub mod elf {
         /// `dlpi_addr` — link-map base address (subtract from the lookup address
         /// to get an image-relative offset).
         pub base_address: usize,
-        /// `dlpi_name` copied to an owned buffer (empty when libc reports `NULL`,
-        /// as Android does for the main program).
-        pub name: Box<[u8]>,
+        /// `dlpi_name`, mapped until the object is unloaded. Android reports `NULL` for the main program.
+        name: *const core::ffi::c_char,
         /// End address (exclusive) of the `PT_LOAD` segment that contains the lookup address.
         pub segment_end: usize,
         /// `dlpi_phdr` — `program_header_count` headers, mapped until the object is unloaded.
         pub program_headers: *const libc::Elf64_Phdr,
         /// `dlpi_phnum`.
         pub program_header_count: usize,
+    }
+
+    #[cfg(not(any(windows, target_os = "macos")))]
+    impl LoadedModule {
+        /// The loader's name for the object. glibc and Android name the main program with nothing.
+        ///
+        /// # Safety
+        /// The object is still loaded.
+        pub unsafe fn name(&self) -> &[u8] {
+            if self.name.is_null() {
+                return b"";
+            }
+            // SAFETY: `dlpi_name` is NUL-terminated, and the caller keeps its object loaded.
+            unsafe { core::ffi::CStr::from_ptr(self.name) }.to_bytes()
+        }
     }
 
     /// Walk loaded ELF objects via `dl_iterate_phdr`, returning the one whose
@@ -8569,20 +8583,9 @@ pub mod elf {
                 let seg_start = (info.dlpi_addr as usize).wrapping_add(phdr.p_vaddr as usize);
                 let seg_end = seg_start + phdr.p_memsz as usize;
                 if context.address >= seg_start && context.address < seg_end {
-                    // Android libc uses NULL instead of an empty string to mark
-                    // the main program.
-                    let name = if info.dlpi_name.is_null() {
-                        Box::default()
-                    } else {
-                        // SAFETY: dlpi_name is a valid NUL-terminated C string.
-                        unsafe { core::ffi::CStr::from_ptr(info.dlpi_name) }
-                            .to_bytes()
-                            .to_vec()
-                            .into_boxed_slice()
-                    };
                     context.result = Some(LoadedModule {
                         base_address: info.dlpi_addr as usize,
-                        name,
+                        name: info.dlpi_name,
                         segment_end: seg_end,
                         program_headers: info.dlpi_phdr,
                         program_header_count: info.dlpi_phnum as usize,

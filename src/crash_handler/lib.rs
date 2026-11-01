@@ -211,7 +211,8 @@ pub mod debug {
             if !self.address_map.contains_key(&m.base_address) {
                 let obj_di = Box::new(Module {
                     base_address: m.base_address,
-                    name: m.name,
+                    // SAFETY: the loader listed the object a moment ago.
+                    name: Box::from(unsafe { m.name() }),
                 });
                 self.address_map.insert(m.base_address, obj_di);
             }
@@ -305,7 +306,8 @@ pub mod debug {
     #[cfg(not(any(target_vendor = "apple", windows)))]
     fn lookup_module_name_dl(address: usize) -> Option<Box<[u8]>> {
         bun_sys::elf::find_loaded_module(address)
-            .map(|m| bun_paths::basename(&m.name).to_vec().into_boxed_slice())
+            // SAFETY: the loader listed the object a moment ago.
+            .map(|m| Box::from(bun_paths::basename(unsafe { m.name() })))
     }
 
     #[cfg(target_vendor = "apple")]
@@ -862,7 +864,7 @@ mod draft {
                     // checks for this CLI flag.
                     let debug_trace = Environment::SHOW_CRASH_TRACE
                         && 'check_flag: {
-                            for arg in bun_core::argv() {
+                            for arg in bun_core::argv_without_init() {
                                 if arg == &b"--debug-crash-handler-use-trace-string"[..] {
                                     break 'check_flag false;
                                 }
@@ -934,7 +936,7 @@ mod draft {
                     } else {
                         if enable_ansi_colors_stderr() {
                             if writer
-                                .write_all(&Output::pretty_fmt::<true>("<red>"))
+                                .write_all(bun_core::pretty_fmt!("<red>", true).as_bytes())
                                 .is_err()
                             {
                                 abort();
@@ -945,18 +947,20 @@ mod draft {
                         }
                         if enable_ansi_colors_stderr() {
                             if writer
-                                .write_all(&Output::pretty_fmt::<true>(
-                                    "<r><d>: multiple threads are crashing<r>\n",
-                                ))
+                                .write_all(
+                                    bun_core::pretty_fmt!(
+                                        "<r><d>: multiple threads are crashing<r>\n",
+                                        true
+                                    )
+                                    .as_bytes(),
+                                )
                                 .is_err()
                             {
                                 abort();
                             }
                         } else {
                             if writer
-                                .write_all(&Output::pretty_fmt::<true>(
-                                    ": multiple threads are crashing\n",
-                                ))
+                                .write_all(b": multiple threads are crashing\n")
                                 .is_err()
                             {
                                 abort();
@@ -967,7 +971,7 @@ mod draft {
                     if !matches!(reason, CrashReason::OutOfMemory) || debug_trace {
                         if enable_ansi_colors_stderr() {
                             if writer
-                                .write_all(&Output::pretty_fmt::<true>("<red>"))
+                                .write_all(bun_core::pretty_fmt!("<red>", true).as_bytes())
                                 .is_err()
                             {
                                 abort();
@@ -980,7 +984,7 @@ mod draft {
 
                         if enable_ansi_colors_stderr() {
                             if writer
-                                .write_all(&Output::pretty_fmt::<true>("<r><d>"))
+                                .write_all(bun_core::pretty_fmt!("<r><d>", true).as_bytes())
                                 .is_err()
                             {
                                 abort();
@@ -1011,7 +1015,13 @@ mod draft {
                                         // SAFETY: `name` is a valid NUL-terminated wide string
                                         // (PWSTR out-param from GetThreadDescription).
                                         let span = unsafe { bun_core::ffi::wstr_units(name) };
-                                        if write!(writer, "({})", bun_fmt::utf16(span)).is_err() {
+                                        // A longer name is cut. `bun_fmt::utf16` takes its buffer from the heap.
+                                        let mut utf8 = [0u8; 256];
+                                        let length =
+                                            strings::copy_utf16_into_utf8(&mut utf8, span).written;
+                                        if write!(writer, "({})", bstr::BStr::new(&utf8[..length]))
+                                            .is_err()
+                                        {
                                             abort();
                                         }
                                         // NOTE: `GetThreadDescription` heap-allocates `name` and the
@@ -1045,7 +1055,7 @@ mod draft {
                         }
                         if enable_ansi_colors_stderr() {
                             if writer
-                                .write_all(&Output::pretty_fmt::<true>("<r>"))
+                                .write_all(bun_core::pretty_fmt!("<r>", true).as_bytes())
                                 .is_err()
                             {
                                 abort();
@@ -1137,13 +1147,15 @@ mod draft {
                             }
                             if enable_ansi_colors_stderr() {
                                 if writer
-                                    .write_all(&Output::pretty_fmt::<true>("<r><d>:<r> "))
+                                    .write_all(
+                                        bun_core::pretty_fmt!("<r><d>:<r> ", true).as_bytes(),
+                                    )
                                     .is_err()
                                 {
                                     abort();
                                 }
                             } else {
-                                if writer.write_all(&Output::pretty_fmt::<true>(": ")).is_err() {
+                                if writer.write_all(b": ").is_err() {
                                     abort();
                                 }
                             }
@@ -1188,7 +1200,7 @@ mod draft {
 
                         if enable_ansi_colors_stderr() {
                             if writer
-                                .write_all(&Output::pretty_fmt::<true>("<cyan>"))
+                                .write_all(bun_core::pretty_fmt!("<cyan>", true).as_bytes())
                                 .is_err()
                             {
                                 abort();
@@ -1239,7 +1251,7 @@ mod draft {
 
                     if enable_ansi_colors_stderr() {
                         if writer
-                            .write_all(&Output::pretty_fmt::<true>("<r>\n"))
+                            .write_all(bun_core::pretty_fmt!("<r>\n", true).as_bytes())
                             .is_err()
                         {
                             abort();
@@ -1962,7 +1974,7 @@ mod draft {
 
             let debug_trace = Environment::SHOW_CRASH_TRACE
                 && 'check_flag: {
-                    for arg in bun_core::argv() {
+                    for arg in bun_core::argv_without_init() {
                         if arg == &b"--debug-crash-handler-use-trace-string"[..] {
                             break 'check_flag false;
                         }
@@ -1979,11 +1991,11 @@ mod draft {
             let _ = print_metadata(writer);
 
             if enable_ansi_colors_stderr() {
-                let _ = writer.write_all(&Output::pretty_fmt::<true>("<red>"));
+                let _ = writer.write_all(bun_core::pretty_fmt!("<red>", true).as_bytes());
             }
             let _ = writer.write_all(b"panic");
             if enable_ansi_colors_stderr() {
-                let _ = writer.write_all(&Output::pretty_fmt::<true>("<r>"));
+                let _ = writer.write_all(bun_core::pretty_fmt!("<r>", true).as_bytes());
             }
             let _ = writeln!(writer, ": {}", reason);
 
@@ -2013,7 +2025,7 @@ mod draft {
             } else {
                 let _ = writer.write_all(b"oh no");
                 if enable_ansi_colors_stderr() {
-                    let _ = writer.write_all(&Output::pretty_fmt::<true>("<r><d>:<r> "));
+                    let _ = writer.write_all(bun_core::pretty_fmt!("<r><d>:<r> ", true).as_bytes());
                 } else {
                     let _ = writer.write_all(b": ");
                 }
@@ -2023,7 +2035,7 @@ mod draft {
                   please file a GitHub issue using the link below:\n\n ",
                 );
                 if enable_ansi_colors_stderr() {
-                    let _ = writer.write_all(&Output::pretty_fmt::<true>("<cyan>"));
+                    let _ = writer.write_all(bun_core::pretty_fmt!("<cyan>", true).as_bytes());
                 }
                 let _ = write!(
                     trace_str_buf.writer(),
@@ -2038,7 +2050,7 @@ mod draft {
                 let _ = writer.write_all(b"\n");
             }
             if enable_ansi_colors_stderr() {
-                let _ = writer.write_all(&Output::pretty_fmt::<true>("<r>\n"));
+                let _ = writer.write_all(bun_core::pretty_fmt!("<r>\n", true).as_bytes());
             } else {
                 let _ = writer.write_all(b"\n");
             }
@@ -2362,7 +2374,7 @@ mod draft {
         }
 
         if enable_ansi_colors_stderr() {
-            writer.write_all(&Output::pretty_fmt::<true>("<r><d>"))?;
+            writer.write_all(bun_core::pretty_fmt!("<r><d>", true).as_bytes())?;
         }
 
         #[cfg(target_arch = "x86_64")]
@@ -2475,7 +2487,7 @@ mod draft {
 
             write!(writer, "Args: ").map_err(fmt_err)?;
             let mut arg_chars_left: usize = if cfg!(debug_assertions) { 4096 } else { 196 };
-            for (i, arg) in bun_core::argv().iter().enumerate() {
+            for (i, arg) in bun_core::argv_without_init().enumerate() {
                 if i != 0 {
                     writer.write_all(b" ")?;
                 }
@@ -2554,7 +2566,7 @@ mod draft {
         }
 
         if enable_ansi_colors_stderr() {
-            writer.write_all(&Output::pretty_fmt::<true>("<r>"))?;
+            writer.write_all(bun_core::pretty_fmt!("<r>", true).as_bytes())?;
         }
         writer.write_all(b"\n")?;
 
@@ -2674,21 +2686,19 @@ mod draft {
         }
     };
 
-    struct StackLine {
+    struct StackLine<'a> {
         address: i32,
         // None -> from bun.exe
-        object: Option<Box<[u8]>>,
-        // Box<[u8]> rather than a borrowed slice into caller's `name_bytes`,
-        // since the only caller writes into a stack buffer and the value is consumed immediately.
+        object: Option<&'a [u8]>,
     }
 
-    impl StackLine {
+    impl<'a> StackLine<'a> {
         /// `None` implies the trace is not known.
-        fn from_address(addr: usize, name_bytes: &mut [u8]) -> Option<StackLine> {
+        fn from_address(addr: usize, name_bytes: &'a mut [u8]) -> Option<StackLine<'a>> {
             if let Some(address) = crate::compiled_frames::offset_in_code(addr.saturating_sub(1)) {
                 return Some(StackLine {
                     address,
-                    object: Some(crate::compiled_frames::object_name(false)),
+                    object: Some(crate::compiled_frames::OBJECT_NAME),
                 });
             }
 
@@ -2716,8 +2726,8 @@ mod draft {
                         // or bare drive prefix, so `basename_windows`'s
                         // stripping is a no-op on this domain.
                         let basename = bun_paths::basename_windows(name);
-                        Some(Box::<[u8]>::from(
-                            &*strings::convert_utf16_to_utf8_in_buffer(name_bytes, basename),
+                        Some(&*strings::convert_utf16_to_utf8_in_buffer(
+                            name_bytes, basename,
                         ))
                     } else {
                         None
@@ -2797,13 +2807,16 @@ mod draft {
             }
         }
 
-        fn write_encoded(self_: Option<&StackLine>, writer: &mut impl Write) -> crate::Result<()> {
+        fn write_encoded(
+            self_: Option<&StackLine<'_>>,
+            writer: &mut impl Write,
+        ) -> crate::Result<()> {
             let Some(known) = self_ else {
                 writer.write_all(b"_")?;
                 return Ok(());
             };
 
-            if let Some(object) = &known.object {
+            if let Some(object) = known.object {
                 writer.write_all(VLQ::encode(1).slice())?;
                 writer.write_all(
                     VLQ::encode(i32::try_from(object.len()).expect("int cast")).slice(),
@@ -2853,6 +2866,7 @@ mod draft {
         write_u64_as_two_vlqs(writer, packed_features as usize)?;
 
         let mut name_bytes: [u8; 1024] = [0; 1024];
+        let mut name_with_build = crate::compiled_frames::ObjectNameWithBuild::default();
 
         let mut names_build = true;
         for &addr in &opts.trace.instruction_addresses[0..opts.trace.index] {
@@ -2860,7 +2874,9 @@ mod draft {
             let is_compiled =
                 crate::compiled_frames::offset_in_code(addr.saturating_sub(1)).is_some();
             if let Some(line) = line.as_mut().filter(|_| is_compiled && names_build) {
-                line.object = Some(crate::compiled_frames::object_name(true));
+                line.object = Some(crate::compiled_frames::object_name_with_build(
+                    &mut name_with_build,
+                ));
                 names_build = false;
             }
             StackLine::write_encoded(line.as_ref(), writer)?;
@@ -2894,7 +2910,7 @@ mod draft {
                     }
                     // Insufficient memory.
                     r if r == bun_zlib::ReturnCode::MemError as i32 => {
-                        return Err(crate::Error::Alloc(bun_alloc::AllocError));
+                        stored_zlib_stream(&mut compressed_bytes, message)
                     }
                     // The buffer dest was not large enough to hold the compressed data.
                     r if r == bun_zlib::ReturnCode::BufError as i32 => {
@@ -2954,6 +2970,27 @@ mod draft {
             writer.write_all(b"/view")?;
         }
         Ok(())
+    }
+
+    /// The start of `message` as a zlib stream of one block that is not compressed. zlib needs about 350 KB to compress.
+    fn stored_zlib_stream<'a>(stream: &'a mut [u8], message: &[u8]) -> &'a [u8] {
+        // As base64 it fits the 1024 bytes of a link beside the addresses.
+        const MESSAGE_MAX: usize = 256;
+        let message = &message[..message.len().min(MESSAGE_MAX)];
+        let length = message.len() as u16;
+        let mut end = 0;
+        for part in [
+            // Deflate with no dictionary, then a last block of the type "stored".
+            &[0x78, 0x01, 0x01][..],
+            &length.to_le_bytes(),
+            &(!length).to_le_bytes(),
+            message,
+            &bun_hash::Adler32::hash(message).to_be_bytes(),
+        ] {
+            stream[end..end + part.len()].copy_from_slice(part);
+            end += part.len();
+        }
+        &stream[..end]
     }
 
     pub fn write_u64_as_two_vlqs(writer: &mut impl Write, addr: usize) -> crate::Result<()> {

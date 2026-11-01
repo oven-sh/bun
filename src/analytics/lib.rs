@@ -92,8 +92,8 @@ pub mod features {
     // `BUILTIN_MODULES.lock().insert(<&'static str>::from(hardcoded))`.
     // PERF: BTreeSet is O(log n) insert — fine for ≤~80 entries written once
     // each at module-load time.
-    static BUILTIN_MODULES: bun_core::Mutex<std::collections::BTreeSet<&'static str>> =
-        bun_core::Mutex::new(std::collections::BTreeSet::new());
+    static BUILTIN_MODULES: bun_threading::Guarded<std::collections::BTreeSet<&'static str>> =
+        bun_threading::Guarded::new(std::collections::BTreeSet::new());
 
     /// Record a builtin-module load.
     pub fn insert_builtin_module(name: &'static str) {
@@ -201,8 +201,8 @@ pub mod features {
 
                     // See BUILTIN_MODULES above — stores `&'static str` names
                     // directly (cyclebreak), so no `@tagName` conversion needed.
-                    {
-                        let builtins = BUILTIN_MODULES.lock();
+                    // No wait: the crash handler prints this, and the thread that crashed may hold the lock.
+                    if let Some(builtins) = BUILTIN_MODULES.try_lock() {
                         let mut iter = builtins.iter();
                         if let Some(first) = iter.next() {
                             writer.write_str("Builtins: \"")?;

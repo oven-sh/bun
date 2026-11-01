@@ -839,9 +839,10 @@ static JSValue requireModuleKey(Zig::GlobalObject* globalObject, const String& f
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 #if ENABLE(AOT)
-    if (JSValue required = Bun::requireCompiledModuleForTestRunner(globalObject, key))
-        return required;
+    JSValue required = Bun::requireCompiledModuleForTestRunner(globalObject, key);
     RETURN_IF_EXCEPTION(scope, {});
+    if (required)
+        return required;
 #endif
     JSObject* require = Bun::JSCommonJSModule::createBoundRequireFunction(vm, globalObject, from, Bun::testFileModuleGraph(globalObject));
     RETURN_IF_EXCEPTION(scope, {});

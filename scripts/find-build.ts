@@ -43,9 +43,16 @@ Options:
   --errors             Print rendered test-failure annotations for the build (the first 200)
   --logs               Save full logs for each failed job to ./tmp/ci-<build>/
   --all                With --errors, include warning/info annotations too (flaky is shown without it)
-  --no-compare         With --errors, skip the "[pre-existing]" check against recently merged PRs
+  --no-compare         With --errors, skip the comparison with main
   --no-dedup           With --errors, print every platform's output in full
   -h, --help           Show this help
+
+--errors compares each failing test file with passed or failed builds of main:
+  [pre-existing]       it also fails in one of the two builds of main before this build
+  [on newer main #N]   it does not, but it fails in build N, the first build of main after this build
+  [new]                it fails in none of them
+  [flaky]              it passed on a retry. It is not compared.
+A build of main is compared only with the builds of main before it.
 
 For anything else, compose with \`bk\` directly (.bk.yaml sets the pipeline):
   bk build view $(bun run ci:find)
@@ -109,7 +116,8 @@ if (target == null) {
   branch = target;
 }
 
-type Build = { number: number; state: string; web_url: string; commit?: string };
+/** A target given as a build number has no `branch` and no `created_at`: nothing is asked about it up front. */
+type Build = { number: number; state: string; web_url: string; commit?: string; branch?: string; created_at?: string };
 let builds: Build[];
 
 try {
@@ -124,8 +132,7 @@ try {
   if (opts.status) await printStatus(builds[0].number);
   else if (opts.watch) await watchStatus(builds[0].number);
   else if (opts.logs) await saveLogs(builds[0].number);
-  else if (opts.errors)
-    await printErrors(builds[0].number, { all: !!opts.all, compare: !opts["no-compare"], excludeBranch: branch });
+  else if (opts.errors) await printErrors(builds[0], { all: !!opts.all, compare: !opts["no-compare"] });
   else
     for (const b of builds) {
       process.stdout.write(b.number + "\n");
@@ -246,17 +253,28 @@ function normalizeForDedup(s: string): string {
     .replace(/\s+/g, " ");
 }
 
-async function printErrors(
-  build: number,
-  { all, compare, excludeBranch }: { all: boolean; compare: boolean; excludeBranch: string | null | undefined },
-) {
+async function printErrors(target: Build, { all, compare }: { all: boolean; compare: boolean }) {
+  const build = target.number;
   console.log(`${c.bold}build #${build}${c.reset}  https://buildkite.com/bun/bun/builds/${build}\n`);
 
-  const [{ list: anns, more }, baseline] = await Promise.all([
+  // The comparison only adds tags. When it fails, the list is printed without them.
+  let notCompared = "";
+  const [{ list: anns, more }, main] = await Promise.all([
     annotations(build, { bodies: true }),
-    compare ? mergedPRFailingContexts(excludeBranch) : Promise.resolve(null),
+    compare
+      ? mainBaseline(target).catch((e: Error) => {
+          notCompared = `${c.yellow}not compared with main: ${e.message}${c.reset}`;
+          return null;
+        })
+      : null,
   ]);
-  // Printed above the annotations and below them: megabytes of output can lie between.
+  if (main) {
+    const failing = (n: number) => `#${n} (${main.errors.get(n)} failing)`;
+    const newer = main.newer == null ? [] : [`newer ${failing(main.newer)}`];
+    console.log(`${c.dim}compared with main ${[...main.below.map(failing), ...newer].join(", ")}${c.reset}`);
+  }
+  // These two are printed above the annotations and below them: megabytes of output can lie between.
+  if (notCompared) console.log(notCompared);
   const cut = more && `${c.yellow}(only the first ${anns.length} annotations of this build are read)${c.reset}`;
   if (cut) console.log(cut);
 
@@ -273,24 +291,22 @@ async function printErrors(
     return;
   }
 
-  const tag = (a: Annotation) =>
-    a.style !== "error"
-      ? ""
-      : baseline == null
-        ? ""
-        : baseline.has(a.context)
-          ? ` ${c.dim}[pre-existing]${c.reset}`
-          : ` ${c.yellow}[new]${c.reset}`;
+  const compared = (a: Annotation): { order: number; tag: string } => {
+    if (a.style !== "error" || !main) return { order: 0, tag: "" };
+    const on = main.failing.get(a.context);
+    if (!on) return { order: 0, tag: ` ${c.yellow}[new]${c.reset}` };
+    // Not `[pre-existing]`: this branch can be what brought the failure to main.
+    if (on.every(n => n === main.newer)) return { order: 1, tag: ` [on newer main #${main.newer}]` };
+    return { order: 2, tag: ` ${c.dim}[pre-existing]${c.reset}` };
+  };
 
-  // New-on-this-branch first.
-  shown.sort((a, b) => Number(baseline?.has(a.context) ?? 0) - Number(baseline?.has(b.context) ?? 0));
-  for (const a of shown) renderAnnotation(a, tag(a));
+  // New-on-this-branch first, then what only the newer build of main has.
+  shown.sort((a, b) => compared(a).order - compared(b).order);
+  for (const a of shown) renderAnnotation(a, compared(a).tag);
   for (const a of flaky) renderAnnotation(a, ` ${c.yellow}[flaky]${c.reset}`);
 
   if (cut) console.log(`\n${cut}`);
-  if (baseline == null && compare) {
-    console.log(`\n${c.dim}(no comparison: could not read the builds of recently merged PRs)${c.reset}`);
-  }
+  if (notCompared) console.log(`\n${notCompared}`);
 }
 
 function ago(iso: string | null | undefined): string {
@@ -421,32 +437,46 @@ async function saveLogs(build: number) {
   );
 }
 
-async function mergedPRFailingContexts(excludeBranch: string | null | undefined): Promise<Set<string> | null> {
-  // main builds don't run tests (build-only), so compare against the last few
-  // merged PRs' final builds — anything still failing there is pre-existing.
-  // A request that fails ends the comparison: a build left out would turn its failures into `[new]`.
-  try {
-    const merged: Array<{ headRefName: string }> =
-      await $`gh pr list --repo oven-sh/bun --state merged --limit 5 --json headRefName`.json();
-    const branches = merged.map(p => p.headRefName).filter(b => b && b !== excludeBranch);
-    if (branches.length === 0) return null;
-    const builds = await Promise.all(
-      branches.map(b =>
-        bk("build", "list", "--branch", b, "--state", "finished", "--limit", "1", "--json").then(
-          (r: Build[]) => r[0]?.number,
-        ),
-      ),
-    );
-    const results = await Promise.all(
-      builds.filter((n): n is number => n != null).map(n => annotations(n, { bodies: false, maxPages: Infinity })),
-    );
-    return new Set(
-      results
-        .flatMap(r => r.list)
-        .filter(a => a.style === "error")
-        .map(a => a.context),
-    );
-  } catch {
-    return null;
+/** `errors`: build of main -> its count of error annotations. `failing`: context -> the builds of main that have it. */
+type Baseline = { below: number[]; newer?: number; errors: Map<number, number>; failing: Map<string, number[]> };
+
+// The passed or failed builds of main that a build is compared with, every page of each. A canceled build
+// holds a part of its annotations, so it does not count.
+//   `below`: the two newest that are numbered below the target. A lower number is an earlier build, so main
+//            had their failures before the target existed.
+//   `newer`: the first one that is numbered above the target. A commit of main that the target holds can
+//            have its first complete build there, and so can an outage that hit both. But the target's
+//            branch can also be what brought a failure there. A target on main gets none: that build has
+//            what the target brought.
+// Throws when a request fails, because a build that is left out would turn its failures into `[new]`.
+async function mainBaseline(target: Build): Promise<Baseline> {
+  const perPage = 10;
+  const complete = `/pipelines/bun/builds?branch=main&state[]=passed&state[]=failed&exclude_jobs=true&exclude_pipeline=true&per_page=${perPage}`;
+
+  const [newest, { branch, created_at }] = await Promise.all([
+    bk<{ number: number }[]>("api", complete),
+    target.created_at ? target : bk<Build>("api", `/pipelines/bun/builds/${target.number}?exclude_jobs=true`),
+  ]);
+  // Newest first: the builds from `firstBelow` on are below the target, and the one before them is the first
+  // above it. When the page holds no build below the target, which build is the first above is not known.
+  const firstBelow = newest.findIndex(b => b.number < target.number);
+  const newer = branch === "main" || firstBelow < 1 ? undefined : newest[firstBelow - 1].number;
+  let before = firstBelow < 0 ? [] : newest.slice(firstBelow);
+  // An older target: the builds of main before it are past the end of the page. `created_to` is exclusive.
+  if (before.length < 2 && newest.length === perPage) {
+    before = await bk<{ number: number }[]>("api", `${complete}&created_to=${created_at}`);
   }
+  const below = before.slice(0, 2).map(b => b.number);
+  if (below.length === 0) throw new Error("no passed or failed build of main before this build");
+  const numbers = newer == null ? below : [...below, newer];
+
+  const lists = await Promise.all(numbers.map(n => annotations(n, { bodies: false, maxPages: Infinity })));
+  const errors = new Map<number, number>();
+  const failing = new Map<string, number[]>();
+  for (const [i, { list }] of lists.entries()) {
+    const contexts = list.filter(a => a.style === "error").map(a => a.context);
+    errors.set(numbers[i], contexts.length);
+    for (const context of contexts) failing.set(context, [...(failing.get(context) ?? []), numbers[i]]);
+  }
+  return { below, newer, errors, failing };
 }

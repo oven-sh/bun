@@ -145,7 +145,7 @@ function median(arr) {
 // files is complete). We search passed-or-failed builds because a single
 // unrelated test failure still yields complete timing for everything else.
 // Note: `branch=main` is *not* applied because main builds on this pipeline
-// skip the test-bun steps entirely; PR builds run the full sharded suite, and
+// do not run the asan lane; PR builds run the full sharded suite, and
 // the median across N of them is robust to one branch's local timing changes.
 async function findSourceBuilds(want) {
   const candidates = await (await api(`builds?state[]=passed&state[]=failed&per_page=100`)).json();

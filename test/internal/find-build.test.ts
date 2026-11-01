@@ -3,17 +3,38 @@ import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
 import { chmodSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// scripts/find-build.ts asks `bk` for the builds and `gh` for the merged PRs. Here both are shell
-// scripts on PATH that record their arguments. `bk api .../annotations` answers as the Buildkite
-// REST API does: 30 annotations per page unless `per_page` asks for more, 100 at most, pages count
-// from 1, and `omit_body=true` leaves `body_html` out. Shell scripts do not resolve as executables
-// on Windows, hence the skip.
+// scripts/find-build.ts asks `bk` for the builds and `gh` for the branch of a PR. Here both are shell
+// scripts on PATH that record their arguments. `bk api` answers as the Buildkite REST API does.
+// `.../annotations`: 30 annotations per page unless `per_page` asks for more, 100 at most, pages
+// count from 1, and `omit_body=true` leaves `body_html` out. `/pipelines/bun/builds?branch=main`:
+// the builds of main, newest first, only in the states that `state[]` names, only those created
+// before `created_to`, and `per_page` of them. Shell scripts do not resolve as executables on
+// Windows, hence the skip.
 describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", () => {
   const script = join(import.meta.dir, "..", "..", "scripts", "find-build.ts");
-  const fakeGh = ["#!/bin/sh", 'echo "gh $*" >> "$FAKE/calls"', 'cat "$FAKE/merged.json"', ""].join("\n");
+  const fakeGh = [
+    "#!/bin/sh",
+    'echo "gh $*" >> "$FAKE/calls"',
+    'case "$1 $2" in',
+    '  "pr view") cat "$FAKE/pr-$3" ;;',
+    "  *)",
+    '    echo "no canned answer for: gh $*" >&2',
+    "    exit 1",
+    "    ;;",
+    "esac",
+    "",
+  ].join("\n");
   const fakeBk = [
     "#!/bin/sh",
     'echo "bk $*" >> "$FAKE/calls"',
+    'if [ -n "$FAKE_FAILING" ]; then',
+    '  case "$*" in',
+    '    *"$FAKE_FAILING"*)',
+    '      echo "Error: error making request: HTTP request failed: 500 Internal Server Error" >&2',
+    "      exit 1",
+    "      ;;",
+    "  esac",
+    "fi",
     'case "$1 $2" in',
     '  "api /pipelines/bun/builds/"*"/annotations"*)',
     "    build=${2#/pipelines/bun/builds/}",
@@ -41,6 +62,21 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
     '        cat "$list.added" "$list" > "$list.now" && mv "$list.now" "$list" && rm "$list.added"',
     "      done",
     "    fi",
+    "    ;;",
+    // One build of main per line in the file, newest first.
+    '  "api /pipelines/bun/builds?branch=main&"*)',
+    "    states=$(echo \"$2\" | tr '&' '\\n' | sed -n 's/^state\\[\\]=//p' | paste -sd '|' -)",
+    "    created_to=$(echo \"$2\" | sed -n 's/.*[?&]created_to=\\([^&]*\\).*/\\1/p')",
+    "    per_page=$(echo \"$2\" | sed -n 's/.*[?&]per_page=\\([0-9]*\\).*/\\1/p')",
+    '    echo "["',
+    '    grep -E "\\"state\\":\\"(${states:-[a-z_]*})\\"" "$FAKE/main.jsonl" |',
+    '      awk -v to="$created_to" \'{ at = $0; sub(/.*"created_at":"/, "", at); sub(/".*/, "", at) } to == "" || at < to\' |',
+    "      head -n \"${per_page:-30}\" | sed '$!s/$/,/'",
+    '    echo "]"',
+    "    ;;",
+    '  "api /pipelines/bun/builds/"*)',
+    "    build=${2#/pipelines/bun/builds/}",
+    '    cat "$FAKE/build-${build%%\\?*}.json"',
     "    ;;",
     '  "build view") cat "$FAKE/view-$3.json" ;;',
     '  "build list") cat "$FAKE/list-$4.json" ;;',
@@ -94,6 +130,25 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
   const after200 = (build: number) =>
     `bk api /pipelines/bun/builds/${build}/annotations?per_page=1&page=201&omit_body=true`;
 
+  /** Build `number` is created `number` minutes into 2026, so a higher number is a later build. */
+  const createdAt = (number: number) => new Date(Date.UTC(2026, 0, 1, 0, number)).toISOString();
+  /** A build as `bk build list` and `bk api /pipelines/bun/builds/<number>` give it. */
+  const buildOf = (branch: string, number: number) => ({
+    number,
+    branch,
+    state: "failed",
+    created_at: createdAt(number),
+    web_url: `https://buildkite.com/bun/bun/builds/${number}`,
+  });
+  const onMain = (number: number, state = "failed") => ({ ...buildOf("main", number), state });
+  /** The newest ten passed or failed builds of main. */
+  const complete =
+    "bk api /pipelines/bun/builds?branch=main&state[]=passed&state[]=failed&exclude_jobs=true&exclude_pipeline=true&per_page=10";
+  /** The same, of those created before the build. */
+  const completeBefore = (build: number) => `${complete}&created_to=${createdAt(build)}`;
+  /** Asks for the branch and the creation time of a target that is given as a build number. */
+  const lookup = (build: number) => `bk api /pipelines/bun/builds/${build}?exclude_jobs=true`;
+
   interface Canned {
     /** `bk api /pipelines/bun/builds/<key>/annotations`, in the order the API lists them. */
     annotations: Record<number, readonly Annotation[]>;
@@ -101,23 +156,31 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
     views?: Record<number, object>;
     /** `bk build list --branch <key>` */
     lists?: Record<string, readonly { number: number }[]>;
-    /** `gh pr list --state merged` */
-    merged?: { headRefName: string }[];
+    /** `bk api /pipelines/bun/builds?branch=main`: every build of main, newest first. */
+    main?: readonly ReturnType<typeof onMain>[];
+    /** `bk api /pipelines/bun/builds/<number>` */
+    builds?: readonly ReturnType<typeof buildOf>[];
+    /** `gh pr view <key>`: the branch of the pull request. */
+    prs?: Record<number, string>;
     /** The annotations page on which `bk api` fails. */
     failingPage?: number;
+    /** `bk` fails when its arguments contain this text. */
+    failing?: string;
     /** An annotation that the build `<key>` gets ahead of its others, after the script read the first page. */
     added?: Record<number, Annotation>;
   }
 
   async function runFindBuild(
     args: string[],
-    { annotations, views = {}, lists = {}, merged = [], failingPage, added = {} }: Canned,
+    { annotations, views = {}, lists = {}, main = [], builds = [], prs = {}, failingPage, failing, added = {} }: Canned,
   ) {
     using dir = tempDir("find-build", {
       "bin/gh": fakeGh,
       "bin/bk": fakeBk,
       "calls": "",
-      "merged.json": JSON.stringify(merged),
+      "main.jsonl": main.map(build => JSON.stringify(build) + "\n").join(""),
+      ...Object.fromEntries(builds.map(build => [`build-${build.number}.json`, JSON.stringify(build)])),
+      ...Object.fromEntries(Object.entries(prs).map(([pr, branch]) => [`pr-${pr}`, branch + "\n"])),
       ...Object.fromEntries(
         Object.entries(annotations).flatMap(([build, list]) => [
           [`annotations-${build}.jsonl`, list.map(annotation => JSON.stringify(annotation) + "\n").join("")],
@@ -149,6 +212,7 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
         PATH: `${bin}:${bunEnv.PATH}`,
         FAKE: String(dir),
         FAKE_FAILING_PAGE: String(failingPage ?? ""),
+        FAKE_FAILING: failing ?? "",
       },
       stdout: "pipe",
       stderr: "pipe",
@@ -156,20 +220,28 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const lines = stdout.split("\n");
     // The script reads several builds at the same time, and the pages of one build one after the other.
-    const requests: Record<string, readonly string[]> = {};
+    const calls: Record<string, string[]> = {};
     for (const call of readFileSync(join(String(dir), "calls"), "utf8").split("\n")) {
-      const build = call.match(/^bk api \/pipelines\/bun\/builds\/(\d+)\//)?.[1];
-      if (build) requests[build] = [...(requests[build] ?? []), call];
+      const build = call.match(/^bk api \/pipelines\/bun\/builds\/(\d+)\/annotations/)?.[1];
+      const key = build ?? (call.startsWith("bk api ") ? "comparison" : call.startsWith("gh ") ? "gh" : undefined);
+      if (key) (calls[key] ??= []).push(call);
     }
+    // The comparison asks for the builds of main and for the target at the same time.
+    calls.comparison?.sort();
+    const requests: Record<string, readonly string[]> = calls;
     return {
       stdout: lines,
       /** The `== <context> ==` line above each annotation that `--errors` prints. */
       headings: lines.filter(line => line.startsWith("== ")),
-      /** The lines of `--errors` that say that the list is cut. */
-      notes: lines.filter(line => line.startsWith("(only the first ")),
+      /** The lines of `--errors` that say that the list is cut, and what it is compared with. */
+      notes: lines.filter(line => /^(\(only the first |compared with main |not compared with main: )/.test(line)),
       stderr,
       exitCode,
-      /** The `bk api` calls for each build, in the order the script made them. */
+      /**
+       * The `bk api` calls for the annotations of each build, in the order the script made them. `comparison`:
+       * its other `bk api` calls, which only the comparison makes, sorted. `gh`: its `gh` calls. A key is absent
+       * when the script made no such call.
+       */
       requests,
     };
   }
@@ -312,66 +384,332 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
 
   describe("--errors with the comparison", () => {
     const onThisBranch = "test/js/only-on-this-branch.test.ts";
-    const build7 = [
-      failing(failingFile(5)),
-      failing(failingFile(120)),
-      failing(failingFile(220)),
-      failing(onThisBranch),
-    ];
+    /** A test file that fails in build `number` of main and in no other build of main. */
+    const onlyOn = (number: number) => `test/js/only-on-main-${number}.test.ts`;
+    // Build 7 is the target, on a branch. Build 8 of main was canceled. So 7 is compared with builds 6 and 5
+    // of main, which are below it, and with build 9, the first one above it.
+    const main = [onMain(10), onMain(9), onMain(8, "canceled"), onMain(6), onMain(5), onMain(3)];
+    const annotations = {
+      10: [failing(onlyOn(10)), failing(failingFile(5)), binarySize],
+      9: [failing(onlyOn(9)), failing(failingFile(5)), binarySize],
+      8: [failing(onlyOn(8))],
+      7: [
+        // An error here, and not an error on main: only an error annotation of main is compared with.
+        { ...binarySize, style: "error" as const },
+        failing(failingFile(5)),
+        failing(onlyOn(9)),
+        // The 32nd and the 102nd annotation of build 6: after the first page of 30, and of 100.
+        failing(failingFile(32)),
+        failing(failingFile(102)),
+        failing(failingFile(220)),
+        failing(onlyOn(5)),
+        failing(onThisBranch),
+        failing(onlyOn(8)),
+        failing(onlyOn(3)),
+        failing(onlyOn(10)),
+      ],
+      6: [
+        ...failingFiles(230),
+        flaky(onThisBranch),
+        { ...failing(onThisBranch), id: "warning", style: "warning" as const },
+      ],
+      5: [failing(onlyOn(5)), failing(failingFile(5)), binarySize],
+      3: [failing(onlyOn(3))],
+    };
+    const tagged = {
+      headings: [
+        heading("binary-size", " [new]"),
+        heading(onThisBranch, " [new]"),
+        heading(onlyOn(8), " [new]"),
+        heading(onlyOn(3), " [new]"),
+        heading(onlyOn(10), " [new]"),
+        heading(onlyOn(9), " [on newer main #9]"),
+        heading(failingFile(5), " [pre-existing]"),
+        heading(failingFile(32), " [pre-existing]"),
+        heading(failingFile(102), " [pre-existing]"),
+        heading(failingFile(220), " [pre-existing]"),
+        heading(onlyOn(5), " [pre-existing]"),
+      ],
+      notes: ["compared with main #6 (230 failing), #5 (2 failing), newer #9 (2 failing)"],
+      stderr: "",
+      exitCode: 0,
+    };
+    const read = {
+      7: [request(7, 1)],
+      6: [names(6, 1), names(6, 2), names(6, 3)],
+      5: [names(5, 1)],
+      9: [names(9, 1)],
+    };
 
-    scenario("tags with every annotation of a merged PR's build, read without the bodies", async () => {
-      const result = await runFindBuild(["--errors", "7"], {
-        merged: [{ headRefName: "merged-pr" }],
-        lists: { "merged-pr": [{ number: 8 }] },
-        annotations: { 7: build7, 8: failingFiles(230) },
-      });
+    scenario("tags from the two builds of main below a build number, and the first one above it", async () => {
+      const result = await runFindBuild(["--errors", "7"], { main, annotations, builds: [buildOf("a-branch", 7)] });
       expect(result).toEqual({
         stdout: expect.any(Array),
+        ...tagged,
+        requests: { ...read, comparison: [lookup(7), complete] },
+      });
+      expect(result.stdout.slice(0, 4)).toEqual([
+        "build #7  https://buildkite.com/bun/bun/builds/7",
+        "",
+        tagged.notes[0],
+        "",
+      ]);
+    });
+
+    const byName: { target: string; gh: Record<string, readonly string[]> }[] = [
+      { target: "a-branch", gh: {} },
+      { target: "#123", gh: { gh: ["gh pr view 123 --repo oven-sh/bun --json headRefName -q .headRefName"] } },
+    ];
+    scenario.each(byName)(
+      "tags the latest build of $target the same, and does not ask for it",
+      async ({ target, gh }) => {
+        const result = await runFindBuild(["--errors", target], {
+          main,
+          annotations,
+          lists: { "a-branch": [buildOf("a-branch", 7)] },
+          prs: { 123: "a-branch" },
+        });
+        expect(result).toEqual({
+          stdout: expect.any(Array),
+          ...tagged,
+          requests: { ...read, comparison: [complete], ...gh },
+        });
+      },
+    );
+
+    // A build of main is compared with the builds before it only: the next build of main has what it brought.
+    const onMainTargets: {
+      target: string;
+      canned: Partial<Canned>;
+      headings: string[];
+      notes: string[];
+      requests: Record<string, readonly string[]>;
+    }[] = [
+      {
+        target: "main",
+        canned: { lists: { main: [onMain(10)] } },
+        headings: [heading(onlyOn(10), " [new]"), heading(failingFile(5), " [pre-existing]")],
+        notes: ["compared with main #9 (2 failing), #6 (230 failing)"],
+        requests: { 10: [request(10, 1)], 9: read[9], 6: read[6], comparison: [complete] },
+      },
+      {
+        target: "5",
+        canned: { builds: [onMain(5)] },
+        // Builds 6, 9 and 10 have the second one too.
+        headings: [heading(onlyOn(5), " [new]"), heading(failingFile(5), " [new]")],
+        notes: ["compared with main #3 (1 failing)"],
+        requests: { 5: [request(5, 1)], 3: [names(3, 1)], comparison: [lookup(5), complete] },
+      },
+    ];
+    scenario.each(onMainTargets)(
+      "tags a build of main ($target) from the builds of main below it",
+      async ({ target, canned, headings, notes, requests }) => {
+        const result = await runFindBuild(["--errors", target], { main, annotations, ...canned });
+        expect(result).toEqual({ stdout: expect.any(Array), headings, notes, stderr: "", exitCode: 0, requests });
+      },
+    );
+
+    // Builds 21 to 13 of main are above the target, and 6, 5 and 3 are below it.
+    const older = [...Array.from({ length: 9 }, (_, i) => onMain(21 - i)), onMain(6), onMain(5), onMain(3)];
+    const before = "test/js/on-main-before-the-target.test.ts";
+    const olderTargets: {
+      below: string;
+      ofMain: ReturnType<typeof onMain>[];
+      headings: string[];
+      notes: string[];
+      requests: Record<string, readonly string[]>;
+    }[] = [
+      {
+        // With build 22, the ten newest end at build 13. Which build is the first above the target is not known.
+        below: "none",
+        ofMain: [onMain(22), ...older],
         headings: [
+          heading(onlyOn(21), " [new]"),
+          heading(onlyOn(13), " [new]"),
           heading(onThisBranch, " [new]"),
-          heading(failingFile(5), " [pre-existing]"),
-          heading(failingFile(120), " [pre-existing]"),
-          heading(failingFile(220), " [pre-existing]"),
+          heading(before, " [pre-existing]"),
         ],
-        notes: [],
+        notes: ["compared with main #6 (1 failing), #5 (0 failing)"],
+        requests: {},
+      },
+      {
+        below: "one",
+        ofMain: older,
+        headings: [
+          heading(onlyOn(21), " [new]"),
+          heading(onThisBranch, " [new]"),
+          heading(onlyOn(13), " [on newer main #13]"),
+          heading(before, " [pre-existing]"),
+        ],
+        notes: ["compared with main #6 (1 failing), #5 (0 failing), newer #13 (1 failing)"],
+        requests: { 13: [names(13, 1)] },
+      },
+    ];
+    scenario.each(olderTargets)(
+      "asks for the builds of main before a target when the newest ten hold $below of them",
+      async ({ ofMain, headings, notes, requests }) => {
+        const result = await runFindBuild(["--errors", "7"], {
+          main: ofMain,
+          annotations: {
+            21: [failing(onlyOn(21))],
+            13: [failing(onlyOn(13))],
+            7: [failing(before), failing(onlyOn(21)), failing(onlyOn(13)), failing(onThisBranch)],
+            6: [failing(before)],
+            5: [],
+          },
+          builds: [buildOf("a-branch", 7)],
+        });
+        expect(result).toEqual({
+          stdout: expect.any(Array),
+          headings,
+          notes,
+          stderr: "",
+          exitCode: 0,
+          requests: {
+            7: [request(7, 1)],
+            6: [names(6, 1)],
+            5: [names(5, 1)],
+            ...requests,
+            comparison: [lookup(7), complete, completeBefore(7)],
+          },
+        });
+      },
+    );
+
+    scenario("compares a build that has no failing test file, and says with what", async () => {
+      const result = await runFindBuild(["--errors", "7"], {
+        // The ten newest hold the two builds below the target: no second request.
+        main: older.slice(1),
+        annotations: { 13: [], 7: [], 6: [failing(failingFile(1))], 5: [] },
+        builds: [buildOf("a-branch", 7)],
+      });
+      const note = "compared with main #6 (1 failing), #5 (0 failing), newer #13 (0 failing)";
+      expect(result).toEqual({
+        stdout: ["build #7  https://buildkite.com/bun/bun/builds/7", "", note, "no error annotations", ""],
+        headings: [],
+        notes: [note],
         stderr: "",
         exitCode: 0,
-        requests: { 7: [request(7, 1)], 8: [names(8, 1), names(8, 2), names(8, 3)] },
+        requests: {
+          7: [request(7, 1)],
+          6: [names(6, 1)],
+          5: [names(5, 1)],
+          13: [names(13, 1)],
+          comparison: [lookup(7), complete],
+        },
       });
     });
 
-    // With a part of the merged PRs' failures, the others would get the tag `[new]`.
-    const failures: { failure: string; canned: Partial<Canned>; requests: Record<string, string[]> }[] = [
-      {
-        failure: "a page of a merged PR's build",
-        canned: { lists: { "merged-pr": [{ number: 8 }] }, failingPage: 2 },
-        requests: { 7: [request(7, 1)], 8: [names(8, 1), names(8, 2)] },
-      },
-      {
-        failure: "the list of a merged PR's builds",
-        canned: { lists: {} },
-        requests: { 7: [request(7, 1)] },
-      },
-    ];
-    scenario.each(failures)("prints no tag when the request for $failure fails", async ({ canned, requests }) => {
-      const result = await runFindBuild(["--errors", "7"], {
-        merged: [{ headRefName: "merged-pr" }],
-        annotations: { 7: build7, 8: failingFiles(230) },
-        ...canned,
+    scenario("--all gives no tag to an annotation that is not an error", async () => {
+      const result = await runFindBuild(["--errors", "7", "--all"], {
+        main: [onMain(6), onMain(5)],
+        annotations: { 7: [binarySize, failing(onThisBranch)], 6: [], 5: [] },
+        builds: [buildOf("a-branch", 7)],
       });
       expect(result).toEqual({
         stdout: expect.any(Array),
-        headings: build7.map(annotation => heading(annotation.context)),
-        notes: [],
+        headings: [heading("binary-size"), heading(onThisBranch, " [new]")],
+        notes: ["compared with main #6 (0 failing), #5 (0 failing)"],
+        stderr: "",
+        exitCode: 0,
+        requests: { 7: [request(7, 1)], 6: [names(6, 1)], 5: [names(5, 1)], comparison: [lookup(7), complete] },
+      });
+    });
+
+    // With a part of main's failures, the others would get the tag `[new]`.
+    const notCompared: {
+      why: string;
+      canned: Partial<Canned>;
+      reason: string;
+      requests: Record<string, readonly string[]>;
+    }[] = [
+      {
+        why: "the request for the builds of main fails",
+        canned: { failing: "builds?branch=main" },
+        reason: failedRequest(complete),
+        requests: { 7: [request(7, 1)], comparison: [lookup(7), complete] },
+      },
+      {
+        why: "the request for the target fails",
+        canned: { failing: "builds/7?" },
+        reason: failedRequest(lookup(7)),
+        requests: { 7: [request(7, 1)], comparison: [lookup(7), complete] },
+      },
+      {
+        why: "a page of a build of main fails",
+        canned: { failing: "builds/6/annotations?per_page=100&page=2" },
+        reason: failedRequest(names(6, 2)),
+        requests: { ...read, 6: [names(6, 1), names(6, 2)], comparison: [lookup(7), complete] },
+      },
+      {
+        why: "main has no passed or failed build before the target",
+        canned: { main: [onMain(9), onMain(8, "canceled"), onMain(6, "canceled")] },
+        reason: "no passed or failed build of main before this build",
+        requests: { 7: [request(7, 1)], comparison: [lookup(7), complete] },
+      },
+    ];
+    scenario.each(notCompared)("prints no tag, and says why, when $why", async ({ canned, reason, requests }) => {
+      const result = await runFindBuild(["--errors", "7"], {
+        main,
+        annotations,
+        builds: [buildOf("a-branch", 7)],
+        ...canned,
+      });
+      const note = `not compared with main: ${reason}`;
+      expect(result).toEqual({
+        stdout: expect.any(Array),
+        headings: annotations[7].map(annotation => heading(annotation.context)),
+        notes: [note, note],
         stderr: "",
         exitCode: 0,
         requests,
       });
-      expect(result.stdout.slice(-3)).toEqual([
-        "",
-        "(no comparison: could not read the builds of recently merged PRs)",
-        "",
-      ]);
+      expect(result.stdout.slice(0, 4)).toEqual(["build #7  https://buildkite.com/bun/bun/builds/7", "", note, ""]);
+      expect(result.stdout.slice(-3)).toEqual(["", note, ""]);
+    });
+  });
+
+  // Only the comparison of `--errors` asks about main. The rows of `--errors --no-compare` and of `--status`
+  // assert the same with their exact `requests`.
+  describe("a command that does not compare", () => {
+    scenario("--watch reads only the build it watches", async () => {
+      const result = await runFindBuild(["--watch", "7"], {
+        views: {
+          7: {
+            state: "passed",
+            started_at: null,
+            finished_at: "2999-01-01T00:00:00Z",
+            web_url: "https://buildkite.com/bun/bun/builds/7",
+            jobs: [],
+          },
+        },
+        annotations: { 7: [] },
+      });
+      expect(result).toEqual({
+        stdout: expect.arrayContaining(["#7 passed  https://buildkite.com/bun/bun/builds/7", "no failures"]),
+        headings: [],
+        notes: [],
+        stderr: "",
+        exitCode: 0,
+        requests: { 7: [names(7, 1)] },
+      });
+    });
+
+    const quiet: { command: string; args: string[]; first: string }[] = [
+      { command: "ci:find 7", args: ["7"], first: "7" },
+      { command: "--help", args: ["--help"], first: "Usage: bun scripts/find-build.ts [target] [options]" },
+    ];
+    scenario.each(quiet)("$command makes no request", async ({ args, first }) => {
+      const result = await runFindBuild(args, { annotations: {} });
+      expect(result).toEqual({
+        stdout: expect.any(Array),
+        headings: [],
+        notes: [],
+        stderr: "",
+        exitCode: 0,
+        requests: {},
+      });
+      expect(result.stdout[0]).toBe(first);
     });
   });
 

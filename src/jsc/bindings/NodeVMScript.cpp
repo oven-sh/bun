@@ -139,7 +139,7 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
 
     RefPtr fetcher(NodeVMScriptFetcher::create(vm, importer, jsUndefined()));
 
-    SourceCode source = makeSource(sourceString, JSC::SourceOrigin(sourceOriginURL(vm, options.filename), *fetcher), JSC::SourceTaintedOrigin::Untainted, options.filename, providerStartPosition(options.lineOffset, options.columnOffset));
+    SourceCode source(NodeVMSourceProvider::create(WebCore::clientData(vm)->nodeVMSourceBuffers, sourceString, JSC::SourceOrigin(sourceOriginURL(vm, options.filename), *fetcher), JSC::SourceTaintedOrigin::Untainted, options.filename, providerStartPosition(options.lineOffset, options.columnOffset)));
 
     NodeVMScript* script = NodeVMScript::create(vm, globalObject, structure, WTF::move(source), WTF::move(options));
     RETURN_IF_EXCEPTION(scope, {});
@@ -210,8 +210,10 @@ JSC::UnlinkedProgramCodeBlock* NodeVMScript::unlinkedCodeBlockFor(JSGlobalObject
 
     // The CodeCache records the parse on the executable passed to it, and every run links its own executable.
     JSC::UnlinkedProgramCodeBlock* block = vm.codeCache()->getUnlinkedProgramCodeBlock(vm, JSC::ProgramExecutable::create(globalObject, m_source), m_source, codeGenerationMode, error);
-    if (block)
+    if (block) {
+        static_cast<NodeVMSourceProvider*>(m_source.provider())->shareSourceMap(WebCore::clientData(vm)->nodeVMSourceBuffers, block);
         m_unlinkedCodeBlock.set(vm, this, block);
+    }
     return block;
 }
 

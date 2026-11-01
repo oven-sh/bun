@@ -583,6 +583,51 @@ console.log(greet("world"));`,
       expect(map.mappings.length).toBeGreaterThan(0);
     });
 
+    // The script is inlined into its page, so a browser resolves the URL from
+    // the page. Pages at three depths need three different prefixes.
+    test("CLI --sourcemap=linked links the map of each page relative to the directory of that page", async () => {
+      const pages = ["a/one.html", "b/c/two.html", "top.html"];
+      using dir = tempDir(
+        "compile-browser-sourcemap-linked-pages",
+        Object.fromEntries(
+          pages.flatMap(page => {
+            const name = page.slice(page.lastIndexOf("/") + 1, -".html".length);
+            return [
+              [page, `<!DOCTYPE html><html><body><script type="module" src="./${name}.ts"></script></body></html>`],
+              [page.replace(".html", ".ts"), `console.log("${name}");`],
+            ];
+          }),
+        ),
+      );
+      const outdir = `${dir}/dist`;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", "--target=browser", "--sourcemap=linked", ...pages, "--outdir", outdir],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+
+      const linked: Record<string, { url: string; sourcesContent: string[] }> = {};
+      for (const page of pages) {
+        const html = await Bun.file(`${outdir}/${page}`).text();
+        const url = html.match(/\/\/# sourceMappingURL=(.+)\n<\/script>/)![1];
+        const map = await Bun.file(new URL(url, Bun.pathToFileURL(`${outdir}/${page}`))).json();
+        linked[page] = {
+          url: url.replace(/-[0-9a-z]+\.js\.map$/, "-[hash].js.map"),
+          sourcesContent: map.sourcesContent,
+        };
+      }
+      expect(linked).toEqual({
+        "a/one.html": { url: "../one-[hash].js.map", sourcesContent: [`console.log("one");`] },
+        "b/c/two.html": { url: "../../two-[hash].js.map", sourcesContent: [`console.log("two");`] },
+        "top.html": { url: "./top-[hash].js.map", sourcesContent: [`console.log("top");`] },
+      });
+    });
+
     test("CLI --sourcemap=inline embeds a data: URL sourcemap in the inline script", async () => {
       using dir = tempDir("compile-browser-sourcemap-inline", fixture);
       const outdir = `${dir}/dist`;

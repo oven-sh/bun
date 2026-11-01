@@ -89,7 +89,7 @@ pub(crate) fn write_output_files_to_disk(
         let chunk: &Chunk = &chunks[chunk_index_in_chunks_list];
         // In standalone mode, only write HTML chunks to disk.
         // Insert placeholder output files for non-HTML chunks to keep indices aligned.
-        if standalone_chunk_contents.is_some() && !matches!(chunk.content, Content::Html) {
+        if standalone_chunk_contents.is_some() && !matches!(chunk.content, Content::Html { .. }) {
             // The chunk itself is inlined into the HTML document, but its .map
             // file (linked/external sourcemaps) is still written to disk.
             let source_map_index: Option<u32> = if let Some(output_source_map) =
@@ -569,7 +569,7 @@ pub(crate) fn write_output_files_to_disk(
                         .collect()
                 }
                 Content::Css(_) => Box::default(),
-                Content::Html => Box::default(),
+                Content::Html { .. } => Box::default(),
             },
             source_index: IndexOptional::NONE,
             bake_extra: BakeExtra::default(),

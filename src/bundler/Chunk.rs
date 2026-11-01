@@ -301,7 +301,7 @@ impl<'a> Chunk<'a> {
         match self.content {
             Content::Javascript(_) => b"</script",
             Content::Css(_) => b"</style",
-            Content::Html => unreachable!(),
+            Content::Html { .. } => unreachable!(),
         }
     }
 
@@ -309,19 +309,14 @@ impl<'a> Chunk<'a> {
         &self,
         chunks: &'c [Chunk<'a>],
     ) -> Option<&'c Chunk<'a>> {
-        self.get_js_chunk_index_for_html(chunks).map(|i| &chunks[i])
+        self.get_js_chunk_index_for_html().map(|i| &chunks[i])
     }
 
-    pub(crate) fn get_js_chunk_index_for_html(&self, chunks: &[Chunk]) -> Option<usize> {
-        // Non-entry chunks created under code splitting carry a default
-        // entry_point_id of 0, so the id alone is ambiguous; require
-        // is_entry_point to find the actual entry chunk.
-        let entry_point_id = self.entry_point.entry_point_id();
-        chunks.iter().position(|other| {
-            matches!(other.content, Content::Javascript(_))
-                && other.entry_point.is_entry_point()
-                && other.entry_point.entry_point_id() == entry_point_id
-        })
+    pub(crate) fn get_js_chunk_index_for_html(&self) -> Option<usize> {
+        match self.content {
+            Content::Html { js_chunk_index } => js_chunk_index.map(|i| i as usize),
+            _ => None,
+        }
     }
 
     pub(crate) fn get_css_chunk_for_html<'c>(
@@ -331,29 +326,21 @@ impl<'a> Chunk<'a> {
         // Look up the CSS chunk via the JS chunk's css_chunks indices.
         // This correctly handles deduplicated CSS chunks that are shared
         // across multiple HTML entry points (see issue #23668).
-        let entry_point_id = self.entry_point.entry_point_id();
-        for other in chunks.iter() {
-            if let Content::Javascript(js) = &other.content {
-                if other.entry_point.is_entry_point()
-                    && other.entry_point.entry_point_id() == entry_point_id
-                {
-                    if let Some(&css_idx) = js.css_chunks.first() {
-                        return Some(&chunks[css_idx as usize]);
-                    }
-                    break;
-                }
-            }
-        }
-        // Fallback: match by entry_point_id for cases without a JS chunk.
-        for other in chunks.iter() {
-            if matches!(other.content, Content::Css(_))
-                && other.entry_point.is_entry_point()
-                && other.entry_point.entry_point_id() == entry_point_id
-            {
-                return Some(other);
-            }
-        }
-        None
+        let js_chunk = self.get_js_chunk_for_html(chunks)?;
+        let css_idx = *js_chunk.content.javascript().css_chunks.first()?;
+        Some(&chunks[css_idx as usize])
+    }
+
+    /// The HTML chunk of the entry point whose JS chunk is `chunks[js_chunk_index]`.
+    pub(crate) fn get_html_chunk_for_js<'c>(
+        chunks: &'c [Chunk<'a>],
+        js_chunk_index: usize,
+        entry_point_chunk_index: &[u32],
+    ) -> Option<&'c Chunk<'a>> {
+        let source_index = chunks[js_chunk_index].entry_point.source_index();
+        let slot = *entry_point_chunk_index.get(source_index as usize)?;
+        let html_chunk = chunks.get(slot as usize)?;
+        (html_chunk.get_js_chunk_index_for_html() == Some(js_chunk_index)).then_some(html_chunk)
     }
 
     #[inline]
@@ -1616,7 +1603,10 @@ impl CrossChunkImport {
 pub enum Content<'a> {
     Javascript(JavaScriptChunk),
     Css(CssChunk<'a>),
-    Html,
+    Html {
+        /// The entry point's JS chunk in the list `compute_chunks` returns; the dev server's list has none.
+        js_chunk_index: Option<u32>,
+    },
 }
 
 impl<'a> Content<'a> {
@@ -1635,7 +1625,7 @@ impl<'a> Content<'a> {
         match self {
             Content::Javascript(_) => default,
             Content::Css(_) => options::SourceMapOption::None, // TODO: css source maps
-            Content::Html => options::SourceMapOption::None,
+            Content::Html { .. } => options::SourceMapOption::None,
         }
     }
 
@@ -1643,7 +1633,7 @@ impl<'a> Content<'a> {
         match self {
             Content::Javascript(_) => Loader::Js,
             Content::Css(_) => Loader::Css,
-            Content::Html => Loader::Html,
+            Content::Html { .. } => Loader::Html,
         }
     }
 
@@ -1651,7 +1641,7 @@ impl<'a> Content<'a> {
         match self {
             Content::Javascript(_) => b"js",
             Content::Css(_) => b"css",
-            Content::Html => b"html",
+            Content::Html { .. } => b"html",
         }
     }
 }
@@ -1676,4 +1666,50 @@ pub mod bun_renamer {
             }
         }
     }
+}
+
+#[cfg(test)]
+#[test]
+fn get_html_chunk_for_js_returns_only_the_chunk_that_names_the_js_chunk() {
+    fn chunk(source_index: u32, content: Content<'static>) -> Chunk<'static> {
+        Chunk {
+            entry_point: EntryPoint::entry_point(source_index, 0),
+            content,
+            ..Default::default()
+        }
+    }
+    let html = |source_index, js_chunk_index| {
+        chunk(
+            source_index,
+            Content::Html {
+                js_chunk_index: Some(js_chunk_index),
+            },
+        )
+    };
+    // Two pages (files 5 and 2), then a file (7) that has a JS chunk and no HTML chunk.
+    let chunks = [
+        chunk(5, Content::default()),
+        html(5, 0),
+        chunk(2, Content::default()),
+        html(2, 2),
+        chunk(7, Content::default()),
+    ];
+    let found = |js_chunk_index, entry_point_chunk_index: &[u32]| {
+        Chunk::get_html_chunk_for_js(&chunks, js_chunk_index, entry_point_chunk_index)
+            .and_then(|html| chunks.iter().position(|chunk| core::ptr::eq(chunk, html)))
+    };
+
+    let mut slots = [u32::MAX; 8];
+    (slots[5], slots[2], slots[7]) = (1, 3, 4);
+    assert_eq!(found(0, &slots), Some(1));
+    assert_eq!(found(2, &slots), Some(3));
+    // The slot names the JS chunk itself.
+    assert_eq!(found(4, &slots), None);
+    // The slot names the HTML chunk of another page.
+    slots[5] = 3;
+    assert_eq!(found(0, &slots), None);
+    // The slot is not set, or the file has no slot.
+    slots[5] = u32::MAX;
+    assert_eq!(found(0, &slots), None);
+    assert_eq!(found(0, &slots[..5]), None);
 }

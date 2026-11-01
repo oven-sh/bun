@@ -189,7 +189,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                             css.imports_in_chunk_in_order.len() as usize,
                         );
                     }
-                    crate::chunk::Content::Html => {
+                    crate::chunk::Content::Html { .. } => {
                         has_html_chunk = true;
                         // HTML gets only one chunk.
                         total_count += 1;
@@ -240,7 +240,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                             ));
                         }
                     }
-                    crate::chunk::Content::Html => {
+                    crate::chunk::Content::Html { .. } => {
                         combined_part_ranges.push(PendingPartRange {
                             part_range: Default::default(),
                             i: 0,
@@ -735,7 +735,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
         // `&[Chunk]` (chunk is `&chunks[ci]`). Take `intermediate_output` out
         // by value so the only `&mut` is disjoint from those shared borrows.
         for ci in 0..chunks.len() {
-            if matches!(chunks[ci].content, crate::chunk::Content::Html) {
+            if matches!(chunks[ci].content, crate::chunk::Content::Html { .. }) {
                 continue;
             }
             let sourcemap_option = chunks[ci].content.sourcemap(c.options.source_maps);
@@ -785,19 +785,17 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                                 &source_map_final_rel_path,
                             )
                         } else {
-                            let entry_point_id = chunks[ci].entry_point.entry_point_id();
-                            let mut html_dir: &[u8] = chunks
-                                .iter()
-                                .find(|ch| {
-                                    matches!(ch.content, crate::chunk::Content::Html)
-                                        && ch.entry_point.entry_point_id() == entry_point_id
-                                })
-                                .map(|ch| {
-                                    path::resolve_path::dirname::<path::platform::Posix>(
-                                        &ch.final_rel_path,
-                                    )
-                                })
-                                .unwrap_or(b"");
+                            let mut html_dir: &[u8] = Chunk::get_html_chunk_for_js(
+                                chunks,
+                                ci,
+                                c.graph.files.items_entry_point_chunk_index(),
+                            )
+                            .map(|ch| {
+                                path::resolve_path::dirname::<path::platform::Posix>(
+                                    &ch.final_rel_path,
+                                )
+                            })
+                            .unwrap_or(b"");
                             if html_dir == b"." {
                                 html_dir = b"";
                             }
@@ -880,7 +878,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
             if is_standalone
                 && !matches!(
                     chunks[chunk_index_in_chunks_list].content,
-                    crate::chunk::Content::Html
+                    crate::chunk::Content::Html { .. }
                 )
             {
                 // Emit the chunk's .map file (linked/external) even though the
@@ -970,7 +968,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
             let _code_result = if is_standalone
                 && matches!(
                     chunks[chunk_index_in_chunks_list].content,
-                    crate::chunk::Content::Html
+                    crate::chunk::Content::Html { .. }
                 ) {
                 intermediate_output.code_standalone(
                     None,
@@ -1312,7 +1310,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                             .map(|&i| crate::output_file::Index::init(i))
                             .collect(),
                         crate::chunk::Content::Css(_) => Box::default(),
-                        crate::chunk::Content::Html => Box::default(),
+                        crate::chunk::Content::Html { .. } => Box::default(),
                     },
                     bake_extra: 'brk: {
                         let Some(framework) = c.framework else {

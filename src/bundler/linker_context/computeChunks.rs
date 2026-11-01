@@ -129,7 +129,9 @@ pub(crate) fn compute_chunks<'a>(
                 *html_chunk_entry.value_ptr = Chunk {
                     entry_point: chunk::EntryPoint::entry_point(source_index, entry_bit),
                     entry_bits: entry_point_chunk_bits.clone()?,
-                    content: chunk::Content::Html,
+                    content: chunk::Content::Html {
+                        js_chunk_index: None,
+                    },
                     output_source_map: SourceMapPieces::init(),
                     flags: make_flags(
                         false,
@@ -142,6 +144,10 @@ pub(crate) fn compute_chunks<'a>(
         }
 
         if css_asts[source_index as usize].is_some() {
+            debug_assert!(
+                !has_html_chunk,
+                "an HTML entry point has no CSS AST, so it gets its JS chunk below"
+            );
             let order = css_order_or_log(
                 this,
                 find_imported_files_in_css_order(this, temp, &[Index::init(source_index)]),
@@ -472,12 +478,16 @@ pub(crate) fn compute_chunks<'a>(
             let idx = js_chunks.get_index(&key).expect("unreachable");
             let owned = core::mem::take(&mut js_chunks.values_mut()[idx]);
             let has_html = owned.flags.contains(chunk::Flags::HAS_HTML_CHUNK);
+            let js_chunk_index = sorted_chunks.len() as u32;
             sorted_chunks.append_assume_capacity(owned);
 
             // Attempt to order the JS HTML chunk immediately after the non-html one.
             if has_html {
                 if let Some(html_idx) = html_chunks.get_index(&key) {
-                    let (_, html_chunk) = html_chunks.swap_remove_at(html_idx);
+                    let (_, mut html_chunk) = html_chunks.swap_remove_at(html_idx);
+                    html_chunk.content = chunk::Content::Html {
+                        js_chunk_index: Some(js_chunk_index),
+                    };
                     sorted_chunks.append_assume_capacity(html_chunk);
                 }
             }
@@ -538,6 +548,7 @@ pub(crate) fn compute_chunks<'a>(
             {
                 continue;
             }
+            // An HTML chunk comes after its JS chunk, so an HTML entry point's slot ends on the HTML chunk.
             entry_point_chunk_indices[chunk.entry_point.source_index() as usize] =
                 u32::try_from(chunk_id).expect("int cast");
         }
@@ -622,7 +633,7 @@ pub(crate) fn compute_chunks<'a>(
         }
 
         if chunk.entry_point.is_entry_point()
-            && (matches!(chunk.content, chunk::Content::Html)
+            && (matches!(chunk.content, chunk::Content::Html { .. })
                 || (kinds[chunk.entry_point.source_index() as usize]
                     == crate::EntryPoint::Kind::UserSpecified
                     && !chunk.flags.contains(chunk::Flags::HAS_HTML_CHUNK)))

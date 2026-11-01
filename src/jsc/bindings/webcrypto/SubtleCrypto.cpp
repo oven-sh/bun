@@ -551,6 +551,13 @@ CryptoKeyUsageBitmap SubtleCrypto::toCryptoKeyUsageBitmap(const Vector<CryptoKey
 // Maybe we want more specific error messages?
 static void rejectWithException(Ref<DeferredPromise>&& passedPromise, ExceptionCode ec, const String& msg)
 {
+    // createDOMException() turns this code into JavaScript's own SyntaxError.
+    if (ec == SyntaxError) {
+        passedPromise->rejectWithCallback([&](JSDOMGlobalObject& globalObject) {
+            return createDOMExceptionObject(&globalObject, ec, msg.isEmpty() ? "A required parameter was missing or out-of-range"_s : msg);
+        });
+        return;
+    }
     if (!msg.isEmpty()) {
         passedPromise->reject(ec, msg);
         return;
@@ -558,9 +565,6 @@ static void rejectWithException(Ref<DeferredPromise>&& passedPromise, ExceptionC
     switch (ec) {
     case NotSupportedError:
         passedPromise->reject(ec, "The algorithm is not supported"_s);
-        return;
-    case SyntaxError:
-        passedPromise->reject(ec, "A required parameter was missing or out-of-range"_s);
         return;
     case InvalidStateError:
         passedPromise->reject(ec, "The requested operation is not valid for the current state of the provided key"_s);

@@ -42,7 +42,23 @@ interface AwsImage {
   State: string;
 }
 
+/** A short-lived token from Buildkite that says which job this is, for `audience` to verify. */
+function getOidcToken(audience: string): string {
+  const { error, status, stdout, stderr } = spawnSync(
+    requireCommand("buildkite-agent"),
+    ["oidc", "request-token", "--audience", audience],
+    { encoding: "utf8" },
+  );
+  if (error || status !== 0) {
+    throw new Error(`buildkite-agent oidc request-token failed: ${stderr?.trim() ?? error?.message}`, { cause: error });
+  }
+  return stdout.trim();
+}
+
 function getLinuxImageState(name: string): ImageState {
+  // The aws CLI exchanges the token in this file for the role's credentials.
+  const tokenPath = join(tmpdir(), "aws-web-identity-token");
+  writeFileSync(tokenPath, getOidcToken("sts.amazonaws.com"), { mode: 0o600 });
   const { error, status, stdout, stderr } = spawnSync(
     requireCommand("aws"),
     ["ec2", "describe-images", "--owners", "self", "--filters", `Name=name,Values=${name}`, "--output", "json"],
@@ -50,8 +66,8 @@ function getLinuxImageState(name: string): ImageState {
       encoding: "utf8",
       // The aws CLI gets these and nothing else of this job's environment.
       env: {
-        AWS_ACCESS_KEY_ID: getSecret("EC2_ACCESS_KEY_ID"),
-        AWS_SECRET_ACCESS_KEY: getSecret("EC2_SECRET_ACCESS_KEY"),
+        AWS_ROLE_ARN: getSecret("EC2_ROLE_ARN"),
+        AWS_WEB_IDENTITY_TOKEN_FILE: tokenPath,
         AWS_REGION: getSecret("EC2_REGION"),
       },
     },

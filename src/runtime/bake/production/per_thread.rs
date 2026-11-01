@@ -13,8 +13,6 @@ pub(crate) struct PerThread {
     /// Owns `input_files` (keys) and `output_indexes` (values).
     pub(crate) entry_points: EntryPointMap,
     pub(crate) bundled_outputs: Vec<OutputFile>,
-    /// Indexed by entry point index (OpaqueFileId)
-    pub(crate) module_keys: Vec<BunString>,
     /// Unordered
     /// Each source owns its chunk's bytes, moved out of `bundled_outputs`: JavaScriptCore keeps it longer than `PerThread` lives.
     pub(crate) module_map: StringArrayHashMap<BunString>,
@@ -63,7 +61,6 @@ impl PerThread {
         PerThread {
             entry_points: EntryPointMap::default(),
             bundled_outputs: Vec::new(),
-            module_keys: Vec::new(),
             module_map: StringArrayHashMap::default(),
             source_maps: StringArrayHashMap::default(),
             // SAFETY: `vm` is the live per-thread VM from `init_bake` (non-null,
@@ -80,7 +77,6 @@ impl PerThread {
         vm: bun_ptr::BackRef<VirtualMachine, bun_ptr::Mut>,
         entry_points: EntryPointMap,
         mut bundled_outputs: Vec<OutputFile>,
-        module_keys: Vec<BunString>,
         module_indexes: &StringArrayHashMap<OutputFileIndex>,
         source_maps: StringArrayHashMap<OutputFileIndex>,
     ) -> crate::Result<PerThread> {
@@ -109,7 +105,6 @@ impl PerThread {
         Ok(PerThread {
             entry_points,
             bundled_outputs,
-            module_keys,
             module_map,
             source_maps,
             vm,
@@ -129,8 +124,11 @@ impl PerThread {
         self.attached = true;
     }
 
+    /// Only for an entry point that `build_with_vm` checked before `init`.
     pub(crate) fn output_index(&self, id: OpaqueFileId) -> OutputFileIndex {
         self.entry_points.files.values()[id.get() as usize]
+            .unwrap()
+            .expect("a loaded entry point with no output stops the build")
     }
 
     pub(crate) fn input_file(&self, id: OpaqueFileId) -> InputFile {
@@ -141,15 +139,18 @@ impl PerThread {
         &self.bundled_outputs[self.output_index(id).get() as usize]
     }
 
+    /// The key of the module of a server entry point in `module_map`.
+    fn module_key(&self, id: OpaqueFileId) -> JsResult<JSValue> {
+        bun_string_jsc::create_utf8_for_js(self.global(), &module_map_key(self.output_file(id)))
+    }
+
     // Must be run at the top of the event loop
     pub(crate) fn load_bundled_module(&self, id: OpaqueFileId) -> crate::Result<JSValue> {
         let global = self.global();
         load_module(
             self.vm.as_ptr(),
             global,
-            self.module_keys[id.get() as usize]
-                .to_js(global)
-                .map_err(js_err)?,
+            self.module_key(id).map_err(js_err)?,
         )
     }
 
@@ -163,12 +164,13 @@ impl PerThread {
     pub(crate) fn preload_bundled_module(&mut self, id: OpaqueFileId) -> JsResult<JSValue> {
         let global = self.global();
         if !self.loaded_files.is_set(id.get() as usize) {
+            let key = self.module_key(id)?;
             self.loaded_files.set(id.get() as usize);
-            self.all_server_files.as_ref().unwrap().get().put_index(
-                global,
-                id.get(),
-                self.module_keys[id.get() as usize].to_js(global)?,
-            )?;
+            self.all_server_files
+                .as_ref()
+                .unwrap()
+                .get()
+                .put_index(global, id.get(), key)?;
         }
 
         Ok(JSValue::js_number_from_int32(

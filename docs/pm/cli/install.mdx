@@ -472,6 +472,27 @@ jobs:
         run: bun run build
 ```
 
+### GitLab CI
+
+Use the official [`oven-sh/setup-bun`](https://github.com/oven-sh/setup-bun) action with the GitLab `.gitlab-ci.yml` syntax to install `bun` in a GitLab pipeline:
+
+```yaml .gitlab-ci.yml icon="file-code"
+image: oven/bun:latest
+
+build-app:
+  stage: build
+  script:
+    - bun install
+    - bun run build
+  cache:
+    key:
+      files:
+        - bun.lock
+    paths:
+      - node_modules/.cache
+```
+
+
 ## Platform-specific dependencies?
 
 Bun stores normalized `cpu`, `os` and `libc` values from npm in the lockfile, along with the resolved packages. It skips downloading, extracting, and installing packages disabled for the current target at runtime. This means the lockfile doesn't change between platforms/architectures even if the packages ultimately installed do change.
@@ -520,7 +541,7 @@ To choose the version, add the peer to the `dependencies` in your `package.json`
 
 `bun.lock` is Bun’s lockfile format. See [our blog post about the text lockfile](https://bun.com/blog/bun-lock-text-lockfile).
 
-Before Bun 1.2, the lockfile was binary and called `bun.lockb`. To upgrade an old lockfile to the new format, run `bun install --save-text-lockfile --frozen-lockfile --lockfile-only`, then delete `bun.lockb`.
+Before Bun 1.2, the lockfile was binary and called `bun.lock`. To upgrade an old lockfile to the new format, run `bun install --save-text-lockfile --frozen-lockfile --lockfile-only`, then delete `bun.lock`.
 
 ## Cache
 

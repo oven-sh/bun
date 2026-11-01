@@ -536,6 +536,25 @@ fn migrate_npm_lockfile(
         }
     }
 
+    // The parsed package-lock.json lives in the store, so this read must not reset it.
+    let root_name: Option<Box<[u8]>> = crate::lockfile_real::join_top_level_dir(&[b"package.json"])
+        .and_then(|path| {
+            match manager.workspace_package_json_cache.get_with_path(
+                log,
+                path.slice(),
+                crate::GetJsonOptions {
+                    init_reset_store: false,
+                    ..Default::default()
+                },
+            ) {
+                crate::GetJsonResult::Entry(root) => Some(match root.root.get(b"name") {
+                    Some(name) => Box::from(name.as_utf8_string_literal().unwrap_or_default()),
+                    None => Box::default(),
+                }),
+                _ => None,
+            }
+        });
+
     npm_lock::migrate_packages(
         this,
         manager,
@@ -543,6 +562,7 @@ fn migrate_npm_lockfile(
         &json_src,
         packages_properties,
         workspace_map.as_ref(),
+        root_name.as_deref(),
         lockfile_name,
     )?;
     clear_non_registry_platform_constraints(this);

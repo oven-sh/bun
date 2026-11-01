@@ -4327,6 +4327,13 @@ pub mod formatter {
                 let mut nonempty_count: u32 = 1;
 
                 while (i as u64) < len {
+                    if i > jsc::MAX_ARRAY_INDEX {
+                        // An arguments object's `length` can exceed the index space.
+                        if empty_start.is_none() {
+                            empty_start = Some(i);
+                        }
+                        break;
+                    }
                     let element = value.get_direct_index(self.global_this, i)?;
                     if element.is_empty() {
                         if empty_start.is_none() {
@@ -4341,10 +4348,11 @@ pub mod formatter {
                                 _ => break,
                             }
                         } else {
-                            // Arguments objects store their elements outside
-                            // the butterfly; their length is small, so probe
-                            // each index like before.
-                            i += 1;
+                            // The same for an arguments object: its `length` is a writable property.
+                            match value.next_present_arguments_index(i + 1, len) {
+                                Some(next) if (next as u64) < len => i = next,
+                                _ => break,
+                            }
                         }
                         continue;
                     }

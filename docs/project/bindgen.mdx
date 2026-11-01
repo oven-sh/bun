@@ -119,7 +119,11 @@ the argument of `b.fn` is:
 ```ts src/semver_jsc/SemverObject.bind.ts icon="/icons/typescript.svg"
 export const semver = b.namespace({
   satisfies: {
-    args: { version: b.string.loose.utf8, range: b.string.loose.utf8 },
+    args: {
+      version: b.string.loose.utf8,
+      range: b.string.loose.utf8,
+      options: SatisfiesOptions.nullable.default({}),
+    },
     returns: b.bool,
     throws: true,
   },

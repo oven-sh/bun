@@ -105,7 +105,6 @@ using namespace JSC;
     macro(ignoreBOM) \
     macro(importer) \
     macro(inherits) \
-    macro(initialExports) \
     macro(internal) \
     macro(internalMessage) \
     macro(internalModuleRegistry) \

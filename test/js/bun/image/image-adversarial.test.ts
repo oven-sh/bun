@@ -489,35 +489,47 @@ describe("malformed PNG structure", () => {
 
   // 1 GiB of RGBA, the most the default maxPixels allows, and one row more than are inflated before any is looked at.
   const firstRows = (line: number) => (linesAtATime(line) + 1) * line;
+  // Last, the MiB that those rows take where they are many.
   test.concurrent.each([
-    ["1-bit", 16383, 16383, 1, 0, 0, firstRows(1 + 2048)],
-    // Narrow, because the seven rows between two of the first pass are written with them: 16 MiB.
-    ["1-bit, interlaced", 8, Math.floor(16383 ** 2 / 8), 1, 0, 1, firstRows(1 + 1)],
-    ["RGBA", 16383, 16383, 8, 6, 0, firstRows(1 + 16383 * 4)],
-    ["RGB", 16383, 16383, 8, 2, 0, firstRows(1 + 16383 * 3)],
-    ["RGB, interlaced", 16383, 16383, 8, 2, 1, firstRows(1 + 2048 * 3)],
+    ["1-bit", 16383, 16383, 1, 0, 0, firstRows(1 + 2048), 0],
+    ["1-bit, interlaced", 16383, 16383, 1, 0, 1, firstRows(1 + 256), 32],
+    // Every eighth row. The seven between two of them are not written to.
+    ["1-bit, interlaced, all of the first pass", 16383, 16383, 1, 0, 1, 2048 * (1 + 256), 128],
+    ["RGBA", 16383, 16383, 8, 6, 0, firstRows(1 + 16383 * 4), 0],
+    ["RGB", 16383, 16383, 8, 2, 0, firstRows(1 + 16383 * 3), 0],
+    ["RGB, interlaced", 16383, 16383, 8, 2, 1, firstRows(1 + 2048 * 3), 0],
     // A row of 512 MiB, and only its filter type.
-    ["one very wide row", 1 << 26, 1, 16, 6, 0, 1],
+    ["one very wide row", 1 << 26, 1, 16, 6, 0, 1, 0],
+    // That row, and what it becomes.
+    ["the first of two very wide rows", 1 << 26, 2, 16, 6, 0, 1 + (1 << 29), 512 + 256],
   ])("memory is written to as the rows come, not when the header does: %s", async (_, ...args) => {
-    const [width, height, depth, colorType, interlace, bytes] = args;
+    const [width, height, depth, colorType, interlace, bytes, written] = args;
     const ihdr = Buffer.alloc(13);
     ihdr.writeUInt32BE(width, 0);
     ihdr.writeUInt32BE(height, 4);
     ihdr.set([depth, colorType, 0, 0, interlace], 8);
-    const png = Buffer.concat([
-      tinyPng.subarray(0, 8),
-      pngChunk("IHDR", ihdr),
-      pngChunk("IDAT", zlib.deflateSync(Buffer.alloc(bytes))),
+    const idat = Buffer.concat([
+      Buffer.from([0x78, 0x9c]),
+      ...Array(bytes >> 20).fill(
+        zlib.deflateRawSync(Buffer.alloc(1 << 20), { finishFlush: zlib.constants.Z_SYNC_FLUSH }),
+      ),
+      zlib.deflateRawSync(Buffer.alloc(bytes % (1 << 20))),
     ]);
+    using dir = tempDir("png-first-rows", {
+      "first-rows.png": Buffer.concat([tinyPng.subarray(0, 8), pngChunk("IHDR", ihdr), pngChunk("IDAT", idat)]),
+    });
     const fixture = `
-      const png = Buffer.from("${png.toString("base64")}", "base64");
-      console.log(JSON.stringify(await new Bun.Image(png).png().bytes().then(() => "decoded", e => e.code)));
+      const png = require("node:fs").readFileSync(${JSON.stringify(join(String(dir), "first-rows.png"))});
+      const decode = () => new Bun.Image(png).png().bytes().then(() => "decoded", e => e.code);
+      // Rows that are not written to, also in memory that was just given back, which the allocator does not take to be zeros.
+      ${interlace ? "await decode();" : ""}
+      console.log(JSON.stringify(await decode()));
     `;
     const [fixtureMaxRSS, baselineMaxRSS] = await Promise.all([
       runFixtureMaxRSS(fixture, "ERR_IMAGE_DECODE_FAILED"),
       emptyProcessMaxRSS(),
     ]);
-    expect((fixtureMaxRSS - baselineMaxRSS) / 1024 / 1024).toBeLessThan(isASAN || isDebug ? 256 : 64);
+    expect((fixtureMaxRSS - baselineMaxRSS) / 1024 / 1024).toBeLessThan(written + (isASAN || isDebug ? 256 : 64));
   });
 
   // 448 MiB of it in a file of 450 KB.

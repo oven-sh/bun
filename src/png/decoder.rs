@@ -1,5 +1,6 @@
 //! PNG to 8-bit RGBA. No checksum is looked at: not a chunk's CRC, not a zlib stream's Adler-32.
 
+use bun_collections::LazilyZeroedVec;
 use bun_core::strings::index_of_char_usize;
 use bun_zlib::{InflateDecoder, ReturnCode};
 
@@ -435,7 +436,7 @@ fn unfilter_last_row(filter_type: u8, rows: &mut [u8], stride: usize) -> Result<
     let (done, row) = rows.split_at_mut_checked(start).unwrap_or_default();
     match start.checked_sub(stride).and_then(|at| done.get(at..)) {
         Some(above) => filter::unfilter(filter_type, 4, row, above)?,
-        None => filter::unfilter(filter_type, 4, row, &filter::zeros(stride)?)?,
+        None => filter::unfilter_first(filter_type, 4, row)?,
     }
     Ok(row)
 }
@@ -471,13 +472,10 @@ fn read_rgba8(header: Header, size: usize, idat: &mut Idat) -> Result<Vec<u8>> {
 }
 
 /// A row becomes RGBA before it is unfiltered, because that is faster on 4-byte pixels.
-fn read_rgb8(
-    header: Header,
-    expander: &Expander,
-    idat: &mut Idat,
-    image: &mut Vec<u8>,
-) -> Result<()> {
+fn read_rgb8(header: Header, size: usize, expander: &Expander, idat: &mut Idat) -> Result<Vec<u8>> {
     let (line_len, stride) = (header.width as usize * 3 + 1, header.width as usize * 4);
+    let mut image: Vec<u8> = Vec::new();
+    image.try_reserve_exact(size)?;
     let mut line: Vec<u8> = Vec::new();
     line.try_reserve_exact(line_len)?;
     for _ in 0..header.height {
@@ -486,12 +484,12 @@ fn read_rgb8(
         let Some((&filter_type, filtered)) = line.split_first() else {
             return Err(Error::Internal);
         };
-        filter::push_rgb_as_rgba(filtered, image)?;
-        let row = unfilter_last_row(filter_type, image, stride)?;
+        filter::push_rgb_as_rgba(filtered, &mut image)?;
+        let row = unfilter_last_row(filter_type, &mut image, stride)?;
         filter::make_opaque(row);
         expander.apply_transparent_color(row);
     }
-    Ok(())
+    Ok(image)
 }
 
 // https://github.com/randy408/libspng/blob/fb768002d4288590083a476af628e51c3f1d47cd/spng/spng.c#L3618
@@ -504,13 +502,10 @@ fn read_pixels(header: Header, expander: &Expander, idat: &mut Idat) -> Result<V
         read_rgba8(header, size, idat)?
     } else {
         idat.read_ahead(header);
-        let mut image: Vec<u8> = Vec::new();
-        image.try_reserve_exact(size)?;
         match expander.layout {
-            Layout::Rgb8(_) if !header.interlaced => read_rgb8(header, expander, idat, &mut image)?,
-            _ => read_any_layout(header, expander, idat, &mut image)?,
+            Layout::Rgb8(_) if !header.interlaced => read_rgb8(header, size, expander, idat)?,
+            _ => read_any_layout(header, size, expander, idat)?,
         }
-        image
     };
     // It goes to C by its address, with the width and the height.
     if image.len() != size {
@@ -521,11 +516,13 @@ fn read_pixels(header: Header, expander: &Expander, idat: &mut Idat) -> Result<V
 
 fn read_any_layout(
     header: Header,
+    size: usize,
     expander: &Expander,
     idat: &mut Idat,
-    image: &mut Vec<u8>,
-) -> Result<()> {
+) -> Result<Vec<u8>> {
     let stride = header.width as usize * 4;
+    // A pass leaves rows out, and those are not to take memory before their own pass comes.
+    let mut image = LazilyZeroedVec::try_new(size)?;
     let longest = header.passes().map(|pass| pass.row_bytes).max();
     let mut line_len = longest.unwrap_or_default().saturating_add(1);
     let mut bytes_per_pixel = header.bytes_per_pixel();
@@ -537,9 +534,7 @@ fn read_any_layout(
         (line_len, bytes_per_pixel) = (stride + 1, 4);
     }
     let mut line: Vec<u8> = Vec::new();
-    line.try_reserve_exact(line_len)?;
     let mut line_above: Vec<u8> = Vec::new();
-    line_above.try_reserve_exact(line_len)?;
 
     // For the passes that do not have every pixel of a row.
     let mut pass_rgba: Vec<u8> = Vec::new();
@@ -550,6 +545,10 @@ fn read_any_layout(
     for pass in header.passes() {
         for y in 0..pass.height {
             line.clear();
+            // Here, so that an image of one row has one of the two.
+            if line.capacity() == 0 {
+                line.try_reserve_exact(line_len)?;
+            }
             if is_rgb8 {
                 rgb_line.clear();
                 idat.read(&mut rgb_line, pass.row_bytes + 1)?;
@@ -559,27 +558,25 @@ fn read_any_layout(
                 idat.read(&mut line, pass.row_bytes + 1)?;
             }
             // Memory is written to only now that there is a row: a header can announce any size.
-            if y == 0 {
-                line_above.clear();
-                line_above.resize(line.len(), 0);
-                if pass.x_step != 1 {
-                    pass_rgba.resize(pass.width * 4, 0);
-                }
+            if y == 0 && pass.x_step != 1 {
+                pass_rgba.resize(pass.width * 4, 0);
             }
             let Some((&mut filter_type, row)) = line.split_first_mut() else {
                 return Err(Error::Internal);
             };
-            let above = line_above.get(1..).unwrap_or_default();
-            filter::unfilter(filter_type, bytes_per_pixel, row, above)?;
+            if y == 0 {
+                filter::unfilter_first(filter_type, bytes_per_pixel, row)?;
+            } else {
+                let above = line_above.get(1..).unwrap_or_default();
+                filter::unfilter(filter_type, bytes_per_pixel, row, above)?;
+            }
             if is_rgb8 {
                 filter::make_opaque(row);
             }
 
             let start = (pass.y_start + y * pass.y_step) * stride;
-            if image.len() < start + stride {
-                image.resize(start + stride, 0);
-            }
-            let image_row = image.get_mut(start..start + stride).unwrap_or_default();
+            let image_row = image.get_mut(start..start + stride);
+            let image_row = image_row.ok_or(Error::Internal)?;
             if pass.x_step == 1 {
                 expander.expand_row(row, image_row);
             } else {
@@ -595,5 +592,5 @@ fn read_any_layout(
             core::mem::swap(&mut line, &mut line_above);
         }
     }
-    Ok(())
+    Ok(image.into_vec())
 }

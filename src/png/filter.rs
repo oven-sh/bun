@@ -5,6 +5,7 @@
 use crate::error::{Error, Result};
 
 const NONE: u8 = 0;
+const UP: u8 = 2;
 const PAETH: u8 = 4;
 
 /// What is above the first row.
@@ -33,6 +34,34 @@ pub(crate) fn unfilter(
         bun_highway::png_unfilter(filter_type, bytes_per_pixel, row, above);
     }
     Ok(())
+}
+
+/// `unfilter()` for the first row, without zeros as long as the row.
+pub(crate) fn unfilter_first(
+    filter_type: u8,
+    bytes_per_pixel: usize,
+    row: &mut [u8],
+) -> Result<()> {
+    // A whole number of pixels of every size.
+    static ZEROS: [u8; 24 * 128] = [0; 24 * 128];
+    if matches!(filter_type, NONE | UP) {
+        return Ok(());
+    }
+    // A piece starts on the last pixel of the piece before it. That pixel stays as it is: it has zeros above it and
+    // nothing to its left.
+    let mut start = 0;
+    loop {
+        let piece = row.get_mut(start..).unwrap_or_default();
+        let len = piece.len().min(ZEROS.len());
+        let (Some(piece), Some(zeros)) = (piece.get_mut(..len), ZEROS.get(..len)) else {
+            return Err(Error::Internal);
+        };
+        unfilter(filter_type, bytes_per_pixel, piece, zeros)?;
+        if len < ZEROS.len() {
+            return Ok(());
+        }
+        start += len - bytes_per_pixel;
+    }
 }
 
 /// The alpha does not count: see `make_opaque()`.

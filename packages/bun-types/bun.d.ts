@@ -9822,7 +9822,7 @@ declare module "bun" {
        * allocated, so a tiny file claiming a huge canvas is refused cheaply.
        * A decoded image takes 4 bytes per pixel, which is 1 GiB at the default.
        * A PNG of 32 KiB can decode to that size. Decoding a PNG that is one very
-       * wide row needs up to 20 bytes of memory per pixel, 5 GiB at the default.
+       * wide row needs up to 12 bytes of memory per pixel, 3 GiB at the default.
        * For untrusted input, set this to the largest image you accept.
        * @default 268402689 // 0x3FFF * 0x3FFF, same as Sharp
        */

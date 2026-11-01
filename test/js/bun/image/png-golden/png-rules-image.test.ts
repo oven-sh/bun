@@ -425,6 +425,47 @@ describe("the image", () => {
     );
   });
 
+  // The first row of an image or of a pass is unfiltered in pieces. Each starts on the last pixel of the one before it.
+  const piece = 24 * 128;
+  test("the pieces are as long as the tests below take them to be", async () => {
+    const source = await Bun.file(join(import.meta.dir, "../../../../../src/png/filter.rs")).text();
+    expect(source).toContain("static ZEROS: [u8; 24 * 128] = [0; 24 * 128];");
+  });
+  /** How many pixels of a format fill a piece. RGB is made RGBA before it is unfiltered. */
+  const pixelsInAPiece = ([, depth, channels]: number[]) =>
+    piece / (channels * depth === 24 ? 4 : (channels * depth) / 8);
+
+  test("a first row that ends before, at and after the end of a piece", async () => {
+    const random = randomBytes(5);
+    const wrong: string[] = [];
+    await Promise.all(
+      pixelFormats.flatMap(format => {
+        const [first, second] = [pixelsInAPiece(format), 2 * pixelsInAPiece(format) - 1];
+        return [first - 1, first, first + 1, second - 1, second, second + 1].flatMap(width =>
+          [1, 2, 3, 4].map(async filter => {
+            const picture = noise([format[0], format[1]], width, 1, random);
+            if ((await decodeToHex(write(picture, { filter: () => filter }))).hex !== rgbaOf(picture).toString("hex"))
+              wrong.push(`${format}, width ${width}, filter ${filter}`);
+          }),
+        );
+      }),
+    );
+    expect(wrong).toEqual([]);
+  });
+
+  test("the first row of each pass, where that of the first pass is longer than a piece", async () => {
+    const random = randomBytes(6);
+    const wrong: string[] = [];
+    await Promise.all(
+      pixelFormats.map(async format => {
+        const picture = noise([format[0], format[1]], 8 * pixelsInAPiece(format) + 9, 3, random);
+        const file = write(picture, { interlaced: true, filter: (row, pass) => 1 + ((row + pass) % 4) });
+        if ((await decodeToHex(file)).hex !== rgbaOf(picture).toString("hex")) wrong.push(`${format}`);
+      }),
+    );
+    expect(wrong).toEqual([]);
+  });
+
   test("Paeth where two of a, b and c are as near, or almost", async () => {
     // a, b, c, a, b, c and so on. Which one is picked depends on a - c and b - c alone.
     const triples: number[] = [];

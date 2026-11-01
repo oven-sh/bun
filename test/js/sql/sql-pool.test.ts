@@ -105,14 +105,11 @@ async function unhandledRejections(url: string) {
           await new Promise(setImmediate);
           result[name] = reported.join();
         }
-        // The timer of close() does not keep the process alive.
-        const alive = setInterval(() => {}, 2 ** 30);
         await stillQueued("execute(), still queued when the time of close({ timeout }) runs out", full => full.close({ timeout: 0.001 }));
         await stillQueued("execute(), still queued when close({ timeout: 0 }) overtakes close({ timeout })", full => {
           full.close({ timeout: 60 });
           return full.close({ timeout: 0 });
         });
-        clearInterval(alive);
       }
       const closed = new Bun.SQL(process.env.SQL_URL, { max: 1 });
       await closed.close();
@@ -138,8 +135,6 @@ async function outlivesAQueryThatIsOnlyStarted(url: string, closeTimeout?: numbe
       `
       const sql = new Bun.SQL(process.env.SQL_URL, { max: 1 });
       (async () => {
-        // The timer of close() does not keep the process alive.
-        const alive = setInterval(() => {}, 2 ** 30);
         if (${closeTimeout} !== undefined) {
           // Behind a reservation the query is still queued when the time runs out.
           if (${closeTimeout} > 0) await sql.reserve();
@@ -152,7 +147,6 @@ async function outlivesAQueryThatIsOnlyStarted(url: string, closeTimeout?: numbe
         }
         await new Promise(setImmediate);
         console.log("alive");
-        clearInterval(alive);
         await sql.close();
       })();
       `,

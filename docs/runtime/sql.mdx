@@ -1436,6 +1436,7 @@ await sql.close({ timeout: 0 }); // closes every connection immediately
 ```
 
 - `close()` waits for the queries that started before the call. When the timeout ends, the queries that still run reject with `ERR_POSTGRES_CONNECTION_CLOSED` or `ERR_MYSQL_CONNECTION_CLOSED`.
+- A `close()` with a timeout keeps the process alive until it resolves.
 - After `close()`, new queries, `sql.begin` and `sql.reserve` reject with the same code.
 - You can call `close()` again. Every call resolves when the pool is closed, and the shortest timeout counts: `close({ timeout: 0 })` after `close()` closes the pool immediately.
 - `await query` starts the query in a microtask. A `close()` later in the same tick comes first, and the query rejects.

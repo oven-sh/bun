@@ -29,7 +29,8 @@ declare module "bun" {
      * Closes the connection instead of returning it to the pool.
      *
      * @param options `timeout` is how many seconds to wait for the running
-     * queries of this client. The default is `0`.
+     * queries of this client. The default is `0`. While it waits, the process
+     * stays alive.
      */
     close(options?: { timeout?: number }): Promise<void>;
   }
@@ -142,7 +143,7 @@ declare module "bun" {
      *
      * @param options `timeout` is how many seconds to wait for the running
      * queries of the transaction before Bun sends `ROLLBACK`. The default is
-     * `0`.
+     * `0`. While it waits, the process stays alive.
      */
     close(options?: { timeout?: number }): Promise<void>;
 
@@ -1245,6 +1246,8 @@ declare module "bun" {
      *
      * You can call it again. Every call resolves when the pool is closed, and
      * the shortest timeout counts.
+     *
+     * A call with a timeout keeps the process alive until it resolves.
      *
      * @param options Optional `timeout` in seconds, an upper bound for the wait
      *

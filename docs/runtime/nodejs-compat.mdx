@@ -13,7 +13,7 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:assert`](https://nodejs.org/api/assert.html)
 
-🟢 Fully implemented. Legacy-mode `deepEqual` uses `Bun.deepEquals` semantics rather than Node's loose `==` comparison, and function-valued or `printf`-style `message` arguments are not formatted.
+🟢 Fully implemented. Legacy-mode `deepEqual` uses `Bun.deepEquals` semantics rather than Node's loose `==` comparison. Unlike `Bun.deepEquals`, it compares the `errors` of two Errors, and it compares the values in `errors` with `Bun.deepEquals` semantics too. Function-valued or `printf`-style `message` arguments are not formatted.
 
 ### [`node:buffer`](https://nodejs.org/api/buffer.html)
 

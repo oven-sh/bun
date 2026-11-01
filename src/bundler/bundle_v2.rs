@@ -2048,19 +2048,6 @@ pub mod bv2_impl {
             Ok(ct)
         }
 
-        /// `bun build` runs once on caches that it filled itself, so it takes a cached miss as it is.
-        fn resolve_import<T>(
-            &self,
-            resolver: &mut _resolver::Resolver<'a>,
-            lookup: impl FnOnce(&mut _resolver::Resolver<'a>) -> T,
-        ) -> T {
-            if self.completion.is_none() && self.dev_server.is_none() {
-                resolver.with_trusted_cache(lookup)
-            } else {
-                lookup(resolver)
-            }
-        }
-
         /// By calling this function, it implies that the returned log *will* be
         /// written to. For DevServer, this allocates a per-file log for the sources
         /// it is called on. Function must be called on the bundle thread.
@@ -2751,12 +2738,11 @@ pub mod bv2_impl {
                 }
             }
 
-            let resolve_result = match self.resolve_import(
-                // SAFETY: see `transpiler` note above.
-                &mut unsafe { &mut *transpiler }.resolver,
-                |resolver| {
-                    resolver.resolve(source_dir, &import_record.specifier, import_record.kind)
-                },
+            // SAFETY: see `transpiler` note above.
+            let resolve_result = match unsafe { &mut *transpiler }.resolver.resolve(
+                source_dir,
+                &import_record.specifier,
+                import_record.kind,
             ) {
                 Ok(r) => r,
                 Err(err) => {
@@ -6818,16 +6804,10 @@ pub mod bv2_impl {
                     }
                 }
 
-                let resolve_result: _resolver::Result<'a> = match self.resolve_import(
-                    &mut transpiler.resolver,
-                    |resolver| {
-                        resolver.resolve_with_framework(
-                            source_dir,
-                            import_record.path.text,
-                            import_record.kind,
-                        )
-                    },
-                ) {
+                let resolve_result: _resolver::Result<'a> = match transpiler
+                    .resolver
+                    .resolve_with_framework(source_dir, import_record.path.text, import_record.kind)
+                {
                     Ok(r) => r,
                     Err(err) => {
                         // borrowck — `log_for_resolution_failures` returns

@@ -122,6 +122,7 @@ pub(super) fn configure(ctx: Context<'_>) -> Result<Configuration, crate::Error>
         std::ptr::from_ref::<Transpiler>(this_transpiler).cast(),
         core::mem::size_of::<Transpiler>(),
     );
+    this_transpiler.resolver.trust_cached_misses();
 
     expand_entry_patterns(this_transpiler);
     add_addons_among_assets(ctx, this_transpiler);

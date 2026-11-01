@@ -109,6 +109,9 @@ impl Framework {
         // `BundleOptions`, so re-project via the dedicated helper rather than
         // `Clone`.
         out.sync_resolver_opts();
+        if mode == Mode::ProductionStatic {
+            out.resolver.trust_cached_misses();
+        }
 
         out.configure_linker();
         out.configure_defines()?;

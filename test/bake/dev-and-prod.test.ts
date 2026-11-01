@@ -1,6 +1,6 @@
 // Tests which apply to both dev and prod. They are run twice.
 import { writeFileSync } from "node:fs";
-import { devAndProductionTest, devTest, emptyHtmlFile, WAIT_MULTIPLIER } from "./bake-harness";
+import { devAndProductionTest, devTest, emptyHtmlFile, minimalFramework, WAIT_MULTIPLIER } from "./bake-harness";
 
 const hmrSelfAcceptingModule = (label: string) => `
   console.log(${JSON.stringify(label)});
@@ -193,13 +193,28 @@ devTest("using runtime import", {
             // TODO: all of these should be `hmr.require`
             "()=>hmr.require",
             "()=>module.require", // not being visited
-            "()=>hmr.importMeta.require", // not being visited
+            "()=>hmr.require",
             true,
             false,
-            false,
+            true,
           ]
         : []),
     );
+  },
+});
+// The server side of the dev server gets the same node as the browser side.
+devTest("import.meta.require in a route is hmr.require", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      const load = () => import.meta.require;
+      export default function (req, meta) {
+        return new Response(load.toString().replaceAll(" ", "").replaceAll("\\n", "") + " " + (load() === eval("hmr.require")));
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("()=>hmr.require true");
   },
 });
 devTest("hmr handles rapid consecutive edits", {

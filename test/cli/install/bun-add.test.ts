@@ -2,7 +2,7 @@ import type { BunLockFile } from "bun";
 import { $, file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { randomBytes } from "crypto";
-import { access, appendFile, copyFile, mkdir, readlink, rm, writeFile } from "fs/promises";
+import { access, appendFile, copyFile, mkdir, readlink, rm, stat, utimes, writeFile } from "fs/promises";
 import {
   bunExe,
   bunEnv as env,
@@ -4307,6 +4307,319 @@ describe("a spec without a name that resolves to a dependency package.json alrea
     expect(exitCode).toBe(1);
     expect(await file(join(project, "package.json")).text()).toBe(before);
     expect(await Bun.file(join(project, "bun.lock")).exists()).toBeFalse();
+  });
+});
+
+// `bun add` sorts the group it adds to, and only when a request gives that group a package name it did not have.
+describe("the order of a dependency group after bun add", () => {
+  // Folder packages, so no registry is needed. `zeta2` is a second folder of the package `zeta`.
+  const folders = { alpha: "alpha", beta: "beta", delta: "delta", gamma: "gamma", zeta: "zeta", zeta2: "zeta" };
+  const folderFiles = Object.fromEntries(
+    Object.entries(folders).map(([folder, name]) => [
+      `${folder}/package.json`,
+      JSON.stringify({ name, version: "1.0.0" }),
+    ]),
+  );
+  const text = (manifest: object | string) =>
+    typeof manifest === "string" ? manifest : JSON.stringify({ name: "app", ...manifest }, null, 2) + "\n";
+
+  const [alpha, beta, delta, gamma, zeta] = ["alpha", "beta", "delta", "gamma", "zeta"].map(name => ({
+    [name]: `./${name}`,
+  }));
+  // Not the order a sort gives.
+  const unsorted = { ...zeta, ...beta, ...alpha };
+  const withZeta2 = { ...unsorted, zeta: "./zeta2" };
+  const sortedWithGamma = { ...alpha, ...beta, ...gamma, ...zeta };
+  const optionalPeer = { peerDependenciesMeta: { zeta: { optional: true } } };
+
+  // An mtime in the past shows whether package.json was written.
+  const past = new Date("2001-01-01T00:00:00Z");
+
+  type Options = { cwd?: string; packageJson?: string; env?: Record<string, string> };
+
+  // Runs bun in `cwd` and says what that left in `packageJson`.
+  async function run(root: string, args: string[], options: Options = {}) {
+    const { cwd = root, packageJson = join(cwd, "package.json") } = options;
+    await utimes(packageJson, past, past);
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(root, ".bun-cache"), ...options.env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    return {
+      text: await file(packageJson).text(),
+      written: (await stat(packageJson)).mtimeMs !== past.getTime(),
+    };
+  }
+
+  type Row = { command: string; on: string; before: object | string; after?: object };
+
+  test.concurrent.each<Row>([
+    // No request names a package that is new to its group: every entry keeps its place.
+    { command: "add zeta@./zeta", on: "the spec it has", before: { dependencies: unsorted } },
+    { command: "add -d zeta@./zeta", on: "the spec it has", before: { devDependencies: unsorted } },
+    { command: "add ./zeta", on: "the folder it has", before: { dependencies: unsorted } },
+    { command: "add zeta@./zeta beta@./beta", on: "the specs it has", before: { dependencies: unsorted } },
+    {
+      command: "add zeta@./zeta2",
+      on: "another spec",
+      before: { dependencies: unsorted },
+      after: { dependencies: withZeta2 },
+    },
+    {
+      command: "add -d zeta@./zeta2",
+      on: "another spec",
+      before: { devDependencies: unsorted },
+      after: { devDependencies: withZeta2 },
+    },
+    {
+      command: "add --optional zeta@./zeta2",
+      on: "another spec",
+      before: { optionalDependencies: unsorted },
+      after: { optionalDependencies: withZeta2 },
+    },
+    {
+      command: "add --peer zeta@./zeta2",
+      on: "another spec",
+      before: { peerDependencies: unsorted },
+      after: { peerDependencies: withZeta2 },
+    },
+    {
+      command: "install --dev zeta@./zeta2",
+      on: "another spec",
+      before: { devDependencies: unsorted },
+      after: { devDependencies: withZeta2 },
+    },
+    {
+      command: "add ./zeta2",
+      on: "another folder of a package it has",
+      before: { dependencies: unsorted },
+      after: { dependencies: withZeta2 },
+    },
+    {
+      command: "add ./zeta2",
+      on: "another folder of a package that devDependencies has",
+      before: { dependencies: { ...delta, ...beta }, devDependencies: unsorted },
+      after: { dependencies: { ...delta, ...beta }, devDependencies: withZeta2 },
+    },
+    {
+      command: "add --peer ./zeta2",
+      on: "another folder of an optional peer",
+      before: { peerDependencies: unsorted, ...optionalPeer },
+      after: { peerDependencies: withZeta2, ...optionalPeer },
+    },
+    {
+      command: "add --peer ./zeta2",
+      on: "another folder of an optional peer, sorted group",
+      before: { peerDependencies: { ...alpha, ...beta, ...zeta }, ...optionalPeer },
+      after: { peerDependencies: { ...alpha, ...beta, zeta: "./zeta2" }, ...optionalPeer },
+    },
+    {
+      command: "add --peer ./zeta2",
+      on: "another folder of an optional peer that the group has two times",
+      before: text({ peerDependencies: { ...zeta, ...beta, "zeta ": "./zeta", ...alpha }, ...optionalPeer }).replace(
+        '"zeta "',
+        '"zeta"',
+      ),
+      after: { peerDependencies: withZeta2, ...optionalPeer },
+    },
+    {
+      command: "add zeta@./zeta",
+      on: "an entry that is not a string",
+      before: { dependencies: { ...unsorted, zeta: {} } },
+      after: { dependencies: unsorted },
+    },
+    // A request names a package that is new to its group: the group is sorted.
+    {
+      command: "add gamma@./gamma",
+      on: "a new package",
+      before: { dependencies: unsorted },
+      after: { dependencies: sortedWithGamma },
+    },
+    {
+      command: "add ./gamma",
+      on: "the folder of a new package",
+      before: { dependencies: unsorted },
+      after: { dependencies: sortedWithGamma },
+    },
+    {
+      command: "add ./gamma",
+      on: "the folder of a new package, sorted group",
+      before: { dependencies: { ...alpha, ...zeta } },
+      after: { dependencies: { ...alpha, ...gamma, ...zeta } },
+    },
+    {
+      command: "add --only-missing gamma@./gamma",
+      on: "a new package",
+      before: { dependencies: unsorted },
+      after: { dependencies: sortedWithGamma },
+    },
+    {
+      command: "add zeta@./zeta gamma@./gamma",
+      on: "the spec it has and a new package",
+      before: { dependencies: unsorted },
+      after: { dependencies: sortedWithGamma },
+    },
+    {
+      command: "add ./zeta2 ./gamma",
+      on: "another folder of a package it has and the folder of a new package",
+      before: { dependencies: unsorted },
+      after: { dependencies: { ...sortedWithGamma, zeta: "./zeta2" } },
+    },
+    {
+      command: "add -d delta@./delta",
+      on: "a package that dependencies has",
+      before: { dependencies: { ...gamma, ...delta, ...beta }, devDependencies: { ...zeta, ...alpha } },
+      after: { dependencies: { ...gamma, ...beta }, devDependencies: { ...alpha, ...delta, ...zeta } },
+    },
+    {
+      command: "add --peer ./zeta2 gamma@./gamma",
+      on: "another folder of an optional peer and a new package",
+      before: { peerDependencies: unsorted, ...optionalPeer },
+      after: { peerDependencies: { ...sortedWithGamma, zeta: "./zeta2" }, ...optionalPeer },
+    },
+    {
+      command: "add gamma@./gamma",
+      on: "a new package, sorted group",
+      before: { dependencies: { ...alpha, ...zeta } },
+      after: { dependencies: { ...alpha, ...gamma, ...zeta } },
+    },
+    {
+      command: "add -d delta@./delta",
+      on: "a package that dependencies has, sorted group",
+      before: { dependencies: { ...beta, ...delta }, devDependencies: { ...alpha, ...zeta } },
+      after: { dependencies: beta, devDependencies: { ...alpha, ...delta, ...zeta } },
+    },
+  ])("bun $command: $on", async ({ command, before, after = before }) => {
+    using dir = tempDir("bun-add-group-order", { ...folderFiles, "package.json": text(before) });
+
+    expect(await run(String(dir), command.split(" "))).toEqual({ text: text(after), written: after !== before });
+  });
+
+  test.concurrent.each<Row>([
+    { command: "add zeta@./zeta", on: "the spec it has", before: { dependencies: unsorted } },
+    {
+      command: "add ./zeta2",
+      on: "another folder of a package it has",
+      before: { dependencies: unsorted },
+      after: { dependencies: withZeta2 },
+    },
+  ])("bun $command in an installed project: $on", async ({ command, before, after = before }) => {
+    using dir = tempDir("bun-add-group-order-installed", { ...folderFiles, "package.json": text(before) });
+    const root = String(dir);
+    await run(root, ["install"]);
+    const lockfile = await file(join(root, "bun.lock")).text();
+
+    expect(await run(root, command.split(" "))).toEqual({ text: text(after), written: after !== before });
+    if (after === before) expect(await file(join(root, "bun.lock")).text()).toBe(lockfile);
+    await run(root, ["install", "--frozen-lockfile"]);
+  });
+
+  // The command of the report in #11536 is `bun install --dev <alias>@npm:<package>@<version>`.
+  it.each([
+    ["0.0.3", false],
+    ["0.0.5", true],
+  ])("bun install --dev @types/bun@npm:baz@%s over the alias it has", async (version, written) => {
+    setHandler(dummyRegistry([], { "0.0.3": {}, "0.0.5": {} }));
+    const manifest = (aliased: string) =>
+      text({ devDependencies: { baz: "0.0.3", "@types/bun": `npm:baz@${aliased}` } });
+    await writeFile(join(package_dir, "package.json"), manifest("0.0.3"));
+
+    expect(await run(package_dir, ["install", "--dev", `@types/bun@npm:baz@${version}`])).toEqual({
+      text: manifest(version),
+      written,
+    });
+  });
+
+  test.concurrent("bun add -g zeta@<another folder>", async () => {
+    using home = tempDir("bun-add-group-order-global", folderFiles);
+    const spec = (folder: string) => join(String(home), folder).replaceAll("\\", "/");
+    const globalDir = join(String(home), ".bun", "install", "global");
+    const packageJson = join(globalDir, "package.json");
+    const globalText = (zetaFolder: string) =>
+      JSON.stringify({ dependencies: { zeta: spec(zetaFolder), beta: spec("beta"), alpha: spec("alpha") } }, null, 2) +
+      "\n";
+    await Bun.write(packageJson, globalText("zeta"));
+
+    const result = await run(String(home), ["add", "-g", `zeta@${spec("zeta2")}`], {
+      packageJson,
+      env: {
+        HOME: String(home),
+        BUN_INSTALL: join(String(home), ".bun"),
+        BUN_INSTALL_GLOBAL_DIR: globalDir,
+        BUN_INSTALL_BIN: join(String(home), ".bun", "bin"),
+      },
+    });
+    expect(result.text).toBe(globalText("zeta2"));
+  });
+
+  test.concurrent("bun link zeta --save: the link it has", async () => {
+    const before = { dependencies: { zeta: "link:zeta", ...beta, ...alpha } };
+    using dir = tempDir("bun-add-group-order-link", { ...folderFiles, "package.json": text(before) });
+    const root = String(dir);
+    // The package is registered in a global directory of this test.
+    const linkEnv = {
+      BUN_INSTALL_GLOBAL_DIR: join(root, "global", "install", "global"),
+      BUN_INSTALL_BIN: join(root, "global", "bin"),
+    };
+    await run(root, ["link"], { cwd: join(root, "zeta"), env: linkEnv });
+
+    expect(await run(root, ["link", "zeta", "--save"], { env: linkEnv })).toEqual({
+      text: text(before),
+      written: false,
+    });
+  });
+
+  describe("in a workspace", () => {
+    const member = (name: string, dependencies: object) => JSON.stringify({ name, dependencies }, null, 2) + "\n";
+    // Neither group is in sorted order. `has` has the package `zeta`, `new` does not.
+    const has = (zetaSpec: string) => member("has", { zeta: zetaSpec, beta: "../../beta" });
+    const workspace = (workspaces: object) => ({
+      ...folderFiles,
+      "package.json": JSON.stringify({ name: "root", workspaces }),
+      "packages/has/package.json": has("../../zeta"),
+      "packages/new/package.json": member("new", { gamma: "../../gamma", beta: "../../beta" }),
+    });
+    const packageJsonOf = (root: string, name: string) => join(root, "packages", name, "package.json");
+
+    test.concurrent("bun add --filter has --filter new zeta@./zeta", async () => {
+      using dir = tempDir("bun-add-group-order-filter", workspace(["packages/*"]));
+      const root = String(dir);
+
+      expect(
+        await run(root, ["add", "--filter", "has", "--filter", "new", "zeta@./zeta"], {
+          packageJson: packageJsonOf(root, "has"),
+        }),
+      ).toEqual({ text: has("../../zeta"), written: false });
+      expect(await file(packageJsonOf(root, "new")).text()).toBe(
+        member("new", { beta: "../../beta", gamma: "../../gamma", zeta: "../../zeta" }),
+      );
+    });
+
+    test.concurrent("bun add --filter has ./zeta2", async () => {
+      using dir = tempDir("bun-add-group-order-filter", workspace(["packages/*"]));
+      const root = String(dir);
+
+      const result = await run(root, ["add", "--filter", "has", "./zeta2"], {
+        packageJson: packageJsonOf(root, "has"),
+      });
+      expect(result.text).toBe(has("../../zeta2"));
+    });
+
+    test.concurrent("bun add --catalog zeta@<the spec it has>", async () => {
+      using dir = tempDir("bun-add-group-order-catalog", workspace({ packages: ["packages/*"], catalog: {} }));
+      const root = String(dir);
+      const spec = `file:${join(root, "zeta").replaceAll("\\", "/")}`;
+      await Bun.write(packageJsonOf(root, "has"), has(spec));
+
+      const result = await run(root, ["add", "--catalog", `zeta@${spec}`], { cwd: join(root, "packages", "has") });
+      expect(result.text).toBe(has("catalog:"));
+    });
   });
 });
 

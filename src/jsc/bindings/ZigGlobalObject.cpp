@@ -71,6 +71,7 @@
 #include "AddEventListenerOptions.h"
 #include "AsyncContextFrame.h"
 #include "BunClientData.h"
+#include "BunDebugger.h"
 #include "BunObject.h"
 #include "GeneratedBlob.h"
 #include "GeneratedBunObject.h"
@@ -1565,6 +1566,7 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::Scri
 
 GlobalObject::~GlobalObject()
 {
+    Bun::leakInspectorControllerThatHadFrontend(*this);
     m_scriptExecutionContext->globalObjectDestroyed();
     m_scriptExecutionContext->deref();
 }

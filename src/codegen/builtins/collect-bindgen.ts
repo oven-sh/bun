@@ -290,10 +290,16 @@ function computeConversionUses(type: Type): UseSpec[] {
 // Whoever says what a member of a class answers has read it, its setter too, and writes `uses` for an operand that it changes.
 const saysResult = (type: Type): boolean => !(type instanceof AnyType) || type.isDeclaredResult;
 
-/** An instance of a class of a schema, which the body is handed as `&T`: the struct, never the wrapper. Absent, or one of several classes, too. */
+/** An instance of a class of a schema, which the body is handed as `&T`: the struct, never the wrapper. Absent, or one of several classes, or a class or a primitive, too. */
 function isClassReference(type: Type): boolean {
   if (type instanceof OptionalType || type instanceof DefaultType) return isClassReference(type.inner);
-  if (type instanceof UnionType) return type.alternatives.every(({ type }) => isClassReference(type));
+  if (type instanceof UnionType) {
+    const alternatives = type.alternatives.map(({ type }) => type);
+    return (
+      alternatives.some(isClassReference) &&
+      alternatives.every(type => isClassReference(type) || isImmediate(type.parameterType.accepted))
+    );
+  }
   return type instanceof ClassType;
 }
 

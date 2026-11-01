@@ -37,10 +37,12 @@ async function membersOf(proto: string): Promise<MemberDeclaration[]> {
 /** What each function of the prototype of a class `Thing` does with its receiver, as the table of built-ins reads the schema. */
 async function usesOfReceivers(proto: string): Promise<Record<string, string[]>> {
   return Object.fromEntries(
-    (await membersOf(proto)).map(({ path, signatures }) => [
-      path,
-      (signatures[0].uses?.this ?? []).map(({ use }) => use),
-    ]),
+    (await membersOf(proto)).flatMap(({ path, signatures }) =>
+      signatures.map((signature, index) => [
+        signatures.length === 1 ? path : `${path}/${index}`,
+        (signature.uses?.this ?? []).map(({ use }) => use),
+      ]),
+    ),
   );
 }
 
@@ -126,7 +128,10 @@ test("one that runs no JavaScript and answers its receiver with b.this is handed
       ref: { returns: b.this, passThis: true },
       remove: { returns: b.this.optional, passThis: true, capability: "heap" },
       append: { args: { content: b.string }, returns: b.this.nullable, passThis: true, capability: "heap", throws: true },
-      update: { args: { input: b.bytes({ from: ["buffer"] }) }, returns: b.this, passThis: true, capability: "heap", mutates: true },
+      update: [
+        { args: { input: b.string }, returns: b.this, passThis: true, capability: "heap", mutates: true, rustName: "update_string" },
+        { args: { input: b.bytes({ from: ["buffer"] }) }, returns: b.this, passThis: true, capability: "heap", mutates: true, rustName: "update_bytes" },
+      ],
     `),
   ).toEqual({
     "%Other%.prototype.@@toStringTag": [],
@@ -135,7 +140,8 @@ test("one that runs no JavaScript and answers its receiver with b.this is handed
     "%Thing%.prototype.ref": ["Returns", "ReadsContents", "WritesContents"],
     "%Thing%.prototype.remove": ["Returns", "ReadsContents", "WritesContents"],
     "%Thing%.prototype.append": ["Returns", "ReadsContents", "WritesContents"],
-    "%Thing%.prototype.update": ["Returns", "ReadsContents", "WritesContents"],
+    "%Thing%.prototype.update/0": ["Returns", "ReadsContents", "WritesContents"],
+    "%Thing%.prototype.update/1": ["Returns", "ReadsContents", "WritesContents"],
   });
 });
 
@@ -185,12 +191,16 @@ test("an argument that is an instance of a class is handed to the body as the st
       plus: { args: { other: b.self }, returns: b.i32 },
       merge: { args: { other: b.self.nullable }, returns: b.self, capability: "heap" },
       either: { args: { other: b.union({ other: Other, third: Third }) }, returns: b.i32 },
+      orNull: { args: { other: b.union({ other: Other, none: b.null }) }, returns: b.i32 },
+      orText: { args: { other: b.union({ other: Other, text: b.string }) }, returns: b.i32 },
       watch: { args: { other: Other }, returns: b.any, capability: "js", throws: true },
     `),
   ).toEqual({
     "%Thing%.prototype.plus": { other: ["ReadsContents", "WritesContents"] },
     "%Thing%.prototype.merge": { other: ["ReadsContents", "WritesContents", "RetainsContents"] },
     "%Thing%.prototype.either": { other: ["ReadsContents", "WritesContents"] },
+    "%Thing%.prototype.orNull": { other: ["ReadsContents", "WritesContents"] },
+    "%Thing%.prototype.orText": { other: ["Retains"] },
     "%Thing%.prototype.watch": { other: ["Everything"] },
   });
 });
@@ -207,7 +217,8 @@ test("one that runs JavaScript keeps its receiver whether or not it is passed it
     "%Third%.prototype.@@toStringTag": [],
     "%Thing%.prototype.@@toStringTag": [],
     "%Thing%.prototype.run": ["Retains"],
-    "%Thing%.prototype.runAll": ["Everything"],
+    "%Thing%.prototype.runAll/0": ["Everything"],
+    "%Thing%.prototype.runAll/1": [],
     "%Thing%.prototype.on": ["Retains", "Returns"],
   });
 });

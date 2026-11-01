@@ -95,6 +95,47 @@ afterEach(() => {
   }
 });
 
+it.concurrent("pending rejects matcher keeps a valid WebSocket open (#45805)", async () => {
+  const ready = Promise.withResolvers<void>();
+  const reply = Promise.withResolvers<void>();
+  const followUp = Promise.withResolvers<void>();
+  void followUp.promise.catch(() => {});
+  using server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch(req, server) {
+      return server.upgrade(req) ? undefined : new Response(null, { status: 400 });
+    },
+    websocket: {
+      message(ws, message) {
+        ws.send(message);
+        if (message.toString() === "ready") ready.resolve();
+      },
+    },
+  });
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}`);
+  ws.onopen = () => ws.send("ready");
+  ws.onmessage = ({ data }) => {
+    if (data === "denied") reply.reject(Object.assign(new Error("denied"), { code: "DENIED" }));
+    if (data === "follow-up") followUp.resolve();
+  };
+  ws.onclose = ({ code, reason }) => {
+    const error = new Error(`${code}: ${reason}`);
+    reply.reject(error);
+    followUp.reject(error);
+  };
+  try {
+    await ready.promise;
+    ws.send("denied");
+    await expect(reply.promise).rejects.toMatchObject({ code: "DENIED" });
+    ws.send("follow-up");
+    await followUp.promise;
+  } finally {
+    ws.close();
+    await server.stop(true);
+  }
+});
+
 // publish on a closed websocket
 // connecct 2 websocket clients to one server
 // wait for one to call close callback

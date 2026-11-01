@@ -3880,9 +3880,13 @@ pub(crate) fn serialize_json_source_map_for_standalone(
     let json_src = bun_ast::Source::init_path_string("sourcemap.json", json_source);
     let mut log = bun_ast::Log::init();
 
-    // the allocator given to the JS parser is not respected for all parts
-    // of the parse, so we need to remember to reset the ast store
-    let _reset_guard = bun_ast::StoreResetGuard::new();
+    // An outer frame may still read this thread's AST store.
+    let arena = bun_alloc::Arena::new();
+    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
+    let _ast_scope = ast_memory_allocator.enter();
+    // In a debug build, a node that goes to that store panics.
+    let _stmt_guard = bun_ast::stmt::Disabler::scope();
+    let _expr_guard = bun_ast::expr::Disabler::scope();
 
     let parsed = bun_parsers::json::ParsedJson::parse_json(&json_src, &mut log)
         .map_err(|_| crate::Error::InvalidSourceMap)?;

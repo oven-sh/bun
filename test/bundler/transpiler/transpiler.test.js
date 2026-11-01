@@ -403,11 +403,14 @@ describe("Bun.Transpiler", () => {
       expect(fold("x = T[3]")).toBe('x = "a\u00e9b"[3];');
       expect(fold("x = T.charCodeAt(3)")).toBe('x = "a\u00e9b".charCodeAt(3);');
       expect(fold('x = (T + "x").charCodeAt(3)')).toBe('x = "a\u00e9bx".charCodeAt(3);');
-      // Code units order "\u{1F600}" before "\uffee", and UTF-8 bytes order it after.
-      expect(fold("x = H < L")).toBe('x = "\u{1F600}" < "\uffee";');
-      expect(fold("x = H >= L")).toBe('x = "\u{1F600}" >= "\uffee";');
-      // A no-break space is white space, so `+"\u00a01"` is 1.
-      expect(fold("x = [+N, -N, ~N]")).toBe('x = [+"\u00a01", -"\u00a01", ~"\u00a01"];');
+    });
+    // Code units order "\u{1F600}" before "\uffee", and UTF-8 bytes order it after.
+    it("orders it by UTF-16 code unit", () => {
+      expect(fold('x = [H < L, H >= L, L > H, T <= T + "x", H + "a" < H + "b"]')).toBe("x = [!0, !1, !0, !0, !0];");
+    });
+    // A no-break space is white space, which `Number()` trims.
+    it("trims its white space for a number", () => {
+      expect(fold("x = [+N, -N, ~N, +T, +H]")).toBe("x = [1, -1, -2, NaN, NaN];");
     });
     it("folds where the text that is read is ASCII", () => {
       expect(fold('x = [("x" + "yz").length, ("ab" + "cd")[1], "abc".charCodeAt(1), "a" < "b", +"1"]')).toBe(
@@ -419,14 +422,14 @@ describe("Bun.Transpiler", () => {
     it("keeps the folds that run without a minify option", () => {
       const plain = new Bun.Transpiler({ define });
       expect(plain.transformSync("x = [T.charCodeAt(3), T.charCodeAt(0), +N, -N];")).toBe(
-        'x = ["a\u00e9b".charCodeAt(3), 97, +"\u00a01", -"\u00a01"];\n',
+        'x = ["a\u00e9b".charCodeAt(3), 97, 1, -1];\n',
       );
     });
-    it("keeps a unary operator on an enum member", () => {
+    it("folds a unary operator on an enum member", () => {
       const typescript = new Bun.Transpiler({ loader: "ts", minify: { syntax: true }, define });
       expect(
         typescript.transformSync("enum E { S = N as any }\nx = [+E.S, -E.S, ~E.S];").trimEnd().split("\n").at(-1),
-      ).toBe('x = [+"\u00a01" /* S */, -"\u00a01" /* S */, ~"\u00a01" /* S */];');
+      ).toBe("x = [1, -1, -2];");
     });
     // Every operand alone and every pair, joined by `+` and by a template, under every consumer.
     it("gives what the engine gives for each generated read", () => {

@@ -1909,6 +1909,17 @@ impl EString {
         }
     }
 
+    /// The order that `<` gives: by UTF-16 code unit. Both strings must share the same encoding.
+    #[inline]
+    pub fn order_utf16(&self, other: &EString) -> Ordering {
+        debug_assert!(self.is_utf8() == other.is_utf8());
+        if self.is_utf8() {
+            strings::order_utf16(&self.data, &other.data)
+        } else {
+            strings::order_t(self.slice16(), other.slice16())
+        }
+    }
+
     /// Whether this string, or a later part of its rope, is 8-bit text that is not ASCII.
     #[inline(never)]
     pub fn has_non_ascii_bytes(&self) -> bool {

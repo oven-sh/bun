@@ -28,7 +28,7 @@ for (let backend of ["api", "cli"] as const) {
         },
       });
 
-    // An inlined value is 8-bit text. A fold reads one byte of it as one character only where the text is ASCII, so
+    // An inlined value is 8-bit text. No fold reads one byte of it as one character where the text is not ASCII, so
     // each of these reads gives what it gives at run time. The path still joins with a literal at build time.
     if (backend === "cli")
       itBundled("env/inline non-ascii", {
@@ -198,4 +198,42 @@ test("Bun.build inlines the env values from when it was called", async () => {
   expect(stdout).toContain(`console.log(${JSON.stringify(atCall)})`);
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
+});
+
+// A `.env` file is read as bytes, so an inlined value can be 8-bit text that is not UTF-8. A comparison of two such
+// values stays for run time: it gives what the same comparison gives for values that the bundler cannot see through.
+test("bun build --env leaves a comparison of values that are not UTF-8 for run time", async () => {
+  using dir = tempDir("bun-build-env-bytes", {
+    ".env": Buffer.concat([
+      Buffer.from("PUB_A=a"),
+      Buffer.from([0xff]),
+      Buffer.from("\nPUB_B=a"),
+      Buffer.from([0xef, 0xbf, 0xbe]),
+      Buffer.from("\n"),
+    ]),
+    "entry.mjs": /* js */ `
+      const id = x => x;
+      console.log(process.env.PUB_A < process.env.PUB_B, process.env.PUB_A >= process.env.PUB_B);
+      console.log(id(process.env.PUB_A) < id(process.env.PUB_B), id(process.env.PUB_A) >= id(process.env.PUB_B));
+    `,
+  });
+  await using build = Bun.spawn({
+    cmd: [bunExe(), "build", "--env", "PUB_*", "--minify-syntax", "entry.mjs", "--outfile", "out.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect({ stderr: await build.stderr.text(), exitCode: await build.exited }).toEqual({ stderr: "", exitCode: 0 });
+
+  await using run = Bun.spawn({
+    cmd: [bunExe(), "out.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+  const [folded, opaque] = stdout.trim().split("\n");
+  expect({ folded, stderr, exitCode }).toEqual({ folded: opaque, stderr: "", exitCode: 0 });
 });

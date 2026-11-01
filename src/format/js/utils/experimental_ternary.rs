@@ -402,7 +402,7 @@ pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Format
     });
 
     // This printer writes no parentheses around the operands of a conditional with an element in it.
-    let outer = AfterColon::enter(conditional, f);
+    let outer = AfterColon::enter(conditional, false, f);
     if is_on_same_line_as_return {
         write!(f, group(&indent(&format_parts)));
     } else if should_extra_indent || (is_ts_conditional && is_in_test) {

@@ -263,7 +263,8 @@ pub(crate) struct FileComments {
     attachments: Vec<AttachmentInfo>,
     owners: Owners,
     cast_parens: Vec<u32>,
-    has_ignore_comments: bool,
+    /// The sorted start offsets of the `prettier-ignore` comments.
+    ignore_comments: Vec<u32>,
 }
 
 impl FileComments {
@@ -271,7 +272,7 @@ impl FileComments {
         attachments: Vec::new(),
         owners: Owners::EMPTY,
         cast_parens: Vec::new(),
-        has_ignore_comments: false,
+        ignore_comments: Vec::new(),
     };
 }
 
@@ -320,7 +321,7 @@ pub(crate) fn for_file<'a>(file: &'a File<'a>, options: &FormatOptions) -> &'a F
             experimental_ternaries: options.experimental_ternaries,
             flavor: options.flavor,
         };
-        let attached = attach::attach(file, &cast_parens, attach_options);
+        let mut attached = attach::attach(file, &cast_parens, attach_options);
         let attachments = (attached.attachments.iter())
             .map(|attachment| AttachmentInfo {
                 placement: attachment.placement,
@@ -333,7 +334,7 @@ pub(crate) fn for_file<'a>(file: &'a File<'a>, options: &FormatOptions) -> &'a F
             .collect();
         FileComments {
             attachments,
-            has_ignore_comments: attached.has_ignore_comments,
+            ignore_comments: std::mem::take(&mut attached.ignore_comments),
             owners: Owners::new(file, attached),
             cast_parens,
         }
@@ -442,7 +443,8 @@ impl<'a> Comments<'a> {
     /// True if `node` is copied from the source because of a `prettier-ignore` comment.
     #[inline]
     pub(crate) fn is_ignored(&self, node: AstNodes<'_>) -> bool {
-        self.file_comments.has_ignore_comments && self.file_comments.owners.of_node(node).is_ignored
+        !self.file_comments.ignore_comments.is_empty()
+            && self.file_comments.owners.of_node(node).is_ignored
     }
 
     pub(crate) fn attachment(&self, comment: Comment<'_>) -> Option<AttachmentInfo> {
@@ -608,24 +610,19 @@ impl<'a> Comments<'a> {
     /// True if the file has a `prettier-ignore` comment.
     #[inline]
     pub(crate) fn has_suppression_comments(&self) -> bool {
-        self.file_comments.has_ignore_comments
+        !self.file_comments.ignore_comments.is_empty()
     }
 
-    /// True if `span` has a `prettier-ignore` comment or the `(` of a type cast: both keep parentheses of the source.
-    pub(crate) fn keeps_source_parentheses_in(&self, span: Span) -> bool {
-        let casts = &self.file_comments.cast_parens;
-        let is_cast = |open: &u32| *open < span.end;
-        casts
-            .get(casts.partition_point(|open| *open < span.start))
-            .is_some_and(is_cast)
-            || (self.file_comments.has_ignore_comments
-                && (self.comments_in_span(span).iter())
-                    .any(|comment| comment.is_ignore_comment(self.flavor)))
+    /// True if `span` has a `prettier-ignore` comment.
+    pub(crate) fn has_ignore_comment_in(&self, span: Span) -> bool {
+        let starts = &self.file_comments.ignore_comments;
+        (starts.get(starts.partition_point(|start| *start < span.start)))
+            .is_some_and(|start| *start < span.end)
     }
 
     #[inline]
     pub(crate) fn is_suppression_comment(&self, comment: Comment<'_>) -> bool {
-        self.file_comments.has_ignore_comments && comment.is_ignore_comment(self.flavor)
+        !self.file_comments.ignore_comments.is_empty() && comment.is_ignore_comment(self.flavor)
     }
 
     // ───────────────────────────── printed comments ─────────────────────────────

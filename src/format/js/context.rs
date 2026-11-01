@@ -55,8 +55,10 @@ pub(crate) struct JsFormatContext<'a> {
     pub(crate) line_start: Cell<(u32, u32)>,
     /// True if the `a | b` being written is a Vue value and filter.
     pub(crate) is_vue_filter_sequence: Cell<bool>,
-    /// What the conditional that is being written found after its `:`.
+    /// What the conditional that is being written decided about the arrow functions after its `:`.
     pub(crate) after_colon: Cell<AfterColon>,
+    /// True if what is being written loses its soft line breaks, and with them the text that only a broken group has.
+    pub(crate) removes_soft_lines: Cell<bool>,
     /// Parses the code in HTML, overriding `FormatOptions::parse_javascript`.
     pub(crate) parse_javascript: Option<JavaScriptParser<'a>>,
 }
@@ -98,6 +100,7 @@ impl<'a> JsFormatContext<'a> {
             long_member_chain: Cell::new(None),
             is_vue_filter_sequence: Cell::new(false),
             after_colon: Cell::default(),
+            removes_soft_lines: Cell::new(false),
             parse_javascript: None,
         }
     }

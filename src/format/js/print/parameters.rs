@@ -401,10 +401,23 @@ impl<'a> Format<'a> for ParameterList<'a> {
     }
 }
 
-/// `a => a`: true if the options ask for it and the parameters allow it. Prettier's `shouldPrintParamsWithoutParens`.
+/// `a => a`: true if Prettier prints it, and no conditional keeps `(a) =>`.
+#[inline]
 pub(crate) fn can_avoid_parentheses<'a>(arrow: Func<'a>, f: &Formatter<'a>) -> bool {
-    f.options().arrow_parentheses.is_as_needed()
-        && arrow.params().len() == 1
+    // Prettier prints `a ? b => ({ c }) : d => (e): T => f`. tsc reads `({ c }): d => (e)` as an arrow function.
+    prettier_avoids_parentheses(arrow, f)
+        && !f.context().after_colon.get().keeps_parentheses_of(arrow)
+}
+
+/// `a => a`: true if the options ask for it and the parameters allow it. Prettier's `shouldPrintParamsWithoutParens`.
+#[inline]
+pub(crate) fn prettier_avoids_parentheses<'a>(arrow: Func<'a>, f: &Formatter<'a>) -> bool {
+    f.options().arrow_parentheses.is_as_needed() && has_only_a_name(arrow, f)
+}
+
+/// True if the parameters of `arrow` are one name, with no type, default or comment.
+fn has_only_a_name<'a>(arrow: Func<'a>, f: &Formatter<'a>) -> bool {
+    arrow.params().len() == 1
         && arrow.this_param().is_none()
         && arrow.type_params().is_empty()
         && arrow.return_type().is_none()
@@ -417,8 +430,6 @@ pub(crate) fn can_avoid_parentheses<'a>(arrow: Func<'a>, f: &Formatter<'a>) -> b
                 && !parameter_has_comment(param, f)
         })
         && (f.comments().of_node(arrow.as_ast_nodes()).dangling).is_empty()
-        // Prettier prints `a ? b => ({ c }) : d => (e): T => f`. tsc reads `({ c }): d => (e)` as an arrow function.
-        && !f.context().after_colon.get().keeps_parentheses_of(arrow)
 }
 
 /// Prettier's `shouldHugTheOnlyFunctionParameter`.

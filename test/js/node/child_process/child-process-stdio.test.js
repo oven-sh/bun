@@ -220,3 +220,65 @@ describe.skipIf(!isPosix)("stdio handed to the child", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe("child readable stdio references", () => {
+  it.each(["stdout", "stderr"])("repeated %s.ref() calls need only one unref()", async name => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { spawn } = require("node:child_process");
+        const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000); process.stdout.write('ready')"], {
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        process.on("exit", () => child.kill());
+        // A leaked reference has no completion event; bound the failure and reap the child.
+        setTimeout(() => {
+          console.error("stdio kept the parent alive");
+          process.exitCode = 1;
+          child.kill();
+        }, 2000).unref();
+        child.on("error", error => { throw error; });
+        child.stderr.resume();
+        child.stdout.once("data", () => {
+          child[${JSON.stringify(name)}].ref();
+          child[${JSON.stringify(name)}].ref();
+          child.unref();
+          child.stdout.unref();
+          child.stderr.unref();
+          console.log("released");
+        });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "released\n", stderr: "", exitCode: 0 });
+  });
+
+  it("ref and unref return each readable stream before and after close", async () => {
+    const child = spawn(bunExe(), ["-e", "process.stdin.resume()"], {
+      env: bunEnv,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const closed = once(child, "close");
+    try {
+      for (const stream of [child.stdout, child.stderr]) {
+        expect(stream.ref()).toBe(stream);
+        expect(stream.unref()).toBe(stream);
+        expect(stream.unref()).toBe(stream);
+        expect(stream.ref()).toBe(stream);
+      }
+    } finally {
+      child.kill();
+      await closed;
+    }
+    for (const stream of [child.stdout, child.stderr]) {
+      expect(stream.ref()).toBe(stream);
+      expect(stream.unref()).toBe(stream);
+    }
+  });
+});

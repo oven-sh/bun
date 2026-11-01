@@ -6,6 +6,7 @@ import { Agent as HttpsAgent, createServer as createHttpsServer, get as httpsGet
 import type { AddressInfo } from "node:net";
 import { connect, createServer as createNetServer } from "node:net";
 import { connect as tlsConnect } from "node:tls";
+import { Worker } from "node:worker_threads";
 
 // Node's net.Server#close callback (and the 'close' event) only fires once
 // every accepted connection has ended. A connection that was mid-request
@@ -552,6 +553,92 @@ test("server.close() in the handler of a response that still drains does not cut
     server.closeAllConnections();
   }
 });
+
+// Once the handler has returned, Node.js takes the connection of an ended
+// response for idle, also while bytes of the response wait for the socket.
+// Bun.serve waits for those bytes. node:http closes, like Node.js.
+test("closeIdleConnections() closes a connection whose ended response has not drained", async () => {
+  // Two writes: Windows takes the first one whole, whatever its size, and refuses the next.
+  const half = Buffer.alloc(16 * 1024 * 1024, "a");
+  const handlerReturned = Promise.withResolvers<void>();
+  const server = createServer((req, res) => {
+    res.write(half);
+    res.end(half);
+    setImmediate(handlerReturned.resolve);
+  });
+  server.keepAliveTimeout = 60000;
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const socket = connect(port, "127.0.0.1");
+  try {
+    let received = 0;
+    const endedBy: string[] = [];
+    // The connection closes, or the whole response arrives on a connection that stays open.
+    const done = Promise.withResolvers<void>();
+    socket.pause();
+    socket.on("data", chunk => {
+      received += chunk.length;
+      if (received > 2 * half.length) done.resolve();
+    });
+    socket.on("end", () => endedBy.push("end"));
+    socket.on("error", (err: NodeJS.ErrnoException) => endedBy.push(err.code ?? err.message));
+    socket.on("close", () => done.resolve());
+    socket.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+    await handlerReturned.promise;
+    server.closeIdleConnections();
+    socket.resume();
+    await done.promise;
+    expect({ short: received < 2 * half.length, endedBy }).toEqual({ short: true, endedBy: ["end"] });
+  } finally {
+    socket.destroy();
+    server.closeAllConnections();
+    server.close();
+  }
+});
+
+// Bun.serve resets a connection when it cuts an HTTP/1.0 body that has no
+// length. Node.js ends that connection in order, and so does node:http.
+test.each(["http", "https"] as const)(
+  "%s: worker.terminate() ends the connection of an HTTP/1.0 response in flight in order",
+  async protocol => {
+    const worker = new Worker(
+      `
+        const { parentPort, workerData } = require("node:worker_threads");
+        const handler = (req, res) => res.write("part 1 of 2\\n");
+        const server = workerData
+          ? require("node:https").createServer(workerData, handler)
+          : require("node:http").createServer(handler);
+        server.listen(0, "127.0.0.1", () => parentPort.postMessage(server.address().port));
+      `,
+      { eval: true, workerData: protocol === "https" ? { ...tlsCert } : null },
+    );
+    try {
+      const [port] = await once(worker, "message");
+      const socket =
+        protocol === "https" ? tlsConnect({ port, host: "127.0.0.1", ca: tlsCert.cert }) : connect(port, "127.0.0.1");
+      const chunks: Buffer[] = [];
+      const endedBy: string[] = [];
+      const body = () => {
+        const raw = Buffer.concat(chunks).toString("latin1");
+        return raw.slice(raw.indexOf("\r\n\r\n") + 4);
+      };
+      socket.on("data", (chunk: Buffer) => {
+        chunks.push(chunk);
+        if (body() === "part 1 of 2\n") worker.terminate();
+      });
+      socket.on("end", () => endedBy.push("end"));
+      socket.on("error", (err: NodeJS.ErrnoException) => endedBy.push(err.code ?? err.message));
+      const closed = once(socket, "close");
+      socket.write("GET / HTTP/1.0\r\nHost: x\r\n\r\n");
+      await closed;
+      expect({ body: body(), endedBy }).toEqual({ body: "part 1 of 2\n", endedBy: ["end"] });
+    } finally {
+      await worker.terminate();
+    }
+  },
+);
 
 // After close() the server has no native handle, and closeIdleConnections()
 // asks each connection. A busy one stays, and one that became idle goes.

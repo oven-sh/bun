@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
@@ -75,23 +75,57 @@ test("another file, so that the run has pieces", () => expect(1).toBe(1));
 `,
 });
 
+// What a.test.js prints each time that it gives the names. It gives them three times: by displayName, by name and by displayName again.
+const seenEachTime = [
+  "SEEN as written | probe < visit < step < each < inThePackage < forEachOf < work < <anonymous>",
+  "SEEN one that the package calls | probe < visit < step < for each < inThePackage < forEachOf < work < <anonymous>",
+  "SEEN one that the application calls | probe < visited < step < for each < inThePackage < forEachOf < work < <anonymous>",
+  "SEEN one of the package | probe < visited < step < for each < in a package < forEachOf < work < <anonymous>",
+  "SEEN one of the test file | probed < visited < step < for each < in a package < forEachOf < work < <anonymous>",
+  "SEEN others | probe < visit < step < each < inThePackage < forEachOf < work < <anonymous>",
+];
+// Of every run of a project: plain Bun's, and each run in layers.
+const expected = {
+  seen: [...seenEachTime, ...seenEachTime, ...seenEachTime],
+  summary: ["2 pass", "0 fail", "2 expect() calls", "Ran 2 tests across 2 files."],
+  exitCode: 0,
+};
+
 async function seenIn(directory: string, words?: string) {
   const env = words ? { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words } : bunEnv;
-  const { stdout, exitCode } = await run([bunExe(), "test", "--isolate", ...(words ? ["--aot"] : [])], directory, env);
-  return { seen: stdout.split("\n").filter(line => line.startsWith("SEEN ")), exitCode };
+  const command = [bunExe(), "test", "--isolate", ...(words ? ["--aot"] : [])];
+  const { stdout, stderr, exitCode } = await run(command, directory, env);
+  const said = stderr.split("\n").map(line => line.trim().replace(/ \[[\d.]+m?s\]$/, ""));
+  return {
+    seen: stdout.split("\n").filter(line => line.startsWith("SEEN ")),
+    summary: said.slice(said.findLastIndex(line => /^\d+ pass$/.test(line))).filter(Boolean),
+    exitCode,
+  };
 }
 
-test.each(programs)(
-  "a stack taken before %s names the callbacks of the other programs shows the names",
-  async where => {
-    using dir = tempDir("aot-callbacks-named-by-another-program", filesWithNamesGivenIn(where));
-    const plain = await seenIn(String(dir));
-    expect(plain.exitCode).toBe(0);
-    expect(plain.seen.length).toBe(18);
-    expect(plain.seen[4]).toContain("probed < visited < step < for each < in a package < forEachOf < work");
-    expect(plain.seen[5]).toContain("probe < visit < step < each < inThePackage < forEachOf < work");
-    expect(await seenIn(String(dir), "TestRunLayers:1,TestRunPartFiles:1")).toEqual(plain);
-    expect(await seenIn(String(dir), "TestRunLayers:2,TestRunPartFiles:1")).toEqual(plain);
-  },
-  240_000,
-);
+// What the test files import is one program, or two: the package with Bun's own code, and the application above it. Each test file
+// is a program of its own above them.
+const layers = {
+  "one layer": "TestRunLayers:1,TestRunPartFiles:1",
+  "two layers": "TestRunLayers:2,TestRunPartFiles:1",
+};
+
+// A debug build of Bun lists the private helpers of built-in functions in a stack (showPrivateScriptsInStackTraces), here the one
+// that flatMap calls, and compiled code lists none. One run in layers also takes five minutes or more there.
+if (isDebug)
+  console.error(
+    "SKIPPED: test/aot/callbacks-named-by-another-program-of-a-test-run.test.ts: a debug build of Bun lists a helper of flatMap in the stacks of its plain run, and takes five minutes or more for one run in layers",
+  );
+
+// Each run in layers is a test of its own, so `bun test --max-concurrency` says how many of them are built at once.
+for (const where of programs) {
+  test.skipIf(isDebug).concurrent.each(Object.entries(layers))(
+    `a stack taken before ${where} names the callbacks of the other programs shows the names, over %s`,
+    async (_, words) => {
+      using dir = tempDir("aot-callbacks-named-by-another-program", filesWithNamesGivenIn(where));
+      expect(await seenIn(String(dir))).toEqual(expected);
+      expect(await seenIn(String(dir), words)).toEqual(expected);
+    },
+    300_000,
+  );
+}

@@ -6,8 +6,8 @@ use bun_lint::rule::Plugin;
 /// types in both branches.
 pub struct ConsistentEmptyArraySpread;
 
-const CONSISTENT_EMPTY_ARRAY_SPREAD: Message =
-    Message::new("", "Prefer consistent types when spreading a ternary in an array literal.");
+const CONSISTENT_EMPTY_ARRAY_SPREAD: &Message =
+    &Message::new("", "Prefer consistent types when spreading a ternary in an array literal.");
 
 impl Rule for ConsistentEmptyArraySpread {
     const META: Meta =

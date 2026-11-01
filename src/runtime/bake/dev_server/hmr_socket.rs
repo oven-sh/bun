@@ -43,10 +43,7 @@ impl HmrSocket {
     }
 
     pub(crate) fn on_open(&mut self, ws: AnyWebSocket) {
-        // SAFETY: JS-thread only; sole `&mut DevServer` for this scope. Derived
-        // via the BackRef accessor (lifetime-detached from `&self`) so we can
-        // assign `self.underlying` below while `dev` is still live.
-        let dev = unsafe { self.dev() };
+        let dev = self.dev;
         let mut header = [0u8; 1 + DevServer::CONFIGURATION_HASH_KEY_LEN];
         header[0] = MessageId::Version.char();
         header[1..].copy_from_slice(&dev.configuration_hash_key);
@@ -114,7 +111,6 @@ impl HmrSocket {
                             match field {
                                 HmrTopic::IncrementalVisualizer => {
                                     dev.emit_incremental_visualizer_events += 1;
-                                    dev.emit_visualizer_message_if_needed();
                                 }
                                 HmrTopic::MemoryVisualizer => {
                                     dev.emit_memory_visualizer_events += 1;
@@ -164,7 +160,7 @@ impl HmrSocket {
                 let maybe_rbi = dev.route_to_bundle_index_slow(pattern);
                 if let Some(agent) = dev.inspector() {
                     if self.inspector_connection_id > -1 {
-                        let pattern_str = bun_core::String::from_bytes(pattern);
+                        let pattern_str = bun_core::StringView::from_bytes(pattern);
                         agent.notify_client_navigated(
                             dev.inspector_server_id,
                             self.inspector_connection_id,
@@ -247,11 +243,10 @@ impl HmrSocket {
                 };
 
                 let data = &msg[2..];
-                // SAFETY: JS-thread only; sole `&mut DevServer` for this scope.
-                let dev = unsafe { self.dev() };
+                let dev = self.dev;
 
                 if let Some(agent) = dev.inspector() {
-                    let log_str = bun_core::String::from_bytes(data);
+                    let log_str = bun_core::StringView::from_bytes(data);
                     agent.notify_console_log(dev.inspector_server_id, kind as u8, &log_str);
                 }
 
@@ -415,13 +410,12 @@ impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for D
         debug_assert_eq!(id, 0);
         // Note: DevServer always registers `*mut Self` with `id == 0`
         // (`set_routes` → `app.ws(prefix, this, 0, ..)`); live for the upgrade
-        // callback's duration. `res.upgrade(..)` synchronously runs `on_open`
-        // → `HmrSocket::dev()`, which materializes a second `&mut DevServer`
-        // from the socket's backref, so no `&mut DevServer` may span it — the
-        // pre-upgrade borrows below are scoped to their statements. uWS
-        // guarantees `res` is non-null and live for the upgrade callback
-        // (`Response<SSL>` is an opaque handle); every `&mut *res` below is
-        // likewise statement-scoped.
+        // callback's duration. `res.upgrade(..)` synchronously runs `on_open`,
+        // which reads the DevServer through the socket's backref, so no
+        // `&mut DevServer` may span it — the pre-upgrade borrows below are
+        // scoped to their statements. uWS guarantees `res` is non-null and live
+        // for the upgrade callback (`Response<SSL>` is an opaque handle); every
+        // `&mut *res` below is likewise statement-scoped.
         //
         // SAFETY: `this` is the live DevServer registered for the upgrade callback.
         if !is_allowed_dev_host(unsafe { &*this }, req) {

@@ -31,10 +31,11 @@ use crate::generated_bindgen::fetch_tasklet::{
 };
 use crate::webcore::blob::{Any as AnyBlob, Blob, SizeType as BlobSizeType, Store as BlobStore};
 use crate::webcore::body::{self, Body, Value as BodyValue, ValueError as BodyValueError};
-use crate::webcore::fetch::fetch_request_body_sink::{FetchRequestBodySink, RequestBodyChunk};
+use crate::webcore::fetch::fetch_request_body_sink::FetchRequestBodySink;
 use crate::webcore::readable_stream::{ReadableStream, Strong as ReadableStreamStrong};
 use crate::webcore::response::HeadersRef;
-use crate::webcore::sink::JSSink;
+use crate::webcore::sink::ReadableSinkController;
+use crate::webcore::streams::EncodedChunk;
 use crate::webcore::streams::{SourceHandle, StreamError, StreamResult, Writable};
 use crate::webcore::{AbortSignal, DrainResult, FetchHeaders, InternalBlob, Response, SinkHandle};
 use bun_jsc::AbortSignalRef;
@@ -501,7 +502,7 @@ impl FetchTasklet {
             // FetchTasklet ref — `write_end_request` is the canonical release.
             sink.task = None;
             // `detach` may fire the controller's onClose; every terminal path
-            // here has already cleared it, so this just nulls m_sinkPtr.
+            // here has already cleared it, so this just detaches the controller.
             sink.source.detach(&self.global_this);
         }
         if let Some(buffer) = self.request_body_streaming_buffer.take() {
@@ -708,7 +709,7 @@ impl FetchTasklet {
             crate::webcore::readable_stream::NativeWireResult::NotNative => {}
         }
 
-        let assignment_result = JSSink::<FetchRequestBodySink>::assign_to_stream(
+        let assignment_result = ReadableSinkController::assign_to_stream(
             &global_this,
             stream.value,
             core::ptr::NonNull::from(&mut *sink),
@@ -2309,7 +2310,7 @@ impl FetchTasklet {
     /// `start({ highWaterMark })`.
     pub(crate) fn write_request_data(
         &mut self,
-        data: RequestBodyChunk<'_>,
+        data: EncodedChunk<'_>,
         high_water_mark: usize,
     ) -> Writable {
         if self.signal_aborted() || self.request_body_mismatched {
@@ -2600,13 +2601,10 @@ impl FetchTasklet {
         let prev_can_stream = task_ref.result.can_stream;
         // `result.body` borrows the HTTP thread's scratch buffer on non-terminal
         // callbacks; the terminal callback carries the bytes in `body_owned`
-        // instead. Capture both before `detach_lifetime` clears them in the
-        // stored copy.
+        // instead. Capture both; the stored copy keeps neither.
         let body: &[u8] = result.body;
         let body_owned: Vec<u8> = core::mem::take(&mut result.body_owned);
-        // SAFETY: lifetime erasure for non-body fields; `body` is stored as
-        // `&'static []` so no borrow escapes.
-        task_ref.result = unsafe { result.detach_lifetime() };
+        task_ref.result = result.without_borrowed_body();
         // can_stream is a one-shot signal to start the request body stream; don't let a
         // later coalesced result clobber it before the JS thread sees it.
         task_ref.result.can_stream = task_ref.result.can_stream || prev_can_stream;

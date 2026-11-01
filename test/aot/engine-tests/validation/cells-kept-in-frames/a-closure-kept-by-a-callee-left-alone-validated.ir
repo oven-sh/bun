@@ -1,0 +1,6 @@
+# FORM: AsRead
+# RUN: run-in-shell globalThis.argumentCount = 2;
+# OPTIONS: validate disable=pass:InlineCalls,pass:InlineHeads
+# CHECK: 186
+# CHECK: exited with 0
+# PROGRAM-OF: a-closure-kept-by-a-callee-left-alone.ir

@@ -19,9 +19,6 @@ type CSSInteger = i32;
 
 // ───────────────────────── QueryCondition trait ─────────────────────────
 // Implementors: MediaCondition, StyleQuery, ContainerCondition.
-// NOT SupportsCondition — its variant set {Not, And(Vec), Or(Vec), Declaration,
-// Selector, Unknown} and its `needs_parens(&Self)` / `b" not "` contract are
-// structurally different and must stay hand-rolled.
 //
 // `deep_clone` is intentionally NOT on this trait. The single mechanism is
 // `#[derive(DeepClone)]` (generics.rs). The hand-expansions in callers exist
@@ -78,6 +75,9 @@ pub trait QueryCondition: Sized + ToCss {
         parent_operator: Option<Operator>,
         targets: &css::targets::Targets,
     ) -> bool;
+
+    /// Makes a `<general-enclosed>` condition from its source text. `None`: no such variant.
+    const GENERAL_ENCLOSED: Option<fn(&'static [u8]) -> Self> = None;
 
     // ─── variant-walk accessors (drive `condition_to_css`) ───
     fn as_feature(&self) -> Option<&Self::Feature>;
@@ -200,6 +200,8 @@ bitflags::bitflags! {
         const ALLOW_OR = 1 << 0;
         /// Whether to allow style container queries.
         const ALLOW_STYLE = 1 << 1;
+        /// Whether the condition is in a `( .. )` block, where an unknown function is not one.
+        const IN_PARENS = 1 << 2;
     }
 }
 
@@ -225,6 +227,8 @@ pub enum MediaCondition {
         operator: Operator,
         conditions: Vec<MediaCondition, ArenaPtr>,
     },
+    /// `<general-enclosed>`, as its source text.
+    Unknown(&'static [u8]),
 }
 
 // ───────────────────────── QueryFeature / MediaFeature ─────────────────────────
@@ -674,7 +678,7 @@ impl MediaList {
 
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         if self.media_queries.is_empty() {
-            return dest.write_str("not all");
+            return dest.write_str("all");
         }
         dest.write_comma_separated(&self.media_queries, |d, q| q.to_css(d))
     }
@@ -817,6 +821,13 @@ impl QueryCondition for MediaCondition {
     fn feature_to_css(f: &MediaFeature, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         f.to_css(dest)
     }
+    const GENERAL_ENCLOSED: Option<fn(&'static [u8]) -> Self> = Some(MediaCondition::Unknown);
+    fn extra_to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        let Self::Unknown(raw) = self else {
+            unreachable!()
+        };
+        dest.write_bytes(raw)
+    }
 
     fn parse_feature(input: &mut Parser) -> Result<Self> {
         let feature = MediaFeature::parse(input)?;
@@ -856,6 +867,7 @@ impl QueryCondition for MediaCondition {
             MediaCondition::Not(_) => true,
             MediaCondition::Operation { operator, .. } => Some(*operator) != parent_operator,
             MediaCondition::Feature(f) => f.needs_parens(parent_operator, targets),
+            MediaCondition::Unknown(_) => false,
         }
     }
 }
@@ -882,6 +894,14 @@ impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
                 name.to_css(dest)?;
                 dest.delim(b':', false)?;
                 value.to_css(dest)?;
+                // `-o-min-device-pixel-ratio: 2/1`: a feature we do not know may need both numbers.
+                if matches!(name, MediaFeatureName::Unknown(_))
+                    && let MediaFeatureValue::Ratio(ratio) = value
+                    && ratio.denominator == 1.0
+                {
+                    dest.delim(b'/', true)?;
+                    dest.write_char(b'1')?;
+                }
             }
             QueryFeature::Range {
                 name,
@@ -966,7 +986,7 @@ impl<FeatureId: FeatureIdTrait> MediaFeatureName<FeatureId> {
     /// prefix (lowered to `>=`/`<=`).
     fn parse(input: &mut Parser) -> Result<(Self, Option<MediaFeatureComparison>)> {
         use bun_core::strings;
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
 
         if strings::starts_with(ident, b"--") {
             return Ok((MediaFeatureName::Custom(DashedIdent { v: ident }), None));
@@ -1024,10 +1044,7 @@ impl<FeatureId: FeatureIdTrait> MediaFeatureName<FeatureId> {
 impl MediaFeatureComparison {
     fn to_css(self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         match self {
-            // Suspect but intentional: emits '-' for `Equal`, diverging from
-            // the spec `=` and from this enum's strum tag. Preserved
-            // byte-for-byte; revisit if upstream fixes.
-            MediaFeatureComparison::Equal => dest.delim(b'-', true),
+            MediaFeatureComparison::Equal => dest.delim(b'=', true),
             MediaFeatureComparison::GreaterThan => dest.delim(b'>', true),
             MediaFeatureComparison::GreaterThanEqual => {
                 dest.whitespace()?;
@@ -1078,7 +1095,10 @@ impl MediaFeatureValue {
     /// boundary lowering. Consumes `self`.
     fn add_f32(self, other: f32) -> MediaFeatureValue {
         match self {
-            MediaFeatureValue::Length(len) => MediaFeatureValue::Length(len.add(Length::px(other))),
+            // Blink gives a `min-`/`max-` length 1/64px of slack, so a smaller step does nothing.
+            MediaFeatureValue::Length(len) => {
+                MediaFeatureValue::Length(len.add(Length::px(0.02_f32.copysign(other))))
+            }
             MediaFeatureValue::Number(num) => MediaFeatureValue::Number(num + other),
             MediaFeatureValue::Integer(num) => {
                 MediaFeatureValue::Integer(num + if other.is_sign_positive() { 1 } else { -1 })
@@ -1299,6 +1319,7 @@ impl MediaCondition {
                     out
                 },
             },
+            MediaCondition::Unknown(raw) => MediaCondition::Unknown(raw),
         }
     }
 }
@@ -1402,20 +1423,17 @@ impl MediaList {
         let mut media_queries: Vec<MediaQuery, ArenaPtr> =
             Vec::new_in(ArenaPtr::new(input.arena()));
         loop {
-            match input
-                .parse_until_before(css::Delimiters::COMMA, |i| MediaQuery::parse(i, options))
-            {
-                Ok(mq) => media_queries.push(mq),
-                Err(e) => {
-                    if matches!(
-                        e.kind,
-                        css::error::ParserErrorKind::basic(css::BasicParseErrorKind::end_of_input)
-                    ) {
-                        break;
-                    }
-                    return Err(e);
+            // Only a blank query ends the list: `@media {}`, `@media screen, {}`.
+            let Some(mq) = input.parse_until_before(css::Delimiters::COMMA, |i| {
+                if i.is_exhausted() {
+                    return Ok(None);
                 }
-            }
+                MediaQuery::parse(i, options).map(Some)
+            })?
+            else {
+                break;
+            };
+            media_queries.push(mq);
 
             match input.next() {
                 Ok(tok) => {
@@ -1499,44 +1517,15 @@ pub(crate) fn parse_query_condition_with_options<C: QueryCondition>(
     flags: QueryConditionFlags,
     options: &css::ParserOptions,
 ) -> Result<C> {
-    use bun_core::strings;
     let location = input.current_source_location();
-    let (is_negation, is_style) = 'brk: {
-        let tok = *input.next()?;
-        match &tok {
-            css::Token::OpenParen => break 'brk (false, false),
-            css::Token::Ident(ident) => {
-                if strings::eql_case_insensitive_ascii_check_length(ident, b"not") {
-                    break 'brk (true, false);
-                }
-            }
-            css::Token::Function(f) => {
-                if flags.allow_style()
-                    && strings::eql_case_insensitive_ascii_check_length(f, b"style")
-                {
-                    break 'brk (false, true);
-                }
-            }
-            _ => {}
-        }
-        return Err(location.new_unexpected_token_error(tok));
-    };
-
     let alloc = ArenaPtr::new(input.arena());
 
-    // (is_negation, is_style)
-    let first_condition: C = match (is_negation, is_style) {
-        (true, false) => {
-            let inner_condition = parse_parens_or_function::<C>(input, flags, options)?;
-            return Ok(C::create_negation_in(inner_condition, alloc));
-        }
-        (true, true) => {
-            let inner_condition = C::parse_style_query_with_options(input, options)?;
-            return Ok(C::create_negation_in(inner_condition, alloc));
-        }
-        (false, false) => parse_paren_block::<C>(input, flags, options)?,
-        (false, true) => C::parse_style_query_with_options(input, options)?,
-    };
+    if input.try_parse(|i| i.expect_ident_matching(b"not")).is_ok() {
+        let inner_condition = parse_parens_or_function::<C>(input, flags, options)?;
+        return Ok(C::create_negation_in(inner_condition, alloc));
+    }
+
+    let first_condition = parse_parens_or_function::<C>(input, flags, options)?;
 
     let operator: Operator = match input.try_parse(Operator::parse) {
         Ok(op) => op,
@@ -1564,26 +1553,51 @@ pub(crate) fn parse_query_condition_with_options<C: QueryCondition>(
     }
 }
 
-/// Parse a media condition in parentheses, or a style() function.
-pub(crate) fn parse_parens_or_function<C: QueryCondition>(
+/// Parse a media condition in parentheses, or a function. A block that is neither a known
+/// condition nor a known function is `<general-enclosed>` and is kept as written.
+fn parse_parens_or_function<C: QueryCondition>(
     input: &mut Parser,
     flags: QueryConditionFlags,
     options: &css::ParserOptions,
 ) -> Result<C> {
     use bun_core::strings;
     let location = input.current_source_location();
+    input.skip_whitespace();
+    let start = input.position();
     let t = *input.next()?;
-    match &t {
-        css::Token::OpenParen => return parse_paren_block::<C>(input, flags, options),
-        css::Token::Function(f) => {
-            if flags.allow_style() && strings::eql_case_insensitive_ascii_check_length(f, b"style")
-            {
-                return C::parse_style_query_with_options(input, options);
-            }
+    let result = match &t {
+        css::Token::OpenParen => input.try_parse(|i| parse_paren_block::<C>(i, flags, options)),
+        css::Token::Function(f)
+            if flags.allow_style()
+                && strings::eql_case_insensitive_ascii_check_length(f, b"style") =>
+        {
+            input.try_parse(|i| C::parse_style_query_with_options(i, options))
         }
-        _ => {}
+        css::Token::Function(_) => Err(location.new_unexpected_token_error(t)),
+        _ => return Err(location.new_unexpected_token_error(t)),
+    };
+    let may_keep =
+        matches!(t, css::Token::OpenParen) || !flags.contains(QueryConditionFlags::IN_PARENS);
+    match (result, C::GENERAL_ENCLOSED) {
+        (Err(_), Some(general_enclosed)) if may_keep && is_general_enclosed(input) => {
+            Ok(general_enclosed(input.slice_from(start)))
+        }
+        (result, _) => result,
     }
-    Err(location.new_unexpected_token_error(t))
+}
+
+/// Reads the block `input` is at the start of. False if it holds an error token or is not closed.
+#[cold]
+fn is_general_enclosed(input: &mut Parser) -> bool {
+    input
+        .parse_nested_block(|i| {
+            i.expect_no_error_token()?;
+            if i.input.tokenizer.is_eof() {
+                return Err(i.new_error(css::BasicParseErrorKind::end_of_input));
+            }
+            Ok(())
+        })
+        .is_ok()
 }
 
 fn parse_paren_block<C: QueryCondition>(
@@ -1592,6 +1606,10 @@ fn parse_paren_block<C: QueryCondition>(
     options: &css::ParserOptions,
 ) -> Result<C> {
     input.parse_nested_block(|i| {
+        // `( <media-condition> )` allows `or` even after a media type: `screen and ((a) or (b))`.
+        // `(calc(1px) < width)` is a range, and `(layer(x))` without its parentheses is an
+        // `@import` layer.
+        let flags = flags | QueryConditionFlags::ALLOW_OR | QueryConditionFlags::IN_PARENS;
         if let Ok(inner) =
             i.try_parse(|i2| parse_query_condition_with_options::<C>(i2, flags, options))
         {

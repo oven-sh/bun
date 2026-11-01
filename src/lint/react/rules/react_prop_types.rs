@@ -15,7 +15,7 @@ pub struct PropTypes {
     skip_undeclared: bool,
 }
 
-const MISSING_PROP_TYPE: Message = Message::new("missingPropType", "'{{name}}' is missing in props validation");
+const MISSING_PROP_TYPE: &Message = &Message::new("missingPropType", "'{{name}}' is missing in props validation");
 
 impl Rule for PropTypes {
     const META: Meta = Meta::plugin(Plugin::React, "prop-types", Kind::None).recommended().reports_at_the_end();

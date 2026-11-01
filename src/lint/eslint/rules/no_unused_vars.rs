@@ -36,15 +36,15 @@ pub enum Args {
     None,
 }
 
-pub const UNUSED_VAR: Message = Message::new(
+pub const UNUSED_VAR: &Message = &Message::new(
     "unusedVar",
     "'{{varName}}' is {{action}} but never used{{additional}}.",
 );
-pub const USED_IGNORED_VAR: Message = Message::new(
+pub const USED_IGNORED_VAR: &Message = &Message::new(
     "usedIgnoredVar",
     "'{{varName}}' is marked as ignored but is used{{additional}}.",
 );
-const REMOVE_VAR: Message = Message::new("removeVar", "Remove unused variable '{{varName}}'.");
+const REMOVE_VAR: &Message = &Message::new("removeVar", "Remove unused variable '{{varName}}'.");
 
 // ───────────────────────────── options ─────────────────────────────
 
@@ -1236,11 +1236,11 @@ impl NoUnusedVars {
                 if throws {
                     ""
                 } else {
-                    "A catch needs no parameter. Remove it and its parentheses."
+                    "The parameter is optional. Write catch { }."
                 }
             }
             Declaration::Var(pat) | Declaration::Param(pat) if has_rest_sibling(Node::Pat(pat)) => {
-                "To leave a property out this way, turn on the option ignoreRestSiblings."
+                "To omit a property this way, turn on ignoreRestSiblings."
             }
             Declaration::ImportDefault(_)
             | Declaration::ImportNamespace(_)
@@ -1251,7 +1251,7 @@ impl NoUnusedVars {
                 .1
                 .is_some_and(|it| it.source() == "^_") =>
             {
-                "Remove it, or start its name with _ to keep it."
+                "Remove it, or prefix it with _."
             }
             _ => "",
         }

@@ -47,7 +47,7 @@ use bun_resolver::fs::FileSystem;
 
 use crate::Graph::Graph;
 use crate::chunk::Content;
-use crate::options::{Loader, OutputKind};
+use crate::options::{Loader, OutputFile, OutputKind};
 use crate::options_impl::LoaderExt as _;
 use crate::{BundleV2, Chunk, LinkerGraph};
 
@@ -55,7 +55,7 @@ use crate::{BundleV2, Chunk, LinkerGraph};
 pub struct HTMLImportManifest<'a> {
     pub(crate) index: u32,
     pub(crate) graph: &'a Graph<'a>,
-    pub(crate) chunks: &'a [Chunk],
+    pub(crate) chunks: &'a [Chunk<'a>],
     pub(crate) linker_graph: &'a LinkerGraph<'a>,
 }
 
@@ -174,6 +174,24 @@ pub(crate) fn write<W: Write + ?Sized>(
     chunks: &[Chunk],
     writer: &mut W,
 ) -> Result<(), crate::Error> {
+    write_with_assets(
+        index,
+        graph,
+        linker_graph,
+        chunks,
+        &graph.additional_output_files,
+        writer,
+    )
+}
+
+pub(crate) fn write_with_assets<W: Write + ?Sized>(
+    index: u32,
+    graph: &Graph,
+    linker_graph: &LinkerGraph<'_>,
+    chunks: &[Chunk],
+    assets: &[OutputFile],
+    writer: &mut W,
+) -> Result<(), crate::Error> {
     let browser_source_index = graph.html_imports.html_source_indices.slice()[index as usize];
     let server_source_index = graph.html_imports.server_source_indices.slice()[index as usize];
     let sources: &[Source] = graph.input_files.items_source();
@@ -190,7 +208,6 @@ pub(crate) fn write<W: Write + ?Sized>(
     let root_dir: &[u8] = if !options.root_dir.is_empty() {
         &options.root_dir[..]
     } else {
-        // SAFETY: FileSystem singleton is initialized before bundling.
         FileSystem::get().top_level_dir()
     };
 
@@ -257,7 +274,7 @@ pub(crate) fn write<W: Write + ?Sized>(
 
     let mut first = true;
 
-    let additional_output_files = graph.additional_output_files.as_slice();
+    let additional_output_files = assets;
     let file_entry_bits: &[AutoBitSet] = linker_graph.files.items_entry_bits();
     let mut already_visited_output_file = AutoBitSet::init_empty(additional_output_files.len())?;
 

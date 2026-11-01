@@ -35,25 +35,22 @@ fn make_flags(has_html_chunk: bool, is_browser_chunk_from_server_build: bool) ->
 
 /// Returns `order`. If the `@import` chain is too deep, logs an error and returns
 /// an empty order. The logged error fails the build after `compute_chunks` returns.
-fn css_order_or_log(
-    this_ptr: *mut LinkerContext,
-    parse_graph: &crate::Graph::Graph,
-    order: Result<Vec<chunk::CssImportOrder>, CssImportChainTooDeep>,
-) -> Vec<chunk::CssImportOrder> {
+fn css_order_or_log<'a>(
+    this: &LinkerContext,
+    order: Result<Vec<chunk::CssImportOrder<'a>>, CssImportChainTooDeep>,
+) -> Vec<chunk::CssImportOrder<'a>> {
     order.unwrap_or_else(|too_deep| {
-        // SAFETY: see the `this_ptr` note in `compute_chunks`. The log is
-        // allocation-disjoint from the linker (`LinkerContext::log_disjoint`).
-        let log = unsafe { &*this_ptr }.log_disjoint();
-        too_deep.add_to_log(parse_graph.input_files.items_source(), log);
+        let sources = this.parse_graph().input_files.items_source();
+        too_deep.add_to_log(sources, this.log_disjoint());
         Vec::new()
     })
 }
 
 #[inline(never)]
-pub(crate) fn compute_chunks(
-    this: &mut LinkerContext,
+pub(crate) fn compute_chunks<'a>(
+    this: &mut LinkerContext<'a>,
     unique_key: u64,
-) -> crate::Result<Box<[Chunk]>> {
+) -> crate::Result<Box<[Chunk<'a>]>> {
     let _trace = bun_core::perf::trace("Bundler.computeChunks");
 
     debug_assert!(this.dev_server.is_none()); // use
@@ -78,18 +75,6 @@ pub(crate) fn compute_chunks(
     // link step. Raw deref (not `this.parse_graph()`) because the loop below
     // needs disjoint `&mut this.graph.*` borrows while `parse_graph` is held.
     let parse_graph = unsafe { &*this.parse_graph };
-    // `bump` is a `BackRef` into `BundleV2.graph.arena`, valid for the link step.
-    // Hoisted so the loop can hold disjoint &mut borrows into `this.graph`.
-    // `BundlerStyleSheet::empty()` no longer takes an arena in Rust; kept for
-    // when arena threading lands.
-    let _arena: &Arena = this.graph.arena();
-
-    // borrowck escape hatch — the SoA column slices below hold disjoint
-    // immutable borrows into `this.graph` while several helpers (and the BundleV2
-    // back-pointer recovery) still want `&mut LinkerContext`. Split borrows
-    // could eventually be threaded through
-    // `LinkerGraph` instead of laundering through a raw pointer.
-    let this_ptr: *mut LinkerContext = this;
 
     let entry_source_indices = this.graph.entry_points.items_source_index();
     let css_asts = this.graph.ast.items_css();
@@ -117,7 +102,7 @@ pub(crate) fn compute_chunks(
 
         // reshaped for borrowck — set the bit through a scoped &mut, then keep an
         // owned clone so the `this.graph.files` borrow does not span the helper calls below
-        // that need `&LinkerContext` / `&mut LinkerContext`.
+        // that need `&LinkerContext`.
         let entry_bits: AutoBitSet = {
             let eb = &mut this.graph.files.items_entry_bits_mut()[source_index as usize];
             eb.set(entry_bit as usize);
@@ -157,16 +142,9 @@ pub(crate) fn compute_chunks(
         }
 
         if css_asts[source_index as usize].is_some() {
-            // SAFETY: see `this_ptr` note above — the helper only reads from
-            // `this.graph` columns disjoint from the slices we hold here.
             let order = css_order_or_log(
-                this_ptr,
-                parse_graph,
-                find_imported_files_in_css_order(
-                    unsafe { &mut *this_ptr },
-                    temp,
-                    &[Index::init(source_index)],
-                ),
+                this,
+                find_imported_files_in_css_order(this, temp, &[Index::init(source_index)]),
             );
             // Create a chunk for the entry point here to ensure that the chunk is
             // always generated even if the resulting file is empty
@@ -236,15 +214,9 @@ pub(crate) fn compute_chunks(
             let css_source_indices =
                 find_imported_css_files_in_js_order(this, temp, Index::init(source_index));
             if css_source_indices.len() > 0 {
-                // SAFETY: see `this_ptr` note above.
                 let order = css_order_or_log(
-                    this_ptr,
-                    parse_graph,
-                    find_imported_files_in_css_order(
-                        unsafe { &mut *this_ptr },
-                        temp,
-                        css_source_indices.slice(),
-                    ),
+                    this,
+                    find_imported_files_in_css_order(this, temp, css_source_indices.slice()),
                 );
 
                 // Always use content-based hashing for CSS chunk deduplication.
@@ -402,12 +374,12 @@ pub(crate) fn compute_chunks(
                         }
                     } else {
                         // Pass a context struct + fn pointer to entry_bits' forEach.
-                        struct Handler<'a> {
-                            chunks: &'a mut [Chunk],
+                        struct Handler<'a, 'c> {
+                            chunks: &'a mut [Chunk<'c>],
                             source_id: u32,
                             entry_point_to_js_chunk_idx: &'a [u32],
                         }
-                        fn next(c: &mut Handler<'_>, entry_point_id: usize) {
+                        fn next(c: &mut Handler<'_, '_>, entry_point_id: usize) {
                             // Map the entry point ID to the actual JS chunk index.
                             // CSS-only entry points don't have JS chunks (sentinel value).
                             let chunk_idx = c.entry_point_to_js_chunk_idx[entry_point_id];
@@ -449,7 +421,7 @@ pub(crate) fn compute_chunks(
         // sort by entry_point_id to ensure the main entry point (id=0) comes first,
         // then by key for determinism among the rest.
         struct ChunkSortContext<'a> {
-            chunks: &'a ArrayHashMap<&'a [u8], Chunk>,
+            chunks: &'a ArrayHashMap<&'a [u8], Chunk<'a>>,
         }
 
         impl<'a> ChunkSortContext<'a> {
@@ -591,9 +563,8 @@ pub(crate) fn compute_chunks(
     let prefix_len = chunk::UNIQUE_KEY_PREFIX_LEN;
 
     // SAFETY: `this` points to LinkerContext which is the `linker` field of BundleV2.
-    // Derived from `this_ptr` (raw) so it does not reborrow `*this` here — the column
-    // slices below hold disjoint immutable borrows into `this.graph`.
-    let bv2: &mut BundleV2 = unsafe { &mut *LinkerContext::bundle_v2_ptr(this_ptr) };
+    let bv2: &mut BundleV2 =
+        unsafe { &mut *LinkerContext::bundle_v2_ptr(std::ptr::from_mut::<LinkerContext>(this)) };
     let kinds = this.graph.files.items_entry_point_kind();
     let output_paths = this.graph.entry_points.items_output_path();
     // re-borrow after `find_all_imported_parts_in_js_order` released `&mut this`.

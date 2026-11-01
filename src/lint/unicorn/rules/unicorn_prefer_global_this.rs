@@ -4,11 +4,11 @@ use bun_lint::rule::Plugin;
 /// Prefer `globalThis` over environment-specific global aliases like `window`, `self`, and `global`.
 pub struct PreferGlobalThis;
 
-const PREFER_GLOBAL_THIS: Message = Message::new(
+const PREFER_GLOBAL_THIS: &Message = &Message::new(
     "",
     "Prefer `globalThis` over environment-specific global aliases like `window`, `self`, and `global`.",
 );
-const REPLACE_ALIAS: Message = Message::new("", "Replace the alias with `globalThis`.");
+const REPLACE_ALIAS: &Message = &Message::new("", "Replace the alias with `globalThis`.");
 
 const ALIASES: [&str; 3] = ["window", "self", "global"];
 

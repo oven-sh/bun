@@ -20,28 +20,28 @@ enum Spacing {
     Allow,
 }
 
-const SELF_CLOSE_SLASH_NO_SPACE: Message =
-    Message::new("selfCloseSlashNoSpace", "Whitespace is forbidden between `/` and `>`; write `/>`");
-const SELF_CLOSE_SLASH_NEED_SPACE: Message =
-    Message::new("selfCloseSlashNeedSpace", "Whitespace is required between `/` and `>`; write `/ >`");
-const CLOSE_SLASH_NO_SPACE: Message =
-    Message::new("closeSlashNoSpace", "Whitespace is forbidden between `<` and `/`; write `</`");
-const CLOSE_SLASH_NEED_SPACE: Message =
-    Message::new("closeSlashNeedSpace", "Whitespace is required between `<` and `/`; write `< /`");
-const BEFORE_SELF_CLOSE_NO_SPACE: Message =
-    Message::new("beforeSelfCloseNoSpace", "A space is forbidden before closing bracket");
-const BEFORE_SELF_CLOSE_NEED_SPACE: Message =
-    Message::new("beforeSelfCloseNeedSpace", "A space is required before closing bracket");
-const BEFORE_SELF_CLOSE_NEED_NEWLINE: Message =
-    Message::new("beforeSelfCloseNeedNewline", "A newline is required before closing bracket");
-const AFTER_OPEN_NO_SPACE: Message = Message::new("afterOpenNoSpace", "A space is forbidden after opening bracket");
-const AFTER_OPEN_NEED_SPACE: Message = Message::new("afterOpenNeedSpace", "A space is required after opening bracket");
-const BEFORE_CLOSE_NO_SPACE: Message =
-    Message::new("beforeCloseNoSpace", "A space is forbidden before closing bracket");
-const BEFORE_CLOSE_NEED_SPACE: Message =
-    Message::new("beforeCloseNeedSpace", "Whitespace is required before closing bracket");
-const BEFORE_CLOSE_NEED_NEWLINE: Message =
-    Message::new("beforeCloseNeedNewline", "A newline is required before closing bracket");
+const SELF_CLOSE_SLASH_NO_SPACE: &Message =
+    &Message::new("selfCloseSlashNoSpace", "Whitespace is forbidden between `/` and `>`; write `/>`");
+const SELF_CLOSE_SLASH_NEED_SPACE: &Message =
+    &Message::new("selfCloseSlashNeedSpace", "Whitespace is required between `/` and `>`; write `/ >`");
+const CLOSE_SLASH_NO_SPACE: &Message =
+    &Message::new("closeSlashNoSpace", "Whitespace is forbidden between `<` and `/`; write `</`");
+const CLOSE_SLASH_NEED_SPACE: &Message =
+    &Message::new("closeSlashNeedSpace", "Whitespace is required between `<` and `/`; write `< /`");
+const BEFORE_SELF_CLOSE_NO_SPACE: &Message =
+    &Message::new("beforeSelfCloseNoSpace", "A space is forbidden before closing bracket");
+const BEFORE_SELF_CLOSE_NEED_SPACE: &Message =
+    &Message::new("beforeSelfCloseNeedSpace", "A space is required before closing bracket");
+const BEFORE_SELF_CLOSE_NEED_NEWLINE: &Message =
+    &Message::new("beforeSelfCloseNeedNewline", "A newline is required before closing bracket");
+const AFTER_OPEN_NO_SPACE: &Message = &Message::new("afterOpenNoSpace", "A space is forbidden after opening bracket");
+const AFTER_OPEN_NEED_SPACE: &Message = &Message::new("afterOpenNeedSpace", "A space is required after opening bracket");
+const BEFORE_CLOSE_NO_SPACE: &Message =
+    &Message::new("beforeCloseNoSpace", "A space is forbidden before closing bracket");
+const BEFORE_CLOSE_NEED_SPACE: &Message =
+    &Message::new("beforeCloseNeedSpace", "Whitespace is required before closing bracket");
+const BEFORE_CLOSE_NEED_NEWLINE: &Message =
+    &Message::new("beforeCloseNeedNewline", "A newline is required before closing bracket");
 
 impl Spacing {
     fn from_option(options: Object<'_>, key: &str, default: Spacing) -> Spacing {
@@ -134,8 +134,8 @@ impl JsxTagSpacing {
         &self,
         first: Span,
         second: Span,
-        no_space: Message,
-        need_space: Message,
+        no_space: &'static Message,
+        need_space: &'static Message,
         cx: &mut Cx<'_, Self>,
     ) {
         let spaced = is_spaced(cx.file(), first, second);

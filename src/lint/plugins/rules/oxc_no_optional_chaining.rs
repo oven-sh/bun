@@ -7,7 +7,7 @@ pub struct NoOptionalChaining {
     message: String,
 }
 
-const NO_OPTIONAL_CHAINING: Message = Message::new("", "Optional chaining is not allowed.");
+const NO_OPTIONAL_CHAINING: &Message = &Message::new("", "Optional chaining is not allowed.");
 
 impl Rule for NoOptionalChaining {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "no-optional-chaining", Kind::Suggestion);

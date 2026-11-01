@@ -16,12 +16,12 @@ pub struct PromiseFunctionAsync {
     check_method_declarations: bool,
 }
 
-const MISSING_ASYNC: Message =
-    Message::new("missingAsync", "Functions that return promises must be async.");
+const MISSING_ASYNC: &Message =
+    &Message::new("missingAsync", "Functions that return promises must be async.");
 /// tsgolint only.
-const MISSING_ASYNC_HYBRID_RETURN_SUGGESTION: Message =
-    Message::new("missingAsyncHybridReturnSuggestion", "Add `async` keyword to the function.");
-const MISSING_ASYNC_HYBRID_RETURN: Message = Message::new(
+const MISSING_ASYNC_HYBRID_RETURN_SUGGESTION: &Message =
+    &Message::new("missingAsyncHybridReturnSuggestion", "Add `async` keyword to the function.");
+const MISSING_ASYNC_HYBRID_RETURN: &Message = &Message::new(
     "missingAsyncHybridReturn",
     "Functions that return promises must be async. Consider adding an explicit return type annotation if the function is intended to return a union of promise and non-promise types.",
 );

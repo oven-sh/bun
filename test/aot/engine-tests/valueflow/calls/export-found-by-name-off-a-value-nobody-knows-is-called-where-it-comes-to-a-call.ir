@@ -1,0 +1,39 @@
+# vm = require("node:vm"); input(Object.values(vm)); taken = input(vm).run; taken("1")
+# The exports have escaped in a list, and the module has gone to a callee nobody knows. The read off what comes back finds `run` by its name, beside a value nobody knows.
+# Beside such a value the callee shows nothing that has escaped. A function of a module of the library that may call an evaluator has come to the call all the same: it is called by seen code, and the evaluator raises its event.
+# RUN: valueflow-solve calls
+# CHECK: f2 v2 -> Eval
+# RUN(UNSEEN): valueflow-solve unseen
+# UNSEEN: unseen EvaluatesText Eval f2:v2
+# UNSEEN: unseen-code yes
+
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0
+module m1 path="node:vm" displayPath="node:vm" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeVm body=f1
+entry module=m0
+layout L0 name="Exports" fields=[{key="run" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m1 referrer=m0 specifier="node:vm"
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="input" [isFreeName]
+    v3 = Builtin builtin=ObjectValues
+    v4 = Call v3, -, v0
+    v5 = Call v2, -, v4
+    v6 = Call v2, -, v0
+    v7 = PropGet v6 key="run"
+    v8 = String string="1"
+    v9 = Call v7, -, v8
+    Return
+}
+function f1 name="vm" module=m1 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    Return v1
+}
+function f2 name="run" module=m1 role=Library parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Eval
+    v2 = Call v1, -, v0
+    Return v2
+}

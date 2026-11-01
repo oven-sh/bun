@@ -27,14 +27,14 @@ fn name_of_setter(element: Member<'_>) -> Option<MemberAccessValue<'_>> {
     get_static_member_access_value(element).filter(|_| is_setter)
 }
 
-const PREFER_FIELD_STYLE: Message =
-    Message::new("preferFieldStyle", "Literals should be exposed using readonly fields.");
-const PREFER_FIELD_STYLE_SUGGESTION: Message =
-    Message::new("preferFieldStyleSuggestion", "Replace the literals with readonly fields.");
-const PREFER_GETTER_STYLE: Message =
-    Message::new("preferGetterStyle", "Literals should be exposed using getters.");
-const PREFER_GETTER_STYLE_SUGGESTION: Message =
-    Message::new("preferGetterStyleSuggestion", "Replace the literals with getters.");
+const PREFER_FIELD_STYLE: &Message =
+    &Message::new("preferFieldStyle", "Literals should be exposed using readonly fields.");
+const PREFER_FIELD_STYLE_SUGGESTION: &Message =
+    &Message::new("preferFieldStyleSuggestion", "Replace the literals with readonly fields.");
+const PREFER_GETTER_STYLE: &Message =
+    &Message::new("preferGetterStyle", "Literals should be exposed using getters.");
+const PREFER_GETTER_STYLE_SUGGESTION: &Message =
+    &Message::new("preferGetterStyleSuggestion", "Replace the literals with getters.");
 
 /// Upstream's `printNodeModifiers`, followed by the key.
 fn print_modifiers_and_key<'a>(member: Member<'a>, key: Key<'a>, last: &str) -> Vec<u8> {

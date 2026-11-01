@@ -6,7 +6,7 @@ use rustc_hash::FxHashSet;
 /// Disallow duplicate keys in JSON objects
 pub struct NoDuplicateKeys;
 
-const DUPLICATE_KEY: Message = Message::new("duplicateKey", "Duplicate key \"{{key}}\" found.");
+const DUPLICATE_KEY: &Message = &Message::new("duplicateKey", "Duplicate key \"{{key}}\" found.");
 
 /// An object with at most this many members gets a linear search instead of a hash set.
 const LINEAR_SEARCH_MAX: usize = 16;

@@ -2,17 +2,19 @@
 // script. --script-kb=<n> makes each script about n KB of code (two lines
 // without it), --css gives each page its own stylesheet.
 // Usage: bun gen.ts <outdir> <N> [--script-kb=<n>] [--css]
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const [outdir, nStr = "1000", ...flags] = process.argv.slice(2);
 const N = +nStr;
 const scriptKb = +(flags.find(flag => flag.startsWith("--script-kb="))?.slice("--script-kb=".length) ?? 0);
 const css = flags.includes("--css");
-if (!outdir || !(N > 0) || N > 99999) {
+if (!outdir || !Number.isInteger(N) || N < 1 || N > 99999 || !Number.isFinite(scriptKb) || scriptKb < 0) {
   console.error("usage: bun gen.ts <outdir> <N> [--script-kb=<n>] [--css]");
   process.exit(1);
 }
+// A run with a smaller N must not keep the pages of an earlier run.
+rmSync(join(outdir, "pages"), { recursive: true, force: true });
 mkdirSync(join(outdir, "pages"), { recursive: true });
 
 function scriptSource(id: string): string {

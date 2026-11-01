@@ -816,7 +816,7 @@ describe.concurrent("a loaded file with its own source map", () => {
     ]);
   });
 
-  // node v26.3.0: `/[\\/]node_modules[\\/]/` on the path, when the module loads and again when a stack is read.
+  // node v26.13.0: `/[\\/]node_modules[\\/]/` on the path, when the module loads and again when a stack is read.
   test("a module in node_modules is left out unless nodeModules is set", async () => {
     using dir = tempDir("own-source-map-node-modules", {
       ...withMap("node_modules/dep/a.js"),
@@ -865,7 +865,7 @@ describe.concurrent("a loaded file with its own source map", () => {
     });
   });
 
-  // What is about the loaded file stays there. In node v26.3.0 a CallSite answers for the loaded file too, and
+  // What is about the loaded file stays there. In node v26.13.0 a CallSite answers for the loaded file too, and
   // `error.stack` inside `Error.prepareStackTrace` is the loaded file's.
   test("a CallSite is in the loaded file while Error.stack is in the original", async () => {
     using dir = tempDir("own-source-map-call-site", {
@@ -978,7 +978,8 @@ describe.concurrent("a loaded file with its own source map", () => {
     ]);
     const lcov = readFileSync(join(String(dir), "coverage", "lcov.info"), "utf8");
     expect({
-      // `Error.stack` is what Node maps. The rest is about the file that ran.
+      // `Error.stack` is mapped. An inline snapshot is written into the file that ran. Coverage and the JUnit line
+      // are about that file too, which is a choice of Bun: the test runner of Node.js maps both with the flag.
       stack: stdout.split("\n").filter(line => line.startsWith("at ")),
       covered: lcov
         .split("end_of_record\n")[0]
@@ -1100,7 +1101,7 @@ describe.concurrent("a loaded file with its own source map", () => {
     });
   });
 
-  // What node v26.3.0 reads: a `data:` URL that says `application/json` and ends its parameters with `base64`, and a
+  // What node v26.13.0 reads: a `data:` URL that says `application/json` and ends its parameters with `base64`, and a
   // path, which is a URL relative to the module. It does not read a URL with any other scheme.
   test("the URL of the comment is read the way Node.js reads it", async () => {
     const map = mapOf("cjs", "original.ts");
@@ -1196,7 +1197,7 @@ describe.concurrent("a loaded file with its own source map", () => {
     });
   });
 
-  // node v26.3.0 puts `sourceRoot` before the source with nothing between them, and resolves the result as a URL
+  // node v26.13.0 puts `sourceRoot` before the source with nothing between them, and resolves the result as a URL
   // beside the map. A `file:` URL is shown as a path.
   test("a source is named the way Node.js names it", async () => {
     // [sourceRoot, source, the name in the frame]
@@ -1250,5 +1251,267 @@ describe.concurrent("a loaded file with its own source map", () => {
       stderr: "",
       exitCode: 0,
     });
+  });
+
+  // A module that returns errors nothing has read. The functions of their stacks are garbage once `make` returns, so
+  // a collection formats the stacks. The finally blocks keep every return out of tail position.
+  const madeUnread = {
+    "make.js": [
+      `exports.make = function () {`,
+      `  function thrower() { try { return new Error("made"); } finally {} }`,
+      `  try { return thrower(); } finally {}`,
+      `};`,
+      `//# sourceMappingURL=make.js.map`,
+      ``,
+    ].join("\n"),
+    // Line 2 of `make.js` is line 7 of `make.ts`.
+    "make.js.map": JSON.stringify({
+      version: 3,
+      sources: ["make.ts"],
+      names: [],
+      mappings: lineMappings([5, 7, 8, 9]),
+    }),
+  };
+
+  // The map is read by the first stack that needs it. Here that is a collection: the file is gone before any stack
+  // is read, and a stack that no collection formatted would be in the loaded file.
+  test("a stack that a collection formats is in the original file", async () => {
+    using dir = tempDir("own-source-map-collection", {
+      ...madeUnread,
+      "main.cjs": `
+        const { make } = require("./make.js");
+        const errors = Array.from({ length: 8 }, () => make());
+        setImmediate(() => {
+          Bun.gc(true);
+          require("node:fs").rmSync("./make.js.map");
+          console.log(JSON.stringify([...new Set(errors.map(error => error.stack.split("\\n")[1].trim()))]));
+        });
+      `,
+    });
+    expect(printed(await run(String(dir), ["--enable-source-maps", "main.cjs"]))).toEqual({
+      stdout: ["at thrower (<dir>/make.ts:7:1)"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // `--smol` collects while the loader turns the parsed `.jsonc` file into values, and that collection is the first
+  // reader of the map. The parser of the map must leave the loader's syntax tree alone.
+  test("a collection that reads a source map during the load of a .jsonc file leaves that file whole", async () => {
+    const strings = Array.from({ length: 600 }, (_, i) => String(i).padEnd(4096, "x"));
+    using dir = tempDir("own-source-map-collection-in-a-load", {
+      ...madeUnread,
+      "data.jsonc": `// a comment\n${JSON.stringify(strings)}`,
+      "main.cjs": `
+        const { make } = require("./make.js");
+        const errors = Array.from({ length: 8 }, () => make());
+        const data = require("./data.jsonc");
+        require("node:fs").rmSync("./make.js.map");
+        let wrong = 0;
+        for (let i = 0; i < ${strings.length}; i++) if (data[i] !== String(i).padEnd(4096, "x")) wrong++;
+        console.log(
+          JSON.stringify({
+            length: data.length,
+            wrong,
+            frames: [...new Set(errors.map(error => error.stack.split("\\n")[1].trim()))],
+          }),
+        );
+      `,
+    });
+    expect(printed(await run(String(dir), ["--smol", "--enable-source-maps", "main.cjs"]))).toEqual({
+      stdout: { length: strings.length, wrong: 0, frames: ["at thrower (<dir>/make.ts:7:1)"] },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The map is read once more for the text of a source, by the first error that shows that source. The file is gone
+  // before the second error is printed.
+  test("a second printed error has the source lines of the first, without a read of the map", async () => {
+    using dir = tempDir("own-source-map-printed-twice", {
+      "lib.js": `${transpiled.cjs.code}//# sourceMappingURL=lib.js.map\n`,
+      "lib.js.map": mapOf("cjs", "lib.ts", { sourcesContent: [original] }),
+      "main.cjs": `
+        const { boom } = require("./lib.js");
+        const caught = () => { try { boom(); } catch (error) { return error; } };
+        const [first, second] = [caught(), caught()];
+        console.error(first);
+        require("node:fs").rmSync("./lib.js.map");
+        console.error("--");
+        console.error(second);
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), ["--enable-source-maps", "main.cjs"]);
+    const shown = [
+      ...preview(original, inOriginal.boom).split("\n"),
+      "error: kaboom",
+      `      at boom (<dir>/lib.ts:${inOriginal.boom})`,
+    ];
+    expect({
+      stdout,
+      stderr: stderr.split("--\n").map(error => error.split("\n").slice(0, shown.length)),
+      exitCode,
+    }).toEqual({ stdout: "", stderr: [shown, shown], exitCode: 0 });
+  });
+
+  // `%00` in a URL is a NUL in the path that the URL names.
+  test("a NUL in the URL of the comment or in a source names no file", async () => {
+    using dir = tempDir("own-source-map-nul", {
+      ...withUrl("in-the-url.js", "a%00b.js.map"),
+      "entry.js": `${transpiled.cjs.code}boom();\n//# sourceMappingURL=entry.js.map\n`,
+      "entry.js.map": mapOf("cjs", "a%00b.ts"),
+      "main.cjs": `
+        ${firstFrame}
+        console.log(JSON.stringify(firstFrame(require("./in-the-url.js").boom)));
+      `,
+    });
+    const [caught, printedError] = await Promise.all([
+      run(String(dir), ["--enable-source-maps", "main.cjs"]),
+      run(String(dir), ["--enable-source-maps", "entry.js"]),
+    ]);
+    expect(printed(caught)).toEqual({
+      stdout: `at boom (<dir>/in-the-url.js:${transpiled.cjs.boom})`,
+      stderr: "",
+      exitCode: 0,
+    });
+    // The frame is in the source, whose name has the NUL. The lines are the loaded file's, as for any source that
+    // nothing has the text of.
+    const code = transpiled.cjs.code + "boom();\n";
+    expect({ ...printedError, stderr: printedError.stderr.split("\n").slice(0, 9) }).toEqual({
+      stdout: "",
+      stderr: [
+        ...preview(code, transpiled.cjs.boom).split("\n"),
+        "error: kaboom",
+        `      at boom (<dir>/a\0b.ts:${inOriginal.boom})`,
+      ],
+      exitCode: 1,
+    });
+  });
+
+  // What a bundler makes of two files: each line of `bundle.js` is a line of one of them.
+  test("a frame is in the source that its line is from, in a map with two sources", async () => {
+    const bundle = [
+      `function fromFirst() {`,
+      `  throw new Error("first");`,
+      `}`,
+      `function fromSecond() {`,
+      `  throw new Error("second");`,
+      `}`,
+      `module.exports = { fromFirst, fromSecond };`,
+      `//# sourceMappingURL=bundle.js.map`,
+      ``,
+    ].join("\n");
+    using dir = tempDir("own-source-map-two-sources", {
+      "bundle.js": bundle,
+      // Lines 1 to 3 are lines 11 to 13 of `first.ts`. Lines 4 to 6 are lines 21 to 23 of `second.ts`.
+      "bundle.js.map": JSON.stringify({
+        version: 3,
+        sources: ["src/first.ts", "src/second.ts"],
+        names: [],
+        mappings: "AAUA;AACA;AACA;ACQA;AACA;AACA",
+      }),
+      "main.cjs": `
+        ${firstFrame}
+        const { fromFirst, fromSecond } = require("./bundle.js");
+        console.log(JSON.stringify([firstFrame(fromFirst), firstFrame(fromSecond), firstFrame(fromFirst)]));
+      `,
+    });
+    expect(printed(await run(String(dir), ["--enable-source-maps", "main.cjs"]))).toEqual({
+      stdout: [
+        "at fromFirst (<dir>/src/first.ts:12:1)",
+        "at fromSecond (<dir>/src/second.ts:22:1)",
+        "at fromFirst (<dir>/src/first.ts:12:1)",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // One stack with a frame of each kind: a module with its own map, a file that Bun transpiles, a plain file and a
+  // builtin, whose position is not the test's to say. Every reader is asked for all of it.
+  test("each frame of a stack with frames of several kinds is in its own file", async () => {
+    using dir = tempDir("own-source-map-mixed-stack", {
+      ...withMap("lib.js"),
+      "typed.ts": [
+        `type Erased = { x: number };`,
+        `export function typed(cb: () => unknown): unknown {`,
+        `  return [0].map(() => cb())[0];`,
+        `}`,
+        ``,
+      ].join("\n"),
+      "plain.cjs": `exports.plain = function plain(cb) {\n  return [cb()];\n};\n`,
+      "main.cjs": [
+        `const lib = require("./lib.js");`,
+        `const { typed } = require("./typed.ts");`,
+        `const { plain } = require("./plain.cjs");`,
+        `const through = f => lib.call(() => typed(() => plain(f)));`,
+        `const frames = text => text.split("\\n").slice(1).map(line => line.trim().replace(/^at map .*/, "at map"));`,
+        `const out = {};`,
+        `try {`,
+        `  through(lib.boom);`,
+        `} catch (error) {`,
+        `  out["Error.stack"] = frames(error.stack);`,
+        `}`,
+        `Error.prepareStackTrace = (error, sites) =>`,
+        `  sites.map(site =>`,
+        `    site.getFunctionName() === "map" ? "map" : [site.getFileName(), site.getLineNumber(), site.getColumnNumber()].join(":"),`,
+        `  );`,
+        `try {`,
+        `  through(lib.boom);`,
+        `} catch (error) {`,
+        `  out["CallSite"] = error.stack;`,
+        `}`,
+        `Error.prepareStackTrace = undefined;`,
+        `console.log(JSON.stringify(out));`,
+        `through(lib.boom);`,
+        ``,
+      ].join("\n"),
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), ["--enable-source-maps", "main.cjs"]);
+    expect({
+      ...JSON.parse(stdout),
+      printed: stderr
+        .split("\n")
+        .filter(line => line.startsWith("      at "))
+        .map(line => line.trim().replace(/^at map .*/, "at map")),
+      exitCode,
+    }).toMatchInlineSnapshot(`
+      {
+        "CallSite": [
+          "<dir>/lib.js:6:15",
+          "<dir>/plain.cjs:2:11",
+          "<dir>/main.cjs:4:49",
+          "map",
+          "<dir>/typed.ts:3:14",
+          "<dir>/main.cjs:4:37",
+          "<dir>/lib.js:9:13",
+          "<dir>/main.cjs:4:26",
+          "<dir>/main.cjs:17:3",
+        ],
+        "Error.stack": [
+          "at boom (<dir>/lib.ts:4:13)",
+          "at plain (<dir>/plain.cjs:2:11)",
+          "at <anonymous> (<dir>/main.cjs:4:49)",
+          "at map",
+          "at typed (<dir>/typed.ts:3:14)",
+          "at <anonymous> (<dir>/main.cjs:4:37)",
+          "at call (<dir>/lib.ts:8:11)",
+          "at through (<dir>/main.cjs:4:26)",
+          "at <anonymous> (<dir>/main.cjs:8:3)",
+        ],
+        "exitCode": 1,
+        "printed": [
+          "at boom (<dir>/lib.ts:4:13)",
+          "at plain (<dir>/plain.cjs:2:11)",
+          "at <anonymous> (<dir>/main.cjs:4:49)",
+          "at map",
+          "at typed (<dir>/typed.ts:3:14)",
+          "at <anonymous> (<dir>/main.cjs:4:37)",
+          "at call (<dir>/lib.ts:8:11)",
+          "at through (<dir>/main.cjs:4:26)",
+          "at <anonymous> (<dir>/main.cjs:23:1)",
+        ],
+      }
+    `);
   });
 });

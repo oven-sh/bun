@@ -1000,7 +1000,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionGetSourceMapsSupport,
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::objectConstructorFreeze(globalObject, result)));
 }
 
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/source_map/source_map_cache.js#L71-L95
+// https://github.com/nodejs/node/blob/v26.13.0/lib/internal/source_map/source_map_cache.js#L72-L96
 JSC_DEFINE_HOST_FUNCTION(jsFunctionSetSourceMapsSupport,
     (JSGlobalObject * globalObject,
         JSC::CallFrame* callFrame))

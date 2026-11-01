@@ -2378,7 +2378,7 @@ it("process.hasUncaughtExceptionCaptureCallback", () => {
   process.setUncaughtExceptionCaptureCallback(null);
 });
 
-// Each script prints the same under node v26.3.0 with the same flags.
+// Each script prints the same under node v26.13.0 with the same flags.
 describe.concurrent("process.sourceMapsEnabled", () => {
   async function run(flags, script) {
     await using proc = Bun.spawn({

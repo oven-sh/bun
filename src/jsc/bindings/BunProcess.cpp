@@ -5460,7 +5460,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_setSourceMapsEnabled, (JSC::JSGlobalObject * le
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "enabled"_s, "boolean"_s, arg0);
     }
 
-    // nodeModules and generatedCode follow enabled: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/bootstrap/node.js#L397-L406
+    // nodeModules and generatedCode follow enabled, as in process.setSourceMapsEnabled() of Node.js (lib/internal/bootstrap/node.js).
     bool enabled = arg0.asBoolean();
     Bun__VM__setSourceMapsSupport(globalObject->bunVM(), { enabled, enabled, enabled });
     return JSValue::encode(jsUndefined());

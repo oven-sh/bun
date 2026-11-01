@@ -1168,7 +1168,7 @@ console.log("survived", require("./late.js"));`,
     expect(Module.findSourceMap("foo")).toEqual(undefined);
   });
 
-  // Each script prints the same under node v26.3.0 with the same flags.
+  // Each script prints the same under node v26.13.0 with the same flags.
   describe("getSourceMapsSupport() and setSourceMapsSupport()", () => {
     async function run(flags, script) {
       await using proc = Bun.spawn({

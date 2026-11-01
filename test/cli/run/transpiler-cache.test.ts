@@ -521,60 +521,78 @@ describe("transpiler cache", () => {
   });
 
   // A hit does not parse the file, so the entry says where the file's `sourceMappingURL` comment is. The switch is
-  // not part of the key: an entry written without it serves a run with it, and the other way round.
-  test("a module from the cache has its own source map in stack traces, like one that was transpiled", () => {
-    // What `tsc --sourceMap` makes of a file that throws on its line 4, `Error` at column 13.
-    const code = [
-      `"use strict";`,
-      `Object.defineProperty(exports, "__esModule", { value: true });`,
-      `exports.boom = boom;`,
-      `function boom() {`,
-      `    throw new Error("kaboom");`,
-      `}`,
-      `// ${Buffer.alloc(5 * 1024, "f").toString()}`,
-      `//# sourceMappingURL=lib.js.map`,
-      ``,
-    ].join("\n");
-    writeFileSync(join(temp_dir, "lib.js"), code);
-    writeFileSync(
-      join(temp_dir, "lib.js.map"),
-      JSON.stringify({
-        version: 3,
-        sources: ["lib.ts"],
-        names: [],
-        mappings: ";;AAEA,oBAEC;AAFD,SAAgB,IAAI;IAClB,MAAM,IAAI,KAAK,CAAC,QAAQ,CAAC,CAAC;AAC5B,CAAC",
-      }),
-    );
-    writeFileSync(
-      join(temp_dir, "main.js"),
-      `try { require("./lib.js").boom(); } catch (e) { console.log(e.stack.split("\\n")[1].trim()); }`,
-    );
-    const run = (flags: string[]) => {
-      const result = Bun.spawnSync({ cmd: [bunExe(), ...flags, "main.js"], cwd: temp_dir, env });
-      return { stdout: result.stdout.toString().trim(), stderr: result.stderr.toString(), exitCode: result.exitCode };
-    };
-    // An entry that is written again is another file.
-    const entries = () => readdirSync(cache_dir).map(name => `${name} ${statSync(join(cache_dir, name)).ino}`);
-    const loaded = { stdout: `at boom (${join(temp_dir, "lib.js")}:5:15)`, stderr: "", exitCode: 0 };
-    const original = { stdout: `at boom (${join(temp_dir, "lib.ts")}:4:13)`, stderr: "", exitCode: 0 };
+  // not part of the key: an entry written without it serves a run with it, and the other way round. `require()`
+  // takes the entry on the JS thread, and `import` on a thread of the transpiler.
+  test.each([
+    {
+      how: "require()",
+      lib: "lib.js",
+      // What `tsc --sourceMap` makes of a file that throws on its line 4, `Error` at column 13.
+      code: [
+        `"use strict";`,
+        `Object.defineProperty(exports, "__esModule", { value: true });`,
+        `exports.boom = boom;`,
+        `function boom() {`,
+        `    throw new Error("kaboom");`,
+        `}`,
+      ],
+      mappings: ";;AAEA,oBAEC;AAFD,SAAgB,IAAI;IAClB,MAAM,IAAI,KAAK,CAAC,QAAQ,CAAC,CAAC;AAC5B,CAAC",
+      main: "main.js",
+      load: `const { boom } = require("./lib.js");`,
+      inLoaded: "5:15",
+    },
+    {
+      how: "import",
+      lib: "lib.mjs",
+      // The same file, from `tsc --sourceMap --module esnext`.
+      code: [`export function boom() {`, `    throw new Error("kaboom");`, `}`],
+      mappings: "AAEA,MAAM,UAAU,IAAI;IAClB,MAAM,IAAI,KAAK,CAAC,QAAQ,CAAC,CAAC;AAC5B,CAAC",
+      main: "main.mjs",
+      load: `import { boom } from "./lib.mjs";`,
+      inLoaded: "2:15",
+    },
+  ])(
+    "a module that $how takes from the cache has its own source map in stack traces, like one that was transpiled",
+    ({ lib, code, mappings, main, load, inLoaded }) => {
+      writeFileSync(
+        join(temp_dir, lib),
+        [...code, `// ${Buffer.alloc(5 * 1024, "f").toString()}`, `//# sourceMappingURL=${lib}.map`, ``].join("\n"),
+      );
+      writeFileSync(
+        join(temp_dir, `${lib}.map`),
+        JSON.stringify({ version: 3, sources: ["lib.ts"], names: [], mappings }),
+      );
+      writeFileSync(
+        join(temp_dir, main),
+        `${load}\ntry { boom(); } catch (e) { console.log(e.stack.split("\\n")[1].trim()); }`,
+      );
+      const run = (flags: string[]) => {
+        const result = Bun.spawnSync({ cmd: [bunExe(), ...flags, main], cwd: temp_dir, env });
+        return { stdout: result.stdout.toString().trim(), stderr: result.stderr.toString(), exitCode: result.exitCode };
+      };
+      // An entry that is written again is another file.
+      const entries = () => readdirSync(cache_dir).map(name => `${name} ${statSync(join(cache_dir, name)).ino}`);
+      const loaded = { stdout: `at boom (${join(temp_dir, lib)}:${inLoaded})`, stderr: "", exitCode: 0 };
+      const original = { stdout: `at boom (${join(temp_dir, "lib.ts")}:4:13)`, stderr: "", exitCode: 0 };
 
-    expect(run([])).toEqual(loaded);
-    const written = entries();
-    expect(written).toHaveLength(1);
-    expect([run([]), run(["--enable-source-maps"]), run([])]).toEqual([loaded, original, loaded]);
-    expect(entries()).toEqual(written);
+      expect(run([])).toEqual(loaded);
+      const written = entries();
+      expect(written).toHaveLength(1);
+      expect([run([]), run(["--enable-source-maps"]), run([])]).toEqual([loaded, original, loaded]);
+      expect(entries()).toEqual(written);
 
-    removeCache();
-    expect(run(["--enable-source-maps"])).toEqual(original);
-    const writtenWithTheSwitch = entries();
-    expect(writtenWithTheSwitch).toHaveLength(1);
-    expect([run(["--enable-source-maps"]), run([]), run(["--enable-source-maps"])]).toEqual([
-      original,
-      loaded,
-      original,
-    ]);
-    expect(entries()).toEqual(writtenWithTheSwitch);
-  });
+      removeCache();
+      expect(run(["--enable-source-maps"])).toEqual(original);
+      const writtenWithTheSwitch = entries();
+      expect(writtenWithTheSwitch).toHaveLength(1);
+      expect([run(["--enable-source-maps"]), run([]), run(["--enable-source-maps"])]).toEqual([
+        original,
+        loaded,
+        original,
+      ]);
+      expect(entries()).toEqual(writtenWithTheSwitch);
+    },
+  );
 });
 
 test("rejects cached module records containing out-of-range string indices", () => {

@@ -372,7 +372,7 @@ describe("execArgv option", async () => {
   // TODO(@190n) get our handling of non-string array elements in line with Node's
 });
 
-// The script prints the same under node v26.3.0, with and without the flag.
+// The script prints the same under node v26.13.0, with and without the flag.
 describe("--enable-source-maps in a Worker", () => {
   const on = { enabled: true, nodeModules: true, generatedCode: true };
   const off = { enabled: false, nodeModules: false, generatedCode: false };

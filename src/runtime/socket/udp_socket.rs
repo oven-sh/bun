@@ -3,11 +3,11 @@ use core::cell::Cell;
 use core::ffi::c_char;
 use core::ffi::{c_int, c_void};
 
-use bun_core::{String as BunString, Utf8Bytes};
+use bun_core::{String as BunString, Utf8Bytes, ZStr};
 use bun_io::KeepAlive;
 use bun_jsc::JsCell;
 use bun_jsc::array_buffer::BinaryType;
-use bun_jsc::bindgen::{self, IntoError as _, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
+use bun_jsc::bindgen::{self, IntoError as _, JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     JSGlobalObject, JSValue, JsRef, JsResult, MarkedArgumentBuffer, StringJsc, SysErrorJsc,
@@ -19,58 +19,21 @@ use crate::node::validators;
 use bun_cares_sys::c_ares_draft as c_ares;
 #[cfg(windows)]
 use bun_libuv_sys::sockaddr_storage;
-use bun_sys::{self, SystemErrno};
+#[cfg(windows)]
+use bun_sys::windows::ws2_32::getaddrinfo;
+use bun_sys::{self, SystemErrno, UV_E};
 use bun_uws as uws;
 #[cfg(not(windows))]
 use libc::sockaddr_storage;
 #[cfg(not(windows))]
-use libc::{IF_NAMESIZE, if_indextoname, if_nametoindex};
+use libc::{IF_NAMESIZE, getaddrinfo, if_indextoname, if_nametoindex};
 
 use crate::api::SocketAddress;
 use crate::generated_bindgen::udp_socket::js_UDPSocket as js;
 use crate::socket::socket_address::inet::{self, INET6_ADDRSTRLEN, sockaddr_in, sockaddr_in6};
+use crate::socket::socket_address::{parse_ip_address, parse_uv_ip_address};
 
 bun_output::declare_scope!(UdpSocket, visible);
-
-/// Local errno-classification shim — `bun_sys::Result`
-/// is a plain `core::result::Result` alias in Rust and has no associated
-/// `errno_sys` constructor.
-///
-/// POSIX `getErrno(c_int)` semantics: only `rc == -1` is failure (any other
-/// value — including positive packet counts from `us_udp_socket_send` and
-/// negative EAI codes from `connect` — is "not a libc errno", so callers
-/// handle it themselves).
-///
-/// Windows semantics: for any non-NTSTATUS
-/// integer `rc`, `if (rc != 0) return null` — i.e. *every* non-zero rc
-/// (including `-1` / `SOCKET_ERROR`) falls through to the caller's own EAI /
-/// WSA handling rather than synthesising an errno. This matters for the
-/// `connect()` path (line ~575): `us_udp_socket_connect()` returns a Winsock
-/// status, not a CRT errno, so reading `_errno()` here would be the wrong
-/// source.
-#[inline]
-fn errno_sys(rc: c_int, tag: bun_sys::Tag) -> Option<bun_sys::Error> {
-    #[cfg(windows)]
-    {
-        if rc != 0 {
-            return None;
-        }
-        // rc == 0 → read the CRT `_errno()`;
-        // a zero errno must still yield `None`.
-        let errno_val = bun_sys::last_errno();
-        if errno_val == 0 {
-            return None;
-        }
-        return Some(bun_sys::Error::from_code_int(errno_val, tag));
-    }
-    #[cfg(not(windows))]
-    {
-        if rc != -1 {
-            return None;
-        }
-        Some(bun_sys::Error::from_code_int(bun_sys::last_errno(), tag))
-    }
-}
 
 use bun_core::ip_address;
 use bun_sys::net::Address;
@@ -632,9 +595,16 @@ impl UDPSocket {
                     hostname_z.as_bytes(),
                 )));
         }
+        let mut connect_address: Option<sockaddr_storage> = None;
         if let Some(connect) = &config.connect {
             let address = connect.address.to_utf8();
-            if !bun_dns::is_valid_hostname(&address) {
+            let mut storage: sockaddr_storage = bun_core::ffi::zeroed();
+            // A zone that `net.isIP()` refuses stays with the resolver, which refuses it too.
+            let zone_is_valid = !bun_core::strings::contains_char(&address, b'%')
+                || ip_address::parse_zoned_ipv6_host(&address).is_some();
+            if zone_is_valid && parse_ip_address(&address, connect.port, &mut storage) {
+                connect_address = Some(storage);
+            } else if !bun_dns::is_valid_hostname(&address) {
                 return Err(cx.global().throw_value(
                     crate::dns_jsc::cares_jsc::not_a_hostname_error(cx.global(), &address),
                 ));
@@ -756,28 +726,18 @@ impl UDPSocket {
         }
 
         if let Some(connect) = &this.config.get().connect {
-            let address_z = connect.address.to_owned_slice_z();
-            // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-            let ret = uws::udp::Socket::opaque_mut(this.socket.get().unwrap())
-                .connect(address_z.as_ptr(), connect.port as u32);
-            if ret != 0 {
-                if let Some(sys_err) = errno_sys(ret, bun_sys::Tag::connect) {
-                    return Err(cx.global().throw_value(sys_err.to_js(cx.global())));
+            match connect_address {
+                Some(address) => {
+                    if let Err(err) = this.connect_addr(&address, connect.port) {
+                        return Err(cx.global().throw_value(err.to_js(cx.global())));
+                    }
                 }
-
-                if let Some(eai_err) = c_ares::Error::init_eai(ret) {
-                    return Err(cx.global().throw_value(
-                        crate::dns_jsc::cares_jsc::error_to_js_with_syscall_and_hostname(
-                            eai_err,
-                            cx.global(),
-                            b"connect",
-                            address_z.as_bytes(),
-                        )?,
-                    ));
-                }
+                None => this.connect_name(
+                    cx.global(),
+                    &connect.address.to_owned_slice_z(),
+                    connect.port,
+                )?,
             }
-            this.connect_info
-                .set(Some(ConnectInfo { port: connect.port }));
         }
 
         // Disarm the error-path guard.
@@ -788,6 +748,79 @@ impl UDPSocket {
             cx.global(),
             js_value,
         ))
+    }
+
+    /// `connect(2)`: the kernel records `addr` as this socket's only peer. Every connect ends here, so nothing hands uSockets a host to resolve.
+    fn connect_addr(&self, addr: &sockaddr_storage, port: u16) -> bun_sys::Result<()> {
+        let error = |errno: SystemErrno| {
+            bun_sys::Error::from_code_int(errno as c_int, bun_sys::Tag::connect)
+        };
+        if self.closed.get() {
+            return Err(error(SystemErrno::EBADF));
+        }
+        let Some(socket) = self.socket.get() else {
+            return Err(error(SystemErrno::EBADF));
+        };
+        if self.connect_info.get().is_some() {
+            return Err(error(SystemErrno::EISCONN));
+        }
+        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
+        let rc = uws::udp::Socket::opaque_mut(socket).connect(addr);
+        if let Some(err) = get_us_error::<true>(rc, bun_sys::Tag::connect) {
+            return Err(err);
+        }
+        self.connect_info.set(Some(ConnectInfo { port }));
+        Ok(())
+    }
+
+    /// The `connect` option of `Bun.udpSocket` with a host name: one blocking getaddrinfo(3) on this thread with no flags in its hints, then the first of its addresses that connect(2) takes.
+    fn connect_name(&self, global: &JSGlobalObject, host: &ZStr, port: u16) -> JsResult<()> {
+        let hints = bun_dns::Options {
+            socktype: bun_dns::SocketType::Dgram,
+            ..Default::default()
+        }
+        .to_libc();
+        let mut service = [0u8; 21];
+        let service = bun_core::fmt::itoa_z(&mut service, u64::from(port));
+        let mut head: *mut bun_dns::addrinfo = core::ptr::null_mut();
+        // SAFETY: `host` and `service` are NUL-terminated, `hints` and `head` are live locals, and the socket that exists by now has started Winsock.
+        let status = unsafe {
+            getaddrinfo(
+                host.as_ptr().cast(),
+                service.as_ptr(),
+                hints
+                    .as_ref()
+                    .map_or(core::ptr::null(), core::ptr::from_ref),
+                &raw mut head,
+            )
+        };
+        let _owner = bun_dns::ResultAny::Addrinfo(head);
+        if let Some(resolver_error) = c_ares::Error::init_eai(status) {
+            return Err(global.throw_value(
+                crate::dns_jsc::cares_jsc::error_to_js_with_syscall_and_hostname(
+                    resolver_error,
+                    global,
+                    b"connect",
+                    host.as_bytes(),
+                )?,
+            ));
+        }
+
+        // What connect(2) itself says when no address is of the socket's family.
+        let mut connected = Err(bun_sys::Error::from_code_int(
+            SystemErrno::EAFNOSUPPORT as c_int,
+            bun_sys::Tag::connect,
+        ));
+        // SAFETY: getaddrinfo(3) returned 0, so `head` is its result list, which `_owner` frees when it drops.
+        if let Some(head) = unsafe { head.as_ref() } {
+            for entry in bun_dns::GetAddrInfoResult::to_list(head) {
+                connected = self.connect_addr(&entry.address.into_storage(), port);
+                if connected.is_ok() {
+                    break;
+                }
+            }
+        }
+        connected.map_err(|err| global.throw_value(err.to_js(global)))
     }
 
     pub(crate) fn call_error_handler(&self, this_value_: JSValue, err: JSValue) {
@@ -1682,66 +1715,50 @@ impl Drop for UDPSocket {
     }
 }
 
+/// Node's `UDPWrap::DoConnect` (https://github.com/nodejs/node/blob/v26.3.0/src/udp_wrap.cc#L337-L364): `host` is an address of the socket's own family (`ipv6`), never a name to resolve. Returns 0 or a negative libuv error code.
 pub(crate) fn connect(
     cx: &mut JsScope<'_>,
     this: &UDPSocket,
-    host: &BunString,
+    host: &[u8],
     port: i32,
-) -> JsResult<()> {
-    let global_this = cx.global();
-    if this.connect_info.get().is_some() {
-        return Err(global_this.throw(format_args!("Socket is already connected")));
-    }
-
-    if this.closed.get() {
-        return Err(global_this.throw(format_args!("Socket is closed")));
-    }
-
-    let connect_host = host.to_owned_slice_z();
-    if !bun_dns::is_valid_hostname(connect_host.as_bytes()) {
-        return Err(
-            global_this.throw_value(crate::dns_jsc::cares_jsc::not_a_hostname_error(
-                global_this,
-                connect_host.as_bytes(),
-            )),
-        );
-    }
-
+    ipv6: bool,
+) -> i32 {
     let port = u16::try_from(port).unwrap_or(0);
-
-    let Some(socket) = this.socket.get() else {
-        return Err(global_this.throw(format_args!("Socket is closed")));
-    };
-    // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-    if uws::udp::Socket::opaque_mut(socket).connect(connect_host.as_ptr(), port as u32) == -1 {
-        return Err(global_this.throw(format_args!("Failed to connect socket")));
+    let mut addr: sockaddr_storage = bun_core::ffi::zeroed();
+    if !parse_uv_ip_address(host, port, ipv6, &mut addr) {
+        return -UV_E::INVAL;
     }
-    this.connect_info.set(Some(ConnectInfo { port }));
+    if let Err(err) = this.connect_addr(&addr, port) {
+        return err.uv_errno();
+    }
 
     if let Some(this_value) = this.this_value.get().try_get() {
+        let global_this = cx.global();
         js::address_set_cached(this_value, global_this, JSValue::ZERO);
         js::remote_address_set_cached(this_value, global_this, JSValue::ZERO);
     }
 
-    Ok(())
+    0
 }
 
-pub(crate) fn disconnect<'a>(heap: &JsHeap<'a>, this: &UDPSocket) -> bindgen::Result<'a, ()> {
-    if this.connect_info.get().is_none() {
-        return Err(heap.error(format_args!("Socket is not connected")));
-    }
-
+/// Node's `UDPWrap::Disconnect`, which is libuv's `uv_udp_connect(handle, NULL)`. Returns 0 or a negative libuv error code.
+pub(crate) fn disconnect(this: &UDPSocket) -> i32 {
     if this.closed.get() {
-        return Err(heap.error(format_args!("Socket is closed")));
+        return -UV_E::BADF;
     }
-
+    let Some(socket) = this.socket.get() else {
+        return -UV_E::BADF;
+    };
+    if this.connect_info.get().is_none() {
+        return -UV_E::NOTCONN;
+    }
     // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-    if uws::udp::Socket::opaque_mut(this.socket.get().unwrap()).disconnect() == -1 {
-        return Err(heap.error(format_args!("Failed to disconnect socket")));
+    let rc = uws::udp::Socket::opaque_mut(socket).disconnect();
+    if let Some(err) = get_us_error::<true>(rc, bun_sys::Tag::connect) {
+        return err.uv_errno();
     }
     this.connect_info.set(None);
-
-    Ok(())
+    0
 }
 
 /// The resulting SO_RCVBUF/SO_SNDBUF value. `size == 0`
@@ -2247,6 +2264,10 @@ pub(crate) fn get_us_error<const USE_WSA: bool>(
     }
     #[cfg(not(windows))]
     {
-        errno_sys(res, tag)
+        // Only -1 is a failure: a send returns how many packets went out.
+        if res != -1 {
+            return None;
+        }
+        Some(bun_sys::Error::from_code_int(bun_sys::last_errno(), tag))
     }
 }

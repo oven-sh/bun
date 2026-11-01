@@ -4957,6 +4957,170 @@ test.skipIf(!isDebug && !isASAN)("react-compiler reports which kind of function 
   );
 });
 
+// For each function it compiled, the compiler copied the set of every name in
+// the file into the function's Environment and copied the set back afterwards,
+// with two allocations for each name. A file has more names when it has more
+// components, so the time grew with the square of their number: 4000 small
+// components took 5 seconds on a release build, and take 0.3 seconds now.
+test("react-compiler compile time of a component does not grow with the number of names in the file", async () => {
+  // The same components in both files, each with an arrow function that is
+  // outlined as `_temp<N>`. `large.jsx` also declares `_temp2` to
+  // `_temp<names + 1>` in a function that is not a component. They cost a
+  // parse and one walk of the search for a free `_temp<N>`, which goes on from
+  // where the search before it ended. A search that starts at `_temp` for each
+  // arrow function walks them `components` times.
+  const { components, names, rounds } = isDebug
+    ? { components: 25, names: 5000, rounds: 1 }
+    : isASAN
+      ? { components: 200, names: 10_000, rounds: 3 }
+      : { components: 500, names: 20_000, rounds: 3 };
+  const source = (declared: number) =>
+    (declared === 0
+      ? ""
+      : `function names() {\n  var ${Array.from({ length: declared }, (_, i) => `_temp${i + 2}`).join(", ")};\n}\n`) +
+    Array.from(
+      { length: components },
+      (_, i) =>
+        `export function C${i}(props) {\n  const a${i} = props.a;\n  return <ul title={a${i}}>{props.items.map(x => <li>{x}</li>)}</ul>;\n}\n`,
+    ).join("");
+  using dir = tempDir("react-compiler-names", {
+    "warmup.jsx": `export function C(props) { return <b>{props.a}</b>; }`,
+    "control.jsx": source(0),
+    "large.jsx": source(names),
+  });
+
+  // The CPU time of a process on Windows is a count of 1/64 s ticks, and one
+  // build of a release build takes a few.
+  const builds = isWindows && !isDebug ? 8 : 1;
+  // The bundler runs on threads of this process. `cpuUsage` counts them all.
+  const cpu = async (entry: string, compiled: number, second?: string) => {
+    const before = process.cpuUsage();
+    let output = "";
+    for (let build = 0; build < builds; build++) {
+      const result = await Bun.build({
+        entrypoints: [join(String(dir), entry)],
+        target: "browser",
+        external: ["*"],
+        reactCompiler: true,
+        throw: false,
+      });
+      expect(result.success).toBe(true);
+      output = await result.outputs[0].text();
+    }
+    const { user, system } = process.cpuUsage(before);
+    // Every component compiled.
+    expect(output.match(/\b_c\(\d+\)/g)?.length).toBe(compiled);
+    // The name of the second outlined function: the declared names are taken.
+    if (second) expect(output).toContain(`function ${second}(`);
+    return user + system;
+  };
+
+  // The ratio is 1.0 to 1.4 with the fix. Without it the ratio is 5 on a
+  // debug build and 17 on a release build, and 13 on a release build of the
+  // fix whose search starts at `_temp` each time. Other load on the machine
+  // adds to a CPU time, so an optimized build, which has the time, takes the
+  // best of up to three pairs.
+  await cpu("warmup.jsx", 1);
+  let ratio = Infinity;
+  for (let round = 0; round < rounds && ratio >= 2.5; round++) {
+    const control = await cpu("control.jsx", components, "_temp2");
+    const large = await cpu("large.jsx", components, `_temp${names + 2}`);
+    ratio = Math.min(ratio, large / control);
+  }
+  expect(ratio).toBeLessThan(2.5);
+});
+
+// The names of outlined functions are `_temp`, `_temp2`, and so on. All
+// components of a file share the sequence, and it skips a name that the file
+// declares, at the top level or in a function. A name stays taken when its
+// component does not compile, as in Babel: `E` outlines its arrow function as
+// `_temp7` and then fails in BuildReactiveFunction, on the comma in the update
+// of its `for`. The port gave that name to the next component.
+test("react-compiler takes the names of outlined functions from one sequence for the file", async () => {
+  using dir = tempDir("react-compiler-outlined-names", {
+    "entry.jsx": `
+      const _temp2 = "top";
+      export function A({ items }) {
+        return <ul title={_temp2}>{items.map(a => a * 2)}{items.map(b => b * 3)}</ul>;
+      }
+      export function B({ items }) {
+        const _temp5 = items.length;
+        return <ul title={_temp5}>{items.map(c => c * 4)}{items.map(d => d * 5)}</ul>;
+      }
+      export function E({ items }) {
+        let i = 0;
+        for (let x = 0; x < 10; foo(x), x++) {
+          i += x;
+        }
+        return <ul title={i}>{items.map(e => e * 6)}</ul>;
+      }
+      export function C({ items }) {
+        return <ul>{items.map(f => f * 7)}</ul>;
+      }
+    `,
+  });
+
+  const result = await Bun.build({
+    entrypoints: [join(String(dir), "entry.jsx")],
+    target: "browser",
+    external: ["*"],
+    reactCompiler: true,
+    throw: false,
+  });
+  expect(result.success).toBe(true);
+  const output = await result.outputs[0].text();
+  const outlined = [...output.matchAll(/^function (_temp\d*)\(\w+\) \{\s*return ([^;]+);/gm)];
+  expect({
+    // `A`, `B` and `C`. `E` is left as it was written.
+    compiled: output.match(/\b_c\(\d+\)/g)?.length,
+    arrowOfE: output.includes("items.map((e) => e * 6)") ? "inline" : "outlined",
+    outlined: outlined.map(match => [match[1], match[2]]),
+  }).toEqual({
+    compiled: 3,
+    arrowOfE: "inline",
+    outlined: [
+      ["_temp", "a * 2"],
+      ["_temp3", "b * 3"],
+      ["_temp4", "c * 4"],
+      ["_temp6", "d * 5"],
+      ["_temp8", "f * 7"],
+    ],
+  });
+});
+
+// JSX outlining moves the JSX of a callback to a new component, and names the
+// props of that component after the JSX attributes. The port did not record
+// those names, so the component got the name `_temp` next to a prop `_temp`.
+// Codegen keeps one symbol for one name, so the component did not compile and
+// the callback rendered a `_temp` that the output does not declare. JSX
+// outlining is a fixture pragma, which release builds compile out.
+test.skipIf(!isDebug && !isASAN)("react-compiler names an outlined component unlike its props", async () => {
+  using dir = tempDir("react-compiler-outlined-jsx-name", {
+    "entry.jsx": `// @enableJsxOutlining
+      export function Component({ arr }) {
+        const x = useX();
+        return <>{arr.map((i, id) => <Bar key={id} _temp={x}><Baz _temp={i} /></Bar>)}</>;
+      }
+    `,
+  });
+
+  const result = await Bun.build({
+    entrypoints: [join(String(dir), "entry.jsx")],
+    target: "browser",
+    external: ["*"],
+    reactCompiler: true,
+    // @ts-expect-error test-only option, not in bun-types
+    reactCompilerParseTestPragmas: true,
+    throw: false,
+  });
+  expect(result.success).toBe(true);
+  const output = await result.outputs[0].text();
+  expect({
+    rendered: output.match(/const T0 = (\w+);/)?.[1],
+    declared: [...output.matchAll(/^function (_temp\d*)\(/gm)].map(match => match[1]),
+  }).toEqual({ rendered: "_temp2", declared: ["_temp2"] });
+});
+
 // RenameVariables reaches a nested function expression through its
 // `visit_value` override. The shared walker for a function body recursed into
 // it a second time, so a function at depth d was walked 2^d times: depth 25

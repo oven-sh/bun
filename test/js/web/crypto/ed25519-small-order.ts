@@ -141,7 +141,7 @@ export function identityRSignature(privateJwk: { d?: string; x?: string }, messa
 
 // RFC 8032, section 7.1, TEST 1: a seed and its public key [a]B, a point of prime order.
 export const ED25519_HONEST_SEED = "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60";
-export const ED25519_HONEST_POINT = "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a";
+const ED25519_HONEST_POINT = "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a";
 
 // A forged signature under the small-order public key `hex` whose R is not
 // small-order, so that only the check on the public key can reject it.

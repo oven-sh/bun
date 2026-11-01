@@ -32,7 +32,6 @@ import { totalmem } from "node:os";
 import { createContext, runInContext, runInThisContext, Script } from "node:vm";
 import path from "path";
 import {
-  ED25519_HONEST_POINT,
   ED25519_HONEST_SEED,
   ED25519_IDENTITY,
   ED25519_SMALL_ORDER_POINTS,
@@ -1913,22 +1912,22 @@ describe("Ed25519 verify rejects small-order points", () => {
 
   // R is an honest point here, so the check on R cannot be what rejects the signature.
   test("a small-order public key is rejected when R is not a small-order point", () => {
-    // The R of these signatures is the public key of the seed whose scalar is their S.
+    // The public key of the seed whose scalar is the S of these signatures. Their R must be this point.
     const seedKey = createPrivateKey({
       key: Buffer.concat([Buffer.from("302e020100300506032b657004220420", "hex"), hexBytes(ED25519_HONEST_SEED)]),
       format: "der",
       type: "pkcs8",
     });
-    expect(Buffer.from(createPublicKey(seedKey).export({ format: "jwk" }).x!, "base64url").toString("hex")).toBe(
-      ED25519_HONEST_POINT,
-    );
+    const honestPoint = Buffer.from(createPublicKey(seedKey).export({ format: "jwk" }).x!, "base64url");
 
     const results: Record<string, boolean> = {};
+    const forgedRs = new Set<string>();
     for (const { name, hex } of ED25519_SMALL_ORDER_POINTS) {
       const { message, signature } = forgeryWithHonestR(hex);
-      expect(Buffer.from(signature.subarray(0, 32)).toString("hex")).toBe(ED25519_HONEST_POINT);
+      forgedRs.add(Buffer.from(signature.subarray(0, 32)).toString("hex"));
       results[name] = verify(null, message, jwkKey(hex), signature);
     }
+    expect([...forgedRs]).toEqual([honestPoint.toString("hex")]);
     expect(results).toEqual(Object.fromEntries(ED25519_SMALL_ORDER_POINTS.map(p => [p.name, false])));
   });
 

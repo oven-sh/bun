@@ -475,11 +475,21 @@ known_atoms! {
     createRequire = "createRequire",
     node_module = "node:module",
     url = "url",
+    node_url = "node:url",
+    fileURLToPath = "fileURLToPath",
+    URL = "URL",
     meta_filename = "filename",
     meta_dir = "dir",
     meta_dirname = "dirname",
     Module = "Module",
     node_process = "node:process",
+    mock = "mock",
+    jest = "jest",
+    vi = "vi",
+    bun_test = "bun:test",
+    setup = "setup",
+    jest_globals = "@jest/globals",
+    vitest = "vitest",
 }
 
 /// Name prefix of a symbol-keyed property: `InternalSymbolNamePrefix` and `@`. Source text never

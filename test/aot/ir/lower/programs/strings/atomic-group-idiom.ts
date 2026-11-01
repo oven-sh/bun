@@ -42,7 +42,7 @@ console.log(rows + " rows")
 // CHECK-NEXT: Jump -> next b3()
 // CHECK-NEXT: b3():
 // CHECK-NEXT: v3 = String string="-"
-// CHECK-NEXT: Jump -> next b6(v3)
+// CHECK-NEXT: Jump -> next b9(v3)
 // CHECK-NEXT: b4(v4):
 // CHECK-NEXT: Jump -> next b5()
 // CHECK-NEXT: b5():
@@ -53,15 +53,26 @@ console.log(rows + " rows")
 // CHECK-NEXT: v9 = Builtin builtin=JSON
 // CHECK-NEXT: v10 = PropGet v9 key="stringify"
 // CHECK-NEXT: v11 = Convert v10 declared={type=builtin(JSONStringify) flags=[IsExpected]}
-// CHECK-NEXT: v12 = Builtin builtin=Array
-// CHECK-NEXT: v13 = Builtin builtin=ArrayFrom
-// CHECK-NEXT: v14 = Call v13, v12, v4 calleeName="Array.from"
-// CHECK-NEXT: v15 = Convert v14 declared={type=undefined|null|Array<undefined|null|string> site=[[w_3]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-// CHECK-NEXT: v16 = Call v11, v9, v15 calleeKey="stringify" calleeName="JSON.stringify"
-// CHECK-NEXT: v17 = Convert v16 declared={type=undefined|null|string site=[[w_4]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v18 = Add v8, v17
-// CHECK-NEXT: Jump -> next b6(v18)
-// CHECK-NEXT: b6(v19):
-// CHECK-NEXT: v20 = Convert v19 declared={type=undefined|null|string site=[[w_1]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v20
+// CHECK-NEXT: v12 = Builtin builtin=ArrayFrom
+// CHECK-NEXT: v13 = IsPristineArray v4
+// CHECK-NEXT: Branch v13 -> taken b6(), notTaken b7()
+// CHECK-NEXT: b6():
+// CHECK-NEXT: v14 = NewArray contents=anything
+// CHECK-NEXT: AppendSpread v14, v4
+// CHECK-NEXT: v16 = Convert v14 declared={type=undefined|null|Array<undefined|null|string> site=[[w_3]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+// CHECK-NEXT: Jump -> next b8(v16)
+// CHECK-NEXT: b7():
+// CHECK-NEXT: v17 = Builtin builtin=Array [isNotReadFromHolder]
+// CHECK-NEXT: v18 = Builtin builtin=ArrayFrom [isNotReadFromHolder]
+// CHECK-NEXT: v19 = Call v18, v17, v4
+// CHECK-NEXT: v20 = Convert v19 declared={type=undefined|null|Array<undefined|null|string> site=[[w_3]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+// CHECK-NEXT: Jump -> next b8(v20)
+// CHECK-NEXT: b8(v21):
+// CHECK-NEXT: v22 = Call v11, v9, v21 calleeKey="stringify" calleeName="JSON.stringify"
+// CHECK-NEXT: v23 = Convert v22 declared={type=undefined|null|string site=[[w_4]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: v24 = Add v8, v23
+// CHECK-NEXT: Jump -> next b9(v24)
+// CHECK-NEXT: b9(v25):
+// CHECK-NEXT: v26 = Convert v25 declared={type=undefined|null|string site=[[w_1]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: Return v26
 // CHECK-NEXT: }

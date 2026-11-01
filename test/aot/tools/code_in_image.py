@@ -5,27 +5,22 @@ From an offset into the image's code: the function, its written name, the file:l
   functions [text]            every function of the image: offset, size, name, file:line:column; with a text, those whose name or file holds it
   at <hexadecimal offset> ..  one address a line, counted from the start of the code part
 As a module: Image(path).function_at(offset) -> (index, start, end); .describe(index) -> (name, path, line, column); .stack_at(index, offset in the function); .regexp_at(offset in the code of the regular expressions).
-The forms it reads: aot/image/AOTImageFormat.h, AOTPositionTable.cpp, AOTCallSiteTable.cpp, AOTImageText.h, aot/object/AOTProgramTables.h, aot/runtime/AOTRegExpRecord.h. Whoever adds, removes or moves a section or a table changes SECTIONS and
-TABLES here: test/aot/code-addresses-have-names.test.ts holds the answers against a program whose functions it knows.
+The forms it reads: aot/image/AOTImageFormat.h, AOTPositionTable.cpp, AOTCallSiteTable.cpp, AOTImageText.h, aot/object/AOTProgramTables.h, aot/runtime/AOTRegExpRecord.h. The lists of sections and tables come from the engine
+(image_format.py: $TESTAOT or $AOT_IMAGE_FORMAT). test/aot/code-addresses-have-names.test.ts holds the answers against a program whose functions it knows.
 Identical bodies are stored once: such a body has the name of one of its functions, so trust the caller's line and column. The image lists the addresses of some stubs only: shared code is named by the listed stub in front of it and the distance."""
 import bisect, mmap, struct, sys
+from image_format import ImageFormat, facts_of_executable
 
-SECTIONS = ['Functions', 'FunctionStarts', 'CodeGranules', 'InnerEntries', 'Frames', 'FrameMaps', 'ClosureWords', 'Positions', 'FaultSites', 'SideTables', 'SharedCodeCopies', 'Strings', 'LongStrings', 'Text', 'Identifiers',
-            'StringConstants', 'StringHeaders', 'RegExps', 'RegExpHashes', 'RegExpDetails', 'WebAssemblyDirectory', 'ProgramTables', 'StubAddresses', 'StubReturnSites', 'SlotHandlers', 'MethodLookups', 'MethodTable']
-TABLES = ['types', 'typeSites', 'layouts', 'classes', 'layoutSets', 'allocations', 'constructedAllocations', 'shapeSetBits', 'propertyRuns', 'fieldTable', 'fieldRecordIndices', 'classMemberRows', 'classAccessors', 'methodTableFunctions',
-          'methodLookupFunctions', 'methodTableDependents', 'removedFields', 'addedNames', 'classPrototypeNames', 'parsedRecordFields',
-          'functionNames', 'functionNameGroups', 'functionNameRuns', 'functionRecordNumbers', 'functionRecords', 'functionRecordsByFunction', 'functionSources', 'implementedBuiltins', 'closureFunctionKinds', 'functionLengths',
-          'closureCaptureCounts', 'functionsWithLargeCounts', 'closureCellNumbers', 'functionTexts', 'constructors', 'boundFunctions', 'constructEntrypoints', 'placesOfTailCalls',
-          'staticsLayout', 'staticsRuns', 'staticsOfFiles', 'staticsOfImportedFiles', 'staticsRoots', 'staticsNarrowRoots', 'staticsClearedEachCollection', 'functionVariables', 'identifiersByHash', 'identifiersOfEngineSymbols', 'keyCellIdentifiers', 'literalStrings',
-          'literalStringTable', 'literalStringLimits', 'literalStringDigests', 'bigIntConstants', 'data', 'requests', 'builtinCells', 'eagerBuiltinCells', 'constantBuiltinMembers', 'globalBindings', 'entryPoints',
-          'modules', 'moduleDirectories', 'moduleDisplayPaths', 'moduleRequests', 'linkRequests', 'evaluationRequests', 'groupsLoadedWithGroups', 'entryPointLinkPlan', 'linkPlanRoots', 'linkPlanStepsOfRoots', 'moduleExports', 'indirectExports',
-          'syntheticExports', 'requiredNames', 'moduleFailures', 'modulesByPath', 'modulesOfUncompiledCode', 'compiledRuntimeModules', 'compiledRuntimeFunctions']
+FORMAT = ImageFormat()
+SECTIONS, TABLES = FORMAT.sections, [name for name, _ in FORMAT.tables]
 
 def zigzag(v): return (v >> 1) ^ -(v & 1)
 
 class Image:
     def __init__(self, path):
         f = open(path, 'rb'); self.m = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ); m = self.m
+        differences = FORMAT.differences_from(facts_of_executable(m))
+        if differences: raise SystemExit('the run time in %s is not the one that testaot describes: %s' % (path, differences[0]))
         self.base = None; at = 0
         while True:
             at = m.find(b'BUNAOT01', at)
@@ -47,9 +42,9 @@ class Image:
         self.unit = None
         po, ps = self.sections['ProgramTables']; self.pt = b + po
         assert struct.unpack_from('<I', m, self.pt)[0] == 0x44505943, 'program tables: bad magic'
-        r = self.pt + 8 + 16 + 20 + 12
+        r = self.pt + FORMAT.offsets['ProgramTables::ranges']
         self.tables = {n: struct.unpack_from('<II', m, r + 8 * i) for i, n in enumerate(TABLES)}
-        self.closure_first, self.closure_end = struct.unpack_from('<II', m, self.pt + 8 + 16 + 20)
+        self.closure_first, self.closure_end = struct.unpack_from('<II', m, self.pt + FORMAT.offsets['ProgramTables::closureFunctions'])
         self._positions = None; self._modules = None; self._cache = {}; self._stubs = None; self._regexps = None; self._bodies = None
 
     def sec(self, name): o, s = self.sections[name]; return self.base + o, s

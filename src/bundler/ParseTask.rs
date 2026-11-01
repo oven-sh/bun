@@ -2255,7 +2255,7 @@ pub mod parse_worker {
     // runWithSourceCode
     // ───────────────────────────────────────────────────────────────────────────
 
-    fn run_with_source_code(
+    pub(crate) fn run_with_source_code(
         task: &mut ParseTask<'static>,
         this: &mut crate::Worker,
         step: &mut Step,
@@ -2456,6 +2456,8 @@ pub mod parse_worker {
             ))
         };
         opts.package_version = task.package_version.slice();
+        // SAFETY: the resolver outlives the parse, which only calls it from this thread.
+        opts.import_meta_glob = Some(unsafe { Resolver::import_meta_glob_host(resolver) });
 
         opts.features.allow_runtime = !task.source_index.is_runtime();
         opts.features.unwrap_commonjs_to_esm =
@@ -2500,6 +2502,7 @@ pub mod parse_worker {
         // JavaScriptCore implements `using` / `await using` natively, so when
         // targeting Bun there is no need to lower them.
         opts.features.lower_using = !target.is_bun();
+        opts.features.ascii_only = target.is_bun();
         opts.features.hot_module_reloading =
             output_format == options::Format::InternalBakeDev && !task.source_index.is_runtime();
         opts.features.auto_polyfill_require =

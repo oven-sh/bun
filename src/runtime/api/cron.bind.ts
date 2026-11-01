@@ -2,7 +2,7 @@ import * as b from "../../codegen/bindgen-lib.ts";
 
 export default b.module({ rustPath: "crate::api::cron" });
 
-const chainable = { returns: b.self, passThis: true } as const;
+const chainable = { returns: b.this, passThis: true } as const;
 
 export const CronJob = b.class({
   rustPath: "crate::api::cron::CronJob",

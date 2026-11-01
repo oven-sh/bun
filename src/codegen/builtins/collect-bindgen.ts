@@ -26,6 +26,7 @@ import {
   Getter,
   InternalFieldAccessor,
   Method,
+  OptionalType,
   RefType,
   RestType,
   Signature,
@@ -287,7 +288,13 @@ function computeConversionUses(type: Type): UseSpec[] {
 // Whoever says what a member of a class answers has read it, its setter too, and writes `uses` for an operand that it changes.
 const saysResult = (type: Type): boolean => !(type instanceof AnyType) || type.isDeclaredResult;
 
-function computeBodyUses(type: Type, capability: Capability, isRead: boolean): readonly UseSpec[] {
+/** An instance of a class of a schema, which the body is handed as `&T`: the struct, never the wrapper. */
+const isClassReference = (type: Type): boolean =>
+  type instanceof ClassType || (type instanceof OptionalType && type.inner instanceof ClassType);
+
+// What a body can do with an argument. One handed an instance of a class as `&T` can neither keep the wrapper nor answer it, like a getter its receiver.
+function computeBodyUses(type: Type, capability: Capability, isRead: boolean, result: TypeSpec): readonly UseSpec[] {
+  if (isClassReference(type) && capability !== "js") return usesOfGetterReceiver(false, result);
   const sharesNativeObject = () => [...collectParts([type])].some(part => part instanceof RefType);
   if (type.holdsJSValue || type.passesValue || sharesNativeObject()) {
     if (isRead) return b.handedOver;
@@ -313,7 +320,17 @@ function mayHoldInstanceOf(spec: TypeSpec, className: string): boolean {
 }
 
 // A member that is passed its wrapper may answer it: `returns: b.self` is any object of the class, the receiver too.
-function computeReceiverUses(signature: Signature, className: string | null): readonly UseSpec[] {
+// A member that runs no JavaScript and is not passed its wrapper is handed `&self` alone, like a getter: it can neither keep the wrapper nor answer it.
+// One that runs no JavaScript and `returns: b.this` is handed its wrapper to answer it, and keeps nothing either.
+function computeReceiverUses(
+  signature: Signature,
+  className: string | null,
+  passesWrapper: boolean,
+): readonly UseSpec[] {
+  if (signature instanceof Method && signature.capability !== "js") {
+    if (!passesWrapper) return usesOfGetterReceiver(false, signature.returns.resultType);
+    if (signature.answersReceiver) return [b.returned, b.readsContents(), b.writesContents()];
+  }
   const changesReceiver = signature instanceof Method && signature.receiver === "mut";
   if (signature instanceof Method && saysResult(signature.returns) && !changesReceiver) {
     const mayAnswerReceiver =
@@ -326,8 +343,17 @@ function computeReceiverUses(signature: Signature, className: string | null): re
   return [b.readsContents(), b.writesContents()];
 }
 
-function createReceiver(signature: Signature, type: ParameterType | null, className: string | null): Receiver | null {
-  return type === null ? null : { type, uses: computeReceiverUses(signature, className) };
+/** The body of a member of the class is handed the wrapper of its receiver: with `passThis`, or through the class's `protoCaller`. */
+const passesWrapperTo = (signature: Signature, type: ClassType | null): boolean =>
+  (signature instanceof Method && signature.passThis) || type?.protoCaller !== undefined;
+
+function createReceiver(
+  signature: Signature,
+  type: ParameterType | null,
+  className: string | null,
+  passesWrapper: boolean,
+): Receiver | null {
+  return type === null ? null : { type, uses: computeReceiverUses(signature, className, passesWrapper) };
 }
 
 function isImmediate(spec: TypeSpec): boolean {
@@ -387,7 +413,7 @@ function createField(
   const uses = { ...columns.uses } as Record<string, readonly UseSpec[]>;
   for (const { name, type } of args) {
     uses[name] = [
-      ...(columns.uses?.[name] ?? computeBodyUses(type, capability, isRead)),
+      ...(columns.uses?.[name] ?? computeBodyUses(type, capability, isRead, signature.returns.resultType)),
       ...computeConversionUses(type),
     ];
   }
@@ -425,7 +451,11 @@ export function signatureOfBindgen(
   mode: CallMode,
   receiver: ParameterType | null,
 ): SignatureDeclaration {
-  const field = createField(signature, createReceiver(signature, receiver, null), signature.returns.resultType);
+  const field = createField(
+    signature,
+    createReceiver(signature, receiver, null, passesWrapperTo(signature, null)),
+    signature.returns.resultType,
+  );
   const [declared] = b
     .fn(unplacedPath, field)
     .flatMap(declaration => (declaration.declares === "Member" ? declaration.signatures : []));
@@ -440,9 +470,23 @@ function findLayoutOfResult({ returns }: Signature, fn: FunctionDefinition): Dic
   return returns.members.every(({ type }) => !type.takesUndefined) ? returns : null;
 }
 
+/** `returns: b.this` is the receiver, where the schema's type says an instance of the class. */
+function receiverInPlaceOfInstance(spec: TypeSpec): TypeSpec {
+  switch (spec.type) {
+    case "Instance":
+      return { type: "Operand", operand: "this" };
+    case "Union":
+      return { type: "Union", members: spec.members.map(receiverInPlaceOfInstance) };
+    default:
+      return spec;
+  }
+}
+
 function resultTypeOf(signature: Signature, fn: FunctionDefinition): TypeSpec {
   const layout = findLayoutOfResult(signature, fn);
-  return layout === null ? signature.returns.resultType : b.ordinaryObjectOf(layout.name).fresh.spec;
+  if (layout !== null) return b.ordinaryObjectOf(layout.name).fresh.spec;
+  const result = signature.returns.resultType;
+  return signature.answersReceiver ? receiverInPlaceOfInstance(result) : result;
 }
 
 function declareLayoutsOfResults(functions: readonly FunctionDefinition[]): Declaration[] {
@@ -536,8 +580,9 @@ function collectFunction(
   path: BuiltinPath,
   receiver: ParameterType | null,
   thunkOf: (signature: Signature) => string | null,
-  className: string | null = null,
+  type: ClassType | null = null,
 ): Declaration[] {
+  const className = type?.name ?? null;
   const resultOf = (signature: Signature): TypeSpec => {
     const result = resultTypeOf(signature, fn);
     const ignoresOtherReceivers =
@@ -546,7 +591,11 @@ function collectFunction(
   };
   const overloads = fn.signatures.map(signature =>
     createFields(
-      createField(signature, createReceiver(signature, receiver, className), resultOf(signature)),
+      createField(
+        signature,
+        createReceiver(signature, receiver, className, passesWrapperTo(signature, type)),
+        resultOf(signature),
+      ),
       signature,
       // The host function counts the arguments and turns what is thrown into a rejected promise. The thunk does neither.
       signature.requiredArguments > 0 || signature.rejects ? null : thunkOf(signature),
@@ -803,12 +852,11 @@ function collectClassMember(type: ClassType, member: ClassMember, path: BuiltinP
   if (isStatic) return collectFunction(member, path, null, signature => methodSymbolName(type, signature as Method));
   if (!hasInstanceReceiver(type)) return collectFunction(member, path, null, () => null);
   // The host function answers undefined for a receiver that is no instance, and the thunk takes an instance.
-  if (methods[0].invalidThis === "undefined")
-    return collectFunction(member, path, b.any.parameter, () => null, type.name);
+  if (methods[0].invalidThis === "undefined") return collectFunction(member, path, b.any.parameter, () => null, type);
   // The thunk of a function that `protoCaller` calls takes other arguments, and its host function reads the callee, which a frame of values lacks.
-  if (type.protoCaller !== undefined) return collectFunction(member, path, type.parameterType, () => null, type.name);
+  if (type.protoCaller !== undefined) return collectFunction(member, path, type.parameterType, () => null, type);
   const thunkOf = (signature: Signature) => methodSymbolName(type, signature as Method);
-  return collectFunction(member, path, type.parameterType, thunkOf, type.name).map(declaration =>
+  return collectFunction(member, path, type.parameterType, thunkOf, type).map(declaration =>
     declaration.declares === "Member"
       ? { ...declaration, columns: { ...declaration.columns, directEntryOfMethod: directEntryOfMethod(type, member) } }
       : declaration,

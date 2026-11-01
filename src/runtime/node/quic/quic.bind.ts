@@ -47,7 +47,7 @@ export const QuicStream = b.class({
     destroy: { ...js, args: { error: b.any } },
     endWrite: { capability: "js" },
     getPriority: { returns: b.u32 },
-    getReader: { returns: b.self, passThis: true },
+    getReader: { returns: b.this, passThis: true },
     initStreamingSource: {},
     pull: { ...js, args: { callback: b.any } },
     resetStream: { args: { code: b.any }, capability: "js" },

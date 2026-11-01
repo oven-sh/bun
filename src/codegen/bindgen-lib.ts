@@ -120,7 +120,7 @@ export const union = (alternatives: Record<string, Type>) => new UnionType(alter
 const class_ = (options: ClassOptions) => new ClassType(options);
 
 /** The class being declared, in its own signatures: a `JsWrapper<'a, Self>`. */
-export { selfType as self } from "./bindgen-lib-internal.ts";
+export { selfType as self, thisType as this } from "./bindgen-lib-internal.ts";
 
 export const fn = (options: FunctionOptions) => new FunctionDefinition([options], options);
 

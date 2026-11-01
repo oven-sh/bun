@@ -993,7 +993,7 @@ A few things a schema cannot say with bindgen's own keys:
 | any other key                             | a column of the table: `SignatureColumns`, `EntryColumns` in `src/codegen/builtins/vocabulary.ts` |
 
 `b.any.returning(..)` is still `b.any` to Rust. Each word is `"string"`, `"number"`, `"int32"`, `"bigint"`, `"boolean"`,
-`"undefined"`, `"null"`, `"object"`, `"Promise"`, `"this"` (the receiver itself) or the name of a class (`"Array"`,
+`"undefined"`, `"null"`, `"object"`, `"Promise"`, `"this"` (the receiver itself, as `returns: b.this` says for a class) or the name of a class (`"Array"`,
 `"Buffer"`, `"Headers"`, a class of a schema ..). Compiled code takes the words on trust. Without
 `.returning` the compiler takes a `b.any` result for an object nobody knows, and takes the member to do anything at all
 to its operands.
@@ -1008,6 +1008,21 @@ read: { args: { target: b.any }, returns: b.any.returning("number"), uses: { tar
 ```
 
 The operands of `uses` are `this` and the names of `args`.
+
+An instance of a class is the exception, as the receiver or as an argument. A member with the default `capability` or
+`"heap"` is handed it as `&T` alone, unless `passThis` hands it the receiver's wrapper too, so the table takes the body to
+neither keep nor answer the wrapper, as it does for a getter. Such a body may not call `wrapper_value()`: a body that
+needs its wrapper asks for it with `passThis`, or has `capability: "js"`.
+`test/internal/source-lints/bindgen-wrapper-value.test.ts` lists the files that call `wrapper_value()`.
+
+A member that answers its receiver says so with `returns: b.this` (`b.this.optional`, `b.this.nullable`), which takes
+`passThis`. To Rust it is `b.self`: the body returns the `JsWrapper` it was handed. With the default `capability` or
+`"heap"` the table takes the body to hand the wrapper back and keep nothing of it. `returns: b.self` says less: any
+instance of the class, and a body that is passed its wrapper may have kept it.
+
+Under `--aot` a call on an instance that no member keeps can be a direct call, and so can the next call on the same
+instance, as long as the flow still knows the instance: one that is handed to code the compiler cannot see, or given an
+own property, is looked up by name again.
 
 `pure: true` is a promise that somebody has read the getter down to the last function it calls: it allocates nothing in the
 JavaScript heap, throws nothing, runs no JavaScript, walks no stack, takes no lock that a collection waits for, and changes

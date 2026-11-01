@@ -926,9 +926,9 @@ test(
   timeout,
 );
 
-// A search for a prime p == rem (mod add) that cannot end: BoringSSL's own searches make no progress
-// callback there, so the worker could not be stopped. The worker loads node:crypto before it says
-// "go", so that terminate() lands while it is in the search and not while it loads the module.
+// A search for a prime p == rem (mod add) that cannot end must still stop on terminate(). The worker
+// loads node:crypto before it says "go", so that terminate() lands while it is in the search and not
+// while it loads the module.
 test(
   "terminate() stops a prime search on a progression that has no prime",
   async () => {

@@ -1,0 +1,43 @@
+# const made = Object.create({ inner: class {} })  Promise.reject(made)  try { null.x } catch (error) { new error.inner() }
+# `made` goes to native code, so a value nobody knows may be `made`. `inner` is a field that the layout of the literal above it declares, not a name that was added later.
+# Whoever reads `inner` off a value nobody knows holds the class.
+# RUN: valueflow-why escaped=f1
+# CHECK-NOT: not held
+
+layout L0 kind=Instance module=m0 position=1 constructor=f1
+layout L1 module=m0 position=2 fields=[{key="inner" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Object
+    v1 = Builtin builtin=ObjectCreate
+    v2 = NewClosure function=f1
+    v3 = NewClass v2 layout=L0
+    v4 = FinishClass v3 layout=L0
+    v5 = NewObject layout=L1
+    PropDefine v5, v4 key="inner"
+    v7 = FinishObject v5
+    v8 = Call v1, v0, v7
+    v9 = Builtin builtin=Promise
+    v10 = Builtin builtin=PromiseReject
+    v11 = Call v10, v9, v8
+    Jump -> next b1()
+  b1() handler=b2():
+    v12 = Null
+    v13 = PropGet v12 key="x"
+    Jump -> next b3()
+  b2() role=CatchHandler:
+    v14 = CatchValue
+    v15 = PropGet v14 key="inner"
+    v16 = Construct v15
+    Jump -> next b3()
+  b3():
+    v17 = Undefined
+    Return v17
+}
+function f1 name="inner" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object flags=[IsFromCompiler]}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}

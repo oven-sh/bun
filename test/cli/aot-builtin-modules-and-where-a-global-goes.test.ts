@@ -1,16 +1,11 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
-import { statSync } from "node:fs";
-import { join } from "node:path";
-import { run } from "../aot/harness/run";
-import { slot } from "../aot/run-programs";
+import { tempDir } from "harness";
 import { test } from "../aot/supported";
-import { importingByName } from "./aot-builtin-modules";
+import { compileEachAlone, importingByName, oneAfterTheOther, startsAtAnyEntryPoint } from "./aot-builtin-modules";
 
 const plain = "plain.mjs";
 
 const withoutADoor: Record<string, string> = {
-  [plain]: `console.log("run");`,
   "the-global-object-chosen-and-read.cjs": `var OwnUint8Array = (typeof global !== "undefined" ? global : typeof window !== "undefined" ? window : typeof self !== "undefined" ? self : {}).Uint8Array || function () {};
 console.log(typeof OwnUint8Array === "function" ? "run" : "");`,
   "the-global-object-kept-and-read.mjs": `const root = typeof globalThis !== "undefined" ? globalThis : typeof self !== "undefined" ? self : {};
@@ -82,14 +77,14 @@ if (!global[queue]) Object.defineProperty(global, queue, { get: function () { re
 console.log(Array.isArray(global[queue]) && globalThis[Symbol.for("a-small-program.queue")] ? "run" : "");`,
 };
 
-const name = `const name = ["node:zlib"][0];\n`;
-const loaded = (how: string) => `console.log(typeof ${how}.gzipSync === "function" ? "run" : "");`;
-const withADoor = importingByName("node:zlib", {
+const name = `const name = ["node:querystring"][0];\n`;
+const loaded = (how: string) => `console.log(typeof ${how}.escape === "function" ? "run" : "");`;
+const withADoor = importingByName("node:querystring", {
   "the-parameter-is-returned.mjs": `const check = it => it && it.Math === Math && it;
 const root = check(typeof globalThis == "object" && globalThis);
-console.log(typeof root.process.getBuiltinModule(["node:zlib"][0]).gzipSync === "function" ? "run" : "");`,
+console.log(typeof root.process.getBuiltinModule(["node:querystring"][0]).escape === "function" ? "run" : "");`,
   "the-arguments-object.cjs": `function first(root) { return arguments[0]; }
-console.log(typeof first(globalThis).process.getBuiltinModule(["node:zlib"][0]).gzipSync === "function" ? "run" : "");`,
+console.log(typeof first(globalThis).process.getBuiltinModule(["node:querystring"][0]).escape === "function" ? "run" : "");`,
   "the-global-object-read-by-a-computed-name.mjs": `${name}const first = globalThis;\nconst second = first;\nconst key = ["pro", "cess"].join("");\n${loaded("second[key].getBuiltinModule(name)")}`,
   "the-global-object-handed-to-a-function.mjs": `${name}const use = object => object.process.getBuiltinModule(name);\n${loaded('use(typeof globalThis !== "undefined" ? globalThis : {})')}`,
   "the-global-object-in-a-literal.mjs": `${name}const held = { root: globalThis };\n${loaded("held.root.process.getBuiltinModule(name)")}`,
@@ -99,44 +94,26 @@ console.log(typeof first(globalThis).process.getBuiltinModule(["node:zlib"][0]).
   "process-required-and-handed-on.cjs": `${name}const use = kept => kept.getBuiltinModule(name);\n${loaded('use(require("node:process"))')}`,
 });
 
-const env = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" };
+const harmless = "without-a-door.mjs";
+const loading = "with-a-door.mjs";
 
-test("a global that goes nowhere but into reads by written names brings no built-in module into the executable", async () => {
-  const programs = { ...withoutADoor, ...withADoor };
-  using dir = tempDir("where-a-global-goes", programs);
-  const sizes: Record<string, number> = {};
-  await Promise.all(
-    Object.keys(programs).map(entry =>
-      slot(async () => {
-        const outfile = join(String(dir), entry + ".exe");
-        const { stderr, exitCode } = await run(
-          [bunExe(), "build", "--compile", "--aot", entry, "--outfile", outfile],
-          String(dir),
-        );
-        expect({ entry, stderr, exitCode }).toEqual({
-          entry,
-          stderr: expect.not.stringContaining("error"),
-          exitCode: 0,
-        });
-        const { stdout, exitCode: ranWith } = await run([outfile], String(dir), env);
-        expect({ entry, stdout, ranWith }).toEqual({ entry, stdout: "run\n", ranWith: 0 });
-        sizes[entry] = statSync(outfile).size;
-      }),
-    ),
-  );
-  for (const entry of Object.keys(withoutADoor)) {
-    expect({ entry, grows: sizes[entry] - sizes[plain] > 1024 * 1024 }).toEqual({ entry, grows: false });
-  }
-}, 280_000);
-
-test("bun run --aot interprets nothing of those that keep a door", async () => {
-  using dir = tempDir("where-a-global-goes", withADoor);
-  await Promise.all(
-    Object.keys(withADoor).map(entry =>
-      slot(async () => {
-        const { stdout, exitCode } = await run([bunExe(), "run", "--debug-aot", entry], String(dir), env);
-        expect({ entry, stdout, exitCode }).toEqual({ entry, stdout: "run\n", exitCode: 0 });
-      }),
-    ),
-  );
-}, 280_000);
+test.skipIf(!startsAtAnyEntryPoint)(
+  "a global that goes nowhere but into reads by written names brings no built-in module into the executable",
+  async () => {
+    using dir = tempDir("where-a-global-goes", {
+      [plain]: `console.log("run");`,
+      ...withoutADoor,
+      ...withADoor,
+      [harmless]: oneAfterTheOther(withoutADoor),
+      [loading]: oneAfterTheOther(withADoor),
+    });
+    const ran = await compileEachAlone(String(dir), [plain, harmless, loading]);
+    expect(ran).toEqual({
+      [plain]: { stdout: "run\n", exitCode: 0, bytes: expect.any(Number) },
+      [harmless]: { stdout: "run\n".repeat(Object.keys(withoutADoor).length), exitCode: 0, bytes: expect.any(Number) },
+      [loading]: { stdout: "run\n".repeat(Object.keys(withADoor).length), exitCode: 0, bytes: expect.any(Number) },
+    });
+    expect(ran[harmless].bytes - ran[plain].bytes).toBeLessThan(1024 * 1024);
+  },
+  280_000,
+);

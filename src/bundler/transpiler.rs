@@ -46,9 +46,6 @@ pub struct Transpiler<'a> {
     pub arena: &'a Arena,
     pub(crate) result: options::TransformResult,
     pub resolver: Resolver<'a>,
-    // Raw ptr — points at the shared global `FileSystem` singleton; a stored
-    // `&'a mut` would assert uniqueness it cannot have.
-    pub fs: *mut Fs::FileSystem,
     pub(crate) output_files: Vec<options::OutputFile>,
     pub(crate) resolve_results: Box<ResolveResults>,
     pub(crate) resolve_queue: ResolveQueue,
@@ -86,7 +83,7 @@ impl<'a> Transpiler<'a> {
     }
 
     /// VM-teardown: the owning `VirtualMachine` is raw-allocated and never `Drop`'d,
-    /// so free `BundleOptions` here. `log`/`fs`/`env` are aliased/singletons; left alone.
+    /// so free `BundleOptions` here. `log`/`env` are aliased/singletons; left alone.
     /// `resolver` is a value field whose caches alias process-global BSSMaps, so the
     /// resolver itself stays put — only its owned `opts` projection (cloned in
     /// `resolver_bundle_options_subset`) is released.
@@ -118,33 +115,6 @@ impl<'a> Transpiler<'a> {
             core::ptr::drop_in_place(&raw mut self.resolver.opts);
             core::ptr::drop_in_place(&raw mut self.resolve_results);
         }
-    }
-
-    /// Shared borrow of the process-lifetime `Fs::FileSystem` singleton.
-    #[inline]
-    pub(crate) fn fs(&self) -> &Fs::FileSystem {
-        // SAFETY: `self.fs` is set in `Transpiler::init` to the
-        // `Fs::FileSystem::instance` singleton (process-lifetime, never null,
-        // never freed). Reads of `top_level_dir` (the dominant use) are sound
-        // even concurrently with `fs_mut()` callers because that field is
-        // `&'static [u8]` written once at init.
-        unsafe { &*self.fs }
-    }
-
-    /// Mutable reborrow of the `Fs::FileSystem` singleton. The returned
-    /// lifetime is **decoupled** from `&self` so callers can pass it alongside
-    /// disjoint `&mut self.resolver` borrows (see `read_file_with_allocator`
-    /// call sites). Callers must not hold the result across any other
-    /// `fs()`/`fs_mut()` reborrow or across a resolver call that itself
-    /// dereferences the shared singleton mutably.
-    #[inline]
-    pub fn fs_mut<'r>(&self) -> &'r mut Fs::FileSystem {
-        // SAFETY: `self.fs` is the non-null process-lifetime singleton (see
-        // `fs()`). The unbounded `'r` mirrors the prior open-coded
-        // `unsafe { &mut *self.fs }` — the pointee outlives any `'r` a caller
-        // can name. Exclusive access is upheld by single-threaded use at each
-        // call site (no two live `&mut FileSystem` overlap).
-        unsafe { &mut *self.fs }
     }
 
     /// Shared read-only borrow of the `Log`. Use for `has_errors()` /
@@ -255,7 +225,6 @@ impl<'a> Transpiler<'a> {
             // Per-worker scratch — workers never read the parent's accumulated state.
             result: options::TransformResult::default(),
             resolver,
-            fs: from.fs,
             output_files: Vec::new(),
             resolve_results: Box::new(ResolveResults::default()),
             resolve_queue: ResolveQueue::default(),
@@ -267,7 +236,6 @@ impl<'a> Transpiler<'a> {
                 core::ptr::null_mut(),
                 core::ptr::null_mut(),
                 core::ptr::null_mut(),
-                from.fs,
             ),
             env: from.env,
             // `MacroContext::init(transpiler)` takes the
@@ -286,13 +254,11 @@ impl<'a> Transpiler<'a> {
         let log = self.log;
         self.options.log = log;
         self.resolver.log = core::ptr::NonNull::new(log).expect("wire_after_move: log is non-null");
-        self.resolver.fs = self.fs;
         self.linker.reseat_self_refs(
             log,
             core::ptr::addr_of_mut!(self.resolve_queue),
             core::ptr::addr_of_mut!(self.options).cast(),
             core::ptr::addr_of_mut!(*self.resolve_results),
-            self.fs,
         );
         self.macro_context = Some(js_ast::Macro::MacroContext::init(self));
     }
@@ -338,7 +304,7 @@ impl<'a> Transpiler<'a> {
         entry_point: &'e [u8],
         dot_slash: &'e OnceCell<Vec<u8>>,
     ) -> crate::Result<resolver::Result<'e>> {
-        let top_level_dir = self.fs().top_level_dir();
+        let top_level_dir = Fs::FileSystem::get().top_level_dir();
         // The lookup as a package is expected to miss for `bun build index.ts`: one check for both.
         self.resolver
             .with_deferred_miss_check(top_level_dir, entry_point, |resolver| {
@@ -568,12 +534,11 @@ impl<'a> Transpiler<'a> {
             core::ptr::addr_of_mut!(self.resolve_queue),
             core::ptr::addr_of_mut!(self.options).cast(),
             core::ptr::addr_of_mut!(*self.resolve_results),
-            self.fs,
         );
 
         if auto_jsx {
             // Most of the time, this will already be cached
-            let top_level_dir = self.fs().top_level_dir();
+            let top_level_dir = Fs::FileSystem::get().top_level_dir();
             if let Ok(Some(root_dir)) = self.resolver.read_dir_info(top_level_dir) {
                 if let Some(tsconfig) = self.resolver.tsconfig_json(&root_dir) {
                     // If we don't explicitly pass JSX, try to get it from the root tsconfig
@@ -643,7 +608,7 @@ impl<'a> Transpiler<'a> {
                 // (or a parent) is unreadable, readDirInfo may return null;
                 // bail out of .env file loading in that case, but process
                 // env vars were already loaded above.
-                let top_level_dir = self.fs().top_level_dir();
+                let top_level_dir = Fs::FileSystem::get().top_level_dir();
                 let dir_info = match self.resolver.read_dir_info(top_level_dir) {
                     Ok(Some(d)) => d,
                     _ => return Ok(()),
@@ -659,7 +624,7 @@ impl<'a> Transpiler<'a> {
                 // place under that lock, and `dot_env::Loader::load` does
                 // file I/O between probes.
                 let dir = {
-                    let _entries_lock = bun_resolver::fs::FileSystem::instance()
+                    let _entries_lock = bun_resolver::fs::FileSystem::get()
                         .fs
                         .entries_mutex
                         .lock_guard();
@@ -1171,10 +1136,7 @@ impl<'a> Transpiler<'a> {
         // / the struct field below. No `&'a
         // mut Log` is materialized here, so the sibling raw pointers don't
         // invalidate a long-lived unique borrow under stacked borrows.
-        // SAFETY: `fs` is the process-lifetime `Fs::FileSystem` singleton from
-        // `init_file_system` above; this short `&mut *fs` is the only live
-        // borrow for the duration of `from_api`.
-        let bundle_options = options::BundleOptions::from_api(unsafe { &mut *fs }, log, opts)?;
+        let bundle_options = options::BundleOptions::from_api(log, opts)?;
 
         // `Resolver.opts` is the resolver-crate subset
         // (`bun_resolver::options::BundleOptions`), nominally distinct from this
@@ -1208,7 +1170,6 @@ impl<'a> Transpiler<'a> {
                 fs,
                 resolver_opts,
             ));
-            core::ptr::addr_of_mut!((*p).fs).write(fs);
             core::ptr::addr_of_mut!((*p).output_files).write(Vec::new());
             core::ptr::addr_of_mut!((*p).resolve_results).write(resolve_results);
             core::ptr::addr_of_mut!((*p).resolve_queue).write(ResolveQueue::default());
@@ -1219,7 +1180,6 @@ impl<'a> Transpiler<'a> {
                 core::ptr::null_mut(),
                 core::ptr::null_mut(),
                 core::ptr::null_mut(),
-                fs,
             ));
             core::ptr::addr_of_mut!((*p).env).write(env_loader);
             core::ptr::addr_of_mut!((*p).macro_context).write(None);
@@ -1371,7 +1331,6 @@ impl<'a> Transpiler<'a> {
             // job-scoped heap that `TranspilerJob::run` `mi_heap_destroy`s on
             // return — not the worker thread's default mimalloc heap.
             let mut entry = match self.resolver.caches.fs.read_file_with_allocator(
-                self.fs_mut(),
                 path.text,
                 dirname_fd,
                 USE_SHARED_BUFFER,
@@ -2087,15 +2046,12 @@ fn parse_md_loader<'a>(
     arena: &'a Arena,
     log: &mut bun_ast::Log,
 ) -> Option<ParseResult<'a>> {
-    let html: &'static [u8] = match bun_md::root::render_to_html(&source.contents) {
+    let html: &[u8] = match bun_md::root::render_to_html(&source.contents) {
         // The rendered HTML is allocated via
         // `arena` (the per-parse arena), so it is freed with the
         // arena. Arena-copy the heap `Box<[u8]>` and let it drop;
         // PORTING.md §Forbidden patterns bars `Box::leak` here.
-        // SAFETY: ARENA — `arena` outlives the returned
-        // `ParseResult.ast` (the AST crate's `Str` convention erases
-        // `'bump` to `'static` for `E::String.data`).
-        Ok(h) => unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(&h)) },
+        Ok(h) => arena.alloc_slice_copy(&h),
         Err(_) => {
             let _ = log.add_error_fmt(
                 None,
@@ -2549,8 +2505,8 @@ impl<'a> Transpiler<'a> {
         )
     }
 
-    fn normalize_entry_point_path(&self, _entry: &[u8]) -> &'static [u8] {
-        let fs = self.fs();
+    fn normalize_entry_point_path(_entry: &[u8]) -> &'static [u8] {
+        let fs = Fs::FileSystem::get();
         let entry = fs.abs(&[_entry]);
 
         // If the absolutized path does not exist on disk, return the original
@@ -2590,10 +2546,10 @@ impl<'a> Transpiler<'a> {
         // snapshot entry points so the `&mut self` resolver call
         // does not conflict with the `&self.options` borrow.
         let entries: Vec<Box<[u8]>> = self.options.entry_points.to_vec();
-        let top_level_dir = self.fs().top_level_dir();
+        let top_level_dir = Fs::FileSystem::get().top_level_dir();
 
         for _entry in entries.iter() {
-            let entry = self.normalize_entry_point_path(_entry);
+            let entry = Self::normalize_entry_point_path(_entry);
 
             let _reset = bun_ast::StoreResetGuard::new();
 
@@ -2821,7 +2777,7 @@ impl<'a> Transpiler<'a> {
 
         let mut file_path = Fs::Path::init(file_path_text);
 
-        let top_level_dir = self.fs().top_level_dir();
+        let top_level_dir = Fs::FileSystem::get().top_level_dir();
         let rel = bun_paths::resolve_path::relative(top_level_dir, file_path_text);
         file_path.pretty = crate::linker::dupe(rel);
 
@@ -3050,7 +3006,6 @@ impl<'a> Transpiler<'a> {
         use crate::bun_css;
 
         let entry = match self.resolver.caches.fs.read_file_with_allocator(
-            self.fs_mut(),
             file_path_text,
             dirname_fd,
             false,

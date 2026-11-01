@@ -27,12 +27,22 @@ pub struct BundledPositions {
     pub corrections: &'static [u8],
 }
 
+/// Of a file that declares for every file. Each list says where statements stand, in ascending order.
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+pub struct PartSeenByEveryFile {
+    /// What a file sees that does not name the file: what the file declares for every file, and what that leads to.
+    pub seen: Box<[(u32, u32)]>,
+    /// The other statements that name another file.
+    pub asked: Box<[(u32, u32)]>,
+}
+
 #[derive(Default)]
 pub struct Manifest {
     defines: Vec<(Box<[u8]>, Box<[u8]>)>,
     modules: Vec<Module>,
     function_files: Vec<Box<[u8]>>,
     module_declarations: Vec<Box<[u8]>>,
+    files_declaring_for_every_file: Vec<(Box<[u8]>, PartSeenByEveryFile)>,
     builtin_functions: Vec<(Box<[u8]>, u32)>,
     function_file_indexes: Vec<(u32, u32)>,
     bundled_names: Vec<(Box<[u8]>, Vec<BundledName>)>,
@@ -75,6 +85,14 @@ impl Manifest {
                 }),
                 b"functions" => manifest.function_files.push(field()?.into()),
                 b"declarations" => manifest.module_declarations.push(field()?.into()),
+                b"declares-for-every-file" => {
+                    let file = field()?.into();
+                    let part = PartSeenByEveryFile {
+                        seen: ranges(field()?).ok_or_else(error)?,
+                        asked: ranges(field()?).ok_or_else(error)?,
+                    };
+                    (manifest.files_declaring_for_every_file).push((file, part));
+                }
                 b"name" => {
                     let file = field()?;
                     let name = BundledName {
@@ -104,6 +122,7 @@ impl Manifest {
             }
         }
         manifest.builtin_functions.sort_unstable();
+        manifest.files_declaring_for_every_file.sort_unstable();
         for (_, names) in &mut manifest.bundled_names {
             names.sort_unstable_by_key(|name| name.position);
         }
@@ -193,6 +212,17 @@ impl Manifest {
     /// Each says what `require` answers for the module beside it.
     pub fn module_declarations(&self) -> &[Box<[u8]>] {
         &self.module_declarations
+    }
+
+    /// Whether the file declares a global or a module by its name, which files see that do not name the file.
+    pub fn declares_for_every_file(&self, file: &[u8]) -> bool {
+        self.part_seen_by_every_file(file).is_some()
+    }
+
+    pub fn part_seen_by_every_file(&self, file: &[u8]) -> Option<&PartSeenByEveryFile> {
+        let files = &self.files_declaring_for_every_file;
+        let found = files.binary_search_by(|it| (*it.0).cmp(file)).ok()?;
+        Some(&files[found].1)
     }
 
     /// Only `$linkTimeConstant` calls from other function files reach these.
@@ -392,6 +422,16 @@ fn name_of(record: &[u8; RECORD_LEN]) -> &[u8] {
 
 fn number(field: &[u8]) -> Option<u32> {
     std::str::from_utf8(field).ok()?.parse().ok()
+}
+
+/// `-`: none.
+fn ranges(field: &[u8]) -> Option<Box<[(u32, u32)]>> {
+    let mut ranges = Vec::new();
+    let mut offsets = bun_core::strings::split(field, b" ").filter(|_| field != b"-");
+    while let Some(start) = offsets.next() {
+        ranges.push((number(start)?, number(offsets.next()?)?));
+    }
+    Some(ranges.into())
 }
 
 fn optional(field: &[u8]) -> Option<Box<[u8]>> {

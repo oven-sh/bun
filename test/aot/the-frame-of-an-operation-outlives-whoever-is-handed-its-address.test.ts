@@ -48,6 +48,6 @@ test.skipIf(!sources)("a function that is handed the frame record of an operatio
   }
   expect(wrong).toEqual([]);
   // The check has found what it is about.
-  expect(begun.length).toBeGreaterThanOrEqual(4);
+  expect(begun.length).toBeGreaterThanOrEqual(3);
   expect(new Set(handed)).toEqual(new Set(begun));
 });

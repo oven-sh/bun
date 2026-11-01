@@ -38,7 +38,7 @@ process.exit(0);
 const bunfig = `preload = ["./preload.js"]`;
 
 describe("preload", () => {
-  test.todo("works", async () => {
+  test("works", async () => {
     const preloadDir = join(realpathSync(tmpdir()), "bun-preload-test");
     mkdirSync(preloadDir, { recursive: true });
     const preloadPath = join(preloadDir, "preload.js");
@@ -68,7 +68,7 @@ describe("preload", () => {
     }
   });
 
-  test.todo("works from CLI", async () => {
+  test("works from CLI", async () => {
     const preloadDir = join(realpathSync(tmpdir()), "bun-preload-test4");
     mkdirSync(preloadDir, { recursive: true });
     const preloadPath = join(preloadDir, "preload.js");

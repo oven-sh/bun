@@ -1430,6 +1430,87 @@ error: Hello World`,
     ],
   });
 
+  // https://github.com/oven-sh/bun/issues/14459
+  // PATH has no `bun`, so Bun Shell runs the executable itself for the word `bun`. It must start
+  // as the bun CLI. A second run of the entry point prints "entry:" again, or exits with 3.
+  {
+    const noBunOnPath = { PATH: "", Path: "" };
+    itBundled("compile/ShellBunWithoutBunOnPath", {
+      compile: true,
+      files: {
+        "/entry.ts": /* js */ `
+          import { $ } from "bun";
+          import { copyFileSync, linkSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+          import { tmpdir } from "node:os";
+          import { join } from "node:path";
+
+          const mode = process.argv[2];
+          console.log("entry:" + mode);
+          if (mode === "word") {
+            console.log((await $\`bun -p 1+1\`.nothrow().text()).trim());
+          } else if (mode === "substitution") {
+            await $\`echo got:$(bun -p 1+1)\`.nothrow();
+          } else if (mode === "falsy") {
+            console.log((await $\`bun -p 1+1\`.env({ ...process.env, BUN_BE_BUN: "0" }).nothrow().text()).trim());
+          } else if (mode === "next") {
+            // Only the \`bun\` command gets the variable. The next commands of the script do not.
+            await $\`bun -p 1+1; echo after:$BUN_BE_BUN; \${process.execPath} named\`.nothrow();
+          } else if (mode === "on-path") {
+            // A \`bun\` on PATH wins, and it gets no variable.
+            const dir = mkdtempSync(join(tmpdir(), "bun-on-path-"));
+            const bun = join(dir, process.platform === "win32" ? "bun.exe" : "bun");
+            try {
+              if (process.platform !== "win32") symlinkSync(process.env.REAL_BUN, bun);
+              else {
+                try {
+                  linkSync(process.env.REAL_BUN, bun);
+                } catch {
+                  copyFileSync(process.env.REAL_BUN, bun);
+                }
+              }
+              const seen = "JSON.stringify([process.env.BUN_BE_BUN ?? null, Bun.isStandaloneExecutable])";
+              console.log((await $\`bun -p \${seen}\`.env({ ...process.env, PATH: dir, Path: dir }).nothrow().text()).trim());
+            } finally {
+              rmSync(dir, { recursive: true, force: true });
+            }
+          } else if (mode !== "named") {
+            process.exit(3);
+          }
+        `,
+      },
+      run: [
+        { args: ["word"], env: noBunOnPath, stdout: "entry:word\n2" },
+        { args: ["substitution"], env: noBunOnPath, stdout: "entry:substitution\ngot:2" },
+        // A falsy BUN_BE_BUN in the script's environment does not bring the second run back.
+        { args: ["falsy"], env: noBunOnPath, stdout: "entry:falsy\n2" },
+        { args: ["next"], env: noBunOnPath, stdout: "entry:next\n2\nafter:\nentry:named" },
+        { args: ["on-path"], env: { REAL_BUN: bunExe() }, stdout: "entry:on-path\n[null,false]" },
+        // The executable runs as bun, and the script exports a falsy BUN_BE_BUN.
+        {
+          args: ["exec", "export BUN_BE_BUN=0; bun -p 1+1"],
+          env: { ...noBunOnPath, BUN_BE_BUN: "1" },
+          stdout: "2",
+        },
+        // A truthy BUN_BE_BUN from the user is passed on as it is.
+        {
+          args: ["exec", "bun -p process.env.BUN_BE_BUN"],
+          env: { ...noBunOnPath, BUN_BE_BUN: "true" },
+          stdout: "true",
+        },
+        // `bun upgrade` replaces the file it runs from. The argument makes a build without the refusal
+        // stop before it downloads anything: it takes no package names.
+        {
+          args: ["upgrade", "nothing"],
+          env: { BUN_BE_BUN: "1" },
+          exitCode: 1,
+          validate({ stderr }) {
+            expect(stderr).toContain("This executable is an app compiled with `bun build --compile`");
+          },
+        },
+      ],
+    });
+  }
+
   test("does not crash", async () => {
     await using dir = tempDir("bundler-compile-shadcn", {
       "frontend.tsx": `console.log("Hello, world!");`,

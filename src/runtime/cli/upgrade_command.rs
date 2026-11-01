@@ -511,6 +511,13 @@ impl UpgradeCommand {
 
     #[cold]
     pub(crate) fn exec(ctx: Command::Context) -> crate::Result<()> {
+        if bun_standalone_graph::Graph::image_has_program() {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r><d>:<r> This executable is an app compiled with `bun build --compile`. `bun upgrade` would replace it with Bun.\n<blue>note<r><d>:<r> Install Bun, and run `bun upgrade` there."
+            );
+            Global::exit(1);
+        }
+
         let args = bun_core::argv();
         if args.len() > 2 {
             for arg in args.iter().skip(2) {

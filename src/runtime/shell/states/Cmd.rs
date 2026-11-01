@@ -481,9 +481,21 @@ impl Cmd {
             match bun_which::which(&mut *path_buf, spawn_args.path, spawn_args.cwd, &first_arg) {
                 Some(z) => Some(z.as_bytes().to_vec()),
                 None if &first_arg[..] == b"bun" || &first_arg[..] == b"bun-debug" => {
-                    bun_core::self_exe_path()
-                        .ok()
-                        .map(|z| z.as_bytes().to_vec())
+                    match spawn_args.this_executable_as_bun() {
+                        Ok(this_executable) => this_executable,
+                        Err(why) => {
+                            drop(spawn_args);
+                            return Builtin::cmd_write_failing_error(
+                                interp,
+                                this,
+                                format_args!(
+                                    "bun: command not found: {}\nbun: {}. Install bun, or add it to PATH.\n",
+                                    bstr::BStr::new(&first_arg),
+                                    why
+                                ),
+                            );
+                        }
+                    }
                 }
                 None => None,
             }

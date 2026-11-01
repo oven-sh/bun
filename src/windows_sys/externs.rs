@@ -955,6 +955,15 @@ pub mod kernel32 {
             nDefaultTimeOut: DWORD,
             lpSecurityAttributes: *mut c_void,
         ) -> HANDLE;
+        /// `PeekNamedPipe` (`namedpipeapi.h`). Each out-pointer may be null.
+        pub fn PeekNamedPipe(
+            hNamedPipe: HANDLE,
+            lpBuffer: *mut c_void,
+            nBufferSize: DWORD,
+            lpBytesRead: *mut DWORD,
+            lpTotalBytesAvail: *mut DWORD,
+            lpBytesLeftThisMessage: *mut DWORD,
+        ) -> BOOL;
         /// `AddVectoredExceptionHandler` (`errhandlingapi.h`).
         pub fn AddVectoredExceptionHandler(
             First: u32,

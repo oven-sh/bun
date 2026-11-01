@@ -1193,30 +1193,81 @@ impl SendQueue {
             // SAFETY: caller contract — the queued task owns a ref on `this`.
             let sq = unsafe { &*this };
             sq.deferred_scheduled.set(false);
-            if sq.pending_close.replace(false) {
-                log!("SendQueue#closeSocketTask");
-                sq.close_socket(CloseReason::Normal, CloseFrom::User);
-            }
-            if sq.pending_after_close.replace(false) {
-                log!("SendQueue#_onAfterIPCClosed");
-                if !sq.close_event_sent.replace(true) {
-                    let global = sq.get_global_this();
-                    if let Some(item) = sq.waiting_for_ack.with_mut(|w| w.take()) {
-                        item.complete(&global);
-                    }
-                    // on_write_complete already dequeued everything fully written; the rest was never delivered.
-                    for item in sq.queue.with_mut(std::mem::take) {
-                        item.abort_unsent(&global);
-                    }
-                    if let Some(owner) = sq.owner.get() {
-                        owner.handle_ipc_close();
-                    }
-                }
-            }
+            sq.run_pending();
         }
         // Release the task's ref; the SendQueue may be freed here.
         // SAFETY: `this` is live and owns the ref taken at schedule.
         unsafe { <SendQueue as bun_ptr::CellRefCounted>::deref(this) };
+    }
+
+    /// Does now what the queued task would do. A pending flag means that task is still queued, and its ref keeps `self` alive through the callbacks.
+    pub(crate) fn run_pending(&self) {
+        if self.pending_close.replace(false) {
+            log!("SendQueue#closeSocketTask");
+            self.close_socket(CloseReason::Normal, CloseFrom::User);
+        }
+        if self.pending_after_close.replace(false) {
+            log!("SendQueue#_onAfterIPCClosed");
+            if !self.close_event_sent.replace(true) {
+                let global = self.get_global_this();
+                if let Some(item) = self.waiting_for_ack.with_mut(|w| w.take()) {
+                    item.complete(&global);
+                }
+                // on_write_complete already dequeued everything fully written; the rest was never delivered.
+                for item in self.queue.with_mut(std::mem::take) {
+                    item.abort_unsent(&global);
+                }
+                if let Some(owner) = self.owner.get() {
+                    owner.handle_ipc_close();
+                }
+            }
+        }
+    }
+
+    /// The peer process has exited. A channel whose other end is closed, with nothing left to read,
+    /// is closed here, so that `run_pending` reports its end before the owner reports the exit.
+    pub(crate) fn close_after_peer_exit(&self) {
+        if self.peer_closed_and_drained() {
+            // A write still in flight on Windows is cancelled: nothing is left to complete it.
+            #[cfg(windows)]
+            self.windows_close(true);
+            #[cfg(not(windows))]
+            self.close_socket(CloseReason::Normal, CloseFrom::User);
+        }
+        self.run_pending();
+    }
+
+    /// Whether the channel is open on our side, closed on the other, with no input left to read.
+    fn peer_closed_and_drained(&self) -> bool {
+        let SocketUnion::Open(socket) = *self.socket.get() else {
+            return false;
+        };
+        #[cfg(not(windows))]
+        {
+            match bun_sys::recv_peek_non_block(socket.fd(), &mut [0u8]) {
+                Ok(peeked) => peeked == 0,
+                // Any error but "nothing to read yet" ends the stream (ECONNRESET: the peer died
+                // with our data unread).
+                Err(err) => !err.is_retry(),
+            }
+        }
+        #[cfg(windows)]
+        {
+            use bun_sys::windows::kernel32::PeekNamedPipe;
+            // Fails once the other end is closed and the pipe is empty.
+            // SAFETY: `socket` is the live pipe (`socket == Open`); each out-pointer may be null.
+            let peeked = unsafe {
+                PeekNamedPipe(
+                    (*socket).handle,
+                    core::ptr::null_mut(),
+                    0,
+                    core::ptr::null_mut(),
+                    core::ptr::null_mut(),
+                    core::ptr::null_mut(),
+                )
+            };
+            peeked == 0
+        }
     }
 
     /// `Taskable::release_unrun`: a scheduled deferred task that will never

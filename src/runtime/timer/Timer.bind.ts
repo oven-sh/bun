@@ -7,7 +7,7 @@ export const timerClockMs = b.fn({ returns: b.f64 });
 export const monotonicNowMs = b.fn({ returns: b.f64 });
 export const setNextTimerId = b.fn({ args: { id: b.u64.optional }, length: 1, capability: "heap", throws: true });
 
-const chainable = { returns: b.self, passThis: true, invalidThis: "undefined" } as const;
+const chainable = { returns: b.this, passThis: true, invalidThis: "undefined" } as const;
 const ref = { ...chainable, rustName: "do_ref" } as const;
 const unref = { ...chainable, rustName: "do_unref" } as const;
 const destroyed = { getter: b.bool, pure: true } as const;

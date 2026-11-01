@@ -7,7 +7,7 @@ export const ContentOptions = b.dictionary(
   { allowArray: true, nonObjectAsEmpty: true },
 );
 
-/** Returns `this`. After the handler returns, `b.self.optional` returns `undefined` and `b.self.nullable` returns `null`. */
+/** Returns `this`. After the handler returns, `b.this.optional` returns `undefined` and `b.this.nullable` returns `null`. */
 const chainable = (returns: b.Type) => ({ returns, passThis: true }) as const;
 const contentOp = (returns: b.Type) =>
   ({
@@ -26,12 +26,12 @@ export const TextChunk = b.class({
   rustPath: "crate::api::html_rewriter::TextChunk",
   refCounted: true,
   proto: {
-    after: contentOp(b.self.optional),
-    before: contentOp(b.self.optional),
+    after: contentOp(b.this.optional),
+    before: contentOp(b.this.optional),
     lastInTextNode: { getter: b.bool.optional, cache: true },
-    remove: chainable(b.self.optional),
+    remove: chainable(b.this.optional),
     removed: { getter: b.bool.optional },
-    replace: contentOp(b.self.optional),
+    replace: contentOp(b.this.optional),
     text: { getter: b.string.utf8.optional },
   },
 });
@@ -50,7 +50,7 @@ export const DocType = b.class({
   proto: {
     name: doctypeField,
     publicId: doctypeField,
-    remove: chainable(b.self.optional),
+    remove: chainable(b.this.optional),
     removed: { getter: b.bool.optional },
     systemId: doctypeField,
   },
@@ -60,7 +60,7 @@ export const DocEnd = b.class({
   rustPath: "crate::api::html_rewriter::DocEnd",
   refCounted: true,
   proto: {
-    append: contentOp(b.self.nullable),
+    append: contentOp(b.this.nullable),
   },
 });
 
@@ -68,11 +68,11 @@ export const Comment = b.class({
   rustPath: "crate::api::html_rewriter::Comment",
   refCounted: true,
   proto: {
-    after: contentOp(b.self.nullable),
-    before: contentOp(b.self.nullable),
-    remove: chainable(b.self.nullable),
+    after: contentOp(b.this.nullable),
+    before: contentOp(b.this.nullable),
+    remove: chainable(b.this.nullable),
     removed: { getter: b.bool.optional },
-    replace: contentOp(b.self.nullable),
+    replace: contentOp(b.this.nullable),
     text: assignable("null"),
   },
 });
@@ -81,10 +81,10 @@ export const EndTag = b.class({
   rustPath: "crate::api::html_rewriter::EndTag",
   refCounted: true,
   proto: {
-    after: contentOp(b.self.nullable),
-    before: contentOp(b.self.nullable),
+    after: contentOp(b.this.nullable),
+    before: contentOp(b.this.nullable),
     name: assignable("undefined"),
-    remove: chainable(b.self.optional),
+    remove: chainable(b.this.optional),
   },
 });
 
@@ -98,7 +98,7 @@ export const AttributeIterator = b.class({
   proto: {
     /** Neither keeps the receiver. */
     next: { returns: AttributeIteratorResult, capability: "heap", throws: true, uses: { this: [] } },
-    "@@iterator": { ...chainable(b.self), rustName: "get_this", uses: { this: [{ use: "Returns" }] } },
+    "@@iterator": { ...chainable(b.this), rustName: "get_this" },
   },
 });
 
@@ -108,36 +108,36 @@ export const Element = b.class({
   rustPath: "crate::api::html_rewriter::Element",
   refCounted: true,
   proto: {
-    after: contentOp(b.self.optional),
-    append: contentOp(b.self.optional),
+    after: contentOp(b.this.optional),
+    append: contentOp(b.this.optional),
     attributes: { getter: AttributeIterator.optional, capability: "js" },
-    before: contentOp(b.self.optional),
+    before: contentOp(b.this.optional),
     canHaveContent: { getter: b.bool.optional },
     getAttribute: { ...named, returns: b.string.utf8.nullable },
     hasAttribute: { ...named, returns: b.bool, capability: "heap", throws: true },
     namespaceURI: { getter: b.string.utf8.optional, cache: true },
     onEndTag: {
-      ...chainable(b.self.nullable),
+      ...chainable(b.this.nullable),
       /** `b.any`: a detached element returns `null` without checking it. */
       args: { handler: b.any },
       capability: "js",
       throws: true,
     },
-    prepend: contentOp(b.self.optional),
-    remove: chainable(b.self.optional),
-    removeAndKeepContent: chainable(b.self.optional),
-    removeAttribute: { ...chainable(b.self.optional), ...named, capability: "heap", throws: true },
+    prepend: contentOp(b.this.optional),
+    remove: chainable(b.this.optional),
+    removeAndKeepContent: chainable(b.this.optional),
+    removeAttribute: { ...chainable(b.this.optional), ...named, capability: "heap", throws: true },
     removed: { getter: b.bool.optional },
-    replace: contentOp(b.self.optional),
+    replace: contentOp(b.this.optional),
     selfClosing: { getter: b.bool.optional },
     setAttribute: {
-      ...chainable(b.self.optional),
+      ...chainable(b.this.optional),
       args: { name: text, value: text },
       expected: { name: "Expected string", value: "Expected string" },
       capability: "heap",
       throws: true,
     },
-    setInnerContent: contentOp(b.self.optional),
+    setInnerContent: contentOp(b.this.optional),
     tagName: assignable("undefined"),
   },
 });
@@ -148,8 +148,8 @@ export const HTMLRewriter = b.class({
   /** The `on()` / `onDocument()` callbacks: `HandlerList` in html_rewriter.rs. */
   internalFields: ["handlers"],
   proto: {
-    on: { ...chainable(b.self), args: { selector: b.any, handlers: b.any }, capability: "js", throws: true },
-    onDocument: { ...chainable(b.self), args: { handlers: b.any }, capability: "js", throws: true },
+    on: { ...chainable(b.this), args: { selector: b.any, handlers: b.any }, capability: "js", throws: true },
+    onDocument: { ...chainable(b.this), args: { handlers: b.any }, capability: "js", throws: true },
     transform: {
       args: { input: b.any },
       returns: b.any.returning("string", "object"),

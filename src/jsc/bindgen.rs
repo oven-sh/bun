@@ -962,6 +962,7 @@ pub unsafe trait JsPayload: Sized + 'static {
     }
 
     /// The JS object that owns `self`. In `Drop` the cell is dead: compare it by identity only.
+    /// Only a body under a `passThis` or `capability: "js"` member may call this (bindgen-wrapper-value.test.ts).
     ///
     /// # Safety
     /// `self` was given to [`into_js`](Self::into_js).

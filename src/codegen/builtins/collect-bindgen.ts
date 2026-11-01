@@ -21,15 +21,18 @@ import {
   ArrayType,
   ClassType,
   Constant,
+  DefaultType,
   DictionaryType,
   FunctionDefinition,
   Getter,
   InternalFieldAccessor,
   Method,
+  OptionalType,
   RefType,
   RestType,
   Signature,
   Type,
+  UnionType,
   memberIdentifier,
   symbolDescription,
   type Builtin,
@@ -287,7 +290,22 @@ function computeConversionUses(type: Type): UseSpec[] {
 // Whoever says what a member of a class answers has read it, its setter too, and writes `uses` for an operand that it changes.
 const saysResult = (type: Type): boolean => !(type instanceof AnyType) || type.isDeclaredResult;
 
-function computeBodyUses(type: Type, capability: Capability, isRead: boolean): readonly UseSpec[] {
+/** A value the body is handed as no cell: `b.any` is a cell as often as not. */
+const isNoCell = (type: Type): boolean => !(type instanceof AnyType) && isImmediate(type.parameterType.accepted);
+
+/** An instance of a class of a schema, which the body is handed as `&T`: the struct, never the wrapper. Absent, or one of several classes, or a class or a primitive, too. */
+function isClassReference(type: Type): boolean {
+  if (type instanceof OptionalType || type instanceof DefaultType) return isClassReference(type.inner);
+  if (type instanceof UnionType) {
+    const alternatives = type.alternatives.map(({ type }) => type);
+    return alternatives.some(isClassReference) && alternatives.every(type => isClassReference(type) || isNoCell(type));
+  }
+  return type instanceof ClassType;
+}
+
+// What a body can do with an argument. One handed an instance of a class as `&T` can neither keep the wrapper nor answer it, like a getter its receiver.
+function computeBodyUses(type: Type, capability: Capability, isRead: boolean, result: TypeSpec): readonly UseSpec[] {
+  if (isClassReference(type) && capability !== "js") return usesOfGetterReceiver(false, result);
   const sharesNativeObject = () => [...collectParts([type])].some(part => part instanceof RefType);
   if (type.holdsJSValue || type.passesValue || sharesNativeObject()) {
     if (isRead) return b.handedOver;
@@ -312,8 +330,16 @@ function mayHoldInstanceOf(spec: TypeSpec, className: string): boolean {
   }
 }
 
-// A member that is passed its wrapper may answer it: `returns: b.self` is any object of the class, the receiver too.
-function computeReceiverUses(signature: Signature, className: string | null): readonly UseSpec[] {
+// Without its wrapper a body has `&self` alone, like a getter. With `returns: b.this` it has the wrapper to answer it.
+function computeReceiverUses(
+  signature: Signature,
+  className: string | null,
+  passesWrapper: boolean,
+): readonly UseSpec[] {
+  if (signature instanceof Method && signature.capability !== "js") {
+    if (!passesWrapper) return usesOfGetterReceiver(false, signature.returns.resultType);
+    if (signature.answersReceiver) return [b.returned, b.readsContents(), b.writesContents()];
+  }
   const changesReceiver = signature instanceof Method && signature.receiver === "mut";
   if (signature instanceof Method && saysResult(signature.returns) && !changesReceiver) {
     const mayAnswerReceiver =
@@ -326,8 +352,16 @@ function computeReceiverUses(signature: Signature, className: string | null): re
   return [b.readsContents(), b.writesContents()];
 }
 
-function createReceiver(signature: Signature, type: ParameterType | null, className: string | null): Receiver | null {
-  return type === null ? null : { type, uses: computeReceiverUses(signature, className) };
+/** The body of a member is handed the wrapper of its receiver, `passThis`. */
+const passesWrapperTo = (signature: Signature): boolean => signature instanceof Method && signature.passThis;
+
+function createReceiver(
+  signature: Signature,
+  type: ParameterType | null,
+  className: string | null,
+  passesWrapper: boolean,
+): Receiver | null {
+  return type === null ? null : { type, uses: computeReceiverUses(signature, className, passesWrapper) };
 }
 
 function isImmediate(spec: TypeSpec): boolean {
@@ -387,7 +421,7 @@ function createField(
   const uses = { ...columns.uses } as Record<string, readonly UseSpec[]>;
   for (const { name, type } of args) {
     uses[name] = [
-      ...(columns.uses?.[name] ?? computeBodyUses(type, capability, isRead)),
+      ...(columns.uses?.[name] ?? computeBodyUses(type, capability, isRead, result)),
       ...computeConversionUses(type),
     ];
   }
@@ -425,7 +459,11 @@ export function signatureOfBindgen(
   mode: CallMode,
   receiver: ParameterType | null,
 ): SignatureDeclaration {
-  const field = createField(signature, createReceiver(signature, receiver, null), signature.returns.resultType);
+  const field = createField(
+    signature,
+    createReceiver(signature, receiver, null, passesWrapperTo(signature)),
+    signature.returns.resultType,
+  );
   const [declared] = b
     .fn(unplacedPath, field)
     .flatMap(declaration => (declaration.declares === "Member" ? declaration.signatures : []));
@@ -440,9 +478,23 @@ function findLayoutOfResult({ returns }: Signature, fn: FunctionDefinition): Dic
   return returns.members.every(({ type }) => !type.takesUndefined) ? returns : null;
 }
 
+/** `returns: b.this` is the receiver, where the schema's type says an instance of the class. */
+function receiverInPlaceOfInstance(spec: TypeSpec): TypeSpec {
+  switch (spec.type) {
+    case "Instance":
+      return { type: "Operand", operand: "this" };
+    case "Union":
+      return { type: "Union", members: spec.members.map(receiverInPlaceOfInstance) };
+    default:
+      return spec;
+  }
+}
+
 function resultTypeOf(signature: Signature, fn: FunctionDefinition): TypeSpec {
   const layout = findLayoutOfResult(signature, fn);
-  return layout === null ? signature.returns.resultType : b.ordinaryObjectOf(layout.name).fresh.spec;
+  if (layout !== null) return b.ordinaryObjectOf(layout.name).fresh.spec;
+  const result = signature.returns.resultType;
+  return signature.answersReceiver ? receiverInPlaceOfInstance(result) : result;
 }
 
 function declareLayoutsOfResults(functions: readonly FunctionDefinition[]): Declaration[] {
@@ -546,7 +598,11 @@ function collectFunction(
   };
   const overloads = fn.signatures.map(signature =>
     createFields(
-      createField(signature, createReceiver(signature, receiver, className), resultOf(signature)),
+      createField(
+        signature,
+        createReceiver(signature, receiver, className, passesWrapperTo(signature)),
+        resultOf(signature),
+      ),
       signature,
       // The host function counts the arguments and turns what is thrown into a rejected promise. The thunk does neither.
       signature.requiredArguments > 0 || signature.rejects ? null : thunkOf(signature),

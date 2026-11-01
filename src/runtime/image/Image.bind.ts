@@ -1,7 +1,7 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 
 /** Chainable mutators — record an op and return `this`. */
-const chainable = { returns: b.self, passThis: true } as const;
+const chainable = { returns: b.this, passThis: true } as const;
 const chainableWithOptions = { ...chainable, args: { options: b.any }, capability: "js", throws: true } as const;
 /** Terminal async ops — run decode → pipeline → encode on the work pool. */
 const terminal = { returns: b.any.returning("Promise"), capability: "js", throws: true, passThis: true } as const;

@@ -2896,8 +2896,11 @@ export class Signature {
   readonly cppInlineBody: { name: string; header: string } | undefined;
   readonly length: number | undefined;
   readonly columns: SignatureColumns & EntryColumns;
+  /** The result is the receiver: `returns: b.this`, which the class resolves. */
+  readonly answersReceiver: boolean;
   /** `hasThisValue`: the body is also handed its own JS object. `isProperty`: JS can call it, so each argument is converted from a JS value. */
   constructor(options: FunctionOptions & FunctionField & ConstructOptions, hasThisValue = false, isProperty = true) {
+    this.answersReceiver = (options as { [answersReceiverKey]?: boolean })[answersReceiverKey] ?? false;
     this.columns = columnsOf(options, [
       "args",
       "returns",
@@ -3587,6 +3590,12 @@ class SelfType extends Type {
 }
 export const selfType = new SelfType();
 
+/** `b.this`: the result is the receiver itself. A member with it is passed its wrapper, and the table takes it to hand the wrapper back and keep nothing of it. */
+class ReceiverType extends SelfType {}
+export const thisType = new ReceiverType();
+/** Only the class sets it, when it resolves `returns: b.this`. */
+const answersReceiverKey = Symbol("answersReceiver");
+
 /** As a result: the wrapper, `JsWrapper<'a, T>`. As an argument: `&'a T`. */
 export class ClassType extends NamedType {
   /** What it `extends`. */
@@ -3703,15 +3712,29 @@ export class ClassType extends NamedType {
       this.sharedThis || !options.estimatedSize,
       "estimatedSize: a marking thread would read the struct while a mutates member writes it",
     );
+    const isSelf = (type: Type): boolean => type instanceof SelfType;
     const own = (type: Type): Type => {
-      if (type === selfType) return this;
-      return type instanceof OptionalType && type.inner === selfType ? new OptionalType(this, type.modifier) : type;
+      if (isSelf(type)) return this;
+      return type instanceof OptionalType && isSelf(type.inner) ? new OptionalType(this, type.modifier) : type;
     };
-    const resolve = <T extends SignatureOptions>(signature: T): T => ({
-      ...signature,
-      args: Object.fromEntries(Object.entries(signature.args ?? {}).map(([name, type]) => [name, own(type)])),
-      ...(signature.returns ? { returns: own(signature.returns) } : {}),
-    });
+    const answersReceiver = (type: Type | undefined): boolean =>
+      type === thisType || (type instanceof OptionalType && type.inner === thisType);
+    // `passThis` of a member, which a constructor has not: b.this takes the wrapper of an instance.
+    const resolve = <T extends SignatureOptions & { passThis?: boolean }>(signature: T, isStatic = true): T => {
+      for (const [name, type] of Object.entries(signature.args ?? {})) {
+        assert(!answersReceiver(type), `${name}: b.this is a result: an argument of the class is b.self`);
+      }
+      if (answersReceiver(signature.returns)) {
+        assert(!isStatic, "returns: b.this is the result of a member with a receiver: a static member has none");
+        assert(signature.passThis, "returns: b.this takes passThis: the body answers the wrapper it is handed");
+      }
+      return {
+        ...signature,
+        args: Object.fromEntries(Object.entries(signature.args ?? {}).map(([name, type]) => [name, own(type)])),
+        ...(signature.returns ? { returns: own(signature.returns) } : {}),
+        [answersReceiverKey]: answersReceiver(signature.returns),
+      };
+    };
     this.illegalConstructor = options.construct === "illegal";
     this.construct = options.construct
       ? new Signature(options.construct === "illegal" ? {} : resolve(options.construct))
@@ -3752,6 +3775,10 @@ export class ClassType extends NamedType {
         }
         if ("getter" in field) {
           assert(!("args" in field || "returns" in field), `${name}: a getter has no args or returns`);
+          assert(
+            !answersReceiver(field.getter),
+            `${name}: b.this is the result of a function: a getter of the class is b.self`,
+          );
           return new Getter(name, { ...field, getter: own(field.getter) }, isStatic, this.sharedThis);
         }
         const overloads: readonly FunctionField[] = Array.isArray(field) ? field : [field];
@@ -3766,7 +3793,7 @@ export class ClassType extends NamedType {
         );
         assert(!(isStatic && wellKnownSymbol(name)), `${name}: an @@ key is a property of the prototype`);
         const fn = new FunctionDefinition(
-          overloads.map(overload => new Method(name, resolve(overload), isStatic, this.sharedThis)),
+          overloads.map(overload => new Method(name, resolve(overload, isStatic), isStatic, this.sharedThis)),
         );
         fn.name = name;
         return fn;

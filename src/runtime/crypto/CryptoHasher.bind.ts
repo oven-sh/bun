@@ -23,7 +23,7 @@ const digestIn = (newBuffer: "Buffer" | "Uint8Array") =>
 
 const method = { capability: "heap", throws: true } as const;
 const uses = { output: [...table.handedOver, table.writesContents()] };
-const update = { ...method, returns: b.self, passThis: true, mutates: true } as const;
+const update = { ...method, returns: b.this, passThis: true, mutates: true } as const;
 const digestOf = (newBuffer: "Buffer" | "Uint8Array") =>
   ({ ...method, args: { output: DigestOutput.nullable }, returns: digestIn(newBuffer), mutates: true, uses }) as const;
 

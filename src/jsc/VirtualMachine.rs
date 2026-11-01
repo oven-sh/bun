@@ -6135,8 +6135,14 @@ impl VirtualMachine {
     ) {
         let mut formatter = crate::console_object::Formatter::new(self.global());
         let colors = bun_core::Output::enable_ansi_colors_stderr();
+        let exception_cell = exception.to_js();
+        // Print the thrown Error itself; non-Error values only have the cell's throw-site stack.
+        let value = match exception_cell.to_error() {
+            Some(error) if error.is_error() => error,
+            _ => exception_cell,
+        };
         self.print_errorlike_object(
-            exception.value(),
+            value,
             Some(exception),
             exception_list,
             &mut formatter,
@@ -6665,6 +6671,7 @@ impl VirtualMachine {
             if members_past_cap {
                 self.print_error_from_maybe_private_data(
                     value,
+                    exception,
                     exception_list.as_deref_mut(),
                     formatter,
                     writer,
@@ -6755,6 +6762,7 @@ impl VirtualMachine {
 
         let was_internal = self.print_error_from_maybe_private_data(
             value,
+            exception,
             exception_list.as_deref_mut(),
             formatter,
             writer,
@@ -6785,6 +6793,7 @@ impl VirtualMachine {
     fn print_error_from_maybe_private_data(
         &mut self,
         value: JSValue,
+        exception: Option<&Exception>,
         exception_list: Option<&mut ExceptionList>,
         formatter: &mut crate::console_object::Formatter,
         writer: &mut bun_core::io::Writer,
@@ -6847,6 +6856,7 @@ impl VirtualMachine {
 
         if let Err(err) = self.print_error_instance_js(
             value,
+            exception,
             exception_list,
             formatter,
             writer,
@@ -6875,7 +6885,7 @@ impl VirtualMachine {
         exception: &Exception,
     ) -> JSValue {
         let jsc_vm = global_object.bun_vm().as_mut();
-        let _ = jsc_vm.uncaught_exception(global_object, exception.value(), false);
+        let _ = jsc_vm.uncaught_exception(global_object, exception.to_js(), false);
         JSValue::UNDEFINED
     }
 
@@ -7389,6 +7399,7 @@ impl VirtualMachine {
     fn print_error_instance_js(
         &mut self,
         error_instance: JSValue,
+        jsc_exception: Option<&Exception>,
         exception_list: Option<&mut ExceptionList>,
         formatter: &mut crate::console_object::Formatter,
         writer: &mut bun_core::io::Writer,
@@ -7452,10 +7463,12 @@ impl VirtualMachine {
         // raw pointer (the holder is heap-pinned for the call).
         let exception: *mut ZigException<'_> = exception_holder.zig_exception();
 
+        // toZigException unwraps the cell and falls back to its throw-site frames when the error has none.
+        let stack_source = jsc_exception.map_or(error_instance, Exception::to_js);
         self.remap_zig_exception(
             // SAFETY: `exception` points into stack-local `exception_holder`.
             unsafe { &mut *exception },
-            error_instance,
+            stack_source,
             exception_list,
             &mut exception_holder.need_to_clear_parser_arena_on_deinit,
             &mut source_code,
@@ -8019,6 +8032,7 @@ impl VirtualMachine {
             } else {
                 self.print_error_instance_js(
                     err,
+                    None,
                     exception_list.as_deref_mut(),
                     formatter,
                     writer,

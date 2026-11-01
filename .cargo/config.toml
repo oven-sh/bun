@@ -1,0 +1,2 @@
+[build]
+rustflags = ["-D", "unsafe_code"]

@@ -3,6 +3,7 @@
 const { createRequire } = require("node:module");
 const types = require("node:util/types");
 const SavedProperties = require("internal/test/saved_properties");
+type SavedProperties = InstanceType<typeof SavedProperties>;
 
 const reportUncaughtException = $newCppFunction("BunProcess.cpp", "jsFunctionReportUncaughtException", 1);
 const isInPreload = $bindgen("environment.bind.ts", "isInPreload");
@@ -38,6 +39,7 @@ interface Environment {
 interface PackageClasses {
   // What the first root has is saved. The second root tells which of it is the package's and not the root's own.
   add(root: object, descendsIntoObjects: boolean): void;
+  // Puts back the classes of every package: they share the builtins of the global they were loaded into.
   restore(): void;
 }
 
@@ -404,11 +406,22 @@ const kept = new $Map<string, Environment>();
 // require() of a module with top-level await throws only the first time, so rethrow that error for every file.
 const failedToLoad = new $Map<string, unknown>();
 const classesOfPackages = new $Map<string, PackageClasses>();
+const savedClassesOfPackages: SavedProperties[] = [];
+
+// Underscore-prefixed properties hold internal state. Reading `console._stdout` opens the stream.
+function isNotInternal(_: object, key: PropertyKey) {
+  return typeof key !== "string" || key.$charCodeAt(0) !== 95;
+}
+
+function restoreClassesOfPackages() {
+  for (let i = 0; i < savedClassesOfPackages.length; i++) savedClassesOfPackages[i].restore();
+}
 
 function classesOf(packagePath: string): PackageClasses {
   let classes = classesOfPackages.$get(packagePath);
   if (classes) return classes;
-  const saved = new SavedProperties();
+  const saved = new SavedProperties(isNotInternal);
+  $arrayPush(savedClassesOfPackages, saved);
   let roots = 0;
   classes = {
     add(root, descendsIntoObjects) {
@@ -416,7 +429,7 @@ function classesOf(packagePath: string): PackageClasses {
       else if (roots === 1) saved.keepReachableFrom(root, descendsIntoObjects);
       roots++;
     },
-    restore: () => saved.restore(),
+    restore: restoreClassesOfPackages,
   };
   classesOfPackages.$set(packagePath, classes);
   return classes;

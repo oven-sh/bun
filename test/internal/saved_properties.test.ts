@@ -58,6 +58,38 @@ describe("SavedProperties", () => {
     expect("added" in Class.prototype).toBe(false);
   });
 
+  test("leaves a sealed or frozen object as it is", () => {
+    const sealed = { left: 1, fn() {} };
+    const frozen = { left: 1, fn() {} };
+    const saved = new SavedProperties();
+    saved.save({ sealed, frozen }, true);
+    sealed.left = 2;
+    Object.seal(sealed);
+    Object.freeze(frozen);
+    saved.restore();
+    expect(sealed).toEqual({ left: 2, fn: sealed.fn });
+    expect(Object.isSealed(sealed)).toBe(true);
+    expect(frozen).toEqual({ left: 1, fn: frozen.fn });
+    expect(Object.isFrozen(frozen)).toBe(true);
+  });
+
+  test("a walk that throws keeps what it saved before", () => {
+    class Before {}
+    const saved = new SavedProperties();
+    const trap = new Proxy(
+      {},
+      {
+        ownKeys() {
+          throw new Error("trap");
+        },
+      },
+    );
+    expect(() => saved.save({ Before, trap }, true)).toThrow("trap");
+    Before.prototype.left = 1;
+    saved.restore();
+    expect("left" in Before.prototype).toBe(false);
+  });
+
   test("does not descend into the global object", () => {
     const saved = new SavedProperties();
     saved.save({ global: globalThis, Class: class {} }, true);

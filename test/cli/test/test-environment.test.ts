@@ -1399,16 +1399,19 @@ describe.concurrent("test environment with the real", () => {
         Object.getPrototypeOf(Text.prototype).left = "${file}";
         if (typeof happyDOM === "object") {
           NodeFilter.SHOW_ELEMENT = 0;
-          Object.getPrototypeOf(happyDOM).abort = function patchedAbort() {};
+          Object.getPrototypeOf(happyDOM).left = "${file}";
         }
         if (typeof jsdom === "object") jsdom.constructor.prototype.left = "${file}";
         expect(HTMLElement.prototype.fromPreload).toBe("preload");
         expect(new Event("ping").type).toBe("patched");
       `;
-      // After the file's tests, while the window closes.
-      const late = `
+      // After the file's tests, while the window closes. jsdom's window closes before a timer can fire.
+      const late = (file: string) => `
         const prototype = HTMLElement.prototype;
-        afterAll(() => void setTimeout(() => (prototype.focus = function patchedLate() {}), 0));
+        afterAll(() => void setImmediate(() => {
+          prototype.focus = function patchedLate() {};
+          console.log("late ${file}");
+        }));
       `;
       const check = `
         expect(HTMLElement.prototype.focus.name).toBe("focus");
@@ -1419,7 +1422,7 @@ describe.concurrent("test environment with the real", () => {
         expect(new Event("ping").type).toBe("ping");
         expect(typeof Element.prototype.remove).toBe("function");
         expect(NodeFilter.SHOW_ELEMENT).toBe(1);
-        if (typeof happyDOM === "object") expect(Object.getPrototypeOf(happyDOM).abort.name).toBe("abort");
+        if (typeof happyDOM === "object") expect("left" in Object.getPrototypeOf(happyDOM)).toBe(false);
         if (typeof jsdom === "object") expect("left" in jsdom.constructor.prototype).toBe(false);
         expect(HTMLElement.prototype.fromPreload).toBe("preload");
         const popup = document.implementation.createHTMLDocument("popup");
@@ -1429,17 +1432,53 @@ describe.concurrent("test environment with the real", () => {
       `;
       using dir = project({
         "preload.js": `HTMLElement.prototype.fromPreload = "preload";`,
-        "a.test.js": `// ${VITEST} ${name}\ntest("a", () => { ${patch("a")} });\n${late}`,
-        "b.test.js": `// ${VITEST} ${name}\ntest("b", () => { ${check} ${patch("b")} });\n${late}`,
+        "a.test.js": `// ${VITEST} ${name}\ntest("a", () => { ${patch("a")} });\n${late("a")}`,
+        "b.test.js": `// ${VITEST} ${name}\ntest("b", () => { ${check} ${patch("b")} });\n${late("b")}`,
         "c.test.js": `// ${VITEST} ${name}\ntest("c", () => { ${check} });`,
       });
-      const { stdout, stderr, exitCode } = await bunTest(String(dir), flag, "--preload=./preload.js");
-      expect(stdout).toEqual([]);
+      const { stdout, stderr, exitCode } = await bunTest(
+        String(dir),
+        flag,
+        "--preload=./preload.js",
+        "./a.test.js",
+        "./b.test.js",
+        "./c.test.js",
+      );
+      expect(stdout).toEqual(["late a", "late b"]);
       expect(stderr).not.toContain("Unhandled error");
       expect(summary(stderr)).toEqual(["3 pass", "0 fail"]);
       expect(exitCode).toBe(0);
     },
   );
+
+  // Both packages are loaded into the one global that outlives the files, so their classes share its Object.prototype.
+  test("with --isolate a file's change to the builtins behind the packages' classes is undone for both packages", async () => {
+    const happyDom = (body: string) => `// ${VITEST} happy-dom\ntest("happy-dom", () => {
+      const builtin = Object.getPrototypeOf(EventTarget.prototype);
+      ${body}
+    });`;
+    const jsdom = (body: string) => `// ${VITEST} jsdom\ntest("jsdom", () => {
+      const builtin = Object.getPrototypeOf(jsdom.constructor.prototype);
+      ${body}
+    });`;
+    using dir = project({
+      "a.test.js": happyDom(`builtin.left = "a";`),
+      "b.test.js": jsdom(`expect("left" in builtin).toBe(false); builtin.left = "b";`),
+      "c.test.js": happyDom(`expect("left" in builtin).toBe(false); builtin.left = "c";`),
+      "d.test.js": jsdom(`expect("left" in builtin).toBe(false);`),
+    });
+    const { stdout, stderr, exitCode } = await bunTest(
+      String(dir),
+      "--isolate",
+      "./a.test.js",
+      "./b.test.js",
+      "./c.test.js",
+      "./d.test.js",
+    );
+    expect(stdout).toEqual([]);
+    expect(summary(stderr)).toEqual(["4 pass", "0 fail"]);
+    expect(exitCode).toBe(0);
+  });
 
   test.each(["jsdom", "happy-dom"])(
     "%s: with --isolate=modules every file has all the names of its window",

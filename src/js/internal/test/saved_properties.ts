@@ -21,7 +21,7 @@ const deleteOwnProperty: (object: object, key: PropertyKey) => boolean = $newCpp
 
 // This module is evaluated before any test file runs. Test files can patch builtins later,
 // so only use what's captured here, $-private names, index loops and null-prototype descriptors.
-const { getPrototypeOf, getOwnPropertyDescriptor, defineProperty } = Object;
+const { getPrototypeOf, getOwnPropertyDescriptor, defineProperty, isExtensible } = Object;
 const { ownKeys } = Reflect;
 
 type Properties = Map<PropertyKey, PropertyDescriptor>;
@@ -103,13 +103,15 @@ function restoreProperties(
     const current = getOwnPropertyDescriptor(object, key)!;
     if (isSame(current, saved)) continue;
     if (!$getByIdDirect(current, "configurable")) {
+      // A sealed or frozen object keeps its properties: one that is deleted can't be defined again.
+      if (!isExtensible(object)) continue;
       if (saved.configurable) deleteOwnProperty(object, key);
       // Some builtins have a read-only property that gives a new value each time it's read.
       else if (!$getByIdDirect(current, "writable")) continue;
     }
     defineProperty(object, key, saved);
   }
-  if (found === properties.$size) return;
+  if (found === properties.$size || !isExtensible(object)) return;
   properties.$forEach((saved, key) => {
     if (!getOwnPropertyDescriptor(object, key)) defineProperty(object, key, saved);
   });
@@ -129,25 +131,34 @@ class SavedProperties {
     this.#isTracked = isTracked;
   }
 
-  // Saves what is reachable from `root` and not saved yet.
+  // Saves what is reachable from `root` and not saved yet. A walk that throws, from a trap of a proxy, keeps what
+  // it saved before.
   save(root: object, descendsIntoObjects: boolean) {
     if (this.#seen.$has(root)) return;
     const objects = this.#objects;
     const properties = this.#properties;
-    walk(root, descendsIntoObjects, this.#isTracked, this.#seen, object => {
-      const saved: Properties = new Map();
-      $arrayPush(objects, object);
-      $arrayPush(properties, saved);
-      return saved;
-    });
-    this.#saveShapes();
+    try {
+      walk(root, descendsIntoObjects, this.#isTracked, this.#seen, object => {
+        const saved: Properties = new Map();
+        $arrayPush(objects, object);
+        $arrayPush(properties, saved);
+        return saved;
+      });
+    } finally {
+      this.#saveShapes();
+    }
   }
 
   // Forgets what isn't reachable from `root`. The rest keeps its saved properties.
   keepReachableFrom(root: object, descendsIntoObjects: boolean) {
     this.restore();
     const reachable = new Map<object, true>();
-    walk(root, descendsIntoObjects, this.#isTracked, reachable, () => undefined);
+    try {
+      walk(root, descendsIntoObjects, this.#isTracked, reachable, () => undefined);
+    } catch (error) {
+      this.#saveShapes();
+      throw error;
+    }
     const objects = this.#objects;
     const properties = this.#properties;
     let kept = 0;

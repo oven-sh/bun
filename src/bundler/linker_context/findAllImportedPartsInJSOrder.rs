@@ -449,6 +449,21 @@ impl LoadTimeReads {
             }
         };
 
+        // A read of `exports_other.name`, a name of an external `export *` (README: Pattern 5), depends on the part that declares that object and names no binding of the file.
+        let has_members = !c.external_star_members.is_empty();
+        let exports_refs = c.graph.ast.items_exports_ref();
+        let symbols = &c.graph.symbols;
+        let names_binding = |part: &bun_ast::Part, dependency: &bun_ast::Dependency| {
+            if !has_members || dependency.part_index != bun_ast::NAMESPACE_EXPORT_PART_INDEX {
+                return true;
+            }
+            let exports_ref = symbols.follow(exports_refs[dependency.source_index.get() as usize]);
+            part.symbol_uses
+                .keys()
+                .iter()
+                .any(|&used| symbols.follow(used) == exports_ref)
+        };
+
         let mut effects = vec![LoadEffect::Hoisted; parts_len];
         let mut dependents_start: Vec<u32> = vec![0; parts_len + 2];
         for_each_live_part(&mut |file, id, part| {
@@ -460,6 +475,9 @@ impl LoadTimeReads {
                 effects[id as usize] = LoadEffect::of(part);
             }
             for dependency in part.dependencies.iter() {
+                if !names_binding(part, dependency) {
+                    continue;
+                }
                 let to =
                     first_part_id[dependency.source_index.get() as usize] + dependency.part_index;
                 dependents_start[to as usize + 2] += 1;
@@ -471,6 +489,9 @@ impl LoadTimeReads {
         let mut dependents: Vec<u32> = vec![0; dependents_start[parts_len + 1] as usize];
         for_each_live_part(&mut |_, id, part| {
             for dependency in part.dependencies.iter() {
+                if !names_binding(part, dependency) {
+                    continue;
+                }
                 let to =
                     first_part_id[dependency.source_index.get() as usize] + dependency.part_index;
                 dependents[dependents_start[to as usize + 1] as usize] = id;

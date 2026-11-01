@@ -252,6 +252,7 @@ _What happens_:
 
 - For each import in each file, finds the corresponding export definition
 - Handles re-exports by tracing through export chains
+- Binds a name that only an external `export *` of the target can have to a member of the namespace that the statement imports (Pattern 5 of `convertStmtsForChunk`)
 - Creates dependency relationships between parts of different files
 - Handles CommonJS compatibility for import/export objects
 - Creates wrapper parts for modules that need runtime wrappers
@@ -764,7 +765,7 @@ The renamed symbols are then used during final code generation to produce output
 
 - Walks the import graph in evaluation order (`EntryWalk`): depth first along every `import` statement, also through files that tree shaking dropped, so a file prints after the files it imports
 - One walk per entry point, in parallel. A chunk has one owner: the entry point that loads first among the chunk's entry points (`load_rank`). `load_rank` and `EntryWalk` read the same edges (`for_each_edge`). The owner's walk places the files of the chunk, so no two walks write the same list. Without code splitting, each chunk is owned by its own entry point
-- On an import cycle, the owner's order can put a part that evaluates code at load ahead of a binding that it reads, itself or through the functions that it names (`LoadTimeReads`). A walk from the next entry point by rank whose order does not then lays out that chunk (`find_safe_walks`). The other chunks keep the layout of their owner. With no such entry point, so does this one. The read is judged by `part.dependencies`, per statement: `const f = () => x` is no read of `x` (`Expr::can_be_moved`), and `const o = { f: () => x }` is one
+- On an import cycle, the owner's order can put a part that evaluates code at load ahead of a binding that it reads, itself or through the functions that it names (`LoadTimeReads`). A walk from the next entry point by rank whose order does not then lays out that chunk (`find_safe_walks`). The other chunks keep the layout of their owner. With no such entry point, so does this one. The read is judged by `part.dependencies`, per statement: `const f = () => x` is no read of `x` (`Expr::can_be_moved`), and `const o = { f: () => x }` is one. A read of `exports_lib.a`, a name of an external `export *` (Pattern 5 of `convertStmtsForChunk`), names the exports object and no binding of lib.js, so it is no read of one
 - Places the parts of a file in runs: a part prints after the files it imports and before the files that the next part imports
 - Collects the live parts of each run into part ranges. The runtime and the wrapped files go first in the chunk, then the namespace objects: a namespace object exists before any file runs
 - Records the other chunks in the order a walk from the chunk's files reaches their first file with side effects (`reached_chunks_in_order`), which orders the chunk's cross-chunk `import` statements
@@ -945,10 +946,11 @@ var init_module = __esm(() => {
 // Input:
 export * from "./external-module";
 
-// Output (when external module needs runtime re-export):
-import * as ns from "./external-module"; // ← outside_wrapper_prefix
-__reExport(exports, ns, module.exports); // ← inside_wrapper_prefix (runtime call)
+// Output (CommonJS and IIFE output):
+__reExport(exports, require("./external-module"), module.exports); // ← inside_wrapper_prefix (runtime call)
 ```
+
+In ES module output the statement does not run (Pattern 5).
 
 **Pattern 4: CommonJS Entry Point Dual Exports**
 For CommonJS entry points, the function creates dual export objects:
@@ -961,29 +963,50 @@ var exports = {};
 __reExport(exports, targetModule, module.exports); // module.exports gets __esModule
 ```
 
-**Pattern 5: External `export *` of an ES Module Entry Point**
-In ES module output, the `export * from` of an external module that an entry point has is not evaluated at run time. It is an export of that entry point's chunk and of no other chunk. The statement stays in place only at the top level of the entry point's own chunk (`Chunk::prints_entry_point_file_in_place`). Everywhere else it becomes an import, and the tail of the chunk (`print_entry_point_external_export_stars`) re-exports the module for the entry point and for each entry point that reaches it through `export *`:
+**Pattern 5: External `export *` in ES Module Output**
+In ES module output, the `export * from` of an external module does not copy names when it runs, whether or not its file is an entry point. Only that module knows its names, so the linker has no export for them. Step 3 lists, for each file, the external `export *` statements that its `export *` chain reaches (`LinkerContext::external_export_stars`). A statement of a module that the target disables is not in the list: such a module has no names. Each listed statement has a namespace symbol of its own. A name that no export of the file matches binds in step 4 (`external_export_star_name`):
 
 ```javascript
-// lib.js, an entry point:
+// lib.js (an entry point or not):
 export * from "external";
 
-// In the chunk of lib.js, when lib.js has no wrapper:
-export * from "external";
+// The file reaches one module. The name is a member of the namespace of its statement:
+import { a } from "./lib.js";
+a; // → external.a
+import * as lib from "./lib.js";
+lib.a; // → external.a
 
-// In the chunk of another entry point, in a shared chunk, or when lib.js has a wrapper:
-import "external"; // ← outside_wrapper_prefix when wrapped
-
-// ...and at the end of the chunk of lib.js (and of an entry point with `export * from "./lib.js"`):
-export * from "external";
+// The file reaches two or more modules. The name is a member of the exports object of lib.js:
+exports_lib.a;
 ```
 
-The tail also re-exports an external module that the entry point reaches through the `export *` of a file that is not an entry point. That file evaluates its own statement at run time (Pattern 3), which fills its exports object and adds no export to the chunk.
+Two statements name one module when their paths are equal and are package paths or absolute paths, or are relative paths of files in one directory (`same_external_module`).
 
-Two statements stay out of the tail:
+The member is one symbol per namespace and name (`external_star_member`), and the part of the statement declares it. So every reader depends on that part: the statement stays in the output, and the module loads where the statement loads it. A name that the module does not have reads `undefined`. A read does not initialize a file that has a wrapper: through an `export *` of a file without side effects, nothing calls `init_lib()`, as for a name of lib.js itself.
+
+A file that reaches only disabled modules has no name to give. A named import of it is a member of its exports object, which reads `undefined`. A property of a namespace import and a re-export of a TypeScript file get the answer of a name that no file has: a warning, and a dropped re-export.
+
+The statement is the one import of the module. After tree shaking, a statement whose namespace has a member, or whose names a live exports object copies, gets `ImportRecordFlags::CONTAINS_IMPORT_STAR` (`import_used_external_star_namespaces`), and prints the namespace:
+
+```javascript
+// In the chunk of lib.js, when lib.js is its entry point and has no wrapper:
+export * from "external"; // the statement stays an export of the chunk
+import * as external from "external"; // only when the namespace is used
+
+// In every other chunk, or when lib.js has a wrapper:
+import * as external from "external"; // `import "external"` when the namespace is not used
+```
+
+The exports object of a file that reaches such a statement gets the names at run time. The part that declares the object ends with `__reExport(exports_lib, external)` for each module (`complete_exports_objects_with_external_export_stars`). Tree shaking keeps that part only when something reads the object, such as `Object.keys(lib)`, `require("./lib.js")` or an `import("./lib.js")` without code splitting. A name read off `require()` or `import()` stays a read of that object: the call returns it, and it has properties that the module does not have (`__esModule`, those of `Object.prototype`).
+
+That part runs before any file does. So a name of the external module wins over the same name of a CommonJS file that lib.js also re-exports with `export *`, whatever the order of the two statements: the names of the CommonJS file are copied where its statement runs. Such a lib.js has dynamic exports, so a name that none of its exports matches is a property of its exports object.
+
+The statement is also an export of the chunk of an entry point and of no other chunk. The tail of an entry chunk (`print_entry_point_external_export_stars`) re-exports the module for each statement that its entry point reaches and that does not print in place. Two statements stay out of the tail:
 
 - The statement of an entry point that has a CommonJS wrapper. The namespace of that chunk is its default export alone.
-- A statement with a relative path, unless the entry point's chunk itself has the import of that statement. A relative path prints as written, so only a chunk that already imports it is sure to name the same file.
+- A statement with a relative path, unless the entry point's chunk itself has the import of that statement. A relative path prints as written, so only a chunk that already imports it is sure to name the same file. A read of a name needs no second path: it reads the namespace that the statement imports.
+
+A lifted CommonJS file is the exception. Its statement was `module.exports = require("external")`, and it keeps the rule that it had: a file that is not an entry point has dynamic exports, which gives it a CommonJS wrapper, and inside the wrapper the statement assigns the namespace of the module.
 
 **Example: Complex Module Transformation**
 

@@ -425,6 +425,86 @@ impl LinkerContext<'_> {
         }
     }
 
+    /// After step 5: appends `__reExport(exports, ns)`, for each external module that a file re-exports with `export *`, to the part that declares its exports object (README: Pattern 5).
+    pub(crate) fn complete_exports_objects_with_external_export_stars(
+        &mut self,
+    ) -> Result<(), bun_alloc::AllocError> {
+        let re_export_ref = self.runtime_function(b"__reExport");
+        let part_index = bun_ast::NAMESPACE_EXPORT_PART_INDEX;
+        // The first statement of each module, with its namespace.
+        let mut modules: Vec<(crate::linker_context_mod::ExternalExportStar, Ref)> = Vec::new();
+        for i in 0..self.external_export_stars.count() {
+            let source_index = self.external_export_stars.keys()[i];
+            let id = source_index as usize;
+            // The namespace of a CommonJS file is its `module.exports`.
+            if self.graph.ast.items_exports_kind()[id] == bun_ast::ExportsKind::Cjs
+                || self.graph.meta.items_flags()[id].wrap == WrapKind::Cjs
+            {
+                continue;
+            }
+
+            modules.clear();
+            for j in 0..self.external_export_stars.values()[i].len() {
+                let star = self.external_export_stars.values()[i][j];
+                if modules
+                    .iter()
+                    .any(|&(module, _)| self.same_external_module(module, star))
+                {
+                    continue;
+                }
+                let namespace_ref = self.external_star_namespace(star);
+                modules.push((star, namespace_ref));
+            }
+            if modules.is_empty() {
+                continue;
+            }
+
+            let arena = self.graph.arena();
+            let exports_ref = self.graph.ast.items_exports_ref()[id];
+            let part =
+                &mut self.graph.ast.items_parts_mut()[id].as_mut_slice()[part_index as usize];
+            let loc = Loc::EMPTY;
+            let mut stmts: Vec<Stmt> = Vec::with_capacity(part.stmts.len() + modules.len());
+            stmts.extend_from_slice(part.stmts.slice());
+            for &(_, namespace_ref) in &modules {
+                stmts.push(Stmt::allocate_expr(
+                    arena,
+                    Expr::allocate(
+                        arena,
+                        E::Call {
+                            target: Expr::init_identifier(re_export_ref, loc),
+                            args: bun_ast::ExprNodeList::from_slice(&[
+                                Expr::init_identifier(exports_ref, loc),
+                                Expr::init_identifier(namespace_ref, loc),
+                            ]),
+                            ..Default::default()
+                        },
+                        loc,
+                    ),
+                ));
+            }
+            part.stmts = bun_ast::StoreSlice::new_mut(arena.alloc_slice_copy(&stmts));
+            for &(star, namespace_ref) in &modules {
+                self.graph.generate_symbol_import_and_use(
+                    source_index,
+                    part_index,
+                    namespace_ref,
+                    1,
+                    Index::source(star.source_index),
+                )?;
+                self.external_star_copies.push((source_index, star));
+            }
+            self.graph.generate_symbol_import_and_use(
+                source_index,
+                part_index,
+                re_export_ref,
+                modules.len() as u32,
+                Index::RUNTIME,
+            )?;
+        }
+        Ok(())
+    }
+
     /// WARNING: This method is run in parallel over all files. Do not mutate data
     /// for other files within this method or you will create a data race.
     ///

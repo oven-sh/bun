@@ -964,7 +964,7 @@ pub(crate) fn generate_entry_point_tail_js(
                             if unsafe {
                                 (*c.graph
                                     .symbols
-                                    .get(resolved_export_data.import_ref)
+                                    .get(c.graph.symbols.follow(resolved_export_data.import_ref))
                                     .unwrap())
                                 .namespace_alias
                                 .is_some()

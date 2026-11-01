@@ -188,7 +188,9 @@ describe.concurrent("the debug id of a // @bun file and of the .map beside it", 
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const clean = (text: string) => text.replaceAll(String(dir), "<dir>").replaceAll("\\", "/");
+    // A path in a warning is in quotes, and a quoted path that is not ASCII has each backslash twice.
+    const clean = (text: string) =>
+      text.replaceAll("\\\\", "\\").replaceAll(String(dir), "<dir>").replaceAll("\\", "/");
     return { stdout: clean(stdout), stderr: clean(stderr), exitCode };
   }
   // A warning shows the first 64 bytes of an id.

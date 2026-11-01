@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isCI, isLinux, isMacOS, isWindows, readElf64ProgramHeaders } from "harness";
+import { bunEnv, bunExe, isASAN, isArm64, isCI, isLinux, isMacOS, isWindows, readElf64ProgramHeaders } from "harness";
 import { closeSync, constants, openSync, readFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { unsupported } from "../aot/harness/compiler";
@@ -254,7 +254,7 @@ test.concurrent("--trim requires --compile", async () => {
     test.skipIf(!isMacOS || (isAot && !!unsupported))(`${how}: codesign finds the embedded Info.plist`, async () => {
       const hello = await build("hello.ts", ...flags, "--trim", "--macos-info-plist=embedded.plist");
       expect(await run([hello.executable], folder)).toEqual(saysHello);
-      if (process.arch === "arm64") {
+      if (isArm64) {
         expect(await run(["codesign", "--verify", hello.file])).toEqual({ stdout: "", stderr: "", exitCode: 0 });
         expect((await run(["codesign", "--display", "--verbose=2", hello.file])).stderr).toContain(
           "Info.plist entries=1",

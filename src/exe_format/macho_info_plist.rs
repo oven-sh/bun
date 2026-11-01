@@ -99,10 +99,10 @@ pub fn write(macho: &mut [u8], plist: &[u8]) -> Result<(), MachoError> {
             sections_at + index * SECTION_SIZE
         }
         None => {
-            // It has the lowest address of the segment, and linkers write sections in the order of their addresses.
             if parsed.segments[parsed.linkedit].first_ordinal > MAX_SECTIONS {
                 return Err(MachoError::InvalidObject);
             }
+            // It has the lowest address of the segment, and linkers write sections in the order of their addresses.
             shift_ordinals(macho, &parsed, text.first_ordinal, 1)?;
             macho.copy_within(sections_at..old_commands_end, sections_at + SECTION_SIZE);
             count_sections(macho, &parsed, command_at, text, 1);

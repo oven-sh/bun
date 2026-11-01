@@ -286,6 +286,7 @@ impl<'a> Options<'a> {
                 vitest_globals: f.vitest_globals,
                 own_test_globals: f.own_test_globals,
                 no_macros: f.no_macros,
+                graph_scan: f.graph_scan,
                 commonjs_named_exports: f.commonjs_named_exports,
                 minify_syntax: f.minify_syntax,
                 is_library: f.is_library,

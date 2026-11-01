@@ -200,6 +200,8 @@ pub mod Runtime {
         pub own_test_globals: u32,
 
         pub no_macros: bool,
+        /// The caller reads only the import records of the AST. It never links or prints it.
+        pub graph_scan: bool,
 
         pub commonjs_named_exports: bool,
 
@@ -303,6 +305,7 @@ pub mod Runtime {
                 vitest_globals: false,
                 own_test_globals: 0,
                 no_macros: false,
+                graph_scan: false,
                 commonjs_named_exports: true,
                 minify_syntax: false,
                 is_library: false,

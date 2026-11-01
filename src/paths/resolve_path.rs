@@ -156,7 +156,7 @@ fn get_if_exists_longest_common_path_generic<'a, P: PlatformT>(
     match input.len() {
         0 => return Some(b""),
         1 => return Some(input[0]),
-        n @ 2..=8 => {
+        n @ 2.. => {
             while index < min_length {
                 if nql_at_index_fn(n, index, input) {
                     last_common_separator?;
@@ -166,33 +166,6 @@ fn get_if_exists_longest_common_path_generic<'a, P: PlatformT>(
                     last_common_separator = Some(index);
                 }
                 index += 1;
-            }
-        }
-        _ => {
-            let mut string_index: usize = 1;
-            // `index -= 1` below needs a byte in every input.
-            while min_length > 0 && string_index < input.len() {
-                while index < min_length {
-                    if P::P == Platform::Windows {
-                        if !input[0][index].eq_ignore_ascii_case(&input[string_index][index]) {
-                            last_common_separator?;
-                            break;
-                        }
-                    } else {
-                        if input[0][index] != input[string_index][index] {
-                            last_common_separator?;
-                            break;
-                        }
-                    }
-                    index += 1;
-                }
-                if index == min_length {
-                    index -= 1;
-                }
-                if is_path_separator(input[0][index]) {
-                    last_common_separator = Some(index);
-                }
-                string_index += 1;
             }
         }
     }
@@ -214,10 +187,18 @@ fn get_if_exists_longest_common_path_generic<'a, P: PlatformT>(
     // /app/public/
     // To detect /app/public is actually a folder, we do one more loop through the strings
     // and say, "do one of you have a path separator after what we thought was the end?"
-    for str in input {
-        if str.len() > index {
-            if is_path_separator(str[index]) {
-                return Some(&str[0..index + 1]);
+    // Builds of up to 8 entry points keep their output names, so one yes is enough for them.
+    const ONE_YES_IS_ENOUGH_UP_TO: usize = 8;
+    if input.len() <= ONE_YES_IS_ENOUGH_UP_TO
+        || input
+            .iter()
+            .all(|str| str.len() <= index || is_path_separator(str[index]))
+    {
+        for str in input {
+            if str.len() > index {
+                if is_path_separator(str[index]) {
+                    return Some(&str[0..index + 1]);
+                }
             }
         }
     }
@@ -2783,6 +2764,135 @@ mod tests {
             .checked_sub(k)
             .and_then(|end| (0..=end).rev().find(|&i| h[i..i + k] == *nd));
         last.unwrap_or(usize::MAX)
+    }
+
+    fn pages(dir: &str, count: usize) -> Vec<String> {
+        (0..count).map(|i| format!("{dir}page{i}.ts")).collect()
+    }
+
+    fn common_path<'a>(input: impl IntoIterator<Item = &'a str>) -> Option<&'a str> {
+        let input: Vec<&[u8]> = input.into_iter().map(str::as_bytes).collect();
+        get_if_exists_longest_common_path(&input).map(|path| core::str::from_utf8(path).unwrap())
+    }
+
+    #[test]
+    fn common_path_of_files_in_one_directory_is_that_directory_for_any_count() {
+        for dir in ["pages/", "./pages/", "/app/pages/"] {
+            for count in 2..=20 {
+                let files = pages(dir, count);
+                assert_eq!(
+                    common_path(files.iter().map(String::as_str)),
+                    Some(dir),
+                    "{count} files"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn common_path_is_none_when_the_inputs_differ_before_any_separator() {
+        for count in [2, 9] {
+            let files = pages("", count);
+            assert_eq!(
+                common_path(files.iter().map(String::as_str)),
+                None,
+                "{count} files"
+            );
+        }
+    }
+
+    #[test]
+    fn common_path_does_not_depend_on_the_order_of_the_inputs() {
+        let files = pages("pages/", 8);
+        let files = files.iter().map(String::as_str);
+        assert_eq!(common_path(files.clone().chain(["app.ts"])), None);
+        assert_eq!(common_path(["app.ts"].into_iter().chain(files)), None);
+    }
+
+    #[test]
+    fn common_path_of_more_than_8_inputs_is_an_ancestor_of_every_input() {
+        let files = pages("./pub/", 8);
+        let files = files.iter().map(String::as_str);
+        for sibling in ["./pubx/b.ts", "./pub.ts"] {
+            assert_eq!(
+                common_path(files.clone().chain([sibling])),
+                Some("./"),
+                "8 files, then {sibling}"
+            );
+            assert_eq!(
+                common_path([sibling].into_iter().chain(files.clone())),
+                Some("./"),
+                "{sibling}, then 8 files"
+            );
+        }
+        let files = pages("/app/pub/", 8);
+        let files = files.iter().map(String::as_str);
+        assert_eq!(
+            common_path(
+                ["/app/pub"]
+                    .into_iter()
+                    .chain(files)
+                    .chain(["/app/pubx/b.ts"])
+            ),
+            Some("/app/"),
+            "the directory, 8 files, then a sibling"
+        );
+    }
+
+    #[test]
+    fn common_path_of_up_to_8_inputs_is_the_folder_of_one_of_them() {
+        for count in [1, 7] {
+            let files = pages("./pub/", count);
+            let files = files.iter().map(String::as_str);
+            for sibling in ["./pubx/b.ts", "./pub.ts"] {
+                assert_eq!(
+                    common_path(files.clone().chain([sibling])),
+                    Some("./pub/"),
+                    "{count} files, then {sibling}"
+                );
+                assert_eq!(
+                    common_path([sibling].into_iter().chain(files.clone())),
+                    Some("./pub/"),
+                    "{sibling}, then {count} files"
+                );
+            }
+        }
+        assert_eq!(
+            common_path(["/app/pub", "/app/pub/page0.ts", "/app/pubx/b.ts"]),
+            Some("/app/pub/")
+        );
+    }
+
+    #[test]
+    fn common_path_is_an_input_when_every_longer_input_is_inside_it() {
+        for count in [1, 8] {
+            let files = pages("/app/pages/", count);
+            let files = files.iter().map(String::as_str);
+            assert_eq!(
+                common_path(files.clone().chain(["/app/pages"])),
+                Some("/app/pages/"),
+                "{count} files, then the directory"
+            );
+            assert_eq!(
+                common_path(["/app/pages"].into_iter().chain(files)),
+                Some("/app/pages/"),
+                "the directory, then {count} files"
+            );
+        }
+        // `Loose` takes `\` as a separator too. The answer ends as its first input does.
+        assert_eq!(
+            common_path(["/app/public/index.js", "/app/public\\x.js"]),
+            Some("/app/public/")
+        );
+    }
+
+    #[test]
+    fn common_path_of_an_empty_input_among_many_is_the_separator() {
+        for count in [1, 8] {
+            let files = pages("/app/pages/", count);
+            let files = files.iter().map(String::as_str);
+            assert_eq!(common_path(files.chain([""])), Some("/"), "{count} files");
+        }
     }
 
     #[test]

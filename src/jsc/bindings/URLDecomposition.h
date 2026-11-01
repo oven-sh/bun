@@ -51,16 +51,16 @@ public:
     void setPassword(StringView);
 
     WEBCORE_EXPORT String host() const;
-    void setHost(StringView);
+    void setHost(const String&);
 
     WEBCORE_EXPORT String hostname() const;
-    void setHostname(StringView);
+    void setHostname(const String&);
 
     WEBCORE_EXPORT String port() const;
     void setPort(StringView);
 
     WEBCORE_EXPORT String pathname() const;
-    void setPathname(StringView);
+    void setPathname(const String&);
 
     WEBCORE_EXPORT String search() const;
     void setSearch(const String&);

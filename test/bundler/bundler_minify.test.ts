@@ -239,7 +239,7 @@ describe("bundler", () => {
     minifySyntax: true,
     run: { stdout: "Controller Model" },
   });
-  // A bundle renames bindings, so the function that a `let` or `const` names still moves to its only use.
+  // A bundle still moves a single-use function, as esbuild does, so it has no name there: https://github.com/oven-sh/bun/pull/40503
   itBundled("minify/SingleUseFunctionMovesToItsUse", {
     files: {
       "/entry.js": /* js */ `

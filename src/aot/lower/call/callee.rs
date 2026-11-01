@@ -9,8 +9,8 @@ use bun_sema::bind::{Binding, FnOwner, Parent};
 use bun_sema::check::spans::skip_trivia;
 use bun_sema::fold::{Constant, Decision, TreeNode, push_children};
 use bun_sema::hir::{
-    BinOp, Call, Chain, ExprFlags, ExprId, ExprKind, FnBody, FnId, FnKind, IdList, MemberKey,
-    NameKind, PropKey, PropKind, UnOp, end_of_expr, start_of,
+    BinOp, Call, Chain, ExprFlags, ExprId, ExprKind, FnBody, FnKind, IdList, MemberKey, NameKind,
+    PropKey, PropKind, UnOp, end_of_expr, start_of,
 };
 use bun_sema::import_sites::{ImportSiteKind, find_module_printed_as_require};
 use rustc_hash::FxHashMap;
@@ -297,8 +297,6 @@ pub(in crate::lower) struct PrintedOperators {
     first_positions: RefCell<FxHashMap<ExprId, u32>>,
     // By a name in whose place an initializer is printed: what stands there once every such name is followed to its initializer.
     printed_behind_names: RefCell<FxHashMap<ExprId, ExprId>>,
-    // The functions printed in place of a name whose last position is being looked for.
-    entered_functions: RefCell<SmallVec<[FnId; 4]>>,
 }
 
 impl FileLowering<'_, '_, '_, '_> {
@@ -365,17 +363,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 },
                 ExprKind::Ident(_) => match self.find_printed_in_place(last) {
                     Some(Printed::Initializer(initializer)) => initializer,
-                    Some(Printed::Function(function)) => {
-                        let entered = &self.printed_operators.entered_functions;
-                        if entered.borrow().contains(&function) {
-                            return hir[last].pos;
-                        }
-                        entered.borrow_mut().push(function);
-                        let position = self.last_mapped_function_position(function);
-                        entered.borrow_mut().pop();
-                        return position.unwrap_or(hir[last].pos);
-                    }
-                    None => return hir[last].pos,
+                    Some(Printed::Function) | None => return hir[last].pos,
                 },
                 ExprKind::Dot { .. } if self.is_require_main_node(last) => {
                     return hir[last].pos;
@@ -687,8 +675,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 ExprKind::Ident(_) => {
                     let printed = match self.find_printed_in_place(first) {
                         Some(Printed::Initializer(initializer)) => initializer,
-                        Some(Printed::Function(function)) => break hir[function].start,
-                        None => break hir[first].pos,
+                        Some(Printed::Function) | None => break hir[first].pos,
                     };
                     replaced.push(first);
                     printed
@@ -763,7 +750,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 ExprKind::TaggedTemplate(_) => return false,
                 ExprKind::Ident(_) => match self.find_printed_in_place(first) {
                     Some(Printed::Initializer(initializer)) => (initializer, around),
-                    Some(Printed::Function(_)) | None => return false,
+                    Some(Printed::Function) | None => return false,
                 },
                 _ => return false,
             };
@@ -1089,7 +1076,7 @@ impl FileLowering<'_, '_, '_, '_> {
                     Some(Printed::Initializer(initializer)) => {
                         self.append_written_path(initializer, path)
                     }
-                    Some(Printed::Function(_)) | None => false,
+                    Some(Printed::Function) | None => false,
                 };
             }
             ExprKind::Ident(name) => self.append_identifier(inner, name, path),

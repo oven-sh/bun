@@ -838,6 +838,21 @@ describe.concurrent("bun pm diff (canonical re-print)", () => {
     expect(exitCode).toBe(0);
   });
 
+  // https://github.com/oven-sh/bun/issues/20398
+  test("a function moved out of the variable that names it is a change", async () => {
+    const { text, exitCode } = await pretty({
+      "a/m.js": "export function run(x) {\n  const step = () => x + 1;\n  return step();\n}\n",
+      "b/m.js": "export function run(x) {\n  return (() => x + 1)();\n}\n",
+    });
+    expect(changedLines(text)).toEqual([
+      "    2 │-   const step = () => x + 1;",
+      "    3 │-   return step();",
+      "    2 │+   return (() => x + 1)();",
+    ]);
+    expect(text).toMatch(/\nm\.js ─+ \+1 -2\n/);
+    expect(exitCode).toBe(0);
+  });
+
   test("two minified builds with different mangled names diff down to the real change", async () => {
     // Same program, names handed out differently by the "minifier", plus one genuine edit (* 2 → * 3) and one
     // inserted helper in b. Long enough on one line to count as minified.

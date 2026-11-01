@@ -644,16 +644,10 @@ describe("Functions with names", () => {
     },
     () => {
       const f = function () {};
-      // workaround transpiler inlining losing the display name
-      // TODO: preserve the name on functions being inlined
-      f.length;
       return f;
     },
     () => {
       let f = function () {};
-      // workaround transpiler inlining losing the display name
-      // TODO: preserve the name on functions being inlined
-      f.length;
       return f;
     },
     () => {

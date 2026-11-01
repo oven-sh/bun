@@ -1,8 +1,8 @@
 use bun_sema::bind::{Binding, Decl, Parent, PatParent, SymbolId};
 use bun_sema::fold::{Constant, Decision, FoldedValue};
 use bun_sema::hir::{
-    BinOp, ExprId, ExprKind, Flags, FnBody, FnId, IdList, MemberKey, PatKind, PropKey, PropKind,
-    StmtId, StmtKind, UnOp, VarDeclId, VarKind,
+    BinOp, ExprId, ExprKind, Flags, FnBody, IdList, MemberKey, PatKind, PropKey, PropKind, StmtId,
+    StmtKind, UnOp, VarDeclId, VarKind,
 };
 use smallvec::{SmallVec, smallvec};
 
@@ -14,8 +14,8 @@ use crate::lower::transpiled::{Rewrite, TranspiledFile};
 #[derive(Copy, Clone)]
 pub(in crate::lower) enum Printed {
     Initializer(ExprId),
-    // A function that a block declares. The transpiler declares it as a `let` variable at the start of the block, with a function expression that has no name.
-    Function(FnId),
+    // A function whose declaration is not printed either: the name stands in code that the transpiler drops.
+    Function,
 }
 
 impl FileLowering<'_, '_, '_, '_> {
@@ -298,9 +298,8 @@ impl FileLowering<'_, '_, '_, '_> {
         self.return_variable_at_once(later, holder)
     }
 
-    // What Bun's transpiler prints in place of the name of a constant, of the only use of a `let` or `const` variable or of a function that a block declares.
+    // What Bun's transpiler prints in place of the name of a constant or of the only use of a `let` or `const` variable.
     // An initializer that replaces a name ends in front of the name, so following names to their initializers comes to an end.
-    // A function may be declared behind the name: `last_mapped_position_in` enters none that it is in already.
     pub(in crate::lower) fn find_printed_in_place(&self, name: ExprId) -> Option<Printed> {
         let hir = self.hir;
         let transpiled = self.transpiled.as_ref()?;
@@ -331,7 +330,7 @@ impl FileLowering<'_, '_, '_, '_> {
                     _ => None,
                 });
                 last.filter(|&last| !transpiled.has_binding_at(hir[last].name_pos))
-                    .map(Printed::Function)
+                    .map(|_| Printed::Function)
             }
         }
     }
@@ -339,7 +338,7 @@ impl FileLowering<'_, '_, '_, '_> {
     pub(in crate::lower) fn find_printed_initializer(&self, name: ExprId) -> Option<ExprId> {
         match self.find_printed_in_place(name)? {
             Printed::Initializer(initializer) => Some(initializer),
-            Printed::Function(_) => None,
+            Printed::Function => None,
         }
     }
 

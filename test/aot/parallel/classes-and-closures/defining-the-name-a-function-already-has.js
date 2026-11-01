@@ -147,8 +147,7 @@ const computedKey = ["com", "puted"].join("");
 let ticks = 0;
 const capture = make => make(++ticks, ++ticks, ++ticks, ++ticks, ++ticks, ++ticks);
 
-// Every call creates a new function object. One that is named after a variable is used twice: plain Bun's transpiler puts a constant that is used once in the place of its use, where the function gets no name.
-let lastMade;
+// Every call creates a new function object.
 const kinds = {
   "a function that is only called": () => function called() {},
   "a function that is constructed": () => {
@@ -160,25 +159,21 @@ const kinds = {
   "a function with six captures": () => capture((a, b, c, d, e, g) => function summed() { return a + b + c + d + e + g; }),
   "a function expression in a variable": () => {
     const inferred = function () {};
-    lastMade = inferred;
     return inferred;
   },
   "a function without a name": () => function () {},
   "an arrow function in a variable": () => {
     const pointed = () => {};
-    lastMade = pointed;
     return pointed;
   },
   "an arrow function with six captures": () =>
     capture((a, b, c, d, e, g) => {
       const adding = () => a + b + c + d + e + g;
-      lastMade = adding;
       return adding;
     }),
   "a generator": () => function* yielding() {},
   "a generator in a variable": () => {
     const stepping = function* () {};
-    lastMade = stepping;
     return stepping;
   },
   "a generator without a name": () => function* () {},
@@ -199,7 +194,6 @@ const kinds = {
   "a class": () => class Circle {},
   "a class in a variable": () => {
     const Square = class {};
-    lastMade = Square;
     return Square;
   },
   "a class with a static field called name": () => class Labeled { static name = "given"; },

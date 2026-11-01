@@ -210,7 +210,6 @@ DIFFERS test/js/bun/sqlite/sqlite.test.js > an exception that is raised behind a
 DIFFERS test/js/bun/sqlite/sqlite.test.js > db.function() > terminating a Worker that is inside a function ends it: a file by a path that is computed or made at run time
 DIFFERS test/js/bun/sqlite/sqlite.test.js > db.function() > terminating a Worker that is inside a hook ends it: a file by a path that is computed or made at run time
 DIFFERS test/js/bun/sqlite/sqlite.test.js > db.onInsert, db.onUpdate and db.onDelete > the database keeps a hook alive, and nothing else > hooks that were replaced or removed, those of a closed database, and databases that their own hooks hold, are collected: the clock, and what is collected when
-DIFFERS test/js/bun/test/describe.test.ts > blocks should handle a number, string, anonymous class, named class, or function for the first arg > MyClass > Should also pass: the name of the test is made of a function's text, or the plain run was cut
 DIFFERS test/js/bun/test/expect.test.js > expect() > asymmetric matchers > objects with an asymmetricMatch() method > an error thrown by asymmetricMatch() fails the assertion: asymmetricMatch() is looked up in the Structure, which has none of a compiled object's fields
 DIFFERS test/js/bun/test/expect.test.js > expect() > asymmetric matchers > objects with an asymmetricMatch() method > asymmetricMatch() also works on the received value: asymmetricMatch() is looked up in the Structure, which has none of a compiled object's fields
 DIFFERS test/js/bun/test/expect.test.js > expect() > asymmetric matchers > objects with an asymmetricMatch() method > asymmetricMatch() can be a class method: asymmetricMatch() is looked up in the Structure, which has none of a compiled object's fields
@@ -315,8 +314,8 @@ DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > util > call: a file by a path tha
 DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > util > construct-subclass: a file by a path that is computed or made at run time
 DIFFERS test/js/bun/util/fuzzy-wuzzy.test.ts > util > construct: a file by a path that is computed or made at run time
 DIFFERS test/js/bun/util/index-of-line.test.ts > indexOfLine searches a SharedArrayBuffer that another thread is writing: text at run time (eval, the Function constructor, a Worker or an import of text)
-DIFFERS test/js/bun/util/inspect.test.js > Functions with names > "() => {\n      const f = function () {};\n      // workaround transpiler inlining losing the display name\n      // TODO: the name of the test is made of a function's text, or the plain run was cut
-DIFFERS test/js/bun/util/inspect.test.js > Functions with names > "() => {\n      let f = function () {};\n      // workaround transpiler inlining losing the display name\n      // TODO: the name of the test is made of a function's text, or the plain run was cut
+DIFFERS test/js/bun/util/inspect.test.js > Functions with names > "() => {\n      const f = function () {};\n      return f;\n    }": the name of the test is made of a function's text, or the plain run was cut
+DIFFERS test/js/bun/util/inspect.test.js > Functions with names > "() => {\n      let f = function () {};\n      return f;\n    }": the name of the test is made of a function's text, or the plain run was cut
 DIFFERS test/js/bun/util/inspect.test.js > Functions with names > "() => {\n      var f = function () {};\n      return f;\n    }": the name of the test is made of a function's text, or the plain run was cut
 DIFFERS test/js/bun/util/inspect.test.js > crash testing > inspecting "() =>\n    new Proxy(" doesn't crash: the name of the test is made of a function's text, or the plain run was cut
 DIFFERS test/js/bun/util/inspect.test.js > crash testing > inspecting "() =>\n    new Writab" doesn't crash: the name of the test is made of a function's text, or the plain run was cut
@@ -929,13 +928,12 @@ DIFFERS test/regression/issue/22635/22635.test.ts > issue #22635 - MessagePort c
 DIFFERS test/regression/issue/issue-1825-jest-mock-functions.test.ts > Jest mock functions from issue #1825 > jest.mock should be available and work with factory function: a spy or a mock on what a module exports
 MISSING test/js/bun/http/bun-serve-html.test.ts > mixed api and html routes with non-* false routes (2): a file by a path that is computed or made at run time
 MISSING test/js/bun/http/bun-serve-html.test.ts > mixed api and html routes with non-* false routes (3): a file by a path that is computed or made at run time
-MISSING test/js/bun/test/describe.test.ts > blocks should handle a number, string, anonymous class, named class, or function for the first arg > Should also pass: the compiled run is right: `const C = class {}` names the class
 MISSING test/js/bun/test/mock/mock-module.test.ts > adding a default on a module with no default (2): a spy or a mock on what a module exports
 MISSING test/js/bun/util/fuzzy-wuzzy.test.ts > http2 > call (2): the lock of the built-ins
 MISSING test/js/bun/util/fuzzy-wuzzy.test.ts > http2 > construct (2): the lock of the built-ins
 MISSING test/js/bun/util/fuzzy-wuzzy.test.ts > http2 > construct-subclass (2): the lock of the built-ins
-MISSING test/js/bun/util/inspect.test.js > Functions with names > "() => {\n      const f = function() {};\n      f.length;\n      return f;\n    }": the name of the test is made of a function's text
-MISSING test/js/bun/util/inspect.test.js > Functions with names > "() => {\n      let f = function() {};\n      f.length;\n      return f;\n    }": the name of the test is made of a function's text
+MISSING test/js/bun/util/inspect.test.js > Functions with names > "() => {\n      const f = function() {};\n      return f;\n    }": the name of the test is made of a function's text
+MISSING test/js/bun/util/inspect.test.js > Functions with names > "() => {\n      let f = function() {};\n      return f;\n    }": the name of the test is made of a function's text
 MISSING test/js/bun/util/inspect.test.js > Functions with names > "() => {\n      var f = function() {};\n      return f;\n    }": the name of the test is made of a function's text
 MISSING test/js/bun/util/inspect.test.js > crash testing > inspecting "() => new Proxy({ yo" doesn't crash (2): the name of the test is made of a function's text
 MISSING test/js/bun/util/inspect.test.js > crash testing > inspecting "() => new WritableSt" doesn't crash: the name of the test is made of a function's text

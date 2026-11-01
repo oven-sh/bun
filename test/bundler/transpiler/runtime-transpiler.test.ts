@@ -289,7 +289,7 @@ test.skipIf(isDebug || isASAN)(
 
 // https://github.com/oven-sh/bun/issues/20398
 describe("a let or const that names a function or class", () => {
-  const source = /* js */ `
+  const before = /* js */ `
     const rows = {};
     const row = (label, run) => {
       try {
@@ -299,87 +299,26 @@ describe("a let or const that names a function or class", () => {
       }
     };
     const nameOf = f => f.name;
+    const first = a => a;
     const frame = e => e.stack.split("\\n")[1].match(/at (?:new )?(\\S+) \\(/)?.[1];
-
-    // The declaration gives the name.
-    row("arrow", () => { const q = () => {}; return q.name; });
-    row("function", () => { let q = function () {}; return q.name; });
-    row("class", () => { const Q = class {}; return Q.name; });
-    row("async arrow", () => { const q = async () => {}; return q.name; });
-    row("generator", () => { const q = function* () {}; return q.name; });
-    row("argument", () => { const q = () => {}; return nameOf(q); });
-    row("frame", () => { const q = () => frame(new Error()); const top = q(); return top; });
-    row("instance", () => { const Q = class {}; return new Q().constructor.name; });
-    row("bound", () => { const q = () => {}; return q.bind(null).name; });
-
-    // A read in a place that names a function gives no second name.
-    row("property", () => { const q = () => {}; const o = { k: q }; return o.k.name; });
-    row("assignment", () => { let sink; const q = () => {}; sink = q; return sink.name; });
-    row("second declaration", () => { const a = () => {}; const b = a; return b.name + b.name; });
-    row("element", () => { const f = () => 0; const a = [f]; return a[0].name; });
-
-    // A function that a block declares is a let.
-    row("block", () => { { function q() {} return q.name; } });
-    row("if", () => { if (rows) { function q() {} return nameOf(q); } });
-    row("block frame", () => { { function q() { return frame(new Error()); } const top = q(); return top; } });
-    row("switch case", () => { switch (1) { case 1: function q() {} return q.name; } });
-
-    // The declaration gives no name.
-    row("named function", () => { const q = function named() {}; return q.name; });
-    row("comma", () => { const q = (0, () => {}); return q.name; });
-    row("nullish", () => { const q = null ?? (() => {}); return q.name; });
-    row("and", () => { const q = 1 && function () {}; return q.name; });
-    row("conditional", () => { const Q = true ? class {} : 0; return Q.name; });
-    row("comma, second declaration", () => { const a = (0, () => {}); const b = a; return b.name; });
-
+  `;
+  const after = /* js */ `
     console.log(JSON.stringify(rows));
   `;
-  const expected = {
-    "arrow": "q",
-    "function": "q",
-    "class": "Q",
-    "async arrow": "q",
-    "generator": "q",
-    "argument": "q",
-    "frame": "q",
-    "instance": "Q",
-    "bound": "bound q",
 
-    "property": "q",
-    "assignment": "q",
-    "second declaration": "aa",
-    "element": "f",
-
-    "block": "q",
-    "if": "q",
-    "block frame": "q",
-    "switch case": "q",
-
-    "named function": "named",
-    "comma": "",
-    "nullish": "",
-    "and": "",
-    "conditional": "",
-    "comma, second declaration": "",
-  };
-
-  test("in a test file", () => {
-    const fn = function () {};
-    expect(fn.name).toBe("fn");
-  });
-
-  test.concurrent.each([
-    ["an ES module", ["module.mjs"]],
-    ["a CommonJS module", ["script.cjs"]],
-    ["bun -e", ["-e", source]],
-  ])("in %s", async (_, args) => {
+  const modes = ["an ES module", "a CommonJS module", "bun -e"] as const;
+  async function rowsOf(mode: (typeof modes)[number], rows: string) {
+    const source = before + rows + after;
     using dir = tempDir("transpiler-named-by-declaration", {
       "module.mjs": "export {};\n" + source,
       "script.cjs": source,
     });
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), ...args],
+      cmd: [
+        bunExe(),
+        ...(mode === "bun -e" ? ["-e", source] : [mode === "an ES module" ? "module.mjs" : "script.cjs"]),
+      ],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
@@ -388,10 +327,107 @@ describe("a let or const that names a function or class", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    let rows: unknown = stdout;
+    let printed: unknown = stdout;
     try {
-      rows = JSON.parse(stdout);
+      printed = JSON.parse(stdout);
     } catch {}
-    expect({ rows, stderr, exitCode }).toEqual({ rows: expected, stderr: "", exitCode: 0 });
+    return { rows: printed, stderr, exitCode };
+  }
+
+  test("in a test file", () => {
+    const fn = function () {};
+    expect(fn.name).toBe("fn");
+  });
+
+  test.concurrent.each(modes)("in %s", async mode => {
+    const rows = /* js */ `
+      // The declaration gives the name.
+      row("arrow", () => { const q = () => {}; return q.name; });
+      row("function", () => { let q = function () {}; return q.name; });
+      row("class", () => { const Q = class {}; return Q.name; });
+      row("async arrow", () => { const q = async () => {}; return q.name; });
+      row("generator", () => { const q = function* () {}; return q.name; });
+      row("argument", () => { const q = () => {}; return nameOf(q); });
+      row("frame", () => { const q = () => frame(new Error()); const top = q(); return top; });
+      row("instance", () => { const Q = class {}; return new Q().constructor.name; });
+      row("bound", () => { const q = () => {}; return q.bind(null).name; });
+
+      // A read in a place that names a function gives no second name.
+      row("property", () => { const q = () => {}; const o = { k: q }; return o.k.name; });
+      row("assignment", () => { let sink; const q = () => {}; sink = q; return sink.name; });
+      row("second declaration", () => { const a = () => {}; const b = a; return b.name + b.name; });
+      row("operand", () => { const q = () => {}; const w = q ?? 1; return w.name + w.name; });
+      row("element", () => { const f = () => 0; const a = [f]; return a[0].name; });
+
+      // A function that a block declares is a let.
+      row("block", () => { { function q() {} return q.name; } });
+      row("if", () => { if (rows) { function q() {} return nameOf(q); } });
+      row("block frame", () => { { function q() { return frame(new Error()); } const top = q(); return top; } });
+      row("switch case", () => { switch (1) { case 1: function q() {} return q.name; } });
+
+      // The declaration gives no name.
+      row("named function", () => { const q = function named() {}; return q.name; });
+      row("comma", () => { const q = (0, () => {}); return q.name; });
+      row("nullish", () => { const q = null ?? (() => {}); return q.name; });
+      row("and", () => { const q = 1 && function () {}; return q.name; });
+      row("conditional", () => { const Q = true ? class {} : 0; return Q.name; });
+      row("comma, second declaration", () => { const a = (0, () => {}); const b = a; return b.name; });
+    `;
+
+    expect(await rowsOf(mode, rows)).toEqual({
+      rows: {
+        "arrow": "q",
+        "function": "q",
+        "class": "Q",
+        "async arrow": "q",
+        "generator": "q",
+        "argument": "q",
+        "frame": "q",
+        "instance": "Q",
+        "bound": "bound q",
+
+        "property": "q",
+        "assignment": "q",
+        "second declaration": "aa",
+        "operand": "qq",
+        "element": "f",
+
+        "block": "q",
+        "if": "q",
+        "block frame": "q",
+        "switch case": "q",
+
+        "named function": "named",
+        "comma": "",
+        "nullish": "",
+        "and": "",
+        "conditional": "",
+        "comma, second declaration": "",
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A fold leaves the function in a declaration that stays, or in a place that names it: the rows give "a", "a", "k" and "sink".
+  // https://github.com/oven-sh/bun/pull/42691 and https://github.com/oven-sh/bun/pull/42585 keep such a function away from the name.
+  test.todo("a function behind a fold takes no name from where it ends", async () => {
+    const rows = /* js */ `
+      row("before a function that stays", () => { const a = (0, () => {}); const f = () => {}; return first(a, f).name; });
+      row("before a class that stays", () => { const a = null ?? (() => {}); const C = class {}; return first(a, C).name; });
+      row("property", () => { const q = (0, () => {}); const o = { k: q }; return o.k.name; });
+      row("assignment", () => { let sink; const q = (0, () => {}); sink = q; return sink.name; });
+    `;
+
+    expect(await rowsOf("an ES module", rows)).toEqual({
+      rows: {
+        "before a function that stays": "",
+        "before a class that stays": "",
+        "property": "",
+        "assignment": "",
+      },
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });

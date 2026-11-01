@@ -41,7 +41,6 @@ function attempt(label, run) {
     note(label + ":", "THROWS", error.constructor.name);
   }
 }
-function keep() {}
 // Plain Bun settles an operator whose left side is a constant, and the function behind it gets a name: so these are variables.
 let nothing = null,
   zero = 0,
@@ -175,8 +174,5 @@ export function generate(random: Random): string {
       `attempt("made twice", () => {\nconst make = () => ${unnamed().startsWith("class") ? "class {}" : "function () {}"};\nconst first = make();\nObject.defineProperty(first, "name", { value: "the first" });\nreturn make();\n});`,
   ];
   const rows = Array.from({ length: random.between(14, 30) }, () => random.pick(kinds)());
-  // Plain Bun inlines a `let` or `const` that is read once, in the next statement, and then the function gets no name,
-  // so a call is placed in between.
-  const text = rows.join("\n").replace(/;\n(return given|return new Proxy\(given)/g, ";\nkeep();\n$1");
-  return `${head}${text}\nconsole.log(lines.join("\\n"));\n`;
+  return `${head}${rows.join("\n")}\nconsole.log(lines.join("\\n"));\n`;
 }

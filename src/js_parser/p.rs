@@ -3470,7 +3470,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.options.bundle || self.options.features.minify_identifiers
     }
 
-    /// Whether the `let` or `const` of `symbol` is what gives `value` its `name`. A renamer prints another name, so never with one.
+    /// Whether the `let` or `const` of `symbol` gives `value` its `name` and has to stay. A bundle or `minify_identifiers` moves the value, as esbuild does.
     pub(crate) fn declaration_names_value(&self, symbol: &Symbol, value: &Expr) -> bool {
         value.is_anonymous_named()
             && !symbol.initializer_not_named_by_decl()

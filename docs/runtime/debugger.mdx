@@ -213,6 +213,26 @@ Bun transpiles every file, which could leave stack traces pointing at the transp
 
 Bun loads sourcemaps both at runtime when it transpiles files on-demand, and when you use `bun build` to precompile files ahead of time.
 
+### Source maps of files that another tool built
+
+A file that another tool built, such as `tsc`, can name its own source map in a `//# sourceMappingURL=` comment. By default, Bun ignores that source map. With `--enable-source-maps`, or after `process.setSourceMapsEnabled(true)` or `module.setSourceMapsSupport(true)`, `Error.stack` and the errors that Bun prints point at the original source, for the files that load from then on. Bun reads a source map when a stack trace first needs it.
+
+```sh
+bun --enable-source-maps dist/index.js
+```
+
+The switch works as in Node.js, with these differences:
+
+- Bun maps the position that it reports in the loaded file. That position can have another column than the one Node.js reports, and sometimes another line.
+- A mapped stack frame keeps the function name of the loaded file.
+- A frame on a line that the source map has no mapping for stays in the loaded file.
+- `CallSite` objects, `util.getCallSites()`, code coverage and the locations of tests keep the positions of the loaded file.
+- `module.findSourceMap()` returns `undefined`.
+- Code from `eval` and `new Function` is not mapped.
+- Bun does not read an index map (a source map with `sections`).
+- The switch does not change the positions of the modules in a bundle or in a [standalone executable](/compiler/executables). A file that such a program loads from the disk is mapped.
+- Bun has no `--no-enable-source-maps` flag and does not read `NODE_OPTIONS`.
+
 ### Syntax-highlighted source code preview
 
 Bun prints a small source-code preview when an unhandled exception or rejection occurs. To produce the same output yourself, call `Bun.inspect(error)`:

@@ -1,6 +1,5 @@
 // What ./idioms.test.ts runs. It says how.
-import { expect } from "bun:test";
-import { afterAll } from "../harness/declare";
+import { afterAll, expect } from "bun:test";
 import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, isCI, isDebug, isMusl, isWindows, tempDir } from "harness";
 import { join } from "path";

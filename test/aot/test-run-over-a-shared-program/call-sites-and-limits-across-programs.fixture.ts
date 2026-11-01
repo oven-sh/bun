@@ -1,7 +1,6 @@
 // What else reads a stack: the call sites that Error.prepareStackTrace is handed, Error.stackTraceLimit, Error.captureStackTrace, and whoever reads the stack of an error later, while
 // another program runs or behind a collection. The frames are of both programs in turn.
-import { expect } from "bun:test";
-import { test } from "../harness/declare";
+import { expect, test } from "bun:test";
 import * as lib from "./makes-errors";
 const rows: string[] = [];
 let kept = 0;

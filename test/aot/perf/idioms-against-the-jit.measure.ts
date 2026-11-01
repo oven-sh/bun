@@ -11,8 +11,7 @@
 // Nor may type annotations cost: no idiom, of ./idioms too, may take over 1.05 times and one instruction more as TypeScript than as the same text without its types.
 // ./typed-dearer-than-untyped.<os>-<arch>.json names those that did when they were last measured: todos of the same kind, rewritten by the same flag.
 // Every other idiom fails at over 1.2 times and two instructions: where a turn allocates much, its cost moves by up to an eighth from run to run.
-import { expect } from "bun:test";
-import { afterAll } from "../harness/declare";
+import { afterAll, expect } from "bun:test";
 import { existsSync, readFileSync, rmSync } from "fs";
 import { bunExe, isASAN, isDebug, isLinux, isMusl, tempDir } from "harness";
 import { slot } from "../harness/commands";

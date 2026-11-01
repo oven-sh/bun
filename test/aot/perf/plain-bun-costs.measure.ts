@@ -26,8 +26,7 @@
 // and are not judged: PLAIN_BUN_COSTS=hold judges them anyway.
 //
 // What the top tier compiles a second time, it compiled for nothing the first time. That needs no counter, so it is judged wherever the programs run.
-import { expect } from "bun:test";
-import { test } from "../harness/declare";
+import { expect, test } from "bun:test";
 import {
   accessSync,
   constants,

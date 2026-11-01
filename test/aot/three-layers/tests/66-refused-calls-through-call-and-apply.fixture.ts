@@ -1,7 +1,6 @@
 // `f.call(receiver)` and `f.apply(receiver, list)` where f is no function. The functions of the library that forward the call are those of the lowest program, so the place that is named
 // and quoted lies in another program than the failure: behind an adapter, or, where the call is a tail call, tested before the frame is given up.
-import { expect } from "bun:test";
-import { test } from "../../harness/declare";
+import { expect, test } from "bun:test";
 const rows: string[] = [];
 const show = (label: string, run: () => unknown) => {
   try {

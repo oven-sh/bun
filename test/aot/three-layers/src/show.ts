@@ -1,4 +1,4 @@
-import { test } from "../../harness/declare";
+import { test } from "bun:test";
 
 export function show(value: unknown, depth: number = 0, seen: unknown[] = []): string {
   if (value === undefined) return "undefined";

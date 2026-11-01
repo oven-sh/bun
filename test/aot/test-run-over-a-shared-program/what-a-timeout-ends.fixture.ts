@@ -1,7 +1,6 @@
 // The timeout of node:vm ends code that runs, and the program goes on: the one ending of this kind that a program outlives. Compiled code of both programs spins under the text, and
 // whoever goes on behind it runs with the tables of its own program, as in ./the-image-of-whoever-catches-runs.fixture.ts.
-import { expect } from "bun:test";
-import { test } from "../harness/declare";
+import { expect, test } from "bun:test";
 import * as vm from "node:vm";
 import * as lib from "./numbered-by-image";
 const rows: string[] = [];

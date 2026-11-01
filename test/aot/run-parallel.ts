@@ -210,7 +210,11 @@ const named = listed
   ? readFileSync(listed, "utf8").split(/\r?\n/).filter(Boolean)
   : process.argv.slice(2).filter(argument => !argument.startsWith("--"));
 // CI runs what ./parallel/every-build.txt names: ./harness/every-build.ts.
-const leftOut = named.filter(file => isProgramLeftOut(relative(root, resolve(file)).replaceAll("\\", "/")));
+// A program that is named on the command line runs, and so does what lies under another root.
+const leftOut =
+  listed && !option("root")
+    ? named.filter(file => isProgramLeftOut(relative(root, resolve(file)).replaceAll("\\", "/")))
+    : [];
 const isLeftOut = new Set(leftOut);
 const files = named.filter(file => !isLeftOut.has(file));
 const jobs = Number(option("jobs")) || availableParallelism();

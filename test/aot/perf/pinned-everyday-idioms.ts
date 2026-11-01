@@ -9,8 +9,7 @@
 //   AOT_PERF=lower ..                                                    writes every number that got better into the file
 //   AOT_PERF=update ..                                                   rewrites the pinned numbers as measured
 //   AOT_PERF_BUILD_FLAGS="--aot-.. --aot-.."                             goes to every `bun build --compile --aot`
-import { expect } from "bun:test";
-import { afterAll } from "../harness/declare";
+import { afterAll, expect } from "bun:test";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunExe, isASAN, isDebug, isLinux, isMusl, tempDir } from "harness";
 import { join } from "path";

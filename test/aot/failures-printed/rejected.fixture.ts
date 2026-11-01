@@ -1,5 +1,4 @@
-import { expect } from "bun:test";
-import { describe, it, test } from "../harness/declare";
+import { describe, expect, it, test } from "bun:test";
 
 const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 async function load(name: string): Promise<string> {

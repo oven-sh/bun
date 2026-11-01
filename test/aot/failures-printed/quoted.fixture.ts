@@ -1,5 +1,5 @@
 // The message of a TypeError quotes the read or the call that failed. These functions are only ever called, so a compiled run has their text nowhere but in this file.
-import { describe, it } from "../harness/declare";
+import { describe, it } from "bun:test";
 
 const none = null as any;
 

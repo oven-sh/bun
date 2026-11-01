@@ -1,5 +1,5 @@
 // `test`, `describe` and the hooks of bun:test for a test file that CI may leave out (./every-build.ts). In a file that is left out they declare one skipped test and
-// nothing else. The hooks too: a hook of bun:test runs in a file whose tests are all skipped.
+// nothing else. `beforeAll` and `beforeEach` too: a hook of bun:test runs in a file whose tests are all skipped.
 import {
   afterAll as afterAllOfBun,
   afterEach as afterEachOfBun,
@@ -41,5 +41,16 @@ export const it = unlessLeftOut(itOfBun);
 export const describe = unlessLeftOut(describeOfBun);
 export const beforeAll = unlessLeftOut(beforeAllOfBun);
 export const beforeEach = unlessLeftOut(beforeEachOfBun);
-export const afterAll = unlessLeftOut(afterAllOfBun);
-export const afterEach = unlessLeftOut(afterEachOfBun);
+// The body of a file that is left out has run all the same, and may have made what these put away. What a hook in front would have made is not there.
+const evenIfLeftOut =
+  (register: typeof afterAllOfBun): typeof afterAllOfBun =>
+  (hook, ...rest) =>
+    isThisFileLeftOut()
+      ? register(async () => {
+          try {
+            await (hook as () => unknown)();
+          } catch {}
+        }, ...rest)
+      : register(hook, ...rest);
+export const afterAll = evenIfLeftOut(afterAllOfBun);
+export const afterEach = evenIfLeftOut(afterEachOfBun);

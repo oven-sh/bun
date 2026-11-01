@@ -1,5 +1,4 @@
-import { expect, mock, spyOn, jest } from "bun:test";
-import { test, describe, beforeEach, afterAll } from "../harness/declare";
+import { test, expect, mock, spyOn, describe, beforeEach, afterAll, jest } from "bun:test";
 import * as l from "./lib2";
 import { Store, Temp, Matrix } from "./lib2";
 import * as mocked from "./mocked";

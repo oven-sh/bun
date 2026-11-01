@@ -1,4 +1,4 @@
-import { test } from "../harness/declare";
+import { test } from "bun:test";
 import { unsupported } from "../harness/compiler";
 import { pinnedIdiomsInParts } from "./pinned-idioms";
 

@@ -1,5 +1,4 @@
-import { expect } from "bun:test";
-import { test } from "../harness/declare";
+import { expect, test } from "bun:test";
 
 test("is never run", () => {
   expect(1).toBe(1);

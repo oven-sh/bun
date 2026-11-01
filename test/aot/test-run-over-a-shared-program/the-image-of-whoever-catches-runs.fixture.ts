@@ -1,7 +1,6 @@
 // A throw may be carried by the engine and not by compiled code: through text made at run time, host functions, getters, traps, jobs. Whoever catches it, or goes on behind it, runs with the tables
 // of its own program: regular expression literals, the objects of tagged templates and private names are numbered by program, so another program's would show at once.
-import { expect } from "bun:test";
-import { test } from "../harness/declare";
+import { expect, test } from "bun:test";
 import * as lib from "./numbered-by-image";
 const rows: string[] = [];
 const tag = (strings: TemplateStringsArray, ...values: unknown[]) => strings.raw.join("=") + values.length;

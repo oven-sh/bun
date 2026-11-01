@@ -8,8 +8,7 @@
 // Each is a todo: `bun test --todo` runs them and tells which have come under the JIT.
 // `bun test/aot/perf/idioms-against-the-jit.ts --in-a-very-large-program --write-behind` rewrites the file.
 // Every other idiom fails at over 1.35 times and 8 instructions. A run measures one idiom in twenty, others for each commit of Bun; AOT_SHARE=all measures all of them.
-import { expect } from "bun:test";
-import { afterAll } from "../harness/declare";
+import { afterAll, expect } from "bun:test";
 import { existsSync, readFileSync, rmSync } from "fs";
 import { bunExe, isASAN, isDebug, isLinux, isMusl, tempDir } from "harness";
 import { slot } from "../harness/commands";

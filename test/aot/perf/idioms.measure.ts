@@ -14,7 +14,7 @@
 // from the log of such a run. The cost of one iteration is the difference between a run of n
 // iterations and a run of n / 4, divided by 3n / 4, so that start-up and warm-up cancel out. turns.json has n for each idiom.
 // ./untyped-idioms.ts makes the JavaScript.
-import { test } from "../harness/declare";
+import { test } from "bun:test";
 import { comesInParts, pinnedIdioms } from "./pinned-idioms";
 
 if (comesInParts) test.skip("aot/perf/idioms-in-parts has them", () => {});

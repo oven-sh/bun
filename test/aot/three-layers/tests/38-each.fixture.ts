@@ -1,4 +1,4 @@
-import { test, describe, beforeAll, afterAll, afterEach } from "../../harness/declare";
+import { test, describe, beforeAll, afterAll, afterEach } from "bun:test";
 import { show } from "../src/show";
 import { makePoint, kinds } from "fake-shapes";
 import { Vec2, makeItem, weigh } from "fake-typed";

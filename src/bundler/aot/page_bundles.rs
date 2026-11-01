@@ -19,7 +19,7 @@ use super::services::{BuildContext, with_ast_scope};
 use crate::bundle_v2::bv2_impl::generate_unique_key;
 use crate::mal_prelude::*;
 use crate::options::{CompileMode, Loader, ModuleType, OutputFile, OutputKind, Side, Target};
-use crate::{BundleV2, Chunk, Index, Transpiler};
+use crate::{BundleV2, Index, Transpiler};
 
 const ENTRY_NAMESPACE: &[u8] = b"bun-aot-page";
 const ENTRY_FILE_NAME: &[u8] = b"page-entry.js";
@@ -213,7 +213,7 @@ fn run<'h>(
         &mut chunks,
     )?;
 
-    let manifests = write_page_manifests(bundle, &chunks, &output_files, pages)?;
+    let manifests = write_page_manifests(bundle, pages)?;
     Ok(PageOutputs {
         manifests,
         output_files,
@@ -222,8 +222,6 @@ fn run<'h>(
 
 fn write_page_manifests(
     bundle: &BundleV2<'_>,
-    chunks: &[Chunk<'_>],
-    output_files: &[OutputFile],
     pages: &[&[u8]],
 ) -> Result<Vec<Vec<u8>>, crate::Error> {
     let server_source_indices = &bundle.graph.html_imports.server_source_indices;
@@ -248,17 +246,10 @@ fn write_page_manifests(
             continue;
         };
 
-        // `generate_chunks_in_parallel` moved the copied files out of the graph and into `output_files`.
-        let mut manifest: Vec<u8> = Vec::new();
-        crate::HTMLImportManifest::write_with_assets(
-            index as u32,
-            &bundle.graph,
-            &bundle.linker.graph,
-            chunks,
-            output_files,
-            &mut manifest,
-        )?;
-        manifests[positions_by_path[found].1] = Some(manifest);
+        // The entry chunk prints every page, so `generate_chunks_in_parallel` rendered each one.
+        if let Some(Some(manifest)) = bundle.graph.html_imports.manifests.get(index) {
+            manifests[positions_by_path[found].1] = Some(manifest.json.clone());
+        }
     }
 
     let bundled_count = manifests.iter().flatten().count();

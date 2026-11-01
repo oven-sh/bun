@@ -255,6 +255,26 @@ export default b.declarations(
     reads: externalState,
     implementation: b.hostCall,
   }),
+  b.static(cpp("sqlite/NodeSqlite.cpp", "jsSetSqliteQueryPublisher"), {
+    args: { publisher: b.any.optional },
+    returns: b.undefined,
+    capability: "none",
+    uses: {
+      publisher: [
+        b.retained,
+        b.called({
+          afterwards: "TouchesOnlyWhatRowNames",
+          times: "Later",
+          this: b.undefined,
+          args: [b.object],
+          result: "Ignored",
+        }),
+      ],
+    },
+    reads: externalState,
+    writes: externalState,
+    implementation: b.hostCall,
+  }),
   b.static(cpp("NodeAsyncHooks.cpp", "jsSetAsyncHooksEnabled"), {
     args: { enabled: b.any },
     returns: b.undefined,

@@ -46,7 +46,8 @@ async function performRouteReload(hasClientCode = false) {
     return;
   }
 
-  if (onServerSideReload) {
+  // `hot_update` drops the modules of a frame that reloads an HTML route page: a callback would keep the old scripts.
+  if (onServerSideReload && config.htmlRouteIndex === undefined) {
     try {
       isPerformingRouteReload = true;
       do {
@@ -152,13 +153,14 @@ const handlers = {
       if (routeId === -1 || routeId == undefined) break;
       serverSideRoutesUpdated.add(routeId);
     } while (true);
+    // The server finds `currentRouteIndex` by URL. On "/app/*" that is not the route whose html the page holds.
+    const isServerSideRouteUpdate =
+      serverSideRoutesUpdated.has(config.htmlRouteIndex) || serverSideRoutesUpdated.has(currentRouteIndex);
     // List 2
-    let isServerSideRouteUpdate = false;
     do {
       const routeId = reader.i32();
       if (routeId === -1 || routeId == undefined) break;
       if (routeId === currentRouteIndex) {
-        isServerSideRouteUpdate = serverSideRoutesUpdated.has(routeId);
         const cssCount = reader.i32();
         if (cssCount !== -1) {
           const cssArray = new Array<string>(cssCount);

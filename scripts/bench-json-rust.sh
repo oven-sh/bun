@@ -42,10 +42,32 @@ build "$SUP/simdutf_shim.o" $CXX -O3 -fPIC -std=c++20 -I"$SUP" -c src/parsers/be
 for f in abort targets per_target print timer nanobenchmark aligned_allocator; do
   build "$SUP/hwy_$f.o" $CXX -O3 -fPIC -std=c++17 -Ivendor/highway -c "vendor/highway/hwy/$f.cc"
 done
-for k in json xml; do
-  if [ -f src/jsc/bindings/highway_$k.cpp ]; then
-    $CXX -O3 -fPIC -std=c++17 -Ivendor/highway -Isrc/jsc/bindings -I"$BUN_CODEGEN_DIR" -c src/jsc/bindings/highway_$k.cpp -o "$SUP/highway_$k.o"
+# bun's Highway kernels: the files that define every `highway_*` symbol src/highway/lib.rs imports, compiled
+# with the C++ dialect and the Highway targets the build gives them (scripts/build/flags.ts, deps/highway.ts).
+# test/internal/source-lints/bench-json-rust.test.ts checks both lists against the build.
+KERNELS=(highway_strings highway_json highway_xml highway_sourcemap xxhash3)
+KERNEL_FLAGS=(-std=c++23 -DHWY_DISABLED_TARGETS=HWY_ALL_SVE-HWY_SVE2_128)
+# root.h pulls in JavaScriptCore. This defines its include guard and the macros a kernel file uses from it.
+ROOT_STUB=src/parsers/benches/support/highway_strings_root_stub.h
+# Like build, and also compiles again when the compiler or the command line changed (<object>.cmd has both),
+# or when a file the last compile read (the compiler lists them in <object>.d) is newer or gone.
+CXX_VERSION=$($CXX --version)
+build_kernel() {
+  local out=$1 dep
+  shift
+  if [ "$CXX_VERSION"$'\n'"$*" != "$(cat "$out.cmd" 2>/dev/null)" ]; then rm -f "$out"; fi
+  for dep in $(sed -e '1s/^[^:]*://' -e 's/\\$//' "$out.d" 2>/dev/null); do
+    if [ ! -e "$dep" ] || [ "$dep" -nt "$out" ]; then rm -f "$out"; break; fi
+  done
+  if [ ! -f "$out" ] || [ ! -f "$out.d" ]; then
+    "$@" -MMD -MF "$out.d" -o "$out"
+    printf '%s\n%s\n' "$CXX_VERSION" "$*" > "$out.cmd"
   fi
+}
+for k in "${KERNELS[@]}"; do
+  flags=("${KERNEL_FLAGS[@]}")
+  if grep -q '^#include "root.h"' "src/jsc/bindings/$k.cpp"; then flags+=(-include "$ROOT_STUB"); fi
+  build_kernel "$SUP/$k.o" $CXX -O3 -fPIC "${flags[@]}" -Ivendor/highway -Isrc/jsc/bindings -I"$BUN_CODEGEN_DIR" -c "src/jsc/bindings/$k.cpp"
 done
 # C/C++ XML parsers for benches/xml_parse.rs to compare against (optional).
 XML_C_DEFS=()
@@ -76,6 +98,10 @@ CXXLIB=stdc++
 [ "$(uname -s)" = Darwin ] && CXXLIB=c++
 export BUN_XML_BENCH_FIXTURES=${BUN_XML_BENCH_FIXTURES:-$PWD/bench/xml-corpus}
 export RUSTFLAGS="${RUSTFLAGS:-} ${XML_CFG[*]-} -Clink-arg=$PWD/$SUP/libbun_bench_cdeps.a ${XML_C_LIBS[*]-} -Clink-arg=-l$CXXLIB -Clink-arg=-lm -Clink-arg=-ldl -Clink-arg=-lpthread -Clink-arg=-lc"
+# cargo does not look at the file behind -Clink-arg. src/parsers/native_test_shims.rs reads this, so the
+# test and bench binaries are built again, and with that linked again, when an object changed.
+BUN_PARSERS_NATIVE_SUPPORT=$(cat "$SUP"/*.o | cksum)
+export BUN_PARSERS_NATIVE_SUPPORT
 
 if [ "${1:-}" = "--test" ]; then
   shift

@@ -6,6 +6,7 @@ use bun_jsc::{JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JST
 use super::{throw, Expect};
 
 impl Expect {
+    #[optimize(size)]
     pub(crate) fn to_be_empty(
         &self,
         this_value: JsWrapper<'_, Self>,
@@ -14,8 +15,6 @@ impl Expect {
         let global = cx.global();
         let (this, value, not) = self.matcher_prelude(global, this_value.to_js(), "toBeEmpty", "")?;
         let mut pass;
-        let mut formatter = super::make_formatter(global);
-        // `defer formatter.deinit()` — handled by Drop.
 
         // The length probe reports 0 for a value that is not a cell, and a function has a `length`.
         let is_string_or_object = value.is_string() || (value.is_object() && !value.is_callable());
@@ -82,7 +81,7 @@ impl Expect {
                     global,
                     signature,
                     "\n\nExpected value to be a string, object, or iterable\n\nReceived: <red>{}<r>\n",
-                    value.to_fmt(&mut formatter)
+                    value.to_fmt(&mut super::make_formatter(global))
                 );
             }
         } else if actual_length.is_nan() {
@@ -108,7 +107,7 @@ impl Expect {
                 global,
                 signature,
                 "\n\nExpected value <b>not<r> to be empty\n\nReceived: <red>{}<r>\n",
-                value.to_fmt(&mut formatter)
+                value.to_fmt(&mut super::make_formatter(global))
             );
         }
 
@@ -118,7 +117,7 @@ impl Expect {
             global,
             signature,
             "\n\nExpected value to be empty\n\nReceived: <red>{}<r>\n",
-            value.to_fmt(&mut formatter)
+            value.to_fmt(&mut super::make_formatter(global))
         )
     }
 }

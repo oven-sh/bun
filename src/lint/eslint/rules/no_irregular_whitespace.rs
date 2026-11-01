@@ -10,8 +10,8 @@ pub struct NoIrregularWhitespace {
     skip_templates: Option<bool>,
 }
 
-const NO_IRREGULAR_WHITESPACE: Message =
-    Message::new("noIrregularWhitespace", "Irregular whitespace not allowed.");
+const NO_IRREGULAR_WHITESPACE: &Message =
+    &Message::new("noIrregularWhitespace", "Irregular whitespace not allowed.");
 
 #[derive(Copy, Clone, PartialEq)]
 enum Irregular {
@@ -221,7 +221,7 @@ impl NoIrregularWhitespace {
             {
                 cx.report(whitespace_span, NO_IRREGULAR_WHITESPACE).hint_with(|| {
                     let character = strings::wtf8_first_codepoint(cx.slice(whitespace_span))?;
-                    Some(format!("It is the character U+{character:04X}. Replace it with a plain space or a line break."))
+                    Some(format!("This is U+{character:04X}. Use a plain space or a line break."))
                 });
             }
         }

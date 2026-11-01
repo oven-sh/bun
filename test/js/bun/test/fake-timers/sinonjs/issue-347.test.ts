@@ -12,7 +12,7 @@ describe("#347 - Support util.promisify once installed", function () {
     clock.uninstall();
   });
 
-  it.failing("setTimeout", function () {
+  it("setTimeout", function () {
     let resolved = false;
     utilPromisify(global.setTimeout)(100).then(function () {
       resolved = true;
@@ -23,7 +23,7 @@ describe("#347 - Support util.promisify once installed", function () {
     });
   });
 
-  it.failing("setImmediate", function () {
+  it("setImmediate", function () {
     if (!setImmediatePresent) {
       this.skip();
     }

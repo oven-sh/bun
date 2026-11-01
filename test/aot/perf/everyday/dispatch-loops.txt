@@ -1,0 +1,2263 @@
+//// forty-commands-of-which-thirty-five-are-rare-calls
+const seen: number[] = [];
+function rare5(a: number, b: number): number {
+  seen.push(5, a);
+  return (a ^ b) + 5;
+}
+function rare6(a: number, b: number): number {
+  seen.push(6, a);
+  return (a ^ b) + 6;
+}
+function rare7(a: number, b: number): number {
+  seen.push(7, a);
+  return (a ^ b) + 7;
+}
+function rare8(a: number, b: number): number {
+  seen.push(8, a);
+  return (a ^ b) + 8;
+}
+function rare9(a: number, b: number): number {
+  seen.push(9, a);
+  return (a ^ b) + 9;
+}
+function rare10(a: number, b: number): number {
+  seen.push(10, a);
+  return (a ^ b) + 10;
+}
+function rare11(a: number, b: number): number {
+  seen.push(11, a);
+  return (a ^ b) + 11;
+}
+function rare12(a: number, b: number): number {
+  seen.push(12, a);
+  return (a ^ b) + 12;
+}
+function rare13(a: number, b: number): number {
+  seen.push(13, a);
+  return (a ^ b) + 13;
+}
+function rare14(a: number, b: number): number {
+  seen.push(14, a);
+  return (a ^ b) + 14;
+}
+function rare15(a: number, b: number): number {
+  seen.push(15, a);
+  return (a ^ b) + 15;
+}
+function rare16(a: number, b: number): number {
+  seen.push(16, a);
+  return (a ^ b) + 16;
+}
+function rare17(a: number, b: number): number {
+  seen.push(17, a);
+  return (a ^ b) + 17;
+}
+function rare18(a: number, b: number): number {
+  seen.push(18, a);
+  return (a ^ b) + 18;
+}
+function rare19(a: number, b: number): number {
+  seen.push(19, a);
+  return (a ^ b) + 19;
+}
+function rare20(a: number, b: number): number {
+  seen.push(20, a);
+  return (a ^ b) + 20;
+}
+function rare21(a: number, b: number): number {
+  seen.push(21, a);
+  return (a ^ b) + 21;
+}
+function rare22(a: number, b: number): number {
+  seen.push(22, a);
+  return (a ^ b) + 22;
+}
+function rare23(a: number, b: number): number {
+  seen.push(23, a);
+  return (a ^ b) + 23;
+}
+function rare24(a: number, b: number): number {
+  seen.push(24, a);
+  return (a ^ b) + 24;
+}
+function rare25(a: number, b: number): number {
+  seen.push(25, a);
+  return (a ^ b) + 25;
+}
+function rare26(a: number, b: number): number {
+  seen.push(26, a);
+  return (a ^ b) + 26;
+}
+function rare27(a: number, b: number): number {
+  seen.push(27, a);
+  return (a ^ b) + 27;
+}
+function rare28(a: number, b: number): number {
+  seen.push(28, a);
+  return (a ^ b) + 28;
+}
+function rare29(a: number, b: number): number {
+  seen.push(29, a);
+  return (a ^ b) + 29;
+}
+function rare30(a: number, b: number): number {
+  seen.push(30, a);
+  return (a ^ b) + 30;
+}
+function rare31(a: number, b: number): number {
+  seen.push(31, a);
+  return (a ^ b) + 31;
+}
+function rare32(a: number, b: number): number {
+  seen.push(32, a);
+  return (a ^ b) + 32;
+}
+function rare33(a: number, b: number): number {
+  seen.push(33, a);
+  return (a ^ b) + 33;
+}
+function rare34(a: number, b: number): number {
+  seen.push(34, a);
+  return (a ^ b) + 34;
+}
+function rare35(a: number, b: number): number {
+  seen.push(35, a);
+  return (a ^ b) + 35;
+}
+function rare36(a: number, b: number): number {
+  seen.push(36, a);
+  return (a ^ b) + 36;
+}
+function rare37(a: number, b: number): number {
+  seen.push(37, a);
+  return (a ^ b) + 37;
+}
+function rare38(a: number, b: number): number {
+  seen.push(38, a);
+  return (a ^ b) + 38;
+}
+function rare39(a: number, b: number): number {
+  seen.push(39, a);
+  return (a ^ b) + 39;
+}
+function run(code: Int32Array, stack: Int32Array, steps: number, start: number): number {
+  let pc = start;
+  let sp = 0;
+  let acc = 1;
+  let x = 0;
+  let y = 7;
+  for (let n = 0; n < steps; n++) {
+    const op = code[pc++];
+    switch (op) {
+      case 0:
+        acc = (acc + code[pc++]) | 0;
+        break;
+      case 1:
+        stack[sp++] = acc;
+        break;
+      case 2:
+        acc ^= stack[--sp];
+        break;
+      case 3:
+        x = (x + acc + y) | 0;
+        y = (y + 1) & 255;
+        break;
+      case 4:
+        pc = code[pc];
+        break;
+      case 5:
+        acc = rare5(acc, x);
+        break;
+      case 6:
+        acc = rare6(acc, x);
+        break;
+      case 7:
+        acc = rare7(acc, x);
+        break;
+      case 8:
+        acc = rare8(acc, x);
+        break;
+      case 9:
+        acc = rare9(acc, x);
+        break;
+      case 10:
+        acc = rare10(acc, x);
+        break;
+      case 11:
+        acc = rare11(acc, x);
+        break;
+      case 12:
+        acc = rare12(acc, x);
+        break;
+      case 13:
+        acc = rare13(acc, x);
+        break;
+      case 14:
+        acc = rare14(acc, x);
+        break;
+      case 15:
+        acc = rare15(acc, x);
+        break;
+      case 16:
+        acc = rare16(acc, x);
+        break;
+      case 17:
+        acc = rare17(acc, x);
+        break;
+      case 18:
+        acc = rare18(acc, x);
+        break;
+      case 19:
+        acc = rare19(acc, x);
+        break;
+      case 20:
+        acc = rare20(acc, x);
+        break;
+      case 21:
+        acc = rare21(acc, x);
+        break;
+      case 22:
+        acc = rare22(acc, x);
+        break;
+      case 23:
+        acc = rare23(acc, x);
+        break;
+      case 24:
+        acc = rare24(acc, x);
+        break;
+      case 25:
+        acc = rare25(acc, x);
+        break;
+      case 26:
+        acc = rare26(acc, x);
+        break;
+      case 27:
+        acc = rare27(acc, x);
+        break;
+      case 28:
+        acc = rare28(acc, x);
+        break;
+      case 29:
+        acc = rare29(acc, x);
+        break;
+      case 30:
+        acc = rare30(acc, x);
+        break;
+      case 31:
+        acc = rare31(acc, x);
+        break;
+      case 32:
+        acc = rare32(acc, x);
+        break;
+      case 33:
+        acc = rare33(acc, x);
+        break;
+      case 34:
+        acc = rare34(acc, x);
+        break;
+      case 35:
+        acc = rare35(acc, x);
+        break;
+      case 36:
+        acc = rare36(acc, x);
+        break;
+      case 37:
+        acc = rare37(acc, x);
+        break;
+      case 38:
+        acc = rare38(acc, x);
+        break;
+      case 39:
+        acc = rare39(acc, x);
+        break;
+      default:
+        return -1;
+    }
+  }
+  return (acc + x + y + sp + pc) | 0;
+}
+const code = Int32Array.from([0, 3, 1, 3, 0, 5, 2, 3, 4, 0, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,  4, 0]);
+const stack = new Int32Array(16);
+function turn(i: number): number {
+  seen.length = 0;
+  return run(code, stack, 700, (i & 1023) === 0 ? 10 : 0);
+}
+//// the-same-with-return-addresses-in-a-list
+const seen: number[] = [];
+function rare5(a: number, b: number): number {
+  seen.push(5, a);
+  return (a ^ b) + 5;
+}
+function rare6(a: number, b: number): number {
+  seen.push(6, a);
+  return (a ^ b) + 6;
+}
+function rare7(a: number, b: number): number {
+  seen.push(7, a);
+  return (a ^ b) + 7;
+}
+function rare8(a: number, b: number): number {
+  seen.push(8, a);
+  return (a ^ b) + 8;
+}
+function rare9(a: number, b: number): number {
+  seen.push(9, a);
+  return (a ^ b) + 9;
+}
+function rare10(a: number, b: number): number {
+  seen.push(10, a);
+  return (a ^ b) + 10;
+}
+function rare11(a: number, b: number): number {
+  seen.push(11, a);
+  return (a ^ b) + 11;
+}
+function rare12(a: number, b: number): number {
+  seen.push(12, a);
+  return (a ^ b) + 12;
+}
+function rare13(a: number, b: number): number {
+  seen.push(13, a);
+  return (a ^ b) + 13;
+}
+function rare14(a: number, b: number): number {
+  seen.push(14, a);
+  return (a ^ b) + 14;
+}
+function rare15(a: number, b: number): number {
+  seen.push(15, a);
+  return (a ^ b) + 15;
+}
+function rare16(a: number, b: number): number {
+  seen.push(16, a);
+  return (a ^ b) + 16;
+}
+function rare17(a: number, b: number): number {
+  seen.push(17, a);
+  return (a ^ b) + 17;
+}
+function rare18(a: number, b: number): number {
+  seen.push(18, a);
+  return (a ^ b) + 18;
+}
+function rare19(a: number, b: number): number {
+  seen.push(19, a);
+  return (a ^ b) + 19;
+}
+function rare20(a: number, b: number): number {
+  seen.push(20, a);
+  return (a ^ b) + 20;
+}
+function rare21(a: number, b: number): number {
+  seen.push(21, a);
+  return (a ^ b) + 21;
+}
+function rare22(a: number, b: number): number {
+  seen.push(22, a);
+  return (a ^ b) + 22;
+}
+function rare23(a: number, b: number): number {
+  seen.push(23, a);
+  return (a ^ b) + 23;
+}
+function rare24(a: number, b: number): number {
+  seen.push(24, a);
+  return (a ^ b) + 24;
+}
+function rare25(a: number, b: number): number {
+  seen.push(25, a);
+  return (a ^ b) + 25;
+}
+function rare26(a: number, b: number): number {
+  seen.push(26, a);
+  return (a ^ b) + 26;
+}
+function rare27(a: number, b: number): number {
+  seen.push(27, a);
+  return (a ^ b) + 27;
+}
+function rare28(a: number, b: number): number {
+  seen.push(28, a);
+  return (a ^ b) + 28;
+}
+function rare29(a: number, b: number): number {
+  seen.push(29, a);
+  return (a ^ b) + 29;
+}
+function rare30(a: number, b: number): number {
+  seen.push(30, a);
+  return (a ^ b) + 30;
+}
+function rare31(a: number, b: number): number {
+  seen.push(31, a);
+  return (a ^ b) + 31;
+}
+function rare32(a: number, b: number): number {
+  seen.push(32, a);
+  return (a ^ b) + 32;
+}
+function rare33(a: number, b: number): number {
+  seen.push(33, a);
+  return (a ^ b) + 33;
+}
+function rare34(a: number, b: number): number {
+  seen.push(34, a);
+  return (a ^ b) + 34;
+}
+function rare35(a: number, b: number): number {
+  seen.push(35, a);
+  return (a ^ b) + 35;
+}
+function rare36(a: number, b: number): number {
+  seen.push(36, a);
+  return (a ^ b) + 36;
+}
+function rare37(a: number, b: number): number {
+  seen.push(37, a);
+  return (a ^ b) + 37;
+}
+function rare38(a: number, b: number): number {
+  seen.push(38, a);
+  return (a ^ b) + 38;
+}
+function rare39(a: number, b: number): number {
+  seen.push(39, a);
+  return (a ^ b) + 39;
+}
+function runWithReturns(code: Int32Array, stack: Int32Array, returns: number[], steps: number, start: number): number {
+  let pc = start;
+  let sp = 0;
+  let acc = 1;
+  let x = 0;
+  let y = 7;
+  let depth = 0;
+  for (let n = 0; n < steps; n++) {
+    const op = code[pc++];
+    switch (op) {
+      case 0:
+        acc = (acc + code[pc++]) | 0;
+        break;
+      case 1:
+        stack[sp++] = acc;
+        break;
+      case 2:
+        acc ^= stack[--sp];
+        break;
+      case 3:
+        x = (x + acc + y) | 0;
+        y = (y + 1) & 255;
+        break;
+      case 4:
+        pc = code[pc];
+        break;
+      case 40:
+        returns[depth++] = pc + 1;
+        pc = code[pc];
+        break;
+      case 41:
+        pc = returns[--depth];
+        break;
+      case 5:
+        acc = rare5(acc, x);
+        break;
+      case 6:
+        acc = rare6(acc, x);
+        break;
+      case 7:
+        acc = rare7(acc, x);
+        break;
+      case 8:
+        acc = rare8(acc, x);
+        break;
+      case 9:
+        acc = rare9(acc, x);
+        break;
+      case 10:
+        acc = rare10(acc, x);
+        break;
+      case 11:
+        acc = rare11(acc, x);
+        break;
+      case 12:
+        acc = rare12(acc, x);
+        break;
+      case 13:
+        acc = rare13(acc, x);
+        break;
+      case 14:
+        acc = rare14(acc, x);
+        break;
+      case 15:
+        acc = rare15(acc, x);
+        break;
+      case 16:
+        acc = rare16(acc, x);
+        break;
+      case 17:
+        acc = rare17(acc, x);
+        break;
+      case 18:
+        acc = rare18(acc, x);
+        break;
+      case 19:
+        acc = rare19(acc, x);
+        break;
+      case 20:
+        acc = rare20(acc, x);
+        break;
+      case 21:
+        acc = rare21(acc, x);
+        break;
+      case 22:
+        acc = rare22(acc, x);
+        break;
+      case 23:
+        acc = rare23(acc, x);
+        break;
+      case 24:
+        acc = rare24(acc, x);
+        break;
+      case 25:
+        acc = rare25(acc, x);
+        break;
+      case 26:
+        acc = rare26(acc, x);
+        break;
+      case 27:
+        acc = rare27(acc, x);
+        break;
+      case 28:
+        acc = rare28(acc, x);
+        break;
+      case 29:
+        acc = rare29(acc, x);
+        break;
+      case 30:
+        acc = rare30(acc, x);
+        break;
+      case 31:
+        acc = rare31(acc, x);
+        break;
+      case 32:
+        acc = rare32(acc, x);
+        break;
+      case 33:
+        acc = rare33(acc, x);
+        break;
+      case 34:
+        acc = rare34(acc, x);
+        break;
+      case 35:
+        acc = rare35(acc, x);
+        break;
+      case 36:
+        acc = rare36(acc, x);
+        break;
+      case 37:
+        acc = rare37(acc, x);
+        break;
+      case 38:
+        acc = rare38(acc, x);
+        break;
+      case 39:
+        acc = rare39(acc, x);
+        break;
+      default:
+        return -1;
+    }
+  }
+  return (acc + x + y + sp + pc) | 0;
+}
+const code = Int32Array.from([0, 3, 1, 40, 12, 0, 5, 2, 3, 4, 0, -1, 3, 0, 1, 41, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,  4, 0]);
+const stack = new Int32Array(16);
+const returns: number[] = [0, 0, 0, 0];
+function turn(i: number): number {
+  seen.length = 0;
+  return runWithReturns(code, stack, returns, 700, (i & 1023) === 0 ? 16 : 0);
+}
+//// the-same-with-two-hundred-more-rare-commands
+const seen: number[] = [];
+function rare5(a: number, b: number): number {
+  seen.push(5, a);
+  return (a ^ b) + 5;
+}
+function rare6(a: number, b: number): number {
+  seen.push(6, a);
+  return (a ^ b) + 6;
+}
+function rare7(a: number, b: number): number {
+  seen.push(7, a);
+  return (a ^ b) + 7;
+}
+function rare8(a: number, b: number): number {
+  seen.push(8, a);
+  return (a ^ b) + 8;
+}
+function rare9(a: number, b: number): number {
+  seen.push(9, a);
+  return (a ^ b) + 9;
+}
+function rare10(a: number, b: number): number {
+  seen.push(10, a);
+  return (a ^ b) + 10;
+}
+function rare11(a: number, b: number): number {
+  seen.push(11, a);
+  return (a ^ b) + 11;
+}
+function rare12(a: number, b: number): number {
+  seen.push(12, a);
+  return (a ^ b) + 12;
+}
+function rare13(a: number, b: number): number {
+  seen.push(13, a);
+  return (a ^ b) + 13;
+}
+function rare14(a: number, b: number): number {
+  seen.push(14, a);
+  return (a ^ b) + 14;
+}
+function rare15(a: number, b: number): number {
+  seen.push(15, a);
+  return (a ^ b) + 15;
+}
+function rare16(a: number, b: number): number {
+  seen.push(16, a);
+  return (a ^ b) + 16;
+}
+function rare17(a: number, b: number): number {
+  seen.push(17, a);
+  return (a ^ b) + 17;
+}
+function rare18(a: number, b: number): number {
+  seen.push(18, a);
+  return (a ^ b) + 18;
+}
+function rare19(a: number, b: number): number {
+  seen.push(19, a);
+  return (a ^ b) + 19;
+}
+function rare20(a: number, b: number): number {
+  seen.push(20, a);
+  return (a ^ b) + 20;
+}
+function rare21(a: number, b: number): number {
+  seen.push(21, a);
+  return (a ^ b) + 21;
+}
+function rare22(a: number, b: number): number {
+  seen.push(22, a);
+  return (a ^ b) + 22;
+}
+function rare23(a: number, b: number): number {
+  seen.push(23, a);
+  return (a ^ b) + 23;
+}
+function rare24(a: number, b: number): number {
+  seen.push(24, a);
+  return (a ^ b) + 24;
+}
+function rare25(a: number, b: number): number {
+  seen.push(25, a);
+  return (a ^ b) + 25;
+}
+function rare26(a: number, b: number): number {
+  seen.push(26, a);
+  return (a ^ b) + 26;
+}
+function rare27(a: number, b: number): number {
+  seen.push(27, a);
+  return (a ^ b) + 27;
+}
+function rare28(a: number, b: number): number {
+  seen.push(28, a);
+  return (a ^ b) + 28;
+}
+function rare29(a: number, b: number): number {
+  seen.push(29, a);
+  return (a ^ b) + 29;
+}
+function rare30(a: number, b: number): number {
+  seen.push(30, a);
+  return (a ^ b) + 30;
+}
+function rare31(a: number, b: number): number {
+  seen.push(31, a);
+  return (a ^ b) + 31;
+}
+function rare32(a: number, b: number): number {
+  seen.push(32, a);
+  return (a ^ b) + 32;
+}
+function rare33(a: number, b: number): number {
+  seen.push(33, a);
+  return (a ^ b) + 33;
+}
+function rare34(a: number, b: number): number {
+  seen.push(34, a);
+  return (a ^ b) + 34;
+}
+function rare35(a: number, b: number): number {
+  seen.push(35, a);
+  return (a ^ b) + 35;
+}
+function rare36(a: number, b: number): number {
+  seen.push(36, a);
+  return (a ^ b) + 36;
+}
+function rare37(a: number, b: number): number {
+  seen.push(37, a);
+  return (a ^ b) + 37;
+}
+function rare38(a: number, b: number): number {
+  seen.push(38, a);
+  return (a ^ b) + 38;
+}
+function rare39(a: number, b: number): number {
+  seen.push(39, a);
+  return (a ^ b) + 39;
+}
+function rare42(a: number, b: number): number {
+  seen.push(42, a);
+  return (a ^ b) + 42;
+}
+function rare43(a: number, b: number): number {
+  seen.push(43, a);
+  return (a ^ b) + 43;
+}
+function rare44(a: number, b: number): number {
+  seen.push(44, a);
+  return (a ^ b) + 44;
+}
+function rare45(a: number, b: number): number {
+  seen.push(45, a);
+  return (a ^ b) + 45;
+}
+function rare46(a: number, b: number): number {
+  seen.push(46, a);
+  return (a ^ b) + 46;
+}
+function rare47(a: number, b: number): number {
+  seen.push(47, a);
+  return (a ^ b) + 47;
+}
+function rare48(a: number, b: number): number {
+  seen.push(48, a);
+  return (a ^ b) + 48;
+}
+function rare49(a: number, b: number): number {
+  seen.push(49, a);
+  return (a ^ b) + 49;
+}
+function rare50(a: number, b: number): number {
+  seen.push(50, a);
+  return (a ^ b) + 50;
+}
+function rare51(a: number, b: number): number {
+  seen.push(51, a);
+  return (a ^ b) + 51;
+}
+function rare52(a: number, b: number): number {
+  seen.push(52, a);
+  return (a ^ b) + 52;
+}
+function rare53(a: number, b: number): number {
+  seen.push(53, a);
+  return (a ^ b) + 53;
+}
+function rare54(a: number, b: number): number {
+  seen.push(54, a);
+  return (a ^ b) + 54;
+}
+function rare55(a: number, b: number): number {
+  seen.push(55, a);
+  return (a ^ b) + 55;
+}
+function rare56(a: number, b: number): number {
+  seen.push(56, a);
+  return (a ^ b) + 56;
+}
+function rare57(a: number, b: number): number {
+  seen.push(57, a);
+  return (a ^ b) + 57;
+}
+function rare58(a: number, b: number): number {
+  seen.push(58, a);
+  return (a ^ b) + 58;
+}
+function rare59(a: number, b: number): number {
+  seen.push(59, a);
+  return (a ^ b) + 59;
+}
+function rare60(a: number, b: number): number {
+  seen.push(60, a);
+  return (a ^ b) + 60;
+}
+function rare61(a: number, b: number): number {
+  seen.push(61, a);
+  return (a ^ b) + 61;
+}
+function rare62(a: number, b: number): number {
+  seen.push(62, a);
+  return (a ^ b) + 62;
+}
+function rare63(a: number, b: number): number {
+  seen.push(63, a);
+  return (a ^ b) + 63;
+}
+function rare64(a: number, b: number): number {
+  seen.push(64, a);
+  return (a ^ b) + 64;
+}
+function rare65(a: number, b: number): number {
+  seen.push(65, a);
+  return (a ^ b) + 65;
+}
+function rare66(a: number, b: number): number {
+  seen.push(66, a);
+  return (a ^ b) + 66;
+}
+function rare67(a: number, b: number): number {
+  seen.push(67, a);
+  return (a ^ b) + 67;
+}
+function rare68(a: number, b: number): number {
+  seen.push(68, a);
+  return (a ^ b) + 68;
+}
+function rare69(a: number, b: number): number {
+  seen.push(69, a);
+  return (a ^ b) + 69;
+}
+function rare70(a: number, b: number): number {
+  seen.push(70, a);
+  return (a ^ b) + 70;
+}
+function rare71(a: number, b: number): number {
+  seen.push(71, a);
+  return (a ^ b) + 71;
+}
+function rare72(a: number, b: number): number {
+  seen.push(72, a);
+  return (a ^ b) + 72;
+}
+function rare73(a: number, b: number): number {
+  seen.push(73, a);
+  return (a ^ b) + 73;
+}
+function rare74(a: number, b: number): number {
+  seen.push(74, a);
+  return (a ^ b) + 74;
+}
+function rare75(a: number, b: number): number {
+  seen.push(75, a);
+  return (a ^ b) + 75;
+}
+function rare76(a: number, b: number): number {
+  seen.push(76, a);
+  return (a ^ b) + 76;
+}
+function rare77(a: number, b: number): number {
+  seen.push(77, a);
+  return (a ^ b) + 77;
+}
+function rare78(a: number, b: number): number {
+  seen.push(78, a);
+  return (a ^ b) + 78;
+}
+function rare79(a: number, b: number): number {
+  seen.push(79, a);
+  return (a ^ b) + 79;
+}
+function rare80(a: number, b: number): number {
+  seen.push(80, a);
+  return (a ^ b) + 80;
+}
+function rare81(a: number, b: number): number {
+  seen.push(81, a);
+  return (a ^ b) + 81;
+}
+function rare82(a: number, b: number): number {
+  seen.push(82, a);
+  return (a ^ b) + 82;
+}
+function rare83(a: number, b: number): number {
+  seen.push(83, a);
+  return (a ^ b) + 83;
+}
+function rare84(a: number, b: number): number {
+  seen.push(84, a);
+  return (a ^ b) + 84;
+}
+function rare85(a: number, b: number): number {
+  seen.push(85, a);
+  return (a ^ b) + 85;
+}
+function rare86(a: number, b: number): number {
+  seen.push(86, a);
+  return (a ^ b) + 86;
+}
+function rare87(a: number, b: number): number {
+  seen.push(87, a);
+  return (a ^ b) + 87;
+}
+function rare88(a: number, b: number): number {
+  seen.push(88, a);
+  return (a ^ b) + 88;
+}
+function rare89(a: number, b: number): number {
+  seen.push(89, a);
+  return (a ^ b) + 89;
+}
+function rare90(a: number, b: number): number {
+  seen.push(90, a);
+  return (a ^ b) + 90;
+}
+function rare91(a: number, b: number): number {
+  seen.push(91, a);
+  return (a ^ b) + 91;
+}
+function rare92(a: number, b: number): number {
+  seen.push(92, a);
+  return (a ^ b) + 92;
+}
+function rare93(a: number, b: number): number {
+  seen.push(93, a);
+  return (a ^ b) + 93;
+}
+function rare94(a: number, b: number): number {
+  seen.push(94, a);
+  return (a ^ b) + 94;
+}
+function rare95(a: number, b: number): number {
+  seen.push(95, a);
+  return (a ^ b) + 95;
+}
+function rare96(a: number, b: number): number {
+  seen.push(96, a);
+  return (a ^ b) + 96;
+}
+function rare97(a: number, b: number): number {
+  seen.push(97, a);
+  return (a ^ b) + 97;
+}
+function rare98(a: number, b: number): number {
+  seen.push(98, a);
+  return (a ^ b) + 98;
+}
+function rare99(a: number, b: number): number {
+  seen.push(99, a);
+  return (a ^ b) + 99;
+}
+function rare100(a: number, b: number): number {
+  seen.push(100, a);
+  return (a ^ b) + 100;
+}
+function rare101(a: number, b: number): number {
+  seen.push(101, a);
+  return (a ^ b) + 101;
+}
+function rare102(a: number, b: number): number {
+  seen.push(102, a);
+  return (a ^ b) + 102;
+}
+function rare103(a: number, b: number): number {
+  seen.push(103, a);
+  return (a ^ b) + 103;
+}
+function rare104(a: number, b: number): number {
+  seen.push(104, a);
+  return (a ^ b) + 104;
+}
+function rare105(a: number, b: number): number {
+  seen.push(105, a);
+  return (a ^ b) + 105;
+}
+function rare106(a: number, b: number): number {
+  seen.push(106, a);
+  return (a ^ b) + 106;
+}
+function rare107(a: number, b: number): number {
+  seen.push(107, a);
+  return (a ^ b) + 107;
+}
+function rare108(a: number, b: number): number {
+  seen.push(108, a);
+  return (a ^ b) + 108;
+}
+function rare109(a: number, b: number): number {
+  seen.push(109, a);
+  return (a ^ b) + 109;
+}
+function rare110(a: number, b: number): number {
+  seen.push(110, a);
+  return (a ^ b) + 110;
+}
+function rare111(a: number, b: number): number {
+  seen.push(111, a);
+  return (a ^ b) + 111;
+}
+function rare112(a: number, b: number): number {
+  seen.push(112, a);
+  return (a ^ b) + 112;
+}
+function rare113(a: number, b: number): number {
+  seen.push(113, a);
+  return (a ^ b) + 113;
+}
+function rare114(a: number, b: number): number {
+  seen.push(114, a);
+  return (a ^ b) + 114;
+}
+function rare115(a: number, b: number): number {
+  seen.push(115, a);
+  return (a ^ b) + 115;
+}
+function rare116(a: number, b: number): number {
+  seen.push(116, a);
+  return (a ^ b) + 116;
+}
+function rare117(a: number, b: number): number {
+  seen.push(117, a);
+  return (a ^ b) + 117;
+}
+function rare118(a: number, b: number): number {
+  seen.push(118, a);
+  return (a ^ b) + 118;
+}
+function rare119(a: number, b: number): number {
+  seen.push(119, a);
+  return (a ^ b) + 119;
+}
+function rare120(a: number, b: number): number {
+  seen.push(120, a);
+  return (a ^ b) + 120;
+}
+function rare121(a: number, b: number): number {
+  seen.push(121, a);
+  return (a ^ b) + 121;
+}
+function rare122(a: number, b: number): number {
+  seen.push(122, a);
+  return (a ^ b) + 122;
+}
+function rare123(a: number, b: number): number {
+  seen.push(123, a);
+  return (a ^ b) + 123;
+}
+function rare124(a: number, b: number): number {
+  seen.push(124, a);
+  return (a ^ b) + 124;
+}
+function rare125(a: number, b: number): number {
+  seen.push(125, a);
+  return (a ^ b) + 125;
+}
+function rare126(a: number, b: number): number {
+  seen.push(126, a);
+  return (a ^ b) + 126;
+}
+function rare127(a: number, b: number): number {
+  seen.push(127, a);
+  return (a ^ b) + 127;
+}
+function rare128(a: number, b: number): number {
+  seen.push(128, a);
+  return (a ^ b) + 128;
+}
+function rare129(a: number, b: number): number {
+  seen.push(129, a);
+  return (a ^ b) + 129;
+}
+function rare130(a: number, b: number): number {
+  seen.push(130, a);
+  return (a ^ b) + 130;
+}
+function rare131(a: number, b: number): number {
+  seen.push(131, a);
+  return (a ^ b) + 131;
+}
+function rare132(a: number, b: number): number {
+  seen.push(132, a);
+  return (a ^ b) + 132;
+}
+function rare133(a: number, b: number): number {
+  seen.push(133, a);
+  return (a ^ b) + 133;
+}
+function rare134(a: number, b: number): number {
+  seen.push(134, a);
+  return (a ^ b) + 134;
+}
+function rare135(a: number, b: number): number {
+  seen.push(135, a);
+  return (a ^ b) + 135;
+}
+function rare136(a: number, b: number): number {
+  seen.push(136, a);
+  return (a ^ b) + 136;
+}
+function rare137(a: number, b: number): number {
+  seen.push(137, a);
+  return (a ^ b) + 137;
+}
+function rare138(a: number, b: number): number {
+  seen.push(138, a);
+  return (a ^ b) + 138;
+}
+function rare139(a: number, b: number): number {
+  seen.push(139, a);
+  return (a ^ b) + 139;
+}
+function rare140(a: number, b: number): number {
+  seen.push(140, a);
+  return (a ^ b) + 140;
+}
+function rare141(a: number, b: number): number {
+  seen.push(141, a);
+  return (a ^ b) + 141;
+}
+function rare142(a: number, b: number): number {
+  seen.push(142, a);
+  return (a ^ b) + 142;
+}
+function rare143(a: number, b: number): number {
+  seen.push(143, a);
+  return (a ^ b) + 143;
+}
+function rare144(a: number, b: number): number {
+  seen.push(144, a);
+  return (a ^ b) + 144;
+}
+function rare145(a: number, b: number): number {
+  seen.push(145, a);
+  return (a ^ b) + 145;
+}
+function rare146(a: number, b: number): number {
+  seen.push(146, a);
+  return (a ^ b) + 146;
+}
+function rare147(a: number, b: number): number {
+  seen.push(147, a);
+  return (a ^ b) + 147;
+}
+function rare148(a: number, b: number): number {
+  seen.push(148, a);
+  return (a ^ b) + 148;
+}
+function rare149(a: number, b: number): number {
+  seen.push(149, a);
+  return (a ^ b) + 149;
+}
+function rare150(a: number, b: number): number {
+  seen.push(150, a);
+  return (a ^ b) + 150;
+}
+function rare151(a: number, b: number): number {
+  seen.push(151, a);
+  return (a ^ b) + 151;
+}
+function rare152(a: number, b: number): number {
+  seen.push(152, a);
+  return (a ^ b) + 152;
+}
+function rare153(a: number, b: number): number {
+  seen.push(153, a);
+  return (a ^ b) + 153;
+}
+function rare154(a: number, b: number): number {
+  seen.push(154, a);
+  return (a ^ b) + 154;
+}
+function rare155(a: number, b: number): number {
+  seen.push(155, a);
+  return (a ^ b) + 155;
+}
+function rare156(a: number, b: number): number {
+  seen.push(156, a);
+  return (a ^ b) + 156;
+}
+function rare157(a: number, b: number): number {
+  seen.push(157, a);
+  return (a ^ b) + 157;
+}
+function rare158(a: number, b: number): number {
+  seen.push(158, a);
+  return (a ^ b) + 158;
+}
+function rare159(a: number, b: number): number {
+  seen.push(159, a);
+  return (a ^ b) + 159;
+}
+function rare160(a: number, b: number): number {
+  seen.push(160, a);
+  return (a ^ b) + 160;
+}
+function rare161(a: number, b: number): number {
+  seen.push(161, a);
+  return (a ^ b) + 161;
+}
+function rare162(a: number, b: number): number {
+  seen.push(162, a);
+  return (a ^ b) + 162;
+}
+function rare163(a: number, b: number): number {
+  seen.push(163, a);
+  return (a ^ b) + 163;
+}
+function rare164(a: number, b: number): number {
+  seen.push(164, a);
+  return (a ^ b) + 164;
+}
+function rare165(a: number, b: number): number {
+  seen.push(165, a);
+  return (a ^ b) + 165;
+}
+function rare166(a: number, b: number): number {
+  seen.push(166, a);
+  return (a ^ b) + 166;
+}
+function rare167(a: number, b: number): number {
+  seen.push(167, a);
+  return (a ^ b) + 167;
+}
+function rare168(a: number, b: number): number {
+  seen.push(168, a);
+  return (a ^ b) + 168;
+}
+function rare169(a: number, b: number): number {
+  seen.push(169, a);
+  return (a ^ b) + 169;
+}
+function rare170(a: number, b: number): number {
+  seen.push(170, a);
+  return (a ^ b) + 170;
+}
+function rare171(a: number, b: number): number {
+  seen.push(171, a);
+  return (a ^ b) + 171;
+}
+function rare172(a: number, b: number): number {
+  seen.push(172, a);
+  return (a ^ b) + 172;
+}
+function rare173(a: number, b: number): number {
+  seen.push(173, a);
+  return (a ^ b) + 173;
+}
+function rare174(a: number, b: number): number {
+  seen.push(174, a);
+  return (a ^ b) + 174;
+}
+function rare175(a: number, b: number): number {
+  seen.push(175, a);
+  return (a ^ b) + 175;
+}
+function rare176(a: number, b: number): number {
+  seen.push(176, a);
+  return (a ^ b) + 176;
+}
+function rare177(a: number, b: number): number {
+  seen.push(177, a);
+  return (a ^ b) + 177;
+}
+function rare178(a: number, b: number): number {
+  seen.push(178, a);
+  return (a ^ b) + 178;
+}
+function rare179(a: number, b: number): number {
+  seen.push(179, a);
+  return (a ^ b) + 179;
+}
+function rare180(a: number, b: number): number {
+  seen.push(180, a);
+  return (a ^ b) + 180;
+}
+function rare181(a: number, b: number): number {
+  seen.push(181, a);
+  return (a ^ b) + 181;
+}
+function rare182(a: number, b: number): number {
+  seen.push(182, a);
+  return (a ^ b) + 182;
+}
+function rare183(a: number, b: number): number {
+  seen.push(183, a);
+  return (a ^ b) + 183;
+}
+function rare184(a: number, b: number): number {
+  seen.push(184, a);
+  return (a ^ b) + 184;
+}
+function rare185(a: number, b: number): number {
+  seen.push(185, a);
+  return (a ^ b) + 185;
+}
+function rare186(a: number, b: number): number {
+  seen.push(186, a);
+  return (a ^ b) + 186;
+}
+function rare187(a: number, b: number): number {
+  seen.push(187, a);
+  return (a ^ b) + 187;
+}
+function rare188(a: number, b: number): number {
+  seen.push(188, a);
+  return (a ^ b) + 188;
+}
+function rare189(a: number, b: number): number {
+  seen.push(189, a);
+  return (a ^ b) + 189;
+}
+function rare190(a: number, b: number): number {
+  seen.push(190, a);
+  return (a ^ b) + 190;
+}
+function rare191(a: number, b: number): number {
+  seen.push(191, a);
+  return (a ^ b) + 191;
+}
+function rare192(a: number, b: number): number {
+  seen.push(192, a);
+  return (a ^ b) + 192;
+}
+function rare193(a: number, b: number): number {
+  seen.push(193, a);
+  return (a ^ b) + 193;
+}
+function rare194(a: number, b: number): number {
+  seen.push(194, a);
+  return (a ^ b) + 194;
+}
+function rare195(a: number, b: number): number {
+  seen.push(195, a);
+  return (a ^ b) + 195;
+}
+function rare196(a: number, b: number): number {
+  seen.push(196, a);
+  return (a ^ b) + 196;
+}
+function rare197(a: number, b: number): number {
+  seen.push(197, a);
+  return (a ^ b) + 197;
+}
+function rare198(a: number, b: number): number {
+  seen.push(198, a);
+  return (a ^ b) + 198;
+}
+function rare199(a: number, b: number): number {
+  seen.push(199, a);
+  return (a ^ b) + 199;
+}
+function rare200(a: number, b: number): number {
+  seen.push(200, a);
+  return (a ^ b) + 200;
+}
+function rare201(a: number, b: number): number {
+  seen.push(201, a);
+  return (a ^ b) + 201;
+}
+function rare202(a: number, b: number): number {
+  seen.push(202, a);
+  return (a ^ b) + 202;
+}
+function rare203(a: number, b: number): number {
+  seen.push(203, a);
+  return (a ^ b) + 203;
+}
+function rare204(a: number, b: number): number {
+  seen.push(204, a);
+  return (a ^ b) + 204;
+}
+function rare205(a: number, b: number): number {
+  seen.push(205, a);
+  return (a ^ b) + 205;
+}
+function rare206(a: number, b: number): number {
+  seen.push(206, a);
+  return (a ^ b) + 206;
+}
+function rare207(a: number, b: number): number {
+  seen.push(207, a);
+  return (a ^ b) + 207;
+}
+function rare208(a: number, b: number): number {
+  seen.push(208, a);
+  return (a ^ b) + 208;
+}
+function rare209(a: number, b: number): number {
+  seen.push(209, a);
+  return (a ^ b) + 209;
+}
+function rare210(a: number, b: number): number {
+  seen.push(210, a);
+  return (a ^ b) + 210;
+}
+function rare211(a: number, b: number): number {
+  seen.push(211, a);
+  return (a ^ b) + 211;
+}
+function rare212(a: number, b: number): number {
+  seen.push(212, a);
+  return (a ^ b) + 212;
+}
+function rare213(a: number, b: number): number {
+  seen.push(213, a);
+  return (a ^ b) + 213;
+}
+function rare214(a: number, b: number): number {
+  seen.push(214, a);
+  return (a ^ b) + 214;
+}
+function rare215(a: number, b: number): number {
+  seen.push(215, a);
+  return (a ^ b) + 215;
+}
+function rare216(a: number, b: number): number {
+  seen.push(216, a);
+  return (a ^ b) + 216;
+}
+function rare217(a: number, b: number): number {
+  seen.push(217, a);
+  return (a ^ b) + 217;
+}
+function rare218(a: number, b: number): number {
+  seen.push(218, a);
+  return (a ^ b) + 218;
+}
+function rare219(a: number, b: number): number {
+  seen.push(219, a);
+  return (a ^ b) + 219;
+}
+function rare220(a: number, b: number): number {
+  seen.push(220, a);
+  return (a ^ b) + 220;
+}
+function rare221(a: number, b: number): number {
+  seen.push(221, a);
+  return (a ^ b) + 221;
+}
+function rare222(a: number, b: number): number {
+  seen.push(222, a);
+  return (a ^ b) + 222;
+}
+function rare223(a: number, b: number): number {
+  seen.push(223, a);
+  return (a ^ b) + 223;
+}
+function rare224(a: number, b: number): number {
+  seen.push(224, a);
+  return (a ^ b) + 224;
+}
+function rare225(a: number, b: number): number {
+  seen.push(225, a);
+  return (a ^ b) + 225;
+}
+function rare226(a: number, b: number): number {
+  seen.push(226, a);
+  return (a ^ b) + 226;
+}
+function rare227(a: number, b: number): number {
+  seen.push(227, a);
+  return (a ^ b) + 227;
+}
+function rare228(a: number, b: number): number {
+  seen.push(228, a);
+  return (a ^ b) + 228;
+}
+function rare229(a: number, b: number): number {
+  seen.push(229, a);
+  return (a ^ b) + 229;
+}
+function rare230(a: number, b: number): number {
+  seen.push(230, a);
+  return (a ^ b) + 230;
+}
+function rare231(a: number, b: number): number {
+  seen.push(231, a);
+  return (a ^ b) + 231;
+}
+function rare232(a: number, b: number): number {
+  seen.push(232, a);
+  return (a ^ b) + 232;
+}
+function rare233(a: number, b: number): number {
+  seen.push(233, a);
+  return (a ^ b) + 233;
+}
+function rare234(a: number, b: number): number {
+  seen.push(234, a);
+  return (a ^ b) + 234;
+}
+function rare235(a: number, b: number): number {
+  seen.push(235, a);
+  return (a ^ b) + 235;
+}
+function rare236(a: number, b: number): number {
+  seen.push(236, a);
+  return (a ^ b) + 236;
+}
+function rare237(a: number, b: number): number {
+  seen.push(237, a);
+  return (a ^ b) + 237;
+}
+function rare238(a: number, b: number): number {
+  seen.push(238, a);
+  return (a ^ b) + 238;
+}
+function rare239(a: number, b: number): number {
+  seen.push(239, a);
+  return (a ^ b) + 239;
+}
+function rare240(a: number, b: number): number {
+  seen.push(240, a);
+  return (a ^ b) + 240;
+}
+function runWithReturns(code: Int32Array, stack: Int32Array, returns: number[], steps: number, start: number): number {
+  let pc = start;
+  let sp = 0;
+  let acc = 1;
+  let x = 0;
+  let y = 7;
+  let depth = 0;
+  for (let n = 0; n < steps; n++) {
+    const op = code[pc++];
+    switch (op) {
+      case 0:
+        acc = (acc + code[pc++]) | 0;
+        break;
+      case 1:
+        stack[sp++] = acc;
+        break;
+      case 2:
+        acc ^= stack[--sp];
+        break;
+      case 3:
+        x = (x + acc + y) | 0;
+        y = (y + 1) & 255;
+        break;
+      case 4:
+        pc = code[pc];
+        break;
+      case 40:
+        returns[depth++] = pc + 1;
+        pc = code[pc];
+        break;
+      case 41:
+        pc = returns[--depth];
+        break;
+      case 5:
+        acc = rare5(acc, x);
+        break;
+      case 6:
+        acc = rare6(acc, x);
+        break;
+      case 7:
+        acc = rare7(acc, x);
+        break;
+      case 8:
+        acc = rare8(acc, x);
+        break;
+      case 9:
+        acc = rare9(acc, x);
+        break;
+      case 10:
+        acc = rare10(acc, x);
+        break;
+      case 11:
+        acc = rare11(acc, x);
+        break;
+      case 12:
+        acc = rare12(acc, x);
+        break;
+      case 13:
+        acc = rare13(acc, x);
+        break;
+      case 14:
+        acc = rare14(acc, x);
+        break;
+      case 15:
+        acc = rare15(acc, x);
+        break;
+      case 16:
+        acc = rare16(acc, x);
+        break;
+      case 17:
+        acc = rare17(acc, x);
+        break;
+      case 18:
+        acc = rare18(acc, x);
+        break;
+      case 19:
+        acc = rare19(acc, x);
+        break;
+      case 20:
+        acc = rare20(acc, x);
+        break;
+      case 21:
+        acc = rare21(acc, x);
+        break;
+      case 22:
+        acc = rare22(acc, x);
+        break;
+      case 23:
+        acc = rare23(acc, x);
+        break;
+      case 24:
+        acc = rare24(acc, x);
+        break;
+      case 25:
+        acc = rare25(acc, x);
+        break;
+      case 26:
+        acc = rare26(acc, x);
+        break;
+      case 27:
+        acc = rare27(acc, x);
+        break;
+      case 28:
+        acc = rare28(acc, x);
+        break;
+      case 29:
+        acc = rare29(acc, x);
+        break;
+      case 30:
+        acc = rare30(acc, x);
+        break;
+      case 31:
+        acc = rare31(acc, x);
+        break;
+      case 32:
+        acc = rare32(acc, x);
+        break;
+      case 33:
+        acc = rare33(acc, x);
+        break;
+      case 34:
+        acc = rare34(acc, x);
+        break;
+      case 35:
+        acc = rare35(acc, x);
+        break;
+      case 36:
+        acc = rare36(acc, x);
+        break;
+      case 37:
+        acc = rare37(acc, x);
+        break;
+      case 38:
+        acc = rare38(acc, x);
+        break;
+      case 39:
+        acc = rare39(acc, x);
+        break;
+      case 42:
+        acc = rare42(acc, x);
+        break;
+      case 43:
+        acc = rare43(acc, x);
+        break;
+      case 44:
+        acc = rare44(acc, x);
+        break;
+      case 45:
+        acc = rare45(acc, x);
+        break;
+      case 46:
+        acc = rare46(acc, x);
+        break;
+      case 47:
+        acc = rare47(acc, x);
+        break;
+      case 48:
+        acc = rare48(acc, x);
+        break;
+      case 49:
+        acc = rare49(acc, x);
+        break;
+      case 50:
+        acc = rare50(acc, x);
+        break;
+      case 51:
+        acc = rare51(acc, x);
+        break;
+      case 52:
+        acc = rare52(acc, x);
+        break;
+      case 53:
+        acc = rare53(acc, x);
+        break;
+      case 54:
+        acc = rare54(acc, x);
+        break;
+      case 55:
+        acc = rare55(acc, x);
+        break;
+      case 56:
+        acc = rare56(acc, x);
+        break;
+      case 57:
+        acc = rare57(acc, x);
+        break;
+      case 58:
+        acc = rare58(acc, x);
+        break;
+      case 59:
+        acc = rare59(acc, x);
+        break;
+      case 60:
+        acc = rare60(acc, x);
+        break;
+      case 61:
+        acc = rare61(acc, x);
+        break;
+      case 62:
+        acc = rare62(acc, x);
+        break;
+      case 63:
+        acc = rare63(acc, x);
+        break;
+      case 64:
+        acc = rare64(acc, x);
+        break;
+      case 65:
+        acc = rare65(acc, x);
+        break;
+      case 66:
+        acc = rare66(acc, x);
+        break;
+      case 67:
+        acc = rare67(acc, x);
+        break;
+      case 68:
+        acc = rare68(acc, x);
+        break;
+      case 69:
+        acc = rare69(acc, x);
+        break;
+      case 70:
+        acc = rare70(acc, x);
+        break;
+      case 71:
+        acc = rare71(acc, x);
+        break;
+      case 72:
+        acc = rare72(acc, x);
+        break;
+      case 73:
+        acc = rare73(acc, x);
+        break;
+      case 74:
+        acc = rare74(acc, x);
+        break;
+      case 75:
+        acc = rare75(acc, x);
+        break;
+      case 76:
+        acc = rare76(acc, x);
+        break;
+      case 77:
+        acc = rare77(acc, x);
+        break;
+      case 78:
+        acc = rare78(acc, x);
+        break;
+      case 79:
+        acc = rare79(acc, x);
+        break;
+      case 80:
+        acc = rare80(acc, x);
+        break;
+      case 81:
+        acc = rare81(acc, x);
+        break;
+      case 82:
+        acc = rare82(acc, x);
+        break;
+      case 83:
+        acc = rare83(acc, x);
+        break;
+      case 84:
+        acc = rare84(acc, x);
+        break;
+      case 85:
+        acc = rare85(acc, x);
+        break;
+      case 86:
+        acc = rare86(acc, x);
+        break;
+      case 87:
+        acc = rare87(acc, x);
+        break;
+      case 88:
+        acc = rare88(acc, x);
+        break;
+      case 89:
+        acc = rare89(acc, x);
+        break;
+      case 90:
+        acc = rare90(acc, x);
+        break;
+      case 91:
+        acc = rare91(acc, x);
+        break;
+      case 92:
+        acc = rare92(acc, x);
+        break;
+      case 93:
+        acc = rare93(acc, x);
+        break;
+      case 94:
+        acc = rare94(acc, x);
+        break;
+      case 95:
+        acc = rare95(acc, x);
+        break;
+      case 96:
+        acc = rare96(acc, x);
+        break;
+      case 97:
+        acc = rare97(acc, x);
+        break;
+      case 98:
+        acc = rare98(acc, x);
+        break;
+      case 99:
+        acc = rare99(acc, x);
+        break;
+      case 100:
+        acc = rare100(acc, x);
+        break;
+      case 101:
+        acc = rare101(acc, x);
+        break;
+      case 102:
+        acc = rare102(acc, x);
+        break;
+      case 103:
+        acc = rare103(acc, x);
+        break;
+      case 104:
+        acc = rare104(acc, x);
+        break;
+      case 105:
+        acc = rare105(acc, x);
+        break;
+      case 106:
+        acc = rare106(acc, x);
+        break;
+      case 107:
+        acc = rare107(acc, x);
+        break;
+      case 108:
+        acc = rare108(acc, x);
+        break;
+      case 109:
+        acc = rare109(acc, x);
+        break;
+      case 110:
+        acc = rare110(acc, x);
+        break;
+      case 111:
+        acc = rare111(acc, x);
+        break;
+      case 112:
+        acc = rare112(acc, x);
+        break;
+      case 113:
+        acc = rare113(acc, x);
+        break;
+      case 114:
+        acc = rare114(acc, x);
+        break;
+      case 115:
+        acc = rare115(acc, x);
+        break;
+      case 116:
+        acc = rare116(acc, x);
+        break;
+      case 117:
+        acc = rare117(acc, x);
+        break;
+      case 118:
+        acc = rare118(acc, x);
+        break;
+      case 119:
+        acc = rare119(acc, x);
+        break;
+      case 120:
+        acc = rare120(acc, x);
+        break;
+      case 121:
+        acc = rare121(acc, x);
+        break;
+      case 122:
+        acc = rare122(acc, x);
+        break;
+      case 123:
+        acc = rare123(acc, x);
+        break;
+      case 124:
+        acc = rare124(acc, x);
+        break;
+      case 125:
+        acc = rare125(acc, x);
+        break;
+      case 126:
+        acc = rare126(acc, x);
+        break;
+      case 127:
+        acc = rare127(acc, x);
+        break;
+      case 128:
+        acc = rare128(acc, x);
+        break;
+      case 129:
+        acc = rare129(acc, x);
+        break;
+      case 130:
+        acc = rare130(acc, x);
+        break;
+      case 131:
+        acc = rare131(acc, x);
+        break;
+      case 132:
+        acc = rare132(acc, x);
+        break;
+      case 133:
+        acc = rare133(acc, x);
+        break;
+      case 134:
+        acc = rare134(acc, x);
+        break;
+      case 135:
+        acc = rare135(acc, x);
+        break;
+      case 136:
+        acc = rare136(acc, x);
+        break;
+      case 137:
+        acc = rare137(acc, x);
+        break;
+      case 138:
+        acc = rare138(acc, x);
+        break;
+      case 139:
+        acc = rare139(acc, x);
+        break;
+      case 140:
+        acc = rare140(acc, x);
+        break;
+      case 141:
+        acc = rare141(acc, x);
+        break;
+      case 142:
+        acc = rare142(acc, x);
+        break;
+      case 143:
+        acc = rare143(acc, x);
+        break;
+      case 144:
+        acc = rare144(acc, x);
+        break;
+      case 145:
+        acc = rare145(acc, x);
+        break;
+      case 146:
+        acc = rare146(acc, x);
+        break;
+      case 147:
+        acc = rare147(acc, x);
+        break;
+      case 148:
+        acc = rare148(acc, x);
+        break;
+      case 149:
+        acc = rare149(acc, x);
+        break;
+      case 150:
+        acc = rare150(acc, x);
+        break;
+      case 151:
+        acc = rare151(acc, x);
+        break;
+      case 152:
+        acc = rare152(acc, x);
+        break;
+      case 153:
+        acc = rare153(acc, x);
+        break;
+      case 154:
+        acc = rare154(acc, x);
+        break;
+      case 155:
+        acc = rare155(acc, x);
+        break;
+      case 156:
+        acc = rare156(acc, x);
+        break;
+      case 157:
+        acc = rare157(acc, x);
+        break;
+      case 158:
+        acc = rare158(acc, x);
+        break;
+      case 159:
+        acc = rare159(acc, x);
+        break;
+      case 160:
+        acc = rare160(acc, x);
+        break;
+      case 161:
+        acc = rare161(acc, x);
+        break;
+      case 162:
+        acc = rare162(acc, x);
+        break;
+      case 163:
+        acc = rare163(acc, x);
+        break;
+      case 164:
+        acc = rare164(acc, x);
+        break;
+      case 165:
+        acc = rare165(acc, x);
+        break;
+      case 166:
+        acc = rare166(acc, x);
+        break;
+      case 167:
+        acc = rare167(acc, x);
+        break;
+      case 168:
+        acc = rare168(acc, x);
+        break;
+      case 169:
+        acc = rare169(acc, x);
+        break;
+      case 170:
+        acc = rare170(acc, x);
+        break;
+      case 171:
+        acc = rare171(acc, x);
+        break;
+      case 172:
+        acc = rare172(acc, x);
+        break;
+      case 173:
+        acc = rare173(acc, x);
+        break;
+      case 174:
+        acc = rare174(acc, x);
+        break;
+      case 175:
+        acc = rare175(acc, x);
+        break;
+      case 176:
+        acc = rare176(acc, x);
+        break;
+      case 177:
+        acc = rare177(acc, x);
+        break;
+      case 178:
+        acc = rare178(acc, x);
+        break;
+      case 179:
+        acc = rare179(acc, x);
+        break;
+      case 180:
+        acc = rare180(acc, x);
+        break;
+      case 181:
+        acc = rare181(acc, x);
+        break;
+      case 182:
+        acc = rare182(acc, x);
+        break;
+      case 183:
+        acc = rare183(acc, x);
+        break;
+      case 184:
+        acc = rare184(acc, x);
+        break;
+      case 185:
+        acc = rare185(acc, x);
+        break;
+      case 186:
+        acc = rare186(acc, x);
+        break;
+      case 187:
+        acc = rare187(acc, x);
+        break;
+      case 188:
+        acc = rare188(acc, x);
+        break;
+      case 189:
+        acc = rare189(acc, x);
+        break;
+      case 190:
+        acc = rare190(acc, x);
+        break;
+      case 191:
+        acc = rare191(acc, x);
+        break;
+      case 192:
+        acc = rare192(acc, x);
+        break;
+      case 193:
+        acc = rare193(acc, x);
+        break;
+      case 194:
+        acc = rare194(acc, x);
+        break;
+      case 195:
+        acc = rare195(acc, x);
+        break;
+      case 196:
+        acc = rare196(acc, x);
+        break;
+      case 197:
+        acc = rare197(acc, x);
+        break;
+      case 198:
+        acc = rare198(acc, x);
+        break;
+      case 199:
+        acc = rare199(acc, x);
+        break;
+      case 200:
+        acc = rare200(acc, x);
+        break;
+      case 201:
+        acc = rare201(acc, x);
+        break;
+      case 202:
+        acc = rare202(acc, x);
+        break;
+      case 203:
+        acc = rare203(acc, x);
+        break;
+      case 204:
+        acc = rare204(acc, x);
+        break;
+      case 205:
+        acc = rare205(acc, x);
+        break;
+      case 206:
+        acc = rare206(acc, x);
+        break;
+      case 207:
+        acc = rare207(acc, x);
+        break;
+      case 208:
+        acc = rare208(acc, x);
+        break;
+      case 209:
+        acc = rare209(acc, x);
+        break;
+      case 210:
+        acc = rare210(acc, x);
+        break;
+      case 211:
+        acc = rare211(acc, x);
+        break;
+      case 212:
+        acc = rare212(acc, x);
+        break;
+      case 213:
+        acc = rare213(acc, x);
+        break;
+      case 214:
+        acc = rare214(acc, x);
+        break;
+      case 215:
+        acc = rare215(acc, x);
+        break;
+      case 216:
+        acc = rare216(acc, x);
+        break;
+      case 217:
+        acc = rare217(acc, x);
+        break;
+      case 218:
+        acc = rare218(acc, x);
+        break;
+      case 219:
+        acc = rare219(acc, x);
+        break;
+      case 220:
+        acc = rare220(acc, x);
+        break;
+      case 221:
+        acc = rare221(acc, x);
+        break;
+      case 222:
+        acc = rare222(acc, x);
+        break;
+      case 223:
+        acc = rare223(acc, x);
+        break;
+      case 224:
+        acc = rare224(acc, x);
+        break;
+      case 225:
+        acc = rare225(acc, x);
+        break;
+      case 226:
+        acc = rare226(acc, x);
+        break;
+      case 227:
+        acc = rare227(acc, x);
+        break;
+      case 228:
+        acc = rare228(acc, x);
+        break;
+      case 229:
+        acc = rare229(acc, x);
+        break;
+      case 230:
+        acc = rare230(acc, x);
+        break;
+      case 231:
+        acc = rare231(acc, x);
+        break;
+      case 232:
+        acc = rare232(acc, x);
+        break;
+      case 233:
+        acc = rare233(acc, x);
+        break;
+      case 234:
+        acc = rare234(acc, x);
+        break;
+      case 235:
+        acc = rare235(acc, x);
+        break;
+      case 236:
+        acc = rare236(acc, x);
+        break;
+      case 237:
+        acc = rare237(acc, x);
+        break;
+      case 238:
+        acc = rare238(acc, x);
+        break;
+      case 239:
+        acc = rare239(acc, x);
+        break;
+      case 240:
+        acc = rare240(acc, x);
+        break;
+      default:
+        return -1;
+    }
+  }
+  return (acc + x + y + sp + pc) | 0;
+}
+const code = Int32Array.from([0, 3, 1, 40, 12, 0, 5, 2, 3, 4, 0, -1, 3, 0, 1, 41, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,  4, 0]);
+const stack = new Int32Array(16);
+const returns: number[] = [0, 0, 0, 0];
+function turn(i: number): number {
+  seen.length = 0;
+  return runWithReturns(code, stack, returns, 700, (i & 1023) === 0 ? 16 : 0);
+}

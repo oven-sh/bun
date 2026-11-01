@@ -6,9 +6,9 @@ use bun_lint::rule::Plugin;
 /// Enforces the use of `Response.json()` over `new Response(JSON.stringify())`.
 pub struct PreferResponseStaticJson;
 
-const PREFER_RESPONSE_STATIC_JSON: Message =
-    Message::new("", "Prefer using `Response.json(…)` over `JSON.stringify()`.");
-const SUGGESTION: Message = Message::new("", "Replace `new Response(JSON.stringify(...))` with `Response.json(...)`");
+const PREFER_RESPONSE_STATIC_JSON: &Message =
+    &Message::new("", "Prefer using `Response.json(…)` over `JSON.stringify()`.");
+const SUGGESTION: &Message = &Message::new("", "Replace `new Response(JSON.stringify(...))` with `Response.json(...)`");
 
 impl Rule for PreferResponseStaticJson {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-response-static-json", Kind::Suggestion).has_suggestions();

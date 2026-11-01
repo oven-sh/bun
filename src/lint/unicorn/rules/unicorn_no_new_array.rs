@@ -5,9 +5,9 @@ use bun_lint::rule::Plugin;
 /// Disallow `new Array()`.
 pub struct NoNewArray;
 
-const NO_NEW_ARRAY: Message = Message::new("", "Do not use `new Array(singleArgument)`.");
-const REPLACE_WITH_ARRAY_FROM: Message = Message::new("", "Replace with Array.from({ length: argument })");
-const REPLACE_WITH_ARRAY: Message = Message::new("", "Replace with [argument]");
+const NO_NEW_ARRAY: &Message = &Message::new("", "Do not use `new Array(singleArgument)`.");
+const REPLACE_WITH_ARRAY_FROM: &Message = &Message::new("", "Replace with Array.from({ length: argument })");
+const REPLACE_WITH_ARRAY: &Message = &Message::new("", "Replace with [argument]");
 
 impl Rule for NoNewArray {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-new-array", Kind::Problem).has_suggestions();

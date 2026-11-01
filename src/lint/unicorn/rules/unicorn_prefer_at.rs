@@ -11,10 +11,10 @@ pub struct PreferAt {
     get_last_element_functions: Vec<Box<[u8]>>,
 }
 
-const PREFER_AT: Message = Message::new("", "Prefer `.at()` over `{{method}}`.");
-const PREFER_AT_OVER_SUBSTRING: Message =
-    Message::new("", "Prefer `String#at()` over `String#substring()` when getting one character.");
-const USE_AT: Message = Message::new("", "Use `.at()` for index access.");
+const PREFER_AT: &Message = &Message::new("", "Prefer `.at()` over `{{method}}`.");
+const PREFER_AT_OVER_SUBSTRING: &Message =
+    &Message::new("", "Prefer `String#at()` over `String#substring()` when getting one character.");
+const USE_AT: &Message = &Message::new("", "Use `.at()` for index access.");
 
 const METHODS: [&str; 6] = ["charAt", "substring", "pop", "shift", "last", "slice"];
 

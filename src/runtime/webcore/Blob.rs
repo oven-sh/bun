@@ -12,14 +12,14 @@ use bun_jsc::JsCell;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 
 use crate::webcore::jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine,
+    self as jsc, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine,
 };
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_core as bun;
 use bun_core::Output;
 use bun_core::{EncodedSlice, String as BunString, Utf8Bytes, WTFStringImplExt as _, strings};
 use bun_http_types::MimeType::MimeType;
-use bun_jsc::{EncodedSliceJsc as _, StringJsc as _, bun_string_jsc};
+use bun_jsc::{CompiledJsonParser, EncodedSliceJsc as _, StringJsc as _, bun_string_jsc};
 use bun_ptr::RefPtr;
 use bun_sys::{self, Fd};
 
@@ -116,6 +116,9 @@ pub(crate) use bun_jsc::webcore_types::{Blob, BlobContentType, ClosingState, MAX
 const SERIALIZATION_VERSION: u8 = 4;
 
 pub(crate) use crate::generated_bindgen::blob::js_Blob as js;
+use crate::generated_bindgen::blob::{
+    BlobOrBuildArtifact, BlobType, BunFileOptions, BunWriteOptions,
+};
 
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -199,6 +202,8 @@ pub(crate) trait BlobExt {
     fn json(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
     fn array_buffer(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
     fn bytes(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
+    /// A promise for [`BlobExt::to_json_source`].
+    fn json_source(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue>;
     fn form_data(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
     fn get_exists_sync(&self) -> JSValue;
     fn write(
@@ -293,6 +298,8 @@ pub(crate) trait BlobExt {
     fn to_string_transfer(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue>;
     fn to_string(&self, cx: &bun_jsc::JsThread<'_>, lifetime: Lifetime) -> JsResult<JSValue>;
     fn to_json(&self, cx: &bun_jsc::JsThread<'_>, lifetime: Lifetime) -> JsResult<JSValue>;
+    /// What `to_json` parses: the bytes, or the text behind a UTF-16 mark.
+    fn to_json_source(&self, cx: &bun_jsc::JsThread<'_>, lifetime: Lifetime) -> JsResult<JSValue>;
     /// # Safety
     /// `raw_bytes` must be valid for reads for the duration of the call; when
     /// `LIFETIME == Temporary` it must be a leaked default-allocator `Box<[u8]>`.
@@ -706,7 +713,7 @@ impl BlobExt for Blob {
             self.offset.get()
         })?;
 
-        let ct = self.content_type_slice();
+        let ct = self.content_type.get().given();
         writer.write_int_le::<u32>(ct.len() as u32)?;
         writer.write_all(ct)?;
         writer.write_int_le::<u8>(self.content_type_was_set.get() as u8)?;
@@ -1052,7 +1059,7 @@ impl BlobExt for Blob {
                         writer,
                         ENABLE_ANSI_COLORS,
                         "type<d>:<r> <green>\"{s}\"<r>",
-                        bstr::BStr::new(self.content_type_slice()),
+                        bstr::BStr::new(self.content_type.get().given()),
                     )?;
                     if self.offset.get() > 0 || self.last_modified.get() != 0.0 {
                         formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
@@ -1171,6 +1178,11 @@ impl BlobExt for Blob {
         let _store = self.store.get().clone();
         let cx = cx.js_thread();
         JSPromise::wrap(cx.global(), |_| self.to_uint8_array(&cx, Lifetime::Clone))
+    }
+
+    fn json_source(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {
+        let _store = self.store.get().clone();
+        JSPromise::wrap(cx.global(), |_| self.to_json_source(cx, Lifetime::Clone))
     }
 
     fn form_data(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
@@ -1676,9 +1688,10 @@ impl BlobExt for Blob {
             // `webcore::PathOrFileDescriptor` is not `Clone`; build user
             // options first, then move `input_path` in once.
             let mut stream_start = if options.is_object() {
-                streams::Start::from_js_with_tag::<{ streams::StartTag::FileSink }>(
+                crate::generated_bindgen::sink::FileSinkStartOptions::from_js(
                     global_this,
                     options,
+                    |options| Ok(streams::Start::file_sink(&options.path, options.fd)),
                 )?
             } else {
                 streams::Start::FileSink(streams::FileSinkOptions {
@@ -1721,7 +1734,8 @@ impl BlobExt for Blob {
         let content_type_was_allocated = content_type.is_owned() && !content_type.is_empty();
         // infer the content type if it was not specified
         if content_type.is_empty()
-            && matches!(self.content_type.get(), BlobContentType::Static(s) if !s.is_empty())
+            && !self.content_type.get().is_owned()
+            && !self.content_type.get().is_empty()
         {
             blob.content_type.set(self.content_type.get().clone());
         } else {
@@ -1794,10 +1808,7 @@ impl BlobExt for Blob {
             let slicer = content_type_view.to_utf8();
             let slice = slicer.slice();
             if is_valid_blob_type(slice) {
-                blob_content_type = match global_this.bun_vm().as_mut().mime_type(slice) {
-                    Some(mime) => BlobContentType::from(mime),
-                    None => BlobContentType::from_lowercased(slice),
-                };
+                blob_content_type = BlobContentType::from_script(slice);
             }
         }
 
@@ -1813,7 +1824,7 @@ impl BlobExt for Blob {
 
     fn get_type(&self, cx: &mut JsScope<'_>) -> JSValue {
         let global_this = cx.global();
-        let ct = self.content_type_slice();
+        let ct = self.content_type.get().given();
         if !ct.is_empty() {
             return EncodedSlice::latin1(ct).to_js(global_this);
         }
@@ -1964,7 +1975,7 @@ impl BlobExt for Blob {
                         Ok(crate::node::fs::async_::Stat::create(
                             &cx,
                             binding,
-                            crate::node::fs::args::Stat::owned(path_like.slice().to_vec()),
+                            crate::node::fs::args::Stat::owned_copy_of(path_like),
                             vm,
                             None,
                         ))
@@ -1987,7 +1998,31 @@ impl BlobExt for Blob {
                 }
             }
             store::DataTag::S3 => crate::webcore::s3_file::S3BlobStatTask::stat(&cx, self),
-            store::DataTag::Bytes => Ok(JSValue::UNDEFINED),
+            store::DataTag::Bytes => {
+                let name = &self
+                    .store()
+                    .expect("infallible: store present")
+                    .data
+                    .as_bytes()
+                    .stored_name;
+                if !bun_standalone_graph::Graph::get_ref().is_some_and(|graph| {
+                    graph.compiled_program.is_some() && graph.contains_file(name)
+                }) {
+                    return Ok(JSValue::UNDEFINED);
+                }
+                // SAFETY: bun_vm() returns the live VM for this global.
+                let vm = global_this.bun_vm().as_mut();
+                // SAFETY: lazily-initialised per-VM NodeFS binding; never null after init.
+                let binding =
+                    unsafe { &*vm.node_fs().cast::<crate::node::node_fs_binding::Binding>() };
+                Ok(crate::node::fs::async_::Stat::create(
+                    &cx,
+                    binding,
+                    crate::node::fs::args::Stat::owned(name.to_vec()),
+                    vm,
+                    None,
+                ))
+            }
         }
     }
 
@@ -2130,12 +2165,7 @@ impl BlobExt for Blob {
                                 break 'inner;
                             }
                             blob.content_type_was_set.set(true);
-                            blob.content_type.set(
-                                match global_this.bun_vm().as_mut().mime_type(slice) {
-                                    Some(mime) => BlobContentType::from(mime),
-                                    None => BlobContentType::from_lowercased(slice),
-                                },
-                            );
+                            blob.content_type.set(BlobContentType::from_script(slice));
                         }
                     }
                 }
@@ -2332,23 +2362,9 @@ impl BlobExt for Blob {
 
         if bom == Some(strings::BOM::Utf16Le) {
             let _free = (LIFETIME == Lifetime::Temporary).then(|| TemporaryBytes(raw_bytes));
-            // Reinterpret as u16: drop a trailing odd byte.
             // This branch intentionally does NOT `self.detach()` for
             // `Lifetime::Transfer`, unlike the toJSON path.
-            let buf = &buf[..buf.len() & !1];
-            let out = match bytemuck::try_cast_slice::<u8, u16>(buf) {
-                Ok(units) => BunString::clone_utf16(units),
-                Err(_) => {
-                    let units: Vec<u16> = buf
-                        .as_chunks::<2>()
-                        .0
-                        .iter()
-                        .map(|pair| u16::from_le_bytes(*pair))
-                        .collect();
-                    BunString::clone_utf16(&units)
-                }
-            };
-            return out.into_js(global);
+            return BunString::clone_utf16_bytes(buf).into_js(global);
         }
 
         // null == unknown
@@ -2529,6 +2545,19 @@ impl BlobExt for Blob {
         }
     }
 
+    fn to_json_source(&self, cx: &bun_jsc::JsThread<'_>, lifetime: Lifetime) -> JsResult<JSValue> {
+        if self.needs_to_read_file() {
+            return Ok(self.do_read_file::<ToJsonSourceWithBytesFn>(cx));
+        }
+        if self.is_s3() {
+            return self.do_read_from_s3::<ToJsonSourceWithBytesFn>(cx);
+        }
+        match json_text_behind_mark(cx.global(), self.shared_view()) {
+            Some(text) => text,
+            None => self.to_uint8_array(cx, lifetime),
+        }
+    }
+
     /// See [`to_string_with_bytes`] for why `raw_bytes` is `*mut [u8]`.
     ///
     /// # Safety
@@ -2547,26 +2576,11 @@ impl BlobExt for Blob {
                 // SAFETY: `Temporary` ⇒ caller passed a leaked `Box<[u8]>`; reclaim it.
                 unsafe { drop(bun_core::heap::take(raw_bytes)) };
             }
-            return Err(global.throw_value(
-                global.create_syntax_error_instance(format_args!("Unexpected end of JSON input")),
-            ));
+            return Err(global.throw_value(Blob__createEmptyJSONBodyError(global)));
         }
 
         if bom == Some(strings::BOM::Utf16Le) {
-            // Reinterpret as u16: drop a trailing odd byte.
-            let buf = &buf[..buf.len() & !1];
-            let out = match bytemuck::try_cast_slice::<u8, u16>(buf) {
-                Ok(units) => BunString::clone_utf16(units),
-                Err(_) => {
-                    let units: Vec<u16> = buf
-                        .as_chunks::<2>()
-                        .0
-                        .iter()
-                        .map(|pair| u16::from_le_bytes(*pair))
-                        .collect();
-                    BunString::clone_utf16(&units)
-                }
-            };
+            let out = BunString::clone_utf16_bytes(buf);
             // Compute the
             // result first, then perform the deferred work explicitly — capturing
             // `&mut self` in a scopeguard closure conflicts with later uses below.
@@ -2589,24 +2603,14 @@ impl BlobExt for Blob {
         // free the original allocation, not the offset pointer.
         let _free = (LIFETIME == Lifetime::Temporary).then(|| TemporaryBytes(raw_bytes));
 
-        if could_be_all_ascii.is_none() || !could_be_all_ascii.unwrap() {
-            if let Some(external) = strings::to_utf16_alloc(buf, false, false)
-                .map_err(|_| bun_string_jsc::throw_utf16_transcode_failure(global, buf))?
-            {
-                if LIFETIME != Lifetime::Temporary {
-                    self.set_is_ascii_flag(false);
-                }
-                let result = EncodedSlice::utf16(&external).to_json_object(global);
-                drop(external);
-                return result;
-            }
-
-            if LIFETIME != Lifetime::Temporary {
-                self.set_is_ascii_flag(true);
-            }
+        if let Some(parsed) = EncodedSlice::latin1(buf).try_parse_json_from_utf8(global) {
+            return Ok(parsed);
         }
 
-        EncodedSlice::latin1(buf).to_json_object(global)
+        if could_be_all_ascii == Some(true) {
+            return EncodedSlice::latin1(buf).to_json_object(global, CompiledJsonParser::Skip);
+        }
+        EncodedSlice::utf8(buf).to_json_object(global, CompiledJsonParser::Skip)
     }
 
     /// See [`to_string_with_bytes`] for why `buf` is `*mut [u8]`.
@@ -3314,6 +3318,19 @@ impl BlobExt for Blob {
             }
         }
 
+        // `name` is the path as it was written.
+        let named = |blob: Blob, written: Option<BunString>| {
+            if let Some(written) = written {
+                blob.name.set(written);
+            }
+            blob
+        };
+        let written = match path_or_fd {
+            PathOrFileDescriptor::Path(PathLike::Joined(path)) => {
+                Some(BunString::clone_utf8(&path.written))
+            }
+            _ => None,
+        };
         let path: PathOrFileDescriptor = match path_or_fd {
             PathOrFileDescriptor::Path(_) => {
                 #[cfg(windows)]
@@ -3327,7 +3344,10 @@ impl BlobExt for Blob {
                 if let Some(file) = bun_standalone_graph::Graph::get_ref()
                     .and_then(|graph| graph.find_ref(path_or_fd.path().slice()))
                 {
-                    return crate::api::standalone_graph_jsc::file_blob(file, global_this);
+                    return named(
+                        crate::api::standalone_graph_jsc::file_blob(file, global_this),
+                        written,
+                    );
                 }
 
                 core::mem::replace(path_or_fd, PathOrFileDescriptor::Path(PathLike::default()))
@@ -3356,9 +3376,12 @@ impl BlobExt for Blob {
             }
         };
 
-        Blob::init_with_store(
-            bun_core::handle_oom(Store::init_file(path, None)),
-            global_this,
+        named(
+            Blob::init_with_store(
+                bun_core::handle_oom(Store::init_file(path, None)),
+                global_this,
+            ),
+            written,
         )
     }
     fn is_all_ascii(&self) -> Option<bool> {
@@ -3378,20 +3401,17 @@ impl BlobExt for Blob {
 // JSC-integration methods (host fns, to_js/from_js, S3/file I/O state machines)
 // ──────────────────────────────────────────────────────────────────────────
 
+use self::write_file::{WriteFilePromise, WriteFileWaitFromLockedValueTask};
 use crate::api::archive::Archive;
 use crate::image::Image;
 use crate::node;
 use crate::webcore::s3::client as s3_client;
 use crate::webcore::s3::simple_request::S3UploadResult;
 use crate::webcore::s3_file as S3File;
-use bun_core::string_joiner::StringJoiner;
-use bun_jsc::SysErrorJsc as _;
-// The `write_file` module name coexists with `pub fn write_file` below (module
-// vs value namespace); alias the module so the call sites read unambiguously.
-use self::write_file as write_file_mod;
-use self::write_file::{WriteFilePromise, WriteFileWaitFromLockedValueTask};
 use bun_bundler::options_impl::LoaderExt as _;
+use bun_core::string_joiner::StringJoiner;
 use bun_jsc::JsClass as _;
+use bun_jsc::SysErrorJsc as _;
 
 /// Local mirror of `jsc.DOMFormData.FormDataEntry` (`union(enum) { string, file }`).
 /// `bun_jsc::dom_form_data::FormDataEntry` carries `&Blob` (immutable) but
@@ -3782,7 +3802,7 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
 
             match pathlike_tag {
                 PathOrFileDescriptorSerializeTag::Fd => {
-                    let fd: Fd = reader.read_struct()?;
+                    let fd = Fd(reader.read_struct()?);
                     // Wire bytes are untrusted: enforce the same range as `FdJsc::from_js_validated`
                     // so a crafted record cannot materialize an fd no JS could construct (fd == -1
                     // hits `Fd::as_borrowed_fd`'s `raw != -1` assert on posix and aborts).
@@ -3808,11 +3828,10 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
                         return Err(crate::Error::InvalidValue);
                     }
                     let mut dest = PathOrFileDescriptor::Path(PathLike::owned(path));
-                    break 'file Blob::new(Blob::find_or_create_file_from_path(
+                    break 'file Blob::new(try_find_or_create_file_from_path(
                         &mut dest,
                         global_this,
-                        true,
-                    ));
+                    )?);
                 }
             }
         }
@@ -3880,7 +3899,7 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
 
     if !content_type.is_empty() {
         blob.content_type
-            .set(BlobContentType::Owned(std::sync::Arc::from(content_type)));
+            .set(BlobContentType::from_clone(&content_type));
         blob.content_type_was_set.set(content_type_was_set);
     }
 
@@ -3909,6 +3928,25 @@ impl URLSearchParamsConverter {
 // C-exported helpers
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Where `to_json_with_bytes` does not parse the bytes as UTF-8: the text that it parses behind a
+/// UTF-16 mark, and the error that it throws for a mark alone.
+fn json_text_behind_mark(global: &JSGlobalObject, bytes: &[u8]) -> Option<JsResult<JSValue>> {
+    match strings::BOM::detect_and_split(bytes) {
+        (Some(_), []) => Some(Err(
+            global.throw_value(Blob__createEmptyJSONBodyError(global))
+        )),
+        (Some(strings::BOM::Utf16Le), text) => {
+            Some(BunString::clone_utf16_bytes(text).into_js(global))
+        }
+        _ => None,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Blob__createEmptyJSONBodyError(global: &JSGlobalObject) -> JSValue {
+    global.create_syntax_error_instance(format_args!("Unexpected end of JSON input"))
+}
+
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Blob__dupeFromJS(value: JSValue) -> Option<NonNull<Blob>> {
     let this = Blob::from_js(value)?;
@@ -3922,7 +3960,7 @@ pub(crate) extern "C" fn Blob__dupeFromJS(value: JSValue) -> Option<NonNull<Blob
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Blob__setAsFile(this: &mut Blob, path_str: &BunString) {
     this.is_jsdom_file.set(true);
-    if !path_str.is_empty() && this.get_file_name().is_none() {
+    if !path_str.is_empty() {
         this.name.set(path_str.clone());
     }
 }
@@ -4027,7 +4065,9 @@ fn sys_error_with_path_like(
     pathlike: &PathOrFileDescriptor,
 ) -> bun_sys::Error {
     match pathlike {
-        PathOrFileDescriptor::Path(p) => err.with_path(p.slice()),
+        PathOrFileDescriptor::Path(p) => {
+            node::fs::error_for_caller([Some(p), None], err.with_path(p.slice()))
+        }
         PathOrFileDescriptor::Fd(_) => err.clone(),
     }
 }
@@ -4302,7 +4342,7 @@ pub(crate) fn write_file_with_source_destination(
                     .promise
                     .set(cx.global(), promise_value)
             };
-            match write_file_mod::WriteFileWindows::create(
+            match write_file::WriteFileWindows::create(
                 cx.vm().event_loop(),
                 cx.context(),
                 destination_blob.borrowed_view(),
@@ -4311,8 +4351,8 @@ pub(crate) fn write_file_with_source_destination(
                 WriteFilePromise::run,
                 options.mkdirp_if_not_exists.unwrap_or(true),
             ) {
-                Err(write_file_mod::WriteFileWindowsError::WriteFileWindowsDeinitialized) => {}
-                Err(write_file_mod::WriteFileWindowsError::Js(err)) => return Err(err),
+                Err(write_file::WriteFileWindowsError::WriteFileWindowsDeinitialized) => {}
+                Err(write_file::WriteFileWindowsError::Js(err)) => return Err(err),
                 Ok(_) => {}
             }
             return Ok(promise_value);
@@ -4320,7 +4360,7 @@ pub(crate) fn write_file_with_source_destination(
 
         #[cfg(not(windows))]
         {
-            let file_copier = write_file_mod::WriteFile::create(
+            let file_copier = write_file::WriteFile::create(
                 destination_blob.borrowed_view(),
                 source_blob.borrowed_view(),
                 options.mkdirp_if_not_exists.unwrap_or(true),
@@ -4332,7 +4372,7 @@ pub(crate) fn write_file_with_source_destination(
             write_file_promise.promise = jsc::JSPromiseStrong::init(cx.global());
             let promise_value = write_file_promise.promise.value();
             promise_value.ensure_still_alive();
-            write_file_mod::WriteFile::schedule(file_copier, write_file_promise, cx);
+            write_file::WriteFile::schedule(file_copier, write_file_promise, cx);
             return Ok(promise_value);
         }
     }
@@ -4598,6 +4638,20 @@ pub(crate) fn write_file_internal(
     // RefPtr<Store> clone+drop keeps the store alive for the duration of this call.
     let _input_store_hold = input_store;
 
+    let destination: Option<&PathOrFileDescriptor> = match &*path_or_blob {
+        PathOrBlob::Path(path) => Some(path),
+        PathOrBlob::Blob(blob) => match blob.store.get().as_ref().map(|store| &store.data) {
+            Some(store::Data::File(file)) => Some(&file.pathlike),
+            _ => None,
+        },
+    };
+    if let Some(PathOrFileDescriptor::Path(path)) = destination
+        && let Some(err) =
+            node::fs::creation_in_executable(path.slice(), bun_sys::Tag::open, bun_sys::E::EROFS)
+    {
+        return Ok(JSPromise::rejected_promise(cx.global(), err.to_js(cx.global())).to_js());
+    }
+
     if let Some(mkdir) = options.mkdirp_if_not_exists {
         if mkdir
             && matches!(*path_or_blob, PathOrBlob::Blob(ref b)
@@ -4696,7 +4750,7 @@ pub(crate) fn write_file_internal(
     // if path_or_blob is a path, convert it into a file blob
     let mut destination_blob: Blob = match path_or_blob {
         PathOrBlob::Path(path) => {
-            let new_blob = Blob::find_or_create_file_from_path(path, cx.global(), true);
+            let new_blob = try_find_or_create_file_from_path(path, cx.global())?;
             if new_blob.store.get().is_none() {
                 return Err(cx.global().throw_invalid_arguments(format_args!(
                     "Writing to an empty blob is not implemented yet"
@@ -5007,68 +5061,49 @@ fn set_content_type_from_js(
 }
 
 /// `Bun.write(destination, input, options?)`
-pub(crate) fn write_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let context = global_this.bun_vm().context_of_caller(callframe);
-    let arguments = callframe.arguments();
-    // SAFETY: `bun_vm()` returns a live VM pointer for the calling JS context.
-    let mut args = jsc::ArgumentsSlice::init(global_this.bun_vm(), arguments);
+pub(crate) fn write(
+    cx: &mut JsScope<'_>,
+    destination: JsLocal<'_>,
+    data: JsLocal<'_>,
+    options: JsLocal<'_>,
+) -> JsResult<JSValue> {
+    let cx = cx.js_thread();
+    let global_this = cx.global();
+    let destination = destination.to_js();
+    let mut args =
+        jsc::ArgumentsSlice::init(global_this.bun_vm(), core::slice::from_ref(&destination));
 
     let mut path_or_blob = write_destination_from_js(global_this, &mut args)?;
 
-    let Some(data) = args.next_eat() else {
-        return Err(global_this.throw_invalid_arguments(format_args!(
-            "Bun.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write"
-        )));
+    let options = (!options.is_undefined()).then(|| options.to_js());
+    let own_options = match options {
+        Some(options) if !options.is_null() => BunWriteOptions::from_js(global_this, options)?,
+        _ => BunWriteOptions::default(),
     };
-    let mut mkdirp_if_not_exists: Option<bool> = None;
-    let mut mode: Option<bun_sys::Mode> = None;
-    let options = args.next_eat();
-    if let Some(options_object) = options {
-        if options_object.is_object() {
-            if let Some(create_directory) = options_object.get_truthy(global_this, "createPath")? {
-                if !create_directory.is_boolean() {
-                    return Err(global_this.throw_invalid_argument_type(
-                        "write",
-                        "options.createPath",
-                        "boolean",
-                    ));
-                }
-                mkdirp_if_not_exists = Some(create_directory.to_boolean());
+    let mode = match own_options.mode {
+        Some(mode) => {
+            let mode_int = mode as i64;
+            if mode_int < 0 || mode_int > 0o777 {
+                return Err(global_this.throw_range_error(
+                    mode_int,
+                    jsc::RangeErrorOptions {
+                        field_name: b"mode",
+                        min: 0,
+                        max: 0o777,
+                        msg: b"",
+                    },
+                ));
             }
-            if let Some(mode_value) = options_object.get(global_this, "mode")? {
-                if !mode_value.is_empty_or_undefined_or_null() {
-                    if !mode_value.is_number() {
-                        return Err(global_this.throw_invalid_argument_type(
-                            "write",
-                            "options.mode",
-                            "number",
-                        ));
-                    }
-                    let mode_int = mode_value.to_int64();
-                    if mode_int < 0 || mode_int > 0o777 {
-                        return Err(global_this.throw_range_error(
-                            mode_int,
-                            jsc::RangeErrorOptions {
-                                field_name: b"mode",
-                                min: 0,
-                                max: 0o777,
-                                msg: b"",
-                            },
-                        ));
-                    }
-                    mode = Some(mode_int as bun_sys::Mode);
-                }
-            }
-        } else if !options_object.is_empty_or_undefined_or_null() {
-            return Err(global_this.throw_invalid_argument_type("write", "options", "object"));
+            Some(mode_int as bun_sys::Mode)
         }
-    }
+        None => None,
+    };
     write_file_internal(
-        &global_this.js_thread(context),
+        &cx,
         &mut path_or_blob,
-        data,
+        data.to_js(),
         WriteFileOptions {
-            mkdirp_if_not_exists,
+            mkdirp_if_not_exists: own_options.create_path,
             extra_options: options,
             mode,
         },
@@ -5242,9 +5277,11 @@ bun_jsc::jsc_host_abi! {
     #[unsafe(no_mangle)]
     pub unsafe fn JSDOMFile__construct(
         global_this: &JSGlobalObject,
-        callframe: &CallFrame,
+        bits: JSValue,
+        name: JSValue,
+        options: JSValue,
     ) -> Option<NonNull<Blob>> {
-        match jsdom_file_construct(global_this, callframe) {
+        match jsdom_file_construct(global_this, bits, name, options) {
             Ok(b) => Some(NonNull::new(b).expect("jsdom_file_construct returns Blob::new (heap::alloc)")),
             Err(jsc::JsError::Thrown) => None,
             Err(jsc::JsError::Terminated) => {
@@ -5262,55 +5299,43 @@ bun_jsc::jsc_host_abi! {
 
 pub(crate) fn jsdom_file_construct(
     global_this: &JSGlobalObject,
-    callframe: &CallFrame,
+    bits: JSValue,
+    name: JSValue,
+    options: JSValue,
 ) -> JsResult<*mut Blob> {
     jsc::mark_binding();
-    let args = callframe.arguments();
 
-    if args.len() < 2 {
-        return Err(global_this.throw_invalid_arguments(format_args!(
-            "new File(bits, name) expects at least 2 arguments"
-        )));
-    }
-    let name = BunString::from_js(args[1], global_this)?;
-    let blob = Blob::get::<false, true>(global_this, args[0])?;
+    let name = BunString::from_js(name, global_this)?;
+    let blob = Blob::get::<false, true>(global_this, bits)?;
     // The store may be shared with the source blob (`dupe()`); never rename it.
     blob.name.set(name);
 
     let mut set_last_modified = false;
 
-    if args.len() > 2 {
-        let options = args[2];
-        if options.is_object() {
-            // type, the ASCII-encoded string in lower case
-            // representing the media type of the Blob.
-            if let Some(content_type) = options.get(global_this, "type")? {
-                'inner: {
-                    if content_type.is_string() {
-                        let content_type_str = content_type.to_utf8(global_this)?;
-                        let slice = content_type_str.slice();
-                        if !is_valid_blob_type(slice) {
-                            break 'inner;
-                        }
-                        blob.content_type_was_set.set(true);
-                        blob.content_type.set(
-                            match global_this.bun_vm().as_mut().mime_type(slice) {
-                                Some(mime) => BlobContentType::from(mime),
-                                None => BlobContentType::from_lowercased(slice),
-                            },
-                        );
+    if options.is_object() {
+        // type, the ASCII-encoded string in lower case
+        // representing the media type of the Blob.
+        if let Some(content_type) = options.get(global_this, "type")? {
+            'inner: {
+                if content_type.is_string() {
+                    let content_type_str = content_type.to_utf8(global_this)?;
+                    let slice = content_type_str.slice();
+                    if !is_valid_blob_type(slice) {
+                        break 'inner;
                     }
+                    blob.content_type_was_set.set(true);
+                    blob.content_type.set(BlobContentType::from_script(slice));
                 }
             }
+        }
 
-            // WebIDL dictionary member: only `undefined` / not-present falls
-            // through to the Date.now() default. Any present value (including
-            // `null`) goes through ToNumber, with NaN normalized to 0.
-            if let Some(last_modified) = options.get(global_this, "lastModified")? {
-                set_last_modified = true;
-                let n = last_modified.to_number(global_this)?;
-                blob.last_modified.set(if n.is_nan() { 0.0 } else { n });
-            }
+        // WebIDL dictionary member: only `undefined` / not-present falls
+        // through to the Date.now() default. Any present value (including
+        // `null`) goes through ToNumber, with NaN normalized to 0.
+        if let Some(last_modified) = options.get(global_this, "lastModified")? {
+            set_last_modified = true;
+            let n = last_modified.to_number(global_this)?;
+            blob.last_modified.set(if n.is_nan() { 0.0 } else { n });
         }
     }
 
@@ -5339,60 +5364,74 @@ pub(crate) fn jsdom_file_construct(
 // `calculate_estimated_byte_size` / `estimated_size`: canonical impls live
 // later in this file (near `dupe`/`to_js`). Duplicates removed here.
 
-pub(crate) fn construct_bun_file(
-    global_object: &JSGlobalObject,
-    callframe: &CallFrame,
+impl<'a> BlobOrBuildArtifact<'a> {
+    pub(crate) fn blob(self) -> &'a Blob {
+        match self {
+            Self::Blob(blob) => blob,
+            Self::BuildArtifact(artifact) => &artifact.blob,
+        }
+    }
+}
+
+pub(crate) fn file(
+    cx: &mut JsScope<'_>,
+    path: JsLocal<'_>,
+    options: JsLocal<'_>,
 ) -> JsResult<JSValue> {
+    let global_object = cx.global();
     // SAFETY: bun_vm() never returns null for a Bun-owned global.
     let vm = global_object.bun_vm();
-    let arguments_slice = callframe.arguments();
-    let mut args = jsc::ArgumentsSlice::init(vm, arguments_slice);
+    let path = path.to_js();
+    let mut args = jsc::ArgumentsSlice::init(vm, core::slice::from_ref(&path));
 
     let Some(mut path) = PathOrFileDescriptor::from_js(global_object, &mut args)? else {
         return Err(global_object.throw_invalid_arguments(format_args!(
             "Expected file path string or file descriptor"
         )));
     };
-    let options = if arguments_slice.len() >= 2 {
-        Some(arguments_slice[1])
-    } else {
-        None
-    };
+    let options = (!options.is_undefined()).then(|| options.to_js());
 
     if let PathOrFileDescriptor::Path(ref p) = path {
         if p.slice().starts_with(b"s3://") {
             // The clone owns a copy of a buffer's bytes; `path` unpins at scope exit.
-            return S3File::construct_internal_js(global_object, p.clone(), options);
+            return bun_removable_features::call_removable_or!(
+                S3Client,
+                Throw,
+                { Err(throw_for_removed_s3_client(global_object)) },
+                construct_s3_file,
+                global_object,
+                p.clone(),
+                options
+            );
         }
     }
 
     let blob = Blob::find_or_create_file_from_path(&mut path, global_object, false);
 
-    if let Some(opts) = options {
-        if opts.is_object() {
-            if let Some(file_type) = opts.get_truthy(global_object, "type")? {
-                'inner: {
-                    if file_type.is_string() {
-                        let str = file_type.to_utf8(global_object)?;
-                        let slice = str.slice();
-                        if !is_valid_blob_type(slice) {
-                            break 'inner;
-                        }
-                        blob.content_type_was_set.set(true);
-                        blob.content_type.set(
-                            match global_object.bun_vm().as_mut().mime_type(slice) {
-                                Some(mime) => BlobContentType::from(mime),
-                                None => BlobContentType::from_lowercased(slice),
-                            },
-                        );
-                    }
+    if let Some(options) = options {
+        BunFileOptions::from_js(global_object, options, |options| {
+            let file_type = match options.r#type {
+                BlobType::Text(text) => Some(text).filter(|text| !text.is_empty()),
+                BlobType::StringObject(text) => Some(text),
+                BlobType::Ignored(_) => None,
+            };
+            if let Some(file_type) = file_type {
+                let str = file_type.to_utf8();
+                let slice = str.slice();
+                if is_valid_blob_type(slice) {
+                    blob.content_type_was_set.set(true);
+                    blob.content_type
+                        .set(match global_object.bun_vm().as_mut().mime_type(slice) {
+                            Some(mime) => BlobContentType::from(mime),
+                            None => BlobContentType::from_lowercased(slice),
+                        });
                 }
             }
-            if let Some(last_modified) = opts.get(global_object, "lastModified")? {
-                let n = last_modified.to_number(global_object)?;
+            if let Some(n) = options.last_modified {
                 blob.last_modified.set(if n.is_nan() { 0.0 } else { n });
             }
-        }
+            Ok(())
+        })?;
     }
 
     let ptr = Blob::new(blob);
@@ -5404,6 +5443,57 @@ pub(crate) fn construct_bun_file(
 
 // `find_or_create_file_from_path`: canonical impl lives later in this file
 // (runtime `check_s3: bool` form). Const-generic duplicate removed here.
+
+fn throw_for_removed_s3_client(global_this: &JSGlobalObject) -> jsc::JsError {
+    crate::removed_feature::throw_for_removed_feature(
+        global_this,
+        bun_removable_features::Feature::S3Client,
+    )
+}
+
+#[inline(never)]
+fn construct_s3_file(
+    global_object: &JSGlobalObject,
+    path: PathLike<'static>,
+    options: Option<JSValue>,
+) -> JsResult<JSValue> {
+    S3File::construct_internal_js(global_object, path, options)
+}
+
+#[inline(never)]
+fn find_or_create_s3_file(
+    path_or_fd: &mut PathOrFileDescriptor<'static>,
+    global_this: &JSGlobalObject,
+) -> Blob {
+    Blob::find_or_create_file_from_path(path_or_fd, global_this, true)
+}
+
+/// `find_or_create_file_from_path` with `check_s3`.
+#[inline(always)]
+fn try_find_or_create_file_from_path(
+    path_or_fd: &mut PathOrFileDescriptor<'static>,
+    global_this: &JSGlobalObject,
+) -> JsResult<Blob> {
+    let is_s3_path = matches!(
+        &*path_or_fd,
+        PathOrFileDescriptor::Path(path) if path.slice().starts_with(b"s3://")
+    );
+    if !is_s3_path {
+        return Ok(Blob::find_or_create_file_from_path(
+            path_or_fd,
+            global_this,
+            false,
+        ));
+    }
+    Ok(bun_removable_features::call_removable_or!(
+        S3Client,
+        Throw,
+        { return Err(throw_for_removed_s3_client(global_this)) },
+        find_or_create_s3_file,
+        path_or_fd,
+        global_this
+    ))
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // getStream / toStreamWithOffset / lifetimeWrap / accessor host fns
@@ -5837,6 +5927,7 @@ impl Drop for TemporaryBytes {
 // Each implements `ReadFileToJs` so a plain fn-pointer monomorphizes per `*WithBytes` body.
 pub(crate) struct ToStringWithBytesFn;
 pub(crate) struct ToJsonWithBytesFn;
+pub(crate) struct ToJsonSourceWithBytesFn;
 pub(crate) struct ToArrayBufferWithBytesFn;
 pub(crate) struct ToUint8ArrayWithBytesFn;
 pub(crate) struct ToFormDataWithBytesFn;
@@ -5866,6 +5957,19 @@ impl read_file::ReadFileToJs for ToJsonWithBytesFn {
                 Lifetime::Transfer => b.to_json_with_bytes::<{ Lifetime::Transfer }>(g, by),
             }
         }
+    }
+}
+impl read_file::ReadFileToJs for ToJsonSourceWithBytesFn {
+    fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
+        // SAFETY: see `ToStringWithBytesFn::call`.
+        let Some(text) = json_text_behind_mark(g, unsafe { &*by }) else {
+            return ToUint8ArrayWithBytesFn::call(b, g, by, l);
+        };
+        if l == Lifetime::Temporary {
+            // SAFETY: `Temporary` ⇒ caller passed a leaked `Box<[u8]>`; reclaim it.
+            unsafe { drop(bun_core::heap::take(by)) };
+        }
+        text
     }
 }
 impl read_file::ReadFileToJs for ToArrayBufferWithBytesFn {
@@ -6074,6 +6178,12 @@ impl Any {
                 self.to_array_buffer_transfer(cx)
             }
             streams::BufferActionTag::Json => self.to_json(cx, Lifetime::Share),
+            streams::BufferActionTag::JsonSource => {
+                if matches!(self, Any::Blob(_)) {
+                    return self.to_json_source(cx, Lifetime::Clone);
+                }
+                self.to_json_source(cx, Lifetime::Transfer)
+            }
         }
     }
 
@@ -6107,29 +6217,50 @@ impl Any {
         promise.wrap(cx.global(), |_| self.to_action_value(cx, action))
     }
 
+    /// Whether `json()` answers null and parses nothing: the body is empty and no Blob holds it.
+    fn is_null_without_parsing(&self) -> bool {
+        match self {
+            Any::Blob(_) => false,
+            Any::InternalBlob(ib) => ib.bytes.is_empty(),
+            Any::WTFStringImpl(s) => s.length() == 0,
+        }
+    }
+
     pub(crate) fn to_json(
         &mut self,
         cx: &bun_jsc::JsThread<'_>,
         lifetime: Lifetime,
     ) -> JsResult<JSValue> {
+        if self.is_null_without_parsing() {
+            return Ok(JSValue::NULL);
+        }
         match self {
             Any::Blob(b) => b.to_json(cx, lifetime),
             Any::InternalBlob(ib) => {
-                if ib.bytes.is_empty() {
-                    return Ok(JSValue::NULL);
-                }
                 let str = ib.to_json(cx.global());
                 // the GC will collect the string
                 *self = Any::Blob(Blob::default());
                 str
             }
-            Any::WTFStringImpl(_) => {
-                let str = self.take_string();
-                if str.length() == 0 {
-                    return Ok(JSValue::NULL);
-                }
-                str.to_js_by_parse_json(cx.global())
-            }
+            Any::WTFStringImpl(_) => self.take_string().to_js_by_parse_json(cx.global()),
+        }
+    }
+
+    /// What `to_json` parses, for the JSON parser of a compiled program: the string that holds the
+    /// body, the text behind the UTF-16 mark of a Blob, otherwise the bytes. A UTF-8 mark stays in the bytes.
+    /// Where `to_json` answers null without parsing, the text is "null".
+    pub(crate) fn to_json_source(
+        &mut self,
+        cx: &bun_jsc::JsThread<'_>,
+        lifetime: Lifetime,
+    ) -> JsResult<JSValue> {
+        if self.is_null_without_parsing() {
+            return bun_string_jsc::create_utf8_for_js(cx.global(), b"null");
+        }
+        match self {
+            Any::Blob(b) => b.to_json_source(cx, lifetime),
+            Any::InternalBlob(_) => self.to_uint8_array(cx, lifetime),
+            Any::WTFStringImpl(_) => self.take_string().into_js(cx.global()),
         }
     }
 
@@ -6356,8 +6487,8 @@ impl Internal {
     }
 
     pub(crate) fn to_json(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        let str_bytes = EncodedSlice::from_bytes(strings::without_utf8_bom(&self.bytes));
-        let json = str_bytes.to_json_object(global_this);
+        let str_bytes = EncodedSlice::utf8(strings::without_utf8_bom(&self.bytes));
+        let json = str_bytes.to_json_object(global_this, CompiledJsonParser::Try);
         self.bytes = Vec::new();
         json
     }
@@ -6477,10 +6608,13 @@ pub(crate) trait FileOpener: Sized {
                         };
                         self_.set_errno(bun_errno::from_errno(err_enum as i32).into());
                         self_.set_system_error(
-                            bun_sys::Error::from_code(err_enum, bun_sys::Tag::open)
-                                .with_path(path_string_2.slice())
-                                .to_system_error()
-                                .into(),
+                            node::fs::error_for_caller(
+                                [Some(&path_string_2), None],
+                                bun_sys::Error::from_code(err_enum, bun_sys::Tag::open)
+                                    .with_path(path_string_2.slice()),
+                            )
+                            .to_system_error()
+                            .into(),
                         );
                         self_.set_opened_fd(bun_sys::Fd::INVALID);
                     } else {
@@ -6522,10 +6656,13 @@ pub(crate) trait FileOpener: Sized {
             if let Some(errno) = rc.errno() {
                 self.set_errno(bun_errno::from_errno(errno as i32).into());
                 self.set_system_error(
-                    bun_sys::Error::from_code(errno, bun_sys::Tag::open)
-                        .with_path(path_string.slice())
-                        .to_system_error()
-                        .into(),
+                    node::fs::error_for_caller(
+                        [Some(&path_string), None],
+                        bun_sys::Error::from_code(errno, bun_sys::Tag::open)
+                            .with_path(path_string.slice()),
+                    )
+                    .to_system_error()
+                    .into(),
                 );
                 self.set_opened_fd(bun_sys::Fd::INVALID);
                 // `callback` may free `self` (see comment above) — must be the
@@ -6561,10 +6698,12 @@ pub(crate) trait FileOpener: Sized {
                                 Retry::No => {}
                             }
                         }
+                        let err = node::fs::error_for_caller(
+                            [Some(&path_string), None],
+                            err.with_path(path_string.slice()),
+                        );
                         self.set_errno(bun_errno::from_errno(err.errno as i32).into());
-                        self.set_system_error(jsc::SysErrorJsc::to_system_error(
-                            &err.with_path(path_string.slice()),
-                        ));
+                        self.set_system_error(jsc::SysErrorJsc::to_system_error(&err));
                         self.set_opened_fd(Fd::INVALID);
                         break;
                     }

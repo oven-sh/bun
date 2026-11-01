@@ -2,78 +2,43 @@
 
 use super::*;
 
-pub(super) struct RequestEnsureRouteBundledCtx {
-    // Note: erased to raw pointer — a `&mut DevServer` field would alias the
-    // caller's borrow.
-    pub(super) dev: *mut DevServer,
-    pub(super) req: ReqOrSaved,
+pub(super) struct RequestEnsureRouteBundledCtx<'a> {
+    pub(super) req: ReqOrSaved<'a>,
     pub(super) resp: AnyResponse,
     pub(super) kind: deferred_request::HandlerKind,
     pub(super) route_bundle_index: route_bundle::Index,
 }
 
-impl RequestEnsureRouteBundledCtx {
-    /// Reborrow the erased `dev` pointer.
-    /// # Safety
-    /// `self.dev` is set from a live `&mut DevServer` at ctx construction and
-    /// outlives the ctx (the ctx is stack-local in the request handler scope).
-    #[inline]
-    fn dev_mut(&mut self) -> &mut DevServer {
-        // SAFETY: `self.dev` was set from a live `&mut DevServer` at ctx
-        // construction and outlives this stack-local ctx.
-        unsafe { &mut *self.dev }
-    }
-
-    fn on_defer(&mut self, bundle_field: BundleQueueType) -> JsResult<Deferral> {
-        // Note: reshaped for borrowck — captured args before re-borrowing dev
-        let route_bundle_index = self.route_bundle_index;
-        let kind = self.kind;
+impl RequestEnsureRouteBundledCtx<'_> {
+    fn on_defer(
+        &mut self,
+        dev: &mut DevServer,
+        bundle_field: BundleQueueType,
+    ) -> JsResult<Deferral> {
         let req = ::core::mem::replace(&mut self.req, ReqOrSaved::Aborted);
-        let resp = self.resp;
-        let dev = self.dev_mut();
-        let requests_array: *mut deferred_request::List = match bundle_field {
-            BundleQueueType::CurrentBundle => {
-                &raw mut dev
-                    .current_bundle
-                    .as_mut()
-                    .expect("infallible: bundle active")
-                    .requests
-            }
-            BundleQueueType::NextBundle => &raw mut dev.next_bundle.requests,
-        };
-        Ok(self.dev_mut().defer_request(
-            // SAFETY: `requests_array` points into `*self.dev`, which outlives this call.
-            unsafe { &mut *requests_array },
-            route_bundle_index,
-            kind,
+        Ok(dev.defer_request(
+            bundle_field,
+            self.route_bundle_index,
+            self.kind,
             req,
-            resp,
+            self.resp,
         )?)
     }
 
-    fn on_loaded(&mut self) -> JsResult<()> {
+    fn on_loaded(&mut self, dev: &mut DevServer) -> JsResult<()> {
         match self.kind {
             deferred_request::HandlerKind::ServerHandler => {
-                let route_bundle_index = self.route_bundle_index;
-                let resp = self.resp;
                 // The `Strong` field is move-only. Take ownership out of `self.req`
                 // (it is consumed by `on_framework_request_with_bundle`).
                 let req = match ::core::mem::replace(&mut self.req, ReqOrSaved::Aborted) {
-                    ReqOrSaved::Req(r) => {
-                        // SAFETY: `r` is a uWS `Request*` valid for the handler callback's duration.
-                        SavedRequestUnion::Stack(unsafe { &mut *r })
-                    }
+                    ReqOrSaved::Req(r) => SavedRequestUnion::Stack(r),
                     ReqOrSaved::Aborted => unreachable!(),
                 };
-                self.dev_mut()
-                    .on_framework_request_with_bundle(route_bundle_index, req, resp)
+                dev.on_framework_request_with_bundle(self.route_bundle_index, req, self.resp)
             }
             deferred_request::HandlerKind::BundledHtmlPage => {
-                let route_bundle_index = self.route_bundle_index;
-                let resp = self.resp;
                 let method = self.req.method();
-                self.dev_mut()
-                    .on_html_request_with_bundle(route_bundle_index, resp, method);
+                dev.on_html_request_with_bundle(self.route_bundle_index, self.resp, method);
                 Ok(())
             }
         }
@@ -105,7 +70,7 @@ enum Deferral {
 pub(super) fn ensure_route_is_bundled(
     dev: &mut DevServer,
     route_bundle_index: route_bundle::Index,
-    ctx: &mut RequestEnsureRouteBundledCtx,
+    ctx: &mut RequestEnsureRouteBundledCtx<'_>,
 ) -> JsResult<()> {
     debug_assert!(dev.magic == Magic::Valid);
     debug_assert!(dev.server.is_some());
@@ -115,7 +80,7 @@ pub(super) fn ensure_route_is_bundled(
             route_bundle::State::Unqueued => {
                 // We already are bundling something, defer the request
                 if dev.current_bundle.is_some() {
-                    if ctx.on_defer(BundleQueueType::NextBundle)? == Deferral::Answered {
+                    if ctx.on_defer(dev, BundleQueueType::NextBundle)? == Deferral::Answered {
                         return Ok(());
                     }
                     dev.next_bundle.route_queue.put(route_bundle_index, ())?;
@@ -178,7 +143,8 @@ pub(super) fn ensure_route_is_bundled(
                             break 'plugin;
                         }
                         PluginState::Pending => {
-                            if ctx.on_defer(BundleQueueType::NextBundle)? == Deferral::Answered {
+                            if ctx.on_defer(dev, BundleQueueType::NextBundle)? == Deferral::Answered
+                            {
                                 return Ok(());
                             }
                             dev.next_bundle.route_queue.put(route_bundle_index, ())?;
@@ -217,7 +183,7 @@ pub(super) fn ensure_route_is_bundled(
                 }
 
                 // A bundle moves a route out of `Bundling` only through the requests that wait for it.
-                if ctx.on_defer(BundleQueueType::NextBundle)? == Deferral::Answered {
+                if ctx.on_defer(dev, BundleQueueType::NextBundle)? == Deferral::Answered {
                     return Ok(());
                 }
                 dev.next_bundle.route_queue.put(route_bundle_index, ())?;
@@ -235,12 +201,12 @@ pub(super) fn ensure_route_is_bundled(
                         .get(&route_bundle_index)
                         .is_some()
                 );
-                ctx.on_defer(BundleQueueType::NextBundle)?;
+                ctx.on_defer(dev, BundleQueueType::NextBundle)?;
                 return Ok(());
             }
             route_bundle::State::Bundling => {
                 debug_assert!(dev.current_bundle.is_some());
-                ctx.on_defer(BundleQueueType::CurrentBundle)?;
+                ctx.on_defer(dev, BundleQueueType::CurrentBundle)?;
                 return Ok(());
             }
             route_bundle::State::PossibleBundlingFailures => {
@@ -262,26 +228,22 @@ pub(super) fn ensure_route_is_bundled(
                 continue 'sw;
             }
             route_bundle::State::Loaded => {
-                ctx.on_loaded()?;
+                ctx.on_loaded(dev)?;
                 return Ok(());
             }
         }
     }
 }
 
-#[derive(Clone, Copy)]
-pub(super) enum ReqOrSaved {
-    Req(*mut Request), // FFI: uws C request ptr from handler callback
+pub(super) enum ReqOrSaved<'a> {
+    Req(&'a mut Request),
     Aborted,
 }
 
-impl ReqOrSaved {
+impl ReqOrSaved<'_> {
     fn method(&self) -> Method {
         match self {
-            ReqOrSaved::Req(req) => {
-                // SAFETY: `req` is a uWS `Request*` valid for the handler callback's duration.
-                Method::which(unsafe { &**req }.method()).unwrap_or(Method::POST)
-            }
+            ReqOrSaved::Req(req) => Method::which(req.method()).unwrap_or(Method::POST),
             ReqOrSaved::Aborted => unreachable!(),
         }
     }
@@ -290,10 +252,10 @@ impl ReqOrSaved {
 impl DevServer {
     fn defer_request(
         &mut self,
-        requests_array: &mut deferred_request::List,
+        bundle_field: BundleQueueType,
         route_bundle_index: route_bundle::Index,
         kind: deferred_request::HandlerKind,
-        req: ReqOrSaved,
+        req: ReqOrSaved<'_>,
         resp: AnyResponse,
     ) -> crate::Result<Deferral> {
         let deferred_slot = self.deferred_request_pool.claim();
@@ -309,8 +271,7 @@ impl DevServer {
         debug_log!("DeferredRequest(0x{:x}).init", deferred_data_ptr as usize);
 
         let method = match &req {
-            // SAFETY: r is a uws Request ptr valid for the duration of the handler callback
-            ReqOrSaved::Req(r) => Method::which(unsafe { &**r }.method()).unwrap_or(Method::GET),
+            ReqOrSaved::Req(r) => Method::which(r.method()).unwrap_or(Method::GET),
             _ => unreachable!(),
         };
 
@@ -344,8 +305,7 @@ impl DevServer {
                                 .as_ref()
                                 .unwrap()
                                 .prepare_and_save_js_request_context(
-                                    // SAFETY: r is the live µWS request for this handler frame.
-                                    unsafe { &mut *r },
+                                    r,
                                     resp,
                                     global,
                                     Some(method),
@@ -397,6 +357,16 @@ impl DevServer {
             })
             .as_ptr();
 
+        let requests_array = match bundle_field {
+            BundleQueueType::CurrentBundle => {
+                &mut self
+                    .current_bundle
+                    .as_mut()
+                    .expect("infallible: bundle active")
+                    .requests
+            }
+            BundleQueueType::NextBundle => &mut self.next_bundle.requests,
+        };
         // SAFETY: `deferred_ptr` was just initialized via `deferred_slot.write()`.
         unsafe { requests_array.prepend(&mut *deferred_ptr) };
         Ok(Deferral::Queued)
@@ -416,16 +386,16 @@ fn check_route_failures(
 ) -> crate::Result<CheckResult> {
     let mut gts = dev.init_graph_trace_state(0)?;
     let _lock_guard = dev.graph_safety_lock.guard();
-    let route_bundle = std::ptr::from_mut::<RouteBundle>(dev.route_bundle_ptr(route_bundle_index));
-    // SAFETY: `trace_all_route_imports` reads `route_bundle.data` but never
-    // mutates `route_bundles`; the raw-pointer reborrow sidesteps the
-    // overlapping `&mut self`.
-    dev.trace_all_route_imports(
-        // SAFETY: see above; `route_bundle` points into `dev.route_bundles`, not resized here.
-        unsafe { &*route_bundle },
-        &mut gts,
-        TraceImportGoal::FindErrors,
-    )?;
+    match &dev.route_bundles[route_bundle_index.get() as usize].data {
+        route_bundle::Data::Framework(fw) => {
+            dev.trace_all_route_imports(fw.route_index, &mut gts, TraceImportGoal::FindErrors)?
+        }
+        route_bundle::Data::Html(html) => dev.client_graph.trace_imports(
+            html.bundled_file,
+            &mut gts,
+            TraceImportGoal::FindErrors,
+        )?,
+    }
     if !gts.failures.is_empty() {
         // See comment on this field for information
         if !dev.assume_perfect_incremental_bundling {
@@ -468,7 +438,6 @@ impl DevServer {
             .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Html(html))
             .map_err(|_| AllocError)?;
         let mut ctx = RequestEnsureRouteBundledCtx {
-            dev: std::ptr::from_mut::<DevServer>(self),
             req: ReqOrSaved::Req(req),
             resp,
             kind: deferred_request::HandlerKind::BundledHtmlPage,
@@ -492,17 +461,13 @@ impl DevServer {
         &mut self,
         route: route_bundle::UnresolvedIndex,
     ) -> crate::Result<route_bundle::Index> {
-        let index_location: *mut route_bundle::IndexOptional = match route {
+        let index_location: &::core::cell::Cell<route_bundle::IndexOptional> = match &route {
             route_bundle::UnresolvedIndex::Framework(route_index) => {
-                &raw mut self.router.route_ptr_mut(route_index).bundle
+                ::core::cell::Cell::from_mut(&mut self.router.route_ptr_mut(*route_index).bundle)
             }
-            // R-2: `dev_server_id` is `Cell<Option<Index>>`; `Cell::as_ptr`
-            // yields the inner `*mut Option<Index>` so the `*index_location`
-            // read/write below stays raw and matches the framework arm's type.
-            route_bundle::UnresolvedIndex::Html(html) => html.dev_server_id.as_ptr(),
+            route_bundle::UnresolvedIndex::Html(html) => &html.dev_server_id,
         };
-        // SAFETY: index_location points into self/html which outlive this fn
-        if let Some(bundle_index) = unsafe { *index_location } {
+        if let Some(bundle_index) = index_location.get() {
             return Ok(bundle_index);
         }
 
@@ -564,8 +529,7 @@ impl DevServer {
             client_bundle: None,
             active_viewers: 0,
         });
-        // SAFETY: index_location still valid (route_bundles is a separate field)
-        unsafe { *index_location = Some(bundle_index) };
+        index_location.set(Some(bundle_index));
         Ok(bundle_index)
     }
 }

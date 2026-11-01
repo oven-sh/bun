@@ -3,8 +3,8 @@ use bun_lint::prelude::*;
 /// Disallow extra non-null assertions.
 pub struct NoExtraNonNullAssertion;
 
-const NO_EXTRA_NON_NULL_ASSERTION: Message =
-    Message::new("noExtraNonNullAssertion", "Forbidden extra non-null assertion.");
+const NO_EXTRA_NON_NULL_ASSERTION: &Message =
+    &Message::new("noExtraNonNullAssertion", "Forbidden extra non-null assertion.");
 
 impl NoExtraNonNullAssertion {
     fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

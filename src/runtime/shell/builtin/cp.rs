@@ -5,22 +5,22 @@ use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
     EventLoopHandle, FlagParser, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable,
     ParseFlagResult, ShellTask, parse_flags, shell_join_path, shell_resolve_operand,
-    unsupported_flag,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 use crate::shell::{ExitCode, ShellErr};
+use core::ops::ControlFlow;
 
 #[derive(Default)]
 pub(crate) struct Cp {
     pub(crate) opts: Opts,
     pub(crate) state: State,
-    /// FIFO of in-flight OutputTask pointers awaiting an IOWriter chunk
-    /// completion. Stopgap until `WriterTag` can carry the `*mut OutputTask`
+    /// FIFO of in-flight `OutputTask`s awaiting an IOWriter chunk
+    /// completion. Stopgap until `WriterTag` can carry the `OutputTask`
     /// directly (see mkdir.rs `Exec::output_queue`). Lives on `Cp` (not
     /// `ExecState`) because `print_shell_cp_task` is also driven from
     /// `State::Ebusy` on Windows; both states must be able to stash/pop.
-    pub(crate) output_queue: std::collections::VecDeque<*mut OutputTask<Cp>>,
+    pub(crate) output_queue: std::collections::VecDeque<Box<OutputTask<Cp>>>,
 }
 
 #[derive(Default)]
@@ -56,8 +56,7 @@ pub(crate) struct ExecState {
 #[cfg(windows)]
 #[derive(Default)]
 pub(crate) struct EbusyState {
-    pub(crate) tasks: Vec<*mut ShellCpTask>,
-    pub(crate) idx: usize,
+    pub(crate) tasks: std::collections::VecDeque<Box<ShellCpTask>>,
     pub(crate) main_exit_code: ExitCode,
     /// Absolute target paths that some task copied successfully — used to
     /// suppress a sibling task's EBUSY on the same target.
@@ -159,7 +158,6 @@ impl Cp {
                     unreachable!()
                 };
                 let mut ebusy = core::mem::take(&mut exec.ebusy);
-                ebusy.idx = 0;
                 ebusy.main_exit_code = exit_code;
                 Self::state_mut(interp, cmd).state = State::Ebusy(ebusy);
                 Self::ignore_ebusy_error_if_possible(interp, cmd)
@@ -201,9 +199,7 @@ impl Cp {
             return Builtin::done(interp, cmd, 1);
         }
         if let Some(task) = Self::state_mut(interp, cmd).output_queue.pop_front() {
-            // SAFETY: `task` was heap-allocated in `OutputTask::new` and
-            // pushed by `write_err`/`write_out`; not yet freed.
-            return unsafe { OutputTask::<Cp>::on_io_writer_chunk(task, interp, written, e) };
+            return OutputTask::<Cp>::on_io_writer_chunk(task, interp, written, e);
         }
         Self::next(interp, cmd)
     }
@@ -215,43 +211,26 @@ impl Cp {
     #[cfg(windows)]
     fn ignore_ebusy_error_if_possible(interp: &Interpreter, cmd: NodeId) -> Yield {
         loop {
-            // Pop tasks one at a time; `idx` is bumped on the first
-            // non-ignorable hit so a re-entry resumes there.
+            // Pop tasks one at a time, so a re-entry after the first
+            // non-ignorable hit resumes behind it.
             let next = {
                 let State::Ebusy(eb) = &mut Self::state_mut(interp, cmd).state else {
                     unreachable!()
                 };
-                if eb.idx < eb.tasks.len() {
-                    let t = eb.tasks[eb.idx];
-                    eb.idx += 1;
-                    // SAFETY: `t` is a live heap-allocated task stashed in
-                    // `on_shell_cp_task_done`; not yet freed.
-                    let tref = unsafe { &*t };
-                    let ignorable = tref
+                eb.tasks.pop_front().map(|t| {
+                    let ignorable = t
                         .tgt_absolute
                         .as_ref()
                         .map_or(false, |p| eb.absolute_targets.contains(p))
-                        || tref
-                            .src_absolute
+                        || t.src_absolute
                             .as_ref()
                             .map_or(false, |p| eb.absolute_srcs.contains(p));
-                    Some((t, ignorable))
-                } else {
-                    None
-                }
+                    (t, ignorable)
+                })
             };
             match next {
-                Some((t, true)) => {
-                    // SAFETY: paired with `heap::alloc` in `create()`.
-                    drop(unsafe { bun_core::heap::take(t) });
-                }
-                // SAFETY: `t` is a live heap task stashed in
-                // `on_shell_cp_task_done`; reclaim ownership.
-                Some((t, false)) => {
-                    return Self::print_shell_cp_task(interp, cmd, unsafe {
-                        bun_core::heap::take(t)
-                    });
-                }
+                Some((t, true)) => drop(t),
+                Some((t, false)) => return Self::print_shell_cp_task(interp, cmd, t),
                 None => break,
             }
         }
@@ -259,19 +238,19 @@ impl Cp {
             unreachable!()
         };
         let exit_code = eb.main_exit_code;
-        // `Drop` frees the ebusy sets/vec here.
+        // `Drop` frees the ebusy sets/queue here.
         Self::state_mut(interp, cmd).state = State::Done;
         Builtin::done(interp, cmd, exit_code)
     }
 
-    fn on_shell_cp_task_done(interp: &Interpreter, cmd: NodeId, task: *mut ShellCpTask) {
+    fn on_shell_cp_task_done(
+        interp: &Interpreter,
+        cmd: NodeId,
+        #[cfg_attr(not(windows), allow(unused_mut))] mut task: Box<ShellCpTask>,
+    ) {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.tasks_count -= 1;
         }
-        // SAFETY: `task` was heap-allocated in `create()`; ownership transfers
-        // to this completion callback. Re-leaked below only on the EBUSY-defer path.
-        #[cfg_attr(not(windows), allow(unused_mut))]
-        let mut task = unsafe { bun_core::heap::take(task) };
         #[cfg(windows)]
         {
             if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
@@ -288,7 +267,7 @@ impl Cp {
                             || task.src_absolute.as_deref()
                                     .map_or(false, |p| sys.path.eql_utf8(p)));
                     if is_ebusy {
-                        exec.ebusy.tasks.push(bun_core::heap::into_raw(task));
+                        exec.ebusy.tasks.push_back(task);
                         return Self::next(interp, cmd).run(interp);
                     }
                 } else {
@@ -332,9 +311,9 @@ impl OutputTaskVTable for Cp {
     fn write_err(
         interp: &Interpreter,
         cmd: NodeId,
-        child: *mut OutputTask<Self>,
+        child: Box<OutputTask<Self>>,
         errbuf: &[u8],
-    ) -> Option<Yield> {
+    ) -> ControlFlow<Yield, Box<OutputTask<Self>>> {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.output_waiting += 1;
         }
@@ -343,14 +322,14 @@ impl OutputTaskVTable for Cp {
             // machine and reclaim the box (stopgap for missing WriterTag).
             Self::state_mut(interp, cmd).output_queue.push_back(child);
             let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
-            return Some(
+            return ControlFlow::Break(
                 Builtin::of_mut(interp, cmd)
                     .stderr
                     .enqueue(childptr, errbuf, safeguard),
             );
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, errbuf);
-        None
+        ControlFlow::Continue(child)
     }
     fn on_write_err(interp: &Interpreter, cmd: NodeId) {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
@@ -360,25 +339,24 @@ impl OutputTaskVTable for Cp {
     fn write_out(
         interp: &Interpreter,
         cmd: NodeId,
-        child: *mut OutputTask<Self>,
-        output: &mut OutputSrc,
-    ) -> Option<Yield> {
+        child: Box<OutputTask<Self>>,
+    ) -> ControlFlow<Yield, Box<OutputTask<Self>>> {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.output_waiting += 1;
         }
         if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
+            let buf = child.output.slice().to_vec();
             Self::state_mut(interp, cmd).output_queue.push_back(child);
             let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
-            let buf = output.slice().to_vec();
-            return Some(
+            return ControlFlow::Break(
                 Builtin::of_mut(interp, cmd)
                     .stdout
                     .enqueue(childptr, &buf, safeguard),
             );
         }
-        let buf = output.slice().to_vec();
+        let buf = child.output.slice().to_vec();
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
-        None
+        ControlFlow::Continue(child)
     }
     fn on_write_out(interp: &Interpreter, cmd: NodeId) {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
@@ -837,11 +815,11 @@ impl ShellCpTask {
 
     /// # Safety
     /// `this` must be a live `heap::alloc`'d task (see [`create`](Self::create));
-    /// ownership is consumed via [`Cp::on_shell_cp_task_done`].
+    /// ownership is reclaimed here.
     fn run_from_main_thread(this: *mut ShellCpTask, interp: &Interpreter) {
         // SAFETY: `this` is a live heap-allocated task per the caller's contract.
-        let cmd = unsafe { (*this).cmd };
-        Cp::on_shell_cp_task_done(interp, cmd, this);
+        let task = unsafe { bun_core::heap::take(this) };
+        Cp::on_shell_cp_task_done(interp, task.cmd, task);
     }
 }
 
@@ -892,24 +870,29 @@ pub(crate) struct Opts {
 }
 
 impl FlagParser for Opts {
-    fn parse_long(&mut self, _flag: &[u8]) -> Option<ParseFlagResult> {
+    fn parse_long<'a>(&mut self, _flag: &'a [u8]) -> Option<ParseFlagResult<'a>> {
         None
     }
 
-    fn parse_short(&mut self, ch: u8, smallflags: &[u8], i: usize) -> Option<ParseFlagResult> {
+    fn parse_short<'a>(
+        &mut self,
+        ch: u8,
+        smallflags: &'a [u8],
+        i: usize,
+    ) -> Option<ParseFlagResult<'a>> {
         match ch {
             b'R' => self.recursive = true,
             b'v' => self.verbose = true,
             b'n' => self.no_clobber = true,
             // Only the first flag of a group is rejected. Scripts rely on `-Rp` and `-Rf` working.
             _ if i > 0 => {}
-            b'f' => return Some(ParseFlagResult::Unsupported(unsupported_flag(b"-f"))),
-            b'H' => return Some(ParseFlagResult::Unsupported(unsupported_flag(b"-H"))),
-            b'i' => return Some(ParseFlagResult::Unsupported(unsupported_flag(b"-i"))),
-            b'L' => return Some(ParseFlagResult::Unsupported(unsupported_flag(b"-L"))),
-            b'P' => return Some(ParseFlagResult::Unsupported(unsupported_flag(b"-P"))),
-            b'p' => return Some(ParseFlagResult::Unsupported(unsupported_flag(b"-P"))),
-            _ => return Some(ParseFlagResult::IllegalOption(&raw const smallflags[i..])),
+            b'f' => return Some(ParseFlagResult::Unsupported(b"-f")),
+            b'H' => return Some(ParseFlagResult::Unsupported(b"-H")),
+            b'i' => return Some(ParseFlagResult::Unsupported(b"-i")),
+            b'L' => return Some(ParseFlagResult::Unsupported(b"-L")),
+            b'P' => return Some(ParseFlagResult::Unsupported(b"-P")),
+            b'p' => return Some(ParseFlagResult::Unsupported(b"-P")),
+            _ => return Some(ParseFlagResult::IllegalOption(&smallflags[i..])),
         }
         None
     }

@@ -10,8 +10,8 @@ pub struct PreferDefaultExport {
     target_is_any: bool,
 }
 
-const SINGLE: Message = Message::new("", "Prefer default export on a file with single export.");
-const ANY: Message = Message::new("", "Prefer default export to be present on every file that has export.");
+const SINGLE: &Message = &Message::new("", "Prefer default export on a file with single export.");
+const ANY: &Message = &Message::new("", "Prefer default export to be present on every file that has export.");
 
 #[derive(Default)]
 pub struct ExportSummary {

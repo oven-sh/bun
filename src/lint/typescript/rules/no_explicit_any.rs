@@ -6,20 +6,20 @@ pub struct NoExplicitAny {
     ignores_rest_args: bool,
 }
 
-const SUGGEST_NEVER: Message = Message::new(
+const SUGGEST_NEVER: &Message = &Message::new(
     "suggestNever",
     "Use `never` instead, this is useful when instantiating generic type parameters that you don't need to know the type of.",
 );
-const SUGGEST_PROPERTY_KEY: Message = Message::new(
+const SUGGEST_PROPERTY_KEY: &Message = &Message::new(
     "suggestPropertyKey",
     "Use `PropertyKey` instead, this is more explicit than `keyof any`.",
 );
-const SUGGEST_UNKNOWN: Message = Message::new(
+const SUGGEST_UNKNOWN: &Message = &Message::new(
     "suggestUnknown",
     "Use `unknown` instead, this will force you to explicitly, and safely assert the type is correct.",
 );
-const UNEXPECTED_ANY: Message =
-    Message::new("unexpectedAny", "Unexpected any. Specify a different type.");
+const UNEXPECTED_ANY: &Message =
+    &Message::new("unexpectedAny", "Unexpected any. Specify a different type.");
 
 /// typescript-eslint's `isNodeRestElementInFunction`, applied to the node that has the type annotation.
 fn is_rest_element_in_function(node: Node) -> bool {
@@ -76,7 +76,7 @@ impl NoExplicitAny {
             return;
         }
         let parent = ty.parent();
-        let report = cx.report(ty, UNEXPECTED_ANY).hint("unknown is the safe choice where the type is not known.");
+        let report = cx.report(ty, UNEXPECTED_ANY).hint("Use unknown if the type isn't known.");
         // oxlint has no suggestions, and doesn't know `PropertyKey`.
         if cx.language().is_oxlint {
             if self.fixes_to_unknown {

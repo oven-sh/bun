@@ -5,7 +5,7 @@ use rustc_hash::FxHashMap;
 /// Disallow control flow statements in `finally` blocks.
 pub struct NoUnsafeFinally;
 
-const UNSAFE_USAGE: Message = Message::new("unsafeUsage", "Unsafe usage of {{nodeType}}.");
+const UNSAFE_USAGE: &Message = &Message::new("unsafeUsage", "Unsafe usage of {{nodeType}}.");
 
 #[derive(Default)]
 pub struct State<'a> {
@@ -47,7 +47,7 @@ fn report<'a>(statement: Stmt<'a>, cx: &mut Cx<'a, NoUnsafeFinally>) {
     };
     cx.report(statement, UNSAFE_USAGE)
         .data("nodeType", node_type)
-        .hint("It replaces whatever try and catch return or throw.");
+        .hint("Overrides what try and catch return or throw.");
 }
 
 impl Rule for NoUnsafeFinally {

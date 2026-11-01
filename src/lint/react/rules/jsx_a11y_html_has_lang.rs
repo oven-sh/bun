@@ -5,8 +5,8 @@ use bun_lint::rule::Plugin;
 /// Ensures that every HTML document has a lang attribute.
 pub struct HtmlHasLang;
 
-const MISSING_LANG_PROP: Message = Message::new("", "Missing lang attribute.");
-const MISSING_LANG_VALUE: Message = Message::new("", "Missing value for `lang` attribute");
+const MISSING_LANG_PROP: &Message = &Message::new("", "Missing lang attribute.");
+const MISSING_LANG_VALUE: &Message = &Message::new("", "Missing value for `lang` attribute");
 
 impl Rule for HtmlHasLang {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "html-has-lang", Kind::Problem);

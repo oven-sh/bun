@@ -18,6 +18,7 @@ bun_core::comptime_string_map! {
 }
 
 impl Expect {
+    #[optimize(size)]
     pub(crate) fn to_be_type_of(
         &self,
         this_value: JsWrapper<'_, Self>,

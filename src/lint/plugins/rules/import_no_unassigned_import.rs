@@ -13,8 +13,8 @@ pub struct NoUnassignedImport {
     allow: GlobsFromCwd,
 }
 
-const IMPORT: Message = Message::new("", "Imported module should be assigned");
-const REQUIRE: Message = Message::new("", "A `require()` style import is forbidden.");
+const IMPORT: &Message = &Message::new("", "Imported module should be assigned");
+const REQUIRE: &Message = &Message::new("", "A `require()` style import is forbidden.");
 
 impl Rule for NoUnassignedImport {
     const META: Meta = Meta::plugin(Plugin::Import, "no-unassigned-import", Kind::Suggestion).needs_modules();

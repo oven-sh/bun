@@ -1276,7 +1276,7 @@ body {
   });
 
   // A plugin can also make a script of a stylesheet, to add the styles at run time. That page builds.
-  // The same holds for a module that a plugin makes: it is not a script file.
+  // The same holds for a module that a plugin makes: it is not a script file. A data URL of CSS is a stylesheet too.
   itBundled("html/stylesheet-link-loaded-as-script-by-plugin", {
     outdir: "out/",
     files: {
@@ -1286,6 +1286,7 @@ body {
   <head>
     <link rel="stylesheet" href="./styles.css">
     <link rel="stylesheet" href="virtual:styles.js">
+    <link rel="stylesheet" href="data:text/css,body{color:red}">
   </head>
   <body></body>
 </html>`,
@@ -1302,6 +1303,10 @@ body {
         contents: `console.log("virtual-from-plugin");`,
         loader: "js",
       }));
+      builder.onLoad({ filter: /.*/, namespace: "dataurl" }, () => ({
+        contents: `console.log("data-url-from-plugin");`,
+        loader: "js",
+      }));
     },
     onAfterBundle(api) {
       const html = api.readFile("out/index.html");
@@ -1311,6 +1316,7 @@ body {
       const script = api.readFile("out/" + src);
       expect(script).toContain("styles-from-plugin");
       expect(script).toContain("virtual-from-plugin");
+      expect(script).toContain("data-url-from-plugin");
     },
   });
 
@@ -1716,6 +1722,28 @@ describe("a stylesheet link to a script", () => {
       success: false,
       outputs: [],
       errors: [{ message: expect.stringMatching(/^Cannot use ".*theme\.js" as a stylesheet$/), notes: [linkNote] }],
+    });
+  });
+
+  // The note quotes the href as it quotes the file: a quote in either is escaped.
+  test.concurrent("the note escapes a quote in the href", async () => {
+    const build = await Bun.build({
+      entrypoints: ["/html-stylesheet-link-quote/index.html"],
+      files: {
+        "/html-stylesheet-link-quote/index.html": `<!doctype html><html><head><link rel="stylesheet" href='./the"me.js'></head><body></body></html>`,
+        '/html-stylesheet-link-quote/the"me.js': files["theme.js"],
+      },
+      throw: false,
+    });
+    expect(failed(build)).toEqual({
+      success: false,
+      outputs: [],
+      errors: [
+        {
+          message: expect.stringMatching(/^Cannot use ".*the\\"me\.js" as a stylesheet$/),
+          notes: [expect.stringMatching(/^The stylesheet link "\.\/the\\"me\.js" resolves to ".*the\\"me\.js", /)],
+        },
+      ],
     });
   });
 

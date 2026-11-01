@@ -3418,7 +3418,13 @@ impl<'a> LinkerContext<'a> {
     ) -> bool {
         // The MIME type of a data URL picks its loader, and `Path::loader` does not read it.
         if path.is_data_url() {
-            return true;
+            return bun_resolver::DataURL::parse(path.text)
+                .ok()
+                .flatten()
+                .is_some_and(|url| {
+                    url.decode_mime_type().category
+                        == bun_http_types::MimeType::Category::Javascript
+                });
         }
         // `file` and `node` are the namespaces of Bun. A plugin makes the modules of each other namespace.
         (path.is_file() || path.namespace == b"node")
@@ -3446,8 +3452,8 @@ impl<'a> LinkerContext<'a> {
             ))
         } else {
             bun_ast::alloc_print(format_args!(
-                "The stylesheet link \"{}\" resolves to {file}, which the \"{loader}\" loader loads. {REMEDY}",
-                bstr::BStr::new(href),
+                "The stylesheet link {} resolves to {file}, which the \"{loader}\" loader loads. {REMEDY}",
+                bun_core::fmt::quote(href),
             ))
         };
         log.add_range_error_fmt_with_notes(

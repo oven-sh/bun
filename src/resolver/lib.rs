@@ -700,11 +700,11 @@ pub mod fs {
     // ── Entry / DirEntry / EntryKind ─────────────────────────────────────
     // Canonical definitions live in `fs.rs` (mounted as `crate::fs_full`).
     // Re-exported here so the public path `bun_resolver::fs::*` is preserved.
+    pub(crate) use crate::fs_full::ListingIdentity;
     pub use crate::fs_full::{
         DirEntry, DirEntryIterator, Entry, EntryCache, EntryKind, EntryKindResolver, EntryLookup,
         FilenameStoreAppender, dir_entry,
     };
-    pub(crate) use crate::fs_full::ListingIdentity;
 
     use bun_core::Generation;
     use bun_paths::strings;
@@ -1008,9 +1008,6 @@ pub mod fs {
             let mut iter = bun_sys::iterate_dir(handle);
             let mut dir = DirEntry::init(dir_, generation);
             if let Some(prev) = prev_map.as_deref() {
-                // A listing read again has about as many entries as before, and
-                // records what the directory looks like so the next newer
-                // generation can keep it without a read.
                 dir.data.reserve(prev.count());
                 dir.identity = ListingIdentity::read(handle).unwrap_or_default();
             }
@@ -1685,8 +1682,8 @@ pub mod fs {
     }
 
     pub mod file_system {
-        pub(crate) use crate::fs_full::ListingIdentity;
         pub use super::{DirEntry, DirnameStore, Entry, EntryKind, FilenameStore, RealFS};
+        pub(crate) use crate::fs_full::ListingIdentity;
         pub mod real_fs {
             pub use crate::fs::EntriesOption;
         }

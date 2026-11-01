@@ -255,8 +255,7 @@ impl<C: CompletionStruct> BundleThread<C> {
                 }
                 // SAFETY: as above; started ⇒ the owner waits for us.
                 let completion = unsafe { &mut *completion };
-                // Each build is newer than every cached listing, also one
-                // that a runtime retry read again since the last build.
+                // Newer than every cached listing, also one a runtime retry read again.
                 let generation = bun_core::next_generation();
                 // `panic = "abort"` → a Rust panic on this thread enters the
                 // crash-handler hook and aborts the whole process.

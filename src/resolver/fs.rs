@@ -141,9 +141,7 @@ pub struct Entry {
 
     pub mutex: Mutex,
     pub need_stat: AtomicBool,
-    /// The directory listed this entry as a symlink, or did not say what it
-    /// is. Such an entry is stat'ed again when a newer generation keeps its
-    /// listing without a read: its target can have appeared since.
+    /// Listed as a symlink or of unknown kind: stat'ed again when its listing is kept without a read.
     pub(crate) is_link: AtomicBool,
 
     abs_path: OnceLock<Interned>,
@@ -352,17 +350,12 @@ impl DirEntryIterator for () {
     fn next<R: EntryKindResolver>(&mut self, _fs: &R, _entry: &Entry, _fd: Fd) {}
 }
 
-/// What `fstat` said about a directory when its listing was read again. A
-/// later reader at a newer generation keeps the listing without a read when
-/// the directory still says the same.
+/// `fstat` of a directory when its listing was read: a later reader keeps the listing while it holds.
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) struct ListingIdentity {
     ino: u64,
     mtime_ns: i64,
-    /// The last change was well before the read. A change right after the
-    /// read can share the mtime of one right before it on a file system with
-    /// a coarse clock, so an identity taken that close to a change is not
-    /// trusted.
+    /// The read was well after the last change: a later change cannot share its mtime on a coarse clock.
     settled: bool,
 }
 
@@ -376,8 +369,7 @@ impl ListingIdentity {
             .sec
             .saturating_mul(bun_core::time::NS_PER_S as i64)
             .saturating_add(mtime.nsec);
-        let settled =
-            bun_core::time::nano_timestamp() - mtime_ns as i128 > Self::SETTLED_AFTER_NS;
+        let settled = bun_core::time::nano_timestamp() - mtime_ns as i128 > Self::SETTLED_AFTER_NS;
         Some(Self {
             ino: stat.ino,
             mtime_ns,
@@ -385,8 +377,7 @@ impl ListingIdentity {
         })
     }
 
-    /// The directory behind `fd` is the one that was read, and nothing was
-    /// added, removed or renamed in it since.
+    /// `fd` is the directory that was read, with nothing added, removed or renamed since.
     pub(crate) fn still_current(&self, fd: Fd) -> bool {
         self.settled
             && Self::read(fd)
@@ -400,8 +391,7 @@ pub struct DirEntry {
     pub dir: &'static [u8],
     pub fd: Fd,
     pub(crate) generation: Generation,
-    /// Set by a read at a newer generation than the one before it. The first
-    /// read of a directory does not stat it.
+    /// Recorded by a read at a newer generation. The first read does not stat.
     pub(crate) identity: ListingIdentity,
     pub data: dir_entry::EntryMap,
 }
@@ -417,10 +407,7 @@ impl DirEntry {
         }
     }
 
-    /// A reader at a newer generation holds the open directory. True when
-    /// the listing can stand for it as it is, and stamps it with the
-    /// generation. A symlink in it is stat'ed again by its next reader, as
-    /// after a read. The caller holds `entries_mutex`.
+    /// Stamps the listing with `generation` when the open directory is unchanged. Caller holds `entries_mutex`.
     pub(crate) fn keep_if_current(&mut self, fd: Fd, generation: Generation) -> bool {
         if !self.identity.still_current(fd) {
             return false;
@@ -531,7 +518,9 @@ impl DirEntry {
                             || Some(existing.cache().kind) != found_kind,
                         Ordering::Release,
                     );
-                    existing.is_link.store(found_kind.is_none(), Ordering::Relaxed);
+                    existing
+                        .is_link
+                        .store(found_kind.is_none(), Ordering::Relaxed);
                     break 'brk existing_ptr;
                 }
             }

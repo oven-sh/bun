@@ -2266,14 +2266,12 @@ impl StackCheck {
 // Small helpers that downstream crates need.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Stamp on a cached directory listing. A reader at a newer generation reads
-/// the directory again. 0 is older than every stamp.
+/// Stamp on a cached directory listing: a reader at a newer generation reads the directory again.
 pub type Generation = u32;
 
 static GENERATION_COUNTER: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
 /// A generation newer than every one handed out before, on any thread. Never 0.
-/// Wraps after 2^32 draws: a draw is one bundle or one miss of the runtime resolver.
 pub fn next_generation() -> Generation {
     GENERATION_COUNTER
         .fetch_add(1, core::sync::atomic::Ordering::Relaxed)

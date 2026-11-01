@@ -460,7 +460,7 @@ pub use bun_watcher::AnyResolveWatcher;
 // runtime fn-pointer alongside the context — `init` produces the
 // `AnyResolveWatcher` erased shim.
 
-/// Returned by [`Resolver::enter_fresh_generation`]. Puts the generation back on drop.
+/// From [`Resolver::enter_fresh_generation`]: restores the generation on drop.
 pub struct FreshGeneration {
     generation: NonNull<Generation>,
     previous: Generation,
@@ -2760,11 +2760,7 @@ impl<'a> Resolver<'a> {
         first_bust || second_bust
     }
 
-    /// Moves the resolver to a generation newer than every cached listing,
-    /// for one more lookup after a miss. Each listing that lookup consults is
-    /// read again, unless the directory is unchanged, and a cached "no such
-    /// directory" is checked against its parent's listing. The guard puts the
-    /// generation back when it drops.
+    /// For one more lookup after a miss: every listing it consults is read again unless unchanged.
     pub fn enter_fresh_generation(&mut self) -> FreshGeneration {
         let previous = self.generation;
         self.generation = bun_core::next_generation();
@@ -2774,11 +2770,7 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// At a fresh generation, after a miss: the facts that each `DirInfo` from
-    /// `dir` up to the root took from its listing are checked against the
-    /// listing as it is now, and the importer's own `package.json` against the
-    /// file. A level that is stale is dropped, with every level below it (they
-    /// point at it as their parent), so the next lookup builds them again.
+    /// Drops each `DirInfo` from `dir` up whose listing-derived facts changed, with the levels below it.
     pub fn drop_stale_dir_info_chain(&mut self, dir: &[u8]) {
         if !bun_paths::is_absolute(dir) {
             return;
@@ -2800,16 +2792,15 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// Compares what the `DirInfo` took from its listing with the listing at
-    /// the resolver's generation. `check_package_json_bytes` also compares the
-    /// parsed `package.json` with the file, for the importer's own directory.
+    /// `check_package_json_bytes`: also compare the parsed `package.json` with the file.
     fn dir_info_is_stale(&mut self, info: DirInfoRef, check_package_json_bytes: bool) -> bool {
         let kind_of = |this: &Self, name: &'static [u8]| {
             info.get_entry(this.generation, name)
                 .map(|e| e.entry().kind(this.rfs_ref(), this.store_fd))
         };
         if !info.is_node_modules()
-            && info.has_node_modules() != (kind_of(self, b"node_modules") == Some(Fs::EntryKind::Dir))
+            && info.has_node_modules()
+                != (kind_of(self, b"node_modules") == Some(Fs::EntryKind::Dir))
         {
             return true;
         }
@@ -2826,9 +2817,7 @@ impl<'a> Resolver<'a> {
         {
             return true;
         }
-        if check_package_json_bytes
-            && let Some(package_json) = info.package_json()
-        {
+        if check_package_json_bytes && let Some(package_json) = info.package_json() {
             let on_disk = bun_sys::File::openat(
                 FD::cwd(),
                 package_json.source.path.text,
@@ -4626,11 +4615,7 @@ impl<'a> Resolver<'a> {
         self.dir_info_cached_miss(enable_logging, input_path, top_result)
     }
 
-    /// `path` is cached as "no such directory". At generation 0 that holds.
-    /// A lookup at a newer generation reads the parent's listing again (when
-    /// the parent changed) and asks it: no entry of that name, and the
-    /// answer holds without a system call. A parent that is cached as missing
-    /// itself is asked the same question. The caller holds `entries_mutex`.
+    /// A cached "no such directory" holds at a newer generation if the parent's listing still lacks it. Caller holds `entries_mutex`.
     fn not_found_still_holds_locked(&mut self, path: &[u8]) -> bool {
         if self.generation == 0 {
             return true;

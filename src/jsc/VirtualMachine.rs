@@ -5567,13 +5567,11 @@ impl VirtualMachine {
             top_level_dir
         };
 
-        // A `loop` returning the resolver result; `retry_on_not_found` is
-        // consumed on the first miss.
+        // `retry_on_not_found` is consumed on the first miss.
         let mut retry_on_not_found = bun_paths::is_absolute(source_to_use);
         let mut may_retry_from_root = self.finds_entry_points_by_path && !is_special_source;
         let mut source_before_root: Option<&[u8]> = None;
         let mut has_read_folders_again = false;
-        // Set on the first miss, for the lookups after it. Dropped after the loop.
         let mut fresh_generation: Option<bun_resolver::FreshGeneration> = None;
         let result: crate::CrateResult<bun_resolver::Result> = loop {
             let import_kind = if is_esm {
@@ -5643,8 +5641,9 @@ impl VirtualMachine {
                     };
                     let resolver = &mut self.transpiler.resolver;
                     fresh_generation = Some(resolver.enter_fresh_generation());
-                    resolver
-                        .drop_stale_dir_info_chain(folder_on_disk.as_deref().unwrap_or(source_to_use));
+                    resolver.drop_stale_dir_info_chain(
+                        folder_on_disk.as_deref().unwrap_or(source_to_use),
+                    );
                     if let Some(dir) = bun_paths::dirname(normalized_specifier)
                         .filter(|_| bun_paths::is_absolute(normalized_specifier))
                     {

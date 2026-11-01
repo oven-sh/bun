@@ -95,7 +95,7 @@ function windowProperty(win: any, key: string): PropertyDescriptor {
         win[key] = value;
       } catch {}
     },
-    enumerable: false,
+    // Without `enumerable`, a name that globalThis already has keeps its own, like `navigator` in vitest.
     configurable: true,
   } as PropertyDescriptor;
 }
@@ -551,7 +551,6 @@ function forwarder(key: string) {
       set(value) {
         currentWindowProperties?.$get(key)?.set?.$call(this, value);
       },
-      enumerable: false,
       configurable: true,
     } as PropertyDescriptor;
     forwarders.$set(key, descriptor);

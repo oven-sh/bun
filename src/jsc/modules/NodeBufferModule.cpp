@@ -7,6 +7,7 @@
 #include "JSDOMExceptionHandling.h"
 #include "wtf/SIMDUTF.h"
 #include <JavaScriptCore/JSTypedArrays.h>
+#include <array>
 
 namespace WebCore {
 JSC::JSUint8Array* createUninitializedBuffer(JSC::JSGlobalObject*, size_t);
@@ -101,10 +102,67 @@ static bool transcodeDecodeToUtf16(std::span<const uint8_t> input, TranscodeEnco
     return true;
 }
 
-// Encode well-formed UTF-16 into a single-byte encoding: code points above
-// maxCodePoint become '?', matching ICU's substitution behavior.
-// Returns nullptr with an exception pending when the result cannot be allocated.
-static JSC::JSUint8Array* transcodeEncodeNarrow(JSGlobalObject* globalObject, const WTF::Vector<char16_t>& units, char16_t maxCodePoint)
+// The code points that ICU's default callback skips when the target cannot encode them. IS_DEFAULT_IGNORABLE_CODE_POINT: https://github.com/unicode-org/icu/blob/release-78.3/icu4c/source/common/ucnv_err.cpp#L68-L86
+static constexpr std::pair<char32_t, char32_t> transcodeSkippedRanges[] = {
+    { 0x00AD, 0x00AD },
+    { 0x034F, 0x034F },
+    { 0x061C, 0x061C },
+    { 0x115F, 0x115F },
+    { 0x1160, 0x1160 },
+    { 0x17B4, 0x17B5 },
+    { 0x180B, 0x180F },
+    { 0x200B, 0x200F },
+    { 0x202A, 0x202E },
+    { 0x2060, 0x206F },
+    { 0x3164, 0x3164 },
+    { 0xFE00, 0xFE0F },
+    { 0xFEFF, 0xFEFF },
+    { 0xFFA0, 0xFFA0 },
+    { 0xFFF0, 0xFFF8 },
+    { 0x1BCA0, 0x1BCA3 },
+    { 0x1D173, 0x1D17A },
+    { 0xE0000, 0xE0FFF },
+};
+
+static constexpr bool transcodeSkipsUnmappable(char32_t codePoint)
+{
+    for (const auto& [first, last] : transcodeSkippedRanges) {
+        if (codePoint >= first && codePoint <= last)
+            return true;
+    }
+    return false;
+}
+
+// One bit for each UTF-16 unit that can start a code point of those ranges: a BMP code point of one, or a lead surrogate of one.
+static constexpr std::array<uint64_t, 1024> transcodeSkippedStarts = [] {
+    std::array<uint64_t, 1024> bits {};
+    for (const auto& [first, last] : transcodeSkippedRanges) {
+        const bool isBMP = U_IS_BMP(first);
+        for (char32_t unit = isBMP ? first : U16_LEAD(first); unit <= (isBMP ? last : U16_LEAD(last)); ++unit)
+            bits[unit >> 6] |= uint64_t { 1 } << (unit & 63);
+    }
+    return bits;
+}();
+
+// One step of transcodeEncodeNarrow: writes the byte of source[i], if it has one.
+static ALWAYS_INLINE void transcodeEncodeNarrowUnit(const char16_t* source, size_t i, size_t length, char16_t maxCodePoint, uint8_t* bytes, size_t& written)
+{
+    const char16_t unit = source[i];
+    // A trail surrogate writes nothing: its lead wrote the byte of the pair.
+    if (U16_IS_TRAIL(unit)) [[unlikely]]
+        return;
+    if ((transcodeSkippedStarts[unit >> 6] >> (unit & 63)) & 1) [[unlikely]] {
+        // Skipped, unless the target has this code point (U+00AD in latin1) or this lead surrogate starts a pair outside the ranges.
+        if (unit > maxCodePoint && (!U16_IS_LEAD(unit) || (i + 1 < length && U16_IS_TRAIL(source[i + 1]) && transcodeSkipsUnmappable(U16_GET_SUPPLEMENTARY(unit, source[i + 1])))))
+            return;
+    }
+    bytes[written++] = unit <= maxCodePoint ? static_cast<uint8_t>(unit) : '?';
+}
+
+// Encode well-formed UTF-16 into a single-byte encoding as ICU's converter does with '?' for its substitution character.
+// A code point above maxCodePoint becomes '?', or nothing when ICU skips it: https://github.com/unicode-org/icu/blob/release-78.3/icu4c/source/common/ucnv_err.cpp#L174-L185
+// Overwrites `units`. Returns nullptr with an exception pending when the result cannot be allocated.
+static JSC::JSUint8Array* transcodeEncodeNarrow(JSGlobalObject* globalObject, WTF::Vector<char16_t>& units, char16_t maxCodePoint)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSC::JSUint8Array* result = nullptr;
@@ -117,24 +175,27 @@ static JSC::JSUint8Array* transcodeEncodeNarrow(JSGlobalObject* globalObject, co
         if (converted.error == simdutf::error_code::SUCCESS)
             return result;
     }
-    // Substitution path: simdutf conversions are strict, so out-of-range
-    // code points ('?' in ICU) are handled per unit.
-    constexpr auto writesByte = [](char16_t unit) { return !U16_IS_TRAIL(unit); };
-    size_t length = 0;
-    for (const char16_t unit : units)
-        length += writesByte(unit);
-    // A surrogate pair writes one '?', so a source with pairs needs a shorter result than the bulk attempt allocated.
-    if (!result || length != units.size()) {
-        result = WebCore::createUninitializedBuffer(globalObject, length);
+    // Substitution path: simdutf conversions are strict, so each unit is handled here.
+    // The bytes overwrite the front of `units`: a step reads its unit before it writes at most one byte.
+    const size_t length = units.size();
+    const char16_t* const source = units.begin();
+    auto* const bytes = reinterpret_cast<uint8_t*>(units.begin());
+    size_t written = 0;
+    size_t i = 0;
+    // Two units in a step. The compiler unrolled the loop that this replaces and does not unroll this one: a step of one unit takes 1.5 times as long.
+    for (; i + 1 < length; i += 2) {
+        transcodeEncodeNarrowUnit(source, i, length, maxCodePoint, bytes, written);
+        transcodeEncodeNarrowUnit(source, i + 1, length, maxCodePoint, bytes, written);
+    }
+    if (i < length)
+        transcodeEncodeNarrowUnit(source, i, length, maxCodePoint, bytes, written);
+    // A surrogate pair or a skipped code point leaves fewer bytes than the bulk attempt allocated.
+    if (!result || written != length) {
+        result = WebCore::createUninitializedBuffer(globalObject, written);
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
-    const std::span<uint8_t> out = result->typedSpan();
-    size_t written = 0;
-    for (const char16_t unit : units) {
-        if (writesByte(unit))
-            out[written++] = unit <= maxCodePoint ? static_cast<uint8_t>(unit) : '?';
-    }
-    ASSERT(written == out.size());
+    if (written)
+        memcpy(result->typedVector(), bytes, written);
     return result;
 }
 

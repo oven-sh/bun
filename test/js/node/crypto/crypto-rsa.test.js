@@ -383,6 +383,7 @@ describe("RSA PKCS#1 v1.5 signatures", () => {
     expect(crypto.verify(digest, data, rsaPubPem, signature)).toBe(true);
     expect(crypto.createVerify(digest).update(data).verify(rsaPubPem, signature)).toBe(true);
     expect(crypto.verify(digest, Buffer.from("other"), rsaPubPem, signature)).toBe(false);
+    expect(crypto.createVerify(digest).update("other").verify(rsaPubPem, signature)).toBe(false);
   });
 
   test.each(["SHA3-256", "SHA3-384", "SHA3-512"])("with %s in WebCrypto", async hash => {
@@ -392,6 +393,7 @@ describe("RSA PKCS#1 v1.5 signatures", () => {
     const signature = await crypto.subtle.sign(algorithm, privateKey, data);
     expect(Buffer.from(signature)).toEqual(crypto.sign(hash.toLowerCase(), data, rsaKeyPem));
     expect(await crypto.subtle.verify(algorithm, publicKey, signature, data)).toBe(true);
+    expect(await crypto.subtle.verify(algorithm, publicKey, signature, Buffer.from("other"))).toBe(false);
   });
 });
 

@@ -1343,8 +1343,9 @@ it.concurrent("generatePrimeSync({ add, rem }) can be interrupted when no prime 
       `
       const { Worker } = require("node:worker_threads");
       const worker = new Worker(
-        'require("node:worker_threads").parentPort.postMessage("searching");' +
-          'require("node:crypto").generatePrimeSync(64, { add: 6n, rem: 3n });',
+        'const { generatePrimeSync } = require("node:crypto");' +
+          'require("node:worker_threads").parentPort.postMessage("searching");' +
+          'generatePrimeSync(64, { add: 6n, rem: 3n });',
         { eval: true },
       );
       worker.once("message", async () => {

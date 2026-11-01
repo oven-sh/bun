@@ -2191,6 +2191,7 @@ impl<'a> Resolver<'a> {
                             self.check_browser_map::<{ BrowserMapPathKind::PackagePath }>(
                                 &scope,
                                 import_path_without_node_prefix,
+                                self.extension_order,
                             )
                             .is_some()
                         }));
@@ -2387,6 +2388,7 @@ impl<'a> Resolver<'a> {
                         .check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(
                             &import_dir_info,
                             abs_path,
+                            self.extension_order,
                         )
                     {
                         // Is the path disabled?
@@ -2540,6 +2542,7 @@ impl<'a> Resolver<'a> {
                         .check_browser_map::<{ BrowserMapPathKind::PackagePath }>(
                             &browser_scope,
                             import_path,
+                            self.extension_order,
                         )
                     {
                         if remapped.is_empty() {
@@ -2643,6 +2646,7 @@ impl<'a> Resolver<'a> {
                             .check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(
                                 &browser_scope,
                                 result.path_pair.primary.text(),
+                                self.extension_order,
                             )
                         {
                             if remap.is_empty() {
@@ -5327,10 +5331,12 @@ impl<'a> Resolver<'a> {
         )
     }
 
+    /// Matches by name in `extension_order`. The first key wins, and the directory is not read.
     pub(crate) fn check_browser_map<const KIND: BrowserMapPathKind>(
         &mut self,
         dir_info: &DirInfo::DirInfo,
         input_path_: &[u8],
+        extension_order: options::ExtOrder,
     ) -> Option<&'static [u8]> {
         let package_json = dir_info.package_json()?;
         let browser_map = &package_json.browser_map;
@@ -5373,11 +5379,16 @@ impl<'a> Resolver<'a> {
             return None;
         }
 
+        // A CSS kind keeps its own order: a `./main.css` key must still apply to "main".
+        let extension_order = match self.extension_order {
+            options::ExtOrder::Css => options::ExtOrder::Css,
+            _ => extension_order,
+        };
         let mut checker = BrowserMapPath {
             remapped: b"",
             cleaned,
             input_path,
-            extension_order: self.opts.ext_order_slice(self.extension_order),
+            extension_order: self.opts.ext_order_slice(extension_order),
             map: &package_json.browser_map,
         };
 
@@ -5473,6 +5484,7 @@ impl<'a> Resolver<'a> {
                         .check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(
                             &browser_scope,
                             field_abs_path,
+                            extension_order,
                         )
                     {
                         // Is the path disabled?
@@ -5733,6 +5745,7 @@ impl<'a> Resolver<'a> {
                         .check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(
                             &browser_scope,
                             index_abs_path,
+                            extension_order,
                         )
                     {
                         // Is the path disabled?

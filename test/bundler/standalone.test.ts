@@ -352,6 +352,29 @@ body { color: blue; }`,
     expect(html).toContain('console.log("with image")');
   });
 
+  test("inlines two images that have one name under an asset naming without [hash]", async () => {
+    using dir = tempDir("compile-browser-same-name-images", {
+      "index.html": `<!DOCTYPE html>
+<html><body><img src="./a/logo.png"><img src="./b/logo.png"></body></html>`,
+      "a/logo.png": "the first logo",
+      "b/logo.png": "the second logo",
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/index.html`],
+      compile: true,
+      target: "browser",
+      naming: { asset: "[name].[ext]" },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.outputs.length).toBe(1);
+
+    const html = await result.outputs[0].text();
+    expect(html).toContain(`src="data:image/png;base64,${Buffer.from("the first logo").toString("base64")}"`);
+    expect(html).toContain(`src="data:image/png;base64,${Buffer.from("the second logo").toString("base64")}"`);
+  });
+
   test("handles CSS url() references", async () => {
     const pixel = Buffer.from(
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4DwAAAQEABRjYTgAAAABJRU5ErkJggg==",

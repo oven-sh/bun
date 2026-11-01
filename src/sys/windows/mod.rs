@@ -2035,6 +2035,7 @@ pub fn GetEnvironmentVariableW(
     Ok(rc)
 }
 
+pub(crate) mod console;
 pub mod env;
 pub mod private_folder;
 

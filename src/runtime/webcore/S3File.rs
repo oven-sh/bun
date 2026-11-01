@@ -7,7 +7,7 @@ use crate::webcore::s3_client::S3CredentialsExt as _;
 use bun_core::strings;
 use bun_http::Method;
 use bun_jsc::bun_string_jsc;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass as _, JsError, JsResult};
+use bun_jsc::{JSGlobalObject, JSValue, JsClass as _, JsError, JsResult};
 use bun_ptr::RefPtr;
 
 // Local front for `bun_core::pretty_fmt!` that accepts a runtime / const-
@@ -556,14 +556,6 @@ fn get_bucket(this: &Blob, global: &JSGlobalObject) -> JsResult<JSValue> {
     Ok(JSValue::UNDEFINED)
 }
 
-fn get_presign_url(
-    this: &Blob,
-    global: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    get_presign_url_from(this, global, callframe.arguments().first().copied())
-}
-
 pub(crate) fn construct_internal_js(
     global: &JSGlobalObject,
     path: PathLike<'static>,
@@ -580,7 +572,7 @@ pub(crate) fn to_js_unchecked(global: &JSGlobalObject, this: *mut Blob) -> JSVal
 }
 
 // Symbols exported with C linkage and JSC calling convention.
-// JSS3File__presign     -> raw shim wrapping get_presign_url (method-with-context)
+// JSS3File__presign     -> raw shim wrapping get_presign_url_from (method-with-context)
 // JSS3File__bucket      -> get_bucket
 // JSS3File__stat        -> raw shim wrapping S3BlobStatTask::stat (method-with-context)
 
@@ -597,30 +589,28 @@ pub(crate) mod exports {
         bun_jsc::to_js_host_call(global, || super::get_bucket(this, global))
     }
 
-    /// Method-with-context shim wrapping `get_presign_url`.
+    /// `options` is empty when it was not passed.
     #[unsafe(no_mangle)]
     #[bun_jsc::host_call]
     fn JSS3File__presign(
         this: *mut Blob,
         global: *mut JSGlobalObject,
-        callframe: *mut CallFrame,
+        options: JSValue,
     ) -> JSValue {
-        // SAFETY: JSC method shim passes the wrapper's live Blob, global and callframe.
-        let (this, global, callframe) = unsafe { (&*this, &*global, &*callframe) };
-        bun_jsc::to_js_host_call(global, || super::get_presign_url(this, global, callframe))
+        // SAFETY: JSC method shim passes the wrapper's live Blob and global.
+        let (this, global) = unsafe { (&*this, &*global) };
+        bun_jsc::to_js_host_call(global, || {
+            super::get_presign_url_from(this, global, (!options.is_empty()).then_some(options))
+        })
     }
 
     #[unsafe(no_mangle)]
     #[bun_jsc::host_call]
-    fn JSS3File__stat(
-        this: *mut Blob,
-        global: *mut JSGlobalObject,
-        callframe: *mut CallFrame,
-    ) -> JSValue {
-        // SAFETY: JSC method shim passes the wrapper's live Blob, global and callframe.
-        let (this, global, callframe) = unsafe { (&*this, &*global, &*callframe) };
+    fn JSS3File__stat(this: *mut Blob, global: *mut JSGlobalObject) -> JSValue {
+        // SAFETY: JSC method shim passes the wrapper's live Blob and global.
+        let (this, global) = unsafe { (&*this, &*global) };
         bun_jsc::to_js_host_call(global, || {
-            S3BlobStatTask::stat(&global.js_thread_of_caller(callframe), this)
+            S3BlobStatTask::stat(&global.js_thread_of_caller(), this)
         })
     }
 }

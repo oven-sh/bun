@@ -7,12 +7,12 @@ use std::rc::Rc;
 /// Disallow type parameters that aren't used multiple times.
 pub struct NoUnnecessaryTypeParameters;
 
-const REPLACE_USAGES_WITH_CONSTRAINT: Message = Message::new(
+const REPLACE_USAGES_WITH_CONSTRAINT: &Message = &Message::new(
     "replaceUsagesWithConstraint",
     "Replace all usages of type parameter with its constraint.",
 );
-const SOLE: Message =
-    Message::new("sole", "Type parameter {{name}} is {{uses}} in the {{descriptor}} signature.");
+const SOLE: &Message =
+    &Message::new("sole", "Type parameter {{name}} is {{uses}} in the {{descriptor}} signature.");
 
 /// True if ESLint has a `TSClassImplements` or a `TSInterfaceHeritage` for it, not a `TSTypeReference`.
 fn is_heritage(ty: TypeNode) -> bool {

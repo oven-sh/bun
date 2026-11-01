@@ -268,7 +268,7 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
             }
 
             attributeMap.set("type"_s, WTF::move(attributesTypeString));
-            attributesObject->putDirect(vm, JSC::Identifier::fromString(vm, "type"_s), attributesType);
+            Bun::putDirectNamed(vm, attributesObject, "type"_s, attributesType);
 
             if (const String& hostDefinedImportType = request.m_attributes->hostDefinedImportType(); !hostDefinedImportType.isEmpty()) {
                 attributesObject->putDirect(vm, hostDefinedImportTypeIdentifier, JSC::jsString(vm, hostDefinedImportType));

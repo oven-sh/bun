@@ -10,7 +10,7 @@ pub struct NoNull {
     check_arguments: bool,
 }
 
-const NO_NULL: Message = Message::new("", "Do not use `null` literals");
+const NO_NULL: &Message = &Message::new("", "Do not use `null` literals");
 
 impl Rule for NoNull {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-null", Kind::Suggestion).fixable(Fixable::Code);

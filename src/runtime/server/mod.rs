@@ -114,7 +114,7 @@ macro_rules! for_each_mux_app {
 // route setup, …) split out to keep this module declaration file readable.
 
 #[path = "server_body.rs"]
-mod server_body;
+pub(crate) mod server_body;
 pub(crate) use server_body::{GetOrStartLoadResult, ServePluginsCallback};
 
 // ─── write_status ────────────────────────────────────────────────────────────
@@ -1491,14 +1491,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 &mut strong_promise,
                                 jsc::StrongOptional::empty(),
                             ));
-                            // `#[host_fn(export = …)]` emits its
-                            // C-ABI shim as `__jsc_host_<fn>`; the export name
-                            // is link-only.
                             result.then2(
                                 global,
                                 strong_self,
-                                node_http_response::__jsc_host_node_http_request_on_resolve,
-                                node_http_response::__jsc_host_node_http_request_on_reject,
+                                crate::generated_bindgen::node_http_response::Bun__NodeHTTPRequest__onResolve,
+                                crate::generated_bindgen::node_http_response::Bun__NodeHTTPRequest__onReject,
                             );
                             is_async = true;
                         }
@@ -2776,7 +2773,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
         // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
         let Some(h2) =
-            uws_sys::h2::App::create::<SSL>(bun_opaque::opaque_deref_mut(app), http1, idle_timeout)
+            create_http2_app::<SSL>(bun_opaque::opaque_deref_mut(app), http1, idle_timeout)
         else {
             // SAFETY: `this` is live; `global_this()` borrows the STATIC global, not `*this`.
             let global = unsafe { (*this).global_this() };
@@ -2891,7 +2888,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
             if Self::HAS_H3 && this_ref.config.get().http3 {
                 let idle_timeout = this_ref.config.get().idle_timeout as u32;
-                let h3 = match uws_sys::h3::App::create(&ssl_options, idle_timeout) {
+                let h3 = match create_http3_app(&ssl_options, idle_timeout) {
                     Some(a) => Some(a),
                     None => {
                         if !global.has_exception() {
@@ -3222,6 +3219,25 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 // them here instead of redeclaring with a divergent `req` pointer type.
 use server_body::{Bun__ServerRouteList__callRoute, Bun__ServerRouteList__create};
 
+#[inline(never)]
+fn create_http2_app<const SSL: bool>(
+    parent: &mut uws_sys::app::App<SSL>,
+    allow_http1: bool,
+    idle_timeout_s: u32,
+) -> Option<*mut uws_sys::h2::App> {
+    bun_removable_features::removable_definition!(ServeHttp2, create_http2_app::<SSL>);
+    uws_sys::h2::App::create::<SSL>(parent, allow_http1, idle_timeout_s)
+}
+
+#[inline(never)]
+fn create_http3_app(
+    options: &uws_sys::BunSocketContextOptions,
+    idle_timeout_s: u32,
+) -> Option<*mut uws_sys::h3::App> {
+    bun_removable_features::removable_definition!(Http3, create_http3_app);
+    uws_sys::h3::App::create(options, idle_timeout_s)
+}
+
 /// `(SSL, DEBUG)` → the generated `js_*Server` module of that class.
 macro_rules! server_js_cached {
     ($ssl:expr, $debug:expr, $fn:ident($($arg:expr),* $(,)?)) => {
@@ -3442,6 +3458,11 @@ mod trampoline {
         req: *mut UwsRequest,
         user_data: *mut c_void,
     ) {
+        // What leaves with the route alone is about as much as the smallest group of the trimmable link. Below that it leaves with the command line, under that name, or stays.
+        if bun_removable_features::is_removed(bun_removable_features::Feature::BunInfo) {
+            bun_opaque::opaque_deref_mut(req).set_yield(true);
+            return;
+        }
         // SAFETY: user_data is the `*mut NewServer<..>` registered in set_routes.
         // S008: `Request` / `Response<SSL>` are ZST opaques — safe deref.
         unsafe {
@@ -3581,7 +3602,6 @@ fn throw_ssl_error_if_necessary(global: &JSGlobalObject) -> bool {
     let err_code = bun_boringssl_sys::ERR_get_error();
     if err_code != 0 {
         let _ = global.throw_value(crate::crypto::create_crypto_error(global, err_code));
-        bun_boringssl_sys::ERR_clear_error();
         return true;
     }
     false
@@ -4149,10 +4169,6 @@ impl AnyServer {
     pub(crate) fn set_max_headers_count(&self, max_headers_count: u32) {
         any_server_dispatch!(self, |s| s.set_max_headers_count(max_headers_count))
     }
-
-    pub(crate) fn get_all_closed_promise(&self, global: &JSGlobalObject) -> JSValue {
-        any_server_dispatch!(self, |s| s.get_all_closed_promise(global))
-    }
 }
 
 // ─── http_server_agent ───────────────────────────────────────────────────────
@@ -4163,7 +4179,7 @@ impl AnyServer {
 pub(crate) mod http_server_agent {
     use super::{AnyRoute, AnyServer, AnyServerTag};
 
-    use bun_core::String as BunString;
+    use bun_core::StringView;
     use bun_jsc::debugger::DebuggerId;
     use bun_jsc::http_server_agent::{HTTPServerAgent, InspectorHTTPServerAgent, Route, RouteType};
 
@@ -4211,7 +4227,7 @@ pub(crate) mod http_server_agent {
             return Ok(());
         };
         let config = server.config();
-        let mut routes: Vec<Route> = Vec::new();
+        let mut routes: Vec<Route<'_>> = Vec::new();
         let mut max_id: u32 = 0;
 
         // Monomorphized over the four `UserRoute<SSL,DEBUG>` slice types.
@@ -4224,7 +4240,7 @@ pub(crate) mod http_server_agent {
                 max_id = max_id.max(user_route.id);
                 routes.push(Route {
                     route_id: user_route.id as i32,
-                    path: BunString::from_bytes(user_route.route.path.as_bytes()),
+                    path: StringView::from_bytes(user_route.route.path.as_bytes()),
                     r#type: RouteType::Api,
                     ..Default::default()
                 });
@@ -4235,15 +4251,15 @@ pub(crate) mod http_server_agent {
             max_id += 1;
             routes.push(Route {
                 route_id: max_id as i32,
-                path: BunString::from_bytes(&entry.path),
+                path: StringView::from_bytes(&entry.path),
                 r#type: match &entry.route {
                     AnyRoute::Html(_) => RouteType::Html,
                     AnyRoute::Static(_) => RouteType::Static,
                     _ => RouteType::Default,
                 },
                 file_path: match &entry.route {
-                    AnyRoute::Html(r) => BunString::from_bytes(&r.bundle.path),
-                    _ => BunString::EMPTY,
+                    AnyRoute::Html(r) => StringView::from_bytes(&r.bundle.path),
+                    _ => StringView::EMPTY,
                 },
                 ..Default::default()
             });
@@ -4255,7 +4271,6 @@ pub(crate) mod http_server_agent {
             server.vm().hot_reload_counter as i32,
             &mut routes,
         );
-        // `Vec<Route>` drops → each `Route` drops (derefs path/file_path/etc.).
         Ok(())
     }
 }

@@ -3,7 +3,7 @@ use bun_lint::prelude::*;
 /// Disallow labels that share a name with a variable.
 pub struct NoLabelVar;
 
-const IDENTIFIER_CLASH_WITH_LABEL: Message = Message::new(
+const IDENTIFIER_CLASH_WITH_LABEL: &Message = &Message::new(
     "identifierClashWithLabel",
     "Found identifier with same name as label.",
 );

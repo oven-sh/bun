@@ -17,7 +17,7 @@ use bun_uws_sys as uws_sys;
 use crate::generated_bindgen::node_http_response::js_NodeHTTPResponse as js;
 use crate::node::{Encoding, StringOrBuffer};
 use crate::server::jsc::{
-    self, CallFrame, ErrorCode, JSGlobalObject, JSValue, JsResult, StrongOptional, VirtualMachine,
+    self, ErrorCode, JSGlobalObject, JSValue, JsResult, StrongOptional, VirtualMachine,
 };
 use crate::server::{AnyServer, AnyServerTag, HTTPStatusText, ServerWebSocket};
 use crate::webcore::AutoFlusher;
@@ -233,6 +233,27 @@ unsafe extern "C" {
         response: *mut c_void,
     );
 
+    safe fn NodeHTTPServer__bytesOfChunk(
+        chunk: JSValue,
+        bytes: *mut *const u8,
+        length: *mut usize,
+    ) -> bool;
+    safe fn NodeHTTPServer__writeWholeResponse(
+        is_ssl: bool,
+        response: *mut c_void,
+        status: *const u8,
+        status_len: usize,
+        headers: JSValue,
+        auto_header_bits: u32,
+        keep_alive_timeout_secs: u32,
+        body: *const u8,
+        body_len: usize,
+    ) -> bool;
+    safe fn NodeHTTPServer__finishWholeResponse(
+        is_ssl: bool,
+        response: *mut c_void,
+        body_len: usize,
+    ) -> bool;
     safe fn NodeHTTPServer__writeHead_https(
         global_object: &JSGlobalObject,
         status_message: *const u8,
@@ -1030,6 +1051,21 @@ impl NodeHTTPResponse {
         let this = bun_ptr::BackRef::from(ptr::NonNull::from(self));
         let _guard = self.ref_guard();
 
+        if let Some(written) = this.write_whole_response(
+            this_value.to_js(),
+            cx.global(),
+            status_code,
+            status_message,
+            headers.to_js(),
+            WholeBody::Converted(chunk.as_ref()),
+            encoding.to_js(),
+            strict_content_length,
+            auto_header_bits,
+            keep_alive_timeout_secs,
+        ) {
+            return Ok(written);
+        }
+
         let raw_response = this.writer();
         let mut result: JsResult<JSValue> = Ok(JSValue::UNDEFINED);
         {
@@ -1065,6 +1101,235 @@ impl NodeHTTPResponse {
         }
 
         result
+    }
+
+    pub(crate) fn write_whole_response_as_given(
+        &self,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        arguments: &[JsLocal<'_>],
+    ) -> JsResult<JSValue> {
+        let &[
+            status_code,
+            status_message,
+            headers,
+            chunk,
+            encoding,
+            strict_content_length,
+            auto_header_bits,
+            keep_alive_timeout_secs,
+        ] = arguments
+        else {
+            return Ok(JSValue::UNDEFINED);
+        };
+        let (status_code, auto_header_bits, keep_alive_timeout_secs) = (
+            status_code.to_js(),
+            auto_header_bits.to_js(),
+            keep_alive_timeout_secs.to_js(),
+        );
+        if !status_code.is_int32()
+            || !auto_header_bits.is_int32()
+            || !keep_alive_timeout_secs.is_int32()
+        {
+            return Ok(JSValue::UNDEFINED);
+        }
+        let (status_code, auto_header_bits, keep_alive_timeout_secs) = (
+            status_code.as_int32(),
+            auto_header_bits.as_int32(),
+            keep_alive_timeout_secs.as_int32(),
+        );
+        if !(100..=999).contains(&status_code)
+            || auto_header_bits < 0
+            || keep_alive_timeout_secs < 0
+        {
+            return Ok(JSValue::UNDEFINED);
+        }
+        let status_message = status_message.to_js();
+        let status_message = if status_message.is_undefined_or_null() {
+            None
+        } else if !status_message.is_string() {
+            return Ok(JSValue::UNDEFINED);
+        } else {
+            match bytes_of_short_chunk(status_message) {
+                Some(bytes) => Some(bytes),
+                None => return Ok(JSValue::UNDEFINED),
+            }
+        };
+        let chunk = chunk.to_js();
+        let body: &[u8] = if chunk.is_undefined_or_null() {
+            &[]
+        } else {
+            match bytes_of_short_chunk(chunk) {
+                Some(bytes) => bytes,
+                None => return Ok(JSValue::UNDEFINED),
+            }
+        };
+        let strict_content_length = strict_content_length.to_js();
+        let strict_content_length = if strict_content_length.is_undefined() {
+            None
+        } else if strict_content_length.is_number() {
+            Some(strict_content_length.as_number())
+        } else {
+            return Ok(JSValue::UNDEFINED);
+        };
+        let flags = self.flags.get();
+        if flags.contains(Flags::REQUEST_HAS_COMPLETED)
+            || flags.contains(Flags::SOCKET_CLOSED)
+            || flags.contains(Flags::UPGRADED)
+        {
+            return Ok(JSValue::UNDEFINED);
+        }
+
+        let this = bun_ptr::BackRef::from(ptr::NonNull::from(self));
+        let _guard = self.ref_guard();
+        Ok(this
+            .write_whole_response(
+                this_value.to_js(),
+                cx.global(),
+                status_code,
+                status_message,
+                headers.to_js(),
+                WholeBody::InPlace(body),
+                encoding.to_js(),
+                strict_content_length,
+                auto_header_bits as u32,
+                keep_alive_timeout_secs as u32,
+            )
+            .unwrap_or(JSValue::UNDEFINED))
+    }
+}
+
+#[derive(Clone, Copy)]
+enum WholeBody<'a, 'b> {
+    InPlace(&'a [u8]),
+    Converted(Option<&'a StringOrJsBytes<'b>>),
+}
+
+fn bytes_of_short_chunk<'a>(chunk: JSValue) -> Option<&'a [u8]> {
+    if !chunk.is_cell() {
+        return None;
+    }
+    let mut bytes: *const u8 = ptr::null();
+    let mut length: usize = 0;
+    if !NodeHTTPServer__bytesOfChunk(chunk, &raw mut bytes, &raw mut length)
+        || length > PINNED_WRITE_THRESHOLD
+    {
+        return None;
+    }
+    // SAFETY: the characters of a resolved string or the bytes of a Uint8Array that the caller's frame keeps alive; no JavaScript runs while they are read.
+    Some(unsafe { core::slice::from_raw_parts(bytes, length) })
+}
+
+impl NodeHTTPResponse {
+    /// The head and the body as one write into the cork buffer. `None`: nothing was written, and the two phases do it.
+    fn write_whole_response(
+        &self,
+        this_value: JSValue,
+        global_object: &JSGlobalObject,
+        status_code: i32,
+        status_message: Option<&[u8]>,
+        headers: JSValue,
+        body: WholeBody<'_, '_>,
+        encoding: JSValue,
+        strict_content_length: Option<f64>,
+        auto_header_bits: u32,
+        keep_alive_timeout_secs: u32,
+    ) -> Option<JSValue> {
+        if !encoding.is_undefined_or_null() {
+            return None;
+        }
+        let mut written_status = [0u8; 128];
+        let status: &[u8] = match status_message {
+            None => HTTPStatusText::get(u16::try_from(status_code).expect("int cast"))?,
+            Some(message) => {
+                if message.is_empty()
+                    || message.len() > written_status.len() - 4
+                    || !message.iter().all(|c| (0x20..=0x7e).contains(c))
+                {
+                    return None;
+                }
+                let mut itoa_buf = bun_core::fmt::ItoaBuf::new();
+                written_status[..3]
+                    .copy_from_slice(bun_core::fmt::itoa(&mut itoa_buf, status_code));
+                written_status[3] = b' ';
+                written_status[4..4 + message.len()].copy_from_slice(message);
+                &written_status[..4 + message.len()]
+            }
+        };
+
+        let flags = self.flags.get();
+        let raw_response = self.writer()?;
+        if flags.is_requested_completed_or_ended()
+            || flags.contains(Flags::UPGRADED)
+            || self.is_socket_closed_or_closing()
+            || self.pending_pinned_write.get().is_some()
+        {
+            return None;
+        }
+        let state = raw_response.state();
+        if !state.is_response_pending() || state.is_http_status_called() {
+            return None;
+        }
+        let (is_ssl, response): (bool, *mut c_void) = match raw_response {
+            uws::AnyResponse::TCP(tcp) => (false, tcp.cast::<c_void>()),
+            uws::AnyResponse::SSL(ssl) => (true, ssl.cast::<c_void>()),
+            uws::AnyResponse::H3(_) | uws::AnyResponse::H2(_) => return None,
+        };
+
+        let utf8;
+        let buffer;
+        let bytes: &[u8] = match body {
+            WholeBody::InPlace(bytes) => bytes,
+            WholeBody::Converted(None) => &[],
+            WholeBody::Converted(Some(StringOrJsBytes::String(string))) => {
+                if string.length() > PINNED_WRITE_THRESHOLD {
+                    return None;
+                }
+                utf8 = string.to_utf8();
+                utf8.slice()
+            }
+            WholeBody::Converted(Some(StringOrJsBytes::Bytes(bytes))) => {
+                buffer =
+                    bun_jsc::MarkedArrayBuffer::from_array_buffer(global_object, bytes.to_js());
+                buffer.slice()
+            }
+        };
+        let bytes_written = self.bytes_written.get().saturating_add(bytes.len());
+        if strict_content_length
+            .is_some_and(|length| bytes_written as u64 != (length as i64).max(0) as u64)
+        {
+            return None;
+        }
+
+        if !NodeHTTPServer__writeWholeResponse(
+            is_ssl,
+            response,
+            status.as_ptr(),
+            status.len(),
+            headers,
+            auto_header_bits,
+            keep_alive_timeout_secs,
+            bytes.as_ptr(),
+            bytes.len(),
+        ) {
+            return None;
+        }
+
+        self.resume_socket();
+        self.bytes_written.set(bytes_written);
+        if !this_value.is_empty() {
+            js::on_aborted_set_cached(this_value, global_object, JSValue::ZERO);
+        }
+        self.update_flags(|f| f.insert(Flags::ENDED));
+        let is_draining = NodeHTTPServer__finishWholeResponse(is_ssl, response, bytes.len());
+        if is_draining && !self.flags.get().contains(Flags::SOCKET_CLOSED) {
+            if let Some(raw_response) = self.writer() {
+                raw_response.on_writable(on_drain_shim, self.as_ctx_ptr());
+                return Some(JSValue::js_number(-(bytes.len() as f64) - 1.0));
+            }
+        }
+        self.on_request_complete();
+        Some(JSValue::js_number_from_uint64(bytes.len() as u64))
     }
 }
 
@@ -1399,13 +1664,13 @@ impl NodeHTTPResponse {
     }
 }
 
-#[bun_jsc::host_fn(export = "Bun__NodeHTTPRequest__onResolve")]
-fn node_http_request_on_resolve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JSValue {
+pub(crate) fn on_resolve(
+    cx: &mut JsScope<'_>,
+    _: JsLocal<'_>,
+    (this, wrapper): (&NodeHTTPResponse, JsLocal<'_>),
+) {
     scoped_log!(NodeHTTPResponse, "onResolve");
-    let arguments = callframe.arguments_as_array::<2>();
-    // arguments[1] is the JSNodeHTTPResponse cell from the resolve callback.
-    // R-2: deref shared — `maybe_stop_reading_body`/`on_request_complete` re-enter.
-    let this: &NodeHTTPResponse = arguments[1].as_class_ref::<NodeHTTPResponse>().unwrap();
+    let global_object = cx.global();
     // `promise` non-empty is the ownership token for the server-handler ref;
     // `mark_request_as_done` may have already released it on abort.
     let had_promise = this.promise.with_mut(|p| {
@@ -1413,7 +1678,7 @@ fn node_http_request_on_resolve(global_object: &JSGlobalObject, callframe: &Call
         p.deinit();
         had
     });
-    this.maybe_stop_reading_body(arguments[1]);
+    this.maybe_stop_reading_body(wrapper.to_js());
 
     let flags = this.flags.get();
     if !flags.contains(Flags::REQUEST_HAS_COMPLETED) && !this.is_socket_closed_or_closing() {
@@ -1438,16 +1703,14 @@ fn node_http_request_on_resolve(global_object: &JSGlobalObject, callframe: &Call
     if had_promise {
         this.deref();
     }
-    JSValue::UNDEFINED
 }
 
-#[bun_jsc::host_fn(export = "Bun__NodeHTTPRequest__onReject")]
-fn node_http_request_on_reject(global_object: &JSGlobalObject, callframe: &CallFrame) -> JSValue {
-    let arguments = callframe.arguments_as_array::<2>();
-    let err = arguments[0];
-    // arguments[1] is the JSNodeHTTPResponse cell from the reject callback.
-    // R-2: deref shared — `maybe_stop_reading_body`/`on_request_complete` re-enter.
-    let this: &NodeHTTPResponse = arguments[1].as_class_ref::<NodeHTTPResponse>().unwrap();
+pub(crate) fn on_reject(
+    cx: &mut JsScope<'_>,
+    err: JsLocal<'_>,
+    (this, wrapper): (&NodeHTTPResponse, JsLocal<'_>),
+) {
+    let global_object = cx.global();
     // `promise` non-empty is the ownership token for the server-handler ref;
     // `mark_request_as_done` may have already released it on abort.
     let had_promise = this.promise.with_mut(|p| {
@@ -1455,7 +1718,7 @@ fn node_http_request_on_reject(global_object: &JSGlobalObject, callframe: &CallF
         p.deinit();
         had
     });
-    this.maybe_stop_reading_body(arguments[1]);
+    this.maybe_stop_reading_body(wrapper.to_js());
 
     let flags = this.flags.get();
     if !flags.contains(Flags::REQUEST_HAS_COMPLETED)
@@ -1482,11 +1745,10 @@ fn node_http_request_on_reject(global_object: &JSGlobalObject, callframe: &CallF
         this.on_request_complete();
     }
 
-    let _ = bun_vm_mut(global_object).uncaught_exception(global_object, err, true);
+    let _ = bun_vm_mut(global_object).uncaught_exception(global_object, err.to_js(), true);
     if had_promise {
         this.deref();
     }
-    JSValue::UNDEFINED
 }
 
 impl NodeHTTPResponse {
@@ -1499,6 +1761,14 @@ impl NodeHTTPResponse {
         // uws is parsing this socket: it delivers the rest of the read, then closes (on_abort runs then).
         if let Some(raw_response) = self.reader()
             && raw_response.close_after_message_if_parsing()
+        {
+            return;
+        }
+
+        // Nothing has been sent yet, so send nothing, like Node. Ending the response here would write "200 OK".
+        // The caller destroys the socket next, and on_abort runs when it closes.
+        if let Some(raw_response) = self.writer()
+            && !raw_response.state().is_http_status_called()
         {
             return;
         }

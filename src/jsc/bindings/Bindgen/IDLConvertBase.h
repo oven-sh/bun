@@ -1,6 +1,8 @@
 #pragma once
 #include "BunIDLConvertBase.h"
 #include "ErrorCode.h"
+#include <JavaScriptCore/Operations.h>
+#include <optional>
 #include <wtf/text/MakeString.h>
 
 namespace Bun::Bindgen {
@@ -50,6 +52,13 @@ private:
     Parent m_parent;
 };
 
+}
+
+// Whether a call threw, from what it returned: false, null or empty. As WebCore's ConversionResult::hasException.
+ALWAYS_INLINE bool hasException(JSC::ThrowScope& scope, bool succeeded)
+{
+    EXCEPTION_ASSERT_UNUSED(scope, !!scope.exception() == !succeeded);
+    return !succeeded;
 }
 
 // Conversion context where the name of the value being converted is specified as an
@@ -130,6 +139,41 @@ struct ArgumentMessageContext : Detail::ContextBase<ArgumentMessageContext> {
 private:
     const WTF::ASCIILiteral m_name;
     const WTF::ASCIILiteral m_message;
+};
+
+// A value of the wrong type throws what src/runtime/node/util/validators.rs does: `The "name" property must be of type string, got number`.
+struct ValidatorArgumentContext : Detail::ContextBase<ValidatorArgumentContext> {
+    using ElementContext = Detail::ElementOf<ValidatorArgumentContext>;
+
+    ValidatorArgumentContext(WTF::ASCIILiteral name, WTF::ASCIILiteral expected, JSC::JSValue actual, std::optional<size_t> index = std::nullopt)
+        : m_name(name)
+        , m_expected(expected)
+        , m_actual(actual)
+        , m_index(index)
+    {
+    }
+
+    auto source() const
+    {
+        return m_name;
+    }
+
+    template<typename String>
+    NEVER_INLINE void throwGenericTypeError(JSC::JSGlobalObject& global, JSC::ThrowScope& scope, String&&) const
+    {
+        // `JSValue::type_name` in src/jsc/JSValue.rs.
+        bool isArray = m_actual.isCell() && (m_actual.asCell()->type() == JSC::ArrayType || m_actual.asCell()->type() == JSC::DerivedArrayType);
+        WTF::String actual = isArray ? WTF::String("array"_s) : JSC::jsTypeStringForValue(&global, m_actual)->value(&global).data;
+        WTF::String index = m_index ? WTF::makeString('[', *m_index, ']') : WTF::emptyString();
+        Bun::throwError(&global, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
+            WTF::makeString("The \""_s, m_name, index, "\" property must be of type "_s, m_expected, ", got "_s, actual));
+    }
+
+private:
+    const WTF::ASCIILiteral m_name;
+    const WTF::ASCIILiteral m_expected;
+    const JSC::JSValue m_actual;
+    const std::optional<size_t> m_index;
 };
 
 }

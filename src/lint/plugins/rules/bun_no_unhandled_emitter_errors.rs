@@ -13,7 +13,7 @@ pub struct NoUnhandledEmitterErrors {
     factories: Exports,
 }
 
-const NO_LISTENER: Message = Message::new(
+const NO_LISTENER: &Message = &Message::new(
     "noListener",
     "`{{name}}()` emits `error` when it fails, which crashes the process if nothing listens. Add an `error` listener.",
 );

@@ -72,6 +72,7 @@
 #include "JavaScriptCore/Strong.h"
 #include "JavaScriptCore/JSSetIterator.h"
 #include "JavaScriptCore/JSString.h"
+#include "JavaScriptCore/JSStringInlines.h"
 #include "JavaScriptCore/JSWebAssemblyMemory.h"
 #include "JavaScriptCore/MarkedSpaceInlines.h"
 #include "JavaScriptCore/SubspaceInlines.h"
@@ -137,8 +138,13 @@
 #include "JavaScriptCore/FunctionPrototype.h"
 #include "JSFetchHeaders.h"
 #include "FetchHeaders.h"
+#include "BunCompiledObjectEquality.h"
+#include "JavaScriptCore/AOTHost.h"
+#include "JavaScriptCore/AOTJSONHooks.h"
 #include "DOMURL.h"
 #include "JSDOMURL.h"
+#include "JSCryptoKey.h"
+#include "JSKeyObject.h"
 
 #include <string_view>
 #include <bun-uws/src/App.h>
@@ -258,27 +264,8 @@ enum class AsymmetricMatcherConstructorType : int8_t {
 };
 
 // Ensure we instantiate the true and false variants of this function
-template bool Bun__deepMatch<true>(
-    JSValue objValue,
-    std::set<EncodedJSValue>* seenObjProperties,
-    JSValue subsetValue,
-    std::set<EncodedJSValue>* seenSubsetProperties,
-    JSGlobalObject* globalObject,
-    ThrowScope& throwScope,
-    MarkedArgumentBuffer* gcBuffer,
-    bool replacePropsWithAsymmetricMatchers,
-    bool isMatchingObjectContaining);
-
-template bool Bun__deepMatch<false>(
-    JSValue objValue,
-    std::set<EncodedJSValue>* seenObjProperties,
-    JSValue subsetValue,
-    std::set<EncodedJSValue>* seenSubsetProperties,
-    JSGlobalObject* globalObject,
-    ThrowScope& throwScope,
-    MarkedArgumentBuffer* gcBuffer,
-    bool replacePropsWithAsymmetricMatchers,
-    bool isMatchingObjectContaining);
+template bool Bun__deepMatch<true>(JSValue objValue, JSValue subsetValue, JSGlobalObject* globalObject, ThrowScope& throwScope, Bun::DeepMatchState& state, bool isMatchingObjectContaining);
+template bool Bun__deepMatch<false>(JSValue objValue, JSValue subsetValue, JSGlobalObject* globalObject, ThrowScope& throwScope, Bun::DeepMatchState& state, bool isMatchingObjectContaining);
 
 extern "C" bool Expect_readFlagsAndProcessPromise(JSC::EncodedJSValue instanceValue, JSC::JSGlobalObject* globalObject, ExpectFlags* flags, JSC::EncodedJSValue* value, AsymmetricMatcherConstructorType* constructorType);
 
@@ -337,6 +324,21 @@ extern "C" int8_t AsymmetricMatcherConstructorType__fromJS(JSC::JSGlobalObject* 
     }
 
     return static_cast<uint8_t>(AsymmetricMatcherConstructorType::none);
+}
+
+// `new RegExp(source)`, including what it throws for an invalid source.
+extern "C" __attribute__((minsize)) JSC::EncodedJSValue ExpectStringMatching__compile(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedSource)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String source = JSValue::decode(encodedSource).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    RegExp* regExp = RegExp::create(vm, source, {});
+    if (!regExp->isValid()) {
+        throwException(globalObject, scope, regExp->errorToThrow(globalObject));
+        return {};
+    }
+    return JSValue::encode(RegExpObject::create(vm, globalObject->regExpStructure(), regExp));
 }
 
 bool readFlagsAndProcessPromise(JSValue& instanceValue, ExpectFlags& flags, JSGlobalObject* globalObject, JSValue& value, AsymmetricMatcherConstructorType& constructorType)
@@ -490,20 +492,8 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
         if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp, constructorType))
             return AsymmetricMatcherResult::FAIL;
 
-        JSValue expectedTestValue = expectStringMatching->m_testValue.get();
-
         if (otherProp.isString()) {
-            if (expectedTestValue.isString()) {
-                String otherString = otherProp.toWTFString(globalObject);
-                RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
-
-                String substring = expectedTestValue.toWTFString(globalObject);
-                RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
-
-                if (otherString.find(substring) != WTF::notFound) {
-                    return AsymmetricMatcherResult::PASS;
-                }
-            } else if (auto* regex = dynamicDowncast<RegExpObject>(expectedTestValue)) {
+            if (auto* regex = dynamicDowncast<RegExpObject>(expectStringMatching->m_pattern.get())) {
                 JSString* otherString = otherProp.toString(globalObject);
                 RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
                 bool matched = !!regex->match(globalObject, otherString);
@@ -568,10 +558,8 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
         JSValue patternObject = expectObjectContaining->m_objectValue.get();
         if (patternObject.isObject()) {
             if (otherProp.isObject()) {
-                // SAFETY: visited property sets are not required when
-                // `enableAsymmetricMatchers` and `isMatchingObjectContaining`
-                // are both true
-                bool match = Bun__deepMatch<true>(otherProp, nullptr, patternObject, nullptr, globalObject, throwScope, nullptr, false, true);
+                Bun::DeepMatchState state;
+                bool match = Bun__deepMatch<true>(otherProp, patternObject, globalObject, throwScope, state, true);
                 RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
                 if (match) {
                     return AsymmetricMatcherResult::PASS;
@@ -686,6 +674,189 @@ static bool canPerformFastPropertyEnumerationForIterationBun(Structure* s)
 static bool mayBeAsymmetricMatcher(JSValue value)
 {
     return value.isCell() && !value.isEmpty() && value.asCell()->type() == JSC::JSType(JSDOMWrapperType);
+}
+
+extern "C" int8_t Expect__runEqualityTesters(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue a, JSC::EncodedJSValue b);
+
+static ALWAYS_INLINE bool hasEqualityTesters(JSGlobalObject* globalObject)
+{
+    JSObject* matcherUtils = static_cast<Zig::GlobalObject*>(globalObject)->m_testMatcherUtilsObject.getConcurrently();
+    return matcherUtils && uncheckedDowncast<Bun::Bindgen::Generated::JSExpectMatcherUtils>(matcherUtils)->m_equalityTesters;
+}
+
+// nullopt when every tester returned undefined, so the built-in rules decide.
+static NEVER_INLINE std::optional<bool> runEqualityTesters(JSGlobalObject* globalObject, ThrowScope& scope, JSValue a, JSValue b)
+{
+    int8_t verdict = Expect__runEqualityTesters(globalObject, JSValue::encode(a ? a : jsUndefined()), JSValue::encode(b ? b : jsUndefined()));
+    RETURN_IF_EXCEPTION(scope, false);
+    if (verdict < 0)
+        return std::nullopt;
+    return verdict != 0;
+}
+
+// Rules out most objects without a property lookup.
+static ALWAYS_INLINE bool mayHaveAsymmetricMatchMethod(JSGlobalObject* globalObject, JSValue value)
+{
+    if (!value || !value.isCell())
+        return false;
+    JSCell* cell = value.asCell();
+    if (cell->type() != FinalObjectType && cell->type() != ObjectType)
+        return false;
+    Structure* structure = cell->structure();
+    if (!structure->hasMonoProto() || structure->storedPrototype() != JSValue(globalObject->objectPrototype()))
+        return true;
+    auto* name = WebCore::builtinNames(globalObject->vm()).asymmetricMatchPublicName().impl();
+    return !structure->seenProperties().ruleOut(CompactPtr<UniquedStringImpl>::encode(name));
+}
+
+// Values with the same structure both have the method or both don't, and two matchers are compared as plain objects.
+static ALWAYS_INLINE bool oneMayHaveAsymmetricMatchMethod(JSGlobalObject* globalObject, JSValue a, JSValue b)
+{
+    if (a && b && a.isCell() && b.isCell() && a.asCell()->structureID() == b.asCell()->structureID())
+        return false;
+    return mayHaveAsymmetricMatchMethod(globalObject, a) || mayHaveAsymmetricMatchMethod(globalObject, b);
+}
+
+// Looks up asymmetricMatch() without running getters or Proxy traps. Returns an empty value if it isn't a method.
+static JSValue asymmetricMatchMethod(JSGlobalObject* globalObject, JSValue value)
+{
+    if (!mayHaveAsymmetricMatchMethod(globalObject, value))
+        return {};
+    VM& vm = globalObject->vm();
+    PropertyName name = WebCore::builtinNames(vm).asymmetricMatchPublicName();
+    for (JSObject* object = asObject(value); object != globalObject->objectPrototype();) {
+        if (object->type() != FinalObjectType && object->type() != ObjectType)
+            return {};
+        Structure* structure = object->structure();
+        unsigned attributes;
+        PropertyOffset offset = structure->get(vm, name, attributes);
+        if (offset != invalidOffset) {
+            if (attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue))
+                return {};
+            JSValue method = object->getDirect(offset);
+            return method.isCallable() ? method : JSValue();
+        }
+        JSValue prototype = structure->storedPrototype(object);
+        if (!prototype.isObject())
+            return {};
+        object = asObject(prototype);
+    }
+    return {};
+}
+
+// Jest and Vitest treat any object with an asymmetricMatch() method as a matcher. Returns nullopt if neither or both are.
+static NEVER_INLINE std::optional<bool> matchUserAsymmetricMatcher(JSGlobalObject* globalObject, ThrowScope& scope, JSValue a, JSValue b)
+{
+    JSValue methodOfA = asymmetricMatchMethod(globalObject, a);
+    JSValue methodOfB = asymmetricMatchMethod(globalObject, b);
+    if (!methodOfA == !methodOfB) [[likely]]
+        return std::nullopt;
+    JSValue method = methodOfA ? methodOfA : methodOfB;
+    JSValue other = methodOfA ? b : a;
+    MarkedArgumentBuffer arguments;
+    arguments.append(other ? other : jsUndefined());
+    JSValue matched = JSC::call(globalObject, method, JSC::getCallData(method), methodOfA ? a : b, arguments);
+    RETURN_IF_EXCEPTION(scope, false);
+    return matched.toBoolean(globalObject);
+}
+
+// jsdom and happy-dom nodes are class instances, sometimes wrapped in a Proxy.
+static ALWAYS_INLINE bool mayBeDOMNode(JSGlobalObject* globalObject, JSObject* object)
+{
+    JSC::JSType type = object->type();
+    return type == ProxyObjectType || (type == FinalObjectType && object->getPrototypeDirect() != globalObject->objectPrototype());
+}
+
+// Jest's and vitest's `isDomNode`, but no getter or Proxy trap runs unless the value has an `isEqualNode`.
+static bool isDOMNode(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* object, JSValue& isEqualNode)
+{
+    VM& vm = globalObject->vm();
+    auto& names = WebCore::builtinNames(vm);
+    if (!mayBeDOMNode(globalObject, object))
+        return false;
+
+    JSObject* target = object;
+    while (auto* proxy = dynamicDowncast<ProxyObject>(target)) {
+        if (proxy->isRevoked())
+            return false;
+        target = proxy->target();
+    }
+    {
+        // Scoped, because a VMInquiry slot forbids entering the VM while it's alive.
+        PropertySlot inquiry(target, PropertySlot::InternalMethodType::VMInquiry, &vm);
+        bool hasIsEqualNode = target->getPropertySlot(globalObject, names.isEqualNodePublicName(), inquiry);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!hasIsEqualNode)
+            return false;
+    }
+
+    JSValue nodeType = object->get(globalObject, names.nodeTypePublicName());
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!nodeType.isNumber())
+        return false;
+    JSValue nodeName = object->get(globalObject, names.nodeNamePublicName());
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!nodeName.isString())
+        return false;
+    isEqualNode = object->get(globalObject, names.isEqualNodePublicName());
+    RETURN_IF_EXCEPTION(scope, false);
+    return isEqualNode.isCallable();
+}
+
+enum class DOMNodeComparison : uint8_t {
+    Equal,
+    StrictEqual,
+    // For toMatchObject, where a plain-object pattern still matches a node by its properties.
+    Match,
+};
+
+namespace Bun {
+JSC::JSString* objectPrototypeToStringOutOfLine(JSC::JSGlobalObject*, JSC::JSValue);
+}
+
+// The DOM node step of Jest's and vitest's `equals`. nullopt means fall through to comparing properties.
+static NEVER_INLINE std::optional<bool> domNodesDequal(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* o1, JSObject* o2, DOMNodeComparison comparison)
+{
+    VM& vm = globalObject->vm();
+    // Any property or script that names `isEqualNode` refs this atom, so a single ref means no object has one.
+    if (WebCore::builtinNames(vm).isEqualNodePublicName().impl()->hasOneRef())
+        return std::nullopt;
+    JSValue isEqualNode;
+    JSValue isEqualNodeOfOther;
+    bool isNode1 = isDOMNode(globalObject, scope, o1, isEqualNode);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    if (!isNode1 && o1->structureID() == o2->structureID() && o1->type() == FinalObjectType && !o1->structure()->hasPolyProto())
+        return std::nullopt;
+    bool isNode2 = isDOMNode(globalObject, scope, o2, isEqualNodeOfOther);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    if (comparison == DOMNodeComparison::Match ? !(isNode1 && isNode2) : !(isNode1 || isNode2))
+        return std::nullopt;
+
+    JSString* tag1 = Bun::objectPrototypeToStringOutOfLine(globalObject, o1);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    JSString* tag2 = Bun::objectPrototypeToStringOutOfLine(globalObject, o2);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    bool sameTag = tag1->equal(globalObject, tag2);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    if (!sameTag)
+        return false;
+    if (!isNode1 || !isNode2)
+        return std::nullopt;
+
+    if (comparison == DOMNodeComparison::StrictEqual) {
+        JSValue constructor1 = o1->get(globalObject, vm.propertyNames->constructor);
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+        JSValue constructor2 = o2->get(globalObject, vm.propertyNames->constructor);
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+        if (constructor1 != constructor2)
+            return false;
+    }
+
+    MarkedArgumentBuffer arguments;
+    arguments.append(o2);
+    JSValue result = JSC::call(globalObject, isEqualNode, JSC::getCallData(isEqualNode), o1, arguments);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    return result.toBoolean(globalObject);
 }
 
 JSValue getIndexWithoutAccessors(JSGlobalObject* globalObject, JSObject* obj, uint64_t i)
@@ -822,6 +993,8 @@ static bool isWellKnownConstructor(JSValue value)
         || info == WebCore::JSBufferConstructor::info();
 }
 
+extern "C" bool Bun__VM__isRunningVitestEntry(void* bunVM);
+
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity>
 bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, bool addToStack)
 {
@@ -856,6 +1029,14 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 RETURN_IF_EXCEPTION(scope, false);
                 break;
             }
+        } else if (oneMayHaveAsymmetricMatchMethod(globalObject, v1, v2)) {
+            if (auto matched = matchUserAsymmetricMatcher(globalObject, scope, v1, v2)) [[unlikely]]
+                return *matched;
+        }
+
+        if (hasEqualityTesters(globalObject)) [[unlikely]] {
+            if (auto verdict = runEqualityTesters(globalObject, scope, v1, v2))
+                return *verdict;
         }
     }
 
@@ -996,6 +1177,11 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             if (array1Length != array2Length) {
                 return false;
             }
+        } else if constexpr (enableAsymmetricMatchers) {
+            // Vitest's toEqual() compares the lengths. Jest's takes an item that isn't there for undefined.
+            if (array1Length != array2Length && Bun__VM__isRunningVitestEntry(bunVM(globalObject))) {
+                return false;
+            }
         }
 
         uint64_t i = 0;
@@ -1100,7 +1286,20 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         return true;
     }
 
+    if constexpr (enableAsymmetricMatchers) {
+        if (mayBeDOMNode(globalObject, o1) || mayBeDOMNode(globalObject, o2)) {
+            auto nodesEqual = domNodesDequal(globalObject, scope, o1, o2, isStrict ? DOMNodeComparison::StrictEqual : DOMNodeComparison::Equal);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (nodesEqual)
+                return *nodesEqual;
+        }
+    }
+
     if constexpr (isStrict && !checkPrototypes && !skipPrototypeIdentity) {
+#if ENABLE(AOT)
+        JSC::AOT::PropertyWalk::materializeLazyProperties(vm, o1);
+        JSC::AOT::PropertyWalk::materializeLazyProperties(vm, o2);
+#endif
         if (!equal(JSObject::calculatedClassName(o1), JSObject::calculatedClassName(o2))) {
             return false;
         }
@@ -1217,14 +1416,21 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 return false;
             }
 
+            // An equality tester can say a value doesn't equal itself, so identical pairs can't be skipped.
+            bool sameIsEqual = true;
+            if constexpr (enableAsymmetricMatchers)
+                sameIsEqual = !hasEqualityTesters(globalObject);
+
             for (size_t i = 0; i < pairs.size(); i += 2) {
                 JSValue left = pairs.at(i);
                 JSValue right = pairs.at(i + 1);
 
-                if (left == right) continue;
-                auto same = JSC::sameValue(globalObject, left, right);
-                RETURN_IF_EXCEPTION(scope, false);
-                if (same) continue;
+                if (sameIsEqual) [[likely]] {
+                    if (left == right) continue;
+                    auto same = JSC::sameValue(globalObject, left, right);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    if (same) continue;
+                }
 
                 auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, left, right, gcBuffer, stack, scope, true);
                 RETURN_IF_EXCEPTION(scope, false);
@@ -1236,6 +1442,18 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             return true;
         }
     }
+
+#if ENABLE(AOT)
+    if (JSC::AOT::PropertyWalk::isCompiledObject(o1) || JSC::AOT::PropertyWalk::isCompiledObject(o2)) {
+        static_assert(!checkPrototypes || isStrict);
+        auto areEqual = Bun::compareCompiledObjectProperties<isStrict>(globalObject, scope, o1, o2, [&](JSValue left, JSValue right) {
+            return Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, left, right, gcBuffer, stack, scope, true);
+        });
+        RETURN_IF_EXCEPTION(scope, false);
+        if (areEqual)
+            return *areEqual;
+    }
+#endif
 
     JSC::PropertyNameArrayBuilder a1(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     JSC::PropertyNameArrayBuilder a2(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
@@ -1385,6 +1603,23 @@ static std::optional<bool> temporalObjectsDequal(JSC::JSObject* o1, JSC::JSObjec
     if (isTemporalObject(o2))
         return false;
     return std::nullopt;
+}
+
+// A KeyObject or CryptoKey keeps its key in an internal slot and has no own properties
+// either. Own properties are still compared afterwards, like node does.
+static bool keyObjectsDequal(JSC::JSObject* o1, JSC::JSObject* o2)
+{
+    auto* key1 = dynamicDowncast<Bun::JSKeyObject>(o1);
+    auto* key2 = dynamicDowncast<Bun::JSKeyObject>(o2);
+    if (key1 || key2)
+        return key1 && key2 && key1->handle().equals(key2->handle()).value_or(false);
+
+    auto* cryptoKey1 = dynamicDowncast<JSCryptoKey>(o1);
+    auto* cryptoKey2 = dynamicDowncast<JSCryptoKey>(o2);
+    if (cryptoKey1 || cryptoKey2)
+        return cryptoKey1 && cryptoKey2 && Bun::KeyObject::cryptoKeysEqual(cryptoKey1->wrapped(), cryptoKey2->wrapped());
+
+    return true;
 }
 
 struct DeepEqualsMode {
@@ -1569,7 +1804,10 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
                 return false;
             }
 
-            if (mode.isStrict) {
+            // Vitest compares the causes only if the expected error has one, and the `errors` of an AggregateError.
+            bool isLikeVitest = mode.enableAsymmetricMatchers && Bun__VM__isRunningVitestEntry(bunVM(globalObject));
+
+            if (mode.isStrict && !isLikeVitest) {
                 if (left->runtimeTypeForCause() != right->runtimeTypeForCause()) {
                     return false;
                 }
@@ -1581,7 +1819,7 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
             // note that an undefined cause is different than a missing cause in
             // strict mode.
             const PropertyName cause(vm.propertyNames->cause);
-            if (mode.isStrict) {
+            if (mode.isStrict && !isLikeVitest) {
                 bool leftHasCause = left->hasProperty(globalObject, cause);
                 RETURN_IF_EXCEPTION(scope, {});
                 bool rightHasCause = right->hasProperty(globalObject, cause);
@@ -1594,10 +1832,22 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
             RETURN_IF_EXCEPTION(scope, {});
             auto rightCause = right->get(globalObject, cause);
             RETURN_IF_EXCEPTION(scope, {});
-            bool causesEqual = mode.deepEquals(globalObject, leftCause, rightCause, gcBuffer, stack, scope, true);
+            bool causesEqual = (isLikeVitest && rightCause.isUndefined()) || mode.deepEquals(globalObject, leftCause, rightCause, gcBuffer, stack, scope, true);
             RETURN_IF_EXCEPTION(scope, {});
             if (!causesEqual) {
                 return false;
+            }
+
+            if (isLikeVitest && left->errorType() == ErrorType::AggregateError) {
+                auto leftErrors = left->get(globalObject, vm.propertyNames->errors);
+                RETURN_IF_EXCEPTION(scope, {});
+                auto rightErrors = right->get(globalObject, vm.propertyNames->errors);
+                RETURN_IF_EXCEPTION(scope, {});
+                bool errorsEqual = mode.deepEquals(globalObject, leftErrors, rightErrors, gcBuffer, stack, scope, true);
+                RETURN_IF_EXCEPTION(scope, {});
+                if (!errorsEqual) {
+                    return false;
+                }
             }
 
             // check arbitrary enumerable properties. `.stack` is not checked.
@@ -1726,6 +1976,23 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
             return false;
         }
 
+        // Equality testers see every element, so the byte comparison below can't be used.
+        if (mode.enableAsymmetricMatchers && hasEqualityTesters(globalObject)) [[unlikely]] {
+            size_t length = left->length();
+            for (size_t i = 0; i < length; i++) {
+                JSValue leftElement = left->getIndex(globalObject, i);
+                RETURN_IF_EXCEPTION(scope, {});
+                JSValue rightElement = right->getIndex(globalObject, i);
+                RETURN_IF_EXCEPTION(scope, {});
+                bool elementsEqual = mode.deepEquals(globalObject, leftElement, rightElement, gcBuffer, stack, scope, true);
+                RETURN_IF_EXCEPTION(scope, {});
+                if (!elementsEqual)
+                    return false;
+            }
+            if (compareOwnProperties) break;
+            return true;
+        }
+
         if (vector == rightVector) [[unlikely]] {
             if (mode.checkPrototypes) {
                 return mode.nonIndexOwnPropertiesEqual(globalObject, gcBuffer, stack, scope, left, right);
@@ -1799,7 +2066,11 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
         }
         return true;
     }
-    case JSFunctionType: {
+    case JSFunctionType:
+    case InternalFunctionType:
+    case CompiledClosureType:
+    case SlimClosureType:
+    case SlimClosureWithPropertiesType: {
         return false;
     }
 
@@ -2119,6 +2390,10 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
     case BigUint64ArrayType:
     case StringObjectType:
     case JSFunctionType:
+    case InternalFunctionType:
+    case CompiledClosureType:
+    case SlimClosureType:
+    case SlimClosureWithPropertiesType:
     case JSAsJSONType:
     case JSDOMWrapperType:
     case GlobalObjectType:
@@ -2150,6 +2425,9 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             std::optional<bool> temporalEqual = temporalObjectsDequal(obj1, obj2);
             if (temporalEqual.has_value())
                 return temporalEqual;
+
+            if (!keyObjectsDequal(obj1, obj2))
+                return false;
 
             const bool isSymbol1 = obj1->inherits<SymbolObject>();
             const bool isBigInt1 = obj1->inherits<BigIntObject>();
@@ -2205,41 +2483,14 @@ template bool Bun__deepEquals<true, false, false, true>(JSC::JSGlobalObject*, JS
 
 /**
  * @brief `Bun.deepMatch(a, b)`
- *
- * @note
- * The sets recording already visited properties (`seenObjProperties`,
- * `seenSubsetProperties`, and `gcBuffer`) aren not needed when both
- * `enableAsymmetricMatchers` and `isMatchingObjectContaining` are true. In
- * this case, it is safe to pass a `nullptr`.
- *
- * `gcBuffer` ensures JSC's stack scan does not come up empty-handed and free
- * properties currently within those stacks. Likely unnecessary, but better to
- * be safe tnan sorry
- *
- * @tparam enableAsymmetricMatchers
- * @param objValue
- * @param seenObjProperties already visited properties of `objValue`.
- * @param subsetValue
- * @param seenSubsetProperties already visited properties of `subsetValue`.
- * @param globalObject
- * @param throwScope
- * @param gcBuffer
- * @param replacePropsWithAsymmetricMatchers
- * @param isMatchingObjectContaining
- *
- * @return true
- * @return false
  */
 template<bool enableAsymmetricMatchers>
 bool Bun__deepMatch(
     JSValue objValue,
-    std::set<EncodedJSValue>* seenObjProperties,
     JSValue subsetValue,
-    std::set<EncodedJSValue>* seenSubsetProperties,
     JSGlobalObject* globalObject,
     ThrowScope& throwScope,
-    MarkedArgumentBuffer* gcBuffer,
-    bool replacePropsWithAsymmetricMatchers,
+    Bun::DeepMatchState& state,
     bool isMatchingObjectContaining)
 {
 
@@ -2252,10 +2503,27 @@ bool Bun__deepMatch(
         return false;
     }
 
+    if constexpr (enableAsymmetricMatchers) {
+        // expect.objectContaining()'s argument is a pattern, so the testers don't see it.
+        if (!isMatchingObjectContaining && hasEqualityTesters(globalObject)) [[unlikely]] {
+            if (auto verdict = runEqualityTesters(globalObject, throwScope, objValue, subsetValue))
+                return *verdict;
+        }
+    }
+
     // fast path for reference equality.
     if (objValue == subsetValue) return true;
     JSObject* obj = objValue.getObject();
     JSObject* subsetObj = subsetValue.getObject();
+
+    if constexpr (enableAsymmetricMatchers) {
+        if (mayBeDOMNode(globalObject, obj) && mayBeDOMNode(globalObject, subsetObj)) {
+            auto nodesEqual = domNodesDequal(globalObject, throwScope, obj, subsetObj, DOMNodeComparison::Match);
+            RETURN_IF_EXCEPTION(throwScope, false);
+            if (nodesEqual)
+                return *nodesEqual;
+        }
+    }
 
     PropertyNameArrayBuilder subsetProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
     subsetObj->getPropertyNames(globalObject, subsetProps, DontEnumPropertiesMode::Exclude);
@@ -2309,10 +2577,7 @@ bool Bun__deepMatch(
                 case AsymmetricMatcherResult::FAIL:
                     return false;
                 case AsymmetricMatcherResult::PASS:
-                    if (replacePropsWithAsymmetricMatchers) {
-                        obj->putDirectMayBeIndex(globalObject, property, subsetProp);
-                        RETURN_IF_EXCEPTION(throwScope, false);
-                    }
+                    state.recordIfAsked(obj, subsetObj, property, subsetProp, jsUndefined());
                     // continue to next subset prop
                     continue;
                 case AsymmetricMatcherResult::NOT_MATCHER:
@@ -2323,14 +2588,16 @@ bool Bun__deepMatch(
                 case AsymmetricMatcherResult::FAIL:
                     return false;
                 case AsymmetricMatcherResult::PASS:
-                    if (replacePropsWithAsymmetricMatchers) {
-                        subsetObj->putDirectMayBeIndex(globalObject, property, prop);
-                        RETURN_IF_EXCEPTION(throwScope, false);
-                    }
                     // continue to next subset prop
                     continue;
                 case AsymmetricMatcherResult::NOT_MATCHER:
                     break;
+                }
+            } else if (oneMayHaveAsymmetricMatchMethod(globalObject, prop, subsetProp)) {
+                if (auto matched = matchUserAsymmetricMatcher(globalObject, throwScope, prop, subsetProp)) [[unlikely]] {
+                    if (!*matched)
+                        return false;
+                    continue;
                 }
             }
         }
@@ -2346,20 +2613,24 @@ bool Bun__deepMatch(
                 RETURN_IF_EXCEPTION(throwScope, false);
                 if (!eql) return false;
             } else {
-                ASSERT(seenObjProperties != nullptr);
-                ASSERT(seenSubsetProperties != nullptr);
-                ASSERT(gcBuffer != nullptr);
-                auto didInsertProp = seenObjProperties->insert(JSC::JSValue::encode(prop));
-                auto didInsertSubset = seenSubsetProperties->insert(JSC::JSValue::encode(subsetProp));
-                gcBuffer->append(prop);
-                gcBuffer->append(subsetProp);
-                // property cycle detected
-                if (!didInsertProp.second || !didInsertSubset.second) continue;
-                bool matched = Bun__deepMatch<enableAsymmetricMatchers>(prop, seenObjProperties, subsetProp, seenSubsetProperties, globalObject, throwScope, gcBuffer, replacePropsWithAsymmetricMatchers, isMatchingObjectContaining);
+                state.gcBuffer.append(prop);
+                state.gcBuffer.append(subsetProp);
+                state.recordIfAsked(obj, subsetObj, property, prop, subsetProp);
+                // This (value, pattern) pair already matched, or is still being compared (a cycle).
+                if (!state.seen.insert({ JSC::JSValue::encode(prop), JSC::JSValue::encode(subsetProp) }).second) continue;
+                bool matched = Bun__deepMatch<enableAsymmetricMatchers>(prop, subsetProp, globalObject, throwScope, state, isMatchingObjectContaining);
                 RETURN_IF_EXCEPTION(throwScope, false);
                 if (!matched) return false;
             }
         } else {
+            if constexpr (enableAsymmetricMatchers) {
+                if (hasEqualityTesters(globalObject)) [[unlikely]] {
+                    if (auto verdict = runEqualityTesters(globalObject, throwScope, prop, subsetProp)) {
+                        if (!*verdict) return false;
+                        continue;
+                    }
+                }
+            }
             auto same = JSC::sameValue(globalObject, prop, subsetProp);
             RETURN_IF_EXCEPTION(throwScope, false);
             if (!same) return false;
@@ -2400,12 +2671,60 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__cast_(JSC::EncodedJSValue JSValue0
     return WebCoreCast<WebCore::JSFetchHeaders, WebCore::FetchHeaders>(JSValue0);
 }
 
+// What the conversion in WebCore__FetchHeaders__createFromJS() makes of a record of compiled code that holds nothing but strings under string keys, without the question for @@iterator and without the list of pairs in between: no code of the program runs, and a string is converted without an error, so the first header that is refused is the first error either way.
+static std::optional<WebCore::FetchHeaders*> tryCreateFetchHeadersFromCompiledRecord(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
+{
+    namespace PropertyWalk = JSC::AOT::PropertyWalk;
+    struct Header {
+        UniquedStringImpl* name;
+        JSC::JSString* value;
+    };
+
+    auto& vm = JSC::getVM(globalObject);
+    JSC::JSObject* object = value.getObject();
+    JSC::JSObject* objectPrototype = globalObject->objectPrototype();
+    if (!object || !PropertyWalk::isCompiledObject(object) || object->getPrototypeDirect() != JSC::JSValue(objectPrototype))
+        return std::nullopt;
+    if (objectPrototype->getDirect(vm, vm.propertyNames->iteratorSymbol))
+        return std::nullopt;
+
+    // The record keeps the strings alive.
+    Vector<Header, 8> record;
+    auto walked = PropertyWalk::forEachOwnProperty(vm, object, PropertyWalk::Filter::StringsAndSymbols, [&](const PropertyWalk::OwnProperty& own) -> IterationStatus {
+        if (own.name->isSymbol() || !own.value.isString())
+            return IterationStatus::Done;
+        if (!(own.attributes & JSC::PropertyAttribute::DontEnum))
+            record.append({ own.name, JSC::asString(own.value) });
+        return IterationStatus::Continue;
+    });
+    if (walked != PropertyWalk::Result::Completed)
+        return std::nullopt;
+    if (record.isEmpty())
+        return nullptr;
+
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    for (auto& [name, string] : record) {
+        auto text = string->value(globalObject);
+        if (!scope.exception()) [[likely]]
+            WebCore::propagateException(*globalObject, scope, headers->append(String { name }, text.data));
+        if (scope.exception()) [[unlikely]] {
+            headers->deref();
+            return nullptr;
+        }
+    }
+    return headers;
+}
+
 WebCore::FetchHeaders* WebCore__FetchHeaders__createFromJS(JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue argument0_)
 {
     EnsureStillAliveScope argument0 = JSC::JSValue::decode(argument0_);
 
     auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
     throwScope.assertNoException();
+
+    if (auto headers = tryCreateFetchHeadersFromCompiledRecord(lexicalGlobalObject, argument0.value()))
+        RELEASE_AND_RETURN(throwScope, *headers);
 
     // Note that we use IDLDOMString here rather than IDLByteString: while headers
     //  should be ASCII only, we want the headers->fill implementation to discover
@@ -2626,7 +2945,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void*
 }
 WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(void* arg1)
 {
-    uWS::HttpRequest req = *reinterpret_cast<uWS::HttpRequest*>(arg1);
+    uWS::HttpRequest& req = *reinterpret_cast<uWS::HttpRequest*>(arg1);
 
     auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
 
@@ -2769,12 +3088,27 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__unwrapBoxedPrimitive(JSGlobalObject
     return JSValue::encode(object);
 }
 
-extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue EncodedSlice__toJSONObject(const EncodedSlice* strPtr, JSC::JSGlobalObject* globalObject)
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue EncodedSlice__toJSONObject(const EncodedSlice* strPtr, JSC::JSGlobalObject* globalObject, bool skipsCompiledParser)
 {
     ASSERT_NO_PENDING_EXCEPTION(globalObject);
+    auto compiledParser = skipsCompiledParser ? JSC::CompiledJSONParser::Skip : JSC::CompiledJSONParser::Try;
+#if ENABLE(AOT)
+    if (compiledParser == JSC::CompiledJSONParser::Try && strPtr->len && Zig::isTaggedUTF8Ptr(strPtr->ptr)) {
+        if (JSValue parsed = JSC::AOT::tryParseUTF8JSON(globalObject, std::span<const uint8_t> { Zig::untag(strPtr->ptr), strPtr->len }))
+            return JSValue::encode(parsed);
+        compiledParser = JSC::CompiledJSONParser::Skip;
+    }
+#endif
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (Zig::isTaggedUTF8Ptr(strPtr->ptr) && strPtr->len <= std::min(Bun__stringSyntheticAllocationLimit, static_cast<size_t>(WTF::String::MaxLength))) {
+        JSValue parsed = JSC::JSONParse(globalObject, std::span { reinterpret_cast<const char8_t*>(Zig::untag(strPtr->ptr)), strPtr->len });
+        RETURN_IF_EXCEPTION(scope, {});
+        if (parsed)
+            return JSValue::encode(parsed);
+        // The message of the error quotes characters of the text.
+    }
     // Zig::toString() is null for an empty slice, and JSONParseWithException throws nothing for null.
     auto str = strPtr->len ? Zig::toString(*strPtr) : emptyString();
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
     if (str.isNull()) {
         // isNull() will be true for strings which are too long, and when an allocation fails.
@@ -2783,15 +3117,27 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue EncodedSlice__toJSO
             scope.throwException(globalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_STRING_TOO_LONG, "Cannot parse a JSON string longer than 2147483647 characters"_s));
             return {};
         }
+        return Bun::ERR::MEMORY_ALLOCATION_FAILED(scope, globalObject);
     }
 
-    JSValue result = JSONParseWithException(globalObject, str);
+    JSValue result = JSONParseWithException(globalObject, str, compiledParser);
     RETURN_IF_EXCEPTION(scope, {});
     if (!result) {
         scope.throwException(globalObject, createSyntaxError(globalObject, "Failed to parse JSON"_s));
         return {};
     }
     return JSValue::encode(result);
+}
+
+extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue EncodedSlice__tryParseJSONFromUTF8(const EncodedSlice* bytes, JSC::JSGlobalObject* globalObject)
+{
+#if ENABLE(AOT)
+    return JSValue::encode(JSC::AOT::tryParseUTF8JSON(globalObject, std::span<const uint8_t> { Zig::untag(bytes->ptr), bytes->len }));
+#else
+    UNUSED_PARAM(bytes);
+    UNUSED_PARAM(globalObject);
+    return {};
+#endif
 }
 
 // We used to just throw "Out of memory" as a regular Error with that string.
@@ -3147,7 +3493,7 @@ void JSC__JSValue___then(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1
 void JSC__JSGlobalObject__deleteModuleRegistryEntry(JSC::JSGlobalObject* global, const EncodedSlice* arg1)
 {
     const JSC::Identifier identifier = Zig::toIdentifier(*arg1, global);
-    global->moduleLoader()->removeEntry(identifier); // takes the loader's cellLock itself
+    Bun::testFileModuleLoader(defaultGlobalObject(global))->removeEntry(identifier); // takes the loader's cellLock itself
 }
 
 void JSC__VM__collectAsync(JSC::VM* vm, bool full)
@@ -3254,17 +3600,107 @@ bool Bun__deepEqualsNodeStrictSkipProto(JSC::EncodedJSValue JSValue0, JSC::Encod
 
 #undef IMPL_DEEP_EQUALS_WRAPPER
 
-bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* globalObject, bool replacePropsWithAsymmetricMatchers)
+static JSObject* shallowCopyForDeepMatch(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* object)
+{
+    auto& vm = JSC::getVM(globalObject);
+    JSObject* copy = nullptr;
+    if (isJSArray(object)) {
+        copy = constructEmptyArray(globalObject, nullptr, 0);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    } else if (object->type() == FinalObjectType || JSC::AOT::PropertyWalk::isCompiledObject(object)) {
+        JSValue prototype = object->getPrototypeDirect();
+        copy = prototype.isObject() ? constructEmptyObject(globalObject, asObject(prototype)) : constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+    } else {
+        return nullptr;
+    }
+    PropertyNameArrayBuilder names(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    object->methodTable()->getOwnPropertyNames(object, globalObject, names, DontEnumPropertiesMode::Include);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    for (const auto& name : names) {
+        PropertyDescriptor descriptor;
+        bool exists = object->getOwnPropertyDescriptor(globalObject, name, descriptor);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (!exists)
+            continue;
+        descriptor.setConfigurable(true);
+        if (descriptor.isDataDescriptor())
+            descriptor.setWritable(true);
+        copy->methodTable()->defineOwnProperty(copy, globalObject, name, descriptor, false);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    // The loop can't define `length` (it's not configurable), and trailing holes only exist through it.
+    if (auto* array = dynamicDowncast<JSArray>(copy)) {
+        array->setLength(globalObject, uncheckedDowncast<JSArray>(object)->length(), false);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    return copy;
+}
+
+// Returns `root` with matched properties replaced by their asymmetric matchers, copying only the objects that change.
+static JSValue replaceMatchedProperties(JSGlobalObject* globalObject, ThrowScope& scope, Bun::DeepMatchState& state, JSValue root, JSValue rootPattern)
+{
+    using Pair = std::pair<EncodedJSValue, EncodedJSValue>;
+    auto pairAt = [&](size_t index) { return Pair { JSValue::encode(state.recorded.at(index)), JSValue::encode(state.recorded.at(index + 1)) }; };
+    auto matchedMatcher = [&](size_t record) { return state.recorded.at(record * 4 + 3).isUndefined(); };
+    size_t records = state.recordedNames.size();
+
+    // Keyed by (object, pattern), since an object that appears twice can meet a different pattern in each place.
+    std::map<Pair, JSObject*> copies;
+    for (size_t i = 0; i < records; i++) {
+        if (matchedMatcher(i))
+            copies.emplace(pairAt(i * 4), nullptr);
+    }
+    // Also copy every object that leads to one of those. Runs to a fixed point because of cycles.
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (size_t i = records; i-- > 0;) {
+            if (!matchedMatcher(i) && copies.contains(pairAt(i * 4 + 2)) && copies.emplace(pairAt(i * 4), nullptr).second)
+                changed = true;
+        }
+    }
+
+    MarkedArgumentBuffer keepAlive;
+    for (auto& [pair, copy] : copies) {
+        copy = shallowCopyForDeepMatch(globalObject, scope, asObject(JSValue::decode(pair.first)));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (copy)
+            keepAlive.append(copy);
+    }
+    for (size_t i = 0; i < records; i++) {
+        auto holder = copies.find(pairAt(i * 4));
+        if (holder == copies.end() || !holder->second)
+            continue;
+        JSValue value = state.recorded.at(i * 4 + 2);
+        if (!matchedMatcher(i)) {
+            auto nested = copies.find(pairAt(i * 4 + 2));
+            if (nested == copies.end() || !nested->second)
+                continue;
+            value = nested->second;
+        }
+        holder->second->putDirectMayBeIndex(globalObject, state.recordedNames[i], value);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    auto copyOfRoot = copies.find({ JSValue::encode(root), JSValue::encode(rootPattern) });
+    return copyOfRoot != copies.end() && copyOfRoot->second ? JSValue(copyOfRoot->second) : root;
+}
+
+bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* globalObject, bool replaceWhen, JSC::EncodedJSValue* replaced)
 {
     JSValue obj = JSValue::decode(JSValue0);
     JSValue subset = JSValue::decode(JSValue1);
 
     ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
-    std::set<EncodedJSValue> objVisited;
-    std::set<EncodedJSValue> subsetVisited;
-    MarkedArgumentBuffer gcBuffer;
-    RELEASE_AND_RETURN(scope, Bun__deepMatch<true>(obj, &objVisited, subset, &subsetVisited, globalObject, scope, &gcBuffer, replacePropsWithAsymmetricMatchers, false));
+    Bun::DeepMatchState state;
+    state.records = !!replaced;
+    bool matched = Bun__deepMatch<true>(obj, subset, globalObject, scope, state, false);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (replaced) {
+        JSValue shown = matched == replaceWhen ? replaceMatchedProperties(globalObject, scope, state, obj, subset) : obj;
+        RETURN_IF_EXCEPTION(scope, false);
+        *replaced = JSValue::encode(shown);
+    }
+    return matched;
 }
 
 extern "C" bool Bun__JSValue__isAsyncContextFrame(JSC::EncodedJSValue value)
@@ -3402,6 +3838,91 @@ BunString JSC__JSString__view(JSC::JSString* str, JSC::JSGlobalObject* global, c
 bool JSC__JSString__is8Bit(const JSC::JSString* arg0) { return arg0->is8Bit(); };
 size_t JSC__JSString__length(const JSC::JSString* arg0) { return arg0->length(); }
 
+// JSString::latin1_characters in src/jsc/JSString.rs reads these fields itself.
+static_assert(JSC::JSString::offsetOfValue() == 8 && JSC::JSString::isRopeInPointer == 1 && JSC::JSRopeString::isSubstringInPointer == 2, "JSString::m_fiber is mirrored in src/jsc/JSString.rs");
+static_assert(JSC::JSRopeString::offsetOfLength() == 16 && JSC::JSRopeString::offsetOfFiber1Lower() == 20 && JSC::JSRopeString::offsetOfFiber2() == 24 && JSC::JSRopeString::offsetOfFiber2Lower() == 26 && sizeof(JSC::JSRopeString) == 32, "JSRopeString's fibers are mirrored in src/jsc/JSString.rs");
+static_assert(JSC::JSRopeString::CompactFibers::addressMask <= (1ULL << 48) - 1 && JSC::JSRopeString::CompactFibers::shiftOfFiber2InUpperWord == 16, "JSRopeString's fibers are mirrored in src/jsc/JSString.rs");
+static_assert(JSC::JSString::MaxLength == std::numeric_limits<int32_t>::max(), "JSString::MaxLength is mirrored in src/jsc/JSString.rs");
+static_assert(WTF::StringImpl::lengthMemoryOffset() == 4 && WTF::StringImpl::dataOffset() == 8 && WTF::StringImpl::flagsOffset() == 16 && WTF::StringImpl::flagIs8Bit() == 4, "StringImpl is mirrored in src/bun_alloc/lib.rs");
+
+// Whether the next cell of `space` comes off the free list.
+static ALWAYS_INLINE bool nextCellIsOnFreeList(JSC::GCClient::IsoSubspace& space)
+{
+    auto* allocator = space.allocatorFor(0, JSC::AllocatorForMode::AllocatorIfExists).localAllocator();
+    auto* freeList = std::bit_cast<char*>(allocator) + JSC::LocalAllocator::offsetOfFreeList();
+    return *std::bit_cast<char**>(freeList + JSC::FreeList::offsetOfIntervalStart()) < *std::bit_cast<char**>(freeList + JSC::FreeList::offsetOfIntervalEnd());
+}
+
+static NEVER_INLINE JSC::JSString* substringOfResolvedSlow(JSC::VM& vm, JSC::JSString* string, uint32_t offset, uint32_t length)
+{
+    return JSC::jsSubstringOfResolved(vm, string, offset, length);
+}
+
+// `string` is no rope. `isPart`: the substring is not all of it.
+static ALWAYS_INLINE JSC::JSString* substringOfResolved(JSC::VM& vm, JSC::JSString* string, uint32_t offset, uint32_t length, bool isPart)
+{
+    ASSERT(!string->isRope());
+    ASSERT(!isPart || length < string->length());
+    if (length > 2 && nextCellIsOnFreeList(vm.ropeStringSpace())) [[likely]] {
+        if (string->isSubstring())
+            __builtin_unreachable();
+        if (auto* text = string->tryGetValueImpl(); isPart && (!text || text->length() == length))
+            __builtin_unreachable();
+        [[clang::always_inline]] return JSC::jsSubstringOfResolved(vm, nullptr, string, offset, length);
+    }
+    if (!length)
+        return vm.smallStrings.emptyString();
+    if (length == 1) {
+        if (auto character = (*string->tryGetValueImpl())[offset]; character <= JSC::maxSingleCharacterString)
+            return vm.smallStrings.singleCharacterString(character);
+    }
+    // Those of two characters have a cache.
+    return substringOfResolvedSlow(vm, string, offset, length);
+}
+
+// The substring is not all of `string`.
+extern "C" JSC::EncodedJSValue JSC__JSString__substringOfResolved(JSC::JSString* string, JSC::JSGlobalObject* globalObject, uint32_t offset, uint32_t length)
+{
+    return JSC::JSValue::encode(substringOfResolved(JSC::getVM(globalObject), string, offset, length, true));
+}
+
+// `ranges` holds an offset and a length for each of the `count` substrings. The collector finds them in the frame of the caller.
+extern "C" void JSC__JSString__substringsOfResolved(JSC::JSString* string, JSC::JSGlobalObject* globalObject, const uint32_t* ranges, size_t count, JSC::EncodedJSValue* substrings)
+{
+    JSC::VM& vm = JSC::getVM(globalObject);
+    for (size_t i = 0; i < count; ++i)
+        substrings[i] = JSC::JSValue::encode(substringOfResolved(vm, string, ranges[2 * i], ranges[2 * i + 1], false));
+}
+
+// At most `capacity` of them. A rope is not resolved: nothing is allocated in the heap and nothing is thrown.
+extern "C" uint32_t JSC__JSString__firstCharacters(const JSC::JSString* string, char16_t* characters, uint32_t capacity)
+{
+    uint32_t count = 0;
+    JSC::JSRopeString::LeafIterator leaves { string };
+    while (count < capacity && !leaves.isAtEnd()) {
+        WTF::StringView leaf = leaves.next();
+        for (unsigned i = 0; i < leaf.length() && count < capacity; ++i)
+            characters[count++] = leaf[i];
+    }
+    return count;
+}
+
+extern "C" JSC::EncodedJSValue JSC__JSString__singleLatin1Character(JSC::JSGlobalObject* globalObject, uint8_t character)
+{
+    return JSC::JSValue::encode(JSC::jsSingleCharacterString(JSC::getVM(globalObject), Latin1Character { character }));
+}
+
+// `length` is at least 2. Empty when the characters cannot be allocated.
+extern "C" JSC::EncodedJSValue JSC__JSString__tryCreateUninitializedLatin1(JSC::JSGlobalObject* globalObject, uint32_t length, Latin1Character** characters)
+{
+    std::span<Latin1Character> buffer;
+    auto text = WTF::StringImpl::tryCreateUninitialized(length, buffer);
+    if (!text) [[unlikely]]
+        return {};
+    *characters = buffer.data();
+    return JSC::JSValue::encode(JSC::jsNontrivialString(JSC::getVM(globalObject), WTF::String(text.releaseNonNull())));
+}
+
 JSC::JSObject* JSC__JSString__toObject(JSC::JSString* arg0, JSC::JSGlobalObject* arg1)
 {
     return arg0->toObject(arg1);
@@ -3418,7 +3939,8 @@ extern "C" JSC::JSPromise* JSModuleLoader__import(JSC::JSGlobalObject* globalObj
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    auto* promise = JSC::importModule(globalObject, JSC::Identifier::fromString(vm, moduleNameStr->toWTFString()), JSC::Identifier(), nullptr, nullptr);
+    auto* graph = Bun::testFileModuleGraph(defaultGlobalObject(globalObject));
+    auto* promise = graph ? graph->import(defaultGlobalObject(globalObject), jsString(vm, moduleNameStr->toWTFString()), false) : JSC::importModule(globalObject, JSC::Identifier::fromString(vm, moduleNameStr->toWTFString()), JSC::Identifier(), nullptr, nullptr);
 
     EXCEPTION_ASSERT(!!scope.exception() == !promise);
     return promise;
@@ -3627,6 +4149,7 @@ CPP_DECL bool JSC__JSValue__canBeFreedWhilePinned(JSC::EncodedJSValue v)
 // A fixed-length buffer doesn't point to its memory, so this checks every live one.
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__findWasmMemory(JSC::EncodedJSValue v, size_t* out_offset)
 {
+#if ENABLE(WEBASSEMBLY)
     auto value = JSC::JSValue::decode(v);
     auto* buf = existingArrayBuffer(value);
     if (!buf || !buf->isWasmMemory() || buf->isShared())
@@ -3645,6 +4168,11 @@ CPP_DECL JSC::EncodedJSValue JSC__JSValue__findWasmMemory(JSC::EncodedJSValue v,
     });
     space->forEachDirectory([](JSC::BlockDirectory& directory) { directory.resumeAllocating(); });
     return JSC::JSValue::encode(found);
+#else
+    UNUSED_PARAM(v);
+    UNUSED_PARAM(out_offset);
+    return {};
+#endif
 }
 
 // Returns the current byte range of `v`, a buffer, a view or a WebAssembly.Memory. Returns null and 0 if it's detached or out of bounds.
@@ -3664,11 +4192,14 @@ CPP_DECL void JSC__JSValue__arrayBufferExtent(JSC::EncodedJSValue v, uint8_t** o
             *out_len = buf->byteLength();
             return;
         }
-    } else if (auto* memory = dynamicDowncast<JSC::JSWebAssemblyMemory>(value)) {
+    }
+#if ENABLE(WEBASSEMBLY)
+    else if (auto* memory = dynamicDowncast<JSC::JSWebAssemblyMemory>(value)) {
         *out_ptr = static_cast<uint8_t*>(memory->basePointer());
         *out_len = memory->memory().size();
         return;
     }
+#endif
     *out_ptr = nullptr;
     *out_len = 0;
 }
@@ -4150,6 +4681,7 @@ JSC::EncodedJSValue JSC__JSGlobalObject__generateHeapSnapshot(JSC::JSGlobalObjec
     snapshotBuilder.buildSnapshot();
 
     WTF::String jsonString = snapshotBuilder.json();
+    heapProfiler.clearSnapshots();
     if (jsonString.isNull()) [[unlikely]] {
         JSC::throwOutOfMemoryError(globalObject, scope);
         return {};
@@ -4167,6 +4699,16 @@ __attribute__((__always_inline__)) JSC::VM* JSC__JSGlobalObject__vm(JSC::JSGloba
 void JSC__JSGlobalObject__handleRejectedPromises(JSC::JSGlobalObject* arg0)
 {
     return uncheckedDowncast<Zig::GlobalObject>(arg0)->handleRejectedPromises();
+}
+
+extern "C" size_t Bun__holdRejectedPromises(Zig::GlobalObject* globalObject)
+{
+    return globalObject->holdRejectedPromises();
+}
+
+extern "C" void Bun__releaseRejectedPromises(Zig::GlobalObject* globalObject, size_t mark)
+{
+    globalObject->releaseRejectedPromises(mark);
 }
 
 #pragma mark - JSC::JSValue
@@ -4201,10 +4743,6 @@ bool JSC__JSValue__isException(JSC::EncodedJSValue JSValue0, JSC::VM* arg1)
 [[ZIG_EXPORT(nothrow)]] bool JSC__JSValue__isBigInt(JSC::EncodedJSValue JSValue0)
 {
     return JSC::JSValue::decode(JSValue0).isBigInt();
-}
-[[ZIG_EXPORT(nothrow)]] bool JSC__JSValue__isBigInt32(JSC::EncodedJSValue JSValue0)
-{
-    return JSC::JSValue::decode(JSValue0).isBigInt32();
 }
 
 [[ZIG_EXPORT(nothrow)]] bool JSC__JSValue__isLiveCell(JSC::EncodedJSValue JSValue0)
@@ -4268,6 +4806,17 @@ extern "C" bool JSC__JSValue__deleteProperty(JSC::EncodedJSValue target, JSC::JS
     return result;
 }
 
+extern "C" bool JSC__JSValue__isCompiledGenerator(JSC::EncodedJSValue encodedValue)
+{
+#if ENABLE(AOT)
+    JSValue value = JSValue::decode(encodedValue);
+    return value.isCell() && JSC::AOT::isGeneratorObject(value.asCell());
+#else
+    UNUSED_PARAM(encodedValue);
+    return false;
+#endif
+}
+
 bool JSC__JSValue__isClass(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1)
 {
     JSValue value = JSValue::decode(JSValue0);
@@ -4279,6 +4828,10 @@ bool JSC__JSValue__isClass(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* ar
     case CallData::Type::Native:
         if (callData.native.isBoundFunction)
             return false;
+#if ENABLE(AOT)
+        if (auto declaredAs = JSC::AOT::declaredAs(value.asCell()); declaredAs != JSC::AOT::DeclaredAs::NotCompiled)
+            return declaredAs == JSC::AOT::DeclaredAs::Class;
+#endif
         return value.isConstructor();
     default:
         return false;
@@ -4375,44 +4928,17 @@ JSC::EncodedJSValue JSC__JSValue__jsNumberFromUint64(uint64_t arg0)
     return static_cast<int64_t>(value.asDouble());
 }
 
-uint8_t JSC__JSValue__asBigIntCompare(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue JSValue1)
+uint8_t JSC__JSValue__asBigIntCompare(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1)
 {
     JSValue v1 = JSValue::decode(JSValue0);
     JSValue v2 = JSValue::decode(JSValue1);
-    ASSERT(v1.isHeapBigInt() || v1.isBigInt32());
-
-#if USE(BIGINT32)
-    if (v1.isBigInt32()) {
-        int32_t v1Int = v1.bigInt32AsInt32();
-        if (v2.isHeapBigInt()) {
-            return static_cast<uint8_t>(JSBigInt::compare(v1Int, v2.asHeapBigInt()));
-        } else if (v2.isBigInt32()) {
-            return static_cast<uint8_t>(JSBigInt::compare(v1Int, v2.bigInt32AsInt32()));
-        }
-
-        double v2Double = v2.asNumber();
-        if (v1Int == v2Double) {
-            return static_cast<uint8_t>(JSBigInt::ComparisonResult::Equal);
-        }
-        if (v1Int < v2Double) {
-            return static_cast<uint8_t>(JSBigInt::ComparisonResult::LessThan);
-        }
-
-        return static_cast<uint8_t>(JSBigInt::ComparisonResult::GreaterThan);
-    }
-#endif
+    ASSERT(v1.isHeapBigInt());
 
     if (v1.isHeapBigInt()) {
         JSBigInt* v1BigInt = v1.asHeapBigInt();
         if (v2.isHeapBigInt()) {
             return static_cast<uint8_t>(JSBigInt::compare(v1BigInt, v2.asHeapBigInt()));
         }
-
-#if USE(BIGINT32)
-        if (v2.isBigInt32()) {
-            return static_cast<uint8_t>(JSBigInt::compare(v1BigInt, v2.toInt32(globalObject)));
-        }
-#endif
 
         return static_cast<uint8_t>(JSBigInt::compareToDouble(v1BigInt, v2.asNumber()));
     }
@@ -4511,6 +5037,9 @@ JSC::EncodedJSValue JSC__JSValue__createObject2(JSC::JSGlobalObject* globalObjec
         return JSValue::encode(JSValue::decode(JSC::JSValue::ValueDeleted));
     }
 
+    if (auto* name = JSC::AOT::PropertyWalk::tryFindName(vm, { byteCast<Latin1Character>(arg1), arg2 }))
+        return JSC::JSValue::encode(Bun::getIfPropertyExistsPrototypePollutionMitigationUnsafe(vm, globalObject, object, JSC::PropertyName(name)));
+
     // Since Identifier might not ref the string, we need to ensure it doesn't get deref'd until this function returns
     const auto propertyString = String(StringImpl::createWithoutCopying({ byteCast<Latin1Character>(arg1), arg2 }));
     const auto identifier = JSC::Identifier::fromString(vm, propertyString);
@@ -4574,6 +5103,17 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__getOwn(JSC::EncodedJSValue JSValue0
     return JSValue::encode(slotValue);
 }
 
+// Empty where the path ends early: the property is missing, or `base` is undefined or null.
+static JSValue getPropertyOnPath(JSGlobalObject* globalObject, JSValue base, PropertyName name)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (base.isUndefinedOrNull())
+        return {};
+    auto* object = base.toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, object->getIfPropertyExists(globalObject, name));
+}
+
 JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue arg1)
 {
     ASSERT_NO_PENDING_EXCEPTION(globalObject);
@@ -4588,9 +5128,7 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
         uint32_t length = pathString.length();
 
         if (length == 0) {
-            auto* valueObject = value.toObject(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            JSValue prop = valueObject->getIfPropertyExists(globalObject, vm.propertyNames->emptyIdentifier);
+            JSValue prop = getPropertyOnPath(globalObject, value, vm.propertyNames->emptyIdentifier);
             RETURN_IF_EXCEPTION(scope, {});
             return JSValue::encode(prop);
         }
@@ -4605,9 +5143,7 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
 
         // if "." is the only character, it will search for an empty string twice.
         if (pathString.codeUnitAt(0) == '.') {
-            auto* currPropObject = currProp.toObject(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            currProp = currPropObject->getIfPropertyExists(globalObject, vm.propertyNames->emptyIdentifier);
+            currProp = getPropertyOnPath(globalObject, currProp, vm.propertyNames->emptyIdentifier);
             RETURN_IF_EXCEPTION(scope, {});
             if (currProp.isEmpty()) {
                 return JSValue::encode(currProp);
@@ -4621,9 +5157,7 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
                 if (i == length) {
 
                     if (ic == '.') {
-                        auto* currPropObject = currProp.toObject(globalObject);
-                        RETURN_IF_EXCEPTION(scope, {});
-                        currProp = currPropObject->getIfPropertyExists(globalObject, vm.propertyNames->emptyIdentifier);
+                        currProp = getPropertyOnPath(globalObject, currProp, vm.propertyNames->emptyIdentifier);
                         RETURN_IF_EXCEPTION(scope, {});
                         return JSValue::encode(currProp);
                     }
@@ -4639,9 +5173,7 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
                 char16_t previous = ic;
                 ic = pathString.codeUnitAt(i);
                 if (previous == '.' && ic == '.') {
-                    auto* currPropObject = currProp.toObject(globalObject);
-                    RETURN_IF_EXCEPTION(scope, {});
-                    currProp = currPropObject->getIfPropertyExists(globalObject, vm.propertyNames->emptyIdentifier);
+                    currProp = getPropertyOnPath(globalObject, currProp, vm.propertyNames->emptyIdentifier);
                     RETURN_IF_EXCEPTION(scope, {});
                     if (currProp.isEmpty()) {
                         return JSValue::encode(currProp);
@@ -4662,11 +5194,9 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
             }
 
             String propNameStr = pathString.substring(i, j - i);
-            PropertyName propName = PropertyName(Identifier::fromString(vm, propNameStr));
+            Identifier propName = Identifier::fromString(vm, propNameStr);
 
-            auto* currPropObject = currProp.toObject(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            currProp = currPropObject->getIfPropertyExists(globalObject, propName);
+            currProp = getPropertyOnPath(globalObject, currProp, propName);
             RETURN_IF_EXCEPTION(scope, {});
             if (currProp.isEmpty()) {
                 return JSValue::encode(currProp);
@@ -4693,12 +5223,10 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
 
             JSString* propNameString = item.toString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            PropertyName propName = PropertyName(propNameString->toIdentifier(globalObject));
+            Identifier propName = propNameString->toIdentifier(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
 
-            auto* currPropObject = currProp.toObject(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            currProp = currPropObject->getIfPropertyExists(globalObject, propName);
+            currProp = getPropertyOnPath(globalObject, currProp, propName);
             RETURN_IF_EXCEPTION(scope, {});
             if (currProp.isEmpty()) {
                 return false;
@@ -4860,7 +5388,7 @@ BunString JSC__JSValue__getClassName(JSC::EncodedJSValue JSValue0, JSC::JSGlobal
     auto view = WTF::StringView(std::span { ptr, strlen(ptr) });
 
     // Fallback to .name if className is empty
-    if (view.length() == 0 || StringView("Function"_s) == view) {
+    if (view.length() == 0 || StringView("Function"_s) == view || cell->inherits<JSC::InternalFunction>()) {
         return JSC__JSValue__getNameProperty(JSValue0, arg1);
     }
 
@@ -4905,6 +5433,11 @@ BunString JSC__JSValue__getNameProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlo
             return toStringAdopt(WTF::move(str));
         }
     }
+
+#if ENABLE(AOT)
+    if (WTF::String declaredName = JSC::AOT::closureDeclaredName(obj); !declaredName.isNull())
+        return toStringAdopt(WTF::move(declaredName));
+#endif
 
     if (JSC::JSFunction* function = dynamicDowncast<JSC::JSFunction>(obj)) {
 
@@ -5046,7 +5579,7 @@ size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
     return vm->heap.sizeAfterLastFullCollection();
 }
 
-bool JSC__JSValue__isTerminationException(JSC::EncodedJSValue JSValue0)
+NEVER_INLINE bool JSC__JSValue__isTerminationException(JSC::EncodedJSValue JSValue0)
 {
     JSC::Exception* exception = dynamicDowncast<JSC::Exception>(JSC::JSValue::decode(JSValue0));
     if (exception == nullptr)
@@ -5102,6 +5635,12 @@ void JSC__VM__deleteAllCode(JSC::VM* arg1, JSC::JSGlobalObject* globalObject)
 void JSC__VM__reportExtraMemory(JSC::VM* arg0, size_t arg1)
 {
     arg0->heap.deprecatedReportExtraMemory(arg1);
+}
+
+void JSC__VM__reportExtraMemoryAllocated(JSC::VM* vm, JSC::EncodedJSValue encodedOwner, size_t size)
+{
+    auto owner = JSC::JSValue::decode(encodedOwner);
+    vm->heap.reportExtraMemoryAllocated(owner.isCell() ? owner.asCell() : nullptr, size);
 }
 
 void JSC__VM__drainMicrotasks(JSC::VM* arg0)
@@ -5169,7 +5708,7 @@ void JSC__VM__notifyNeedShellTimeoutCheck(JSC::VM* arg0)
     (*arg0).notifyNeedShellTimeoutCheck();
 }
 
-void JSC__VM__throwError(JSC::VM* vm_, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue encodedValue)
+NEVER_INLINE void JSC__VM__throwError(JSC::VM* vm_, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue encodedValue)
 {
     JSC::VM& vm = *reinterpret_cast<JSC::VM*>(vm_);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -5188,6 +5727,11 @@ void JSC__VM__throwError(JSC::VM* vm_, JSC::JSGlobalObject* arg1, JSC::EncodedJS
 
     // Do not call .getObject() on it.
     // https://github.com/oven-sh/bun/issues/13311
+    if (vm.hasCompiledCode()) {
+        // The engine walks the stack for the Exception only when the value has no stack of its own and no catch clause takes it.
+        scope.throwException(arg1, value);
+        return;
+    }
     JSC::Exception* exception = JSC::Exception::create(vm, value);
     scope.throwException(arg1, exception);
 }
@@ -5223,9 +5767,6 @@ enum class BuiltinNamesMap : uint8_t {
     toString,
     redirect,
     inspectCustom,
-    highWaterMark,
-    path,
-    stream,
     asyncIterator,
     name,
     message,
@@ -5277,15 +5818,6 @@ static inline const JSC::Identifier& builtinNameMap(JSC::VM& vm, unsigned char n
     }
     case BuiltinNamesMap::inspectCustom: {
         return clientData->builtinNames().inspectCustomPublicName();
-    }
-    case BuiltinNamesMap::highWaterMark: {
-        return clientData->builtinNames().highWaterMarkPublicName();
-    }
-    case BuiltinNamesMap::path: {
-        return clientData->builtinNames().pathPublicName();
-    }
-    case BuiltinNamesMap::stream: {
-        return clientData->builtinNames().streamPublicName();
     }
     case BuiltinNamesMap::asyncIterator: {
         return vm.propertyNames->asyncIteratorSymbol;
@@ -5355,6 +5887,19 @@ JSC::EncodedJSValue JSC__JSValue__fastGet(JSC::EncodedJSValue JSValue0, JSC::JSG
     auto& vm = JSC::getVM(globalObject);
 
     const auto property = JSC::PropertyName(builtinNameMap(vm, arg2));
+    if (JSC::AOT::PropertyWalk::isCompiledObject(object)) {
+        JSC::JSValue own;
+        switch (JSC::AOT::PropertyWalk::tryGetOwnValue(object, property.uid(), own)) {
+        case JSC::AOT::PropertyWalk::Presence::Present:
+            return JSC::JSValue::encode(own);
+        case JSC::AOT::PropertyWalk::Presence::Absent:
+            if (object->getPrototypeDirect() == JSC::JSValue(globalObject->objectPrototype()))
+                return JSC::JSValue::ValueDeleted;
+            break;
+        case JSC::AOT::PropertyWalk::Presence::Unknown:
+            break;
+        }
+    }
     return JSC::JSValue::encode(Bun::getIfPropertyExistsPrototypePollutionMitigationUnsafe(vm, globalObject, object, property));
 }
 
@@ -5389,8 +5934,15 @@ extern "C" void JSGlobalObject__throwStackOverflow(JSC::JSGlobalObject* globalOb
     throwStackOverflowError(globalObject, scope);
 }
 
+static bool endsPrototypeWalk(JSC::JSGlobalObject* globalObject, JSC::JSObject* prototype)
+{
+    auto* realm = prototype->realmMayBeNull();
+    return (realm && (prototype == realm->objectPrototype() || prototype == realm->functionPrototype()))
+        || (prototype->inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(prototype)->target() != globalObject);
+}
+
 template<bool nonIndexedOnly>
-static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
+static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol), bool callOwnGetters)
 {
     ASSERT_NO_PENDING_EXCEPTION(globalObject);
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
@@ -5410,11 +5962,48 @@ static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC:
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSC::Structure* structure = object->structure();
-    bool fast = !nonIndexedOnly && canPerformFastPropertyEnumerationForIterationBun(structure);
     JSValue prototypeObject = value;
 
+    struct SnapshottedProperty {
+        Identifier key;
+        unsigned attributes;
+    };
+#if ENABLE(AOT)
+    // A compiled object stands in the place of an ordinary one, whose properties the quick walk below takes from its Structure: in the order of their creation, enumerable or not.
+    WTF::Vector<SnapshottedProperty, 16> propertiesOfCompiledObject;
+    MarkedArgumentBuffer valuesOfCompiledObject;
+    bool listsCompiledObject = false;
+    auto canWalkQuickly = [&](JSC::JSObject* walkedObject) {
+        listsCompiledObject = false;
+        // The prototype of a compiled class gets its members when somebody first looks at them, and is an ordinary object from then on. It is judged as that object.
+        JSC::AOT::PropertyWalk::materializeLazyProperties(vm, walkedObject);
+        structure = walkedObject->structure();
+        if (!JSC::AOT::PropertyWalk::isCompiledObject(walkedObject))
+            return canPerformFastPropertyEnumerationForIterationBun(structure);
+        propertiesOfCompiledObject.shrink(0);
+        valuesOfCompiledObject.clear();
+        bool hasUnderscoreProto = false;
+        auto walked = JSC::AOT::PropertyWalk::forEachOwnPropertyAsCreated(vm, walkedObject, [&](const JSC::AOT::PropertyWalk::OwnProperty& own) -> IterationStatus {
+            hasUnderscoreProto |= own.name == vm.propertyNames->underscoreProto.impl();
+            propertiesOfCompiledObject.append({ Identifier::fromUid(vm, own.name), own.attributes });
+            valuesOfCompiledObject.appendWithCrashOnOverflow(own.value);
+            return IterationStatus::Continue;
+        });
+        listsCompiledObject = walked == JSC::AOT::PropertyWalk::Result::Completed && !hasUnderscoreProto;
+        return listsCompiledObject;
+    };
+    bool fast = !nonIndexedOnly && canWalkQuickly(object);
+    bool hasNoOwnProperty = listsCompiledObject ? propertiesOfCompiledObject.isEmpty() : structure->outOfLineSize() == 0 && structure->inlineSize() == 0;
+#else
+    auto canWalkQuickly = [&](JSC::JSObject* walkedObject) {
+        return canPerformFastPropertyEnumerationForIterationBun(walkedObject->structure());
+    };
+    bool fast = !nonIndexedOnly && canWalkQuickly(object);
+    bool hasNoOwnProperty = structure->outOfLineSize() == 0 && structure->inlineSize() == 0;
+#endif
+
     if (fast) {
-        if (structure->outOfLineSize() == 0 && structure->inlineSize() == 0) {
+        if (hasNoOwnProperty) {
             fast = false;
 
             JSValue proto = object->getPrototype(globalObject);
@@ -5422,7 +6011,7 @@ static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC:
             if (proto) {
                 if ((structure = proto.structureOrNull())) {
                     prototypeObject = proto;
-                    fast = canPerformFastPropertyEnumerationForIterationBun(structure);
+                    fast = canWalkQuickly(asObject(proto));
                     prototypeCount = 1;
                 }
             }
@@ -5442,43 +6031,57 @@ restart:
         // mid-walk (use-after-free). Same for getters resolved through
         // getIfPropertyExists. Collect the entries with no side effects first, then
         // do the getter calls and callbacks on the snapshot.
-        struct SnapshottedProperty {
-            Identifier key;
-            unsigned attributes;
-        };
         WTF::Vector<SnapshottedProperty, 16> snapshot;
         // Parallel to `snapshot`; keeps the collected values visible to GC. Empty
         // slots mark prototype properties that are fetched after the walk.
         MarkedArgumentBuffer snapshotValues;
 
-        structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
-            if ((entry.attributes() & (PropertyAttribute::Function)) == 0 && (entry.attributes() & (PropertyAttribute::Builtin)) != 0) {
-                return true;
-            }
-            auto* prop = entry.key();
+        // `ownValue` answers the value of a property of `object` itself.
+        auto collect = [&](UniquedStringImpl* prop, unsigned attributes, const auto& ownValue) {
+            if ((attributes & (PropertyAttribute::Function)) == 0 && (attributes & (PropertyAttribute::Builtin)) != 0)
+                return;
 
             if (prop == propertyNames->constructor
                 || prop == propertyNames->underscoreProto
                 || prop == propertyNames->toStringTagSymbol || (objectToUse != object && prop == propertyNames->__esModule))
-                return true;
+                return;
 
             if (builtinNames.bunNativePtrPrivateName() == prop)
-                return true;
+                return;
 
             if (!visitedProperties.add(prop).isNewEntry)
-                return true;
+                return;
 
             JSC::JSValue propertyValue = JSValue();
             if (objectToUse == object) {
-                propertyValue = objectToUse->getDirect(entry.offset());
+                if (attributes & PropertyAttribute::DontEnum)
+                    return;
+                propertyValue = ownValue();
                 if (!propertyValue)
-                    return true;
+                    return;
             }
 
-            snapshot.append({ Identifier::fromUid(vm, prop), entry.attributes() });
+            snapshot.append({ Identifier::fromUid(vm, prop), attributes });
             snapshotValues.appendWithCrashOnOverflow(propertyValue);
-            return true;
-        });
+        };
+
+#if ENABLE(AOT)
+        if (listsCompiledObject) {
+            for (size_t i = 0; i < propertiesOfCompiledObject.size(); i++) {
+                collect(propertiesOfCompiledObject[i].key.impl(), propertiesOfCompiledObject[i].attributes, [&] {
+                    return valuesOfCompiledObject.at(i);
+                });
+            }
+        } else
+#endif
+        {
+            structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
+                collect(entry.key(), entry.attributes(), [&] {
+                    return objectToUse->getDirect(entry.offset());
+                });
+                return true;
+            });
+        }
 
         for (size_t i = 0; i < snapshot.size(); i++) {
             const auto& snapshotted = snapshot[i];
@@ -5495,6 +6098,18 @@ restart:
 
             if (!propertyValue)
                 continue;
+
+            if (callOwnGetters) {
+                if (objectToUse == object && propertyValue.isGetterSetter()) {
+                    JSC::JSValue accessor = propertyValue;
+                    propertyValue = uncheckedDowncast<GetterSetter>(accessor)->callGetter(globalObject, object);
+                    if (scope.exception()) [[unlikely]] {
+                        if (!scope.tryClearException())
+                            return;
+                        propertyValue = accessor;
+                    }
+                }
+            }
 
             anyHits = true;
             JSC::EnsureStillAliveScope ensureStillAliveScope(propertyValue);
@@ -5514,14 +6129,11 @@ restart:
 
                 JSValue proto = prototypeObject.getPrototype(globalObject);
                 RETURN_IF_EXCEPTION(scope, );
-                if (proto) {
-                    if (!(proto == globalObject->objectPrototype() || proto == globalObject->functionPrototype() || (proto.inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(proto)->target() != globalObject))) {
-                        if ((structure = proto.structureOrNull())) {
-                            prototypeObject = proto;
-                            fast = canPerformFastPropertyEnumerationForIterationBun(structure);
-                            goto restart;
-                        }
-                    }
+                if (auto* protoObject = proto.getObject(); protoObject && !endsPrototypeWalk(globalObject, protoObject)) {
+                    structure = protoObject->structure();
+                    prototypeObject = proto;
+                    fast = canWalkQuickly(protoObject);
+                    goto restart;
                 }
             }
             return;
@@ -5537,7 +6149,7 @@ restart:
         auto* globalProxy = dynamicDowncast<JSGlobalProxy>(object);
         const bool isOtherGlobal = globalProxy && globalProxy->target() != globalObject;
 
-        while (iterating && !(iterating == globalObject->objectPrototype() || iterating == globalObject->functionPrototype() || (iterating != object && iterating->inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(iterating)->target() != globalObject)) && prototypeCount++ < 5) {
+        while (iterating && (iterating == object || !endsPrototypeWalk(globalObject, iterating)) && prototypeCount++ < 5) {
             if constexpr (nonIndexedOnly) {
                 iterating->getOwnNonIndexPropertyNames(globalObject, properties, DontEnumPropertiesMode::Include);
             } else {
@@ -5575,6 +6187,9 @@ restart:
                 if (!visitedProperties.add(property.impl()).isNewEntry)
                     continue;
 
+                if (iterating == object && (slot.attributes() & PropertyAttribute::DontEnum))
+                    continue;
+
                 EncodedSlice key = toEncodedSlice(property.isSymbol() && !property.isPrivateName() ? property.impl() : property.string());
 
                 JSC::JSValue propertyValue = jsUndefined();
@@ -5596,6 +6211,13 @@ restart:
                     } else if (object->getOwnPropertySlot(object, globalObject, property, slot)) {
                         RETURN_IF_EXCEPTION(scope, );
                         propertyValue = slot.getValue(globalObject, property);
+                    }
+                } else if (callOwnGetters && iterating == object && slot.isAccessor()) {
+                    propertyValue = slot.getValue(globalObject, property);
+                    if (scope.exception()) [[unlikely]] {
+                        if (!scope.tryClearException())
+                            return;
+                        propertyValue = slot.getterSetter();
                     }
                 } else if (slot.isAccessor()) {
                     // If we can't use getPureResult, let's at least say it was a [Getter]
@@ -5650,12 +6272,17 @@ restart:
 
 [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__forEachProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)([[ZIG_NONNULL]] JSC::JSGlobalObject* arg0, void* ctx, [[ZIG_NONNULL]] EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
 {
-    JSC__JSValue__forEachPropertyImpl<false>(JSValue0, globalObject, arg2, iter);
+    JSC__JSValue__forEachPropertyImpl<false>(JSValue0, globalObject, arg2, iter, false);
 }
 
 extern "C" void JSC__JSValue__forEachPropertyNonIndexed(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
 {
-    JSC__JSValue__forEachPropertyImpl<true>(JSValue0, globalObject, arg2, iter);
+    JSC__JSValue__forEachPropertyImpl<true>(JSValue0, globalObject, arg2, iter, false);
+}
+
+extern "C" void JSC__JSValue__forEachPropertyCallingOwnGetters(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
+{
+    JSC__JSValue__forEachPropertyImpl<false>(JSValue0, globalObject, arg2, iter, true);
 }
 
 extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInUInt64Range(JSC::EncodedJSValue value, uint64_t max, uint64_t min)
@@ -5686,8 +6313,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
     return high == JSBigInt::ComparisonResult::LessThan || high == JSBigInt::ComparisonResult::Equal;
 }
 
-[[ZIG_EXPORT(check_slow)]] void JSC__JSValue__forEachPropertyOrdered(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)([[ZIG_NONNULL]] JSC::JSGlobalObject* arg0, void* ctx, [[ZIG_NONNULL]] EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
-
+static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol), bool callGetters, bool withNonEnumerable = false)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     JSC::JSObject* object = value.getObject();
@@ -5700,16 +6326,17 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
     JSC::PropertyNameArrayBuilder properties(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     {
 
-        JSC::JSObject::getOwnPropertyNames(object, globalObject, properties, DontEnumPropertiesMode::Include);
+        JSC::AOT::PropertyWalk::materializeLazyProperties(vm, object);
+        // withNonEnumerable reproduces older Bun output. Skipping the method table prints a module namespace as `Module {}`.
+        if (withNonEnumerable && !JSC::AOT::PropertyWalk::isCompiledObject(object))
+            JSC::JSObject::getOwnPropertyNames(object, globalObject, properties, DontEnumPropertiesMode::Include);
+        else
+            object->methodTable()->getOwnPropertyNames(object, globalObject, properties, withNonEnumerable ? DontEnumPropertiesMode::Include : DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(scope, );
     }
 
     auto vector = properties.data()->propertyNameVector();
-    std::sort(vector.begin(), vector.end(), [&](Identifier a, Identifier b) -> bool {
-        const WTF::StringImpl* aImpl = a.isSymbol() && !a.isPrivateName() ? a.impl() : a.string().impl();
-        const WTF::StringImpl* bImpl = b.isSymbol() && !b.isPrivateName() ? b.impl() : b.string().impl();
-        return codePointCompare(aImpl, bImpl) < 0;
-    });
+    std::sort(vector.begin(), vector.end(), [](const Identifier& a, const Identifier& b) { return codePointCompare(a.impl(), b.impl()) < 0; });
     auto clientData = WebCore::clientData(vm);
 
     for (auto property : vector) {
@@ -5726,29 +6353,24 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
         if (!hasProperty) {
             continue;
         }
-
-        if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
-            if (property == vm.propertyNames->underscoreProto
-                || property == vm.propertyNames->toStringTagSymbol)
-                continue;
-        }
+        if ((slot.attributes() & PropertyAttribute::DontEnum) != 0 && (property == vm.propertyNames->underscoreProto || property == vm.propertyNames->toStringTagSymbol))
+            continue;
 
         JSC::JSValue propertyValue = jsUndefined();
-        if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
-            if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
-                propertyValue = slot.getPureResult();
-            } else if (slot.attributes() & PropertyAttribute::BuiltinOrFunction) {
+        auto pureResult = [&] {
+            return !slot.isCacheableGetter() && object->structure()->isCompiledStructure() ? JSValue(slot.getterSetter()) : slot.getPureResult();
+        };
+        if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
+            if (callGetters) {
                 propertyValue = slot.getValue(globalObject, property);
-            } else if (slot.isCustom()) {
-                propertyValue = slot.getValue(globalObject, property);
-            } else if (slot.isValue()) {
-                propertyValue = slot.getValue(globalObject, property);
-            } else if (object->getOwnPropertySlot(object, globalObject, property, slot)) {
-                RETURN_IF_EXCEPTION(scope, );
-                propertyValue = slot.getValue(globalObject, property);
+                if (scope.exception()) [[unlikely]] {
+                    if (!scope.tryClearException())
+                        return;
+                    propertyValue = pureResult();
+                }
+            } else {
+                propertyValue = pureResult();
             }
-        } else if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
-            propertyValue = slot.getPureResult();
         } else {
             propertyValue = slot.getValue(globalObject, property);
         }
@@ -5766,6 +6388,25 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
         RETURN_IF_EXCEPTION(scope, );
     }
     properties.releaseData();
+}
+
+[[ZIG_EXPORT(check_slow)]] void JSC__JSValue__forEachPropertyOrdered(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)([[ZIG_NONNULL]] JSC::JSGlobalObject* arg0, void* ctx, [[ZIG_NONNULL]] EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
+{
+    forEachPropertyOrderedImpl(JSValue0, globalObject, arg2, iter, false);
+}
+
+// Returns true if JSC__JSValue__forEachPropertyOrderedWithNonEnumerable is sure to visit the same properties.
+extern "C" bool JSC__JSValue__forEachPropertyOrderedCallingGetters(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
+{
+    JSC::JSObject* object = JSC::JSValue::decode(JSValue0).getObject();
+    bool hasOnlyEnumerableValues = object && object->structure()->canPerformFastPropertyEnumeration() && !object->structure()->hasNonEnumerableProperties();
+    forEachPropertyOrderedImpl(JSValue0, globalObject, arg2, iter, true);
+    return hasOnlyEnumerableValues;
+}
+
+extern "C" void JSC__JSValue__forEachPropertyOrderedWithNonEnumerable(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
+{
+    forEachPropertyOrderedImpl(JSValue0, globalObject, arg2, iter, false, true);
 }
 
 [[ZIG_EXPORT(nothrow)]] bool JSC__JSValue__isConstructor(JSC::EncodedJSValue JSValue0)
@@ -6744,6 +7385,17 @@ CPP_DECL [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__JSValue__bind(JS
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(boundFunction));
 }
 
+// JSC names a bound function "bound " + name.
+extern "C" void Bun__JSBoundFunction__setName(JSC::EncodedJSValue boundFunction, JSC::JSGlobalObject* globalObject, const BunString* name)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto* object = JSC::JSValue::decode(boundFunction).getObject();
+    JSC::PropertyDescriptor descriptor(JSC::jsString(vm, name->toWTFString()), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
+    object->methodTable()->defineOwnProperty(object, globalObject, vm.propertyNames->name, descriptor, false);
+    scope.assertNoException();
+}
+
 CPP_DECL [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue Bun__JSBoundFunction__boundThis(JSC::EncodedJSValue value)
 {
     auto* boundFunction = dynamicDowncast<JSC::JSBoundFunction>(JSC::JSValue::decode(value));
@@ -6763,13 +7415,13 @@ CPP_DECL [[ZIG_EXPORT(check_slow)]] void Bun__JSValue__setPrototypeDirect(JSC::E
     return;
 }
 
-CPP_DECL [[ZIG_EXPORT(nothrow)]] unsigned int Bun__CallFrame__getLineNumber(JSC::CallFrame* callFrame, JSC::JSGlobalObject* globalObject)
+CPP_DECL [[ZIG_EXPORT(nothrow)]] unsigned int JSC__JSGlobalObject__getCallerLineNumber(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     JSC::LineColumn lineColumn;
     String sourceURL;
 
-    JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
+    JSC::StackVisitor::visit(vm.topCallFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
         if (Zig::isImplementationVisibilityPrivate(visitor))
             return WTF::IterationStatus::Continue;
 

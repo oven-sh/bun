@@ -8,7 +8,7 @@ use std::borrow::Cow;
 /// Disallow duplicate keys in object literals.
 pub struct NoDupeKeys;
 
-const UNEXPECTED: Message = Message::new("unexpected", "Duplicate key '{{name}}'.");
+const UNEXPECTED: &Message = &Message::new("unexpected", "Duplicate key '{{name}}'.");
 
 const GET: u8 = 1 << 0;
 const SET: u8 = 1 << 1;
@@ -106,7 +106,7 @@ impl NoDupeKeys {
             }
             cx.report(report_span, UNEXPECTED)
                 .data("name", get_static_key_name(key).unwrap_or_default())
-                .hint_with(|| Some(format!("Only the last one counts. The first is on line {}.", cx.line_of(first.start))))
+                .hint_with(|| Some(format!("The last one wins. The first is on line {}.", cx.line_of(first.start))))
                 .labels_with(|labels| labels.push(here, "and duplicated here"));
         }
     }

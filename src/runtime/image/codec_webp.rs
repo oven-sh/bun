@@ -112,7 +112,7 @@ unsafe extern "C" {
     ) -> c_int;
     fn WebPDemuxReleaseChunkIterator(iter: *mut WebPChunkIterator);
 
-    fn WebPNewInternal(version: c_int) -> *mut WebPMux;
+    safe fn WebPNewInternal(version: c_int) -> *mut WebPMux;
     fn WebPMuxDelete(mux: *mut WebPMux);
     fn WebPMuxSetImage(mux: *mut WebPMux, bitstream: *const WebPData, copy_data: c_int) -> c_int;
     fn WebPMuxSetChunk(
@@ -203,9 +203,13 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
         if unsafe { WebPDemuxGetI(dmux, WEBP_FF_FORMAT_FLAGS) } & ICCP_FLAG == 0 {
             break 'blk None;
         }
-        // SAFETY: all-zero is a valid WebPChunkIterator (#[repr(C)] POD, raw ptr + ints).
-        let mut iter: WebPChunkIterator =
-            unsafe { core::mem::MaybeUninit::<WebPChunkIterator>::zeroed().assume_init() };
+        let mut iter = WebPChunkIterator {
+            chunk_num: 0,
+            num_chunks: 0,
+            chunk: WebPData::default(),
+            pad: [0; 6],
+            private_: core::ptr::null_mut(),
+        };
         // SAFETY: dmux is live; fourcc reads exactly 4 bytes; iter is a valid out-param.
         if unsafe { WebPDemuxGetChunk(dmux, b"ICCP".as_ptr(), 1, &raw mut iter) } == 0 {
             break 'blk None;
@@ -267,24 +271,26 @@ pub(crate) fn encode(
             )
         }
     };
-    if len == 0 || out.is_null() {
+    if len == 0 {
         return Err(codecs::Error::EncodeFailed);
     }
-    // SAFETY: WebPEncode* returns a buffer of `len` bytes on success.
-    let bitstream: &mut [u8] = unsafe { core::slice::from_raw_parts_mut(out, len) };
+    let Some(out) = NonNull::new(out) else {
+        return Err(codecs::Error::EncodeFailed);
+    };
+    let bitstream = NonNull::slice_from_raw_parts(out, len);
 
     // Fast path: no profile to attach, so the bare VP8/VP8L RIFF that
     // `WebPEncodeRGBA` produced is already the final container. Avoids the
     // mux round-trip (and its extra copy) for the common sRGB case.
     let Some(profile) = icc_profile else {
         return Ok(codecs::Encoded {
-            bytes: NonNull::from(bitstream),
+            bytes: bitstream,
             free: encoded_wrap_free!(WebPFree),
         });
     };
     if profile.is_empty() {
         return Ok(codecs::Encoded {
-            bytes: NonNull::from(bitstream),
+            bytes: bitstream,
             free: encoded_wrap_free!(WebPFree),
         });
     }
@@ -296,12 +302,11 @@ pub(crate) fn encode(
     // `copy_data = 0` the mux borrows our buffers until `WebPMuxAssemble`
     // returns, so `bitstream`/`profile` must outlive the assemble call
     // (both do — `bitstream` is freed below, `profile` is caller-owned).
-    let _free_bitstream = scopeguard::guard(bitstream.as_mut_ptr(), |p| {
+    let _free_bitstream = scopeguard::guard(out.as_ptr(), |p| {
         // SAFETY: p is the buffer returned by WebPEncode*RGBA above; WebPFree is the matching deallocator.
         unsafe { WebPFree(p.cast::<c_void>()) }
     });
-    // SAFETY: WebPNewInternal has no preconditions.
-    let mux = unsafe { WebPNewInternal(WEBP_MUX_ABI_VERSION) };
+    let mux = WebPNewInternal(WEBP_MUX_ABI_VERSION);
     if mux.is_null() {
         return Err(codecs::Error::OutOfMemory);
     }
@@ -310,8 +315,8 @@ pub(crate) fn encode(
         unsafe { WebPMuxDelete(m) }
     });
     let img = WebPData {
-        bytes: bitstream.as_ptr(),
-        size: bitstream.len(),
+        bytes: out.as_ptr(),
+        size: len,
     };
     // SAFETY: mux is live; img points to valid borrowed data.
     if unsafe { WebPMuxSetImage(mux, &raw const img, 0) } != WEBP_MUX_OK {
@@ -335,14 +340,11 @@ pub(crate) fn encode(
         unsafe { WebPFree(assembled.bytes as *mut c_void) };
         return Err(codecs::Error::EncodeFailed);
     }
-    if assembled.bytes.is_null() {
+    let Some(assembled_ptr) = NonNull::new(assembled.bytes.cast_mut()) else {
         return Err(codecs::Error::EncodeFailed);
-    }
-    let assembled_ptr = assembled.bytes.cast_mut();
-    // SAFETY: WebPMuxAssemble returns a WebPMalloc-owned buffer of assembled.size bytes on WEBP_MUX_OK.
-    let assembled_slice = unsafe { core::slice::from_raw_parts_mut(assembled_ptr, assembled.size) };
+    };
     Ok(codecs::Encoded {
-        bytes: NonNull::from(assembled_slice),
+        bytes: NonNull::slice_from_raw_parts(assembled_ptr, assembled.size),
         free: encoded_wrap_free!(WebPFree),
     })
 }

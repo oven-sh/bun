@@ -1,0 +1,1 @@
+postMessage("other.ts");

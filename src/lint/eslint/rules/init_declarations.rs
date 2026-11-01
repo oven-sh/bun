@@ -7,11 +7,11 @@ pub struct InitDeclarations {
     config: Config,
 }
 
-const INITIALIZED: Message = Message::new(
+const INITIALIZED: &Message = &Message::new(
     "initialized",
     "Variable '{{idName}}' should be initialized on declaration.",
 );
-const NOT_INITIALIZED: Message = Message::new(
+const NOT_INITIALIZED: &Message = &Message::new(
     "notInitialized",
     "Variable '{{idName}}' should not be initialized on declaration.",
 );
@@ -24,7 +24,7 @@ pub struct Config {
 
 /// A problem with a declarator, to report unless `declare` exempts it.
 pub struct Finding<'a> {
-    pub message: Message,
+    pub message: &'static Message,
     pub name: Name<'a>,
     /// The `var`, `let`, `const` or `using` statement.
     pub declaration: Stmt<'a>,

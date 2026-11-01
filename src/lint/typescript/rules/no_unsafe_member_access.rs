@@ -10,27 +10,27 @@ pub struct NoUnsafeMemberAccess {
     allow_optional_chaining: bool,
 }
 
-const ERROR_COMPUTED_MEMBER_ACCESS: Message = Message::new(
+const ERROR_COMPUTED_MEMBER_ACCESS: &Message = &Message::new(
     "errorComputedMemberAccess",
     "The type of computed name {{property}} cannot be resolved.",
 );
-const ERROR_MEMBER_EXPRESSION: Message = Message::new(
+const ERROR_MEMBER_EXPRESSION: &Message = &Message::new(
     "errorMemberExpression",
     "Unsafe member access {{property}} on a type that cannot be resolved.",
 );
-const ERROR_THIS_MEMBER_EXPRESSION: Message = Message::new(
+const ERROR_THIS_MEMBER_EXPRESSION: &Message = &Message::new(
     "errorThisMemberExpression",
     "Unsafe member access {{property}}. The type of `this` cannot be resolved.\nYou can try to fix this by turning on the `noImplicitThis` compiler option, or adding a `this` parameter to the function.",
 );
-const UNSAFE_COMPUTED_MEMBER_ACCESS: Message = Message::new(
+const UNSAFE_COMPUTED_MEMBER_ACCESS: &Message = &Message::new(
     "unsafeComputedMemberAccess",
     "Computed name {{property}} resolves to an `any` value.",
 );
-const UNSAFE_MEMBER_EXPRESSION: Message = Message::new(
+const UNSAFE_MEMBER_EXPRESSION: &Message = &Message::new(
     "unsafeMemberExpression",
     "Unsafe member access {{property}} on an `any` value.",
 );
-const UNSAFE_THIS_MEMBER_EXPRESSION: Message = Message::new(
+const UNSAFE_THIS_MEMBER_EXPRESSION: &Message = &Message::new(
     "unsafeThisMemberExpression",
     "Unsafe member access {{property}} on an `any` value. `this` is typed as `any`.\nYou can try to fix this by turning on the `noImplicitThis` compiler option, or adding a `this` parameter to the function.",
 );

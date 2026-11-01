@@ -8,9 +8,9 @@ pub struct JsxNewline {
     allow_multilines: bool,
 }
 
-const REQUIRE: Message = Message::new("require", "JSX element should start in a new line");
-const PREVENT: Message = Message::new("prevent", "JSX element should not start in a new line");
-const ALLOW_MULTILINES: Message = Message::new("allowMultilines", "Multiline JSX elements should start in a new line");
+const REQUIRE: &Message = &Message::new("require", "JSX element should start in a new line");
+const PREVENT: &Message = &Message::new("prevent", "JSX element should not start in a new line");
+const ALLOW_MULTILINES: &Message = &Message::new("allowMultilines", "Multiline JSX elements should start in a new line");
 
 impl Rule for JsxNewline {
     const META: Meta =

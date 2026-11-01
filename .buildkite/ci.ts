@@ -171,7 +171,7 @@ function getBuildkiteEmoji(emoji: Emoji): string {
 type Abi = Exclude<HostAbi, "gnu">;
 type Distro = "debian" | "ubuntu" | "alpine";
 type Tier = "latest" | "previous" | "oldest" | "beta";
-type Profile = "release" | "assert" | "debug" | "asan";
+type Profile = "release" | "assert" | "debug" | "asan" | "hardened";
 
 interface Target {
   os: Os;
@@ -223,6 +223,8 @@ type Platform = Target & {
   distro?: Distro;
   release: string;
   tier?: Tier;
+  /** What a test platform runs in place of every test, in one shard. */
+  tests?: string[];
 };
 
 type AzureVmTier = "build" | "test";
@@ -267,6 +269,9 @@ const buildPlatforms: Platform[] = [
   // asan x64 cross-builds from the arm64 host too, with the amd64 compiler-rt
   // that the `crossCompilerRt` tool of scripts/build/ci-images/spec.ts installs there.
   { os: "linux", arch: "x64", profile: "asan", distro: "debian", release: "13" },
+  // In no release either. The build checks the layout of the file that it links and of the one that it strips
+  // (scripts/build/verify-binary.ts).
+  { os: "linux", arch: "x64", profile: "hardened", distro: "debian", release: "13" },
   { os: "linux", arch: "aarch64", abi: "musl", distro: "debian", release: "13" },
   { os: "linux", arch: "x64", abi: "musl", distro: "debian", release: "13" },
   // Android: cross-compiled from the debian-13 aarch64 host via NDK sysroot.
@@ -308,6 +313,25 @@ const testPlatforms: Platform[] = [
   { os: "linux", arch: "aarch64", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "x64", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "x64", profile: "asan", distro: "debian", release: "13", tier: "latest" },
+  // A Bun built with --hardened=on never reads the environment variables that tests steer Bun with, so it runs the tests
+  // that are written for it. On any other build they skip themselves. The last never does.
+  {
+    os: "linux",
+    arch: "x64",
+    profile: "hardened",
+    distro: "debian",
+    release: "13",
+    tier: "latest",
+    tests: [
+      "aot/hardened",
+      "aot/a-hardened-build",
+      "aot/an-executable-that-cannot-read-its-own-file",
+      "aot/compiled-code-mapping",
+      "aot/executable-memory-filter",
+      "aot/texts-that-tell-builds-apart",
+      "aot/the-build-under-test",
+    ],
+  },
   { os: "linux", arch: "aarch64", distro: "ubuntu", release: "25.04", tier: "latest" },
   { os: "linux", arch: "x64", distro: "ubuntu", release: "25.04", tier: "latest" },
   { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.23", tier: "latest" },
@@ -315,6 +339,9 @@ const testPlatforms: Platform[] = [
   { os: "windows", arch: "x64", release: "2019", tier: "oldest" },
   { os: "windows", arch: "aarch64", release: "11", tier: "latest" },
 ];
+
+/** Pull requests build and test the other profiles. main does not: nothing ships them. */
+const isInRelease = ({ profile }: Target) => profile !== "asan" && profile !== "hardened";
 
 function getPlatformKey(platform: Platform): string {
   const { distro, release } = platform;
@@ -586,6 +613,7 @@ function getBuildArgs(target: Target, options: PipelineOptions): string {
 
   if (baseline) args.push("--baseline=on");
   if (profile === "asan") args.push("--asan=on");
+  if (profile === "hardened") args.push("--hardened=on");
 
   // canary: options.canary can be number (revision count) or undefined
   // (default on). Old system used CANARY_REVISION as a counter; build.ts
@@ -640,7 +668,7 @@ function getBuildBunStep(platform: Platform, options: PipelineOptions): CommandS
  * Matches the naming convention in cmake/targets/BuildBun.cmake.
  */
 function getTargetTriplet(platform: Target): string {
-  const { os, arch, abi, baseline } = platform;
+  const { os, arch, abi, baseline, profile } = platform;
   let triplet = `bun-${os}-${arch}`;
   if (abi === "musl") {
     triplet += "-musl";
@@ -651,6 +679,9 @@ function getTargetTriplet(platform: Target): string {
   if (baseline) {
     triplet += "-baseline";
   }
+  if (profile === "hardened") {
+    triplet += "-hardened";
+  }
   return triplet;
 }
 
@@ -660,10 +691,10 @@ function getTargetTriplet(platform: Target): string {
  * aarch64 builds verify no LSE/SVE instructions snuck in.
  */
 function needsBaselineVerification(platform: Platform): boolean {
-  const { os, arch, abi, profile } = platform;
+  const { os, arch, abi } = platform;
   // asan never ships. x64-android is emulator-only; aarch64-android keeps its
   // static LSE/SVE scan via --skip-emulation in getVerifyBaselineStep().
-  if (profile === "asan") return false;
+  if (!isInRelease(platform)) return false;
   if (os === "linux") return (arch === "x64" && abi !== "android") || arch === "aarch64";
   if (os === "windows") return arch === "x64";
   return false;
@@ -866,6 +897,34 @@ function getTraceOrderStep(target: Target, tracePlatform: Platform, options: Pip
   };
 }
 
+/** Where `cargo test` runs. An entry of `testPlatforms`, so the step runs on an image that exists. */
+const cargoTestPlatform: Platform = { os: "linux", arch: "x64", distro: "debian", release: "13" };
+
+/**
+ * The unit tests of the Rust crates that link without JavaScriptCore and Bun's C++ (scripts/rust-test.ts). Some hand what the
+ * front end writes to the engine, which is `testaot` of the build.
+ */
+function getCargoTestStep(buildId: string | undefined): CommandStep {
+  const buildStep = `${getTargetKey(cargoTestPlatform)}-build-bun`;
+  const profileDir = `${getTargetTriplet(cargoTestPlatform)}-profile`;
+  return {
+    key: `${getPlatformKey(cargoTestPlatform)}-cargo-test`,
+    label: `${getPlatformLabel(cargoTestPlatform)} - cargo-test`,
+    depends_on: buildId ? [] : [buildStep],
+    agents: getEc2Agent(cargoTestPlatform, { instanceType: "c7i.4xlarge" }),
+    retry: getRetry(),
+    cancel_on_build_failing: isMergeQueue(),
+    timeout_in_minutes: 30,
+    command: [
+      `buildkite-agent artifact download '${profileDir}.zip' . --step ${buildStep}${buildId ? ` --build ${buildId}` : ""}`,
+      `unzip -o '${profileDir}.zip' '${profileDir}/testaot' '${profileDir}/bun-profile'`,
+      `chmod +x ${profileDir}/testaot ${profileDir}/bun-profile`,
+      // ($$ is a literal $ after pipeline-upload interpolation.)
+      `TESTAOT="$$PWD/${profileDir}/testaot" BUN_UNDER_TEST="$$PWD/${profileDir}/bun-profile" bun run rust:test`,
+    ],
+  };
+}
+
 interface TestOptions {
   buildId?: string | undefined;
   testFiles?: string[] | undefined;
@@ -882,6 +941,8 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
 
   if (testFiles?.length) {
     args.push(...testFiles.map(testFile => `--include=${testFile}`));
+  } else if (platform.tests) {
+    args.push(...platform.tests.map(test => `--include=${test}`), "--vendor=false");
   } else {
     // platform-independent tsc check; runs in .github/workflows/bun-types.yml instead
     args.push("--exclude=integration/bun-types");
@@ -912,7 +973,7 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
     // connected at upload but drops off during the build wait, so the
     // step sits `scheduled` with nobody to take it. That holds only this
     // PR's own build, and a cancel clears it.
-    parallelism: platform.tier === "beta" ? 1 : os === "darwin" ? 2 : os === "windows" ? 8 : 20,
+    parallelism: platform.tier === "beta" || platform.tests ? 1 : os === "darwin" ? 4 : os === "windows" ? 8 : 20,
     ...(platform.tier === "beta" ? { soft_fail: true } : {}),
     // The beta lane runs the whole suite as one shard on one box (~35 min).
     timeout_in_minutes:
@@ -933,6 +994,10 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
       (platform.os === "darwin" && platform.arch === "aarch64" && platform.tier === "latest")
         ? { EXPECTED_PLATFORM_RELEASE: platform.release }
         : {}),
+      // The build, which test/aot/the-build-under-test-is-the-one-its-step-names.test.ts asks the Bun about. Whether the
+      // build behind `buildId` is a canary is not known here.
+      ...(profile ? { EXPECTED_PLATFORM_PROFILE: profile } : {}),
+      ...(options.canary && !buildId ? { EXPECTED_PLATFORM_CANARY: "1" } : {}),
     },
     command:
       os === "windows"
@@ -1111,7 +1176,7 @@ const BINARY_SIZE_THRESHOLD_MB = 0.5;
 function getReleaseStep(
   releasePlatforms: Platform[],
   options: PipelineOptions,
-  { signed = false, testStepKeys = [] }: { signed?: OptionFlag; testStepKeys?: string[] } = {},
+  { signed = false }: { signed?: OptionFlag } = {},
 ): CommandStep {
   const { canary } = options;
   const revision = typeof canary === "number" ? canary : 1;
@@ -1121,11 +1186,6 @@ function getReleaseStep(
   const depends_on = signed
     ? [...releasePlatforms.filter(p => p.os !== "windows").map(p => `${getTargetKey(p)}-build-bun`), "windows-sign"]
     : releasePlatforms.map(platform => `${getTargetKey(platform)}-build-bun`);
-
-  // Gate canary upload on green tests. A red test lane leaves the artifacts in
-  // Buildkite but skips the GitHub/S3 upload; the next green main push ships.
-  // [skip tests] on main still lets the release run (testStepKeys is empty).
-  depends_on.push(...testStepKeys);
 
   return {
     key: "release",
@@ -1265,7 +1325,6 @@ interface PipelineOptions {
   skipTests?: OptionFlag;
   skipSizeCheck?: OptionFlag;
   forceBuilds?: OptionFlag;
-  signWindows?: OptionFlag;
   canary?: number;
   buildPlatforms?: Platform[];
   testPlatforms?: Platform[];
@@ -1456,7 +1515,7 @@ async function getPipelineOptions(): Promise<PipelineOptions | undefined> {
 
   let filteredBuildPlatforms = buildPlatforms;
   if (isMainBranch()) {
-    filteredBuildPlatforms = buildPlatforms.filter(({ profile }) => profile !== "asan");
+    filteredBuildPlatforms = buildPlatforms.filter(isInRelease);
   }
 
   const canary = await getCanaryRevision();
@@ -1532,7 +1591,6 @@ async function getPipelineOptions(): Promise<PipelineOptions | undefined> {
     forceBuilds: parseOption(/\[(force builds?)\]/i),
     skipTests: parseOption(/\[(skip tests?|no tests?|only builds?)\]/i),
     skipSizeCheck: parseOption(/\[(skip size( check)?|allow size)\]/i),
-    signWindows: parseOption(/\[(sign windows)\]/i),
     buildPlatforms: Array.from(buildPlatformsMap.values()),
     testPlatforms: Array.from(testPlatformsMap.values()),
   };
@@ -1653,10 +1711,9 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
   }
 
   const { buildPlatforms = [], testPlatforms = [] } = options;
-  // Sign with [sign windows] in the commit message (for testing the sign step
-  // on a branch). DigiCert charges per signature, so canary builds are never signed.
+  // DigiCert charges per signature, so canary builds are never signed.
   const windowsPlatforms = buildPlatforms.filter(p => p.os === "windows");
-  const signWindows = ((isMainBranch() && !options.canary) || !!options.signWindows) && windowsPlatforms.length > 0;
+  const signWindows = isMainBranch() && !options.canary && windowsPlatforms.length > 0;
 
   // A build makes sure every image of the spec exists, not only the ones its
   // own steps start from: which steps a build has depends on its options (a
@@ -1711,7 +1768,7 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
     }
   }
 
-  const includeASAN = !isMainBranch();
+  const includeEveryProfile = !isMainBranch();
 
   // verify-baseline / trace-order: checks that run on a built binary on a
   // test-fleet host. They are drawn in that host's test group (or a
@@ -1751,9 +1808,7 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
   };
 
   if (!buildId) {
-    let relevantBuildPlatforms = includeASAN
-      ? buildPlatforms
-      : buildPlatforms.filter(({ profile }) => profile !== "asan");
+    const relevantBuildPlatforms = includeEveryProfile ? buildPlatforms : buildPlatforms.filter(isInRelease);
 
     steps.push(
       ...relevantBuildPlatforms.flatMap(target => {
@@ -1811,8 +1866,8 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
   }
 
   // Tests run on main too so the canary release step below can gate on them.
-  // ASAN is PR-only (see includeASAN above), so the asan test lane is dropped
-  // on main along with its build.
+  // The asan and hardened profiles are PR-only (see includeEveryProfile above),
+  // so their test lanes are dropped on main along with their builds.
   // Untiered: any arm64 mac agent, whatever macOS it runs, can take it.
   const prDarwinTestPlatforms: Platform[] = [
     { os: "darwin", arch: "aarch64", release: "any" },
@@ -1830,20 +1885,18 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
     !darwinTestsEnabled && !isMergeQueue() && (await darwinBetaQueueIdle())
       ? [{ os: "darwin", arch: "aarch64", release: "27", tier: "beta" }]
       : [];
-  const relevantTestPlatforms = (
-    includeASAN ? testPlatforms : testPlatforms.filter(({ profile }) => profile !== "asan")
-  )
+  const relevantTestPlatforms = (includeEveryProfile ? testPlatforms : testPlatforms.filter(isInRelease))
     .filter(({ os }) => os !== "darwin" || darwinTestsEnabled)
+    // The files that a manual build asks for are not written for a platform that names its own.
+    .filter(({ tests }) => !tests || !options.testFiles?.length)
     .concat(darwinTestsEnabled ? [] : prDarwinTestPlatforms)
     .concat(darwinTestsEnabled ? [] : betaDarwinTestPlatforms);
-  const testStepKeys: string[] = [];
   {
     const { skipTests, testFiles } = options;
     if (!skipTests) {
       steps.push(
         ...relevantTestPlatforms.map(target => {
           const step = getTestBunStep(target, options, { testFiles, buildId });
-          testStepKeys.push(step.key);
           // Test shards run on their native platform image; when this build
           // bakes it, they wait for it.
           const dependsOn = getImageDependsOn(target, baking);
@@ -1857,6 +1910,15 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
           );
         }),
       );
+      if (!testFiles?.length) {
+        const step = getCargoTestStep(buildId);
+        steps.push(
+          getStepWithDependsOn(
+            { key: getPlatformKey(cargoTestPlatform), group: getPlatformLabel(cargoTestPlatform), steps: [step] },
+            ...getImageDependsOn(cargoTestPlatform, baking),
+          ),
+        );
+      }
     }
   }
 
@@ -1883,7 +1945,7 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
   }
 
   if (isMainBranch()) {
-    steps.push(getReleaseStep(buildPlatforms, options, { signed: signWindows, testStepKeys }));
+    steps.push(getReleaseStep(buildPlatforms, options, { signed: signWindows }));
   }
 
   // Merge same-label groups into their first occurrence, keeping every

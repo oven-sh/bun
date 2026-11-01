@@ -1,0 +1,207 @@
+# -- source: calls-give-no-array-other-storage-left-alone.ts
+# let shared: number[] = [];
+# function grows(turn: number): void {
+#   if (turn === 2) for (let k = 0; k < 40; k++) shared.push(100 + k);
+# }
+# function around(list: number[]): number {
+#   let sum = 0;
+#   for (let turn = 0; turn < 6; turn++) {
+#     sum += list[turn & 3];
+#     grows(turn);
+#     list[turn & 3] = turn * 10;
+#     sum += list.length;
+#   }
+#   return sum;
+# }
+# declare function print(value: number): void;
+# for (let k = 0; k < 4; k++) shared.push(k + 1);
+# print(around(shared));
+# print(shared[0] + shared[1] * 100 + shared[2] * 10000 + shared[3] * 1000000);
+# -- end of source
+# FORM: AsRead
+# RUN: run-in-shell
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls,pass:InlineHeads check=MovedLoads
+# CHECK: 204
+# CHECK: 30205040
+# CHECK: exited with 0
+
+module m0 path="calls-give-no-array-other-storage-left-alone.ts" displayPath="calls-give-no-array-other-storage-left-alone.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+typesite w0 module=m0 position=42 kind=Parameter
+typesite w1 module=m0 position=4 kind=Variable
+typesite w2 module=m0 position=151 kind=Parameter
+typesite w3 module=m0 position=135 kind=Result
+typesite w4 module=m0 position=407 kind=Variable
+typesite w5 module=m0 position=426 kind=CallResult
+typesite w6 module=m0 position=452 kind=CallResult
+typesite w7 module=m0 position=475 kind=Element
+typesite w8 module=m0 position=487 kind=Element
+typesite w9 module=m0 position=505 kind=Element
+typesite w10 module=m0 position=525 kind=Element
+typesite w11 module=m0 position=91 kind=Variable
+typesite w12 module=m0 position=111 kind=CallResult
+typesite w13 module=m0 position=183 kind=Variable
+typesite w14 module=m0 position=203 kind=Variable
+typesite w15 module=m0 position=244 kind=Element
+typesite w16 module=m0 position=281 kind=Element
+typesite w17 module=m0 position=320 kind=PropertyRead
+data d0 root=Array{contents=number} module=m0
+variable g0 name="grows" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="shared" module=m0 declared={type=undefined|null|absent|Array<number> site=w1 flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = Data data=d0 @23
+    v3 = Convert v2 declared={type=undefined|null|Array<number> site=w1 flags=[OmitsNull, OmitsUndefined]} @23
+    PutModuleVariable v3 variable=g1 @4
+    v5 = Integer @411
+    v6 = Convert v5 declared={type=number site=w4} @411
+    Jump -> next b2(v6) @407
+  b2(v7: number):
+    LoopHint @407
+    v9 = Integer integer=4 @418
+    v10 = Less v7, v9 @414
+    Branch v10 -> taken b3(| 0), notTaken b6(| 0) @414
+  b3(v11):
+    Jump -> next b4() @414
+  b4():
+    v12 = PropGet v3 key="push" @426
+    v13 = Integer integer=1 @442
+    v14 = Add v11, v13 @438
+    v15 = Call v12, v3, v14 calleeKey="push" calleeName="shared.push" @433
+    v16 = Convert v15 declared={type=number site=w5} illTypedCause=DeclarationWithoutBody @426
+    Jump -> next b5() @426
+  b5():
+    v17 = Increment v11 @433
+    v18 = Convert v17 declared={type=number site=w4} @421
+    Jump -> next b2(v18) @421
+  b6(v19):
+    Jump -> next b7() @414
+  b7():
+    v20 = Builtin builtin=GlobalThis @446
+    v21 = PropGet v20 key="print" [isFreeName] @446
+    v22 = Call v1, -, v3 calleeName="around" @452
+    v23 = Convert v22 declared={type=number site=w6} @452
+    v24 = Call v21, -, v23 calleeName="print" @446
+    v25 = Builtin builtin=GlobalThis @469
+    v26 = PropGet v25 key="print" [isFreeName] @469
+    v27 = Integer @475
+    v28 = ElemGet v3, v27 @475
+    v29 = Convert v28 declared={type=number site=w7} illTypedCause=ContainerWriterUnseen @475
+    v30 = Integer integer=1 @487
+    v31 = ElemGet v3, v30 @487
+    v32 = Convert v31 declared={type=number site=w8} illTypedCause=ContainerWriterUnseen @487
+    v33 = Integer integer=100 @499
+    v34 = Mul v32, v33 @475
+    v35 = Add v29, v34 @475
+    v36 = Integer integer=2 @505
+    v37 = ElemGet v3, v36 @505
+    v38 = Convert v37 declared={type=number site=w9} illTypedCause=ContainerWriterUnseen @505
+    v39 = Integer integer=10000 @517
+    v40 = Mul v38, v39 @475
+    v41 = Add v35, v40 @475
+    v42 = Integer integer=3 @525
+    v43 = ElemGet v3, v42 @525
+    v44 = Convert v43 declared={type=number site=w10} illTypedCause=ContainerWriterUnseen @525
+    v45 = Integer integer=1000000 @537
+    v46 = Mul v44, v45 @475
+    v47 = Add v41, v46 @475
+    v48 = Call v26, -, v47 calleeName="print" @469
+    v49 = Undefined @469
+    Return v49 @469
+}
+function f1 name="grows" module=m0 position=27 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w0}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @27
+  b1():
+    v1 = Integer integer=2 @79
+    v2 = StrictEq v0, v1 @70
+    Branch v2 -> taken b2(| 0), notTaken b10(| 0) @70
+  b2(v3):
+    Jump -> next b3() @70
+  b3():
+    v4 = Integer @95
+    v5 = Convert v4 declared={type=number site=w11} @95
+    Jump -> next b4(v5) @91
+  b4(v6: number):
+    LoopHint @91
+    v8 = Integer integer=40 @102
+    v9 = Less v6, v8 @98
+    Branch v9 -> taken b5(| 0), notTaken b8(| 0) @98
+  b5(v10):
+    Jump -> next b6() @98
+  b6():
+    v11 = GetModuleVariable variable=g1 @111
+    v12 = CheckInitialized v11 name="shared" @111
+    v13 = PropGet v12 key="push" @111
+    v14 = Integer integer=100 @123
+    v15 = Add v14, v10 @123
+    v16 = Call v13, v12, v15 calleeKey="push" calleeName="shared.push" @118
+    v17 = Convert v16 declared={type=number site=w12} illTypedCause=DeclarationWithoutBody @111
+    Jump -> next b7() @111
+  b7():
+    v18 = Increment v10 @118
+    v19 = Convert v18 declared={type=number site=w11} @106
+    Jump -> next b4(v19) @106
+  b8(v20):
+    Jump -> next b9() @98
+  b9():
+    Jump -> next b11() @106
+  b10(v21):
+    Jump -> next b11() @70
+  b11():
+    v22 = Undefined @106
+    Return v22 @106
+}
+function f2 name="around" module=m0 position=135 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=w2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w3}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>):
+    Jump -> next b1() @135
+  b1():
+    v1 = Integer @189
+    v2 = Convert v1 declared={type=number site=w13} @189
+    v3 = Integer @210
+    v4 = Convert v3 declared={type=number site=w14} @210
+    Jump -> next b2(v2, v4) @203
+  b2(v5: number, v6: number):
+    LoopHint @203
+    v8 = Convert v6 declared={type=i32 flags=[IsExpected]} @213
+    v9 = Integer integer=6 @220
+    v10 = Less v8, v9 @213
+    Branch v10 -> taken b3(| 0), notTaken b6(| 0) @213
+  b3(v11):
+    Jump -> next b4() @213
+  b4():
+    v12 = Convert v11 declared={type=i32 flags=[IsExpected]} @249
+    v13 = Integer integer=3 @256
+    v14 = BitAnd v12, v13 @249
+    v15 = ElemGet v0, v14 @244
+    v16 = Convert v15 declared={type=number site=w15} illTypedCause=ContainerWriterUnseen @244
+    v17 = Add v5, v16 @244
+    v18 = Convert v17 declared={type=number site=w13} @237
+    v19 = GetModuleVariable variable=g0 @264
+    v20 = Call v19, -, v12 calleeName="grows" @264
+    v21 = Integer integer=3 @293
+    v22 = BitAnd v12, v21 @286
+    v23 = Integer integer=10 @305
+    v24 = Mul v12, v23 @298
+    v25 = Convert v24 declared={type=number site=w16} @281
+    ElemSet v0, v22, v25 @281
+    v27 = PropGet v0 key="length" @320
+    v28 = Convert v27 declared={type=number site=w17} illTypedCause=Assertion @320
+    v29 = Add v18, v28 @320
+    v30 = Convert v29 declared={type=number site=w13} @313
+    Jump -> next b5() @313
+  b5():
+    v31 = Increment v12 @320
+    v32 = Convert v31 declared={type=number site=w14} @223
+    Jump -> next b2(v30, v32) @223
+  b6(v33):
+    Jump -> next b7() @213
+  b7():
+    v34 = Convert v5 declared={type=number site=w3} @346
+    Return v34 @346
+}
+# -- generated: *

@@ -6,9 +6,9 @@ use bun_lint::rule::Plugin;
 /// Checks for `a op= a op b` or `a op= b op a` patterns.
 pub struct MisrefactoredAssignOp;
 
-const MISREFACTORED_ASSIGN_OP: Message =
-    Message::new("", "Misrefactored assign op. Variable appears on both sides of an assignment operation");
-const DID_YOU_MEAN: Message = Message::new("", "Did you mean `{{suggestion}}`?");
+const MISREFACTORED_ASSIGN_OP: &Message =
+    &Message::new("", "Misrefactored assign op. Variable appears on both sides of an assignment operation");
+const DID_YOU_MEAN: &Message = &Message::new("", "Did you mean `{{suggestion}}`?");
 
 impl Rule for MisrefactoredAssignOp {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "misrefactored-assign-op", Kind::Problem).has_suggestions();

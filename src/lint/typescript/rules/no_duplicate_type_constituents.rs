@@ -9,11 +9,11 @@ pub struct NoDuplicateTypeConstituents {
     ignore_unions: bool,
 }
 
-const DUPLICATE: Message = Message::new(
+const DUPLICATE: &Message = &Message::new(
     "duplicate",
     "{{type}} type constituent is duplicated with {{previous}}.",
 );
-const UNNECESSARY: Message = Message::new(
+const UNNECESSARY: &Message = &Message::new(
     "unnecessary",
     "Explicit undefined is unnecessary on an optional parameter.",
 );
@@ -235,7 +235,7 @@ fn is_separator_before_unseen<'a>(file: &'a File<'a>, before_constituent: Span) 
 /// `previous` is for [`DUPLICATE`]: `Union` or `Intersection`, and the constituent that's repeated.
 fn report<'a>(
     cx: &Cx<'a, NoDuplicateTypeConstituents>,
-    message: Message,
+    message: &'static Message,
     constituent_node: TypeNode<'a>,
     previous: Option<(&'static str, TypeNode<'a>)>,
 ) {

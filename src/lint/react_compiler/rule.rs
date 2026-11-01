@@ -10,8 +10,8 @@ use bun_lint::rule::{Message, Rule};
 use bun_lint::span::Span;
 use bun_react_compiler::diagnostics::ErrorCategory;
 
-const MESSAGE: Message = Message::new("", "{{message}}");
-const DESCRIPTION: Message = Message::new("", "{{description}}");
+const MESSAGE: &Message = &Message::new("", "{{message}}");
+const DESCRIPTION: &Message = &Message::new("", "{{description}}");
 
 /// oxlint's `run_react_compiler_rule`. Reports the compiler's diagnostics for the file in `category`.
 pub fn report<'a, R: Rule>(cx: &Cx<'a, R>, category: ErrorCategory) {

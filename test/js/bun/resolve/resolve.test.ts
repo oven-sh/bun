@@ -561,9 +561,10 @@ describe("NODE_PATH test", () => {
     const [underRun, underTest] = await Promise.all([run("main.js"), run("test", "./worker.test.js")]);
 
     expect(underRun.message, underRun.stderr).toStartWith("NODE_PATH works, preload from ");
+    expect(underRun.exitCode, underRun.stderr).toBe(0);
     expect({ message: underTest.message, exitCode: underTest.exitCode }, underTest.stderr).toEqual({
       message: underRun.message,
-      exitCode: underRun.exitCode,
+      exitCode: 0,
     });
   });
 });

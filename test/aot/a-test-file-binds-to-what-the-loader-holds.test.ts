@@ -1,10 +1,16 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { runtimeEnvironment } from "./harness/flags";
 import { run } from "./harness/run";
-import { describe, test } from "./supported";
+import { describe, test as oneAtATime } from "./supported";
+
+// The tests run at once: each builds and runs in a folder of its own.
+const test = oneAtATime.concurrent;
+// They share the processors, so one may take as long as the whole file: minutes with a debug build.
+raiseDefaultTimeout(isDebug ? 3_600_000 : 600_000);
 
 // An import statement is bound to the module that the loader holds when the importer is linked. The runner starts a test file behind the test files and the preloads
 // before it, and one of those may have taken a file out of require.cache: then the statement and a require() of the path name one module, the one from disk.
@@ -30,11 +36,17 @@ const ways = [
   { way: "over two layers", words: "TestRunLayers:2,TestRunPartFiles:1" },
 ];
 
+/** What `bun test <flags>` prints: its stdout behind the line that names Bun, and of its stderr each test with its verdict, each count and each line that begins with an error. */
 async function printed(cwd: string, flags: string[], env: Record<string, string | undefined>) {
   const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], cwd, { ...bunEnv, ...env });
+  // A run that is asked to be one program says that it is, as run() asks a run over layers for its layers.
+  if (env.BUN_DEBUG_TEST_AOT_WORDS === "TestRunLayers:0") expect(stderr).toMatch(/^AOT test run \| one program\b/m);
   return {
-    lines: stdout.split("\n").filter(line => /^(first|second|preload) /.test(line)),
-    counts: (stdout + stderr).match(/^ \d+ (pass|fail)$/gm),
+    stdout: stdout.replace(/^bun test .*\n/, ""),
+    results: stderr
+      .split("\n")
+      .filter(line => /^(\((pass|fail|skip|todo)\) |\w*[Ee]rror\b| *\d+ (pass|fail)$)/.test(line))
+      .map(line => line.replace(/ \[[\d.]+ms\]$/, "")),
     exitCode,
   };
 }
@@ -48,7 +60,11 @@ describe.each(ways)("$way", ({ words }) => {
       "b.test.js": importsIt,
     });
     const plain = await printed(String(dir), ["./a.test.js", "./b.test.js"], {});
-    expect(plain).toEqual({ lines: ["first 1 2", "second 1 2 3 true"], counts: [" 2 pass", " 0 fail"], exitCode: 0 });
+    expect(plain).toEqual({
+      stdout: "first 1 2\nsecond 1 2 3 true\n",
+      results: ["(pass) takes it out", "(pass) imports it", " 2 pass", " 0 fail"],
+      exitCode: 0,
+    });
     const compiled = await printed(String(dir), ["--aot", "./a.test.js", "./b.test.js"], {
       BUN_DEBUG_TEST_AOT_WORDS: words,
     });
@@ -64,7 +80,11 @@ describe.each(ways)("$way", ({ words }) => {
     });
     const flags = ["--isolate", "--preload", "./preload.js", "./b.test.js"];
     const plain = await printed(String(dir), flags, {});
-    expect(plain).toEqual({ lines: ["preload 1", "second 1 2 3 true"], counts: [" 1 pass", " 0 fail"], exitCode: 0 });
+    expect(plain).toEqual({
+      stdout: "preload 1\nsecond 1 2 3 true\n",
+      results: ["(pass) imports it", " 1 pass", " 0 fail"],
+      exitCode: 0,
+    });
     expect(await printed(String(dir), ["--aot", ...flags], { BUN_DEBUG_TEST_AOT_WORDS: words })).toEqual(plain);
   });
 });
@@ -89,7 +109,11 @@ test("loads again", () => {
 `,
   });
   const plain = await printed(String(dir), ["./a.test.js"], {});
-  expect(plain).toEqual({ lines: ["first 1 2 true true true true"], counts: [" 1 pass", " 0 fail"], exitCode: 0 });
+  expect(plain).toEqual({
+    stdout: "first 1 2 true true true true\n",
+    results: ["(pass) loads again", " 1 pass", " 0 fail"],
+    exitCode: 0,
+  });
   expect(await printed(String(dir), ["--aot", "./a.test.js"], { BUN_DEBUG_TEST_AOT_WORDS: words })).toEqual(plain);
 });
 
@@ -114,7 +138,11 @@ if (globalThis.never) await import("./other.js?0");
     });
     const flags = ["./a.test.js", "./b.test.js"];
     const plain = await printed(String(dir), flags, {});
-    expect(plain).toEqual({ lines: ["first 1 1 1"], counts: [" 2 pass", " 0 fail"], exitCode: 0 });
+    expect(plain).toEqual({
+      stdout: "first 1 1 1\n",
+      results: ["(pass) first", "(pass) t", " 2 pass", " 0 fail"],
+      exitCode: 0,
+    });
     expect(await printed(String(dir), ["--aot", ...flags], { BUN_DEBUG_TEST_AOT_WORDS: words })).toEqual(plain);
   },
 );
@@ -134,7 +162,11 @@ test("may take it out", () => { delete require.cache[require.resolve("./c.cjs")]
     });
     const flags = ["./a.test.js", "./b.test.js"];
     const plain = await printed(String(dir), flags, {});
-    expect(plain).toEqual({ lines: ["first object true true"], counts: [" 3 pass", " 0 fail"], exitCode: 0 });
+    expect(plain).toEqual({
+      stdout: "first object true true\n",
+      results: ["(pass) first", "(pass) t", "(pass) may take it out", " 3 pass", " 0 fail"],
+      exitCode: 0,
+    });
     expect(await printed(String(dir), ["--aot", ...flags], { BUN_DEBUG_TEST_AOT_WORDS: words })).toEqual(plain);
   },
 );
@@ -153,7 +185,11 @@ test.each(ways)("a test file under a tsconfig.json of its own: $way", async ({ w
   });
   const flags = ["./a.test.js", "./x/main.test.ts"];
   const plain = await printed(String(dir), flags, {});
-  expect(plain.exitCode).toBe(0);
+  expect(plain).toEqual({
+    stdout: "first object\n",
+    results: ["(pass) first", "(pass) x", " 2 pass", " 0 fail"],
+    exitCode: 0,
+  });
   expect(await printed(String(dir), ["--aot", ...flags], { BUN_DEBUG_TEST_AOT_WORDS: words })).toEqual(plain);
 });
 
@@ -192,28 +228,32 @@ test("last", () => {
   async function walked(files: Record<string, string>, words: string) {
     using dir = tempDir("aot-loader-walks-nothing", files);
     const cwd = String(dir);
-    const { stdout, stderr, exitCode } = await run(
-      [bunExe(), "test", "--aot", "--isolate", "--preload", "./preload.ts"],
-      cwd,
-      { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words, [runtimeEnvironment.countsPath]: join(cwd, "counts-%p") },
-    );
+    const said = await printed(cwd, ["--aot", "--isolate", "--preload", "./preload.ts"], {
+      BUN_DEBUG_TEST_AOT_WORDS: words,
+      [runtimeEnvironment.countsPath]: join(cwd, "counts-%p"),
+    });
     const counts = readdirSync(cwd)
       .filter(name => name.startsWith("counts-"))
       .flatMap(name => readFileSync(join(cwd, name), "utf8").split("\n"))
       .filter(line => line.endsWith("\tcounter:CompiledModulesWalkedByLoader"))
       .map(line => Number(line.split("\t")[0]));
     return {
-      passes: (stdout + stderr).match(/^ \d+ (pass|fail)$/gm),
-      exitCode,
+      ...said,
+      // A folder is run in the order in which it is read.
+      results: said.results.sort(),
       walked: counts.reduce((sum, count) => sum + count, 0),
       processesThatCounted: counts.length > 0,
     };
   }
 
   test.each(ways)("$way", async ({ words }) => {
-    const without = await walked(project(false), words);
-    const withIt = await walked(project(true), words);
-    const ran = { passes: [` ${testFileCount + 1} pass`, " 0 fail"], exitCode: 0, processesThatCounted: true };
+    const [without, withIt] = await Promise.all([walked(project(false), words), walked(project(true), words)]);
+    const ran = {
+      stdout: "",
+      results: [" 0 fail", " 5 pass", "(pass) last", "(pass) t0", "(pass) t1", "(pass) t2", "(pass) t3"],
+      exitCode: 0,
+      processesThatCounted: true,
+    };
     expect(without).toMatchObject(ran);
     expect(withIt).toMatchObject(ran);
     // One realm for each test file, and forty modules below the preload in each.

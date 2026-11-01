@@ -405,8 +405,8 @@ fn is_in_executable(path: &[u8]) -> bool {
 
 /// What the executable holds lies on the file system that holds the executable.
 fn path_for_statfs<'a>(path: &'a PathLike<'_>, buf: &'a mut PathBuffer) -> &'a ZStr {
-    match bun_core::self_exe_path() {
-        Ok(executable) if is_in_executable(path.slice()) => executable,
+    match is_in_executable(path.slice()).then(bun_core::self_exe_path) {
+        Some(Ok(executable)) => executable,
         _ => path.slice_z(buf),
     }
 }

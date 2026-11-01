@@ -31,8 +31,10 @@ test("child tsconfig paths replace parent paths (not merge)", async () => {
     `,
   });
 
+  // Without --no-install, auto-install asks the npm registry for @helpers/x
+  // before bun reports that the module is missing.
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "run", "src/index.ts"],
+    cmd: [bunExe(), "--no-install", "run", "src/index.ts"],
     env: bunEnv,
     cwd: String(dir),
     stderr: "pipe",

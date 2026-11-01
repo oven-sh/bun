@@ -251,7 +251,7 @@ snapshots:
         lockfileVersion: 1,
         workspaces: {
           "": {
-            name: "new-proj",
+            name: "root-1",
             dependencies: { pkg1: "workspace:*" },
           },
           "packages/pkg1": { name: "pkg1" },

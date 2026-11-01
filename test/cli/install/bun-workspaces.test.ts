@@ -5095,6 +5095,72 @@ describe("a renamed root package", () => {
     expect(await file(lockPath).bytes()).toEqual(lockBytes);
   });
 
+  // Bun 1.1.42 and older wrote no root name. Such a lockfile takes the name from package.json
+  // without failing a frozen install: it recorded nothing that could have changed.
+  test.concurrent("a lockfile without a root name takes it", async () => {
+    using ctx = await setupTest();
+    const { packageDir } = ctx;
+    const lockPath = join(packageDir, "bun.lock");
+
+    await writeProject(packageDir, { name: "root-named" }, { member: { name: "member" } });
+    await write(
+      lockPath,
+      JSON.stringify({
+        lockfileVersion: 1,
+        configVersion: 1,
+        workspaces: {
+          "": {},
+          "packages/member": { name: "member", version: "1.0.0" },
+        },
+        packages: {
+          member: ["member@workspace:packages/member"],
+        },
+      }),
+    );
+    const nameless = await file(lockPath).text();
+
+    const frozen = await install(ctx, "--frozen-lockfile");
+    expect(frozen).toMatchObject({ err: "", exitCode: 0 });
+    expect(await file(lockPath).text()).toBe(nameless);
+
+    expect(await install(ctx)).toMatchObject({ err: "Saved lockfile\n", exitCode: 0 });
+    const lock = await file(lockPath).text();
+    expect(lock).toContain('"name": "root-named"');
+
+    const again = await install(ctx);
+    expect(again).toMatchObject({ err: "", exitCode: 0 });
+    expect(again.out).toContain("(no changes)");
+    expect(await file(lockPath).text()).toBe(lock);
+  });
+
+  test.concurrent("a removed root name leaves the lockfile, and a new one enters it", async () => {
+    using ctx = await setupTest();
+    const { packageDir } = ctx;
+    const lockPath = join(packageDir, "bun.lock");
+
+    await writeProject(packageDir, { name: "root-before" }, { member: { name: "member" } });
+    expect(await install(ctx)).toMatchObject({ err: "Saved lockfile\n", exitCode: 0 });
+    const named = await file(lockPath).text();
+
+    await writeProject(packageDir, {}, { member: { name: "member" } });
+    const frozen = await install(ctx, "--frozen-lockfile");
+    expect(frozen.err).toContain("name in package.json changed since bun.lock was saved");
+    expect(frozen.exitCode).toBe(1);
+    expect(await file(lockPath).text()).toBe(named);
+
+    expect(await install(ctx)).toMatchObject({ err: "Saved lockfile\n", exitCode: 0 });
+    const nameless = await file(lockPath).text();
+    expect(nameless).not.toContain('"name": "root-before"');
+    expect(nameless).toContain('"": {');
+
+    // The lockfile recorded no name, so the new one is not a change a frozen install refuses.
+    await writeProject(packageDir, { name: "root-again" }, { member: { name: "member" } });
+    expect(await install(ctx, "--frozen-lockfile")).toMatchObject({ err: "", exitCode: 0 });
+    expect(await file(lockPath).text()).toBe(nameless);
+    expect(await install(ctx)).toMatchObject({ err: "Saved lockfile\n", exitCode: 0 });
+    expect(await file(lockPath).text()).toContain('"name": "root-again"');
+  });
+
   test.concurrent("a member that depends on the root by name follows the rename", async () => {
     using ctx = await setupTest();
     const { packageDir } = ctx;

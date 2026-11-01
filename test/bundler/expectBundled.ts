@@ -840,6 +840,59 @@ function expectBundled(
       ? Object.entries(bundleErrors).flatMap(([file, v]) => v.map(error => ({ file, error })))
       : null;
 
+    const checkWarnings = (allWarnings: ErrorMeta[]) => {
+      const expectedWarnings = bundleWarnings
+        ? Object.entries(bundleWarnings).flatMap(([file, v]) => v.map(error => ({ file, error })))
+        : null;
+
+      for (const err of allWarnings) {
+        warningReference[err.file] ??= [];
+        warningReference[err.file].push(err);
+      }
+      if (DEBUG && allWarnings.length) {
+        console.log("REFERENCE WARNINGS OBJECT");
+        console.log("bundleWarnings: {");
+        for (const [file, errs] of Object.entries(warningReference)) {
+          console.log('  "' + file + '": [');
+          for (const err of errs as any) {
+            console.log("    `" + err.error + "`,");
+          }
+          console.log("  ],");
+        }
+        console.log("},");
+      }
+
+      if (allWarnings.length > 0 && !expectedWarnings) {
+        throw new Error("Warnings were thrown while bundling:\n" + allWarnings.map(formatError).join("\n"));
+      }
+      if (!expectedWarnings) return;
+
+      const warningsLeft = [...expectedWarnings];
+      let unexpectedWarnings: ErrorMeta[] = [];
+
+      for (const error of allWarnings) {
+        const i = warningsLeft.findIndex(item => error.file === item.file && error.error.includes(item.error));
+        if (i === -1) {
+          unexpectedWarnings.push(error);
+        } else {
+          warningsLeft.splice(i, 1);
+        }
+      }
+
+      if (unexpectedWarnings.length) {
+        throw new Error(
+          "Unexpected warnings reported while bundling:\n" +
+            [...unexpectedWarnings].map(formatError).join("\n") +
+            "\n\nExpected warnings:\n" +
+            expectedWarnings.map(formatError).join("\n"),
+        );
+      }
+
+      if (warningsLeft.length) {
+        throw new Error("Warnings were expected while bundling:\n" + warningsLeft.map(formatError).join("\n"));
+      }
+    };
+
     // Helper to add compile boolean flags
     const compileFlag = (prop: string, trueFlag: string, falseFlag: string): string[] => {
       if (compile && typeof compile === "object" && Object.prototype.hasOwnProperty.call(compile, prop)) {
@@ -1185,55 +1238,7 @@ function expectBundled(
             return { error, file, line, col };
           })
           .filter(Boolean) as ErrorMeta[];
-        const expectedWarnings = bundleWarnings
-          ? Object.entries(bundleWarnings).flatMap(([file, v]) => v.map(error => ({ file, error })))
-          : null;
-
-        for (const err of allWarnings) {
-          warningReference[err.file] ??= [];
-          warningReference[err.file].push(err);
-        }
-        if (DEBUG && allWarnings.length) {
-          console.log("REFERENCE WARNINGS OBJECT");
-          console.log("bundleWarnings: {");
-          for (const [file, errs] of Object.entries(warningReference)) {
-            console.log('  "' + file + '": [');
-            for (const err of errs as any) {
-              console.log("    `" + err.error + "`,");
-            }
-            console.log("  ],");
-          }
-          console.log("},");
-        }
-
-        if (allWarnings.length > 0 && !expectedWarnings) {
-          throw new Error("Warnings were thrown while bundling:\n" + allWarnings.map(formatError).join("\n"));
-        } else if (expectedWarnings) {
-          const warningsLeft = [...expectedWarnings];
-          let unexpectedWarnings: ErrorMeta[] = [];
-
-          for (const error of allWarnings) {
-            const i = warningsLeft.findIndex(item => error.file === item.file && error.error.includes(item.error));
-            if (i === -1) {
-              unexpectedWarnings.push(error);
-            } else {
-              warningsLeft.splice(i, 1);
-            }
-          }
-
-          if (unexpectedWarnings.length) {
-            throw new Error(
-              "Unexpected warnings reported while bundling:\n" +
-                [...unexpectedWarnings].map(formatError).join("\n") +
-                "\n\nExpected warnings:\n" +
-                expectedWarnings.map(formatError).join("\n"),
-            );
-          }
-
-          if (warningsLeft.length) {
-            throw new Error("Warnings were expected while bundling:\n" + warningsLeft.map(formatError).join("\n"));
-          }
-        }
+        checkWarnings(allWarnings);
       }
     } else {
       const pluginArray = typeof plugins === "function" ? [{ name: "plugin", setup: plugins }] : plugins;
@@ -1386,6 +1391,23 @@ for (const [key, blob] of build.outputs) {
           writeFileSync(metafile, JSON.stringify((build as any).metafile, null, 2));
         }
 
+        const logToErrorMeta = (error: BuildOutput["logs"][number]): ErrorMeta => {
+          const position = error.position;
+
+          const filename = position?.file
+            ? position.namespace === "file"
+              ? "/" + path.relative(root, position.file).replaceAll(path.sep, "/")
+              : `${position.namespace}:${position.file.replace(root, "").replaceAll(path.sep, "/")}`
+            : "<bun>";
+
+          return {
+            file: filename,
+            error: error.message ?? String(error),
+            col: position?.column != null ? String(position.column) : undefined,
+            line: position?.line != null ? String(position.line) : undefined,
+          };
+        };
+
         const buildLogs = build.logs.filter(x => x.level === "error");
         if (buildLogs.length) {
           const allErrors: ErrorMeta[] = [];
@@ -1395,28 +1417,7 @@ for (const [key, blob] of build.outputs) {
               throw error;
             }
 
-            // undocuemnted types
-            const position = error.position as {
-              lineText: string;
-              file: string;
-              namespace: string;
-              line: number;
-              column: number;
-              offset: number;
-            };
-
-            const filename = position?.file
-              ? position.namespace === "file"
-                ? "/" + path.relative(root, position.file).replaceAll(path.sep, "/")
-                : `${position.namespace}:${position.file.replace(root, "").replaceAll(path.sep, "/")}`
-              : "<bun>";
-
-            allErrors.push({
-              file: filename,
-              error: str,
-              col: position?.column !== undefined ? String(position.column) : undefined,
-              line: position?.line !== undefined ? String(position.line) : undefined,
-            });
+            allErrors.push(logToErrorMeta(error));
           }
 
           if (DEBUG && allErrors.length) {
@@ -1470,6 +1471,8 @@ for (const [key, blob] of build.outputs) {
         } else if (expectedErrors && expectedErrors.length > 0) {
           throw new Error("Errors were expected while bundling:\n" + expectedErrors.map(formatError).join("\n"));
         }
+        const allWarnings = build.logs.filter(x => x.level === "warn").map(logToErrorMeta);
+        checkWarnings(allWarnings);
       } else {
         await esbuild.build({
           bundle: true,

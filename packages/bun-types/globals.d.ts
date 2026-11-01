@@ -1052,7 +1052,7 @@ declare class ResolveMessage {
     | "at_conditional"
     | "url"
     | "internal";
-  readonly level: "error" | "warning" | "info" | "debug" | "verbose";
+  readonly level: "error" | "warn" | "info" | "debug" | "verbose";
 
   toString(): string;
 }
@@ -1061,7 +1061,7 @@ declare class BuildMessage {
   readonly name: "BuildMessage";
   readonly position: Position | null;
   readonly message: string;
-  readonly level: "error" | "warning" | "info" | "debug" | "verbose";
+  readonly level: "error" | "warn" | "info" | "debug" | "verbose";
 }
 
 interface ErrorOptions {

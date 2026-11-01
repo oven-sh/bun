@@ -195,6 +195,172 @@ describe("with statement", () => {
   });
 });
 
+// `new X(...)` is a [[Construct]] of whatever the name holds when the site runs. `X(...)` is a [[Call]].
+describe.concurrent("new on a global constructor", () => {
+  async function run(files: Record<string, string>, entry: string) {
+    using dir = tempDir("transpiler-new-on-global", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), entry],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("constructs a class that script stored in globalThis.Error", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "index.mjs": `
+          const NativeError = globalThis.Error;
+          globalThis.Error = class extends NativeError {
+            constructor(message) {
+              super(message);
+              this.patched = true;
+            }
+          };
+          function fail() {
+            throw new Error("request failed");
+          }
+          let caught;
+          try {
+            fail();
+          } catch (error) {
+            caught = error;
+          }
+          globalThis.Error = NativeError;
+          console.log(JSON.stringify({ message: caught.message, patched: caught.patched === true }));
+        `,
+      },
+      "index.mjs",
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toBe('{"message":"request failed","patched":true}\n');
+    expect(exitCode).toBe(0);
+  });
+
+  test("runs the construct trap of a Proxy and not its apply trap", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "index.mjs": `
+          const names = [
+            "Error", "TypeError", "SyntaxError", "RangeError", "ReferenceError", "EvalError", "URIError",
+            "AggregateError", "Function", "Object", "Array",
+          ];
+          const natives = {};
+          const ran = [];
+          function sites(text, length, list, object) {
+            new Error(text);
+            new TypeError(text);
+            new SyntaxError(text);
+            new RangeError(text);
+            new ReferenceError(text);
+            new EvalError(text);
+            new URIError(text);
+            new AggregateError(list, text);
+            new Function(text);
+            new Object(object);
+            new Array(length);
+            new Array(7);
+            new Array(length * 2);
+            new Array(1, ...list);
+            new Array(...list);
+          }
+          for (const name of names) {
+            natives[name] = globalThis[name];
+            globalThis[name] = new Proxy(natives[name], {
+              construct(target, args) {
+                ran.push("construct " + name);
+                return Reflect.construct(target, args);
+              },
+              apply(target, receiver, args) {
+                ran.push("apply " + name);
+                return Reflect.apply(target, receiver, args);
+              },
+            });
+          }
+          try {
+            sites("return 1", 3, [2], {});
+          } finally {
+            for (const name of names) globalThis[name] = natives[name];
+          }
+          console.log(JSON.stringify(ran));
+        `,
+      },
+      "index.mjs",
+    );
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([
+      "construct Error",
+      "construct TypeError",
+      "construct SyntaxError",
+      "construct RangeError",
+      "construct ReferenceError",
+      "construct EvalError",
+      "construct URIError",
+      "construct AggregateError",
+      "construct Function",
+      "construct Object",
+      "construct Array",
+      "construct Array",
+      "construct Array",
+      "construct Array",
+      "construct Array",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("constructs what a plain function, a with object or a direct eval put under the name", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "index.cjs": `
+          const seen = [];
+          function attempt(make) {
+            try {
+              seen.push(make());
+            } catch (error) {
+              seen.push("threw " + error.message);
+            }
+          }
+
+          const NativeRangeError = RangeError;
+          globalThis.RangeError = function (message) {
+            return { how: new.target === undefined ? "call" : "construct", message };
+          };
+          attempt(() => new RangeError("range").how);
+          globalThis.RangeError = NativeRangeError;
+
+          class Custom {
+            constructor(message) {
+              this.custom = message;
+            }
+          }
+          function inWith(scope) {
+            with (scope) {
+              return new Error("with").custom;
+            }
+          }
+          attempt(() => inWith({ Error: Custom }));
+
+          function afterEval(Declared) {
+            eval("var TypeError = Declared");
+            return new TypeError("eval").custom;
+          }
+          attempt(() => afterEval(Custom));
+
+          console.log(JSON.stringify(seen));
+        `,
+      },
+      "index.cjs",
+    );
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(["construct", "with", "eval"]);
+    expect(exitCode).toBe(0);
+  });
+});
+
 test("math.pow", () => {
   function foo1(foo) {
     return 10 ** (foo / 20);

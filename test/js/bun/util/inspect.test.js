@@ -996,7 +996,7 @@ it("ErrorEvent", () => {
     NNN |    lineno: 42,
     NNN |    colno: 10,
     NNN |    error: new Error("Test error"),
-                         ^
+                     ^
     error: Test error
         at <anonymous> (file:NN:NN)
     ,

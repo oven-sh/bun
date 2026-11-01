@@ -15,7 +15,7 @@ test("minifying new Array(if (0) 1 else 2) works", async () => {
   });
 
   expect(await file(join(testDir, "outdir/entry.js")).text()).toMatchInlineSnapshot(`
-    "console.log(Array(Math.random()>-1?1:2));
+    "console.log(new Array(Math.random()>-1?1:2));
     "
   `);
 });

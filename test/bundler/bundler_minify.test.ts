@@ -1248,7 +1248,8 @@ describe("bundler", () => {
     },
   });
 
-  itBundled("minify/ErrorConstructorOptimization", {
+  // `Error(x)` is a call of whatever `globalThis.Error` holds when the site runs. It throws if that is a class.
+  itBundled("minify/ErrorConstructorKeepsNew", {
     files: {
       "/entry.js": /* js */ `
         // Test all Error constructors
@@ -1291,31 +1292,58 @@ describe("bundler", () => {
       `,
     },
     capture: [
-      "Error()",
-      'Error("message")',
-      'Error("message", { cause: "cause" })',
-      "TypeError()",
-      'TypeError("type error")',
-      "SyntaxError()",
-      'SyntaxError("syntax error")',
-      "RangeError()",
-      'RangeError("range error")',
-      "ReferenceError()",
-      'ReferenceError("ref error")',
-      "EvalError()",
-      'EvalError("eval error")',
-      "URIError()",
-      'URIError("uri error")',
-      'AggregateError([], "aggregate error")',
-      'AggregateError([Error("e1")], "multiple")',
-      "Error(msg)",
-      "TypeError(getErrorMessage())",
+      "new Error",
+      'new Error("message")',
+      'new Error("message", { cause: "cause" })',
+      "new TypeError",
+      'new TypeError("type error")',
+      "new SyntaxError",
+      'new SyntaxError("syntax error")',
+      "new RangeError",
+      'new RangeError("range error")',
+      "new ReferenceError",
+      'new ReferenceError("ref error")',
+      "new EvalError",
+      'new EvalError("eval error")',
+      "new URIError",
+      'new URIError("uri error")',
+      'new AggregateError([], "aggregate error")',
+      'new AggregateError([new Error("e1")], "multiple")',
+      "new Error(msg)",
+      "new TypeError(getErrorMessage())",
       "/* @__PURE__ */ new Date",
       "/* @__PURE__ */ new Map",
       "/* @__PURE__ */ new Set",
     ],
     minifySyntax: true,
     target: "bun",
+  });
+
+  itBundled("minify/NewErrorConstructsReplacedGlobal", {
+    files: {
+      "/entry.js": /* js */ `
+        const NativeError = globalThis.Error;
+        globalThis.Error = class extends NativeError {
+          constructor(message) {
+            super(message);
+            this.patched = true;
+          }
+        };
+        let made;
+        try {
+          made = new Error("made");
+        } catch (error) {
+          made = error;
+        }
+        globalThis.Error = NativeError;
+        console.log(made.message, made.patched === true);
+      `,
+    },
+    minifySyntax: true,
+    target: "bun",
+    run: {
+      stdout: "made true",
+    },
   });
 
   itBundled("minify/ErrorConstructorWithVariables", {
@@ -1419,6 +1447,7 @@ describe("bundler", () => {
         capture(new Array(1, 2, 3));
         capture(new Array(...unknownValue));
         capture(new Array(5, ...unknownValue));
+        capture(new Array(unknownValue));
         
         // Test Array with non-numeric single arguments (should convert to literal)
         capture(new Array("string"));
@@ -1431,6 +1460,7 @@ describe("bundler", () => {
         capture(new Object());
         capture(new Object(null));
         capture(new Object({ a: 1 }));
+        capture(new Object(unknownValue));
         
         // Test Function constructor
         capture(new Function("return 42"));
@@ -1453,14 +1483,15 @@ describe("bundler", () => {
     },
     capture: [
       "[]", // new Array() -> []
-      "Array(3)", // new Array(3) stays as Array(3) because it creates sparse array
+      "new Array(3)", // a length, so no literal
       `[
   1,
   2,
   3
 ]`, // new Array(1, 2, 3) -> [1, 2, 3]
-      "Array(...unknownValue)", // a spread may leave a single number behind, which is a length
-      "Array(5, ...unknownValue)",
+      "new Array(...unknownValue)", // a spread may leave a single number behind, which is a length
+      "new Array(5, ...unknownValue)",
+      "new Array(unknownValue)", // may be a length
       `[
   "string"
 ]`, // new Array("string") -> ["string"]
@@ -1479,8 +1510,9 @@ describe("bundler", () => {
       "{}", // new Object() -> {}
       "{}", // new Object(null) -> {}
       "{ a: 1 }", // new Object({ a: 1 }) -> { a: 1 }
-      'Function("return 42")',
-      'Function("a", "b", "return a + b")',
+      "new Object(unknownValue)", // nothing to fold into a literal
+      'new Function("return 42")',
+      'new Function("a", "b", "return a + b")',
       'new RegExp("test")',
       'new RegExp("test", "gi")',
       "new RegExp(/abc/)",
@@ -1523,8 +1555,8 @@ describe("bundler", () => {
       "[,,,,,,,,]", // new Array(8) -> [undefined x 8]
       "[,,,,,,,,,]", // new Array(9) -> [undefined x 9]
       "[,,,,,,,,,,]", // new Array(10) -> [undefined x 10]
-      "Array(11)", // new Array(11) -> Array(11)
-      "Array(4.5)", // new Array(4.5) is Array(4.5) because it's not an integer
+      "new Array(11)", // too long to spell out as a literal
+      "new Array(4.5)", // not an integer
     ],
     minifySyntax: true,
     minifyWhitespace: true,

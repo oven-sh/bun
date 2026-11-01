@@ -16,17 +16,8 @@ pub enum KnownGlobal {
     Response,
     TextEncoder,
     TextDecoder,
-    Error,
-    TypeError,
-    SyntaxError,
-    RangeError,
-    ReferenceError,
-    EvalError,
-    URIError,
-    AggregateError,
     Array,
     Object,
-    Function,
     RegExp,
 }
 
@@ -44,17 +35,8 @@ bun_core::comptime_string_map! {
         b"Response" => KnownGlobal::Response,
         b"TextEncoder" => KnownGlobal::TextEncoder,
         b"TextDecoder" => KnownGlobal::TextDecoder,
-        b"Error" => KnownGlobal::Error,
-        b"TypeError" => KnownGlobal::TypeError,
-        b"SyntaxError" => KnownGlobal::SyntaxError,
-        b"RangeError" => KnownGlobal::RangeError,
-        b"ReferenceError" => KnownGlobal::ReferenceError,
-        b"EvalError" => KnownGlobal::EvalError,
-        b"URIError" => KnownGlobal::URIError,
-        b"AggregateError" => KnownGlobal::AggregateError,
         b"Array" => KnownGlobal::Array,
         b"Object" => KnownGlobal::Object,
-        b"Function" => KnownGlobal::Function,
         b"RegExp" => KnownGlobal::RegExp,
     };
 }
@@ -65,18 +47,6 @@ fn lookup(name: &[u8]) -> Option<KnownGlobal> {
 }
 
 impl KnownGlobal {
-    #[inline(always)]
-    fn call_from_new(e: &mut E::New, loc: crate::Loc) -> js_ast::Expr {
-        let call = E::Call {
-            target: e.target,
-            args: bun_alloc::AstAlloc::take(&mut e.args),
-            close_paren_loc: e.close_parens_loc,
-            can_be_unwrapped_if_unused: e.can_be_unwrapped_if_unused,
-            ..Default::default()
-        };
-        js_ast::Expr::init(call, loc)
-    }
-
     // `_bump` is unused; the `Vec` uses the global arena.
     #[inline(never)]
     pub fn minify_global_constructor(
@@ -102,20 +72,9 @@ impl KnownGlobal {
         let original_name = symbol.original_name.slice();
         let constructor = lookup(original_name)?;
 
+        // A construct is folded into a literal or kept. It is never printed as the call `X(...)`:
+        // script can store a class in the global before the site runs, and calling a class throws.
         match constructor {
-            // Error constructors can be called without 'new' with identical behavior
-            KnownGlobal::Error
-            | KnownGlobal::TypeError
-            | KnownGlobal::SyntaxError
-            | KnownGlobal::RangeError
-            | KnownGlobal::ReferenceError
-            | KnownGlobal::EvalError
-            | KnownGlobal::URIError
-            | KnownGlobal::AggregateError => {
-                // Convert `new Error(...)` to `Error(...)` to save bytes
-                Some(Self::call_from_new(e, loc))
-            }
-
             KnownGlobal::Object => {
                 let n = e.args.len_u32();
 
@@ -141,8 +100,7 @@ impl KnownGlobal {
                     }
                 }
 
-                // For other cases, just remove 'new'
-                Some(Self::call_from_new(e, loc))
+                None
             }
 
             KnownGlobal::Array => {
@@ -176,7 +134,6 @@ impl KnownGlobal {
                         // For other types, check via knownPrimitive
                         let primitive = arg.known_primitive();
                         // Only convert if we know for certain it's not a number
-                        // unknown could be a number at runtime, so we must preserve Array() call
                         match primitive {
                             js_ast::expr::PrimitiveType::Null
                             | js_ast::expr::PrimitiveType::Undefined
@@ -195,7 +152,7 @@ impl KnownGlobal {
                             js_ast::expr::PrimitiveType::Number => {
                                 let val = match arg.data {
                                     js_ast::ExprData::ENumber(num) => num.value(),
-                                    _ => return Some(Self::call_from_new(e, loc)),
+                                    _ => return None,
                                 };
                                 if
                                 // only want this with whitespace minification
@@ -231,13 +188,11 @@ impl KnownGlobal {
                                         loc,
                                     ));
                                 }
-                                Some(Self::call_from_new(e, loc))
+                                None
                             }
+                            // Could be a number, so `new Array(x)` may mean a length.
                             js_ast::expr::PrimitiveType::Unknown
-                            | js_ast::expr::PrimitiveType::Mixed => {
-                                // Could be a number, preserve Array() call
-                                Some(Self::call_from_new(e, loc))
-                            }
+                            | js_ast::expr::PrimitiveType::Mixed => None,
                         }
                     }
                     // > 1
@@ -250,7 +205,7 @@ impl KnownGlobal {
                             .iter()
                             .any(|arg| matches!(arg.data, js_ast::ExprData::ESpread(_)))
                         {
-                            return Some(Self::call_from_new(e, loc));
+                            return None;
                         }
                         Some(js_ast::Expr::init(
                             E::Array {
@@ -263,10 +218,6 @@ impl KnownGlobal {
                 }
             }
 
-            KnownGlobal::Function => {
-                // Just remove 'new' for Function
-                Some(Self::call_from_new(e, loc))
-            }
             KnownGlobal::RegExp => {
                 // Don't optimize RegExp - the semantics are too complex:
                 // - new RegExp(re) creates a copy, but RegExp(re) returns the same instance
@@ -486,17 +437,8 @@ mod tests {
             KnownGlobal::Response,
             KnownGlobal::TextEncoder,
             KnownGlobal::TextDecoder,
-            KnownGlobal::Error,
-            KnownGlobal::TypeError,
-            KnownGlobal::SyntaxError,
-            KnownGlobal::RangeError,
-            KnownGlobal::ReferenceError,
-            KnownGlobal::EvalError,
-            KnownGlobal::URIError,
-            KnownGlobal::AggregateError,
             KnownGlobal::Array,
             KnownGlobal::Object,
-            KnownGlobal::Function,
             KnownGlobal::RegExp,
         ] {
             let name: &'static str = v.into();
@@ -509,8 +451,10 @@ mod tests {
             b"Sat",
             b"Math",
             b"Arrow",
+            b"Error",
             b"String",
             b"Promise",
+            b"Function",
             b"Function_",
             b"TypeErrorr",
             b"SyntaxErrro",

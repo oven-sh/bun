@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { AddressInfo, createServer, Socket } from "node:net";
 import * as path from "node:path";
+import { Script } from "node:vm";
 import { remoteObjectToString, WebSocketInspector } from "../../../bun-inspector-protocol/index.ts";
 import type { Inspector, InspectorEventMap } from "../../../bun-inspector-protocol/src/inspector/index.d.ts";
 import { NodeSocketInspector } from "../../../bun-inspector-protocol/src/inspector/node-socket.ts";
@@ -1168,6 +1169,8 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
       expression,
       objectGroup,
       callFrameId,
+      // Moving the mouse must not run statements: a hovered block stays a SyntaxError, which cancels the hover.
+      expressionOnly: context === "hover",
     });
 
     if (wasThrown) {
@@ -1189,14 +1192,15 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
     expression: string;
     objectGroup?: string;
     callFrameId?: string;
+    expressionOnly?: boolean;
   }): Promise<JSC.Runtime.EvaluateResponse> {
-    const { expression, objectGroup, callFrameId } = options;
+    const { expression, objectGroup, callFrameId, expressionOnly } = options;
     const method = callFrameId ? "Debugger.evaluateOnCallFrame" : "Runtime.evaluate";
 
     return this.send(method, {
       callFrameId,
       objectGroup,
-      expression: sanitizeExpression(expression),
+      expression: sanitizeExpression(expression, expressionOnly),
       generatePreview: true,
       emulateUserGesture: true,
       doNotPauseOnExceptionsAndMuteConsole: true,
@@ -1213,6 +1217,8 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
       expression: expression || "this",
       callFrameId,
       objectGroup: "repl",
+      // This runs while the user types, so `{ a: 1 }; sideEffect(); x.` stays a SyntaxError.
+      expressionOnly: true,
     });
 
     if (wasThrown) {
@@ -1864,6 +1870,8 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
       expression: `${expression} = (${value});`,
       objectGroup: "repl",
       callFrameId,
+      // A target is never statements, so `{ sideEffect() } x` stays a SyntaxError.
+      expressionOnly: true,
     });
 
     if (wasThrown) {
@@ -2569,18 +2577,46 @@ function callFrameToId(callFrame: JSC.Console.CallFrame): string {
   return `${url}:${lineNumber}:${columnNumber}`;
 }
 
-function sanitizeExpression(expression: string): string {
+function sanitizeExpression(expression: string, expressionOnly?: boolean): string {
   expression = expression.trim();
-  if (expression.startsWith("{")) {
-    expression = `(${expression})`;
-  }
+  const typed = expression;
   if (expression.startsWith("return ")) {
-    expression = expression.slice(7);
+    expression = expression.slice(7).trimStart();
   }
   if (expression.startsWith("await ")) {
-    expression = expression.slice(6);
+    expression = expression.slice(6).trimStart();
   }
-  return expression;
+  if (!expression.startsWith("{")) {
+    return expression;
+  }
+  // The line break keeps a trailing `//` comment from hiding the `)`.
+  const wrapped = `(${expression}\n)`;
+  if (expressionOnly) {
+    return wrapped;
+  }
+  const error = compileError(wrapped);
+  if (error === undefined) {
+    return wrapped;
+  }
+  // After `return ` or `await `, text that is not provably an expression goes as written, as it always has.
+  if (expression !== typed) {
+    return expression;
+  }
+  // Without a proof the parentheses stay: `{ a: this.#x }` compiles neither way here, and is an object for its frame.
+  if (error instanceof SyntaxError && compileError(expression) === undefined) {
+    return expression;
+  }
+  return wrapped;
+}
+
+/** What the parser of the adapter's own process throws for `source`. `Script` compiles and does not run it. */
+function compileError(source: string): unknown {
+  try {
+    new Script(source);
+    return undefined;
+  } catch (error) {
+    return error;
+  }
 }
 
 function remoteObjectToVariablePresentationHint(

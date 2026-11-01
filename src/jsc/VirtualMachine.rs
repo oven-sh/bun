@@ -7763,7 +7763,9 @@ impl VirtualMachine {
                         pretty_write!(writer, "<r><b>{} |<r> {}\n", display_line, hl)?;
 
                         let col = top.position.column.zero_based();
+                        // A caret is under the printed line, or right after it.
                         if col >= 0
+                            && (col as usize) <= clamped.len()
                             && (clamped.len() < MAX_LINE_LENGTH_WITH_DIVOT
                                 || (col as usize) > MAX_LINE_LENGTH_WITH_DIVOT)
                         {

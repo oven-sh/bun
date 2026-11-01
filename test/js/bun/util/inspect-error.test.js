@@ -868,6 +868,7 @@ describe("frames read from the error.stack string", () => {
         "zero (/fake/lib.js:2:0)": ["zero", "/fake/lib.js", 2],
         "zero (/fake/lib.js:0:5)": ["zero", "/fake/lib.js"],
         "zero (/fake/lib.js:0)": ["zero", "/fake/lib.js"],
+        "large (/fake/lib.js:2147483647:2147483647)": ["large", "/fake/lib.js", 2147483647, 2147483647],
         "large (/fake/lib.js:1:2147483648)": ["large", "/fake/lib.js", 1],
         "large (/fake/lib.js:2147483648:1)": ["large", "/fake/lib.js"],
       },
@@ -1021,6 +1022,25 @@ describe("frames read from the error.stack string", () => {
           `      at ${lib}`,
           `      at third (${lib}:2:7)`,
         ],
+      });
+    });
+
+    // In front of a caret the printer writes a space for each column.
+    test.each([
+      // "1 | const plain = 1;"
+      [16, "                   ^"],
+      [17, "                    ^"],
+      [18, ""],
+      [2147483647, ""],
+    ])("has a caret for column %d only if it is under the line or right after it", (column, caret) => {
+      using dir = tempDir("inspect-error-stack-string", files);
+      const plain = join(String(dir), "plain.js");
+      expect({
+        name: printedLines([`render (${plain}:1:${column})`]),
+        location: printedLines([`${plain}:1:${column}`]),
+      }).toEqual({
+        name: ["1 | const plain = 1;", caret, "error: boom", `      at render (${plain}:1:${column})`],
+        location: ["1 | const plain = 1;", caret, "error: boom", `      at ${plain}:1:${column}`],
       });
     });
   });

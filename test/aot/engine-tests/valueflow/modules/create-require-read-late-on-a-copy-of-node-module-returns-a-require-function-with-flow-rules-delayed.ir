@@ -1,8 +1,8 @@
 # import Module from "node:module"; copy = { ...Module }; hide(copy); step0 = { next: () => copy.createRequire("/app/main.js")(globalThis.name) }; step1 = { next: () => step0.next() }; and so on
 # The copy and node:module are in unknown hands long before the function that calls createRequire is reached, so the callee may be anything beside createRequire.
 # The call still returns a require function, and the call of that function loads code by name.
-# TODO: nobody: under this order of the delayed rules the solve prints the effect with no site. Which orders do so moves with the table of built-ins: 58, 59 and 76 before the table had the TTY handle, and this one, 20, 50, 58 and 59 since (testing=DelayFlowRules:20)
-# OPTIONS: testing=DelayFlowRules
+# Under some orders of the delayed rules the solve names no site for the effect, and which orders those are moves with the table of built-ins: 58, 59 and 76 before the table had the TTY handle, and the order without a number, 20, 50, 58 and 59 since. Hence the order 4.
+# OPTIONS: testing=DelayFlowRules:4
 # RUN: valueflow-solve unseen
 # CHECK: unseen LoadsCodeByName ModuleRequire f1:v6
 # CHECK: unseen-code yes

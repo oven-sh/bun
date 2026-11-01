@@ -417,10 +417,10 @@ describe("source map remapping of the printed stack", () => {
     expect(positions(out.presentStack)).toEqual(expected("present.ts"));
     expect(positions(out.deletedStack)).toEqual(expected("deleted.ts"));
 
-    // For `throw new Error()`, error.stack reports the column of `Error` and
-    // the printer's own JSC frames report the column of `new`, four columns
-    // to the left. Frames the printer copies from an already read error.stack
-    // keep that string's columns.
+    // For a `new` with arguments, error.stack has the column of the class name
+    // and the printer's own frames have the column of `new`, four columns to
+    // the left. Frames that the printer copies from an error.stack that was
+    // read keep the columns of that string.
     const printerColumns = text =>
       positions(text).map(frame =>
         frame.replace(/^(at thrower \(.*:5:)(\d+)\)$/, (_, prefix, col) => `${prefix}${col - "new ".length})`),

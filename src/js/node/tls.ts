@@ -1544,7 +1544,7 @@ $toClass(Server, "Server", NetServer);
 Server.prototype[kNativeSecureContextCtor] = NativeSecureContext;
 
 Server.prototype.getTicketKeys = function (this: $Node.TLSServer) {
-  throw Error("Not implented in Bun yet");
+  throw new Error("Not implented in Bun yet");
 };
 
 Server.prototype.setTicketKeys = function (this: $Node.TLSServer, keys: ArrayBufferView) {
@@ -1554,7 +1554,7 @@ Server.prototype.setTicketKeys = function (this: $Node.TLSServer, keys: ArrayBuf
   if (keys.byteLength !== 48) {
     throw $ERR_INVALID_ARG_VALUE("buffer", keys, "Session ticket keys must be a 48-byte buffer");
   }
-  throw Error("Not implented in Bun yet");
+  throw new Error("Not implented in Bun yet");
 };
 
 function createServer(

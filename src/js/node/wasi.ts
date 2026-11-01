@@ -838,7 +838,7 @@ class WASI {
           }
         }
         if (!res) {
-          throw Error("invalid clockId");
+          throw new Error("invalid clockId");
         }
         this.view.setBigUint64(resolution, res);
         return WASI_ESUCCESS;
@@ -875,7 +875,7 @@ class WASI {
         const stats = CHECK_FD(fd, BigInt(0));
         this.refreshMemory();
         if (stats.filetype == null) {
-          throw Error("stats.filetype must be set");
+          throw new Error("stats.filetype must be set");
         }
         this.view.setUint8(bufPtr, stats.filetype);
         this.view.setUint16(bufPtr + 2, 0, true);
@@ -916,7 +916,7 @@ class WASI {
         this.view.setBigUint64(bufPtr, BigInt(rstats.ino), true);
         bufPtr += 8;
         if (stats.filetype == null) {
-          throw Error("stats.filetype must be set");
+          throw new Error("stats.filetype must be set");
         }
         this.view.setUint8(bufPtr, stats.filetype);
         bufPtr += 8;
@@ -1188,7 +1188,7 @@ class WASI {
             break;
         }
         if (stats.offset == null) {
-          throw Error("stats.offset must be defined");
+          throw new Error("stats.offset must be defined");
         }
         this.view.setBigUint64(newOffsetPtr, stats.offset, true);
         return WASI_ESUCCESS;
@@ -1732,7 +1732,7 @@ class WASI {
       fd += 1;
     }
     if (fd > SC_OPEN_MAX) {
-      throw Error("no available file descriptors");
+      throw new Error("no available file descriptors");
     }
     return fd;
   }

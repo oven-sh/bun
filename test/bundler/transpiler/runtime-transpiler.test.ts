@@ -360,22 +360,57 @@ describe.concurrent("new on a global constructor", () => {
     expect(exitCode).toBe(0);
   });
 
-  // Bun's own modules are bundled when Bun is built, by another Bun. A debug build does not minify them.
-  test("node:util constructs its error after script replaced globalThis.Error with a class", async () => {
+  // The body of the new function takes its source origin from the frame that made it. A call in `return` leaves that frame.
+  test("a function made by new Function imports relative to the module that made it", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "lib/make.mjs": `
+          export function make() {
+            return new Function("return import('./which.mjs')");
+          }
+        `,
+        "lib/which.mjs": `export default "lib/which.mjs";`,
+        "which.mjs": `export default "which.mjs";`,
+        "index.mjs": `
+          import { make } from "./lib/make.mjs";
+          console.log((await make()()).default);
+        `,
+      },
+      "index.mjs",
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toBe("lib/which.mjs\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // Bun's own modules and functions are bundled when Bun is built, by another Bun.
+  // A debug build does not minify the modules. It does minify the functions: `Bun.$` is one.
+  test("Bun's own code constructs its errors after script replaced globalThis.Error with a class", async () => {
     const { stdout, stderr, exitCode } = await run(
       {
         "index.cjs": `
           const NativeError = globalThis.Error;
           globalThis.Error = class extends NativeError {};
+          const seen = [];
+          try {
+            Bun.$(123);
+          } catch (error) {
+            seen.push([error instanceof NativeError, error.message]);
+          }
           require("util").callbackify(() => Promise.reject(null))(error => {
-            console.log(error instanceof NativeError, error.code, error.message);
+            seen.push([error instanceof NativeError, error.code]);
+            globalThis.Error = NativeError;
+            console.log(JSON.stringify(seen));
           });
         `,
       },
       "index.cjs",
     );
     expect(stderr).toBe("");
-    expect(stdout).toBe("true ERR_FALSY_VALUE_REJECTION Promise was rejected with a falsy value\n");
+    expect(JSON.parse(stdout)).toEqual([
+      [true, "Please use '$' as a tagged template function: $`cmd arg1 arg2`"],
+      [true, "ERR_FALSY_VALUE_REJECTION"],
+    ]);
     expect(exitCode).toBe(0);
   });
 });

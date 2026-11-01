@@ -18,7 +18,6 @@ pub enum KnownGlobal {
     TextDecoder,
     Array,
     Object,
-    RegExp,
 }
 
 bun_core::comptime_string_map! {
@@ -37,7 +36,6 @@ bun_core::comptime_string_map! {
         b"TextDecoder" => KnownGlobal::TextDecoder,
         b"Array" => KnownGlobal::Array,
         b"Object" => KnownGlobal::Object,
-        b"RegExp" => KnownGlobal::RegExp,
     };
 }
 
@@ -218,14 +216,6 @@ impl KnownGlobal {
                 }
             }
 
-            KnownGlobal::RegExp => {
-                // Don't optimize RegExp - the semantics are too complex:
-                // - new RegExp(re) creates a copy, but RegExp(re) returns the same instance
-                // - This affects object identity and lastIndex behavior
-                // - The difference only applies when flags are undefined
-                // Keep the original new RegExp() call to preserve correct semantics
-                None
-            }
             KnownGlobal::WeakSet | KnownGlobal::WeakMap => {
                 let n = e.args.len_u32();
 
@@ -439,7 +429,6 @@ mod tests {
             KnownGlobal::TextDecoder,
             KnownGlobal::Array,
             KnownGlobal::Object,
-            KnownGlobal::RegExp,
         ] {
             let name: &'static str = v.into();
             assert!(lookup(name.as_bytes()) == Some(v), "{}", name);
@@ -453,6 +442,7 @@ mod tests {
             b"Arrow",
             b"Error",
             b"String",
+            b"RegExp",
             b"Promise",
             b"Function",
             b"Function_",

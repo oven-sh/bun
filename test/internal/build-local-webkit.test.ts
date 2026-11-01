@@ -11,7 +11,7 @@ import { join, relative, resolve } from "node:path";
 import { validateBunConfig } from "../../scripts/build/bun.ts";
 import { cxx } from "../../scripts/build/compile.ts";
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
-import { bootstrapCmds } from "../../scripts/build/deps/bootstrap-cmds.ts";
+import { bootstrapCmds, migcomPath } from "../../scripts/build/deps/bootstrap-cmds.ts";
 import { icu, ICU_VERSION } from "../../scripts/build/deps/icu.ts";
 import {
   jscPrograms,
@@ -316,7 +316,7 @@ describe("which builds compile WebKit", () => {
         "host-cc",
       ]);
       expect(spec.steps![2]).toMatchObject({
-        output: built("migcom"),
+        output: migcomPath(cfg),
         sources: expect.arrayContaining([built("lexxer.c"), built("parser.c")]),
         inputs: [built("y.tab.h")],
         flags: expect.arrayContaining([`-I${join(cfg.localDeps.WebKit!, "macos-cross")}`]),

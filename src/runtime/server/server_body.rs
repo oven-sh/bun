@@ -2067,7 +2067,7 @@ where
                 }
 
                 if let Some(body__) = init.fast_get(global, jsc::BuiltinName::Body)? {
-                    match Blob::get::<true, false>(global, body__) {
+                    match Blob::from_js_move(global, body__) {
                         Ok(new_blob) => body = BodyValue::Blob(new_blob),
                         Err(err) => {
                             return Ok(JSPromise::rejected_promise_with_caught_exception(

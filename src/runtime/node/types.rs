@@ -432,6 +432,20 @@ impl StringOrBuffer<'static> {
         unsafe { ThreadIsolated::new(isolated) }
     }
 
+    /// `str` for a work-pool job to read in place, or `Err` with the UTF-8 bytes of a string that it cannot lend.
+    pub(crate) fn lend_string(str: bun_core::String) -> Result<ThreadIsolated<Self>, Vec<u8>> {
+        // An atom belongs to its thread, and a substring keeps its whole base string alive.
+        if !str.is_thread_isolated() {
+            return Err(str.to_owned_slice());
+        }
+        let utf8 = str.into_utf8_with_string();
+        if !utf8.is_shared() {
+            return Err(utf8.into_utf8().into_vec());
+        }
+        // SAFETY: `ThreadIsolatedString` of an isolated string.
+        Ok(unsafe { ThreadIsolated::new(Self::ThreadIsolatedString(utf8)) })
+    }
+
     #[inline]
     pub(crate) fn from_js_with_encoding(
         global: &JSGlobalObject,

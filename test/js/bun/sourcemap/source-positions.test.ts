@@ -9,7 +9,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { mkfifo } from "mkfifo";
-import { readFileSync, rmSync } from "node:fs";
+import { readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { SourceMap } from "node:module";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -732,6 +732,122 @@ describe.concurrent("a loaded file with its own source map", () => {
     });
   });
 
+  // node v26.13.0 prints the same files with the position that V8 reports: `file://<dir>/a.mjs:2:11` and
+  // `<dir>/b.ts:4:9`. Each module is large enough for the transpiler cache, and the second run takes both from it.
+  test("Error.stack of an ES module follows the switch as it is when import() is called", async () => {
+    const padding = `// ${Buffer.alloc(5 * 1024, "f").toString()}\n`;
+    using dir = tempDir("own-source-map-switch-esm", {
+      ...withMap("a.mjs", "esm", undefined, padding),
+      ...withMap("b.mjs", "esm", undefined, padding),
+      "main.mjs": `
+        ${firstFrame}
+        const on = () => process.setSourceMapsEnabled(true);
+        const off = () => process.setSourceMapsEnabled(false);
+        const out = {};
+
+        const a = import("./a.mjs"); on();
+        out["import(), enable, await"] = firstFrame((await a).boom); off();
+
+        on(); const b = import("./b.mjs"); off(); const { boom } = await b; on();
+        out["enable, import(), disable, await, enable"] = firstFrame(boom); off();
+
+        console.log(JSON.stringify(out));
+      `,
+    });
+    const cache = join(String(dir), ".cache");
+    const env = {
+      ...bunEnv,
+      BUN_RUNTIME_TRANSPILER_CACHE_PATH: cache,
+      // A debug build takes nothing from the cache without this.
+      BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: "1",
+    };
+    // An entry that is written again is another file.
+    const entries = () => readdirSync(cache).map(name => `${name} ${statSync(join(cache, name)).ino}`);
+    const cold = printed(await run(String(dir), ["main.mjs"], env));
+    const written = entries();
+    const warm = printed(await run(String(dir), ["main.mjs"], env));
+    const frames = {
+      stdout: {
+        "import(), enable, await": `at boom (<dir>/a.mjs:${transpiled.esm.boom})`,
+        "enable, import(), disable, await, enable": `at boom (<dir>/b.ts:${inOriginal.boom})`,
+      },
+      stderr: "",
+      exitCode: 0,
+    };
+    expect({ cold, warm }).toEqual({ cold: frames, warm: frames });
+    expect(written).toHaveLength(2);
+    expect(entries()).toEqual(written);
+  });
+
+  // A module that `import()` reaches through a static import is asked for after its importer is transpiled, which is
+  // after the code that follows the `import()` call. Bun gives it the switch as it is then. node v26.13.0 gives the
+  // whole graph the switch as it is at the `import()` call.
+  test("a module that import() reaches through a static import gets the switch as it is when Bun loads it", async () => {
+    using dir = tempDir("own-source-map-switch-import-graph", {
+      ...withMap("dep.mjs", "esm"),
+      "parent.mjs": `export { boom as boomOfDep } from "./dep.mjs";\n`,
+      ...withMap("dep2.mjs", "esm"),
+      "parent2.mjs": `export { boom as boomOfDep } from "./dep2.mjs";\n`,
+      "main.mjs": `
+        ${firstFrame}
+        const on = () => process.setSourceMapsEnabled(true);
+        const off = () => process.setSourceMapsEnabled(false);
+        const out = {};
+
+        const p = import("./parent.mjs"); on();
+        out["import(), enable, await"] = firstFrame((await p).boomOfDep); off();
+
+        on(); const p2 = import("./parent2.mjs"); off(); const { boomOfDep } = await p2; on();
+        out["enable, import(), disable, await, enable"] = firstFrame(boomOfDep); off();
+
+        console.log(JSON.stringify(out));
+      `,
+    });
+    expect(printed(await run(String(dir), ["main.mjs"]))).toEqual({
+      stdout: {
+        // node v26.13.0: at boom (file://<dir>/dep.mjs:2:11)
+        "import(), enable, await": `at boom (<dir>/dep.ts:${inOriginal.boom})`,
+        // node v26.13.0: at boom (<dir>/dep2.ts:4:9)
+        "enable, import(), disable, await, enable": `at boom (<dir>/dep2.mjs:${transpiled.esm.boom})`,
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // All the modules that an entry point imports load before one of them runs, so the one that turns the switch on
+  // is too late for the next. node v26.13.0 has no `--preload`. For the other three it prints the same files with
+  // the position that V8 reports: `<dir>/required.ts:4:9`, `<dir>/imported.ts:4:9`, `file://<dir>/imported.mjs:2:11`.
+  test("a preload sets the switch in time for what the entry point loads, and a static import does not", async () => {
+    const printsTheFrame = `
+      ${firstFrame}
+      console.log(JSON.stringify(firstFrame(boom)));
+    `;
+    using dir = tempDir("own-source-map-switch-preload", {
+      ...withMap("required.cjs", "cjs"),
+      ...withMap("imported.mjs", "esm"),
+      "enable.cjs": `process.setSourceMapsEnabled(true);\n`,
+      "enable.mjs": `process.setSourceMapsEnabled(true);\n`,
+      "main.cjs": `const { boom } = require("./required.cjs");\n${printsTheFrame}`,
+      "main.mjs": `import { boom } from "./imported.mjs";\n${printsTheFrame}`,
+      "imports-enable.mjs": `import "./enable.mjs";\nimport { boom } from "./imported.mjs";\n${printsTheFrame}`,
+    });
+    const ways = [
+      ["--preload", "./enable.cjs", "main.cjs"],
+      ["-r", "./enable.cjs", "main.cjs"],
+      ["--import", "./enable.mjs", "main.mjs"],
+      ["imports-enable.mjs"],
+    ];
+    const results = await Promise.all(ways.map(args => run(String(dir), args)));
+    const prints = (frame: string) => ({ stdout: frame, stderr: "", exitCode: 0 });
+    expect(Object.fromEntries(ways.map((args, i) => [args.join(" "), printed(results[i])]))).toEqual({
+      "--preload ./enable.cjs main.cjs": prints(`at boom (<dir>/required.ts:${inOriginal.boom})`),
+      "-r ./enable.cjs main.cjs": prints(`at boom (<dir>/required.ts:${inOriginal.boom})`),
+      "--import ./enable.mjs main.mjs": prints(`at boom (<dir>/imported.ts:${inOriginal.boom})`),
+      "imports-enable.mjs": prints(`at boom (<dir>/imported.mjs:${transpiled.esm.boom})`),
+    });
+  });
+
   /** The lines that an error is printed under, when it is at `line:column` of `text`. */
   function preview(text: string, position: string) {
     const [line, column] = position.split(":").map(Number);
@@ -885,6 +1001,67 @@ describe.concurrent("a loaded file with its own source map", () => {
       },
       stderr: "",
       exitCode: 0,
+    });
+  });
+
+  // What `bun build --target=bun` makes starts with `// @bun`, and Bun does not transpile it again. Every reader of
+  // a position in it goes through the source map of the build, which Bun finds beside the file by its name, and the
+  // switch changes nothing. What is built for another target is a loaded file like any other: its comment counts.
+  // node v26.13.0 prints the same files and lines for the two that are built for it, with 9 as the column.
+  test("a // @bun file keeps the positions of its build, and a file built for Node.js is a loaded file", async () => {
+    using dir = tempDir("own-source-map-bun-build", {
+      "entry.ts": [
+        `type Erased = { x: number };`,
+        ``,
+        `function boom(): never {`,
+        `  throw new Error("kaboom");`,
+        `}`,
+        ``,
+        `const out: Record<string, unknown> = {};`,
+        `try {`,
+        `  boom();`,
+        `} catch (error) {`,
+        `  out["Error.stack"] = (error as Error).stack!.split("\\n")[1].trim();`,
+        `}`,
+        `Error.prepareStackTrace = (_, [site]) => site.getFileName() + ":" + site.getLineNumber();`,
+        `try {`,
+        `  boom();`,
+        `} catch (error) {`,
+        `  out["CallSite"] = (error as Error).stack;`,
+        `}`,
+        `console.log(JSON.stringify(out));`,
+        ``,
+      ].join("\n"),
+    });
+    // "external" writes the source map and no comment. "linked" writes both.
+    const made = {
+      "for-bun": { target: "bun", sourcemap: "external" },
+      "for-node": { target: "node", sourcemap: "linked" },
+      "for-node-without-a-comment": { target: "node", sourcemap: "external" },
+    } as const;
+    const cells = async (name: keyof typeof made) => {
+      await Bun.build({ entrypoints: [join(String(dir), "entry.ts")], outdir: join(String(dir), name), ...made[name] });
+      const results = await Promise.all([
+        run(String(dir), [`${name}/entry.js`]),
+        run(String(dir), ["--enable-source-maps", `${name}/entry.js`]),
+      ]);
+      return results.map(printed);
+    };
+    const prints = (stack: string, callSite: string) => ({
+      stdout: { "Error.stack": stack, "CallSite": callSite },
+      stderr: "",
+      exitCode: 0,
+    });
+    const inSource = prints("at boom (<dir>/entry.ts:4:13)", "<dir>/entry.ts:4");
+    const inOutput = (name: string) => prints(`at boom (<dir>/${name}/entry.js:3:13)`, `<dir>/${name}/entry.js:3`);
+    const [forBun, forNode, forNodeWithoutAComment] = await Promise.all(
+      (Object.keys(made) as (keyof typeof made)[]).map(cells),
+    );
+    // Each is [without the switch, with --enable-source-maps].
+    expect({ forBun, forNode, forNodeWithoutAComment }).toEqual({
+      forBun: [inSource, inSource],
+      forNode: [inOutput("for-node"), prints("at boom (<dir>/entry.ts:4:13)", "<dir>/for-node/entry.js:3")],
+      forNodeWithoutAComment: [inOutput("for-node-without-a-comment"), inOutput("for-node-without-a-comment")],
     });
   });
 
@@ -1505,6 +1682,28 @@ describe.concurrent("a loaded file with its own source map", () => {
     });
   });
 
+  // Bun collects once when the entry point has loaded. That collection reads the map here, in a program that asks
+  // for no collection and reads no stack before the file is gone. node v26.13.0 prints
+  // `at thrower (<dir>/make.js:2:37)`: only a read of `.stack` reads the map there.
+  test("the collection that Bun runs once the entry point has loaded reads the source map", async () => {
+    using dir = tempDir("own-source-map-collection-at-startup", {
+      ...madeUnread,
+      "main.cjs": `
+        const { make } = require("./make.js");
+        globalThis.errors = Array.from({ length: 8 }, () => make());
+        setImmediate(() => {
+          require("node:fs").rmSync("./make.js.map");
+          console.log(JSON.stringify([...new Set(errors.map(error => error.stack.split("\\n")[1].trim()))]));
+        });
+      `,
+    });
+    expect(printed(await run(String(dir), ["--enable-source-maps", "main.cjs"]))).toEqual({
+      stdout: ["at thrower (<dir>/make.ts:7:1)"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   // With an `Error.prepareStackTrace`, a read of the stack is in the loaded file: the function gets call sites. The
   // text that a collection makes for a stack nothing read stands in for that read.
   test("with an Error.prepareStackTrace, a stack that a collection formats is in the loaded file", async () => {
@@ -1685,6 +1884,77 @@ describe.concurrent("a loaded file with its own source map", () => {
     `);
   });
 
+  // A plugin gives Bun the text of a module. The comment of that text counts when the path of the module is the
+  // path of a file, and not for a module in another namespace.
+  test("the text that a plugin's onLoad returns is mapped for a file path, and not in another namespace", async () => {
+    const banner = 5;
+    const text = [
+      ...Array(banner).fill(`// banner`),
+      `export function boom() {`,
+      `  throw new Error("from the plugin");`,
+      `}`,
+    ];
+    // The line of the throw is line 2 of `app.original`.
+    const map = JSON.stringify({
+      version: 3,
+      sources: ["app.original"],
+      names: [],
+      mappings: lineMappings([...Array(banner).fill(1), 1, 2, 3]),
+    });
+    const contents = `${text.join("\n")}\n//# sourceMappingURL=${dataUrl(map)}\n`;
+    using dir = tempDir("own-source-map-plugin", {
+      ...withMap("plain.js"),
+      "app.src": `not JavaScript\n`,
+      "preload.ts": `
+        const contents = ${JSON.stringify(contents)};
+        Bun.plugin({
+          name: "gives text that has a sourceMappingURL comment",
+          setup(build) {
+            build.onLoad({ filter: /\\.src$/ }, () => ({ contents, loader: "js" }));
+            build.onResolve({ filter: /.*/, namespace: "virt" }, ({ path }) => ({ path, namespace: "virt" }));
+            build.onLoad({ filter: /.*/, namespace: "virt" }, () => ({ contents, loader: "js" }));
+            build.onLoad({ filter: /plain\\.js$/ }, async ({ path }) => ({
+              contents: await Bun.file(path).text(),
+              loader: "js",
+            }));
+          },
+        });
+      `,
+      "main.mjs": `
+        ${firstFrame}
+        const out = {};
+        out["a file path, text with an inline map"] = firstFrame((await import("./app.src")).boom);
+        out["another namespace, the same text"] = firstFrame((await import("virt:thing")).boom);
+        out["a file path, the text of the file"] = firstFrame((await import("./plain.js")).boom);
+        console.log(JSON.stringify(out));
+      `,
+    });
+    const [withTheFlag, without] = await Promise.all([
+      run(String(dir), ["--enable-source-maps", "--preload", "./preload.ts", "main.mjs"]),
+      run(String(dir), ["--preload", "./preload.ts", "main.mjs"]),
+    ]);
+    expect([printed(withTheFlag), printed(without)]).toEqual([
+      {
+        stdout: {
+          "a file path, text with an inline map": "at boom (<dir>/app.original:2:1)",
+          "another namespace, the same text": "at boom (virt:thing:7:13)",
+          "a file path, the text of the file": `at boom (<dir>/plain.ts:${inOriginal.boom})`,
+        },
+        stderr: "",
+        exitCode: 0,
+      },
+      {
+        stdout: {
+          "a file path, text with an inline map": "at boom (<dir>/app.src:7:13)",
+          "another namespace, the same text": "at boom (virt:thing:7:13)",
+          "a file path, the text of the file": `at boom (<dir>/plain.js:${transpiled.cjs.boom})`,
+        },
+        stderr: "",
+        exitCode: 0,
+      },
+    ]);
+  });
+
   // `%00` in a URL is a NUL in the path that the URL names.
   test("a NUL in the URL of the comment or in a source names no file", async () => {
     using dir = tempDir("own-source-map-nul", {
@@ -1749,6 +2019,118 @@ describe.concurrent("a loaded file with its own source map", () => {
       ],
       stderr: "",
       exitCode: 0,
+    });
+  });
+
+  // Bun maps the position that JavaScriptCore reports in the loaded file, which is not always in the segment of the
+  // map that the position of V8 is in. Each difference from node v26.13.0 is beside its line.
+  test("frames of a one-line bundle of two sources, and of a variable that is used once", async () => {
+    // The bundle that esbuild 0.28.2 makes of src/index.ts and src/config.ts, after terser 5.51.2 (compress, mangle,
+    // toplevel).
+    const bundle = [
+      `function r(){const r=function(r){const t=Number(r);if(!Number.isInteger(t))throw new RangeError("not a port: "+r);return t}("eighty");return r+1}try{r()}catch(r){console.log(r.stack)}"uncaught"===process.argv[2]&&r();`,
+      `//# sourceMappingURL=index.js.map`,
+      ``,
+    ].join("\n");
+    const bundleMap = JSON.stringify({
+      version: 3,
+      names: [
+        "portFromEnv",
+        "port",
+        "text",
+        "value",
+        "Number",
+        "isInteger",
+        "RangeError",
+        "parsePort",
+        "e",
+        "console",
+        "log",
+        "stack",
+        "process",
+        "argv",
+      ],
+      sources: ["src/index.ts", "src/config.ts"],
+      mappings:
+        "AAEA,SAASA,IACP,MACMC,ECaD,SAAmBC,GACxB,MAAMC,EAAQC,OAAOF,GACrB,IAAKE,OAAOC,UAAUF,GACpB,MAAM,IAAIG,WAAW,eAAiBJ,GAExC,OAAOC,CACT,CDnBeI,CADA,UAEb,OAAON,EAAO,CAChB,CAEA,IACED,GACF,OAASQ,GACPC,QAAQC,IAAKF,EAAYG,MAC3B,CACwB,aAApBC,QAAQC,KAAK,IAAmBb",
+      ignoreList: [],
+    });
+    // What tsc 6.0.2 (--module commonjs --sourceMap) makes of a function that reads a variable that is used once.
+    const lib = [
+      `"use strict";`,
+      `Object.defineProperty(exports, "__esModule", { value: true });`,
+      `exports.nameOf = nameOf;`,
+      `function findUser(id) {`,
+      `    return id === 1 ? { id } : undefined;`,
+      `}`,
+      `function nameOf(id) {`,
+      `    const user = findUser(id);`,
+      `    return user.profile.name;`,
+      `}`,
+      `//# sourceMappingURL=lib.js.map`,
+    ].join("\n");
+    const libMap = JSON.stringify({
+      version: 3,
+      file: "lib.js",
+      sourceRoot: "",
+      sources: ["lib.ts"],
+      names: [],
+      mappings:
+        ";;AAMA,wBAGC;AAPD,SAAS,QAAQ,CAAC,EAAU;IAC1B,OAAO,EAAE,KAAK,CAAC,CAAC,CAAC,CAAC,EAAE,EAAE,EAAE,CAAC,CAAC,CAAC,SAAS,CAAC;AACvC,CAAC;AAED,SAAgB,MAAM,CAAC,EAAU;IAC/B,MAAM,IAAI,GAAG,QAAQ,CAAC,EAAE,CAAC,CAAC;IAC1B,OAAO,IAAI,CAAC,OAAO,CAAC,IAAI,CAAC;AAC3B,CAAC",
+    });
+    using dir = tempDir("own-source-map-minified", {
+      "index.js": bundle,
+      "index.js.map": bundleMap,
+      "lib.js": lib,
+      "lib.js.map": libMap,
+      "main.cjs": `try { require("./lib.js").nameOf(2); } catch (e) { console.log(e.stack.split("\\n")[1]); }`,
+    });
+    const [bundled, uncaught, read, readWithInspector] = await Promise.all([
+      run(String(dir), ["--enable-source-maps", "index.js"]),
+      run(String(dir), ["--enable-source-maps", "index.js", "uncaught"]),
+      run(String(dir), ["--enable-source-maps", "main.cjs"]),
+      run(String(dir), ["--inspect=127.0.0.1:0", "--enable-source-maps", "main.cjs"]),
+    ]);
+    const frames = (text: string) =>
+      text
+        .split("\n")
+        .filter(line => /^\s*at /.test(line))
+        .map(line => line.trim());
+    expect({
+      bundled: { stdout: frames(bundled.stdout), stderr: bundled.stderr, exitCode: bundled.exitCode },
+      // What is printed for the error that nothing catches, up to the empty line after its frames.
+      uncaught: { stderr: uncaught.stderr.split("\n\n")[0].split("\n"), exitCode: uncaught.exitCode },
+      read: { stdout: frames(read.stdout), stderr: read.stderr, exitCode: read.exitCode },
+      // The inspector says on stderr where it listens.
+      readWithInspector: { stdout: frames(readWithInspector.stdout), exitCode: readWithInspector.exitCode },
+    }).toEqual({
+      bundled: {
+        stdout: [
+          // node v26.13.0: at parsePort (<dir>/src/config.ts:21:11)
+          "at <anonymous> (<dir>/src/config.ts:21:15)",
+          // node v26.13.0: at portFromEnv (<dir>/src/index.ts:5:16). Bun is at 1:122 of index.js and V8 at 1:124.
+          "at r (<dir>/src/config.ts:23:10)",
+          // node v26.13.0: at Object.<anonymous> (<dir>/src/index.ts:10:3)
+          "at <dir>/src/index.ts:10:3",
+        ],
+        stderr: "",
+        exitCode: 0,
+      },
+      // The map has no `sourcesContent` and no source is on the disk, so no source lines are above the message.
+      // node v26.13.0 prints line 1 of index.js there. Its frames differ from these as they do above.
+      uncaught: {
+        stderr: [
+          "RangeError: not a port: eighty",
+          "      at <anonymous> (<dir>/src/config.ts:21:15)",
+          "      at r (<dir>/src/config.ts:23:10)",
+          "      at <dir>/src/index.ts:14:37",
+        ],
+        exitCode: 1,
+      },
+      // node v26.13.0: at Object.nameOf (<dir>/lib.ts:9:15). Bun's transpiler puts `findUser(id)` where `user` is read.
+      read: { stdout: ["at nameOf (<dir>/lib.ts:8:27)"], stderr: "", exitCode: 0 },
+      // It does not do that while a debugger listens. node v26.13.0: at Object.nameOf (<dir>/lib.ts:9:15)
+      readWithInspector: { stdout: ["at nameOf (<dir>/lib.ts:9:10)"], exitCode: 0 },
     });
   });
 

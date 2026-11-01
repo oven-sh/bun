@@ -223,14 +223,19 @@ bun --enable-source-maps dist/index.js
 
 The switch works as in Node.js, with these differences:
 
-- Bun maps the position that it reports in the loaded file. That position can have another column than the one Node.js reports, and sometimes another line.
+- Bun maps the position that it reports in the loaded file. That position can have another column than the one Node.js reports, and sometimes another line. In a minified bundle, that position can map to another source file than the one Node.js reports.
 - A mapped stack frame keeps the function name of the loaded file.
 - A frame on a line that the source map has no mapping for stays in the loaded file.
+- When nothing has the text of the original source, Bun prints no source lines above the error. Node.js prints the line of the loaded file.
 - `CallSite` objects, `util.getCallSites()`, code coverage and the locations of tests keep the positions of the loaded file.
 - `module.findSourceMap()` returns `undefined`.
 - Code from `eval` and `new Function` is not mapped.
+- Bun does not map a module that a `require.extensions` handler compiles itself with `module._compile()`.
+- Bun maps a module from a plugin's `onLoad` through an inline source map only when the path of the module is a file path.
 - Bun does not read an index map (a source map with `sections`).
-- The switch does not change the positions of the modules in a bundle or in a [standalone executable](/compiler/executables). A file that such a program loads from the disk is mapped.
+- A module that an `import()` reaches through a static import gets the switch as it is when Bun loads that module, not as it was at the `import()` call.
+- A garbage collection can read a source map before your program reads a stack. If you change a source map while the program runs, the change can apply from another moment than in Node.js.
+- A file that `bun build --target=bun` built keeps the positions that its own build gave it, with or without the switch. So does a [standalone executable](/compiler/executables). Bun maps any other built file like a file from another tool, also the output of `bun build --target=node` and a file that an executable loads from the disk.
 - Bun has no `--no-enable-source-maps` flag and does not read `NODE_OPTIONS`.
 
 ### Syntax-highlighted source code preview

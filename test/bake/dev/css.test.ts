@@ -1,7 +1,7 @@
 // CSS tests concern bundling bugs with CSS files
 import { expect } from "bun:test";
 import assert from "node:assert";
-import { devTest, emptyHtmlFile, imageFixtures } from "../bake-harness";
+import { type Dev, devTest, emptyHtmlFile, imageFixtures } from "../bake-harness";
 
 devTest("css file with syntax error does not kill old styles", {
   files: {
@@ -808,6 +808,232 @@ devTest("css import before create project relative", {
     assert(backgroundImage);
     await dev.fetch(extractCssUrl(backgroundImage)).expectFile(imageFixtures.bun);
     await dev.fetch("/").expect.toContain("HELLO");
+  },
+});
+// Two `[serve.static]` plugins: one that declines an import, and one that answers with the path.
+// Each callback prints "onResolve <specifier>".
+const resolvePlugin = {
+  "bunfig.toml": `
+    [serve.static]
+    plugins = ["./plugin.ts"]
+  `,
+  "plugin.ts": `
+    import path from "node:path";
+    export default {
+      name: "resolve-some",
+      setup(build) {
+        build.onResolve({ filter: /declined\\.\\w+$/ }, args => {
+          console.log("onResolve " + args.path);
+        });
+        build.onResolve({ filter: /answered\\.\\w+$/ }, args => {
+          console.log("onResolve " + args.path);
+          return { path: path.resolve(path.dirname(args.importer), args.path) };
+        });
+      },
+    };
+  `,
+};
+// The next `count` calls that `resolvePlugin` printed, sorted.
+const onResolveCalls = async (dev: Dev, count: number) => {
+  const calls: string[] = [];
+  while (calls.length < count) calls.push((await dev.output.waitForLine(/^onResolve (.+)$/))[1]);
+  return calls.sort();
+};
+devTest("stylesheet that a script imports through an onResolve plugin comes back after a failed first build", {
+  files: {
+    ...resolvePlugin,
+    "index.html": emptyHtmlFile({
+      scripts: ["./app.ts"],
+      body: "<h1>Hello</h1>",
+    }),
+    "app.ts": `
+      import "./declined.css";
+      import "./answered.css";
+      console.log("app");
+    `,
+    "declined.css": `
+      h1 {
+        color: red;
+      }}
+    `,
+    "answered.css": `
+      body {
+        color: red;
+      }}
+    `,
+  },
+  async test(dev) {
+    expect((await dev.fetch("/")).status).toBe(500);
+    expect(await onResolveCalls(dev, 2)).toEqual(["./answered.css", "./declined.css"]);
+    await dev.write("declined.css", `h1 { color: red; }`, { errors: null });
+    await dev.write("answered.css", `body { color: blue; }`);
+    // previously: the page had no stylesheet
+    await using c = await dev.client("/");
+    await c.expectMessage("app");
+    await c.style("h1").color.expect.toBe("red");
+    await c.style("body").color.expect.toBe("#00f");
+  },
+});
+devTest("stylesheet imported through an onResolve plugin follows its edits", {
+  files: {
+    ...resolvePlugin,
+    "index.html": emptyHtmlFile({
+      styles: ["./main.css"],
+      body: "<h1>Hello</h1>",
+    }),
+    "main.css": `
+      @import "./declined.css";
+      @import "./answered.css";
+    `,
+    "declined.css": `
+      h1 {
+        color: red;
+      }
+    `,
+    "answered.css": `
+      body {
+        color: red;
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.style("h1").color.expect.toBe("red");
+    await c.style("body").color.expect.toBe("red");
+    expect(await onResolveCalls(dev, 2)).toEqual(["./answered.css", "./declined.css"]);
+    // previously: the edit did not reach the page
+    await dev.write("declined.css", `h1 { color: blue; }`);
+    await c.style("h1").color.expect.toBe("#00f");
+    await dev.write("answered.css", `body { color: blue; }`);
+    await c.style("body").color.expect.toBe("#00f");
+  },
+});
+// The dev server makes the stylesheets of a plugin whose name has "tailwind" in it entry points of every
+// bundle. The plugin has the shape of bun-plugin-tailwind: one onLoad for css files, and no onResolve.
+devTest("stylesheet of a tailwind plugin keeps its build error and comes back once fixed", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./tailwind-like.ts"]
+    `,
+    "tailwind-like.ts": `
+      export default {
+        name: "tailwind-like",
+        setup(build) {
+          build.onLoad({ filter: /\\.css$/ }, async args => ({
+            contents: "/*! tailwindcss */\\n" + (await Bun.file(args.path).text()),
+            loader: "css",
+          }));
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({
+      styles: ["./styles.css"],
+      body: "<h1>Hello</h1>",
+    }),
+    "styles.css": `
+      h1 {
+        color: red;
+      }
+    `,
+  },
+  async test(dev) {
+    // The dev server takes a stylesheet for a tailwind file when the first bytes of its output have "tailwind" in them.
+    const href = (await dev.fetch("/").text()).match(/<link rel="stylesheet" href="([^"]+)"/)?.[1];
+    expect(href).toBeString();
+    await dev.fetch(href!).expect.toInclude("tailwindcss");
+    await dev.write("styles.css", `h1 { color: red; }}`);
+    expect((await dev.fetch("/")).status).toBe(500);
+    // previously: 200, and the page had no stylesheet from here on
+    expect((await dev.fetch("/")).status).toBe(500);
+    await dev.write("styles.css", `h1 { color: blue; }`);
+    await using c = await dev.client("/");
+    await c.style("h1").color.expect.toBe("#00f");
+  },
+});
+// Build errors of a module that a plugin loads from its own namespace. The plugin keeps the import as
+// written as the path of the module. "NAME" stands for a name that is different in each case.
+const virtualModuleErrors: Record<string, { importer: "css" | "ts" | "html"; text: string; onLoad: string }> = {
+  "a syntax error in a stylesheet": {
+    importer: "css",
+    text: `@import "NAME.css";`,
+    onLoad: `() => ({ contents: "h1 { color: red; }}", loader: "css" })`,
+  },
+  "a syntax error in a stylesheet that a script imports": {
+    importer: "ts",
+    text: `import "NAME.css";`,
+    onLoad: `() => ({ contents: "h1 { color: red; }}", loader: "css" })`,
+  },
+  "a syntax error in a stylesheet that the html file links": {
+    importer: "html",
+    text: emptyHtmlFile({ styles: ["NAME.css"] }),
+    onLoad: `() => ({ contents: "h1 { color: red; }}", loader: "css" })`,
+  },
+  "a url() in a stylesheet that does not resolve": {
+    importer: "css",
+    text: `@import "NAME.css";`,
+    onLoad: `() => ({ contents: 'h1 { background: url("./missing.png"); }', loader: "css" })`,
+  },
+  "a url() in a stylesheet that the plugin declines and that does not resolve": {
+    importer: "css",
+    text: `@import "NAME.css";`,
+    onLoad: `() => ({ contents: 'h1 { background: url("./declined.png"); }', loader: "css" })`,
+  },
+  "a stylesheet that imports a script": {
+    importer: "css",
+    text: `@import "NAME.css";`,
+    onLoad: `args =>
+      args.path.endsWith(".ts")
+        ? { contents: "export {};", loader: "ts" }
+        : { contents: '@import "' + args.path.replace(/css$/, "ts") + '";', loader: "css" }`,
+  },
+  "a syntax error in a toml file that a stylesheet uses": {
+    importer: "css",
+    text: `h1 { background: url("NAME.toml"); }`,
+    onLoad: `() => ({ contents: "key = ", loader: "toml" })`,
+  },
+};
+// The second load bundles the route again. It answers 500 only if the build error is on a module that the
+// page still imports, and the dev server files the error of a module that is not a file under its path as written.
+devTest("page keeps the build error of a module that a plugin loads from a namespace", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./virtual-modules.ts"]
+    `,
+    "virtual-modules.ts": `
+      const onLoad = [${Object.values(virtualModuleErrors)
+        .map(({ onLoad }) => onLoad)
+        .join(", ")}];
+      export default {
+        name: "virtual-modules",
+        setup(build) {
+          build.onResolve({ filter: /^virtual\\./ }, args => ({ path: args.path, namespace: "virtual" }));
+          build.onResolve({ filter: /^\\.\\/declined\\./ }, () => undefined);
+          build.onLoad({ filter: /.*/, namespace: "virtual" }, args => onLoad[args.path.split(".")[1]](args));
+        },
+      };
+    `,
+    ...Object.fromEntries(
+      Object.values(virtualModuleErrors).flatMap(({ importer, text }, n) => {
+        text = text.replace("NAME", `virtual.${n}`);
+        if (importer === "html") return [[`page-${n}.html`, text]];
+        return [
+          [
+            `page-${n}.html`,
+            emptyHtmlFile({ [importer === "css" ? "styles" : "scripts"]: [`./entry-${n}.${importer}`] }),
+          ],
+          [`entry-${n}.${importer}`, text],
+        ];
+      }),
+    ),
+  },
+  async test(dev) {
+    const statuses: Record<string, number[]> = {};
+    for (const [n, name] of Object.keys(virtualModuleErrors).entries()) {
+      statuses[name] = [(await dev.fetch(`/page-${n}`)).status, (await dev.fetch(`/page-${n}`)).status];
+    }
+    expect(statuses).toEqual(Object.fromEntries(Object.keys(virtualModuleErrors).map(name => [name, [500, 500]])));
   },
 });
 

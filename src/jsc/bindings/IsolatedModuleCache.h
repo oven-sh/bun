@@ -81,9 +81,9 @@ public:
     static void evict(JSC::VM&, const WTF::String& key);
     static void clear(JSC::VM&);
 
-    // For a load that Module._extensions of the current global answers: every key of the path of `key` is evicted when `bun test --isolate` retires that global.
-    static void evictWhenGlobalIsRetired(JSC::VM&, const WTF::String& key);
-    static void evictKeysOfRetiredGlobal(JSC::VM&);
+    // For a load that Module._extensions answers: every key of the path of `key` is evicted when the running test file ends.
+    static void evictWhenTestFileEnds(JSC::VM&, const WTF::String& key);
+    static void evictPathsOfFinishedTestFile(JSC::VM&);
 };
 
 // bun:internal-for-testing — returns the cached provider's sourceType name

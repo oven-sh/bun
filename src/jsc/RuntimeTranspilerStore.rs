@@ -797,7 +797,7 @@ impl TranspilerJob {
         if let Some(iw) = import_watcher {
             // Never read through the watchlist's stored fd; see
             // `ImportWatcher::snapshot_package_json`.
-            package_json = iw.snapshot_package_json(hash);
+            package_json = iw.snapshot_package_json(hash, path.text);
         }
 
         // this should be a cheap lookup because 24 bytes == 8 * 3 so it's read 3 machine words

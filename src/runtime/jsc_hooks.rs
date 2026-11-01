@@ -2493,7 +2493,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     // watchlist's stored fd; see
                     // `ImportWatcher::snapshot_package_json`.
                     let iw = unsafe { &*import_watcher };
-                    package_json = iw.snapshot_package_json(hash);
+                    package_json = iw.snapshot_package_json(hash, path.text);
                 }
             }
 

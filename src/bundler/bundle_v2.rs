@@ -5066,7 +5066,7 @@ pub mod bv2_impl {
                                 this.bun_watcher_mut().unwrap().add_file::<true>(
                                     fd,
                                     &load.path,
-                                    bun_wyhash::hash(load.path.as_ref()) as u32,
+                                    bun_watcher::Watcher::get_hash(load.path.as_ref()),
                                     bun_sys::Fd::INVALID,
                                     None,
                                 ),
@@ -7590,7 +7590,7 @@ pub mod bv2_impl {
                     let mut adopted = false;
                     if this.should_add_watcher(source_path) {
                         let dir_fd = parse_result.watcher_data.dir_fd;
-                        let hash = bun_wyhash::hash(source_path) as u32;
+                        let hash = bun_watcher::Watcher::get_hash(source_path);
                         let bun_watcher = this.bun_watcher_mut().unwrap();
                         // The watcher keeps the path past this bundle; borrow it
                         // only when it is interned for the process lifetime

@@ -1574,7 +1574,7 @@ describe("crypto.getRandomValues argument types", () => {
       expect.objectContaining({
         name: "TypeError",
         code: "ERR_MISSING_ARGS",
-        message: "Failed to execute 'getRandomValues' on 'Crypto': 1 argument required, but only 0 present.",
+        message: 'The "array" argument must be specified',
       }),
     );
   });

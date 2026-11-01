@@ -59,7 +59,7 @@ export const Crypto = b.class({
   construct: "illegal",
   proto: {
     /** A view that is not an integer typed array throws WebCrypto's `TypeMismatchError`, which no type here throws. */
-    getRandomValues: { args: { array: b.any.ifPassed }, returns: b.any, capability: "js", throws: true, length: 1 },
+    getRandomValues: { args: { array: b.any }, returns: b.any, capability: "js", throws: true, requiredArguments: 1 },
     randomUUID: { returns: b.string },
     timingSafeEqual: equal,
   },

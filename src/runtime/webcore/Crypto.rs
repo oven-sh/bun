@@ -13,20 +13,9 @@ impl Crypto {
     pub(crate) fn get_random_values<'a>(
         &self,
         cx: &mut JsScope<'a>,
-        array: Option<JsLocal<'a>>,
+        array: JsLocal<'a>,
     ) -> bindgen::Result<'a, JsLocal<'a>> {
         let global = cx.global();
-        let Some(array) = array else {
-            return Err(global
-                .err(
-                    bun_jsc::ErrorCode::MISSING_ARGS,
-                    format_args!(
-                        "Failed to execute 'getRandomValues' on 'Crypto': 1 argument required, but only 0 present."
-                    ),
-                )
-                .throw()
-                .into());
-        };
         // Web IDL's conversion to an ArrayBufferView that is neither [AllowShared] nor [AllowResizable].
         let view = array
             .to_js()

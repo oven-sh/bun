@@ -1,7 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { existsSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
+import { describe, test } from "../aot/harness/declare";
 import { run } from "../aot/harness/run";
 
 const files = {

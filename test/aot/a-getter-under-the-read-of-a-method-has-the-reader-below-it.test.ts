@@ -2,11 +2,12 @@
 // comes first: a getter that runs under it still has f below it. Where f is inlined into a hot loop and other classes of the program have a `method`, the read and
 // the call are one operation with one return address, and a stack trace took the read for the call: f was missing. The stored program shows it only beside these
 // two others, and which programs share a build is dealt anew whenever a program comes: so the three are built together here.
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
 import { rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { dirname, join } from "path";
 import { built, spawned, withoutDebugInformation } from "./harness/commands";
+import { afterAll } from "./harness/declare";
 import { compileCommand } from "./harness/flags";
 import { describe, test } from "./supported";
 

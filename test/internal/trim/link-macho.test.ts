@@ -1,10 +1,11 @@
-import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { expect, setDefaultTimeout } from "bun:test";
 import { tempDir } from "harness";
 import { copyFileSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { reach } from "../../../scripts/build/trim/graph.ts";
 import { readMachOGraph } from "../../../scripts/build/trim/macho-graph.ts";
 import { foldedEntryPointsHeading } from "../../../scripts/build/trim/report.ts";
+import { describe, test } from "../../aot/harness/declare";
 import {
   addOne,
   asCStrings,

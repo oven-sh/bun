@@ -10,12 +10,13 @@
 //
 // A race passes "the same bytes at 1, 16 and 64 threads" 97 to 99 times of 100. What one run of this file lets through the next ones catch, and
 // AOT_REPEATED_BUILDS asks for more: a test of this file that fails now and then is a race, never a flake.
-import { afterAll, describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { mkdirSync, rmSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { availableParallelism } from "os";
 import { dirname, join } from "path";
 import { spawned, unsupported, withoutDebugInformation } from "./harness/commands";
+import { afterAll, describe, test } from "./harness/declare";
 import { withThreads } from "./harness/flags";
 import { wanted } from "./harness/shares";
 

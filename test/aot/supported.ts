@@ -1,12 +1,9 @@
 // `test`, `describe` and `beforeAll` of bun:test for a file whose tests all need `--aot`. Where the Bun under test refuses the
 // flag (harness/compiler.ts asks it, and says so on stderr) every test is skipped, whatever is chained to it, and `beforeAll` does
-// nothing.
-import {
-  beforeAll as beforeAllAnywhere,
-  describe as describeAnywhere,
-  test as testAnywhere,
-} from "bun:test";
+// nothing. Where CI leaves the file out (harness/every-build.ts) they declare nothing.
+import { describe as describeOfBun, test as testOfBun } from "bun:test";
 import { unsupported } from "./harness/compiler";
+import { beforeAll as beforeAllAnywhere, describe as describeAnywhere, test as testAnywhere } from "./harness/declare";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
 
 export { unsupported };
@@ -27,8 +24,8 @@ export function alwaysSkipped<T extends object>(skipped: T): T {
   });
 }
 
-export const test = unsupported ? alwaysSkipped(testAnywhere.skip) : testAnywhere;
-export const describe = unsupported ? alwaysSkipped(describeAnywhere.skip) : describeAnywhere;
+export const test = unsupported ? alwaysSkipped(testOfBun.skip) : testAnywhere;
+export const describe = unsupported ? alwaysSkipped(describeOfBun.skip) : describeAnywhere;
 export const beforeAll: typeof beforeAllAnywhere = unsupported ? () => {} : beforeAllAnywhere;
 
 const rowsNotMetYet = new WeakSet<object>();

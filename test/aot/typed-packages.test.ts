@@ -1,7 +1,8 @@
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
 import { appendFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
+import { afterAll } from "./harness/declare";
 import { installSmallRenderer } from "./typed-packages/small-renderer/install";
 import { describe, test } from "./with-compiler";
 

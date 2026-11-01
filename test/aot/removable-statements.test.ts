@@ -3,10 +3,11 @@
 // src/aot/compile/removable/rows.tsv, also says what the bundler does with each of them. This test holds those two columns against the
 // bundler: every program is a module that the entry point imports for its side effects only, and the statement is gone from the output
 // or it is not.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { test } from "./harness/declare";
 
 type Row = { line: number; plain: string; minified: string; path: string; mark: string; source: string };
 

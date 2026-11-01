@@ -1,8 +1,9 @@
 // An executable built with --compile-exec-argv answers with --aot, and with --aot --trim, as it does without.
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv } from "harness";
 import { canTrim } from "../bundler/compile-trim-features";
 import { unsupported } from "./harness/compiler";
+import { describe, test } from "./harness/declare";
 import { run } from "./harness/run";
 import { sharedBuilds } from "./harness/shared-builds";
 

@@ -5,11 +5,12 @@
 // under the kOutHeaders symbol and the number of arguments of the emitResponseFinished tick: changing one means updating it. A
 // program that looks under the symbol finds the map, whichever form the headers had. `bun run` evaluates another text of node:http,
 // which has none of the three.
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fixture, measure, stacks } from "../js/node/http/node-http-fast-path-coverage";
+import { afterAll } from "./harness/declare";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { beforeAll, describe, test } from "./supported";

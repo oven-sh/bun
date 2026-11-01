@@ -1,6 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { built, slot, spawned, unsupported } from "./harness/commands";
+import { describe, test } from "./harness/declare";
 
 const program = `class Counter {
   count = 0;

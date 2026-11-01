@@ -1,9 +1,10 @@
 // A reading of ./measure-idioms.ts is what a long run executes over a short one, divided by the turns between them. Compiled code takes a loop of over 2 ** 20 turns through a copy of it, all of its
 // turns. With 4,000,000 turns planned, the short run took the loop and the long run the copy: a copy of 11 instructions a turn for the loop's 8 read 12.
 // The program here is arithmetic, so this needs no counter of the processor.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { readFileSync } from "fs";
 import { join } from "path";
+import { test } from "../harness/declare";
 import { fewestTurnsThatTakeTheCopy, mostTurnsOfLoopWithoutCopy, runsOfReading } from "./measure-idioms";
 
 /** `inFront` turns stand in front of the loop, each at the price of a turn of the loop. The copy is for over 2 ** 20 turns that are left. */

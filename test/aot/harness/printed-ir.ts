@@ -3,7 +3,8 @@
 // shell/tools.ts says where testaot is looked for.
 //
 // `test` and `describe` are those of ../supported.ts, and skip where there is no testaot either.
-import { describe as describeAnywhere, expect, test as testAnywhere } from "bun:test";
+import { describe as describeOfBun, expect, test as testOfBun } from "bun:test";
+import { describe as describeAnywhere, test as testAnywhere } from "./declare";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { spawned } from "./commands";
@@ -34,8 +35,8 @@ const whySkipped =
     : "there is no testaot: not in $TESTAOT, not beside the Bun under test, not in build/release-local or build/release");
 if (!unsupported && whySkipped) console.error(`SKIPPED: the tests that read IR: ${whySkipped}`);
 
-export const test = whySkipped ? alwaysSkipped(testAnywhere.skip) : testAnywhere;
-export const describe = whySkipped ? alwaysSkipped(describeAnywhere.skip) : describeAnywhere;
+export const test = whySkipped ? alwaysSkipped(testOfBun.skip) : testAnywhere;
+export const describe = whySkipped ? alwaysSkipped(describeOfBun.skip) : describeAnywhere;
 
 /** For the command line of the build whose IR `printIR` is asked for, with the same folder. */
 export const writesProgramInto = (folder: string) => withProgramOutput(join(folder, programFile));

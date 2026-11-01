@@ -2,7 +2,8 @@
 // Each program prints what it gets from the packages and ends with DONE.
 // An executable built with --aot prints what plain Bun prints, also where the project no longer lies.
 // The programs of a file are built and run side by side. The project is moved away while nobody else needs it.
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
+import { afterAll } from "../harness/declare";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { cpSync, mkdirSync, readdirSync, renameSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";

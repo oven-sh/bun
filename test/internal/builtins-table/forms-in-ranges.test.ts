@@ -1,7 +1,8 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import type { MemberDeclaration, SourcedDeclaration } from "../../../src/codegen/builtins/declarations.ts";
 import * as b from "../../../src/codegen/builtins/lib.ts";
 import { engineFile } from "../../../src/codegen/engine-directory.ts";
+import { test } from "../../aot/harness/declare";
 
 const {
   declareFormsInRanges,

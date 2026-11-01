@@ -1,8 +1,9 @@
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
 import { readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, spawned } from "./harness/commands";
+import { afterAll } from "./harness/declare";
 import { compileCommand } from "./harness/flags";
 import { withoutDebugInformation } from "./harness/without-debug-information";
 import { testaot } from "./shell/tools";

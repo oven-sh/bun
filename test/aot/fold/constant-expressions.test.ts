@@ -1,6 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { readFileSync } from "fs";
 import { join } from "path";
+import { describe, test } from "../harness/declare";
 
 function matchesRow(kind: string, value: string, got: unknown): boolean {
   switch (kind) {

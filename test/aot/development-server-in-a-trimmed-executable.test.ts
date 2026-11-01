@@ -1,11 +1,12 @@
 // Bun.serve starts the development server, which bundles files from the disk when it runs and runs them beside the program. Where
 // the compiler sees `app`, the world is open, and the server answers as in the whole executable. Where it does not see the options
 // the call throws an EvalError, whole or trimmed: a server whose options nobody follows would open the world of every such program.
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { canTrim } from "../bundler/compile-trim-features";
 import { slot, unsupported } from "./harness/commands";
+import { describe, test } from "./harness/declare";
 import { withoutDebugInformation } from "./harness/without-debug-information";
 
 const framework = `{

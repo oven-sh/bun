@@ -1,6 +1,7 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { test } from "./harness/declare";
 
 const nameOfExecutable = isWindows ? "executable.exe" : "executable";
 

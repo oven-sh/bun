@@ -1,10 +1,11 @@
 // One parser reads BUN_OPTIONS and --compile-exec-argv, and compile-trim-bun-options.test.ts takes every form of every option through it.
 // Here is what the build alone does: it reads --compile-exec-argv, keeps what each option needs, and refuses what no executable can do.
-import { afterAll, describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { tempDirWithBunTypes as tempDir } from "harness";
 import { realpathSync } from "node:fs";
 import { join } from "node:path";
 import { unsupported } from "../aot/harness/compiler";
+import { afterAll, describe, test } from "../aot/harness/declare";
 import { canTrim } from "./compile-trim-features";
 import {
   built,

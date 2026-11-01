@@ -1,8 +1,9 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { typeOfPropertyWithoutWrittenType } from "../../../src/codegen/builtins/build-overloads.ts";
 import * as b from "../../../src/codegen/builtins/lib.ts";
 import type { ModelBuiltin, ModelName, NameKind } from "../../../src/codegen/builtins/model.ts";
 import type { BuiltinKind } from "../../../src/codegen/builtins/vocabulary.ts";
+import { test } from "../../aot/harness/declare";
 
 const named = (text: string, kind: NameKind = "Text") => ({ text, kind }) as ModelName;
 const heldBy = (kind: BuiltinKind | null) => (kind === null ? null : ({ kind } as ModelBuiltin));

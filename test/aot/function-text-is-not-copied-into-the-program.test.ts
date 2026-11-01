@@ -1,7 +1,8 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { test } from "./harness/declare";
 import { run } from "./harness/run";
 
 const padding = `/* ${"x".repeat(1 << 20)} */`;

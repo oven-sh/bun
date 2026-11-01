@@ -1,5 +1,6 @@
 // What ./engine-tests.test.ts and the tests beside it share to start `testaot` and `jsc`. ./engine/ runs the engine's own tests.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "./harness/declare";
 import { existsSync } from "fs";
 import { isASAN, isDebug, isWindows } from "harness";
 import { dirname, join } from "path";

@@ -1,9 +1,10 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { crateOf } from "../../../scripts/build/codegen.ts";
 import { globAllSources } from "../../../scripts/glob-sources.ts";
+import { test } from "../../aot/harness/declare";
 import { run } from "../../aot/harness/run";
 import { engineDirectory, engineFiles as generated } from "./engine-files.ts";
 

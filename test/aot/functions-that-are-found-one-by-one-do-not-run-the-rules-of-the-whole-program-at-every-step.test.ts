@@ -2,11 +2,12 @@
 // That call runs once for each function, so the flow analysis lets it wait until nothing else is due, and in this program nothing else is due at every step.
 // Whatever waited beside it was let go with it: the few statements that stand for the whole program among them, and each run of those looks at every built-in
 // that the program uses and at all that has escaped. They ran several times for each function of the row. They go on waiting now while anything else can run.
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 import { readBuildReport } from "./harness/build-report";
 import { unsupported } from "./harness/compiler";
+import { describe, test } from "./harness/declare";
 import { withReport } from "./harness/flags";
 import { run } from "./harness/run";
 import { sharedBuilds } from "./harness/shared-builds";

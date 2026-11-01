@@ -1,6 +1,7 @@
-import { afterAll, expect, setDefaultTimeout } from "bun:test";
+import { expect, setDefaultTimeout } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { afterAll } from "./harness/declare";
 import { run as runProcess } from "./harness/run";
 import { beforeAll, describe, test } from "./supported";
 

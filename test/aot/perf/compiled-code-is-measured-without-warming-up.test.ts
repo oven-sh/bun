@@ -1,7 +1,8 @@
 // The plan of ./measure-idioms.ts for a measurement that runs nothing under the JIT. Arithmetic: it needs no counter of the processor.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { readFileSync } from "fs";
 import { join } from "path";
+import { test } from "../harness/declare";
 import { turnsOfCallThatWarmsUp } from "./measure-idioms";
 
 const calls = Number(

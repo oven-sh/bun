@@ -1,7 +1,8 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { mayRefuseValueBeforeConversion } from "../../../src/codegen/builtins/build-overloads.ts";
 import type { ModelType } from "../../../src/codegen/builtins/model.ts";
 import type { Conversion } from "../../../src/codegen/builtins/vocabulary.ts";
+import { test } from "../../aot/harness/declare";
 
 const converted = (...conversions: Conversion[]) => conversions.map(conversion => ({ conversion, admitted: null }));
 

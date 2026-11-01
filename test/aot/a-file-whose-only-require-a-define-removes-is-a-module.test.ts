@@ -1,9 +1,10 @@
 // A file without import or export is CommonJS if it uses require, module, exports or the like, and an ES module otherwise.
 // `bun run --define` decides that after it has put the values in and removed the arms that they rule out. So does an executable.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { spawned, unsupported } from "./harness/commands";
+import { test } from "./harness/declare";
 
 const flags = [
   `--define=process.env.NODE_ENV="production"`,

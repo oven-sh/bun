@@ -1,7 +1,8 @@
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { cpSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { afterAll } from "../harness/declare";
 import { beforeAll, test } from "../supported";
 import { traceCallsAndReturns, whyTracingIsUnavailable } from "./trace-calls-and-returns";
 

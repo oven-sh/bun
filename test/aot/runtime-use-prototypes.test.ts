@@ -1,6 +1,7 @@
 // The members of a host prototype are enumerable, so a program that holds the prototype can copy them without naming one, and call
 // a copy under a key that nobody knows. `image` of Blob.prototype is the probe: it is the only use of the feature Image here.
-import { describe, expect } from "bun:test";
+import { expect } from "bun:test";
+import { describe } from "./harness/declare";
 import { closed, completeness, retainsFeature } from "./runtime-use-expectations";
 import { of } from "./runtime-use-harness";
 import { test } from "./supported";

@@ -1,11 +1,12 @@
 // `bun build --compile --aot --minify` shortens the names of functions, classes and variables and the paths of the sources, as a build
 // without --aot does. With --sourcemap=external it writes <outfile>.map, which holds what each token stands for and is not part of the
 // executable. With that file alone, what the executable prints is turned back into what the executable built without --minify prints.
-import { afterAll, describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, slot, spawned, unsupported } from "./harness/commands";
+import { afterAll, describe, test } from "./harness/declare";
 
 const sources = {
   "entryOfTheTest.ts": `

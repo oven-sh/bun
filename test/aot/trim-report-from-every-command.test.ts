@@ -1,7 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { unsupported } from "./harness/commands";
+import { describe, test } from "./harness/declare";
 import { run } from "./harness/run";
 import { tsconfig } from "./runtime-use-harness";
 

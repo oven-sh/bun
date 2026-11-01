@@ -1,4 +1,5 @@
-import { describe, expect } from "bun:test";
+import { expect } from "bun:test";
+import { describe } from "./harness/declare";
 import { closed, completeness, notYet, retainsFeature } from "./runtime-use-expectations";
 import { of } from "./runtime-use-harness";
 import { eachRow, gap } from "./supported";

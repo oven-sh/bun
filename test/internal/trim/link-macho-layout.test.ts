@@ -1,10 +1,11 @@
-import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { expect, setDefaultTimeout } from "bun:test";
 import { tempDir } from "harness";
 import { statSync } from "node:fs";
 import { join } from "node:path";
 import type { FeatureName } from "../../../scripts/build/trim/features.ts";
 import { builtinModulesHeaderBytes } from "../../../scripts/build/trim/link.ts";
 import type { TrimTable } from "../../../scripts/build/trim/table.ts";
+import { describe, test } from "../../aot/harness/declare";
 import {
   addOne,
   asCStrings,

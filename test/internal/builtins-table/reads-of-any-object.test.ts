@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import type { WrittenSignature } from "../../../src/codegen/builtins/build-entries.ts";
 import {
   applyUses,
@@ -9,6 +9,7 @@ import {
 import * as b from "../../../src/codegen/builtins/lib.ts";
 import type { ModelParameter, ModelType } from "../../../src/codegen/builtins/model.ts";
 import type { Heap, UseSpec } from "../../../src/codegen/builtins/vocabulary.ts";
+import { test } from "../../aot/harness/declare";
 
 const heaps: Heap[] = [
   "ObjectFields",

@@ -1,5 +1,5 @@
 // The cases of a test file as the test files of one project, which is run once for each way of running it.
-import { afterAll } from "bun:test";
+import { afterAll } from "./declare";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { run } from "./run";
 

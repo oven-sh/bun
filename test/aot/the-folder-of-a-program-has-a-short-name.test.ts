@@ -1,8 +1,9 @@
 // On Windows a path of 260 characters is not found. A checkout puts about 40 in front of the root of the repository, and `bun build --compile` writes a temporary file
 // whose name takes 37 into the working directory, which may be the folder of a program.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { test } from "./harness/declare";
 
 const root = join(import.meta.dir, "..", "..");
 const walked = ["test/aot/parallel", "test/aot/ir", "test/aot/engine-tests"];

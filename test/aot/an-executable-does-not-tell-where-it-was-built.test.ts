@@ -1,10 +1,11 @@
 // A shipped executable tells nobody the folders of the machine that built it: its bytes do not hold them, it does not look into them, and no message names them. A message names a file as the
 // executable knows it (/$bunfs/root/..), as the program wrote it, or where it really lies on the machine of the run.
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, spawned, withoutDebugInformation } from "./harness/commands";
+import { afterAll } from "./harness/declare";
 import { compileCommand } from "./harness/flags";
 import { beforeAll, describe, test } from "./supported";
 

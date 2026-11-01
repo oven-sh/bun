@@ -1,9 +1,10 @@
 // Every export of every built-in module, bound by name and read in a function, at top level, out of a list, a written variable, a Map, an object and a field.
 // The modules and their exports are those of the Bun that runs the test, so a new export is asked about from the day it is there.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { builtinModules } from "node:module";
 import { join } from "node:path";
+import { test } from "./harness/declare";
 
 // `bun:test` answers outside a test run with functions that throw. The others start something when they are loaded, or print a warning.
 const leftOut = new Set([

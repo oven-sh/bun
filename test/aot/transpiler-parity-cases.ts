@@ -1,5 +1,6 @@
 // Bun's own tests of its transpiler, run as compiled code. transpiler-parity-<n>.test.ts each ask a few of the files listed here.
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
+import { afterAll } from "./harness/declare";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { basename, join } from "path";

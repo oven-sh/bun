@@ -1,5 +1,6 @@
 // One folder for all tests of a file, and one build for each command line that they ask for.
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
+import { afterAll } from "./declare";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes } from "harness";
 import { statSync } from "node:fs";
 import { availableParallelism } from "node:os";

@@ -1,7 +1,8 @@
 // How modules load under `bun test --aot`: each project runs under plain `bun test` and compiled, and both must print and pass alike.
 // The test files are one side and the files they share are the other, whether one image holds both or the shared files have an image of their own.
 // Every project runs in every way. A way has test files of its own, test/aot/modules-in-a-test-run*.test.ts: all of them in one file took six minutes.
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
+import { afterAll } from "./declare";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readdirSync } from "node:fs";
 import { basename, dirname } from "node:path";

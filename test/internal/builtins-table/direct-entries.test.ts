@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { checkDirectEntries } from "../../../src/codegen/builtins/check-direct-entries.ts";
 import { Problems } from "../../../src/codegen/builtins/declarations.ts";
 import type {
@@ -14,6 +14,7 @@ import {
   type DirectEntrySpec,
   type DirectParameterSpec,
 } from "../../../src/codegen/builtins/vocabulary.ts";
+import { test } from "../../aot/harness/declare";
 
 const hostCall: ModelImplementation = { how: "HostCall", callee: "HostFunction", function: null, customGetter: null };
 const codeOfFunction = {

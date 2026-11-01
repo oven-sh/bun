@@ -1,7 +1,8 @@
 // With all the pins measured at once, ./measure-idioms.ts took 13 benchmarks of 1,252 for programs that wait, other ones each time: the busy machine had let the run of 5,000 turns end over two
 // seconds later than the run of 1,000. A conversion of 17 instructions a turn got 16,000 turns for its 20 million, and a benchmark whose cost comes in lumps did not get the turns that even them out.
 // The programs here are arithmetic, so this needs no counter of the processor.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "../harness/declare";
 import { mostlyWaits, planOf } from "./measure-idioms";
 
 type Program = {

@@ -2,10 +2,11 @@
 // executable there is none, and the program says what it says for 0. Whoever is asked about such a program runs it in the shell too: run-parallel.ts,
 // shell/expectations.py, and shell/quick.py as anybody starts it. None of them passes it whatever it counts, and where there is no shell the driver says
 // that it has not asked. shell/tools.ts says what the scripts need.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { unsupported } from "./harness/commands";
+import { test } from "./harness/declare";
 import { run } from "./harness/run";
 import { python, scriptEnvironment, scriptSkipReason } from "./shell/tools";
 

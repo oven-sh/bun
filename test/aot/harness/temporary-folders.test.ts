@@ -1,7 +1,8 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { test } from "./declare";
 
 const program = (end: string) => `
   import { mkdtempSync, writeFileSync } from "node:fs";

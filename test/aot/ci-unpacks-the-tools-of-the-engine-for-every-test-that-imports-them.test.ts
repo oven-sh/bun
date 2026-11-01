@@ -1,6 +1,7 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { readFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
+import { test } from "./harness/declare";
 import { startsToolsOfTheEngine } from "./harness/tests-that-start-tools-of-the-engine";
 
 const folder = import.meta.dir;

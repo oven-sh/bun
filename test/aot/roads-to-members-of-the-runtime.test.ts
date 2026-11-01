@@ -1,7 +1,8 @@
 // By which roads does a program come to a member of Bun, of the global object, of process or of a node: module? Whatever the road, the list that --trim goes by keeps the code behind the member.
 // Each road is a program of its own: in one program a road that is followed would hide one that is not.
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { unsupported } from "./harness/compiler";
+import { describe, test } from "./harness/declare";
 import { runtimeUse } from "./runtime-use-harness";
 
 const roads: [keptFeature: string, extension: "mjs" | "cjs", text: string][] = [

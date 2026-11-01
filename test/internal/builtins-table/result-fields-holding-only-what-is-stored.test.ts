@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { checkFieldsHoldingOnlyWhatIsStored } from "../../../src/codegen/builtins/check.ts";
 import { Problems } from "../../../src/codegen/builtins/declarations.ts";
 import type {
@@ -7,6 +7,7 @@ import type {
   ModelPropertyAction,
   ModelTransfer,
 } from "../../../src/codegen/builtins/model.ts";
+import { test } from "../../aot/harness/declare";
 
 const field = (index: number, holdsOnlyWhatIsStored: boolean): ModelPlace => ({
   place: "ResultField",

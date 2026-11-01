@@ -11,12 +11,13 @@
 // A position of a call is not tried with every value that there is: differential/instances.ts has them in families, a few of each family are
 // passed everywhere, and the others where the table or one of those few shows that native code tells the family from the rest.
 import { aotBuiltinEntries } from "bun:internal-for-testing";
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isGlibc, tempDir } from "harness";
 import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { dirname, join } from "node:path";
 import { needsDifferentialTest } from "../../../src/codegen/builtins/dump.ts";
+import { afterAll } from "../harness/declare";
 import { beforeAll, describe, test } from "../supported";
 import { checkCall } from "./differential/check-call";
 import { formatDifference } from "./differential/compare";

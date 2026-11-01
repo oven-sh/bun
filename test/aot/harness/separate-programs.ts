@@ -1,5 +1,6 @@
 // Small programs of one test file in one executable. Each is compiled as it is when it is built alone, and each run is a process of its own.
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
+import { afterAll } from "./declare";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes } from "harness";
 import { join } from "node:path";
 import { run } from "./run";

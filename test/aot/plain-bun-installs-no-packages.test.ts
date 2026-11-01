@@ -1,10 +1,11 @@
 // The tests run plain Bun without installing packages: harness/without-installing-packages.ts says how.
 // Here a registry on this machine counts what it is asked.
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { describe, test } from "./harness/declare";
 import { hasNodeModulesAbove } from "./harness/without-installing-packages";
 
 const missing = "a-package-that-no-test-installs";

@@ -2,11 +2,12 @@
 // that each site's set of receivers grows through as many versions as there are rounds. A statement that ran for every
 // version left nodes and edges behind for each: sites times rounds. The program below needs about a tenth of the bound
 // when reads wait.
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 import { readBuildReport } from "./harness/build-report";
 import { unsupported } from "./harness/compiler";
+import { describe, test } from "./harness/declare";
 import { withReport } from "./harness/flags";
 import { run } from "./harness/run";
 import { sharedBuilds } from "./harness/shared-builds";

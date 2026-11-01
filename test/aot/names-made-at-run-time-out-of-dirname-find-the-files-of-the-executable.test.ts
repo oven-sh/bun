@@ -1,7 +1,8 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { mkdirSync, renameSync } from "node:fs";
 import { join } from "node:path";
+import { test } from "./harness/declare";
 
 // Next.js's server makes the paths of its pages and manifests out of `__dirname` and require()s them, behind a hook on
 // Module._resolveFilename. The pages are further entry points of the build and the manifests are files that --asset gave it.

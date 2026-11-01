@@ -1,6 +1,7 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "node:path";
+import { test } from "./harness/declare";
 
 test("the table of flags for shell completions lists every --aot flag of bun build", async () => {
   await using build = Bun.spawn({ cmd: [bunExe(), "build", "--help"], env: bunEnv, stdout: "pipe", stderr: "pipe" });

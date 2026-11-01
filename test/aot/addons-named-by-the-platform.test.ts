@@ -2,7 +2,7 @@
 // The build knows both, so it knows the name, and the file is in the executable.
 // ./addons-named-by-the-platform/addon.c is built with the system's C compiler against the headers in src/runtime/napi, without node-gyp, and laid under the names that this machine asks for.
 // Each program is built, its sources and the addon are deleted, and the executable runs in another folder: it prints what plain Bun printed while they were there.
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { dirname, join, resolve } from "path";
@@ -17,6 +17,7 @@ import {
   targets,
 } from "./addons-named-by-the-platform/loaders";
 import { built, slot, spawned, unsupported } from "./harness/commands";
+import { afterAll, beforeAll, describe, test } from "./harness/declare";
 
 const systemCC = process.env.CC || Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 const here = join(import.meta.dir, "addons-named-by-the-platform");

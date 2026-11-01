@@ -1,5 +1,6 @@
 // test/harness.ts imports this file, so it takes nothing from there.
 import { closeSync, openSync, readSync } from "node:fs";
+import "./harness/every-build";
 
 function isPositionIndependent(path: string) {
   const header = Buffer.alloc(18);

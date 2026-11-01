@@ -1,6 +1,7 @@
 // A pin went red and green by itself: ./measure-idioms.ts read 14,100 to 16,400 instructions a turn from one executable, depending on where its two runs ended among the lumps that follow a
 // full collection. The program here is arithmetic, so much a turn and a lump every so many turns, so this needs no counter of the processor.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "../harness/declare";
 import { timesThatEvenOutLumps } from "./measure-idioms";
 
 type Program = { aTurn: number; lump: number; every: number };

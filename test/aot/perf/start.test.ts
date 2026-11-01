@@ -1,4 +1,4 @@
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMusl, tempDir } from "harness";
 import { join } from "path";
@@ -6,6 +6,7 @@ import { countsInstructions } from "../analysis-scaling/measure-check";
 import { readElfFile } from "../elf-file";
 import { slot } from "../harness/commands";
 import { run } from "../harness/counted-run";
+import { afterAll } from "../harness/declare";
 import { compileCommand } from "../harness/flags";
 import { wanted } from "../harness/shares";
 import { describe, test } from "../supported";

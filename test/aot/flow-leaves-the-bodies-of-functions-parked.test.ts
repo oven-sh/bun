@@ -2,11 +2,12 @@
 // top of the build. Everyday code must not make a rule do that: what rules ask of the text of an operation stands
 // beside flow's own statements. A rule that newly opens the body of every function with a literal or a loop in it
 // fails no other test and moves no answer.
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 import { readBuildReport } from "./harness/build-report";
 import { unsupported } from "./harness/compiler";
+import { describe, test } from "./harness/declare";
 import { withReport } from "./harness/flags";
 import { run } from "./harness/run";
 import { sharedBuilds } from "./harness/shared-builds";

@@ -1,6 +1,7 @@
 // Functions written for the test, whose behavior is therefore known: each kind of change is noticed, and what native code may do is not taken for one.
 import { aotBuiltinEntries } from "bun:internal-for-testing";
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { describe, test } from "../../harness/declare";
 import { undefinedCandidate } from "../differential/instances";
 import { Realm } from "../differential/members";
 import { Table, type OperandUse } from "../differential/table-description";

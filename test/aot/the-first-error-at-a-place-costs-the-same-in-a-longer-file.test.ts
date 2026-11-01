@@ -20,10 +20,11 @@
 //
 // The program measures itself with process.cpuUsage(), around the forty throws alone, so the test needs no counters and runs on
 // every platform.
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { built, spawned } from "./harness/commands";
+import { afterAll } from "./harness/declare";
 import { describe, test } from "./supported";
 
 const measuredPlaces = 40;

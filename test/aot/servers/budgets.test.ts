@@ -51,7 +51,7 @@
 //
 // Each server prints one line that begins with BUDGET: within, better or worse, and by which numbers; and one that begins with
 // NUMBERS: all that may only fall, as measured, for whoever compares one Bun with another.
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, tempDir } from "harness";
 import { dirname, join } from "path";
@@ -70,6 +70,7 @@ import {
   type CountedWork,
   type Exchange,
 } from "../harness/counted-run";
+import { afterAll, beforeAll, describe, test } from "../harness/declare";
 import { routes } from "./answers";
 import { filterRequested, installPackages, requestedServers } from "./run-servers";
 

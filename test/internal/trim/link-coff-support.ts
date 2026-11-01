@@ -1,5 +1,6 @@
 import { readTrimTable, trimExecutable } from "bun:internal-for-testing";
-import { describe, expect } from "bun:test";
+import { expect } from "bun:test";
+import { describe } from "../../aot/harness/declare";
 import { isWindows, tempDir } from "harness";
 import { closeSync, existsSync, fstatSync, openSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";

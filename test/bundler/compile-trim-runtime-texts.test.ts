@@ -1,8 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { unsupported } from "../aot/harness/commands";
+import { describe, test } from "../aot/harness/declare";
 import { canTrim, getMappedSegments } from "./compile-trim-features";
 
 const keyWidth = 8;

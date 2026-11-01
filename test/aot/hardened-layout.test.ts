@@ -1,9 +1,10 @@
-import { describe, expect } from "bun:test";
+import { expect } from "bun:test";
 import { bunExe, isLinux, libcPathForDlopen, readElf64ProgramHeaders, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { canTrim } from "../bundler/compile-trim-features";
 import { isHardened } from "./hardened";
+import { describe } from "./harness/declare";
 import { run as runCommand } from "./harness/run";
 import { test } from "./supported";
 

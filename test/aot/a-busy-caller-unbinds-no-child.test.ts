@@ -1,6 +1,7 @@
 // harness/memory-limit.ts ends a child that holds more memory than it may. It does so however busy the thread is that started the child: the watching has a thread of its own.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
+import { test } from "./harness/declare";
 import { endAtMemoryLimit, endAtMemoryLimitTogether } from "./harness/memory-limit";
 
 const MB = 2 ** 20;

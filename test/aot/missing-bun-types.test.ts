@@ -1,10 +1,11 @@
 // Without `@types/bun`, TypeScript knows neither `console` nor the module "bun", and `bun check` says so. A build goes on with the
 // declarations that Bun brings along. They hold no program to what its project has not installed: where a program does not fit them,
 // what Bun provides is of type `any`. The executable does what `bun run` does. Every other type error stops the build as always.
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir, tempDirWithBunTypes } from "harness";
 import { join } from "path";
 import { slot, spawned } from "./harness/commands";
+import { afterAll } from "./harness/declare";
 import { startsAtAnyEntryPoint } from "./harness/separate-programs";
 import { beforeAll, describe, test } from "./supported";
 

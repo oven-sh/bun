@@ -2,11 +2,12 @@
 // An image built with validation aborts when such a call comes back and a collection has begun or ended meanwhile. A collector that asks from another thread is what finds these
 // places: a collection that is forced at an allocation is skipped while collections are deferred, and these operations stopped where a deferral ended.
 // engine-tests/validation/*-beside-a-collector.ir start three more programs so in the engine's shell.
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { copyFileSync } from "node:fs";
 import { join } from "node:path";
 import { withoutCoreDump } from "./harness/commands";
+import { afterAll } from "./harness/declare";
 import { run } from "./harness/run";
 import { describe, test } from "./supported";
 

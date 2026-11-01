@@ -2,9 +2,10 @@
 // did the copies and entry points that the compiler makes, several for each function written: 18,323 test files in one
 // build needed 4.6 million and the build stopped. Now only a function that is used as a value takes one. No test program is
 // that large, so the limit is lowered below the number of functions that the program below has.
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { unsupported } from "./harness/compiler";
+import { describe, test } from "./harness/declare";
 import { run } from "./harness/run";
 import { sharedBuilds } from "./harness/shared-builds";
 

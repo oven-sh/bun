@@ -1,9 +1,10 @@
 // ./run.ts builds programs with and without --trim and holds what they print against each other. It runs for hours, elsewhere. Here: it finds a difference that is there.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { canTrim, featureOf, model } from "../../bundler/compile-trim-features";
 import { unsupported } from "../harness/compiler";
+import { test } from "../harness/declare";
 import { compareAll, jailOfThisMachine, type Program, type Result } from "./compare";
 import { readRemovedFeatures } from "./removed-features";
 

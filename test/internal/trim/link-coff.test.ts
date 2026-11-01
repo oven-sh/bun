@@ -1,5 +1,5 @@
 import { trimExecutable } from "bun:internal-for-testing";
-import { expect, setDefaultTimeout, test } from "bun:test";
+import { expect, setDefaultTimeout } from "bun:test";
 import { tempDir } from "harness";
 import { closeSync, existsSync, openSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -18,6 +18,7 @@ import { createLinker, parseArguments } from "../../../scripts/build/trim/link.t
 import { peImage } from "../../../scripts/build/trim/linked-image.ts";
 import { coff } from "../../../scripts/build/trim/linker-coff.ts";
 import { foldedEntryPointsHeading } from "../../../scripts/build/trim/report.ts";
+import { test } from "../../aot/harness/declare";
 import { packageOf } from "../icu-data-package.ts";
 import {
   arm64SkipReason,

@@ -2,11 +2,12 @@
 // `bun build --compile` removes, and holds the values that --define puts in the place of names.
 // What only the compiler knows never to run, behind a constant of another file or a value that is always an object, stays as it stays there.
 // Its layout is the source's own and not the printer's, so the texts are compared without their white space.
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
 import { rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, spawned } from "./harness/commands";
+import { afterAll } from "./harness/declare";
 import { compileCommand } from "./harness/flags";
 import { withoutDebugInformation } from "./harness/without-debug-information";
 import { describe, test } from "./supported";

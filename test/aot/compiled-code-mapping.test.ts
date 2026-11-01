@@ -1,10 +1,11 @@
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isGlibc, isLinux, readElf64ProgramHeaders, tempDir } from "harness";
 import { chmodSync, copyFileSync, readFileSync } from "node:fs";
 import { release } from "node:os";
 import { join } from "node:path";
 import { findImage, imageHeader } from "./cli/compiled-image";
 import { refusesExecuteOnlyStart } from "./execute-only-start";
+import { afterAll } from "./harness/declare";
 import { test } from "./supported";
 
 const program = `import { readFileSync } from "node:fs";

@@ -1,9 +1,10 @@
 // A `require()` whose name is computed brings Bun's run-time `require` into the executable. That function also answers
 // "bun:test", which must not keep the test runner in a program that never names it.
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "node:path";
 import { unsupported } from "../aot/harness/commands";
+import { describe, test } from "../aot/harness/declare";
 import { run } from "../aot/harness/run";
 import { withoutDebugInformation } from "../aot/harness/without-debug-information";
 import { readRemovedFeatures } from "../aot/trimmed-against-whole/removed-features";

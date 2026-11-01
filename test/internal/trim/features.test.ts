@@ -1,7 +1,8 @@
 import { builtinFeatureUses } from "bun:internal-for-testing";
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { globSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { test } from "../../aot/harness/declare";
 
 import { type Toolchain } from "../../../scripts/build/config.ts";
 import { checkBuiltinUses } from "../../../scripts/build/trim/builtin-uses.ts";

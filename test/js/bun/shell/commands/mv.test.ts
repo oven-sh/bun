@@ -9,6 +9,7 @@ import {
   lstatSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   readlinkSync,
   rmSync,
   statSync,
@@ -96,6 +97,40 @@ describe("mv", async () => {
     // The last of -n and -f wins.
     expect(await mv("-n -f a dst")).toEqual(silent);
     expect(read("dst")).toBe("new a");
+  });
+
+  // A source that cannot be moved says nothing about the other sources.
+  test("moves every source it can and reports each source it cannot", async () => {
+    const mv = async (sources: string[], existing: string[]) => {
+      using dir = tempDir("mv-sources", { dest: {}, ...Object.fromEntries(existing.map(name => [name, name])) });
+      const { exitCode, stdout, stderr } = await $`mv ${sources} dest`.cwd(String(dir)).quiet();
+      return {
+        exitCode,
+        stdout: stdout.toString(),
+        stderr: stderr.toString(),
+        moved: readdirSync(join(String(dir), "dest")).sort(),
+        left: readdirSync(String(dir)).sort(),
+      };
+    };
+    const missing = (...names: string[]) =>
+      names.map(name => `mv: ${join("dest", name)}: No such file or directory\n`).join("");
+    const failed = { exitCode: 2 /* ENOENT */, stdout: "", left: ["dest"] };
+
+    expect(await mv(["missing", "a"], ["a"])).toEqual({ ...failed, stderr: missing("missing"), moved: ["a"] });
+    expect(await mv(["a", "missing", "b"], ["a", "b"])).toEqual({
+      ...failed,
+      stderr: missing("missing"),
+      moved: ["a", "b"],
+    });
+
+    // More sources than one worker takes, with a failure in the first and in the last group.
+    const many = Array.from({ length: 11 }, (_, i) => `s${i}`);
+    expect(await mv(["m1", ...many, "m2"], many)).toEqual({
+      ...failed,
+      // In the order of the operands.
+      stderr: missing("m1", "m2"),
+      moved: many.toSorted(),
+    });
   });
 
   test("fails when a source name is longer than the path buffers", async () => {
@@ -303,6 +338,34 @@ describe("mv", async () => {
         expect(r.exitCode).not.toBe(0);
         expect(lstatSync(fifo).isFIFO()).toBe(true);
         expect(lstatSync(join(dst, "pipe"), { throwIfNoEntry: false })).toBeUndefined();
+      } finally {
+        rmSync(src, { recursive: true, force: true });
+        rmSync(dst, { recursive: true, force: true });
+      }
+    });
+
+    // The workers finish in any order. `mv` still names the failed sources in the order of its operands, and the
+    // first of them gives the exit code. Here the worker that has `missing` finishes last: it copies `big` first.
+    test.skipIf(skip)("reports the sources that fail in the order of the operands", async () => {
+      const [src, dst] = crossDevicePair("order");
+      try {
+        writeFileSync(join(src, "big"), Buffer.alloc(64 * 1024 * 1024, "x"));
+        const small = Array.from({ length: 8 }, (_, i) => `s${i}`);
+        for (const name of [...small, "f"]) writeFileSync(join(src, name), name);
+
+        // `f` is a file, so `f/x` fails in another way than `missing`, and in the last group of sources.
+        const r = await $`mv big missing ${small} f/x ${dst}`.cwd(src).quiet();
+        expect({
+          stderr: r.stderr.toString(),
+          exitCode: r.exitCode,
+          moved: readdirSync(dst).sort(),
+          left: readdirSync(src),
+        }).toEqual({
+          stderr: `mv: ${join(dst, "missing")}: No such file or directory\nmv: ${join(dst, "x")}: Not a directory\n`,
+          exitCode: 2 /* ENOENT */,
+          moved: ["big", ...small],
+          left: ["f"],
+        });
       } finally {
         rmSync(src, { recursive: true, force: true });
         rmSync(dst, { recursive: true, force: true });

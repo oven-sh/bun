@@ -136,20 +136,11 @@ static JSValue createX509Certificate(JSC::VM& vm, JSGlobalObject* globalObject, 
         RETURN_IF_EXCEPTION(scope, {});
         data = view->bytes();
     } else if (auto* typedArray = dynamicDowncast<JSArrayBufferView>(arg)) {
-        if (typedArray->isDetached()) [[unlikely]] {
-            Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "TypedArray is detached"_s);
-            return {};
-        }
         data = typedArray->span();
     } else if (auto* buffer = dynamicDowncast<JSArrayBuffer>(arg)) {
-        auto* impl = buffer->impl();
-        if (!impl) [[unlikely]] {
-            Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "Buffer is detached"_s);
-            return {};
-        }
-        data = impl->span();
+        data = buffer->impl()->span();
     } else {
-        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "X509Certificate constructor argument must be a Buffer, TypedArray, or string"_s);
+        Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "buffer"_s, "string or an instance of Buffer, TypedArray, or DataView"_s, arg);
         return {};
     }
 
@@ -170,16 +161,7 @@ JSC_DEFINE_HOST_FUNCTION(x509CertificateConstructorConstruct, (JSGlobalObject * 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (!callFrame->argumentCount()) {
-        Bun::throwError(globalObject, scope, ErrorCode::ERR_MISSING_ARGS, "X509Certificate constructor requires at least one argument"_s);
-        return {};
-    }
-
-    JSValue arg = callFrame->uncheckedArgument(0);
-    if (!arg.isCell()) {
-        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "X509Certificate constructor argument must be a Buffer, TypedArray, or string"_s);
-        return {};
-    }
+    JSValue arg = callFrame->argument(0);
 
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     Structure* structure = zigGlobalObject->m_JSX509CertificateClassStructure.get(zigGlobalObject);

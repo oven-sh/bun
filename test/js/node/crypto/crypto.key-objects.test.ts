@@ -934,6 +934,12 @@ describe("crypto.KeyObjects", () => {
     }
   });
 
+  it.each(["ed25519", "x25519"] as const)("a JWK of an %s key has its members in Node's order", keyType => {
+    const { publicKey, privateKey } = generateKeyPairSync(keyType as "ed25519");
+    expect(Object.keys(publicKey.export({ format: "jwk" }))).toEqual(["kty", "crv", "x"]);
+    expect(Object.keys(privateKey.export({ format: "jwk" }))).toEqual(["kty", "crv", "x", "d"]);
+  });
+
   ["ed25519", "x25519"].forEach(keyType => {
     it(`${keyType} equals should work`, async () => {
       const first = generateKeyPairSync(keyType as "ed25519");

@@ -233,6 +233,23 @@ describe("crypto.getCurves", () => {
   });
 });
 
+describe("crypto.getCipherInfo", () => {
+  it.each([
+    ["aes-128-cbc", { mode: "cbc", name: "aes-128-cbc", nid: 419, keyLength: 16, blockSize: 16, ivLength: 16 }],
+    ["aes-128-ecb", { mode: "ecb", name: "aes-128-ecb", nid: 418, keyLength: 16, blockSize: 16, ivLength: undefined }],
+    ["rc4", { mode: "stream", name: "rc4", nid: 5, keyLength: 16, blockSize: undefined, ivLength: undefined }],
+  ])("of %s has the properties of Node's, in their order", (name, expected) => {
+    const info = crypto.getCipherInfo(name)!;
+    expect(Object.entries(info)).toEqual(Object.entries(expected));
+    expect(Object.getPrototypeOf(info)).toBeNull();
+  });
+});
+
+it("crypto.getRandomValues has its name", () => {
+  expect(crypto.getRandomValues.name).toBe("getRandomValues");
+  expect(crypto.getRandomValues).toHaveLength(1);
+});
+
 describe("names of digests", () => {
   const rsaKey = readKey("rsa_private.pem", "ascii");
   // Every function that takes the name of a digest. The last two are for digests that RSA signs with.

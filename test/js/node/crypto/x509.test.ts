@@ -56,6 +56,29 @@ qGl/+1Di3abpA8YZOtoyAiAiScaiKhxu48bWQXYW5ZoQNzAfBIwL4krTuLVAKYZc
 Vg==
 -----END CERTIFICATE-----`;
 
+describe("new X509Certificate()", () => {
+  test.each([
+    ["nothing", [], "Received undefined"],
+    ["null", [null], "Received null"],
+    ["a number", [5], "Received type number (5)"],
+    ["an object", [{}], "Received an instance of Object"],
+  ])("with %s", (_, args, received) => {
+    expect(() => new (X509Certificate as any)(...args)).toThrow(
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `The "buffer" argument must be of type string or an instance of Buffer, TypedArray, or DataView. ${received}`,
+      }),
+    );
+  });
+
+  test("with a detached view, which is empty", () => {
+    const view = new Uint8Array(4);
+    view.buffer.transfer();
+    expect(() => new X509Certificate(view)).toThrow(expect.objectContaining({ name: "Error" }));
+  });
+});
+
 describe("X509Certificate.checkHost()", () => {
   const cert = new X509Certificate(wildcardSanCertPem);
   const cnOnly = new X509Certificate(cnOnlyCertPem);

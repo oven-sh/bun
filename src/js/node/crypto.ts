@@ -209,7 +209,9 @@ const crypto = globalThis.crypto;
 
 var crypto_exports: any = {};
 
-crypto_exports.getRandomValues = value => crypto.getRandomValues(value);
+crypto_exports.getRandomValues = function getRandomValues(value) {
+  return crypto.getRandomValues(value);
+};
 crypto_exports.constants = $processBindingConstants.crypto;
 
 crypto_exports.KeyObject = KeyObject;

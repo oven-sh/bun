@@ -308,24 +308,16 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCipherInfo, (JSC::JSGlobalObject * lexicalGlobalOb
         }
     }
 
-    JSObject* result = JSC::constructEmptyObject(lexicalGlobalObject);
-
-    if (!modeLabel.isEmpty()) {
-        Bun::putDirectNamed(vm, result, "mode"_s, jsString(vm, String::fromUTF8(modeLabel)));
-    }
-
+    // Like Node's, it has no prototype and always has all six properties.
+    JSObject* result = JSC::constructEmptyObject(vm, lexicalGlobalObject->nullPrototypeObjectStructure());
+    Bun::putDirectNamed(vm, result, "mode"_s, modeLabel.isEmpty() ? jsUndefined() : jsString(vm, String::fromUTF8(modeLabel)));
     Bun::putDirectNamed(vm, result, "name"_s, jsString(vm, name.convertToASCIILowercase()));
     Bun::putDirectNamed(vm, result, "nid"_s, jsNumber(cipher.getNid()));
-
-    if (!cipher.isStreamMode()) {
-        Bun::putDirectNamed(vm, result, "blockSize"_s, jsNumber(blockSize));
-    }
-
-    if (ivLength != 0) {
-        Bun::putDirectNamed(vm, result, "ivLength"_s, jsNumber(ivLength));
-    }
-
     Bun::putDirectNamed(vm, result, "keyLength"_s, jsNumber(keyLength));
+    // Stream ciphers do not have a meaningful block size
+    Bun::putDirectNamed(vm, result, "blockSize"_s, cipher.isStreamMode() ? jsUndefined() : jsNumber(blockSize));
+    // Ciphers that do not use an IV shouldn't report a length
+    Bun::putDirectNamed(vm, result, "ivLength"_s, ivLength == 0 ? jsUndefined() : jsNumber(ivLength));
 
     return JSValue::encode(result);
 }

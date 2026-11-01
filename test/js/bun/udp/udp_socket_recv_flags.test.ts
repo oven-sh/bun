@@ -1,10 +1,11 @@
 // Coverage for the fifth parameter of Bun.udpSocket's `data` callback
-// (`ReceiveFlags.truncated` from MSG_TRUNC) and for Linux's IP_RECVERR
-// surfacing ICMP errors as `error` events on the socket.
+// (`ReceiveFlags.truncated` from MSG_TRUNC) and for which ICMP errors reach
+// the `error` handler of the socket.
 
 import { udpSocket } from "bun";
 import { describe, expect, test } from "bun:test";
-import { isLinux } from "harness";
+import { isLinux, isWindows } from "harness";
+import { replyServerAfterVanishedClient } from "./reply-server";
 
 describe("udpSocket() receive flags", () => {
   test("data callback receives flags object with truncated=false for normal packets", async () => {
@@ -35,62 +36,154 @@ describe("udpSocket() receive flags", () => {
       server.close();
     }
   });
+});
 
-  // IP_RECVERR is Linux-specific. On BSDs and Windows, ICMP errors on
-  // unconnected UDP sockets either propagate by default or are delivered
-  // through different channels that we don't currently surface.
-  test.skipIf(!isLinux)(
-    "surfaces ECONNREFUSED from ICMP port unreachable (IP_RECVERR) and keeps the socket usable",
-    async () => {
-      const { promise: errPromise, resolve: resolveErr } = Promise.withResolvers<Error & { code?: string }>();
-      const { promise: msgPromise, resolve: resolveMsg } = Promise.withResolvers<string>();
+// Linux drops the ICMP error of a datagram from an unconnected socket, unless
+// the socket has IP_RECVERR. With that option the `error` handler can report
+// a closed port (#28827), but the kernel also records the error on the
+// socket: the next send fails with it, whichever peer that one is for, and so
+// does the next recv, so a reply server ends with the first client that
+// closes its port. Like libuv and Node, Bun does not set it: only a connected
+// socket gets the ICMP error of its one peer.
+describe("udpSocket() and ICMP errors", () => {
+  async function closedPort() {
+    const probe = await udpSocket({ hostname: "127.0.0.1" });
+    const port = probe.port;
+    probe.close();
+    return port;
+  }
 
-      const receiver = await udpSocket({
-        socket: {
-          data(_socket, data) {
-            resolveMsg(data.toString());
-          },
+  // Two echoes between two new sockets take four loop iterations: every poll
+  // event that was ready before the call has been handled by the end.
+  async function echoRoundTrips() {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    const echo = await udpSocket({
+      hostname: "127.0.0.1",
+      socket: {
+        data(socket, data, port, address) {
+          socket.send(data, port, address);
         },
-      });
+      },
+    });
+    let echoes = 0;
+    const client = await udpSocket({
+      hostname: "127.0.0.1",
+      socket: {
+        data(socket) {
+          if (++echoes === 2) resolve();
+          else socket.send("x", echo.port, "127.0.0.1");
+        },
+      },
+    });
+    try {
+      client.send("x", echo.port, "127.0.0.1");
+      await promise;
+    } finally {
+      client.close();
+      echo.close();
+    }
+  }
 
-      const sender = await udpSocket({
-        socket: {
-          error(err: Error & { code?: string }) {
-            resolveErr(err);
-          },
-        } as any,
-      });
+  // The handler gets (error) today and (socket, error) by its types (#44274).
+  const lastArgument = (args: unknown[]) => args.at(-1) as Error & { code?: string; syscall?: string };
 
-      // Send to a closed port on localhost. The kernel replies with ICMP
-      // port unreachable; with IP_RECVERR the next recv surfaces ECONNREFUSED.
-      let gotError = false;
-      function sendDead() {
-        if (!gotError && !sender.closed) {
-          sender.send("dead", 1, "127.0.0.1");
-          setTimeout(sendDead, 10);
+  test("an unconnected socket: a datagram to a closed port fails neither the next send nor the socket", async () => {
+    const deadPort = await closedPort();
+    const errors: unknown[] = [];
+    const { promise: delivered, resolve: onData } = Promise.withResolvers<string>();
+    const receiver = await udpSocket({
+      hostname: "127.0.0.1",
+      socket: { data: (_socket, data) => onData(data.toString()) },
+    });
+    const sender = await udpSocket({
+      hostname: "127.0.0.1",
+      socket: { error: (...args: unknown[]) => void errors.push(lastArgument(args)) },
+    });
+    try {
+      // One tick: over loopback the ICMP error of "dead" is back before "alive" goes out.
+      sender.send("dead", deadPort, "127.0.0.1");
+      sender.send("alive", receiver.port, "127.0.0.1");
+      expect(await delivered).toBe("alive");
+      await echoRoundTrips();
+      expect({ errors, closed: sender.closed }).toEqual({ errors: [], closed: false });
+    } finally {
+      sender.close();
+      receiver.close();
+    }
+  });
+
+  // Windows turns these reports off at the socket (SIO_UDP_CONNRESET).
+  test.skipIf(isWindows)("a connected socket gets ECONNREFUSED for its closed peer and stays open", async () => {
+    const deadPort = await closedPort();
+    const { promise: errored, resolve: onError } = Promise.withResolvers<Error & { code?: string; syscall?: string }>();
+    const sender = await udpSocket({
+      connect: { hostname: "127.0.0.1", port: deadPort },
+      socket: { error: (...args: unknown[]) => onError(lastArgument(args)) },
+    });
+    try {
+      // Keep sending until the error arrives: a send can take the pending
+      // error before the receive path does, and then throws it.
+      let stop = false;
+      const pump = (async () => {
+        for (let i = 0; i < 100 && !stop; i++) {
+          if (sender.closed) return onError(new Error("the socket was closed instead of reporting the error"));
+          try {
+            sender.send("dead");
+          } catch {}
+          await echoRoundTrips();
         }
-      }
-      sendDead();
+      })();
+      const err = await errored;
+      stop = true;
+      await pump;
+      expect({ code: err.code, syscall: err.syscall, errqueue: "errqueue" in err, closed: sender.closed }).toEqual({
+        code: "ECONNREFUSED",
+        syscall: "recv",
+        errqueue: false,
+        closed: false,
+      });
+    } finally {
+      sender.close();
+    }
+  });
 
+  // A socket with IP_RECVERR also gets a queued report for a send that failed
+  // locally: the handler would get the error that send() already threw.
+  test.skipIf(!isLinux).each(["unconnected", "connected"])(
+    "an oversized send throws EMSGSIZE and reports nothing more (%s socket)",
+    async kind => {
+      const errors: unknown[] = [];
+      const socket = { error: (...args: unknown[]) => void errors.push(lastArgument(args).code) };
+      const peer = await udpSocket({ hostname: "127.0.0.1" });
+      const sender: any =
+        kind === "connected"
+          ? await udpSocket({ connect: { hostname: "127.0.0.1", port: peer.port }, socket })
+          : await udpSocket({ hostname: "127.0.0.1", socket });
       try {
-        const err = await errPromise;
-        gotError = true;
-        expect(err?.code).toBe("ECONNREFUSED");
-        // The sender socket must remain usable after an ICMP error.
-        expect(sender.closed).toBe(false);
-
-        function sendAlive() {
-          if (!sender.closed && !receiver.closed) {
-            sender.send("alive", receiver.port, "127.0.0.1");
-            setTimeout(sendAlive, 10);
-          }
+        const oversized = new Uint8Array(65510);
+        let thrown: any;
+        try {
+          if (kind === "connected") sender.send(oversized);
+          else sender.send(oversized, peer.port, "127.0.0.1");
+        } catch (err) {
+          thrown = err;
         }
-        sendAlive();
-        expect(await msgPromise).toBe("alive");
+        await echoRoundTrips();
+        expect({ thrown: thrown?.code, errors }).toEqual({ thrown: "EMSGSIZE", errors: [] });
       } finally {
         sender.close();
-        receiver.close();
+        peer.close();
       }
     },
   );
+
+  test("a reply server with only a data handler outlives a client that closed its port", async () => {
+    expect(await replyServerAfterVanishedClient("udpSocket")).toEqual({
+      answeredVanished: true,
+      received: ["ping"],
+      exitedEarly: false,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });

@@ -1750,6 +1750,17 @@ describe("JWK import validation", () => {
     }
   });
 
+  it("takes a key_ops with many entries", async () => {
+    const jwk = { kty: "oct", k: Buffer.alloc(16).toString("base64url") };
+    const many = Array.from({ length: 10_000 }, (_, i) => `operation ${i}`);
+    const importWith = (key_ops: string[]) =>
+      crypto.subtle.importKey("jwk", { ...jwk, key_ops }, "AES-GCM", true, ["encrypt"]);
+    expect({
+      distinct: await rejection(importWith([...many, "encrypt"])),
+      lastRepeatsFirst: await rejection(importWith(["encrypt", ...many, many[0]])),
+    }).toEqual({ distinct: "resolved", lastRepeatsFirst: "DataError" });
+  });
+
   it("reports the modulus length in bits", async () => {
     const n = Buffer.alloc(256);
     n[0] = 0x40;

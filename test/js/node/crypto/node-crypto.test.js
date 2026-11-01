@@ -2134,6 +2134,24 @@ describe("an input encoding", () => {
     const { publicKey } = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
     expect(crypto.createVerify("sha256").update("x").verify(publicKey, "signature", encoding)).toBe(false);
   });
+
+  it.each(["BUFFER", "Buffer", "nope"])("of %j is not known where Buffer.from() reads the string", encoding => {
+    const unknown = expect.objectContaining({ name: "TypeError", code: "ERR_UNKNOWN_ENCODING" });
+    const dh = crypto.getDiffieHellman("modp14");
+    dh.generateKeys();
+    expect(() => dh.computeSecret("abcd", encoding)).toThrow(unknown);
+    expect(() => crypto.createECDH("prime256v1").setPrivateKey("abcd", encoding)).toThrow(unknown);
+    const { publicKey } = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+    expect(() => crypto.createVerify("sha256").update("x").verify(publicKey, "signature", encoding)).toThrow(unknown);
+    const iv = Buffer.alloc(12);
+    expect(() => crypto.createCipheriv("aes-128-gcm", Buffer.alloc(16), iv).setAAD("abcd", { encoding })).toThrow(
+      unknown,
+    );
+    expect(() => crypto.createDecipheriv("aes-128-gcm", Buffer.alloc(16), iv).setAuthTag("abcd", encoding)).toThrow(
+      unknown,
+    );
+    expect(dh.computeSecret("abcd", "buffer")).toEqual(dh.computeSecret(Buffer.from("abcd")));
+  });
 });
 
 describe("crypto.diffieHellman()", () => {
@@ -2195,6 +2213,50 @@ describe("crypto.diffieHellman()", () => {
     );
     expect(() => crypto.diffieHellman({ privateKey: null, publicKey: bob.publicKey })).toThrow(
       expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+    );
+  });
+
+  it("names the option in an error about a JWK or a raw key", () => {
+    const raw = bob.publicKey.export({ format: "raw-public" });
+    const withPublicKey = publicKey => () => crypto.diffieHellman({ privateKey: alice.privateKey, publicKey });
+    const withPrivateKey = privateKey => () => crypto.diffieHellman({ privateKey, publicKey: bob.publicKey });
+    const error = (code, message) => expect.objectContaining({ name: "TypeError", code, message });
+
+    for (const [key, received] of [
+      [5, "Received type number (5)"],
+      [[], "Received an instance of Array"],
+      [null, "Received null"],
+    ]) {
+      expect(withPublicKey({ key, format: "jwk" })).toThrow(
+        error("ERR_INVALID_ARG_TYPE", `The "options.publicKey.key" property must be of type object. ${received}`),
+      );
+    }
+    expect(withPrivateKey({ key: "x", format: "jwk" })).toThrow(
+      error(
+        "ERR_INVALID_ARG_TYPE",
+        `The "options.privateKey.key" property must be of type object. Received type string ('x')`,
+      ),
+    );
+    expect(withPrivateKey({ key: raw, format: "raw-public", asymmetricKeyType: "x25519" })).toThrow(
+      error("ERR_INVALID_ARG_VALUE", "The property 'options.privateKey.format' is invalid. Received 'raw-public'"),
+    );
+    expect(withPublicKey({ key: raw, format: "raw-public" })).toThrow(
+      error(
+        "ERR_INVALID_ARG_TYPE",
+        'The "options.publicKey.asymmetricKeyType" property must be of type string. Received undefined',
+      ),
+    );
+    expect(withPublicKey({ key: raw, format: "raw-public", asymmetricKeyType: "ec" })).toThrow(
+      error(
+        "ERR_INVALID_ARG_TYPE",
+        'The "options.publicKey.namedCurve" property must be of type string. Received undefined',
+      ),
+    );
+    expect(withPublicKey({ key: raw, format: "raw-public", asymmetricKeyType: "x25519" })()).toEqual(secret);
+
+    // Elsewhere the key is the argument `key`.
+    expect(() => crypto.createPublicKey({ key: 5, format: "jwk" })).toThrow(
+      error("ERR_INVALID_ARG_TYPE", 'The "key.key" property must be of type object. Received type number (5)'),
     );
   });
 });

@@ -55,11 +55,11 @@ describe("crypto.hash", () => {
     expect(() => hash("nope", "x")).toThrow(
       expect.objectContaining({ name: "Error", message: "Digest method nope is not supported" }),
     );
-    expect(() => hash("sha256", new ArrayBuffer(1))).toThrow(
+    expect(() => hash("sha256", [97])).toThrow(
       expect.objectContaining({
         code: "ERR_INVALID_ARG_TYPE",
         message:
-          'The "input" argument must be of type string or an instance of Buffer, TypedArray, or DataView. Received an instance of ArrayBuffer',
+          'The "input" argument must be of type string or an instance of Buffer, TypedArray, or DataView. Received an instance of Array',
       }),
     );
     expect(() => hash("sha256", "x", "nope")).toThrow(
@@ -80,7 +80,7 @@ describe("crypto.hash", () => {
         "-e",
         `ArrayBuffer.isView = () => true;
         const { hash } = require("node:crypto");
-        for (const input of [{}, 5, [], new ArrayBuffer(8), null]) {
+        for (const input of [{}, 5, [], () => {}, null]) {
           for (const options of [undefined, { outputLength: 0 }]) {
             try {
               console.log(hash(options ? "shake128" : "sha256", input, options));
@@ -108,6 +108,30 @@ describe("crypto.hash", () => {
       stderr: "",
       exitCode: 0,
     });
+  });
+
+  test("takes what Bun.CryptoHasher.hash() takes", () => {
+    const hash = crypto.hash as (...args: unknown[]) => unknown;
+    const shared = new SharedArrayBuffer(3);
+    new Uint8Array(shared).set([97, 98, 99]);
+    for (const input of [
+      new TextEncoder().encode("abc").buffer,
+      shared,
+      new Blob(["a", "bc"]),
+      new File(["abc"], "name"),
+      new String("abc"),
+      new DataView(new TextEncoder().encode("abc").buffer),
+    ]) {
+      expect(hash("sha1", input)).toBe("a9993e364706816aba3e25717850c26c9cd0d89d");
+      expect(hash("RSA-SHA1", input, { outputEncoding: "base64" })).toBe("qZk+NkcGgWq6PiVxeFDCbJzQ2J0=");
+      expect(hash("shake128", input, { outputLength: 4 })).toBe("5881092d");
+    }
+    for (const input of [new ArrayBuffer(0), new Blob([]), new String("")]) {
+      expect(hash("sha1", input)).toBe("da39a3ee5e6b4b0d3255bfef95601890afd80709");
+    }
+    expect(() => hash("sha1", Bun.file(import.meta.path))).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", message: "File blob cannot be used here" }),
+    );
   });
 
   test("takes an options object", () => {

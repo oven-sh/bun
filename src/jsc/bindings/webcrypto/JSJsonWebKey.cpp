@@ -152,10 +152,11 @@ template<> JsonWebKey convertDictionary<JsonWebKey>(JSGlobalObject& lexicalGloba
         auto operations = convert<IDLSequence<IDLDOMString>>(lexicalGlobalObject, key_opsValue);
         RETURN_IF_EXCEPTION(throwScope, {});
         Vector<CryptoKeyUsage> keyOps;
-        for (size_t i = 0; i < operations.size(); i++) {
-            if (std::ranges::contains(operations.span().first(i), operations[i]))
+        HashSet<String> seen;
+        for (auto& operation : operations) {
+            if (!seen.add(operation).isNewEntry)
                 result.hasDuplicateKeyOps = true;
-            else if (auto usage = parseEnumerationFromString<CryptoKeyUsage>(operations[i]))
+            else if (auto usage = parseEnumerationFromString<CryptoKeyUsage>(operation))
                 keyOps.append(*usage);
         }
         result.key_ops = WTF::move(keyOps);

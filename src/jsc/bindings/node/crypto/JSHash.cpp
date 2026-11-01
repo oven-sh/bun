@@ -1,12 +1,14 @@
 #include "JSHash.h"
 #include "CryptoUtil.h"
 #include "BunClientData.h"
+#include "Bindgen/JSBytesView.h"
 #include <JavaScriptCore/ArrayBuffer.h>
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/Exception.h>
 #include <JavaScriptCore/JSArrayBufferView.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSTypedArrays.h>
+#include <JavaScriptCore/StringObject.h>
 #include <JavaScriptCore/ThrowScope.h>
 #include <openssl/evp.h>
 #include <JavaScriptCore/Error.h>
@@ -328,10 +330,17 @@ JSC_DEFINE_HOST_FUNCTION(jsOneShotDigest, (JSC::JSGlobalObject * lexicalGlobalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
     ncrypto::ClearErrorOnReturn clearErrorOnReturn;
 
-    // crypto.hash() asked ArrayBuffer.isView(), which can be replaced before node:crypto is loaded.
+    // Not in Node: a String object, an ArrayBuffer or a Blob, which Bun.CryptoHasher.hash() takes too.
     JSValue inputValue = callFrame->argument(1);
-    if (!inputValue.isString() && !inputValue.inherits<JSArrayBufferView>()) [[unlikely]] {
-        return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "input"_s, "string or an instance of Buffer, TypedArray, or DataView"_s, inputValue);
+    if (auto* stringObject = dynamicDowncast<StringObject>(inputValue)) [[unlikely]] {
+        inputValue = stringObject->internalValue();
+    }
+    if (!inputValue.isString() && !inputValue.inherits<JSArrayBufferView>() && !inputValue.inherits<JSArrayBuffer>()) [[unlikely]] {
+        bool isBlob = Bindgen::checkInMemoryBlob(*lexicalGlobalObject, inputValue);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!isBlob) {
+            return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "input"_s, "string or an instance of Buffer, TypedArray, or DataView"_s, inputValue);
+        }
     }
 
     WTF::String algorithm = callFrame->argument(0).toWTFString(lexicalGlobalObject);
@@ -402,7 +411,7 @@ JSC_DEFINE_HOST_FUNCTION(jsOneShotDigest, (JSC::JSGlobalObject * lexicalGlobalOb
     };
 
     if (!inputValue.isString()) {
-        return digest(uncheckedDowncast<JSArrayBufferView>(inputValue)->span());
+        return digest(Bindgen::bytesOfBlobOrBuffer(inputValue));
     }
 
     auto inputView = asString(inputValue)->view(lexicalGlobalObject);

@@ -123,7 +123,6 @@ const {
 } = require("internal/validators");
 const { deprecate, getDeprecationWarningEmitter } = require("internal/util/deprecate");
 
-const ArrayBufferIsView = ArrayBuffer.isView;
 const StringPrototypeToLowerCase = String.prototype.toLowerCase;
 
 const kHandle = Symbol("kHandle");
@@ -246,7 +245,8 @@ const maybeEmitDeprecationWarning = getDeprecationWarningEmitter(
 // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/crypto/hash.js#L323-L391
 crypto_exports.hash = function hash(algorithm, input, options) {
   validateString(algorithm, "algorithm");
-  if (typeof input !== "string" && !ArrayBufferIsView(input)) {
+  // oneShotDigest() tells the objects that it takes from the others.
+  if (typeof input !== "string" && !$isObject(input)) {
     throw $ERR_INVALID_ARG_TYPE("input", ["Buffer", "TypedArray", "DataView", "string"], input);
   }
   if (options === undefined) {

@@ -379,7 +379,7 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   if (cfg.hardened) rustflags.push("-Zstack-protector=strong");
   if (cfg.hardened) rustflags.push("-Coverflow-checks=on");
   if (cfg.hardened) rustflags.push("-Zub-checks=yes");
-  if (signsReturnAddresses(cfg)) rustflags.push("-Zbranch-protection=bti,pac-ret");
+  if (signsReturnAddresses(cfg)) rustflags.push(`-Zbranch-protection=${cfg.aot ? "" : "bti,"}pac-ret`);
   // Parallel frontend: rustc's default is single-threaded for parse / macro
   // expansion / typeck / borrowck, so the critical-path crate (`bun_runtime`)
   // sits on one core while the rest idle. With this, independent compiler

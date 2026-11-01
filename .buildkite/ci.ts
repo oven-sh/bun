@@ -180,6 +180,11 @@ interface Target {
   baseline?: boolean | undefined;
   profile?: Profile | undefined;
   /**
+   * Of the hardened aarch64 lane: with the ahead-of-time compiler, and with return addresses signed (oven-sh/WebKit#968)
+   * or, to compare that with, not.
+   */
+  aot?: "signed" | "unsigned";
+  /**
    * Build on a Linux host for a foreign target OS (currently: darwin and
    * windows). Agents/images resolve to the Linux build fleet; keys/labels/
    * artifacts are unaffected — these ARE the darwin/windows build lanes,
@@ -190,7 +195,7 @@ interface Target {
 }
 
 function getTargetKey(target: Target): string {
-  const { os, arch, abi, baseline, profile } = target;
+  const { os, arch, abi, baseline, profile, aot } = target;
   let key = `${os}-${arch}`;
   if (abi) {
     key += `-${abi}`;
@@ -201,11 +206,14 @@ function getTargetKey(target: Target): string {
   if (profile && profile !== "release") {
     key += `-${profile}`;
   }
+  if (aot) {
+    key += `-aot-${aot}`;
+  }
   return key;
 }
 
 function getTargetLabel(target: Target): string {
-  const { os, arch, abi, baseline, profile } = target;
+  const { os, arch, abi, baseline, profile, aot } = target;
   let label = `${getBuildkiteEmoji(os)} ${arch}`;
   if (abi) {
     label += `-${abi}`;
@@ -215,6 +223,9 @@ function getTargetLabel(target: Target): string {
   }
   if (profile && profile !== "release") {
     label += `-${profile}`;
+  }
+  if (aot) {
+    label += `-aot-${aot}`;
   }
   return label;
 }
@@ -275,6 +286,10 @@ const buildPlatforms: Platform[] = [
   // Links bun-webkit-linux-arm64-lto-hardened, which signs return addresses (oven-sh/WebKit#945) and has landing pads
   // (oven-sh/WebKit#965).
   { os: "linux", arch: "aarch64", profile: "hardened", distro: "debian", release: "13" },
+  // Link bun-webkit-linux-arm64-lto-hardened-aot: of oven-sh/WebKit#968, which signs return addresses, and of
+  // WEBKIT_VERSION, which does not.
+  { os: "linux", arch: "aarch64", profile: "hardened", aot: "signed", distro: "debian", release: "13" },
+  { os: "linux", arch: "aarch64", profile: "hardened", aot: "unsigned", distro: "debian", release: "13" },
   { os: "linux", arch: "aarch64", abi: "musl", distro: "debian", release: "13" },
   { os: "linux", arch: "x64", abi: "musl", distro: "debian", release: "13" },
   // Android: cross-compiled from the debian-13 aarch64 host via NDK sysroot.
@@ -336,6 +351,16 @@ const testPlatforms: Platform[] = [
     ],
   },
   { os: "linux", arch: "aarch64", profile: "hardened", distro: "debian", release: "13", tier: "latest" },
+  { os: "linux", arch: "aarch64", profile: "hardened", aot: "signed", distro: "debian", release: "13", tier: "latest" },
+  {
+    os: "linux",
+    arch: "aarch64",
+    profile: "hardened",
+    aot: "unsigned",
+    distro: "debian",
+    release: "13",
+    tier: "latest",
+  },
   { os: "linux", arch: "aarch64", distro: "ubuntu", release: "25.04", tier: "latest" },
   { os: "linux", arch: "x64", distro: "ubuntu", release: "25.04", tier: "latest" },
   { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.23", tier: "latest" },
@@ -344,7 +369,7 @@ const testPlatforms: Platform[] = [
   { os: "windows", arch: "aarch64", release: "11", tier: "latest" },
 ];
 
-// The other lanes have nothing to say about landing pads.
+// The other lanes have nothing to say about landing pads or signed return addresses.
 for (const platforms of [buildPlatforms, testPlatforms]) {
   const onlyLane = platforms.filter(platform => platform.profile === "hardened" && platform.arch === "aarch64");
   platforms.splice(0, platforms.length, ...onlyLane);
@@ -365,13 +390,16 @@ function getPlatformKey(platform: Platform): string {
 
 /** `arch` is only printed here, and placeBinaryCheck() passes `<arch>-<abi>` as one. */
 function getPlatformLabel(platform: Omit<Platform, "arch"> & { arch: string }): string {
-  const { os, arch, baseline, profile, distro, release } = platform;
+  const { os, arch, baseline, profile, aot, distro, release } = platform;
   let label = `${getBuildkiteEmoji(distro || os)} ${release} ${arch}`;
   if (baseline) {
     label += "-baseline";
   }
   if (profile && profile !== "release") {
     label += `-${profile}`;
+  }
+  if (aot) {
+    label += `-aot-${aot}`;
   }
   return label;
 }
@@ -624,8 +652,11 @@ function getBuildArgs(target: Target, options: PipelineOptions): string {
   if (baseline) args.push("--baseline=on");
   if (profile === "asan") args.push("--asan=on");
   if (profile === "hardened") args.push("--hardened=on");
-  // The lane that signs return addresses has no ahead-of-time compiler.
-  if (profile === "hardened" && arch === "aarch64") args.push("--aot=off", "--lock-environment=off");
+  if (profile === "hardened" && arch === "aarch64") {
+    args.push("--lock-environment=off");
+    if (!target.aot) args.push("--aot=off");
+    if (target.aot === "signed") args.push("--webkit-version=autobuild-preview-pr-968-3e994322");
+  }
 
   // canary: options.canary can be number (revision count) or undefined
   // (default on). Old system used CANARY_REVISION as a counter; build.ts
@@ -961,8 +992,11 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
     // source-tree lints and build-script unit tests that never touch the built
     // binary; run in .github/workflows/source-lints.yml instead
     args.push("--exclude=internal/source-lints");
-    // Built with --aot=off.
-    if (profile === "hardened") args.push("--exclude=aot/", "--exclude=compile-aot", "--exclude=bundler_compile_aot");
+    if (profile === "hardened") {
+      if (platform.aot)
+        args.push("--exclude=branch-target-identification"); // Has no landing pads.
+      else args.push("--exclude=aot/", "--exclude=compile-aot", "--exclude=bundler_compile_aot"); // Built with --aot=off.
+    }
   }
 
   const depends: string[] = [];
@@ -1190,7 +1224,7 @@ const BINARY_SIZE_THRESHOLD_MB = 0.5;
 function getReleaseStep(
   releasePlatforms: Platform[],
   options: PipelineOptions,
-  { signed = false, testStepKeys = [] }: { signed?: OptionFlag; testStepKeys?: string[] } = {},
+  { signed = false }: { signed?: OptionFlag } = {},
 ): CommandStep {
   const { canary } = options;
   const revision = typeof canary === "number" ? canary : 1;
@@ -1200,11 +1234,6 @@ function getReleaseStep(
   const depends_on = signed
     ? [...releasePlatforms.filter(p => p.os !== "windows").map(p => `${getTargetKey(p)}-build-bun`), "windows-sign"]
     : releasePlatforms.map(platform => `${getTargetKey(platform)}-build-bun`);
-
-  // Gate canary upload on green tests. A red test lane leaves the artifacts in
-  // Buildkite but skips the GitHub/S3 upload; the next green main push ships.
-  // [skip tests] on main still lets the release run (testStepKeys is empty).
-  depends_on.push(...testStepKeys);
 
   return {
     key: "release",
@@ -1344,7 +1373,6 @@ interface PipelineOptions {
   skipTests?: OptionFlag;
   skipSizeCheck?: OptionFlag;
   forceBuilds?: OptionFlag;
-  signWindows?: OptionFlag;
   canary?: number;
   buildPlatforms?: Platform[];
   testPlatforms?: Platform[];
@@ -1611,7 +1639,6 @@ async function getPipelineOptions(): Promise<PipelineOptions | undefined> {
     forceBuilds: parseOption(/\[(force builds?)\]/i),
     skipTests: parseOption(/\[(skip tests?|no tests?|only builds?)\]/i),
     skipSizeCheck: parseOption(/\[(skip size( check)?|allow size)\]/i),
-    signWindows: parseOption(/\[(sign windows)\]/i),
     buildPlatforms: Array.from(buildPlatformsMap.values()),
     testPlatforms: Array.from(testPlatformsMap.values()),
   };
@@ -1732,10 +1759,9 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
   }
 
   const { buildPlatforms = [], testPlatforms = [] } = options;
-  // Sign with [sign windows] in the commit message (for testing the sign step
-  // on a branch). DigiCert charges per signature, so canary builds are never signed.
+  // DigiCert charges per signature, so canary builds are never signed.
   const windowsPlatforms = buildPlatforms.filter(p => p.os === "windows");
-  const signWindows = ((isMainBranch() && !options.canary) || !!options.signWindows) && windowsPlatforms.length > 0;
+  const signWindows = isMainBranch() && !options.canary && windowsPlatforms.length > 0;
 
   // A build makes sure every image of the spec exists, not only the ones its
   // own steps start from: which steps a build has depends on its options (a
@@ -1914,14 +1940,12 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
     .concat(darwinTestsEnabled ? [] : prDarwinTestPlatforms)
     .concat(darwinTestsEnabled ? [] : betaDarwinTestPlatforms)
     .filter(({ os }) => os !== "darwin"); // Nothing builds for them here.
-  const testStepKeys: string[] = [];
   {
     const { skipTests, testFiles } = options;
     if (!skipTests) {
       steps.push(
         ...relevantTestPlatforms.map(target => {
           const step = getTestBunStep(target, options, { testFiles, buildId });
-          testStepKeys.push(step.key);
           // Test shards run on their native platform image; when this build
           // bakes it, they wait for it.
           const dependsOn = getImageDependsOn(target, baking);
@@ -1937,7 +1961,6 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
       );
       if (false && !testFiles?.length) {
         const step = getCargoTestStep(buildId);
-        testStepKeys.push(step.key);
         steps.push(
           getStepWithDependsOn(
             { key: getPlatformKey(cargoTestPlatform), group: getPlatformLabel(cargoTestPlatform), steps: [step] },
@@ -1971,7 +1994,7 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
   }
 
   if (isMainBranch()) {
-    steps.push(getReleaseStep(buildPlatforms, options, { signed: signWindows, testStepKeys }));
+    steps.push(getReleaseStep(buildPlatforms, options, { signed: signWindows }));
   }
 
   // Merge same-label groups into their first occurrence, keeping every

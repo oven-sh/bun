@@ -326,11 +326,6 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
         return {};
     }
 
-    // Check if the context is initialized
-    if (!thisObject->m_mdCtx) {
-        return ERR::CRYPTO_INVALID_STATE(scope, globalObject, "Not initialised"_s);
-    }
-
     // This function receives two arguments: options and signature
     JSValue options = callFrame->argument(0);
     JSValue signatureValue = callFrame->argument(1);
@@ -360,10 +355,6 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
 
     const auto& keyPtr = keyObject.asymmetricKey();
 
-    if (keyPtr.isOneShotVariant()) {
-        return ERR::CRYPTO_UNSUPPORTED_OPERATION(scope, globalObject);
-    }
-
     // Get RSA padding mode and salt length if applicable
     int32_t padding = getPadding(globalObject, scope, options, keyPtr);
     RETURN_IF_EXCEPTION(scope, {});
@@ -376,6 +367,10 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
     RETURN_IF_EXCEPTION(scope, {});
 
     // https://github.com/nodejs/node/blob/v26.12.1/src/crypto/crypto_sig.cc#L530-L607
+    if (keyPtr.isOneShotVariant()) {
+        return ERR::CRYPTO_UNSUPPORTED_OPERATION(scope, globalObject);
+    }
+
     ncrypto::Buffer<const unsigned char> sigBuf {
         .data = static_cast<const unsigned char*>(signatureBuffer->vector()),
         .len = signatureBuffer->byteLength(),
@@ -387,6 +382,10 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
             return ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "Malformed signature"_s);
         }
         sigBuf = { .data = derBuffer.begin(), .len = derBuffer.size() };
+    }
+
+    if (!thisObject->m_mdCtx) {
+        return ERR::CRYPTO_INVALID_STATE(scope, globalObject, "Not initialised"_s);
     }
 
     // Move mdCtx out of JSVerify object to finalize it

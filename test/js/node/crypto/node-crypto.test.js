@@ -2048,6 +2048,28 @@ describe("Sign and Verify", () => {
     expect(() => verifier().verify(ed.publicKey, Buffer.alloc(64))).toThrow(unsupported);
   });
 
+  it("report what is wrong in Node's order", () => {
+    const invalidValue = expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" });
+    const unsupported = expect.objectContaining({ code: "ERR_CRYPTO_UNSUPPORTED_OPERATION" });
+    // The options come before the kind of key.
+    for (const options of [{ padding: "x" }, { saltLength: "x" }, { dsaEncoding: "x" }]) {
+      expect(() => verifier().verify({ key: ed.publicKey, ...options }, Buffer.alloc(64))).toThrow(invalidValue);
+      expect(() =>
+        crypto
+          .createSign("sha256")
+          .update(data)
+          .sign({ key: ed.privateKey, ...options }),
+      ).toThrow(invalidValue);
+    }
+    // The kind of key comes before whether the object was used.
+    const sign = crypto.createSign("sha256").update(data);
+    sign.sign(rsa.privateKey);
+    expect(() => sign.sign(ed.privateKey)).toThrow(unsupported);
+    const verify = verifier();
+    verify.verify(rsa.publicKey, rsaSignature);
+    expect(() => verify.verify(ed.publicKey, Buffer.alloc(64))).toThrow(unsupported);
+  });
+
   it("sign() refuses an output encoding it does not know", () => {
     expect(() => crypto.createSign("sha256").update(data).sign(rsa.privateKey, "nope")).toThrow(
       expect.objectContaining({ code: "ERR_UNKNOWN_ENCODING", message: "Unknown encoding: nope" }),
@@ -2098,6 +2120,22 @@ describe("Sign and Verify", () => {
   });
 });
 
+describe("an input encoding", () => {
+  const cipher = () => crypto.createCipheriv("aes-128-ctr", Buffer.alloc(16), Buffer.alloc(16));
+
+  it.each(["nope", 5, "buffer", "", undefined])("of %j is UTF-8 in cipher.update()", encoding => {
+    expect(cipher().update("h\u00e9", encoding)).toEqual(cipher().update(Buffer.from("h\u00e9")));
+  });
+
+  it.each([5, {}, true])("of %j, which is not a string, is UTF-8 where Buffer.from() reads the string", encoding => {
+    const dh = crypto.getDiffieHellman("modp14");
+    dh.generateKeys();
+    expect(dh.computeSecret("abcd", encoding)).toEqual(dh.computeSecret(Buffer.from("abcd")));
+    const { publicKey } = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+    expect(crypto.createVerify("sha256").update("x").verify(publicKey, "signature", encoding)).toBe(false);
+  });
+});
+
 describe("crypto.diffieHellman()", () => {
   const alice = crypto.generateKeyPairSync("x25519");
   const bob = crypto.generateKeyPairSync("x25519");
@@ -2145,6 +2183,14 @@ describe("crypto.diffieHellman()", () => {
       expect.objectContaining({
         code: "ERR_INVALID_ARG_TYPE",
         message: expect.stringContaining('The "options.publicKey" property must be of type string or an instance of'),
+      }),
+    );
+    expect(() => crypto.diffieHellman({ privateKey: { key: 5 }, publicKey: bob.publicKey })).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: expect.stringContaining(
+          'The "options.privateKey.key" property must be of type string or an instance of',
+        ),
       }),
     );
     expect(() => crypto.diffieHellman({ privateKey: null, publicKey: bob.publicKey })).toThrow(

@@ -1166,10 +1166,23 @@ std::optional<WTF::String> X509View::getFingerprint(
     return std::nullopt;
 }
 
+namespace {
+// Not upstream: OpenSSL's PEM reader skips a UTF-8 byte order mark at the start of its input, BoringSSL's does not.
+constexpr Buffer<const unsigned char> SkipByteOrderMark(
+    const Buffer<const unsigned char>& pem)
+{
+    if (pem.len > 3 && pem.data[0] == 0xef && pem.data[1] == 0xbb && pem.data[2] == 0xbf) {
+        return { .data = pem.data + 3, .len = pem.len - 3 };
+    }
+    return pem;
+}
+} // namespace
+
 Result<X509Pointer, int> X509Pointer::Parse(
     Buffer<const unsigned char> buffer)
 {
     ClearErrorOnReturn clearErrorOnReturn;
+    buffer = SkipByteOrderMark(buffer);
     BIOPointer bio(BIO_new_mem_buf(buffer.data, buffer.len));
     if (!bio) return Result<X509Pointer, int>(ERR_get_error());
 
@@ -2162,16 +2175,6 @@ constexpr bool IsEncryptedPrivateKeyInfo(
     return len >= 1 && buffer.data[offset] != 2;
 }
 
-// Not upstream: OpenSSL's PEM reader skips a UTF-8 byte order mark at the start of its input, BoringSSL's does not.
-constexpr Buffer<const unsigned char> SkipByteOrderMark(
-    const Buffer<const unsigned char>& pem)
-{
-    if (pem.len > 3 && pem.data[0] == 0xef && pem.data[1] == 0xbb && pem.data[2] == 0xbf) {
-        return { .data = pem.data + 3, .len = pem.len - 3 };
-    }
-    return pem;
-}
-
 } // namespace
 
 bool EVPKeyPointer::IsRSAPrivateKey(const Buffer<const unsigned char>& buffer)
@@ -2340,7 +2343,11 @@ EVPKeyPointer::ParseKeyResult EVPKeyPointer::TryParsePrivateKey(
         // Not upstream: BoringSSL's d2i_PrivateKey_bio() tells the kind of key by the number of
         // elements, and takes an ECPrivateKey without its optional publicKey for an RSA key.
         const unsigned char* p = buffer.data;
-        auto key = d2i_PrivateKey(EVP_PKEY_EC, nullptr, &p, buffer.len);
+        if (EVPKeyPointer key { d2i_PrivateKey(EVP_PKEY_EC, nullptr, &p, buffer.len) }) {
+            return keyOrError(WTF::move(key));
+        }
+        ERR_clear_error();
+        auto key = d2i_PrivateKey_bio(bio.get(), nullptr);
         return keyOrError(EVPKeyPointer(key));
     }
     default: {

@@ -658,7 +658,8 @@ JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, Throw
         JSString* dataString = value.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
-        auto maybeEncoding = encodingValue.pureToBoolean() == TriState::True ? WebCore::parseEnumerationAllowBuffer(*globalObject, encodingValue) : std::optional<BufferEncodingType> { BufferEncodingType::utf8 };
+        // As in Buffer.from(), an encoding that is not a string is UTF-8.
+        auto maybeEncoding = encodingValue.isString() && asString(encodingValue)->length() ? WebCore::parseEnumerationAllowBuffer(*globalObject, encodingValue) : std::optional<BufferEncodingType> { BufferEncodingType::utf8 };
         RETURN_IF_EXCEPTION(scope, {});
 
         if (!maybeEncoding && !defaultBufferEncoding) {

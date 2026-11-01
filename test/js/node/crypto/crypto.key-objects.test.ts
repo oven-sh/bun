@@ -716,6 +716,22 @@ describe("crypto.KeyObjects", () => {
     );
   });
 
+  test('type: "sec1" takes what it took before', () => {
+    const rsa = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey;
+    const ed25519 = generateKeyPairSync("ed25519").privateKey;
+    const ec = generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey;
+    for (const [key, type] of [
+      [rsa, "pkcs1"],
+      [rsa, "pkcs8"],
+      [ed25519, "pkcs8"],
+      [ec, "pkcs8"],
+      [ec, "sec1"],
+    ] as const) {
+      const der = key.export({ type: type as "pkcs8", format: "der" });
+      expect(createPrivateKey({ key: der, format: "der", type: "sec1" }).equals(key)).toBe(true);
+    }
+  });
+
   test("an ECPrivateKey in DER may leave out its public key", () => {
     const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
     const d = Buffer.from(privateKey.export({ format: "jwk" }).d!, "base64url");

@@ -54,8 +54,10 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherUpdate, (JSC::JSGlobalObject * lexicalGlobalObj
     JSValue encodingValue = callFrame->argument(1);
 
     // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/crypto/cipher.js#L185-L191
+    // An encoding that is not known is UTF-8, as in the other update() methods.
+    auto encoding = BufferEncodingType::utf8;
     if (dataValue.isString()) {
-        auto encoding = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, encodingValue);
+        encoding = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, encodingValue).value_or(BufferEncodingType::utf8);
         RETURN_IF_EXCEPTION(scope, {});
         unsigned length = asString(dataValue)->length();
         if (encoding == BufferEncodingType::hex && length % 2 != 0) {
@@ -65,7 +67,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherUpdate, (JSC::JSGlobalObject * lexicalGlobalObj
         return ERR::INVALID_ARG_TYPE_INSTANCE(scope, lexicalGlobalObject, "data"_s, "string"_s, "Buffer, TypedArray, or DataView"_s, dataValue);
     }
 
-    JSArrayBufferView* dataView = getArrayBufferOrView(lexicalGlobalObject, scope, dataValue, "data"_s, encodingValue);
+    JSArrayBufferView* dataView = getArrayBufferOrView(lexicalGlobalObject, scope, dataValue, "data"_s, encoding);
     RETURN_IF_EXCEPTION(scope, {});
 
     // Read once: the length of a length-tracking view is not fixed.

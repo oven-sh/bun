@@ -1954,7 +1954,7 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
             }
 
             if (!dynamicDowncast<JSArrayBufferView>(dataValue) && !dynamicDowncast<JSArrayBuffer>(dataValue)) {
-                ERR::INVALID_ARG_TYPE(scope, globalObject, "key.key"_s, "ArrayBuffer, Buffer, TypedArray, or DataView"_s, dataValue);
+                ERR::INVALID_ARG_TYPE(scope, globalObject, makeString(name, ".key"_s), "ArrayBuffer, Buffer, TypedArray, or DataView"_s, dataValue);
                 return {};
             }
 
@@ -2054,9 +2054,9 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
         }
 
         if (mode != PrepareAsymmetricKeyMode::CreatePrivate) {
-            ERR::INVALID_ARG_TYPE(scope, globalObject, "key.key"_s, "string or an instance of ArrayBuffer, Buffer, TypedArray, DataView, KeyObject, or CryptoKey"_s, dataValue);
+            ERR::INVALID_ARG_TYPE(scope, globalObject, makeString(name, ".key"_s), "string or an instance of ArrayBuffer, Buffer, TypedArray, DataView, KeyObject, or CryptoKey"_s, dataValue);
         } else {
-            ERR::INVALID_ARG_TYPE(scope, globalObject, "key.key"_s, "string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView"_s, dataValue);
+            ERR::INVALID_ARG_TYPE(scope, globalObject, makeString(name, ".key"_s), "string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView"_s, dataValue);
         }
         return {};
     }

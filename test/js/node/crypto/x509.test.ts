@@ -72,6 +72,11 @@ describe("new X509Certificate()", () => {
     );
   });
 
+  test("with a PEM that starts with a byte order mark", () => {
+    const pem = readFileSync(path.join(import.meta.dir, "..", "test", "fixtures", "keys", "agent1-cert.pem"), "utf8");
+    expect(new X509Certificate("\ufeff" + pem).fingerprint256).toBe(new X509Certificate(pem).fingerprint256);
+  });
+
   test("with a detached view, which is empty", () => {
     const view = new Uint8Array(4);
     view.buffer.transfer();

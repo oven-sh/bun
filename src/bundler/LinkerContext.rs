@@ -4752,7 +4752,7 @@ impl<'a> LinkerContext<'a> {
 
         // The printer substitutes a binding at each `X.name` of the file, so a
         // call that needs `X` as `this` keeps every `X.name` of the file.
-        let mut keeps_this: Vec<(Ref, bun_ast::StoreStr)> = Vec::new();
+        let mut keeps_this: HashMap<(Ref, bun_ast::StoreStr), ()> = HashMap::new();
         for access in &accesses {
             if access.is_call_target
                 && let Some(resolved) = member_resolutions
@@ -4760,7 +4760,7 @@ impl<'a> LinkerContext<'a> {
                     .unwrap()
                 && self.method_call_needs_this(resolved.source_index, resolved.r#ref)
             {
-                keeps_this.push((access.base, access.name));
+                keeps_this.insert((access.base, access.name), ());
             }
         }
 
@@ -4772,7 +4772,7 @@ impl<'a> LinkerContext<'a> {
             bound_bases.clear();
             for access in part_accesses {
                 let (base, name, count) = (access.base, access.name, access.count);
-                if keeps_this.contains(&(base, name)) {
+                if keeps_this.contains_key(&(base, name)) {
                     continue;
                 }
                 let Some(resolved) = member_resolutions

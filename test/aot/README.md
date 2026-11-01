@@ -84,7 +84,12 @@ last section.
   runner says, or nowhere (`BUN_ENABLE_CRASH_REPORTING=0`): `harness/without-core-dump.ts`.
 - **A file runs beside others.** One that takes under fifteen seconds on every lane runs in a bucket, many files to a process
   (`test/parallel-allowlist.json`), with no more of its concurrent tests under way than its share of the processors. The longer ones run beside one another too, each in a process of its own: one for every three
-  processors, and no more than one for every three gigabytes of the machine. A file that judges by a clock, or by the memory that is
+  processors, and no more than one for every three gigabytes of the machine. On the lane with a sanitizer no file of this folder
+  runs in a bucket, whatever the allowlist says: each has a process of its own, its share of the processors for its concurrent
+  tests there too, and one try beside the others. A file that fails there is tried again alone when the others are through, as
+  a file of a bucket is. What a crash or a sanitizer reports there is final, as it is for any file that is not in a bucket. A
+  file that fails alone too has its further tries, each only if it can end five minutes before the job does. A
+  file that judges by a clock, or by the memory that is
   held or left, says so in a line `// Runs alone: <why>`, and nothing else of the shard runs beside it.
 - **Every test runs on every push, on x64 and arm64: the programs of `parallel/` and a few folders of test files on Ubuntu
   (`distroOfAotTest` in `scripts/runner.node.ts`), the other test files on Debian. Neither repeats what the other runs. The other lanes (Alpine, Windows, macOS) run what asks the system**: processes, Workers and

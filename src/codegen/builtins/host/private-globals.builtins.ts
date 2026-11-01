@@ -130,8 +130,9 @@ export default b.declarations(
     ...Object.fromEntries(
       Object.entries(resultsOfFunctionsChangingNothing).map(([name, returns]) => [name, changesNothing(returns)]),
     ),
-    // The object that runtime-dependencies.builtins.ts describes.
+    // The object that runtime-dependencies.builtins.ts describes. The realm has one from its first read on, so compiled code keeps it.
     asyncContext: b.property(b.object, {
+      mutability: "AlwaysLocked",
       createdOnFirstRead: { capability: "none", uses: { this: [b.returnedFrom(asyncContextCell)] } },
     }),
     // `require` in a library module hands another library module to it.

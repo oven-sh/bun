@@ -29,6 +29,7 @@ export interface Result {
   build?: { stock: Built; aot: Built };
   tests?: Compared;
   compiled?: Compared;
+  together?: Compared;
 }
 
 interface Built {
@@ -170,6 +171,15 @@ export class Runner {
     return compare(readTests(first, source), readTests(second, source), readTests(aot, source));
   }
 
+  /** The whole suite as one compiled program. Each test file runs in a global object of its own, in plain Bun too. */
+  async compareTestsCompiledTogether(project: Project): Promise<Compared> {
+    const source = this.sourceOf(project);
+    const cwd = join(source, project.directory);
+    const test = (flags: string[]) => this.spawn(project, cwd, [this.bun, "test", "--isolate", ...flags, "--timeout", "60000"]);
+    const [first, second, aot] = [await test([]), await test([]), await test(["--aot"])];
+    return compare(readTests(first, source), readTests(second, source), readTests(aot, source));
+  }
+
   async compareCompiledTests(project: Project): Promise<Compared> {
     const source = this.sourceOf(project);
     const cwd = join(source, project.directory);
@@ -304,7 +314,7 @@ export function compare(first: Tests, second: Tests, aot: Tests): Compared {
 }
 
 export function rowOf(result: Result) {
-  const { types, build, tests, compiled } = result;
+  const { types, build, tests, compiled, together } = result;
   const built = (it: Built) => (it.signal ? it.signal : it.exitCode ? `exit ${it.exitCode}` : `${it.seconds.toFixed(1)} s, ${it.peakMegabytes} MB`);
   return [
     result.name,
@@ -317,6 +327,9 @@ export function rowOf(result: Result) {
     compiled ? `${compiled.plain.pass} | ${compiled.aot.pass}` : "",
     compiled ? `${compiled.failedOnlyUnderAot.length} failed, ${compiled.neverReportedUnderAot.length} never reported, ${compiled.filesNotBuilt!.length} files not built, ${compiled.filesBuiltUnchecked!.length} built with files unchecked, ${compiled.filesEndedBySignal!.length} files ended by a signal` : "",
     compiled?.filesEndedBySignal![0]?.file ?? compiled?.causes[0]?.message ?? "",
+    together ? `${together.plain.pass} | ${together.aot.pass}` : "",
+    together ? `${together.failedOnlyUnderAot.length} failed, ${together.neverReportedUnderAot.length} never reported, ${together.filesRefused} files refused` : "",
+    together?.aot.signal ?? together?.causes[0]?.message ?? "",
   ].join(" | ");
 }
 
@@ -335,7 +348,7 @@ if (import.meta.main) {
     },
   });
   if (!positionals[0]) {
-    console.error("usage: bun run.ts <work folder> [--only <regex>] [--steps fetch,types,build,tests,compiled] [--jobs <n>] [--files-at-a-time <n>] [--bun <path>] [--tsc <path>] [--results <name>] [--no-jail]");
+    console.error("usage: bun run.ts <work folder> [--only <regex>] [--steps fetch,types,build,tests,compiled,together] [--jobs <n>] [--files-at-a-time <n>] [--bun <path>] [--tsc <path>] [--results <name>] [--no-jail]");
     process.exit(1);
   }
   const work = resolve(positionals[0]);
@@ -353,6 +366,7 @@ if (import.meta.main) {
         if (steps.has("build")) result.build = await runner.build(project);
         if (steps.has("tests")) result.tests = await runner.compareTests(project);
         if (steps.has("compiled")) result.compiled = await runner.compareCompiledTests(project);
+        if (steps.has("together")) result.together = await runner.compareTestsCompiledTogether(project);
       }
       results.push(result);
       console.log(rowOf(result));

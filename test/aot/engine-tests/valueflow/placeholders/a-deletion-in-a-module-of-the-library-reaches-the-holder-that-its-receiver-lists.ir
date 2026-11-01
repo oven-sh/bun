@@ -1,0 +1,49 @@
+# globalThis[first] = globalThis[second]; somebody(require("bun")); require("bun:ffi")        bun:ffi: Bun.fileURLToPath(suffix); ffi = globalThis.Bun.FFI; ffi.dlopen; delete ffi.callback
+# After the store a global may hold whatever another holds, so the module reads Bun.FFI off a value nobody knows. The Bun that the program loaded and the Bun that the module names are both in unknown hands,
+# and that read lets Bun.FFI escape: the receiver of the deletion shows the unknown object alone and lists Bun.FFI beside it. No other statement writes Bun.FFI.
+# The module takes a member off an object of the realm that it named itself, and the delete must not be refused when it loads. The deletion names the member, so it reaches it on the holder that the
+# receiver lists, as a deletion of the program does: start-up does not lock Bun.FFI.callback. The member that the module only reads stays constant.
+# RUN: valueflow-results
+# CHECK: builtin-location BunFFI."dlopen" Constant
+# CHECK: builtin-location BunFFI."callback" Unknown
+
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0
+module m1 path="bun" displayPath="bun" kind=Runtime exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=Bun
+module m2 path="bun:ffi" displayPath="bun:ffi" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=BunFfi body=f1
+entry module=m0
+layout L0 name="Exports" fields=[{key="dlopen" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="argv"
+    v2 = Integer integer=2
+    v3 = ElemGet v1, v2
+    v4 = Integer integer=3
+    v5 = ElemGet v1, v4
+    v6 = Builtin builtin=GlobalThis
+    v7 = ElemGet v6, v5
+    ElemSet v6, v3, v7 mode=Sloppy
+    v9 = Integer integer=4
+    v10 = ElemGet v1, v9
+    v11 = ElemGet v6, v10
+    v12 = RequireModule module=m1 referrer=m0 specifier="bun"
+    v13 = Call v11, -, v12
+    v14 = RequireModule module=m2 referrer=m0 specifier="bun:ffi"
+    v15 = PropGet v14 key="dlopen"
+    Return v15
+}
+function f1 name="ffi" module=m2 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Bun"
+    v2 = PropGet v1 key="fileURLToPath"
+    v3 = String string="so"
+    v4 = Call v2, v1, v3 calleeKey="fileURLToPath"
+    v5 = PropGet v0 key="globalThis"
+    v6 = PropGet v5 key="Bun"
+    v7 = PropGet v6 key="FFI"
+    v8 = PropGet v7 key="dlopen"
+    v9 = PropDelete v7 key="callback"
+    v10 = NewObject -, v8 layout=L0 fields=[0]
+    Return v10
+}

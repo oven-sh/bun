@@ -5,7 +5,7 @@ Open-source TypeScript projects that nobody here wrote, each at a pinned commit,
 `projects.json` is the list: repository, commit, the directory of the package, its `tsconfig.json`, an entry point and a kind.
 
 ```sh
-bun test/aot/real-apps/run.ts <work folder> [--only <regex>] [--steps fetch,types,build,tests,compiled] [--jobs <n>] [--files-at-a-time <n>] [--bun <path>] [--tsc <path>] [--results <name>] [--no-jail]
+bun test/aot/real-apps/run.ts <work folder> [--only <regex>] [--steps fetch,types,build,tests,compiled,together] [--jobs <n>] [--files-at-a-time <n>] [--bun <path>] [--tsc <path>] [--results <name>] [--no-jail]
 ```
 
 | Step       | What runs                                                                                     | Network | Runs the project's code |
@@ -15,6 +15,7 @@ bun test/aot/real-apps/run.ts <work folder> [--only <regex>] [--steps fetch,type
 | `build`    | `bun build --compile` and `bun build --compile --aot --no-macros` of the entry point          | no      | no                      |
 | `tests`    | `bun test` twice, then `bun test --aot`, compared test by test                                | no      | yes                     |
 | `compiled` | `bun test` twice, then each test file alone as compiled code, compared test by test           | no      | yes                     |
+| `together` | `bun test --isolate` twice, then the whole suite as one compiled program under `--isolate`    | no      | yes                     |
 
 `bun test --aot` checks a project as the build does and then runs it from its source files. Only `compiled` runs machine code: each file in which plain Bun passes a test is compiled with all it imports and run by `bun test --debug-aot`, alone, so that a file that isn't built or ends early takes no other file with it. Type errors stop a build, and many projects check their tests under looser rules than their sources. So a file that isn't built for type errors is tried again with `// @ts-nocheck` on the files that the errors name, which the jail throws away afterwards. It isn't among the default steps. Put `<work folder>/scratch` on a file system in memory: the jail's overlay writes there, and the kernel syncs that file system each time a jail ends.
 

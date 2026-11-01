@@ -8,6 +8,9 @@ import {
   releaseCell,
   runtimeArgumentsCell,
   sendsOverChannelCell,
+  standardErrorCell,
+  standardInputCell,
+  standardOutputCell,
   tickShownToHooksCell,
   versionsCell,
 } from "./native-cells.ts";
@@ -207,17 +210,23 @@ const replaceableFunction = (callback: b.UseSpec, call: b.FunctionField) =>
   });
 
 // constructStdioWriteStream() in BunProcess.cpp: where the code that makes the stream throws, as it does when the stack is full, it reports the error and the property is undefined from then on.
-const outputStream = b.property(b.union(b.object, b.undefined), {
-  createdOnFirstRead: { capability: "js", throws: true },
-  setter: {
-    this: b.object,
-    value: b.any,
-    capability: "heap",
-    uses: { this: b.inspected, value: [b.retained] },
-    writes: ["ShapeWords", "NamedProperties"],
-    implementation: b.generic,
-  },
+// runtime-dependencies.builtins.ts says what makes the stream and puts it in the cell.
+const standardStream = (cell: string) => ({
+  createdOnFirstRead: { capability: "heap" as const, throws: true, uses: { this: [b.returnedFrom(cell)] } },
 });
+const inputStream = b.property(b.union(b.object, b.undefined), standardStream(standardInputCell));
+const outputStream = (cell: string) =>
+  b.property(b.union(b.object, b.undefined), {
+    ...standardStream(cell),
+    setter: {
+      this: b.object,
+      value: b.any,
+      capability: "heap",
+      uses: { this: b.inspected, value: [b.retained] },
+      writes: ["ShapeWords", "NamedProperties"],
+      implementation: b.generic,
+    },
+  });
 
 // The message of an error about a refused value reads its constructor.name, or prints it the way console.log does.
 const formattedAfterReading = (...members: readonly string[]) => b.printedByFormatter("constructor", ...members);
@@ -391,11 +400,11 @@ const ignoresValue = {
 
 // Native code makes the list of strings at the first read. From then on it is a property like any other.
 const listOfStringsKeptIn = (cell: string) =>
-  b.property(b.any, {
+  b.property(b.instance("Array").holding({ element: b.string }), {
     createdOnFirstRead: {
       capability: "heap",
       throws: true,
-      uses: { this: [b.createdIn(newArrayOf(b.string), b.nativeCell(cell)), b.returnedFrom(cell)] },
+      uses: { this: [b.createdIn(newArrayOf(b.string).dense, b.nativeCell(cell)), b.returnedFrom(cell)] },
       reads: externalState,
     },
   });
@@ -475,6 +484,7 @@ const lookedUpByNativeCode = [
   "_kill",
   "argv",
   "emit",
+  "env",
   "execArgv",
   "nextTick",
   "noDeprecation",
@@ -510,8 +520,9 @@ export default b.declarations(
         implementation: b.hostCall,
       },
       _kill: replaceableFunction(calledWithSignal, b.otherwise),
-      stderr: outputStream,
-      stdout: outputStream,
+      stderr: outputStream(standardErrorCell),
+      stdin: inputStream,
+      stdout: outputStream(standardOutputCell),
       pid: createdOnFirstRead(b.f64),
       browser: createdOnFirstRead(b.bool),
       isBun: createdOnFirstRead(b.bool),

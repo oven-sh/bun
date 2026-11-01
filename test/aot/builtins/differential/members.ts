@@ -16,7 +16,7 @@ export type Invocation = {
 };
 
 const prototypeOf = (value: unknown): object => Reflect.getPrototypeOf(Object(value))!;
-const modulesInPlaceOfPackages = ["utf-8-validate"];
+const modulesInPlaceOfPackages = ["utf-8-validate", "bun:test/vitest"];
 
 const preludeFolder = join(import.meta.dir, "../../../../src/aot/prelude");
 
@@ -59,10 +59,13 @@ function createHiddenRoots(): Map<string, () => unknown> {
     ["%IntlSegmentIterator%.prototype", () => prototypeOf(new Intl.Segmenter().segment("")[Symbol.iterator]())],
     ["%HeadersIterator%.prototype", () => prototypeOf(new Headers().entries())],
     ["%URLSearchParamsIterator%.prototype", () => prototypeOf(new URLSearchParams().entries())],
+    // `test`, `describe` and what their modifiers answer are bound functions below it.
+    ["%ScopeFunctions%.prototype", () => prototypeOf(require("bun:test").test)],
     ["%ImportMeta%", () => import.meta],
     ["%ModuleObject%", () => require("./module-object.cjs")],
     ["%CompilerHelpers%", loadCompiledHelpers],
     ["%ModuleRequire%", () => require],
+    ["%ModuleRequirePrototype%", () => prototypeOf(require)],
     // The import and require() each get a function of their own.
     ["utf-8-validate", () => require("utf-8-validate")],
   ]);
@@ -292,10 +295,17 @@ export class Realm {
 
 const typedArrayTag = Reflect.getOwnPropertyDescriptor(prototypeOf(Int8Array.prototype), Symbol.toStringTag)!.get!;
 
-// Its cell says Function, as that of every function does.
+const structureOf = (value: object) => /StructureID: (\d+)/.exec(jscDescribe(value))?.[1];
+
+// Its cell says Function, as that of every function does. The functions that the formatters of ECMA-402 bind have the empty name: they are known by the structure,
+// which every bound function of a realm begins with and no other function has.
 function isBoundFunction(value: Function): boolean {
   const name: unknown = Reflect.getOwnPropertyDescriptor(value, "name")?.value;
-  return typeof name === "string" && name.startsWith("bound ") && !Object.hasOwn(value, "prototype");
+  if (typeof name !== "string" || Object.hasOwn(value, "prototype")) return false;
+  if (name.startsWith("bound ")) return true;
+  const bound = function () {}.bind(null);
+  Reflect.getOwnPropertyDescriptor(bound, "name");
+  return structureOf(value) === structureOf(bound);
 }
 
 // Their cells are named "Object". Neither function looks for a formatter that an older program has put on another object.

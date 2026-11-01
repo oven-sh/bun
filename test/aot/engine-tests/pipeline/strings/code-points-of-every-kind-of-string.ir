@@ -144,5 +144,5 @@ function f3 name="rope" module=m0 position=1137 flags=[IsChecked, HasExplicitNam
 # -- generated: takeApart
 # CHECK-LABEL: function {{*}}name="takeApart"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 171, patchpoints: 26, rare instructions: 32, polls: 3
+# CHECK-NEXT: instructions: 34, patchpoints: 1, rare instructions: 172, polls: 1
 # CHECK-NEXT: end of function f2

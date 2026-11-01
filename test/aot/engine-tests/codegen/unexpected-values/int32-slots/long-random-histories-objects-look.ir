@@ -189,7 +189,7 @@ function f6 module=m0 position=1136 kind=Initializer flags=[HasThis, IsChecked, 
 # CHECK-NEXT: Predecessors: #10, #8, #13
 # CHECK-NEXT: Int64 b@20 = Phi(ReadsLocalState, v16:Parameter)
 # CHECK-NEXT: Int64 b@6 = Patchpoint(runsWithoutFrame, resultConstraints = SomeRegister, v17:PropSet)
-# CHECK-NEXT: Void b@97 = Patchpoint(b@18:Register(%rax), b@20:Register(%rsi), b@6:Register(%rdx), resultConstraints = WarmAny, ExitsSideways|ControlDependent|Writes:jscRoot|Reads:Top, v17:PropSet)
+# CHECK-NEXT: Void b@97 = Patchpoint(b@18:Register(%rax), b@20:Register(%rsi), b@6:Register(%rdx), resultConstraints = WarmAny, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, ObjectFields, ShapeWords, OrderWords, MemberGuards, PrototypeLinks, NamedProperties, Elements, ArrayStorage, TypedArrayStorage, TypedArrayElements, CollectionStorage, CollectionEntries, InternalFields, RegExpState, PromiseState, StringStorage, StringBuilderContents, ParserState, ExternalState, AllocatorState, RuntimeState, ValidationState, CalleesInFrames}|Reads:Top, v17:PropSet)
 # CHECK-NEXT: Void b@98 = Jump(Terminal)
 # CHECK-NEXT: Successors: #7
 # CHECK-NEXT: BB#8: ; frequency = 0.000976
@@ -204,7 +204,7 @@ function f6 module=m0 position=1136 kind=Initializer flags=[HasThis, IsChecked, 
 # CHECK-NEXT: Successors: #6
 # CHECK-NEXT: BB#5: ; frequency = 0.000977
 # CHECK-NEXT: Predecessors: #0
-# CHECK-NEXT: Int64 b@53 = Patchpoint(b@18:SomeRegister, resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:jscRoot|Reads:Top, v12:PropGet)
+# CHECK-NEXT: Int64 b@53 = Patchpoint(b@18:SomeRegister, resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, ObjectFields, ShapeWords, OrderWords, MemberGuards, PrototypeLinks, NamedProperties, Elements, ArrayStorage, TypedArrayStorage, TypedArrayElements, CollectionStorage, CollectionEntries, InternalFields, RegExpState, PromiseState, StringStorage, StringBuilderContents, ParserState, ExternalState, AllocatorState, RuntimeState, ValidationState, CalleesInFrames}|Reads:Top, v12:PropGet)
 # CHECK-NEXT: Int32 b@54 = Load(b@18, offset = 24, ControlDependent|Reads:ObjectFields.0, v14:GetSlot)
 # CHECK-NEXT: Int64 b@5 = ArgumentReg(%r13)
 # CHECK-NEXT: Int64 b@4 = Load(b@5, offset = 96, ReadsImmutable, v15:Add)

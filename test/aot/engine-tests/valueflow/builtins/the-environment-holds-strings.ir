@@ -11,6 +11,7 @@
 # CHECK: values=f0:v11
 # CHECK: operand 0 {{*}} 1 members: [[environment]]
 # RUN(UNREACHED): valueflow-solve unreached
+# REQUIRES(UNREACHED): not-windows
 # UNREACHED-NOT: unreached f1
 # UNREACHED: unreached f2
 

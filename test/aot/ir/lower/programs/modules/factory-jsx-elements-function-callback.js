@@ -61,7 +61,7 @@ console.log(require_lib().v);
 // CHECK-NEXT: Return v9
 // CHECK-NEXT: }
 // CHECK: function {{*}}
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow captures=[{type=env [[L_7]] flags=[IsFromCompiler]}, {type=undefined|null|function flags=[IsExpected]}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_4]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow captures=[{type=env [[L_7]] flags=[IsFromCompiler]}, {type=undefined|null|function flags=[IsExpected] variableName="cb"}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_4]]] {
 // CHECK-NEXT: b0(v0: env [[L_7]], v1: undefined|null|function):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

@@ -1,0 +1,11 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.NAME_7 = exports.NAME_6 = exports.NAME_5 = exports.NAME_4 = exports.NAME_3 = exports.NAME_2 = exports.NAME_1 = exports.NAME_0 = void 0;
+exports.NAME_0 = "name_0";
+exports.NAME_1 = "name_1";
+exports.NAME_2 = 2;
+exports.NAME_3 = 3.5;
+exports.NAME_4 = null;
+exports.NAME_5 = true;
+exports.NAME_6 = "name_6";
+exports.NAME_7 = "name_7";

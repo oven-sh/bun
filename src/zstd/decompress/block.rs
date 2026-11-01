@@ -733,7 +733,7 @@ impl BlockDecoder {
             small_output_used,
         } = &mut **scratch;
         let dict_tables = dict_entropy.map(|dict| &dict.seq);
-        let is_history_long = total_history_size > (1 << 24);
+        let is_history_long = total_history_size > MIN_FAR_HISTORY;
         let tables = if nb_seq <= MAX_ONE_BY_ONE && !use_prefetch_decoder && !is_history_long {
             entropy.seq.pick(self.seq_sources, dict_tables)
         } else {
@@ -952,6 +952,16 @@ impl History {
         prefetch_read(from.wrapping_add(64), Locality::L1);
         self.position += (match_length + MINMATCH) as usize;
     }
+
+    /// The same, whatever its offset.
+    #[inline(always)]
+    fn prefetch_match(&mut self, sequence: Sequence) {
+        self.prefetch(
+            sequence.lit_length,
+            sequence.match_length - MINMATCH,
+            (sequence.offset as u32).saturating_add(3),
+        );
+    }
 }
 
 /// A copy of the start of a stream after zeroes, where it can be read as if its start were far. That it was not shows
@@ -999,6 +1009,10 @@ impl PaddedStart {
 
 /// Up to how many sequences it is not worth it to decode them by the batch.
 const MAX_ONE_BY_ONE: usize = 32;
+/// How many sequences `ZSTD_decompressSequencesLong_body` decodes ahead of the one that it executes.
+const ADVANCED_SEQS: usize = 8;
+/// A history that is longer is not all in a cache.
+const MIN_FAR_HISTORY: usize = 1 << 24;
 
 /// `seqState_t`
 #[derive(Clone, Copy)]
@@ -1874,6 +1888,48 @@ impl<'a> Executor<'_, 'a> {
         Ok(index)
     }
 
+    /// `ZSTD_decompressSequencesLong_body` the way it is in C: a sequence is executed once [`ADVANCED_SEQS`] more are
+    /// decoded and their matches asked for. It is for long matches, which [`Self::run`] takes one at a time too, and knows
+    /// nothing of literals that would be in the output. Returns the last offsets.
+    #[inline(never)]
+    fn run_long_matches_ahead(
+        &mut self,
+        seq_state: &SeqState<'_>,
+        nb_seq: usize,
+    ) -> Result<[usize; ZSTD_REP_NUM]> {
+        let mut ahead = [Sequence::default(); ADVANCED_SEQS];
+        let ahead = ahead.sub_mut(..nb_seq.min(ADVANCED_SEQS))?;
+        let mut history = self.history();
+        let mut exec = self.fork();
+        let mut seq_state: SeqState<'_> = *seq_state;
+        let mut remaining = nb_seq;
+        for sequence in &mut *ahead {
+            *sequence = seq_state.decode_sequence(remaining == 1);
+            remaining -= 1;
+            history.prefetch_match(*sequence);
+        }
+        let mut oldest = 0;
+        while remaining > 0 {
+            let next = seq_state.decode_sequence(remaining == 1);
+            remaining -= 1;
+            history.prefetch_match(next);
+            let slot = ahead.at_mut(oldest)?;
+            exec.exec_sequence::<false>(*slot)?;
+            *slot = next;
+            oldest = (oldest + 1) % ADVANCED_SEQS;
+        }
+        if !seq_state.bit_d.is_at_end() {
+            return Err(Error::CorruptionDetected);
+        }
+        ahead.rotate_left(oldest);
+        for &sequence in &*ahead {
+            exec.exec_sequence::<false>(sequence)?;
+        }
+        let exec = (exec.op, exec.lits, exec.split);
+        self.join(exec);
+        Ok(seq_state.prev_offset)
+    }
+
     /// `ZSTD_decompressSequences_body`, `ZSTD_decompressSequences_bodySplitLitBuffer` and, with `LONG`,
     /// `ZSTD_decompressSequencesLong_body`. Returns the last offsets.
     fn run<const LONG: bool>(
@@ -1882,10 +1938,17 @@ impl<'a> Executor<'_, 'a> {
         nb_seq: usize,
         batch: &mut [RawSequence],
     ) -> Result<[usize; ZSTD_REP_NUM]> {
-        // The C code then decodes 8 sequences ahead, so it sees whether the stream ends where it should before it
-        // executes the last ones.
-        let mut ahead = [Sequence::default(); 8];
-        let ahead = ahead.sub_mut(..if LONG { nb_seq.min(8) } else { 0 })?;
+        if LONG
+            && self.op - self.prefix_start + self.ext_dict.len() > MIN_FAR_HISTORY
+            && seq_state.tables.matches_are_long()
+            && !self.split
+        {
+            return self.run_long_matches_ahead(seq_state, nb_seq);
+        }
+        // With `LONG`, the C code decodes that many sequences ahead, so it sees whether the stream ends where it should
+        // before it executes the last ones.
+        let mut ahead = [Sequence::default(); ADVANCED_SEQS];
+        let ahead = ahead.sub_mut(..if LONG { nb_seq.min(ADVANCED_SEQS) } else { 0 })?;
         let mut start = None;
         // There until decoding goes on from it.
         let mut start = (!LONG).then_some(&mut start);
@@ -1899,10 +1962,22 @@ impl<'a> Executor<'_, 'a> {
         if (seq_state.tables.matches_are_long() || nb_seq <= MAX_ONE_BY_ONE && !LONG) && !self.split
         {
             let mut exec = self.fork();
-            while remaining > ahead.len() {
-                let sequence = seq_state.decode_sequence(remaining == 1);
-                remaining -= 1;
-                exec.exec_sequence::<false>(sequence)?;
+            if LONG {
+                while remaining > ahead.len() {
+                    let sequence = seq_state.decode_sequence(remaining == 1);
+                    remaining -= 1;
+                    exec.exec_sequence::<false>(sequence)?;
+                }
+            } else {
+                // As for `fork`: `decode_batch` takes the address of `seq_state`. With `LONG`, HTML after a cold dictionary
+                // takes 7% longer with the copy.
+                let mut state = seq_state;
+                while remaining > ahead.len() {
+                    let sequence = state.decode_sequence(remaining == 1);
+                    remaining -= 1;
+                    exec.exec_sequence::<false>(sequence)?;
+                }
+                seq_state = state;
             }
             let exec = (exec.op, exec.lits, exec.split);
             self.join(exec);
@@ -1962,11 +2037,7 @@ impl<'a> Executor<'_, 'a> {
         for sequence in &mut *ahead {
             *sequence = seq_state.decode_sequence(remaining == 1);
             remaining -= 1;
-            history.prefetch(
-                sequence.lit_length,
-                sequence.match_length - MINMATCH,
-                (sequence.offset as u32).saturating_add(3),
-            );
+            history.prefetch_match(*sequence);
         }
         let is_at_end = match left_at {
             Some(_) => PaddedStart::is_reached(&seq_state.bit_d),

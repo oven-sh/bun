@@ -513,6 +513,25 @@ describe("decompressing frames whose size is known", () => {
     expect(decoded.equals(Buffer.concat([data, data, data]))).toBe(true);
   });
 
+  // Then a sequence waits until 8 more are decoded, so that what it copies can be fetched by then.
+  it("long matches from more than 16 MB back", () => {
+    const c = zlib.constants;
+    const piece = (i: number) => pieces[0].subarray((i * 7919) % 139_000).subarray(0, 40 + ((i * 31) % 300));
+    const data = Buffer.concat([
+      pieces[0],
+      Buffer.alloc(17 << 20),
+      ...Array.from({ length: 4_000 }, (_, i) => piece(i)),
+    ]);
+    const params = { [c.ZSTD_c_windowLog]: 25, [c.ZSTD_c_enableLongDistanceMatching]: 1 };
+    const frame = zlib.zstdCompressSync(data, { params });
+    const sequences = blocks(frame).filter(block => typeof block === "number" && block > 300);
+    expect(new Set(sequences.map(count => Number(count) % 8)).size).toBeGreaterThan(2);
+    expect(zstdDecompressSync(frame).equals(data)).toBe(true);
+    // In one go to where it is wanted, and by way of the decoder's own buffer.
+    expect(zlib.zstdDecompressSync(frame, { chunkSize: data.length }).equals(data)).toBe(true);
+    expect(zlib.zstdDecompressSync(frame).equals(data)).toBe(true);
+  });
+
   // The C library keeps some of them in the output buffer, unless that has room for all of them.
   describe("blocks of more than 64 KB of literals", () => {
     // Noise of 6 bits, and after every 6 to 30 bytes of it, up to `end`, 5 to 8 bytes from `nearest` to `furthest` back.

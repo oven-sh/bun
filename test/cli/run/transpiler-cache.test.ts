@@ -1118,6 +1118,8 @@ describe.concurrent("`bun test` and `bun run`", () => {
     ["named=describe", `export const g = () => named;`],
     ["named.dot=expect", `export const g = () => named.dot;`],
     ["named=vi", `export const g = () => named.doMock(import("./dep.js"), () => ({}));`],
+    // Vitest globals leave out `jest`, so only `bun test` without them hoists this.
+    ["jest.mock=replaced", `jest.mock("./dep.js", () => ({ a() {} }));`],
   ])(
     "keep apart the entries of a file that uses it only without, or only with, --define %s",
     async (define, statement) => {
@@ -1128,11 +1130,12 @@ describe.concurrent("`bun test` and `bun run`", () => {
         ...loader(["source.js", "nothing.js"], "import"),
       });
       const flags = ["--define", define];
-      const [runFirst, testFirst] = await Promise.all(
+      const [runFirst, testFirst, vitestFirst] = await Promise.all(
         (
           [
             ["run", "test"],
             ["test", "run"],
+            ["test --globals=vitest", "test"],
           ] as const
         ).map(async ([first, second], i) => {
           const cache = join(String(dir), `.cache-${i}`);
@@ -1142,14 +1145,15 @@ describe.concurrent("`bun test` and `bun run`", () => {
           return { afterFirst, afterSecond: readEntries(cache) };
         }),
       );
-      const fresh = { run: runFirst.afterFirst, test: testFirst.afterFirst };
+      const fresh = { run: runFirst.afterFirst, test: testFirst.afterFirst, vitest: vitestFirst.afterFirst };
       expect({
         differs: !fresh.run.get(0)!.output.equals(fresh.test.get(0)!.output),
-        keys: new Set([fresh.run.get(0)!.key, fresh.test.get(0)!.key, fresh.run.get(1)!.key, fresh.test.get(1)!.key])
-          .size,
+        // One for each mode of the file that uses it, and one that the other file has in every mode.
+        keys: new Set(Object.values(fresh).flatMap(entries => [entries.get(0)!.key, entries.get(1)!.key])).size,
         testAfterRun: runFirst.afterSecond.get(0)!.bytes.equals(fresh.test.get(0)!.bytes),
         runAfterTest: testFirst.afterSecond.get(0)!.bytes.equals(fresh.run.get(0)!.bytes),
-      }).toEqual({ differs: true, keys: 3, testAfterRun: true, runAfterTest: true });
+        testAfterVitest: vitestFirst.afterSecond.get(0)!.bytes.equals(fresh.test.get(0)!.bytes),
+      }).toEqual({ differs: true, keys: 4, testAfterRun: true, runAfterTest: true, testAfterVitest: true });
     },
     60_000,
   );

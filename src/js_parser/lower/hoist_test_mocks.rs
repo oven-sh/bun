@@ -236,9 +236,22 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     /// Must run before the visit pass.
     #[optimize(size)]
     pub(crate) fn plan_mock_hoisting(&mut self, stmts: &[Stmt]) -> Option<&'a [MockHoistOrder]> {
-        self.has_hoisted_mock_stmt = stmts.iter().any(|stmt| self.is_hoisted_mock_stmt(stmt));
+        // `bun run` has no `vitest_globals`, which leave out `jest`, so the cache key is picked without them.
+        let vitest_globals = core::mem::take(&mut self.options.features.vitest_globals);
+        let first = stmts
+            .iter()
+            .position(|stmt| self.is_hoisted_mock_stmt(stmt));
+        self.options.features.vitest_globals = vitest_globals;
+        self.has_hoisted_mock_stmt = first.is_some();
+        // What is hoisted with them is also hoisted without them, so nothing before `first` is.
+        let hoists_mock = first.is_some_and(|first| {
+            !vitest_globals
+                || stmts[first..]
+                    .iter()
+                    .any(|stmt| self.is_hoisted_mock_stmt(stmt))
+        });
         if !self.options.features.inject_jest_globals
-            || !(self.has_hoisted_mock_stmt || self.runs_imports_in_turn(stmts))
+            || !(hoists_mock || self.runs_imports_in_turn(stmts))
         {
             return None;
         }

@@ -735,6 +735,8 @@ describe("bundler", async () => {
     itBundled("bake-dev/loader-css-module-import", {
       format: "internal_bake_dev",
       outdir: "/out",
+      // https://github.com/oven-sh/bun/issues/18258: the importer reads `import_styles_module` and binds no import.
+      allowUndeclaredGeneratedNames: ["import_styles_module"],
       files: {
         "/entry.ts": /* js */ `
           import styles from "./styles.module.css";

@@ -105,7 +105,7 @@ Use `bun --hot` to enable hot reloading when executing code with Bun. Unlike `--
 bun --hot server.ts
 ```
 
-Starting from the entrypoint (`server.ts` in this example), Bun builds a registry of all imported source files (excluding those in `node_modules`) and watches them for changes. When a file changes, Bun performs a "soft reload". Bun re-evaluates all files, but global state (notably, the `globalThis` object) persists.
+Starting from the entrypoint (`server.ts` in this example), Bun builds a registry of all imported source files (excluding those in `node_modules`) and watches them for changes. When a file changes, Bun performs a "soft reload". Bun re-evaluates all files, but global state (notably, the `globalThis` object) persists. [Preload scripts](#preload-scripts) are the exception: Bun runs them once.
 
 ```ts title="server.ts" icon="/icons/typescript.svg"
 // make TypeScript happy
@@ -168,3 +168,28 @@ On hot reload, Bun:
 This implementation isn't particularly optimized. It re-transpiles files that haven't changed. It makes no attempt at incremental compilation. It's a starting point.
 
 </Accordion>
+
+### Preload scripts
+
+A preload script is a file that you pass to `--preload`, `-r`, `--require`, or `--import`, or that you list under [`preload`](/runtime/bunfig#preload) in `bunfig.toml`. Bun runs the preload scripts once, before your entrypoint.
+
+Once the preload scripts have loaded, a hot reload does not run them again. The same is true when the file that you save is a preload script. What the preload script set up at startup stays in place. For example, a plugin that a preload script registers with [`Bun.plugin()`](/runtime/plugins) keeps its `onLoad` and `onResolve` callbacks from startup.
+
+To apply a change to a preload script, restart Bun. With [`--watch`](#watch-mode), Bun restarts the process on every change.
+
+If your program also imports a preload script, from the entrypoint or from a file that the entrypoint imports, Bun re-evaluates that script on every reload, like any other imported file.
+
+To change what a plugin does without a restart, put that code in a module of its own, and load the module inside the callback with `require()`. A hot reload resets the `require` cache, so the callback loads the new code after the next reload.
+
+```ts title="plugin.ts" icon="/icons/typescript.svg"
+import { plugin } from "bun";
+
+plugin({
+  name: "graphql",
+  setup(build) {
+    build.onLoad({ filter: /\.graphql$/ }, args => require("./graphql-loader.ts").load(args));
+  },
+});
+```
+
+Here `graphql-loader.ts` exports a `load` function that returns the result for `onLoad`. When you save `graphql-loader.ts`, Bun reloads your program, and the callback loads the new `load` function. A change to `plugin.ts` itself, such as a new `filter`, still needs a restart.

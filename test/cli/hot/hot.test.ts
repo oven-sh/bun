@@ -1332,3 +1332,124 @@ it("--hot does not emit beforeExit to the listeners of a failed run", async () =
   expect(await stdout("still running")).toBe(true);
   expect(await runner.exited).toBe(0);
 });
+
+/** Returns a function that resolves to the stream's next line, or to `undefined` at EOF. */
+function lineByLine(stream: ReadableStream<Uint8Array>) {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+  return async () => {
+    for (;;) {
+      const end = text.indexOf("\n");
+      if (end !== -1) {
+        const line = text.slice(0, end);
+        text = text.slice(end + 1);
+        return line;
+      }
+      const { value, done } = await reader.read();
+      if (done) return undefined;
+      text += decoder.decode(value, { stream: true });
+    }
+  };
+}
+
+// The three tests below pin what docs/runtime/watch-mode.mdx says under "Preload scripts".
+
+/** main.js for those tests. Each run prints one line, and the second run exits. */
+const mainAfterPreload = (imports: string, state: string) => `
+  ${imports}
+  globalThis.runs = (globalThis.runs ?? 0) + 1;
+  console.log("run " + globalThis.runs + ": " + ${state});
+  if (globalThis.runs === 2) process.exit(0);
+`;
+
+/**
+ * Runs main.js under --hot with `preload`, saves `file` after the first run, and expects the lines of the two runs.
+ * The save does not truncate the file first, so no reload reads it empty. `text` is as long as the text it replaces.
+ */
+async function expectTwoRunsWithPreload(
+  files: Record<string, string>,
+  preload: string,
+  [file, text]: [string, string],
+  expected: [string, string],
+) {
+  using dir = tempDir("hot-preload", files);
+  await using runner = spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "--preload", preload, "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  const line = lineByLine(runner.stdout);
+  expect(await line()).toBe(expected[0]);
+  writeFileSync(join(String(dir), file), text, { flag: "r+" });
+  expect(await line()).toBe(expected[1]);
+  expect(await runner.exited).toBe(0);
+}
+
+it("--hot runs a preload once: a save of the preload reloads the program with the plugin from startup", async () => {
+  const plugin = (generation: number) => `
+    globalThis.preloads = (globalThis.preloads ?? 0) + 1;
+    Bun.plugin({
+      name: "contents",
+      setup(build) {
+        build.onLoad({ filter: /\\.contents$/ }, () => ({ contents: "export default ${generation};", loader: "js" }));
+      },
+    });
+  `;
+  await expectTwoRunsWithPreload(
+    {
+      "plugin.js": plugin(1),
+      "data.contents": "",
+      "main.js": mainAfterPreload(
+        `import generation from "./data.contents";`,
+        `"preload ran " + globalThis.preloads + " time(s), onLoad of generation " + generation`,
+      ),
+    },
+    "./plugin.js",
+    ["plugin.js", plugin(2)],
+    ["run 1: preload ran 1 time(s), onLoad of generation 1", "run 2: preload ran 1 time(s), onLoad of generation 1"],
+  );
+});
+
+it("--hot evaluates a preload again on a reload when the entry point imports it", async () => {
+  const setup = (comment: string) => `globalThis.preloads = (globalThis.preloads ?? 0) + 1; // ${comment}`;
+  await expectTwoRunsWithPreload(
+    {
+      "setup.js": setup("first"),
+      "main.js": mainAfterPreload(`import "./setup.js";`, `"setup.js evaluated " + globalThis.preloads + " time(s)"`),
+    },
+    "./setup.js",
+    ["setup.js", setup("again")],
+    ["run 1: setup.js evaluated 1 time(s)", "run 2: setup.js evaluated 2 time(s)"],
+  );
+});
+
+it("--hot loads a module again when the onLoad of a preloaded plugin loads it with require()", async () => {
+  const loader = (generation: number) =>
+    `exports.load = () => ({ contents: "export default ${generation};", loader: "js" });`;
+  await expectTwoRunsWithPreload(
+    {
+      "plugin.js": `
+        globalThis.preloads = (globalThis.preloads ?? 0) + 1;
+        Bun.plugin({
+          name: "contents",
+          setup(build) {
+            build.onLoad({ filter: /\\.contents$/ }, args => require("./loader.js").load(args));
+          },
+        });
+      `,
+      "loader.js": loader(1),
+      "data.contents": "",
+      "main.js": mainAfterPreload(
+        `import generation from "./data.contents";`,
+        `"preload ran " + globalThis.preloads + " time(s), onLoad of generation " + generation`,
+      ),
+    },
+    "./plugin.js",
+    ["loader.js", loader(2)],
+    ["run 1: preload ran 1 time(s), onLoad of generation 1", "run 2: preload ran 1 time(s), onLoad of generation 2"],
+  );
+});

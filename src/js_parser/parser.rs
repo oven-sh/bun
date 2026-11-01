@@ -200,6 +200,8 @@ pub mod Runtime {
         pub own_test_globals: u32,
 
         pub no_macros: bool,
+        /// A macro import is an ordinary import, and no macro runs. The output is then not what the program means.
+        pub macro_imports_are_plain: bool,
 
         pub commonjs_named_exports: bool,
 
@@ -303,6 +305,7 @@ pub mod Runtime {
                 vitest_globals: false,
                 own_test_globals: 0,
                 no_macros: false,
+                macro_imports_are_plain: false,
                 commonjs_named_exports: true,
                 minify_syntax: false,
                 is_library: false,
@@ -377,6 +380,7 @@ pub mod Runtime {
         // Takes `Wyhash` (NOT `Wyhash11`).
         pub(crate) fn hash_for_runtime_transpiler(&self, hasher: &mut Wyhash) {
             debug_assert!(self.runtime_transpiler_cache.is_some());
+            debug_assert!(!self.macro_imports_are_plain);
 
             let bools: [bool; 19] = [
                 self.top_level_await,

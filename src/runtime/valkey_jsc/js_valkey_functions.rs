@@ -1,4 +1,4 @@
-use crate::node::{BlobOrStringOrBuffer as JSArgument, FileBlobs, StringOrBuffer};
+use crate::node::{BlobOrStringOrBuffer as JSArgument, StringOrBuffer};
 use bun_collections::VecExt as _;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{
@@ -56,7 +56,7 @@ fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSArgumen
     if value.is_number() {
         // Allow numbers to be passed as strings.
         let str = value.to_js_string(global)?;
-        return JSArgument::from_js_maybe_file(global, str.to_js(), FileBlobs::Reject);
+        return JSArgument::from_js(global, str.to_js());
     }
 
     // Copy the bytes. A later argument's `toString()` can detach this buffer before the command is serialized.
@@ -69,7 +69,7 @@ fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSArgumen
         ))));
     }
 
-    JSArgument::from_js_maybe_file(global, value, FileBlobs::Allow)
+    JSArgument::from_js(global, value)
 }
 
 /// Shim around `protocol::valkey_error_to_js` that:

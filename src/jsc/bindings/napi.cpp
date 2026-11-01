@@ -22,6 +22,7 @@
 #include <JavaScriptCore/JSObjectInlines.h>
 #include <JavaScriptCore/JSCellInlines.h>
 #include <wtf/text/ExternalStringImpl.h>
+#include "napi_external_string.h"
 #include <wtf/text/StringCommon.h>
 #include <wtf/text/StringImpl.h>
 #include <JavaScriptCore/JSMicrotask.h>
@@ -1468,10 +1469,7 @@ static napi_status createExternalString(napi_env env, Char* str, size_t length, 
         NAPI_RETURN_SUCCESS(env);
     }
 
-    Ref<WTF::ExternalStringImpl> impl = WTF::ExternalStringImpl::create({ reinterpret_cast<const ExternalChar*>(str), static_cast<unsigned int>(length) }, finalize_hint, [finalize_callback, env](void* hint, void* str, unsigned) {
-        NAPI_LOG("external string finalizer");
-        env->doFinalizer(finalize_callback, str, hint);
-    });
+    auto impl = Bun::createNapiExternalString(env, std::span<const ExternalChar> { reinterpret_cast<const ExternalChar*>(str), static_cast<unsigned int>(length) }, finalize_callback, finalize_hint);
 
     JSString* out = JSC::jsString(JSC::getVM(globalObject), WTF::String(WTF::move(impl)));
     ensureStillAliveHere(out);

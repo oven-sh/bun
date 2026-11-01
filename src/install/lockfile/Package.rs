@@ -904,6 +904,9 @@ pub struct DiffSummary {
     /// A workspace's `version` changed. No edge changed with it (those count as updates), but the
     /// lockfile records the version, so it is rewritten.
     pub(crate) workspace_versions_changed: bool,
+    /// The root's `name` changed. The lockfile records it, so it is rewritten, and a frozen
+    /// install fails.
+    pub(crate) root_name_changed: bool,
 
     pub(crate) pruned_workspaces: Vec<PackageNameHash>,
     /// Indexes, in the new root's dependencies, of the workspaces that a lockfile from Bun 1.4 or
@@ -954,6 +957,7 @@ impl DiffSummary {
             || self.removed_trusted_dependencies
             || self.patched_dependencies_changed
             || self.workspace_versions_changed
+            || self.root_name_changed
     }
 
     #[inline]
@@ -1140,6 +1144,9 @@ impl Diff {
                             || from.tag.build.slice(from_buf!()) != to.tag.build.slice(to_buf!())
                     })
                 });
+            // A lockfile that recorded no root name (Bun 1.1.42 and older, or a hand-written
+            // one) has nothing to compare against. It takes the name on its next rewrite.
+            summary.root_name_changed = from.name_hash != 0 && from.name_hash != to.name_hash;
         }
 
         let mut missing_workspaces: Vec<PackageID> = Vec::new();

@@ -24,6 +24,7 @@ import {
   type WebKitAotFile,
 } from "../../scripts/build/deps/webkit.ts";
 import { hostZstdPath, zstd } from "../../scripts/build/deps/zstd.ts";
+import { cachedTreeDir } from "../../scripts/build/download.ts";
 import { BuildError } from "../../scripts/build/error.ts";
 import { Ninja, readManifest } from "../../scripts/build/ninja.ts";
 import { getProfile } from "../../scripts/build/profiles.ts";
@@ -112,6 +113,20 @@ describe("which builds compile WebKit", () => {
     expect(() => linux({ webkit: "vendored" as "source" })).toThrow("Unknown webkit: vendored");
     expect(() => linux({ webkit: "source", localDeps: "WebKit=/elsewhere/WebKit" })).toThrow(
       "webkit=source can't be combined with --local-deps=WebKit=<path>",
+    );
+  });
+
+  test("a CI image's copy of the same tree is read where it is", () => {
+    using dir = tempDir("build-prefetched-tree", { "prefetch/extracted/webkit-source-0123/.ref": "0123 /Source/\n" });
+    const [cache, prefetch] = [join(String(dir), "cache"), join(String(dir), "prefetch")];
+    const at = (identity: string) => cachedTreeDir(cache, "webkit-source-0123", identity, prefetch);
+    expect(at("0123 /Source/")).toBe(join(prefetch, "extracted", "webkit-source-0123"));
+    expect(at("0123 /Source/ /icu/")).toBe(join(cache, "webkit-source-0123"));
+    expect(cachedTreeDir(cache, "webkit-source-4567", "4567 /Source/", prefetch)).toBe(
+      join(cache, "webkit-source-4567"),
+    );
+    expect(cachedTreeDir(cache, "webkit-source-0123", "0123 /Source/", undefined)).toBe(
+      join(cache, "webkit-source-0123"),
     );
   });
 

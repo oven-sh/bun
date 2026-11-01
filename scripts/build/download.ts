@@ -107,7 +107,7 @@ export function prefetchPathForUrl(url: string, dir = prefetchDir): string | und
 
 /**
  * If `prefetchDir/extracted/<basename(dest)>/<stampFile>` matches `expected`,
- * copy that tree to `dest` and return true. Used by fetchPrebuilt and fetchIntoCache to
+ * copy that tree to `dest` and return true. Used by fetchPrebuilt to
  * skip download+extract entirely when the image has the right version baked.
  *
  * Recursive copy (not symlink) so the per-build cacheDir stays self-contained
@@ -150,10 +150,30 @@ async function chmodRecursiveWritable(root: string): Promise<void> {
   for (const e of await readdir(root)) await chmodRecursiveWritable(resolve(root, e));
 }
 
+const treeStamp = ".ref";
+
+function treeIs(dir: string, identity: string): boolean {
+  try {
+    return readFileSync(resolve(dir, treeStamp), "utf8").trim() === identity;
+  } catch {
+    return false;
+  }
+}
+
 /**
- * A tree that configure needs before it can write the graph, in a directory of the build cache that `identity` stamps:
- * taken from the prefetch cache, or written by `fill` into a staging directory that is then renamed into place, so an
- * interrupted configure leaves nothing that claims to be complete.
+ * Where the tree `name` that fetchIntoCache() writes is: in the build cache, or, when a CI image has the same one, where
+ * the image has it. Read in place: nothing writes to such a tree, and copying WebKit's 14,000 files out of the image took
+ * a build 23 seconds with every processor idle, as long as fetching them.
+ */
+export function cachedTreeDir(cacheDir: string, name: string, identity: string, prefetch = prefetchDir): string {
+  const baked = prefetch === undefined ? undefined : resolve(prefetch, "extracted", name);
+  return baked !== undefined && treeIs(baked, identity) ? baked : resolve(cacheDir, name);
+}
+
+/**
+ * A tree that configure needs before it can write the graph, in the directory cachedTreeDir() gives, which `identity`
+ * stamps. `fill` writes it into a staging directory that is then renamed into place, so an interrupted configure leaves
+ * nothing that claims to be complete.
  *
  * Reports itself the way a dependency's fetch edge does, on stderr like ninja-release.ts: stdout is the built program's
  * under build-then-exec.
@@ -165,15 +185,8 @@ export async function fetchIntoCache(
   identity: string,
   fill: (staging: string, say: (line: string) => void) => Promise<void>,
 ): Promise<void> {
-  const stamp = ".ref";
-  const published = (): boolean => {
-    try {
-      return readFileSync(resolve(dir, stamp), "utf8").trim() === identity;
-    } catch {
-      return false;
-    }
-  };
-  if (published() || (await tryPrefetchExtracted(dir, stamp, identity))) return;
+  const published = () => treeIs(dir, identity);
+  if (published()) return;
 
   const say = (line: string) => process.stderr.write(`${nameColor(name, `[${name}]`)} ${line}\n`);
   const started = performance.now();
@@ -183,7 +196,7 @@ export async function fetchIntoCache(
     await rm(staging, { recursive: true, force: true });
     await mkdir(staging, { recursive: true });
     await fill(staging, say);
-    await writeFile(resolve(staging, stamp), identity + "\n");
+    await writeFile(resolve(staging, treeStamp), identity + "\n");
     // Builds share the cache. Another may have published the same tree meanwhile and be compiling from it.
     if (published()) return;
     await rm(dir, { recursive: true, force: true });

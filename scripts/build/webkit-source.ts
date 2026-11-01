@@ -9,14 +9,14 @@
  * `/archive/` tarball of WebKit (HTTP 422), and a clone is 12 GB.
  *
  * The directory is named by the commit and never edited, so it is shared by every checkout and profile that pins the
- * same WebKit. It is not `vendor/WebKit`, which is where people keep a clone of their own (`webkit: "local"`).
+ * same WebKit, and a CI image's copy is read where it is. It is not `vendor/WebKit`, which is where people keep a clone of their own (`webkit: "local"`).
  */
 
 import { execFile } from "node:child_process";
 import { rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
-import { downloadRetry, fetchIntoCache } from "./download.ts";
+import { cachedTreeDir, downloadRetry, fetchIntoCache } from "./download.ts";
 import { BuildError, describeError } from "./error.ts";
 
 const REPO = "oven-sh/WebKit";
@@ -37,8 +37,10 @@ export function webkitVersionKey(version: string): string {
   return version.startsWith("autobuild-") ? version.slice("autobuild-".length) : version.slice(0, 16);
 }
 
+const identityOf = (version: string) => `${version} ${sparse.join(" ")}`;
+
 export function webkitSourceDir(cacheDir: string, version: string): string {
-  return resolve(cacheDir, `webkit-source-${webkitVersionKey(version)}`);
+  return cachedTreeDir(cacheDir, `webkit-source-${webkitVersionKey(version)}`, identityOf(version));
 }
 
 /** A build that a git hook or `git rebase -x` starts inherits variables that point every git at that repository. */
@@ -68,34 +70,39 @@ export async function ensureWebKitSource(cfg: {
 }): Promise<void> {
   if (cfg.webkit !== "source") return;
   const version = cfg.webkitVersion;
-  const identity = `${version} ${sparse.join(" ")}`;
-  await fetchIntoCache("WebKit", `${REPO} ${version}`, cfg.localDeps.WebKit!, identity, async (staging, say) => {
-    await git(staging, "init", "-q");
-    await git(staging, "remote", "add", "origin", `https://github.com/${REPO}.git`);
-    await git(staging, "sparse-checkout", "set", "--no-cone", ...sparse);
-    for (let attempt = 1; ; attempt++) {
-      try {
-        // fetch brings the commit and its trees; checkout then asks for the blobs the sparse set selects.
-        await git(staging, "fetch", "-q", "--depth=1", "--filter=blob:none", "--no-tags", "origin", version);
-        await git(staging, "checkout", "-q", "--detach", "FETCH_HEAD");
-        break;
-      } catch (err) {
-        const why = (err as { stderr?: string }).stderr?.trim() || describeError(err);
-        if (/couldn't find remote ref|not our ref|no such remote ref/i.test(why)) {
-          throw new BuildError(`${REPO} has no commit ${version}\n${why}`, {
-            hint: `WEBKIT_VERSION (scripts/build/deps/webkit.ts) or --webkit-version has to be pushed to github.com/${REPO}`,
-          });
+  await fetchIntoCache(
+    "WebKit",
+    `${REPO} ${version}`,
+    cfg.localDeps.WebKit!,
+    identityOf(version),
+    async (staging, say) => {
+      await git(staging, "init", "-q");
+      await git(staging, "remote", "add", "origin", `https://github.com/${REPO}.git`);
+      await git(staging, "sparse-checkout", "set", "--no-cone", ...sparse);
+      for (let attempt = 1; ; attempt++) {
+        try {
+          // fetch brings the commit and its trees; checkout then asks for the blobs the sparse set selects.
+          await git(staging, "fetch", "-q", "--depth=1", "--filter=blob:none", "--no-tags", "origin", version);
+          await git(staging, "checkout", "-q", "--detach", "FETCH_HEAD");
+          break;
+        } catch (err) {
+          const why = (err as { stderr?: string }).stderr?.trim() || describeError(err);
+          if (/couldn't find remote ref|not our ref|no such remote ref/i.test(why)) {
+            throw new BuildError(`${REPO} has no commit ${version}\n${why}`, {
+              hint: `WEBKIT_VERSION (scripts/build/deps/webkit.ts) or --webkit-version has to be pushed to github.com/${REPO}`,
+            });
+          }
+          if (attempt === downloadRetry.attempts) {
+            throw new BuildError(`Failed to fetch ${REPO} ${version} after ${attempt} attempts:\n${why}`, {
+              hint: "Check network connectivity to github.com",
+            });
+          }
+          const backoffMs = downloadRetry.backoffMs(attempt + 1);
+          say(`retry ${attempt + 1}/${downloadRetry.attempts} in ${backoffMs}ms (${why.split("\n").pop()})`);
+          await new Promise(r => setTimeout(r, backoffMs));
         }
-        if (attempt === downloadRetry.attempts) {
-          throw new BuildError(`Failed to fetch ${REPO} ${version} after ${attempt} attempts:\n${why}`, {
-            hint: "Check network connectivity to github.com",
-          });
-        }
-        const backoffMs = downloadRetry.backoffMs(attempt + 1);
-        say(`retry ${attempt + 1}/${downloadRetry.attempts} in ${backoffMs}ms (${why.split("\n").pop()})`);
-        await new Promise(r => setTimeout(r, backoffMs));
       }
-    }
-    await rm(resolve(staging, ".git"), { recursive: true, force: true });
-  });
+      await rm(resolve(staging, ".git"), { recursive: true, force: true });
+    },
+  );
 }

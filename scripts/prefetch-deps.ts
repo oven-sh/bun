@@ -55,7 +55,7 @@ interface Item {
   };
 }
 
-// The tree as configure puts it in the cache, where tryPrefetchExtracted() looks for it by the directory's name.
+// The tree as configure puts it in the cache, where cachedTreeDir() looks for it by the directory's name.
 await ensureWebKitSource({ ...cfg, localDeps: { WebKit: resolve(extractedDir, basename(cfg.localDeps.WebKit!)) } });
 
 const items: Item[] = [{ url: ICU_URL }];

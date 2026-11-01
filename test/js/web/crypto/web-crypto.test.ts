@@ -1214,7 +1214,7 @@ describe("X25519 JWK import", () => {
   const x25519Public: JsonWebKey = {
     kty: "OKP",
     crv: "X25519",
-    x: "hSDwCYkwp1R0i33ctD73Wg2_Og0mOBr06uFD1q1y5Go",
+    x: "hSDwCYkwp1R0i33ctD73Wg2_Og0mOBr066SpjqqbTmo",
   };
   const x25519Private: JsonWebKey = {
     ...x25519Public,
@@ -1566,6 +1566,40 @@ describe("JWK import validation", () => {
       () => "resolved",
       e => e.name,
     );
+
+  it.each([
+    ["Ed25519", "sign", "K1wIouqnuiA04b3WrMa-xKIKIpfHetNZRv3h9fBf768", "wVK6M3SMhQh3NK-7GRrSV-BVWQx1FO5pW8hhQeu_NdA"],
+    [
+      "X25519",
+      "deriveBits",
+      "aSb8Q-RndwfNnPeOYGYPDUN3uhAPnMLzXyfi-mqfhig",
+      "mL_IWm55RrALUGRfJYzw40gEYWMvtRkesP9mj8o8Omc",
+    ],
+  ] as const)("%s private keys need the matching x", async (name, usage, x, d) => {
+    const importJwk = (members: JsonWebKey) =>
+      crypto.subtle.importKey("jwk", { kty: "OKP", crv: name, x, d, ...members }, name, true, [usage]);
+
+    // Node decodes both like Buffer.from(encoded, "base64"): either alphabet, skipping what is in neither.
+    const standard = (encoded: string) => Buffer.from(encoded, "base64url").toString("base64");
+    const wrapped = (encoded: string) => encoded.slice(0, 10) + "\n" + encoded.slice(10);
+    for (const spelled of [{}, { x: standard(x), d: standard(d) }, { x: wrapped(x), d: wrapped(d) }]) {
+      expect(await crypto.subtle.exportKey("jwk", await importJwk(spelled))).toMatchObject({ x, d });
+    }
+
+    expect({
+      otherKey: await rejection(importJwk({ x: d })),
+      missing: await rejection(importJwk({ x: undefined })),
+      notBase64: await rejection(importJwk({ x: "!!" })),
+      shortX: await rejection(importJwk({ x: x.slice(4) })),
+      shortD: await rejection(importJwk({ d: "AA" })),
+    }).toEqual({
+      otherKey: "DataError",
+      missing: "DataError",
+      notBase64: "DataError",
+      shortX: "DataError",
+      shortD: "DataError",
+    });
+  });
 
   it("rejects a repeated key_ops entry for every key type", async () => {
     const pair = async (algorithm: any, usages: KeyUsage[]) =>

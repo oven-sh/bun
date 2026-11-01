@@ -20,10 +20,16 @@ const satisfying = [
   "contain_matcher",
   "numeric_ordering_matcher",
   "mock_prologue",
+  "settled_results_prologue",
 ];
 
-// Matchers that delegate to another matcher's implementation.
-const excluded = new Set(["toHaveReturnedTimes.rs"]);
+const excluded = new Set([
+  // Matchers that delegate to another matcher's implementation.
+  "toHaveReturnedTimes.rs",
+  // Static functions of `expect`, not matchers.
+  "addEqualityTesters.rs",
+  "getState.rs",
+]);
 
 test("every expect matcher increments the expect-call counter", () => {
   const glob = new Glob("*.rs");

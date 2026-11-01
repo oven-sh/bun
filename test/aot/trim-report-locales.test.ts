@@ -104,7 +104,7 @@ describe.concurrent("locales", () => {
     [
       "an Intl.Locale",
       `console.log((1).toLocaleString(new Intl.Locale("de")));`,
-      `${notConstant} (Number.prototype.toLocaleString) at main.ts:2:41`,
+      `${notConstant} (Number.prototype.toLocaleString) at main.ts:2:32`,
     ],
     [
       "a text that is no tag",
@@ -124,7 +124,7 @@ describe.concurrent("locales", () => {
     [
       "code from a string",
       `console.log(new Function(process.argv[2])());`,
-      `${notConstant} (Function) at main.ts:2:17`,
+      `${notConstant} (Function) at main.ts:2:13`,
     ],
   ])("all with %s", async (_, text, locales) => {
     expect(await localesOf(text)).toEqual([locales]);

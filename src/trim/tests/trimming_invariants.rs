@@ -66,6 +66,10 @@ fn image_over(bytes: &[u8]) -> impl FnMut(usize, &mut [u8]) -> bool {
     move |offset, out| read_bytes_at(bytes, offset, out)
 }
 
+fn tag_as_written(tag: &[u8]) -> Option<Box<[u8]>> {
+    Some(Box::from(tag))
+}
+
 fn compute_plan(
     used: &UsedFeatures,
     request: &TrimRequest,
@@ -84,6 +88,7 @@ fn compute_plan(
             len: file.len(),
             read: &mut read,
         },
+        tag_as_written,
     )
 }
 
@@ -1457,7 +1462,7 @@ fn assert_untouched(label: &str, file: &[u8]) {
         settings: &settings,
         request: &request,
     };
-    let plan = bun_trim::plan(&input, &mut image).unwrap_or_else(|error| {
+    let plan = bun_trim::plan(&input, &mut image, tag_as_written).unwrap_or_else(|error| {
         panic!("{label}: plan failed on a request that is not enabled: {error:?}")
     });
     assert!(

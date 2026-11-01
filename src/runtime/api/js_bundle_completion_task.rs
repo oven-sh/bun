@@ -257,11 +257,6 @@ fn opt_box(s: &[u8]) -> Option<Box<[u8]>> {
     }
 }
 
-#[inline]
-fn opt_slice(s: &[u8]) -> Option<&[u8]> {
-    if s.is_empty() { None } else { Some(s) }
-}
-
 /// Absolute, because the PE metadata operations need an absolute path.
 fn executable_path(config: &JSBundlerConfig, compile: &CompileOptions) -> Box<[u8]> {
     let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
@@ -583,7 +578,7 @@ impl JSBundleCompletionTask {
         };
         let mut additions = ExecutableAdditions {
             trim: trim_plan.as_ref(),
-            info_plist: opt_slice(&compile_options.macos_info_plist.list),
+            info_plist: compile_options.macos_info_plist.as_deref(),
             ..Default::default()
         };
 
@@ -605,7 +600,11 @@ impl JSBundleCompletionTask {
                 copyright: opt_box(&compile_options.windows_copyright.list),
             },
             &compile_options.exec_argv.list,
-            opt_slice(&compile_options.executable_path.list),
+            if compile_options.executable_path.list.is_empty() {
+                None
+            } else {
+                Some(&compile_options.executable_path.list)
+            },
             flags,
             RuntimeOptions {
                 jit_policy: compile_options.jit_policy,

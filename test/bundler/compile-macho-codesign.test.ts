@@ -522,7 +522,10 @@ describe.concurrent("--macos-info-plist", () => {
         const macos = { infoPlist: "Info.plist" };
         const missing = { infoPlist: "Missing.plist" };
         await Bun.build({ entrypoints, compile: { ...darwin, outfile: "out", macos } });
-        await Bun.build({ entrypoints, compile: { ...darwin, outfile: "without", macos: { infoPlist: undefined } } });
+        const none = [undefined, null, false];
+        for (const [index, macos] of [...none, ...none.map(infoPlist => ({ infoPlist }))].entries()) {
+          await Bun.build({ entrypoints, compile: { ...darwin, outfile: "without-" + index, macos } });
+        }
         await Bun.build({
           entrypoints,
           compile: { executablePath: process.execPath, outfile: "native", macos: process.platform === "darwin" ? macos : missing },
@@ -536,6 +539,11 @@ describe.concurrent("--macos-info-plist", () => {
         process.chdir("..");
         for (const options of [
           { entrypoints, compile: { ...darwin, outfile: "never", macos: 1 } },
+          { entrypoints, compile: { ...darwin, outfile: "never", macos: { infoPlist: true } } },
+          { entrypoints, compile: { ...darwin, outfile: "never", macos: { infoPlist: ["Info.plist"] } } },
+          { entrypoints, compile: { ...darwin, outfile: "never", macos: { infoPlist: Bun.file("Info.plist") } } },
+          { entrypoints, compile: { target: "bun-linux-x64", outfile: "never", macos: { infoPlist: 1 } } },
+          { entrypoints, compile: { ...darwin, outfile: "never", macos: { infoPlist: "Info.plist\\0.nope" } } },
           { entrypoints, compile: { ...darwin, outfile: "never", macos: missing } },
           { entrypoints, compile: { ...darwin, outfile: "never", macos: { infoPlist: "Empty.plist" } } },
           { entrypoints, compile: { ...darwin, outfile: "never", macos: { infoPlist: "Large.plist" } } },
@@ -556,6 +564,11 @@ describe.concurrent("--macos-info-plist", () => {
     expect(built).toEqual({
       stdout: [
         "macos must be an object",
+        'The "compile.macos.infoPlist" property must be of type string. Received boolean',
+        'The "compile.macos.infoPlist" property must be of type string. Received object',
+        'The "compile.macos.infoPlist" property must be of type string. Received object',
+        'The "compile.macos.infoPlist" property must be of type string. Received number',
+        'the Info.plist "Info.plist\\u0000.nope" has a NUL byte in its path',
         'the Info.plist "Missing.plist" cannot be read: ENOENT',
         'the Info.plist "Empty.plist" is empty',
         `failed to embed the Info.plist: ${templateRoom + 1} bytes do not fit in the ${templateRoom} bytes of padding behind the load commands`,
@@ -566,7 +579,9 @@ describe.concurrent("--macos-info-plist", () => {
       exitCode: 0,
     });
     expect(readInfoPlist(readFileSync(join(cwd, "out")))).toBe(infoPlist);
-    expect(readInfoPlist(readFileSync(join(cwd, "without")))).toBeUndefined();
+    for (let index = 0; index < 6; index++) {
+      expect(readInfoPlist(readFileSync(join(cwd, "without-" + index)))).toBeUndefined();
+    }
     expect(readInfoPlist(readFileSync(join(cwd, "moved")))).toBe(infoPlist);
 
     const native = await run([join(cwd, isWindows ? "native.exe" : "native")], cwd);

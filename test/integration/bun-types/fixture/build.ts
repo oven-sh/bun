@@ -29,6 +29,13 @@ Bun.build({
 
 Bun.build({
   entrypoints: ["hey"],
+  compile: {
+    macos: process.platform === "darwin" && { infoPlist: process.env.INFO_PLIST !== undefined && "./Info.plist" },
+  },
+});
+
+Bun.build({
+  entrypoints: ["hey"],
   // @ts-expect-error - infoPlist is the path of a file
   compile: { macos: { infoPlist: { CFBundleIdentifier: "com.example.app" } } },
 });

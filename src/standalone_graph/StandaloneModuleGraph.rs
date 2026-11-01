@@ -3225,6 +3225,9 @@ pub fn read_info_plist(path: &[u8]) -> Result<Vec<u8>, CompileError> {
         let path = bun_core::fmt::quote(path);
         CompileError::fmt(format_args!("the Info.plist {path} {problem}"))
     };
+    if strings::contains_char(path, 0) {
+        return Err(fail(format_args!("has a NUL byte in its path")));
+    }
     let stat = Syscall::stat(&bun_core::ZBox::from_bytes(path))
         .map_err(|e| fail(format_args!("cannot be read: {e}")))?;
     // A device or a pipe has no end to read to.

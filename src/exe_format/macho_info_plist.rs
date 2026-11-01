@@ -6,7 +6,7 @@ use core::ops::Range;
 use crate::macho::MachoError;
 use crate::macho_ranges::{
     HEADER_SIZE, MAX_SECTIONS, Parsed, SECTION_SIZE, SEGMENT_COMMAND_SIZE, SYMBOL_SIZE, Segment,
-    find_contents_start, find_symbols, parse, room_for_signature_command,
+    find_contents_start, find_symbols, is_zero_fill, parse, room_for_signature_command,
 };
 use crate::macho_types::{
     CommandKind, LC, LoadCommandIterator, N_OSO, N_SECT, N_STAB, N_TYPE, S_REGULAR, mach_header_64,
@@ -90,10 +90,10 @@ pub fn write(macho: &mut [u8], plist: &[u8]) -> Result<(), MachoError> {
     let sections_at = command_at + SEGMENT_COMMAND_SIZE;
     let section_at = match replaced {
         Some(index) => {
-            if let Some(old) = find(macho) {
-                if old.start < old_commands_end {
-                    return Err(MachoError::InvalidObject);
-                }
+            // A zero-fill section has nothing in the file, and `parse` does not look at its offset.
+            if !is_zero_fill(&text.sections[index])
+                && let Some(old) = find(macho)
+            {
                 macho[old].fill(0);
             }
             sections_at + index * SECTION_SIZE
@@ -145,7 +145,7 @@ pub fn remove_written(macho: &mut [u8]) -> bool {
     };
     let commands_end = HEADER_SIZE + parsed.header.sizeofcmds as usize;
     let room_end = find_contents_start(text, |section| !is_info_plist(section));
-    let is_in_padding = contents.start >= commands_end && contents.end as u64 == room_end;
+    let is_in_padding = !is_zero_fill(&text.sections[index]) && contents.end as u64 == room_end;
     let next_ordinal = text.first_ordinal + index + 1;
     if !is_in_padding || shift_ordinals(macho, &parsed, next_ordinal, -1).is_err() {
         return false;
@@ -383,14 +383,37 @@ mod tests {
         }
 
         let mut over_commands = written.clone();
-        let moved = at(0, u64::from(text_at), S_ZEROFILL);
-        write_struct(&mut over_commands[section_at..], &moved);
+        write_struct(
+            &mut over_commands[section_at..],
+            &at(0, u64::from(text_at), S_REGULAR),
+        );
         let before = over_commands.clone();
         assert_eq!(
             write(&mut over_commands, PLIST),
             Err(MachoError::InvalidObject)
         );
         assert!(over_commands == before);
+    }
+
+    #[test]
+    fn replaces_zero_fill_section_without_clearing_anything() {
+        let mut written = toy_macho(Architecture::Aarch64);
+        write(&mut written, PLIST).unwrap();
+        let section_at = find_text(&parse(&written).unwrap()).unwrap().0 + SEGMENT_COMMAND_SIZE;
+        let section: section_64 = read_struct(&written[section_at..]);
+        let text_at = first_section_offset(&toy_macho(Architecture::Aarch64)) as u32;
+        // `parse` does not look at these offsets: over the load commands, and over the contents of `__TEXT`.
+        for offset in [0, text_at] {
+            let mut macho = written.clone();
+            let zero_fill = section_64 {
+                offset,
+                flags: S_ZEROFILL,
+                ..section
+            };
+            write_struct(&mut macho[section_at..], &zero_fill);
+            write(&mut macho, PLIST).unwrap();
+            assert!(macho == written);
+        }
     }
 
     #[test]

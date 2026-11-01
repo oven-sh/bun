@@ -302,7 +302,7 @@ fn section_addresses(section: &section_64) -> AddressRange {
     }
 }
 
-fn is_zero_fill(section: &section_64) -> bool {
+pub(crate) fn is_zero_fill(section: &section_64) -> bool {
     matches!(
         section.flags & SECTION_TYPE,
         S_ZEROFILL | S_GB_ZEROFILL | S_THREAD_LOCAL_ZEROFILL

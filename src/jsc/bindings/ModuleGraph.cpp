@@ -458,6 +458,14 @@ JSValue moduleGraphAsyncContextAtEventLoop(Zig::GlobalObject* globalObject)
     return state && state->enteredFromEventLoop ? state->enteredFromEventLoop.get() : jsUndefined();
 }
 
+// The frame that enters `graph`'s context (null: leaves one) from the async context `previous`.
+static JSValue frameEntering(Zig::GlobalObject* globalObject, JSModuleGraph* graph, JSValue previous)
+{
+    // From the top of the event loop: the frame the graph's loader runs its modules in.
+    JSValue frame = graph && previous.isUndefinedOrNull() ? graph->loader()->asyncContext() : JSValue();
+    return frame && frame.isObject() ? frame : JSValue(createModuleGraphFrame(globalObject, graph, previous));
+}
+
 // Makes `graph`'s context current; null: the realm's own, out of whatever graph's context is
 // current (a completion of the host's run from an event-loop tick nested under a graph's script,
 // an event the graph's script dispatches to something of the host's). Returns the async context
@@ -468,12 +476,23 @@ static JSValue makeContextCurrent(Zig::GlobalObject* globalObject, JSModuleGraph
         return {};
     auto* asyncContextData = globalObject->m_asyncContextData.get();
     JSValue previous = asyncContextData->getInternalField(0);
-    // From the top of the event loop: the frame the graph's loader runs its modules in.
-    JSValue frame = graph && previous.isUndefinedOrNull() ? graph->loader()->asyncContext() : JSValue();
-    if (!frame || !frame.isObject())
-        frame = createModuleGraphFrame(globalObject, graph, previous);
-    asyncContextData->putInternalField(globalObject->vm(), 0, frame);
+    asyncContextData->putInternalField(globalObject->vm(), 0, frameEntering(globalObject, graph, previous));
     return previous;
+}
+
+// For built-ins that keep the AsyncLocalStorage stores something was made in and not its graph (the handle of a node:dgram socket): asyncContextWithoutModuleGraphs() of `frame`.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionAsyncContextWithoutModuleGraphs, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    return JSValue::encode(asyncContextWithoutModuleGraphs(defaultGlobalObject(globalObject), callFrame->argument(0)));
+}
+
+// The frame such a built-in `run()`s its later work in: `stores` (an answer of the function above) inside the graph that the running script is in, so that what opens there is that graph's.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionAsyncContextInCurrentModuleGraph, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto* global = defaultGlobalObject(globalObject);
+    JSValue stores = callFrame->argument(0);
+    JSModuleGraph* graph = currentModuleGraph(global);
+    return JSValue::encode(graph ? frameEntering(global, graph, stores) : stores);
 }
 
 // VirtualMachine::entered_context: makes `context` the one native code entered (0: none) and

@@ -1,0 +1,91 @@
+# In a function that the host calls again and again, the code that only a rare edge leads to may be outlined; the code that is reached without one may not, and neither may a loop behind a rare edge
+# FORM: AsRead
+# OPTIONS: disable=pass:InlineCalls,pass:OutlineColdOperations
+# RUN: generate-code units
+# CHECK-LABEL: f1: size=
+# CHECK-NEXT: units plain=0 call=0 pinned=
+# CHECK-LABEL: f2: size=
+# CHECK-NEXT: units plain={{*}} call=[[throwAlone]] pinned=
+# CHECK-LABEL: f3: size=
+# CHECK-NOT: call=0 pinned=
+# CHECK-NOT: call=[[throwAlone]] pinned=
+# CHECK-LABEL: f4: size=
+# CHECK-LABEL: f5: size=
+# A loop poll is a load that faults where the target has that, and a comparison with a call on its slow path elsewhere.
+# RUN(X64): generate-code units
+# REQUIRES(X64): x86_64 faulting-loop-polls
+# X64-LABEL: f2: size=
+# X64-NEXT: units plain={{*}} call=[[throwAlone]] pinned=
+# X64-LABEL: f4: size=
+# X64-NEXT: units plain={{*}} call=[[throwAlone]] pinned=
+# RUN(ARM64): generate-code units
+# REQUIRES(ARM64): arm64
+# ARM64-LABEL: f2: size=
+# ARM64-NEXT: units plain={{*}} call=4 pinned=
+# ARM64-LABEL: f4: size=
+# ARM64-NEXT: units plain={{*}} call=8 pinned=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = Builtin builtin=SetInterval
+    v5 = Integer integer=16
+    v6 = Call v4, -, v0, v5
+    v7 = Call v4, -, v1, v5
+    v8 = Call v4, -, v2, v5
+    v9 = Call v4, -, v3, v5
+    Return
+}
+function f1 name="callsOnLikelyPath" parameters=[{type=boolean}] results=[{type=anything}] {
+  b0(v0: boolean):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v1 = CallDirect function=f5
+    v2 = CallDirect function=f5
+    Return v2
+  b2():
+    Return
+}
+function f2 name="throws" parameters=[{type=boolean}] results=[{type=anything}] {
+  b0(v0: boolean):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Throw v0
+  b2():
+    Return
+}
+function f3 name="callsBeforeThrowing" parameters=[{type=boolean}] results=[{type=anything}] {
+  b0(v0: boolean):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v1 = CallDirect function=f5
+    v2 = CallDirect function=f5
+    Throw v2
+  b2():
+    Return
+}
+function f4 name="loopsBeforeThrowing" parameters=[{type=boolean}] results=[{type=anything}] {
+  b0(v0: boolean):
+    Branch v0 -> taken b1(), notTaken b3()
+  b1():
+    LoopHint
+    v2 = CallDirect function=f5
+    v3 = TypeTest v2 testedType=undefined
+    Branch v3 -> taken b1(), notTaken b2()
+  b2():
+    Throw v0
+  b3():
+    Return
+}
+function f5 name="callee" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    Return v1
+}

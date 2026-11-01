@@ -49,11 +49,13 @@ The coordinator sorts files by path and splits them into one contiguous chunk pe
 
 ### Worker environment
 
-Each worker gets `BUN_TEST_WORKER_ID` and `JEST_WORKER_ID` set to its 1-based index, so tests can pick a distinct database, port range, or temp directory per worker:
+Each worker gets `BUN_TEST_WORKER_ID`, `JEST_WORKER_ID`, `VITEST_POOL_ID` and `VITEST_WORKER_ID` set to its 1-based index, so tests can pick a distinct database, port range, or temp directory per worker:
 
 ```ts title="db.test.ts" icon="/icons/typescript.svg"
 const dbName = `app_test_${process.env.BUN_TEST_WORKER_ID ?? "1"}`;
 ```
+
+Without `--parallel`, `VITEST_POOL_ID` and `VITEST_WORKER_ID` are `"1"`, as in Vitest. The other two aren't set.
 
 Flags that affect how tests execute (`--timeout`, `--preload`, `--define`, `--coverage`, `--update-snapshots`, `-t`, `--retry`, `--rerun-each`, `--concurrent`, `--randomize`/`--seed`, …) are forwarded to workers. The coordinator handles `--bail` at file granularity: once the failure threshold is reached it starts no new files, but files already running finish.
 
@@ -83,6 +85,28 @@ Isolating every file is how Jest and Vitest behave by default. It makes "passes 
 To keep that cost low, Bun caches transpiled source and bytecode at the process level and shares them across globals. The second file to import a module skips reading, transpiling and parsing it and goes straight to evaluation. Only the module's top-level code runs again.
 
 Without `--isolate` (the default), all files share one global and one module registry. That is the fastest mode and is fine for suites whose files don't leak state into each other.
+
+### `--isolate=modules`
+
+```sh terminal icon="terminal"
+bun test --isolate=modules
+```
+
+Keeps one global object for the whole run and gives each file its own copy of every module. JIT-compiled code belongs to a global object, so with `--isolate` every file starts over in the interpreter. With `--isolate=modules`, a file reuses the code that was compiled for earlier files.
+
+|                                                                      | `--isolate`  | `--isolate=modules` |
+| -------------------------------------------------------------------- | ------------ | ------------------- |
+| Modules, module mocks, `--preload` scripts                           | new per file | new per file        |
+| The window of a [DOM environment](/test/dom)                         | new per file | new per file        |
+| Servers, sockets, watchers, subprocesses and timers a file left open | closed       | closed              |
+| `globalThis`, built-ins (`Array.prototype`, `console`, `Date.now`)   | new per file | changes are undone  |
+| `process.env`, `process.cwd()`, listeners on `process`               | restored     | restored            |
+| Built-in modules (`node:fs`, `bun:sqlite`)                           | new per file | shared              |
+| JIT-compiled code                                                    | discarded    | kept                |
+
+Use it with `--parallel` too: `bun test --parallel --isolate=modules`.
+
+Between files, Bun restores the properties of `globalThis`, of objects stored on `globalThis`, and of any function or prototype reachable from those. It doesn't restore a built-in module's exports (`fs.readFileSync = ...`) or state hidden inside a built-in object, so those changes carry over to the next file.
 
 ## Concurrent tests within a file
 

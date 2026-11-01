@@ -866,7 +866,9 @@ fn run_tasks_erased(
                     // The HTTP request was cached
                     if let Some(mut manifest) = loaded_manifest.take() {
                         // If we requested extended manifest but we somehow got an abbreviated one, this is a bug
-                        debug_assert!(!is_extended_manifest || manifest.pkg.has_extended_manifest);
+                        debug_assert!(
+                            !is_extended_manifest || manifest.pkg.has_extended_manifest()
+                        );
 
                         manifest.pkg.public_max_age =
                             npm::Registry::manifest_expiry(&response.headers);
@@ -1963,7 +1965,7 @@ pub fn is_bunx_tree(dir: &[u8]) -> bool {
 }
 
 fn is_bunx_install() -> bool {
-    is_bunx_tree(crate::bun_fs::FileSystem::instance().top_level_dir())
+    is_bunx_tree(crate::bun_fs::FileSystem::get().top_level_dir())
 }
 
 /// The error that a command returns when a request failed before it linked or saved anything.

@@ -10,8 +10,8 @@ pub struct NoInnerDeclarations {
     allows_namespaces: bool,
 }
 
-const MOVE_DECL_TO_ROOT: Message =
-    Message::new("moveDeclToRoot", "Move {{type}} declaration to {{body}} root.");
+const MOVE_DECL_TO_ROOT: &Message =
+    &Message::new("moveDeclToRoot", "Move {{type}} declaration to {{body}} root.");
 
 /// True if it's directly in the file, a function body or a static block, or it's exported.
 fn is_at_root(statement: Stmt) -> bool {

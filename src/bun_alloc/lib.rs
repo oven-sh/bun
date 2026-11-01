@@ -557,6 +557,27 @@ unsafe impl core::alloc::GlobalAlloc for Mimalloc {
         layout: core::alloc::Layout,
         new_size: usize,
     ) -> *mut u8 {
+        // `mi_realloc` leaves a block where it is while it stays half full, and a list that grew by doubling is always more than half
+        // full: `shrink_to_fit` and `into_boxed_slice` gave nothing back. Whoever shrinks a block keeps it, so it moves to a block of its
+        // size. Of a large block the end was never touched and takes no memory.
+        const LARGEST_BLOCK_MOVED: usize = 64 << 10;
+        if new_size < layout.size()
+            && new_size > 0
+            && layout.size() <= LARGEST_BLOCK_MOVED
+            && layout.align() <= MI_MAX_ALIGN_SIZE
+            // SAFETY: `ptr` is a live mimalloc allocation.
+            && mimalloc::mi_good_size(new_size) < unsafe { mimalloc::mi_usable_size(ptr.cast()) }
+        {
+            let moved: *mut u8 = mimalloc::mi_malloc(new_size).cast();
+            if !moved.is_null() {
+                // SAFETY: both blocks hold `new_size` bytes and are distinct, and `ptr` is not used again.
+                unsafe {
+                    core::ptr::copy_nonoverlapping(ptr, moved, new_size);
+                    mimalloc::mi_free(ptr.cast());
+                }
+                return moved;
+            }
+        }
         // SAFETY: `GlobalAlloc::realloc` contract — `ptr` is a live mimalloc
         // allocation with `layout`; `mi_realloc*` preserves the `min(old, new)` prefix.
         unsafe {
@@ -1707,9 +1728,7 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
                 // `append_overflow_uninit` and is exclusively owned via `self.head`.
                 Some(unsafe { Box::from_raw(head_ptr.as_ptr()) })
             };
-            let raw = Box::into_raw(new_block);
-            // SAFETY: raw came from Box::into_raw on the line above; non-null and exclusively owned.
-            head_ptr = unsafe { NonNull::new_unchecked(raw) };
+            head_ptr = Box::into_non_null(new_block);
             self.head = Some(head_ptr);
         }
         // SAFETY: `head_ptr` is the (possibly freshly-allocated) head block with

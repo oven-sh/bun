@@ -6,7 +6,7 @@ use std::cmp::Reverse;
 /// Disallow unreachable code after `return`, `throw`, `continue`, and `break` statements.
 pub struct NoUnreachable;
 
-const UNREACHABLE_CODE: Message = Message::new("unreachableCode", "Unreachable code.");
+const UNREACHABLE_CODE: &Message = &Message::new("unreachableCode", "Unreachable code.");
 
 #[derive(Default)]
 pub struct State<'a> {

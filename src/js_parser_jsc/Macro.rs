@@ -110,6 +110,16 @@ impl MacroContext {
         caller: Expr,
         function_name: &[u8],
     ) -> crate::Result<Expr> {
+        if bun_jsc::compiled_program::compiled_program()
+            .is_some_and(|program| !bun_jsc::compiled_program::admits_unknown_javascript(program))
+        {
+            log.add_range_error(
+                Some(source),
+                import_range,
+                b"Macros cannot be used in this executable, which only runs code that was compiled into it",
+            );
+            return Err(crate::Error::MacroFailed);
+        }
         // A macro's entry point is text made here, with names in it from the source that imports the macro, which may be a
         // string. The engine would refuse it, but nothing catches that rejection.
         if bun_core::code_generation_from_strings() == bun_core::CodeGenerationFromStrings::Strict {
@@ -282,6 +292,7 @@ fn __bun_macro_context_init(transpiler: *mut core::ffi::c_void) -> js_parser::Ma
     js_parser::Macro::MacroContext {
         javascript_object: js_parser::Macro::MacroJSCtx::ZERO,
         data: data.cast::<core::ffi::c_void>(),
+        known_answers: None,
     }
 }
 
@@ -366,12 +377,7 @@ fn __bun_macro_context_get_remap(
     // the `'static` borrow is sound for callers that drop it before the
     // `Transpiler` does.
     let inner = unsafe { &*data.cast::<MacroContext>() };
-    inner.get_remap(path).map(|e| {
-        // SAFETY: `e` borrows an entry in the remap table owned by
-        // `Transpiler.options`, which outlives every parse that calls this fn,
-        // so extending the borrow to `'static` upholds the function-level contract.
-        unsafe { &*std::ptr::from_ref::<js_parser::Macro::MacroRemapEntry>(e) }
-    })
+    inner.get_remap(path)
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -486,7 +492,9 @@ impl Macro {
             // SAFETY: `vm.global` is the live per-thread global; `loaded_result`
             // is a live promise cell.
             unsafe {
-                (*vm).unhandled_rejection(&*(*vm).global, result, (*loaded_result).to_js());
+                (*vm).run_with_api_lock(|| {
+                    (*vm).unhandled_rejection(&*(*vm).global, result, (*loaded_result).to_js());
+                });
             }
             return Err(crate::Error::MacroLoadError);
         }

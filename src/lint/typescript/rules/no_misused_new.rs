@@ -3,9 +3,9 @@ use bun_lint::prelude::*;
 /// Enforce valid definition of `new` and `constructor`.
 pub struct NoMisusedNew;
 
-const ERROR_MESSAGE_CLASS: Message =
-    Message::new("errorMessageClass", "Class cannot have method named `new`.");
-const ERROR_MESSAGE_INTERFACE: Message = Message::new(
+const ERROR_MESSAGE_CLASS: &Message =
+    &Message::new("errorMessageClass", "Class cannot have method named `new`.");
+const ERROR_MESSAGE_INTERFACE: &Message = &Message::new(
     "errorMessageInterface",
     "Interfaces cannot be constructed, only classes.",
 );

@@ -865,8 +865,7 @@ fn has_css_flag(attrs: &[Attribute], flag: &str) -> bool {
 /// Emit the `__generateToCss` field-sequence body shared by the struct branch
 /// and named-field enum variants: each field is `to_css`'d in declaration
 /// order, `Option<_>` fields are unwrapped, and a single space is written
-/// between fields (unconditionally — the separator is not elided when an
-/// optional field is `None`).
+/// after every field but the last (a `None` field writes neither).
 ///
 /// `access` maps a field ident to the expression that reads it (`self.f` for
 /// a struct, the binding name for a destructured enum variant).
@@ -879,21 +878,21 @@ fn gen_field_seq_to_css<'a>(
     let stmts = fields.enumerate().map(|(j, f)| {
         let fname = f.ident.as_ref().unwrap();
         let slot = access(fname);
-        let body = if is_option_type(&f.ty) {
-            quote! {
-                if let ::core::option::Option::Some(__v) = &#slot {
-                    __v.to_css(__dest)?;
-                }
-            }
-        } else {
-            quote! { #slot.to_css(__dest)?; }
-        };
         let sep = if len > 1 && j != last {
             quote! { __dest.write_char(b' ')?; }
         } else {
             quote! {}
         };
-        quote! { #body #sep }
+        if is_option_type(&f.ty) {
+            quote! {
+                if let ::core::option::Option::Some(__v) = &#slot {
+                    __v.to_css(__dest)?;
+                    #sep
+                }
+            }
+        } else {
+            quote! { #slot.to_css(__dest)?; #sep }
+        }
     });
     quote! { #(#stmts)* }
 }
@@ -928,8 +927,7 @@ fn expand_derive_to_css(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let body = match &input.data {
         // ── Struct branch ──────────────────────────────────────────────────
         // Auto-serializer for a payload struct: the printer is the field
-        // sequence, space-separated, with optionals unwrapped (and the
-        // inter-field space emitted unconditionally).
+        // sequence, space-separated, with optionals unwrapped.
         //
         // Proc-macros cannot see through a type name, so `ToCss` is derived
         // directly on the payload struct; the enum arm's
@@ -1081,11 +1079,7 @@ fn expand_derive_parse(input: &DeriveInput) -> syn::Result<TokenStream2> {
                 let __id = __p.expect_ident()?;
                 #(#arms)*
                 ::core::result::Result::Err(
-                    __loc.new_unexpected_token_error(::bun_css::Token::Ident(
-                        // SAFETY: `__id` is a sub-slice of the parser's source
-                        // buffer (see `enum_property_util::parse`).
-                        unsafe { ::bun_css::css_parser::src_str(__id) },
-                    )),
+                    __loc.new_unexpected_token_error(::bun_css::Token::Ident(__id)),
                 )
             }
         }

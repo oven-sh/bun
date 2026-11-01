@@ -6,6 +6,10 @@ edition.workspace = true
 [lib]
 path = "lib.rs"
 
+[features]
+# What only tests use, those of other crates too.
+test_support = []
+
 [lints]
 workspace = true
 

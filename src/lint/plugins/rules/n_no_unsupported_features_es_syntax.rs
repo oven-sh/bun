@@ -25,11 +25,11 @@ pub struct EsSyntax {
     known: [OnceLock<(Box<[u8]>, Option<Active>)>; 8],
 }
 
-const NOT_SUPPORTED_TILL: Message = Message::new(
+const NOT_SUPPORTED_TILL: &Message = &Message::new(
     "not-supported-till",
     "'{{featureName}}' is not supported until Node.js {{supported}}. The configured version range is '{{version}}'.",
 );
-const NOT_SUPPORTED_YET: Message = Message::new(
+const NOT_SUPPORTED_YET: &Message = &Message::new(
     "not-supported-yet",
     "'{{featureName}}' is not supported in Node.js. The configured version range is '{{version}}'.",
 );

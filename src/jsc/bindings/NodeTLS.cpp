@@ -289,7 +289,9 @@ JSC_DEFINE_HOST_FUNCTION(parseCACertificates, (JSC::JSGlobalObject * globalObjec
     }
     if (parseError) {
         // Reuse the shared ERR_OSSL_<LIB>_<REASON> decoration path
-        // (library/function/reason/code + opensslErrorStack), same as node:crypto.
+        // (library/function/reason/code), same as node:crypto. Node's
+        // LoadCertsFromBIO pops its errors, so there is no opensslErrorStack.
+        ERR_clear_error();
         throwCryptoError(globalObject, scope, parseError);
         return {};
     }
@@ -360,6 +362,27 @@ JSC_DEFINE_HOST_FUNCTION(clearBlockedSPKIsForTesting, (JSC::JSGlobalObject * glo
 {
     us_clear_blocked_spkis_for_testing();
     return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(putBoringSSLErrorForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    OPENSSL_PUT_ERROR(BN, BN_R_BITS_TOO_SMALL);
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(takeBoringSSLErrorQueueForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSArray* errors = constructEmptyArray(globalObject, nullptr);
+    RETURN_IF_EXCEPTION(scope, {});
+    while (uint32_t error = ERR_get_error()) {
+        char message[256];
+        ERR_error_string_n(error, message, sizeof(message));
+        errors->putDirectIndex(globalObject, errors->length(), jsString(vm, String::fromUTF8(message)));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    return JSValue::encode(errors);
 }
 
 } // namespace Bun

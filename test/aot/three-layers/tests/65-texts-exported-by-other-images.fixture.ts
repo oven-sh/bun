@@ -1,0 +1,11 @@
+import { check } from "../src/show";
+import { packageMode, packageText, setPackageMode } from "fake-merge";
+import * as merge from "fake-merge";
+import { middleMode, middleText, setMiddleMode, textsSeenInTheMiddle } from "../src/settings";
+import * as settings from "../src/settings";
+const F = "65";
+const seenHere = () => [packageText, packageMode, merge.packageText, merge.packageMode, middleText, middleMode, settings.middleText, settings.middleMode];
+check(F, "texts of the two images below", () => [seenHere(), textsSeenInTheMiddle()]);
+check(F, "used as texts are", () => [packageText.length, middleText.toUpperCase(), packageText === "text of the package", middleText + packageText, { [middleText]: 1 }, `${packageMode}/${middleMode}`, [packageText, middleText].sort(), packageText.split(" ")]);
+check(F, "a text that changes", () => ["two", "text of the package", "", "made " + [1, 2].length, "one"].map(mode => { setPackageMode(mode); setMiddleMode(mode + "!"); return [seenHere(), textsSeenInTheMiddle()]; }));
+check(F, "behind a collection", () => { setPackageMode("three"); setMiddleMode("three"); Bun.gc(true); const seen = [seenHere(), textsSeenInTheMiddle()]; setPackageMode("one"); setMiddleMode("one"); return seen; });

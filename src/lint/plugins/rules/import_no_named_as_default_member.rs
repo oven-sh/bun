@@ -11,11 +11,11 @@ use std::cell::OnceCell;
 /// Forbid use of exported name as property of default export.
 pub struct NoNamedAsDefaultMember;
 
-const CAUTION: Message = Message::new(
+const CAUTION: &Message = &Message::new(
     "",
     "Caution: `{{objectName}}` also has a named export `{{propName}}`. Check if you meant to write `import {{{propName}}} from '{{sourcePath}}'` instead.",
 );
-const OXLINT: Message = Message::new("", "{{module_name}} also has a named export {{export_name}}");
+const OXLINT: &Message = &Message::new("", "{{module_name}} also has a named export {{export_name}}");
 
 pub struct State<'a> {
     /// `None` for oxlint, which uses its module records.

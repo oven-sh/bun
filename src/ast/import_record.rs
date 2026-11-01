@@ -108,6 +108,10 @@ bitflags::bitflags! {
 
 pub type List<'a> = bun_alloc::ArenaVec<'a, ImportRecord<'a>>;
 
+pub const fn is_test_module(path: &[u8]) -> bool {
+    matches!(path, b"bun:test" | b"vitest" | b"@jest/globals")
+}
+
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
 pub enum Tag {
@@ -126,13 +130,6 @@ pub enum Tag {
     /// For Bun Kit, if a module in the server graph should actually
     /// crossover to the SSR graph. See bake.Framework.ServerComponents.separate_ssr_graph
     BakeResolveToSsrGraph,
-}
-
-impl Tag {
-    #[inline]
-    pub fn is_internal(self) -> bool {
-        (self as u8) >= (Tag::Runtime as u8)
-    }
 }
 
 // NOTE: no `impl Default for ImportRecord` — `range`, `path`, `kind` have no

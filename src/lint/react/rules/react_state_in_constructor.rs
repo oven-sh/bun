@@ -12,12 +12,12 @@ pub struct StateInConstructor {
     is_always: bool,
 }
 
-const STATE_INIT_CONSTRUCTOR: Message =
-    Message::new("stateInitConstructor", "State initialization should be in a constructor");
-const STATE_INIT_CLASS_PROP: Message =
-    Message::new("stateInitClassProp", "State initialization should be in a class property");
-const OXLINT_IN_CONSTRUCTOR: Message = Message::new("", "State initialization should be in a constructor");
-const OXLINT_IN_CLASS_PROPERTY: Message = Message::new("", "State initialization should be in a class property");
+const STATE_INIT_CONSTRUCTOR: &Message =
+    &Message::new("stateInitConstructor", "State initialization should be in a constructor");
+const STATE_INIT_CLASS_PROP: &Message =
+    &Message::new("stateInitClassProp", "State initialization should be in a class property");
+const OXLINT_IN_CONSTRUCTOR: &Message = &Message::new("", "State initialization should be in a constructor");
+const OXLINT_IN_CLASS_PROPERTY: &Message = &Message::new("", "State initialization should be in a class property");
 
 #[derive(Default)]
 pub struct State<'a> {

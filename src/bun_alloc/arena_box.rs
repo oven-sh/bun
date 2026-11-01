@@ -68,6 +68,22 @@ impl<'a, T: ?Sized> ArenaBox<'a, T> {
     }
 }
 
+impl<T: ?Sized> ArenaBox<'_, T> {
+    /// Gives the block up. `from_raw` takes it back.
+    #[inline]
+    pub fn into_raw(self) -> *mut T {
+        Box::into_raw_with_allocator(self.0).0
+    }
+
+    /// # Safety
+    /// `raw` comes from `into_raw`, once, and its arena is alive for the lifetime of the result.
+    #[inline]
+    pub unsafe fn from_raw(raw: *mut T) -> Self {
+        // SAFETY: caller contract.
+        ArenaBox(unsafe { Box::from_raw_in(raw, FreesOnly(PhantomData)) })
+    }
+}
+
 impl<'a, T> ArenaBox<'a, T> {
     #[inline]
     pub fn new_in(value: T, arena: &'a MimallocArena) -> Self {

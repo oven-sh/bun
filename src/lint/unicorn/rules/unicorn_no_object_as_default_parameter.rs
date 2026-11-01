@@ -5,8 +5,8 @@ use bun_lint::rule::Plugin;
 /// Disallow the use of an object literal as a default value for a parameter.
 pub struct NoObjectAsDefaultParameter;
 
-const IDENTIFIER: Message = Message::new("", "Do not use an object literal as default for parameter `{{param}}`.");
-const NON_IDENTIFIER: Message = Message::new("", "Do not use an object literal as default");
+const IDENTIFIER: &Message = &Message::new("", "Do not use an object literal as default for parameter `{{param}}`.");
+const NON_IDENTIFIER: &Message = &Message::new("", "Do not use an object literal as default");
 
 impl Rule for NoObjectAsDefaultParameter {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-object-as-default-parameter", Kind::Suggestion);

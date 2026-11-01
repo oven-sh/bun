@@ -8,16 +8,16 @@ use bun_lint::utils::eslint_utils::{StaticValue, get_static_value};
 /// Disallow comparing an enum value with a non-enum value.
 pub struct NoUnsafeEnumComparison;
 
-const MISMATCHED_CASE: Message = Message::new(
+const MISMATCHED_CASE: &Message = &Message::new(
     "mismatchedCase",
     "The case statement does not have a shared enum type with the switch predicate.",
 );
-const MISMATCHED_CONDITION: Message = Message::new(
+const MISMATCHED_CONDITION: &Message = &Message::new(
     "mismatchedCondition",
     "The two values in this comparison do not have a shared enum type.",
 );
-const REPLACE_VALUE_WITH_ENUM: Message =
-    Message::new("replaceValueWithEnum", "Replace with an enum value comparison.");
+const REPLACE_VALUE_WITH_ENUM: &Message =
+    &Message::new("replaceValueWithEnum", "Replace with an enum value comparison.");
 
 /// Returns how to write the member of the enum `enum_type` that has `value`'s static value.
 fn enum_key_of_value<'a>(enum_type: Type<'a>, value: Expr<'a>) -> Option<Vec<u8>> {

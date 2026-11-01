@@ -12,9 +12,9 @@ pub struct NoMapSpread {
     ignore_args: bool,
 }
 
-const OBJECT_SPREAD: Message = Message::new("", "Spreading to modify object properties in `map` calls is inefficient");
-const ARRAY_SPREAD: Message = Message::new("", "Spreading to modify array elements in `map` calls is inefficient");
-const USE_OBJECT_ASSIGN: Message = Message::new(
+const OBJECT_SPREAD: &Message = &Message::new("", "Spreading to modify object properties in `map` calls is inefficient");
+const ARRAY_SPREAD: &Message = &Message::new("", "Spreading to modify array elements in `map` calls is inefficient");
+const USE_OBJECT_ASSIGN: &Message = &Message::new(
     "",
     "If in-place mutation is acceptable, use `Object.assign` or direct property assignment instead of spreading",
 );

@@ -9,12 +9,12 @@ use bun_lint::utils::estree_compat::estree_parent;
 /// Disallow usage of shouldComponentUpdate when extending React.PureComponent
 pub struct NoRedundantShouldComponentUpdate;
 
-const NO_SHOULD_COMP_UPDATE: Message = Message::new(
+const NO_SHOULD_COMP_UPDATE: &Message = &Message::new(
     "noShouldCompUpdate",
     "{{component}} does not need shouldComponentUpdate when extending React.PureComponent.",
 );
-const OXLINT: Message =
-    Message::new("", "{{component_name}} does not need `shouldComponentUpdate` when extending `React.PureComponent`.");
+const OXLINT: &Message =
+    &Message::new("", "{{component_name}} does not need `shouldComponentUpdate` when extending `React.PureComponent`.");
 
 pub struct State<'a> {
     /// `None` for oxlint, whose only pragma is `React`.

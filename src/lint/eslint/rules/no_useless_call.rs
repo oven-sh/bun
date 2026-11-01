@@ -3,7 +3,7 @@ use bun_lint::prelude::*;
 /// Disallow unnecessary calls to `.call()` and `.apply()`.
 pub struct NoUselessCall;
 
-const UNNECESSARY_CALL: Message = Message::new("unnecessaryCall", "Unnecessary '.{{name}}()'.");
+const UNNECESSARY_CALL: &Message = &Message::new("unnecessaryCall", "Unnecessary '.{{name}}()'.");
 
 impl Rule for NoUselessCall {
     const META: Meta = Meta::eslint("no-useless-call", Kind::Suggestion);

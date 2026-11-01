@@ -18,7 +18,7 @@ enum Indent {
     Spaces(i64),
 }
 
-const WRONG_INDENT: Message = Message::new(
+const WRONG_INDENT: &Message = &Message::new(
     "wrongIndent",
     "Expected indentation of {{needed}} {{type}} {{characters}} but found {{gotten}}.",
 );

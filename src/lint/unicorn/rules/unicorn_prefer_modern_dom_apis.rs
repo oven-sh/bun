@@ -6,7 +6,7 @@ use bun_lint::rule::Plugin;
 /// Prefer modern DOM APIs like `replaceWith` and `before` over older methods like `replaceChild` and `insertBefore`.
 pub struct PreferModernDomApis;
 
-const PREFER_MODERN_DOM_APIS: Message = Message::new("", "Prefer using `{{good_method}}` over `{{bad_method}}`.");
+const PREFER_MODERN_DOM_APIS: &Message = &Message::new("", "Prefer using `{{good_method}}` over `{{bad_method}}`.");
 
 impl Rule for PreferModernDomApis {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-modern-dom-apis", Kind::Suggestion).has_suggestions();

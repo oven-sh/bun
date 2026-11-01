@@ -18,22 +18,22 @@ pub struct ExplicitModuleBoundaryTypes {
     options: ReturnTypeOptions,
 }
 
-const ANY_TYPED_ARG: Message = Message::new(
+const ANY_TYPED_ARG: &Message = &Message::new(
     "anyTypedArg",
     "Argument '{{name}}' should be typed with a non-any type.",
 );
-const ANY_TYPED_ARG_UNNAMED: Message = Message::new(
+const ANY_TYPED_ARG_UNNAMED: &Message = &Message::new(
     "anyTypedArgUnnamed",
     "{{type}} argument should be typed with a non-any type.",
 );
-const MISSING_ARG_TYPE: Message =
-    Message::new("missingArgType", "Argument '{{name}}' should be typed.");
-const MISSING_ARG_TYPE_UNNAMED: Message = Message::new(
+const MISSING_ARG_TYPE: &Message =
+    &Message::new("missingArgType", "Argument '{{name}}' should be typed.");
+const MISSING_ARG_TYPE_UNNAMED: &Message = &Message::new(
     "missingArgTypeUnnamed",
     "{{type}} argument should be typed.",
 );
-const MISSING_RETURN_TYPE: Message =
-    Message::new("missingReturnType", "Missing return type on function.");
+const MISSING_RETURN_TYPE: &Message =
+    &Message::new("missingReturnType", "Missing return type on function.");
 
 impl ExplicitModuleBoundaryTypes {
     /// Upstream's `isAllowedName`, applied to the function declaration `func`, or to the parent of the function
@@ -70,7 +70,7 @@ impl ExplicitModuleBoundaryTypes {
         &self,
         func: Func<'a>,
         is_oxlint: bool,
-    ) -> impl Iterator<Item = (Param<'a>, Message, Message)> {
+    ) -> impl Iterator<Item = (Param<'a>, &'static Message, &'static Message)> {
         let allows_any = self.allow_arguments_explicitly_typed_as_any;
         func.params_with_this().filter_map(move |param| {
             // It has its default value's type. oxlint checks the annotation first, and ignores `this`.
@@ -92,7 +92,7 @@ impl ExplicitModuleBoundaryTypes {
     /// `export` is for oxlint: the export that led to `func`, which is the node oxlint's rule is called with.
     fn check_parameters<'a>(&self, func: Func<'a>, cx: &Cx<'a, Self>, export: Option<Node<'a>>) {
         let is_oxlint = cx.language().is_oxlint;
-        let report = |at: Span, message: Message| match export {
+        let report = |at: Span, message: &'static Message| match export {
             Some(export) => cx.report(at, message).called_with(export),
             None => cx.report(at, message),
         };

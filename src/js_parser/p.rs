@@ -683,7 +683,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 
     // These are backed by stack fallback allocators in _parse, and are uninitialized until then.
     pub(crate) binary_expression_stack: ListManaged<'a, BinaryExpressionVisitor>,
-    // Reusable stack for `SideEffects::simplify_unused_binary_comma_expr`;
+    // Reusable stack for the loops over a chain of binary expressions;
     // the path is recursive, so callers truncate back to their entry watermark.
     pub(crate) binary_expression_simplify_stack: ListManaged<'a, BinaryExpressionSimplifyVisitor>,
 
@@ -2994,6 +2994,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 js_ast::ExprData::EBinary(mut e) => {
                     // Do not substitute into an assignment position
                     if js_ast::op::Code::binary_assign_target(e.op) == js_ast::AssignTarget::None {
+                        // A chain of binary expressions nests in `left`: a loop takes its links.
+                        if matches!(e.left.data, js_ast::ExprData::EBinary(_)) {
+                            return self.substitute_single_use_symbol_in_binary_chain(
+                                expr,
+                                r#ref,
+                                replacement,
+                                replacement_can_be_removed,
+                            );
+                        }
                         if let Some(done) = self.substitute_single_use_symbol_in_child(
                             &mut e.left,
                             expr,
@@ -3275,6 +3284,65 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 Some(Substitution::Failure(parent))
             }
         }
+    }
+
+    /// `substitute_single_use_symbol_in_expr` for a binary whose left operand is a binary.
+    #[inline(never)] // Keeps the loop's state out of the frame that every nesting level takes.
+    fn substitute_single_use_symbol_in_binary_chain(
+        &mut self,
+        expr: Expr,
+        r#ref: Ref,
+        replacement: Expr,
+        replacement_can_be_removed: bool,
+    ) -> Substitution {
+        let stack_bottom = self.binary_expression_simplify_stack.len();
+
+        // `link` stops above the innermost link, which goes through the ordinary call.
+        let mut link = expr.data.e_binary().expect("infallible: variant checked");
+        while let js_ast::ExprData::EBinary(left) = link.left.data
+            && js_ast::op::Code::binary_assign_target(left.op) == js_ast::AssignTarget::None
+            && matches!(left.left.data, js_ast::ExprData::EBinary(_))
+        {
+            self.binary_expression_simplify_stack
+                .push(BinaryExpressionSimplifyVisitor { bin: link });
+            link = left;
+        }
+
+        let result = 'chain: {
+            if let Some(done) = self.substitute_single_use_symbol_in_child(
+                &mut link.left,
+                expr,
+                r#ref,
+                replacement,
+                replacement_can_be_removed,
+            ) {
+                break 'chain done;
+            }
+            loop {
+                if let Some(done) = self.substitute_single_use_symbol_in_child(
+                    &mut link.right,
+                    expr,
+                    r#ref,
+                    replacement,
+                    replacement_can_be_removed,
+                ) {
+                    break 'chain done;
+                }
+                // The left operand is a link that continued, so it can be removed.
+                if !(replacement_can_be_removed
+                    && Self::binary_can_be_removed_if_operands_can(&link)
+                    && self.binary_right_can_be_removed(&link))
+                {
+                    break 'chain Substitution::Failure(expr);
+                }
+                if self.binary_expression_simplify_stack.len() == stack_bottom {
+                    break 'chain Substitution::Continue;
+                }
+                link = self.binary_expression_simplify_stack.pop().unwrap().bin;
+            }
+        };
+        self.binary_expression_simplify_stack.truncate(stack_bottom);
+        result
     }
 
     pub(crate) fn prepare_for_visit_pass(&mut self) -> Result<(), crate::Error> {
@@ -6360,63 +6428,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 _ => {}
             },
-            js_ast::ExprData::EBinary(ex) => match ex.op {
-                // These operators must not have any type conversions that can execute code
-                // such as "toString" or "valueOf". They must also never throw any exceptions.
-                js_ast::op::Code::BinStrictEq
-                | js_ast::op::Code::BinStrictNe
-                | js_ast::op::Code::BinComma
-                | js_ast::op::Code::BinNullishCoalescing => {
-                    return self.expr_can_be_removed_if_unused_without_dce_check(&ex.left)
-                        && self.expr_can_be_removed_if_unused_without_dce_check(&ex.right);
+            js_ast::ExprData::EBinary(ex) => {
+                // A chain of binary expressions nests in `left`: a loop takes its links.
+                if matches!(ex.left.data, js_ast::ExprData::EBinary(_)) {
+                    return self.binary_chain_can_be_removed_if_unused(*ex);
                 }
-                // Special-case "||" to make sure "typeof x === 'undefined' || x" can be removed
-                js_ast::op::Code::BinLogicalOr => {
-                    return self.expr_can_be_removed_if_unused_without_dce_check(&ex.left)
-                        && (self
-                            .is_side_effect_free_unbound_identifier_ref(ex.right, ex.left, false)
-                            || self.expr_can_be_removed_if_unused_without_dce_check(&ex.right));
-                }
-                // Special-case "&&" to make sure "typeof x !== 'undefined' && x" can be removed
-                js_ast::op::Code::BinLogicalAnd => {
-                    return self.expr_can_be_removed_if_unused_without_dce_check(&ex.left)
-                        && (self
-                            .is_side_effect_free_unbound_identifier_ref(ex.right, ex.left, true)
-                            || self.expr_can_be_removed_if_unused_without_dce_check(&ex.right));
-                }
-                // For "==" and "!=", pretend the operator was actually "===" or "!==". If
-                // we know that we can convert it to "==" or "!=", then we can consider the
-                // operator itself to have no side effects. This matters because our mangle
-                // logic will convert "typeof x === 'object'" into "typeof x == 'object'"
-                // and since "typeof x === 'object'" is considered to be side-effect free,
-                // we must also consider "typeof x == 'object'" to be side-effect free.
-                js_ast::op::Code::BinLooseEq | js_ast::op::Code::BinLooseNe => {
-                    return crate::scan::scan_side_effects::SideEffects::can_change_strict_to_loose(
-                        &ex.left.data,
-                        &ex.right.data,
-                    ) && self.expr_can_be_removed_if_unused_without_dce_check(&ex.left)
-                        && self.expr_can_be_removed_if_unused_without_dce_check(&ex.right);
-                }
-                // Special-case "<" and ">" with string, number, or bigint arguments
-                js_ast::op::Code::BinLt
-                | js_ast::op::Code::BinGt
-                | js_ast::op::Code::BinLe
-                | js_ast::op::Code::BinGe => {
-                    let left = ex.left.data.known_primitive();
-                    let right = ex.right.data.known_primitive();
-                    match left {
-                        js_ast::KnownPrimitive::String
-                        | js_ast::KnownPrimitive::Number
-                        | js_ast::KnownPrimitive::Bigint => {
-                            return right == left
-                                && self.expr_can_be_removed_if_unused_without_dce_check(&ex.left)
-                                && self.expr_can_be_removed_if_unused_without_dce_check(&ex.right);
-                        }
-                        _ => {}
-                    }
-                }
-                _ => {}
-            },
+                return Self::binary_can_be_removed_if_operands_can(ex)
+                    && self.expr_can_be_removed_if_unused_without_dce_check(&ex.left)
+                    && self.binary_right_can_be_removed(ex);
+            }
             js_ast::ExprData::ETemplate(templ) => {
                 if templ.tag.is_none() {
                     for part in templ.parts().iter() {
@@ -6432,6 +6452,91 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             _ => {}
         }
         false
+    }
+
+    /// Whether the operator of `ex` lets `ex` be removed if unused when both operands can be.
+    #[inline(always)] // Out of line, this is a call for each binary expression the query meets.
+    fn binary_can_be_removed_if_operands_can(ex: &E::Binary) -> bool {
+        match ex.op {
+            // These operators must not have any type conversions that can execute code
+            // such as "toString" or "valueOf". They must also never throw any exceptions.
+            js_ast::op::Code::BinStrictEq
+            | js_ast::op::Code::BinStrictNe
+            | js_ast::op::Code::BinComma
+            | js_ast::op::Code::BinNullishCoalescing
+            | js_ast::op::Code::BinLogicalOr
+            | js_ast::op::Code::BinLogicalAnd => true,
+            // For "==" and "!=", pretend the operator was actually "===" or "!==". If
+            // we know that we can convert it to "==" or "!=", then we can consider the
+            // operator itself to have no side effects. This matters because our mangle
+            // logic will convert "typeof x === 'object'" into "typeof x == 'object'"
+            // and since "typeof x === 'object'" is considered to be side-effect free,
+            // we must also consider "typeof x == 'object'" to be side-effect free.
+            js_ast::op::Code::BinLooseEq | js_ast::op::Code::BinLooseNe => {
+                crate::scan::scan_side_effects::SideEffects::can_change_strict_to_loose(
+                    &ex.left.data,
+                    &ex.right.data,
+                )
+            }
+            // Special-case "<" and ">" with string, number, or bigint arguments
+            js_ast::op::Code::BinLt
+            | js_ast::op::Code::BinGt
+            | js_ast::op::Code::BinLe
+            | js_ast::op::Code::BinGe => {
+                let left = ex.left.data.known_primitive();
+                let right = ex.right.data.known_primitive();
+                matches!(
+                    left,
+                    js_ast::KnownPrimitive::String
+                        | js_ast::KnownPrimitive::Number
+                        | js_ast::KnownPrimitive::Bigint
+                ) && right == left
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether the right operand of `ex` can be removed if unused, given that the left one can.
+    #[inline(always)] // Inline, the query of the right operand stays a tail call.
+    fn binary_right_can_be_removed(&mut self, ex: &E::Binary) -> bool {
+        match ex.op {
+            // Special-case "||" to make sure "typeof x === 'undefined' || x" can be removed
+            js_ast::op::Code::BinLogicalOr => {
+                self.is_side_effect_free_unbound_identifier_ref(ex.right, ex.left, false)
+                    || self.expr_can_be_removed_if_unused_without_dce_check(&ex.right)
+            }
+            // Special-case "&&" to make sure "typeof x !== 'undefined' && x" can be removed
+            js_ast::op::Code::BinLogicalAnd => {
+                self.is_side_effect_free_unbound_identifier_ref(ex.right, ex.left, true)
+                    || self.expr_can_be_removed_if_unused_without_dce_check(&ex.right)
+            }
+            _ => self.expr_can_be_removed_if_unused_without_dce_check(&ex.right),
+        }
+    }
+
+    /// The removability query for a binary whose left operand is a binary.
+    #[inline(never)] // Keeps the loop's state out of the frame that every nesting level takes.
+    fn binary_chain_can_be_removed_if_unused(&mut self, root: js_ast::StoreRef<E::Binary>) -> bool {
+        let stack_bottom = self.binary_expression_simplify_stack.len();
+        let mut ex = root;
+        let mut can_be_removed = loop {
+            if !Self::binary_can_be_removed_if_operands_can(&ex) {
+                break false;
+            }
+            let js_ast::ExprData::EBinary(left) = ex.left.data else {
+                break self.expr_can_be_removed_if_unused_without_dce_check(&ex.left);
+            };
+            self.binary_expression_simplify_stack
+                .push(BinaryExpressionSimplifyVisitor { bin: ex });
+            ex = left;
+        };
+        while can_be_removed && self.binary_expression_simplify_stack.len() > stack_bottom {
+            can_be_removed = self.binary_right_can_be_removed(&ex);
+            ex = self.binary_expression_simplify_stack.pop().unwrap().bin;
+        }
+        self.binary_expression_simplify_stack.truncate(stack_bottom);
+        // `root` is asked last, after the list is restored, so that this stays a tail call.
+        can_be_removed && self.binary_right_can_be_removed(&root)
     }
 
     fn is_side_effect_free_unbound_identifier_ref(

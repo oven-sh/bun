@@ -3,6 +3,10 @@ name = "server"
 version = "0.1.0"
 edition = "2021"
 
+# Standalone crate: opt out of the repo-root [workspace]. test-tonic.test.ts
+# builds a copy of this directory in the OS temp directory.
+[workspace]
+
 [dependencies]
 tonic = { version = "0.13.1", features = ["transport", "prost"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

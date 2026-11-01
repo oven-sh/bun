@@ -28,6 +28,7 @@ on:
       - ".buildkite/scripts/upload-release.sh"
       - "packages/bun-release/src/platform.ts"
       - "rust-toolchain.toml"
+      - "**/Cargo.toml"
       - "bun.lock"
       - "test/bun.lock"
       - "test/harness.ts"
@@ -57,6 +58,7 @@ on:
       - ".buildkite/scripts/upload-release.sh"
       - "packages/bun-release/src/platform.ts"
       - "rust-toolchain.toml"
+      - "**/Cargo.toml"
       - "bun.lock"
       - "test/bun.lock"
       - "test/harness.ts"
@@ -93,5 +95,16 @@ jobs:
       # No `bun install`: every test here imports only built-ins, relative
       # paths, or `harness` (resolved via test/tsconfig.json `paths`), so a
       # bare checkout is sufficient.
+      #
+      # workspace-lints.test.ts runs `cargo metadata` on the crates outside the
+      # workspace. It takes RUSTUP_TOOLCHAIN from here, and it is skipped where
+      # that toolchain is not installed, so `cargo --version` goes first: it
+      # fails the step when the runner has no cargo. The stable cargo of the
+      # runner image can load those crates, so the job does not install the
+      # nightly that rust-toolchain.toml pins.
       - name: Run source lints
-        run: bun test test/internal/source-lints/
+        env:
+          RUSTUP_TOOLCHAIN: stable
+        run: |
+          cargo --version
+          bun test test/internal/source-lints/

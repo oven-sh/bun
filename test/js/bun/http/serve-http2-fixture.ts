@@ -92,6 +92,10 @@ async function handler(req: Request, server: Bun.Server<undefined>): Promise<Res
     }
     case "/file":
       return new Response(Bun.file(bigFile));
+    // server.timeout(req, s), then a Bun.file body.
+    case "/file-t":
+      server.timeout(req, Number(url.searchParams.get("s")));
+      return new Response(Bun.file(bigFile));
     case "/file-stream":
       return new Response(Bun.file(bigFile).stream());
     case "/status/204":

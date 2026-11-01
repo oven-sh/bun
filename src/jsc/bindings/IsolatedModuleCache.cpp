@@ -91,15 +91,15 @@ static WTF::String pathOfKey(const WTF::String& key)
     return query == WTF::notFound ? key : key.left(query);
 }
 
-void IsolatedModuleCache::evictWhenGlobalIsRetired(JSC::VM& vm, const WTF::String& key)
+void IsolatedModuleCache::evictWhenTestFileEnds(JSC::VM& vm, const WTF::String& key)
 {
-    WebCore::clientData(vm)->isolationSourceProviderCachePathsOfGlobal.add(pathOfKey(key));
+    WebCore::clientData(vm)->isolationSourceProviderCachePathsOfTestFile.add(pathOfKey(key));
 }
 
-void IsolatedModuleCache::evictKeysOfRetiredGlobal(JSC::VM& vm)
+void IsolatedModuleCache::evictPathsOfFinishedTestFile(JSC::VM& vm)
 {
     auto* clientData = WebCore::clientData(vm);
-    auto paths = std::exchange(clientData->isolationSourceProviderCachePathsOfGlobal, {});
+    auto paths = std::exchange(clientData->isolationSourceProviderCachePathsOfTestFile, {});
     if (paths.isEmpty())
         return;
     clientData->isolationSourceProviderCache.removeIf([&](auto& entry) {

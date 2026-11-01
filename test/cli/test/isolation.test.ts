@@ -2104,6 +2104,7 @@ test("t2", () => {
 
 // `Module._extensions` is an object of one test file's global, and the SourceProvider cache has one source for a
 // path. A file's require() has to call the handlers that the file set, and no handler of a file before it.
+// --isolate=modules keeps one global object: there a handler stays until a file takes it out.
 describe.concurrent("--isolate: Module._extensions handlers", () => {
   const modes: [string, string[], Record<string, string>][] = [
     ["--isolate", ["--isolate"], {}],
@@ -2181,7 +2182,11 @@ describe.concurrent("--isolate: Module._extensions handlers", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.each(modes)("a test file's handlers see the paths that a file before it loaded (%s)", async (_, args, env) => {
+  // With --isolate=modules the handlers of b.test.ts would answer in c.test.ts too, so that mode ends with b.test.ts.
+  test.each([
+    ...modes.map(mode => [...mode, ["a", "b", "c"], 6] as const),
+    ["--isolate=modules", ["--isolate=modules"], {}, ["a", "b"], 3] as const,
+  ])("a test file's handlers see the paths that a file before it loaded (%s)", async (_, args, env, names, pass) => {
     using dir = tempDir("isolate-require-extensions", {
       "plain.js": `module.exports = "plain.js";`,
       "plain.ts": `module.exports = "plain.ts" as string;`,
@@ -2263,11 +2268,13 @@ describe.concurrent("--isolate: Module._extensions handlers", () => {
         });
       `,
     });
-    const { stderr, exitCode } = await runTests(String(dir), args, ["./a.test.ts", "./b.test.ts", "./c.test.ts"], {
-      ...bunEnv,
-      ...env,
-    });
-    expect(normalizeBunSnapshot(stderr, dir)).toContain("6 pass");
+    const { stderr, exitCode } = await runTests(
+      String(dir),
+      args,
+      names.map(name => `./${name}.test.ts`),
+      { ...bunEnv, ...env },
+    );
+    expect(normalizeBunSnapshot(stderr, dir)).toContain(`${pass} pass`);
     expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
     expect(exitCode).toBe(0);
   });
@@ -2380,53 +2387,66 @@ describe.concurrent("--isolate: Module._extensions handlers", () => {
   }
 
   test.each([
-    ["a built-in loader", `Module._extensions[".js"] = Module._extensions[".ts"];`],
+    ["a built-in loader", "--isolate", `Module._extensions[".js"] = Module._extensions[".ts"];`, ""],
     [
       "a function",
+      "--isolate",
       `const loadTs = Module._extensions[".ts"];
        Module._extensions[".js"] = (module: any, filename: string) => loadTs(module, filename);`,
+      "",
     ],
-  ])("a require() that %s for another extension answers leaves no source for the next file", async (_, setHandler) => {
-    using dir = tempDir("isolate-require-extensions-no-source", {
-      "typed.js": `module.exports = 1 as number;\n`,
-      "dependency.js": `export const unused = 1;\n`,
-      "thrower.js": throwerFile,
-      "a.test.ts": `
-        import { test } from "bun:test";
-        ${throwerFrame}
-        test("loads thrower.js with the loader of its path", () => {
-          console.log("a.test.ts frame " + throwerFrame("./thrower.js"));
-        });
-      `,
-      "b.test.ts": `
-        import { test, expect } from "bun:test";
-        import Module from "node:module";
-        ${throwerFrame}
-        test("loads both files with the TypeScript loader", () => {
-          ${setHandler}
-          expect(require("./typed.js")).toBe(1);
-          console.log("b.test.ts frame " + throwerFrame("./thrower.js"));
-        });
-      `,
-      "c.test.ts": `
-        import { test, expect } from "bun:test";
-        ${throwerFrame}
-        test("loads both files with the loader of their path", () => {
-          expect(() => require("./typed.js")).toThrow('Expected ";" but found "as"');
-          console.log("c.test.ts frame " + throwerFrame("./thrower.js"));
-        });
-      `,
-    });
-    const { stdout, stderr, exitCode } = await runTests(
-      String(dir),
-      ["--isolate"],
-      ["./a.test.ts", "./b.test.ts", "./c.test.ts"],
-    );
-    expect(normalizeBunSnapshot(stderr, dir)).toContain("3 pass");
-    expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
-    expectSameFrames(stdout, ["a", "b", "c"]);
-    expect(exitCode).toBe(0);
-  });
+    // The handler would answer in c.test.ts too, so b.test.ts takes it out.
+    [
+      "a built-in loader",
+      "--isolate=modules",
+      `Module._extensions[".js"] = Module._extensions[".ts"];`,
+      `delete Module._extensions[".js"];`,
+    ],
+  ])(
+    "a require() that %s for another extension answers leaves no source for the next file (%s)",
+    async (_, flag, setHandler, removeHandler) => {
+      using dir = tempDir("isolate-require-extensions-no-source", {
+        "typed.js": `module.exports = 1 as number;\n`,
+        "dependency.js": `export const unused = 1;\n`,
+        "thrower.js": throwerFile,
+        "a.test.ts": `
+          import { test } from "bun:test";
+          ${throwerFrame}
+          test("loads thrower.js with the loader of its path", () => {
+            console.log("a.test.ts frame " + throwerFrame("./thrower.js"));
+          });
+        `,
+        "b.test.ts": `
+          import { test, expect } from "bun:test";
+          import Module from "node:module";
+          ${throwerFrame}
+          test("loads both files with the TypeScript loader", () => {
+            ${setHandler}
+            expect(require("./typed.js")).toBe(1);
+            console.log("b.test.ts frame " + throwerFrame("./thrower.js"));
+            ${removeHandler}
+          });
+        `,
+        "c.test.ts": `
+          import { test, expect } from "bun:test";
+          ${throwerFrame}
+          test("loads both files with the loader of their path", () => {
+            expect(() => require("./typed.js")).toThrow('Expected ";" but found "as"');
+            console.log("c.test.ts frame " + throwerFrame("./thrower.js"));
+          });
+        `,
+      });
+      const { stdout, stderr, exitCode } = await runTests(
+        String(dir),
+        [flag],
+        ["./a.test.ts", "./b.test.ts", "./c.test.ts"],
+      );
+      expect(normalizeBunSnapshot(stderr, dir)).toContain("3 pass");
+      expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+      expectSameFrames(stdout, ["a", "b", "c"]);
+      expect(exitCode).toBe(0);
+    },
+  );
 
   // The handlers match "thrower.foo?query" by its path, and the source map of a load is the one of the path.
   test.each([

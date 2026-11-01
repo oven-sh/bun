@@ -876,6 +876,30 @@ const response = await fetch("s3://my-bucket/my-file.txt", {
 });
 ```
 
+`fetch` sends the request `headers` with the signed request. The storage service decides what each header does. The service receives every header that you pass, so do not pass the headers of an incoming request.
+
+```ts s3.ts icon="/icons/typescript.svg"
+// Store the object with a Cache-Control header
+await fetch("s3://my-bucket/my-file.txt", {
+  method: "PUT",
+  body: "Hello",
+  headers: { "Cache-Control": "max-age=3600" },
+});
+
+// Download the object only when it has changed
+const first = await fetch("s3://my-bucket/my-file.txt");
+const second = await fetch("s3://my-bucket/my-file.txt", {
+  headers: { "If-None-Match": first.headers.get("etag")! },
+});
+second.status; // 304 when the object still has that ETag
+```
+
+`fetch` rejects with a `TypeError`, and sends nothing, when `headers` has a header that it cannot send:
+
+- `Host`, `Authorization`, `x-amz-date`, `x-amz-content-sha256` or `x-amz-security-token`. Request signing generates these headers.
+- Any other `x-amz-*` header, and `Content-MD5`. These headers need a signature, and `fetch` does not sign request headers yet. `S3Client.write()` has options for some of them, such as `acl` and `storageClass`.
+- With a stream or an `S3File` as the body of an upload: the `If-*` headers, `Cache-Control`, `Content-Language` and `Expires`. Bun uploads such a body in parts. It sends `Content-Type`, `Content-Disposition` and `Content-Encoding` with the upload, and no other header.
+
 ### UTF-8, UTF-16, and BOM (byte order mark)
 
 Like `Response` and `Blob`, `S3File` assumes UTF-8 encoding by default.

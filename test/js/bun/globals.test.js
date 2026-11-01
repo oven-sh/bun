@@ -297,9 +297,14 @@ describe("globalThis.gc", () => {
       { flags: [], type: "undefined" },
     ];
 
-    const typeofGcInEachKind = /* js */ `
+    /**
+     * Prints `typeof gc` in each kind of global object that a program can make, after it ran `first`.
+     * @param {string} [first]
+     */
+    const typeofGcInEachKind = (first = "") => /* js */ `
       const vm = require("node:vm");
       const { Worker } = require("node:worker_threads");
+      ${first}
       const inWorker = options => {
         const { promise, resolve, reject } = Promise.withResolvers();
         const source = "require('node:worker_threads').parentPort.postMessage(typeof gc)";
@@ -320,18 +325,39 @@ describe("globalThis.gc", () => {
       );
     `;
 
+    /**
+     * What `typeofGcInEachKind` prints.
+     * @param {string} main
+     * @param {string} made in the global objects that the program makes
+     */
+    const typesOf = (main, made) =>
+      JSON.stringify({
+        main,
+        shadowRealm: made,
+        vmNewContext: made,
+        vmContext: made,
+        // A name of the sandbox hides the one of the global object.
+        vmSandboxKey: "number",
+        worker: made,
+        workerWithOwnExecArgv: made,
+      });
+
     it.each(withAndWithoutTheFlag)("typeof gc is $type with the flags $flags", async ({ flags, type }) => {
-      expect(await run([...flags, "-e", typeofGcInEachKind])).toEqual({
-        stdout: JSON.stringify({
-          main: type,
-          shadowRealm: type,
-          vmNewContext: type,
-          vmContext: type,
-          // A name of the sandbox hides the one of the global object.
-          vmSandboxKey: "number",
-          worker: type,
-          workerWithOwnExecArgv: type,
-        }),
+      expect(await run([...flags, "-e", typeofGcInEachKind()])).toEqual({
+        stdout: typesOf(type, type),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // As in Node.js, the flag is one that a program can change: the global objects made afterwards follow it.
+    it.each([
+      { flags: [], set: "--expose-gc", main: "undefined", made: "function" },
+      { flags: ["--expose-gc"], set: "--no-expose-gc", main: "function", made: "undefined" },
+    ])("v8.setFlagsFromString($set) with the flags $flags", async ({ flags, set, main, made }) => {
+      const first = `require("node:v8").setFlagsFromString(${JSON.stringify(set)});`;
+      expect(await run([...flags, "-e", typeofGcInEachKind(first)])).toEqual({
+        stdout: typesOf(main, made),
         stderr: "",
         exitCode: 0,
       });
@@ -389,6 +415,14 @@ describe("globalThis.gc", () => {
           import { test } from "node:test";
           test("node", () => console.log("node:", typeof gc));
         `,
+        "set.test.ts": `
+          import { test } from "bun:test";
+          import v8 from "node:v8";
+          test("set", () => {
+            v8.setFlagsFromString("--expose-gc");
+            console.log("set:", typeof gc);
+          });
+        `,
         "runner.mjs": `
           import { run } from "node:test";
           const events = run({ files: ["./a.test.ts"], execArgv: ["--expose-gc"] });
@@ -405,7 +439,7 @@ describe("globalThis.gc", () => {
         using dir = tempDir("expose-gc-bun-test", files);
         const { stdout, stderr, exitCode } = await run(cmd, { cwd: String(dir), env });
         // The output of a --parallel worker is relayed on the coordinator's stderr.
-        const printed = `${stdout}\n${stderr}`.split(/\r?\n/).filter(line => /^(preload|a|b|node): /.test(line));
+        const printed = `${stdout}\n${stderr}`.split(/\r?\n/).filter(line => /^(preload|a|b|node|set): /.test(line));
         return { printed, exitCode };
       };
 
@@ -445,6 +479,12 @@ describe("globalThis.gc", () => {
           printed: ["preload: function", "a: function", "preload: function", "b: function"],
           exitCode: 0,
         });
+      });
+
+      // The flag is the process's: the global object of the next file is made after the first file set it.
+      it("--isolate after a file that calls v8.setFlagsFromString('--expose-gc')", async () => {
+        const cmd = ["test", "--isolate", "./set.test.ts", "./b.test.ts"];
+        expect(await typeofGcInTestFiles(cmd)).toEqual({ printed: ["set: undefined", "b: function"], exitCode: 0 });
       });
 
       it.each(withAndWithoutTheFlag)("--parallel workers with the flags $flags", async ({ flags, type }) => {

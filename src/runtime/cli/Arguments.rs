@@ -1120,7 +1120,7 @@ pub(crate) static Bun__Node__ProcessTraceDeprecation: core::sync::atomic::Atomic
 #[unsafe(no_mangle)]
 pub(crate) static Bun__Node__ProcessPendingDeprecation: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
-/// `--expose-gc`. C++ reads this one as a `std::atomic<bool>`, each time it makes a global object (BunGlobalScope.h).
+/// `--expose-gc`. C++ reads this one as a `std::atomic<bool>` each time it makes a global object, and `v8.setFlagsFromString()` stores it.
 #[unsafe(no_mangle)]
 pub(crate) static Bun__Node__ExposeGC: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);

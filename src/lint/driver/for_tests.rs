@@ -288,6 +288,16 @@ pub fn run_path_tests(args: &[&[u8]]) -> Option<Vec<u8>> {
             b"namespaced" => paths::namespaced(a),
             b"normalize" => paths::normalize(a),
             b"join" => paths::join_normalized(a, b),
+            // `split_joined` with each join that a directory and an option or a `tsconfig.json` entry go through.
+            b"split_resolved" | b"split_joined" | b"split_included" => {
+                let (joined, separators) = match *function {
+                    b"split_resolved" => (paths::resolve_as(style, a, b), style.separators()),
+                    b"split_joined" => (paths::join_normalized(a, b), style.separators()),
+                    _ => (bun_sema::resolve::join(a, b), &b"/\\"[..]),
+                };
+                let (directory, below) = paths::split_joined(a, &[b], separators, &joined);
+                [directory, b" + ", below].concat()
+            }
             _ => return None,
         });
         out.push(b'\n');

@@ -52,7 +52,7 @@ import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { getJS2NativeDTS } from "./generate-js2native";
 import { cap, checkAscii, low, writeIfNotChanged } from "./helpers";
 import { beginGuardedBody, endGuardedBody, removableFeatures } from "./removable-entry-points.ts";
-import { applyGlobalReplacements, define } from "./replacements";
+import { applyGlobalReplacements, assertNoDestructuredGlobalThis, define } from "./replacements";
 
 const PARALLEL = false;
 const KEEP_TMP = true;
@@ -361,6 +361,7 @@ $$capture_start$$(${fn.async ? "async " : ""}${
     const bundled = await made.text();
     const sourceMap: SourceMap = await made.sourcemap.json();
     let output = bundled.replaceAll("// @bun\n", "");
+    assertNoDestructuredGlobalThis(output, `${basename}.ts (${fn.name})`);
     let usesDebug = output.includes("$debug_log");
     let usesAssert = output.includes("$assert");
     const captured = output.match(/\$\$capture_start\$\$([\s\S]+)\.\$\$capture_end\$\$/)![1];

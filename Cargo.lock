@@ -955,11 +955,14 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_crash_handler",
+ "bun_glob",
  "bun_highway",
+ "bun_node_path",
  "bun_options_types",
  "bun_paths",
  "bun_ptr",
  "bun_react_compiler",
+ "bun_sys",
  "bun_url",
  "bun_wyhash",
  "criterion",
@@ -1464,6 +1467,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_png"
+version = "0.0.0"
+dependencies = [
+ "bun_alloc",
+ "bun_core",
+ "bun_highway",
+ "bun_zlib",
+ "thiserror",
+]
+
+[[package]]
 name = "bun_pod"
 version = "0.0.0"
 dependencies = [
@@ -1627,6 +1641,7 @@ dependencies = [
  "bun_jsc",
  "bun_libdeflate_sys",
  "bun_libuv_sys",
+ "bun_lint",
  "bun_lint_driver",
  "bun_lsquic_sys",
  "bun_md",
@@ -1639,6 +1654,7 @@ dependencies = [
  "bun_paths",
  "bun_picohttp",
  "bun_platform",
+ "bun_png",
  "bun_ptr",
  "bun_removable_features",
  "bun_resolve_builtins",

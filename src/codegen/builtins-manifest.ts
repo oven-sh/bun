@@ -61,7 +61,7 @@ const fixed: Record<string, string> = {
   "process.env.NODE_ENV": '"production"',
 };
 for (const [key, value] of Object.entries({ ...define, ...fixed })) {
-  if (globalsToPrefix.includes(key)) continue;
+  if (globalsToPrefix.includes(key) || value.startsWith("__intrinsic__natives.")) continue;
   const name = key.startsWith("__intrinsic__") ? "$" + key.slice("__intrinsic__".length) : key;
   lines.push(`define\t${name}\t${canonicalJSON(name, value)}`);
 }

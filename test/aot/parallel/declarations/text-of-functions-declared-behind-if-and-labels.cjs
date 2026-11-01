@@ -1,10 +1,10 @@
-// In a sloppy file a function may be the statement of an `if` or stand behind a label. It is `let name = function() {}` in what Bun runs, as in a block: a mock of it takes no name.
+// In a sloppy file a function may be the statement of an `if` or stand behind a label. It is `let name = function() {}` in what Bun runs, as in a block: a mock of it takes the name that it has there.
 // Its text has no name there. In an executable it keeps the name, which the text of the function around it holds too: the name is not compared.
 // Reference: bun build --compile
 const { mock } = require("bun:test");
 
 function show(what, f) {
-  console.log(what + ":", String(f).replace(/^function[^(]*/, "function").replace(/\s+/g, ""), JSON.stringify(mock(f).getMockName()));
+  console.log(what + ":", String(f).replace(/^function[^(]*/, "function").replace(/\s+/g, ""), mock(f).getMockName() === f.name);
 }
 
 if (show) function inAnIf() { return 1; }

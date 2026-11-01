@@ -44,6 +44,11 @@ pub enum ClosingState {
 pub enum BlobContentType {
     Static(&'static [u8]),
     Owned(std::sync::Arc<[u8]>),
+    /// Script named a type that Bun sends with a charset: `type` is `given`, a `Content-Type` header is `header`.
+    Named {
+        given: &'static [u8],
+        header: &'static [u8],
+    },
 }
 
 impl Default for BlobContentType {
@@ -59,6 +64,16 @@ impl BlobContentType {
         match self {
             Self::Static(s) => s,
             Self::Owned(b) => b,
+            Self::Named { header, .. } => header,
+        }
+    }
+
+    /// What the `type` attribute answers.
+    #[inline]
+    pub fn given(&self) -> &[u8] {
+        match self {
+            Self::Named { given, .. } => given,
+            _ => self.as_slice(),
         }
     }
 
@@ -79,6 +94,30 @@ impl BlobContentType {
             std::borrow::Cow::Borrowed(s) => Self::Static(s),
             std::borrow::Cow::Owned(v) => Self::Owned(std::sync::Arc::from(v.as_slice())),
         }
+    }
+
+    /// The type that script gave to `new Blob()`, `new File()` or `slice()`.
+    pub fn from_script(slice: &[u8]) -> Self {
+        Self::from_known_name(slice).unwrap_or_else(|| Self::from_lowercased(slice))
+    }
+
+    /// The `type` of the Blob that a clone is made from. Not every Blob's is lowercase.
+    pub fn from_clone(given: &[u8]) -> Self {
+        Self::from_known_name(given)
+            .filter(|known| known.given() == given)
+            .unwrap_or_else(|| Self::Owned(std::sync::Arc::from(given)))
+    }
+
+    fn from_known_name(slice: &[u8]) -> Option<Self> {
+        let given = bun_http_types::MimeType::interned_name(slice)?;
+        Some(
+            match bun_http_types::MimeType::by_name_static(given).map(|mime| mime.value) {
+                Some(std::borrow::Cow::Borrowed(header)) if header != given => {
+                    Self::Named { given, header }
+                }
+                _ => Self::Static(given),
+            },
+        )
     }
 
     /// Heap-owned ASCII-lowercased copy of `slice`.

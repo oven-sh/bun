@@ -233,6 +233,16 @@ it("availableParallelism", () => {
   expect(os.availableParallelism()).toBeGreaterThan(0);
 });
 
+it("availableParallelism does not read navigator from globalThis", () => {
+  const { navigator } = globalThis;
+  globalThis.navigator = { hardwareConcurrency: navigator.hardwareConcurrency + 1 };
+  try {
+    expect(os.availableParallelism()).toBe(navigator.hardwareConcurrency);
+  } finally {
+    globalThis.navigator = navigator;
+  }
+});
+
 it("loadavg", () => {
   const loadavg = os.loadavg();
   expect(loadavg.length).toBe(3);

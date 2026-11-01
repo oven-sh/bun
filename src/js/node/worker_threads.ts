@@ -6,7 +6,7 @@ type WebWorker = globalThis.Worker;
 
 const EventEmitter = require("node:events");
 const { SafeMap } = require("internal/primordials");
-const { throwNotImplemented, warnNotImplementedOnce } = require("internal/shared");
+const { throwNotImplemented, warnNotImplementedOnce, reportUncaughtException } = require("internal/shared");
 const {
   validateString,
   validateObject,
@@ -1232,7 +1232,12 @@ class Worker extends EventEmitter {
       try {
         let entry;
         while ((entry = _receiveMessageOnPort(this.#publicPort)) !== undefined) {
-          this.emit("message", entry.message);
+          try {
+            this.emit("message", entry.message);
+          } catch (err) {
+            // Node rethrows on a tick and goes on: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/event_target.js#L1117-L1119
+            require("internal/process/next_tick_queue").queueTick1(reportUncaughtException, err);
+          }
         }
       } finally {
         this.#publicPort.close();

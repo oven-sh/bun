@@ -48,13 +48,15 @@ const ran = () =>
   ));
 
 /** `asked`: what the test file prints behind "asked" under plain `bun test`. */
-function runsAsPlain(title: string, asked: string, testFile: (name: string) => string) {
+function runsAsPlain(title: string, parts: (name: string) => { asked: string; testFile: string }) {
   const name = `c${folders.length + 1}`;
   folders.push(name);
+  const { asked, testFile } = parts(name);
   Object.assign(files, {
-    [`${name}/helpers/named.js`]: `export const name = "named";`,
-    [`${name}/helpers/bundle.js`]: `export default function start() { return "ran"; }`,
-    [`${name}/helpers/data.json`]: `{ "name": "data" }`,
+    // A helper says which folder it lies in: an answer out of another folder's file of the same name prints another line.
+    [`${name}/helpers/named.js`]: `export const name = "named in ${name}";`,
+    [`${name}/helpers/bundle.js`]: `export default function start() { return "ran in ${name}"; }`,
+    [`${name}/helpers/data.json`]: `{ "name": "data in ${name}" }`,
     // It imports the helpers as code, so the layer that the test files share holds them as code.
     [`${name}/shared.test.js`]: `
     import { test } from "bun:test";
@@ -63,7 +65,7 @@ function runsAsPlain(title: string, asked: string, testFile: (name: string) => s
     import data from "./helpers/data.json";
     test("${name} shared", () => { console.log("${name}", start(), data.name); });`,
     [`${name}/third.test.js`]: `import { test } from "bun:test";\ntest("${name} third", () => {});`,
-    [`${name}/asks.test.js`]: testFile(name),
+    [`${name}/asks.test.js`]: testFile,
   });
   test(title, async () => {
     const [plain, ...compiled] = (await ran()).map(({ form, printed, results }) => ({
@@ -73,73 +75,69 @@ function runsAsPlain(title: string, asked: string, testFile: (name: string) => s
     }));
     expect(plain).toEqual({
       form: "plain",
-      printed: [`${name} asked ${asked}`, `${name} ran data`],
+      printed: [`${name} asked ${asked}`, `${name} ran in ${name} data in ${name}`],
       results: [`pass ${name} asks`, `pass ${name} shared`, `pass ${name} third`],
     });
     for (const each of compiled) expect(each).toEqual({ ...plain, form: each.form });
   });
 }
 
-runsAsPlain(
-  "the text of a file without a default export",
-  `string export const name = "named";`,
-  name => `
+runsAsPlain("the text of a file without a default export", name => ({
+  asked: `string export const name = "named in ${name}";`,
+  testFile: `
     import { test } from "bun:test";
     import text from "./helpers/named.js" with { type: "text" };
     test("${name} asks", () => { console.log("${name} asked", typeof text, text); });`,
-);
+}));
 
-runsAsPlain(
-  "the text of a file whose default export is a function",
-  "string true",
-  name => `
+runsAsPlain("the text of a file whose default export is a function", name => ({
+  asked: `string true export default function start() { return "ran in ${name}"; }`,
+  testFile: `
     import { test } from "bun:test";
     import text from "./helpers/bundle.js" with { type: "text" };
-    test("${name} asks", () => { console.log("${name} asked", typeof text, text.startsWith("export default")); });`,
-);
+    test("${name} asks", () => { console.log("${name} asked", typeof text, text.startsWith("export default"), text); });`,
+}));
 
-runsAsPlain(
-  "the path of a file",
-  "string true",
-  name => `
+runsAsPlain("the path of a file", name => ({
+  asked: "string true",
+  testFile: `
     import { test } from "bun:test";
     import path from "./helpers/bundle.js" with { type: "file" };
-    test("${name} asks", () => { console.log("${name} asked", typeof path, String(path).endsWith("bundle.js")); });`,
-);
+    test("${name} asks", () => {
+      console.log("${name} asked", typeof path, String(path).replaceAll("\\\\", "/").endsWith("${name}/helpers/bundle.js"));
+    });`,
+}));
 
-runsAsPlain(
-  "the code and the text of one file",
-  "ran string true",
-  name => `
+runsAsPlain("the code and the text of one file", name => ({
+  asked: `ran in ${name} string true export default function start() { return "ran in ${name}"; }`,
+  testFile: `
     import { test } from "bun:test";
     import start from "./helpers/bundle.js";
     import text from "./helpers/bundle.js" with { type: "text" };
     test("${name} asks", async () => {
       const again = await import("./helpers/bundle.js", { with: { type: "text" } });
-      console.log("${name} asked", start(), typeof text, again.default === text);
+      console.log("${name} asked", start(), typeof text, again.default === text, text);
     });`,
-);
+}));
 
-runsAsPlain(
-  "a file taken for what its name says is the module of the layer",
-  "data false string",
-  name => `
+runsAsPlain("a file taken for what its name says is the module of the layer", name => ({
+  asked: `data in ${name} false string`,
+  testFile: `
     import { test } from "bun:test";
     import data from "./helpers/data.json" with { type: "json" };
     import plainly from "./helpers/data.json";
     import text from "./helpers/data.json" with { type: "text" };
     test("${name} asks", () => { console.log("${name} asked", data.name, data === plainly, typeof text); });`,
-);
+}));
 
 // The case above asks for the type of the text alone. This one reads the text.
-runsAsPlain(
-  "the text of a data file",
-  `string { "name": "data" }`,
-  name => `
+runsAsPlain("the text of a data file", name => ({
+  asked: `string { "name": "data in ${name}" }`,
+  testFile: `
     import { test } from "bun:test";
     import text from "./helpers/data.json" with { type: "text" };
     test("${name} asks", () => { console.log("${name} asked", typeof text, text); });`,
-);
+}));
 
 // What no folder answers for alone: nothing else runs or prints, and the run ends with 0.
 test("the run of all the folders ends as under plain bun test", async () => {

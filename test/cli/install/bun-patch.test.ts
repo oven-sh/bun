@@ -203,6 +203,57 @@ describe.concurrent("error messages", () => {
   });
 });
 
+// Each example is run as the help prints it, in a project where `jquery` is an alias of a stand-in.
+describe.concurrent("the examples in 'bun patch --help'", () => {
+  test.each([
+    ["Generate a patch file for changes made to jquery", "patches"],
+    ["Generate a patch file in a custom directory for changes made to jquery", "my-patches"],
+  ])("%s", async (commitExample, patchesDir) => {
+    await using project = await installedProject({ dependencies: { jquery: "npm:no-deps@1.0.0" } });
+    const { dir, env } = project;
+    const indexJs = join(dir, "node_modules", "jquery", "index.js");
+    const help = (await bunOk(dir, env, "patch", "--help")).split(/\r?\n/).map(line => line.trim());
+
+    /** Runs the command that the help prints under `description`, without the quotes a shell removes. */
+    async function runExample(description: string) {
+      expect(help).toContain(description);
+      const [bun, ...args] = help[help.indexOf(description) + 1].split(" ");
+      expect(bun).toBe("bun");
+      await bunOk(dir, env, ...args.map(arg => arg.replace(/^'(.*)'$/, "$1")));
+    }
+
+    await runExample("Prepare jquery for patching");
+    await Bun.write(indexJs, patched);
+    await runExample(commitExample);
+
+    expect({
+      patchedDependencies: (await Bun.file(join(dir, "package.json")).json()).patchedDependencies,
+      patchFile: existsSync(join(dir, patchesDir, "no-deps@1.0.0.patch")),
+      indexJs: await Bun.file(indexJs).text(),
+    }).toEqual({
+      patchedDependencies: { "no-deps@1.0.0": `${patchesDir}/no-deps@1.0.0.patch` },
+      patchFile: true,
+      indexJs: patched,
+    });
+    expect(await Bun.file(join(dir, patchesDir, "no-deps@1.0.0.patch")).text()).toMatchInlineSnapshot(`
+      "diff --git a/index.js b/index.js
+      index bb9c6f6876154493527577cd78279aa6bb686ebb..486c735f2b33e6d1beb1de227b99684124172cb9 100644
+      --- a/index.js
+      +++ b/index.js
+      @@ -1,7 +1 @@
+      -module.exports = require(\`./package.json\`);
+      -
+      -for (const key of [\`dependencies\`, \`devDependencies\`, \`peerDependencies\`]) {
+      -  for (const dep of Object.keys(module.exports[key] || {})) {
+      -    module.exports[key][dep] = require(dep);
+      -  }
+      -}
+      +module.exports = 'patched';
+      "
+    `);
+  });
+});
+
 // `bun patch` identifies packages by `name@label`, where a tarball package's label is
 // the spec it was installed from. These labels used to be formatted into 1024 byte
 // stack buffers (512 bytes in the installer itself), so a long enough spec crashed

@@ -981,6 +981,15 @@ const projects: Record<string, Record<string, string>> = {
         console.log("written out", (await import("node:path")) === (await import(made("node:path"))), (await import("node:events")).default === (await import(made("events"))).default);
       });`,
   },
+  // What is printed is sorted before it is compared, so the order stands in one line.
+  "a module that waits for bun": {
+    "helpers/waits.js": `globalThis.order = ["waits: start"];\nconst bun = await import("bun");\nglobalThis.order.push("waits: behind " + typeof bun.version);`,
+    "helpers/beside.js": `globalThis.order.push("beside");`,
+    "order.test.js": `${head}
+      import "./helpers/waits.js";
+      import "./helpers/beside.js";
+      test("order", () => console.log(globalThis.order.join(" | ")));`,
+  },
   "built-in modules that only the test file names": {
     "builtins.test.js": `${head}
       import { basename } from "node:path";
@@ -1042,6 +1051,7 @@ const shareARunInLayers = [
   "require() of a file of data that another test file's modules import",
   "built-in modules that only the test file names",
   "a name that a test file imports twice",
+  "a module that waits for bun",
 ];
 
 // The results of each folder, and what the whole run printed.

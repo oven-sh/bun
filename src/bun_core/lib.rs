@@ -455,7 +455,16 @@ pub mod vec {
     /// Whether a work-pool job frees its own copy of an input on the pool thread after its last read. Otherwise the JS thread frees it at completion.
     #[inline]
     pub fn releases_on_pool(capacity: usize) -> bool {
-        capacity > POOL_RELEASE_MIN_BYTES
+        // Measurement only: BUN_X_POOL_RELEASE_MIN is the limit in bytes.
+        static LIMIT: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        #[allow(clippy::disallowed_methods)]
+        let limit = *LIMIT.get_or_init(|| {
+            std::env::var("BUN_X_POOL_RELEASE_MIN")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(POOL_RELEASE_MIN_BYTES)
+        });
+        capacity > limit
     }
 
     /// The bytes for the job to drop on the pool thread, if [`releases_on_pool`] says so.

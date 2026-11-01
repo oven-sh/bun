@@ -119,6 +119,73 @@ describe.concurrent("hoisting", () => {
     ).toEqual([isHoisted ? ["mocked", "mocked"] : ["load mod", "load other", "mocked", "mocked"]]);
   });
 
+  describe("with Vitest globals, which have no `jest`, a jest.mock() of the project's own `jest` stays in place", () => {
+    const setup = {
+      "setup.ts": `globalThis.jest = { mock: () => void (globalThis.events ??= []).push("own jest.mock") };`,
+    };
+    const args = ["--globals=vitest", "--preload=./setup.ts", "hoist.test.ts"];
+
+    test("a vi.mock() after it is hoisted", async () => {
+      expect(
+        await events(
+          {
+            ...setup,
+            "hoisted.ts": `
+              import { captured } from "./side";
+              jest.mock("./other");
+              vi.mock("./mod", () => ({ value: "mocked" }));
+              events.push(captured);
+            `,
+            "hoist.test.ts": `
+              import "./hoisted";
+              ${print}
+            `,
+          },
+          args,
+        ),
+      ).toEqual([["load side", "own jest.mock", "mocked"]]);
+    });
+
+    // An import that became `await import()` would get the mock's own exports, and would not be linked.
+    test("a module with nothing else to hoist keeps its static imports", async () => {
+      expect(
+        await events(
+          {
+            ...setup,
+            "mocks.ts": `vi.mock("./mod", () => ({ value: "mocked", onlyInTheMock: true }));`,
+            "static.ts": `
+              import "./mocks";
+              import * as mod from "./mod";
+              jest.mock("./other");
+              events.push(mod.value, "onlyInTheMock" in mod);
+            `,
+            "hoist.test.ts": `
+              import "./static";
+              ${print}
+            `,
+          },
+          args,
+        ),
+      ).toEqual([["load mod", "own jest.mock", "mocked", false]]);
+    });
+
+    test("a test file with nothing else to hoist keeps its static import", async () => {
+      const { stderr, exitCode } = await run(
+        {
+          ...setup,
+          "hoist.test.ts": `
+            import { absent } from "./mod";
+            jest.mock("./other");
+            test("never runs", () => absent);
+          `,
+        },
+        args,
+      );
+      expect(stderr).toContain("SyntaxError: Export named 'absent' not found in module");
+      expect(exitCode).toBe(1);
+    });
+  });
+
   test.each([
     ["hoist.test.js", ["load other", "load side", "mocked"]],
     ["hoist.test.mjs", ["load other", "load side", "mocked"]],

@@ -352,6 +352,54 @@ body { color: blue; }`,
     expect(html).toContain('console.log("with image")');
   });
 
+  test("keeps #fragments on inlined assets and inlines every srcset candidate", async () => {
+    const png = Buffer.from("89504e470d0a1a0a78", "hex");
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg"><symbol id="icon" viewBox="0 0 1 1"><path d="M0 0h1v1z"/></symbol></svg>`;
+    const mp4 = Buffer.from("00000018667479706d703432", "hex");
+    using dir = tempDir("compile-browser-url-suffix", {
+      "index.html": `<!DOCTYPE html><html><head>
+<script type="module" src="./app.js?v=3"></script></head><body>
+<img src="./sprite.svg#icon"> <img src="./sprite.svg?v=2#icon">
+<img srcset="./h1.png 1x, ./h2.png 2x"> <img srcset="data:image/gif;base64,R0lGODlhAQABAAAAACw=, ./h2.png 2x">
+<video src="./clip.mp4#t=1,2"></video>
+<img src="//cdn.example.com/x.png"> <img src="https://cdn.example.com/y.png?v=1#f"> <img src="#local">
+<img src="./C#/logo.png">
+</body></html>`,
+      "app.js": `console.log("app");`,
+      "h1.png": png,
+      "h2.png": png,
+      "C#/logo.png": png,
+      "sprite.svg": svg,
+      "clip.mp4": mp4,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/index.html`],
+      compile: true,
+      target: "browser",
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.outputs.length).toBe(1);
+    const html = await result.outputs[0].text();
+
+    const pngData = "data:image/png;base64," + png.toString("base64");
+    const svgData = "data:image/svg+xml;base64," + Buffer.from(svg).toString("base64");
+    expect([...html.matchAll(/(?:src|srcset)="([^"]*)"/g)].map(m => m[1])).toEqual([
+      // A ?query would land inside the base64 body, so only the #fragment is kept.
+      `${svgData}#icon`,
+      `${svgData}#icon`,
+      `${pngData} 1x, ${pngData} 2x`,
+      `data:image/gif;base64,R0lGODlhAQABAAAAACw=, ${pngData} 2x`,
+      `data:video/mp4;base64,${mp4.toString("base64")}#t=1,2`,
+      "//cdn.example.com/x.png",
+      "https://cdn.example.com/y.png?v=1#f",
+      "#local",
+      pngData, // the `#` is part of a directory name, not a fragment
+    ]);
+    expect(html).toContain('console.log("app")');
+  });
+
   test("handles CSS url() references", async () => {
     const pixel = Buffer.from(
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4DwAAAQEABRjYTgAAAABJRU5ErkJggg==",

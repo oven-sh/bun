@@ -427,6 +427,7 @@ typedef struct BunSourceMapsSupport {
 } BunSourceMapsSupport;
 extern "C" BunSourceMapsSupport Bun__VM__sourceMapsSupport(void* bunVM);
 extern "C" void Bun__VM__setSourceMapsSupport(void* bunVM, BunSourceMapsSupport);
+extern "C" bool Bun__VM__sourceMapsApplyTo(void* bunVM, const BunString* key);
 
 // Used in process.version
 extern "C" const char* Bun__version;
@@ -500,9 +501,7 @@ bool Bun__deepMatch(
 enum class BunPositionSpace : uint8_t {
     // The file that was loaded.
     Loaded = 0,
-    // What the loaded file was made from, for a file with a source map of its own, while
-    // process.sourceMapsEnabled is on. Otherwise the same as Loaded. What Node maps, `Error.stack` and a printed
-    // error, reads this one.
+    // What the loaded file was made from, for a runtime-transpiled module with a source map of its own, while process.sourceMapsEnabled is on. Otherwise the same as Loaded. `Error.stack` and a printed error read this one.
     Original = 1,
 };
 extern "C" void Bun__remapStackFramePositions(void*, ZigStackFrame*, size_t, BunPositionSpace);

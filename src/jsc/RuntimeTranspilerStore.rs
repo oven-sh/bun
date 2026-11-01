@@ -39,6 +39,7 @@ use crate::runtime_transpiler_cache::{
     Entry as CacheEntry, ModuleType as CacheModuleType,
     RuntimeTranspilerCache as JscRuntimeTranspilerCache,
 };
+use crate::saved_source_map::SourceMapsSupport;
 use crate::strong::Optional as StrongOptional;
 use crate::virtual_machine::{SourceMapHandlerGetter, VirtualMachine};
 use crate::{JSGlobalObject, JSInternalPromise, JSValue, JsResult, ResolvedSource};
@@ -378,6 +379,8 @@ impl RuntimeTranspilerStore {
                 poll_ref: KeepAlive::default(),
                 resolved_source,
                 generation_number: self.generation_number.load(Ordering::SeqCst),
+                // SAFETY: `vm` is the live VM of this JS thread, and only the atomic switch of its `source_mappings` is read.
+                source_maps_support: unsafe { (*vm).source_mappings.source_maps_support() },
                 has_plugins: global_object.has_plugins(),
                 parse_error: None,
                 work_task: WorkPoolTask {
@@ -442,6 +445,8 @@ pub struct TranspilerJob {
     pub global_this: BackRef<JSGlobalObject>,
     pub(crate) poll_ref: KeepAlive,
     pub(crate) generation_number: u32,
+    /// The source maps switch when the JS thread asked for the module. The pool thread gives it to `put_mappings`.
+    pub(crate) source_maps_support: SourceMapsSupport,
     /// Macros load through `Bun.plugin()` callbacks, which the pool thread's VM lacks, so the JS thread must run them.
     has_plugins: bool,
     pub(crate) log: bun_ast::Log,
@@ -1012,6 +1017,7 @@ impl TranspilerJob {
                     list: core::mem::take(&mut entry.sourcemap).into_vec(),
                 },
                 entry.metadata.source_mapping_url,
+                self.source_maps_support,
             );
 
             if bun_core::env::DUMP_SOURCE {
@@ -1143,7 +1149,9 @@ impl TranspilerJob {
             // SAFETY: see `vm` note above — `from_raw` stores `vm` as a raw
             // pointer and only borrows leaf fields (`source_mappings`, `debugger`)
             // inside `get()`. No `&mut VirtualMachine` is ever formed.
-            let mut mapper = unsafe { SourceMapHandlerGetter::from_raw(vm, &raw mut printer) };
+            let mut mapper = unsafe {
+                SourceMapHandlerGetter::from_raw(vm, &raw mut printer, self.source_maps_support)
+            };
             let _writeback = scopeguard::guard(
                 (
                     std::ptr::from_mut::<BufferPrinter>(source_code_printer),

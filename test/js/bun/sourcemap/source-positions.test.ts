@@ -632,8 +632,9 @@ describe.concurrent("a loaded file with its own source map", () => {
     stdout: result.stdout && JSON.parse(result.stdout),
   });
 
-  // Each line is what node v26.3.0 does, with the column of JavaScriptCore: it reads a module's map when the module
-  // loads, if source maps are on then, and applies what it read when a stack is first read, if they are on then.
+  // Each line is what node v26.13.0 does, with the position that JavaScriptCore reports. It keeps the URL of a
+  // module's map when the module loads, if source maps are on then. It reads the map when a stack first needs it, if
+  // they are on then (nodejs/node#65490: before v26.9.0 it read the map when the module loaded).
   test("Error.stack follows the switch as it is when the module loads and when the stack is read", async () => {
     const names = ["a", "b", "c", "d", "e", "f", "g", "h", "i"];
     using dir = tempDir("own-source-map-switch", {
@@ -686,9 +687,9 @@ describe.concurrent("a loaded file with its own source map", () => {
         "load, enable": loaded("b"),
         "enable, load, disable": loaded("c"),
         "enable, load, disable, enable": mapped("c"),
-        "enable, load, delete the map": mapped("d"),
-        "enable, load, create the map": loaded("e"),
-        "enable, load, overwrite the map": mapped("f"),
+        "enable, load, delete the map": loaded("d"),
+        "enable, load, create the map": mapped("e"),
+        "enable, load, overwrite the map": loaded("f"),
         "error made while on, stack first read while off": loaded("g"),
         "the same stack read again while on": loaded("g"),
         "error made while off, stack first read while on": mapped("h"),

@@ -530,7 +530,6 @@ unsafe extern "C" {
     safe fn Bun__Process__resetArgv(global: &JSGlobalObject);
     safe fn Bun__TestFile__leaveModuleGraph(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__retireDerivedRealmsForTestIsolation(global: &JSGlobalObject);
-    safe fn Bun__IsolatedModuleCache__clear(vm: &VM);
     safe fn Zig__GlobalObject__destructOnExit(global: &JSGlobalObject);
     safe fn WebWorker__teardownJSCVM(global: &JSGlobalObject);
 }
@@ -1759,9 +1758,11 @@ impl VirtualMachine {
         &'a mut self,
         printer: *mut bun_js_printer::BufferPrinter,
     ) -> SourceMapHandlerGetter<'a> {
+        let support = self.source_mappings.source_maps_support();
         SourceMapHandlerGetter {
             vm: self,
             printer,
+            support,
             _marker: core::marker::PhantomData,
         }
     }
@@ -4094,6 +4095,8 @@ pub fn process_fetch_log(
 pub struct SourceMapHandlerGetter<'a> {
     vm: *mut VirtualMachine,
     printer: *mut bun_js_printer::BufferPrinter,
+    /// The source maps switch as the JS thread had it when it asked for the module.
+    support: SourceMapsSupport,
     _marker: core::marker::PhantomData<&'a mut ()>,
 }
 
@@ -4109,10 +4112,12 @@ impl<'a> SourceMapHandlerGetter<'a> {
     pub(crate) unsafe fn from_raw(
         vm: *mut VirtualMachine,
         printer: *mut bun_js_printer::BufferPrinter,
+        support: SourceMapsSupport,
     ) -> Self {
         Self {
             vm,
             printer,
+            support,
             _marker: core::marker::PhantomData,
         }
     }
@@ -4162,20 +4167,6 @@ impl<'a> SourceMapHandlerGetter<'a> {
     /// pointer once the writer's last byte has been emitted (i.e. inside
     /// `on_source_map_chunk`, which the printer invokes from its tail).
     pub fn get(&mut self) -> bun_js_printer::SourceMapHandler<'_> {
-        // Take the inline-sourcemap path only when a
-        // debugger is present AND it is *not* in `.connect` mode — `.connect`
-        // (VSCode-extension) clients fall through to the `source_mappings`
-        // fast-path handler.
-        let wants_inline_source_map = matches!(
-            self.vm_debugger(),
-            Some(d) if d.mode != crate::debugger::Mode::Connect
-        );
-        if !wants_inline_source_map {
-            // `source_mappings` is a value field on the VM, exclusively
-            // borrowed for the returned handler's lifetime (bounded by
-            // `&mut self`).
-            return bun_js_printer::SourceMapHandler::for_(self.vm_source_mappings_mut());
-        }
         bun_js_printer::SourceMapHandler::for_(self)
     }
 }
@@ -4190,6 +4181,20 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
         source: &bun_ast::Source,
         source_mapping_url: bun_ast::Range,
     ) -> bun_js_printer::Result<()> {
+        let support = self.support;
+        // Only a debugger that is not in `.connect` mode (the VSCode extension connects) gets the inline source map.
+        let wants_inline_source_map = matches!(
+            self.vm_debugger(),
+            Some(d) if d.mode != crate::debugger::Mode::Connect
+        );
+        if !wants_inline_source_map {
+            return self.vm_source_mappings_mut().put_mappings(
+                source,
+                chunk.buffer,
+                source_mapping_url,
+                support,
+            );
+        }
         let mut temp_json_buffer = bun_core::MutableString::init_empty();
         // `defer temp_json_buffer.deinit()` → Drop.
         chunk
@@ -4204,7 +4209,7 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
             SOURCE_MAP_URL_PREFIX_START.len() + SOURCE_MAPPING_URL.len() + source_url_len;
 
         self.vm_source_mappings_mut()
-            .put_mappings(source, chunk.buffer, source_mapping_url)
+            .put_mappings(source, chunk.buffer, source_mapping_url, support)
             .map_err(|_| bun_js_printer::Error::WriteFailed)?;
 
         // SAFETY: `printer` is the raw `*mut BufferPrinter` passed in by the
@@ -4565,13 +4570,17 @@ impl VirtualMachine {
         this: &VirtualMachine,
         support: SourceMapsSupport,
     ) {
-        // `put_mappings` reads the setting when a module is transpiled, and `bun test --isolate` does not transpile
-        // a module again that an earlier file loaded. It does after the setting changes.
-        if this.source_mappings.set_source_maps_support(support)
-            && this.use_isolation_source_provider_cache()
-        {
-            Bun__IsolatedModuleCache__clear(this.jsc_vm());
-        }
+        this.source_mappings.set_source_maps_support(support);
+    }
+
+    /// Whether the switch asks for the own source map of the module `key`. `bun test --isolate` keeps a transpiled module for the answer it was transpiled with.
+    #[unsafe(export_name = "Bun__VM__sourceMapsApplyTo")]
+    pub(crate) extern "C" fn source_maps_apply_to(
+        this: &VirtualMachine,
+        key: &bun_core::String,
+    ) -> bool {
+        let support = this.source_mappings.source_maps_support();
+        support.enabled && (support.node_modules || support.applies_to(key.to_utf8().slice()))
     }
 
     /// Whether `bun:ffi` `cc()` is allowed (`--no-ffi-cc` and `--no-addons` disable it).
@@ -6556,6 +6565,7 @@ impl VirtualMachine {
         if shares_global {
             self.undo_process_env_side_effects();
             self.undo_synthetic_allocation_limit();
+            self.undo_source_maps_support();
             return;
         }
 
@@ -6595,10 +6605,10 @@ impl VirtualMachine {
 
     /// The switch is on the VM, which outlives the file: put the startup value back so a file's setting stays with it.
     fn undo_source_maps_support(&mut self) {
-        Self::set_source_maps_support(
-            self,
-            SourceMapsSupport::all(self.transpiler.options.transform_options.enable_source_maps),
-        );
+        self.source_mappings
+            .set_source_maps_support(SourceMapsSupport::all(
+                self.transpiler.options.transform_options.enable_source_maps,
+            ));
     }
 
     /// `--isolate=modules`: creates the graph for the test file that's about to run.
@@ -7250,7 +7260,11 @@ impl VirtualMachine {
                     top_source_url.slice(),
                     frames[top].position.line,
                     frames[top].position.column,
-                    bun_sourcemap::SourceContentHandling::SourceContents,
+                    if enable_source_code_preview.get() {
+                        bun_sourcemap::SourceContentHandling::SourceContents
+                    } else {
+                        bun_sourcemap::SourceContentHandling::NoSourceContents
+                    },
                     PositionSpace::Original,
                 )
             };
@@ -7274,8 +7288,7 @@ impl VirtualMachine {
                 } else {
                     None
                 };
-                // The position is in what the loaded file was made from, and nothing has that text: the lines to
-                // show are the loaded file's, as in Node.js.
+                // Nothing has the text of what the loaded file was made from: the lines to show are the loaded file's.
                 let loaded = if enable_source_code_preview.get() && external_code.is_none() {
                     loaded
                 } else {

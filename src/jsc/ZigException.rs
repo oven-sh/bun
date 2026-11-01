@@ -47,9 +47,7 @@ pub struct ZigException<'a> {
 
     pub browser_url: StringOrView<'a>,
 
-    /// Where the error is in the last of `stack`'s source lines, when that line is not at the position of the top
-    /// frame: the frame is in an original source that nothing has the text of, and the line is the loaded file's.
-    /// `Ordinal::INVALID`: the line is at the top frame's position.
+    /// The column of the error in the last of `stack`'s source lines, when that line is the loaded file's and the top frame is in an original source that nothing has the text of. `Ordinal::INVALID`: the line is at the top frame's position.
     pub source_lines_column: bun_core::Ordinal,
 }
 

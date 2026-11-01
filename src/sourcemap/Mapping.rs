@@ -303,8 +303,7 @@ pub struct Lookup {
     /// Owned by default_allocator always
     /// use `get_source_code` to access this as a Slice
     pub prefetched_source_code: Option<Box<[u8]>>,
-    /// Where the position is in the file that was loaded, when `mapping` is from that file's own source map and so
-    /// is a position in what the file was made from.
+    /// Where the position is in the file that was loaded, when `mapping` is from that file's own source map and so is a position in what the file was made from.
     pub loaded: Option<LineColumnOffset>,
 }
 
@@ -361,7 +360,7 @@ impl Lookup {
             if source_map.has_resolved_source_names {
                 // As in Node.js, only a source that resolved to a file is read. A `webpack://` one is not.
                 let name: &[u8] = source_map.external_source_names.get(index)?;
-                if !bun_paths::is_absolute(name) {
+                if !bun_paths::is_absolute(name) || bun_core::strings::contains_char(name, 0) {
                     return None;
                 }
                 match bun_sys::File::read_from(bun_sys::Fd::cwd(), name) {

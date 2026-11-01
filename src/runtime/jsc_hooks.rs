@@ -3012,12 +3012,14 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     // stacks remap to original positions even on a cache hit.
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread
                     // VM; `source_mappings` is only touched from the JS thread.
-                    let _ = unsafe { &mut (*jsc_vm).source_mappings }.put_mappings(
+                    let source_mappings = unsafe { &mut (*jsc_vm).source_mappings };
+                    let _ = source_mappings.put_mappings(
                         source,
                         bun_core::MutableString {
                             list: core::mem::take(&mut entry.sourcemap).into_vec(),
                         },
                         entry.metadata.source_mapping_url,
+                        source_mappings.source_maps_support(),
                     );
                     // Rebuild the cached ESM record for the
                     // isolation source-provider cache (same shape as

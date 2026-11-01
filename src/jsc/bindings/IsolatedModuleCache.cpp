@@ -32,6 +32,9 @@ static uint64_t madeFromHash(JSC::VM& vm, const WTF::String& key, const CodeStri
     BunString borrowedKey = Bun::toString(key);
     if (Bun__VM__isTestEntryPoint(bunVM, &borrowedKey))
         hash ^= 0x9e3779b97f4a7c15ULL;
+    // What is transpiled while the source maps switch asks for a module's own source map keeps the URL of that map.
+    if (Bun__VM__sourceMapsApplyTo(bunVM, &borrowedKey))
+        hash ^= 0xbf58476d1ce4e5b9ULL;
     return Bun__VM__hasGlobalsOfVitest(bunVM) ? ~hash : hash;
 }
 
@@ -82,11 +85,6 @@ void IsolatedModuleCache::evict(JSC::VM& vm, const WTF::String& key)
 void IsolatedModuleCache::clear(JSC::VM& vm)
 {
     WebCore::clientData(vm)->isolationSourceProviderCache.clear();
-}
-
-extern "C" void Bun__IsolatedModuleCache__clear(JSC::VM* vm)
-{
-    IsolatedModuleCache::clear(*vm);
 }
 
 // Test-only (bun:internal-for-testing). Returns the cached provider's

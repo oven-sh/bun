@@ -98,7 +98,11 @@ test.each([
   ["two layers", ["--aot"], "TestRunLayers:2,TestRunPartFiles:1"],
 ])("a second vi.mock() of a module that a mock stands in place of: %s", async (_, flags, words) => {
   using dir = tempDir("aot-mock-again", files);
-  const ran = await run([bunExe(), "test", ...flags], String(dir), { ...bunEnv, NO_COLOR: "1", BUN_DEBUG_TEST_AOT_WORDS: words });
+  const ran = await run([bunExe(), "test", ...flags], String(dir), {
+    ...bunEnv,
+    NO_COLOR: "1",
+    BUN_DEBUG_TEST_AOT_WORDS: words,
+  });
   expect({
     seen: ran.stderr
       .split("\n")

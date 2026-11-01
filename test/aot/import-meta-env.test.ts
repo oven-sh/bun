@@ -41,7 +41,11 @@ test.each(["ts", "js"])(
     const rowsOf = async (flags: string[], words = "") => {
       const env = { ...bunEnv, NO_COLOR: "1", NODE_ENV: undefined, GIVEN: "abc", BUN_DEBUG_TEST_AOT_WORDS: words };
       const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], String(dir), env);
-      return { rows: stdout.split("\n").filter(line => line.startsWith("ROW ")), exitCode, stderr: exitCode ? stderr : "" };
+      return {
+        rows: stdout.split("\n").filter(line => line.startsWith("ROW ")),
+        exitCode,
+        stderr: exitCode ? stderr : "",
+      };
     };
     const plain = await rowsOf([]);
     expect(plain.rows.slice(0, 4)).toEqual(["ROW 0 dev", "ROW 1 not prod", "ROW 2 ssr", "ROW 3 x"]);

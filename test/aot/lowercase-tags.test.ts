@@ -66,17 +66,20 @@ test.concurrent.each(ways)("an element named as an import is not the import: %s"
   ]);
 });
 
-test.concurrent.each(ways)("an element named as a global of the test runner is not the global: %s", async (_, flags, words) => {
-  const files = {
-    "a.test.tsx": `
+test.concurrent.each(ways)(
+  "an element named as a global of the test runner is not the global: %s",
+  async (_, flags, words) => {
+    const files = {
+      "a.test.tsx": `
       /** @jsxImportSource ./jsx */
       it("renders", () => {
         console.log("SAID", <test />, <it></it>, <describe />, <expect />, <jest />, <vi />, <beforeAll />);
         console.log("SAID", typeof test, typeof it, typeof describe, typeof expect);
       });`,
-  };
-  expect(await runTestFile("aot-lowercase-tags-globals", files, flags, words)).toEqual([
-    `SAID "test"() "it"() "describe"() "expect"() "jest"() "vi"() "beforeAll"()`,
-    `SAID function function function function`,
-  ]);
-});
+    };
+    expect(await runTestFile("aot-lowercase-tags-globals", files, flags, words)).toEqual([
+      `SAID "test"() "it"() "describe"() "expect"() "jest"() "vi"() "beforeAll"()`,
+      `SAID function function function function`,
+    ]);
+  },
+);

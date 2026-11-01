@@ -776,13 +776,14 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, Messa
         if (constructor.toBoolean(globalObject)) {
             auto name = constructor.get(globalObject, vm.propertyNames->name);
             RETURN_IF_EXCEPTION(scope, void());
-            auto str = name.toString(globalObject);
-            RETURN_IF_EXCEPTION(scope, void());
-            builder.append("an instance of "_s);
-            auto view = str->view(globalObject);
-            RETURN_IF_EXCEPTION(scope, );
-            builder.append(view);
-            return;
+            // A name that is not a string is not converted to one: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/errors.js#L1042-L1045
+            if (name.isString()) {
+                builder.append("an instance of "_s);
+                auto view = asString(name)->view(globalObject);
+                RETURN_IF_EXCEPTION(scope, );
+                builder.append(view);
+                return;
+            }
         }
     }
 
@@ -1571,17 +1572,23 @@ JSC::EncodedJSValue UNKNOWN_SIGNAL(JSC::ThrowScope& throwScope, JSC::JSGlobalObj
     return {};
 }
 
+// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/errors.js#L1807-L1812. An undefined `name` is "Port", the default of validatePort.
 JSC::EncodedJSValue SOCKET_BAD_PORT(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue name, JSC::JSValue port, bool allowZero)
 {
     ASCIILiteral op = allowZero ? ">="_s : ">"_s;
     MessageBuilder builder;
-    JSValueToStringSafe(globalObject, builder, name);
-    RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
+    if (name.isUndefined()) {
+        builder.append("Port"_s);
+    } else {
+        JSValueToStringSafe(globalObject, builder, name);
+        RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
+    }
     builder.append(" should be "_s);
     builder.append(op);
     builder.append(" 0 and < 65536. Received "_s);
-    JSValueToStringSafe(globalObject, builder, port);
+    determineSpecificType(JSC::getVM(globalObject), globalObject, builder, port);
     RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
+    builder.append('.');
 
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_SOCKET_BAD_PORT, builder));
     throwScope.release();

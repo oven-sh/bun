@@ -40,6 +40,16 @@ test.each([
   expect(received(value)).toBe(expected);
 });
 
+// Node does not convert a constructor name to a string: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/errors.js#L1042-L1045
+test.each([[JSON.parse('{"constructor":{"name":{"toString":null}}}')], [{ constructor: { name: Symbol("name") } }]])(
+  "a constructor name that is not a string does not replace the error %#",
+  value => {
+    expect(() => Buffer.compare(value as Buffer, Buffer.alloc(1))).toThrow(
+      expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }),
+    );
+  },
+);
+
 test.each([
   [function foo() {}, "function foo"],
   [Foo, "function Foo"],

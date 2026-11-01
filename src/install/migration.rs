@@ -536,10 +536,8 @@ fn migrate_npm_lockfile(
         }
     }
 
-    // The root's name comes from package.json, as with the other lockfiles. `packages[""].name`
-    // is npm's copy of it, which can be stale. Empty when package.json has no name, `None` when it
-    // cannot be read. The parsed package-lock.json lives in the store, so this read must not
-    // reset it.
+    // Empty when package.json has no name, `None` when it cannot be read. The parsed
+    // package-lock.json lives in the store, so this read must not reset it.
     let root_name: Option<Box<[u8]>> = crate::lockfile_real::join_top_level_dir(&[b"package.json"])
         .and_then(|path| {
             match manager.workspace_package_json_cache.get_with_path(

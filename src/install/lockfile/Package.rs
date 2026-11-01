@@ -904,9 +904,7 @@ pub struct DiffSummary {
     /// A workspace's `version` changed. No edge changed with it (those count as updates), but the
     /// lockfile records the version, so it is rewritten.
     pub(crate) workspace_versions_changed: bool,
-    /// The root's `name` is not the one the lockfile recorded, if it recorded one. The lockfile
-    /// is rewritten with the name in package.json. Nothing installed changes, so a frozen install
-    /// accepts it, as it does a workspace's `version`.
+    /// The root's `name` differs from the recorded one. Rewritten, accepted by a frozen install.
     pub(crate) root_name_changed: bool,
 
     pub(crate) pruned_workspaces: Vec<PackageNameHash>,

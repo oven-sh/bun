@@ -145,8 +145,7 @@ struct Migrator<'a> {
     manager: &'a mut PackageManager,
     entries: &'a [E::PropertyJSON],
     workspace_map: Option<&'a WorkspaceMap>,
-    /// The root's name in package.json, empty when it has none. `None` when package.json cannot
-    /// be read: then `packages[""].name` is used.
+    /// The root's name in package.json, empty when it has none. `None`: use `packages[""].name`.
     root_name: Option<&'a [u8]>,
     index: StringHashMap<u32>,
     link_entries: DynamicBitSet,

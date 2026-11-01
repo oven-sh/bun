@@ -88,6 +88,10 @@ pub struct LinkerContext<'a> {
     /// [`Self::load`]. Read-only — never `assume_mut`.
     pub(crate) resolver: Option<bun_ptr::ParentRef<Resolver<'a>>>,
     pub(crate) cycle_detector: Vec<ImportTracker>,
+    /// The export each symbol step 3 made for a name read through an
+    /// `export *` of a wrapped lifted CommonJS file stands for. Two such
+    /// reads of one export are the same export, not an ambiguity.
+    pub(crate) wrapped_lifted_reads: HashMap<Ref, ImportTracker>,
 
     /// We may need to refer to the "__esm" and/or "__commonJS" runtime symbols
     pub(crate) cjs_runtime_ref: Ref,
@@ -161,6 +165,7 @@ impl<'a> LinkerContext<'a> {
             log: core::ptr::null_mut(),
             resolver: None,
             cycle_detector: Vec::new(),
+            wrapped_lifted_reads: HashMap::default(),
             cjs_runtime_ref: Ref::NONE,
             esm_runtime_ref: Ref::NONE,
             unbound_module_ref: Ref::NONE,
@@ -4185,7 +4190,7 @@ impl<'a> LinkerContext<'a> {
 
         // If there is a potential ambiguity, all results must be the same
         for ambig in &ambiguous_results {
-            if *ambig != result {
+            if *ambig != result && !self.same_wrapped_lifted_read(ambig, &result) {
                 if result.kind == ambig.kind
                     && ambig.kind == MatchImportKind::Normal
                     && ambig.name_loc.start != 0
@@ -4209,6 +4214,31 @@ impl<'a> LinkerContext<'a> {
         }
 
         result
+    }
+
+    /// The export symbol a match stands for: the export a read made by step 3
+    /// reads, or the symbol itself. A `Ref` names its file, so two matches
+    /// with one target are one export.
+    pub(crate) fn wrapped_lifted_read_target(&self, ref_: Ref) -> Ref {
+        match self.wrapped_lifted_reads.get(&ref_) {
+            Some(target) => target.import_ref,
+            None => ref_,
+        }
+    }
+
+    fn same_wrapped_lifted_read(&self, a: &MatchImport, b: &MatchImport) -> bool {
+        // A match that ends at a read is `NormalAndNamespace`.
+        let binds = |m: &MatchImport| {
+            matches!(
+                m.kind,
+                MatchImportKind::Normal | MatchImportKind::NormalAndNamespace
+            )
+        };
+        binds(a)
+            && binds(b)
+            && (self.wrapped_lifted_reads.contains_key(&a.r#ref)
+                || self.wrapped_lifted_reads.contains_key(&b.r#ref))
+            && self.wrapped_lifted_read_target(a.r#ref) == self.wrapped_lifted_read_target(b.r#ref)
     }
 
     pub(crate) fn export_runtime_function(&self) -> &'static [u8] {
@@ -4292,6 +4322,11 @@ impl<'a> LinkerContext<'a> {
 
     /// Must `X.name()` keep `X` as `this`, where `X.name` is export `ref_`?
     fn method_call_needs_this(&self, source_index: crate::IndexInt, ref_: Ref) -> bool {
+        // A read of a wrapped file's namespace. A holder of that file's
+        // `module.exports` can replace any function, so no call ignores `this`.
+        if self.wrapped_lifted_reads.contains_key(&ref_) {
+            return true;
+        }
         self.graph.ast.items_flags()[source_index as usize]
             .contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
             && !self
@@ -4489,6 +4524,7 @@ impl<'a> LinkerContext<'a> {
 
         // Items of `ns.name()` left unbound, each with its `ns`.
         let mut method_call_items: HashMap<Ref, Ref> = HashMap::default();
+        let has_wrapped_lifted_reads = !self.wrapped_lifted_reads.is_empty();
         for &i in &order {
             let i = i as usize;
             // SAFETY: `keys`/`values` point into stable SoA storage (see above); read-only deref.
@@ -4525,6 +4561,15 @@ impl<'a> LinkerContext<'a> {
             match result.kind {
                 MatchImportKind::Normal
                     if self.method_call_item_needs_this(import_ref, named_import, &result) =>
+                {
+                    method_call_items.insert(import_ref, named_import.namespace_ref);
+                }
+                // A name read through `export *` of a wrapped lifted file is a
+                // property of the barrel namespace, which the call passes as `this`.
+                MatchImportKind::NormalAndNamespace
+                    if has_wrapped_lifted_reads
+                        && self.wrapped_lifted_reads.contains_key(&result.r#ref)
+                        && self.method_call_item_needs_this(import_ref, named_import, &result) =>
                 {
                     method_call_items.insert(import_ref, named_import.namespace_ref);
                 }

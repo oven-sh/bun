@@ -139,6 +139,13 @@ pub mod js_meta {
                 self.insert(a.slice());
             }
         }
+        /// Keeps `alias` in a set that importers narrowed. `None` stays
+        /// `None`: step 5 does not filter that file.
+        pub fn keep_if_partial(&mut self, alias: &'static [u8]) {
+            if let Self::Partial(set) = self {
+                bun_core::handle_oom(set.put(alias, ()));
+            }
+        }
     }
     pub type TopLevelSymbolToParts = bun_ast::ast_result::TopLevelSymbolToParts;
 
@@ -150,6 +157,9 @@ pub mod js_meta {
         pub(crate) needs_export_symbol_from_runtime: bool,
         pub(crate) did_wrap_dependencies: bool,
         pub(crate) needs_synthetic_default_export: bool,
+        /// A lifted CommonJS file whose `named_exports` is its whole export
+        /// list, even once step 1 sets `exports_kind = Cjs` to keep its wrapper.
+        pub(crate) lifted_exports_are_static: bool,
         pub(crate) wrap: WrapKind,
     }
     pub use crate::WrapKind as Wrap;
@@ -824,13 +834,21 @@ impl<'a> LinkerGraph<'a> {
         }
 
         let src_named_exports: &[bundled_ast::NamedExports] = self.ast.items_named_exports();
-        let dest_resolved_exports: &mut [ResolvedExports] = self.meta.items_resolved_exports_mut();
+        let src_exports_kind: &[bun_ast::ExportsKind] = self.ast.items_exports_kind();
+        let src_ast_flags: &[bundled_ast::Flags] = self.ast.items_flags();
+        let meta = self.meta.split_mut();
+        let dest_resolved_exports: &mut [ResolvedExports] = meta.resolved_exports;
+        let dest_flags: &mut [js_meta::Flags] = meta.flags;
         debug_assert_eq!(src_named_exports.len(), dest_resolved_exports.len());
         for (source_index, (src, dest)) in src_named_exports
             .iter()
             .zip(dest_resolved_exports.iter_mut())
             .enumerate()
         {
+            // The parser's verdict, read before step 1 overwrites `exports_kind`.
+            dest_flags[source_index].lifted_exports_are_static = src_ast_flags[source_index]
+                .contains(bundled_ast::Flags::COMMONJS_LIFTED_TO_ESM)
+                && src_exports_kind[source_index] != bun_ast::ExportsKind::Cjs;
             let mut resolved = ResolvedExports::default();
             resolved
                 .ensure_total_capacity(src.count())

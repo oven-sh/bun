@@ -521,30 +521,34 @@ const constructsWorkersBeforeItHearsThatOthersEnded = `if (Bun.isMainThread) {
 
 // A thread starts Workers until the constructor throws. One of them is held up for eight seconds on its way out, and more are constructed meanwhile until the constructor throws again: one of them waits.
 // Then the thread ends: the main thread exits, or a Worker is terminated. A Worker that starts after that writes a line.
+// Where the end of the thread ends the others too (a Worker, or an exit that waits for every thread), it terminates them first, one at a time, each once the thread of the one before it is gone from /proc. It takes no turn of its loop, so it hears of none of them.
+// Each thread that ends can start a thread that collects its heap, which takes a stack and pages of the allocator. What the constructor leaves of the address space has room for one such thread, not for one for each Worker, and an allocation that may not fail crashes where it finds none.
 // The runs of the program share a folder, so each names its files by the number of its process.
-const endsThreadWhoseWorkerWaits = `import { existsSync, writeFileSync, writeSync } from "node:fs";
+const endsThreadWhoseWorkerWaits = `import { existsSync, readlinkSync, writeFileSync, writeSync } from "node:fs";
 declare var self: Worker;
 const threadEnds = "the-thread-ends-" + process.pid;
 const hasStarted = (late: number | string) => "started-" + process.pid + "-" + late;
+// A Worker answers with the folder of its thread in /proc, which is there for as long as the thread is.
 const start = async () => {
   const worker = new Worker(new URL(import.meta.url));
-  await new Promise(resolve => (worker.onmessage = resolve));
-  return worker;
+  const thread = await new Promise<string>(resolve => (worker.onmessage = event => resolve(event.data)));
+  return { worker, thread };
 };
 async function constructWorkerThatWaits() {
   const heldUp = await start();
+  const others: Awaited<ReturnType<typeof start>>[] = [];
   for (;;) {
     try {
-      await start();
+      others.push(await start());
     } catch (error) {
       if (!(error instanceof TypeError)) throw error;
       break;
     }
   }
-  heldUp.postMessage("a call that blocks");
-  await new Promise(resolve => (heldUp.onmessage = resolve));
+  heldUp.worker.postMessage("a call that blocks");
+  await new Promise(resolve => (heldUp.worker.onmessage = resolve));
   await Bun.sleep(200);
-  heldUp.terminate();
+  heldUp.worker.terminate();
   // Only one Worker can wait for the one that is ending, so once the constructor throws, all but one start.
   // Only this thread can start the one that waits, in a turn of its loop, and it takes none from here on.
   const late: Worker[] = [];
@@ -558,6 +562,17 @@ async function constructWorkerThatWaits() {
     Bun.sleepSync(10);
   }
   writeFileSync(threadEnds, "");
+  return others;
+}
+// No more than one of them ends at a time.
+function endOneByOne(workers: Awaited<ReturnType<typeof start>>[]) {
+  for (const { worker, thread } of workers) {
+    worker.terminate();
+    for (let rounds = 0; existsSync(thread); rounds++) {
+      if (rounds === 3000) throw new Error("a Worker that was terminated has not ended");
+      Bun.sleepSync(10);
+    }
+  }
 }
 if (!Bun.isMainThread) {
   if (process.argv[2] === "late") {
@@ -569,23 +584,28 @@ if (!Bun.isMainThread) {
       postMessage("held up");
       return Bun.sleepSync(8000);
     }
-    await constructWorkerThatWaits();
+    endOneByOne(await constructWorkerThatWaits());
     postMessage("one waits");
+    // In a turn of its loop it would hear that Workers have ended, and start the one that waits in their room.
+    for (;;) Bun.sleepSync(10);
   };
   setInterval(() => {}, 1000);
-  postMessage("ready");
+  postMessage("/proc/" + readlinkSync("/proc/thread-self"));
 } else if (process.argv[2] === "the main thread exits") {
-  await constructWorkerThatWaits();
+  const others = await constructWorkerThatWaits();
+  // Only an exit that waits for every thread ends the others. The runtime takes these values of the variable for no.
+  const waits = !["", "0", "false", "no", "off"].includes((process.env.BUN_DESTRUCT_VM_ON_EXIT ?? "").toLowerCase());
+  if (waits) endOneByOne(others);
   writeSync(1, "exits at " + Date.now() + "\\n");
   process.exit(0);
 } else {
   const parent = await start();
-  parent.addEventListener("close", event => {
+  parent.worker.addEventListener("close", event => {
     console.log("closed with code", (event as unknown as { code: number }).code);
     process.exit(0);
   });
-  parent.onmessage = () => parent.terminate();
-  parent.postMessage("start Workers");
+  parent.worker.onmessage = () => parent.worker.terminate();
+  parent.worker.postMessage("start Workers");
 }
 `;
 

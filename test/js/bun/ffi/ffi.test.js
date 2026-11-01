@@ -501,8 +501,11 @@ function ffiRunner(fast) {
       expect(identity_ptr(cptr)).toBe(cptr);
       const second_ptr = ptr(new Buffer(8));
       expect(identity_ptr(second_ptr)).toBe(second_ptr);
-      expect(new CString(ptr(Buffer.from([97, 97, 97, 0, 97, 98, 99, 0, 0])), 4).toString()).toBe("abc");
-      expect(new CString(ptr(Buffer.from([97, 97, 97, 0, 97, 98, 99, 0, 0])), 4, 2).toString()).toBe("ab");
+      // Keep the buffer referenced: its storage is only valid while it is alive.
+      const strings = Buffer.from([97, 97, 97, 0, 97, 98, 99, 0, 0]);
+      expect(new CString(ptr(strings), 4).toString()).toBe("abc");
+      expect(new CString(ptr(strings), 4, 2).toString()).toBe("ab");
+      expect(strings.length).toBe(9);
     });
 
     it("CFunction", () => {
@@ -668,6 +671,48 @@ it("read", () => {
   }
 
   delete globalThis.buffer;
+});
+
+// https://github.com/oven-sh/bun/issues/32054
+it("ptr(typedArray) stays valid after DFG tier-up", async () => {
+  const code = `
+    import { ptr, read } from "bun:ffi";
+    const out = new Float64Array(1);
+    out[0] = 1.5;
+    const outPtr = ptr(out);
+    function main() {
+      let sum = 0;
+      for (let i = 0; i < 10_000; i++) {
+        sum += out[0];
+      }
+      return sum;
+    }
+    main();
+    if (ptr(out) !== outPtr) {
+      console.log("MOVED: the view's storage was relocated after ptr() was taken");
+      process.exit(1);
+    }
+    out[0] = 42.5;
+    if (read.f64(outPtr) !== 42.5) {
+      console.log("STALE: write through the view is not visible at the captured address");
+      process.exit(1);
+    }
+    console.log("STABLE");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: {
+      ...bunEnv,
+      // Deterministic early tier-up: the DFG folds the view into the compiled
+      // loop, and that relocates a small view's storage on an unfixed build.
+      BUN_JSC_useConcurrentJIT: "false",
+      BUN_JSC_thresholdForOptimizeAfterWarmUp: "100",
+      BUN_JSC_thresholdForOptimizeSoon: "100",
+    },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "STABLE", stderr: "", exitCode: 0 });
 });
 
 describe.skipIf(!FFI_FIXTURE_PATH)("run ffi", () => {

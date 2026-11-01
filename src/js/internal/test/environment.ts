@@ -33,8 +33,7 @@ interface Environment {
   close(): void | Promise<void>;
 }
 
-// The classes of a package, which a process loads once and every window shares. With --isolate and --isolate=modules
-// a file's changes to them are put back before the next window is made, after the file's last timer.
+// The classes of a package, which a process loads once and every window shares. Put back before the next window is made.
 interface PackageClasses {
   // What the first root has is saved. The second root tells which of it is the package's and not the root's own.
   add(root: object, descendsIntoObjects: boolean): void;

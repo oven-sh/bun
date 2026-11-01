@@ -1,5 +1,4 @@
-// Saves the own properties of an object, of every function reachable from it and of their prototypes, and puts them
-// back later: globalThis with `bun test --isolate=modules`, and the classes of a DOM package that every window shares.
+// Saves the own properties of an object, of every function reachable from it and of their prototypes, to put them back.
 
 const shapesOf: (objects: object[]) => unknown[] = $newCppFunction(
   "TestEnvironment.cpp",
@@ -45,8 +44,7 @@ function isSame(current: PropertyDescriptor, saved: PropertyDescriptor) {
   );
 }
 
-// Visits `root`, every function reachable from it and their prototypes, each once. An object that `root` holds is
-// visited only if `descendsIntoObjects`, or if it's a `prototype`. The global object is visited only as the root.
+// Visits `root`, every function reachable from it and their prototypes, each once. The global object only as the root.
 function walk(
   root: object,
   descendsIntoObjects: boolean,

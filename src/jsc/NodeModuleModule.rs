@@ -120,7 +120,7 @@ pub(crate) fn set_global_folders(
 ) {
     // SAFETY: only the VM is taken from it.
     let vm = unsafe { heap.global() }.bun_vm().as_mut();
-    vm.transpiler.resolver.opts.extra_cjs_global_folders = folders
+    vm.extra_cjs_global_folders = folders
         .into_iter()
         .map(|folder| folder.into_vec().into_boxed_slice())
         .collect();

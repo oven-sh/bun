@@ -738,7 +738,7 @@ impl TranspilerJob {
         // a bytewise copy. SAFETY: `vm.transpiler` is read via
         // `addr_of!` (no `&VirtualMachine` formed); every internal raw pointer in the copy
         // still targets memory owned by `vm.transpiler` (resolver caches, define, env) which
-        // outlives this stack frame. The JS thread can replace `resolver.opts.extra_cjs_global_folders` during a job, so the copy drops it below, unread.
+        // outlives this stack frame; `vm.transpiler` is not concurrently mutated.
         // The by-value copy must not be deinitialized; `ManuallyDrop` suppresses Drop so owned
         // fields aren't double-freed against `vm.transpiler`.
         let mut transpiler_storage =
@@ -756,17 +756,12 @@ impl TranspilerJob {
         // Note: the resolver already shares opts with the parent
         // Transpiler via raw pointer; set_arena/set_log keep them in sync.
         transpiler.macro_context = None;
+        // The list of `Module._initPaths()` is for the JS thread, which replaces it while a job runs.
+        transpiler.resolver.extra_cjs_global_folders = None;
         // The JS thread may have been in macro mode when its options were copied, but a job is never part of a macro.
         transpiler.options.target = bun_ast::Target::Bun;
         if self.has_plugins {
             transpiler.options.no_macros = true;
-        }
-        // SAFETY: the JS thread owns this list and replaces it while jobs run, so the copy gives up its alias. Nothing is freed.
-        unsafe {
-            ptr::write(
-                &raw mut transpiler.resolver.opts.extra_cjs_global_folders,
-                Box::default(),
-            );
         }
         // Note: `parse_maybe` re-creates the macro context per-iteration
         // when `macro_context.is_none()`. It boxes a

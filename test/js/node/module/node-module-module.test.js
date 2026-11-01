@@ -1640,28 +1640,32 @@ console.log(logger, require('./deep/er/user'));
           const path = require("node:path");
           const lib = name => path.join(__dirname, "..", name);
           const attempt = name => { try { return require(name); } catch (error) { return error.code; } };
-          const worker = (source, options) => new Promise((resolve, reject) => {
+          // The Worker answers a message, so what it allocates is not behind the frames of a module that loads.
+          const worker = (answer, options) => new Promise((resolve, reject) => {
             let message;
-            new Worker(source, { eval: true, ...options })
+            new Worker(\`
+              const { parentPort } = require("node:worker_threads");
+              const attempt = \${attempt};
+              parentPort.once("message", () => parentPort.postMessage((\${answer})()));
+            \`, { eval: true, ...options })
               .on("message", value => { message = value; })
               .on("error", reject)
-              .on("exit", () => resolve(message));
+              .on("exit", () => resolve(message))
+              .postMessage("go");
           });
           (async () => {
             const out = {};
-            out.workerThatCalls = await worker(\`
+            out.workerThatCalls = await worker(\`() => {
               process.env.NODE_PATH = \${JSON.stringify(lib("lib-a"))};
               require("node:module")._initPaths();
-              require("node:worker_threads").parentPort.postMessage((\${attempt})("pkg-a"));
-            \`);
+              return attempt("pkg-a");
+            }\`);
             out.parentOfThatWorker = attempt("pkg-a");
 
             process.env.NODE_PATH = lib("lib-b");
             Module._initPaths();
             out.parentThatCalls = require("pkg-b");
-            out.workerOfThatParent = await worker(\`
-              require("node:worker_threads").parentPort.postMessage((\${attempt})("pkg-b"));
-            \`, { env: {} });
+            out.workerOfThatParent = await worker('() => attempt("pkg-b")', { env: {} });
             console.log(JSON.stringify(out));
           })();
         `,

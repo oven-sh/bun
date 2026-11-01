@@ -2098,7 +2098,8 @@ declare module "bun:test" {
     /**
      * Asserts that the value is deeply equal to an element in the expected array.
      *
-     * The value must be an array or iterable, which includes strings.
+     * Pass an array or another iterable object, such as a `Set`. The matcher throws if you pass a string. To match
+     * one character of a string, spread the string: `[..."abc"]`.
      *
      * @example
      * expect(1).toBeOneOf([1,2,3]);
@@ -2107,8 +2108,8 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toBeOneOf(expected: Iterable<T>): R;
-    toBeOneOf<X = T>(expected: NoInfer<Iterable<X>>): R;
+    toBeOneOf(expected: Iterable<T> & object): R;
+    toBeOneOf<X = T>(expected: NoInfer<Iterable<X> & object>): R;
 
     /**
      * Asserts that a value contains what is expected.

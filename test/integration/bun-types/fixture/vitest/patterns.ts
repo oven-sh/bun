@@ -262,6 +262,9 @@ describe("loose expected values", () => {
   expect([1]).toHaveProperty([0]);
   // @ts-expect-error
   expect([1]).toHaveProperty(0);
+  expect(text).toBeOneOf([...text]);
+  // @ts-expect-error
+  expect(text).toBeOneOf("abc");
   expect({ a: 1 }).toMatchObject({ b: expect.any(String) });
   expect([{ a: 1 }]).toMatchObject([{ b: 1 }]);
   expect(text).toHaveLength(1);

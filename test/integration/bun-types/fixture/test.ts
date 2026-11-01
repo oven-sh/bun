@@ -246,6 +246,13 @@ describe("Matcher Overload Type Tests", () => {
     expect(num).toBeOneOf<number>(1);
     // @ts-expect-error - Expecting string iterable, passed number iterable
     expect(str).toBeOneOf<Iterable<string>>([1, 2, 3]);
+    expect(str).toBeOneOf([...str]);
+    // @ts-expect-error - A string is not a list of expected values. The matcher throws for one.
+    expect(str).toBeOneOf("hello");
+    // @ts-expect-error - Also for a string variable
+    expect(str).toBeOneOf(str);
+    // @ts-expect-error - Also after .not
+    expect(str).not.toBeOneOf("abc");
   });
 
   test("toContainKey", () => {

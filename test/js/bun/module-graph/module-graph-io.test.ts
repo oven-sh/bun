@@ -5,6 +5,7 @@ import fs, { rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir, tls } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import dgram from "node:dgram";
+import { once } from "node:events";
 import net from "node:net";
 import nodeTls from "node:tls";
 import { promisify } from "node:util";
@@ -652,19 +653,17 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
       const sender = dgram.createSocket("udp4");
       try {
         if (disposeMakerFirst) graphs.A.dispose();
+        enter(boundIn, () => storage.run("bind()", () => socket.bind(0, "127.0.0.1")));
+        await once(socket, "listening");
         const message = Promise.withResolvers<{ store: string; graph: string }>();
+        socket.on("error", message.reject);
+        sender.on("error", message.reject);
         socket.on("message", () =>
           message.resolve({ store: String(storage.getStore()), graph: nameOf(Bun.ModuleGraph.current) }),
         );
-        const port = await enter(boundIn, () =>
-          storage.run(
-            "bind()",
-            () => new Promise<number>(resolve => socket.bind(0, "127.0.0.1", () => resolve(socket.address().port))),
-          ),
-        );
         // dispose() closes the sockets of its graph at once, and the native socket says so.
         const native = socket[kStateSymbol].handle.socket;
-        sender.send("x", port, "127.0.0.1");
+        sender.send("x", socket.address().port, "127.0.0.1");
         const { store, graph } = await message.promise;
         graphs.A.dispose();
         const closedByA: boolean = native.closed;
@@ -726,9 +725,10 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
       const socket = enter(socketOf, () => dgram.createSocket("udp4"));
       let closed = false;
       try {
-        await enter(socketOf, () => new Promise<void>(resolve => socket.bind(0, "127.0.0.1", resolve)));
-        const port = socket.address().port;
-        await enter(socketOf, () => new Promise<void>(resolve => socket.connect(port, "127.0.0.1", resolve)));
+        enter(socketOf, () => socket.bind(0, "127.0.0.1"));
+        await once(socket, "listening");
+        enter(socketOf, () => socket.connect(socket.address().port, "127.0.0.1"));
+        await once(socket, "connect");
         const handle = socket[kStateSymbol].handle;
         const realSocket = handle.socket;
         handle.sendQueue = [];
@@ -784,8 +784,10 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
     const { kStateSymbol } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
     const storage = new AsyncLocalStorage<string>();
     const socket = dgram.createSocket("udp4");
-    await new Promise<void>(resolve => socket.bind(0, "127.0.0.1", resolve));
-    await new Promise<void>(resolve => socket.connect(socket.address().port, "127.0.0.1", resolve));
+    socket.bind(0, "127.0.0.1");
+    await once(socket, "listening");
+    socket.connect(socket.address().port, "127.0.0.1");
+    await once(socket, "connect");
     const handle = socket[kStateSymbol].handle;
     const realSocket = handle.socket;
     const graph = new Bun.ModuleGraph();

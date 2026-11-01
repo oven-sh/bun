@@ -869,6 +869,8 @@ test.skipIf(isWindows)("bind({ fd }): 'message' runs in the store of createSocke
   try {
     const listening = Promise.withResolvers<string>();
     const message = Promise.withResolvers<string>();
+    socket.on("error", listening.reject);
+    sender.on("error", message.reject);
     socket.on("listening", () => listening.resolve(String(storage.getStore())));
     socket.on("message", () => message.resolve(String(storage.getStore())));
     storage.run("bind()", () => socket.bind({ fd: wrap.fd }));
@@ -893,8 +895,10 @@ test("a send() that waited behind backpressure runs its callback in the store of
   const storage = new AsyncLocalStorage<string>();
   const inStore = <T>(store: string | undefined, fn: () => T) => (store === undefined ? fn() : storage.run(store, fn));
   const socket = storage.run("createSocket()", () => createSocket("udp4"));
-  await new Promise<void>(resolve => socket.bind(0, "127.0.0.1", resolve));
-  await new Promise<void>(resolve => socket.connect(socket.address().port, "127.0.0.1", resolve));
+  await new Promise<void>((resolve, reject) => socket.once("error", reject).bind(0, "127.0.0.1", resolve));
+  await new Promise<void>((resolve, reject) =>
+    socket.once("error", reject).connect(socket.address().port, "127.0.0.1", () => resolve()),
+  );
 
   const handle = socket[kStateSymbol].handle;
   const realSocket = handle.socket;
@@ -1085,6 +1089,7 @@ for (const [kind, bind] of Object.entries(icmpBindModes)) {
 // whichever call binds the socket. Node.js v26.3.0 reads these stores.
 for (const [kind, bind] of Object.entries(icmpBindModes)) {
   test.skipIf(isWindows)(`${kind} socket emits the ICMP error in the store of createSocket()`, async () => {
+    const { kStateSymbol } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
     const storage = new AsyncLocalStorage<string>();
     const inStore = <T>(store: string | undefined, fn: () => T) =>
       store === undefined ? fn() : storage.run(store, fn);
@@ -1096,10 +1101,13 @@ for (const [kind, bind] of Object.entries(icmpBindModes)) {
         socket.on("error", error => onError(`${storage.getStore()} (${error.message})`));
         await inStore(bindIn, () => bind(socket));
         await new Promise<void>(resolve => socket.connect(deadPort, "127.0.0.1", () => resolve()));
-        // Keep sending until the queued ICMP error surfaces.
+        // Keep sending until the queued ICMP error surfaces. If the native socket is silently closed instead, say
+        // that rather than time out.
+        const native = socket[kStateSymbol].handle.socket;
         let stop = false;
         const pump = (async () => {
           while (!stop) {
+            if (native.closed) return onError("the native socket was silently closed instead of emitting 'error'");
             try {
               socket.send("x");
             } catch {}

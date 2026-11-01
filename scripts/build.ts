@@ -46,7 +46,6 @@ import {
   reconfigureCodegen,
   type ConfigureInput,
 } from "./build/configure.ts";
-import { webkitAotFile } from "./build/deps/webkit.ts";
 import { BuildError } from "./build/error.ts";
 import { ninjaIfPresent } from "./build/ninja-release.ts";
 import { STREAM_FD } from "./build/stream.ts";
@@ -295,12 +294,7 @@ async function main(): Promise<void> {
     // binary — bun-debug for debug, bun-profile for release. That's the one
     // you want for dev iteration (has symbols + assertions in debug).
     const exe = result.output.exe;
-    // The tests of the table of built-ins import the engine's generators (src/codegen/engine-directory.ts): say where the build's engine is.
-    const env = {
-      ...process.env,
-      AOT_ENGINE_DIRECTORY: process.env.AOT_ENGINE_DIRECTORY || webkitAotFile(result.cfg, "directory"),
-    };
-    const child = spawnSync(exe, args.execArgs, { stdio: "inherit", env });
+    const child = spawnSync(exe, args.execArgs, { stdio: "inherit" });
     if (child.error) {
       throw new BuildError(`Failed to exec ${exe}`, { cause: child.error });
     }

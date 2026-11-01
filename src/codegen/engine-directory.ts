@@ -1,12 +1,24 @@
 // The generators of the AoT compiler's schema and of its table of built-ins are files of the engine: Source/JavaScriptCore/aot/ir/generator and
 // aot/builtins/generator in WebKit. Where that folder `aot` lies depends on the build: a checkout, or the tarball of a prebuilt WebKit in the cache.
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { sharedCacheDir } from "../../scripts/build/config.ts";
+import { prebuiltDirPrefix, WEBKIT_VERSION } from "../../scripts/build/deps/webkit.ts";
 
 const flag = "--engine-directory=";
 const checkoutFlag = "--javascriptcore=";
 const inCheckout = (webkit: string): string => join(webkit, "Source", "JavaScriptCore", "aot");
+
+function prebuiltInCache(): string | undefined {
+  const cache = sharedCacheDir(resolve(import.meta.dirname, "..", ".."));
+  if (!existsSync(cache)) return undefined;
+  const prefix = prebuiltDirPrefix(WEBKIT_VERSION);
+  return readdirSync(cache)
+    .filter(name => name.startsWith(prefix))
+    .map(name => inCheckout(join(cache, name)))
+    .find(directory => existsSync(join(directory, "builtins", "generator")));
+}
 
 function findEngineDirectory(): string {
   const valueOf = (name: string): string | undefined =>
@@ -20,6 +32,8 @@ function findEngineDirectory(): string {
     ["vendor/WebKit", inCheckout(resolve(import.meta.dirname, "..", "..", "vendor", "WebKit"))],
     // Where CI puts it for the machines that only run tests.
     ["aot-engine beside the Bun that runs this", join(dirname(realpathSync(process.execPath)), "aot-engine")],
+    // A prebuilt WebKit of the version that the build pins, which a build of any profile extracted to the shared cache.
+    ["the prebuilt WebKit in the build cache", prebuiltInCache()],
   ];
   for (const [, directory] of places) {
     if (directory !== undefined && directory !== "" && existsSync(join(directory, "builtins", "generator"))) {

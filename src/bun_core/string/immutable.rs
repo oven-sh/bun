@@ -2667,7 +2667,7 @@ pub unsafe fn write_wtf8_as_utf16le(bytes: &[u8], first_non_ascii: usize, dst: *
         clippy::cast_ptr_alignment,
         reason = "caller contract: dst is 2-byte aligned"
     )]
-    // SAFETY: caller contract; simdutf writes at most `utf16_length_from_utf8(bytes) <= bytes.len()` units.
+    // SAFETY: caller contract: `dst` has room for one unit per byte of `bytes`, which `le_raw` accepts.
     let res = unsafe {
         simdutf::convert::utf8::to::utf16::with_errors::le_raw(
             bytes,

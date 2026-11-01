@@ -117,10 +117,11 @@ pub mod convert {
                     /// stops with the offset of the sequence in `count`, and `output` then holds
                     /// the conversion of `input[..count]`. simdutf documents the offset only.
                     /// `test/js/bun/util/toUTF16Alloc.test.ts` checks the output for each kernel.
-                    /// SAFETY: `output` is valid for writes of `length::utf16::from::utf8(input)` units.
+                    /// SAFETY: `output` is valid for writes of `length::utf16::from::utf8(input)`
+                    /// units, or of `input.len()` units. simdutf writes no more than the smaller count.
                     #[inline(always)]
                     pub unsafe fn le_raw(input: &[u8], output: *mut u16) -> SIMDUTFResult {
-                        // SAFETY: the caller's contract. simdutf writes no more units than that count.
+                        // SAFETY: the caller's contract.
                         unsafe {
                             simdutf__convert_utf8_to_utf16le_with_errors(
                                 input.as_ptr(),
@@ -160,7 +161,12 @@ pub mod convert {
                     const MAX_CHECKED_PREFIX: usize = 1024 * 1024;
 
                     fn assert_converted(converted: &[u8], units: &[u16]) {
-                        let mut again = vec![0u16; units.len()];
+                        let mut again: Vec<u16> = Vec::new();
+                        // The decode reports a failed allocation as an error, so this check does not abort for one.
+                        if again.try_reserve_exact(units.len()).is_err() {
+                            return;
+                        }
+                        again.resize(units.len(), 0);
                         let res = le(converted, &mut again);
                         assert!(
                             res.is_successful() && res.count == units.len() && again == units,

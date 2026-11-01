@@ -625,7 +625,7 @@ pub fn pretty_update_row(name: &[u8], from: &[u8], to: &[u8], downgrade: bool) {
     }
     pretty!(
         "<b>{}<r> <d>{} {}<r> <b><cyan>{}<r>",
-        BStr::new(name),
+        bun_core::fmt::escape_control_chars(name),
         bun_core::fmt::escape_control_chars(from),
         glyphs.arrow,
         bun_core::fmt::escape_control_chars(to)

@@ -5060,40 +5060,43 @@ describe("a renamed root package", () => {
   test.concurrent.each([
     { lockfile: "bun.lock", saveTextLockfile: true },
     { lockfile: "bun.lockb", saveTextLockfile: false },
-  ])("$lockfile takes the new name, and a frozen install fails until it does", async ({ lockfile, saveTextLockfile }) => {
-    using ctx = await setupTest();
-    const { packageDir } = ctx;
-    const lockPath = join(packageDir, lockfile);
-    // bun.lockb stores the names as plain bytes, so the same check reads both formats.
-    const lockText = () => file(lockPath).text();
+  ])(
+    "$lockfile takes the new name, and a frozen install fails until it does",
+    async ({ lockfile, saveTextLockfile }) => {
+      using ctx = await setupTest();
+      const { packageDir } = ctx;
+      const lockPath = join(packageDir, lockfile);
+      // bun.lockb stores the names as plain bytes, so the same check reads both formats.
+      const lockText = () => file(lockPath).text();
 
-    await verdaccio.writeBunfig(packageDir, { saveTextLockfile });
-    await writeProject(packageDir, { name: "root-before" }, { member: { name: "member" } });
-    expect(await install(ctx)).toMatchObject({ err: "Saved lockfile\n", exitCode: 0 });
-    expect(await lockText()).toContain("root-before");
+      await verdaccio.writeBunfig(packageDir, { saveTextLockfile });
+      await writeProject(packageDir, { name: "root-before" }, { member: { name: "member" } });
+      expect(await install(ctx)).toMatchObject({ err: "Saved lockfile\n", exitCode: 0 });
+      expect(await lockText()).toContain("root-before");
 
-    await writeProject(packageDir, { name: "root-after" }, { member: { name: "member" } });
-    const frozen = await install(ctx, "--frozen-lockfile");
-    expect(frozen.err).toContain("lockfile had changes, but lockfile is frozen");
-    expect(frozen.err).toContain(`name in package.json changed since ${lockfile} was saved`);
-    expect(frozen.exitCode).toBe(1);
-    expect(await lockText()).toContain("root-before");
+      await writeProject(packageDir, { name: "root-after" }, { member: { name: "member" } });
+      const frozen = await install(ctx, "--frozen-lockfile");
+      expect(frozen.err).toContain("lockfile had changes, but lockfile is frozen");
+      expect(frozen.err).toContain(`name in package.json changed since ${lockfile} was saved`);
+      expect(frozen.exitCode).toBe(1);
+      expect(await lockText()).toContain("root-before");
 
-    expect(await install(ctx)).toMatchObject({ err: "Saved lockfile\n", exitCode: 0 });
-    const lock = await lockText();
-    expect(lock).toContain("root-after");
-    expect(lock).not.toContain("root-before");
-    if (saveTextLockfile) {
-      expect(lock).toContain('"name": "root-after"');
-    }
-    const lockBytes = await file(lockPath).bytes();
+      expect(await install(ctx)).toMatchObject({ err: "Saved lockfile\n", exitCode: 0 });
+      const lock = await lockText();
+      expect(lock).toContain("root-after");
+      expect(lock).not.toContain("root-before");
+      if (saveTextLockfile) {
+        expect(lock).toContain('"name": "root-after"');
+      }
+      const lockBytes = await file(lockPath).bytes();
 
-    expect(await install(ctx, "--frozen-lockfile")).toMatchObject({ err: "", exitCode: 0 });
-    const again = await install(ctx);
-    expect(again).toMatchObject({ err: "", exitCode: 0 });
-    expect(again.out).toContain("(no changes)");
-    expect(await file(lockPath).bytes()).toEqual(lockBytes);
-  });
+      expect(await install(ctx, "--frozen-lockfile")).toMatchObject({ err: "", exitCode: 0 });
+      const again = await install(ctx);
+      expect(again).toMatchObject({ err: "", exitCode: 0 });
+      expect(again.out).toContain("(no changes)");
+      expect(await file(lockPath).bytes()).toEqual(lockBytes);
+    },
+  );
 
   // Bun 1.1.42 and older wrote no root name. Such a lockfile takes the name from package.json
   // without failing a frozen install: it recorded nothing that could have changed.
@@ -5173,7 +5176,9 @@ describe("a renamed root package", () => {
     );
     await write(join(packageDir, "index.js"), "module.exports = 42;\n");
     expect(await install(ctx)).toMatchObject({ err: "Saved lockfile\n", exitCode: 0 });
-    expect(await file(lockPath).text()).toContain('"root-before": ["root-before@root:", { "bin": { "root-bin": "index.js" } }],');
+    expect(await file(lockPath).text()).toContain(
+      '"root-before": ["root-before@root:", { "bin": { "root-bin": "index.js" } }],',
+    );
 
     // The member is renamed in the same step, so the lockfile is rewritten even without the root
     // rename being detected.

@@ -447,8 +447,9 @@ pub fn install_with_manager(
                         .scripts
                         .clone_into(&lockfile.buffers.string_bytes, builder);
                     // `clean_lockfile` rebuilds `package_index` from this row.
-                    lf.packages.items_name_mut()[0] = builder
-                        .append::<SemverString>(maybe_root.name.slice(&lockfile.buffers.string_bytes));
+                    lf.packages.items_name_mut()[0] = builder.append::<SemverString>(
+                        maybe_root.name.slice(&lockfile.buffers.string_bytes),
+                    );
                     lf.packages.items_name_hash_mut()[0] = maybe_root.name_hash;
 
                     // Update workspace paths

@@ -631,7 +631,7 @@ test.concurrent(
 // npm copies the root's name into `packages[""]` and regenerates it on every save, so a stale copy is
 // not a change of the project. The migrated bun.lock takes the name from package.json, as the pnpm
 // and yarn migrations do.
-test.concurrent("the root's name comes from package.json, not from a stale packages[\"\"].name", async () => {
+test.concurrent('the root\'s name comes from package.json, not from a stale packages[""].name', async () => {
   await using testDir = tempDir("migrate-stale-root-name", {
     "package.json": JSON.stringify({ name: "new-name", dependencies: { a: "file:./vendor/a" } }),
     "vendor/a/package.json": JSON.stringify({ name: "a", version: "1.0.0" }),

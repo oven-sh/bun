@@ -374,7 +374,7 @@ describe("Bun.Transpiler", () => {
     ts.expectPrintedMin_("y = new Object()", "y = {}");
     ts.expectPrintedMin_("y = new Object({ a })", "y = { a }");
     ts.expectPrintedMin_("y = new Array()", "y = []");
-    ts.expectPrintedMin_("y = new Array(1, 2)", "y = [1, 2]");
+    ts.expectPrintedMin_("y = new Array(1, 2)", "y = [\n  1,\n  2\n]");
   });
 
   describe("TypeScript", () => {

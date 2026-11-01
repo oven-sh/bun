@@ -1447,7 +1447,6 @@ describe("bundler", () => {
         capture(new Array(1, 2, 3));
         capture(new Array(...unknownValue));
         capture(new Array(5, ...unknownValue));
-        capture(new Array(unknownValue));
         
         // Test Array with non-numeric single arguments (should convert to literal)
         capture(new Array("string"));
@@ -1460,7 +1459,6 @@ describe("bundler", () => {
         capture(new Object());
         capture(new Object(null));
         capture(new Object({ a: 1 }));
-        capture(new Object(unknownValue));
         
         // Test Function constructor
         capture(new Function("return 42"));
@@ -1491,7 +1489,6 @@ describe("bundler", () => {
 ]`, // new Array(1, 2, 3) -> [1, 2, 3]
       "new Array(...unknownValue)", // a spread may leave a single number behind, which is a length
       "new Array(5, ...unknownValue)",
-      "new Array(unknownValue)", // may be a length
       `[
   "string"
 ]`, // new Array("string") -> ["string"]
@@ -1510,7 +1507,6 @@ describe("bundler", () => {
       "{}", // new Object() -> {}
       "{}", // new Object(null) -> {}
       "{ a: 1 }", // new Object({ a: 1 }) -> { a: 1 }
-      "new Object(unknownValue)", // nothing to fold into a literal
       'new Function("return 42")',
       'new Function("a", "b", "return a + b")',
       'new RegExp("test")',

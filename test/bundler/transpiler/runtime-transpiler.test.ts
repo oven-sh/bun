@@ -359,6 +359,25 @@ describe.concurrent("new on a global constructor", () => {
     expect(JSON.parse(stdout)).toEqual(["construct", "with", "eval"]);
     expect(exitCode).toBe(0);
   });
+
+  // Bun's own modules are bundled when Bun is built, by another Bun. A debug build does not minify them.
+  test("node:util constructs its error after script replaced globalThis.Error with a class", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "index.cjs": `
+          const NativeError = globalThis.Error;
+          globalThis.Error = class extends NativeError {};
+          require("util").callbackify(() => Promise.reject(null))(error => {
+            console.log(error instanceof NativeError, error.code, error.message);
+          });
+        `,
+      },
+      "index.cjs",
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toBe("true ERR_FALSY_VALUE_REJECTION Promise was rejected with a falsy value\n");
+    expect(exitCode).toBe(0);
+  });
 });
 
 test("math.pow", () => {

@@ -572,7 +572,7 @@ Checked 63 installs across 64 packages (no changes) [5.00ms]
 
 CLI tools built on top of Bun can use this to install packages, bundle dependencies, or run other files without downloading a separate binary or installing Bun.
 
-[Bun Shell](/runtime/shell) sets `BUN_BE_BUN=1` for the command `bun` when `PATH` has no `bun`. The executable then starts again as the `bun` CLI, and does not run your program a second time:
+[Bun Shell](/runtime/shell) sets `BUN_BE_BUN=1` for the command `bun` when `PATH` has no `bun`. A truthy `BUN_BE_BUN` that the script already has stays as it is. The executable then starts again as the `bun` CLI, and does not run your program a second time:
 
 ```ts
 import { $ } from "bun";
@@ -581,7 +581,7 @@ import { $ } from "bun";
 await $`bun install`;
 ```
 
-That `bun` and every process below it inherit `BUN_BE_BUN=1`. Below it, your executable and each other executable compiled with Bun also start as `bun`. A script that must run the program of such an executable clears the variable first: `export BUN_BE_BUN=; mytool`.
+That `bun` and every process below it inherit the variable. Below it, your executable and each other executable compiled with Bun also start as `bun`, or exit with an error if they don't include the `bun` CLI. A script that must run the program of such an executable clears the variable first: `export BUN_BE_BUN=; mytool`.
 
 An executable built with `bun compile` or with `--trim` doesn't include the `bun` CLI, so `BUN_BE_BUN=1` doesn't work there. In such an executable the shell reports `bun: command not found: bun`.
 

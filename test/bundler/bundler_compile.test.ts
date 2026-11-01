@@ -1444,17 +1444,24 @@ error: Hello World`,
           import { tmpdir } from "node:os";
           import { join } from "node:path";
 
+          // Prints what the script printed, also when it fails, and exits with its exit code then.
+          async function run(script) {
+            const { stdout, exitCode } = await script.nothrow().quiet();
+            console.log(stdout.toString().trim());
+            if (exitCode !== 0) process.exit(exitCode);
+          }
+
           const mode = process.argv[2];
           console.log("entry:" + mode);
           if (mode === "word") {
-            console.log((await $\`bun -p 1+1\`.nothrow().text()).trim());
+            await run($\`bun -p 1+1\`);
           } else if (mode === "substitution") {
-            await $\`echo got:$(bun -p 1+1)\`.nothrow();
+            await run($\`echo got:$(bun -p 1+1)\`);
           } else if (mode === "falsy") {
-            console.log((await $\`bun -p 1+1\`.env({ ...process.env, BUN_BE_BUN: "0" }).nothrow().text()).trim());
+            await run($\`bun -p 1+1\`.env({ ...process.env, BUN_BE_BUN: "0" }));
           } else if (mode === "next") {
             // Only the \`bun\` command gets the variable. The next commands of the script do not.
-            await $\`bun -p 1+1; echo after:$BUN_BE_BUN; \${process.execPath} named\`.nothrow();
+            await run($\`bun -p 1+1; echo after:$BUN_BE_BUN; \${process.execPath} named\`);
           } else if (mode === "on-path") {
             // A \`bun\` on PATH wins, and it gets no variable.
             const dir = mkdtempSync(join(tmpdir(), "bun-on-path-"));
@@ -1469,7 +1476,7 @@ error: Hello World`,
                 }
               }
               const seen = "JSON.stringify([process.env.BUN_BE_BUN ?? null, Bun.isStandaloneExecutable])";
-              console.log((await $\`bun -p \${seen}\`.env({ ...process.env, PATH: dir, Path: dir }).nothrow().text()).trim());
+              await run($\`bun -p \${seen}\`.env({ ...process.env, PATH: dir, Path: dir }));
             } finally {
               rmSync(dir, { recursive: true, force: true });
             }
@@ -1503,9 +1510,9 @@ error: Hello World`,
           args: ["upgrade", "nothing"],
           env: { BUN_BE_BUN: "1" },
           exitCode: 1,
-          validate({ stderr }) {
-            expect(stderr).toContain("This executable is an app compiled with `bun build --compile`");
-          },
+          stderr:
+            "error: This executable is an app compiled with `bun build --compile`. `bun upgrade` would replace it with Bun.\n" +
+            "note: Install Bun, and run `bun upgrade` there.",
         },
       ],
     });

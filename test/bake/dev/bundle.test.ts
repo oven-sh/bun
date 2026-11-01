@@ -1511,6 +1511,199 @@ devTest("barrel optimization: namespace re-export cycle through a star-exported 
     await c.expectMessage("result: object Y KEEP DEEP OTHER");
   },
 });
+
+// A statement of a barrel reads an import: the record it reads through has to
+// load even when no importer asks for that export. Without it the dev server
+// served `var import_item = {}` and the statement read `undefined`. unused.js
+// is a syntax error: a record that nothing reads stays deferred.
+const ownReadBarrel = (dir: string, index: string) => ({
+  [`${dir}/package.json`]: JSON.stringify({ name: dir.split("/").pop(), version: "1.0.0", sideEffects: false }),
+  [`${dir}/index.js`]: index,
+  [`${dir}/menu.js`]: `export const Menu = {};`,
+  [`${dir}/item.js`]: `
+    export function Item() {}
+    export function helper() { return "helped"; }
+  `,
+  [`${dir}/unused.js`]: `export const Unused = <<<SYNTAX_ERROR>>>;`,
+});
+
+devTest("barrel optimization: a statement of the barrel reads an import", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { Menu as clause } from 'clause';
+      import { Menu as samePath } from 'same-path';
+      import { Menu as twoNamespaces } from 'two-namespaces';
+      import { Menu as propertyRead } from 'property-read';
+      import { Menu as otherName } from 'other-name';
+      import { Menu as namespaceMember } from 'namespace-member';
+      console.log('got: ' + [
+        typeof clause.Item,
+        samePath.helped,
+        twoNamespaces.names,
+        propertyRead.kind,
+        otherName.helped,
+        typeof namespaceMember.Item,
+      ].join(' '));
+    `,
+    ...ownReadBarrel(
+      "node_modules/clause",
+      `
+        import { Menu } from './menu.js';
+        import { Item } from './item.js';
+        import { Unused } from './unused.js';
+        Menu.Item = Item;
+        export { Menu, Item, Unused };
+      `,
+    ),
+    // HMR merges the two records of './item.js' and './menu.js'. The statement
+    // reads through the duplicates, and the records that survive are the
+    // re-exports that nothing asked for.
+    ...ownReadBarrel(
+      "node_modules/same-path",
+      `
+        export { Item } from './item.js';
+        export { Menu } from './menu.js';
+        export { Unused } from './unused.js';
+        import { helper } from './item.js';
+        import { Menu as menu } from './menu.js';
+        menu.helped = helper();
+      `,
+    ),
+    // HMR links the namespace `a` to `b` and clears its use count.
+    ...ownReadBarrel(
+      "node_modules/two-namespaces",
+      `
+        import { Menu } from './menu.js';
+        import * as b from './item.js';
+        import * as a from './item.js';
+        import { Unused } from './unused.js';
+        Menu.names = Object.keys(a).sort().join(',');
+        export { Menu, b, Unused };
+      `,
+    ),
+    ...ownReadBarrel(
+      "node_modules/property-read",
+      `
+        import { Menu } from './menu.js';
+        import { Item } from './item.js';
+        import { Unused } from './unused.js';
+        Menu.kind = typeof Item.name;
+        export { Menu, Item, Unused };
+      `,
+    ),
+    ...ownReadBarrel(
+      "node_modules/other-name",
+      `
+        import { Menu } from './menu.js';
+        import { Item, helper } from './item.js';
+        import { Unused } from './unused.js';
+        Menu.helped = helper();
+        export { Menu, Item, Unused };
+      `,
+    ),
+    ...ownReadBarrel(
+      "node_modules/namespace-member",
+      `
+        import { Menu } from './menu.js';
+        import * as items from './item.js';
+        import { Unused } from './unused.js';
+        Menu.Item = items.Item;
+        export { Menu, items, Unused };
+      `,
+    ),
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("got: function helped Item,helper string helped function");
+  },
+});
+
+// The barrel defers unused.js, so every build parses the barrel again, and each
+// parse decides from the current source. An edit of the barrel itself makes it
+// an entry point of that build, and an entry point defers nothing: unused.js
+// has to parse here.
+devTest("barrel optimization: a statement that reads an import follows edits", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { Menu } from './lib/index.js';
+      console.log('build 1: ' + typeof Menu.Item);
+    `,
+    ...ownReadBarrel(
+      "lib",
+      `
+        import { Menu } from './menu.js';
+        import { Item } from './item.js';
+        import { Unused } from './unused.js';
+        Menu.Item = Item;
+        export { Menu, Item, Unused };
+      `,
+    ),
+    "lib/unused.js": `export const Unused = "unused";`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("build 1: function");
+
+    const editImporter = async (build: number, expected: string) => {
+      await c.expectReload(async () => {
+        await dev.patch("index.ts", { find: `build ${build - 1}: `, replace: `build ${build}: ` });
+      });
+      await c.expectMessage(`build ${build}: ${expected}`);
+    };
+    await editImporter(2, "function");
+
+    await c.expectReload(async () => {
+      await dev.patch("lib/index.js", { find: "Menu.Item = Item;", replace: "" });
+    });
+    await c.expectMessage("build 2: undefined");
+    await editImporter(3, "undefined");
+
+    await c.expectReload(async () => {
+      await dev.patch("lib/index.js", { find: "export {", replace: "Menu.Item = Item;\nexport {" });
+    });
+    await c.expectMessage("build 3: function");
+    await editImporter(4, "function");
+  },
+});
+
+// No statement reads an import here, so nothing more loads than before: the
+// module that must stay deferred is a syntax error. `export { Unused }` is a
+// use of `Unused` for each name, and HMR links the namespace of `export * as`
+// to the first import of the same path. Neither is a read.
+devTest("barrel optimization: a barrel whose statements read no import keeps its deferrals", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { Menu as clause } from 'clause';
+      import { Menu as starAs } from 'star-as';
+      console.log('got: ' + typeof clause + ' ' + typeof starAs);
+    `,
+    ...ownReadBarrel(
+      "node_modules/clause",
+      `
+        import { Menu } from './menu.js';
+        import { Unused } from './unused.js';
+        console.log('barrel loaded');
+        export { Menu, Unused, Unused as Alias };
+      `,
+    ),
+    ...ownReadBarrel(
+      "node_modules/star-as",
+      `
+        export { Menu } from './menu.js';
+        export { Unused } from './unused.js';
+        export * as all from './unused.js';
+      `,
+    ),
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("barrel loaded", "got: object object");
+  },
+});
+
 // The dev server's runtime threw `$ERR_SSR_RESPONSE_EXPECTED(...)`, a name only src/js resolves: what the
 // user saw was "ReferenceError: $ERR_SSR_RESPONSE_EXPECTED is not defined".
 devTest("a render() that does not return a Response is reported as that", {

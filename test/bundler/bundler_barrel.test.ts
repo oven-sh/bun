@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
 import { join } from "path";
-import { itBundled } from "./expectBundled";
+import { itBundled, type BundlerTestInput } from "./expectBundled";
 
 describe("bundler", () => {
   // --- Explicit mode (optimizeImports list) ---
@@ -2194,6 +2194,246 @@ describe("bundler", () => {
       api.expectFile("/out/entry.js").toContain("a = 1");
     },
   });
+
+  // --- A statement of the barrel reads an import ---
+  // The record it reads through has to load even when no importer asks for
+  // that export. unused.js is a syntax error: a record that nothing reads
+  // stays deferred.
+
+  const ownReadPackage = (index: string | Buffer, packageJson: object = { sideEffects: false }) => ({
+    "/node_modules/ui/package.json": JSON.stringify({ name: "ui", main: "./index.js", ...packageJson }),
+    "/node_modules/ui/index.js": index,
+    "/node_modules/ui/menu.js": /* js */ `export function Menu() {}`,
+    "/node_modules/ui/item.js": /* js */ `
+      export function Item() {}
+      export function helper() { globalThis.seen = "helped"; }
+      export default function Def() {}
+    `,
+    "/node_modules/ui/unused.js": /* js */ `export const Unused = <<<SYNTAX_ERROR>>>;`,
+  });
+  const ownReadIndex = /* js */ `
+    import { Menu } from './menu.js';
+    import { Item } from './item.js';
+    import { Unused } from './unused.js';
+    Menu.Item = Item;
+    globalThis.seen = typeof Menu.Item;
+    export { Menu, Item, Unused };
+  `;
+  const ownReadEntry = /* js */ `
+    import { Menu } from 'ui';
+    console.log(typeof Menu, globalThis.seen);
+  `;
+
+  const itemImport = `import { Item } from './item.js';`;
+  for (const [name, statement, seen, imports = itemImport, exports = "Item"] of [
+    ["Assignment", `Menu.Item = Item; globalThis.seen = Menu.Item.name;`, "Item"],
+    ["ObjectAssign", `globalThis.seen = Object.assign(Menu, { Item }).Item.name;`, "Item"],
+    ["PropertyWrite", `Item.displayName = globalThis.seen = "written";`, "written"],
+    ["PropertyRead", `globalThis.seen = Item.name;`, "Item"],
+    ["New", `globalThis.seen = typeof new Item();`, "object"],
+    ["Extends", `globalThis.seen = (class Sub extends Item {}).name;`, "Sub"],
+    ["ThroughLocalFunction", `function attach() { globalThis.seen = Item.name; } attach();`, "Item"],
+    ["ExportedUnderTwoNames", `globalThis.seen = Item.name;`, "Item", itemImport, "Item, Item as Alias"],
+    ["NamespaceMember", `globalThis.seen = items.Item.name;`, "Item", `import * as items from './item.js';`, "items"],
+    ["DefaultImport", `globalThis.seen = Def.name;`, "Def", `import Def from './item.js';`, "Def"],
+    ["OtherNameOfSameRecord", `helper();`, "helped", `import { Item, helper } from './item.js';`],
+  ] as [name: string, statement: string, seen: string, imports?: string, exports?: string][]) {
+    itBundled(`barrel/OwnStatementReadsImport${name}`, {
+      files: {
+        "/entry.js": ownReadEntry,
+        ...ownReadPackage(/* js */ `
+          import { Menu } from './menu.js';
+          ${imports}
+          import { Unused } from './unused.js';
+          ${statement}
+          export { Menu, ${exports}, Unused };
+        `),
+      },
+      outdir: "/out",
+      run: { stdout: `function ${seen}` },
+    });
+  }
+
+  // The importer asks for `Item` only. The statement also reads `Menu`.
+  itBundled("barrel/OwnStatementReadsImportThatNoImporterRequests", {
+    files: {
+      "/entry.js": /* js */ `
+        import { Item } from 'ui';
+        console.log(typeof Item, globalThis.seen);
+      `,
+      ...ownReadPackage(ownReadIndex),
+    },
+    outdir: "/out",
+    run: { stdout: "function function" },
+  });
+
+  // With tree shaking off, and with a lowered top-level `using`, the whole
+  // file is one part: the export clause and the statement share its use counts.
+  // unused.js is valid with tree shaking off, so that case holds whether or
+  // not the option also turns deferral off.
+  const ownReadIndexWithUsing = ownReadIndex.replace(
+    "Menu.Item = Item;",
+    "using resource = { [Symbol.dispose]() {} }; Menu.Item = Item;",
+  );
+  const validUnused = { "/node_modules/ui/unused.js": /* js */ `export const Unused = "unused";` };
+  for (const [name, options, index = ownReadIndex, files = {}] of [
+    ["FormatCjs", { format: "cjs" }],
+    ["Minify", { minifySyntax: true, minifyWhitespace: true, minifyIdentifiers: true }],
+    ["TargetBun", { target: "bun" }],
+    ["TreeShakingOff", { backend: "api", treeShaking: false }, ownReadIndex, validUnused],
+    ["LoweredUsing", { target: "browser" }, ownReadIndexWithUsing],
+  ] as [name: string, options: Partial<BundlerTestInput>, index?: string, files?: Record<string, string>][]) {
+    itBundled(`barrel/OwnStatementReadsImport${name}`, {
+      files: { "/entry.js": ownReadEntry, ...ownReadPackage(index), ...files },
+      ...options,
+      outdir: "/out",
+      run: { stdout: "function function" },
+    });
+  }
+
+  // The statement reads nothing it imports: every deferral stays. An import
+  // that is exported under several names is still only exported.
+  itBundled("barrel/OwnStatementReadsNoImportKeepsDeferral", {
+    files: {
+      "/entry.js": ownReadEntry,
+      ...ownReadPackage(/* js */ `
+        import { Menu } from './menu.js';
+        import { Unused } from './unused.js';
+        globalThis.seen = "no import read";
+        export { Menu, Unused, Unused as Alias, Unused as default };
+      `),
+    },
+    outdir: "/out",
+    run: { stdout: "function no import read" },
+  });
+
+  // The record the statement reads through points at another barrel: the name
+  // is requested there in both parse orders, and the rest of the inner barrel
+  // stays deferred.
+  for (const slow of ["Outer", "Inner"] as const) {
+    const outer = /* js */ `
+      import { Menu } from './menu.js';
+      import { Item } from './inner.js';
+      globalThis.seen = Item.name;
+      export { Menu, Item };
+    `;
+    const inner = /* js */ `
+      export { Item } from './item.js';
+      export { Other } from './other.js';
+      export { Unused } from './unused.js';
+    `;
+    itBundled(`barrel/OwnStatementReadsImportFromInnerBarrel${slow}ParsesLast`, {
+      files: {
+        "/entry.js": /* js */ `
+          import { Menu } from 'ui';
+          import { Other } from 'ui/inner.js';
+          console.log(typeof Menu, globalThis.seen, Other);
+        `,
+        ...ownReadPackage(slow === "Outer" ? slowToParse(outer) : outer),
+        "/node_modules/ui/inner.js": slow === "Inner" ? slowToParse(inner) : inner,
+        "/node_modules/ui/other.js": /* js */ `export const Other = "other";`,
+      },
+      outdir: "/out",
+      run: { stdout: "function Item other" },
+    });
+  }
+
+  // The shape of @apollo/client/core: a statement reads an import of another
+  // package that the barrel exports under another name only, next to
+  // `export from` records. The entry imports that package too, so the module
+  // is in the graph either way and only the barrel's record has to link.
+  for (const slow of ["Barrel", "Target"] as const) {
+    const barrel = /* js */ `
+      export { Menu } from './menu.js';
+      import { f } from 'other-pkg';
+      export { f as g };
+      f();
+    `;
+    const target = /* js */ `export const f = () => { globalThis.seen = "called"; };`;
+    itBundled(`barrel/OwnStatementReadsImportOfLoadedPackage${slow}ParsesLast`, {
+      files: {
+        "/entry.js": /* js */ `
+          import { Menu } from 'ui';
+          import { f } from 'other-pkg';
+          console.log(typeof Menu, typeof f, globalThis.seen);
+        `,
+        "/node_modules/ui/package.json": JSON.stringify({ name: "ui", main: "./index.js", sideEffects: false }),
+        "/node_modules/ui/index.js": slow === "Barrel" ? slowToParse(barrel) : barrel,
+        "/node_modules/ui/menu.js": /* js */ `export function Menu() {}`,
+        "/node_modules/other-pkg/package.json": JSON.stringify({ name: "other-pkg", main: "./index.js" }),
+        "/node_modules/other-pkg/index.js": slow === "Target" ? slowToParse(target) : target,
+      },
+      outdir: "/out",
+      run: { stdout: "function function called" },
+    });
+  }
+  itBundled("barrel/OwnStatementReadsImportNextToExportFromAndStar", {
+    files: {
+      "/entry.js": /* js */ `
+        import { Client } from 'apollo-like';
+        console.log(typeof Client, globalThis.seen);
+      `,
+      "/node_modules/apollo-like/package.json": JSON.stringify({
+        name: "apollo-like",
+        main: "./index.js",
+        sideEffects: false,
+      }),
+      "/node_modules/apollo-like/index.js": /* js */ `
+        export { Client } from './client.js';
+        export { Unused } from './unused.js';
+        export * from './link.js';
+        import { setVerbosity } from 'ts-inv';
+        export { setVerbosity as setLogVerbosity };
+        setVerbosity("log");
+      `,
+      "/node_modules/apollo-like/client.js": /* js */ `
+        import { invariant } from 'ts-inv';
+        export class Client { constructor() { invariant(true, "x"); } }
+      `,
+      "/node_modules/apollo-like/link.js": /* js */ `
+        import { invariant } from 'ts-inv';
+        export const link = () => invariant(true, "y");
+      `,
+      "/node_modules/apollo-like/unused.js": /* js */ `export const Unused = <<<SYNTAX_ERROR>>>;`,
+      "/node_modules/ts-inv/package.json": JSON.stringify({ name: "ts-inv", main: "./index.js" }),
+      "/node_modules/ts-inv/index.js": /* js */ `
+        export const setVerbosity = level => { globalThis.seen = level; };
+        export const invariant = (c, m) => { if (!c) throw new Error(m); };
+      `,
+    },
+    outdir: "/out",
+    run: { stdout: "function log" },
+  });
+
+  // The module the statement reads from does not resolve: one error, as for
+  // any import of a file that is in the build.
+  itBundled("barrel/OwnStatementReadsImportThatDoesNotResolve", {
+    files: {
+      "/entry.js": ownReadEntry,
+      ...ownReadPackage(ownReadIndex.replace("./item.js", "./missing.js")),
+    },
+    outdir: "/out",
+    bundleErrors: {
+      "/node_modules/ui/index.js": ['Could not resolve: "./missing.js"'],
+    },
+  });
+
+  // optimizeImports with no sideEffects field: the barrel's statement runs for
+  // every kind of import, a bare one included.
+  for (const [name, entry] of [
+    ["Static", ownReadEntry],
+    ["DynamicImport", `const { Menu } = await import('ui'); console.log(typeof Menu, globalThis.seen);`],
+    ["Require", `const { Menu } = require('ui'); console.log(typeof Menu, globalThis.seen);`],
+    ["BareImport", `import 'ui'; console.log("function", globalThis.seen);`],
+  ] as const) {
+    itBundled(`barrel/OwnStatementReadsImportOptimizeImports${name}`, {
+      files: { "/entry.js": entry, ...ownReadPackage(ownReadIndex, {}) },
+      optimizeImports: ["ui"],
+      target: "bun",
+      outdir: "/out",
+      run: { stdout: "function function" },
+    });
+  }
 
   // The barrel deferral must produce the same output no matter in which order
   // the parse tasks finish. When a request un-defers a barrel record, every

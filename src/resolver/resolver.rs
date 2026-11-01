@@ -2839,8 +2839,7 @@ impl<'a> Resolver<'a> {
             info.get_entry(this.generation, name)
                 .map(|e| e.entry().kind(this.rfs_ref(), this.store_fd))
         };
-        // The listing is read again by the first lookup. A directory that is another one now
-        // (a retargeted link, a directory replaced) invalidates the real path the DirInfo holds.
+        // Another inode after the re-read (a retargeted link) invalidates the real path in the DirInfo.
         let ino_before = info.get_entries_const().map(|e| e.identity.ino());
         let has_node_modules_now = kind_of(self, b"node_modules") == Some(Fs::EntryKind::Dir);
         let ino_after = info.get_entries_const().map(|e| e.identity.ino());

@@ -1454,13 +1454,13 @@ describe("the message, name, cause and errors of an Error", () => {
       expect([actual.reads(), expected.reads()]).toEqual([4, 4]);
     });
 
-    test.each(keys)("compares a hidden %s once at each level", key => {
+    test.each(keys)("reads a hidden %s of the actual error once at each level", key => {
       const reads = depths.map(depth => {
         const actual = getterChain(key, false, depth);
         assert.partialDeepStrictEqual(actual.error, getterChain(key, false, depth).error);
         return actual.reads();
       });
-      // Only the actual side is counted. Node reads a hidden key of the expected error two or three times, Bun once.
+      // The expected side is not counted: Node reads a hidden key of the expected error two or three times, Bun once.
       expect(reads).toEqual([2, 4, 9]);
     });
 
@@ -1554,13 +1554,16 @@ describe("the message, name, cause and errors of an Error", () => {
         if (!state.place.startsWith("inherited")) return Object.defineProperty(error, key, property);
         return Object.setPrototypeOf(error, Object.create(Error.prototype, { [key]: property }));
       };
+      const actuals = states.map(holding);
+      const expecteds = states.map(holding);
       const differences: unknown[] = [];
-      for (const actual of states) {
-        for (const expected of states) {
-          const result = partiallyEqual(holding(actual), holding(expected));
-          if (result !== nodeRule(holding(actual), holding(expected))) differences.push({ actual, expected, result });
-        }
-      }
+      actuals.forEach((actual, i) => {
+        expecteds.forEach((expected, j) => {
+          const result = partiallyEqual(actual, expected);
+          if (result === nodeRule(actual, expected)) return;
+          differences.push({ actual: states[i], expected: states[j], result });
+        });
+      });
       expect(differences).toEqual([]);
     });
 

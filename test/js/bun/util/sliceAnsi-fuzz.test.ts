@@ -94,11 +94,12 @@ describe("sliceAnsi invariants", () => {
   });
 
   // Property: identity. slice(s, 0, Infinity) == s (modulo ANSI normalization).
+  // The end is a finite column past any width: sliceAnsi(s, 0) returns `s` itself and tokenizes nothing.
   test("full slice preserves visible content", () => {
     const rng = makeRng(0x1234);
     for (let i = 0; i < 100; i++) {
       const s = randomString(rng, 0, 100);
-      const out = Bun.sliceAnsi(s, 0);
+      const out = Bun.sliceAnsi(s, 0, s.length * 2 + 1);
       expect(Bun.stripANSI(out)).toBe(Bun.stripANSI(s));
       expect(visibleWidth(out)).toBe(visibleWidth(s));
     }

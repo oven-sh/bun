@@ -31,8 +31,10 @@ pub(crate) struct ConnectionFlags {
     /// Sticky until `on_open`/`connect()`. `fail()` closes the socket outright
     /// (see `close()`), so by the time it returns the close callback has run
     /// (`on_close` reads this to skip the retry policy) and this overlaps
-    /// `Disconnected`.
+    /// `Disconnected`. Not set when `fail_with_js_value` leaves a retry's attempt to `on_close`.
     pub(crate) failed: bool,
+    /// A HELLO has been accepted on this client. Never cleared; a `duplicate()` starts without it.
+    pub(crate) has_connected: bool,
     pub(crate) enable_auto_pipelining: bool,
     pub(crate) finalized: bool,
     // This flag is a slight hack to allow returning the client instance in the
@@ -56,6 +58,7 @@ impl Default for ConnectionFlags {
             enable_auto_reconnect: true,
             is_reconnecting: false,
             failed: false,
+            has_connected: false,
             enable_auto_pipelining: true,
             finalized: false,
             connection_promise_returns_client: false,
@@ -280,6 +283,16 @@ pub(crate) struct ValkeyClient {
     pub(crate) auto_flusher: AutoFlusher,
 
     pub(crate) vm: &'static VirtualMachine,
+}
+
+/// What `on_close` does with a close; `close_outcome()` decides it.
+#[derive(Copy, Clone, Eq, PartialEq)]
+enum CloseOutcome {
+    /// A manual close, a failure the client detected itself, or a disposed `Bun.ModuleGraph`.
+    Final,
+    AutoReconnectOff,
+    RetriesUsedUp,
+    Retry,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -603,6 +616,15 @@ impl ValkeyClient {
         if self.flags.failed {
             return Ok(());
         }
+        // A retry of a client that has connected before: `on_close` counts the attempt, the queue waits.
+        if self.status == Status::Connecting
+            && self.flags.has_connected
+            && self.retry_attempts > 0
+            && self.close_outcome() == CloseOutcome::Retry
+        {
+            debug!("handshake not accepted, leaving the attempt to the retry policy");
+            return self.close(uws::CloseCode::Failure);
+        }
         self.flags.failed = true;
         self.flags.is_reconnecting = false;
         let val = Self::reject_all_pending_commands(
@@ -612,11 +634,22 @@ impl ValkeyClient {
             jsvalue,
         );
 
-        // A failure the client detected itself (idle timeout, protocol or
-        // handshake error) has always been a deliberate close; `on_close` reads
-        // `failed` and skips the retry policy.
+        // Terminal: `on_close` reads `failed` and skips the retry policy.
         let closed = self.close(uws::CloseCode::Failure); // unconditionally, whatever `val` is
         val.and(closed)
+    }
+
+    /// Retry or terminal, decided here for `on_close` and for `fail_with_js_value`.
+    fn close_outcome(&mut self) -> CloseOutcome {
+        if self.flags.is_manually_closed || self.flags.failed || self.parent().context_stopped() {
+            CloseOutcome::Final
+        } else if !self.flags.enable_auto_reconnect {
+            CloseOutcome::AutoReconnectOff
+        } else if self.retry_attempts >= self.max_retries {
+            CloseOutcome::RetriesUsedUp
+        } else {
+            CloseOutcome::Retry
+        }
     }
 
     /// `fail()` passes `Failure`, the one code whose close callback has run by
@@ -665,50 +698,40 @@ impl ValkeyClient {
         self.read_buffer.clear_and_free();
         self.reply_scanner.reset();
 
-        // A manual close, a failure the client detected itself, or the script that made the client
-        // is gone (a disposed `Bun.ModuleGraph`'s): no retry, and what was queued is released.
-        if self.flags.is_manually_closed || self.flags.failed || self.parent().context_stopped() {
-            debug!("skip reconnecting since the connection is manually closed or failed");
-            self.fail(b"Connection closed", RedisError::ConnectionClosed)?;
-            self.on_valkey_close()?;
-            return Ok(());
-        }
+        let message: &[u8] = match self.close_outcome() {
+            CloseOutcome::Retry => {
+                self.retry_attempts += 1;
+                debug!(
+                    "reconnect in {}ms (attempt {}/{})",
+                    self.get_reconnect_delay(),
+                    self.retry_attempts,
+                    self.max_retries
+                );
 
-        // If auto reconnect is disabled, just fail
-        if !self.flags.enable_auto_reconnect {
-            debug!("skip reconnecting since auto reconnect is disabled");
-            self.fail(b"Connection closed", RedisError::ConnectionClosed)?;
-            self.on_valkey_close()?;
-            return Ok(());
-        }
+                self.flags.is_reconnecting = true;
+                self.flags.is_selecting_db_internal = false;
 
-        // Calculate reconnection delay with exponential backoff
-        self.retry_attempts += 1;
-        let delay_ms = self.get_reconnect_delay();
+                self.reject_in_flight_commands(b"Connection closed", RedisError::ConnectionClosed)?;
 
-        if delay_ms == 0 || self.retry_attempts > self.max_retries {
-            debug!("Max retries reached or retry strategy returned 0, giving up reconnection");
-            self.fail(
-                b"Max reconnection attempts reached",
-                RedisError::ConnectionClosed,
-            )?;
-            self.on_valkey_close()?;
-            return Ok(());
-        }
-
-        debug!(
-            "reconnect in {}ms (attempt {}/{})",
-            delay_ms, self.retry_attempts, self.max_retries
-        );
-
-        self.flags.is_reconnecting = true;
-        self.flags.is_selecting_db_internal = false;
-
-        self.reject_in_flight_commands(b"Connection closed", RedisError::ConnectionClosed)?;
-
-        // Signal reconnect timer should be started
-        self.on_valkey_reconnect();
-        Ok(())
+                // Signal reconnect timer should be started
+                self.on_valkey_reconnect();
+                return Ok(());
+            }
+            CloseOutcome::Final => {
+                debug!("skip reconnecting since the connection is manually closed or failed");
+                b"Connection closed"
+            }
+            CloseOutcome::AutoReconnectOff => {
+                debug!("skip reconnecting since auto reconnect is disabled");
+                b"Connection closed"
+            }
+            CloseOutcome::RetriesUsedUp => {
+                debug!("Max retries reached, giving up reconnection");
+                b"Max reconnection attempts reached"
+            }
+        };
+        self.fail(message, RedisError::ConnectionClosed)?;
+        self.on_valkey_close()
     }
 
     pub(crate) fn send_next_command(&mut self) {
@@ -992,6 +1015,14 @@ impl ValkeyClient {
         }
     }
 
+    fn hello_accepted(&mut self, value: &mut RESPValue) -> JsResult<()> {
+        self.status = Status::Connected;
+        self.flags.has_connected = true;
+        self.flags.is_reconnecting = false;
+        self.retry_attempts = 0;
+        self.on_valkey_connect(value)
+    }
+
     fn handle_hello_response(&mut self, value: &mut RESPValue) -> JsResult<()> {
         debug!("Processing HELLO response");
 
@@ -1002,11 +1033,7 @@ impl ValkeyClient {
             }
             RESPValue::SimpleString(str_) => {
                 if str_.as_ref() == b"OK" {
-                    self.status = Status::Connected;
-                    self.flags.is_reconnecting = false;
-                    self.retry_attempts = 0;
-                    self.on_valkey_connect(value)?;
-                    return Ok(());
+                    return self.hello_accepted(value);
                 }
                 self.fail(
                     b"Authentication failed (unexpected response)",
@@ -1041,11 +1068,7 @@ impl ValkeyClient {
                 }
 
                 // Authentication successful via HELLO
-                self.status = Status::Connected;
-                self.flags.is_reconnecting = false;
-                self.retry_attempts = 0;
-                self.on_valkey_connect(value)?;
-                Ok(())
+                self.hello_accepted(value)
             }
             _ => {
                 self.fail(

@@ -1607,7 +1607,7 @@ interface BuildMetafile {
         path: string;
         kind: ImportKind;
         original?: string; // Original specifier before resolution
-        entryPoint?: string; // import() / require() split into another output file: the input that file was built from
+        entryPoint?: string; // import() / require() split into another output file: the input that file was built from. `path` is the key of that file in `outputs`
         external?: boolean;
       }>;
       format?: "esm" | "cjs" | "json" | "css";

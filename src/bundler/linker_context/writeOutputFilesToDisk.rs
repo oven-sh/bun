@@ -322,6 +322,10 @@ pub(crate) fn write_output_files_to_disk(
                     code_result.buffer = buf.into_boxed_slice();
                 }
 
+                if let Some(linked) = c.options.linked {
+                    c.report_linked_chunk(linked, chunk, &code_result.buffer, &output_source_map);
+                }
+
                 match bun_sys::File::write_file(
                     bun_sys::Fd::from_std_dir(&root_dir),
                     paths::resolve_path::z(&source_map_final_rel_path, &mut pathbuf),

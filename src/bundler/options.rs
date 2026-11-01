@@ -1291,9 +1291,34 @@ pub struct TypeChecked<'a, 'i> {
     pub sources: &'i mut dyn Iterator<Item = (&'a [u8], &'a [u8], Loader)>,
 }
 
-/// `BundleOptions::type_check`. Errors are added to `log`, or reported in another way. Returns
-/// whether the build goes on.
-pub type TypeCheck = fn(checked: TypeChecked<'_, '_>, log: &mut bun_ast::Log) -> bool;
+/// A JavaScript chunk whose text and source map are final, for `TypeCheck::linked`.
+pub struct LinkedChunk<'a, 'i> {
+    pub cwd: &'a [u8],
+    /// Where the chunk is written, from the output directory.
+    pub path: &'a [u8],
+    pub javascript: &'a [u8],
+    /// The `mappings` of its source map.
+    pub mappings: &'a [u8],
+    /// What the `sources` of its source map name, in their order.
+    pub sources: &'i mut dyn Iterator<Item = LinkedSource<'a>>,
+}
+
+pub struct LinkedSource<'a> {
+    pub path: &'a [u8],
+    pub is_file: bool,
+    /// The text that the positions of the map were counted on.
+    pub contents: &'a [u8],
+    /// What counted them: `bun_sourcemap::LineOffsetTable::byte_offset_of` reads it.
+    pub line_offsets: &'a bun_sourcemap::line_offset_table::List<bun_alloc::AstAlloc>,
+}
+
+/// `BundleOptions::type_check`.
+pub struct TypeCheck {
+    /// Errors are added to `log`, or reported in another way. Returns whether the build goes on.
+    pub check: fn(checked: TypeChecked<'_, '_>, log: &mut bun_ast::Log) -> bool,
+    /// Called for each JavaScript chunk that has a source map of its own, once both are final.
+    pub linked: Option<fn(linked: LinkedChunk<'_, '_>)>,
+}
 
 /// BundleOptions is effectively webpack + babel
 pub struct BundleOptions<'a> {
@@ -1441,7 +1466,7 @@ pub struct BundleOptions<'a> {
     /// `--check`, `check: true`: type checks the program when every file is parsed, before
     /// anything is linked. `bun_runtime` provides it: the bundler does not depend on the type
     /// checker.
-    pub type_check: Option<TypeCheck>,
+    pub type_check: Option<&'static TypeCheck>,
     /// `--conditions`, `conditions`: those of `conditions` that are not there by default.
     pub custom_conditions: Vec<Box<[u8]>>,
 

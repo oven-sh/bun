@@ -726,6 +726,51 @@ pub fn parse(
     Ok(psm)
 }
 
+/// The text that the positions into one source of a map were counted on, and the table that counted them.
+pub struct CountedSource<'a, A: core::alloc::Allocator = std::alloc::Global> {
+    pub contents: &'a [u8],
+    pub line_offsets: &'a crate::line_offset_table::List<A>,
+}
+
+/// Each mapping of `mappings`, in order: its offset in `generated` (valid UTF-8), its source, and where it is in that text.
+pub fn byte_offsets<A: core::alloc::Allocator + 'static>(
+    mappings: &[u8],
+    generated: &[u8],
+    sources: &[CountedSource<'_, A>],
+) -> Result<Vec<(u32, u32, crate::ByteOffset)>, ParseFail> {
+    use crate::{ByteOffset, LineOffsetTable};
+    let count = i32::try_from(sources.len()).unwrap_or(i32::MAX);
+    let parsed = parse(mappings, None, count, ParseOptions::default())?;
+    let parsed = &parsed.mappings;
+    let generated_lines = LineOffsetTable::generate(generated, 0).map_err(|err| ParseFail {
+        err: crate::Error::Alloc(err),
+        loc: Loc::default(),
+    })?;
+    let generated_lines = crate::chunk::OwnedLineOffsetTables(generated_lines);
+    let mut found = Vec::with_capacity(parsed.generated().len());
+    let positions = (parsed.generated().iter()).zip(parsed.original());
+    for ((at, original), &source_index) in positions.zip(parsed.source_index()) {
+        let zero_based = |position: &LineColumnOffset| {
+            (
+                position.lines.zero_based() as u32,
+                position.columns.zero_based() as u32,
+            )
+        };
+        let (line, column) = zero_based(at);
+        let ByteOffset::At(at) =
+            LineOffsetTable::byte_offset_of(&generated_lines.0, generated, line, column)
+        else {
+            continue;
+        };
+        let source = &sources[source_index as usize];
+        let (line, column) = zero_based(original);
+        let original =
+            LineOffsetTable::byte_offset_of(source.line_offsets, source.contents, line, column);
+        found.push((at, source_index as u32, original));
+    }
+    Ok(found)
+}
+
 enum SimdResult {
     Done {
         resume_at: usize,

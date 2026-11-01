@@ -1,5 +1,6 @@
 use bstr::BStr;
 use bun_ast::LoaderHashTable;
+use bun_bundler::options::LinkedChunk;
 use bun_paths::platform::Auto;
 use bun_paths::resolve_path::join_abs_string;
 use bun_sema::check::Checker;
@@ -14,10 +15,13 @@ use bun_sema::session::Session;
 use bun_sema::util::SharedSort;
 use bun_sema_driver::host::{Disk, Provided, from_native};
 use bun_sema_driver::typed_files::{
-    ModuleTypes, Output, annotate_implicit_any, build_typed_files, emitted_declarations_of,
-    module_types, tsconfig_of_sources, typed_path_beside,
+    ModuleTypes, Output, Source, SourceText, TypedFilesError, annotate_implicit_any,
+    build_typed_files, emitted_declarations_of, is_typescript, module_types, tsconfig_of_sources,
+    typed_path_beside,
 };
 use bun_sema_driver::{Diagnostic, PlanOptions, Report, Request};
+use bun_sourcemap::ByteOffset;
+use bun_sourcemap::mapping::{CountedSource, byte_offsets};
 use bun_threading::Guarded;
 
 use super::declarations::{LIBS_WITHOUT_CONFIGURATION, bundler_path};
@@ -27,9 +31,10 @@ const SKIPPED_TYPED_FILES: &str =
     "the .aot.ts files that --aot compiles a package from are left out";
 
 pub(crate) struct WrittenJavaScript<'a> {
-    pub(crate) path: &'a [u8],
+    pub(crate) path: Vec<u8>,
+    /// `LinkedOutput::javascript`, or the start of it.
     pub(crate) text: &'a [u8],
-    pub(crate) source_map: &'a [u8],
+    pub(crate) linked: &'a LinkedOutput,
     pub(crate) entry_point: Option<&'a [u8]>,
 }
 
@@ -41,6 +46,100 @@ pub(crate) struct TypedFilesRequest<'a> {
     pub(crate) outdir: &'a [u8],
     pub(crate) written: &'a [WrittenJavaScript<'a>],
     pub(crate) modules: &'a [ModuleTypes],
+    /// `CheckedBuild::not_linked`
+    pub(crate) not_linked: Option<&'a TypedFilesError>,
+}
+
+/// A JavaScript output as the linker finished it, with its mappings as byte offsets.
+pub(crate) struct LinkedOutput {
+    /// From the output directory.
+    pub(crate) path: Box<[u8]>,
+    pub(crate) javascript: Box<[u8]>,
+    /// `Output::mappings`
+    mappings: Vec<(u32, u32, u32)>,
+    sources: Vec<LinkedSource>,
+}
+
+struct LinkedSource {
+    /// In the checker's format.
+    path: Vec<u8>,
+    text: LinkedText,
+}
+
+/// `SourceText`
+enum LinkedText {
+    /// The index of the module among those of the build. The bundler read what was type checked.
+    Checked(usize),
+    Unchecked(Box<[u8]>),
+    NotRead,
+}
+
+/// The text of a source as `already_read` gives it to the checker, and how many bytes of a mark are before it.
+fn without_mark(contents: &[u8]) -> (&[u8], u32) {
+    let text = bun_core::strings::without_utf8_bom(contents);
+    (text, (contents.len() - text.len()) as u32)
+}
+
+/// `modules`: what `check_and_emit_declarations` noted for the build.
+pub(super) fn linked_output(
+    modules: &[ModuleTypes],
+    linked: LinkedChunk<'_, '_>,
+) -> Result<LinkedOutput, TypedFilesError> {
+    let LinkedChunk {
+        cwd,
+        path,
+        javascript,
+        mappings,
+        sources,
+    } = linked;
+    // No two counters of lines and columns step the same way over bytes that are not UTF-8.
+    if !bun_core::strings::is_valid_utf8(javascript) {
+        return Err(TypedFilesError::JavaScriptNotUtf8);
+    }
+    let (mut counted, mut described) = (Vec::new(), Vec::new());
+    for source in sources {
+        let path = match source.is_file {
+            true => from_native(join_abs_string::<Auto>(cwd, &[source.path])),
+            false => source.path.to_vec(),
+        };
+        let (text, _) = without_mark(source.contents);
+        let module = (modules.iter()).position(|module| module.path[..] == path[..]);
+        let text = match module {
+            _ if !is_typescript(&path) => LinkedText::NotRead,
+            Some(index) if modules[index].text[..] == *text => LinkedText::Checked(index),
+            // A plugin gave the bundler another text than the file on disk, which is what was type checked.
+            Some(_) => return Err(TypedFilesError::NotTheCheckedText { path }),
+            None => LinkedText::Unchecked(text.into()),
+        };
+        counted.push(CountedSource {
+            contents: source.contents,
+            line_offsets: source.line_offsets,
+        });
+        described.push(LinkedSource { path, text });
+    }
+    let found = byte_offsets(mappings, javascript, &counted)
+        .map_err(|_| TypedFilesError::MappingsNotRead)?;
+    let in_text = |(generated, index, original): (u32, u32, ByteOffset)| {
+        let source = &described[index as usize];
+        let (text, mark) = without_mark(counted[index as usize].contents);
+        let original = match original {
+            ByteOffset::At(at) => at.saturating_sub(mark),
+            ByteOffset::PastEnd => text.len() as u32,
+            ByteOffset::Ambiguous if matches!(source.text, LinkedText::NotRead) => 0,
+            ByteOffset::Ambiguous => {
+                let path = source.path.clone();
+                return Err(TypedFilesError::SourceNotUtf8 { path });
+            }
+        };
+        Ok((generated, index, original))
+    };
+    let mappings = found.into_iter().map(in_text).collect::<Result<_, _>>()?;
+    Ok(LinkedOutput {
+        path: path.into(),
+        javascript: javascript.into(),
+        mappings,
+        sources: described,
+    })
 }
 
 pub(crate) struct TypedFile {
@@ -214,8 +313,8 @@ pub(crate) fn warn_unless_package_states(
     );
 }
 
-pub(crate) fn typed_files_for_build(
-    asked: &TypedFilesRequest<'_>,
+pub(crate) fn typed_files_for_build<'a>(
+    asked: &TypedFilesRequest<'a>,
     log: &mut bun_ast::Log,
 ) -> TypedFiles {
     let &TypedFilesRequest {
@@ -226,17 +325,39 @@ pub(crate) fn typed_files_for_build(
         outdir,
         written,
         modules,
+        not_linked,
     } = asked;
+    if let Some(why) = not_linked {
+        log.add_warning_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!("{SKIPPED_TYPED_FILES}: {why}"),
+        );
+        return TypedFiles::default();
+    }
     let (bundler_outdir, outdir) = (outdir, &from_native(outdir)[..]);
     let paths: Vec<(Vec<u8>, Option<Vec<u8>>)> = written
         .iter()
-        .map(|file| (from_native(file.path), file.entry_point.map(from_native)))
+        .map(|file| (from_native(&file.path), file.entry_point.map(from_native)))
         .collect();
-    let outputs: Vec<Output<'_>> = (written.iter().zip(&paths))
-        .map(|(file, (path, entry_point))| Output {
+    let sources_of = |file: &WrittenJavaScript<'a>| -> Vec<Source<'a>> {
+        let sources = file.linked.sources.iter().map(|source| Source {
+            path: &source.path,
+            text: match &source.text {
+                LinkedText::Checked(index) => SourceText::Checked(&modules[*index]),
+                LinkedText::Unchecked(text) => SourceText::Unchecked(text),
+                LinkedText::NotRead => SourceText::NotRead,
+            },
+        });
+        sources.collect()
+    };
+    let sources: Vec<Vec<Source<'_>>> = written.iter().map(sources_of).collect();
+    let outputs: Vec<Output<'_>> = (written.iter().zip(&paths).zip(&sources))
+        .map(|((file, (path, entry_point)), sources)| Output {
             path,
             javascript: file.text,
-            source_map: file.source_map,
+            mappings: &file.linked.mappings,
+            sources,
             entry_point: entry_point.as_deref(),
         })
         .collect();

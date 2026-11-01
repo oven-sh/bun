@@ -1194,6 +1194,42 @@ impl<'a> LinkerContext<'a> {
             .expect("TODO: handle error");
     }
 
+    /// Calls `linked` for `chunk`: `javascript` is its final text, `source_map` its finished map.
+    pub(crate) fn report_linked_chunk(
+        &self,
+        linked: fn(crate::options::LinkedChunk<'_, '_>),
+        chunk: &Chunk,
+        javascript: &[u8],
+        source_map: &[u8],
+    ) {
+        if !chunk.content.is_javascript() {
+            return;
+        }
+        let sources = self.parse_graph().input_files.items_source();
+        let line_offsets = self.graph.files.items_line_offset_table();
+        let mut sources = (chunk.output_source_map.sources.iter()).map(|&index| {
+            let source = &sources[index as usize];
+            let is_file = source.path.is_file();
+            crate::options::LinkedSource {
+                path: if is_file {
+                    source.path.text
+                } else {
+                    source.path.pretty
+                },
+                is_file,
+                contents: source.contents(),
+                line_offsets: &line_offsets[index as usize],
+            }
+        });
+        linked(crate::options::LinkedChunk {
+            cwd: bun_resolver::fs::FileSystem::get().top_level_dir(),
+            path: &chunk.final_rel_path,
+            javascript,
+            mappings: chunk.output_source_map.mappings_in(source_map),
+            sources: &mut sources,
+        });
+    }
+
     /// The relative path from the chunk directory to a file source, as written
     /// into the source map's `sources` array. `sources` entries are URLs, so the
     /// host separator is normalized to `/` (the invariant `Path::pretty` holds).
@@ -1368,6 +1404,11 @@ impl<'a> LinkerContext<'a> {
         debug_assert!(done[0] == b'{');
 
         let mut pieces = SourceMapPieces::init();
+        pieces.before_mappings = mapping_start;
+        pieces.after_mappings = done.len() - mapping_end;
+        if self.options.linked.is_some() {
+            pieces.sources = source_id_map.keys().to_vec();
+        }
         if can_have_shifts {
             pieces.prefix.extend_from_slice(&done[0..mapping_start]);
             pieces
@@ -1446,6 +1487,8 @@ pub struct LinkerOptions {
     pub(crate) entry_naming_has_hash: bool,
     pub(crate) module_preload: bool,
     pub(crate) source_maps: SourceMapOption,
+    /// `TypeCheck::linked`
+    pub(crate) linked: Option<fn(crate::options::LinkedChunk<'_, '_>)>,
     pub(crate) target: Target,
     pub(crate) compile_mode: CompileMode,
     pub(crate) metafile: bool,
@@ -1507,6 +1550,7 @@ impl Default for LinkerOptions {
             entry_naming_has_hash: false,
             module_preload: true,
             source_maps: SourceMapOption::None,
+            linked: None,
             target: Target::Browser,
             compile_mode: CompileMode::None,
             metafile: false,

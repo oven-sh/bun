@@ -32,3 +32,7 @@ bun_ptr.workspace = true
 bun_semver.workspace = true
 bun_sys.workspace = true
 bun_zstd.workspace = true
+
+[dev-dependencies]
+# The native symbols that Bun's C and C++ side provides to `bun_core`.
+bun_sema_standalone = { path = "../sema/standalone" }

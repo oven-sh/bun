@@ -2571,7 +2571,7 @@ pub mod bv2_impl {
                 entry_points: &mut entry_points,
                 sources: &mut sources,
             };
-            if type_check(checked, self.transpiler.log_mut()) {
+            if (type_check.check)(checked, self.transpiler.log_mut()) {
                 return Ok(());
             }
             Err(crate::Error::BuildFailed)
@@ -3356,6 +3356,8 @@ pub mod bv2_impl {
             );
             this.linker.options.module_preload = this.transpiler.options.module_preload;
             this.linker.options.source_maps = this.transpiler.options.source_map;
+            this.linker.options.linked =
+                (this.transpiler.options.type_check).and_then(|hook| hook.linked);
             this.linker.options.tree_shaking = this.transpiler.options.tree_shaking;
             // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.
             this.linker.options.public_path =

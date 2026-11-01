@@ -6,19 +6,31 @@ use bun_sema::check::services::{
     Child, NodeRef, Services, SymbolFlags, SymbolOp, SymbolRef, SymbolTable, TypeFlags,
     TypeFormatFlags,
 };
-use bun_sema::check::spans::{compute_ecma_line_starts, skip_trivia, skip_trivia_back, token_end};
+use bun_sema::check::spans::{skip_trivia, skip_trivia_back, token_end};
 use bun_sema::config::find_config_of_package;
 use bun_sema::hir::*;
-use bun_sema::json::Json;
 use bun_sema::program::FileId;
-use bun_sema::resolve::{Dialect, ScriptKind};
+use bun_sema::resolve::{Dialect, ScriptKind, displayed_path};
 use bun_sema::session::Session;
 use bun_sema::types::TypeId;
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 
-struct Source<'a> {
-    path: &'a [u8],
-    text: &'a [u8],
+/// What a mapping of a JavaScript output names.
+pub struct Source<'a> {
+    /// In the checker's format.
+    pub path: &'a [u8],
+    pub text: SourceText<'a>,
+}
+
+/// The text that the mappings into a source were counted on.
+#[derive(Copy, Clone)]
+pub enum SourceText<'a> {
+    /// `ModuleTypes::text` of this module, which is one of the modules of the build.
+    Checked(&'a ModuleTypes),
+    /// Of TypeScript that was not type checked.
+    Unchecked(&'a [u8]),
+    /// Of a file that is not TypeScript. Nothing reads it.
+    NotRead,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -140,7 +152,8 @@ fn merged(mut ranges: Vec<(u32, u32)>) -> Vec<(u32, u32)> {
     merged
 }
 
-fn is_typescript(path: &[u8]) -> bool {
+/// Whether the text of a source at `path` is read for its types.
+pub fn is_typescript(path: &[u8]) -> bool {
     [&b".ts"[..], b".tsx", b".mts", b".cts"]
         .iter()
         .any(|extension| path.ends_with(extension))
@@ -1206,96 +1219,11 @@ struct Mappings {
     entries: Vec<(u32, u32, u32)>,
 }
 
-fn offset_in_line(text: &[u8], from: usize, columns: usize) -> usize {
-    let (mut at, mut left) = (from, columns);
-    while left > 0 && at < text.len() {
-        let (bytes, units) = match text[at] {
-            0..=0x7F => (1, 1),
-            0x80..=0xDF => (2, 1),
-            0xE0..=0xEF => (3, 1),
-            _ => (4, 2),
-        };
-        at += bytes;
-        left = left.saturating_sub(units);
-    }
-    at.min(text.len())
-}
-
 impl Mappings {
-    fn decode(
-        mappings: &[u8],
-        javascript: &[u8],
-        sources: &[Source<'_>],
-    ) -> Result<Mappings, TypedFilesError> {
-        let generated_lines = compute_ecma_line_starts(javascript);
-        let source_lines: Vec<Vec<u32>> = sources
-            .iter()
-            .map(|source| compute_ecma_line_starts(source.text))
-            .collect();
-        let mut entries = Vec::new();
-        let (mut source, mut line, mut column) = (0i64, 0i64, 0i64);
-        for (generated_line, segments) in bun_core::strings::split(mappings, b";").enumerate() {
-            let Some(&line_offset) = generated_lines.get(generated_line) else {
-                break;
-            };
-            let (mut generated_column, mut generated_offset, mut walked) =
-                (0i64, line_offset as usize, 0i64);
-            for segment in
-                bun_core::strings::split(segments, b",").filter(|segment| !segment.is_empty())
-            {
-                let mut fields = [0i64; 5];
-                let (mut count, mut value, mut shift) = (0, 0i64, 0);
-                for &byte in segment {
-                    let digit = match byte {
-                        b'A'..=b'Z' => byte - b'A',
-                        b'a'..=b'z' => byte - b'a' + 26,
-                        b'0'..=b'9' => byte - b'0' + 52,
-                        b'+' => 62,
-                        b'/' => 63,
-                        _ => return Err(TypedFilesError::MappingsNotBase64),
-                    } as i64;
-                    value |= (digit & 31) << shift;
-                    shift += 5;
-                    if digit & 32 == 0 {
-                        if count < 5 {
-                            fields[count] = if value & 1 == 1 {
-                                -(value >> 1)
-                            } else {
-                                value >> 1
-                            };
-                        }
-                        (count, value, shift) = (count + 1, 0, 0);
-                    }
-                }
-                generated_column += fields[0];
-                if count < 4 {
-                    continue;
-                }
-                source += fields[1];
-                line += fields[2];
-                column += fields[3];
-                generated_offset = offset_in_line(
-                    javascript,
-                    generated_offset,
-                    (generated_column - walked).max(0) as usize,
-                );
-                walked = generated_column;
-                let Some(lines) = source_lines.get(source as usize) else {
-                    continue;
-                };
-                let Some(&start) = lines.get(line as usize) else {
-                    continue;
-                };
-                let original = offset_in_line(
-                    sources[source as usize].text,
-                    start as usize,
-                    column.max(0) as usize,
-                );
-                entries.push((generated_offset as u32, source as u32, original as u32));
-            }
-        }
+    fn new(in_order_of_the_map: &[(u32, u32, u32)]) -> Mappings {
+        let mut entries = in_order_of_the_map.to_vec();
         entries.shared_sort_by_key(|entry| entry.0);
-        Ok(Mappings { entries })
+        Mappings { entries }
     }
 
     fn original(&self, generated: u32) -> Option<(u32, u32)> {
@@ -2833,13 +2761,13 @@ fn link(
 fn add_types(
     path: &[u8],
     javascript: &[u8],
-    mappings: &[u8],
+    mappings: &[(u32, u32, u32)],
     sources: &[Source<'_>],
     bundle: &Bundle<'_>,
 ) -> Result<TypedText, TypedFilesError> {
     let session = Session::new();
     let atoms = Interner::new_in(&session);
-    let mut mappings = Mappings::decode(mappings, javascript, sources)?;
+    let mut mappings = Mappings::new(mappings);
     let mut output_file = parse(&session, &atoms, &[path, b".ts"].concat(), javascript)?;
     let line_breaks = Syntax {
         file: &output_file,
@@ -2862,16 +2790,13 @@ fn add_types(
         text: javascript,
     };
     let modules = bundle.modules;
+    let module_at = |path: &[u8]| modules.iter().find(|module| &module.path[..] == path);
     let mut texts: Vec<(&[u8], &[u8], Option<&ModuleTypes>)> = sources
         .iter()
-        .map(|source| {
-            (
-                source.path,
-                source.text,
-                modules
-                    .iter()
-                    .find(|module| &module.path[..] == source.path),
-            )
+        .map(|source| match source.text {
+            SourceText::Checked(module) => (source.path, &module.text[..], Some(module)),
+            SourceText::Unchecked(text) => (source.path, text, None),
+            SourceText::NotRead => (source.path, &b""[..], module_at(source.path)),
         })
         .collect();
     texts.extend(
@@ -3002,7 +2927,19 @@ fn add_types(
     transfer.copy_statements();
     transfer.copy_directives();
     transfer.copy_members();
-    transfer.finish()
+    let typed = transfer.finish()?;
+    if bun_core::strings::is_valid_utf8(&typed.text) {
+        return Ok(typed);
+    }
+    // A byte that is not UTF-8 was copied from a source, and not every reader decodes it the same way.
+    let copied_from = (texts.iter())
+        .find(|(path, text, _)| is_typescript(path) && !bun_core::strings::is_valid_utf8(text));
+    Err(match copied_from {
+        Some(&(path, _, _)) => TypedFilesError::SourceNotUtf8 {
+            path: path.to_vec(),
+        },
+        None => TypedFilesError::JavaScriptNotUtf8,
+    })
 }
 
 struct Transfer<'t, 'a, 's> {
@@ -4056,58 +3993,6 @@ fn absolute(directory: &[u8], path: &[u8]) -> Vec<u8> {
     [&b"/"[..], &parts.join(&b"/"[..])].concat()
 }
 
-fn add_types_by_source_map(
-    path: &[u8],
-    javascript: &[u8],
-    source_map: &[u8],
-    bundle: &Bundle<'_>,
-) -> Result<TypedText, TypedFilesError> {
-    let source_map = crate::host::parse_json_object(&bun_sema::session::Arena::new(), source_map)
-        .ok_or(TypedFilesError::SourceMapNotJson)?;
-    let strings = |field: &[u8]| -> Vec<&[u8]> {
-        source_map
-            .get(field)
-            .and_then(Json::as_array)
-            .unwrap_or_default()
-            .iter()
-            .map(|entry| entry.as_str().unwrap_or_default())
-            .collect()
-    };
-    let (paths, texts) = (strings(b"sources"), strings(b"sourcesContent"));
-    if paths.len() != texts.len() {
-        return Err(TypedFilesError::SourceMapWithoutSources);
-    }
-    let directory = &path[..bun_core::strings::last_index_of_char(path, b'/').unwrap_or(0)];
-    let is_known = |path: &Vec<u8>| {
-        bundle
-            .modules
-            .iter()
-            .any(|module| module.path[..] == path[..])
-    };
-    let paths: Vec<Vec<u8>> = (paths.iter())
-        .map(|source| {
-            ancestors(directory)
-                .map(|from| absolute(from, source))
-                .find(is_known)
-                .unwrap_or_else(|| absolute(directory, source))
-        })
-        .collect();
-    let sources: Vec<Source<'_>> = paths
-        .iter()
-        .zip(&texts)
-        .map(|(path, &text)| Source { path, text })
-        .collect();
-    let mappings = source_map
-        .get(b"mappings")
-        .and_then(Json::as_str)
-        .ok_or(TypedFilesError::SourceMapWithoutMappings)?;
-    let typed = add_types(path, javascript, mappings, &sources, bundle)?;
-    Ok(TypedText {
-        source: paths.first().filter(|path| is_known(path)).cloned(),
-        ..typed
-    })
-}
-
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Target {
     Declaration { path: Box<[u8]>, name: Box<[u8]> },
@@ -4466,7 +4351,9 @@ pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<Modul
 pub struct Output<'a> {
     pub path: &'a [u8],
     pub javascript: &'a [u8],
-    pub source_map: &'a [u8],
+    /// In the order of its source map: the offset in `javascript`, the index in `sources`, the offset in that text.
+    pub mappings: &'a [(u32, u32, u32)],
+    pub sources: &'a [Source<'a>],
     pub entry_point: Option<&'a [u8]>,
 }
 
@@ -4476,11 +4363,15 @@ pub enum TypedFilesError {
         path: Vec<u8>,
         offset: u32,
     },
-    MappingsNotBase64,
+    MappingsNotRead,
     NoFinalLineBreak,
-    SourceMapNotJson,
-    SourceMapWithoutSources,
-    SourceMapWithoutMappings,
+    JavaScriptNotUtf8,
+    SourceNotUtf8 {
+        path: Vec<u8>,
+    },
+    NotTheCheckedText {
+        path: Vec<u8>,
+    },
     NotNamedJavaScript {
         path: Vec<u8>,
     },
@@ -4498,19 +4389,21 @@ impl core::fmt::Display for TypedFilesError {
                 "{} does not parse as TypeScript (offset {offset})",
                 BStr::new(path)
             ),
-            TypedFilesError::MappingsNotBase64 => {
-                f.write_str("the source map has a character that is not base64")
+            TypedFilesError::MappingsNotRead => {
+                f.write_str("the mappings of the source map cannot be read")
             }
             TypedFilesError::NoFinalLineBreak => {
                 f.write_str("the JavaScript does not end with a line break")
             }
-            TypedFilesError::SourceMapNotJson => f.write_str("the source map is not JSON"),
-            TypedFilesError::SourceMapWithoutSources => {
-                f.write_str("the source map does not hold the text of its sources")
+            TypedFilesError::JavaScriptNotUtf8 => f.write_str("the JavaScript is not UTF-8"),
+            TypedFilesError::SourceNotUtf8 { path } => {
+                write!(f, "{} is not UTF-8", BStr::new(&displayed_path(path)))
             }
-            TypedFilesError::SourceMapWithoutMappings => {
-                f.write_str("the source map has no mappings")
-            }
+            TypedFilesError::NotTheCheckedText { path } => write!(
+                f,
+                "the bundled text of {} is not the text that was type checked",
+                BStr::new(&displayed_path(path))
+            ),
             TypedFilesError::NotNamedJavaScript { path } => {
                 write!(f, "{} is not named .js, .mjs or .cjs", BStr::new(path))
             }
@@ -4591,12 +4484,24 @@ fn typed_outputs(
             emitted_declarations,
             entry_point: output.entry_point,
         };
-        let typed =
-            add_types_by_source_map(output.path, output.javascript, output.source_map, &bundle)
-                .map_err(|why| TypedFilesError::InOutput {
-                    path: shown.to_vec(),
-                    why: Box::new(why),
-                })?;
+        let typed = add_types(
+            output.path,
+            output.javascript,
+            output.mappings,
+            output.sources,
+            &bundle,
+        )
+        .map_err(|why| TypedFilesError::InOutput {
+            path: shown.to_vec(),
+            why: Box::new(why),
+        })?;
+        let first = output.sources.first().map(|source| source.path);
+        let typed = TypedText {
+            source: first
+                .filter(|first| modules.iter().any(|module| module.path[..] == first[..]))
+                .map(<[u8]>::to_vec),
+            ..typed
+        };
         let typed_path =
             typed_path_beside(output.path).ok_or_else(|| TypedFilesError::NotNamedJavaScript {
                 path: shown.to_vec(),

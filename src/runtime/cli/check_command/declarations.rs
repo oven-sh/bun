@@ -1,17 +1,17 @@
 use std::collections::BTreeMap;
 
 use bstr::BStr;
-use bun_bundler::options::TypeChecked;
+use bun_bundler::options::{LinkedChunk, TypeChecked};
 use bun_paths::platform::Auto;
 use bun_paths::resolve_path::join_abs_string;
 use bun_sema::check::Checker;
 use bun_sema::program::FileId;
 use bun_sema_driver::host::{Provided, from_native, to_native};
-use bun_sema_driver::typed_files::{ModuleTypes, tsconfig_of_package};
+use bun_sema_driver::typed_files::{ModuleTypes, TypedFilesError, tsconfig_of_package};
 use bun_sema_driver::{Category, PlanOptions, Report, Request, ScriptKind, format};
 use bun_threading::Guarded;
 
-use super::typed_files::NotedModuleTypes;
+use super::typed_files::{LinkedOutput, NotedModuleTypes, linked_output};
 use super::{
     Entries, Paths, already_read, has_types_with, log_data_of, request, script_kind_of,
     script_kinds_by_extension, with_pages,
@@ -29,14 +29,50 @@ pub(crate) struct DeclarationFile {
 // `BundleOptions::type_check` only answers whether the build goes on, so what it emits waits here.
 static EMITTED_FILES: Guarded<Vec<DeclarationFile>> = Guarded::new(Vec::new());
 
-static MODULE_TYPES: Guarded<Vec<ModuleTypes>> = Guarded::new(Vec::new());
+/// What the type checker and the linker know of a build, for the step that writes its typed files.
+#[derive(Default)]
+pub(crate) struct CheckedBuild {
+    pub(crate) modules: Vec<ModuleTypes>,
+    /// One for each JavaScript output that has a source map of its own.
+    pub(crate) outputs: Vec<LinkedOutput>,
+    /// Why the positions of an output cannot be used, for the first such output.
+    pub(crate) not_linked: Option<TypedFilesError>,
+}
+
+static CHECKED_BUILD: Guarded<CheckedBuild> = Guarded::new(CheckedBuild {
+    modules: Vec::new(),
+    outputs: Vec::new(),
+    not_linked: None,
+});
 
 pub(crate) fn take_declaration_files() -> Vec<DeclarationFile> {
     std::mem::take(&mut *EMITTED_FILES.lock())
 }
 
-pub(crate) fn take_module_types() -> Vec<ModuleTypes> {
-    std::mem::take(&mut *MODULE_TYPES.lock())
+pub(crate) fn take_checked_build() -> CheckedBuild {
+    std::mem::take(&mut *CHECKED_BUILD.lock())
+}
+
+/// `TypeCheck::linked`, after `check_and_emit_declarations` of the same build.
+pub(crate) fn note_linked_chunk(linked: LinkedChunk<'_, '_>) {
+    let mut build = CHECKED_BUILD.lock();
+    if build.not_linked.is_some() {
+        return;
+    }
+    let path = linked
+        .path
+        .strip_prefix(b"./")
+        .unwrap_or(linked.path)
+        .to_vec();
+    match linked_output(&build.modules, linked) {
+        Ok(output) => build.outputs.push(output),
+        Err(why) => {
+            build.not_linked = Some(TypedFilesError::InOutput {
+                path,
+                why: Box::new(why),
+            });
+        }
+    }
 }
 
 pub(crate) fn check_and_emit_declarations(checked: TypeChecked, log: &mut bun_ast::Log) -> bool {
@@ -132,7 +168,10 @@ pub(crate) fn check_and_emit_declarations(checked: TypeChecked, log: &mut bun_as
             module.emitted_declarations = text[..].into();
         }
     }
-    *MODULE_TYPES.lock() = module_types;
+    *CHECKED_BUILD.lock() = CheckedBuild {
+        modules: module_types,
+        ..Default::default()
+    };
     *EMITTED_FILES.lock() = emitted
         .into_iter()
         .map(|(source, text)| DeclarationFile {

@@ -1261,27 +1261,6 @@ fn parse_package_json(arena: &Arena, text: &[u8]) -> Option<Json> {
     unmarshal_fields(root.get(), log.warnings > 0)
 }
 
-/// Every member of a JSON object, such as a source map.
-pub(crate) fn parse_json_object(arena: &Arena, text: &[u8]) -> Option<Json> {
-    use bun_parsers::json::ParsedJson;
-    if !is_valid(text) {
-        return None;
-    }
-    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
-    let _ast_scope = ast_memory_allocator.enter();
-    let source = bun_ast::Source::init_path_string(b"object.json".as_slice(), text);
-    let mut log = bun_ast::Log::init();
-    let parsed = ParsedJson::parse_json(&source, &mut log).ok()?;
-    let bun_ast::expr::Data::EObjectJSON(root) = parsed.root.data else {
-        return None;
-    };
-    let members = root.get().properties().iter().map(|property| {
-        let value = unmarshal_json_value(&property.value, log.warnings > 0)?;
-        Some((property.key.slice().to_vec(), value))
-    });
-    Some(Json::Object(members.collect::<Option<_>>()?))
-}
-
 /// The disk, for a few queries across many directories. Each query is a system call, and no directory is listed or
 /// cached for it. A `Disk` lists the directory of whatever it's queried about, which pays off when most of the
 /// directory is queried.

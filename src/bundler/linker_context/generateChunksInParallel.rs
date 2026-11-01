@@ -1050,6 +1050,15 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                         code_result.buffer = buf.into_boxed_slice();
                     }
 
+                    if let Some(linked) = c.options.linked {
+                        c.report_linked_chunk(
+                            linked,
+                            chunk,
+                            &code_result.buffer,
+                            &output_source_map,
+                        );
+                    }
+
                     sourcemap_output_file =
                         Some(options::OutputFile::init(options::OutputFileInit {
                             data: options::OutputFileData::Buffer {

@@ -6,7 +6,7 @@ use bun_paths::resolve_path::{join_abs_string, platform_to_posix_in_place, relat
 use bun_sema_driver::typed_files::javascript_path_beside;
 
 use crate::cli::check_command::{
-    CompilerOptions, TypedFilesRequest, WrittenJavaScript, take_module_types,
+    CheckedBuild, CompilerOptions, TypedFilesRequest, WrittenJavaScript, take_checked_build,
     typed_files_for_build, warn_unless_package_states,
 };
 
@@ -34,54 +34,33 @@ pub(crate) fn add_typed_files(
     output_files: &mut Vec<OutputFile>,
 ) -> CompilerOptions {
     let outdir = join_abs_string::<Auto>(request.working_directory, &[request.outdir]).to_vec();
-    let path_of = |file: &OutputFile| join_abs_string::<Auto>(&outdir, &[&file.dest_path]).to_vec();
-    let text_of = |file: &OutputFile| match &file.value {
-        OutputFileValue::Buffer { bytes } => Some(bytes.to_vec()),
-        OutputFileValue::Saved(_) => {
-            bun_sys::File::read_from(bun_core::Fd::cwd(), &path_of(file)).ok()
-        }
-        OutputFileValue::Copy(_) | OutputFileValue::Noop => None,
-    };
-    struct Written<'f> {
-        path: Vec<u8>,
-        text: Vec<u8>,
-        source_map: Vec<u8>,
-        entry_point: Option<&'f [u8]>,
-    }
-    let mut written: Vec<Written<'_>> = Vec::new();
+    let CheckedBuild {
+        modules,
+        outputs,
+        not_linked,
+    } = take_checked_build();
+    let mut javascript: Vec<WrittenJavaScript<'_>> = Vec::new();
     for file in output_files.iter() {
         let is_code = matches!(file.output_kind, OutputKind::EntryPoint | OutputKind::Chunk);
         if !is_code || !file.loader.is_javascript_like() {
             continue;
         }
-        let source_map = output_files.get(file.source_map_index as usize);
-        let (Some(mut text), Some(source_map)) = (text_of(file), source_map.and_then(text_of))
+        let Some(linked) = (outputs.iter()).find(|linked| linked.path[..] == file.dest_path[..])
         else {
             continue;
         };
-        if let Some(length) = without_debug_id(&text).map(<[u8]>::len)
-            && request.drops_source_maps
-        {
-            text.truncate(length);
-        }
+        let text = match without_debug_id(&linked.javascript) {
+            Some(without) if request.drops_source_maps => without,
+            _ => &linked.javascript[..],
+        };
         let is_entry_point = file.output_kind == OutputKind::EntryPoint;
-        written.push(Written {
-            path: path_of(file),
+        javascript.push(WrittenJavaScript {
+            path: join_abs_string::<Auto>(&outdir, &[&file.dest_path]).to_vec(),
             text,
-            source_map,
+            linked,
             entry_point: is_entry_point.then_some(file.src_path.text),
         });
     }
-    let javascript: Vec<WrittenJavaScript<'_>> = written
-        .iter()
-        .map(|file| WrittenJavaScript {
-            path: &file.path,
-            text: &file.text,
-            source_map: &file.source_map,
-            entry_point: file.entry_point,
-        })
-        .collect();
-    let modules = take_module_types();
     let typed_files = typed_files_for_build(
         &TypedFilesRequest {
             cwd: request.working_directory,
@@ -91,11 +70,11 @@ pub(crate) fn add_typed_files(
             outdir: &outdir,
             written: &javascript,
             modules: &modules,
+            not_linked: not_linked.as_ref(),
         },
         log,
     );
     drop(javascript);
-    drop(written);
     if request.drops_source_maps {
         drop_source_maps(&outdir, output_files);
     }

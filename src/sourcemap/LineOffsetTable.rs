@@ -297,3 +297,190 @@ impl LineOffsetTable {
         Ok(list)
     }
 }
+
+/// Where a line and a column of a [`List`] are in the text that the list was generated from.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ByteOffset {
+    At(u32),
+    /// No byte of the text has that line and column.
+    PastEnd,
+    /// Several bytes that can start a token share it: a lead byte announced bytes that do not continue it.
+    Ambiguous,
+}
+
+impl LineOffsetTable {
+    /// The byte offset that `add_source_mapping` wrote as `line` and `column` (zero-based) from `list`, the table of `contents`.
+    pub fn byte_offset_of<A: Allocator + 'static>(
+        list: &List<A>,
+        contents: &[u8],
+        line: u32,
+        column: u32,
+    ) -> ByteOffset {
+        let starts = list.items_byte_offset_to_start_of_line();
+        let line = line as usize;
+        let Some(&start) = starts.get(line) else {
+            return ByteOffset::PastEnd;
+        };
+        let first_non_ascii = list.items_byte_offset_to_first_non_ascii()[line];
+        // Before the first byte that is not ASCII, the column is the offset in the line.
+        let counted = u64::from(start) + u64::from(column);
+        let is_on_the_line = match starts.get(line + 1) {
+            Some(&next) => counted < u64::from(next),
+            None => counted <= contents.len() as u64,
+        };
+        let counted = (column < first_non_ascii && is_on_the_line).then_some(counted as u32);
+        // From that byte on, each byte has its column here, and the columns never go down.
+        let columns = &list.items::<"columns_for_non_ascii", Box<[i32], A>>()[line];
+        let column = i32::try_from(column).unwrap_or(i32::MAX);
+        let from = columns.partition_point(|&it| it < column);
+        let until = columns.partition_point(|&it| it <= column);
+        if from == until {
+            return counted.map_or(ByteOffset::PastEnd, ByteOffset::At);
+        }
+        if counted.is_some() {
+            return ByteOffset::Ambiguous;
+        }
+        // The last byte with the column starts a code point. No token starts at a byte before it that continues a sequence.
+        let base = (start + first_non_ascii) as usize;
+        let last = base + until - 1;
+        let Some(announced) = contents.get(base + from..last) else {
+            return ByteOffset::PastEnd;
+        };
+        match announced.iter().all(|byte| matches!(byte, 0x80..=0xBF)) {
+            true => ByteOffset::At(last as u32),
+            false => ByteOffset::Ambiguous,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bun_sema_standalone as _;
+
+    fn offset(contents: &[u8], line: u32, column: u32) -> ByteOffset {
+        let mut list = LineOffsetTable::generate(contents, 0).unwrap();
+        let found = LineOffsetTable::byte_offset_of(&list, contents, line, column);
+        list.drop_elements();
+        found
+    }
+
+    /// What `add_source_mapping` writes for the byte at `offset`.
+    fn line_and_column(list: &List, offset: u32) -> (u32, u32) {
+        let starts = list.items_byte_offset_to_start_of_line();
+        let loc = Loc {
+            start: offset as i32,
+        };
+        let line = LineOffsetTable::find_line(starts, loc).max(0) as usize;
+        let in_line = offset - starts[line];
+        let first_non_ascii = list.items_byte_offset_to_first_non_ascii()[line];
+        let columns = &list.items::<"columns_for_non_ascii", Box<[i32]>>()[line];
+        let column = match in_line >= first_non_ascii && !columns.is_empty() {
+            true => columns[(in_line - first_non_ascii) as usize] as u32,
+            false => in_line,
+        };
+        (line as u32, column)
+    }
+
+    /// Every byte of `contents` that starts a character, and its end, is found again from its line and column.
+    fn assert_every_character_is_found(contents: &str) {
+        let bytes = contents.as_bytes();
+        let mut list = LineOffsetTable::generate(bytes, 0).unwrap();
+        let starts = contents.char_indices().map(|(at, _)| at as u32);
+        for at in starts.chain([bytes.len() as u32]) {
+            let (line, column) = line_and_column(&list, at);
+            assert_eq!(
+                LineOffsetTable::byte_offset_of(&list, bytes, line, column),
+                ByteOffset::At(at),
+                "{contents:?} at {at}, which is {line}:{column}"
+            );
+        }
+        list.drop_elements();
+    }
+
+    #[test]
+    fn text_that_is_utf8_is_found_at_every_character() {
+        for contents in [
+            "",
+            "ab\ncd",
+            "a\r\nb\rc\n",
+            "a\u{2028}b\u{2029}c",
+            "\u{FEFF}// caf\u{E9} \u{1F600}\nexport const a: \"\u{E9}\u{1F600}\" = 1;",
+            "\u{E9}",
+            "x\u{1F600}",
+            "\u{0}\u{7F}\u{85}\u{FFFD}\t",
+        ] {
+            assert_every_character_is_found(contents);
+        }
+    }
+
+    #[test]
+    fn a_column_that_no_byte_has_is_past_the_end() {
+        assert_eq!(offset(b"ab\ncd", 0, 3), ByteOffset::PastEnd);
+        assert_eq!(offset(b"ab\ncd", 1, 3), ByteOffset::PastEnd);
+        assert_eq!(offset(b"ab\ncd", 2, 0), ByteOffset::PastEnd);
+        // The second half of a surrogate pair.
+        assert_eq!(offset("\u{1F600}x".as_bytes(), 0, 1), ByteOffset::PastEnd);
+        assert_eq!(offset("\u{1F600}x".as_bytes(), 0, 4), ByteOffset::PastEnd);
+    }
+
+    #[test]
+    fn a_lead_byte_without_its_sequence_on_a_line_of_ascii_keeps_every_byte_apart() {
+        // The line has no column table, so a column is an offset in the line.
+        let contents = b"// caf\xE9 au lait\nx";
+        for at in 0..=contents.len() as u32 {
+            let (line, column) = match at {
+                0..=15 => (0, at),
+                _ => (1, at - 16),
+            };
+            assert_eq!(offset(contents, line, column), ByteOffset::At(at));
+        }
+        // The sequence that the lead byte announces holds the line feed: the line goes on.
+        let contents = b"// caf\xE9\nexport";
+        assert_eq!(offset(contents, 0, 8), ByteOffset::At(8));
+        assert_eq!(offset(contents, 1, 0), ByteOffset::PastEnd);
+    }
+
+    #[test]
+    fn a_byte_that_starts_no_sequence_is_a_character() {
+        let contents = b"// 25\xB0C\nx";
+        assert_eq!(offset(contents, 0, 5), ByteOffset::At(5));
+        assert_eq!(offset(contents, 0, 6), ByteOffset::At(6));
+        assert_eq!(offset(contents, 1, 0), ByteOffset::At(8));
+        // It is the only byte with its column, though it could continue a sequence.
+        assert_eq!(offset(b"a\xB5 = 1", 0, 1), ByteOffset::At(1));
+    }
+
+    #[test]
+    fn bytes_that_share_a_column_are_ambiguous() {
+        // After `\x92` the line has a column table, and `a`, `b` and the end have the column after `\xE9`.
+        let contents = b"\x92 \xE9ab";
+        assert_eq!(offset(contents, 0, 2), ByteOffset::At(2));
+        assert_eq!(offset(contents, 0, 3), ByteOffset::Ambiguous);
+        // Before `\u{E9}` a column is an offset, and `\xE9ab` counted as one column: `b` and `\u{E9}` have column 2.
+        let contents = b"\xE9ab \xC3\xA9x";
+        assert_eq!(offset(contents, 0, 1), ByteOffset::At(1));
+        assert_eq!(offset(contents, 0, 2), ByteOffset::Ambiguous);
+        assert_eq!(offset(contents, 0, 4), ByteOffset::At(7));
+    }
+
+    #[test]
+    fn a_table_that_gives_each_ill_formed_byte_a_column_has_no_ambiguous_column() {
+        // `\x92 \xE9ab` as a table that steps one byte over `\xE9`.
+        let contents = b"\x92 \xE9ab";
+        let mut list = List::default();
+        list.append(LineOffsetTable {
+            columns_for_non_ascii: Box::from([0, 1, 2, 3, 4, 5]),
+            byte_offset_to_first_non_ascii: 0,
+            byte_offset_to_start_of_line: 0,
+        })
+        .unwrap();
+        for at in 0..=5 {
+            assert_eq!(
+                LineOffsetTable::byte_offset_of(&list, contents, 0, at),
+                ByteOffset::At(at)
+            );
+        }
+        list.drop_elements();
+    }
+}

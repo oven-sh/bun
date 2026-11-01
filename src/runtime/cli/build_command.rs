@@ -200,10 +200,24 @@ impl BuildCommand {
         let writes_typed_files = ctx.bundler_options.dts
             && has_typescript_entry_point
             && skips_typed_files_for.is_none();
-        let type_check: Option<options::TypeCheck> = if ctx.bundler_options.dts {
-            Some(crate::cli::check_command::check_and_emit_declarations)
+        static DECLARATIONS: options::TypeCheck = options::TypeCheck {
+            check: crate::cli::check_command::check_and_emit_declarations,
+            linked: None,
+        };
+        static DECLARATIONS_AND_TYPED_FILES: options::TypeCheck = options::TypeCheck {
+            check: crate::cli::check_command::check_and_emit_declarations,
+            linked: Some(crate::cli::check_command::note_linked_chunk),
+        };
+        static CHECK: options::TypeCheck = options::TypeCheck {
+            check: crate::cli::check_command::check_for_build_command,
+            linked: None,
+        };
+        let type_check: Option<&'static options::TypeCheck> = if writes_typed_files {
+            Some(&DECLARATIONS_AND_TYPED_FILES)
+        } else if ctx.bundler_options.dts {
+            Some(&DECLARATIONS)
         } else if ctx.bundler_options.check {
-            Some(crate::cli::check_command::check_for_build_command)
+            Some(&CHECK)
         } else {
             None
         };
@@ -221,7 +235,7 @@ impl BuildCommand {
                 entry_points: &mut entry_points.map(|path| &**path),
                 sources: &mut core::iter::empty(),
             };
-            if !type_check(checked, log_ref) {
+            if !(type_check.check)(checked, log_ref) {
                 log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
                     Output::error_writer(),
                 ))?;

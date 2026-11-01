@@ -26,7 +26,8 @@ mod declarations;
 mod typed_files;
 
 pub(crate) use declarations::{
-    DeclarationFile, check_and_emit_declarations, take_declaration_files, take_module_types,
+    CheckedBuild, DeclarationFile, check_and_emit_declarations, note_linked_chunk,
+    take_checked_build, take_declaration_files,
 };
 pub(crate) use typed_files::{
     CompilerOptions, TypedFilesRequest, WrittenJavaScript, typed_files_for_build,

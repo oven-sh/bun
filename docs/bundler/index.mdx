@@ -1352,6 +1352,12 @@ Point `"types"` in your `package.json` at `index.d.ts`, and the `"aot"` conditio
 warn: the .aot.ts files that --aot compiles a package from are left out: they do not support --minify-identifiers yet
 ```
 
+- **A source that isn't UTF-8 can leave out `index.aot.ts`.** Most comments in another encoding are fine. Where such a byte is in a type, or Bun can't tell where a type belongs, it writes the `.d.ts` files and warns with the name of the file. An `onLoad` plugin that changes a TypeScript file that is on disk does the same: the types are those of the file.
+
+```txt
+warn: the .aot.ts files that --aot compiles a package from are left out: index.js: /project/src/index.ts is not UTF-8
+```
+
 - **The bundle isn't byte for byte what you get without `dts`.** A `const` stays a `const`, dead code is removed, and `--minify-syntax` skips a few rewrites, so that `index.aot.ts` type checks like your sources.
 
 ### features

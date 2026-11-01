@@ -24,7 +24,7 @@ pub use bun_base64::vlq;
 pub use vlq::VLQ;
 use vlq::{decode as decode_vlq, decode_assume_valid as decode_vlq_assume_valid};
 
-pub use line_offset_table::{LineOffsetTable, LineOffsetTableColumns};
+pub use line_offset_table::{ByteOffset, LineOffsetTable, LineOffsetTableColumns};
 pub use mapping::Mapping;
 pub use parsed_source_map::{ParsedSourceMap, SourceContentPtr};
 
@@ -256,6 +256,11 @@ pub struct SourceMapPieces {
     pub prefix: Vec<u8>,
     pub mappings: Vec<u8>,
     pub suffix: Vec<u8>,
+    /// How many bytes the map has before and after the text of its `mappings`.
+    pub before_mappings: usize,
+    pub after_mappings: usize,
+    /// The bundle's index of each entry of `sources`. Only filled where the mappings are read back.
+    pub sources: Vec<u32>,
 }
 
 /// This function is extremely hot.
@@ -712,6 +717,11 @@ pub mod SerializedSourceMap {
 impl SourceMapPieces {
     pub fn init() -> SourceMapPieces {
         SourceMapPieces::default()
+    }
+
+    /// The text of `mappings` in `map`, which `finalize` returned.
+    pub fn mappings_in<'a>(&self, map: &'a [u8]) -> &'a [u8] {
+        &map[self.before_mappings..map.len() - self.after_mappings]
     }
 
     pub fn finalize(

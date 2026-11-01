@@ -302,6 +302,25 @@ fn check_types_and_emit_declarations(
     })
 }
 
+fn note_linked_chunk(linked: options::LinkedChunk<'_, '_>) {
+    bun_removable_features::removable_body!(Check, Abort, {
+        crate::cli::check_command::note_linked_chunk(linked)
+    })
+}
+
+static CHECK: options::TypeCheck = options::TypeCheck {
+    check: check_types,
+    linked: None,
+};
+static DECLARATIONS: options::TypeCheck = options::TypeCheck {
+    check: check_types_and_emit_declarations,
+    linked: None,
+};
+static DECLARATIONS_AND_TYPED_FILES: options::TypeCheck = options::TypeCheck {
+    check: check_types_and_emit_declarations,
+    linked: Some(note_linked_chunk),
+};
+
 fn write_declarations(outdir: &[u8], output_files: &mut [OutputFile]) -> bun_bundler::Result<()> {
     let directory = Dir::cwd().make_open_path(outdir, bun_sys::OpenDirOptions::default())?;
     for file in output_files.iter_mut() {
@@ -319,7 +338,7 @@ impl JSBundleCompletionTask {
             use crate::cli::{check_command, compile_command};
             let emitted = check_command::take_declaration_files();
             let BundleV2Result::Value(build) = &mut self.result else {
-                drop(check_command::take_module_types());
+                drop(check_command::take_checked_build());
                 return;
             };
             let output_files = &mut build.output_files;
@@ -330,7 +349,7 @@ impl JSBundleCompletionTask {
                 true,
                 output_files,
             ) {
-                drop(check_command::take_module_types());
+                drop(check_command::take_checked_build());
                 let mut message = Vec::new();
                 error.write_message(&mut message);
                 self.log.add_error_fmt(
@@ -363,7 +382,7 @@ impl JSBundleCompletionTask {
                 };
                 compile_command::add_typed_files(&request, &mut self.log, output_files);
             } else {
-                drop(check_command::take_module_types());
+                drop(check_command::take_checked_build());
             }
             if config.outdir.is_empty() {
                 return;
@@ -1198,8 +1217,8 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.fold_chunks = config.fold_chunks;
         transpiler.options.module_preload = config.module_preload;
         transpiler.options.type_check = match config.dts {
-            true => Some(check_types_and_emit_declarations as options::TypeCheck),
-            false => config.check.then_some(check_types as options::TypeCheck),
+            true => Some(&DECLARATIONS),
+            false => config.check.then_some(&CHECK),
         };
         if config.dts {
             let unsupported = [
@@ -1225,6 +1244,9 @@ impl CompletionStruct for JSBundleCompletionTask {
                 writes_typed_files && config.source_map == options::SourceMapOption::None;
             if drops_source_maps {
                 transpiler.options.source_map = options::SourceMapOption::External;
+            }
+            if writes_typed_files {
+                transpiler.options.type_check = Some(&DECLARATIONS_AND_TYPED_FILES);
             }
             self.declarations = Some(DeclarationOutputs {
                 loaders: bun_core::UnwrapOrOom::unwrap_or_oom(transpiler.options.loaders.clone()),

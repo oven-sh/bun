@@ -314,16 +314,13 @@ fn shown_source_name(base: &bun_core::String, source: &[u8]) -> Box<[u8]> {
     Box::from(shown.to_utf8().slice())
 }
 
-/// The URL at `url` in `contents`, if V8 takes a URL from the `sourceMappingURL` comment that the lexer found there: the comment is a `//` comment, and only white space follows the URL on its line.
+/// The URL at `url` in `contents`, if V8 takes a URL from the `//# sourceMappingURL=` comment that the lexer found there: only white space follows the URL on its line.
 fn url_of_comment(contents: &[u8], url: bun_ast::Range) -> Option<&[u8]> {
     let start = usize::try_from(url.loc.start).ok()?;
     let end = start.checked_add(usize::try_from(url.len).ok()?)?;
     let text = contents.get(start..end).filter(|text| !text.is_empty())?;
-    // The comment starts 21 bytes before its URL: `//` or `/*`, then `#` or `@`, then ` sourceMappingURL=`.
-    let comment = contents.get(start.checked_sub(21)?..)?;
     let rest_of_line = bun_core::strings::js_lines(&contents[end..]).next()?;
-    (comment.starts_with(b"//") && bun_core::strings::is_all_js_whitespace(rest_of_line))
-        .then_some(text)
+    bun_core::strings::is_all_js_whitespace(rest_of_line).then_some(text)
 }
 
 /// What [`SavedSourceMap::put_mappings`] does with the `sourceMappingURL` comment at `url` in `source` while the switch is `support`.

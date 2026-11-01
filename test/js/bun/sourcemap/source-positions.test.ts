@@ -1259,8 +1259,7 @@ describe.concurrent("a loaded file with its own source map", () => {
   // What node v26.13.0 reads: a `data:` URL that says `application/json` and ends its parameters with `base64`, and a
   // path, which is a URL relative to the module. It does not read a URL with any other scheme. The comment is a `//`
   // comment that starts with `//# sourceMappingURL=` or `//@ sourceMappingURL=`, and only white space is after the
-  // URL on its line. The last such comment of the file counts, also when it has no URL to read. The forms that Bun
-  // reads in another way than Node.js are in docs/runtime/debugger.mdx.
+  // URL on its line. The last such comment of the file counts, also when it has no URL to read.
   test("the URL of the comment is read the way Node.js reads it", async () => {
     const map = mapOf("cjs", "original.ts");
     const comment = (url: string) => `//# sourceMappingURL=${url}\n`;
@@ -1315,6 +1314,34 @@ describe.concurrent("a loaded file with its own source map", () => {
         comment("ad.js.map") + `//# sourceMappingURL="none.js.map"\n`,
         { "ad.js.map": map },
         "",
+      ],
+      // One white space character of any kind is between the marker and the name.
+      "a tab after the #": [`//#\tsourceMappingURL=ae.js.map\n`, { "ae.js.map": map }, "original.ts"],
+      "a no-break space after the #": [`//#\u00A0sourceMappingURL=af.js.map\n`, { "af.js.map": map }, "original.ts"],
+      // White space before the URL is not a part of it.
+      "a space after the =": [`//# sourceMappingURL= ag.js.map\n`, { "ag.js.map": map }, "original.ts"],
+      "a tab after the =": [`//# sourceMappingURL=\tah.js.map\n`, { "ah.js.map": map }, "original.ts"],
+      // A block comment names no source map, and takes none away.
+      "a comment, then a block comment that starts with the marker": [
+        comment("ai.js.map") + `/*# sourceMappingURL=none.js.map */\n`,
+        { "ai.js.map": map },
+        "original.ts",
+      ],
+      "a comment, then one with no URL at the end of the file": [
+        comment("aj.js.map") + `//# sourceMappingURL=`,
+        { "aj.js.map": map },
+        "",
+      ],
+      "a comment, then one with a tab after the #, which names nothing": [
+        comment("ak.js.map") + `//#\tsourceMappingURL=none.js.map\n`,
+        { "ak.js.map": map },
+        "",
+      ],
+      // Only white space ends the URL.
+      "a control character in the URL": [
+        `//# sourceMappingURL=al\u0001.js.map\n`,
+        { "al\u0001.js.map": map },
+        "original.ts",
       ],
       "data: with base64": [comment(dataUrl(map)), {}, "original.ts"],
       "data: with a charset before base64": [

@@ -2207,17 +2207,15 @@ impl<'a> Lexer<'a> {
                         0
                     };
             }
-        } else if chunk.len() > " sourceMappingURL=".len()
-            && chunk.starts_with(b" sourceMappingURL=")
-        {
-            // Check includes space for prefix
-            let span = PragmaArg::scan_source_mapping_url_value(chunk_start, chunk);
+        } else if let Some(value) = PragmaArg::source_mapping_url_value_start(chunk) {
+            let span = PragmaArg::scan_source_mapping_url_value(chunk_start, chunk, value);
             self.debug_assert_span_in_source(span);
-            // Only a comment that starts with the marker names the source map: `//#`, `//@`, `/*#` or `/*@`.
-            if chunk_start == self.start + 3 {
+            // As in V8, only a `//#` or `//@` comment names the source map, and the last one does so also when it has no URL.
+            if matches!(comment, CommentKind::SingleLine) && chunk_start == self.start + 3 {
                 self.source_mapping_url = Some(span);
             }
-            return " sourceMappingURL=".len() + span.text.len();
+            return usize::try_from(span.range.loc.start).expect("int cast") - chunk_start
+                + span.text.len();
         }
 
         0
@@ -3446,36 +3444,59 @@ impl PragmaArg {
         c == 0x0D || c == 0x0A || c == 0x2028 || c == 0x2029
     }
 
+    /// Where the value starts in a chunk that is one white space character and then `sourceMappingURL=`, as V8 reads the comment.
+    pub(crate) fn source_mapping_url_value_start(chunk: &[u8]) -> Option<usize> {
+        let space = strings::js_whitespace_len(chunk);
+        if space == 0 || strings::js_line_break_len(chunk) != 0 {
+            return None;
+        }
+        chunk[space..]
+            .starts_with(b"sourceMappingURL=")
+            .then_some(space + "sourceMappingURL=".len())
+    }
+
     // These can be extremely long, so we use SIMD.
     /// "//# sourceMappingURL=data:/adspaoksdpkz"
     ///                       ^^^^^^^^^^^^^^^^^^
-    pub(crate) fn scan_source_mapping_url_value(chunk_start: usize, chunk: &[u8]) -> js_ast::Span {
-        const PREFIX: u32 = " sourceMappingURL=".len() as u32;
-        let url_and_rest_of_code = &chunk[PREFIX as usize..]; // Slice containing only the potential argument
+    pub(crate) fn scan_source_mapping_url_value(
+        chunk_start: usize,
+        chunk: &[u8],
+        value: usize,
+    ) -> js_ast::Span {
+        // As in V8, white space before the URL is not a part of it.
+        let mut value = value;
+        while strings::js_line_break_len(&chunk[value..]) == 0 {
+            match strings::js_whitespace_len(&chunk[value..]) {
+                0 => break,
+                space => value += space,
+            }
+        }
+        let url_and_rest_of_code = &chunk[value..]; // Slice containing only the potential argument
 
-        // The URL ends at whitespace. A non-ASCII code point (`ünï.js.map`) is part of it unless it is whitespace.
+        // The URL ends at whitespace. Any other character is part of it: a control character, or a non-ASCII code point (`ünï.js.map`).
         let mut url_len: usize = url_and_rest_of_code.len();
         let mut from: u32 = 0;
         while let Some(pos) =
             strings::index_of_space_or_newline_or_non_ascii(url_and_rest_of_code, from)
         {
             let pos = pos as usize;
-            if url_and_rest_of_code[pos] < 0x80 {
+            let space = strings::js_whitespace_len(&url_and_rest_of_code[pos..]);
+            if space != 0 {
                 url_len = pos;
                 break;
             }
-            let (c, width) = bun_core::lexer::char_and_size(url_and_rest_of_code, pos);
-            if strings::is_js_whitespace(c as u32) {
-                url_len = pos;
-                break;
-            }
+            let width = if url_and_rest_of_code[pos] < 0x80 {
+                1
+            } else {
+                bun_core::lexer::char_and_size(url_and_rest_of_code, pos).1
+            };
             from = (pos + width) as u32;
         }
 
         // Now we have the correct argument length (url_len) and the argument text.
         let url = &url_and_rest_of_code[0..url_len];
 
-        let absolute_arg_start = chunk_start + PREFIX as usize;
+        let absolute_arg_start = chunk_start + value;
 
         js_ast::Span {
             range: Range {

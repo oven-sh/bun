@@ -5043,6 +5043,7 @@ unsafe fn transpile_file<const DATA_ONLY: bool>(
                     lr.package_json,
                     aot_package_config,
                     module_loader,
+                    (*jsc_vm).source_mappings.source_maps_support(),
                 )
             };
         }

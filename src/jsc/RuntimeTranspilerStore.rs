@@ -328,6 +328,8 @@ impl RuntimeTranspilerStore {
         // `Transpiler::find_aot_package_config` of `path`.
         aot_package_config: Option<std::sync::Arc<bun_resolver::tsconfig_json::TSConfigJSON>>,
         module_loader: JSValue,
+        // The source maps switch of `vm` now.
+        source_maps_support: SourceMapsSupport,
     ) -> *mut c_void {
         // The path text is heap-duplicated here and freed in `reset_for_pool` via
         // heap::take on `path.text`.
@@ -379,8 +381,7 @@ impl RuntimeTranspilerStore {
                 poll_ref: KeepAlive::default(),
                 resolved_source,
                 generation_number: self.generation_number.load(Ordering::SeqCst),
-                // SAFETY: `vm` is the live VM of this JS thread, and only the atomic switch of its `source_mappings` is read.
-                source_maps_support: unsafe { (*vm).source_mappings.source_maps_support() },
+                source_maps_support,
                 has_plugins: global_object.has_plugins(),
                 parse_error: None,
                 work_task: WorkPoolTask {

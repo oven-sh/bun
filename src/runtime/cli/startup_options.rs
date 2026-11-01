@@ -1,6 +1,7 @@
 use bstr::BStr;
 use bun_aot::ir::generated::AdmittedCode;
 use bun_clap as clap;
+use bun_clap::args::ArgIter as _;
 use bun_core::strings::const_bytes_eq;
 use bun_core::{CodeGenerationFromStrings, Global, Output};
 use bun_options_types::context::ContextData;
@@ -199,26 +200,41 @@ pub(crate) struct WrittenOption<'w> {
     pub value: Option<&'w [u8]>,
 }
 
-pub(crate) fn walk_option_words<'w>(words: &'w [&'w [u8]]) -> Vec<WrittenOption<'w>> {
+/// Stops when `visit` returns false or the parser rejects a word. Returns the count of the words read, `None` after a positional.
+pub(crate) fn visit_option_words<'w>(
+    words: &'w [&'w [u8]],
+    mut visit: impl FnMut(WrittenOption<'w>) -> bool,
+) -> Option<usize> {
     // `AUTO_PARAMS` would retain the help texts in a trimmed executable.
     let params = AUTO_TABLE.params();
     let mut iterator = clap::args::SliceIterator::new(words);
     let mut stream =
         clap::streaming::StreamingClap::over_words(params, &mut iterator, NODE_SHORT_ALIASES);
-    let mut options = Vec::new();
     while let Ok(Some(arg)) = stream.next() {
         let names = &arg.param.names;
         if names.long.is_none() && names.short.is_none() {
-            break;
+            return None;
         }
         let index = params
             .iter()
             .position(|param| core::ptr::eq(param, arg.param));
-        options.push(WrittenOption {
+        let option = WrittenOption {
             index: index.expect("the stream returns parameters of its table"),
             value: arg.value,
-        });
+        };
+        if !visit(option) {
+            break;
+        }
     }
+    Some(words.len() - iterator.remain().len())
+}
+
+pub(crate) fn walk_option_words<'w>(words: &'w [&'w [u8]]) -> Vec<WrittenOption<'w>> {
+    let mut options = Vec::new();
+    visit_option_words(words, |option| {
+        options.push(option);
+        true
+    });
     options
 }
 

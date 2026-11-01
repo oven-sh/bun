@@ -1671,7 +1671,7 @@ unsafe fn apply_standalone_runtime_flags(
 }
 
 /// Scan a Worker's `execArgv` for the flags that mean something there. Like the
-/// CLI parser, the scan stops at the first positional.
+/// CLI parser, the scan reads an option's value with the option and stops at the first positional. It skips a word that the parser rejects.
 ///
 /// # Safety
 /// Each `WTFStringImpl` in `exec_argv` is a live WTF string (the C++
@@ -1679,46 +1679,49 @@ unsafe fn apply_standalone_runtime_flags(
 unsafe fn parse_worker_exec_argv_flags(
     exec_argv: &[bun_core::WTFStringImpl],
 ) -> Option<WorkerExecArgvFlags> {
+    use crate::cli::arguments::{AUTO_PARAMS, CODE_GENERATION_PARAM};
+    use crate::cli::startup_options::{index_of_long, visit_option_words};
+    const NO_ADDONS_PARAM: usize = index_of_long(AUTO_PARAMS, b"no-addons");
+    const NO_FFI_CC_PARAM: usize = index_of_long(AUTO_PARAMS, b"no-ffi-cc");
+    const ENABLE_SOURCE_MAPS_PARAM: usize = index_of_long(AUTO_PARAMS, b"enable-source-maps");
+
     let mut flags = WorkerExecArgvFlags {
         allow_addons: true,
         allow_ffi_cc: true,
         enable_source_maps: false,
         invalid: None,
     };
+    // SAFETY: per fn contract: each entry that is not null is a live `WTFStringImpl*`.
+    let owned = exec_argv
+        .iter()
+        .enumerate()
+        .filter(|(_, arg)| !arg.is_null())
+        .map(|(index, &arg)| (index, unsafe { &*arg }.to_owned_slice_z()));
+    let owned: Vec<_> = owned.collect();
+    let words: Vec<&[u8]> = owned.iter().map(|(_, word)| word.as_bytes()).collect();
     if crate::cli::startup_options::may_refuse_options() {
-        // SAFETY: per fn contract: each entry that is not null is a live `WTFStringImpl*`.
-        let words = exec_argv
-            .iter()
-            .filter(|arg| !arg.is_null())
-            .map(|&arg| unsafe { &*arg }.to_owned_slice_z());
-        let words: Vec<_> = words.collect();
-        let words: Vec<&[u8]> = words.iter().map(|word| word.as_bytes()).collect();
         crate::cli::startup_options::warn_of_ignored_options(&words);
     }
-    for (index, &arg) in exec_argv.iter().enumerate() {
-        if arg.is_null() {
-            continue;
-        }
-        // SAFETY: per fn contract — `arg` is a live `WTFStringImpl*`.
-        let owned = unsafe { &*arg }.to_owned_slice_z();
-        let bytes = owned.as_bytes();
-        if bytes.first() != Some(&b'-') {
+    let mut read = 0;
+    while read < words.len() {
+        let mut is_invalid = false;
+        let stopped_after = visit_option_words(&words[read..], |option| {
+            match option.index {
+                NO_ADDONS_PARAM => flags.allow_addons = false,
+                NO_FFI_CC_PARAM => flags.allow_ffi_cc = false,
+                ENABLE_SOURCE_MAPS_PARAM => flags.enable_source_maps = true,
+                CODE_GENERATION_PARAM => is_invalid = true,
+                _ => {}
+            }
+            !is_invalid
+        });
+        let Some(count) = stopped_after else {
             break;
-        }
-        if bytes == b"--" {
-            break;
-        }
-        if bytes == b"--no-addons" {
-            flags.allow_addons = false;
-        } else if bytes == b"--no-ffi-cc" {
-            flags.allow_ffi_cc = false;
-        } else if bytes == b"--enable-source-maps" {
-            flags.enable_source_maps = true;
-        } else if matches!(
-            bytes.strip_prefix(b"--disallow-code-generation-from-strings".as_slice()),
-            Some([] | [b'=', ..])
-        ) {
-            flags.invalid.get_or_insert(index);
+        };
+        read += count;
+        if is_invalid {
+            // The flag is always one word, so it is the last word that was read.
+            flags.invalid.get_or_insert(owned[read - 1].0);
         }
     }
     Some(flags)

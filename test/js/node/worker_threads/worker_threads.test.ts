@@ -369,16 +369,58 @@ describe("execArgv option", async () => {
   it("can specify an array of strings", async () => {
     await run('["--no-warnings"]', '["--no-warnings"]\n');
   });
+
+  // A Worker of this process: its execArgv stands in for the flags of the process.
+  function answerOf(source: string, execArgv: string[]) {
+    const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+    const worker = new Worker(source, { eval: true, execArgv });
+    worker.once("message", resolve);
+    worker.once("error", reject);
+    worker.once("exit", code => reject(new Error(`the worker exited with ${code} before it answered`)));
+    return promise;
+  }
+
+  // Node.js refuses a Worker that is given such a word. Bun reads on, and does not take the next word for its value.
+  it.each(["--not-an-option", "-Z"])("reads on after %s, which is not an option", async word => {
+    const source = `require("node:worker_threads").parentPort.postMessage(process.sourceMapsEnabled);`;
+    expect(await answerOf(source, [word, "--enable-source-maps"])).toBe(true);
+  });
+
+  it("reads --no-addons after another option and its value", async () => {
+    const source = `
+      const { parentPort } = require("node:worker_threads");
+      try {
+        process.dlopen({ exports: {} }, "not-an-addon.node");
+        parentPort.postMessage("loaded");
+      } catch (error) {
+        parentPort.postMessage(error.code);
+      }
+    `;
+    expect(await answerOf(source, ["--conditions", "development", "--no-addons"])).toBe("ERR_DLOPEN_DISABLED");
+  });
+
+  it("refuses --disallow-code-generation-from-strings after another option and its value", () => {
+    const flag = "--disallow-code-generation-from-strings";
+    expect(() => {
+      new Worker("", { eval: true, execArgv: ["--conditions", "development", flag] });
+    }).toThrow(
+      expect.objectContaining({
+        code: "ERR_WORKER_INVALID_EXEC_ARGV",
+        message: `Initiated Worker with invalid execArgv flags: ${flag}`,
+      }),
+    );
+  });
   // TODO(@190n) get our handling of non-string array elements in line with Node's
 });
 
-// The script prints the same under node v26.13.0, with and without the flag.
+// The script prints the same under node v26.13.0, started with each of the sets of flags.
 describe("--enable-source-maps in a Worker", () => {
   const on = { enabled: true, nodeModules: true, generatedCode: true };
   const off = { enabled: false, nodeModules: false, generatedCode: false };
   const script = `
     const { Worker } = require("node:worker_threads");
     const { getSourceMapsSupport } = require("node:module");
+    const { resolve } = require("node:path");
     const report = 'require("node:worker_threads").parentPort.postMessage(require("node:module").getSourceMapsSupport());';
     const reportFromNested = \`
       const { Worker, parentPort } = require("node:worker_threads");
@@ -399,6 +441,15 @@ describe("--enable-source-maps in a Worker", () => {
       seen.flagInExecArgv = await ask(report, { execArgv: ["--enable-source-maps"] });
       seen.emptyExecArgv = await ask(report, { execArgv: [] });
       seen.nestedUnderFlagInExecArgv = await ask(reportFromNested, { execArgv: ["--enable-source-maps"] });
+      seen.flagAfterRequire = await ask(report, { execArgv: ["--require", resolve("preload.js"), "--enable-source-maps"] });
+      seen.flagAfterShortRequire = await ask(report, { execArgv: ["-r", resolve("preload.js"), "--enable-source-maps"] });
+      seen.flagAfterImport = await ask(report, { execArgv: ["--import", resolve("import.mjs"), "--enable-source-maps"] });
+      seen.flagAfterConditions = await ask(report, { execArgv: ["--conditions", "development", "--enable-source-maps"] });
+      seen.flagAfterConditionsWithEquals = await ask(report, { execArgv: ["--conditions=development", "--enable-source-maps"] });
+      seen.execArgvOfParent = await ask(report, { execArgv: process.execArgv });
+      seen.requireWithoutFlag = await ask(report, { execArgv: ["--require", resolve("preload.js")] });
+      seen.flagAfterDoubleDash = await ask(report, { execArgv: ["--", "--enable-source-maps"] });
+      seen.flagAfterPositional = await ask(report, { execArgv: ["script.js", "--enable-source-maps"] });
       seen.setInWorker = await ask("process.setSourceMapsEnabled(" + !initial + ");" + report);
       seen.parentAfterSetInWorker = getSourceMapsSupport();
       process.setSourceMapsEnabled(!initial);
@@ -410,10 +461,13 @@ describe("--enable-source-maps in a Worker", () => {
   it.concurrent.each([
     { flags: [], initial: off, other: on },
     { flags: ["--enable-source-maps"], initial: on, other: off },
+    { flags: ["--require", "./preload.js", "--enable-source-maps"], initial: on, other: off },
   ])("a parent started with the flags $flags", async ({ flags, initial, other }) => {
+    using dir = tempDir("worker-enable-source-maps", { "preload.js": "", "import.mjs": "" });
     await using proc = Bun.spawn({
       cmd: [bunExe(), ...flags, "-e", script],
       env: bunEnv,
+      cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -425,6 +479,17 @@ describe("--enable-source-maps in a Worker", () => {
         flagInExecArgv: on,
         emptyExecArgv: off,
         nestedUnderFlagInExecArgv: on,
+        // An execArgv is read as a command line is: the word after an option that takes a value is that value.
+        flagAfterRequire: on,
+        flagAfterShortRequire: on,
+        flagAfterImport: on,
+        flagAfterConditions: on,
+        flagAfterConditionsWithEquals: on,
+        execArgvOfParent: initial,
+        requireWithoutFlag: off,
+        // What follows "--" or a positional is not an option.
+        flagAfterDoubleDash: off,
+        flagAfterPositional: off,
         // What a thread sets at run time stays in that thread.
         setInWorker: other,
         parentAfterSetInWorker: initial,

@@ -39,3 +39,5 @@ export const build = b.fn({
 });
 
 export const workerLiveCount = b.fn({ returns: b.usize });
+
+export const poolsCreated = b.fn({ returns: b.u64 });

@@ -1319,6 +1319,10 @@ impl Display for URLFormatter<'_> {
         )?;
 
         if let Some(hostname) = self.hostname {
+            let hostname = match self.proto {
+                URLProto::Http | URLProto::Https => crate::ip_address::without_ipv6_zone(hostname),
+                URLProto::Unix | URLProto::Abstract => hostname,
+            };
             let needs_brackets =
                 hostname[0] != b'[' && crate::ip_address::is_ipv6_address(hostname);
             if needs_brackets {

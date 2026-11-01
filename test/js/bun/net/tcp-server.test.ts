@@ -1,6 +1,6 @@
 import { connect, listen, SocketHandler, TCPSocketListener } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, ipv6LoopbackInterface, ipv6LoopbackZones, isLinux, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
 type Resolve = (value?: unknown) => void;
@@ -56,6 +56,224 @@ it("remoteAddress works", async () => {
     port: server.port,
   });
   await prom;
+});
+
+const noIPv6Loopback = ipv6LoopbackInterface() === undefined;
+
+// A hostname that Node's net.isIP() takes is bound as it is written, with no
+// resolver. A zone is the index of the interface that it names, and a name that
+// no interface has is no zone, as libuv reads it for node:net. glibc's getaddrinfo
+// refuses both on ::1, and Bun.listen threw "Failed to listen at" with no code.
+it.skipIf(noIPv6Loopback).each(ipv6LoopbackZones())("listens on ::1%%%s, which has a zone", async zone => {
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
+  const hostname = `::1%${zone}`;
+  using server = Bun.listen({
+    hostname,
+    port: 0,
+    socket: {
+      open(socket) {
+        socket.end("hello");
+      },
+      data() {},
+    },
+  });
+  expect({ hostname: server.hostname, port: server.port }).toEqual({ hostname, port: expect.any(Number) });
+  const chunks: string[] = [];
+  await Bun.connect({
+    hostname: "::1",
+    port: server.port,
+    socket: {
+      data(_socket, data) {
+        chunks.push(decoder.decode(data));
+      },
+      close() {
+        resolve(chunks.join(""));
+      },
+      error(_socket, error) {
+        reject(error);
+      },
+      connectError(_socket, error) {
+        reject(error);
+      },
+    },
+  });
+  expect(await promise).toBe("hello");
+});
+
+// A zone of digits is the index of the interface, which is how dns.lookup()
+// prints a scoped address. Index 1 is "lo" on Linux, which does not have
+// fe80::1. With no zone the kernel answers EINVAL.
+it.skipIf(!isLinux || noIPv6Loopback)("reads the zone of fe80::1%1 as the index of an interface", () => {
+  let error: any;
+  try {
+    Bun.listen({ hostname: "fe80::1%1", port: 0, socket: { data() {} } }).stop(true);
+  } catch (e) {
+    error = e;
+  }
+  expect({ code: error?.code, syscall: error?.syscall }).toEqual({ code: "EADDRNOTAVAIL", syscall: "listen" });
+});
+
+// A zone that net.isIP() refuses is not part of an address. The resolver gets
+// such a host. glibc and musl refuse it, and the resolver of macOS takes it.
+it.skipIf(!isLinux)("does not listen on ::1%x y, which has a zone that net.isIP() refuses", () => {
+  const hostname = "::1%x y";
+  expect(() => Bun.listen({ hostname, port: 0, socket: { data() {} } }).stop(true)).toThrow(hostname);
+});
+
+// At the descriptor limit socket() fails before there is an address to bind.
+// For a hostname that is an address the error has the code of that failure.
+it.skipIf(isWindows)("Bun.listen on an address at the file descriptor limit throws EMFILE", async () => {
+  const hostnames = ["127.0.0.1", "0.0.0.0", ...(noIPv6Loopback ? [] : ["::1", "::"])];
+  const fixture = /* js */ `
+    const fs = require("fs");
+    const held = [];
+    for (;;) {
+      try {
+        held.push(fs.openSync("/dev/null", "r"));
+      } catch {
+        break;
+      }
+    }
+    const errors = {};
+    for (const hostname of ${JSON.stringify(hostnames)}) {
+      try {
+        Bun.listen({ hostname, port: 0, socket: { data() {} } }).stop(true);
+        errors[hostname] = "listening";
+      } catch (e) {
+        errors[hostname] = { code: e.code, syscall: e.syscall };
+      }
+    }
+    for (const fd of held) fs.closeSync(fd);
+    console.log(JSON.stringify(errors));
+  `;
+  await using proc = Bun.spawn({
+    cmd: ["/bin/sh", "-c", 'ulimit -n 256 && exec "$@"', "sh", bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ errors: JSON.parse(stdout || "{}"), stderr }).toEqual({
+    errors: Object.fromEntries(hostnames.map(hostname => [hostname, { code: "EMFILE", syscall: "listen" }])),
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
+// Every getaddrinfo() call of the child fails. A hostname that net.isIP() takes
+// still binds in each API, because it is an address and the resolver never gets
+// it. "localhost" does not bind, which shows that the shim is in the child.
+const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+it.skipIf(!isLinux || !cc)("binds and listens on an address without a getaddrinfo() call", async () => {
+  const hostnames = ["127.0.0.1", "0.0.0.0", ...(noIPv6Loopback ? [] : ["::1", "::"])];
+  using dir = tempDir("bind-without-getaddrinfo", {
+    "shim.c": /* c */ `
+      #include <netdb.h>
+      int getaddrinfo(const char *node, const char *service, const struct addrinfo *hints, struct addrinfo **res) {
+          (void) node; (void) service; (void) hints; (void) res;
+          return EAI_FAIL;
+      }
+    `,
+    "fixture.mjs": /* js */ `
+      import dgram from "node:dgram";
+      import http from "node:http";
+      import net from "node:net";
+
+      const socket = { data() {} };
+      // The address that an API bound, or the code of its error.
+      const attempt = async bind => {
+        try {
+          return await bind();
+        } catch (error) {
+          return error.code ?? error.message;
+        }
+      };
+      const listening = (handle, start) =>
+        new Promise((resolve, reject) => {
+          handle.once("error", reject);
+          handle.once("listening", () => {
+            const { address } = handle.address();
+            handle.close(() => resolve(address));
+          });
+          start();
+        });
+
+      const bound = {};
+      for (const hostname of ${JSON.stringify(hostnames)}) {
+        bound[hostname] = {
+          listen: await attempt(() => {
+            const listener = Bun.listen({ hostname, port: 0, socket });
+            listener.stop(true);
+            return listener.hostname;
+          }),
+          serve: await attempt(() => {
+            const server = Bun.serve({ hostname, port: 0, fetch: () => new Response("") });
+            const { address } = server.address;
+            server.stop(true);
+            return address;
+          }),
+          udpSocket: await attempt(async () => {
+            const udp = await Bun.udpSocket({ hostname });
+            const { address } = udp.address;
+            udp.close();
+            return address;
+          }),
+          net: await attempt(() => {
+            const server = net.createServer();
+            return listening(server, () => server.listen(0, hostname));
+          }),
+          http: await attempt(() => {
+            const server = http.createServer();
+            return listening(server, () => server.listen(0, hostname));
+          }),
+          dgram: await attempt(() => {
+            const udp = dgram.createSocket(hostname.includes(":") ? "udp6" : "udp4");
+            return listening(udp, () => udp.bind(0, hostname));
+          }),
+        };
+      }
+      let resolverRefuses = false;
+      try {
+        Bun.listen({ hostname: "localhost", port: 0, socket }).stop(true);
+      } catch {
+        resolverRefuses = true;
+      }
+      console.log(JSON.stringify({ bound, resolverRefuses }));
+    `,
+  });
+  const shim = join(String(dir), "shim.so");
+  await using compile = Bun.spawn({
+    cmd: [cc!, "-shared", "-fPIC", "-o", shim, join(String(dir), "shim.c")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect({ stderr: await compile.stderr.text(), exitCode: await compile.exited }).toEqual({ stderr: "", exitCode: 0 });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.mjs"],
+    cwd: String(dir),
+    env: { ...bunEnv, LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shim}:${bunEnv.LD_PRELOAD}` : shim },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const everyApi = (address: string) => ({
+    listen: address,
+    serve: address,
+    udpSocket: address,
+    net: address,
+    http: address,
+    dgram: address,
+  });
+  expect({ result: JSON.parse(stdout || "{}"), stderr }).toEqual({
+    result: {
+      bound: Object.fromEntries(hostnames.map(hostname => [hostname, everyApi(hostname)])),
+      resolverRefuses: true,
+    },
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
 });
 
 it("should not allow invalid tls option", () => {

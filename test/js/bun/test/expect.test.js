@@ -4463,7 +4463,8 @@ describe("expect()", () => {
       { label: `new Error("boom")`, value: new Error("boom") },
       { label: `new Number(5)`, value: new Number(5) },
       { label: `new Boolean(false)`, value: new Boolean(false) },
-      { label: `Object(Symbol())`, value: Object(Symbol()) },
+      // The printer of Vitest throws on a boxed Symbol.
+      ...(isBun ? [{ label: `Object(Symbol())`, value: Object(Symbol()) }] : []),
       { label: `Promise.resolve()`, value: Promise.resolve() },
       { label: `new WeakSet()`, value: new WeakSet() },
       { label: `new DataView(new ArrayBuffer(8))`, value: new DataView(new ArrayBuffer(8)) },

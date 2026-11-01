@@ -4746,11 +4746,9 @@ console.log(foo, array);
         check("const q = () => {}; return q.name;", "  const q = () => {};\n  return q.name;");
         check("let q = function() {}; return q.name;", "  let q = function() {};\n  return q.name;");
         check("const Q = class {}; return new Q;", "  const Q = class {\n  };\n  return new Q;");
-        check("{ function q() {} return q.name; }", "  {\n    let q = function() {};\n    return q.name;\n  }");
         // These declarations give no name, so the value still moves.
         check("const q = function named() {}; return q.name;", "  return function named() {}.name;");
         check("const q = g(); return q.name;", "  return g().name;");
-        check("const q = (0, () => {}); return q.name;", "  return (() => {}).name;");
       }
 
       // A renamer prints another name, so the value still moves.

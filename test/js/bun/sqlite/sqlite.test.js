@@ -1698,6 +1698,234 @@ it("syntax error sets the byteOffset", () => {
   }
 });
 
+// SQLite writes the offset when its parser reports an error, and keeps it until a statement compiles or fails in a
+// step. An error from anywhere else on the connection names no token.
+describe("byteOffset after a syntax error on the connection", () => {
+  // The system SQLite of macOS before 13 has no sqlite3_error_offset. Bun reports -1 there.
+  const at = offset => (isMacOS && !isMacOSVersionAtLeast(13) ? -1 : offset);
+
+  const thrownBy = fn => {
+    try {
+      fn();
+    } catch (e) {
+      return { name: e.name, code: e.code, errno: e.errno, message: e.message, byteOffset: e.byteOffset };
+    }
+    return "no error";
+  };
+  const sqliteError = (code, errno, message, byteOffset = -1) => ({
+    name: "SQLiteError",
+    code,
+    errno,
+    message,
+    byteOffset,
+  });
+
+  // Leaves the offset of the second `nope` on the connection.
+  const syntaxError = db =>
+    expect(thrownBy(() => db.run("SELECT 1 nope nope"))).toEqual(
+      sqliteError("SQLITE_ERROR", 1, 'near "nope": syntax error', at(14)),
+    );
+
+  // macOS loads the SQLite of the system, which is compiled with other options than the one that Bun builds.
+  const compiledWith = option => {
+    using db = new Database(":memory:");
+    return db.query("SELECT sqlite_compileoption_used(?) AS used").get(option).used === 1;
+  };
+
+  it("the same syntax error keeps its offset", () => {
+    using db = new Database(":memory:");
+    syntaxError(db);
+    syntaxError(db);
+    syntaxError(db);
+  });
+
+  // In shared-cache mode SQLite refuses to compile a statement, before it parses it, while another connection holds
+  // a change of the schema in an open transaction.
+  it.skipIf(compiledWith("OMIT_SHARED_CACHE"))("a statement that SQLite refuses before it parses it", () => {
+    const flags = constants.SQLITE_OPEN_READWRITE | constants.SQLITE_OPEN_CREATE | constants.SQLITE_OPEN_URI;
+    const uri = "file:byte-offset-after-a-syntax-error?mode=memory&cache=shared";
+    using writer = new Database(uri, flags);
+    using reader = new Database(uri, flags);
+    writer.run("CREATE TABLE t (x)");
+    // The two connections share one database.
+    expect(reader.query("SELECT count(*) AS rows FROM t").get()).toEqual({ rows: 0 });
+    syntaxError(reader);
+    writer.run("BEGIN");
+    writer.run("CREATE TABLE other (y)");
+
+    const locked = sqliteError("SQLITE_LOCKED_SHAREDCACHE", 262, "database schema is locked: main");
+    expect({
+      run: thrownBy(() => reader.run("SELECT * FROM t")),
+      exec: thrownBy(() => reader.exec("SELECT * FROM t")),
+      afterBlanks: thrownBy(() => reader.run("    SELECT * FROM t")),
+      query: thrownBy(() => reader.query("SELECT * FROM t")),
+      prepare: thrownBy(() => reader.prepare("SELECT * FROM t")),
+      transaction: thrownBy(() => reader.transaction(() => {})),
+    }).toEqual({ run: locked, exec: locked, afterBlanks: locked, query: locked, prepare: locked, transaction: locked });
+  });
+
+  // EXPLAIN does not open the temp database, so SQLite fails this PRAGMA with SQLITE_ERROR, and its parser reports
+  // nothing.
+  it("a statement that fails to compile with SQLITE_ERROR and no token", () => {
+    using db = new Database(":memory:");
+    syntaxError(db);
+    const noToken = sqliteError("SQLITE_ERROR", 1, "SQL logic error");
+    expect({
+      run: thrownBy(() => db.run("EXPLAIN PRAGMA temp.page_size")),
+      afterBlanks: thrownBy(() => db.run("    EXPLAIN PRAGMA temp.page_size")),
+      query: thrownBy(() => db.query("EXPLAIN PRAGMA temp.page_size")),
+      prepare: thrownBy(() => db.prepare("EXPLAIN PRAGMA temp.page_size")),
+    }).toEqual({ run: noToken, afterBlanks: noToken, query: noToken, prepare: noToken });
+    syntaxError(db);
+  });
+
+  it("db.function() and db.aggregate() that SQLite refuses", () => {
+    using db = new Database(":memory:");
+    db.function("f", () => 1);
+    const rows = db.query("SELECT 1 UNION ALL SELECT 2").iterate();
+    rows.next();
+    syntaxError(db);
+    // A function cannot be replaced while a statement runs.
+    const busy = sqliteError("SQLITE_BUSY", 5, "unable to delete/modify user-function due to active statements");
+    expect({
+      function: thrownBy(() => db.function("f", () => 2)),
+      aggregate: thrownBy(() => db.aggregate("f", { step: () => 2 })),
+    }).toEqual({ function: busy, aggregate: busy });
+    rows.return();
+  });
+
+  it.each(["get", "all", "run", "values", "iterate"])("a bind that SQLite refuses, through %s()", method => {
+    using db = new Database(":memory:");
+    const query = db.query("SELECT $a AS a UNION ALL SELECT 2");
+    syntaxError(db);
+    let rows;
+    const bindings = {
+      // Starts a run of the statement after the outer call has reset it. SQLite binds nothing to a statement that runs.
+      get $a() {
+        rows = query.iterate({ $a: 5 });
+        rows.next();
+        return 1;
+      },
+    };
+    expect(
+      thrownBy(() => {
+        const result = query[method](bindings);
+        if (method === "iterate") result.next();
+      }),
+    ).toEqual(sqliteError("SQLITE_MISUSE", 21, "bad parameter or other API misuse"));
+    rows.return();
+  });
+
+  // A SQLite that is compiled with SQLITE_OMIT_AUTORESET refuses to step a statement that reached its end and was not
+  // reset, and records nothing on the connection for that. The connection still has the syntax error then.
+  it.skipIf(!compiledWith("OMIT_AUTORESET")).each(["get", "all", "run", "values", "iterate"])(
+    "a step that SQLite refuses and does not record, through %s()",
+    method => {
+      using db = new Database(":memory:");
+      const query = db.query("SELECT $a AS a UNION ALL SELECT 2");
+      let traps = 0;
+      const bindings = new Proxy(
+        {},
+        {
+          // Runs after the outer call has reset the statement. It reports no property, so nothing is bound after it.
+          getOwnPropertyDescriptor() {
+            traps++;
+            query.all();
+            thrownBy(() => db.run("SELECT 1 nope nope"));
+          },
+        },
+      );
+      expect(
+        thrownBy(() => {
+          const result = query[method](bindings);
+          if (method === "iterate") result.next();
+        }),
+      ).toEqual(sqliteError("SQLITE_MISUSE", 21, "bad parameter or other API misuse"));
+      expect(traps).toBeGreaterThan(0);
+    },
+  );
+
+  // Database.deserialize() does not turn extended result codes on. A step returns SQLITE_CONSTRAINT there, and the
+  // connection has SQLITE_CONSTRAINT_UNIQUE.
+  it("an error of a step on a deserialized database keeps its extended code", () => {
+    using source = new Database(":memory:");
+    source.run("CREATE TABLE t (x UNIQUE)");
+    source.run("INSERT INTO t VALUES (1)");
+    using db = Database.deserialize(source.serialize());
+    const insert = db.query("INSERT INTO t VALUES (1)");
+    syntaxError(db);
+    const unique = sqliteError("SQLITE_CONSTRAINT_UNIQUE", 2067, "UNIQUE constraint failed: t.x");
+    expect({
+      run: thrownBy(() => db.run("INSERT INTO t VALUES (1)")),
+      step: thrownBy(() => insert.run()),
+    }).toEqual({ run: unique, step: unique });
+  });
+
+  it("a statement that SQLite compiles again when it runs keeps the offset of its token", () => {
+    using db = new Database(":memory:");
+    db.run("CREATE TABLE t (x, y)");
+    const query = db.query("  SELECT y, x FROM t");
+    // db.run() compiles its statement, binds the values, then runs it. The column is gone before it runs.
+    const bindings = {
+      get $y() {
+        db.run("ALTER TABLE t DROP COLUMN x");
+        return 1;
+      },
+    };
+    syntaxError(db);
+    const noSuchColumn = offset => sqliteError("SQLITE_ERROR", 1, "no such column: x", at(offset));
+    expect({
+      run: thrownBy(() => db.run("     SELECT y, x FROM t WHERE y = $y", bindings)),
+      all: thrownBy(() => query.all()),
+      get: thrownBy(() => query.get()),
+    }).toEqual({ run: noSuchColumn(15), all: noSuchColumn(12), get: noSuchColumn(12) });
+  });
+
+  // The rtree module runs `SELECT length(data) FROM rt_node WHERE nodeno = 1` when a connection first uses the table,
+  // which is while SQLite compiles the statement that names it. When the schema changes then, and again in the one
+  // retry of SQLite, the error of the parser leaves as SQLITE_SCHEMA and keeps its message and its token.
+  it.skipIf(!compiledWith("ENABLE_RTREE"))(
+    "a token error that SQLite reports as SQLITE_SCHEMA keeps the offset of its token",
+    () => {
+      using dir = tempDir("sqlite-schema-changes", {});
+      const file = path.join(String(dir), "schema.db");
+      using writer = new Database(file);
+      // A reader does not stop a writer in WAL mode.
+      writer.run("PRAGMA journal_mode = WAL");
+      writer.run("PRAGMA synchronous = OFF");
+      writer.run("CREATE VIRTUAL TABLE rt USING rtree(id, minx, maxx)");
+      writer.run("CREATE TABLE t (x, y)");
+      using reader = new Database(file);
+      let changing = false;
+      let changes = 0;
+      reader.function("length", blob => {
+        if (changing) writer.run(`CREATE TABLE changed${++changes} (a)`);
+        return blob.length;
+      });
+      const whileTheSchemaChanges = fn => {
+        changing = true;
+        try {
+          return thrownBy(fn);
+        } finally {
+          changing = false;
+        }
+      };
+
+      const kept = reader.query("  SELECT rt.id, t.x FROM rt, t");
+      expect(kept.all()).toEqual([]);
+      writer.run("ALTER TABLE t RENAME COLUMN x TO xx");
+      syntaxError(reader);
+      const schema = (column, offset) => sqliteError("SQLITE_SCHEMA", 17, `no such column: ${column}`, at(offset));
+      expect({
+        run: whileTheSchemaChanges(() => reader.run("    SELECT id, nosuch FROM rt")),
+        prepare: whileTheSchemaChanges(() => reader.prepare("SELECT id, nosuch FROM rt")),
+        step: whileTheSchemaChanges(() => kept.all()),
+      }).toEqual({ run: schema("nosuch", 15), prepare: schema("nosuch", 11), step: schema("t.x", 16) });
+      expect(changes).toBeGreaterThan(0);
+    },
+  );
+});
+
 it("Missing DB throws SQLITE_CANTOPEN", () => {
   try {
     new Database("./definitely/not/found");
@@ -3154,6 +3382,45 @@ describe("fileControl without storage from the caller", () => {
     expect(db.fileControl(name, constants.SQLITE_FCNTL_DATA_VERSION, version)).toBe(0);
     expect(version).toEqual(expected);
     expect(version[0]).toBeGreaterThan(0);
+  });
+
+  // sqlite3_file_control records no error on the connection. Bun used to throw what the connection had.
+  it("fileControl(name, op, arg) of a schema that does not exist throws the same error in every state of the connection", () => {
+    using db = new Database(":memory:");
+    db.run("CREATE TABLE t (x UNIQUE)");
+    db.run("INSERT INTO t VALUES (1)");
+    const query = db.query("SELECT 1 UNION ALL SELECT 2");
+    const unknownSchema = () => {
+      try {
+        db.fileControl("nope", constants.SQLITE_FCNTL_PERSIST_WAL, 0);
+      } catch (e) {
+        return { name: e.name, code: e.code, errno: e.errno, message: e.message, byteOffset: e.byteOffset };
+      }
+      return "no error";
+    };
+
+    const fresh = unknownSchema();
+    expect(() => db.run("SELECT 1 nope nope")).toThrow(expect.objectContaining({ code: "SQLITE_ERROR" }));
+    const afterSyntaxError = unknownSchema();
+    expect(() => db.run("INSERT INTO t VALUES (1)")).toThrow(
+      expect.objectContaining({ code: "SQLITE_CONSTRAINT_UNIQUE" }),
+    );
+    const afterConstraint = unknownSchema();
+    query.all();
+    const afterLastRow = unknownSchema();
+    const rows = query.iterate();
+    rows.next();
+    const afterRow = unknownSchema();
+    rows.return();
+
+    const error = { name: "SQLiteError", code: "SQLITE_ERROR", errno: 1, message: "SQL logic error", byteOffset: -1 };
+    expect({ fresh, afterSyntaxError, afterConstraint, afterLastRow, afterRow }).toEqual({
+      fresh: error,
+      afterSyntaxError: error,
+      afterConstraint: error,
+      afterLastRow: error,
+      afterRow: error,
+    });
   });
 });
 

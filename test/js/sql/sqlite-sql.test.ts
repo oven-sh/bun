@@ -2487,6 +2487,31 @@ describe("Error handling", () => {
     });
   });
 
+  test("byteOffset is -1 for an error that names no token, after one that names a token", async () => {
+    // The temp database of another test would make the PRAGMA below succeed.
+    await using sql = new SQL("sqlite://:memory:");
+    // The system SQLite of macOS before 13 has no sqlite3_error_offset. Bun reports -1 there.
+    const at = (offset: number) => (isMacOS && !isMacOSVersionAtLeast(13) ? -1 : offset);
+    const thrownBy = (query: PromiseLike<unknown>) =>
+      query.then(
+        () => "no error",
+        error => ({ code: error.code, message: error.message, byteOffset: error.byteOffset }),
+      );
+
+    const token = { code: "SQLITE_ERROR", message: 'near "nope": syntax error', byteOffset: at(14) };
+    expect({
+      token: await thrownBy(sql.unsafe("SELECT 1 nope nope")),
+      // EXPLAIN does not open the temp database, so SQLite fails this PRAGMA with SQLITE_ERROR, and its parser
+      // reports nothing.
+      noToken: await thrownBy(sql.unsafe("EXPLAIN PRAGMA temp.page_size")),
+      tokenAgain: await thrownBy(sql.unsafe("SELECT 1 nope nope")),
+    }).toEqual({
+      token,
+      noToken: { code: "SQLITE_ERROR", message: "SQL logic error", byteOffset: -1 },
+      tokenAgain: token,
+    });
+  });
+
   test("a text of several statements stops at the first one that fails", async () => {
     await sql`CREATE TABLE stops (id INTEGER PRIMARY KEY)`;
     const error = await sql

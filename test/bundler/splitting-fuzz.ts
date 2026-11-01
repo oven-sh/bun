@@ -29,7 +29,7 @@ function rng(seed: number) {
 
 type Graph = { files: Record<string, string>; entries: string[] };
 
-function generateGraph(seed: number): Graph {
+export function generateGraph(seed: number): Graph {
   const rnd = rng(seed);
   const int = (n: number) => Math.floor(rnd() * n);
   const chance = (p: number) => rnd() < p;

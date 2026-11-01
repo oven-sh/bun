@@ -35,7 +35,9 @@ use bun_ast::SideEffects;
 use bun_resolver::Resolver;
 
 use crate::Graph::Graph;
-use crate::options::{CompileMode, Format, Loader, SourceMapOption, Target};
+use crate::options::{
+    CompileMode, Format, Loader, PathTemplate, PlaceholderField, SourceMapOption, Target,
+};
 use crate::{
     AdditionalFile, BundleV2, Chunk, CompileResultForSourceMap, ContentHasher, ImportTracker,
     LinkerGraph, MangledProps, PartRange, StableRef, WrapKind,
@@ -60,7 +62,9 @@ bun_core::define_scoped_log!(debug_tree_shake, crate::linker_context_mod::TreeSh
 // Module declarations live in `lib.rs::linker_context`.
 pub(crate) use crate::linker_context::scan_imports_and_exports::scan_imports_and_exports;
 
-pub(crate) use crate::linker_context::compute_chunks::compute_chunks;
+pub(crate) use crate::linker_context::compute_chunks::{
+    compute_chunks, name_chunks_without_entry_point,
+};
 pub use crate::linker_context::metafile_builder as MetafileBuilder;
 // do_step5 / create_exports_for_file are inherent methods on LinkerContext (see
 // `linker_context/doStep5.rs`), not free functions — no item re-export.
@@ -966,6 +970,7 @@ impl<'a> LinkerContext<'a> {
         }
 
         compute_cross_chunk_dependencies(self, &mut chunks)?;
+        name_chunks_without_entry_point(self, &mut chunks)?;
 
         if FeatureFlags::HELP_CATCH_MEMORY_ISSUES {
             self.check_for_memory_corruption();
@@ -1965,6 +1970,18 @@ impl<'a> LinkerContext<'a> {
         // Hash the output path template as part of the content hash because we want
         // any import to be considered different if the import's output path has changed.
         hasher.write(&chunk.template.data);
+        // Likewise what `[name]` and `[dir]` print, for a chunk without an entry point.
+        if !chunk.entry_point.is_entry_point() {
+            if chunk.template.needs(PlaceholderField::Name) {
+                hasher.write(&chunk.template.placeholder.name);
+            }
+            if chunk.template.needs(PlaceholderField::Dir) {
+                let dir = &chunk.template.placeholder.dir;
+                for segment in strings::split_any(dir, PathTemplate::DIR_SEPARATORS) {
+                    hasher.write(segment);
+                }
+            }
+        }
 
         let public_path: &[u8] = if chunk
             .flags

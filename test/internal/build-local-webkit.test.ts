@@ -129,6 +129,7 @@ describe("which builds compile WebKit", () => {
         name === "testaot" ? ["zstd"] : undefined,
       ]),
     );
+    expect(zstd.enabled!(cfg)).toBe(true);
     expect(webkit.provides(cfg).files).toEqual(expect.arrayContaining([objects("jsc"), objects("testaot")]));
     expect([webkitJSCPath(cfg), webkitTestAotPath(cfg)]).toEqual([join(buildDir, "jsc"), join(buildDir, "testaot")]);
   });
@@ -768,7 +769,8 @@ describe.skipIf(Bun.which(python) === null)("the graph of a checkout", () => {
     try {
       process.env.BUN_ICU_ROOT = join("/somewhere", "icu");
       expect(zstd.enabled!(cfg)).toBe(true);
-      expect(zstd.enabled!(linux({ buildDir }))).toBe(false);
+      // A prebuilt WebKit that is not fetched yet, whatever the cache of this machine has.
+      expect(zstd.enabled!(linux({ buildDir, cacheDir: join(buildDir, "cache") }))).toBe(false);
       delete process.env.BUN_ICU_ROOT;
       expect(zstd.enabled!(cfg)).toBe(false);
     } finally {

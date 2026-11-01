@@ -5,7 +5,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { isWindows, tempDir } from "harness";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 
 import { validateBunConfig } from "../../scripts/build/bun.ts";
@@ -26,6 +26,7 @@ import {
 import { hostZstdPath, zstd } from "../../scripts/build/deps/zstd.ts";
 import { cachedTreeDir } from "../../scripts/build/download.ts";
 import { BuildError } from "../../scripts/build/error.ts";
+import { copyWritable } from "../../scripts/build/fs.ts";
 import { Ninja, readManifest } from "../../scripts/build/ninja.ts";
 import { getProfile } from "../../scripts/build/profiles.ts";
 import { registerAllRules } from "../../scripts/build/rules.ts";
@@ -128,6 +129,25 @@ describe("which builds compile WebKit", () => {
     expect(cachedTreeDir(cache, "webkit-source-0123", "0123 /Source/", undefined)).toBe(
       join(cache, "webkit-source-0123"),
     );
+  });
+
+  test.skipIf(isWindows)("what CI packs out of a read-only tree can be removed again", () => {
+    using dir = tempDir("build-read-only-tree", { "tree/tests/a/b.ir": "b", "tree/AOTSchema.def": "schema" });
+    const [tree, copy] = [join(String(dir), "tree"), join(String(dir), "copy")];
+    const readOnly = [["AOTSchema.def"], ["tests", "a", "b.ir"], ["tests", "a"], ["tests"]].map(p => join(tree, ...p));
+    for (const path of readOnly) chmodSync(path, statSync(path).mode & ~0o222);
+    try {
+      copyWritable(join(tree, "tests"), join(copy, "tests"));
+      copyWritable(join(tree, "AOTSchema.def"), join(copy, "ir", "AOTSchema.def"));
+      expect(readFileSync(join(copy, "tests", "a", "b.ir"), "utf8")).toBe("b");
+      expect(readFileSync(join(copy, "ir", "AOTSchema.def"), "utf8")).toBe("schema");
+      const copied = [["tests"], ["tests", "a"], ["tests", "a", "b.ir"], ["ir", "AOTSchema.def"]];
+      expect(copied.map(p => statSync(join(copy, ...p)).mode & 0o200)).toEqual([0o200, 0o200, 0o200, 0o200]);
+      rmSync(copy, { recursive: true });
+      expect(existsSync(copy)).toBe(false);
+    } finally {
+      for (const path of readOnly.toReversed()) chmodSync(path, statSync(path).mode | 0o200);
+    }
   });
 
   test("nothing reads the pinned trees before configure has fetched them", () => {

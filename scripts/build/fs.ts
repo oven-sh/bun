@@ -5,8 +5,8 @@
  * file idempotently" share nothing except being utility functions.
  */
 
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { chmodSync, cpSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 /**
  * Write `content` to `path` only if different (or file doesn't exist).
@@ -36,6 +36,17 @@ export function writeIfChanged(path: string, content: string | Uint8Array): bool
   writeFileSync(tmp, content);
   renameSync(tmp, path);
   return true;
+}
+
+/**
+ * Copy a file or a directory whose source may be read-only, as a CI image's copy of WebKit's tree is. cpSync keeps the
+ * modes, and a directory without the write bit cannot be emptied: not by whoever cleans up the copy, and not where a zip
+ * of it is unpacked.
+ */
+export function copyWritable(src: string, dest: string): void {
+  cpSync(src, dest, { recursive: true });
+  const entries = statSync(dest).isDirectory() ? readdirSync(dest, { recursive: true, encoding: "utf8" }) : [];
+  for (const path of [dest, ...entries.map(entry => join(dest, entry))]) chmodSync(path, statSync(path).mode | 0o200);
 }
 
 /**

@@ -177,7 +177,7 @@ Once the preload scripts have loaded, a hot reload does not run them again. The 
 
 To apply a change to a preload script, restart Bun. With [`--watch`](#watch-mode), Bun restarts the process on every change.
 
-If your program also imports a preload script, from the entrypoint or from a file that the entrypoint imports, Bun re-evaluates that script on every reload, like any other imported file.
+If your program also imports a preload script, from the entrypoint or from a file that the entrypoint imports, Bun re-evaluates that script on every reload, like any other imported file. That does not replace a plugin that the script registered at startup. Each reload registers the plugin again, and Bun still runs the callbacks from startup first.
 
 To change what a plugin does without a restart, put that code in a module of its own, and load the module inside the callback with `require()`. A hot reload resets the `require` cache, so the callback loads the new code after the next reload.
 

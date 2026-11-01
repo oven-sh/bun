@@ -35,6 +35,7 @@ pub struct ParsedSourceMap {
     /// the downside of repeatedly re-decoding sourcemaps if multiple errors
     /// are emitted (specifically with Bun.inspect / unhandled; the ones that
     /// rely on source contents)
+    /// Except a repeat print of a place: the error printer keeps the lines that it cut (`CodeFrameSlots` in bun_jsc).
     pub underlying_provider: SourceContentPtr,
 
     pub is_standalone_module_graph: bool,

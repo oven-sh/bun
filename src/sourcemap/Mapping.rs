@@ -297,6 +297,15 @@ impl bun_collections::multi_array_list::SortContext for SortContext {
     }
 }
 
+/// Where `Lookup::get_source_code` got its text.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SourceCodeOrigin {
+    /// The source map's own copy of the source (`sourcesContent`).
+    SourceMap,
+    /// The file that the source map names, read because the map gave no text.
+    File,
+}
+
 pub struct Lookup {
     pub mapping: Mapping,
     pub source_map: Option<std::sync::Arc<ParsedSourceMap>>,
@@ -343,7 +352,11 @@ impl Lookup {
     ///
     /// This data is freed after printed on the assumption that printing
     /// errors to the console are rare (this isnt used for error.stack)
-    pub fn get_source_code(self, base_filename: &[u8]) -> Option<Utf8Bytes<'static>> {
+    /// A repeat print of a place does not call this: the error printer keeps the lines that it cut (`CodeFrameSlots` in bun_jsc).
+    pub fn get_source_code(
+        self,
+        base_filename: &[u8],
+    ) -> Option<(Utf8Bytes<'static>, SourceCodeOrigin)> {
         let bytes: Vec<u8> = 'bytes: {
             if let Some(code) = self.prefetched_source_code {
                 break 'bytes code.into_vec();
@@ -370,7 +383,7 @@ impl Lookup {
                 // per-index decompression cache through a `OnceLock`.
                 let code = unsafe { (*serialized).source_file_contents(index) };
 
-                return Some(Utf8Bytes::Borrowed(code?));
+                return Some((Utf8Bytes::Borrowed(code?), SourceCodeOrigin::SourceMap));
             }
 
             if let Some(parsed) = provider.get_source_map(
@@ -398,12 +411,12 @@ impl Lookup {
                 bun_paths::platform::Loose,
             >(dir, &mut buf[..], &[name])?;
             match bun_sys::File::read_from(bun_sys::Fd::cwd(), path) {
-                Ok(r) => break 'bytes r,
+                Ok(r) => return Some((Utf8Bytes::Owned(r), SourceCodeOrigin::File)),
                 Err(_) => return None,
             }
         };
 
-        Some(Utf8Bytes::Owned(bytes))
+        Some((Utf8Bytes::Owned(bytes), SourceCodeOrigin::SourceMap))
     }
 }
 

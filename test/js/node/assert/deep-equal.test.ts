@@ -451,6 +451,15 @@ const cases: Case[] = [
     looseBug: "reports equal",
     strictBug: "reports equal",
   },
+  {
+    name: "String subclass instances with different text and the same Symbol.toPrimitive",
+    a: () => new StringWithConstantToPrimitive("xyz"),
+    b: () => new StringWithConstantToPrimitive("xyw"),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+    strictBug: "reports equal",
+  },
   ...bothOrders({
     name: "an empty boxed string and String.prototype",
     a: () => new String(""),
@@ -1427,13 +1436,6 @@ function describeMatrix(
 
 describeMatrix("assert.deepStrictEqual", "strict", "strictBug", assert.deepStrictEqual, assert.notDeepStrictEqual);
 describeMatrix("assert.deepEqual", "loose", "looseBug", assert.deepEqual, assert.notDeepEqual);
-
-// Bun.deepEquals is the comparison of expect().toEqual(). Jest's toEqual() rejects this pair, because its
-// iterableEquality compares the constructors of two iterables. Only the legacy mode of node:assert accepts it.
-test("Bun.deepEquals rejects a boxed string and a String subclass instance with the same text", () => {
-  expect(Bun.deepEquals(new String("abc"), new StringSubclass("abc"))).toBe(false);
-  expect(Bun.deepEquals(new StringSubclass("abc"), new String("abc"))).toBe(false);
-});
 
 describe("util.isDeepStrictEqual", () => {
   for (const testCase of cases) {

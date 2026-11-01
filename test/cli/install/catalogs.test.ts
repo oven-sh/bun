@@ -2347,6 +2347,8 @@ describe("bun add --catalog advice for a failed catalog: dependency", () => {
   const note =
     'note: catalogs require a "workspaces" field in the root package.json. "<dir>/package.json" was used as root and has none';
   const advice = "error: no-deps@catalog: not in catalog\n  bun add --catalog no-deps";
+  const apiAdvice =
+    "error: no-deps@catalog: not in catalog (declared by api@workspace:packages/api)\n  bun add --catalog no-deps";
 
   function project(files: Record<string, object>) {
     return writeRegistryProject(
@@ -2452,7 +2454,7 @@ describe("bun add --catalog advice for a failed catalog: dependency", () => {
       });
 
       const { err, exitCode } = await run(String(dir), ["install"]);
-      expect(err).toBe("error: no-deps@catalog: failed to resolve");
+      expect(err).toBe("error: no-deps@catalog: failed to resolve (declared by inner@inner)");
       expect(exitCode).toBe(1);
     });
 
@@ -2500,7 +2502,7 @@ describe("bun add --catalog advice for a failed catalog: dependency", () => {
       });
 
       const args = command.replace("./vendor", "../../vendor").split(" ");
-      expect(await run(join(String(dir), "packages", "api"), args)).toEqual({ err: advice, exitCode: 1 });
+      expect(await run(join(String(dir), "packages", "api"), args)).toEqual({ err: apiAdvice, exitCode: 1 });
     });
 
     // https://github.com/oven-sh/bun/issues/20015
@@ -2554,10 +2556,28 @@ describe("bun add --catalog advice for a failed catalog: dependency", () => {
 
       expect(await run(String(dir), ["install"])).toEqual({
         err: [
-          "error: lib@catalog: not in catalog",
-          'error: mono@catalog:tools not in catalog "tools"',
-          'error: no-deps@catalog:tools not in catalog "tools"',
+          "error: lib@catalog: not in catalog (declared by app@workspace:packages/app)",
+          'error: mono@catalog:tools not in catalog "tools" (declared by app@workspace:packages/app)',
+          'error: no-deps@catalog:tools not in catalog "tools" (declared by app@workspace:packages/app)',
           "  bun add --catalog=tools no-deps",
+        ].join("\n"),
+        exitCode: 1,
+      });
+    });
+
+    test.concurrent("the same missing entry is reported once per workspace that declares it", async () => {
+      using dir = project({
+        "package.json": { name: "mono", workspaces: ["packages/*"] },
+        "packages/a/package.json": { name: "a", dependencies: { "no-deps": "catalog:" } },
+        "packages/b/package.json": { name: "b", dependencies: { "no-deps": "catalog:" } },
+      });
+
+      expect(await run(String(dir), ["install"])).toEqual({
+        err: [
+          "error: no-deps@catalog: not in catalog (declared by b@workspace:packages/b)",
+          "  bun add --catalog no-deps",
+          "error: no-deps@catalog: not in catalog (declared by a@workspace:packages/a)",
+          "  bun add --catalog no-deps",
         ].join("\n"),
         exitCode: 1,
       });
@@ -2691,7 +2711,14 @@ describe.concurrent("a version published after the manifest was cached", () => {
 
   test.each([
     { version: "1.0.1", messages: [] },
-    { version: "9.9.9", messages: [noVersion("9.9.9"), "error: fresh-pkg@catalog: failed to resolve"] },
+    {
+      version: "9.9.9",
+      messages: [
+        noVersion("9.9.9"),
+        "error: fresh-pkg@catalog: failed to resolve (declared by b@workspace:packages/b)",
+        "error: fresh-pkg@catalog: failed to resolve (declared by a@workspace:packages/a)",
+      ],
+    },
   ])("a catalog entry moved to $version, used by two workspaces", async ({ version, messages }) => {
     const versions = ["1.0.0"];
     using registry = serveMutableRegistry(versions);
@@ -2735,7 +2762,7 @@ describe.concurrent("a version published after the manifest was cached", () => {
     await write(join(String(dir), "packages", "b", "package.json"), member("b", "9.9.9"));
     registry.requests.length = 0;
     expect(await install(String(dir))).toEqual({
-      messages: [noVersion("9.9.9"), "error: fresh-pkg@9.9.9 failed to resolve"],
+      messages: [noVersion("9.9.9"), "error: fresh-pkg@9.9.9 failed to resolve (declared by b@workspace:packages/b)"],
       exitCode: 1,
       locked: "fresh-pkg@1.0.0",
     });

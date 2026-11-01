@@ -426,7 +426,7 @@ describe.each(["hoisted", "isolated"])("link:<path> (%s)", linker => {
     const { err, exitCode } = await bun(root, ["install"]);
     expect(errorLines(err)).toEqual([
       `error: refusing to resolve "inside@link:./src" declared by tb@./tb-1.0.0.tgz: ${rule}`,
-      "error: inside@link:./src failed to resolve",
+      "error: inside@link:./src failed to resolve (declared by tb@./tb-1.0.0.tgz)",
     ]);
     expect(existsSync(join(root, "project", "bun.lock"))).toBe(false);
     expect(entriesNamed(root, "inside")).toEqual([]);

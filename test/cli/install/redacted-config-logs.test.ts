@@ -594,7 +594,7 @@ describe.concurrent("tarball and git URLs declared in package.json are masked wh
   const password = "s3cret";
   const token = "npm_" + "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8";
 
-  async function startTarballServer() {
+  async function startTarballServer(fields: object = {}) {
     const tarball = await new Bun.Archive(
       {
         "package/package.json": JSON.stringify({
@@ -602,6 +602,7 @@ describe.concurrent("tarball and git URLs declared in package.json are masked wh
           version: "1.0.0",
           license: "MIT",
           scripts: { postinstall: "echo postinstall" },
+          ...fields,
         }),
       },
       { compress: "gzip" },
@@ -791,6 +792,17 @@ describe.concurrent("tarball and git URLs declared in package.json are masked wh
     // Only the resolution in the message is asserted: the request URL bun
     // prints on the following line is a separate operand of this message.
     expect(err).toContain(`error: failed to download direct@${masked(server)}: `);
+    expect(exitCode).toBe(1);
+  });
+
+  test("a dependency of the tarball that fails to resolve names the tarball as its declarer", async () => {
+    // The registry is this server too, and it has no manifest for `missing`.
+    await using server = await startTarballServer({ dependencies: { missing: "1.0.0" } });
+    using dir = tempDir("redacted-resolution-declared-by", { "package.json": packageJson(spec(server)) });
+
+    const { out, err, exitCode } = await run(String(dir), server, ["install"]);
+    expect(err).toContain(`error: missing@1.0.0 failed to resolve (declared by direct@${masked(server)})\n`);
+    expectNoSecrets(out, err);
     expect(exitCode).toBe(1);
   });
 

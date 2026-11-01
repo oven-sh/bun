@@ -622,7 +622,10 @@ describe.concurrent("dist-tag on the name of a workspace that the registry does 
       JSON.stringify({ name: "other", dependencies: { sib: "^2.0.0" } }),
     );
     expect(await repo.bun("install")).toEqual({
-      errors: ["error: GET /sib - 404", "error: sib@^2.0.0 failed to resolve"],
+      errors: [
+        "error: GET /sib - 404",
+        "error: sib@^2.0.0 failed to resolve (declared by other@workspace:packages/other)",
+      ],
       exitCode: 1,
       requests: ["/sib"],
     });
@@ -631,7 +634,7 @@ describe.concurrent("dist-tag on the name of a workspace that the registry does 
   test("linkWorkspacePackages = false gets the 404", async () => {
     using repo = project({ dependencies: { sib: "latest" } }, undefined, "linkWorkspacePackages = false\n");
     expect(await repo.bun("install")).toEqual({
-      errors: ["error: GET /sib - 404", "error: sib@latest failed to resolve"],
+      errors: ["error: GET /sib - 404", "error: sib@latest failed to resolve (declared by app@workspace:packages/app)"],
       exitCode: 1,
       requests: ["/sib"],
     });

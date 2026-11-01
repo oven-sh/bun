@@ -8,8 +8,8 @@ pub struct PreferDestructuring {
     enforce_for_declaration_with_type_annotation: bool,
 }
 
-pub const PREFER_DESTRUCTURING: Message =
-    Message::new("preferDestructuring", "Use {{type}} destructuring.");
+pub const PREFER_DESTRUCTURING: &Message =
+    &Message::new("preferDestructuring", "Use {{type}} destructuring.");
 
 const PRECEDENCE_OF_ASSIGNMENT_EXPR: i32 = 1;
 

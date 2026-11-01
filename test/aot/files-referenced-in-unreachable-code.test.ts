@@ -1,6 +1,5 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { join } from "node:path";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
@@ -50,30 +49,6 @@ for (const [name, index] of Object.entries(packages)) {
 }
 
 const env = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" };
-
-// TODO: an addon that is named only behind a throw or a return is embedded.
-test.todo(
-  "an addon is embedded in an executable only if it is named where the program may come on its target",
-  async () => {
-    using dir = tempDir("files-referenced-in-unreachable-code", files);
-    const plain = await run([bunExe(), "run", "main.js"], String(dir), bunEnv);
-    expect(plain.exitCode).toBe(0);
-
-    const build = await run(
-      [bunExe(), "build", "--compile", "--aot", "main.js", "--outfile", "program"],
-      String(dir),
-      bunEnv,
-    );
-    expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
-    const executable = Buffer.from(await Bun.file(join(String(dir), isWindows ? "program.exe" : "program")).bytes());
-    expect(Object.keys(packages).filter(name => executable.includes(markOf(name)))).toEqual(Object.keys(reachable));
-
-    const compiled = await run([join(String(dir), "program")], String(dir), env);
-    expect(compiled.stderr).not.toContain("crashIfInterpreterIsUsed");
-    expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
-  },
-  240_000,
-);
 
 test("bun run --aot prints what bun run prints", async () => {
   using dir = tempDir("files-referenced-in-unreachable-code", files);

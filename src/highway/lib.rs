@@ -176,6 +176,25 @@ unsafe extern "C" {
         out_indices: *mut u32,
         inout_state: *mut u64,
     ) -> usize;
+
+    fn highway_png_unfilter(
+        filter_type: u8,
+        bpp: usize,
+        row: *mut u8,
+        above: *const u8,
+        len: usize,
+    );
+
+    fn highway_png_filter_rgba(
+        row: *const u8,
+        above: *const u8,
+        len: usize,
+        sub: *mut u8,
+        up: *mut u8,
+        average: *mut u8,
+        paeth: *mut u8,
+        sums: *mut u64,
+    );
 }
 
 // NOTE: every public wrapper below is `#[inline(always)]`. They are thin
@@ -1230,6 +1249,49 @@ pub fn xml_structural_index16_chunk(
             state.as_mut_ptr(),
         )
     }
+}
+
+/// Undoes PNG's filter type 1 (Sub), 2 (Up), 3 (Average) or 4 (Paeth) on `row`, whose pixels have 1, 2, 4, 6 or 8 bytes.
+/// `above` is the row before it, with its filter undone, or zeros. Another filter type or pixel size leaves `row` as it is.
+#[inline(always)]
+pub fn png_unfilter(filter_type: u8, bytes_per_pixel: usize, row: &mut [u8], above: &[u8]) {
+    assert_eq!(row.len(), above.len());
+    // SAFETY: the kernel reads and writes `row.len()` bytes of `row` and reads as many of `above` (asserted above).
+    unsafe {
+        highway_png_unfilter(
+            filter_type,
+            bytes_per_pixel,
+            row.as_mut_ptr(),
+            above.as_ptr(),
+            row.len(),
+        );
+    }
+}
+
+/// Applies PNG's filter types 1 to 4 to `row`, whose pixels have 4 bytes: `filtered[t - 1]` is for type `t`.
+/// `above` is the row before it, or zeros. Returns, for types 0 to 4, how far the filtered bytes are from zero, taken
+/// as signed and added up.
+#[inline(always)]
+pub fn png_filter_rgba(row: &[u8], above: &[u8], filtered: [&mut [u8]; 4]) -> [u64; 5] {
+    assert_eq!(row.len(), above.len());
+    assert!(filtered.iter().all(|line| line.len() == row.len()));
+    let [sub, up, average, paeth] = filtered;
+    let mut sums = [0; 5];
+    // SAFETY: the kernel reads `row.len()` bytes of `row` and `above`, writes as many to each of the four (asserted
+    // above), and writes 5 sums.
+    unsafe {
+        highway_png_filter_rgba(
+            row.as_ptr(),
+            above.as_ptr(),
+            row.len(),
+            sub.as_mut_ptr(),
+            up.as_mut_ptr(),
+            average.as_mut_ptr(),
+            paeth.as_mut_ptr(),
+            sums.as_mut_ptr(),
+        );
+    }
+    sums
 }
 
 /// Raw output column pointers for [`parse_mappings`]. Each points to `cap`

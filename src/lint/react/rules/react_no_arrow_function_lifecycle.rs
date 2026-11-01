@@ -8,7 +8,7 @@ use bun_lint::rule::Plugin;
 /// Lifecycle methods should be methods on the prototype, not class fields
 pub struct NoArrowFunctionLifecycle;
 
-const LIFECYCLE: Message = Message::new(
+const LIFECYCLE: &Message = &Message::new(
     "lifecycle",
     "{{propertyName}} is a React lifecycle method, and should not be an arrow function or in a class field. \
      Use an instance method instead.",

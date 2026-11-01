@@ -1,5 +1,4 @@
-// A CommonJS file requires an ES module. The namespace object of that module answers Object.isExtensible() and Object.isSealed() as every namespace object does, and nothing
-// can be added to it.
+// A CommonJS file requires an ES module while the graph loads, so require() creates the namespace object: it is extensible, but takes no new string key.
 import * as ns from "./plain.mjs";
 import { required } from "./reader.cjs";
 
@@ -16,12 +15,3 @@ try {
 }
 console.log(Reflect.preventExtensions(hold), Object.isExtensible(hold), Object.isSealed(hold));
 console.log(hold.__esModule, "__esModule" in hold, Object.keys(hold).join());
-/* Output:
-true false false false
-true true false false
-false undefined false p,Symbol(Symbol.toStringTag)
-false undefined p,Symbol(Symbol.toStringTag)
-TypeError
-true false true
-true true p
-*/

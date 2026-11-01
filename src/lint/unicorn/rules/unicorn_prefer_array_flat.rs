@@ -11,7 +11,7 @@ use bun_lint::rule::Plugin;
 /// Prefers `Array#flat()` over legacy techniques to flatten arrays.
 pub struct PreferArrayFlat;
 
-const PREFER_ARRAY_FLAT: Message = Message::new("", "Prefer Array#flat() over legacy techniques to flatten arrays.");
+const PREFER_ARRAY_FLAT: &Message = &Message::new("", "Prefer Array#flat() over legacy techniques to flatten arrays.");
 
 impl Rule for PreferArrayFlat {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-array-flat", Kind::Suggestion).fixable(Fixable::Code);

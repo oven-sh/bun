@@ -3,7 +3,7 @@ use bun_lint::prelude::*;
 /// Disallow reassigning class members.
 pub struct NoClassAssign;
 
-const CLASS: Message = Message::new("class", "'{{name}}' is a class.");
+const CLASS: &Message = &Message::new("class", "'{{name}}' is a class.");
 
 impl Rule for NoClassAssign {
     const META: Meta = Meta::eslint("no-class-assign", Kind::Problem).recommended().hints();

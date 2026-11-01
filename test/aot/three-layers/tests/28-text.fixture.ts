@@ -1,0 +1,12 @@
+import { check } from "../src/show";
+import { word, sticky, makeRegExp, matchWith, replaceWith, texts, getAt } from "fake-shapes/more";
+import { Square } from "../src/models";
+import { typedLength } from "../src/middle";
+const F = "28";
+check(F, "a shared regular expression keeps its state", () => { word.lastIndex = 0; const a = word.exec("ab cd"), i = word.lastIndex, b = matchWith(word, "ab cd"), j = word.lastIndex; word.lastIndex = 0; return [a, a?.groups, i, b?.[0], j, word.source, word.flags, String(word)]; });
+check(F, "literals are made anew", () => [makeRegExp() === makeRegExp(), makeRegExp().lastIndex, (() => { const r = makeRegExp(); r.test("xx"); return [r.lastIndex, makeRegExp().lastIndex]; })()]);
+check(F, "replace with callbacks of the other side", () => [replaceWith("ab cd", word, (m, first, rest) => first.toUpperCase() + rest), "ab cd".replace(word, "[$<first>|$2]"), replaceWith(texts.ascii, /o/g, () => texts.one), replaceWith("aXb", "X", "$&$&"), texts.wide.replace(/ö/u, m => m.normalize("NFD").length + ""), "a1b22".split(/(\d+)/), [..."a1b22".matchAll(/\d+/g)].map(m => m.index)]);
+check(F, "sticky", () => { sticky.lastIndex = 1; const a = sticky.test("ba"), i = sticky.lastIndex, b = matchWith(sticky, "baa")?.index; sticky.lastIndex = 0; return [a, i, b]; });
+check(F, "texts as keys, cases and numbers", () => { const s: any = new Square("k", 2); return [s[texts.key], getAt(s, texts.key), getAt({ "": 1 }, texts.empty), +texts.num, texts.num + 1, texts.num * 1, [10, 20][texts.one.length], getAt("abc", texts.one.length), texts.key === "si" + "de", texts.long === "l".repeat(70), new Set([texts.key, "side", "si" + "de"]).size, { side: 1 }[texts.key as "side"]]; });
+check(F, "lengths, slices, wide text", () => [typedLength(texts.wide), typedLength(texts.empty), typedLength(texts.ascii + texts.wide), texts.wide.slice(1, 5), texts.wide.at(-1), texts.wide.codePointAt(12), texts.ascii.toUpperCase(), texts.wide.localeCompare(texts.ascii) > 0, texts.ascii.padEnd(13, texts.one), texts.ascii.split(" "), texts.long.lastIndexOf("l"), encodeURIComponent(texts.wide), new TextEncoder().encode(texts.wide).length, btoa(texts.ascii), texts.ascii.indexOf(texts.one), `${texts.one}${texts.num}`.length, String.raw`\n${texts.one}`, texts.wide.normalize("NFD").length, texts.ascii < texts.wide]);
+check(F, "symbols out of texts", () => [Symbol.for(texts.key) === Symbol.for("side"), Symbol(texts.one).description, Symbol.for(texts.empty).description, Object(texts.one) instanceof String, typeof Object(texts.one).valueOf()]);

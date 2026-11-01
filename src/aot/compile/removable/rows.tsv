@@ -159,6 +159,12 @@
 -	-	-	-	-	ts	import * as ns from "./dep.ts"; const MARK = ns.value.x;
 +	-	-	folded	-	ts	import * as ns from "./dep.ts"; const MARK = ns?.value;
 -	-	-	-	-	ts	import * as ns from "./dep.ts"; let k = "value"; const MARK = ns[k];
+-	+	+	missed	-	ts	import defer * as ns from "./dep.ts"; const MARK = ns.value;
+-	+	+	missed	-	ts	import defer * as ns from "./dep.ts"; const MARK = ns["value"];
+-	+	+	missed	-	ts	import defer * as ns from "./dep.ts"; const MARK = (ns as any).value;
++	+	+	-	-	ts	import defer * as ns from "./dep.ts"; const MARK = ns;
+-	+	+	missed	-	ts	import * as ns from "bun"; const MARK = (ns as any).notThere;
++	+	+	-	-	ts	import * as ns from "node:fs"; const MARK = ns.readFileSync;
 -	+	+	read	-	ts	const MARK = Object.keys;
 +	+	+	-	-	ts	const MARK = Math.PI;
 +	+	+	-	-	ts	const MARK = Math.max;

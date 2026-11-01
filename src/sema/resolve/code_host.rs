@@ -40,9 +40,65 @@ pub trait CodeHost: Host {
         HostResolution::Unclaimed
     }
 
+    /// Whether the transpiler alone knows the name, which it replaces where it reads one in the text of a program. The loader finds nothing under it.
+    fn is_name_for_transpiler_alone(&self, _specifier: &[u8]) -> bool {
+        false
+    }
+
+    /// Whether the module system at run time loads this file, as it does a file that the build never saw.
+    fn leaves_to_run_time(&self, _path: &[u8]) -> bool {
+        false
+    }
+
+    /// Whether another program, which runs in the same realm, holds the module of this file.
+    fn is_in_other_program(&self, _path: &[u8]) -> bool {
+        false
+    }
+
+    /// Whether another program, which runs in the same realm, holds the file as what an import with this `type` gets.
+    fn is_form_in_other_program(&self, _path: &[u8], _type_attribute: &[u8]) -> bool {
+        false
+    }
+
+    /// Whether no program holds the file in any form: an earlier compile could not take it, and the loader at run time says what is wrong with it.
+    fn is_left_to_loader(&self, _path: &[u8]) -> bool {
+        false
+    }
+
+    /// Whether `process.getBuiltinModule(specifier)` answers with a module of the host that another program, which runs in the same realm, holds.
+    fn is_builtin_module_in_other_program(&self, _specifier: &[u8]) -> bool {
+        false
+    }
+
+    /// What `require()` or `import()` of an absolute path loads when the file does not exist at build time. `None` if the load fails.
+    fn kind_of_file_missing_at_build(&self) -> Option<ExternalKind> {
+        None
+    }
+
     /// The path of a file with what a `data:` URL holds, if `type_attribute` loads it as data. Such a module has nothing to run, so it is a file of the program like any other.
     fn create_file_from_data_url(&self, _url: &[u8], _type_attribute: &[u8]) -> Option<Vec<u8>> {
         None
+    }
+
+    /// Whether the program holds a module of its own for `./a.ts?fresh=1`. Otherwise only a loader that reads the file again at run time can make one.
+    fn holds_modules_with_queries(&self) -> bool {
+        false
+    }
+
+    /// The path of one more module of the file at `path`, which the program knows as `path` with `query` behind it. Whoever asks with the same two gets the same path.
+    /// It lies in the directory of the file and ends as the name of the file does. `None` if the host can make no second module of such a file for an import of `kind`.
+    fn add_module_with_query(
+        &self,
+        _path: &[u8],
+        _query: &[u8],
+        _kind: CodeImportKind,
+    ) -> Option<Vec<u8>> {
+        None
+    }
+
+    /// The file whose text the module at `path` runs: `path` itself, but for a path that `add_module_with_query` has made.
+    fn file_of_module<'p>(&'p self, path: &'p [u8]) -> &'p [u8] {
+        path
     }
 
     /// The directory that the imports of a file are resolved from, and whose `tsconfig.json` says how the file is transpiled.
@@ -75,6 +131,12 @@ pub trait CodeHost: Host {
 
     /// Where the host has `@types/bun` itself, for where it is not installed. It comes before `declarations_in_place_of_bun_types`.
     fn type_root_in_place_of_bun_types(&self) -> Option<Vec<u8>> {
+        None
+    }
+
+    /// Of a build that has checked the program with the declarations of `type_root_in_place_of_bun_types` and has started over
+    /// without them: the file and the byte offset of each error that it had with them, in ascending order.
+    fn errors_with_bun_types(&self) -> Option<&[(Vec<u8>, u32)]> {
         None
     }
 
@@ -276,6 +338,8 @@ pub enum HostResolution {
 pub struct LoaderRequest<'a> {
     pub path: &'a [u8],
     pub kind: CodeImportKind,
+    /// `import_sites::is_linked_by_bundler`
+    pub is_linked_by_bundler: bool,
     pub type_attribute: Option<&'a [u8]>,
     pub embed_attribute: Option<&'a [u8]>,
     pub settings: &'a TranspileSettings,
@@ -312,6 +376,8 @@ pub struct TransformRequest<'a, 's> {
     pub bound: &'a Bound<'s>,
     pub analysis: &'a FileAnalysis<'s>,
     pub settings: &'a TranspileSettings,
+    /// The value of `import.meta.main` in the file, if known at build time.
+    pub import_meta_main: Option<bool>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]

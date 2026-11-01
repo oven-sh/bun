@@ -12,6 +12,7 @@ impl FileLowering<'_, '_, '_, '_> {
         let top = self.bound.fns[source.idx()].scope;
         let mut lowering = FunctionLowering::begin(self, function);
         lowering.returned = returned;
+        lowering.count_function(source);
         match module::library_function_form(lowering.file, source) {
             Some(LibraryFunctionForm::NakedConstructor) => {
                 let new_target = lowering.builder.new_target();
@@ -22,6 +23,7 @@ impl FileLowering<'_, '_, '_, '_> {
         }
         lowering.lower_parameters(source);
         lowering.emit_coroutine_start();
+        lowering.count_generator_body(source);
         lowering.emit_fast_path(source);
         lowering.lower_function_body(source);
         lowering.leave_scope(top);

@@ -7,15 +7,15 @@ pub struct ConsistentTypeExports {
     fix_mixed_exports_with_inline_type_specifier: bool,
 }
 
-const MULTIPLE_EXPORTS_ARE_TYPES: Message = Message::new(
+const MULTIPLE_EXPORTS_ARE_TYPES: &Message = &Message::new(
     "multipleExportsAreTypes",
     "Type exports {{exportNames}} are not values and should be exported using `export type`.",
 );
-const SINGLE_EXPORT_IS_TYPE: Message = Message::new(
+const SINGLE_EXPORT_IS_TYPE: &Message = &Message::new(
     "singleExportIsType",
     "Type export {{exportNames}} is not a value and should be exported using `export type`.",
 );
-const TYPE_OVER_VALUE: Message = Message::new(
+const TYPE_OVER_VALUE: &Message = &Message::new(
     "typeOverValue",
     "All exports in the declaration are only used as types. Use `export type`.",
 );

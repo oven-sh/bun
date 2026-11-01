@@ -348,7 +348,8 @@ pub(super) fn with_lowered_units<R>(
     then: impl FnOnce(Vec<LinkUnit>, &Projects<'_, '_>) -> R,
 ) -> R {
     with_bound_build(files, |build, loaded, bound| {
-        let units = build.check_and_lower(loaded, bound);
+        let mut units = build.check_and_lower(loaded, bound);
+        units.iter_mut().for_each(LinkUnit::index);
         let unreached = build.take_unreached_runtime_files();
         then(units, &create_link_projects(loaded, bound, &unreached))
     })
@@ -359,7 +360,8 @@ pub(super) fn with_lowered_units_without_bun_modules<R>(
     then: impl FnOnce(Vec<LinkUnit>, &Projects<'_, '_>) -> R,
 ) -> R {
     with_bound_build_without_bun_modules(files, |build, loaded, bound| {
-        let units = build.check_and_lower(loaded, bound);
+        let mut units = build.check_and_lower(loaded, bound);
+        units.iter_mut().for_each(LinkUnit::index);
         let unreached = build.take_unreached_runtime_files();
         then(units, &create_link_projects(loaded, bound, &unreached))
     })
@@ -398,7 +400,9 @@ pub(super) fn unit_in(
     project: ProjectId,
     fragment: Fragment,
 ) -> LinkUnit {
-    LinkUnit::new(&key_context(projects, project), fragment)
+    let mut unit = LinkUnit::new(&key_context(projects, project), fragment);
+    unit.index();
+    unit
 }
 
 pub(super) fn finish_unit(projects: &Projects<'_, '_>, fragment: FragmentBuilder) -> LinkUnit {
@@ -417,7 +421,9 @@ pub(super) fn create_runtime_function(id: u32, function: FunctionId) -> RuntimeF
 pub(crate) fn unit_of(fragment: Fragment) -> LinkUnit {
     with_projects_without_bun_modules(&[("main.js", "export {};\n")], |projects| {
         let keys = application_keys(projects.application.graph, projects.runtime.sources);
-        LinkUnit::new(&keys, fragment)
+        let mut unit = LinkUnit::new(&keys, fragment);
+        unit.index();
+        unit
     })
 }
 

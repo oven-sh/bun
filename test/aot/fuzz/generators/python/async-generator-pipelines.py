@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""async-generator-pipelines.py <seed>: random strict TypeScript programs about streams: a source that waits for something outside the pipeline (an immediate, a chain of promise jobs), one to seven
-layers of async generators above it (for await, yield*, next() by hand, filters, layers that yield twice, that catch, that clean up in finally) and a consumer that is suspended when the source wakes up.
-Every step logs; other jobs, next ticks and immediates are queued at random places, so the log shows the order of jobs. AsyncLocalStorage stores are read in every layer."""
+"""async-generator-pipelines.py <seed>: Random strict TypeScript programs about streams: a source that waits for
+something outside the pipeline (an immediate, a chain of promise jobs), and one to seven layers of async generators
+on top of it.
+"""
 import random, sys
 seed = int(sys.argv[1]) if len(sys.argv) > 1 else 1
 R = random.Random(seed)

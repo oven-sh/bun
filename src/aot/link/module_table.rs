@@ -175,6 +175,7 @@ mod tests {
         ModuleRef::External {
             importer: find_file(projects, importer),
             specifier: projects.application.loaded.files().atoms.intern(specifier),
+            type_attribute: None,
         }
     }
 
@@ -184,7 +185,9 @@ mod tests {
             fragment.declare_module(module);
         }
         let keys = key_context(projects, ProjectId::Application);
-        LinkUnit::new(&keys, fragment.finish(ModuleFragment::default()))
+        let mut unit = LinkUnit::new(&keys, fragment.finish(ModuleFragment::default()));
+        unit.index();
+        unit
     }
 
     fn count_of(table: &ModuleTable, module: ProgramModule) -> usize {

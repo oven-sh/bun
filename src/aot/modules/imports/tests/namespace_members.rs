@@ -121,6 +121,7 @@ fn commonjs_member_gets_a_synthetic_export() {
             module: program.module("c.cjs"),
             name: program.atom("x"),
             is_known_member: true,
+            is_replaceable: false,
         };
         assert_eq!(program.graph.synthetic_exports(), [expected]);
         assert_eq!(id, SyntheticExportId(0));
@@ -274,19 +275,38 @@ fn member_of_bun_module_is_the_named_import() {
 }
 
 #[test]
-fn default_of_bun_module_is_the_own_default_of_its_object() {
+fn default_of_bun_module_is_the_own_default_that_its_object_had_at_the_load() {
     let main = "
         import * as sqlite from 'bun:sqlite';
         import Database from 'bun:sqlite';
         console.log(sqlite.default, Database);
     ";
     with_program(&[("main.js", main)], |program| {
-        let own_default = ImportBinding::Builtin(BuiltinId::BunSqliteDefault);
+        let own_default = program.captured_export(RuntimeModule::BunSqlite, "default");
         assert_eq!(
             program.member_binding("main.js", "default"),
             Some(own_default)
         );
         assert_eq!(program.binding("main.js", "Database"), own_default);
+        assert!(program.graph.errors().is_empty());
+    });
+}
+
+#[test]
+fn default_of_bun_module_is_its_object_where_the_object_has_a_default_too() {
+    let main = "
+        import * as namespace from 'abort-controller';
+        import Controller from 'abort-controller';
+        console.log(namespace.default, Controller);
+    ";
+    with_program(&[("main.js", main)], |program| {
+        let module_object = table::namespace_of(RuntimeModule::AbortController);
+        let default_export = ImportBinding::Builtin(module_object);
+        assert_eq!(
+            program.member_binding("main.js", "default"),
+            Some(default_export)
+        );
+        assert_eq!(program.binding("main.js", "Controller"), default_export);
         assert!(program.graph.errors().is_empty());
     });
 }

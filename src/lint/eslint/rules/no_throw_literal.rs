@@ -3,8 +3,8 @@ use bun_lint::prelude::*;
 /// Disallow throwing literals as exceptions.
 pub struct NoThrowLiteral;
 
-const OBJECT: Message = Message::new("object", "Expected an error object to be thrown.");
-const UNDEF: Message = Message::new("undef", "Do not throw undefined.");
+const OBJECT: &Message = &Message::new("object", "Expected an error object to be thrown.");
+const UNDEF: &Message = &Message::new("undef", "Do not throw undefined.");
 
 /// oxlint looks through type-only wrappers and points at the thrown expression, including its parentheses if that's a
 /// string, a template or `undefined`.

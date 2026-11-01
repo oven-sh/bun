@@ -18,7 +18,7 @@
 U_CAPI void U_EXPORT2 uloc_setDefault(const char* localeID, UErrorCode* status);
 
 // The platforms on which `--trim` removes locale data: see bun_icu_decompress.cpp.
-#if OS(LINUX) || OS(WINDOWS)
+#if OS(LINUX) || OS(WINDOWS) || OS(FREEBSD)
 
 #include <cstring>
 #include <string_view>
@@ -82,7 +82,7 @@ extern "C" void Bun__ensureICUDefaultLocale()
     UErrorCode status = U_ZERO_ERROR;
     uloc_setDefault("en_US", &status);
     uloc_setDefault(nullptr, &status);
-#if OS(LINUX) || OS(WINDOWS)
+#if OS(LINUX) || OS(WINDOWS) || OS(FREEBSD)
     // en and en_US are never removed.
     if (isBundleOfLocaleRemoved(uloc_getDefault())) [[unlikely]]
         uloc_setDefault("en_US", &status);

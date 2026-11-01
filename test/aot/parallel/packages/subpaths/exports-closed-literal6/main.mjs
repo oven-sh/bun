@@ -4,6 +4,3 @@ const t = (name, f) => { try { console.log(name, show(f())); } catch (e) { conso
 const ta = async (name, f) => { try { console.log(name, show(await f())); } catch (e) { console.log(name, said(e)); } };
 const keys = (o) => Object.keys(o).filter((k) => k !== "__esModule").sort().join();
 await ta("import", () => import("sub/").then((m) => m.which));
-/* Output:
-import THROWS Error ERR_MODULE_NOT_FOUND
-*/

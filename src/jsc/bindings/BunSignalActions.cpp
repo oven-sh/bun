@@ -48,8 +48,11 @@ enum class LibcFunction : uint8_t {
     Sigignore,
     PthreadSigmask,
     Sigprocmask,
+    Sighold,
+    Sigblock,
+    Sigsetmask,
 };
-static constexpr const char* namesOfLibcFunctions[] = { "sigaction", "signal", "bsd_signal", "sysv_signal", "__sysv_signal", "sigset", "sigignore", "pthread_sigmask", "sigprocmask" };
+static constexpr const char* namesOfLibcFunctions[] = { "sigaction", "signal", "bsd_signal", "sysv_signal", "__sysv_signal", "sigset", "sigignore", "pthread_sigmask", "sigprocmask", "sighold", "sigblock", "sigsetmask" };
 static constexpr size_t numberOfLibcFunctions = std::size(namesOfLibcFunctions);
 static constinit std::atomic<void*> nextDefinitions[numberOfLibcFunctions];
 
@@ -341,6 +344,39 @@ static int setSignalMask(int how, const sigset_t* set, sigset_t* previousSet)
     return next(how, &withoutAccessFaults, previousSet);
 }
 
+static int holdSignal(int signalNumber)
+{
+    if ((signalNumber == SIGSEGV || signalNumber == SIGBUS) && JSC::AOT::Image::isRegistered()) [[unlikely]]
+        return 0;
+    return findNextDefinition<int(int)>(LibcFunction::Sighold)(signalNumber);
+}
+
+// One bit for each of the first 32 signals. Returns the bits of those that were blocked before.
+template<LibcFunction function>
+static int setSignalMaskBits(int bits)
+{
+    if (JSC::AOT::Image::isRegistered()) [[unlikely]]
+        bits &= ~(1 << (SIGSEGV - 1) | 1 << (SIGBUS - 1));
+    if (auto* next = findNextDefinition<int(int)>(function)) [[likely]]
+        return next(bits);
+    // musl has neither function.
+    sigset_t set;
+    sigset_t previousSet;
+    sigemptyset(&set);
+    for (int signalNumber = 1; signalNumber <= 32; ++signalNumber) {
+        if (static_cast<unsigned>(bits) >> (signalNumber - 1) & 1)
+            sigaddset(&set, signalNumber);
+    }
+    if (findNextDefinition<int(int, const sigset_t*, sigset_t*)>(LibcFunction::PthreadSigmask)(function == LibcFunction::Sigblock ? SIG_BLOCK : SIG_SETMASK, &set, &previousSet))
+        return -1;
+    unsigned previousBits = 0;
+    for (int signalNumber = 1; signalNumber <= 32; ++signalNumber) {
+        if (sigismember(&previousSet, signalNumber) == 1)
+            previousBits |= 1u << (signalNumber - 1);
+    }
+    return static_cast<int>(previousBits);
+}
+
 static void* const replacementsOfLibcFunctions[numberOfLibcFunctions] = {
     reinterpret_cast<void*>(setSignalAction),
     reinterpret_cast<void*>(setSignalHandler),
@@ -351,6 +387,9 @@ static void* const replacementsOfLibcFunctions[numberOfLibcFunctions] = {
     reinterpret_cast<void*>(ignoreSignal),
     reinterpret_cast<void*>(setSignalMask<LibcFunction::PthreadSigmask>),
     reinterpret_cast<void*>(setSignalMask<LibcFunction::Sigprocmask>),
+    reinterpret_cast<void*>(holdSignal),
+    reinterpret_cast<void*>(setSignalMaskBits<LibcFunction::Sigblock>),
+    reinterpret_cast<void*>(setSignalMaskBits<LibcFunction::Sigsetmask>),
 };
 
 extern "C" char __executable_start[];
@@ -426,6 +465,21 @@ LIBC_FUNCTION int sigprocmask(int how, const sigset_t* __restrict set, sigset_t*
     if (Bun::isInExecutable(__builtin_return_address(0))) [[likely]]
         return Bun::findNextDefinition<int(int, const sigset_t*, sigset_t*)>(Bun::LibcFunction::Sigprocmask)(how, set, previousSet);
     return Bun::setSignalMask<Bun::LibcFunction::Sigprocmask>(how, set, previousSet);
+}
+
+LIBC_FUNCTION int sighold(int signalNumber) LIBC_THROW
+{
+    return Bun::holdSignal(signalNumber);
+}
+
+LIBC_FUNCTION int sigblock(int bits) LIBC_THROW
+{
+    return Bun::setSignalMaskBits<Bun::LibcFunction::Sigblock>(bits);
+}
+
+LIBC_FUNCTION int sigsetmask(int bits) LIBC_THROW
+{
+    return Bun::setSignalMaskBits<Bun::LibcFunction::Sigsetmask>(bits);
 }
 
 #endif // DEFINES_SIGNAL_FUNCTIONS_OF_LIBC

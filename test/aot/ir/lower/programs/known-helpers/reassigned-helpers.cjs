@@ -168,7 +168,7 @@ console.log(emittedInAFunction.call({ __createBinding: original, __exportStar: o
 // CHECK-NEXT: Return v4
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} captures=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|number|string|symbol flags=[IsExpected]}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_12]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} captures=[{type=undefined|null|object flags=[IsExpected] variableName="m"}, {type=undefined|null|number|string|symbol flags=[IsExpected] variableName="k"}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_12]]] {
 // CHECK-NEXT: b0(v0: undefined|null|object, v1: undefined|null|number|string|symbol):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -176,7 +176,7 @@ console.log(emittedInAFunction.call({ __createBinding: original, __exportStar: o
 // CHECK-NEXT: Return v2
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} captures=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|number|string|symbol flags=[IsExpected]}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_13]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} captures=[{type=undefined|null|object flags=[IsExpected] variableName="m"}, {type=undefined|null|number|string|symbol flags=[IsExpected] variableName="k"}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_13]]] {
 // CHECK-NEXT: b0(v0: undefined|null|object, v1: undefined|null|number|string|symbol):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

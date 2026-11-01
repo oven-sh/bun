@@ -81,5 +81,10 @@ lines.push("grown: " + Object.keys(grown).length + " " + grown.g0 + " " + grown.
 const start = countsSoFar();
 let sum = 0;
 for (let i = 0; i < 2000; i++) sum += Object.assign({ p: i }, sources.three()).c + Object.assign({}, sources.three(), sources.deleted()).b + Object.assign(targets.same(), sources.three()).a;
-lines.push(sum + " " + (callsIn(countsSoFar()) - callsIn(start) <= 100));
+// An Object.assign enters the run time once, by the road for a target that nothing has seen or by the other; nothing else does.
+const roads = ["operationAOTObjectAssignWithoutCode", "operationAOTObjectAssignToUnseenObject"];
+const end = countsSoFar();
+const others = callsIn(end, ...roads) - callsIn(start, ...roads);
+const entries = callsIn(end) - callsIn(start) - others;
+lines.push(sum + " " + (others <= 100) + " " + (entries <= 6000));
 console.log(lines.join("\n"));

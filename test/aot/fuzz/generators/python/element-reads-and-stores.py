@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""element-reads-and-stores.py <seed>: random strict TypeScript programs about element reads and stores: arrays of integers, doubles, objects, strings and mixtures, with holes made by
-length, delete, stores past the end and new Array(n); sparse arrays; frozen and sealed arrays; heirs of Array; typed arrays; strings; keys that are integers, negative, fractions, NaN, -0, huge, numeric strings;
-loops up and down with the length read once or every turn, while the body pushes, pops, shifts, splices, truncates or converts the array. What is read is used in arithmetic, in comparisons, as text and by itself."""
+"""element-reads-and-stores.py <seed>: Random strict TypeScript programs about element reads and stores: arrays of
+integers, doubles, objects, strings and mixtures, with holes created by length, delete, stores past the end and new
+Array(n).
+"""
 import random, sys, os
 
 HEAD = r'''const G: any = globalThis;

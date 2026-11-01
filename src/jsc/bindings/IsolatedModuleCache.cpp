@@ -5,6 +5,8 @@
 #include "ZigSourceProvider.h"
 #include "JavaScriptCore/JSCInlines.h"
 #include <JavaScriptCore/JSFunction.h>
+#include <JavaScriptCore/StrongInlines.h>
+#include <JavaScriptCore/UnlinkedFunctionExecutable.h>
 
 namespace Bun {
 
@@ -19,29 +21,57 @@ bool IsolatedModuleCache::canUse(JSC::VM&, void* bunVM, const BunString* typeAtt
     return true;
 }
 
-Zig::SourceProvider* IsolatedModuleCache::lookup(JSC::VM& vm, const WTF::String& key)
+extern "C" uint64_t Bun__hashPluginContents(const EncodedSlice* contents, BunLoaderType loader);
+extern "C" bool Bun__VM__hasGlobalsOfVitest(void* bunVM);
+
+static uint64_t madeFromHash(JSC::VM& vm, const WTF::String& key, const CodeString* pluginContents)
+{
+    void* bunVM = WebCore::clientData(vm)->bunVM;
+    uint64_t hash = pluginContents ? Bun__hashPluginContents(&pluginContents->string, pluginContents->loader) : 0;
+    // An entry point is transpiled differently from an import of the same file.
+    BunString borrowedKey = Bun::toString(key);
+    if (Bun__VM__isTestEntryPoint(bunVM, &borrowedKey))
+        hash ^= 0x9e3779b97f4a7c15ULL;
+    return Bun__VM__hasGlobalsOfVitest(bunVM) ? ~hash : hash;
+}
+
+Zig::SourceProvider* IsolatedModuleCache::lookup(JSC::VM& vm, const WTF::String& key, const CodeString* pluginContents)
 {
     auto& cache = WebCore::clientData(vm)->isolationSourceProviderCache;
     auto it = cache.find(key);
     if (it == cache.end())
         return nullptr;
     ASSERT(it->value);
-    return static_cast<Zig::SourceProvider*>(it->value.get());
+    auto* provider = static_cast<Zig::SourceProvider*>(it->value.get());
+    return provider->m_madeFromHash == madeFromHash(vm, key, pluginContents) ? provider : nullptr;
 }
 
-void IsolatedModuleCache::insert(JSC::VM& vm, const WTF::String& key, Zig::SourceProvider& provider)
+void IsolatedModuleCache::insert(JSC::VM& vm, const WTF::String& key, Zig::SourceProvider& provider, const CodeString* pluginContents)
 {
-    if (!isTagCacheable(static_cast<SyntheticModuleType>(provider.m_tag)))
+    if (!isTagCacheable(static_cast<SyntheticModuleType>(provider.m_tag)) || provider.m_dependsOnMoreThanSource)
         return;
-    auto result = WebCore::clientData(vm)->isolationSourceProviderCache.add(key, RefPtr<JSC::SourceProvider>(&provider));
-    ASSERT_WITH_MESSAGE(result.isNewEntry, "IsolatedModuleCache::insert for already-cached key — a lookup was bypassed");
-    UNUSED_VARIABLE(result);
+    provider.m_madeFromHash = madeFromHash(vm, key, pluginContents);
+    WebCore::clientData(vm)->isolationSourceProviderCache.set(key, &provider);
 }
 
-void IsolatedModuleCache::insertIfAbsent(JSC::VM& vm, const WTF::String& key, Zig::SourceProvider& provider)
+const IsolatedInternalModule* IsolatedModuleCache::lookupInternalModule(JSC::VM& vm, uint32_t id)
 {
-    if (!lookup(vm, key))
-        insert(vm, key, provider);
+    auto& modules = WebCore::clientData(vm)->isolationInternalModules;
+    return id < modules.size() && modules[id].executable ? &modules[id] : nullptr;
+}
+
+void IsolatedModuleCache::insertInternalModule(JSC::VM& vm, uint32_t id, const JSC::SourceCode& source, JSC::UnlinkedFunctionExecutable* executable)
+{
+    auto& modules = WebCore::clientData(vm)->isolationInternalModules;
+    if (id >= modules.size())
+        modules.grow(id + 1);
+    modules[id] = { source, JSC::Strong<JSC::UnlinkedFunctionExecutable>(vm, executable) };
+}
+
+void IsolatedModuleCache::insertIfAbsent(JSC::VM& vm, const WTF::String& key, Zig::SourceProvider& provider, const CodeString* pluginContents)
+{
+    if (!lookup(vm, key, pluginContents))
+        insert(vm, key, provider, pluginContents);
 }
 
 void IsolatedModuleCache::evict(JSC::VM& vm, const WTF::String& key)

@@ -97,11 +97,11 @@ console.log(require_numbers.name, require_texts.name, init_shapes.name, require_
 // CHECK-NEXT: EvaluateModule module=[[m_3]] referrer=[[m_4]] [isBare]
 // CHECK-NEXT: v8 = Boolean boolean=true
 // CHECK-NEXT: v9 = Convert v8 declared={type=undefined|null|number|string|symbol|bigint|[[L_5]] flags=[IsExpected]}
-// CHECK-NEXT: v10 = RequireObjectCoercible v9
+// CHECK-NEXT: v10 = RequireObjectCoercible v9 name="early"
 // CHECK-NEXT: v11 = GetModuleVariable variable=[[g_6]]
 // CHECK-NEXT: v12 = ToString v11
 // CHECK-NEXT: v13 = String string=","
-// CHECK-NEXT: v14 = RequireObjectCoercible v9
+// CHECK-NEXT: v14 = RequireObjectCoercible v9 name="late"
 // CHECK-NEXT: v15 = GetModuleVariable variable=[[g_7]]
 // CHECK-NEXT: v16 = ToString v15
 // CHECK-NEXT: v17 = Strcat v12, v13, v16

@@ -58,8 +58,8 @@ export const Crypto = b.class({
   rustPath: "crate::webcore::crypto::Crypto",
   construct: "illegal",
   proto: {
-    /** What is not an integer typed array throws WebCrypto's `TypeMismatchError`, which no type here throws. */
-    getRandomValues: { args: { array: b.any }, returns: b.any, capability: "js", throws: true },
+    /** A view that is not an integer typed array throws WebCrypto's `TypeMismatchError`, which no type here throws. */
+    getRandomValues: { args: { array: b.any }, returns: b.any, capability: "js", throws: true, requiredArguments: 1 },
     randomUUID: { returns: b.string },
     timingSafeEqual: equal,
   },

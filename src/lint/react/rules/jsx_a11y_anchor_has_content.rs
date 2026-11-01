@@ -9,7 +9,7 @@ pub struct AnchorHasContent {
     components: Vec<String>,
 }
 
-const MISSING_CONTENT: Message = Message::new("", "Missing accessible content when using `a` elements.");
+const MISSING_CONTENT: &Message = &Message::new("", "Missing accessible content when using `a` elements.");
 
 impl Rule for AnchorHasContent {
     // oxlint declares a suggestion, but what it produces is a fix.

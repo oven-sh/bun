@@ -1,6 +1,8 @@
 // Code that nothing reaches leaves nothing in an executable built with --aot: no machine code, no string, and no name either.
 // A frame of a stack trace and the `name` of a closure show the name of a function, so the executable holds the names of the functions
 // that have code in it, inlined code too, and of no others.
+// By default it also keeps the text of its functions, for toString() and for what an error quotes. That is the text that `bun build --compile`
+// holds, so a name of unreached code may stand there where an executable built without --aot holds it too, and nowhere else.
 import { afterAll, expect } from "bun:test";
 import { readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
@@ -229,23 +231,30 @@ describe.each(Object.keys(builds) as (keyof typeof builds)[])(
   build => {
     const folder = String(tempDir("aot-names-of-unreached-code", sources));
     const executable = join(folder, isWindows ? "program.exe" : "program");
+    const executableWithoutAot = join(folder, isWindows ? "without-aot.exe" : "without-aot");
+    const keepsTextOfFunctions = build === "by default";
     let bytes = Buffer.alloc(0);
+    let bytesWithoutAot = Buffer.alloc(0);
     afterAll(() => rmSync(folder, { recursive: true, force: true }));
 
     beforeAll(async () => {
-      const flags = ["--define", "DEFINED_FLAG_Q52=false", ...builds[build]];
-      built(
-        await spawned(
-          [bunExe(), ...compileCommand, ...withoutDebugInformation, ...flags, "./main.ts", "--outfile", executable],
-          folder,
-          bunEnv,
-        ),
-      );
-      bytes = readFileSync(executable);
+      const define = ["--define", "DEFINED_FLAG_Q52=false"];
+      const buildWith = async (command: readonly string[], outfile: string) => {
+        built(
+          await spawned(
+            [bunExe(), ...command, ...withoutDebugInformation, ...define, "./main.ts", "--outfile", outfile],
+            folder,
+            bunEnv,
+          ),
+        );
+        return readFileSync(outfile);
+      };
+      bytes = await buildWith([...compileCommand, ...builds[build]], executable);
+      if (keepsTextOfFunctions) bytesWithoutAot = await buildWith(["build", "--compile"], executableWithoutAot);
     }, 300_000);
 
-    const found = (names: string[]) =>
-      names.filter(name => bytes.includes(name, 0, "latin1") || bytes.includes(name, 0, "utf16le"));
+    const holds = (held: Buffer, name: string) => held.includes(name, 0, "latin1") || held.includes(name, 0, "utf16le");
+    const found = (names: string[]) => names.filter(name => holds(bytes, name));
 
     test("the program prints the names of what it keeps", async () => {
       const run = await spawned([executable], folder, bunEnv);
@@ -266,6 +275,7 @@ describe.each(Object.keys(builds) as (keyof typeof builds)[])(
         "keptMessageQ82",
       ];
       expect(found(names)).toEqual(names);
+      if (keepsTextOfFunctions) expect(names.filter(name => holds(bytesWithoutAot, name))).toEqual(names);
     });
 
     const foldedByTheParser = ["literalFalse", "defined"];
@@ -391,7 +401,7 @@ describe.each(Object.keys(builds) as (keyof typeof builds)[])(
         ["module-for-unreached-code-q41", "module-without-effects-q48"],
       ]),
     ] as [string, string[]][])("the executable does not hold %s", (_, names) => {
-      expect(found(names)).toEqual([]);
+      expect(found(names).filter(name => !holds(bytesWithoutAot, name))).toEqual([]);
     });
 
     // The source of a class is kept whole for toString().

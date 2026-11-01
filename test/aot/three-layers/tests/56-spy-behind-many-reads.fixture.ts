@@ -1,0 +1,10 @@
+import { spyOn, mock } from "bun:test";
+import * as star from "../src/spies/barrel-star";
+import * as pkg from "pkg-esm";
+import * as cjs from "pkg-cjs";
+import { add, callsAdd } from "pkg-esm";
+import { seenBySrc, seenOfCjs } from "../src/spies/uses";
+import { say } from "../src/spies/say";
+const all = () => [star.add(1, 2), pkg.add(1, 2), add(1, 2), callsAdd(1, 2), cjs.add(1, 2), seenBySrc(), seenOfCjs()];
+say("56", "every layer has read the export many times", () => { let warm = 0; for (let i = 0; i < 300; i++) warm += JSON.stringify(all()).length; const spies = [spyOn(pkg, "add").mockImplementation(() => 100), spyOn(cjs, "add").mockImplementation(() => 200)]; const during = all(); let hot = 0; for (let i = 0; i < 300; i++) hot += JSON.stringify(all()).length; mock.restore(); let cold = 0; for (let i = 0; i < 300; i++) cold += JSON.stringify(all()).length; return [warm, during, hot, cold, all()]; });
+say("56", "a second spy behind the first", () => { const first = spyOn(star, "add").mockImplementation(() => 1); const a = all(); first.mockImplementation(() => 2); const b = all(); first.mockRestore(); const second = spyOn(pkg, "add").mockReturnValue(3); const c = all(); second.mockRestore(); return [a, b, c, all()]; });

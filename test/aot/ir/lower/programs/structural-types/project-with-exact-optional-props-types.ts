@@ -220,7 +220,7 @@ attempt("honest again", () => [sizeIfThere({ size: 1 }), sizeIfThere({}), labelI
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="drop"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|number|string|symbol|bigint|[[L_1]] flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_17]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|number|string|symbol|bigint|[[L_1]] flags=[IsExpected, OmitsNull, OmitsUndefined] variableName="o"}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_17]]] {
 // CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_1]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

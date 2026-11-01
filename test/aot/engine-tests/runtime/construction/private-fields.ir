@@ -52,7 +52,7 @@
 # CHECK-NEXT: a class whose objects reach run-time text: nothing
 # CHECK-NEXT: a class below a class whose objects reach run-time text: nothing
 # CHECK-NEXT: a method whose generic version reads the field: nothing
-# CHECK-NEXT: names of a class below a parent, on objects that reach run-time text: PrivateDefine
+# CHECK-NEXT: names of a class below a parent, on objects that reach run-time text: nothing
 # CHECK-NEXT: exited with 0
 
 module m0 path="main.ts" displayPath="main.ts" flags=[KeepsError] body=f0 namespaceLayout=L(m0)

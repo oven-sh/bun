@@ -81,6 +81,7 @@ members = [
   "src/ast",
   "src/ast_jsc",
   "src/picohttp",
+  "src/png",
   "src/s3_signing",
   "src/sql_jsc",
   "src/zlib",
@@ -459,6 +460,7 @@ bun_libuv_sys = { path = "src/libuv_sys" }
 bun_ast = { path = "src/ast" }
 bun_ast_jsc = { path = "src/ast_jsc" }
 bun_picohttp = { path = "src/picohttp" }
+bun_png = { path = "src/png" }
 bun_s3_signing = { path = "src/s3_signing" }
 bun_sql_jsc = { path = "src/sql_jsc" }
 bun_zlib = { path = "src/zlib" }
@@ -509,6 +511,11 @@ bun_output = { path = "src/output" }
 bun_simdutf_sys = { path = "src/simdutf_sys" }
 bun_which = { path = "src/which" }
 bun_transpiler = { path = "src/transpiler" }
+
+# Loops over every byte of an image: unoptimized, a debug build takes seconds per megapixel. Assertions and overflow
+# checks stay on. scripts/build/flags.ts does the same for highway_png.cpp.
+[profile.dev.package.bun_png]
+opt-level = 3
 
 # It stands in for vector code that every test program runs over each byte it parses.
 [profile.dev.package.bun_sema_standalone]

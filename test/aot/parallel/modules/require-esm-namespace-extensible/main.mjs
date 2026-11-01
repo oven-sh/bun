@@ -1,0 +1,26 @@
+// A CommonJS file that runs while the graph loads requires ES modules: require() creates their namespace objects, which are extensible.
+import * as one from "./e1.mjs";
+import { x as two } from "./e2.mjs";
+import * as three from "./e3.mjs";
+export * as four from "./e4.mjs";
+import c from "./c.cjs";
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+c.show("main: e1", one);
+console.log(two, three.x);
+const six = require("./e6.mjs");
+c.show("main: e6 required first", six);
+const later = await import("./later.mjs");
+c.show("main: e6 then star-imported", later.held);
+console.log(later.held === six);
+const seven = require("./e7.mjs");
+console.log(seven.__esModule);
+c.mark(seven, 0);
+console.log(seven.__esModule, require("./e7.mjs").__esModule);
+c.define(seven, "defined");
+console.log(seven.__esModule, require("./e7.mjs").__esModule);
+const { __esModule: marker } = require("./e7.mjs");
+console.log(marker);
+console.log(require("./e8.mjs").__esModule);
+c.define(require("./e8.mjs"), 8);
+console.log(require("./e8.mjs").__esModule);

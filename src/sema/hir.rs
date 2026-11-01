@@ -401,6 +401,8 @@ pub trait Storage {
     type Lazy;
     /// `RuntimeBindingsIn::tables`
     type Boxed<T>: DerefMut<Target = T>;
+    /// `BoundIn::block`
+    type Block: Default;
 }
 
 /// Storage while a file is parsed or bound: on the global heap, with room to grow.
@@ -421,6 +423,7 @@ impl Storage for Growable {
     /// For `FileBuilder::lend`.
     type Lazy = LazyCells;
     type Boxed<T> = Box<T>;
+    type Block = ();
 }
 
 /// Storage from then on: at the final size, in the arena of the thread that loaded the file.
@@ -442,6 +445,7 @@ impl<'s> Storage for InArena<'s> {
     type Text = Cow<'s, [u8]>;
     type Lazy = Lazy<'s>;
     type Boxed<T> = ArenaBox<'s, T>;
+    type Block = ListBlock<'s>;
 }
 
 /// A map that nothing writes to. It either owns its arena block or belongs to a file that several programs share.
@@ -483,6 +487,9 @@ impl<T> Default for Fixed<'_, T> {
 impl<'s, T: Copy> Fixed<'s, T> {
     #[inline(never)]
     pub(crate) fn copied_in(arena: &'s Arena, list: &[T]) -> Self {
+        if list.is_empty() {
+            return Fixed::default();
+        }
         Fixed(FixedIn::Arena(ArenaBox::copy_from_slice_in(list, arena)))
     }
 
@@ -497,6 +504,156 @@ impl<'s, T: Copy> Fixed<'s, T> {
 impl<'s, T> Fixed<'s, T> {
     pub(crate) fn shared(list: &'s [T]) -> Self {
         Fixed(FixedIn::Shared(list))
+    }
+}
+
+/// One block for the long lists of a file or of its side tables. They are freed together, and what is freed in one piece
+/// leaves whole pages free, while a hundred small blocks leave holes among what stays.
+pub struct ListBlock<'s> {
+    first: *mut u128,
+    /// In bytes.
+    size: usize,
+    used: usize,
+    arena: PhantomData<&'s Arena>,
+}
+
+// SAFETY: it owns the block.
+unsafe impl Send for ListBlock<'_> {}
+// SAFETY: nothing is read or written through a shared reference.
+unsafe impl Sync for ListBlock<'_> {}
+
+impl Default for ListBlock<'_> {
+    fn default() -> Self {
+        ListBlock {
+            first: std::ptr::null_mut(),
+            size: 0,
+            used: 0,
+            arena: PhantomData,
+        }
+    }
+}
+
+impl<'s> ListBlock<'s> {
+    pub(crate) const ALIGNMENT: usize = align_of::<u128>();
+
+    pub(crate) fn room_for<T>(list: &[T]) -> usize {
+        size_of_val(list).next_multiple_of(ListBlock::ALIGNMENT)
+    }
+
+    /// `size`: the sum of `room_for` of the lists.
+    pub(crate) fn new_in(arena: &'s Arena, size: usize) -> ListBlock<'s> {
+        if size == 0 {
+            return ListBlock::default();
+        }
+        let words = Box::<[u128], _>::new_uninit_slice_in(size / ListBlock::ALIGNMENT, arena);
+        ListBlock {
+            first: ArenaBox::from_box(words).into_raw().cast(),
+            size,
+            used: 0,
+            arena: PhantomData,
+        }
+    }
+
+    /// Copies `list` into the block, or into a block of its own in `arena` if there is no room.
+    pub(crate) fn copy<T: Copy>(&mut self, list: &[T], arena: &'s Arena) -> Fixed<'s, T> {
+        const { assert!(align_of::<T>() <= ListBlock::ALIGNMENT) };
+        let room = ListBlock::room_for(list);
+        if room == 0 || room > self.size - self.used {
+            return Fixed::copied_in(arena, list);
+        }
+        // SAFETY: the room is free, aligned, and lives as long as the lists, which are dropped with the block.
+        let copy = unsafe {
+            let first = self.first.cast::<u8>().add(self.used).cast::<T>();
+            first.copy_from_nonoverlapping(list.as_ptr(), list.len());
+            std::slice::from_raw_parts_mut(first, list.len())
+        };
+        self.used += room;
+        Fixed(FixedIn::Lent(copy))
+    }
+
+    fn is_empty(&self) -> bool {
+        self.first.is_null()
+    }
+
+    /// What the lists hold, and the room between them.
+    pub(crate) fn bytes(&mut self) -> &mut [u8] {
+        if self.first.is_null() {
+            return &mut [];
+        }
+        // SAFETY: the block is that long. What lies between the lists may never have been written, and is only copied.
+        unsafe { std::slice::from_raw_parts_mut(self.first.cast(), self.size) }
+    }
+
+    /// `copy` of what `items` yields.
+    fn collect<T: Copy>(
+        &mut self,
+        items: impl ExactSizeIterator<Item = T>,
+        arena: &'s Arena,
+    ) -> Fixed<'s, T> {
+        let room = (items.len() * size_of::<T>()).next_multiple_of(ListBlock::ALIGNMENT);
+        if room == 0 || room > self.size - self.used {
+            return Fixed(FixedIn::Arena(ArenaBox::from_iter_in(items, arena)));
+        }
+        let count = items.len();
+        // SAFETY: as in `copy`. An iterator that yields less than it said leaves the list shorter.
+        let copy = unsafe {
+            let first = self.first.cast::<u8>().add(self.used).cast::<T>();
+            let mut written = 0;
+            for item in items.take(count) {
+                first.add(written).write(item);
+                written += 1;
+            }
+            std::slice::from_raw_parts_mut(first, written)
+        };
+        self.used += room;
+        Fixed(FixedIn::Lent(copy))
+    }
+
+    /// `copy`, and clears `list`, which keeps its capacity.
+    pub(crate) fn take<T: Copy>(&mut self, list: &mut Vec<T>, arena: &'s Arena) -> Fixed<'s, T> {
+        let exact = self.copy(list, arena);
+        list.clear();
+        exact
+    }
+}
+
+impl Drop for ListBlock<'_> {
+    fn drop(&mut self) {
+        if self.first.is_null() {
+            return;
+        }
+        let words = self.size / ListBlock::ALIGNMENT;
+        // SAFETY: it is the block of `new_in`.
+        drop(unsafe { ArenaBox::from_raw(std::ptr::slice_from_raw_parts_mut(self.first, words)) });
+    }
+}
+
+/// A list of plain data in a `ListBlock`, as `program::retire` sees it.
+pub(crate) trait LongList {
+    /// Where the elements are, and their size in bytes. Nothing of a list that owns its block or shares another's.
+    fn lent_bytes(&self) -> (*const u8, usize);
+    fn release(&mut self);
+    /// # Safety
+    /// The bytes are those of a list of this type, and outlive what is read through the list.
+    unsafe fn lend(&mut self, first: *mut u8, size: usize);
+}
+
+impl<T: Copy> LongList for Fixed<'_, T> {
+    fn lent_bytes(&self) -> (*const u8, usize) {
+        match &self.0 {
+            FixedIn::Lent(list) => (list.as_ptr().cast(), size_of_val(&**list)),
+            FixedIn::Arena(_) | FixedIn::Shared(_) => (std::ptr::null(), 0),
+        }
+    }
+
+    fn release(&mut self) {
+        *self = Fixed::default();
+    }
+
+    unsafe fn lend(&mut self, first: *mut u8, size: usize) {
+        let count = size / size_of::<T>();
+        // SAFETY: caller contract.
+        self.0 = FixedIn::Lent(unsafe { std::slice::from_raw_parts_mut(first.cast::<T>(), count) });
     }
 }
 
@@ -600,6 +757,46 @@ impl<'s, T: Id> Narrow<'s, T> {
         }
     }
 
+    fn all_fit(list: &[T]) -> bool {
+        let fits =
+            |found: bool, &id: &T| found & (id.into().wrapping_add(1) <= u32::from(u16::MAX));
+        list.iter().fold(true, fits)
+    }
+
+    /// `ListBlock::room_for` of what `moved_into` makes of `list`.
+    pub(crate) fn room_for(list: &[T]) -> usize {
+        match Self::all_fit(list) {
+            true => (list.len() * size_of::<u16>()).next_multiple_of(ListBlock::ALIGNMENT),
+            false => ListBlock::room_for(list),
+        }
+    }
+
+    pub(crate) fn for_each_long_list(&mut self, each: &mut dyn FnMut(&mut dyn LongList)) {
+        each(&mut self.short);
+        each(&mut self.long);
+    }
+
+    /// `moved_in`, into `block`.
+    pub(crate) fn moved_into(
+        block: &mut ListBlock<'s>,
+        arena: &'s Arena,
+        list: &mut Vec<T>,
+    ) -> Self {
+        if !Self::all_fit(list) {
+            return Narrow {
+                short: Fixed::default(),
+                long: block.take(list, arena),
+            };
+        }
+        let short = list.iter().map(|&id| id.into().wrapping_add(1) as u16);
+        let short = block.collect(short, arena);
+        list.clear();
+        Narrow {
+            short,
+            long: Fixed::default(),
+        }
+    }
+
     pub(crate) fn shared(&'s self) -> Self {
         Narrow {
             short: Fixed::shared(&self.short),
@@ -625,6 +822,8 @@ pub struct Lazy<'s> {
     /// `File::arena`
     pub(crate) arena: &'s Arena,
     pub(crate) cells: &'s LazyCells,
+    /// Holds the long lists of a file that owns them.
+    pub(crate) block: ListBlock<'s>,
 }
 
 /// Data computed from a loaded file on demand, by the first thread that needs it.
@@ -635,30 +834,67 @@ pub struct Lazy<'s> {
 #[derive(Default)]
 pub struct LazyCells {
     /// `node.Parent`, by `Node`: `File::parent`.
-    pub(crate) parents: OnceLock<crate::node::Parents>,
+    pub(crate) parents: LazyCell<crate::node::Parents>,
     /// `File::kind`
-    pub(crate) kinds: OnceLock<Box<[AtomicU16]>>,
+    pub(crate) kinds: LazyCell<Box<[AtomicU16]>>,
     /// `FnId::to_node`, `ClassId::to_node`
-    pub(crate) owners: OnceLock<crate::node::Owners>,
+    pub(crate) owners: LazyCell<crate::node::Owners>,
     /// `File::is_in_ambient_or_type_node`
-    pub(crate) ambient_or_type_ranges: OnceLock<RangeSet<Box<[TextRange]>>>,
+    pub(crate) ambient_or_type_ranges: LazyCell<RangeSet<Box<[TextRange]>>>,
     /// `File::is_in_type_query`
-    pub(crate) type_query_ranges: OnceLock<RangeSet<Box<[TextRange]>>>,
+    pub(crate) type_query_ranges: LazyCell<RangeSet<Box<[TextRange]>>>,
     /// `File::is_in_class_extends`
-    pub(crate) class_extends_ranges: OnceLock<RangeSet<Box<[TextRange]>>>,
+    pub(crate) class_extends_ranges: LazyCell<RangeSet<Box<[TextRange]>>>,
     /// `File::keyword_identifiers`
-    pub(crate) keyword_identifiers: OnceLock<Box<[Node]>>,
+    pub(crate) keyword_identifiers: LazyCell<Box<[Node]>>,
+}
+
+/// A `OnceLock` that can be emptied while nothing reads the file.
+pub(crate) struct LazyCell<T>(std::cell::UnsafeCell<OnceLock<T>>);
+
+// SAFETY: it is a `OnceLock` but for `clear`, whose caller is alone.
+unsafe impl<T: Send + Sync> Sync for LazyCell<T> {}
+
+impl<T> Default for LazyCell<T> {
+    fn default() -> Self {
+        LazyCell::new()
+    }
+}
+
+impl<T> LazyCell<T> {
+    const fn new() -> LazyCell<T> {
+        LazyCell(std::cell::UnsafeCell::new(OnceLock::new()))
+    }
+
+    #[inline]
+    pub(crate) fn get_or_init(&self, compute: impl FnOnce() -> T) -> &T {
+        // SAFETY: nothing clears it while the file is read.
+        unsafe { &*self.0.get() }.get_or_init(compute)
+    }
+
+    #[inline]
+    pub(crate) fn get(&self) -> Option<&T> {
+        // SAFETY: nothing clears it while the file is read.
+        unsafe { &*self.0.get() }.get()
+    }
+
+    /// # Safety
+    /// No reference to the value is alive, and no other thread uses the cell.
+    unsafe fn clear(&self) {
+        // SAFETY: caller contract.
+        unsafe { *self.0.get() = OnceLock::new() };
+    }
 }
 
 /// The cells of every file without nodes. What's computed from such a file is the same for all of them.
 static EMPTY_FILE_CELLS: LazyCells = LazyCells {
-    parents: OnceLock::new(),
-    kinds: OnceLock::new(),
-    owners: OnceLock::new(),
-    ambient_or_type_ranges: OnceLock::new(),
-    type_query_ranges: OnceLock::new(),
-    class_extends_ranges: OnceLock::new(),
-    keyword_identifiers: OnceLock::new(),
+    parents: LazyCell::new(),
+    kinds: LazyCell::new(),
+    owners: LazyCell::new(),
+    ambient_or_type_ranges: LazyCell::new(),
+    type_query_ranges: LazyCell::new(),
+    class_extends_ranges: LazyCell::new(),
+    keyword_identifiers: LazyCell::new(),
 };
 
 /// Copies `list` to a block of exactly its size in `arena` and clears it. `list` keeps its capacity.
@@ -2456,6 +2692,11 @@ pub struct ImportedConstant {
 /// The parser's output for one source file.
 #[derive(Default)]
 pub struct FileIn<S: Storage> {
+    pub exprs: S::Nodes<Expr>,
+    pub stmts: S::Nodes<Stmt>,
+    pub types: S::Nodes<TypeNode>,
+    pub fns: S::Nodes<Func>,
+    pub members: S::Nodes<Member>,
     pub kind: FileKind,
     /// `.js`, `.jsx`, `.mjs`, `.cjs`. Parsed like `.tsx`: TypeScript-only syntax is accepted and reported as an error
     /// afterwards.
@@ -2605,13 +2846,9 @@ pub struct FileIn<S: Storage> {
 
     pub ids: S::Nodes<u32>,
     pub numbers: S::Nodes<f64>,
-    pub exprs: S::Nodes<Expr>,
-    pub stmts: S::Nodes<Stmt>,
-    pub types: S::Nodes<TypeNode>,
     pub pats: S::Nodes<Pat>,
     pub pat_props: S::Nodes<PatProp>,
     pub pat_elems: S::Nodes<PatElem>,
-    pub fns: S::Nodes<Func>,
     pub params: S::Nodes<Param>,
     pub type_params: S::Nodes<TypeParam>,
     pub classes: S::Nodes<Class>,
@@ -2620,7 +2857,6 @@ pub struct FileIn<S: Storage> {
     pub enums: S::Few<Enum>,
     pub enum_members: S::Few<EnumMember>,
     pub modules: S::Few<Module>,
-    pub members: S::Nodes<Member>,
     pub props: S::Nodes<Prop>,
     pub var_decls: S::Nodes<VarDecl>,
     pub calls: S::Nodes<Call>,
@@ -3094,6 +3330,8 @@ impl FileBuilder {
 macro_rules! long_lists {
     ($each:ident) => {
         $each!(
+            mentioned,
+            modifiers_of_params,
             ids,
             numbers,
             exprs,
@@ -3142,6 +3380,7 @@ macro_rules! file_in_arena {
                 session: $session,
                 arena: $arena,
                 cells: $cells,
+                block: ListBlock::default(),
             },
             $long,
             $few,
@@ -3304,16 +3543,22 @@ impl FileBuilder {
         session: &'s Session,
         cells: &'s LazyCells,
     ) -> (File<'s>, FileBuilder) {
-        // An empty list doesn't allocate in the arena. See `File::empty_in`.
+        // Most callers drop the comments at once, so they get a block of their own.
+        let comments = std::mem::take(&mut self.comments);
+        let mut room = 0;
+        macro_rules! measure {
+            ($($f:ident),*) => { $(room += ListBlock::room_for(&self.$f);)* };
+        }
+        long_lists!(measure);
+        // A file without nodes doesn't allocate in the arena. See `File::empty_in`.
+        let mut block = ListBlock::new_in(arena, room);
         macro_rules! copied {
-            ($list:expr) => {{
-                let exact = Fixed::copied_in(arena, &$list);
-                $list.clear();
-                exact
-            }};
+            ($list:expr) => {
+                block.take(&mut $list, arena)
+            };
         }
         moved_lists!(arena);
-        let file = file_in_arena!(
+        let mut file = file_in_arena!(
             self,
             arena,
             session,
@@ -3323,6 +3568,8 @@ impl FileBuilder {
             owning,
             source_text
         );
+        file.lazy.block = block;
+        file.comments = Fixed::copied_in(arena, &comments);
         let mut emptied = FileBuilder::default();
         macro_rules! each {
             ($($f:ident),*) => { $(emptied.$f = self.$f;)* };
@@ -3428,6 +3675,45 @@ impl<'s> File<'s> {
     /// The arena that holds the lists.
     pub fn arena(&self) -> &'s Arena {
         self.lazy.arena
+    }
+
+    /// False for a file that several programs share, and for one without nodes.
+    pub(crate) fn owns_its_lists(&self) -> bool {
+        !self.lazy.block.is_empty()
+    }
+
+    pub(crate) fn for_each_long_list(&mut self, each: &mut dyn FnMut(&mut dyn LongList)) {
+        macro_rules! lists {
+            ($($list:ident),*) => { $(each(&mut self.$list);)* };
+        }
+        long_lists!(lists);
+    }
+
+    /// Frees the long lists, which is most of the file, and leaves them empty.
+    pub(crate) fn free_long_lists(&mut self) {
+        macro_rules! empty {
+            ($($list:ident),*) => { $(self.$list = Fixed::default();)* };
+        }
+        long_lists!(empty);
+        self.lazy.block = ListBlock::default();
+    }
+
+    /// Drops what was computed from the file on demand.
+    ///
+    /// # Safety
+    /// No other file shares the cells, and nothing reads the file.
+    pub(crate) unsafe fn clear_caches(&self) {
+        let cells = self.lazy.cells;
+        // SAFETY: caller contract.
+        unsafe {
+            cells.parents.clear();
+            cells.kinds.clear();
+            cells.owners.clear();
+            cells.ambient_or_type_ranges.clear();
+            cells.type_query_ranges.clear();
+            cells.class_extends_ranges.clear();
+            cells.keyword_identifiers.clear();
+        }
     }
 }
 

@@ -323,7 +323,7 @@ fn count_nesting_errors(depth: usize) -> usize {
 
 #[test]
 fn data_past_nesting_limit_is_an_error() {
-    let limit = LimitValues::for_host().get(LimitId::MaxNestingDepth) as usize;
+    let limit = LimitValues::for_host().get(LimitId::MaxDataNestingDepth) as usize;
     assert_eq!(count_nesting_errors(limit), 0);
     assert_eq!(count_nesting_errors(limit + 1), 1);
 }

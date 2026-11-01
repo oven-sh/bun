@@ -5,7 +5,7 @@ use bun_lint::rule::Plugin;
 /// Checks for erasing operations, e.g., `x * 0`.
 pub struct ErasingOp;
 
-const ERASING_OP: Message = Message::new("", "Unexpected erasing operation. This expression will always evaluate to zero.");
+const ERASING_OP: &Message = &Message::new("", "Unexpected erasing operation. This expression will always evaluate to zero.");
 
 impl Rule for ErasingOp {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "erasing-op", Kind::Problem).fixable(Fixable::Code);

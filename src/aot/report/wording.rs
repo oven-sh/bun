@@ -618,7 +618,6 @@ pub(super) fn unseen_code_sentence(cause: UnseenCodeCause) -> &'static str {
         UnseenCodeCause::ProgramNotCompiled => "the program wasn't built with --aot",
         UnseenCodeCause::ReportMissing => "the compiler didn't report which APIs are used",
         UnseenCodeCause::FlowResultDisabled => "a developer option turned the analysis off",
-        UnseenCodeCause::FlowGaveUp => "the analysis hit a compiler limit",
         UnseenCodeCause::EvaluatesText => "the program calls eval() or new Function()",
         UnseenCodeCause::ImportsUncompiledCode => {
             "the program imports a module that isn't in the executable"
@@ -743,7 +742,6 @@ pub(super) fn trim_blocker_code(cause: UnseenCodeCause) -> &'static str {
         UnseenCodeCause::ProgramNotCompiled => "no-aot",
         UnseenCodeCause::ReportMissing => "no-report",
         UnseenCodeCause::FlowResultDisabled => "analysis-disabled",
-        UnseenCodeCause::FlowGaveUp => "limit-reached",
         UnseenCodeCause::EvaluatesText => "eval",
         UnseenCodeCause::ImportsUncompiledCode => "external-import",
         UnseenCodeCause::LoadsModuleByName | UnseenCodeCause::LoadsCodeByName => "dynamic-import",

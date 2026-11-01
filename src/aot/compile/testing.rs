@@ -13,7 +13,7 @@ use crate::load::source_provider::{SourceProvider, WithoutServices};
 use crate::lower::LeftOutDeclarations;
 use crate::lower::{LoweredFile, LoweringInputs, LoweringOptions, lower_file};
 use crate::modules::{BindInput, DeferredExports};
-use crate::options::{LoadOptions, Options, PathOptions, RemovableOptions};
+use crate::options::{FilesThatTestsLoad, LoadOptions, Options, PathOptions, RemovableOptions};
 use crate::statistics::{LimitValues, Stage};
 use bstr::BStr;
 use bun_ast::Log;
@@ -355,6 +355,32 @@ fn with_loaded_bind_input<R>(
             deferred_exports: &deferred_exports,
             platform: build.platform,
             external_packages: &[],
+            replaced_exports: &[],
+            replaced_builtins: &[],
+            runs_in_place: false,
+            working_directory: b"",
+            ignores_declared_side_effects: false,
+            mocked_modules: &[],
+            mocks_any_module: false,
+            handed_on_modules: &[],
+            hands_on_any_module: false,
+            spies_on_unknown_objects: false,
+            names_spied_on_unknown_objects: &[],
+            names_spied_in_text: &[],
+            modules_replaced_in_text: &[],
+            every_export_is_asked_for: false,
+            evicted_modules: &[],
+            evicts_any_module: false,
+            loads_below_files_left_to_loader: &[],
+            files_that_tests_load: &FilesThatTestsLoad::default(),
+            runs_tests: false,
+            runner_starts_entry_points: false,
+            stores_path_of_main_module: false,
+            entry_points_run_again: false,
+            typescript_drops_absent_exports: false,
+            loads_code_from_disk: false,
+            host_runs_files_from_disk: false,
+            stand_in_for_files_from_disk: None,
             application: None,
             known_helpers: &known_helpers,
             in_parallel: &in_parallel,

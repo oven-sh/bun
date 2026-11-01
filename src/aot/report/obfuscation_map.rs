@@ -4,6 +4,7 @@ use core::hash::Hash;
 use bun_base64::VLQ;
 use bun_collections::ArrayHashMap;
 use bun_core::handle_oom;
+use bun_sema::util::SharedSort;
 
 use super::format::PathPrinter;
 use super::json::JsonWriter;
@@ -133,7 +134,7 @@ fn site_key(record: &ObfuscatedSiteRecord) -> (u32, u32) {
 
 fn sort_records(records: &[ObfuscatedSiteRecord]) -> Vec<ObfuscatedSiteRecord> {
     let mut sorted = records.to_vec();
-    sorted.sort_by_key(site_key);
+    sorted.shared_sort_by_key(site_key);
     sorted.dedup_by_key(|record| site_key(record));
     sorted
 }
@@ -235,7 +236,7 @@ fn write_function_maps(
 /// A reader takes the last start at or in front of a place, so a start with the name of the one in front of it says nothing.
 fn keep_name_changes(starts: &mut Vec<FunctionStart>) {
     // Where two functions have a site at one place, a name wins over none.
-    starts.sort_unstable_by_key(|start| (start.line, start.column, Reverse(start.name)));
+    starts.shared_sort_unstable_by_key(|start| (start.line, start.column, Reverse(start.name)));
     starts.dedup_by_key(|start| (start.line, start.column));
     starts.dedup_by_key(|start| start.name);
 }

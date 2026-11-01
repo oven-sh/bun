@@ -884,7 +884,7 @@ function f46 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f47 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f48 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f47]
 function f49 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f47]
-function f50 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f50 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     v1 = HasJSType v0 first=5 last=5
     v2 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
@@ -895,7 +895,7 @@ function f50 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsCh
     v7 = CreateIteratorResult v4, v6
     Return v7
 }
-runtimefunction id=68 function=f50
+runtimefunction id=ArrayIteratorPrototypeNext function=f50
 # -- generated: text NoParameter Optional Defaulted Rest Needed Hidden TwoDefaults Arrow Getter f28
 # CHECK-LABEL: function {{*}}name="text"
 # CHECK: module=m0 position=67 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|int|whole}] results=[{type=string site=w0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -918,11 +918,10 @@ runtimefunction id=68 function=f50
 # CHECK-NEXT: Return v9
 # CHECK-NEXT: b5():
 # CHECK-NEXT: v10: undefined = Undefined
-# CHECK-NEXT: v11: string = TypeOf v10
-# CHECK-NEXT: v12: " " = String string=" "
-# CHECK-NEXT: v13: string = CallBuiltin -, v10 overload=String/0 accessSite=75
-# CHECK-NEXT: v14: string = Strcat v11, v12, v13
-# CHECK-NEXT: Return v14
+# CHECK-NEXT: v11: "undefined " = String string="undefined "
+# CHECK-NEXT: v12: string = CallBuiltin -, v10 overload=String/0 accessSite=75
+# CHECK-NEXT: v13: string = Add v11, v12
+# CHECK-NEXT: Return v13
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="NoParameter"
 # CHECK: module=m0 position=406 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L0 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {

@@ -46,9 +46,10 @@ const kRealListen = Symbol("kRealListen");
 const noBodySymbol = Symbol("noBody");
 const optionsSymbol = Symbol("options");
 const tlsSymbol = Symbol("tls");
-const serverSymbol = Symbol.for("::bunternal::");
-// One symbol under two names.
-const kInternalSocketData: typeof serverSymbol = serverSymbol;
+const kAbortController = Symbol.for("kAbortController");
+const kInternalSocketData = Symbol.for("::bunternal::");
+// One symbol under two names. Asked for twice, as in the other text: a test may have replaced Symbol.for.
+const serverSymbol: typeof kInternalSocketData = Symbol.for("::bunternal::") as typeof kInternalSocketData;
 const kPendingCallbacks = Symbol("pendingCallbacks");
 const kRequest = Symbol("request");
 // IncomingMessage slot for the request's native response. null if the request was parsed in JS.
@@ -783,6 +784,7 @@ export {
   headerStateSymbol,
   http1ServerPipeline,
   isTlsSymbol,
+  kAbortController,
   kBytesWritten,
   kChunkedBuffer,
   kChunkedLength,

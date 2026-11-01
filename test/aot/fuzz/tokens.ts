@@ -1,6 +1,6 @@
-// A tokenizer for JavaScript as Bun's transpiler prints it, and a rough model of its blocks and bindings: enough to know where a
-// statement may be inserted and which names are in scope there. Whatever is built on it is parsed again before it is used, so a
-// wrong guess costs a mutant and nothing else.
+// A tokenizer for JavaScript as printed by Bun's transpiler, and a rough model of its blocks and bindings: enough to
+// know where a statement can be inserted and which names are in scope there. Everything built on it is parsed again
+// before use, so a wrong guess only costs one mutant.
 
 export interface Token {
   kind: "name" | "number" | "string" | "template" | "regexp" | "punctuator";
@@ -13,7 +13,22 @@ const punctuators = [
   ">>>=", "...", "===", "!==", "**=", "<<=", ">>=", ">>>", "&&=", "||=", "??=",
   "=>", "==", "!=", "<=", ">=", "&&", "||", "??", "?.", "++", "--", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<", ">>", "**",
 ]; // prettier-ignore
-const beforeExpression = new Set(["return", "typeof", "instanceof", "in", "of", "new", "delete", "void", "throw", "case", "do", "else", "yield", "await"]);
+const beforeExpression = new Set([
+  "return",
+  "typeof",
+  "instanceof",
+  "in",
+  "of",
+  "new",
+  "delete",
+  "void",
+  "throw",
+  "case",
+  "do",
+  "else",
+  "yield",
+  "await",
+]);
 
 export function tokenize(source: string): Token[] {
   const tokens: Token[] = [];
@@ -37,8 +52,8 @@ export function tokenize(source: string): Token[] {
     let i = from + 1;
     for (let depth = 1; i < source.length && depth > 0; ) {
       const c = source[i];
-      if (c === "{") depth++, i++;
-      else if (c === "}") depth--, i++;
+      if (c === "{") (depth++, i++);
+      else if (c === "}") (depth--, i++);
       else if (c === '"' || c === "'") i = skipString(i, c);
       else if (c === "`") i = skipTemplate(i);
       else i++;
@@ -70,11 +85,14 @@ export function tokenize(source: string): Token[] {
     }
     const start = at;
     let kind: Token["kind"] = "punctuator";
-    if (c === '"' || c === "'") (kind = "string"), (at = skipString(at, c));
-    else if (c === "`") (kind = "template"), (at = skipTemplate(at));
+    if (c === '"' || c === "'") ((kind = "string"), (at = skipString(at, c)));
+    else if (c === "`") ((kind = "template"), (at = skipTemplate(at)));
     else if (/[0-9]/.test(c) || (c === "." && /[0-9]/.test(source[at + 1] ?? ""))) {
       kind = "number";
-      const found = /^(0[xX][0-9a-fA-F_]+n?|0[bB][01_]+n?|0[oO][0-7_]+n?|[0-9][0-9_]*n|(?:[0-9][0-9_]*)?\.?[0-9_]*(?:[eE][-+]?[0-9]+)?)/.exec(source.slice(at, at + 80))!;
+      const found =
+        /^(0[xX][0-9a-fA-F_]+n?|0[bB][01_]+n?|0[oO][0-7_]+n?|[0-9][0-9_]*n|(?:[0-9][0-9_]*)?\.?[0-9_]*(?:[eE][-+]?[0-9]+)?)/.exec(
+          source.slice(at, at + 80),
+        )!;
       at += Math.max(1, found[0].length);
     } else if (/[A-Za-z_$#\u0080-￿]/.test(c)) {
       kind = "name";
@@ -95,7 +113,16 @@ export function tokenize(source: string): Token[] {
   return tokens;
 }
 
-export type BindingKind = "object" | "array" | "instance" | "function" | "class" | "number" | "string" | "parameter" | "unknown";
+export type BindingKind =
+  | "object"
+  | "array"
+  | "instance"
+  | "function"
+  | "class"
+  | "number"
+  | "string"
+  | "parameter"
+  | "unknown";
 
 export interface Binding {
   name: string;
@@ -103,13 +130,13 @@ export interface Binding {
   constant: boolean;
   /** The class after `new`, for an instance. */
   of?: string;
-  /** Behind `declare`: the host's, not the program's. */
+  /** After `declare`: it belongs to the host, not to the program. */
   ambient?: true;
 }
 
-/** A place between two statements. */
+/** A position between two statements. */
 export interface Gap {
-  /** Where in the source the text goes: the end of the line that ends the statement before it. */
+  /** Source offset for inserted text: the end of the line that ends the previous statement. */
   offset: number;
   indent: string;
   /** Innermost last. */
@@ -132,17 +159,22 @@ interface Frame {
 
 export interface Model {
   tokens: Token[];
-  /** For the token that opens a pair, the index of the one that closes it, and the reverse. */
+  /** For a token that opens a pair, the index of the closing token, and the reverse. */
   partner: Int32Array;
   gaps: Gap[];
-  /** Names after a dot and keys of literals and classes. */
+  /** Names after a dot, and keys of literals and classes. */
   properties: string[];
-  /** For each token, whether it lies where an expression is evaluated in a function or block (not in a class body or parameter list). */
+  /**
+   * For each token, whether it is where an expression is evaluated in a function or block (not in a class body or
+   * parameter list).
+   */
   top: Binding[];
 }
 
 const keywords = new Set(
-  "await break case catch class const continue debugger default delete do else export extends finally for function if import in instanceof let new return static super switch this throw try typeof var void while with yield async of get set null true false undefined".split(" "),
+  "await break case catch class const continue debugger default delete do else export extends finally for function if import in instanceof let new return static super switch this throw try typeof var void while with yield async of get set null true false undefined".split(
+    " ",
+  ),
 );
 export const isKeyword = (text: string) => keywords.has(text);
 
@@ -156,7 +188,8 @@ function kindOfInitializer(tokens: Token[], at: number): Pick<Binding, "kind" | 
   if (token.text === "class") return { kind: "class" };
   const next = tokens[at + 1]?.text;
   if (token.kind === "number" && (next === ";" || next === ",")) return { kind: "number" };
-  if ((token.kind === "string" || token.kind === "template") && (next === ";" || next === ",")) return { kind: "string" };
+  if ((token.kind === "string" || token.kind === "template") && (next === ";" || next === ","))
+    return { kind: "string" };
   if (token.kind === "name" && next === "=>") return { kind: "function" };
   return { kind: "unknown" };
 }
@@ -170,7 +203,7 @@ export function model(source: string): Model {
     if (token.text === "(" || token.text === "[" || token.text === "{") open.push(index);
     else if (token.text === ")" || token.text === "]" || token.text === "}") {
       const from = open.pop();
-      if (from !== undefined) (partner[from] = index), (partner[index] = from);
+      if (from !== undefined) ((partner[from] = index), (partner[index] = from));
     }
   });
 
@@ -193,7 +226,9 @@ export function model(source: string): Model {
     const closes = tokens[index].text === "}";
     gaps.push({
       offset: newline < 0 ? source.length : newline,
-      indent: /^[ \t]*/.exec(source.slice(closes ? lineStart : source.lastIndexOf("\n", statementStart(index)) + 1))![0],
+      indent: /^[ \t]*/.exec(
+        source.slice(closes ? lineStart : source.lastIndexOf("\n", statementStart(index)) + 1),
+      )![0],
       bindings: frames.flatMap(frame => frame.bindings),
       inFunction: !!inner,
       inLoop: frames.slice(frames.findLastIndex(frame => frame.function) + 1).some(frame => frame.loop),
@@ -203,14 +238,24 @@ export function model(source: string): Model {
       inGenerator: !!inner?.generator,
     });
   };
-  // The first token of the statement that ends at `index`, roughly: after the previous `;`, `{` or `}` at the same depth.
+  // The first token of the statement that ends at `index`, roughly: after the previous `;`, `{` or `}` at the same
+  // depth.
   const statementStart = (index: number) => {
     let i = index - 1;
     for (; i >= 0; i--) {
       const text = tokens[i].text;
       if (tokens[i].kind !== "punctuator") continue;
       if (text === ")" || text === "]" || text === "}") {
-        if (text === "}" && i < index - 1 && partner[i] >= 0 && tokens[i + 1]?.text !== ")" && tokens[i + 1]?.text !== "," && tokens[i + 1]?.text !== ";" && tokens[i + 1]?.text !== ".") break;
+        if (
+          text === "}" &&
+          i < index - 1 &&
+          partner[i] >= 0 &&
+          tokens[i + 1]?.text !== ")" &&
+          tokens[i + 1]?.text !== "," &&
+          tokens[i + 1]?.text !== ";" &&
+          tokens[i + 1]?.text !== "."
+        )
+          break;
         if (partner[i] >= 0) i = partner[i];
       } else if (text === ";" || text === "{") break;
     }
@@ -227,22 +272,55 @@ export function model(source: string): Model {
         if (!token.text.startsWith("#")) properties.add(token.text);
         continue;
       }
-      if ((frame.kind === "object" || frame.kind === "class") && !isKeyword(token.text) && !token.text.startsWith("#") && /^[:(=;]$/.test(tokens[index + 1]?.text ?? "")) {
-        if (previous?.text === "{" || previous?.text === "," || previous?.text === ";" || previous?.text === "}" || isKeyword(previous?.text ?? "")) properties.add(token.text);
+      if (
+        (frame.kind === "object" || frame.kind === "class") &&
+        !isKeyword(token.text) &&
+        !token.text.startsWith("#") &&
+        /^[:(=;]$/.test(tokens[index + 1]?.text ?? "")
+      ) {
+        if (
+          previous?.text === "{" ||
+          previous?.text === "," ||
+          previous?.text === ";" ||
+          previous?.text === "}" ||
+          isKeyword(previous?.text ?? "")
+        )
+          properties.add(token.text);
       }
       if (token.text === "class") {
         pendingClass = true;
         const name = tokens[index + 1];
-        if (name?.kind === "name" && !isKeyword(name.text) && frame.kind === "block" && previous?.text !== "=" && previous?.text !== "(") frame.bindings.push({ name: name.text, kind: "class", constant: false });
-      } else if (token.text === "function" && frame.kind === "block" && (!previous || /^[;{}]$/.test(previous.text) || previous.text === "async" || previous.text === "export")) {
+        if (
+          name?.kind === "name" &&
+          !isKeyword(name.text) &&
+          frame.kind === "block" &&
+          previous?.text !== "=" &&
+          previous?.text !== "("
+        )
+          frame.bindings.push({ name: name.text, kind: "class", constant: false });
+      } else if (
+        token.text === "function" &&
+        frame.kind === "block" &&
+        (!previous || /^[;{}]$/.test(previous.text) || previous.text === "async" || previous.text === "export")
+      ) {
         const name = tokens[index + 1]?.text === "*" ? tokens[index + 2] : tokens[index + 1];
-        if (name?.kind === "name" && !isKeyword(name.text)) frame.bindings.push({ name: name.text, kind: "function", constant: false });
-      } else if ((token.text === "const" || token.text === "let" || token.text === "var") && (frame.kind === "block" || frame.kind === "(")) {
+        if (name?.kind === "name" && !isKeyword(name.text))
+          frame.bindings.push({ name: name.text, kind: "function", constant: false });
+      } else if (
+        (token.text === "const" || token.text === "let" || token.text === "var") &&
+        (frame.kind === "block" || frame.kind === "(")
+      ) {
         const name = tokens[index + 1];
         if (name?.kind === "name" && !isKeyword(name.text)) {
           const holder = frame.kind === "(" ? pendingParameters : frame.bindings;
-          const initializer = tokens[index + 2]?.text === "=" ? kindOfInitializer(tokens, index + 3) : ({ kind: "unknown" } as const);
-          holder.push({ name: name.text, constant: token.text === "const", ...(previous?.text === "declare" && { ambient: true as const }), ...initializer });
+          const initializer =
+            tokens[index + 2]?.text === "=" ? kindOfInitializer(tokens, index + 3) : ({ kind: "unknown" } as const);
+          holder.push({
+            name: name.text,
+            constant: token.text === "const",
+            ...(previous?.text === "declare" && { ambient: true as const }),
+            ...initializer,
+          });
         }
       }
       continue;
@@ -253,11 +331,16 @@ export function model(source: string): Model {
       frames.push({ kind: "(", bindings: [], head: previous?.text ?? "", loop: false });
       const close = partner[index];
       const after = tokens[close + 1]?.text;
-      if (close > 0 && (after === "{" || after === "=>") && !/^(if|while|for|switch|with)$/.test(previous?.text ?? "")) {
+      if (
+        close > 0 &&
+        (after === "{" || after === "=>") &&
+        !/^(if|while|for|switch|with)$/.test(previous?.text ?? "")
+      ) {
         pendingParameters = [];
         for (let i = index + 1; i < close; i++) {
           if (tokens[i].kind === "punctuator" && partner[i] > i) i = partner[i];
-          else if (tokens[i].kind === "name" && !isKeyword(tokens[i].text) && /^[(,]|\.\.\.$/.test(tokens[i - 1].text)) pendingParameters.push({ name: tokens[i].text, kind: "parameter", constant: false });
+          else if (tokens[i].kind === "name" && !isKeyword(tokens[i].text) && /^[(,]|\.\.\.$/.test(tokens[i - 1].text))
+            pendingParameters.push({ name: tokens[i].text, kind: "parameter", constant: false });
         }
       }
     } else if (token.text === "[") frames.push({ kind: "[", bindings: [], head: "", loop: false });
@@ -267,25 +350,32 @@ export function model(source: string): Model {
       let kind: Frame["kind"] = "object";
       let head = "";
       const text = previous?.text ?? ";";
-      if (pendingClass && frame.kind !== "(" ) (kind = "class"), (pendingClass = false);
+      if (pendingClass && frame.kind !== "(") ((kind = "class"), (pendingClass = false));
       else if (text === ")") {
         const before = tokens[partner[index - 1] - 1];
         head = before?.text ?? "";
         kind = head === "switch" ? "switch" : "block";
-      } else if (text === "=>" || /^(else|try|finally|do|catch|static|;|\{|\})$/.test(text)) (kind = "block"), (head = text);
+      } else if (text === "=>" || /^(else|try|finally|do|catch|static|;|\{|\})$/.test(text))
+        ((kind = "block"), (head = text));
       else if (text === ":" && frame.kind !== "object") kind = "block";
       const created: Frame = { kind, bindings: [], head, loop: /^(for|while|do)$/.test(head) };
       if (kind === "block" && (text === "=>" || (text === ")" && !/^(if|while|for|switch|with|catch)$/.test(head)))) {
         const opening = text === ")" ? partner[index - 1] : index - 1;
         const method = frame.kind === "class" || frame.kind === "object";
         const lead = tokens.slice(Math.max(0, opening - 4), opening).map(t => t.text);
-        created.function = { constructor: frame.kind === "class" && head === "constructor", method, async: lead.includes("async"), generator: lead.includes("*") };
+        created.function = {
+          constructor: frame.kind === "class" && head === "constructor",
+          method,
+          async: lead.includes("async"),
+          generator: lead.includes("*"),
+        };
         created.bindings = pendingParameters;
         pendingParameters = [];
       } else if (kind === "block" && (head === "for" || head === "catch")) {
         created.bindings = pendingParameters;
         pendingParameters = [];
-      } else if (kind === "block" && head === "static") created.function = { constructor: false, method: true, async: false, generator: false };
+      } else if (kind === "block" && head === "static")
+        created.function = { constructor: false, method: true, async: false, generator: false };
       frames.push(created);
       if (kind === "block") {
         const newline = source.indexOf("\n", token.end);
@@ -311,7 +401,8 @@ export function model(source: string): Model {
     } else if (token.text === "}") {
       const closed = frames.length > 1 ? frames.pop()! : frame;
       const outer = frames[frames.length - 1];
-      if (outer.kind === "block" && (closed.kind === "block" || closed.kind === "class" || closed.kind === "switch")) gapAfter(index);
+      if (outer.kind === "block" && (closed.kind === "block" || closed.kind === "class" || closed.kind === "switch"))
+        gapAfter(index);
     } else if (token.text === ";" && frame.kind === "block") gapAfter(index);
   }
   return { tokens, partner, gaps, properties: [...properties], top };

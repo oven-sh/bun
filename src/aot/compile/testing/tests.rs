@@ -117,7 +117,7 @@ fn find_probe_fragment(lowered_files: &[(FileId, LoweredFile)]) -> &Fragment {
     fragment.expect("no fragment has a function named probe")
 }
 
-fn lower_function_text(embeds_function_source: bool) -> Vec<u8> {
+fn embeds_function_text_when_lowered(embeds_function_source: bool) -> bool {
     let aot = AotOptions {
         embeds_function_source,
         ..AotOptions::default()
@@ -125,7 +125,8 @@ fn lower_function_text(embeds_function_source: bool) -> Vec<u8> {
     let files = [("main.js", DEBUG_CALL)];
     let project = TestProject::new(&files, &default_settings()).with_aot_options(aot);
     let lowered = lower_application(&project);
-    find_probe_fragment(&lowered).module.function_text.clone()
+    let module = &find_probe_fragment(&lowered).module;
+    module.types_in_function_text.is_some()
 }
 
 fn lowering_options(embeds_function_text: bool) -> LoweringOptions {
@@ -136,6 +137,7 @@ fn lowering_options(embeds_function_text: bool) -> LoweringOptions {
         removable: Default::default(),
         minifies_identifiers: false,
         obfuscates: false,
+        counts_executions: false,
     }
 }
 
@@ -271,8 +273,8 @@ fn provider_defines_reach_lowering() {
 
 #[test]
 fn options_reach_lowering() {
-    assert_eq!(BStr::new(&lower_function_text(true)), DEBUG_CALL);
-    assert!(lower_function_text(false).is_empty());
+    assert!(embeds_function_text_when_lowered(true));
+    assert!(!embeds_function_text_when_lowered(false));
 }
 
 #[test]
@@ -281,8 +283,8 @@ fn lowering_options_replace_build_options() {
     assert!(
         find_probe_fragment(&lowered)
             .module
-            .function_text
-            .is_empty()
+            .types_in_function_text
+            .is_none()
     );
 }
 

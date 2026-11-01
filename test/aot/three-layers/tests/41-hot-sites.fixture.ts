@@ -1,0 +1,12 @@
+import { check } from "../src/show";
+import { HotA, sumN, sumValue, sumTwice, bumpN, kindsOf, countA, countHas, callEach, callEachWith, newEach, makeClosures } from "fake-shapes/hot";
+import { HotB, HotAB, sumNTyped, sumValueTyped, srcClosures } from "../src/hot";
+const F = "41";
+class HotC { n: number; kind = "C"; constructor(n: number) { this.n = n; } value() { return this.n + 5; } get twice() { return -this.n; } }
+class HotABC extends HotAB { override kind = "ABC"; more = 1; override value() { return super.value() + 100; } override get twice() { return super.twice + 1; } }
+const mixed = (count: number) => { const list: any[] = []; for (let i = 0; i < count; i++) list.push([new HotA(i), new HotB(i), new HotC(i), new HotAB(i), new HotABC(i), { n: i, kind: "L", value() { return i; }, twice: 0 }, Object.assign(Object.create(new HotB(i)), { n: i })][i % 7]); return list; };
+check(F, "one place in the package, objects of three layers", () => { const l = mixed(700); return [sumN(l), sumValue(l), sumTwice(l), bumpN(l), sumN(l), kindsOf(l).length, kindsOf(l.slice(0, 7)), countA(l), countHas(l, "extra"), countHas(l, "more"), countHas(l, "value")]; });
+check(F, "one place in the app, one here", () => { const l = mixed(700); let here = 0, hereValue = 0; for (let i = 0; i < l.length; i++) { here += l[i].n; hereValue += l[i].value(); } return [sumNTyped(l), sumValueTyped(l), here, hereValue]; });
+check(F, "first one layer for long, then the others", () => { const a = Array.from({ length: 500 }, (_, i) => new HotA(i)), c = Array.from({ length: 500 }, (_, i) => new HotC(i)), b = Array.from({ length: 500 }, (_, i) => new HotB(i)); return [sumN(a), sumValue(a), sumTwice(a), sumN(c), sumValue(c), sumTwice(c), sumN(b), sumValue(b), sumTwice(b), sumValue([...a, ...b, ...c])]; });
+check(F, "calls of closures of three layers at one place", () => { const fs = [...srcClosures, ...makeClosures(x => x * 2), (x: number) => x - 1, function (this: any, x: number) { return x + (this?.bias ?? 0); }, new HotC(1).value.bind(new HotC(2))]; let s = 0; for (let i = 0; i < 300; i++) s += callEach(fs as any, i); let t = 0; for (let i = 0; i < 300; i++) t += callEachWith(fs as any, { bias: 3 }, i, i); let u = 0; for (let i = 0; i < 300; i++) for (const f of fs) u += (f as any)(i); return [s, t, u]; });
+check(F, "constructors of three layers at one place", () => { let s = 0; for (let i = 0; i < 300; i++) s += newEach([HotA, HotB, HotC, HotAB, HotABC], i); return s; });

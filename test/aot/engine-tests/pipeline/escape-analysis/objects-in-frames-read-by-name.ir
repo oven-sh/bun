@@ -132,11 +132,11 @@ function f9 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v5: 1 @Int32 = Integer integer=1
 # CHECK-NEXT: v6: int[3, 4] @Int32 = Add v0, v5 form=Integers
 # CHECK-NEXT: v7: Array<int|whole> @Cell = NewArray v0, v6 contents=int|whole allocationSite=2 [contentsAreProven]
-# CHECK-NEXT: v11: Array<int|whole, proven, pristine[Storage, Names, Dense]> @Cell = AssumeType v7 provenType=Array<int|whole, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v8: f7 @Cell = NewClosure function=f7 allocationSite=3 closureForm=Slim
-# CHECK-NEXT: v9: L1 @Cell = NewObject -, v2, v4, v11, v0, v8 layout=L1 fields=[4, 2, 1, 0, 3] allocationSite=4 allocation=1 allocationClass=0
-# CHECK-NEXT: v10: L1 @Cell = FinishObject v9
-# CHECK-NEXT: Return v10
+# CHECK-NEXT: v8: Array<int|whole, proven, pristine[Storage, Names, Dense]> @Cell = AssumeType v7 provenType=Array<int|whole, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v9: f7 @Cell = NewClosure function=f7 allocationSite=3 closureForm=Slim
+# CHECK-NEXT: v10: L1 @Cell = NewObject -, v2, v4, v8, v0, v9 layout=L1 fields=[4, 2, 1, 0, 3] allocationSite=4 allocation=1 allocationClass=0
+# CHECK-NEXT: v11: L1 @Cell = FinishObject v10
+# CHECK-NEXT: Return v11
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="readsAfterCollection"
 # CHECK: module=m0 position=957 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -152,7 +152,7 @@ function f9 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v8: anything @JSValue = PropGet v1 key="point" accessSite=6 receivers=[L1]
 # CHECK-NEXT: v9: anything @JSValue = PropGet v8 key="y" accessSite=7 receivers=[]
 # CHECK-NEXT: v10: "" @JSValue = String string=""
-# CHECK-NEXT: v11: string @JSValue = Add v10, v9 form=Generic
+# CHECK-NEXT: v11: string @Cell = Add v10, v9 form=MayBeString
 # CHECK-NEXT: StringBuilderAppendString v5, v11
 # CHECK-NEXT: StringBuilderAppendConstant v5 string="/"
 # CHECK-NEXT: v14: Array<int|whole, proven, pristine[Storage, Names, Dense]> @JSValue = PropGet v1 key="list" accessSite=8 receivers=[L1]
@@ -186,7 +186,7 @@ function f9 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v8: anything @JSValue = PropGet v1 key="point" accessSite=16 receivers=[L1]
 # CHECK-NEXT: v9: anything @JSValue = PropGet v8 key="y" accessSite=17 receivers=[]
 # CHECK-NEXT: v10: "" @JSValue = String string=""
-# CHECK-NEXT: v11: string @JSValue = Add v10, v9 form=Generic
+# CHECK-NEXT: v11: string @Cell = Add v10, v9 form=MayBeString
 # CHECK-NEXT: StringBuilderAppendString v5, v11
 # CHECK-NEXT: StringBuilderAppendConstant v5 string="/"
 # CHECK-NEXT: v14: Array<int|whole, proven, pristine[Storage, Names, Dense]> @JSValue = PropGet v1 key="list" accessSite=18 receivers=[L1]

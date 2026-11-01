@@ -442,25 +442,25 @@ function f5 name="counters" module=m0 position=2596 flags=[IsChecked, HasExplici
 # -- generated: f0 overWords products runningSum lengths counters
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 136, patchpoints: 63, rare instructions: 12, polls: 2
+# CHECK-NEXT: instructions: 126, patchpoints: 58, rare instructions: 12, polls: 1
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="overWords"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 100, patchpoints: 17, rare instructions: 799, polls: 2
+# CHECK-NEXT: instructions: 95, patchpoints: 17, rare instructions: 926, polls: 2
 # CHECK-NEXT: end of function f1
 # CHECK-LABEL: function {{*}}name="products"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 159, patchpoints: 26, rare instructions: 502, polls: 2
+# CHECK-NEXT: instructions: 152, patchpoints: 26, rare instructions: 633, polls: 2
 # CHECK-NEXT: end of function f2
 # CHECK-LABEL: function {{*}}name="runningSum"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 242, patchpoints: 44, rare instructions: 429, polls: 2
+# CHECK-NEXT: instructions: 232, patchpoints: 44, rare instructions: 600, polls: 2
 # CHECK-NEXT: end of function f10
 # CHECK-LABEL: function {{*}}name="lengths"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 37, patchpoints: 5, rare instructions: 137, polls: 1
+# CHECK-NEXT: instructions: 36, patchpoints: 4, rare instructions: 117, polls: 1
 # CHECK-NEXT: end of function f4
 # CHECK-LABEL: function {{*}}name="counters"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 122, patchpoints: 13, rare instructions: 96, polls: 6
+# CHECK-NEXT: instructions: 113, patchpoints: 15, rare instructions: 104, polls: 8
 # CHECK-NEXT: end of function f5

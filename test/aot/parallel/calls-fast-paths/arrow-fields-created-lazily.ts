@@ -1,6 +1,7 @@
 // An arrow function in a field of a class that captures nothing but `this` is a function object of its own for every object. Nobody can tell when it is made: here it is not made while the object is
 // constructed, and a call through the field needs none at all.
-// CALLS- Panel NewTypedClosure
+// IR+  = NewClosure function=f\d+ allocationSite=\d+ \[isMadeOnDemand\]
+// IRM= 0  = NewClosure v\d+ function=
 class Panel {
   title: string;
   width = 1;

@@ -44,162 +44,162 @@ typesite w16 module=m0 position=675 kind=CallResult
 variable g0 name="cold" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
 function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    Jump -> next b1()
+    Jump -> next b1() @0
   b1():
-    v0 = NewClosure function=f2
-    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v2 = NewClosure function=f3
-    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v4 = NewArray v1, v3 contents=anything
-    v5 = Convert v4 declared={type=undefined|null|Array site=w2 flags=[OmitsNull, OmitsUndefined]}
-    v6 = Builtin builtin=GlobalThis
-    v7 = PropGet v6 key="globalThis" [isFreeName]
-    v8 = Convert v7 declared={type=builtin(GlobalThis) flags=[IsExpected]}
-    v9 = Convert v8 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
-    PropSet v9, v5 key="kept"
-    v11 = Integer
-    v12 = Convert v11 declared={type=number site=w3}
-    v13 = Integer
-    v14 = Convert v13 declared={type=number site=w8}
-    Jump -> next b2(v12, v14)
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = NewClosure function=f3 @0
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v4 = NewArray v1, v3 contents=anything @712
+    v5 = Convert v4 declared={type=undefined|null|Array site=w2 flags=[OmitsNull, OmitsUndefined]} @712
+    v6 = Builtin builtin=GlobalThis @830
+    v7 = PropGet v6 key="globalThis" [isFreeName] @830
+    v8 = Convert v7 declared={type=builtin(GlobalThis) flags=[IsExpected]} @830
+    v9 = Convert v8 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @830
+    PropSet v9, v5 key="kept" @830
+    v11 = Integer @871
+    v12 = Convert v11 declared={type=number site=w3} @871
+    v13 = Integer @887
+    v14 = Convert v13 declared={type=number site=w8} @887
+    Jump -> next b2(v12, v14) @883
   b2(v15: number, v16: number):
-    LoopHint
-    v18 = Convert v16 declared={type=i32 flags=[IsExpected]}
-    v19 = Integer integer=5000000
-    v20 = Less v18, v19
-    Branch v20 -> taken b3(| 0), notTaken b6(| 0)
+    LoopHint @883
+    v18 = Convert v16 declared={type=i32 flags=[IsExpected]} @890
+    v19 = Integer integer=5000000 @894
+    v20 = Less v18, v19 @890
+    Branch v20 -> taken b3(| 0), notTaken b6(| 0) @890
   b3(v21):
-    Jump -> next b4()
+    Jump -> next b4() @890
   b4():
-    v22 = Convert v21 declared={type=i32 flags=[IsExpected]}
-    v23 = Integer integer=1
-    v24 = BitAnd v22, v23
-    v25 = ElemGet v5, v24
-    v26 = Convert v25 declared={type=undefined|null|function flags=[IsExpected]}
-    v27 = Integer integer=1
-    v28 = Call v26, v5, v27
-    v29 = Integer integer=1
-    v30 = BitAnd v22, v29
-    v31 = ElemGet v5, v30
-    v32 = Convert v31 declared={type=undefined|null|function flags=[IsExpected]}
-    v33 = Integer integer=1
-    v34 = Integer integer=2
-    v35 = Call v32, v5, v33, v34
-    v36 = Add v28, v35
-    v37 = Add v15, v36
-    v38 = Convert v37 declared={type=number site=w3} illTypedCause=FromLooseType
-    Jump -> next b5()
+    v22 = Convert v21 declared={type=i32 flags=[IsExpected]} @921
+    v23 = Integer integer=1 @925
+    v24 = BitAnd v22, v23 @921
+    v25 = ElemGet v5, v24 @915
+    v26 = Convert v25 declared={type=undefined|null|function flags=[IsExpected]} @915
+    v27 = Integer integer=1 @928
+    v28 = Call v26, v5, v27 @925
+    v29 = Integer integer=1 @943
+    v30 = BitAnd v22, v29 @939
+    v31 = ElemGet v5, v30 @933
+    v32 = Convert v31 declared={type=undefined|null|function flags=[IsExpected]} @933
+    v33 = Integer integer=1 @946
+    v34 = Integer integer=2 @949
+    v35 = Call v32, v5, v33, v34 @943
+    v36 = Add v28, v35 @915
+    v37 = Add v15, v36 @915
+    v38 = Convert v37 declared={type=number site=w3} illTypedCause=FromLooseType @910
+    Jump -> next b5() @910
   b5():
-    v39 = Increment v22
-    v40 = Convert v39 declared={type=number site=w8}
-    Jump -> next b2(v38, v40)
+    v39 = Increment v22 @915
+    v40 = Convert v39 declared={type=number site=w8} @905
+    Jump -> next b2(v38, v40) @905
   b6(v41):
-    Jump -> next b7()
+    Jump -> next b7() @890
   b7():
-    v42 = Builtin builtin=GlobalThis
-    v43 = PropGet v42 key="console" [isFreeName]
-    v44 = Convert v43 declared={type=builtin(Console) flags=[IsExpected]}
-    v45 = PropGet v44 key="log"
-    v46 = Convert v45 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-    v47 = Call v46, v44, v15 calleeKey="log" calleeName="console.log"
-    v48 = Undefined
-    Return v48
+    v42 = Builtin builtin=GlobalThis @953
+    v43 = PropGet v42 key="console" [isFreeName] @953
+    v44 = Convert v43 declared={type=builtin(Console) flags=[IsExpected]} @953
+    v45 = PropGet v44 key="log" @953
+    v46 = Convert v45 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @953
+    v47 = Call v46, v44, v15 calleeKey="log" calleeName="console.log" @961
+    v48 = Undefined @969
+    Return v48 @969
 }
 function f1 name="cold" module=m0 position=277 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array site=w0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|Array):
-    Jump -> next b1()
+    Jump -> next b1() @277
   b1():
-    v1 = PropGet v0 key="length"
-    v2 = Convert v1 declared={type=number site=w9} illTypedCause=Assertion
-    Return v2
+    v1 = PropGet v0 key="length" @325
+    v2 = Convert v1 declared={type=number site=w9} illTypedCause=Assertion @325
+    Return v2 @325
 }
 function f2 name="ofAny" module=m0 position=340 flags=[HasRestParameter, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array site=w4 flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=number site=w5}] functionTypes=[f4] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: Array):
-    Jump -> next b1()
+    Jump -> next b1() @340
   b1():
-    v1 = PropGet v0 key="length"
-    v2 = Convert v1 declared={type=number site=w10} illTypedCause=Assertion
-    Switch v2 cases=[0, 1, 2] -> case b2(| 0), case b4(| 0), case b6(| 0), otherwise b8()
+    v1 = PropGet v0 key="length" @389
+    v2 = Convert v1 declared={type=number site=w10} illTypedCause=Assertion @389
+    Switch v2 cases=[0, 1, 2] -> case b2(| 0), case b4(| 0), case b6(| 0), otherwise b8() @409
   b2(v3):
-    v4 = NarrowByField v0, v3 key="length"
-    Jump -> next b3()
+    v4 = NarrowByField v0, v3 key="length" @409
+    Jump -> next b3() @409
   b3():
-    v5 = Integer
-    v6 = Convert v5 declared={type=number site=w5}
-    Return v6
+    v5 = Integer @419
+    v6 = Convert v5 declared={type=number site=w5} @419
+    Return v6 @419
   b4(v7):
-    v8 = NarrowByField v0, v7 key="length"
-    Jump -> next b5()
+    v8 = NarrowByField v0, v7 key="length" @409
+    Jump -> next b5() @409
   b5():
-    v9 = Integer
-    v10 = ElemGet v8, v9
-    v11 = Convert v10 declared={type=number site=w5} illTypedCause=FromLooseType
-    Return v11
+    v9 = Integer @437
+    v10 = ElemGet v8, v9 @437
+    v11 = Convert v10 declared={type=number site=w5} illTypedCause=FromLooseType @437
+    Return v11 @437
   b6(v12):
-    v13 = NarrowByField v0, v12 key="length"
-    Jump -> next b7()
+    v13 = NarrowByField v0, v12 key="length" @409
+    Jump -> next b7() @409
   b7():
-    v14 = Integer
-    v15 = ElemGet v13, v14
-    v16 = Integer integer=1
-    v17 = ElemGet v13, v16
-    v18 = Add v15, v17
-    v19 = Convert v18 declared={type=number site=w5} illTypedCause=FromLooseType
-    Return v19
+    v14 = Integer @461
+    v15 = ElemGet v13, v14 @461
+    v16 = Integer integer=1 @471
+    v17 = ElemGet v13, v16 @471
+    v18 = Add v15, v17 @461
+    v19 = Convert v18 declared={type=number site=w5} illTypedCause=FromLooseType @461
+    Return v19 @461
   b8():
-    Jump -> next b9()
+    Jump -> next b9() @409
   b9():
-    v20 = GetModuleVariable variable=g0
-    v21 = Call v20, -, v0 calleeName="cold"
-    ReturnCall v21 casts=[{declared={type=number site=w11}}, {declared={type=number site=w5}}]
+    v20 = GetModuleVariable variable=g0 @496
+    v21 = Call v20, -, v0 calleeName="cold" @496
+    ReturnCall v21 casts=[{declared={type=number site=w11}}, {declared={type=number site=w5}}] @496
 }
 function f3 name="ofNumbers" module=m0 position=512 flags=[HasRestParameter, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array<number> site=w6 flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=number site=w7}] functionTypes=[f5] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: Array<number>):
-    Jump -> next b1()
+    Jump -> next b1() @512
   b1():
-    v1 = PropGet v0 key="length"
-    v2 = Convert v1 declared={type=number site=w12} illTypedCause=Assertion
-    Switch v2 cases=[0, 1, 2] -> case b2(| 0), case b4(| 0), case b6(| 0), otherwise b8()
+    v1 = PropGet v0 key="length" @568
+    v2 = Convert v1 declared={type=number site=w12} illTypedCause=Assertion @568
+    Switch v2 cases=[0, 1, 2] -> case b2(| 0), case b4(| 0), case b6(| 0), otherwise b8() @588
   b2(v3):
-    v4 = NarrowByField v0, v3 key="length"
-    Jump -> next b3()
+    v4 = NarrowByField v0, v3 key="length" @588
+    Jump -> next b3() @588
   b3():
-    v5 = Integer
-    v6 = Convert v5 declared={type=number site=w7}
-    Return v6
+    v5 = Integer @598
+    v6 = Convert v5 declared={type=number site=w7} @598
+    Return v6 @598
   b4(v7):
-    v8 = NarrowByField v0, v7 key="length"
-    Jump -> next b5()
+    v8 = NarrowByField v0, v7 key="length" @588
+    Jump -> next b5() @588
   b5():
-    v9 = Integer
-    v10 = ElemGet v8, v9
-    v11 = Convert v10 declared={type=number site=w13} illTypedCause=ContainerWriterUnseen
-    Return v11
+    v9 = Integer @616
+    v10 = ElemGet v8, v9 @616
+    v11 = Convert v10 declared={type=number site=w13} illTypedCause=ContainerWriterUnseen @616
+    Return v11 @616
   b6(v12):
-    v13 = NarrowByField v0, v12 key="length"
-    Jump -> next b7()
+    v13 = NarrowByField v0, v12 key="length" @588
+    Jump -> next b7() @588
   b7():
-    v14 = Integer
-    v15 = ElemGet v13, v14
-    v16 = Convert v15 declared={type=number site=w14} illTypedCause=ContainerWriterUnseen
-    v17 = Integer integer=1
-    v18 = ElemGet v13, v17
-    v19 = Convert v18 declared={type=number site=w15} illTypedCause=ContainerWriterUnseen
-    v20 = Add v16, v19
-    v21 = Convert v20 declared={type=number site=w7}
-    Return v21
+    v14 = Integer @640
+    v15 = ElemGet v13, v14 @640
+    v16 = Convert v15 declared={type=number site=w14} illTypedCause=ContainerWriterUnseen @640
+    v17 = Integer integer=1 @650
+    v18 = ElemGet v13, v17 @650
+    v19 = Convert v18 declared={type=number site=w15} illTypedCause=ContainerWriterUnseen @650
+    v20 = Add v16, v19 @640
+    v21 = Convert v20 declared={type=number site=w7} @640
+    Return v21 @640
   b8():
-    Jump -> next b9()
+    Jump -> next b9() @588
   b9():
-    v22 = GetModuleVariable variable=g0
-    v23 = Call v22, -, v0 calleeName="cold"
-    ReturnCall v23 casts=[{declared={type=number site=w16}}, {declared={type=number site=w7}}]
+    v22 = GetModuleVariable variable=g0 @675
+    v23 = Call v22, -, v0 calleeName="cold" @675
+    ReturnCall v23 casts=[{declared={type=number site=w16}}, {declared={type=number site=w7}}] @675
 }
 function f4 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f5]
 function f5 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 # -- generated: f0 cold ofAny ofNumbers
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f3 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f3 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 parent=4 isTailCall=true module=m0}, {callee=f1 callPosition=4294967295 parent=3 isTailCall=true module=m0}, {callee=f1 callPosition=4294967295 parent=2 isTailCall=true module=m0}, {callee=f1 callPosition=4294967295 parent=1 isTailCall=true module=m0}] {
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f3 callPosition=925 module=m0}, {callee=f2 callPosition=925 module=m0}, {callee=f3 callPosition=943 module=m0}, {callee=f2 callPosition=943 module=m0}, {callee=f1 callPosition=496 parent=4 isTailCall=true module=m0}, {callee=f1 callPosition=675 parent=3 isTailCall=true module=m0}, {callee=f1 callPosition=496 parent=2 isTailCall=true module=m0}, {callee=f1 callPosition=675 parent=1 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: f2 = NewClosure function=f2 allocationSite=0
 # CHECK-NEXT: v1: f3 = NewClosure function=f3 allocationSite=1
@@ -264,13 +264,13 @@ function f5 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: Return v38
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="cold"
-# CHECK: module=m0 position=277 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<undefined|int, proven, pristine[Storage, Names, Dense]> site=w0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: module=m0 position=277 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<undefined|int, proven, pristine[Storage, Names, Dense]> site=w0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=int[0, 4294967295] site=w1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: Array<undefined|int, proven, pristine[Storage, Names, Dense]>):
 # CHECK-NEXT: v1: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0 accessSite=9
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="ofAny"
-# CHECK: module=m0 position=340 flags=[HasRestParameter, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array<undefined|int, proven, pristine[Storage, Names, Dense]> site=w4 flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=number site=w5 flags=[IsExpected]}] functionTypes=[f4] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=4294967295 isTailCall=true module=m0}] {
+# CHECK: module=m0 position=340 flags=[HasRestParameter, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array<undefined|int, proven, pristine[Storage, Names, Dense]> site=w4 flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=undefined|int|whole site=w5}] functionTypes=[f4] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=496 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: Array<undefined|int, proven, pristine[Storage, Names, Dense]>):
 # CHECK-NEXT: v1: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0 accessSite=10
 # CHECK-NEXT: Switch v1 cases=[0, 1, 2] -> case b1(), case b2(), case b7(), otherwise b14()
@@ -333,7 +333,7 @@ function f5 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: Jump -> next b11()
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="ofNumbers"
-# CHECK: module=m0 position=512 flags=[HasRestParameter, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array<undefined|int, proven, pristine[Storage, Names, Dense]> site=w6 flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=number site=w7 flags=[IsExpected]}] functionTypes=[f5] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=4294967295 isTailCall=true module=m0}] {
+# CHECK: module=m0 position=512 flags=[HasRestParameter, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array<undefined|int, proven, pristine[Storage, Names, Dense]> site=w6 flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=undefined|number site=w7}] functionTypes=[f5] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=675 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: Array<undefined|int, proven, pristine[Storage, Names, Dense]>):
 # CHECK-NEXT: v1: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0 accessSite=15
 # CHECK-NEXT: Switch v1 cases=[0, 1, 2] -> case b1(), case b2(), case b7(), otherwise b13()

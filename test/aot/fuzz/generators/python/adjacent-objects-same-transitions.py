@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""adjacent-objects-same-transitions.py <seed>: a store outside an allocation shows as a neighbor's value.
-Eight objects of one kind are made one after the other: instances of compiled classes, typed records, dictionaries, closures, arrays of every kind of storage, subclasses of Array, Map and Error, built-in objects.
-All eight take the same steps side by side, up to 24 of them, each object with values of its own: properties added by name, under computed keys, by Object.defineProperty, Object.assign and Reflect.set; elements before, between and
-after them; deletes; stores to declared fields; runs of 2 to 20 names. Then every object of the group is read back whole. Each scenario runs three times, so the second and third rounds meet inline caches that are warm.
-As plain Bun, line by line."""
+"""adjacent-objects-same-transitions.py <seed>: An out-of-bounds store shows up as a changed value in a neighboring
+object. Eight objects of one kind are allocated one after the other (instances of compiled classes, typed records,
+dictionaries, closures, arrays of every kind), go through the same transitions, and are all read back.
+"""
 import random, sys
 seed = int(sys.argv[1]); count = 24
 r = random.Random(seed)

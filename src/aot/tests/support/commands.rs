@@ -79,6 +79,7 @@ pub fn parse_option_words<'a>(
         match word.as_str() {
             "erase-types" => aot.erases_types = true,
             "builtin-modules" => aot.omits_builtin_modules = false,
+            "entry-points-run-again" => aot.entry_points_run_again = true,
             "platform=darwin" => aot.platform = Some(TargetPlatform::Darwin),
             "platform=linux" => aot.platform = Some(TargetPlatform::Linux),
             "platform=windows" => aot.platform = Some(TargetPlatform::Windows),
@@ -356,7 +357,12 @@ mod tests {
             refused_entry_points: None,
             is_one_program: false,
             brought_bun_types: false,
+            errors_with_bun_types: None,
             has_early_errors: false,
+            replaced_builtins: Vec::new(),
+            mocks_any_module: false,
+            left_to_loader: Vec::new(),
+            loads_below_files_left_to_loader: None,
         }
     }
 

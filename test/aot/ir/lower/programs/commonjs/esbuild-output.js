@@ -932,8 +932,8 @@ var x = 1;
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: EvaluateModule module=[[m_2]] referrer=[[m_0]] [isCallOfRequire]
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|number|string|symbol|bigint|[[L_4]] flags=[IsExpected]}
-// CHECK-NEXT: v3 = PropGet v2 key="x"
+// CHECK-NEXT: v1 = Boolean boolean=true
+// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_3]]
+// CHECK-NEXT: v3 = CheckInitialized v2 name="x"
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }

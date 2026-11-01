@@ -106,7 +106,4 @@ describe("compile/aot/typedness/one-line", () => {
     expect(openInterface.line).toMatch(/^[1-9]\d* open, /);
     expect(findRegression(before, openInterface)).toContain("Row is open");
   }, 120_000);
-
-  // `points.push(JSON.parse('{"x":1,"y":2}'))` makes `this.x` in a method of Point a tested access, and no entry of the report names Point.
-  test.todo("reports a regression when JSON.parse data is pushed into an array of a class");
 });

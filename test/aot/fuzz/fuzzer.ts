@@ -1,22 +1,49 @@
-// The driver: draws programs from the sources, has a bed judge them, and turns each difference into a stored finding: confirmed,
-// reduced, attributed to a pass or a flow result, and told apart from those that are there already.
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statfsSync, writeFileSync } from "fs";
+// The main loop: takes programs from the sources, has a runner judge them, and turns each failure into a stored
+// finding: confirmed, reduced, attributed to a pass or a flow result, and deduplicated against the findings already
+// stored.
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statfsSync,
+  writeFileSync,
+} from "fs";
 import { join } from "path";
 import { withoutInstallingPackages } from "../harness/without-installing-packages";
-import { checksThatMoveNoOutput, inTheRun, isFinding, isOfTheBuild, sameFailure, wholeText, writeProgram, type Bed, type Failure, type Judged, type Mode, type Program, type Verdict } from "./beds";
+import {
+  runtimeChecksVariable,
+  verifierFlags,
+  withoutVerifiersFlag,
+  runEnvFlag,
+  isFinding,
+  isBuildFlag,
+  sameFailure,
+  withPrint,
+  wholeText,
+  writeProgram,
+  type Runner,
+  type Failure,
+  type Judged,
+  type Mode,
+  type Program,
+  type Verdict,
+} from "./runners";
 import { parses, reprinted } from "./mutate";
 import { Random } from "./random";
 import { reduce, reduceFiles, shape, type Reduction, type Whole } from "./reduce";
-import { allSources, inSeveralFiles, writtenAgain, type Generated } from "./sources";
+import { allSources, multiFileSuffix, rewrittenSuffix, type Generated } from "./sources";
 import { typeChecker, type Checker } from "./type-check";
 
 export interface Settings {
-  beds: { bed: Bed; jobs: number }[];
+  runners: { runner: Runner; jobs: number }[];
   out: string;
   work: string;
   programsRoot: string;
   seconds: number;
-  /** Stops after this many programs, if given. */
+  /** Stop after this many programs, if set. */
   programs?: number;
   firstSeed: number;
   sources?: string[];
@@ -24,16 +51,18 @@ export interface Settings {
   known: string[];
   minFreeBytes: number;
   reduceSeconds: number;
-  /** Whether to look for the switches without which a finding goes away, which takes a dozen builds or more. Default: yes. */
+  /**
+   * Whether to search for the switches that make a finding go away, which takes a dozen builds or more. Default: yes.
+   */
   attribute?: boolean;
-  /** The largest number of programs in one build. */
+  /** Maximum number of programs in one build. */
   batch?: number;
-  /** Failures are listed in failures.tsv and counted, and nothing is confirmed, reduced or stored. */
+  /** Only list failures in failures.tsv and count them: nothing is confirmed, reduced or stored. */
   isCountOnly?: boolean;
-  /** Each of `sources` is drawn as often in its form of several files, on the beds that take such programs. */
-  alsoInSeveralFiles?: boolean;
-  alsoWrittenAgain?: boolean;
-  /** The clock that says when the run is over. A test hands over one of its own and waits for nothing. */
+  /** Also use the multi-file variant of each of `sources`, equally often, on runners that support it. */
+  alsoMultiFile?: boolean;
+  alsoRewritten?: boolean;
+  /** The clock that decides when the run is over. A test passes its own so that it never waits. */
   now?: () => number;
 }
 
@@ -48,31 +77,47 @@ interface Known {
   pattern: RegExp;
   owner: string;
   why: string;
-  /** What the pattern is matched against: the words of the finding, the text of the reduced program, both, or the text of a program before it is run. */
+  /**
+   * What the pattern is matched against: the description of the finding, the reduced program's text, both, or a
+   * program's text before it runs.
+   */
   where: string;
   count: number;
 }
 
 export async function fuzz(settings: Settings): Promise<Summary> {
-  const { out, work, beds } = settings;
+  const { out, work, runners } = settings;
   const now = settings.now ?? Date.now;
   const started = now();
   const deadline = started + settings.seconds * 1000;
-  // Behind the deadline every worker ends the batch it has begun, and what fails there is looked at too: a later run has other seeds. But a shared build under a sanitizer takes minutes, so that work has a bound of its own:
-  // a few failures are confirmed, and from the last call on nothing is built again. What is never the load's doing is then stored as it was drawn, the rest is listed.
+  // After the deadline every worker finishes its current batch, and failures there are still handled, because a later
+  // run has other seeds. A shared build under a sanitizer takes minutes, so this work is bounded: a few failures are
+  // confirmed, and after `lastCall` nothing is built again. Failures that load cannot cause are then stored unreduced;
+  // the rest are only listed.
   const lastCall = deadline + Math.min(300, settings.seconds / 3) * 1000;
-  const confirmedBehindTheDeadline = 4;
-  let lateLooks = 0;
-  for (const { bed } of beds) bed.lastCall = lastCall;
+  const maxConfirmationsAfterDeadline = 4;
+  let lateConfirmations = 0;
+  for (const { runner } of runners) runner.lastCall = lastCall;
   mkdirSync(join(out, "findings"), { recursive: true });
   withoutInstallingPackages(work);
 
   const rejected = new Set<string>();
   const sources = await allSources(settings.programsRoot, rejected, true);
-  const wanted = (settings.sources ?? Object.keys(sources).filter(name => !name.endsWith(inSeveralFiles) && !name.endsWith(writtenAgain))).filter(name => sources[name]);
+  const wanted = (
+    settings.sources ??
+    Object.keys(sources).filter(name => !name.endsWith(multiFileSuffix) && !name.endsWith(rewrittenSuffix))
+  ).filter(name => sources[name]);
   if (!wanted.length) throw new Error("no source of programs");
-  const isAForm = (name: string) => name.endsWith(inSeveralFiles) || name.endsWith(writtenAgain);
-  const wantedInBothForms = wanted.flatMap(name => (isAForm(name) ? [name] : [name, ...(settings.alsoInSeveralFiles ? [name + inSeveralFiles] : []), ...(settings.alsoWrittenAgain ? [name + writtenAgain] : [])]));
+  const isVariant = (name: string) => name.endsWith(multiFileSuffix) || name.endsWith(rewrittenSuffix);
+  const wantedWithVariants = wanted.flatMap(name =>
+    isVariant(name)
+      ? [name]
+      : [
+          name,
+          ...(settings.alsoMultiFile ? [name + multiFileSuffix] : []),
+          ...(settings.alsoRewritten ? [name + rewrittenSuffix] : []),
+        ],
+  );
 
   const known: Known[] = [];
   for (const file of settings.known) {
@@ -83,19 +128,40 @@ export async function fuzz(settings: Settings): Promise<Summary> {
       known.push({ pattern: new RegExp(pattern), owner, why, where, count: 0 });
     }
   }
-  const described = (bed: Bed, mode: string, failure: Failure, group?: string) => `${bed.name} ${mode} ${failure.kind} ${failure.detail}${group ? ` | ${group}` : ""}`;
-  const knownAs = (bed: Bed, mode: string, failure: Failure, group?: string) => known.find(entry => entry.where === "finding" && entry.pattern.test(described(bed, mode, failure, group)));
-  const knownText = (where: "reduced" | "program", text: string) => known.find(entry => entry.where === where && entry.pattern.test(text));
-  // A line that looks at the text of a program alone says where an executable may answer otherwise than plain Bun. It excuses no build that runs out of its clock and nothing that ends by a signal, whatever the program holds.
-  const isNeverByDesign = (kind: string) => ["build hang", "build crash", "internal compiler error", "crash", "hang"].includes(kind);
-  // Load makes a slow run look like one that never ends. It ends nothing by a signal and puts no message into the compiler's mouth.
-  const isNeverTheLoad = (kind: string) => ["build crash", "internal compiler error", "crash"].includes(kind);
+  // Only the end of a long line is shown, prefixed with its offset. Accepted-difference patterns match "plain ..
+  // compiled ..", so the prefix is removed.
+  const described = (runner: Runner, mode: string, failure: Failure, group?: string) =>
+    `${runner.name} ${mode} ${failure.kind} ${failure.detail.replace(/^at character \d+ of the line /, "")}${group ? ` | ${group}` : ""}`;
+  const knownAs = (runner: Runner, mode: string, failure: Failure, group?: string) =>
+    known.find(entry => entry.where === "finding" && entry.pattern.test(described(runner, mode, failure, group)));
+  const knownText = (where: "reduced" | "program", text: string) =>
+    known.find(entry => entry.where === where && entry.pattern.test(text));
+  // A pattern that only looks at a program's text says where an executable may differ from plain Bun. It never excuses
+  // a build timeout or a signal.
+  const isAlwaysBug = (kind: string) =>
+    ["build hang", "build crash", "internal compiler error", "crash", "hang"].includes(kind);
+  // Load can make a slow run look like a hang. It cannot cause a signal or a compiler error message.
+  const cannotBeCausedByLoad = (kind: string) => ["build crash", "internal compiler error", "crash"].includes(kind);
 
-  const counts = { programs: {} as Record<string, number>, runs: {} as Record<string, number>, skipped: {} as Record<string, number>, findings: 0, known: 0, repeated: 0, unstable: 0, onlyTogether: 0, artifacts: 0, reductions: 0, notConfirmed: 0 };
+  const counts = {
+    programs: {} as Record<string, number>,
+    runs: {} as Record<string, number>,
+    skipped: {} as Record<string, number>,
+    findings: 0,
+    known: 0,
+    repeated: 0,
+    unstable: 0,
+    onlyTogether: 0,
+    artifacts: 0,
+    sameWithoutCompiler: 0,
+    reductions: 0,
+    notConfirmed: 0,
+  };
   const distinct: string[] = [];
   /** Group, then "programs", "<mode> same" or "<mode> <kind of failure>". */
   const groups = new Map<string, Record<string, number>>();
-  const inGroup = (generated: Generated, what: string) => generated.group && bump(groups.get(generated.group) ?? groups.set(generated.group, {}).get(generated.group)!, what);
+  const inGroup = (generated: Generated, what: string) =>
+    generated.group && bump(groups.get(generated.group) ?? groups.set(generated.group, {}).get(generated.group)!, what);
   let checker: Checker | undefined | "not asked" = "not asked";
   const bump = (table: Record<string, number>, key: string, by = 1) => (table[key] = (table[key] ?? 0) + by);
   const listed = (entries: Record<string, number>) => Object.entries(entries).sort().map(([key, count]) => `${key} ${count}`).join(", "); // prettier-ignore
@@ -103,10 +169,19 @@ export async function fuzz(settings: Settings): Promise<Summary> {
 
   const status = (state: string) => {
     const hours = (now() - started) / 3_600_000;
-    const rate = beds.map(({ bed }) => `${bed.name} ${Math.round(Object.entries(counts.programs).filter(([key]) => key.startsWith(bed.name)).reduce((sum, [, count]) => sum + count, 0) / hours)}/h`).join(", ");
+    const rate = runners
+      .map(
+        ({ runner }) =>
+          `${runner.name} ${Math.round(
+            Object.entries(counts.programs)
+              .filter(([key]) => key.startsWith(runner.name))
+              .reduce((sum, [, count]) => sum + count, 0) / hours,
+          )}/h`,
+      )
+      .join(", ");
     return (
-      `${new Date().toISOString().slice(0, 19)}Z ${state} | binaries ${beds.map(({ bed }) => bed.binary).join(", ")} | seeds ${settings.firstSeed}.. | programs ${total()} (${listed(counts.programs)}) | rate ${rate} | compiled runs: ${listed(counts.runs)} | skipped: ${listed(counts.skipped)} | ` +
-      `findings ${counts.findings}: known ${counts.known}, repeated ${counts.repeated}, unstable ${counts.unstable}, only in a shared build ${counts.onlyTogether}, of the bed ${counts.artifacts}, not confirmed ${counts.notConfirmed}, distinct in this run ${distinct.length}, distinct stored ${readdirSync(join(out, "findings")).length} | reductions ${counts.reductions}\n`
+      `${new Date().toISOString().slice(0, 19)}Z ${state} | binaries ${runners.map(({ runner }) => runner.binary).join(", ")} | seeds ${settings.firstSeed}.. | programs ${total()} (${listed(counts.programs)}) | rate ${rate} | compiled runs: ${listed(counts.runs)} | skipped: ${listed(counts.skipped)} | ` +
+      `findings ${counts.findings}: known ${counts.known}, repeated ${counts.repeated}, unstable ${counts.unstable}, only in a shared build ${counts.onlyTogether}, of the runner ${counts.artifacts}, same without --aot ${counts.sameWithoutCompiler}, not confirmed ${counts.notConfirmed}, distinct in this run ${distinct.length}, distinct stored ${readdirSync(join(out, "findings")).length} | reductions ${counts.reductions}\n`
     );
   };
   const writeStatus = (state = "running") => {
@@ -116,7 +191,7 @@ export async function fuzz(settings: Settings): Promise<Summary> {
   };
 
   const baseIsSame = new Map<string, boolean>();
-  /** How many failures of these words were looked at; without end once one of them is stored. */
+  /** How many failures with this description were examined; unlimited once one of them is stored. */
   const seenEarly = new Map<string, number>();
   const perGroup = new Map<string, number>();
   let sequence = 0;
@@ -125,56 +200,138 @@ export async function fuzz(settings: Settings): Promise<Summary> {
     const { bavail, bsize } = statfsSync(path);
     return Number(bavail) * Number(bsize);
   };
-  const stopped = () => now() > deadline || existsSync(join(out, "STOP")) || (settings.programs !== undefined && sequence >= settings.programs);
+  const stopped = () =>
+    now() > deadline ||
+    existsSync(join(out, "STOP")) ||
+    (settings.programs !== undefined && sequence >= settings.programs);
 
-  const alone = async (bed: Bed, folder: string, program: Program, flags: string[]) => (await bed.judge(folder, [program], flags))[0];
+  const alone = async (runner: Runner, folder: string, program: Program, flags: string[]) =>
+    (await runner.judge(folder, [program], flags))[0];
   const textsOf = ({ text, files }: Whole): Whole => ({ text, ...(files ? { files } : {}) });
-  /** What a program says of itself beside its text. It holds for whatever is cut out of it; an entry point that was cut away is none. */
-  const saidOf = ({ plainEnvironment, entryPoints, runsInItsFolder, meant, plainWavers, mayBeRefused }: Program, { files }: Whole): Partial<Program> => ({ ...(plainEnvironment && { plainEnvironment }), ...(plainWavers && { plainWavers }), ...(mayBeRefused && { mayBeRefused }), ...(entryPoints?.some(path => files?.[path] !== undefined) && { entryPoints: entryPoints.filter(path => files?.[path] !== undefined) }), ...(runsInItsFolder && files && { runsInItsFolder }), ...(meant && { meant }) });
-  const bare = (program: Program): Program => ({ ...textsOf(program), ...saidOf(program, program), extension: program.extension });
+  /**
+   * A program's properties other than its text. They also apply to anything reduced from it, except entry points that
+   * were removed.
+   */
+  const metadataOf = (
+    { plainEnvironment, entryPoints, runsInOwnFolder, meant, unstablePlainOutput, mayBeRefused }: Program,
+    { files }: Whole,
+  ): Partial<Program> => ({
+    ...(plainEnvironment && { plainEnvironment }),
+    ...(unstablePlainOutput && { unstablePlainOutput }),
+    ...(mayBeRefused && { mayBeRefused }),
+    ...(entryPoints?.some(path => files?.[path] !== undefined) && {
+      entryPoints: entryPoints.filter(path => files?.[path] !== undefined),
+    }),
+    ...(runsInOwnFolder && files && { runsInOwnFolder }),
+    ...(meant && { meant }),
+  });
+  const bare = (program: Program): Program => ({
+    ...textsOf(program),
+    ...metadataOf(program, program),
+    extension: program.extension,
+  });
 
   // Files first, then lines.
-  const cut = (program: Whole, extension: Program["extension"], { fails, width, seconds }: { fails(candidates: Whole[]): Promise<boolean[]>; width: number; seconds: number }): Promise<Reduction & Whole> =>
+  const cut = (
+    program: Whole,
+    extension: Program["extension"],
+    { fails, width, seconds }: { fails(candidates: Whole[]): Promise<boolean[]>; width: number; seconds: number },
+  ): Promise<Reduction & Whole> =>
     program.files
-      ? reduceFiles(textsOf(program), { parses: (candidate, path = "main." + extension) => !/\.[cm]?[jt]s$/.test(path) || parses(candidate, path.endsWith("ts")), fails, width, seconds, entry: "main." + extension })
-      : reduce(program.text, { parses: candidate => parses(candidate, extension === "ts"), fails: candidates => fails(candidates.map(text => ({ text }))), width, seconds });
+      ? reduceFiles(textsOf(program), {
+          parses: (candidate, path = "main." + extension) =>
+            !/\.[cm]?[jt]s$/.test(path) || parses(candidate, path.endsWith("ts")),
+          fails,
+          width,
+          seconds,
+          entry: "main." + extension,
+        })
+      : reduce(program.text, {
+          parses: candidate => parses(candidate, extension === "ts"),
+          fails: candidates => fails(candidates.map(text => ({ text }))),
+          width,
+          seconds,
+        });
 
-  // Which switches make the failure go away. Where a build is cheap every switch is tried; else one is found by halving.
-  async function guilty(bed: Bed, folder: string, program: Program, mode: Mode, failure: Failure): Promise<string[]> {
-    // Another failure in its place does not clear a switch: a build may refuse the flags, or fail without the pass.
-    const goesAway = async (flags: string[]) => (await alone(bed, folder, program, [...mode.flags, ...flags])).verdict.kind === "same";
-    const { flowResults, passes } = await bed.switches();
+  // Finds the switches that make the failure go away. Where a build is cheap every switch is tried; otherwise one is
+  // found by bisection. The search gets as long as a reduction: every attempt at a hang takes a run's whole time limit.
+  async function guilty(
+    runner: Runner,
+    folder: string,
+    program: Program,
+    mode: Mode,
+    failure: Failure,
+  ): Promise<string[]> {
+    // A different failure does not clear a switch: the build may reject the flags, or fail without the pass.
+    const goesAway = async (flags: string[]) =>
+      (await alone(runner, folder, program, [...mode.flags, ...flags])).verdict.kind === "same";
+    const { flowResults, passes } = await runner.switches();
+    const until = now() + settings.reduceSeconds * 1000;
     const found: string[] = [];
-    const withoutFlow = await goesAway(bed.withoutFlowResults);
+    // The compiler's verifiers are on in every mode. A build that they stop, and that ends without them, is one that no
+    // user sees stop; what the executable then does is not asked: the program was reduced to whatever still stops the
+    // build. They are meant to change no byte of an executable. Where a check at run time reports in the executable built
+    // with them and not in the one built without, they did, and again it is no user's executable that is at fault.
+    if (
+      mode.flags.includes(verifierFlags) &&
+      /^(internal compiler error|build |validation failure)/.test(failure.kind)
+    ) {
+      const flags = [...mode.flags.filter(flag => flag !== verifierFlags), withoutVerifiersFlag];
+      const without = await alone(runner, folder, program, flags);
+      if (failure.kind === "validation failure" ? without.verdict.kind === "same" : without.compiled?.run)
+        found.push("the verifiers");
+    }
+    const withoutFlow = await goesAway(runner.withoutFlowResults);
     if (withoutFlow) found.push("flow-results");
-    if (bed.batch === 1) {
-      for (const name of withoutFlow ? [...flowResults, ...passes] : passes) if (await goesAway(bed.disabling([name]))) found.push(name);
+    if (runner.batch === 1) {
+      for (const name of withoutFlow ? [...flowResults, ...passes] : passes)
+        if (now() < until && (await goesAway(runner.disabling([name])))) found.push(name);
       return found;
     }
     for (let names of withoutFlow ? [flowResults, passes] : [passes]) {
-      if (names !== flowResults && !(await goesAway(bed.disabling(names)))) continue;
-      while (names.length > 1) {
+      if (now() > until || (names !== flowResults && !(await goesAway(runner.disabling(names))))) continue;
+      while (names.length > 1 && now() < until) {
         const [first, second] = [names.slice(0, names.length >> 1), names.slice(names.length >> 1)];
-        if (await goesAway(bed.disabling(first))) names = first;
-        else if (await goesAway(bed.disabling(second))) names = second;
+        if (await goesAway(runner.disabling(first))) names = first;
+        else if (await goesAway(runner.disabling(second))) names = second;
         else break;
       }
-      found.push(names.length <= 4 ? names.join("&") : `${names.length} of them together`);
+      found.push(
+        names.length <= 4
+          ? names.join("&")
+          : `${names.length} of them${now() < until ? " together" : ", not narrowed"}`,
+      );
     }
     return found;
   }
 
-  // A failure that needs the other programs of its build: what the compiler proves, it proves about all of them at once.
-  // The companions that are not needed go first, then what can go of the program itself. Every attempt is a build of its own.
-  async function keepTogether(bed: Bed, folder: string, generated: Generated, members: Generated[], mode: Mode, failure: Failure) {
-    if (!bed.store) return;
+  // A failure that needs the other programs in its build, because the compiler analyzes all of them as one program.
+  // Unneeded companions are removed first, then the program itself is reduced. Every attempt is a separate build.
+  async function keepWithCompanions(
+    runner: Runner,
+    folder: string,
+    generated: Generated,
+    members: Generated[],
+    mode: Mode,
+    failure: Failure,
+  ) {
+    if (!runner.store) return;
     // An empty module keeps the build a shared one when no companion is left.
     const filler: Program = { text: "", extension: "js" };
-    const failsWith = async (program: Program, others: Program[]) => sameFailure(failure, (await bed.judge(folder, [program, filler, ...others], mode.flags))[0].verdict);
+    const failsWith = async (program: Program, others: Program[]) =>
+      sameFailure(failure, (await runner.judge(folder, [program, filler, ...others], mode.flags))[0].verdict);
     let others: Program[] = members.filter(each => each !== generated).map(bare);
     if (!(await failsWith(generated, others))) {
       counts.unstable++;
-      return isNeverTheLoad(failure.kind) ? keepAsItIs(bed, generated, mode, failure, `same, by itself and beside the same ${others.length} programs`) : undefined;
+      return cannotBeCausedByLoad(failure.kind)
+        ? keepUnreduced(
+            runner,
+            generated,
+            mode,
+            failure,
+            `same, by itself and beside the same ${others.length} programs`,
+          )
+        : undefined;
     }
     counts.reductions++;
     const until = now() > deadline ? 0 : now() + settings.reduceSeconds * 1000;
@@ -190,160 +347,390 @@ export async function fuzz(settings: Settings): Promise<Summary> {
     const reduced = await cut(generated, generated.extension, {
       fails: async candidates => {
         const results: boolean[] = [];
-        for (const candidate of candidates) results.push(await failsWith({ ...candidate, ...saidOf(generated, candidate), extension: generated.extension }, others));
+        for (const candidate of candidates)
+          results.push(
+            await failsWith(
+              { ...candidate, ...metadataOf(generated, candidate), extension: generated.extension },
+              others,
+            ),
+          );
         return results;
       },
       width: 1,
       seconds: now() > deadline ? 0 : settings.reduceSeconds,
     });
-    const small: Program = { ...textsOf(reduced), ...saidOf(generated, reduced), extension: generated.extension };
+    const small: Program = { ...textsOf(reduced), ...metadataOf(generated, reduced), extension: generated.extension };
     const group = `${failure.kind} only together`;
-    const byShape = failure.kind === "different output" || failure.kind === "different exit code" || failure.kind === "hang" || failure.kind === "crash" || !failure.signature.includes(" ");
-    const name = `${group} ${byShape ? Bun.hash.crc32(shape(wholeText(small))).toString(16) : failure.signature}`.replace(/[^\w+&.-]+/g, "-").slice(0, 120);
+    const byShape =
+      failure.kind === "different output" ||
+      failure.kind === "different exit code" ||
+      failure.kind === "hang" ||
+      failure.kind === "crash" ||
+      !failure.signature.includes(" ");
+    const name = `${group} ${byShape ? Bun.hash.crc32(shape(wholeText(small))).toString(16) : failure.signature}`
+      .replace(/[^\w+&.-]+/g, "-")
+      .slice(0, 120);
     const target = join(out, "findings", name);
     if (existsSync(target)) return void counts.repeated++;
-    perGroup.set(group, (perGroup.get(group) ?? readdirSync(join(out, "findings")).filter(each => each.startsWith(group.replace(/[^\w+&.-]+/g, "-"))).length) + 1);
+    perGroup.set(
+      group,
+      (perGroup.get(group) ??
+        readdirSync(join(out, "findings")).filter(each => each.startsWith(group.replace(/[^\w+&.-]+/g, "-"))).length) +
+        1,
+    );
     if (perGroup.get(group)! > 10) return void counts.repeated++;
     distinct.push(name);
     mkdirSync(target, { recursive: true });
-    writeFileSync(join(target, "commands.txt"), bed.store(target, [small, filler, ...others], mode.flags));
+    writeFileSync(join(target, "commands.txt"), runner.store(target, [small, filler, ...others], mode.flags));
     writeProgram(target, "original", generated);
-    const record = { kind: failure.kind, detail: failure.detail, guilty: ["only together"], bed: bed.name, mode: mode.name, flags: mode.flags, binary: bed.binary, source: generated.source, seed: generated.seed, notes: generated.notes, companions: others.length, found: new Date().toISOString() }; // prettier-ignore
+    const record = { kind: failure.kind, detail: failure.detail, guilty: ["only together"], runner: runner.name, mode: mode.name, flags: mode.flags, binary: runner.binary, source: generated.source, seed: generated.seed, notes: generated.notes, companions: others.length, found: new Date().toISOString() }; // prettier-ignore
     writeFileSync(join(target, "finding.json"), JSON.stringify(record, null, 2) + "\n");
-    appendFileSync(join(out, "findings.tsv"), [record.found, bed.name, mode.name, bed.binary, failure.kind, "only together", `${generated.source}:${generated.seed}`, name, failure.detail, `${others.length} companions`].join("\t") + "\n");
+    appendFileSync(
+      join(out, "findings.tsv"),
+      [
+        record.found,
+        runner.name,
+        mode.name,
+        runner.binary,
+        failure.kind,
+        "only together",
+        `${generated.source}:${generated.seed}`,
+        name,
+        failure.detail,
+        `${others.length} companions`,
+      ].join("\t") + "\n",
+    );
   }
 
-  // What failed once and not at the next try: no smaller program can be looked for, so the program is stored whole, with what the next try gave.
-  function keepAsItIs(bed: Bed, generated: Generated, mode: Mode, failure: Failure, nextTry: string, members: Generated[] = [], how = "not at the next try") {
-    const name = `${failure.kind} ${how} ${Bun.hash.crc32(wholeText(generated)).toString(16)}`.replace(/[^\w+&.-]+/g, "-").slice(0, 120);
+  // It failed once and not on the next try, so it cannot be reduced: the whole program is stored, with the result of
+  // the second try.
+  function keepUnreduced(
+    runner: Runner,
+    generated: Generated,
+    mode: Mode,
+    failure: Failure,
+    nextTry: string,
+    members: Generated[] = [],
+    how = "not at the next try",
+  ) {
+    const name = `${failure.kind} ${how} ${Bun.hash.crc32(wholeText(generated)).toString(16)}`
+      .replace(/[^\w+&.-]+/g, "-")
+      .slice(0, 120);
     const target = join(out, "findings", name);
     if (existsSync(target)) return void counts.repeated++;
     distinct.push(name);
     mkdirSync(target, { recursive: true });
     writeProgram(target, "original", generated);
-    if (members.length > 1 && bed.store) writeFileSync(join(target, "commands.txt"), bed.store(target, [generated, ...members.filter(each => each !== generated)], mode.flags));
-    const record = { kind: failure.kind, detail: failure.detail, guilty: [how], nextTry, bed: bed.name, mode: mode.name, flags: mode.flags, binary: bed.binary, source: generated.source, seed: generated.seed, group: generated.group, notes: generated.notes, found: new Date().toISOString() }; // prettier-ignore
+    if (members.length > 1 && runner.store)
+      writeFileSync(
+        join(target, "commands.txt"),
+        runner.store(target, [generated, ...members.filter(each => each !== generated)], mode.flags),
+      );
+    const record = { kind: failure.kind, detail: failure.detail, guilty: [how], nextTry, runner: runner.name, mode: mode.name, flags: mode.flags, binary: runner.binary, source: generated.source, seed: generated.seed, group: generated.group, notes: generated.notes, found: new Date().toISOString() }; // prettier-ignore
     writeFileSync(join(target, "finding.json"), JSON.stringify(record, null, 2) + "\n");
-    appendFileSync(join(out, "findings.tsv"), [record.found, bed.name, mode.name, bed.binary, failure.kind, how, `${generated.source}:${generated.seed}`, name, failure.detail, `the next try: ${nextTry}`].join("\t") + "\n");
+    appendFileSync(
+      join(out, "findings.tsv"),
+      [
+        record.found,
+        runner.name,
+        mode.name,
+        runner.binary,
+        failure.kind,
+        how,
+        `${generated.source}:${generated.seed}`,
+        name,
+        failure.detail,
+        `the next try: ${nextTry}`,
+      ].join("\t") + "\n",
+    );
   }
 
-  async function keep(bed: Bed, folder: string, generated: Generated, mode: Mode, failure: Failure, members: Generated[]) {
+  async function keep(
+    runner: Runner,
+    folder: string,
+    generated: Generated,
+    mode: Mode,
+    failure: Failure,
+    members: Generated[],
+  ) {
     const together = members.length > 1;
     counts.findings++;
-    const rule = knownAs(bed, mode.name, failure, generated.group);
+    const rule = knownAs(runner, mode.name, failure, generated.group);
     if (rule) return void (rule.count++, counts.known++);
-    // The words of a crash or of a wrong line say little, so the group tells such findings apart. A message of the compiler says what is wrong by itself.
-    const groupOf = (kind: string) => (generated.group && !["internal compiler error", "build crash", "build error", "build refused", "build hang"].includes(kind) ? `${generated.group} ` : "");
-    // What runs out of its clock says no word, and many a death says only its signal, so all of them would count as one: they are told apart by source.
-    const saysNothing = !failure.detail.includes(" ");
-    const early = `${bed.name} ${groupOf(failure.kind)}${failure.kind} ${failure.detail.replace(/\d+/g, "N")}${saysNothing ? ` ${generated.source}` : ""}`;
-    // The first that is set aside must not hide the rest of the run: of what is never meant, four are looked at until one is stored.
+    // The text of a crash or a wrong line says little, so the group separates such findings. A compiler error message
+    // is specific enough by itself.
+    const groupOf = (kind: string) =>
+      generated.group &&
+      !["internal compiler error", "build crash", "build error", "build refused", "build hang"].includes(kind)
+        ? `${generated.group} `
+        : "";
+    // A timeout has no message and many crashes only name their signal, so they would all count as one finding: they
+    // are separated by source.
+    const hasNoMessage = !failure.detail.includes(" ");
+    const early = `${runner.name} ${groupOf(failure.kind)}${failure.kind} ${failure.detail.replace(/\d+/g, "N")}${hasNoMessage ? ` ${generated.source}` : ""}`;
+    // The first one that is set aside must not hide the others in this run: for failures that are always bugs, four are
+    // examined until one is stored.
     const looks = seenEarly.get(early) ?? 0;
-    if (looks >= (isNeverByDesign(failure.kind) ? 4 : 1)) return void counts.repeated++;
+    if (looks >= (isAlwaysBug(failure.kind) ? 4 : 1)) return void counts.repeated++;
     seenEarly.set(early, looks + 1);
     const isStored = () => void seenEarly.set(early, Infinity);
-    if (now() > deadline && (now() > lastCall || lateLooks++ >= confirmedBehindTheDeadline)) {
+    if (now() > deadline && (now() > lastCall || lateConfirmations++ >= maxConfirmationsAfterDeadline)) {
       counts.notConfirmed++;
-      appendFileSync(join(out, "not-confirmed.tsv"), `${bed.binary}\t${generated.source}:${generated.seed}\t${described(bed, mode.name, failure, generated.group)}\t${mode.flags.join(" ")}\n`);
-      if (isNeverTheLoad(failure.kind)) (keepAsItIs(bed, generated, mode, failure, "none: the run was over", members, "not tried again"), isStored());
+      appendFileSync(
+        join(out, "not-confirmed.tsv"),
+        `${runner.binary}\t${generated.source}:${generated.seed}\t${described(runner, mode.name, failure, generated.group)}\t${mode.flags.join(" ")}\n`,
+      );
+      if (cannotBeCausedByLoad(failure.kind))
+        (keepUnreduced(runner, generated, mode, failure, "none: the run was over", members, "not tried again"),
+          isStored());
       return;
     }
 
-    // Once more, by itself: a program that fails one time in three, or only beside others, is kept apart.
-    const again = await alone(bed, folder, generated, mode.flags);
+    // Run it again alone: a program that fails one time in three, or only beside others, is kept separately.
+    const again = await alone(runner, folder, generated, mode.flags);
     if (!sameFailure(failure, again.verdict)) {
       together ? counts.onlyTogether++ : counts.unstable++;
-      appendFileSync(join(out, together ? "only-in-a-shared-build.tsv" : "unstable.tsv"), `${bed.binary}\t${generated.source}:${generated.seed}\t${described(bed, mode.name, failure, generated.group)}\t${mode.flags.join(" ")}\n`);
-      if (together) return keepTogether(bed, folder, generated, members, mode, failure);
-      if (isNeverTheLoad(failure.kind)) keepAsItIs(bed, generated, mode, failure, isFinding(again.verdict) ? `${again.verdict.kind}: ${again.verdict.detail}` : again.verdict.kind);
+      appendFileSync(
+        join(out, together ? "only-in-shared-build.tsv" : "unstable.tsv"),
+        `${runner.binary}\t${generated.source}:${generated.seed}\t${described(runner, mode.name, failure, generated.group)}\t${mode.flags.join(" ")}\n`,
+      );
+      if (together) return keepWithCompanions(runner, folder, generated, members, mode, failure);
+      if (cannotBeCausedByLoad(failure.kind))
+        keepUnreduced(
+          runner,
+          generated,
+          mode,
+          failure,
+          isFinding(again.verdict) ? `${again.verdict.kind}: ${again.verdict.detail}` : again.verdict.kind,
+        );
       return;
     }
-    if ((await alone(bed, folder, generated, mode.flags)).plain.stdout !== again.plain.stdout) {
+    if ((await alone(runner, folder, generated, mode.flags)).plain.stdout !== again.plain.stdout) {
       counts.unstable++;
-      return void appendFileSync(join(out, "unstable.tsv"), `${bed.binary}\t${generated.source}:${generated.seed}\tplain Bun prints something else each time: ${described(bed, mode.name, failure, generated.group)}\n`);
+      return void appendFileSync(
+        join(out, "unstable.tsv"),
+        `${runner.binary}\t${generated.source}:${generated.seed}\tplain Bun prints something else each time: ${described(runner, mode.name, failure, generated.group)}\n`,
+      );
     }
 
     counts.reductions++;
     const typed = generated.extension === "ts";
-    const stillFails = (judged: Judged) => sameFailure(failure, judged.verdict) && isFinding(judged.verdict) && !knownAs(bed, mode.name, judged.verdict, generated.group);
+    const stillFails = (judged: Judged) =>
+      sameFailure(failure, judged.verdict) &&
+      isFinding(judged.verdict) &&
+      !knownAs(runner, mode.name, judged.verdict, generated.group);
     let start = textsOf(generated);
-    // Does it take several files? What fails in one file too is cut there.
-    const failsInOneFile = generated.inOneFile === undefined ? undefined : stillFails(await alone(bed, folder, { text: generated.inOneFile, extension: generated.extension }, mode.flags));
-    if (failsInOneFile) start = { text: generated.inOneFile! };
-    // The case that fails by itself, if one does: one build for all of them.
+    // Does it need several files? If it also fails as a single file, reduce that.
+    const failsAsSingleFile =
+      generated.singleFileText === undefined
+        ? undefined
+        : stillFails(
+            await alone(runner, folder, { text: generated.singleFileText, extension: generated.extension }, mode.flags),
+          );
+    if (failsAsSingleFile) start = { text: generated.singleFileText! };
+    // The one case that fails alone, if there is one: one build tests all of them.
     if (generated.alone && generated.alone.length > 1 && now() < deadline) {
-      const failing = (await bed.judge(folder, generated.alone.map(text => ({ text, extension: generated.extension })), mode.flags)).findIndex(stillFails); // prettier-ignore
-      if (failing >= 0 && stillFails(await alone(bed, folder, { text: generated.alone[failing], extension: generated.extension }, mode.flags))) start = { text: generated.alone[failing] };
+      const failing = (await runner.judge(folder, generated.alone.map(text => ({ text, extension: generated.extension })), mode.flags)).findIndex(stillFails); // prettier-ignore
+      if (
+        failing >= 0 &&
+        stillFails(
+          await alone(runner, folder, { text: generated.alone[failing], extension: generated.extension }, mode.flags),
+        )
+      )
+        start = { text: generated.alone[failing] };
     }
-    // Taking tokens out of a function whose text is printed changes what is printed, and every difference in the output counts as the same failure.
-    const reprints = !typed && !start.files && stillFails(await alone(bed, folder, { text: reprinted(generated.inOneFile ?? generated.text), extension: generated.extension }, mode.flags));
-    const printed = (program: Whole): Program => ({ ...textsOf(program), ...saidOf(generated, program), ...(reprints ? { text: reprinted(program.text) } : {}), extension: generated.extension });
-    const reduceWith = (width: number, seconds: number) => cut(start, generated.extension, { fails: async candidates => (await bed.judge(folder, candidates.map(printed), mode.flags)).map(stillFails), width, seconds });
-    // Past the deadline the other workers wait for this one, so a finding is stored as it is.
+    // Removing tokens from a function whose source text is printed changes the output, and any output difference counts
+    // as the same failure.
+    const reprints =
+      !typed &&
+      !start.files &&
+      stillFails(
+        await alone(
+          runner,
+          folder,
+          { text: reprinted(generated.singleFileText ?? generated.text), extension: generated.extension },
+          mode.flags,
+        ),
+      );
+    const printed = (program: Whole): Program => ({
+      ...textsOf(program),
+      ...metadataOf(generated, program),
+      ...(reprints ? { text: reprinted(program.text) } : {}),
+      extension: generated.extension,
+    });
+    const reduceWith = (width: number, seconds: number) =>
+      cut(start, generated.extension, {
+        fails: async candidates => (await runner.judge(folder, candidates.map(printed), mode.flags)).map(stillFails),
+        width,
+        seconds,
+      });
+    // After the deadline the other workers wait for this one, so the finding is stored unreduced.
     const isLate = () => now() > deadline;
-    const seconds = isLate() ? 0 : bed.batch === 1 ? settings.reduceSeconds / 3 : settings.reduceSeconds;
-    let reduced = await reduceWith(bed.batch === 1 ? 6 : bed.batch, seconds);
-    let final = await alone(bed, folder, printed(reduced), mode.flags);
+    const seconds = isLate() ? 0 : runner.batch === 1 ? settings.reduceSeconds / 3 : settings.reduceSeconds;
+    let reduced = await reduceWith(runner.batch === 1 ? 6 : runner.batch, seconds);
+    let final = await alone(runner, folder, printed(reduced), mode.flags);
     if (!stillFails(final)) {
-      // What failed beside the other candidates does not fail by itself: again, one build per candidate.
+      // It failed beside the other candidates but not alone: try again with one build per candidate.
       reduced = await reduceWith(1, seconds);
-      final = await alone(bed, folder, printed(reduced), mode.flags);
+      final = await alone(runner, folder, printed(reduced), mode.flags);
     }
     const small = printed(reduced);
     const verdict = isFinding(final.verdict) ? final.verdict : failure;
-    // What is left rests on something the bed does not have.
-    if (!bed.allows(wholeText(small))) return void counts.artifacts++;
-    const cause = knownText("reduced", wholeText(small)) ?? known.find(entry => entry.where === "both" && entry.pattern.test(described(bed, mode.name, verdict, generated.group) + "\n" + wholeText(small)));
-    if (cause && !(cause.where === "reduced" && isNeverByDesign(verdict.kind))) return void (cause.count++, counts.known++);
-    const culprits = settings.attribute === false || isLate() ? [] : await guilty(bed, folder, small, mode, verdict);
-    // Does the other bed see it too? What only the engine bed shows is often its stand-in library.
+    // What is left depends on something the runner does not have.
+    if (!runner.allows(wholeText(small))) return void counts.artifacts++;
+    const cause =
+      knownText("reduced", wholeText(small)) ??
+      known.find(
+        entry =>
+          entry.where === "both" &&
+          entry.pattern.test(described(runner, mode.name, verdict, generated.group) + "\n" + wholeText(small)),
+      );
+    if (cause && !(cause.where === "reduced" && isAlwaysBug(verdict.kind))) return void (cause.count++, counts.known++);
+    // An executable built without --aot differs from `bun <file>` in the same way, so the bundler or the standalone
+    // runtime causes the difference, not the compiler.
+    if (runner.withoutCompiler && isFinding(final.verdict) && verdict.kind.startsWith("different ")) {
+      // The reducer can leave something that only a build without --aot rejects, such as an empty package.json. Then
+      // the program it started from answers.
+      for (const program of [small, printed(start)]) {
+        const theirs = (await alone(runner, folder, program, [...mode.flags, ...runner.withoutCompiler])).compiled?.run;
+        if (!theirs) continue;
+        const ours = (program === small ? final : await alone(runner, folder, program, mode.flags)).compiled?.run;
+        if (!ours || ours.stdout !== theirs.stdout || ours.exitCode !== theirs.exitCode) break;
+        counts.sameWithoutCompiler++;
+        return void appendFileSync(
+          join(out, "same-without-aot.tsv"),
+          `${runner.name}\t${mode.name}\t${verdict.kind}\t${generated.source}:${generated.seed}\t${verdict.detail}\n`,
+        );
+      }
+    }
+    const culprits = settings.attribute === false || isLate() ? [] : await guilty(runner, folder, small, mode, verdict);
+    // Does the other runner see it too? What only the engine runner shows is often caused by its stand-in library.
     const elsewhere: Record<string, string> = {};
-    for (const { bed: other } of beds) {
-      if (other === bed || !other.accepts(small)) continue;
-      const there = (await alone(other, folder, small, other.modes(small).find(each => each.name === mode.name)?.flags ?? [])).verdict;
+    for (const { runner: other } of runners) {
+      if (other === runner || !other.accepts(small)) continue;
+      const there = (
+        await alone(other, folder, small, other.modes(small).find(each => each.name === mode.name)?.flags ?? [])
+      ).verdict;
       elsewhere[other.name] = isFinding(there) ? `${there.kind}: ${there.detail}` : there.kind;
     }
 
-    // A validating build checks at run time what the compiler took for proven. Where the default build is wrong and that one says nothing, a check is missing.
-    const validating = mode.name === "default" ? bed.modes(small).find(each => each.name === "validate") : undefined;
-    const validated = validating && !isLate() ? (await alone(bed, folder, small, validating.flags)).verdict : undefined;
-    if (validated) elsewhere["validating build"] = !isFinding(validated) ? (validated.kind === "same" ? "right" : validated.why) : sameFailure(verdict, validated) ? "SILENT: it fails in the same way" : `${validated.kind}: ${validated.detail}`;
+    // A validating build checks at run time what the compiler proved. If the default build is wrong and the validating
+    // build reports nothing, a check is missing.
+    const validating = mode.name === "default" ? runner.modes(small).find(each => each.name === "validate") : undefined;
+    const validated =
+      validating && !isLate() ? (await alone(runner, folder, small, validating.flags)).verdict : undefined;
+    if (validated)
+      elsewhere["validating build"] = !isFinding(validated)
+        ? validated.kind === "same"
+          ? "right"
+          : validated.why
+        : sameFailure(verdict, validated)
+          ? "SILENT: it fails in the same way"
+          : `${validated.kind}: ${validated.detail}`;
 
-    const byShape = verdict.kind === "different output" || verdict.kind === "different exit code" || verdict.kind === "hang" || verdict.kind === "crash" || !verdict.signature.includes(" ");
-    const group = `${groupOf(verdict.kind)}${verdict.kind} ${culprits.filter(name => name !== "flow-results").slice(0, 3).join("+") || (culprits.length ? "flow-results" : "no switch")}`;
-    const name = `${group} ${byShape ? Bun.hash.crc32(shape(wholeText(small))).toString(16) : verdict.signature}`.replace(/[^\w+&.-]+/g, "-").slice(0, 120);
+    const byShape =
+      verdict.kind === "different output" ||
+      verdict.kind === "different exit code" ||
+      verdict.kind === "hang" ||
+      verdict.kind === "crash" ||
+      !verdict.signature.includes(" ");
+    const group = `${groupOf(verdict.kind)}${verdict.kind} ${
+      culprits
+        .filter(name => name !== "flow-results")
+        .slice(0, 3)
+        .join("+") || (culprits.length ? "flow-results" : "no switch")
+    }`;
+    const name = `${group} ${byShape ? Bun.hash.crc32(shape(wholeText(small))).toString(16) : verdict.signature}`
+      .replace(/[^\w+&.-]+/g, "-")
+      .slice(0, 120);
     const target = join(out, "findings", name);
     isStored();
     if (existsSync(target)) return void counts.repeated++;
-    // One cause shows in many shapes: after ten of a group the rest is only counted.
-    perGroup.set(group, (perGroup.get(group) ?? readdirSync(join(out, "findings")).filter(each => each.startsWith(group.replace(/[^\w+&.-]+/g, "-"))).length) + 1);
+    // One cause shows up in many shapes: after ten findings in a group the rest are only counted.
+    perGroup.set(
+      group,
+      (perGroup.get(group) ??
+        readdirSync(join(out, "findings")).filter(each => each.startsWith(group.replace(/[^\w+&.-]+/g, "-"))).length) +
+        1,
+    );
     if (perGroup.get(group)! > 10) return void counts.repeated++;
     distinct.push(name);
     mkdirSync(target, { recursive: true });
-    writeProgram(target, "reduced", small);
-    writeProgram(target, "original", generated);
-    // The same program in the form of ../parallel, in which it lands with its fix: what the build and the runs need stands in its first lines.
-    const flags = mode.flags.filter(flag => isOfTheBuild(flag) && (flag !== checksThatMoveNoOutput || !final.compiled?.run));
-    const head = [flags.length ? `// Flags: ${flags.join(" ")}` : "", small.entryPoints?.length ? `// Entry points: ${small.entryPoints.map(path => `./${path.replace(/^\.\//, "")}`).join(" ")}` : "", ...mode.flags.filter(flag => flag.startsWith(inTheRun)).map(flag => `// Env of the executable: ${flag.slice(inTheRun.length)}`), final.plain.exitCode ? `// Exit code: ${final.plain.exitCode}` : ""];
-    writeProgram(join(out, "as-tests"), name, { ...small, text: head.filter(Boolean).map(line => line + "\n").join("") + small.text });
-    writeFileSync(join(target, "plain.txt"), final.plain.stdout + (final.plain.exitCode ? `exit code ${final.plain.exitCode}\n${final.plain.stderr.slice(0, 2000)}` : ""));
+    // As the runner ran them, so that each shows the failure outside the fuzzer too.
+    writeProgram(target, "reduced", withPrint(small));
+    writeProgram(target, "original", withPrint(generated));
+    // The same program in the format of ../parallel, ready to land with its fix: its first lines hold what the build
+    // and the runs need.
+    const flags = mode.flags.filter(flag => isBuildFlag(flag) && (flag !== verifierFlags || !final.compiled?.run));
+    const head = [
+      flags.length ? `// Flags: ${flags.join(" ")}` : "",
+      small.entryPoints?.length
+        ? `// Entry points: ${small.entryPoints.map(path => `./${path.replace(/^\.\//, "")}`).join(" ")}`
+        : "",
+      ...mode.flags
+        .filter(flag => flag.startsWith(runEnvFlag))
+        .map(flag => `// Env of the executable: ${flag.slice(runEnvFlag.length)}`),
+      verdict.detail.includes(runtimeChecksVariable) ? `// Env of the executable: ${runtimeChecksVariable}` : "",
+      final.plain.exitCode ? `// Exit code: ${final.plain.exitCode}` : "",
+    ];
+    const whole = withPrint(small);
+    writeProgram(join(out, "as-tests"), name, {
+      ...whole,
+      text:
+        head
+          .filter(Boolean)
+          .map(line => line + "\n")
+          .join("") + whole.text,
+    });
+    writeFileSync(
+      join(target, "plain.txt"),
+      final.plain.stdout +
+        (final.plain.exitCode ? `exit code ${final.plain.exitCode}\n${final.plain.stderr.slice(0, 2000)}` : ""),
+    );
     const run = final.compiled?.run;
-    writeFileSync(join(target, "compiled.txt"), run ? run.stdout + (run.exitCode !== 0 ? `exit code ${run.exitCode} signal ${run.signal}\n${run.stderr.slice(0, 4000)}` : "") : (final.compiled?.build.stderr ?? "").slice(0, 8000) + (final.compiled?.build.stdout ?? "").slice(0, 2000));
-    const record = { kind: verdict.kind, detail: verdict.detail, guilty: culprits, falseProof: culprits.includes("flow-results"), bed: bed.name, mode: mode.name, flags: mode.flags, binary: bed.binary, source: generated.source, seed: generated.seed, group: generated.group, notes: generated.notes, ...(failsInOneFile === undefined ? {} : { failsInOneFile }), elsewhere, reduction: { tests: reduced.tests, builds: reduced.rounds }, found: new Date().toISOString() }; // prettier-ignore
+    writeFileSync(
+      join(target, "compiled.txt"),
+      run
+        ? run.stdout +
+            (run.exitCode !== 0 ? `exit code ${run.exitCode} signal ${run.signal}\n${run.stderr.slice(0, 4000)}` : "")
+        : (final.compiled?.build.stderr ?? "").slice(0, 8000) + (final.compiled?.build.stdout ?? "").slice(0, 2000),
+    );
+    const record = { kind: verdict.kind, detail: verdict.detail, guilty: culprits, falseProof: culprits.includes("flow-results"), runner: runner.name, mode: mode.name, flags: mode.flags, binary: runner.binary, source: generated.source, seed: generated.seed, group: generated.group, notes: generated.notes, ...(failsAsSingleFile === undefined ? {} : { failsAsSingleFile }), elsewhere, reduction: { tests: reduced.tests, builds: reduced.rounds }, found: new Date().toISOString() }; // prettier-ignore
     writeFileSync(join(target, "finding.json"), JSON.stringify(record, null, 2) + "\n");
-    appendFileSync(join(out, "findings.tsv"), [record.found, bed.name, mode.name, bed.binary, verdict.kind, culprits.join(","), `${generated.source}:${generated.seed}`, name, verdict.detail, Object.entries(elsewhere).map(([where, what]) => `${where === "validating build" ? "the" : "on the"} ${where}${where === "validating build" ? "" : " bed"}: ${what}`).join("; ")].join("\t") + "\n");
+    appendFileSync(
+      join(out, "findings.tsv"),
+      [
+        record.found,
+        runner.name,
+        mode.name,
+        runner.binary,
+        verdict.kind,
+        culprits.join(","),
+        `${generated.source}:${generated.seed}`,
+        name,
+        verdict.detail,
+        Object.entries(elsewhere)
+          .map(
+            ([where, what]) =>
+              `${where === "validating build" ? "the" : "on the"} ${where}${where === "validating build" ? "" : " runner"}: ${what}`,
+          )
+          .join("; "),
+      ].join("\t") + "\n",
+    );
   }
 
-  function next(bed: Bed): Generated | undefined {
+  function next(runner: Runner): Generated | undefined {
     const seed = settings.firstSeed + sequence++;
-    const from = bed.takesSeveralFiles ? wantedInBothForms : wanted;
+    const from = runner.supportsMultiFile ? wantedWithVariants : wanted;
     const source = from[new Random(seed).below(from.length)];
     try {
-      const generated = sources[source](seed, bed);
+      const generated = sources[source](seed, runner);
       if (!generated) return void bump(counts.skipped, "no program");
-      // Whether an unhandled rejection is told in front of the immediates or behind them goes, in `bun <file>`, by whether the file is the entry point; in an executable, with --aot or without, it does not.
-      if (/\bunhandledRejection\b/.test(generated.text)) generated.standsAlone = true;
-      if (generated.standsAlone && !bed.buildsAlone) return void bump(counts.skipped, "needs a build to itself");
+      // In `bun <file>`, whether an unhandled rejection is reported before or after the immediates depends on whether
+      // the file is the entry point. In an executable, with or without --aot, it does not.
+      if (/\bunhandledRejection\b/.test(generated.text)) generated.needsOwnBuild = true;
+      if (generated.needsOwnBuild && !runner.supportsOwnBuild)
+        return void bump(counts.skipped, "needs a build to itself");
       const avoided = knownText("program", wholeText(generated));
       if (avoided) return void (avoided.count++, bump(counts.skipped, "has a known bug in it"));
       return generated;
@@ -352,13 +739,13 @@ export async function fuzz(settings: Settings): Promise<Summary> {
     }
   }
 
-  async function round(bed: Bed, folder: string, size: number) {
+  async function round(runner: Runner, folder: string, size: number) {
     const drawn: Generated[] = [];
     for (let attempt = 0; drawn.length < size && attempt < size * 4 && !stopped(); attempt++) {
-      const generated = next(bed);
+      const generated = next(runner);
       if (generated) drawn.push(generated);
     }
-    // What TypeScript's own checker refuses does not count: it is a bug of the source.
+    // A program that TypeScript's own checker rejects does not count: that is a bug in the source.
     const forTypeScript = drawn.filter(generated => generated.isForTypeScript);
     if (forTypeScript.length && checker === "not asked") checker = typeChecker();
     if (forTypeScript.length && checker && checker !== "not asked") {
@@ -368,86 +755,131 @@ export async function fuzz(settings: Settings): Promise<Summary> {
         drawn.splice(drawn.indexOf(refused), 1);
         bump(counts.skipped, "refused by TypeScript");
         inGroup(refused, "refused by TypeScript");
-        appendFileSync(join(out, "refused-by-typescript.tsv"), `${refused.source}:${refused.seed}\t${refused.group}\t${errors[0]}\n`);
+        appendFileSync(
+          join(out, "refused-by-typescript.tsv"),
+          `${refused.source}:${refused.seed}\t${refused.group}\t${errors[0]}\n`,
+        );
       });
     }
     if (!drawn.length) return;
-    for (const generated of drawn) (bump(counts.programs, `${bed.name} ${generated.source}`), inGroup(generated, "programs"));
+    for (const generated of drawn)
+      (bump(counts.programs, `${runner.name} ${generated.source}`), inGroup(generated, "programs"));
 
-    // The programs that mutants were made from go first, once each, in every mode: a mutant says nothing in a mode in which its base fails already.
+    // The base programs of the mutants run first, once each, in every mode: a mutant means nothing in a mode where its
+    // base already fails.
     const inMode = (base: { name: string }, mode: Mode) => `${base.name} ${mode.name}`;
-    const bases = [...new Map(drawn.flatMap(generated => (generated.base && !baseIsSame.has(inMode(generated.base, bed.modes(generated.base)[0])) ? [[generated.base.name, generated.base] as const] : []))).values()];
+    const bases = [
+      ...new Map(
+        drawn.flatMap(generated =>
+          generated.base && !baseIsSame.has(inMode(generated.base, runner.modes(generated.base)[0]))
+            ? [[generated.base.name, generated.base] as const]
+            : [],
+        ),
+      ).values(),
+    ];
     const baseModes = new Map<string, { mode: Mode; members: typeof bases }>();
-    for (const base of bases) for (const mode of bed.modes(base)) (baseModes.get(mode.name) ?? baseModes.set(mode.name, { mode, members: [] }).get(mode.name)!).members.push(base);
+    for (const base of bases)
+      for (const mode of runner.modes(base))
+        (baseModes.get(mode.name) ?? baseModes.set(mode.name, { mode, members: [] }).get(mode.name)!).members.push(
+          base,
+        );
     for (const { mode, members } of baseModes.values()) {
-      const judged = await bed.judge(folder, members, mode.flags);
+      const judged = await runner.judge(folder, members, mode.flags);
       const whole: Generated[] = members.map(base => ({ ...base, source: "corpus", seed: 0, notes: base.name }));
       for (const [index, base] of members.entries()) {
         const { verdict } = judged[index];
         baseIsSame.set(inMode(base, mode), verdict.kind === "same");
         if (verdict.kind === "same") continue;
-        if (mode.name === bed.modes(base)[0].name) rejected.add(base.name);
-        appendFileSync(join(out, "corpus-failures.tsv"), `${bed.binary}\t${base.name}\t${mode.name}\t${verdict.kind}\t${isFinding(verdict) ? verdict.detail : verdict.kind === "skipped" ? verdict.why : ""}\n`);
-        if (!isFinding(verdict) || knownAs(bed, mode.name, verdict)) continue;
-        // The tests that run ../programs see a program that fails by itself with the default flags, on the text they run on. Here it may be another mode or a later text, so what is never meant is kept.
-        if (members.length === 1 || (await alone(bed, folder, base, mode.flags)).verdict.kind !== "same") {
-          if (isNeverByDesign(verdict.kind) && !settings.isCountOnly) await keep(bed, folder, whole[index], mode, verdict, [whole[index]]);
+        if (mode.name === runner.modes(base)[0].name) rejected.add(base.name);
+        appendFileSync(
+          join(out, "corpus-failures.tsv"),
+          `${runner.binary}\t${base.name}\t${mode.name}\t${verdict.kind}\t${isFinding(verdict) ? verdict.detail : verdict.kind === "skipped" ? verdict.why : ""}\n`,
+        );
+        if (!isFinding(verdict) || knownAs(runner, mode.name, verdict)) continue;
+        // The tests over ../programs catch a program that fails alone with the default flags on their version of it.
+        // Here the mode or the text may differ, so failures that are always bugs are kept.
+        if (members.length === 1 || (await alone(runner, folder, base, mode.flags)).verdict.kind !== "same") {
+          if (isAlwaysBug(verdict.kind) && !settings.isCountOnly)
+            await keep(runner, folder, whole[index], mode, verdict, [whole[index]]);
           continue;
         }
         counts.findings++;
         counts.onlyTogether++;
-        appendFileSync(join(out, "only-in-a-shared-build.tsv"), `${bed.binary}\tcorpus:${base.name}\t${described(bed, mode.name, verdict)}\n`);
-        await keepTogether(bed, folder, whole[index], whole, mode, verdict);
+        appendFileSync(
+          join(out, "only-in-shared-build.tsv"),
+          `${runner.binary}\tcorpus:${base.name}\t${described(runner, mode.name, verdict)}\n`,
+        );
+        await keepWithCompanions(runner, folder, whole[index], whole, mode, verdict);
       }
     }
-    const usable = drawn.filter(generated => !generated.base || baseIsSame.get(inMode(generated.base, bed.modes(generated.base)[0])));
+    const usable = drawn.filter(
+      generated => !generated.base || baseIsSame.get(inMode(generated.base, runner.modes(generated.base)[0])),
+    );
     bump(counts.skipped, "base differs", drawn.length - usable.length);
 
     const modes = new Map<string, { mode: Mode; members: Generated[] }>();
     for (const generated of usable) {
-      for (const mode of bed.modes(generated)) {
-        if (mode.isForSharedBuilds && (usable.length === 1 || generated.standsAlone)) continue;
-        if (generated.base && !baseIsSame.get(inMode(generated.base, mode))) bump(counts.skipped, `base differs in mode ${mode.name}`);
-        else (modes.get(mode.name) ?? modes.set(mode.name, { mode, members: [] }).get(mode.name)!).members.push(generated);
+      for (const mode of runner.modes(generated)) {
+        if (mode.isForSharedBuilds && (usable.length === 1 || generated.needsOwnBuild)) continue;
+        if (generated.base && !baseIsSame.get(inMode(generated.base, mode)))
+          bump(counts.skipped, `base differs in mode ${mode.name}`);
+        else
+          (modes.get(mode.name) ?? modes.set(mode.name, { mode, members: [] }).get(mode.name)!).members.push(generated);
       }
     }
-    // A program that stops the compiler with the default flags stops it in the other modes too, and every such program in a shared build costs that build once more.
-    const stopsTheBuild = new Set<Generated>();
-    // What plain Bun does not get through once, it is not asked again for each of the other modes.
+    // A program that stops the compiler with the default flags also stops it in the other modes, and every such program
+    // in a shared build costs one more build.
+    const stopsBuild = new Set<Generated>();
+    // If plain Bun fails on a program once, it is not run again for the other modes.
     const plainRunFailed = new Set<Generated>();
     for (const { mode, members: all } of modes.values()) {
-      const built = all.filter(generated => !stopsTheBuild.has(generated));
-      if (built.length < all.length) bump(counts.skipped, `stops the build, not tried in mode ${mode.name}`, all.length - built.length);
+      const built = all.filter(generated => !stopsBuild.has(generated));
+      if (built.length < all.length)
+        bump(counts.skipped, `stops the build, not tried in mode ${mode.name}`, all.length - built.length);
       const members = built.filter(generated => !plainRunFailed.has(generated));
-      if (members.length < built.length) bump(counts.skipped, `plain run failed, not tried in mode ${mode.name}`, built.length - members.length);
+      if (members.length < built.length)
+        bump(counts.skipped, `plain run failed, not tried in mode ${mode.name}`, built.length - members.length);
       if (!members.length) continue;
       const look = async (generated: Generated, verdict: Verdict, inTheBuild: Generated[]) => {
-        if (mode.name === bed.modes(generated)[0].name && ["internal compiler error", "build crash", "build hang", "build error", "build refused"].includes(verdict.kind)) stopsTheBuild.add(generated);
+        if (
+          mode.name === runner.modes(generated)[0].name &&
+          ["internal compiler error", "build crash", "build hang", "build error", "build refused"].includes(
+            verdict.kind,
+          )
+        )
+          stopsBuild.add(generated);
         if (verdict.kind === "skipped" && verdict.why.startsWith("plain run ")) plainRunFailed.add(generated);
         if (verdict.kind === "skipped") bump(counts.skipped, verdict.why);
-        else bump(counts.runs, `${bed.name} ${mode.name}`);
+        else bump(counts.runs, `${runner.name} ${mode.name}`);
         inGroup(generated, `${mode.name} ${verdict.kind === "skipped" ? `skipped: ${verdict.why}` : verdict.kind}`);
         if (!isFinding(verdict)) return;
-        appendFileSync(join(out, "failures.tsv"), `${bed.binary}\t${generated.source}:${generated.seed}\t${generated.group ?? ""}\t${mode.name}\t${verdict.kind}\t${verdict.detail}\t${inTheBuild.length} in the build\t${mode.flags.join(" ")}\n`);
-        // Past the deadline too: a later run has other seeds and may never draw it again. There it is stored as it is, without a reduction, because the other workers wait.
-        if (!settings.isCountOnly) await keep(bed, folder, generated, mode, verdict, inTheBuild);
+        appendFileSync(
+          join(out, "failures.tsv"),
+          `${runner.binary}\t${generated.source}:${generated.seed}\t${generated.group ?? ""}\t${mode.name}\t${verdict.kind}\t${verdict.detail}\t${inTheBuild.length} in the build\t${mode.flags.join(" ")}\n`,
+        );
+        // Also after the deadline: a later run has other seeds and may never generate it again. It is stored unreduced,
+        // because the other workers are waiting.
+        if (!settings.isCountOnly) await keep(runner, folder, generated, mode, verdict, inTheBuild);
       };
-      // A program that is its own Worker, say, is the entry point of its build or it is another program.
-      const units = [members.filter(generated => !generated.standsAlone), ...members.filter(generated => generated.standsAlone).map(generated => [generated])];
+      // Some programs must be the entry point of their build, for example a program that starts itself as a Worker.
+      const units = [
+        members.filter(generated => !generated.needsOwnBuild),
+        ...members.filter(generated => generated.needsOwnBuild).map(generated => [generated]),
+      ];
       for (const inTheBuild of units) {
         if (!inTheBuild.length) continue;
         if (now() > lastCall) {
           bump(counts.skipped, `the run was over, not tried in mode ${mode.name}`, inTheBuild.length);
           continue;
         }
-        const judged = await bed.judge(folder, inTheBuild, mode.flags);
+        const judged = await runner.judge(folder, inTheBuild, mode.flags);
         for (const [index, generated] of inTheBuild.entries()) await look(generated, judged[index].verdict, inTheBuild);
       }
     }
   }
 
-  async function worker(bed: Bed, id: number) {
-    const folder = join(work, `${bed.name}-${id}`);
+  async function worker(runner: Runner, id: number) {
+    const folder = join(work, `${runner.name}-${id}`);
     mkdirSync(folder, { recursive: true });
     const sizes = new Random(settings.firstSeed + id);
     while (!stopped()) {
@@ -457,10 +889,20 @@ export async function fuzz(settings: Settings): Promise<Summary> {
         continue;
       }
       try {
-        // A build of few programs proves more about each; a build of many gets through more.
-        await round(bed, folder, Math.min(settings.batch ?? bed.batch, bed.batch === 1 ? 1 : sizes.pick([1, 8, bed.batch >> 1, bed.batch, bed.batch])));
+        // A build with few programs proves more about each; a build with many has more throughput.
+        await round(
+          runner,
+          folder,
+          Math.min(
+            settings.batch ?? runner.batch,
+            runner.batch === 1 ? 1 : sizes.pick([1, 8, runner.batch >> 1, runner.batch, runner.batch]),
+          ),
+        );
       } catch (error) {
-        appendFileSync(join(out, "driver-errors.txt"), `${new Date().toISOString()} ${error instanceof Error ? error.stack : error}\n`);
+        appendFileSync(
+          join(out, "driver-errors.txt"),
+          `${new Date().toISOString()} ${error instanceof Error ? error.stack : error}\n`,
+        );
       }
       await Bun.sleep(0);
     }
@@ -468,7 +910,7 @@ export async function fuzz(settings: Settings): Promise<Summary> {
 
   const timer = setInterval(writeStatus, 20_000);
   writeStatus("starting");
-  await Promise.all(beds.flatMap(({ bed, jobs }) => Array.from({ length: jobs }, (_, id) => worker(bed, id))));
+  await Promise.all(runners.flatMap(({ runner, jobs }) => Array.from({ length: jobs }, (_, id) => worker(runner, id))));
   clearInterval(timer);
   writeStatus("ended");
   rmSync(work, { recursive: true, force: true });

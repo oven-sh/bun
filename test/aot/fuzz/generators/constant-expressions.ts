@@ -1,9 +1,8 @@
-// Programs made of expressions that a compiler may work out while it builds: literals, operators, `Math`, `Number`, methods of strings and
-// numbers on literals, and `const`s that hold such values. Whatever is folded must come out as the engine computes it when the program runs.
-//
-// A program is a seed. The same seed always writes the same program.
+// Programs made of expressions a compiler may fold at build time: literals, operators, `Math`, `Number`, string and
+// number methods on literals, and `const`s that hold such values. Folded results must equal what the engine computes at
+// run time.
 
-/** Numbers from 0 up to 1, the same for the same seed. */
+/** Numbers in [0, 1), the same for the same seed. */
 export function randomFrom(seed: number) {
   let state = seed >>> 0;
   const next = () => {
@@ -38,7 +37,7 @@ const say = (i, f) => { let v; try { v = f(); } catch (e) { v = "THROWS " + e.co
 
 export function program(seed: number, isTypeScript: boolean, count = 2500): { file: string; text: string } {
   const { next, choice } = randomFrom(seed);
-  // In TypeScript `a < ((b) > (c))` is read as type arguments.
+  // TypeScript parses `a < ((b) > (c))` as type arguments.
   const allowed = (operator: string) => !isTypeScript || !["<", "<<", "<="].includes(operator);
   // prettier-ignore
   const binary = ["+", "-", "*", "/", "%", "**", "&", "|", "^", "<<", ">>", ">>>", "<", ">", "<=", ">=", "==", "!=", "===", "!==", "&&", "||", "??"].filter(allowed);

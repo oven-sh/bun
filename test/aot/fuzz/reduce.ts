@@ -1,15 +1,17 @@
-// Makes a program small while it keeps failing in the same way: delta debugging on lines, on blocks (a block goes, or only its head
-// and its closing brace go), on bracketed groups and on tokens.
+// Shrinks a program while it keeps failing in the same way: delta debugging on lines, on blocks (the whole block, or
+// only its head and closing brace), on bracketed groups and on tokens.
 //
-// Candidates are tested many at a time, because one build of the product can hold many programs: `fails` answers for a list. Those
-// of a list that still fail are then applied together if that fails too, else as many of them as do.
+// Candidates are tested many at a time, because one product build can hold many programs: `fails` answers for a list.
+// The candidates that still fail are then applied together if that also fails, otherwise as many of them as possible.
 //
-// A program of several files loses files first (reduceFiles): a file goes with the statements that name it, or its text goes into a file that imports it. Then each file that is left is made small as above,
-// and files are tried again, because a file that nobody imports any more can go.
+// A multi-file program loses files first (reduceFiles): a file is removed with the statements that import it, or it is
+// inlined into a file that imports it. Then each remaining file is reduced as above, and files are tried again, because
+// a file that is no longer imported can go.
 //
-//   bun test/aot/fuzz/reduce.ts <folder of a program> <folder for the result> [--entry main.ts] [--jobs 8] [--seconds 1500] -- <command> [words]
+//   bun test/aot/fuzz/reduce.ts <program folder> <result folder> [--entry main.ts] [--jobs 8] [--seconds 1500] -- <command> [arguments]
 //
-// The command is run as `<command> [words] <the candidate's first file>` in the candidate's folder, and exits with 0 if the candidate still shows what the program showed.
+// The command runs as `<command> [arguments] <the candidate's entry point>` in the candidate's folder, and exits with 0
+// if the candidate still fails like the original.
 import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { withoutInstallingPackages } from "../harness/without-installing-packages";
@@ -26,12 +28,12 @@ export interface Reduction {
 export interface ReduceOptions {
   parses(candidate: string): boolean;
   fails(candidates: string[]): Promise<boolean[]>;
-  /** How many candidates one call of `fails` takes. */
+  /** How many candidates one call of `fails` accepts. */
   width: number;
   seconds: number;
 }
 
-// The text is cut into pieces; an edit blanks some and may rewrite one.
+// The text is split into pieces; an edit blanks some pieces and may rewrite one.
 interface Edit {
   blank: number[];
   put?: { at: number; text: string };
@@ -53,7 +55,10 @@ const lines = (text: string) => text.split(/(?<=\n)/);
 function tokenPieces(text: string): string[] {
   const tokens = tokenize(text);
   if (!tokens.length) return [text];
-  return [text.slice(0, tokens[0].start), ...tokens.map((token, index) => text.slice(token.start, tokens[index + 1]?.start ?? text.length))];
+  return [
+    text.slice(0, tokens[0].start),
+    ...tokens.map((token, index) => text.slice(token.start, tokens[index + 1]?.start ?? text.length)),
+  ];
 }
 
 function chunks(count: number, size: number): Edit[] {
@@ -91,7 +96,8 @@ function groups(pieces: string[]): Edit[] {
     else if (text === ")" || text === "]" || text === "}") {
       const from = open.pop();
       if (from === undefined) return;
-      if (at > from + 1) edits.push({ blank: range(from + 1, at) }, { blank: range(from + 1, at + 1), put: { at: from, text: "0 " } });
+      if (at > from + 1)
+        edits.push({ blank: range(from + 1, at) }, { blank: range(from + 1, at + 1), put: { at: from, text: "0 " } });
       edits.push({ blank: [from, at] });
     }
   });
@@ -110,7 +116,7 @@ export async function reduce(text: string, { parses, fails, width, seconds }: Re
     return fails(candidates);
   };
 
-  // Tries the edits on the pieces and returns the pieces with all that could be applied.
+  // Tries the edits on the pieces and returns the pieces with every edit that could be applied.
   const attempt = async (pieces: string[], edits: Edit[]): Promise<string[]> => {
     for (let at = 0; at < edits.length && Date.now() < deadline; ) {
       const group: { edit: Edit; text: string }[] = [];
@@ -131,7 +137,7 @@ export async function reduce(text: string, { parses, fails, width, seconds }: Re
         pieces = applied(pieces, good);
         continue;
       }
-      // All of them at once, or the longest run of them from the first on: one more call answers for every length.
+      // All of them at once, or the longest prefix that still fails: one more call answers for every length.
       const prefixes = good.map((_, index) => applied(pieces, good.slice(0, good.length - index)));
       const usable = prefixes.map(each => each.join("")).map(candidate => parses(candidate));
       const wanted = prefixes.filter((_, index) => usable[index]).slice(0, width);
@@ -168,68 +174,103 @@ export async function reduce(text: string, { parses, fails, width, seconds }: Re
   return { text: text.replace(/\n\s*\n/g, "\n").trim() + "\n", tests, rounds };
 }
 
-/** What runs first, and the other files by their paths from its folder. */
+/** The entry point's text, and the other files by their paths relative to its folder. */
 export interface Whole {
   text: string;
   files?: Record<string, string>;
 }
 
 export interface ReduceFilesOptions {
-  /** `path` is that of a file of `files`; none for the text that runs first. */
+  /** `path` is a key of `files`; undefined for the entry point. */
   parses(candidate: string, path?: string): boolean;
   fails(candidates: Whole[]): Promise<boolean[]>;
   width: number;
   seconds: number;
-  /** The path of the text that runs first, as the other files name it. */
+  /** The entry point's path, as the other files import it. */
   entry: string;
 }
 
 const quoted = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-/** The import and export statements of a file at `from` that name the file at `to`, with or without its extension; a file of a package in node_modules is named by the package. */
+/**
+ * The import and export statements of the file at `from` that name the file at `to`, with or without its extension. A
+ * file of a package in node_modules is named by the package.
+ */
 function statementsNaming(from: string, to: string): RegExp {
   const path = relative(dirname(from), to).replaceAll("\\", "/");
   const ofPackage = /^node_modules\/((?:@[^/]+\/)?[^/]+)\//.exec(to)?.[1];
-  const specifier = ofPackage ? quoted(ofPackage) : quoted(path.startsWith(".") ? path : "./" + path).replace(/\\\.\w+$/, "(?:$&|\\.[cm]?js)?");
-  return new RegExp(`^[ \\t]*(?:import|export)\\b[\\w$*\\s,]*(?:\\{[^{}]*\\})?[\\w$*\\s,]*(["'])${specifier}\\1[^;\\n]*;?[ \\t]*\\n?`, "gm");
+  const specifier = ofPackage
+    ? quoted(ofPackage)
+    : quoted(path.startsWith(".") ? path : "./" + path).replace(/\\\.\w+$/, "(?:$&|\\.[cm]?js)?");
+  return new RegExp(
+    `^[ \\t]*(?:import|export)\\b[\\w$*\\s,]*(?:\\{[^{}]*\\})?[\\w$*\\s,]*(["'])${specifier}\\1[^;\\n]*;?[ \\t]*\\n?`,
+    "gm",
+  );
 }
 
-// `import { a, b } from ".."` twice in one file: each name stays where it stands first.
+// `import { a, b } from ".."` twice in one file: each name stays at its first import.
 function withoutRepeatedImports(text: string): string {
   const seen = new Set<string>();
-  return text.replace(/^([ \t]*import (?:type )?\{)([^}]*)(\} from [^;\n]*;?[ \t]*\n?)/gm, (_, head: string, names: string, tail: string) => {
-    const kept = names.split(",").map(name => name.trim()).filter(name => name && !seen.has(name.split(/\s+as\s+/).pop()!)); // prettier-ignore
-    for (const name of kept) seen.add(name.split(/\s+as\s+/).pop()!);
-    return kept.length ? `${head} ${kept.join(", ")} ${tail}` : "";
-  });
+  return text.replace(
+    /^([ \t]*import (?:type )?\{)([^}]*)(\} from [^;\n]*;?[ \t]*\n?)/gm,
+    (_, head: string, names: string, tail: string) => {
+      const kept = names.split(",").map(name => name.trim()).filter(name => name && !seen.has(name.split(/\s+as\s+/).pop()!)); // prettier-ignore
+      for (const name of kept) seen.add(name.split(/\s+as\s+/).pop()!);
+      return kept.length ? `${head} ${kept.join(", ")} ${tail}` : "";
+    },
+  );
 }
 
-export async function reduceFiles(whole: Whole, { parses, fails, width, seconds, entry }: ReduceFilesOptions): Promise<Reduction & Whole> {
+export async function reduceFiles(
+  whole: Whole,
+  { parses, fails, width, seconds, entry }: ReduceFilesOptions,
+): Promise<Reduction & Whole> {
   const deadline = Date.now() + seconds * 1000;
   let tests = 0;
   let rounds = 0;
-  // By path; the text that runs first is the first.
+  // By path; the entry point comes first.
   let files = new Map([[entry, whole.text], ...Object.entries(whole.files ?? {})]);
-  const asWhole = (all: Map<string, string>): Whole => ({ text: all.get(entry)!, ...(all.size > 1 ? { files: Object.fromEntries([...all].filter(([path]) => path !== entry)) } : {}) });
-  const isWellFormed = (all: Map<string, string>) => [...all].every(([path, text]) => text === files.get(path) || parses(text, path === entry ? undefined : path));
+  const asWhole = (all: Map<string, string>): Whole => ({
+    text: all.get(entry)!,
+    ...(all.size > 1 ? { files: Object.fromEntries([...all].filter(([path]) => path !== entry)) } : {}),
+  });
+  const isWellFormed = (all: Map<string, string>) =>
+    [...all].every(([path, text]) => text === files.get(path) || parses(text, path === entry ? undefined : path));
 
-  const without = (gone: string) => new Map([...files].filter(([path]) => path !== gone).map(([path, text]) => [path, text.replace(statementsNaming(path, gone), "")]));
-  const importers = (of: string) => [...files].filter(([path, text]) => path !== of && statementsNaming(path, of).test(text)).map(([path]) => path);
-  // The text of `gone` stands where `into` first named it. Whoever else named `gone` names `into`.
+  const without = (gone: string) =>
+    new Map(
+      [...files]
+        .filter(([path]) => path !== gone)
+        .map(([path, text]) => [path, text.replace(statementsNaming(path, gone), "")]),
+    );
+  const importers = (of: string) =>
+    [...files].filter(([path, text]) => path !== of && statementsNaming(path, of).test(text)).map(([path]) => path);
+  // The text of `gone` replaces the first import of it in `into`. Every other importer of `gone` now imports `into`.
   const folded = (gone: string, into: string) => {
     let isLaid = false;
     const laid = files.get(gone)!.replace(statementsNaming(gone, into), "");
-    const joined = files.get(into)!.replace(statementsNaming(into, gone), () => (isLaid ? "" : ((isLaid = true), laid.endsWith("\n") ? laid : laid + "\n")));
+    const joined = files
+      .get(into)!
+      .replace(statementsNaming(into, gone), () =>
+        isLaid ? "" : ((isLaid = true), laid.endsWith("\n") ? laid : laid + "\n"),
+      );
     const name = (from: string) => "./" + relative(dirname(from), into).replaceAll("\\", "/").replace(/\.ts$/, "");
     return new Map(
       [...files]
         .filter(([path]) => path !== gone)
-        .map(([path, text]) => [path, path === into ? withoutRepeatedImports(joined) : text.replace(statementsNaming(path, gone), statement => statement.replace(/(["'])[^"']*\1(?=[^"']*$)/, `"${name(path)}"`))]),
+        .map(([path, text]) => [
+          path,
+          path === into
+            ? withoutRepeatedImports(joined)
+            : text.replace(statementsNaming(path, gone), statement =>
+                statement.replace(/(["'])[^"']*\1(?=[^"']*$)/, `"${name(path)}"`),
+              ),
+        ]),
     );
   };
 
-  // The first candidate that still fails is taken, and the rest is made anew from what is left.
-  const takeWhileItFails = async (candidates: () => Map<string, string>[]) => {
+  // Takes the first candidate that still fails, then computes new candidates from the result.
+  const removeWhileFailing = async (candidates: () => Map<string, string>[]) => {
     for (let hasChanged = true; hasChanged && Date.now() < deadline; ) {
       hasChanged = false;
       const wellFormed = candidates().filter(isWellFormed);
@@ -246,8 +287,14 @@ export async function reduceFiles(whole: Whole, { parses, fails, width, seconds,
 
   for (let round = 0; round < 4 && Date.now() < deadline; round++) {
     const before = [...files.values()].join("").length;
-    await takeWhileItFails(() => others().map(without));
-    await takeWhileItFails(() => others().flatMap(gone => importers(gone).filter(into => dirname(into) === dirname(gone)).map(into => folded(gone, into))));
+    await removeWhileFailing(() => others().map(without));
+    await removeWhileFailing(() =>
+      others().flatMap(gone =>
+        importers(gone)
+          .filter(into => dirname(into) === dirname(gone))
+          .map(into => folded(gone, into)),
+      ),
+    );
     const paths = [...files.keys()];
     for (const [index, path] of paths.entries()) {
       const reduced = await reduce(files.get(path)!, {
@@ -258,7 +305,7 @@ export async function reduceFiles(whole: Whole, { parses, fails, width, seconds,
       });
       tests += reduced.tests;
       rounds += reduced.rounds;
-      // What reduce() does to blank lines at its end is not tested.
+      // reduce() removes blank lines at the end without testing.
       if (reduced.tests) files.set(path, reduced.text);
     }
     if (files.size === 1 || [...files.values()].join("").length === before) break;
@@ -266,7 +313,10 @@ export async function reduceFiles(whole: Whole, { parses, fails, width, seconds,
   return { ...asWhole(files), tests, rounds };
 }
 
-/** The shape of a program: names numbered in order of appearance, literals by kind. Two programs of one shape are one finding. */
+/**
+ * The shape of a program: names numbered in order of appearance, literals by kind. Two programs with the same shape are
+ * one finding.
+ */
 export function shape(text: string): string {
   const names = new Map<string, string>();
   return tokenize(text)
@@ -284,17 +334,25 @@ export function shape(text: string): string {
 if (import.meta.main) {
   const at = process.argv.indexOf("--");
   const [words, command] = [process.argv.slice(2, at), process.argv.slice(at + 1)];
-  const option = (name: string, otherwise: string) => (words.includes(name) ? words.splice(words.indexOf(name), 2)[1] : otherwise);
-  const [entry, jobs, seconds] = [option("--entry", ""), Number(option("--jobs", "8")), Number(option("--seconds", "1500"))];
+  const option = (name: string, otherwise: string) =>
+    words.includes(name) ? words.splice(words.indexOf(name), 2)[1] : otherwise;
+  const [entry, jobs, seconds] = [
+    option("--entry", ""),
+    Number(option("--jobs", "8")),
+    Number(option("--seconds", "1500")),
+  ];
   const [source, result] = words;
-  const paths = (readdirSync(source, { recursive: true, withFileTypes: true }) as import("fs").Dirent[]).filter(each => each.isFile()).map(each => relative(source, join(each.parentPath, each.name)));
+  const paths = (readdirSync(source, { recursive: true, withFileTypes: true }) as import("fs").Dirent[])
+    .filter(each => each.isFile())
+    .map(each => relative(source, join(each.parentPath, each.name)));
   const isCode = (path: string) => /\.[cm]?[jt]sx?$/.test(path) && !path.split("/").includes("node_modules");
   const first = entry || paths.find(path => /^main\.\w+$/.test(path))!;
   const work = mkdtempSync(join(withoutInstallingPackages(process.env.REDUCE_TMP ?? tmpdir()), "reduce-"));
   const write = (folder: string, { text, files }: Whole) => {
-    // What is no code is there for every candidate.
+    // Files that are not code are copied to every candidate.
     cpSync(source, folder, { recursive: true, filter: path => !isCode(relative(source, path)) });
-    for (const [path, each] of Object.entries({ ...files, [first]: text })) (mkdirSync(dirname(join(folder, path)), { recursive: true }), writeFileSync(join(folder, path), each));
+    for (const [path, each] of Object.entries({ ...files, [first]: text }))
+      (mkdirSync(dirname(join(folder, path)), { recursive: true }), writeFileSync(join(folder, path), each));
   };
   let made = 0;
   const fails = (candidates: Whole[]) =>
@@ -302,7 +360,13 @@ if (import.meta.main) {
       candidates.map(async candidate => {
         const folder = join(work, String(made++));
         write(folder, candidate);
-        const child = Bun.spawn({ cmd: [...command, join(folder, first)], cwd: folder, stdio: ["ignore", "ignore", "ignore"], timeout: 600_000, killSignal: "SIGKILL" });
+        const child = Bun.spawn({
+          cmd: [...command, join(folder, first)],
+          cwd: folder,
+          stdio: ["ignore", "ignore", "ignore"],
+          timeout: 600_000,
+          killSignal: "SIGKILL",
+        });
         const code = await child.exited;
         rmSync(folder, { recursive: true, force: true });
         return code === 0;
@@ -312,17 +376,28 @@ if (import.meta.main) {
   const parses = (candidate: string, path = first) => {
     const loader = path.endsWith(".tsx") ? "tsx" : path.endsWith("ts") ? "ts" : "jsx";
     try {
-      (parsers.get(loader) ?? parsers.set(loader, new Bun.Transpiler({ loader })).get(loader)!).transformSync(candidate);
+      (parsers.get(loader) ?? parsers.set(loader, new Bun.Transpiler({ loader })).get(loader)!).transformSync(
+        candidate,
+      );
       return true;
     } catch {
       return false;
     }
   };
-  const whole: Whole = { text: readFileSync(join(source, first), "utf8"), files: Object.fromEntries(paths.filter(path => isCode(path) && path !== first).map(path => [path, readFileSync(join(source, path), "utf8")])) };
+  const whole: Whole = {
+    text: readFileSync(join(source, first), "utf8"),
+    files: Object.fromEntries(
+      paths
+        .filter(path => isCode(path) && path !== first)
+        .map(path => [path, readFileSync(join(source, path), "utf8")]),
+    ),
+  };
   if (!(await fails([whole]))[0]) throw new Error("the program as it is does not show it");
   const reduced = await reduceFiles(whole, { parses, fails, width: jobs, seconds, entry: first });
   rmSync(result, { recursive: true, force: true });
   write(result, reduced);
   rmSync(work, { recursive: true, force: true });
-  console.log(`${Object.keys(reduced.files ?? {}).length + 1} files, ${[reduced.text, ...Object.values(reduced.files ?? {})].join("").split("\n").length - 1} lines, ${reduced.tests} tests`);
+  console.log(
+    `${Object.keys(reduced.files ?? {}).length + 1} files, ${[reduced.text, ...Object.values(reduced.files ?? {})].join("").split("\n").length - 1} lines, ${reduced.tests} tests`,
+  );
 }

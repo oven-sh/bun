@@ -89,7 +89,7 @@ function f3 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: BB#0: ; frequency = 1.000000
 # CHECK-NEXT: Int64 b@22 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x300000002, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState, RuntimeState}, v1:CallBuiltin)
 # CHECK-NEXT: Int64 b@21 = Const64(10, v0:Undefined)
-# CHECK-NEXT: Int64 b@23 = Patchpoint(b@22:Register(%r8), b@22:Register(%rax), $10(b@21):Register(%rdi), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, StringStorage, AllocatorState, RuntimeState}|Reads:{frameSlots, StringStorage, AllocatorState, RuntimeState}, v1:CallBuiltin)
+# CHECK-NEXT: Int64 b@23 = Patchpoint(b@22:Register(%r8), b@22:Register(%rax), $10(b@21):Register(%rdi), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, StringStorage, AllocatorState, RuntimeState}|Reads:{frameSlots, StringStorage, AllocatorState, RuntimeState}, v1:CallBuiltin)
 # CHECK-NEXT: Int64 b@10 = ArgumentReg(%r13)
 # CHECK-NEXT: Void b@24 = Store(b@23, b@10, offset = -1114112, ControlDependent|Writes:ModuleVariables.37, v4:PutModuleVariable)
 # CHECK-NEXT: Int32 b@25 = Const32(1, v4:PutModuleVariable)
@@ -113,7 +113,7 @@ function f3 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: BB#9: ; frequency = 10.000000
 # CHECK-NEXT: Predecessors: #8, #7
 # CHECK-NEXT: Int64 b@49 = Phi(ReadsLocalState, v11:NewTemplateObject)
-# CHECK-NEXT: Int64 b@51 = Patchpoint($1(b@50):Register(%r10), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v13:NewObject)
+# CHECK-NEXT: Int64 b@51 = Patchpoint($1(b@50):Register(%r10), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v13:NewObject)
 # CHECK-NEXT: Void b@52 = Fence(Fence|Reads:jscRoot, v13:NewObject)
 # CHECK-NEXT: Int64 b@53 = Load(b@10, offset = 131120, ControlDependent|Reads:AllocatorState, v15:CallBuiltin)
 # CHECK-NEXT: Void b@55 = Branch(b@53, Terminal, v15:CallBuiltin)
@@ -126,8 +126,8 @@ function f3 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: BB#12: ; frequency = 10.000000
 # CHECK-NEXT: Predecessors: #11, #10
 # CHECK-NEXT: Int64 b@61 = Phi(ReadsLocalState, v15:CallBuiltin)
-# CHECK-NEXT: Int64 b@62 = Patchpoint(b@61:Register(%r8), b@23:Register(%rax), b@49:Register(%rdi), b@51:Register(%rsi), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, CollectionStorage, CollectionEntries, StringStorage, AllocatorState, RuntimeState}|Reads:Top, v15:CallBuiltin)
-# CHECK-NEXT: Void b@12 = Patchpoint(runsWithoutFrame, resultConstraints = WarmAny, turnsAreShort, isLoopPoll, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, CollectionEntries}|Reads:Top, v7:LoopHint)
+# CHECK-NEXT: Int64 b@62 = Patchpoint(b@61:Register(%r8), b@23:Register(%rax), b@49:Register(%rdi), b@51:Register(%rsi), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, CollectionStorage, CollectionEntries, StringStorage, AllocatorState, RuntimeState}|Reads:Top, v15:CallBuiltin)
+# CHECK-NEXT: Void b@12 = Patchpoint(runsWithoutFrame, resultConstraints = WarmAny, iterationsAreShort, isLoopPoll, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries}|Reads:Top, v7:LoopHint)
 # CHECK-NEXT: Int32 b@63 = Add(b@3, $1(b@25), v16:Increment)
 # CHECK-NEXT: Int32 b@31 = Const32(300, v8:Integer)
 # CHECK-NEXT: Int32 b@9 = Below(b@63, $300(b@31), v9:Less)
@@ -150,7 +150,7 @@ function f3 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: BB#8: ; frequency = 0.009766
 # CHECK-NEXT: Predecessors: #6
 # CHECK-NEXT: Int64 b@42 = Const64(4, v11:NewTemplateObject)
-# CHECK-NEXT: Int64 b@43 = Patchpoint($4(b@42):ColdAny, resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:{frameSlots, AllocatorState}, v11:NewTemplateObject)
+# CHECK-NEXT: Int64 b@43 = Patchpoint($4(b@42):ColdAny, resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState}|Reads:{frameSlots, AllocatorState}, v11:NewTemplateObject)
 # CHECK-NEXT: Void b@44 = Fence(Fence|Reads:jscRoot, v11:NewTemplateObject)
 # CHECK-NEXT: Void b@45 = Store(b@43, b@10, offset = -1114104, ControlDependent|Writes:AllocatorState, v11:NewTemplateObject)
 # CHECK-NEXT: Void b@46 = Store8($1(b@25), b@10, offset = -1114368, ControlDependent|Writes:cards, v11:NewTemplateObject)

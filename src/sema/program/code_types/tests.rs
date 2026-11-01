@@ -519,7 +519,11 @@ fn referenced_options_are_found_by_address() {
 #[test]
 fn declaration_file_is_parsed_with_options_of_program() {
     with_projects(|context| {
-        let of_program = context.options.for_parsing();
+        assert!(!context.options.for_parsing().reads_as_bun_run);
+        let of_program = ParseOptions {
+            reads_as_bun_run: true,
+            ..context.options.for_parsing()
+        };
         assert!(!of_program.bind.before_es2020);
         let parse_options = |path: &[u8]| context.types_file_parse_options(path);
         let as_module = ParseOptions {

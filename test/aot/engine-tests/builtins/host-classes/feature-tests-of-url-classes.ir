@@ -497,7 +497,7 @@ function f20 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v12: boolean = ResultAt v11
 # CHECK-NEXT: v13: 1 = Integer integer=1
 # CHECK-NEXT: v14: int[0, 1] = ToNumber v12
-# CHECK-NEXT: v15: i32 = LShift v13, v14
+# CHECK-NEXT: v15: int[1, 2] = LShift v13, v14
 # CHECK-NEXT: v16: anything = ResultAt v11 index=3
 # CHECK-NEXT: v17: 1 = Integer integer=1
 # CHECK-NEXT: v18: int[0, 1] = BitAnd v15, v17

@@ -6,7 +6,9 @@ import { where as whereAccent } from "./a/né/leaf.ts";
 import { where as whereTop } from "./top.ts";
 const root = import.meta.dir;
 const rootOfUrls = "file://" + (root.startsWith("/") ? "" : "/") + root.replaceAll("\\", "/");
-const relative = (path: string) => (path.startsWith(root) ? path.slice(root.length) : path.replace(rootOfUrls, "file://"));
+// `__filename` and `__dirname` say where a file lay when the program was built.
+const relative = (path: string) =>
+  path.startsWith(root) ? path.slice(root.length) : path.startsWith(__dirname) ? path.slice(__dirname.length) : path.replace(rootOfUrls, "file://");
 for (const where of [whereC, whereD, whereE, whereAccent, whereTop, () => import.meta])
   console.log(relative(where().path), relative(decodeURI(where().url)), relative(where().dir), where().file);
 try {

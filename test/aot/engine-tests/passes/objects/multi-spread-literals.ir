@@ -549,15 +549,15 @@ function f16 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f17 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f18 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f19 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f20 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f21 name="map" module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=64 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f20 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f21 name="map" module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeMap thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f22 name="clampToLength" module=m3 position=720 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w2}, {type=number site=w3}] results=[{type=number site=w4}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f23 name="storeInNewArray" module=m3 position=955 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array site=w5 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w6}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f24 name="appendParts" module=m3 position=1242 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array site=w7 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w8}, {type=anything}] results=[{type=number site=w9}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f25 name="joinedText" module=m3 position=1819 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string site=w10 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f26 name="finishJoin" module=m3 position=1934 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=undefined|null|string site=w11 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string site=w12 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w13}, {type=number site=w14}] results=[{type=undefined|null|string site=w15 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f27 name="finishReduce" module=m3 position=2116 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=boolean site=w16}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f28 name="traverseArray" module=m3 position=2337 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 enclosingRuntimeFunction=131091 thisType={type=anything} parameters=[{type=undefined|null|Array site=w17 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w18}, {type=undefined|number site=w19}, {type=number site=w20}, {type=undefined|null|Array site=w21 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f28 name="traverseArray" module=m3 position=2337 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 enclosingRuntimeFunction=ArrayTraversalTraverseArray thisType={type=anything} parameters=[{type=undefined|null|Array site=w17 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w18}, {type=undefined|number site=w19}, {type=number site=w20}, {type=undefined|null|Array site=w21 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: undefined|null|Array, v1: number, v2: undefined|number, v3: number, v4: undefined|null|Array, v5: anything):
     v6 = Integer integer=1
     v7 = Convert v6 declared={type=1 site=w30}
@@ -1135,22 +1135,22 @@ function f28 name="traverseArray" module=m3 position=2337 kind=Method role=Libra
   b147(v547):
     Return v547
 }
-runtimefunction id=64 function=f21
-runtimefunction id=68 function=f20
-runtimefunction id=131091 function=f28 visibility=Private
+runtimefunction id=ArrayPrototypeMap function=f21
+runtimefunction id=ArrayIteratorPrototypeNext function=f20
+runtimefunction id=ArrayTraversalTraverseArray function=f28 visibility=Private
 # -- generated: logged
 # CHECK-LABEL: function {{*}}name="logged"
 # CHECK: role=Source
 # CHECK-NEXT: BB#0: ; frequency = 1.000000
-# CHECK-NEXT: Int64 b@20 = Patchpoint(resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v1:NewDictionary)
+# CHECK-NEXT: Int64 b@20 = Patchpoint(resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v1:NewDictionary)
 # CHECK-NEXT: Int64 b@18 = ArgumentReg(%rdi)
-# CHECK-NEXT: Int64 b@21 = Patchpoint(b@18:Register(%r9), resultConstraints = Register(%rax), pureFunction = 0x900000000(children), ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState}, v3:NewClosure)
-# CHECK-NEXT: Int64 b@23 = Const64(35, v3:NewClosure)
-# CHECK-NEXT: Int64 b@24 = Patchpoint($35(b@23):Register(%r10), b@21:Register(%rdx), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v3:NewClosure)
+# CHECK-NEXT: Int64 b@21 = Patchpoint(b@18:Register(%r9), resultConstraints = Register(%rax), pureFunction = 0x900000000(children), ControlDependent|Writes:{AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState}, v3:NewClosure)
+# CHECK-NEXT: Int64 b@23 = Const64(5, v3:NewClosure)
+# CHECK-NEXT: Int64 b@24 = Patchpoint($5(b@23):Register(%r10), b@21:Register(%rdx), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v3:NewClosure)
 # CHECK-NEXT: Int32 b@25 = Const32(1, v4:SetFunctionName)
-# CHECK-NEXT: Void b@26 = Patchpoint(b@24:Register(%rsi), b@21:Register(%rdx), $1(b@25):Register(%rcx), resultConstraints = WarmAny, ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, OrderWords, NamedProperties, JSObject_butterfly, weakTableStorage, CollectionEntries, StringStorage, RuntimeState}|Reads:Top, v4:SetFunctionName)
+# CHECK-NEXT: Void b@26 = Patchpoint(b@24:Register(%rsi), b@21:Register(%rdx), $1(b@25):Register(%rcx), resultConstraints = WarmAny, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_header, OrderWords, NamedProperties, JSObject_butterfly, StringStorage, RuntimeState}|Reads:Top, v4:SetFunctionName)
 # CHECK-NEXT: Int32 b@28 = Const32(3, v5:DefineGetter)
-# CHECK-NEXT: Void b@29 = Patchpoint(b@20:Register(%rsi), b@21:Register(%rdx), b@24:Register(%rcx), $3(b@28):Register(%r8), resultConstraints = WarmAny, ExitsSideways|ControlDependent|Writes:{collectorState, ObjectFields, ShapeWords, OrderWords, MemberGuards, NamedProperties, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState, RuntimeState}|Reads:Top, v5:DefineGetter)
+# CHECK-NEXT: Void b@29 = Patchpoint(b@20:Register(%rsi), b@21:Register(%rdx), b@24:Register(%rcx), $3(b@28):Register(%r8), resultConstraints = WarmAny, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, ObjectFields, ShapeWords, OrderWords, MemberGuards, NamedProperties, JSObject_butterfly, AllocatorState, RuntimeState}|Reads:Top, v5:DefineGetter)
 # CHECK-NEXT: Void b@31 = Return(b@20, Terminal)
 # CHECK-NEXT: Known properties:
 # CHECK-NEXT: b@20: dereferenceableBytes = 8

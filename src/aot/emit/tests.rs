@@ -10,10 +10,11 @@ use crate::builtins::{BuiltinId, RuntimeFunction};
 use crate::compile::testing::TemporaryDirectory;
 use crate::ir::generated::String as StringRecord;
 use crate::ir::generated::{
-    Data, DataMember, DataNode, Entry, EvalBinding, EvalScope, ExpectedResult, Field, Function,
-    FunctionFlags, FunctionVisibility, Header, HostRead, ImportPhase, Layout, LayoutKind, LimitId,
-    MAGIC, Module, ModuleExport, ModuleFailure, ModuleRequest, ModuleRequestKind, ProgramList,
-    RequiredName, RuntimeFunctionEntry, SCHEMA_HASH, StaticField, SyntheticExport, TypeSite,
+    AmbiguousExport, Data, DataMember, DataNode, Entry, EvalBinding, EvalScope, ExpectedResult,
+    Field, Function, FunctionFlags, FunctionVisibility, Header, HostRead, ImportPhase, Layout,
+    LayoutKind, LimitId, MAGIC, Module, ModuleExport, ModuleFailure, ModuleRequest,
+    ModuleRequestKind, OpenedName, ProgramList, ReplaceableBuiltin, RequiredName,
+    RuntimeFunctionEntry, SCHEMA_HASH, SourceStamp, StaticField, SyntheticExport, TypeSite,
     TypeSiteKind, Variable, WebAssemblyModule,
 };
 use crate::ir::testing::{build_function, function_with_parameters};
@@ -126,6 +127,7 @@ fn create_module(names: &Names) -> Module {
             name: names.text,
             variable: None,
             is_known_member: true,
+            is_replaceable: false,
         }],
         required_names: vec![RequiredName {
             module: MODULE,
@@ -133,6 +135,7 @@ fn create_module(names: &Names) -> Module {
             may_be_absent: false,
             export_name: Some(names.name),
             specifier: Some(names.text),
+            drops_export_if_absent: false,
         }],
         positions: source_positions(source, vec![0, 2]),
         function_text: source.to_vec(),
@@ -166,7 +169,7 @@ fn create_function(names: &Names) -> Function {
     let header = Function {
         name: Some(names.name),
         module: MODULE,
-        captures: vec![create_declared_type(names)],
+        captures: vec![create_declared_type(names).into()],
         ..function_with_parameters(FunctionFlags::default(), &[TypeTable::NUMBER])
     };
     let mut builder = FunctionBuilder::new(header, BuilderScratch::default());
@@ -203,6 +206,16 @@ fn create_full_program() -> Program {
         specifier: names.text,
         exporter: Some(MODULE),
         export_specifier: Some(names.text),
+        ends_load_of: None,
+    });
+    program.ambiguous_exports.push(AmbiguousExport {
+        module: MODULE,
+        name: names.name,
+    });
+    program.source_stamps.push(SourceStamp {
+        module: MODULE,
+        low: 7,
+        high: 9,
     });
     program.eval_scopes.push(EvalScope {
         bindings: vec![EvalBinding {
@@ -230,6 +243,14 @@ fn create_full_program() -> Program {
     program.web_assembly_modules.push(WebAssemblyModule {
         module: MODULE,
         bytes: vec![0, 0x61, 0x73, 0x6D, 1],
+    });
+    program.replaceable_builtins.push(ReplaceableBuiltin {
+        member: BuiltinId::MathMin,
+    });
+    let name = program.strings.intern(b"added");
+    program.opened_names.push(OpenedName {
+        holder: BuiltinId::ObjectPrototype,
+        name,
     });
     program
 }
@@ -434,6 +455,11 @@ fn counts_match_program() {
         (ProgramList::Variables, program.variables.len()),
         (ProgramList::Modules, program.modules.len()),
         (ProgramList::ModuleFailures, program.module_failures.len()),
+        (
+            ProgramList::AmbiguousExports,
+            program.ambiguous_exports.len(),
+        ),
+        (ProgramList::SourceStamps, program.source_stamps.len()),
         (ProgramList::EvalScopes, program.eval_scopes.len()),
         (ProgramList::Functions, program.functions.len()),
         (ProgramList::Data, program.data.len()),
@@ -446,6 +472,11 @@ fn counts_match_program() {
             ProgramList::WebAssemblyModules,
             program.web_assembly_modules.len(),
         ),
+        (
+            ProgramList::ReplaceableBuiltins,
+            program.replaceable_builtins.len(),
+        ),
+        (ProgramList::OpenedNames, program.opened_names.len()),
         (
             ProgramList::Bytes,
             program.strings.byte_len()

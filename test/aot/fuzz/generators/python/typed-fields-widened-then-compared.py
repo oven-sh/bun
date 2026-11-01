@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""typed-fields-widened-then-compared.py: one program, whatever the seed: a field of a declared type (string literals, enums, numbers, booleans, bigints, optional and nullable ones) is read into a
-place of a wider type and then compared, tested or printed. Every function is called through an array, so that it is compiled by itself. As plain Bun, line by line."""
+"""typed-fields-widened-then-compared.py: One program, whatever the seed: a field of a declared type (string literals,
+enums, numbers, booleans, bigints, optional and nullable ones) is read into a place of a wider type and then
+compared.
+"""
 FIELDS = [  # name, type, values, constants to compare with
     ("lit", '"m" | "f"', ['"m"', '"f"'], ['"f"', '"m"', '"x"']),
     ("long", '"first" | "second" | "third"', ['"first"', '"third"'], ['"first"', '"third"', '"none"']),

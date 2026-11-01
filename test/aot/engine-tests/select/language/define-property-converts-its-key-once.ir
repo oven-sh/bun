@@ -149,13 +149,13 @@ function f19 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v6
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="K"
-# CHECK: module=m0 position=477 kind=Arrow role=ResultWrapper length=1 thisType={type=anything} parameters=[{type=string}] results=[{type=L0}] functionTypes=[f11] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f21 layout=L0} inlineFrames=[{}, {callee=f21 callPosition=477 module=m0}] {
-# CHECK-NEXT: b0(v0: string @Cell):
+# CHECK: module=m0 position=477 kind=Arrow role=ResultWrapper length=1 thisType={type=anything} parameters=[{type="b"|"e"|"n"}] results=[{type=L0}] functionTypes=[f11] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f21 layout=L0} inlineFrames=[{}, {callee=f21 callPosition=477 module=m0}] {
+# CHECK-NEXT: b0(v0: "b"|"e"|"n" @LiteralString):
 # CHECK-NEXT: v1: L0 @Cell = NewObject layout=L0 allocationSite=6 allocation=1 allocationClass=0
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="run"
-# CHECK: module=m0 position=555 kind=Arrow length=2 thisType={type=anything} parameters=[{type=string}, {type=f3|f4|f5}] results=[{type=undefined}] functionTypes=[f12] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
+# CHECK: module=m0 position=555 kind=Arrow length=2 thisType={type=anything} parameters=[{type="get is no function"|"null"|"proxy"}, {type=f3|f4|f5}] results=[{type=undefined}] functionTypes=[f12] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function f3 module=
 # CHECK: m0 position=812 kind=Arrow thisType={type=anything} results=[{type=anything}] functionTypes=[f13] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f21 callPosition=477 parent=1 module=m0}] {
 # CHECK-NEXT: b0():
@@ -204,9 +204,9 @@ function f19 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Unreachable @0 tail
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="K"
-# CHECK: module=m0 position=477 kind=Arrow role=ResultWorker length=1 thisType={type=anything} parameters=[{type=string}] results=[{type=undefined}] functionTypes=[f11] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1 parameterMap=[{original=0}]} creator=ResultWorker{origin=f1}
+# CHECK: module=m0 position=477 kind=Arrow role=ResultWorker length=1 thisType={type=anything} parameters=[{type="b"|"e"|"n"}] results=[{type=undefined}] functionTypes=[f11] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1 parameterMap=[{original=0}]} creator=ResultWorker{origin=f1}
 # CHECK-LABEL: function {{*}}name="run"
-# CHECK: module=m0 position=555 kind=Arrow role=CalleeVersion length=2 thisType={type=anything} parameters=[{type=string}, {type=f3|f4|f5}] results=[{type=undefined}] functionTypes=[f12] capabilities=[MayBeCloned, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f2 parameter=1073741825 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f2}
+# CHECK: module=m0 position=555 kind=Arrow role=CalleeVersion length=2 thisType={type=anything} parameters=[{type="get is no function"|"null"|"proxy"}, {type=f3|f4|f5}] results=[{type=undefined}] functionTypes=[f12] capabilities=[MayBeCloned, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f2 parameter=1073741825 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f2}
 # CHECK-LABEL: function {{*}}name="run"
 # CHECK: module=m0 position=555 kind=Arrow role=CalleeVersion length=2 thisType={type=anything} parameters=[{type=f3|f4|f5}] results=[{type=undefined}] functionTypes=[f12] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2 parameter=1073741825 parameterMap=[{original=1}]} creator=Version{provenVersion=f2} {
 # CHECK-NEXT: b0(v1: f3|f4|f5 @Cell):
@@ -214,18 +214,18 @@ function f19 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: TestAndBranch v2 -> taken b1(), notTaken b2(| 0)
 # CHECK-NEXT: b1() handler=b6():
 # CHECK-NEXT: v3: anything @JSValue = CallDirect function=f3 accessSite=3
-# CHECK-NEXT: Jump -> next b5()
+# CHECK-NEXT: Jump -> next b4()
 # CHECK-NEXT: b2(v4: f4|f5 @Cell):
 # CHECK-NEXT: v5: boolean @Boolean = TypeTest v4 testedType=f4
-# CHECK-NEXT: TestAndBranch v5 -> taken b3(), notTaken b4()
+# CHECK-NEXT: TestAndBranch v5 -> taken b3(), notTaken b5()
 # CHECK-NEXT: b3() handler=b6():
 # CHECK-NEXT: v6: undefined @JSValue = CallDirect function=f4 accessSite=3
-# CHECK-NEXT: Jump -> next b5()
-# CHECK-NEXT: b4() frequency=Rare handler=b6():
-# CHECK-NEXT: v7: null @JSValue = CallDirect function=f5 accessSite=3
-# CHECK-NEXT: Jump -> next b5()
-# CHECK-NEXT: b5():
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b4():
 # CHECK-NEXT: Jump -> next b7()
+# CHECK-NEXT: b5() frequency=Rare handler=b6():
+# CHECK-NEXT: v7: null @JSValue = CallDirect function=f5 accessSite=3
+# CHECK-NEXT: Unreachable
 # CHECK-NEXT: b6() role=CatchHandler:
 # CHECK-NEXT: v8: anything @JSValue = CatchValue
 # CHECK-NEXT: v9: "throws " @JSValue = String string="throws "

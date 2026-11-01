@@ -8,7 +8,7 @@ export const programs = () =>
 `,
     ),
     "every-maker-in-every-holder.ts": text(
-      `// Written by test/aot/fuzz/generators/objects-born-in-every-place.ts: program(everyCase.filter(the places in-a-literal, three-levels, held-by-the-caller), false, 120): every way of making an object or an array,
+      `// Written by test/aot/fuzz/generators/object-allocation-sites.ts: program(everyCase.filter(the places in-a-literal, three-levels, held-by-the-caller), false, 120): every way of making an object or an array,
 // listed at once by the object that holds it, two levels deep, or by the caller. The generated test runs all the places in eleven ways; this file is here for whoever runs the programs alone.
 declare const console: { log(...values: unknown[]): void };
 const seen = <V>(value: V): V => value;

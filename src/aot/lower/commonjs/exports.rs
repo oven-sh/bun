@@ -10,7 +10,7 @@ use crate::builtins::id::BuiltinId;
 use crate::ir::generated::{BlockFrequency, ImportPhase, NullishAccess};
 use crate::ir::{FunctionKey, ModuleId, TypeTable, ValueId, VariableId, VariableKey};
 use crate::lower::captures::Capture;
-use crate::lower::member::{PropertyName, Reference};
+use crate::lower::member::{Holder, PropertyName, Reference};
 use crate::lower::scope::{BindingForm, BindingRef, Storage};
 use crate::lower::{FileLowering, FunctionLowering, member, module};
 use crate::modules::{
@@ -272,11 +272,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     // What stands in front of the first dot does what it always did: a name may be in its dead zone, and a call of `require` evaluates the module.
-    fn lower_root(&mut self, access: ExprId) -> Option<ValueId> {
+    fn lower_root(&mut self, access: ExprId) -> Option<Holder> {
         let hir = self.file.hir;
         let mut root = access;
-        while let Some((object, _)) = hir.member_key(root) {
+        let mut first_key = None;
+        while let Some((object, key)) = hir.member_key(root) {
             root = self.file.skip_type_syntax(object);
+            first_key = Some(key);
         }
         if let ExprKind::Call(_) = hir[root].kind {
             self.lower_expression_for_effect(root);
@@ -300,16 +302,22 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return None;
         }
         self.set_position(hir[root].pos);
-        let held = self.lower_identifier(root);
+        let value = self.lower_identifier(root);
         match self.file.bound.initial_state(holder) {
-            InitialState::Undefined => Some(held),
+            InitialState::Undefined => {
+                let member = match first_key {
+                    Some(MemberKey::Name(name)) => Some(self.file.intern_atom(name)),
+                    _ => None,
+                };
+                Some(Holder { value, member })
+            }
             InitialState::Uninitialized | InitialState::Initialized => None,
         }
     }
 
-    pub(in crate::lower) fn test_holder(&mut self, holder: Option<ValueId>, access: NullishAccess) {
-        if let Some(holder) = holder {
-            self.builder.require_object_coercible(holder, access, None);
+    pub(in crate::lower) fn test_holder(&mut self, holder: Option<Holder>, access: NullishAccess) {
+        if let Some(Holder { value, member }) = holder {
+            self.builder.require_object_coercible(value, access, member);
         }
     }
 
@@ -495,6 +503,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return None;
         }
         let described = self.file.find_described_value(hir.id_at(arguments, 2));
+        let is_lowered_here = matches!(
+            (member, described),
+            (Member::Variable(_), Some(_)) | (Member::Undefined | Member::Marker(_), _)
+        );
+        if is_lowered_here {
+            // No call is left. Its callee was read off `Object` first.
+            let callee = self.file.skip_type_syntax(hir[site].callee);
+            self.lower_read_of_locked_path(callee);
+        }
         match (member, described) {
             (Member::Variable(export), Some(described)) => {
                 let value = self.lower_expression(described);

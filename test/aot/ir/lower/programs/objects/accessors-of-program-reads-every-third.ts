@@ -244,7 +244,7 @@ console.log(seen, rounds, keys.length, keys[0], keys[7], keys[keys.length - 1], 
 // CHECK-NEXT: Return v21
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="has"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=2 captures=[{type=undefined|null|object site=[[w_9]] flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|string|symbol site=[[w_19]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean site=[[w_20]]}] functionTypes={{*}}[[f_21]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=2 captures=[{type=undefined|null|object site=[[w_9]] flags=[OmitsNull, OmitsUndefined] variableName="shape"}] thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|string|symbol site=[[w_19]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean site=[[w_20]]}] functionTypes={{*}}[[f_21]]] {
 // CHECK-NEXT: b0(v0: undefined|null|object, v1: anything, v2: undefined|null|string|symbol):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

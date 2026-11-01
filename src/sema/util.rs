@@ -107,6 +107,22 @@ pub fn in_order_of_decimal_text(count: usize) -> impl Iterator<Item = usize> {
     })
 }
 
+/// True if `list` has `entry`. Whoever gets `false` adds `entry` to `list`. `listed` starts empty, belongs to `list`, and
+/// answers once the list has more than a few entries.
+pub fn is_listed<T: Copy + Eq + std::hash::Hash>(
+    list: &[T],
+    listed: &mut FxHashSet<T>,
+    entry: T,
+) -> bool {
+    if list.len() < 16 {
+        return list.contains(&entry);
+    }
+    if listed.is_empty() {
+        listed.extend(list.iter().copied());
+    }
+    !listed.insert(entry)
+}
+
 /// Numbers each key that occurs more than once: 0, 1, .. in order of first occurrence.
 pub fn number_repeated<K: Copy + Eq + std::hash::Hash>(keys: &[K]) -> FxHashMap<K, usize> {
     let mut numbers: FxHashMap<K, usize> = FxHashMap::default();

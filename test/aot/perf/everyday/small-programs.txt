@@ -506,3 +506,64 @@ async function turn(i: number): Promise<number> {
   for await (const chunk of stream) bytes += chunk.length;
   return bytes;
 }
+//// a-parser-that-copies-its-options-and-nodes-name-by-name
+// Written as acorn is: the options are copied name by name from the defaults, a node is copied name by name, and the names it has met lie in a table under "$" + name.
+const defaultOptions: any = { ecmaVersion: null, program: null, onToken: null, locations: false };
+const hasOwn = Object.hasOwn;
+function getOptions(opts: any): any {
+  const options: any = {};
+  for (const opt in defaultOptions) options[opt] = opts && hasOwn(opts, opt) ? opts[opt] : defaultOptions[opt];
+  return options;
+}
+function Node(this: any, parser: any, pos: number) {
+  this.type = "";
+  this.start = pos;
+  this.end = 0;
+}
+function Parser(this: any, options: any, input: string) {
+  this.options = getOptions(options);
+  this.input = input;
+  this.pos = 0;
+  this.clashes = 0;
+}
+const pp: any = Parser.prototype;
+pp.startNode = function () {
+  return new (Node as any)(this, this.pos);
+};
+pp.copyNode = function (node: any) {
+  const newNode = new (Node as any)(this, node.start);
+  for (const prop in node) newNode[prop] = node[prop];
+  return newNode;
+};
+pp.checkPropClash = function (name: string, kind: string, propHash: any) {
+  name = "$" + name;
+  let other = propHash[name];
+  if (other) {
+    if (other[kind]) this.clashes++;
+  } else other = propHash[name] = { init: false, get: false, set: false };
+  other[kind] = true;
+};
+pp.parseStatement = function (propHash: any) {
+  const node = this.startNode();
+  this.checkPropClash(this.input[this.pos], this.pos & 1 ? "get" : "init", propHash);
+  this.pos++;
+  node.end = this.pos;
+  node.type = "Statement";
+  return this.pos & 3 ? node : this.copyNode(node);
+};
+pp.parseTopLevel = function (node: any) {
+  if (!node.body) node.body = [];
+  const propHash = {};
+  while (this.pos < this.input.length) node.body.push(this.parseStatement(propHash));
+  node.type = "Program";
+  return node;
+};
+pp.parse = function () {
+  const node = this.options.program || this.startNode();
+  return this.parseTopLevel(node);
+};
+function turn(i: number): number {
+  const parser = new (Parser as any)({ ecmaVersion: "latest" }, "abcabdef");
+  const program = parser.parse();
+  return program.body.length + program.body[3].end + parser.clashes + (i & 1);
+}

@@ -70,17 +70,11 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     fn find_truthiness(&self, expression: ExprId) -> Option<bool> {
-        match self.find_constant(expression)? {
-            Constant::Undefined | Constant::Null => Some(false),
-            Constant::Boolean(value) => Some(value),
-            Constant::Number(value) => Some(value != 0.0 && !value.is_nan()),
-            Constant::String(text) => Some(!self.queries.atom_bytes(text).is_empty()),
-            Constant::BigInt(_) => None,
-        }
+        self.is_truthy(self.find_constant(expression)?)
     }
 
     // `[a][0]` and `{ a }.a`: the `a`.
-    fn find_only_member(&self, object: ExprId, key: MemberKey) -> Option<ExprId> {
+    pub(super) fn find_only_member(&self, object: ExprId, key: MemberKey) -> Option<ExprId> {
         let hir = self.hir;
         match hir[self.skip_type_syntax(object)].kind {
             ExprKind::Array(elements) if elements.len() == 1 => {

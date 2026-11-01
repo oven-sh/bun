@@ -1,0 +1,80 @@
+# let name; name = "./plugins/one"; name = "./lib/../plugins/two.js"; name = "./plugins/folder"; require(name)()      in /app/main.cjs beside plugins/{one.cjs,two.cjs,folder/index.cjs,other.cjs}
+# The values say what the name may be, and a relative path starts at the folder of the file that loads. An extension may be missing or differ, and a folder stands for its index file.
+# So the call finds what those three files export and not what other.cjs does, which another written path finds. undefined (primitive 0) is what the variable of a module begins as.
+# The image keeps every file that a name may find findable, so other.cjs is evaluated all the same.
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: valueflow-why values=f0:v8
+# CHECK: operand 0 {{*}} 4 members: primitive0 f5 f6 f7
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f4
+# UNREACHED: unreached f8
+# RUN(UNSEEN): valueflow-solve unseen
+# UNSEEN: unseen LoadsModuleByName f0:v7
+# UNSEEN-NEXT: unseen-code no
+# UNSEEN-NEXT: modules-by-name yes
+
+variable g0 name="name" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m1 declared={type=anything} initialization=Undefined
+variable g2 name="exports" module=m2 declared={type=anything} initialization=Undefined
+variable g3 name="exports" module=m3 declared={type=anything} initialization=Undefined
+variable g4 name="exports" module=m4 declared={type=anything} initialization=Undefined
+variable g5 name="exports" module=m0 declared={type=anything} initialization=Undefined
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g5
+module m1 path="/app/plugins/one.cjs" displayPath="plugins/one.cjs" kind=CommonJs flags=[KeepsError, IsFoundByName] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g1
+module m2 path="/app/plugins/two.cjs" displayPath="plugins/two.cjs" kind=CommonJs flags=[KeepsError, IsFoundByName] exportRule=CommonJs requireResult=ModuleExports body=f2 exportsVariable=g2
+module m3 path="/app/plugins/folder/index.cjs" displayPath="plugins/folder/index.cjs" kind=CommonJs flags=[KeepsError, IsFoundByName] exportRule=CommonJs requireResult=ModuleExports body=f3 exportsVariable=g3
+module m4 path="/app/plugins/other.cjs" displayPath="plugins/other.cjs" kind=CommonJs flags=[KeepsError, IsFoundByName] exportRule=CommonJs requireResult=ModuleExports body=f4 exportsVariable=g4
+entry module=m0
+function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="./plugins/one"
+    PutModuleVariable v0 variable=g0
+    v2 = String string="./lib/../plugins/two.js"
+    PutModuleVariable v2 variable=g0
+    v4 = String string="./plugins/folder"
+    PutModuleVariable v4 variable=g0
+    v6 = GetModuleVariable variable=g0
+    v7 = RequireDynamic v6 referrer=m0
+    v8 = Call v7
+    Return
+}
+function f1 name="one" module=m1 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f5
+    PutModuleVariable v0 variable=g1
+    Return
+}
+function f2 name="two" module=m2 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f6
+    PutModuleVariable v0 variable=g2
+    Return
+}
+function f3 name="folder" module=m3 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f7
+    PutModuleVariable v0 variable=g3
+    Return
+}
+function f4 name="other" module=m4 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f8
+    PutModuleVariable v0 variable=g4
+    Return
+}
+function f5 name="exportedByOne" module=m1 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f6 name="exportedByTwo" module=m2 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f7 name="exportedByFolder" module=m3 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f8 name="exportedByOther" module=m4 results=[{type=anything}] {
+  b0():
+    Return
+}

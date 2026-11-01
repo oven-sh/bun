@@ -99,6 +99,15 @@ impl<'s> Checker<'_, 's> {
         !self.files.options.declarations_of_last_resort.is_empty()
     }
 
+    /// `interface Sized extends fs.Stats {}` has whatever `Stats` has, which nothing lists: any member, as a class below a
+    /// value of type `any` has. What is said of the name `fs.Stats` itself decides whether the build goes on.
+    pub(in crate::check) fn base_of_interface_without_bun_types(&self, base: TypeId) -> TypeId {
+        match self.lacks_bun_types() && self.is_error_type(base) {
+            true => TypeId::ANY,
+            false => base,
+        }
+    }
+
     pub(in crate::check) fn is_inferred_file(&self, file: FileId) -> bool {
         self.is_in_compile_build(file) && self.files.role(file) == FileRole::Inferred
     }

@@ -82,6 +82,9 @@ impl RuntimeModules {
 
     pub(crate) fn with_test_aliases(mut self, runs_tests: bool) -> RuntimeModules {
         self.aliases.rewrite_jest_for_tests = runs_tests;
+        let aliases = self.aliases;
+        self.public_specifiers
+            .retain(|&(_, specifier)| !(runs_tests && wraps_entry_point(specifier, aliases)));
         self
     }
 
@@ -194,6 +197,13 @@ impl RuntimeModules {
             RuntimeResolution::Module(_) if self.omits_builtin_modules => {
                 RuntimeResolution::HostValue
             }
+            // A test run has no entry point, so `bun test` has no such module, and says so to whoever asks for it.
+            RuntimeResolution::Module(_)
+                if self.aliases.rewrite_jest_for_tests
+                    && wraps_entry_point(specifier, self.aliases) =>
+            {
+                RuntimeResolution::HostValue
+            }
             RuntimeResolution::Module(_) | RuntimeResolution::HostValue => resolution,
         })
     }
@@ -217,6 +227,17 @@ impl RuntimeModules {
         self.public_specifiers
             .iter()
             .map(|&(_, specifier)| specifier)
+    }
+
+    /// `process.getBuiltinModule` answers with the modules of the registry, and none of those is an ES module.
+    pub(crate) fn answers_get_builtin_module(&self, specifier: &[u8]) -> bool {
+        match self.resolve_module(specifier, b"") {
+            Some(RuntimeResolution::Module(id)) => {
+                RuntimeModule::from_registry_id(id.0).is_some_and(|it| !table::is_es_module(it))
+            }
+            Some(RuntimeResolution::HostValue) => true,
+            None => false,
+        }
     }
 
     pub(crate) fn find_modules(&self, prefix: &[u8], suffix: &[u8]) -> Vec<HostModuleId> {
@@ -307,6 +328,17 @@ fn runs_own_tests() -> bool {
                 .is_some())
 }
 
+// The module whose one import is the entry point of `bun run`.
+fn wraps_entry_point(specifier: &[u8], aliases: Cfg) -> bool {
+    let alias = Alias::get(specifier, Target::Bun, aliases);
+    alias.is_some_and(|alias| {
+        matches!(
+            Module::MAP.get(alias.path.as_bytes()),
+            Some(Module::BunMain)
+        )
+    })
+}
+
 // The names that `bun run` answers to Bun's own tests alone: `fetch_builtin_module` in src/runtime/jsc_hooks.rs.
 fn is_module_of_own_tests(specifier: &[u8], aliases: Cfg) -> bool {
     let Some(alias) = Alias::get(specifier, Target::Bun, aliases) else {
@@ -326,7 +358,278 @@ fn is_module_of_own_tests(specifier: &[u8], aliases: Cfg) -> bool {
     )
 }
 
+/// The specifiers of those of Bun's own modules that are written in JavaScript and that a program can load.
+pub(crate) fn library_modules_that_programs_load() -> Vec<&'static [u8]> {
+    let written_for_programs = table::ModuleFlags::HAS_SOURCE | table::ModuleFlags::IS_PUBLIC;
+    let all = RuntimeModule::ALL.into_iter().map(table::module_data);
+    all.filter(|data| data.flags.contains(written_for_programs))
+        .map(|data| data.specifier.as_bytes())
+        .filter(|specifier| {
+            Alias::has(specifier, Target::Bun, Cfg::default())
+                && (runs_own_tests() || !is_module_of_own_tests(specifier, Cfg::default()))
+        })
+        .collect()
+}
+
+/// The text of a file with what stands in a comment, or between two single or double quotes on one line, made blank, byte for byte. What is left is code.
+/// A template stays: it holds code.
+fn blank_comments_and_strings(text: &[u8]) -> Vec<u8> {
+    let mut code = text.to_vec();
+    let mut at = 0;
+    while at < text.len() {
+        let rest = &text[at..];
+        let (blank, length) = match rest {
+            // In a regular expression: `/\/*$/`.
+            [b'\\', ..] => (0..0, 2),
+            [b'/', b'/', ..] => {
+                let length = strings::index_of_char_usize(rest, b'\n');
+                let length = length.unwrap_or(rest.len());
+                (0..length, length)
+            }
+            [b'/', b'*', ..] => match strings::index_of(&rest[2..], b"*/") {
+                Some(end) => (0..end + 4, end + 4),
+                None => (0..0, 1),
+            },
+            [quote @ (b'"' | b'\''), ..] => {
+                let mut end = 1;
+                while end < rest.len() && rest[end] != *quote && rest[end] != b'\n' {
+                    end += if rest[end] == b'\\' { 2 } else { 1 };
+                }
+                let end = end.min(rest.len());
+                (1..end, end + 1)
+            }
+            _ => (0..0, 1),
+        };
+        code[at + blank.start..at + blank.end].fill(b' ');
+        at += length;
+    }
+    code
+}
+
+/// Those of `library_modules_that_programs_load` whose names stand between quotes in the text of a file, wherever that is. None: the file evaluates text,
+/// or loads code under a name that it does not spell, which may be the name of any module.
+pub(crate) fn library_modules_spelled_in(text: &[u8]) -> Option<Vec<&'static [u8]>> {
+    let code = &blank_comments_and_strings(text)[..];
+    let is_part_of_name = |byte: u8| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$');
+    let skip_space = |at: usize| code.len() - code[at..].trim_ascii_start().len();
+    // What stands between two of the quote at `at` on one line, and where the text goes on.
+    let read_string = |at: usize| {
+        let (quote, rest) = text[at..].split_first()?;
+        let end = rest
+            .iter()
+            .position(|byte| byte == quote || *byte == b'\n')?;
+        (matches!(quote, b'"' | b'\'' | b'`') && rest[end] == *quote)
+            .then(|| (&rest[..end], at + end + 2))
+    };
+    // Where the code goes on behind each place at which the word stands alone.
+    let behind_each = |word: &'static [u8]| {
+        let mut at = 0;
+        std::iter::from_fn(move || {
+            loop {
+                let start = at + strings::index_of(&code[at..], word)?;
+                at = start + word.len();
+                if !(start > 0 && is_part_of_name(code[start - 1]))
+                    && !code.get(at).is_some_and(|&byte| is_part_of_name(byte))
+                {
+                    return Some(skip_space(at));
+                }
+            }
+        })
+    };
+    if strings::contains(code, b"createRequire")
+        || strings::contains(code, b"_load")
+        || behind_each(b"eval").next().is_some()
+        || behind_each(b"Function").any(|next| code.get(next) == Some(&b'('))
+    {
+        return None;
+    }
+    // No module of Bun's own code has a name that begins so, however the name goes on. A package maps a name behind "#" to any.
+    let begins_as_no_module = |name: &[u8]| {
+        let fixed = strings::index_of(name, b"${").map_or(name, |end| &name[..end]);
+        let mut spellings = BUN_ALIASES.iter().copied().flatten();
+        !fixed.is_empty()
+            && !fixed.starts_with(b"#")
+            && !fixed.starts_with(b"bun:")
+            && !b"bun:".starts_with(fixed)
+            && !strings::contains_char(fixed, b'\\')
+            && !spellings.any(|(spelling, _)| spelling.starts_with(fixed))
+    };
+    let begins_with_path_of_this_file = |at: usize| {
+        let paths: [&[u8]; 7] = [
+            b"import.meta.path",
+            b"import.meta.url",
+            b"import.meta.filename",
+            b"import.meta.dirname",
+            b"import.meta.dir",
+            b"__filename",
+            b"__dirname",
+        ];
+        paths.into_iter().any(|it| {
+            code[at..].starts_with(it)
+                && !code
+                    .get(at + it.len())
+                    .is_some_and(|&byte| is_part_of_name(byte))
+        })
+    };
+    let loaders: [&'static [u8]; 5] = [
+        b"import",
+        b"require",
+        b"getBuiltinModule",
+        b"requireActual",
+        b"importActual",
+    ];
+    for word in loaders {
+        for next in behind_each(word) {
+            let loads_what_is_spelled = match code.get(next) {
+                Some(b'(') => {
+                    let argument = skip_space(next + 1);
+                    begins_with_path_of_this_file(argument)
+                        || read_string(argument).is_some_and(|(name, end)| {
+                            begins_as_no_module(name)
+                                || (!strings::contains(name, b"${")
+                                    && matches!(code.get(skip_space(end)), Some(b')' | b',')))
+                        })
+                }
+                // A statement.
+                _ if word == b"import" => true,
+                Some(b'.') if word == b"require" => {
+                    let member = &code[skip_space(next + 1)..];
+                    let length = member
+                        .iter()
+                        .take_while(|&&byte| is_part_of_name(byte))
+                        .count();
+                    matches!(
+                        &member[..length],
+                        b"resolve" | b"cache" | b"main" | b"extensions"
+                    )
+                }
+                _ => false,
+            };
+            if !loads_what_is_spelled {
+                return None;
+            }
+        }
+    }
+    let written_for_programs = table::ModuleFlags::HAS_SOURCE | table::ModuleFlags::IS_PUBLIC;
+    let strings = (0..text.len()).filter_map(read_string);
+    let modules =
+        strings.filter_map(|(name, _)| Some(table::module_data(find_module_named(name)?)));
+    let modules = modules.filter(|data| data.flags.contains(written_for_programs));
+    let modules: Vec<&'static [u8]> = modules.map(|data| data.specifier.as_bytes()).collect();
+    (!modules.contains(&&b"node:vm"[..])).then_some(modules)
+}
+
+/// The built-ins for which native code loads a module of Bun's own code, as a program spells them: `Bun.sql`, `process.stdin`. Those that a program reaches from a global by names alone.
+pub(crate) fn builtins_that_load_library_modules() -> Vec<String> {
+    let is_name = |part: &[u8]| {
+        !part.is_empty()
+            && part
+                .iter()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$'))
+    };
+    let all = table::BuiltinId::ALL.into_iter();
+    all.filter(|&id| !table::entry(id).loads().is_empty())
+        .filter(|&id| {
+            table::global(table::entry(table::root_of(id)).name) == Some(table::root_of(id))
+        })
+        .map(table::text_of)
+        .filter(|text| {
+            let text = text.as_bytes();
+            strings::contains_char(text, b'.') && strings::split(text, b".").all(is_name)
+        })
+        .collect()
+}
+
+/// Those of `builtins_that_load_library_modules` whose last name stands in the text of a file, wherever that is. None: the file does something else with the
+/// object that has one of them, or with the global object, than to read a member by its name, so it may read any.
+pub(crate) fn builtins_that_load_library_modules_spelled_in(text: &[u8]) -> Option<Vec<String>> {
+    let code = &blank_comments_and_strings(text)[..];
+    let is_part_of_name = |byte: u8| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$');
+    // What follows each place at which the word stands alone.
+    let behind_each = |text: &'_ [u8], word: &[u8]| {
+        let mut found = Vec::new();
+        let mut at = 0;
+        while let Some(start) = strings::index_of(&text[at..], word).map(|it| at + it) {
+            at = start + word.len();
+            if !(start > 0 && is_part_of_name(text[start - 1]))
+                && !text.get(at).is_some_and(|&byte| is_part_of_name(byte))
+            {
+                found.push(at);
+            }
+        }
+        found
+    };
+    let all = builtins_that_load_library_modules();
+    let mut objects: Vec<&[u8]> = vec![b"globalThis", b"global", b"self"];
+    objects.extend(
+        all.iter()
+            .filter_map(|it| Some(strings::split_once_char(it.as_bytes(), b'.')?.0)),
+    );
+    objects.sort_unstable();
+    objects.dedup();
+    let reads_a_member_by_name = |object: &[u8], at: usize| {
+        let mut rest = code[at..].trim_ascii_start();
+        // `(process as any).name`, in parentheses of its own: those of a call hand the object on.
+        if let Some(cast) = rest.strip_prefix(b"as ") {
+            let before = code[..at - object.len()].trim_ascii_end();
+            let Some(before) = before.strip_suffix(b"(").map(<[u8]>::trim_ascii_end) else {
+                return false;
+            };
+            let is_called = |byte: u8| is_part_of_name(byte) || matches!(byte, b')' | b']');
+            let end = strings::index_of_char_usize(cast, b')');
+            let Some(end) = end.filter(|&end| !strings::contains_char(&cast[..end], b'(')) else {
+                return false;
+            };
+            if before.last().is_some_and(|&byte| is_called(byte)) {
+                return false;
+            }
+            rest = cast[end + 1..].trim_ascii_start();
+        }
+        let rest = rest.strip_prefix(b"!").unwrap_or(rest);
+        let rest = rest.strip_prefix(b"?").unwrap_or(rest);
+        let member = rest.strip_prefix(b".").map(<[u8]>::trim_ascii_start);
+        member.is_some_and(|it| it.first().is_some_and(|&byte| is_part_of_name(byte)))
+    };
+    // A module that is one of the objects under a name of the file's own.
+    let is_between_quotes = |at: usize, length: usize| {
+        let quote = (at > length).then(|| text[at - length - 1]);
+        quote.is_some_and(|it| matches!(it, b'"' | b'\'' | b'`') && text.get(at) == Some(&it))
+    };
+    let modules: [&[u8]; 5] = [
+        b"bun",
+        b"process",
+        b"node:process",
+        b"console",
+        b"node:console",
+    ];
+    if modules.into_iter().any(|it| {
+        behind_each(text, it)
+            .into_iter()
+            .any(|at| is_between_quotes(at, it.len()))
+    }) || !(objects.into_iter()).all(|it| {
+        behind_each(code, it)
+            .into_iter()
+            .all(|at| reads_a_member_by_name(it, at))
+    }) {
+        return None;
+    }
+    let is_spelled = |it: &String| {
+        let name = it.as_bytes();
+        let last = strings::rsplit_once_char(name, b'.').map_or(name, |(_, last)| last);
+        !behind_each(text, last).is_empty()
+    };
+    Some(all.into_iter().filter(is_spelled).collect())
+}
+
+/// The module of Bun that a program means with a specifier, however it spells it: "node:crypto", "crypto", "sys".
+pub(crate) fn find_module_named(specifier: &[u8]) -> Option<RuntimeModule> {
+    let specifier = Alias::bun_prefixed_builtin(specifier).unwrap_or(specifier);
+    let alias = Alias::get(specifier, Target::Bun, Cfg::default())?;
+    table::module_by_specifier(alias.path.as_bytes())
+}
+
 fn resolve_alias(manifest: &Manifest, specifier: &[u8], aliases: Cfg) -> Option<RuntimeResolution> {
+    let specifier = Alias::bun_prefixed_builtin(specifier).unwrap_or(specifier);
     let alias = Alias::get(specifier, Target::Bun, aliases)?;
     Some(match manifest.module_by_specifier(alias.path.as_bytes()) {
         Some(id) => RuntimeResolution::Module(HostModuleId(id)),
@@ -477,6 +780,224 @@ mod tests {
     use crate::load::data_modules::parse_json;
 
     const HOST_VALUE: Option<RuntimeResolution> = Some(RuntimeResolution::HostValue);
+
+    #[test]
+    fn built_ins_that_load_modules_are_spelled_as_programs_spell_them() {
+        let spelled = builtins_that_load_library_modules();
+        for text in ["Bun.sql", "process.stdin", "Bun.spawn"] {
+            assert!(spelled.iter().any(|it| it == text), "{text}");
+        }
+        let is_no_name = |byte: u8| matches!(byte, b':' | b'%' | b'[');
+        assert!(spelled.iter().all(|it| !it.bytes().any(is_no_name)));
+    }
+
+    #[test]
+    fn a_module_is_found_however_a_program_spells_it() {
+        for (spelled, path) in [
+            (&b"crypto"[..], &b"node:crypto"[..]),
+            (b"node:crypto", b"node:crypto"),
+            (b"fs", b"node:fs"),
+            (b"sys", b"node:util"),
+            (b"bun:sqlite", b"bun:sqlite"),
+        ] {
+            let found = find_module_named(spelled).map(table::specifier_of);
+            assert_eq!(found.map(BStr::new), Some(BStr::new(path)));
+        }
+        for spelled in [&b"./crypto"[..], b"crypto/", b"no-such-module"] {
+            assert_eq!(find_module_named(spelled), None, "{}", BStr::new(spelled));
+        }
+    }
+
+    #[test]
+    fn programs_load_the_public_modules_that_have_source() {
+        let names = library_modules_that_programs_load();
+        for name in [
+            &b"node:http"[..],
+            b"node:worker_threads",
+            b"bun:sqlite",
+            b"ws",
+        ] {
+            assert!(names.contains(&name), "{}", BStr::new(name));
+        }
+        // Native code, a module for Bun's own code alone, a module behind a flag.
+        for name in [
+            &b"node:buffer"[..],
+            b"internal/validators",
+            b"node:zlib/iter",
+        ] {
+            assert!(!names.contains(&name), "{}", BStr::new(name));
+        }
+    }
+
+    #[test]
+    fn a_text_spells_the_library_modules_that_it_loads_or_may_load_any() {
+        let spelled = |text: &str| {
+            let modules = library_modules_spelled_in(text.as_bytes())?;
+            Some(modules.into_iter().map(BStr::new).collect::<Vec<_>>())
+        };
+        assert_eq!(spelled("const a = [1, 'two', \"./three\"];"), Some(vec![]));
+        assert_eq!(
+            spelled(
+                "import { a } from \"node:http\";\nrequire('zlib'); await import(`crypto`, {}); export * from 'ws';"
+            ),
+            Some(vec![
+                BStr::new("node:http"),
+                BStr::new("node:zlib"),
+                BStr::new("node:crypto"),
+                BStr::new("ws"),
+            ])
+        );
+        assert_eq!(
+            spelled("new Worker('require(\"node:worker_threads\")'); mock.module(\"os\", f);"),
+            Some(vec![BStr::new("node:worker_threads"), BStr::new("node:os")])
+        );
+        assert_eq!(
+            spelled("import(/* webpackIgnore */ 'fs') // 'dns'"),
+            Some(vec![BStr::new("node:fs"), BStr::new("node:dns")])
+        );
+        // Native code, and a module for Bun's own code alone.
+        assert_eq!(
+            spelled("import 'node:buffer'; 'internal/validators';"),
+            Some(vec![])
+        );
+        for text in [
+            "require.resolve(name)",
+            "delete require.cache[name]",
+            "require.main === module",
+            "requires(name); required(name); reimport(name); it.imports(name)",
+            "import.meta.url",
+            "process.getBuiltinModule('fs')",
+            "jest.requireActual('fs'); vi.importActual(\"fs\")",
+            "evaluate(text); isFunction(f); Function.prototype.toString.call(f); f instanceof Function",
+            "import('./pages/' + name)",
+            "require(`../${name}.js`)",
+            "import('/opt/' + name)",
+            "import('file://' + path)",
+            "import(`specs/build/${name}.js`)",
+            "import('@/pages/' + name)",
+            "require('~/' + name)",
+            "import('node:zz' + name)",
+            "require(import.meta.path)",
+            "import(import.meta.dir + name)",
+            "require(__dirname + '/' + name)",
+            "test('they require a password', f);",
+            "log(\"require\", \"import()\", \"eval(text)\", 'it\\'s require');",
+            "// we require that\nf();",
+            "/* require(name)\n * eval(text) */ f();",
+        ] {
+            assert!(spelled(text).is_some(), "{text}");
+        }
+        for text in [
+            "require(name)",
+            "import(name)",
+            "import('node:' + name)",
+            "require('node:' + name)",
+            "import(`node:${name}`)",
+            "import(`${name}`)",
+            "import('' + name)",
+            "import('s' + name)",
+            "import('fs/' + name)",
+            "import('b' + name)",
+            "import('bun:' + name)",
+            "import('bun:f' + name)",
+            "import('#internal/' + name)",
+            "import('\\x66' + name)",
+            "import(name + './x')",
+            "import(import.meta.directory)",
+            "const load = require;",
+            "[require].map(load => load(name))",
+            "typeof require !== 'undefined' ? require : fail",
+            "require.call(null, name)",
+            "module.require(name)",
+            "import.meta.require(name)",
+            "process.getBuiltinModule(name)",
+            "const { getBuiltinModule } = process;",
+            "jest.requireActual(name)",
+            "vi.importActual(name)",
+            "createRequire(import.meta.url)",
+            "Module._load(name)",
+            "eval(text)",
+            "(0, eval)(text)",
+            "new Function(text)",
+            "Function ('return 1')",
+            "import vm from 'node:vm';",
+            "require(\"vm\")",
+            "`${require(name)}`",
+            "'a'; require(name); 'b'",
+            "// a comment\nrequire(name)",
+            "/* a comment */ require(name)",
+            "path.replace(/\\/*$/, ''); require(name); /* a comment */",
+            "/https?:\\/\\//.test(url) && require(name)",
+            "it's\nrequire(name)",
+        ] {
+            assert_eq!(spelled(text), None, "{text}");
+        }
+    }
+
+    #[test]
+    fn a_text_spells_the_built_ins_that_load_modules_or_may_read_any() {
+        let spelled = |text: &str| builtins_that_load_library_modules_spelled_in(text.as_bytes());
+        let some = |names: &[&str]| Some(names.iter().map(|it| it.to_string()).collect::<Vec<_>>());
+        assert_eq!(
+            spelled("console.log(process.env.HOME, Bun.version, globalThis.x);"),
+            some(&[])
+        );
+        assert_eq!(
+            spelled("import { test } from 'bun:test'; self.x = 1;"),
+            some(&[])
+        );
+        assert_eq!(
+            spelled("test('the process ends', f); // typeof process"),
+            some(&[])
+        );
+        for text in [
+            "(globalThis as any).x = 2;",
+            "a + (process as unknown as Thing).env.X",
+            "[( globalThis as any )?.x, process!.env]",
+        ] {
+            assert_eq!(spelled(text), some(&[]), "{text}");
+        }
+        assert_eq!(
+            spelled("process.stdin.on('data', f); Bun?.spawn(['ls']);"),
+            some(&["Bun.spawn", "process.stdin"])
+        );
+        assert_eq!(spelled("globalThis['pro' + 'cess'];"), None);
+        for text in [
+            "read(globalThis.process . nextTick)",
+            "const name = 'sql';",
+            "// it writes to stderr",
+        ] {
+            assert_eq!(spelled(text).map(|it| it.len()), Some(1), "{text}");
+        }
+        for text in [
+            "process[name]",
+            "const { [name]: read } = process;",
+            "({ ...process })",
+            "typeof process",
+            "Object.values(Bun)",
+            "inspect(console)",
+            "import process from 'node:process';",
+            "import { stdout } from 'node:process';",
+            "require(\"process\")[name]",
+            "import held from 'node:console';",
+            "require(\"console\")._stdout",
+            "global[name]",
+            "self[name]",
+            "const self = this;",
+            "import * as all from 'bun';",
+            "require(\"bun\")[name]",
+            "for (const name in globalThis) read(name);",
+            "`${process[name]}`",
+            "(globalThis as any)[name]",
+            "read(globalThis as any).x",
+            "list[0](process as any).x",
+            "read((process as any))",
+            "(process as Pick<Thing, keyof (typeof it)>).env",
+            "globalThis as any",
+        ] {
+            assert_eq!(spelled(text), None, "{text}");
+        }
+    }
 
     fn runtime_modules() -> RuntimeModules {
         RuntimeModules::new(Archive::embedded(), false)
@@ -668,6 +1189,19 @@ mod tests {
             source_path(&runtime, resolution),
             b"/$bun/js/runtime.main.js"
         );
+    }
+
+    #[test]
+    fn test_run_leaves_entry_point_wrapper_to_host() {
+        let runtime = runtime_modules().with_test_aliases(true);
+        assert_eq!(runtime.resolve_module(b"bun:main", b""), HOST_VALUE);
+        assert!(runtime.find_modules(b"bun:main", b"").is_empty());
+        let fs = host_module_id(RuntimeModule::NodeFs);
+        assert!(runtime.find_modules(b"node:f", b"").contains(&fs));
+        let wrap = runtime.resolve_module(b"bun:wrap", b"");
+        assert_eq!(source_path(&runtime, wrap), b"/$bun/js/runtime.out.js");
+        let program = runtime_modules().with_test_aliases(false);
+        assert_eq!(program.find_modules(b"bun:main", b"").len(), 1);
     }
 
     #[test]

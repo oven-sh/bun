@@ -77,9 +77,8 @@ function f12 module=m8 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-LABEL: function f8 module=
 # CHECK: m8 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: undefined = CallDirect function=f16 accessSite=0
-# CHECK-NEXT: v1: undefined = Undefined
-# CHECK-NEXT: Return v1
+# CHECK-NEXT: v0: undefined = Undefined
+# CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="show"
 # CHECK: module=m8 position=131 kind=Arrow flags=[IsSloppy] length=2 thisType={type=anything} parameters=[{type="late"}, {type=f10}] results=[{type=undefined}] functionTypes=[f11] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]

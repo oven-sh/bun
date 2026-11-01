@@ -68,7 +68,7 @@ function f4 name="honest" module=m1 position=1234 flags=[HasExplicitName] length
 # CHECK-NEXT: Double b@21 = Sub(b@18, b@16, v2:Sub)
 # CHECK-NEXT: Double b@17 = Load(b@15, offset = -56, ReadsImmutable, v4:Sub)
 # CHECK-NEXT: Double b@22 = Sub(b@21, b@17, v4:Sub)
-# CHECK-NEXT: Int32 b@23 = Patchpoint(b@22:Register(%xmm0), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly}|Reads:Top, v5:CallDirect)
+# CHECK-NEXT: Int32 b@23 = Patchpoint(b@22:Register(%xmm0), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly}|Reads:Top, v5:CallDirect)
 # CHECK-NEXT: Int32 b@24 = Const32(1, v6:LogicalNot)
 # CHECK-NEXT: Int32 b@25 = BitXor(b@23, $1(b@24), v6:LogicalNot)
 # CHECK-NEXT: Int32 b@26 = Const32(0, v7:Boolean)

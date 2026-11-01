@@ -131,14 +131,14 @@ class T {
 // CHECK-NEXT: Return v1
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="#g"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] captures=[{type=env [[L_2]] flags=[IsFromCompiler]}, {type=env [[L_3]] flags=[IsFromCompiler]}, {type=anything}, {type=function flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=undefined|null|[[f_16]] flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] captures=[{type=env [[L_2]] flags=[IsFromCompiler]}, {type=env [[L_3]] flags=[IsFromCompiler]}, {type=anything variableName="n"}, {type=function flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=undefined|null|[[f_16]] flags=[IsExpected]}] {
 // CHECK-NEXT: b0(v0: env [[L_2]], v1: env [[L_3]], v2: anything, v3: function):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v4 = GetEnvironmentField v0 layout=[[L_2]]
 // CHECK-NEXT: v5 = CheckInitialized v4 name="C"
 // CHECK-NEXT: v6 = StrictEq v5, v3
-// CHECK-NEXT: Branch v6 -> taken b2(), notTaken b9()
+// CHECK-NEXT: Branch v6 -> taken b2(), notTaken b11()
 // CHECK-NEXT: b2():
 // CHECK-NEXT: v7 = GetEnvironmentField v1 layout=[[L_3]] field=2
 // CHECK-NEXT: v8 = TypeTest v7 testedType=absent
@@ -164,11 +164,23 @@ class T {
 // CHECK-NEXT: v22 = Convert v21 declared={type=undefined|null|[[f_16]] flags=[IsExpected]}
 // CHECK-NEXT: Return v22
 // CHECK-NEXT: b8() frequency=Unlikely:
-// CHECK-NEXT: v23 = NewRuntimeError runtimeError=InvalidPrivateWrite
-// CHECK-NEXT: Throw v23
-// CHECK-NEXT: b9() frequency=Unlikely:
-// CHECK-NEXT: v24 = NewRuntimeError runtimeError=InvalidPrivateRead
-// CHECK-NEXT: Throw v24
+// CHECK-NEXT: v23 = TypeTest v5 testedType=undefined|null
+// CHECK-NEXT: Branch v23 -> taken b9(| 0), notTaken b10(| 0)
+// CHECK-NEXT: b9(v24):
+// CHECK-NEXT: v25 = PropGet v24 key="#reads"
+// CHECK-NEXT: Unreachable
+// CHECK-NEXT: b10(v26):
+// CHECK-NEXT: v27 = NewRuntimeError runtimeError=InvalidPrivateWrite
+// CHECK-NEXT: Throw v27
+// CHECK-NEXT: b11() frequency=Unlikely:
+// CHECK-NEXT: v28 = TypeTest v5 testedType=undefined|null
+// CHECK-NEXT: Branch v28 -> taken b12(| 0), notTaken b13(| 0)
+// CHECK-NEXT: b12(v29):
+// CHECK-NEXT: v30 = PropGet v29 key="#reads"
+// CHECK-NEXT: Unreachable
+// CHECK-NEXT: b13(v31):
+// CHECK-NEXT: v32 = NewRuntimeError runtimeError=InvalidPrivateRead
+// CHECK-NEXT: Throw v32
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="tagOnThis"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] captures=[{type=function flags=[IsFromCompiler]}, {type=anything}] thisType={type=function flags=[IsExpected]} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes={{*}}[[f_18]]] {

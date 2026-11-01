@@ -1,13 +1,14 @@
 // Bun.serve keeps `fetch` where only native code finds it, and calls it with a new Request. What the handler reads of its request
 // costs the same whether or not the program also hands `globalThis` to a built-in: nobody gets from there to the handler.
-import { expect, setDefaultTimeout } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { built, spawned } from "./harness/commands";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { test } from "./supported";
 
-setDefaultTimeout(240_000);
+raiseDefaultTimeout(240_000);
 
 const tsconfig = JSON.stringify({
   compilerOptions: {
@@ -58,7 +59,6 @@ test("the handler reads its request without a test", async () => {
   expect(await build(server)).toEqual(known);
 });
 
-// TODO: the handler counts as one that anybody may call, and each read of the request is tested.
-test.todo("so it does where the global object is handed to Promise.race", async () => {
+test("so it does where the global object is handed to Promise.race", async () => {
   expect(await build("void Promise.race([globalThis]);\n" + server)).toEqual(known);
 });

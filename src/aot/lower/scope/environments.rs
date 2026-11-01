@@ -1,3 +1,4 @@
+use bun_sema::atom::Atom;
 use bun_sema::bind::{
     BindingKind, CommonJsVariable, InitialState, ScopeId, ScopeKind, SymbolId,
     has_simple_parameter_list,
@@ -12,7 +13,7 @@ use crate::builtins::{BuiltinPath, Mutability};
 use crate::ir::generated::{Field, FieldFlags, Layout, LayoutKind};
 use crate::ir::{
     ClassSlot, DeclaredType, LayoutId, LayoutKey, Mapped, OpaqueKind, PositionFlags, Primitives,
-    PropertyKey, Type, TypeTable,
+    PropertyKey, StringId, Type, TypeTable,
 };
 use crate::lower::{FileLowering, class};
 
@@ -53,6 +54,9 @@ impl FileLowering<'_, '_, '_, '_> {
         };
         // A name that stands for a module holds `true`, whatever type is written behind it.
         if self.inputs.modules.holder(self.file, symbol).is_some() {
+            return DeclaredType::untyped();
+        }
+        if self.is_replaceable(symbol) {
             return DeclaredType::untyped();
         }
         let position = self.binding_position(symbol);
@@ -110,7 +114,21 @@ impl FileLowering<'_, '_, '_, '_> {
             key: Some(key),
             declared: self.location_position(binding),
             flags,
+            variable_name: self.written_name(binding),
             ..Field::default()
+        }
+    }
+
+    /// What the source calls the binding. A heap snapshot shows what it holds under that name.
+    pub(in crate::lower) fn written_name(&mut self, binding: BindingRef) -> Option<StringId> {
+        match binding {
+            BindingRef::Symbol(symbol) => {
+                let name = self.bound.symbol(symbol).name;
+                (name != Atom::NONE).then(|| self.intern_atom(name))
+            }
+            BindingRef::Slot(_, ScopeSlot::This) => Some(self.intern_bytes(b"this")),
+            BindingRef::Slot(_, ScopeSlot::Arguments) => Some(self.intern_bytes(b"arguments")),
+            BindingRef::Slot(..) => None,
         }
     }
 

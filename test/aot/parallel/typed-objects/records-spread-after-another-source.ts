@@ -60,6 +60,7 @@ console.log(copy.inner === same.inner, copy !== same, Object.getPrototypeOf(copy
 const start = countsSoFar();
 let sum = 0;
 for (let i = 0; i < 2000; i++) { const r = make(i); sum += spreadSecond(firsts[0][1](), r).count + assignSecond(firsts[0][1](), r).count + assignOnto(JSON.parse('{"p":1}'), r).count; }
-// `make` writes a number into a name.
+// `make` writes a number into a name. Object.assign({}, first, second) copies the first and assigns the second in one call of the run time.
 const end = countsSoFar();
-console.log(sum, callsIn(end, "operationAOTIntToString") - callsIn(start, "operationAOTIntToString") <= 100);
+const owed = ["operationAOTIntToString", "operationAOTObjectAssignWithoutCode"];
+console.log(sum, callsIn(end, ...owed) - callsIn(start, ...owed) <= 100, callsIn(end, "operationAOTIntToString") - callsIn(start, "operationAOTIntToString") <= 2100);

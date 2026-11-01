@@ -581,9 +581,10 @@ bool JSX509Certificate::checkIP(JSGlobalObject* globalObject, WTF::StringView ip
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // utf8() asserts on failure. A string too long to convert isn't an IP address.
+    // utf8() asserts on failure. A string too long to convert isn't an IP address, and neither is one with a NUL,
+    // where the C string that checkIp() takes would end.
     auto ipUtf8 = ip.tryGetUTF8();
-    auto result = ipUtf8 ? view().checkIp(ipUtf8->legacyCStringPointer(), 0) : ncrypto::X509View::CheckMatch::INVALID_NAME;
+    auto result = ipUtf8 && !ip.contains(u'\0') ? view().checkIp(ipUtf8->legacyCStringPointer(), 0) : ncrypto::X509View::CheckMatch::INVALID_NAME;
     return handleMatchResult(globalObject, "Invalid IP address"_s, scope, result);
 }
 
@@ -1220,7 +1221,7 @@ JSValue JSX509Certificate::computeInfoAccess(ncrypto::X509View view, JSGlobalObj
         RETURN_IF_EXCEPTION(scope, {});
         if (existingValue) {
             JSArray* array = uncheckedDowncast<JSArray>(existingValue);
-            array->push(globalObject, jsString(vm, value));
+            array->putDirectIndex(globalObject, array->length(), jsString(vm, value));
             RETURN_IF_EXCEPTION(scope, {});
         } else {
             JSArray* array = constructEmptyArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), 1);

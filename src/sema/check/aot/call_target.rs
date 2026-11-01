@@ -152,10 +152,12 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
+    /// The file of the function that the parameters of the signature are written in.
     pub(super) fn find_file_of_signature(&self, signature: SigId) -> Option<FileId> {
         match *self.c.types().sig(signature) {
             SigData::Decl { file, .. } | SigData::Construct { file, .. } => Some(file),
-            SigData::DefaultConstruct { .. } | SigData::Synth { .. } => None,
+            SigData::DefaultConstruct { base, .. } => self.find_file_of_signature(base?),
+            SigData::Synth { .. } => None,
             SigData::WithReturn { sig: inner, .. } => self.find_file_of_signature(inner),
         }
     }

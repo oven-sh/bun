@@ -1,0 +1,148 @@
+# function measure(chunk: Uint8Array): number {
+#   return chunk.byteLength;
+# }
+# declare const input: any;
+# const chunks: Uint8Array[] = [new Uint8Array(4), Buffer.alloc(4)];
+# for (let turn = 0; turn < input; turn++) (globalThis as any).answer = measure(chunks[turn & 1]!);
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: x86_64 unsanitized-code
+# RUN(X64): lower-to-air size f1
+# REQUIRES(X64): x86_64 not-windows unsanitized-code
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+typesite w0 module=m0 position=107 kind=Variable
+typesite w1 module=m0 position=17 kind=Parameter
+typesite w2 module=m0 kind=Result
+typesite w3 module=m0 position=131 kind=CallResult
+typesite w4 module=m0 position=150 kind=CallResult
+typesite w5 module=m0 position=177 kind=Variable
+typesite w6 module=m0 position=246 kind=Element
+typesite w7 module=m0 position=238 kind=CallResult
+typesite w8 module=m0 position=55 kind=PropertyRead
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=Uint8Array
+    v3 = Integer integer=4
+    v4 = Construct v2, -, v3 calleeName="Uint8Array"
+    v5 = Convert v4 declared={type=undefined|null|Uint8Array site=w3 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="Buffer" [isFreeName]
+    v8 = Convert v7 declared={type=builtin(Buffer) flags=[IsExpected]}
+    v9 = PropGet v8 key="alloc"
+    v10 = Convert v9 declared={type=builtin(BufferAlloc) flags=[IsExpected]}
+    v11 = Integer integer=4
+    v12 = Call v10, v8, v11 calleeKey="alloc" calleeName="Buffer.alloc"
+    v13 = Convert v12 declared={type=undefined|null|Buffer site=w4 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v14 = NewArray v5, v13 contents=undefined|null|Uint8Array
+    v15 = Convert v14 declared={type=undefined|null|Array<undefined|null|Uint8Array> site=w0 flags=[OmitsNull, OmitsUndefined]}
+    v16 = Integer
+    v17 = Convert v16 declared={type=number site=w5}
+    Jump -> next b2(v17)
+  b2(v18: number):
+    LoopHint
+    v20 = Convert v18 declared={type=i32 flags=[IsExpected]}
+    v21 = Builtin builtin=GlobalThis
+    v22 = PropGet v21 key="input" [isFreeName]
+    v23 = Convert v22 declared={type=number flags=[IsExpected]}
+    v24 = Less v20, v23
+    Branch v24 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v25):
+    Jump -> next b4()
+  b4():
+    v26 = Builtin builtin=GlobalThis
+    v27 = PropGet v26 key="globalThis" [isFreeName]
+    v28 = Convert v27 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v29 = Convert v28 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v30 = Convert v25 declared={type=i32 flags=[IsExpected]}
+    v31 = Integer integer=1
+    v32 = BitAnd v30, v31
+    v33 = ElemGet v15, v32
+    v34 = Convert v33 declared={type=undefined|null|Uint8Array site=w6 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v35 = Call v1, -, v34 calleeName="measure"
+    v36 = Convert v35 declared={type=number site=w7}
+    PropSet v29, v36 key="answer"
+    Jump -> next b5()
+  b5():
+    v38 = Increment v30
+    v39 = Convert v38 declared={type=number site=w5}
+    Jump -> next b2(v39)
+  b6(v40):
+    Jump -> next b7()
+  b7():
+    v41 = Undefined
+    Return v41
+}
+function f1 name="measure" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Uint8Array site=w1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w2}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Uint8Array):
+    Jump -> next b1()
+  b1():
+    v1 = PropGet v0 key="byteLength"
+    v2 = Convert v1 declared={type=number site=w8} illTypedCause=Assertion
+    Return v2
+}
+# -- generated: *
+# CHECK-LABEL: function {{*}}name="measure"
+# CHECK: role=Source
+# CHECK-NEXT: BB#0: ; frequency = 1.000000
+# CHECK-NEXT: Int64 b@18 = ArgumentReg(%rdi)
+# CHECK-NEXT: Int32 b@21 = Load8Z<Traps>(b@18, offset = 5, range = JSCell_typeInfoType, ExitsSideways|ControlDependent|ReadsImmutable|Reads:Top, v1:RequireObjectCoercible)
+# CHECK-NEXT: Int32 b@22 = Load8Z(b@18, offset = 40, ControlDependent|Reads:JSArrayBufferView_mode)
+# CHECK-NEXT: Int32 b@23 = Const32(6)
+# CHECK-NEXT: Int32 b@24 = BitAnd(b@22, $6(b@23))
+# CHECK-NEXT: Void b@26 = Branch(b@24, Terminal)
+# CHECK-NEXT: Successors: Then:Rare:#2, Else:#4
+# CHECK-NEXT: BB#4: ; frequency = 0.999023
+# CHECK-NEXT: Predecessors: #0
+# CHECK-NEXT: Int64 b@27 = Load(b@18, offset = 24, ControlDependent|Reads:JSArrayBufferView_length)
+# CHECK-NEXT: Void b@30 = Upsilon(b@27, ^19, WritesLocalState)
+# CHECK-NEXT: Void b@31 = Jump(Terminal)
+# CHECK-NEXT: Successors: #3
+# CHECK-NEXT: BB#3: ; frequency = 1.000000
+# CHECK-NEXT: Predecessors: #4, #7
+# CHECK-NEXT: Int64 b@19 = Phi(ReadsLocalState, v2:Parameter)
+# CHECK-NEXT: Void b@49 = Return(b@19, Terminal)
+# CHECK-NEXT: BB#2: ; frequency = 0.000977
+# CHECK-NEXT: Predecessors: #0
+# CHECK-NEXT: Int64 b@32 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x300000007, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly}, v3:CallBuiltin)
+# CHECK-NEXT: Int64 b@34 = Patchpoint(b@32:Register(%r8), b@18:Register(%rax), resultConstraints = Register(%rax), ControlDependent|Reads:TypedArrayStorage, v3:CallBuiltin)
+# CHECK-NEXT: Int64 b@29 = ArgumentReg(%r13)
+# CHECK-NEXT: Int64 b@25 = Load(b@29, offset = 96, ReadsImmutable)
+# CHECK-NEXT: Int32 b@35 = AboveEqual(b@34, b@25)
+# CHECK-NEXT: Void b@36 = Branch(b@35, Terminal)
+# CHECK-NEXT: Successors: Then:#5, Else:Rare:#6
+# CHECK-NEXT: BB#5: ; frequency = 0.000976
+# CHECK-NEXT: Predecessors: #2
+# CHECK-NEXT: Int32 b@37 = Trunc(b@34)
+# CHECK-NEXT: Int64 b@38 = SExt32(b@37)
+# CHECK-NEXT: Void b@39 = Upsilon(b@38, ^46, WritesLocalState)
+# CHECK-NEXT: Void b@40 = Jump(Terminal)
+# CHECK-NEXT: Successors: #7
+# CHECK-NEXT: BB#7: ; frequency = 0.000977
+# CHECK-NEXT: Predecessors: #6, #5
+# CHECK-NEXT: Int64 b@46 = Phi(ReadsLocalState)
+# CHECK-NEXT: Void b@47 = Upsilon(b@46, ^19, WritesLocalState)
+# CHECK-NEXT: Void b@48 = Jump(Terminal)
+# CHECK-NEXT: Successors: #3
+# CHECK-NEXT: BB#6: ; frequency = 0.000001
+# CHECK-NEXT: Predecessors: #2
+# CHECK-NEXT: Int64 b@28 = Load(b@29, offset = 96, ReadsImmutable)
+# CHECK-NEXT: Int64 b@41 = Add(b@34, b@28)
+# CHECK-NEXT: Double b@42 = BitwiseCast(b@41)
+# CHECK-NEXT: Int64 b@43 = Patchpoint(b@42:SomeRegister, runsWithoutFrame, resultConstraints = SomeRegister, pureFunction = 0x500000000(children))
+# CHECK-NEXT: Void b@44 = Upsilon(b@43, ^46, WritesLocalState)
+# CHECK-NEXT: Void b@45 = Jump(Terminal)
+# CHECK-NEXT: Successors: #7
+# CHECK-NEXT: Known properties:
+# CHECK-NEXT: b@19: range = [0,4294967296]
+# CHECK-NEXT: end of function f1
+# X64-LABEL: function {{*}}name="measure"
+# X64: role=Source
+# X64-NEXT: instructions: 4, patchpoints: 0, rare instructions: 14
+# X64-NEXT: end of function f1

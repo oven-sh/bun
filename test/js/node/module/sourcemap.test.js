@@ -177,6 +177,186 @@ test("SourceMap with invalid name index has undefined name property", () => {
   `);
 });
 
+test("SourceMap findEntry in a segment with one field returns the generated position only", () => {
+  const sourceMap = new SourceMap({ version: 3, sources: ["a.ts"], names: [], mappings: "AAAA,I,IAAQ" });
+  const entry = sourceMap.findEntry(0, 5);
+
+  // Node.js v26.13.0 returns this object: the four other keys exist and are undefined.
+  expect(entry).toStrictEqual({
+    generatedLine: 0,
+    generatedColumn: 4,
+    originalSource: undefined,
+    originalLine: undefined,
+    originalColumn: undefined,
+    name: undefined,
+  });
+  expect(JSON.stringify(entry)).toBe('{"generatedLine":0,"generatedColumn":4}');
+  expect(sourceMap.findOrigin(0, 5)).toStrictEqual({});
+});
+
+// Every entry in this table is what Node.js v26.13.0 returns for the same findEntry call.
+const oneFieldSegments = [
+  [
+    "in the middle of a line",
+    "AAAA,I,IAAQ",
+    [],
+    [
+      [0, 3, { generatedLine: 0, generatedColumn: 0, originalSource: "a.ts", originalLine: 0, originalColumn: 0 }],
+      [0, 4, { generatedLine: 0, generatedColumn: 4 }],
+      [0, 5, { generatedLine: 0, generatedColumn: 4 }],
+      [0, 7, { generatedLine: 0, generatedColumn: 4 }],
+      [0, 8, { generatedLine: 0, generatedColumn: 8, originalSource: "a.ts", originalLine: 0, originalColumn: 8 }],
+      [0, 9, { generatedLine: 0, generatedColumn: 8, originalSource: "a.ts", originalLine: 0, originalColumn: 8 }],
+    ],
+  ],
+  [
+    "first on a line",
+    "E,IAAA",
+    [],
+    [
+      [0, 1, {}],
+      [0, 2, { generatedLine: 0, generatedColumn: 2 }],
+      [0, 5, { generatedLine: 0, generatedColumn: 2 }],
+      [0, 6, { generatedLine: 0, generatedColumn: 6, originalSource: "a.ts", originalLine: 0, originalColumn: 0 }],
+    ],
+  ],
+  [
+    "last on a line",
+    "AAAA,U;AACA",
+    [],
+    [
+      [0, 9, { generatedLine: 0, generatedColumn: 0, originalSource: "a.ts", originalLine: 0, originalColumn: 0 }],
+      [0, 10, { generatedLine: 0, generatedColumn: 10 }],
+      [0, 12, { generatedLine: 0, generatedColumn: 10 }],
+      [1, 0, { generatedLine: 1, generatedColumn: 0, originalSource: "a.ts", originalLine: 1, originalColumn: 0 }],
+    ],
+  ],
+  [
+    "last on the last line",
+    "AAAA,I;",
+    [],
+    [
+      [0, 3, { generatedLine: 0, generatedColumn: 0, originalSource: "a.ts", originalLine: 0, originalColumn: 0 }],
+      [0, 4, { generatedLine: 0, generatedColumn: 4 }],
+      [0, 5, { generatedLine: 0, generatedColumn: 4 }],
+    ],
+  ],
+  [
+    "last in the string",
+    "AAAA,I",
+    [],
+    [
+      [0, 3, { generatedLine: 0, generatedColumn: 0, originalSource: "a.ts", originalLine: 0, originalColumn: 0 }],
+      [0, 4, { generatedLine: 0, generatedColumn: 4, originalSource: "a.ts", originalLine: 0, originalColumn: 0 }],
+      [0, 5, { generatedLine: 0, generatedColumn: 4, originalSource: "a.ts", originalLine: 0, originalColumn: 0 }],
+    ],
+  ],
+  [
+    "alone in the string",
+    "E",
+    [],
+    [
+      [0, 1, {}],
+      [0, 2, { generatedLine: 0, generatedColumn: 2, originalSource: "a.ts", originalLine: 0, originalColumn: 0 }],
+      [0, 3, { generatedLine: 0, generatedColumn: 2, originalSource: "a.ts", originalLine: 0, originalColumn: 0 }],
+    ],
+  ],
+  [
+    "two in a row",
+    "AAAA,I,I,IAAY",
+    [],
+    [
+      [0, 3, { generatedLine: 0, generatedColumn: 0, originalSource: "a.ts", originalLine: 0, originalColumn: 0 }],
+      [0, 4, { generatedLine: 0, generatedColumn: 4 }],
+      [0, 7, { generatedLine: 0, generatedColumn: 4 }],
+      [0, 8, { generatedLine: 0, generatedColumn: 8 }],
+      [0, 11, { generatedLine: 0, generatedColumn: 8 }],
+      [0, 12, { generatedLine: 0, generatedColumn: 12, originalSource: "a.ts", originalLine: 0, originalColumn: 12 }],
+    ],
+  ],
+  [
+    "on a later line",
+    "AAAA;AACA,I,IAAQ",
+    [],
+    [
+      [1, 3, { generatedLine: 1, generatedColumn: 0, originalSource: "a.ts", originalLine: 1, originalColumn: 0 }],
+      [1, 4, { generatedLine: 1, generatedColumn: 4 }],
+      [1, 6, { generatedLine: 1, generatedColumn: 4 }],
+      [1, 8, { generatedLine: 1, generatedColumn: 8, originalSource: "a.ts", originalLine: 1, originalColumn: 8 }],
+    ],
+  ],
+  [
+    "alone on a later line",
+    "AAAA;A;AAEA",
+    [],
+    [
+      [0, 7, { generatedLine: 0, generatedColumn: 0, originalSource: "a.ts", originalLine: 0, originalColumn: 0 }],
+      [1, 0, { generatedLine: 1, generatedColumn: 0 }],
+      [1, 7, { generatedLine: 1, generatedColumn: 0 }],
+      [2, 0, { generatedLine: 2, generatedColumn: 0, originalSource: "a.ts", originalLine: 2, originalColumn: 0 }],
+    ],
+  ],
+  [
+    "at the column of the segment before it",
+    "AAAA,A,IAAI",
+    [],
+    [
+      [0, 0, { generatedLine: 0, generatedColumn: 0 }],
+      [0, 3, { generatedLine: 0, generatedColumn: 0 }],
+      [0, 4, { generatedLine: 0, generatedColumn: 4, originalSource: "a.ts", originalLine: 0, originalColumn: 4 }],
+    ],
+  ],
+  [
+    "before the segment before it",
+    "IAAA,H,QAAQ",
+    [],
+    [
+      [0, 0, {}],
+      [0, 1, { generatedLine: 0, generatedColumn: 1 }],
+      [0, 3, { generatedLine: 0, generatedColumn: 1 }],
+      [0, 4, { generatedLine: 0, generatedColumn: 4, originalSource: "a.ts", originalLine: 0, originalColumn: 0 }],
+      [0, 9, { generatedLine: 0, generatedColumn: 9, originalSource: "a.ts", originalLine: 0, originalColumn: 8 }],
+    ],
+  ],
+  [
+    "between segments that have names",
+    "AAAAA,I,IAAQC",
+    ["x", "y"],
+    [
+      [
+        0,
+        3,
+        { generatedLine: 0, generatedColumn: 0, originalSource: "a.ts", originalLine: 0, originalColumn: 0, name: "x" },
+      ],
+      [0, 4, { generatedLine: 0, generatedColumn: 4 }],
+      [0, 7, { generatedLine: 0, generatedColumn: 4 }],
+      [
+        0,
+        8,
+        { generatedLine: 0, generatedColumn: 8, originalSource: "a.ts", originalLine: 0, originalColumn: 8, name: "y" },
+      ],
+    ],
+  ],
+];
+
+test.each(oneFieldSegments)("SourceMap findEntry with a one-field segment %s", (_, mappings, names, entries) => {
+  const sourceMap = new SourceMap({ version: 3, sources: ["a.ts"], names, mappings });
+  for (const [line, column, entry] of entries) {
+    expect({ line, column, entry: sourceMap.findEntry(line, column) }).toEqual({ line, column, entry });
+  }
+});
+
+test("SourceMap findEntry with a one-field segment last in the string of a map that has no sources", () => {
+  const sourceMap = new SourceMap({ version: 3, sources: [], names: [], mappings: "E,I" });
+
+  // Node.js v26.13.0 adds originalLine 0 and originalColumn 0 to the second entry, of a source that does not exist.
+  expect([sourceMap.findEntry(0, 3), sourceMap.findEntry(0, 7)]).toEqual([
+    { generatedLine: 0, generatedColumn: 2 },
+    { generatedLine: 0, generatedColumn: 6 },
+  ]);
+  expect(sourceMap.findOrigin(0, 7)).toStrictEqual({});
+});
+
 test("SourceMap handles mappings with truncated VLQ segments without crashing", async () => {
   await using proc = Bun.spawn({
     cmd: [

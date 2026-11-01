@@ -164,7 +164,7 @@ async function assertSimdMatchesScalar(
     expect({ label, simdRan: simd.debug.includes("simd consumed") }).toEqual({ label, simdRan: true });
     expect({ label, scalarRan: scalar.debug.includes("simd consumed") }).toEqual({ label, scalarRan: false });
   }
-  return scalar;
+  return { ...scalar, simdDebug: simd.debug };
 }
 
 describe.concurrent("SourceMap SIMD mappings decode", () => {
@@ -289,7 +289,7 @@ describe.concurrent("SourceMap SIMD mappings decode", () => {
     expect(scalar.entries[139].name).toBe("n0");
   });
 
-  test("1-field (generated-column-only) segments are skipped but accumulate", async () => {
+  test("1-field (generated-column-only) segments move the generated column of the next segment", async () => {
     // Interleave 1-field and 4-field so the generated column a 4-field
     // segment lands on depends on the preceding 1-field deltas.
     const lines: number[][][] = [[]];
@@ -304,6 +304,54 @@ describe.concurrent("SourceMap SIMD mappings decode", () => {
     // The k'th 4-field segment lands at gen column 5*k + 5 - 0 = 5k+5... check one.
     expect(scalar.entries[0].generatedColumn).toBe(5);
     expect(scalar.entries[1].generatedColumn).toBe(10);
+  });
+
+  test("1-field segments keep a row that has no source", async () => {
+    // Line 0 is long and has no ';', so the SIMD decoder tries its batched
+    // path on it. Each of the next lines has a 1-field segment first on the
+    // line, two in a row, and one last on the line.
+    const lines: number[][][] = [[]];
+    for (let i = 0; i < 30; i++) lines[0].push([3], [2, 0, 0, 1]);
+    for (let li = 0; li < 12; li++) lines.push([[1], [2, 0, 1, 3], [4], [5], [2, 0, 0, 1], [6]]);
+    lines.push([[0, 0, 1, 0]]);
+    const { mappings, sourcesLen } = build(lines);
+    expect(mappings.length).toBeGreaterThanOrEqual(128);
+
+    // Probe the first column of every segment and the column after it.
+    const probes: Array<[number, number]> = [];
+    const expected: Entry[] = [];
+    let originalLine = 0;
+    let originalColumn = 0;
+    lines.forEach((segments, generatedLine) => {
+      let generatedColumn = 0;
+      for (const segment of segments) {
+        generatedColumn += segment[0];
+        const hasSource = segment.length > 1;
+        if (hasSource) {
+          originalLine += segment[2];
+          originalColumn += segment[3];
+        }
+        const entry: Entry = {
+          generatedLine,
+          generatedColumn,
+          originalLine: hasSource ? originalLine : null,
+          originalColumn: hasSource ? originalColumn : null,
+          originalSource: hasSource ? "s0.js" : null,
+          name: null,
+        };
+        probes.push([generatedLine, generatedColumn], [generatedLine, generatedColumn + 1]);
+        expected.push(entry, entry);
+      }
+    });
+
+    const scalar = await assertSimdMatchesScalar("1-field-rows", mappings, sourcesLen, 0, probes);
+    expect({ error: scalar.error, entries: scalar.entries }).toEqual({ error: null, entries: expected });
+    if (isDebug) {
+      // The SIMD decoder hands less than one block (at most 64 bytes) to the
+      // scalar loop, so it is the one that read the 1-field segments.
+      const consumed = Number(/simd consumed (\d+)\//.exec(scalar.simdDebug)?.[1]);
+      expect(consumed).toBeGreaterThan(mappings.length - 64);
+    }
   });
 
   test("semicolon runs (line resets) and trailing ';'", async () => {

@@ -1247,6 +1247,41 @@ test("reports an uncalled function on the last line of a // @bun file without a 
   expect(exitCode).toBe(0);
 });
 
+// A segment of a source map with one field says that the generated code from its column on comes from no source.
+test("a function in generated code that has no source is not a function of the file", async () => {
+  const line = "export function app() { return 1; } function glue() { return 2; }";
+  expect(line.indexOf("function glue")).toBe(36);
+  using dir = tempDir("cov-no-source-segment", {
+    "prebuilt.js": `// @bun\n${line}\n//# sourceMappingURL=prebuilt.js.map\n`,
+    // Line 1 maps to line 1 of the source up to column 36, where the one-field segment "oC" starts.
+    "prebuilt.js.map": JSON.stringify({
+      version: 3,
+      sources: ["prebuilt.ts"],
+      sourcesContent: [null],
+      names: [],
+      mappings: ";AAAA,oC;",
+    }),
+    "a.test.ts": `
+      import { expect, test } from "bun:test";
+      import { app } from "./prebuilt.js";
+      test("calls app", () => { expect(app()).toBe(1); });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain(" 1 pass");
+  const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
+  const record = lcov.split("end_of_record").find(r => r.includes("SF:prebuilt.js\n"));
+  expect(record?.trim()).toBe("TN:\nSF:prebuilt.js\nFNF:1\nFNH:1\nDA:1,1\nLF:1\nLH:1");
+  expect(exitCode).toBe(0);
+});
+
 // `braces.ts` in `source-positions-corpus.ts` has this for a file that Bun transpiles and reports by its source map.
 test.concurrent.each(["// @bun", "// @bun with a source map", "coverageIgnoreSourcemaps"])(
   "both braces of an object are listed and no brace of a block is: %s",

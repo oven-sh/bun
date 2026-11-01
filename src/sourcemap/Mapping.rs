@@ -206,7 +206,13 @@ impl List {
         both_lists!(&self.r#impl, |list| list.len())
     }
 
+    /// The mapping that covers `line:column`. `None` in a segment that has no source.
     pub fn find(&self, line: Ordinal, column: Ordinal) -> Option<Mapping> {
+        self.find_segment(line, column).filter(Mapping::has_source)
+    }
+
+    /// `find`, except that a position in a segment that has no source finds the row of that segment.
+    pub(crate) fn find_segment(&self, line: Ordinal, column: Ordinal) -> Option<Mapping> {
         match &self.r#impl {
             ListValue::WithoutNames(list) => {
                 if let Some(i) =
@@ -417,6 +423,25 @@ impl Mapping {
     pub fn original_column(&self) -> i32 {
         self.original.columns.zero_based()
     }
+
+    /// False for the row of a one-field segment: generated code that comes from no source.
+    #[inline]
+    pub fn has_source(&self) -> bool {
+        self.source_index >= 0
+    }
+
+    /// The row of a one-field segment. No mapping has -1 as its source index, line or column.
+    fn without_source(generated: LineColumnOffset) -> Mapping {
+        Mapping {
+            generated,
+            original: LineColumnOffset {
+                lines: Ordinal::INVALID,
+                columns: Ordinal::INVALID,
+            },
+            source_index: -1,
+            name_index: -1,
+        }
+    }
 }
 
 #[derive(Default, Clone, Copy)]
@@ -552,23 +577,23 @@ pub fn parse(
 
         remain = &remain[generated_column_delta.start..];
 
-        // According to the specification, it's valid for a mapping to have 1,
-        // 4, or 5 variable-length fields. Having one field means there's no
-        // original location information, which is pretty useless. Just ignore
-        // those entries.
-        if remain.len() == 0 {
-            break;
-        }
-
-        match remain[0] {
-            b',' => {
+        if matches!(remain.first(), None | Some(b',' | b';')) {
+            // Node reads a one-field segment that ends the string as a mapped one with zero deltas.
+            let row = if remain.is_empty() && source_index < sources_count {
+                Mapping {
+                    generated,
+                    original,
+                    source_index,
+                    name_index: if has_names { name_index } else { -1 },
+                }
+            } else {
+                Mapping::without_source(generated)
+            };
+            bun_core::handle_oom(mapping.append(&row));
+            if remain.first() == Some(&b',') {
                 remain = &remain[1..];
-                continue;
             }
-            b';' => {
-                continue;
-            }
-            _ => {}
+            continue;
         }
 
         // Read the original source

@@ -9,7 +9,7 @@
       "adapter*web-standard*map-response.test.ts": "TEMPORARY: Bun's Response.redirect now puts the WHATWG serialization of the url into Location (oven-sh/bun#33126), matching Node and https://fetch.spec.whatwg.org/#dom-response-redirect, so Response.redirect('https://cunny.school') yields 'https://cunny.school/'. elysia 1.4.28's 'map redirect' test asserts the unserialized string; remove this skip once the upstream assertion expects the trailing slash.",
       "adapter*web-standard*map-early-response.test.ts": "TEMPORARY: same as adapter*web-standard*map-response.test.ts; its 'map redirect' test asserts the unserialized Response.redirect Location value.",
       "response*stream.test.ts": {
-        "tests": ["stop stream on canceled request"],
+        "tests": ["Stream stop stream on canceled request"],
         "reason": "TEMPORARY: the test arms controller.abort() 15 ms ahead, then calls app.handle() and expects the chunks 'a' and 'b', which the handler yields 10 ms apart. 'b' comes first only when the handler's first Bun.sleep(10) starts within about 4.5 ms of the setTimeout() call. With a release build a garbage collection runs inside that app.handle() call in 40 of 40 runs, so the test passes only when that pause is short. When it is not, the abort closes the stream before 'b' and expect(expected).toHaveLength(0) fails with length 1 (x64-asan, every attempt in builds 135832, 135849, 136044, 136083 and 136186). Bun closes the stream when the signal aborts, which is correct. The other 25 tests of the file still run. Remove this skip once the upstream test does not depend on timing."
       }
     }

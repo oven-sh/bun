@@ -8,7 +8,7 @@ const skipTests: VendorSkipTests = {
   "ws*connection.test.ts": "reason",
   "core*stop.test.ts": true,
   "a*b.test.ts": false,
-  "response*stream.test.ts": { tests: ["stop stream on canceled request", "a+b (c)"], reason: "reason" },
+  "response*stream.test.ts": { tests: ["Stream stop stream on canceled request", "Stream a+b (c)"], reason: "reason" },
   "response*.test.ts": { tests: ["every response file"], reason: "reason" },
 };
 
@@ -22,6 +22,7 @@ describe("isVendorTestSkipped", () => {
       tests: isVendorTestSkipped(skipTests, "response/stream.test.ts"),
       unlisted: isVendorTestSkipped(skipTests, "ws/message.test.ts"),
       longerName: isVendorTestSkipped(skipTests, "ws/connection.test.tsx"),
+      otherCharacterForTheDot: isVendorTestSkipped(skipTests, "ws/connection-test.ts"),
     }).toEqual({
       string: true,
       backslash: true,
@@ -30,6 +31,7 @@ describe("isVendorTestSkipped", () => {
       tests: false,
       unlisted: false,
       longerName: false,
+      otherCharacterForTheDot: false,
     });
   });
 
@@ -47,12 +49,13 @@ describe("getVendorTestArgs", () => {
     expect({
       skippedFile: getVendorTestArgs(skipTests, "ws/connection.test.ts"),
       unlisted: getVendorTestArgs(skipTests, "ws/message.test.ts"),
+      otherCharacterForTheDot: getVendorTestArgs(skipTests, "response/stream-test.ts"),
       boolean: getVendorTestArgs(true, "a.test.ts"),
       undefined: getVendorTestArgs(undefined, "a.test.ts"),
-    }).toEqual({ skippedFile: [], unlisted: [], boolean: [], undefined: [] });
+    }).toEqual({ skippedFile: [], unlisted: [], otherCharacterForTheDot: [], boolean: [], undefined: [] });
   });
 
-  test("the pattern matches every test name that contains none of the skipped ones", () => {
+  test("the pattern matches every test name that is not a skipped one", () => {
     const [flag, pattern, ...rest] = getVendorTestArgs(skipTests, "response\\stream.test.ts");
     expect({ flag, rest }).toEqual({ flag: "--test-name-pattern", rest: ["--pass-with-no-tests"] });
     const selects = (name: string) => new RegExp(pattern!).test(name);
@@ -61,8 +64,20 @@ describe("getVendorTestArgs", () => {
       escaped: selects("Stream a+b (c)"),
       fromTheOtherGlob: selects("every response file"),
       unescapedWouldMatch: selects("Stream aab c"),
+      longer: selects("Stream stop stream on canceled request early"),
+      inAnotherDescribe: selects("Other stop stream on canceled request"),
+      withoutTheDescribe: selects("stop stream on canceled request"),
       other: selects("Stream handle stream"),
-    }).toEqual({ skipped: false, escaped: false, fromTheOtherGlob: false, unescapedWouldMatch: true, other: true });
+    }).toEqual({
+      skipped: false,
+      escaped: false,
+      fromTheOtherGlob: false,
+      unescapedWouldMatch: true,
+      longer: true,
+      inAnotherDescribe: true,
+      withoutTheDescribe: true,
+      other: true,
+    });
   });
 
   async function runStreamFixture(skipped: string[]) {
@@ -72,7 +87,9 @@ describe("getVendorTestArgs", () => {
         describe("Stream", () => {
           it("handle stream", () => expect(1).toBe(1));
           it("stop stream on canceled request", () => expect(1).toBe(2));
+          it("stop stream on canceled request early", () => expect(1).toBe(1));
           it("a+b (c)", () => expect(1).toBe(2));
+          it("two\\nlines", () => expect(1).toBe(2));
         });
       `,
     });
@@ -87,20 +104,27 @@ describe("getVendorTestArgs", () => {
     const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { stderr, exitCode };
   }
+  const failing = ["Stream stop stream on canceled request", "Stream a+b (c)", "Stream two\nlines"];
 
   test.concurrent("bun test runs the file without the skipped tests", async () => {
-    const { stderr, exitCode } = await runStreamFixture(["stop stream on canceled request", "a+b (c)"]);
+    const { stderr, exitCode } = await runStreamFixture(failing);
     expect(stderr.match(/^ *\d+ (?:pass|fail|filtered out)$/gm)?.map(line => line.trim())).toEqual([
-      "1 pass",
-      "2 filtered out",
+      "2 pass",
+      "3 filtered out",
       "0 fail",
     ]);
     expect(exitCode).toBe(0);
   });
 
   test.concurrent("a file with no test left passes, as a skipped file does", async () => {
-    const { stderr, exitCode } = await runStreamFixture(["Stream"]);
-    expect(stderr).toContain("matched 0 tests");
+    const { stderr, exitCode } = await runStreamFixture([
+      ...failing,
+      "Stream handle stream",
+      "Stream stop stream on canceled request early",
+    ]);
+    expect(stderr.match(/matched 0 tests\. Searched \d+ files? \(skipping \d+ tests?\)/)?.[0]).toBe(
+      "matched 0 tests. Searched 1 file (skipping 5 tests)",
+    );
     expect(exitCode).toBe(0);
   });
 });
@@ -125,7 +149,7 @@ describe("test/vendor.json", () => {
         {
           "args": [
             "--test-name-pattern",
-            "^(?!.*(?:stop stream on canceled request))",
+            "^(?!(?:Stream stop stream on canceled request)$)",
             "--pass-with-no-tests",
           ],
           "glob": "response*stream.test.ts",
@@ -136,7 +160,7 @@ describe("test/vendor.json", () => {
   });
 
   test("each { tests } skip gives a reason and names tests the way bun test matches them", () => {
-    // A blank name is in every test name. A name with the reporter's " > " is in none.
+    // No test has a blank name, or a name with the " > " that the reporter prints between the parts.
     expect(
       entries.map(({ glob, skip }) => ({
         glob,

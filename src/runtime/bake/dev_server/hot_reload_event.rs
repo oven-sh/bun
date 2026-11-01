@@ -163,6 +163,13 @@ impl HotReloadEvent {
         }
 
         let changed_file_paths = self.files.keys();
+        // `invalidate` bundles a failed page again with a file that changed. The page must not resolve that file from a directory listing that is older than the change.
+        if !dev.bundling_failures.is_empty() {
+            for path in changed_file_paths {
+                let dir = bun_paths::dirname(path).unwrap_or(path);
+                let _ = dev.server_transpiler.resolver.bust_dir_cache(dir);
+            }
+        }
         bun_core::handle_oom(
             dev.server_graph
                 .invalidate(changed_file_paths, entry_points),

@@ -357,9 +357,16 @@ function checkoutWith(changes: Record<string, string | undefined>): Record<strin
 const python = isWindows ? "python" : "python3";
 
 const hardenedIcuScript = join(import.meta.dir, "..", "..", "scripts", "build", "hardened-icu.sh");
-/** hardened-icu.sh runs on a Linux host, with these tools: only a Linux target is hardened. */
+/**
+ * hardened-icu.sh runs on a Linux host, with these tools: only a Linux target is hardened. The patch is GNU's: that of
+ * BusyBox has no -s and no -d.
+ */
 const canRunHardenedIcu =
-  isLinux && ["bash", "tar", "patch", "make", "sha256sum", "nproc"].every(tool => Bun.which(tool) !== null);
+  isLinux &&
+  ["bash", "tar", "patch", "make", "sha256sum", "nproc"].every(tool => Bun.which(tool) !== null) &&
+  Bun.spawnSync({ cmd: ["patch", "--version"], env: bunEnv })
+    .stdout.toString()
+    .startsWith("GNU patch");
 
 /**
  * What hardened-icu.sh builds from, reduced. The tarball's configure writes down the compilers and flags it is given

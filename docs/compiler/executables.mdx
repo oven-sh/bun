@@ -975,6 +975,10 @@ Pass `--asset` multiple times to embed several directories (for example `--asset
 
 With `--aot`, your modules and the files you embed keep their places relative to one another. Next to `./dist/server/entry.mjs`, `--asset dist/client` is at `path.join(import.meta.dir, "../client")`, the same as under `bun run`.
 
+`__dirname`, `__filename` and `require.resolve()` give the path your source file had on the machine that ran the build, with and without `--aot`. An executable that uses one of them contains that path, so two builds in different directories differ. `import.meta.dir`, `import.meta.path` and `import.meta.url` start with `/$bunfs/root/` instead.
+
+With `--aot`, those paths keep working after you ship the executable. If a path under the build directory doesn't exist on the machine, Bun looks in the executable: `path.join(__dirname, "public")` finds the files of `--asset ./public`, `require(path.join(__dirname, "commands", file))` loads the compiled file, and `process.chdir(__dirname)` succeeds. If the path does exist, the file on disk wins, so on the build machine you can also read a file that you didn't embed.
+
 Embedded files are read-only, and writing to one fails with `EROFS`. `process.chdir()` works on an embedded directory.
 
 You can also embed individual files via the `with { type: "file" }` import attribute or, for files that use the `file` loader (images, fonts, and so on) as well as `.wasm` and `.node` files, by adding them as extra entry points. With `--aot` an extra entry point is always compiled as code, so use `--asset` for these. Bun renames imported assets according to `--asset-naming` (default `[name]-[hash].[ext]`):
@@ -1410,7 +1414,7 @@ interface CompileBuildOptions {
   aotLogTypeMismatches?: boolean; // With aot: log values that don't match their declared type (default: false)
   aotExplain?: AotReport | AotReport[]; // With aot: reports to add to BuildOutput.logs, such as "guards"
   functionSource?: boolean; // With aot: embed function source code for fn.toString() (default: true)
-  allowCodeFromDisk?: boolean; // With aot: let import() and require() load code from disk (default: false)
+  allowCodeFromDisk?: boolean; // With aot: let import(), require() and new Worker() load code from disk (default: false)
   inspector?: boolean; // With aot: let a debugger attach to the executable (default: false)
   trim?: boolean | TrimOptions; // Remove the Bun and Node.js APIs your code never calls (default: false)
   disallowCodeGenerationFromStrings?: boolean | "strict"; // eval() and new Function() throw (default: false)

@@ -1,5 +1,5 @@
 use super::{CompileRequest, FileWork, LoadedProgram};
-use crate::{LoadedFiles, PlanOptions, Report, Request, check_loaded_files};
+use crate::{LoadedFiles, PlanOptions, Report, Request, TaskSize, check_loaded_files};
 use bun_sema::program::FileId;
 use bun_sema::resolve::Host;
 use std::time::Instant;
@@ -55,6 +55,7 @@ fn queue_request<'a>(request: &CompileRequest<'a, '_>) -> Request<'a> {
         order: 1,
         plan_options: PlanOptions {
             after_file_only_for_checked_files: true,
+            task_size: TaskSize::ByCostAndThreads,
             ..PlanOptions::default()
         },
         stops_like_tsc: false,

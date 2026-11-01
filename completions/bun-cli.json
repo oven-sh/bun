@@ -4707,7 +4707,7 @@
         },
         {
           "name": "aot-allow-code-from-disk",
-          "description": "With --aot: let import() and require() load code that isn't in the executable from disk at run time. Makes it larger and slower",
+          "description": "With --aot: let import(), require() and new Worker() load code that isn't in the executable from disk at run time. Makes it larger and slower",
           "hasValue": false,
           "required": false,
           "multiple": false

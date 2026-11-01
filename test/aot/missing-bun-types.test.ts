@@ -649,6 +649,26 @@ const stillErrors: [string, string, string[]][] = [
   ["a name that is nearly one of Bun's", `consle.log("typo");\n`, ["TS2552"]],
   ["a type error", `const port: number = "3000";\nconsole.log(port);\n`, ["TS2322"]],
   [
+    "a member that neither an interface nor the program's own interface above it has",
+    `interface Above {\n  port: number;\n}\ninterface Below extends Above {}\nconst value: Below = { port: 1 };\nconsole.log(value.port, value.host);\n`,
+    ["TS2339"],
+  ],
+  [
+    "a member written for an interface that neither it nor the program's own interface above it has",
+    `interface Above {\n  port: number;\n}\ninterface Below extends Above {}\nconst value: Below = { port: 1, host: "a" };\nconsole.log(value.port);\n`,
+    ["TS2353"],
+  ],
+  [
+    "an interface below a type that nothing declares",
+    `interface Below extends Above {\n  port: number;\n}\nconst value: Below = { port: 1 };\nconsole.log(value.port);\n`,
+    ["TS2304"],
+  ],
+  [
+    "a type that the program's own namespace does not have",
+    `namespace Own {\n  export type Port = number;\n}\nconst value: Own.Stats = 1;\nconsole.log(value);\n`,
+    ["TS2694"],
+  ],
+  [
     "a wrong use of what TypeScript's own libraries declare",
     `const size: string = new Map<string, number>().size;\nconsole.log(size, [1].lenght);\n`,
     ["TS2322", "TS2551"],
@@ -708,6 +728,11 @@ const stillErrors: [string, string, string[]][] = [
     "a global that is no class, used as a type",
     `const memory: WebAssembly | undefined = undefined;\nconsole.log(memory);\n`,
     ["TS2749"],
+  ],
+  [
+    "one mistake alone, beside the whole of Bun, however it is reached, where the program's own type is expected",
+    `import * as all from "bun";\nimport whole from "bun";\ninterface Wanted { main: string; plugin: unknown }\nconst wrong: number = "text";\nconst list: (Wanted | undefined)[] = [Bun, globalThis.Bun, Reflect.get(globalThis, "Bun"), all, whole, (await import("bun")).default];\nconsole.log(wrong, list.length);\n`,
+    ["TS2322"],
   ],
   [
     "a missing member whose name quotes ImportMeta",
@@ -813,6 +838,910 @@ describe.concurrent("without Bun's type declarations", () => {
         const stopped = { errors, warnings: [], exitCode: 1, signal: null };
         expect(await check(String(dir), "--aot")).toEqual(stopped);
         expect(await build(String(dir))).toEqual(stopped);
+      }),
+    buildTimeout,
+  );
+
+  test(
+    "the whole of Bun goes where the program's own type is expected, in a program that does not fit Bun's declarations",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-missing-bun-types", {
+          "main.ts": `interface Wanted { main: string; version: string }\nconst odd: number = Bun.version;\nconst found: Wanted | undefined = Reflect.get(globalThis, "Bun");\nconst direct: Wanted = Bun;\nconsole.log(typeof odd, typeof found?.main, direct.version === Bun.version);\n`,
+        });
+        expect(await build(String(dir))).toEqual(built);
+        expect(await run(String(dir), "compiled")).toEqual(await run(String(dir), "plain"));
+      }),
+    buildTimeout,
+  );
+
+  // `declare module "node:fs";` is all that stands in for the module then, and TypeScript finds no `Stats` in that.
+  test(
+    "a type named through a module of Node.js or through NodeJS is any, in a program that does not fit Bun's declarations",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-missing-bun-types", {
+          "main.ts": `import * as fs from "node:fs";
+import path from "node:path";
+import type * as http from "node:http";
+import events = require("node:events");
+import * as all from "./again";
+declare global {
+  namespace NodeJS {
+    interface ProcessEnv {
+      A_NAME_THAT_NOBODY_SETS?: string;
+    }
+  }
+}
+declare module "node:fs" {
+  interface Mine {
+    size: number;
+  }
+}
+interface Options extends fs.StatOptions {
+  extra: number;
+}
+class Bus extends events.EventEmitter implements NodeJS.EventEmitter {}
+function later(handler: () => void, timeout: number, ...args: any[]): number | ReturnType<typeof setTimeout> {
+  return setTimeout(handler, timeout, ...args);
+}
+const odd: number = process.argv.length.toString();
+const stats: fs.Stats = fs.statSync(".");
+const again: all.fs.Stats = stats;
+const key: keyof fs.Stats = "size";
+const parsed: path.ParsedPath = path.parse("/a/b.txt");
+const handle: fs.promises.FileHandle | undefined = undefined;
+const listener: http.RequestListener<typeof http.IncomingMessage> | undefined = undefined;
+const mine: fs.Mine = { size: 1 };
+const options: Options = { extra: 2 };
+const current: NodeJS.Process = process;
+const table: NodeJS.Dict<string> = { a: "b" };
+const timer: NodeJS.Timeout = setTimeout(() => {}, 0);
+clearTimeout(timer);
+console.log(stats.isDirectory(), again === stats, typeof stats[key], parsed.base, handle, listener, mine.size, options.extra);
+console.log(typeof current.pid, table.a, new Bus() instanceof events.EventEmitter, typeof later, typeof odd, process.env.A_NAME_THAT_NOBODY_SETS);
+`,
+          "again.ts": `export * as fs from "node:fs";\n`,
+        });
+        expect(await build(String(dir))).toEqual(built);
+        const expected = {
+          stdout: "true true number b.txt undefined undefined 1 2\nnumber b true function string undefined\n",
+          exitCode: 0,
+          signal: null,
+        };
+        expect(await run(String(dir), "plain")).toEqual(expected);
+        expect(await run(String(dir), "compiled")).toEqual(expected);
+      }),
+    buildTimeout,
+  );
+
+  // No table of the run time has a name that is a type alone. The build has seen the program with Bun's declarations by then: what had a declaration there is Bun's.
+  test(
+    "a global of Bun or of Node.js that is a type alone is any, in a program that does not fit Bun's declarations",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-missing-bun-types", {
+          "main.ts": `function later(handler: () => void, timeout: number, ...args: any[]): number | ReturnType<typeof setTimeout> {
+  return setTimeout(handler, timeout, ...args);
+}
+interface Failure extends ErrnoException {
+  attempts: number;
+}
+class Counts implements Dict<number> {
+  [name: string]: number | undefined;
+}
+type Sizes = Partial<Record<BufferEncoding, number>>;
+function explain(failure: Failure): string {
+  return failure.code + " after " + failure.attempts;
+}
+function decode(bytes: NonSharedBuffer, encoding: BufferEncoding = "utf8"): string {
+  return bytes.toString(encoding);
+}
+const encoding: BufferEncoding = "hex";
+const bytes: Buffer<ArrayBuffer> = Buffer.from("6869", encoding);
+const table: Dict<number> = { a: 1 };
+const sizes: Sizes = { hex: 2 };
+const counts = new Counts();
+counts.b = 2;
+const file: Bun.BunFile = Bun.file("nothing-here");
+const server: Bun.Server<undefined> | null = null;
+const controller: ReadableStreamDirectController | undefined = undefined;
+const failure: Failure = Object.assign(new Error("gone"), { code: "ENOENT", attempts: 3 });
+console.log(decode(bytes), bytes.length, table.a, sizes.hex, counts.b, typeof file.size, server, controller);
+console.log(explain(failure), typeof later);
+`,
+        });
+        expect(await build(String(dir))).toEqual(built);
+        const expected = {
+          stdout: "hi 2 1 2 2 number null undefined\nENOENT after 3 function\n",
+          exitCode: 0,
+          signal: null,
+        };
+        expect(await run(String(dir), "plain")).toEqual(expected);
+        expect(await run(String(dir), "compiled")).toEqual(expected);
+      }),
+    buildTimeout,
+  );
+
+  test(
+    "a name that nothing declares stops the build beside one of Bun's, in a program that does not fit Bun's declarations",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-missing-bun-types", {
+          "main.ts": `const odd: number = process.argv.length.toString();
+const encoding: BufferEncoding = "utf8";
+const wrong: NotDeclaredAnywhere = 1;
+const list: OwnList<number> = [1];
+type OwnList = number[];
+console.log(odd, encoding, wrong, list, neitherIsThis, [1].lenght);
+`,
+        });
+        const errors = ["TS2304", "TS2304", "TS2315", "TS2551"];
+        expect(await build(String(dir))).toEqual({ errors, warnings: [], exitCode: 1, signal: null });
+      }),
+    buildTimeout,
+  );
+
+  // Bun declares "*.txt", so with its declarations nothing is said at the import. Without them the project's own files and options count.
+  test(
+    "a declaration beside a text file that tsconfig.json does not allow stops the build, in a program that does not fit Bun's declarations",
+    () =>
+      slot(async () => {
+        const options = {
+          target: "esnext",
+          module: "preserve",
+          moduleResolution: "bundler",
+          noEmit: true,
+          strict: true,
+        };
+        using dir = tempDir("aot-missing-bun-types", {
+          "main.ts": `import text from "./note.txt";
+const declared: "declared" = text;
+const encoding: BufferEncoding = "utf8";
+console.log(typeof declared, encoding);
+`,
+          "note.txt": "words\n",
+          "note.d.txt.ts": `declare const text: "declared";\nexport default text;\n`,
+          "tsconfig.json": JSON.stringify({ compilerOptions: options }),
+        });
+        expect(await build(String(dir))).toEqual({ errors: ["TS6263"], warnings: [], exitCode: 1, signal: null });
+        await Bun.write(
+          join(String(dir), "tsconfig.json"),
+          JSON.stringify({ compilerOptions: { ...options, allowArbitraryExtensions: true } }),
+        );
+        expect(await build(String(dir))).toEqual(built);
+        const expected = { stdout: "string utf8\n", exitCode: 0, signal: null };
+        expect(await run(String(dir), "plain")).toEqual(expected);
+        expect(await run(String(dir), "compiled")).toEqual(expected);
+      }),
+    buildTimeout,
+  );
+
+  // `any` says nothing of the control flow, so what stands in for Bun's declarations then still says which functions never return
+  // and which say what their argument is.
+  test(
+    "process.exit, an assertion and a type predicate of Node.js narrow, in a program that does not fit Bun's declarations",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-missing-bun-types", {
+          "main.ts": `import assert, { AssertionError, fail, ok, strict, strictEqual } from "node:assert";
+import strictly from "assert/strict";
+import old = require("assert");
+import current, { argv, exit } from "node:process";
+import * as everything from "process";
+import util, { inspect, types } from "node:util";
+import { isRegExp } from "util/types";
+type Shape = { kind: "a"; a: number } | { kind: "b"; b: string };
+const odd: number = process.argv.length.toString();
+function leaves(x?: string): string {
+  if (!x) process.exit(1);
+  return x;
+}
+function leavesAtTheEnd(n: number): string {
+  if (n > 0) return "more";
+  process.abort();
+}
+function leavesWhereItThrows(): number {
+  let parsed: number;
+  try {
+    parsed = JSON.parse("4");
+  } catch {
+    globalThis.process.reallyExit(3);
+  }
+  return parsed;
+}
+function leavesThroughTheModule(x?: string, y?: string, z?: string): string {
+  if (!x) current.exit(1);
+  if (!y) everything.exit(1);
+  if (!z) exit(1);
+  return x + y + z;
+}
+function asserts(x?: string, y?: string, z?: string, w?: string): string {
+  assert(x);
+  assert.ok(y, "y");
+  ok(z);
+  old(w);
+  return x + y + z + w;
+}
+function assertsStrictly(x?: string, y?: string): string {
+  strict(x);
+  assert.strict.ok(y);
+  return x + y;
+}
+function fails(x?: string, y?: string): string {
+  if (!x) fail("x");
+  if (!y) assert.fail();
+  return x + y;
+}
+function compares(one: Shape, two: Shape, three: Shape, list: unknown, error: Error | null): [number, number[], null] {
+  strictEqual(one.kind, "a");
+  assert.strictEqual(two.kind, "a", "two");
+  strictly.equal(three.kind, "a");
+  assert.deepStrictEqual(list, [1]);
+  assert.ifError(error);
+  return [one.a + two.a + three.a, list, error];
+}
+function tells(x: string | Date, y: string | RegExp, z: unknown, w: string | Uint8Array | DataView): unknown[] {
+  return [
+    types.isDate(x) ? x.getFullYear() : x.length,
+    util.types.isDate(x) ? x.getMonth() : x.toUpperCase(),
+    isRegExp(y) ? y.source : y.length,
+    types.isMap(z) ? z.size : types.isNativeError(z) ? z.message : null,
+    types.isTypedArray(w) ? w.length : types.isDataView(w) ? w.byteLength : w.toUpperCase(),
+  ];
+}
+class Failed extends assert.AssertionError {}
+class Decoder extends util.TextDecoder {}
+interface Wanted {
+  pid: number;
+}
+const whole: Wanted = process;
+const kept: assert.AssertionError | undefined = undefined;
+const options: util.InspectOptions = { depth: 0 };
+const a: Shape = { kind: "a", a: 1 };
+console.log(typeof odd, leaves("x"), leavesAtTheEnd(1), leavesWhereItThrows(), leavesThroughTheModule("x", "y", "z"));
+console.log(asserts("x", "y", "z", "w"), assertsStrictly("x", "y"), fails("x", "y"), compares(a, a, a, [1], null));
+console.log(tells("text", /r/, new Map([[1, 2]]), new Uint8Array(3)), tells(new Date(2020, 5, 5), "s", new Error("e"), "w"));
+console.log(new Failed({ message: "m" }) instanceof AssertionError, new Decoder().encoding, typeof whole.pid, kept);
+console.log(inspect({ a: { b: 1 } }, options), argv.length > 0, typeof everything.platform, typeof assert.deepEqual);
+process.exit = () => {
+  console.log("stays");
+};
+console.log(typeof leaves());
+`,
+        });
+        expect(await build(String(dir))).toEqual(built);
+        const expected = {
+          stdout: `string x more 4 xyz
+xyzw xy xy [ 3, [ 1 ], null ]
+[ 4, "TEXT", "r", 1, 3 ] [ 2020, 5, 1, "e", "W" ]
+true utf-8 number undefined
+{ a: [Object] } true string function
+stays
+undefined
+`,
+          exitCode: 0,
+          signal: null,
+        };
+        expect(await run(String(dir), "plain")).toEqual(expected);
+        expect(await run(String(dir), "compiled")).toEqual(expected);
+      }),
+    buildTimeout,
+  );
+
+  // A class of the run time is `any` then. Where the answer is yes the value is `any` too, and where it is no nothing is known of it.
+  test(
+    "Buffer.isBuffer and the other predicates about a class of the run time narrow, in a program that does not fit Bun's declarations",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-missing-bun-types", {
+          "main.ts": `import buffer, { Buffer as Named, type TranscodeEncoding } from "node:buffer";
+import * as wholeBuffer from "buffer";
+import oldBuffer = require("buffer");
+import { createSecretKey } from "node:crypto";
+import net, { BlockList, Socket, type AddressInfo } from "node:net";
+import * as wholeNet from "net";
+import util, { types } from "node:util";
+import { isCryptoKey, isKeyObject } from "util/types";
+type Message = { data: null; why: string } | { data: Uint8Array; why?: undefined };
+const odd: number = process.argv.length.toString();
+function hex(x: string | Uint8Array): string {
+  return Buffer.isBuffer(x) ? x.toString("hex") : typeof x;
+}
+function ofUnknown(x: unknown): unknown {
+  if (globalThis.Buffer.isBuffer(x)) return x.readUInt8(0);
+  return x;
+}
+function otherwise(x: string | Uint8Array): number {
+  if (!Buffer.isBuffer(x)) return x.length;
+  return x.readUInt8(0);
+}
+function throughTheModule(x: string | Uint8Array): unknown[] {
+  return [
+    Named.isBuffer(x) ? x.toString("base64") : x.length,
+    buffer.Buffer.isBuffer(x) ? x.toString("latin1") : x.length,
+    wholeBuffer.Buffer.isBuffer(x) ? x.readUInt8(0) : x.length,
+    oldBuffer.Buffer.isBuffer(x) ? x.readInt8(0) : x.length,
+  ];
+}
+function ofMember(holder: { data: string | Uint8Array }): string | number {
+  return Buffer.isBuffer(holder.data) ? holder.data.toString("hex") : holder.data.length;
+}
+function besideOtherMembers(message: Message): string | undefined {
+  return Buffer.isBuffer(message.data) ? message.data.toString("hex") + message.why : message.why;
+}
+function throughChain(holder?: { data: Uint8Array }): string | boolean {
+  return Buffer.isBuffer(holder?.data) ? holder.data.toString("hex") : holder === undefined;
+}
+function behindTheTest(x: string | Uint8Array): number {
+  if (Buffer.isBuffer(x)) x = x.toString("hex");
+  return x.length;
+}
+function encoding(x: string | number): string {
+  return Buffer.isEncoding(x) ? x.toUpperCase() : x.toString() + " is none";
+}
+function listed(x: unknown, y: string | object, z: unknown): unknown[] {
+  return [
+    BlockList.isBlockList(x) ? x.check("127.0.0.1") : x,
+    net.BlockList.isBlockList(y) ? y.check("127.0.0.2") : y.toString(),
+    wholeNet.BlockList.isBlockList(z) ? z.rules.length : z,
+  ];
+}
+function keys(x: unknown, y: string | object): unknown[] {
+  return [
+    types.isKeyObject(x) ? x.type : typeof x,
+    util.types.isKeyObject(y) ? y.symmetricKeySize : y.toString(),
+    isKeyObject(x) ? x.type : typeof x,
+    types.isCryptoKey(x) ? x.algorithm.name : typeof x,
+    util.types.isCryptoKey(y) ? y.extractable : y.toString(),
+    isCryptoKey(x) ? x.type : typeof x,
+  ];
+}
+function handedOn(list: (string | Uint8Array)[], others: unknown[]): unknown[] {
+  const isBytes = Buffer.isBuffer;
+  const first = list.find(Named.isBuffer);
+  return [
+    list.filter(Buffer.isBuffer).map(it => it.toString("hex")),
+    list.map(it => (isBytes(it) ? it.readUInt8(0) : it.length)),
+    first === undefined ? first : first.toString("base64"),
+    others.filter(net.BlockList.isBlockList).map(it => it.check("127.0.0.1")),
+    others.filter(types.isKeyObject).map(it => it.type),
+  ];
+}
+class Line extends Socket {}
+class Wire extends net.Socket {}
+class Bytes extends Named {}
+interface Wanted {
+  poolSize: number;
+}
+const whole: Wanted = Buffer;
+const wholeOfTheModule: Wanted = Named;
+const address: AddressInfo | null = null;
+const options: net.NetConnectOpts = { port: 1 };
+const named: TranscodeEncoding = "utf8";
+const kept: Named = Named.from("a");
+const list: BlockList = new BlockList();
+list.addAddress("127.0.0.1");
+const secret = createSecretKey(Buffer.from("0123456789abcdef"));
+const signing = await crypto.subtle.generateKey({ name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+console.log(typeof odd, hex(Buffer.from("a")), hex("a"), hex(new Uint8Array(1)), ofUnknown(Buffer.from("a")), ofUnknown(1));
+console.log(otherwise("abc"), otherwise(Buffer.from("a")), throughTheModule(Buffer.from("a")), throughTheModule("abc"));
+console.log(ofMember({ data: Buffer.from("a") }), ofMember({ data: "abc" }), behindTheTest(Buffer.from("a")), behindTheTest("abc"));
+console.log(besideOtherMembers({ data: Buffer.from("a") }), besideOtherMembers({ data: null, why: "none" }));
+console.log(throughChain({ data: Buffer.from("a") }), throughChain({ data: new Uint8Array(1) }), throughChain());
+console.log(encoding("hex"), encoding("no"), encoding(1), listed(list, list, list), listed(1, "y", null));
+console.log(keys(secret, secret), keys(signing, signing), keys(1, "y"));
+console.log(handedOn(["abc", Buffer.from("a"), new Uint8Array(2)], [1, list, secret]), handedOn([], []));
+console.log(new Line() instanceof Socket, new Wire() instanceof Socket, Object.getPrototypeOf(Bytes) === Buffer, typeof whole.poolSize);
+console.log(wholeOfTheModule === whole, address, options, named, kept.length, typeof net.createServer, net.isIP("::1"));
+console.log(buffer.constants.MAX_LENGTH > 0, typeof wholeBuffer.kMaxLength, typeof oldBuffer.Blob, typeof wholeNet.connect);
+`,
+        });
+        expect(await build(String(dir))).toEqual(built);
+        const expected = {
+          stdout: `string 61 string object 97 1
+3 97 [ "YQ==", "a", 97, 97 ] [ 3, 3, 3, 3 ]
+61 3 2 3
+61undefined none
+61 false true
+HEX no is none 1 is none [ true, false, 1 ] [ 1, "y", null ]
+[ "secret", 16, "secret", "object", "[object KeyObject]", "object" ] [ "object", "[object CryptoKey]",
+  "object", "HMAC", false, "secret"
+] [ "number", "y", "number", "number", "y", "number" ]
+[
+  [ "61" ], [ 3, 97, 2 ], "YQ==", [ true ], [ "secret" ]
+] [
+  [], [], undefined, [], []
+]
+true true true number
+true null {
+  port: 1,
+} utf8 1 function 6
+true number function function
+`,
+          exitCode: 0,
+          signal: null,
+        };
+        expect(await run(String(dir), "plain")).toEqual(expected);
+        expect(await run(String(dir), "compiled")).toEqual(expected);
+      }),
+    buildTimeout,
+  );
+
+  test(
+    "such a predicate narrows where it is taken out of its holder by a pattern or under brackets",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-missing-bun-types", {
+          "main.ts": `import net from "node:net";
+import { types } from "node:util";
+const odd: number = process.argv.length.toString();
+const { isBuffer, isEncoding: knows, poolSize } = Buffer;
+const { isBlockList } = net.BlockList;
+const { isKeyObject = () => false } = types;
+function byAPattern(x: string | Uint8Array): string {
+  return isBuffer(x) ? x.toString("hex") : typeof x;
+}
+function underAnotherName(x: unknown): unknown {
+  return knows(x) ? x.toUpperCase() : typeof x;
+}
+function underBrackets(x: string | Uint8Array): unknown[] {
+  return [
+    Buffer["isBuffer"](x) ? x.toString("hex") : x.length,
+    Buffer[\`isBuffer\`](x) ? x.readUInt8(0) : x.length,
+    globalThis.Buffer["isBuffer"](x) ? x.toString("base64") : x.length,
+  ];
+}
+function ofOtherHolders(x: unknown): unknown[] {
+  return [
+    isBlockList(x) ? x.check("127.0.0.1") : typeof x,
+    net["BlockList"]["isBlockList"](x) ? x.check("::1") : typeof x,
+    isKeyObject(x) ? x.type : typeof x,
+  ];
+}
+function handedOn(list: (string | Uint8Array)[]): unknown[] {
+  return [list.filter(isBuffer).map(it => it.toString("hex")), list.filter(Buffer["isBuffer"]).map(it => it.readUInt8(0))];
+}
+const list = new net.BlockList();
+list.addAddress("127.0.0.1");
+console.log(typeof odd, typeof poolSize, byAPattern(Buffer.from("a")), byAPattern("a"), underAnotherName("hex"), underAnotherName(1));
+console.log(underBrackets(Buffer.from("a")), underBrackets("abc"), ofOtherHolders(list), ofOtherHolders(1));
+console.log(handedOn(["abc", Buffer.from("a"), new Uint8Array(2)]));
+`,
+        });
+        expect(await build(String(dir))).toEqual(built);
+        const plain = await run(String(dir), "plain");
+        expect(plain).toMatchObject({ exitCode: 0, signal: null });
+        expect(plain.stdout).toStartWith("string number 61 string HEX number\n");
+        expect(await run(String(dir), "compiled")).toEqual(plain);
+      }),
+    buildTimeout,
+  );
+
+  test(
+    "a guard narrows where the class of the run time stands deeper in its type, behind a type parameter, or where nobody writes the guard down",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-missing-bun-types", {
+          "main.ts": `import { EventEmitter } from "node:events";
+const odd: number = process.argv.length.toString();
+interface Holder { held: string | Uint8Array; name: string }
+function holdsBytes(holder: Holder): holder is Holder & { held: Buffer } {
+  return holder.held instanceof Buffer;
+}
+function deeper(holder: Holder): string {
+  return holdsBytes(holder) ? holder.name + holder.held.toString("hex") : holder.name + typeof holder.held;
+}
+function isA<T>(x: unknown, kind: new (...list: any[]) => T): x is T {
+  return x instanceof kind;
+}
+function behindAParameter(x: string | Uint8Array): unknown[] {
+  return [isA<Buffer>(x, Buffer) ? x.toString("hex") : typeof x, isA(x, Buffer) ? x.toString("base64") : x.length, isA<EventEmitter>(x, EventEmitter) ? x.listenerCount("a") : x.length];
+}
+class Own { own = 1 }
+function ofTheProgramsOwnClass(x: Own | string): number {
+  return isA(x, Own) ? x.own : x.length;
+}
+function writtenAsAny(x: string | number): unknown {
+  return isA<any>(x, Object) ? typeof x : ((nothing: never) => "never")(x);
+}
+const isBytes = (x: string | Uint8Array) => x instanceof Buffer;
+function nobodyWritesItDown(list: (string | Uint8Array)[]): unknown[] {
+  return [
+    list.filter(x => x instanceof Buffer).map(x => x.toString("hex")),
+    list.filter(isBytes).map(x => x.readUInt8(0)),
+    list.map(x => (isBytes(x) ? x.toString("latin1") : x.length)),
+    list.find(x => x instanceof Buffer)?.toString("hex"),
+  ];
+}
+function keepsItsMembers(value: { a: number; b?: string }): unknown {
+  const hasA = (it: { a: number; b?: string }): it is { a: number } => it.a > 0;
+  return hasA(value) ? value.b : undefined;
+}
+console.log(typeof odd, deeper({ held: Buffer.from("a"), name: "n" }), deeper({ held: "a", name: "n" }));
+console.log(behindAParameter(Buffer.from("a")), behindAParameter("abc"), ofTheProgramsOwnClass(new Own()), ofTheProgramsOwnClass("ab"), writtenAsAny("a"));
+console.log(nobodyWritesItDown(["abc", Buffer.from("a"), new Uint8Array(2)]), keepsItsMembers({ a: 1, b: "b" }));
+`,
+        });
+        expect(await build(String(dir))).toEqual(built);
+        const plain = await run(String(dir), "plain");
+        expect(plain).toMatchObject({ exitCode: 0, signal: null });
+        expect(plain.stdout).toStartWith("string n61 nstring\n");
+        expect(await run(String(dir), "compiled")).toEqual(plain);
+      }),
+    buildTimeout,
+  );
+
+  test(
+    "a predicate of the program's own about a class of the run time narrows, in a program that does not fit Bun's declarations",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-missing-bun-types", {
+          "main.ts": `import { EventEmitter } from "node:events";
+import * as http from "node:http";
+import { Socket } from "node:net";
+type Guard = (x: unknown) => x is URL;
+interface Tells {
+  isSocket(x: unknown): x is Socket;
+}
+const odd: number = process.argv.length.toString();
+function isBytes(x: string | Uint8Array): x is Buffer {
+  return x instanceof Buffer;
+}
+function assertBytes(x: unknown): asserts x is Buffer {
+  if (!Buffer.isBuffer(x)) throw new TypeError("no bytes");
+}
+const isEmitter = (x: unknown): x is EventEmitter => x instanceof EventEmitter;
+function isServer(x: unknown): x is http.Server {
+  return x instanceof http.Server;
+}
+const isURL: Guard = (x): x is URL => x instanceof URL;
+const tells: Tells = { isSocket: (x): x is Socket => x instanceof Socket };
+class Holder {
+  constructor(public held: unknown) {}
+  isBlob(x: string | object): x is Blob {
+    return x instanceof Blob;
+  }
+}
+function hex(x: string | Uint8Array): string {
+  return isBytes(x) ? x.toString("hex") : typeof x === "string" ? x.toUpperCase() : String(x.byteLength);
+}
+function told(x: unknown, y: string | object): unknown[] {
+  return [
+    isEmitter(x) ? x.listenerCount("a") : typeof x,
+    isServer(x) ? x.listening : typeof x,
+    isURL(x) ? x.host : typeof x,
+    tells.isSocket(x) ? x.destroyed : typeof x,
+    new Holder(1).isBlob(y) ? y.size : y.toString(),
+  ];
+}
+function asserted(x: unknown): string {
+  assertBytes(x);
+  return x.toString("hex");
+}
+function refused(x: unknown): string {
+  try {
+    return asserted(x);
+  } catch (error) {
+    return error instanceof TypeError ? error.message : "other";
+  }
+}
+function picked(list: (string | Uint8Array)[], holder: Holder): unknown[] {
+  return [list.filter(isBytes).map(it => it.toString("hex")), isEmitter(holder.held) ? holder.held.listenerCount("a") : typeof holder.held];
+}
+console.log(typeof odd, hex(Buffer.from("a")), hex("a"), hex(new Uint8Array(2)), asserted(Buffer.from("b")), refused("b"));
+console.log(told(new EventEmitter(), new Blob(["abc"])), told(http.createServer(), "y"), told(new URL("http://host/"), {}));
+console.log(told(new Socket(), "z"), picked(["a", Buffer.from("a"), new Uint8Array(1)], new Holder(new EventEmitter())), picked([], new Holder(1)));
+`,
+        });
+        expect(await build(String(dir))).toEqual(built);
+        const expected = {
+          stdout: `string 61 A 2 62 no bytes
+[ 0, "object", "object", "object", 3 ] [ 0, false, "object", "object", "y" ] [ "object", "object",
+  "host", "object", "[object Object]"
+]
+[ 0, "object", "object", false, "z" ] [
+  [ "61" ], 0
+] [
+  [], "number"
+]
+`,
+          exitCode: 0,
+          signal: null,
+        };
+        expect(await run(String(dir), "plain")).toEqual(expected);
+        expect(await run(String(dir), "compiled")).toEqual(expected);
+      }),
+    buildTimeout,
+  );
+
+  test.each([
+    [
+      "a function of Buffer that says nothing of its argument",
+      `function hex(x: string | Uint8Array): string {\n  return Buffer.byteLength(x) ? x.toString("hex") : typeof odd;\n}\nconsole.log(hex("a"));\n`,
+      ["TS2554"],
+    ],
+    [
+      "a predicate of the program's own that says any, which leaves never where the answer is no",
+      `function isAnything(value: unknown): value is any {\n  return value !== odd;\n}\nfunction size(x: string | Uint8Array): number {\n  return isAnything(x) ? 0 : x.length;\n}\nconsole.log(size("a"));\n`,
+      ["TS2339"],
+    ],
+  ])(
+    "%s narrows as TypeScript has it, in a program that does not fit Bun's declarations",
+    (_what, rest, errors) =>
+      slot(async () => {
+        using dir = tempDir("aot-missing-bun-types", {
+          "main.ts": `const odd: number = process.argv.length.toString();\n${rest}`,
+        });
+        expect(await build(String(dir))).toEqual({ errors, warnings: [], exitCode: 1, signal: null });
+      }),
+    buildTimeout,
+  );
+
+  test(
+    "a call of process that returns narrows nothing, in a program that does not fit Bun's declarations",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-missing-bun-types", {
+          "main.ts": `const odd: number = process.argv.length.toString();\nfunction stays(x?: string): string {\n  if (!x) process.emitWarning("x");\n  return x;\n}\nconsole.log(odd, stays("x"));\n`,
+        });
+        expect(await build(String(dir))).toEqual({ errors: ["TS2322"], warnings: [], exitCode: 1, signal: null });
+      }),
+    buildTimeout,
+  );
+
+  test(
+    "instanceof a class that Bun provides narrows, in a program that does not fit Bun's declarations",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-missing-bun-types", {
+          "main.ts": `import assert, { AssertionError } from "node:assert";
+import * as events from "node:events";
+import { EventEmitter } from "node:events";
+import stream = require("node:stream");
+const odd: number = process.argv.length.toString();
+const Kept = URL;
+const kept = { URL, Emitter: EventEmitter };
+class Mine extends EventEmitter {
+  own = 7;
+}
+class Holder {
+  constructor(public held: unknown) {}
+  count(): number {
+    return this.held instanceof EventEmitter ? this.held.listenerCount("a") : -1;
+  }
+}
+function byName(x: unknown): unknown[] {
+  return [x instanceof URL ? x.href : "no", x instanceof Buffer ? x.length : -1, x instanceof EventEmitter ? x.listenerCount("a") : -1];
+}
+function throughAModule(x: unknown): unknown[] {
+  return [
+    x instanceof events.EventEmitter ? x.listenerCount("a") : -1,
+    x instanceof stream.Readable ? typeof x.read : "no",
+    x instanceof assert.AssertionError ? x.code : "no",
+    x instanceof globalThis.URL ? x.host : "no",
+  ];
+}
+function keptSomewhere(x: unknown, Given: typeof URL): unknown[] {
+  return [x instanceof Kept ? x.href : "no", x instanceof kept.URL ? x.host : "no", x instanceof kept.Emitter ? x.listenerCount("a") : -1, x instanceof Given ? x.pathname : "no"];
+}
+function inStatements(x: unknown): string {
+  if (!(x instanceof Object)) return "no object";
+  if (x instanceof Headers) return "headers " + x.get("a");
+  if (x instanceof Response || x instanceof Request) return "url " + x.url;
+  const isBlob = x instanceof Blob;
+  if (isBlob) return "blob " + x.size;
+  if (!(x instanceof URLSearchParams)) return "other";
+  return "search " + x.get("a");
+}
+function ofAUnion(x: string | Uint8Array, y: string | URL, z: number | { n: number }): unknown[] {
+  return [
+    x instanceof Buffer ? x.toString("hex") : typeof x === "string" ? x.toUpperCase() : x.byteLength,
+    y instanceof URL ? y.href : y.trim(),
+    z instanceof Blob ? z.size : typeof z === "number" ? z + 1 : z.n,
+  ];
+}
+function caught(run: () => void): string {
+  try {
+    run();
+    return "nothing";
+  } catch (error: unknown) {
+    if (error instanceof AssertionError) return "assertion " + error.code;
+    if (error instanceof DOMException) return "dom " + error.name;
+    if (error instanceof Error) return "error " + error.message;
+    return "thrown";
+  }
+}
+function below(x: unknown): number {
+  return x instanceof EventEmitter ? (x instanceof Mine ? x.own : x.listenerCount("a")) : x instanceof Mine ? x.own : -1;
+}
+const url = new URL("http://host/path");
+const show = (...all: unknown[]) => console.log(JSON.stringify(all));
+show(typeof odd, byName(url), byName(Buffer.from("ab")), byName(new EventEmitter()), byName("text"));
+show(throughAModule(new EventEmitter()), throughAModule(new stream.Readable()), throughAModule(new AssertionError({ message: "m" })), throughAModule(url));
+show(keptSomewhere(url, URL), keptSomewhere(new Mine(), URL), new Holder(new Mine()).count(), new Holder(url).count());
+show([1, new Headers({ a: "b" }), new Request("http://host/r"), new Blob(["abc"]), new URLSearchParams("a=c"), {}].map(inStatements));
+show(ofAUnion(Buffer.from("a"), url, 1), ofAUnion("a", " y ", { n: 5 }), ofAUnion(new Uint8Array(3), "y", 2));
+show(
+  caught(() => assert.strictEqual(1, 2)),
+  caught(() => structuredClone(() => {})),
+  caught(() => {
+    throw new RangeError("far");
+  }),
+  caught(() => {
+    throw 1;
+  }),
+  caught(() => {}),
+);
+show(below(new Mine()), below(new EventEmitter()), below(url));
+`,
+        });
+        expect(await build(String(dir))).toEqual(built);
+        const expected = {
+          stdout: `["string",["http://host/path",-1,-1],["no",2,-1],["no",-1,0],["no",-1,-1]]
+[[0,"no","no","no"],[0,"function","no","no"],[-1,"no","ERR_ASSERTION","no"],[-1,"no","no","host"]]
+[["http://host/path","host",-1,"/path"],["no","no",0,"no"],0,-1]
+[["no object","headers b","url http://host/r","blob 3","search c","other"]]
+[["61","http://host/path",2],["A","y",5],[3,"y",3]]
+["assertion ERR_ASSERTION","dom DataCloneError","error far","thrown","nothing"]
+[7,0,-1]
+`,
+          exitCode: 0,
+          signal: null,
+        };
+        expect(await run(String(dir), "plain")).toEqual(expected);
+        expect(await run(String(dir), "compiled")).toEqual(expected);
+      }),
+    buildTimeout,
+  );
+
+  test.each([
+    [
+      "where the answer is no",
+      `function href(x: unknown): string {\n  return x instanceof URL ? "url" : x.href;\n}\nconsole.log(odd, href(1));\n`,
+      ["TS18046"],
+    ],
+    [
+      "behind the statement",
+      `function href(x: unknown): string {\n  if (x instanceof URL) console.log(x.href);\n  return x.href;\n}\nconsole.log(odd, href(1));\n`,
+      ["TS18046"],
+    ],
+    [
+      "of the program's own class named URL",
+      `class URL {\n  own = 1;\n}\nfunction href(x: unknown): string {\n  return x instanceof URL ? x.href : "no";\n}\nconsole.log(odd, href(1));\nexport {};\n`,
+      ["TS2339"],
+    ],
+  ])(
+    "instanceof narrows to nothing more %s, in a program that does not fit Bun's declarations",
+    (_what, source, errors) =>
+      slot(async () => {
+        using dir = tempDir("aot-missing-bun-types", {
+          "main.ts": `const odd: number = process.argv.length.toString();\n${source}`,
+        });
+        expect(await build(String(dir))).toEqual({ errors, warnings: [], exitCode: 1, signal: null });
+      }),
+    buildTimeout,
+  );
+
+  test(
+    "a type named through a module that the program itself declares without members stops the build",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-missing-bun-types", {
+          "main.ts": `import * as thing from "thing";\nconst value: thing.Unknown = thing.one;\nconsole.log(value);\n`,
+          "thing.d.ts": `declare module "thing";\n`,
+          "tsconfig.json": JSON.stringify({ files: ["main.ts", "thing.d.ts"] }),
+          "node_modules/thing/package.json": JSON.stringify({ name: "thing", version: "1.0.0", main: "index.js" }),
+          "node_modules/thing/index.js": `exports.one = 1;\n`,
+        });
+        expect(await build(String(dir))).toEqual({ errors: ["TS2694"], warnings: [], exitCode: 1, signal: null });
+      }),
+    buildTimeout,
+  );
+
+  // A name that comes out of `declare module "node:fs";` is the module itself to TypeScript: a value and a namespace, no type.
+  test(
+    "what a file of the program exports again from a module of Node.js is any, in a program that does not fit Bun's declarations",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-missing-bun-types", {
+          "main.ts": `import * as named from "./named";
+import * as whole from "./whole";
+import * as outer from "./outer";
+import { existsSync, own, type Dirent } from "./whole";
+import type * as http from "node:http";
+interface Sized extends named.Stats {
+  extra?: number;
+}
+interface Asked extends http.IncomingMessage {
+  user?: string;
+}
+interface Wanted extends http.RequestOptions {
+  retries?: number;
+}
+class Bus extends named.EventEmitter implements named.EventEmitter {}
+const odd: number = process.argv.length.toString();
+const stats: named.Stats = named.statSync(".");
+const renamed: named.FileStats = stats;
+const imported: named.Imported = stats;
+const typeOnly: named.TypeOnly = stats;
+const byImportType: import("./named").Stats = stats;
+const throughTwoFiles: outer.Stats = stats;
+const throughNamespace: outer.named.Stats = stats;
+const key: keyof named.Stats = "size";
+const listeners: named.RequestListener<any, any>[] = [];
+const sized: Sized = stats;
+const { statSync } = whole;
+const ofWhole: whole.Stats = statSync(".");
+const ofWholeByImportType: import("./whole").Stats = ofWhole;
+const ofWholeThroughTwoFiles: outer.Dirent | undefined = undefined;
+const entry: Dirent | undefined = ofWholeThroughTwoFiles;
+console.log(stats.isDirectory(), [renamed, imported, typeOnly, byImportType, throughTwoFiles, throughNamespace, sized].every(it => it === stats));
+console.log(typeof stats[key], listeners.length, new Bus() instanceof named.EventEmitter, typeof odd);
+console.log(ofWhole.isDirectory(), ofWholeByImportType === ofWhole, entry, existsSync("."), outer.existsSync === existsSync, own, whole.own);
+const asked = { url: "/a" } as Asked;
+const wanted: Wanted = { host: "localhost", retries: 2 };
+console.log(sized.isDirectory(), sized.extra, asked.url, asked.user, wanted.host, wanted.retries);
+`,
+          "named.ts": `import { Stats as Imported } from "node:fs";
+export { Imported };
+export { Stats, Stats as FileStats, statSync } from "node:fs";
+export type { Stats as TypeOnly } from "node:fs";
+export type { RequestListener } from "node:http";
+export { EventEmitter } from "node:events";
+`,
+          "whole.ts": `export * from "node:fs";\nexport const own = 1;\n`,
+          "outer.ts": `export * as named from "./named";\nexport { Stats } from "./named";\nexport * from "./whole";\n`,
+        });
+        expect(await build(String(dir))).toEqual(built);
+        const expected = {
+          stdout:
+            "true true\nnumber 0 true string\ntrue true undefined true true 1 1\ntrue undefined /a undefined localhost 2\n",
+          exitCode: 0,
+          signal: null,
+        };
+        expect(await run(String(dir), "plain")).toEqual(expected);
+        expect(await run(String(dir), "compiled")).toEqual(expected);
+      }),
+    buildTimeout,
+  );
+
+  test.each([
+    [
+      "a value of the program's own, named as a type",
+      {
+        "main.ts": `import * as all from "./again";\nconst value: all.port = 1;\nconsole.log(value);\n`,
+        "again.ts": `export * from "node:fs";\nexport const port = 1;\n`,
+      },
+      ["TS2749"],
+    ],
+    [
+      "a name out of a module that the program itself declares without members, named as a type",
+      {
+        "main.ts": `import * as all from "./again";\nconst value: all.Unknown = all.one;\nconsole.log(value);\n`,
+        "again.ts": `export { Unknown, one } from "thing";\n`,
+        "thing.d.ts": `declare module "thing";\n`,
+        "tsconfig.json": JSON.stringify({ files: ["main.ts", "thing.d.ts"] }),
+        "node_modules/thing/package.json": JSON.stringify({ name: "thing", version: "1.0.0", main: "index.js" }),
+        "node_modules/thing/index.js": `exports.one = 1;\nexports.Unknown = 2;\n`,
+      },
+      ["TS2749"],
+    ],
+    [
+      "names that none of the program's own modules has",
+      {
+        "main.ts": `import * as all from "./again";\nimport type { Gone } from "./again";\nconst value: all.Gone = all.missing;\nconst other: import("./again").Gone | Gone = 1;\nconsole.log(value, other, all.here);\n`,
+        "again.ts": `export * from "./once";\n`,
+        "once.ts": `export const here = 1;\n`,
+      },
+      ["TS2305", "TS2339", "TS2694", "TS2694"],
+    ],
+  ])(
+    "a build stops at %s, through a file that exports it again",
+    (_what, files, errors) =>
+      slot(async () => {
+        using dir = tempDir("aot-missing-bun-types", files);
+        expect(await build(String(dir))).toEqual({ errors, warnings: [], exitCode: 1, signal: null });
       }),
     buildTimeout,
   );

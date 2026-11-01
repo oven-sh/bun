@@ -13,11 +13,13 @@ pub(super) fn destructure_array(
     mapped: u32,
 ) {
     // The `[` of an assignment is the start of an expression, which the source map knows.
+    // `const [[x]] = v`: both lists are reported at `const`, and an error quotes the one that was given no list.
     if let PatternNode::Binding(_) = node {
-        lowering.set_position(match lowering.file.is_shown_without_source_map() {
-            true => lowering.file.node_position(node),
-            false => mapped,
-        });
+        let written = lowering.file.node_position(node);
+        match lowering.file.is_shown_without_source_map() {
+            true => lowering.set_position(written),
+            false => lowering.set_position_of_text_elsewhere(mapped, written),
+        }
     }
     let elements = lowering.file.pattern_elements(node);
     let has_rest = elements.last().is_some_and(|element| element.is_rest);
@@ -27,6 +29,7 @@ pub(super) fn destructure_array(
     };
     let iterator = lowering.emit_iterator_open(value, IteratorKind::Sync, Some(shape));
     let position = lowering.position();
+    lowering.set_position(position);
     lowering.builder.record_position(position);
     lowering.begin_cleanup(BlockRole::IterationCleanup, Some(iterator));
     let mut mapped = position;

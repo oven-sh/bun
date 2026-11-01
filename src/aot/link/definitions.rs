@@ -244,8 +244,16 @@ fn choose_functions(
 ) {
     let definitions = &input.units[unit as usize].function_definitions;
     for (merged, key, site) in merged_definitions(input.functions, unit, definitions) {
+        // Only the file that declares a function type records its parameters. Prefer that definition.
         if let FunctionKey::Signature(_) | FunctionKey::ClassSignature(_) = key.key {
-            sites[merged].get_or_insert(site);
+            let has_parameters = |site: DefinitionSite| {
+                let definitions = &input.units[site.unit as usize].function_definitions;
+                !definitions[site.index as usize].1.parameters.is_empty()
+            };
+            match sites[merged] {
+                Some(first) if has_parameters(first) || !has_parameters(site) => {}
+                Some(_) | None => sites[merged] = Some(site),
+            }
             continue;
         }
         let home = ProgramFile {
@@ -341,16 +349,19 @@ fn add_synthetic_exports(
         let merged = merged.expect("link declares every synthetic export and every copy");
         let definition = &mut variables[merged as usize];
         // A name that either project requires is tested when the module is linked.
-        let is_known_elsewhere = match *definition {
+        let (is_known_elsewhere, is_replaceable_elsewhere) = match *definition {
             Some(VariableDefinition::SyntheticExport {
-                is_known_member, ..
-            }) => is_known_member,
-            Some(VariableDefinition::Unit(_)) | None => true,
+                is_known_member,
+                is_replaceable,
+                ..
+            }) => (is_known_member, is_replaceable),
+            Some(VariableDefinition::Unit(_)) | None => (true, false),
         };
         *definition = Some(VariableDefinition::SyntheticExport {
             module,
             name: export.name,
             is_known_member: export.is_known_member && is_known_elsewhere,
+            is_replaceable: export.is_replaceable || is_replaceable_elsewhere,
             writer,
         });
     };

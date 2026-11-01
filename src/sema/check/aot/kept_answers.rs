@@ -4,6 +4,7 @@ use super::answers::{
     CheckedMember, ClassRef, FunctionRef, GaveUp, IndexSignature, ListedMember, ObjectMember,
     PositionTypes, SignatureShape, WrittenType,
 };
+use super::class_stores::StoreIndex;
 use super::queries::AliasScan;
 use super::type_identity::TypeIdentity;
 use super::type_shape::{BuiltinShape, PrimitiveKinds, TypeShape};
@@ -82,6 +83,7 @@ pub(super) struct KeptMemo<'c> {
     pub(super) alias_scans: FxHashMap<Sym, AliasScan>,
     pub(super) alias_reads: FxHashMap<Sym, bool>,
     pub(super) recursive_conditionals: FxHashMap<(FileId, TypeNodeId), bool>,
+    pub(super) store_indexes: FxHashMap<FileId, StoreIndex<'c>>,
 }
 
 #[derive(Copy, Clone)]
@@ -105,6 +107,7 @@ impl<'c> KeptMemo<'c> {
             alias_scans,
             alias_reads,
             recursive_conditionals,
+            store_indexes,
         } = self;
         rows.clear();
         types.clear();
@@ -118,6 +121,7 @@ impl<'c> KeptMemo<'c> {
         alias_scans.clear();
         alias_reads.clear();
         recursive_conditionals.clear();
+        store_indexes.clear();
     }
 
     #[inline]

@@ -237,93 +237,95 @@ function f11 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v116: Object = AssumeType v4 provenType=Object
 # CHECK-NEXT: v5: builtin(Process) = Builtin builtin=Process
 # CHECK-NEXT: v6: anything = PropGet v5 key="argv" accessSite=1
-# CHECK-NEXT: v7: anything ~ builtin(ProcessArgv) = Upcast v6 castType=anything
+# CHECK-NEXT: v117: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v6 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v7: Array<string, proven, pristine[Storage, Names, Dense]> = Upcast v117 castType=anything
+# CHECK-NEXT: v118: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v7 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v8: 2 = Integer integer=2
-# CHECK-NEXT: v9: anything = ElemGet v7, v8 accessSite=2
-# CHECK-NEXT: v10: undefined|null|string = Check v9 expectedType=undefined|null|string
+# CHECK-NEXT: v9: undefined|string = ElemGet v118, v8 accessSite=2
+# CHECK-NEXT: v10: undefined|string = Check v9 expectedType=undefined|null|string
 # CHECK-NEXT: v11: "describe,countThenRead" = String string="describe,countThenRead"
 # CHECK-NEXT: v12: anything = PropGet v11 key="split" accessSite=3 receivers=[]
-# CHECK-NEXT: v117: builtin(StringPrototypeSplit) = AssumeType v12 provenType=builtin(StringPrototypeSplit)
+# CHECK-NEXT: v119: builtin(StringPrototypeSplit) = AssumeType v12 provenType=builtin(StringPrototypeSplit)
 # CHECK-NEXT: v13: "," = String string=","
-# CHECK-NEXT: v14: anything = Call v117, v11, v13 calleeKey="split" calleeName="split" accessSite=4 callees=[builtin(StringPrototypeSplit)]
-# CHECK-NEXT: v118: Array<string, proven, pristine[Storage, Names]> = AssumeType v14 provenType=Array<string, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v15: Array<string, proven, pristine[Storage, Names]> = Check v118 expectedType=undefined|null|Array<undefined|null|string>
-# CHECK-NEXT: v119: Array<string, proven, pristine[Storage, Names]> = AssumeType v15 provenType=Array<string, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v14: anything = Call v119, v11, v13 calleeKey="split" calleeName="split" accessSite=4 callees=[builtin(StringPrototypeSplit)]
+# CHECK-NEXT: v120: Array<string, proven, pristine[Storage, Names]> = AssumeType v14 provenType=Array<string, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v15: Array<string, proven, pristine[Storage, Names]> = Check v120 expectedType=undefined|null|Array<undefined|null|string>
+# CHECK-NEXT: v121: Array<string, proven, pristine[Storage, Names]> = AssumeType v15 provenType=Array<string, proven, pristine[Storage, Names]>
 # CHECK-NEXT: v16: f1 = GetModuleVariable variable=g0
 # CHECK-NEXT: v17: 1 = Integer integer=1
 # CHECK-NEXT: v18: L0 = Call v16, -, v17 calleeName="honest" accessSite=5 callees=[f1]
-# CHECK-NEXT: v120: L0 = AssumeType v18 provenType=L0
+# CHECK-NEXT: v122: L0 = AssumeType v18 provenType=L0
 # CHECK-NEXT: v19: f1 = GetModuleVariable variable=g0
 # CHECK-NEXT: v20: 2 = Integer integer=2
 # CHECK-NEXT: v21: L0 = Call v19, -, v20 calleeName="honest" accessSite=6 callees=[f1]
-# CHECK-NEXT: v121: L0 = AssumeType v21 provenType=L0
-# CHECK-NEXT: v22: Array<anything, Contiguous> = NewArray v120, v121 contents=anything allocationSite=3 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v122: Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v22 provenType=Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v23: anything = PropGet v122 key="push" accessSite=7
-# CHECK-NEXT: v123: builtin(ArrayPrototypePush) = AssumeType v23 provenType=builtin(ArrayPrototypePush)
+# CHECK-NEXT: v123: L0 = AssumeType v21 provenType=L0
+# CHECK-NEXT: v22: Array<anything, Contiguous> = NewArray v122, v123 contents=anything allocationSite=3 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v124: Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v22 provenType=Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v23: anything = PropGet v124 key="push" accessSite=7
+# CHECK-NEXT: v125: builtin(ArrayPrototypePush) = AssumeType v23 provenType=builtin(ArrayPrototypePush)
 # CHECK-NEXT: v24: builtin(JSON) = Builtin builtin=JSON
 # CHECK-NEXT: v25: anything = PropGet v24 key="parse" accessSite=8
-# CHECK-NEXT: v124: builtin(JSONParse) = AssumeType v25 provenType=builtin(JSONParse)
-# CHECK-NEXT: v26: builtin(JSONParse) = Upcast v124 castType=anything
-# CHECK-NEXT: v125: builtin(JSONParse) = AssumeType v26 provenType=builtin(JSONParse)
+# CHECK-NEXT: v126: builtin(JSONParse) = AssumeType v25 provenType=builtin(JSONParse)
+# CHECK-NEXT: v26: builtin(JSONParse) = Upcast v126 castType=anything
+# CHECK-NEXT: v127: builtin(JSONParse) = AssumeType v26 provenType=builtin(JSONParse)
 # CHECK-NEXT: v27: "{\"x\":\"1\",\"y\":2,\"label\":\"parsed\"}" = String string="{\"x\":\"1\",\"y\":2,\"label\":\"parsed\"}"
-# CHECK-NEXT: v28: anything = Call v125, v24, v27 calleeKey="parse" calleeName="JSON.parse" accessSite=9 callees=[builtin(JSONParse)]
+# CHECK-NEXT: v28: anything = Call v127, v24, v27 calleeKey="parse" calleeName="JSON.parse" accessSite=9 callees=[builtin(JSONParse)]
 # CHECK-NEXT: v29: builtin(JSON) = Builtin builtin=JSON
 # CHECK-NEXT: v30: anything = PropGet v29 key="parse" accessSite=10
-# CHECK-NEXT: v126: builtin(JSONParse) = AssumeType v30 provenType=builtin(JSONParse)
-# CHECK-NEXT: v31: builtin(JSONParse) = Upcast v126 castType=anything
-# CHECK-NEXT: v127: builtin(JSONParse) = AssumeType v31 provenType=builtin(JSONParse)
+# CHECK-NEXT: v128: builtin(JSONParse) = AssumeType v30 provenType=builtin(JSONParse)
+# CHECK-NEXT: v31: builtin(JSONParse) = Upcast v128 castType=anything
+# CHECK-NEXT: v129: builtin(JSONParse) = AssumeType v31 provenType=builtin(JSONParse)
 # CHECK-NEXT: v32: "{\"x\":1,\"y\":2,\"label\":null}" = String string="{\"x\":1,\"y\":2,\"label\":null}"
-# CHECK-NEXT: v33: anything = Call v127, v29, v32 calleeKey="parse" calleeName="JSON.parse" accessSite=11 callees=[builtin(JSONParse)]
+# CHECK-NEXT: v33: anything = Call v129, v29, v32 calleeKey="parse" calleeName="JSON.parse" accessSite=11 callees=[builtin(JSONParse)]
 # CHECK-NEXT: v34: builtin(JSON) = Builtin builtin=JSON
 # CHECK-NEXT: v35: anything = PropGet v34 key="parse" accessSite=12
-# CHECK-NEXT: v128: builtin(JSONParse) = AssumeType v35 provenType=builtin(JSONParse)
-# CHECK-NEXT: v36: builtin(JSONParse) = Upcast v128 castType=anything
-# CHECK-NEXT: v129: builtin(JSONParse) = AssumeType v36 provenType=builtin(JSONParse)
+# CHECK-NEXT: v130: builtin(JSONParse) = AssumeType v35 provenType=builtin(JSONParse)
+# CHECK-NEXT: v36: builtin(JSONParse) = Upcast v130 castType=anything
+# CHECK-NEXT: v131: builtin(JSONParse) = AssumeType v36 provenType=builtin(JSONParse)
 # CHECK-NEXT: v37: "{\"label\":\"other order\",\"y\":2,\"x\":1}" = String string="{\"label\":\"other order\",\"y\":2,\"x\":1}"
-# CHECK-NEXT: v38: anything = Call v129, v34, v37 calleeKey="parse" calleeName="JSON.parse" accessSite=13 callees=[builtin(JSONParse)]
-# CHECK-NEXT: v39: anything = Call v123, v122, v28, v33, v38 calleeKey="push" calleeName="given.push" accessSite=14 callees=[builtin(ArrayPrototypePush)]
-# CHECK-NEXT: v40: anything = PropGet v122 key="push" accessSite=15
-# CHECK-NEXT: v130: builtin(ArrayPrototypePush) = AssumeType v40 provenType=builtin(ArrayPrototypePush)
+# CHECK-NEXT: v38: anything = Call v131, v34, v37 calleeKey="parse" calleeName="JSON.parse" accessSite=13 callees=[builtin(JSONParse)]
+# CHECK-NEXT: v39: anything = Call v125, v124, v28, v33, v38 calleeKey="push" calleeName="given.push" accessSite=14 callees=[builtin(ArrayPrototypePush)]
+# CHECK-NEXT: v40: anything = PropGet v124 key="push" accessSite=15
+# CHECK-NEXT: v132: builtin(ArrayPrototypePush) = AssumeType v40 provenType=builtin(ArrayPrototypePush)
 # CHECK-NEXT: v41: builtin(Object) = Builtin builtin=Object
 # CHECK-NEXT: v42: builtin(ObjectFreeze) = Builtin builtin=ObjectFreeze
 # CHECK-NEXT: InitializeBuiltin builtin=ObjectFreeze
 # CHECK-NEXT: v43: f1 = GetModuleVariable variable=g0
 # CHECK-NEXT: v44: 8 = Integer integer=8
 # CHECK-NEXT: v45: L0 = Call v43, -, v44 calleeName="honest" accessSite=16 callees=[f1]
-# CHECK-NEXT: v131: L0 = AssumeType v45 provenType=L0
-# CHECK-NEXT: v46: anything = Call v42, v41, v131 calleeName="Object.freeze" accessSite=17 callees=[builtin(ObjectFreeze)]
-# CHECK-NEXT: v132: L0 = AssumeType v46 provenType=L0
-# CHECK-NEXT: v47: L0 = AssumeType v132 provenType=undefined|null|L0
-# CHECK-NEXT: v133: L0 = AssumeType v47 provenType=L0
+# CHECK-NEXT: v133: L0 = AssumeType v45 provenType=L0
+# CHECK-NEXT: v46: anything = Call v42, v41, v133 calleeName="Object.freeze" accessSite=17 callees=[builtin(ObjectFreeze)]
+# CHECK-NEXT: v134: L0 = AssumeType v46 provenType=L0
+# CHECK-NEXT: v47: L0 = AssumeType v134 provenType=undefined|null|L0
+# CHECK-NEXT: v135: L0 = AssumeType v47 provenType=L0
 # CHECK-NEXT: v48: builtin(Object) = Builtin builtin=Object
 # CHECK-NEXT: v49: builtin(ObjectCreate) = Builtin builtin=ObjectCreate
 # CHECK-NEXT: InitializeBuiltin builtin=ObjectCreate
 # CHECK-NEXT: v50: f1 = GetModuleVariable variable=g0
 # CHECK-NEXT: v51: 9 = Integer integer=9
 # CHECK-NEXT: v52: L0 = Call v50, -, v51 calleeName="honest" accessSite=18 callees=[f1]
-# CHECK-NEXT: v134: L0 = AssumeType v52 provenType=L0
-# CHECK-NEXT: v53: anything = Call v49, v48, v134
-# CHECK-NEXT: v135: Object = AssumeType v53 provenType=Object
+# CHECK-NEXT: v136: L0 = AssumeType v52 provenType=L0
+# CHECK-NEXT: v53: anything = Call v49, v48, v136
+# CHECK-NEXT: v137: Object = AssumeType v53 provenType=Object
 # CHECK-NEXT: v54: undefined = Undefined
-# CHECK-NEXT: v55: Object = Upcast v135 castType=anything
-# CHECK-NEXT: v136: Object = AssumeType v55 provenType=Object
+# CHECK-NEXT: v55: Object = Upcast v137 castType=anything
+# CHECK-NEXT: v138: Object = AssumeType v55 provenType=Object
 # CHECK-NEXT: v56: builtin(Proxy) = Builtin builtin=Proxy
 # CHECK-NEXT: v57: f1 = GetModuleVariable variable=g0
 # CHECK-NEXT: v58: 10 = Integer integer=10
 # CHECK-NEXT: v59: L0 = Call v57, -, v58 calleeName="honest" accessSite=19 callees=[f1]
-# CHECK-NEXT: v137: L0 = AssumeType v59 provenType=L0
+# CHECK-NEXT: v139: L0 = AssumeType v59 provenType=L0
 # CHECK-NEXT: v60: f5 = NewClosure function=f5 allocationSite=5
 # CHECK-NEXT: v61: L2 = NewObject layout=L2 allocationSite=6 allocationClass=2
 # CHECK-NEXT: PropDefine v61, v60 key="get" accessSite=20 receivers=[L2]
 # CHECK-NEXT: v63: L2 = FinishObject v61
-# CHECK-NEXT: v64: anything ~ object = Construct v56, -, v137, v63 calleeName="Proxy" accessSite=21 callees=[builtin(Proxy)]
+# CHECK-NEXT: v64: anything ~ object = Construct v56, -, v139, v63 calleeName="Proxy" accessSite=21 callees=[builtin(Proxy)]
 # CHECK-NEXT: v65: undefined|null|L0 ~ L0 = Check v64 expectedType=undefined|null|L0
-# CHECK-NEXT: v66: anything = Call v130, v122, v133, v136, v65 calleeKey="push" calleeName="given.push" accessSite=22 callees=[builtin(ArrayPrototypePush)]
+# CHECK-NEXT: v66: anything = Call v132, v124, v135, v138, v65 calleeKey="push" calleeName="given.push" accessSite=22 callees=[builtin(ArrayPrototypePush)]
 # CHECK-NEXT: v67: 0 = Integer
 # CHECK-NEXT: Jump -> next b1(v67)
 # CHECK-NEXT: b1(v68: int|whole):
-# CHECK-NEXT: v69: iteratorstate = IteratorOpen v119 [storageIsUndecided]
+# CHECK-NEXT: v69: iteratorstate = IteratorOpen v121 [storageIsUndecided]
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v71: undefined = IteratorResume v69
 # CHECK-NEXT: v72: boolean = ResultAt v71
@@ -332,7 +334,7 @@ function f11 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b2():
 # CHECK-NEXT: Jump -> next b3()
 # CHECK-NEXT: b3() handler=b5():
-# CHECK-NEXT: v74: anything ~ undefined|null|function = PropGet v116 key="sumAll" accessSite=23
+# CHECK-NEXT: v74: anything ~ undefined|null|function|f4 = PropGet v116 key="sumAll" accessSite=23
 # CHECK-NEXT: Jump -> next b4()
 # CHECK-NEXT: b4():
 # CHECK-NEXT: Jump -> next b6()
@@ -340,13 +342,13 @@ function f11 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v75: anything = CatchValue
 # CHECK-NEXT: v76: builtin(GlobalThis) = Builtin builtin=GlobalThis
 # CHECK-NEXT: v77: anything = PropGet v76 key="console" accessSite=24 [isFreeName]
-# CHECK-NEXT: v138: builtin(Console) = AssumeType v77 provenType=builtin(Console)
-# CHECK-NEXT: v78: builtin(Console) = Upcast v138 castType=anything
-# CHECK-NEXT: v139: builtin(Console) = AssumeType v78 provenType=builtin(Console)
-# CHECK-NEXT: v79: anything = PropGet v139 key="log" accessSite=25
-# CHECK-NEXT: v140: builtin(ConsoleLog) = AssumeType v79 provenType=builtin(ConsoleLog)
-# CHECK-NEXT: v80: builtin(ConsoleLog) = Upcast v140 castType=anything
-# CHECK-NEXT: v141: builtin(ConsoleLog) = AssumeType v80 provenType=builtin(ConsoleLog)
+# CHECK-NEXT: v140: builtin(Console) = AssumeType v77 provenType=builtin(Console)
+# CHECK-NEXT: v78: builtin(Console) = Upcast v140 castType=anything
+# CHECK-NEXT: v141: builtin(Console) = AssumeType v78 provenType=builtin(Console)
+# CHECK-NEXT: v79: anything = PropGet v141 key="log" accessSite=25
+# CHECK-NEXT: v142: builtin(ConsoleLog) = AssumeType v79 provenType=builtin(ConsoleLog)
+# CHECK-NEXT: v80: builtin(ConsoleLog) = Upcast v142 castType=anything
+# CHECK-NEXT: v143: builtin(ConsoleLog) = AssumeType v80 provenType=builtin(ConsoleLog)
 # CHECK-NEXT: v81: "sumAll threw" = String string="sumAll threw"
 # CHECK-NEXT: v82: anything ~ undefined|null|Error = Upcast v75 castType=anything
 # CHECK-NEXT: v83: anything = PropGet v82 key="constructor" accessSite=26
@@ -355,13 +357,13 @@ function f11 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v86: undefined|null|string = Check v85 expectedType=undefined|null|string
 # CHECK-NEXT: v87: "|" = String string="|"
 # CHECK-NEXT: v88: anything = PropGet v114 key="join" accessSite=28
-# CHECK-NEXT: v142: builtin(ArrayPrototypeJoin) = AssumeType v88 provenType=builtin(ArrayPrototypeJoin)
+# CHECK-NEXT: v144: builtin(ArrayPrototypeJoin) = AssumeType v88 provenType=builtin(ArrayPrototypeJoin)
 # CHECK-NEXT: v89: ", " = String string=", "
-# CHECK-NEXT: v90: anything = Call v142, v114, v89 calleeKey="join" calleeName="log.join" accessSite=29 callees=[builtin(ArrayPrototypeJoin)]
-# CHECK-NEXT: v143: string = AssumeType v90 provenType=string
-# CHECK-NEXT: v91: string = AssumeType v143 provenType=undefined|null|string
-# CHECK-NEXT: v144: string = AssumeType v91 provenType=string
-# CHECK-NEXT: v92: anything = Call v141, v139, v68, v81, v86, v87, v144 calleeKey="log" calleeName="console.log" accessSite=30 callees=[builtin(ConsoleLog)]
+# CHECK-NEXT: v90: anything = Call v144, v114, v89 calleeKey="join" calleeName="log.join" accessSite=29 callees=[builtin(ArrayPrototypeJoin)]
+# CHECK-NEXT: v145: string = AssumeType v90 provenType=string
+# CHECK-NEXT: v91: string = AssumeType v145 provenType=undefined|null|string
+# CHECK-NEXT: v146: string = AssumeType v91 provenType=string
+# CHECK-NEXT: v92: anything = Call v143, v141, v68, v81, v86, v87, v146 calleeKey="log" calleeName="console.log" accessSite=30 callees=[builtin(ConsoleLog)]
 # CHECK-NEXT: Jump -> next b6()
 # CHECK-NEXT: b6():
 # CHECK-NEXT: v93: int|whole = Increment v68
@@ -370,7 +372,7 @@ function f11 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Jump -> next b8()
 # CHECK-NEXT: b8() handler=b16():
 # CHECK-NEXT: v94: undefined|null|string = AssumeType v73 provenType=undefined|null|string
-# CHECK-NEXT: v95: iteratorstate = IteratorOpen v122
+# CHECK-NEXT: v95: iteratorstate = IteratorOpen v124
 # CHECK-NEXT: Jump -> next b9()
 # CHECK-NEXT: b9() handler=b16():
 # CHECK-NEXT: LoopHint
@@ -378,12 +380,12 @@ function f11 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v98: anything = ResultAt v97 index=1
 # CHECK-NEXT: Jump -> next b10()
 # CHECK-NEXT: b10() handler=b15():
-# CHECK-NEXT: v99: undefined|null|L0 = Check v98 expectedType=undefined|null|L0
+# CHECK-NEXT: v99: undefined|null|L0 = Check v98 expectedType=undefined|null|L0 cause=MayFail
 # CHECK-NEXT: Jump -> next b11()
 # CHECK-NEXT: b11() handler=b13():
 # CHECK-NEXT: v100: anything = ElemGet v116, v94 accessSite=31
-# CHECK-NEXT: v145: undefined|f4|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) = AssumeType v100 provenType=undefined|f4|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)
-# CHECK-NEXT: v101: undefined|function|f4|builtin(Object)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) = Check v145 expectedType=undefined|null|function
+# CHECK-NEXT: v147: undefined|f4|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) = AssumeType v100 provenType=undefined|f4|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)
+# CHECK-NEXT: v101: undefined|function|f4|builtin(Object)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) = Check v147 expectedType=undefined|null|function|f2|f3|f4
 # CHECK-NEXT: v102: anything = Call v101, v116, v99 calleeName="table[name]" accessSite=32 callees=[f4, builtin(Object), builtin(ObjectPrototype__defineGetter__), builtin(ObjectPrototype__defineSetter__), builtin(ObjectPrototype__lookupGetter__), builtin(ObjectPrototype__lookupSetter__), builtin(ObjectPrototypeHasOwnProperty), builtin(ObjectPrototypeIsPrototypeOf), builtin(ObjectPrototypePropertyIsEnumerable), builtin(ObjectPrototypeToLocaleString), builtin(ObjectPrototypeToString), builtin(ObjectPrototypeValueOf), ..]
 # CHECK-NEXT: Jump -> next b12()
 # CHECK-NEXT: b12() handler=b15():

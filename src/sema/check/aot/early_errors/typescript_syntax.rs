@@ -99,13 +99,14 @@ impl Checker<'_, '_> {
                 continue;
             }
             let mut names: SmallVec<[Atom; 16]> = SmallVec::new();
+            let mut listed: crate::util::FxHashSet<Atom> = Default::default();
             for member in declaration.members.iter().map(|member| &hir[member]) {
                 let first = hir.text.get(member.pos as usize).copied();
                 let code = match first {
                     Some(b'[') => 1164,
                     Some(b'#') => 18024,
                     Some(b'0'..=b'9' | b'.') => 2452,
-                    _ if names.contains(&member.name) => 2300,
+                    _ if crate::util::is_listed(&names, &mut listed, member.name) => 2300,
                     _ => {
                         names.push(member.name);
                         continue;

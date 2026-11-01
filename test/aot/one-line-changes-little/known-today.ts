@@ -104,6 +104,9 @@ export const knownInTypedProgram: Readonly<Record<string, string>> = {
   "native-addon-body": "29 | 44 | 27, 27 | 3 | 11, 19,102",
   "native-addon-vec": "46 | 35 | 18, 36 | 2 | 4, 15,285",
   "push-other-layout": "unknown calls 0 -> 3",
+  // Nothing grew: a size fix took 1,417 bytes off the program alone and 384 off the program with this line, and the bound is a quarter of the program alone.
+  // What the line still costs too much is a whole copy of the `for i` loop of run(), 1,125 bytes, made so that one value in it is held in a narrower form.
+  "write-unknown-key-vec": "bytes of code of the program 6520 -> 9324",
 };
 
 /** the same for program.js beside a line that brings in a module of the library. The numbers are those beside much of the library; alone: 67 | 15 | 10, 35 | 0 | 1, 8,768 */
@@ -159,6 +162,8 @@ export const knownBesideLibrary: Readonly<Record<string, string>> = {
     "free accesses 44 -> 24, accesses by name 9 -> 14, direct calls 35 -> 24, unknown calls 1 -> 7, bytes of code of the program 7186 -> 13353",
   "world-to-unknown":
     "free accesses 44 -> 23, accesses by name 9 -> 14, direct calls 35 -> 23, unknown calls 1 -> 10, bytes of code of the program 7186 -> 15728",
+  // As in the typed program above.
+  "write-unknown-key-vec": "bytes of code of the program 7397 -> 10543",
 };
 
 /** the same beside a line that brings in much of the library, for the lines that keep within the bounds beside one module */

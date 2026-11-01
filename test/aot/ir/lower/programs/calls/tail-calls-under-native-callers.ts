@@ -113,7 +113,7 @@ export {};
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="spread"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasRestParameter, IsChecked] captures=[{type=anything}] thisType={type=anything} parameters=[{type=Array site=[[w_12]] flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasRestParameter, IsChecked] captures=[{type=anything variableName="callee"}] thisType={type=anything} parameters=[{type=Array site=[[w_12]] flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: anything, v1: Array):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -124,7 +124,7 @@ export {};
 // CHECK-NEXT: ReturnCall v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="applied"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasArgumentCount, HasHiddenRest, IsChecked] captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasArgumentCount, HasHiddenRest, IsChecked] captures=[{type=anything variableName="callee"}] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: anything, v1: int[0, 4294967295], v2: Array):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

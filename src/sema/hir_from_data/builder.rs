@@ -127,9 +127,19 @@ impl<'s> Builder<'_, 's> {
                 self.file.add_flags(path, ExprFlags::RESOLVED_AT_RUNTIME);
                 vec![self.export_default(path)]
             }
+            // `import { db } from "./data.sqlite" with { type: "sqlite" }`: one object under two names.
             DataModule::Database { path, is_embedded } => {
+                let names = self.local_names(&[], 2);
+                let (database_name, marker_name) = (names[0], names[1]);
                 let database = self.database(path, is_embedded);
-                vec![self.export_default(database)]
+                let marker = self.expr(ExprKind::True);
+                let constants = [(database_name, database), (marker_name, marker)];
+                let exports = [
+                    (database_name, known::default),
+                    (database_name, self.atoms.intern(b"db")),
+                    (marker_name, known::__esModule),
+                ];
+                vec![self.constants(&constants), self.export_list(&exports)]
             }
             DataModule::Page => {
                 let kind = self.unary(UnOp::Void, 0.0);

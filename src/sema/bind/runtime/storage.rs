@@ -138,6 +138,7 @@ define_tables! {
         maps {
             declared_symbols: S::Few<(Decl, SymbolId)>,
             inner_class_symbols: S::Few<(ClassId, SymbolId)>,
+            names_taken_from_imports: S::Few<(SymbolId, SymbolId)>,
             own_scopes: S::List<(StmtId, ScopeId)>,
         }
         sorted {

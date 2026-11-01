@@ -90,6 +90,13 @@ impl UntouchedPages {
             && (start - self.addresses.start) as u64 == position
     }
 
+    /// Where in the file `bytes` begin, if they are a part of the mapping.
+    fn position_of(&self, bytes: &[u8]) -> Option<u64> {
+        let start = bytes.as_ptr() as usize;
+        (start >= self.addresses.start && start + bytes.len() <= self.addresses.end)
+            .then(|| (start - self.addresses.start) as u64)
+    }
+
     /// `bytes` are a part of the mapping.
     fn hold(&self, bytes: &[u8]) -> bool {
         let offset = bytes.as_ptr() as usize - self.addresses.start;
@@ -98,6 +105,33 @@ impl UntouchedPages {
             .iter()
             .all(|&is_untouched| is_untouched)
     }
+}
+
+/// Writes `bytes`, which stand elsewhere in `original` or not in it at all.
+/// What nothing has written to is read from `original`, a block at a time. Read through the mapping, every page of it would stay resident until the mapping goes, and
+/// the symbols and the debug information that a payload pushes back are tens or hundreds of megabytes.
+fn write_moved_blocks(
+    file: &bun_sys::File,
+    position: u64,
+    bytes: &[u8],
+    original: &bun_sys::File,
+    untouched: &UntouchedPages,
+    block: &mut [u8],
+) -> bun_sys::Maybe<()> {
+    let Some(position_in_original) = untouched.position_of(bytes) else {
+        return file.pwrite_all(bytes, position as i64);
+    };
+    let mut start = 0;
+    while start < bytes.len() {
+        let end = bytes.len().min(start + block.len());
+        let held = &mut block[..end - start];
+        let is_read = untouched.hold(&bytes[start..end])
+            && original.pread_all(held, position_in_original + start as u64)? == held.len();
+        let part = if is_read { &*held } else { &bytes[start..end] };
+        file.pwrite_all(part, (position + start as u64) as i64)?;
+        start = end;
+    }
+    Ok(())
 }
 
 fn write_changed_blocks(
@@ -109,8 +143,10 @@ fn write_changed_blocks(
     block: &mut [u8],
 ) -> bun_sys::Maybe<u64> {
     // What has moved, and what the original never held, differs from what stands there.
-    if untouched.is_some_and(|pages| !pages.are_mapped_at(bytes, position)) {
-        file.pwrite_all(bytes, position as i64)?;
+    if let Some(pages) = untouched
+        && !pages.are_mapped_at(bytes, position)
+    {
+        write_moved_blocks(file, position, bytes, original, pages, block)?;
         return Ok(bytes.len() as u64);
     }
     let mut changed_start = 0;
@@ -277,7 +313,14 @@ fn write_pieces<'a>(
                 )
                 .map_err(Write)?;
                 bytes_kept += inside.len() as u64 - written;
-                write_behind_end(file, behind, size + inside.len() as u64).map_err(Write)?;
+                let end = size + inside.len() as u64;
+                match untouched.as_ref() {
+                    Some(pages) if pages.position_of(&behind).is_some() => {
+                        write_moved_blocks(file, end, &behind, original.file, pages, &mut block)
+                    }
+                    _ => write_behind_end(file, behind, end),
+                }
+                .map_err(Write)?;
             }
             (Piece::Bytes(mut behind), None) => {
                 let inside = behind

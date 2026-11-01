@@ -7,7 +7,7 @@ function calls(...names) { let sum = 0; if (counts) for (const name of names) su
 function expectBetween(what, value, low, high) { if (counts && !(value >= low && value <= high)) throw new Error(what + ": " + value + " is not in " + low + ".." + high); }
 const turns = JSON.parse("4");
 const box = JSON.parse("[0]"); function hidden(value) { box[0] = value; return box[0]; }
-function byName() { return calls("GetByIdAndCache", "PutByIdAndCache", "FillSiteCache"); }
+function byName() { return calls("GetByIdAndCache", "PutByIdAndCache", "FillSiteCache", "ReadValueAndFillSiteCache"); }
 
 const chain = [Object.create(null)];
 for (let k = 1; k < 6; k++) chain[k] = Object.create(chain[k - 1]);

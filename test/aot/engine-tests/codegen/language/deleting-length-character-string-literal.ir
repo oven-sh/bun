@@ -48,186 +48,186 @@ variable g3 module=m0 declared={type=undefined|null|function|f10 flags=[IsExpect
 variable g4 module=m0 declared={type=undefined|null|function|f11 flags=[IsExpected]} owner=L1
 function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    Jump -> next b1()
+    Jump -> next b1() @0
   b1():
-    v0 = NewObject layout=L0
-    v1 = FinishObject v0
-    PutModuleVariable v1 variable=g0
-    v3 = NewClosure function=f1
-    v4 = Convert v3 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v5 = NewClosure function=f2
-    v6 = NewClass v5 layout=L1
-    v7 = FinishClass v6 layout=L1
-    v8 = Convert v7 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v9 = Convert v7 declared={type=function flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v10 = CallDirect v6, v9 function=f3
-    v11 = Convert v7 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v12 = String string="sloppy length"
-    v13 = NewClosure function=f4
-    v14 = Call v4, -, v12, v13 calleeName="tell"
-    v15 = String string="sloppy character"
-    v16 = NewClosure function=f5
-    v17 = Call v4, -, v15, v16 calleeName="tell"
-    v18 = String string="sloppy past the end"
-    v19 = NewClosure function=f6
-    v20 = Call v4, -, v18, v19 calleeName="tell"
-    v21 = String string="sloppy another name"
-    v22 = NewClosure function=f7
-    v23 = Call v4, -, v21, v22 calleeName="tell"
-    v24 = String string="strict length"
-    v25 = PropGet v11 key="length"
-    v26 = Convert v25 declared={type=undefined|null|function|f8 flags=[IsExpected]}
-    v27 = Call v4, -, v24, v26 calleeName="tell"
-    v28 = String string="strict character"
-    v29 = PropGet v11 key="character"
-    v30 = Convert v29 declared={type=undefined|null|function|f9 flags=[IsExpected]}
-    v31 = Call v4, -, v28, v30 calleeName="tell"
-    v32 = String string="strict past the end"
-    v33 = PropGet v11 key="pastTheEnd"
-    v34 = Convert v33 declared={type=undefined|null|function|f10 flags=[IsExpected]}
-    v35 = Call v4, -, v32, v34 calleeName="tell"
-    v36 = String string="strict another name"
-    v37 = PropGet v11 key="anotherName"
-    v38 = Convert v37 declared={type=undefined|null|function|f11 flags=[IsExpected]}
-    v39 = Call v4, -, v36, v38 calleeName="tell"
-    v40 = Undefined
-    Return v40
+    v0 = NewObject layout=L0 @0
+    v1 = FinishObject v0 @0
+    PutModuleVariable v1 variable=g0 @0
+    v3 = NewClosure function=f1 @0
+    v4 = Convert v3 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v5 = NewClosure function=f2 @585
+    v6 = NewClass v5 layout=L1 @585
+    v7 = FinishClass v6 layout=L1 @585
+    v8 = Convert v7 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @585
+    v9 = Convert v7 declared={type=function flags=[IsFromCompiler]} illTypedCause=FromLooseType @585
+    v10 = CallDirect v6, v9 function=f3 @585
+    v11 = Convert v7 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @585
+    v12 = String string="sloppy length" @380
+    v13 = NewClosure function=f4 @397
+    v14 = Call v4, -, v12, v13 calleeName="tell" @375
+    v15 = String string="sloppy character" @431
+    v16 = NewClosure function=f5 @451
+    v17 = Call v4, -, v15, v16 calleeName="tell" @426
+    v18 = String string="sloppy past the end" @481
+    v19 = NewClosure function=f6 @504
+    v20 = Call v4, -, v18, v19 calleeName="tell" @476
+    v21 = String string="sloppy another name" @534
+    v22 = NewClosure function=f7 @557
+    v23 = Call v4, -, v21, v22 calleeName="tell" @529
+    v24 = String string="strict length" @794
+    v25 = PropGet v11 key="length" @811
+    v26 = Convert v25 declared={type=undefined|null|function|f8 flags=[IsExpected]} @811
+    v27 = Call v4, -, v24, v26 calleeName="tell" @789
+    v28 = String string="strict character" @832
+    v29 = PropGet v11 key="character" @852
+    v30 = Convert v29 declared={type=undefined|null|function|f9 flags=[IsExpected]} @852
+    v31 = Call v4, -, v28, v30 calleeName="tell" @827
+    v32 = String string="strict past the end" @876
+    v33 = PropGet v11 key="pastTheEnd" @899
+    v34 = Convert v33 declared={type=undefined|null|function|f10 flags=[IsExpected]} @899
+    v35 = Call v4, -, v32, v34 calleeName="tell" @871
+    v36 = String string="strict another name" @924
+    v37 = PropGet v11 key="anotherName" @947
+    v38 = Convert v37 declared={type=undefined|null|function|f11 flags=[IsExpected]} @947
+    v39 = Call v4, -, v36, v38 calleeName="tell" @919
+    v40 = Undefined @919
+    Return v40 @919
 }
 function f1 name="tell" module=m0 position=234 flags=[IsSloppy, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|string, v1: undefined|null|function):
-    Jump -> next b1()
+    Jump -> next b1() @234
   b1():
-    Jump -> next b2()
+    Jump -> next b2() @264
   b2() handler=b4():
-    v2 = Builtin builtin=GlobalThis
-    v3 = PropGet v2 key="console" [isFreeName]
-    v4 = Convert v3 declared={type=builtin(Console) flags=[IsExpected]}
-    v5 = PropGet v4 key="log"
-    v6 = Convert v5 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-    v7 = Call v1 calleeName="ask"
-    v8 = Call v6, v4, v0, v7 calleeKey="log" calleeName="console.log"
-    Jump -> next b3()
+    v2 = Builtin builtin=GlobalThis @274
+    v3 = PropGet v2 key="console" [isFreeName] @274
+    v4 = Convert v3 declared={type=builtin(Console) flags=[IsExpected]} @274
+    v5 = PropGet v4 key="log" @274
+    v6 = Convert v5 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @274
+    v7 = Call v1 calleeName="ask" @293
+    v8 = Call v6, v4, v0, v7 calleeKey="log" calleeName="console.log" @282
+    Jump -> next b3() @274
   b3():
-    Jump -> next b5()
+    Jump -> next b5() @274
   b4() role=CatchHandler:
-    v9 = CatchValue
-    v10 = Builtin builtin=GlobalThis
-    v11 = PropGet v10 key="console" [isFreeName]
-    v12 = Convert v11 declared={type=builtin(Console) flags=[IsExpected]}
-    v13 = PropGet v12 key="log"
-    v14 = Convert v13 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-    v15 = PropGet v9 key="constructor"
-    v16 = PropGet v15 key="name"
-    v17 = Call v14, v12, v0, v16 calleeKey="log" calleeName="console.log"
-    Jump -> next b5()
+    v9 = CatchValue @319
+    v10 = Builtin builtin=GlobalThis @325
+    v11 = PropGet v10 key="console" [isFreeName] @325
+    v12 = Convert v11 declared={type=builtin(Console) flags=[IsExpected]} @325
+    v13 = PropGet v12 key="log" @325
+    v14 = Convert v13 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @325
+    v15 = PropGet v9 key="constructor" @344
+    v16 = PropGet v15 key="name" @350
+    v17 = Call v14, v12, v0, v16 calleeKey="log" calleeName="console.log" @333
+    Jump -> next b5() @325
   b5():
-    v18 = Undefined
-    Return v18
+    v18 = Undefined @325
+    Return v18 @325
 }
 function f2 name="Strict" module=m0 position=591 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
   b0(v0: anything):
-    Jump -> next b1()
+    Jump -> next b1() @591
   b1():
-    v1 = GetConstructPrototype v0 layout=L1
-    v2 = NewObject v1 layout=L1
-    v3 = Convert v2 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    Return v3
+    v1 = GetConstructPrototype v0 layout=L1 @585
+    v2 = NewObject v1 layout=L1 @585
+    v3 = Convert v2 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @585
+    Return v3 @585
 }
 function f3 module=m0 position=591 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] captures=[{type=function flags=[IsFromCompiler]}] thisType={type=function flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: function, v1: function):
-    Jump -> next b1()
+    Jump -> next b1() @591
   b1():
-    v2 = Convert v1 declared={type=object flags=[IsFromCompiler, IsClaim]}
-    v3 = NewClosure function=f8
-    v4 = Convert v3 declared={type=undefined|null|function|f8 flags=[IsExpected]}
-    PropDefine v2, v4 key="length"
-    v6 = NewClosure function=f9
-    v7 = Convert v6 declared={type=undefined|null|function|f9 flags=[IsExpected]}
-    PropDefine v2, v7 key="character"
-    v9 = NewClosure function=f10
-    v10 = Convert v9 declared={type=undefined|null|function|f10 flags=[IsExpected]}
-    PropDefine v2, v10 key="pastTheEnd"
-    v12 = NewClosure function=f11
-    v13 = Convert v12 declared={type=undefined|null|function|f11 flags=[IsExpected]}
-    PropDefine v2, v13 key="anotherName"
-    v15 = Undefined
-    Return v15
+    v2 = Convert v1 declared={type=object flags=[IsFromCompiler, IsClaim]} @591
+    v3 = NewClosure function=f8 @618
+    v4 = Convert v3 declared={type=undefined|null|function|f8 flags=[IsExpected]} @618
+    PropDefine v2, v4 key="length" @609
+    v6 = NewClosure function=f9 @667
+    v7 = Convert v6 declared={type=undefined|null|function|f9 flags=[IsExpected]} @667
+    PropDefine v2, v7 key="character" @655
+    v9 = NewClosure function=f10 @713
+    v10 = Convert v9 declared={type=undefined|null|function|f10 flags=[IsExpected]} @713
+    PropDefine v2, v10 key="pastTheEnd" @700
+    v12 = NewClosure function=f11 @760
+    v13 = Convert v12 declared={type=undefined|null|function|f11 flags=[IsExpected]} @760
+    PropDefine v2, v13 key="anotherName" @746
+    v15 = Undefined @591
+    Return v15 @591
 }
 function f4 module=m0 position=397 kind=Arrow flags=[IsSloppy] thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes=[f12] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    Jump -> next b1()
+    Jump -> next b1() @397
   b1():
-    v0 = String string="text"
-    v1 = PropDelete v0 key="length" mode=Sloppy
-    v2 = Convert v1 declared={type=boolean flags=[IsExpected]}
-    Return v2
+    v0 = String string="text" @410
+    v1 = PropDelete v0 key="length" mode=Sloppy @423
+    v2 = Convert v1 declared={type=boolean flags=[IsExpected]} @423
+    Return v2 @423
 }
 function f5 module=m0 position=451 kind=Arrow flags=[IsSloppy] thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes=[f13] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    Jump -> next b1()
+    Jump -> next b1() @451
   b1():
-    v0 = String string="text"
-    v1 = Integer integer=1
-    v2 = ElemDelete v0, v1 mode=Sloppy
-    v3 = Convert v2 declared={type=boolean flags=[IsExpected]}
-    Return v3
+    v0 = String string="text" @464
+    v1 = Integer integer=1 @464
+    v2 = ElemDelete v0, v1 mode=Sloppy @473
+    v3 = Convert v2 declared={type=boolean flags=[IsExpected]} @473
+    Return v3 @473
 }
 function f6 module=m0 position=504 kind=Arrow flags=[IsSloppy] thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes=[f14] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    Jump -> next b1()
+    Jump -> next b1() @504
   b1():
-    v0 = String string="text"
-    v1 = Integer integer=9
-    v2 = ElemDelete v0, v1 mode=Sloppy
-    v3 = Convert v2 declared={type=boolean flags=[IsExpected]}
-    Return v3
+    v0 = String string="text" @517
+    v1 = Integer integer=9 @517
+    v2 = ElemDelete v0, v1 mode=Sloppy @526
+    v3 = Convert v2 declared={type=boolean flags=[IsExpected]} @526
+    Return v3 @526
 }
 function f7 module=m0 position=557 kind=Arrow flags=[IsSloppy] thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    Jump -> next b1()
+    Jump -> next b1() @557
   b1():
-    v0 = String string="text"
-    v1 = PropDelete v0 key="other" mode=Sloppy
-    v2 = Convert v1 declared={type=boolean flags=[IsExpected]}
-    Return v2
+    v0 = String string="text" @570
+    v1 = PropDelete v0 key="other" mode=Sloppy @582
+    v2 = Convert v1 declared={type=boolean flags=[IsExpected]} @582
+    Return v2 @582
 }
 function f8 name="length" module=m0 position=618 kind=Arrow thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes=[f16] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    Jump -> next b1()
+    Jump -> next b1() @618
   b1():
-    v0 = String string="text"
-    v1 = PropDelete v0 key="length"
-    v2 = Convert v1 declared={type=boolean flags=[IsExpected]}
-    Return v2
+    v0 = String string="text" @631
+    v1 = PropDelete v0 key="length" @631
+    v2 = Convert v1 declared={type=boolean flags=[IsExpected]} @631
+    Return v2 @631
 }
 function f9 name="character" module=m0 position=667 kind=Arrow thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes=[f17] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    Jump -> next b1()
+    Jump -> next b1() @667
   b1():
-    v0 = String string="text"
-    v1 = Integer integer=1
-    v2 = ElemDelete v0, v1
-    v3 = Convert v2 declared={type=boolean flags=[IsExpected]}
-    Return v3
+    v0 = String string="text" @680
+    v1 = Integer integer=1 @680
+    v2 = ElemDelete v0, v1 @680
+    v3 = Convert v2 declared={type=boolean flags=[IsExpected]} @680
+    Return v3 @680
 }
 function f10 name="pastTheEnd" module=m0 position=713 kind=Arrow thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes=[f18] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    Jump -> next b1()
+    Jump -> next b1() @713
   b1():
-    v0 = String string="text"
-    v1 = Integer integer=9
-    v2 = ElemDelete v0, v1
-    v3 = Convert v2 declared={type=boolean flags=[IsExpected]}
-    Return v3
+    v0 = String string="text" @726
+    v1 = Integer integer=9 @726
+    v2 = ElemDelete v0, v1 @733
+    v3 = Convert v2 declared={type=boolean flags=[IsExpected]} @733
+    Return v3 @733
 }
 function f11 name="anotherName" module=m0 position=760 kind=Arrow thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes=[f19] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    Jump -> next b1()
+    Jump -> next b1() @760
   b1():
-    v0 = String string="text"
-    v1 = PropDelete v0 key="other"
-    v2 = Convert v1 declared={type=boolean flags=[IsExpected]}
-    Return v2
+    v0 = String string="text" @773
+    v1 = PropDelete v0 key="other" @780
+    v2 = Convert v1 declared={type=boolean flags=[IsExpected]} @780
+    Return v2 @780
 }
 function f12 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f13 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
@@ -277,8 +277,8 @@ function f19 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v32
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="tell"
-# CHECK: module=m0 position=234 flags=[IsSloppy, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: string, v1: anything ~ undefined|null|function) handler=b1():
+# CHECK: module=m0 position=234 flags=[IsSloppy, HasExplicitName] length=2 thisType={type=anything} parameters=[{type="sloppy another name"|"sloppy character"|"sloppy length"|"sloppy past the end"|"strict another name"|"strict character"|"strict length"|"strict past the end"}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: "sloppy another name"|"sloppy character"|"sloppy length"|"sloppy past the end"|"strict another name"|"strict character"|"strict length"|"strict past the end", v1: anything ~ undefined|null|function) handler=b1():
 # CHECK-NEXT: v2: undefined|number|f4|f5|f6|f7|f8|f9|f10|f11 ~ undefined|f4|f5|f6|f7|f8|f9|f10|f11 = AssumeType v1 provenType=undefined|number|f4|f5|f6|f7|f8|f9|f10|f11
 # CHECK-NEXT: v3: anything = Call v2 calleeName="ask" accessSite=15 callees=[f4, f5, f6, f7, f8, f9, f10, f11]
 # CHECK-NEXT: v4: boolean = AssumeType v3 provenType=boolean
@@ -370,8 +370,8 @@ function f19 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="tell"
-# CHECK: module=m0 position=234 role=CalleeVersion flags=[IsSloppy, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string}, {type=function}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1 parameter=1073741825 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f1} {
-# CHECK-NEXT: b0(v0: string, v1: function) handler=b1():
+# CHECK: module=m0 position=234 role=CalleeVersion flags=[IsSloppy, HasExplicitName] length=2 thisType={type=anything} parameters=[{type="sloppy another name"|"sloppy character"|"sloppy length"|"sloppy past the end"|"strict another name"|"strict character"|"strict length"|"strict past the end"}, {type=function}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1 parameter=1073741825 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f1} {
+# CHECK-NEXT: b0(v0: "sloppy another name"|"sloppy character"|"sloppy length"|"sloppy past the end"|"strict another name"|"strict character"|"strict length"|"strict past the end", v1: function) handler=b1():
 # CHECK-NEXT: v2: f4|f5|f6|f7|f8|f9|f10|f11 = AssumeType v1 provenType=undefined|number|f4|f5|f6|f7|f8|f9|f10|f11
 # CHECK-NEXT: v3: anything = Call v2 calleeName="ask" accessSite=15 callees=[f4, f5, f6, f7, f8, f9, f10, f11]
 # CHECK-NEXT: v4: boolean = AssumeType v3 provenType=boolean

@@ -1,16 +1,15 @@
 // `{ ...x, key: value }` whose copy is a plain object, in typed and in generic code: one call clones and stores, as in untyped code, and plans room for the added properties.
-// Today one call clones, without an allocation and a copy of their own, and the stores behind it are calls of their own.
 // CALLS+ wide operationAOTCopyObject
 // CALLS- wide AllocateCell|operationAOTCopyDataProperties
 // CALLS+ named operationAOTCopyObject
 // CALLS- named AllocateCell|operationAOTCopyDataProperties
 // CALLS+ both operationAOTCopyObject
 // CALLS- both AllocateCell|operationAOTCopyDataProperties
-// CALLS+ wide CloneObjectAndExtendWithNumber
+// CALLS+ wide operationAOTCopyObjectAndDefine
 // CALLS- wide PutBy
-// CALLS+ named CloneObjectAndExtend
+// CALLS+ named operationAOTCopyObjectAndDefine
 // CALLS- named PutBy
-// CALLS+ both CloneObjectAndExtend
+// CALLS+ both operationAOTCopyObjectAndDefine
 // CALLS- both PutBy
 interface R { a: number; b: string }
 function wide<T extends object>(r: T, g: number): T & { g: number } { return { ...r, g }; }

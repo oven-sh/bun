@@ -16,6 +16,7 @@ const suffix = process.argv[2] ?? "";
 globalThis.hide = new Function("value", "return value" + suffix);
 const define = new Function("object", "key", "descriptor", "return Object.defineProperty(object, key, descriptor)" + suffix);
 const remove = new Function("object", "key", "return delete object[key]" + suffix);
+const construct = new Function("target", "list", "newTarget", "return Reflect.construct(target, list, newTarget)" + suffix);
 
 function Fiber(tag, key, child) {
   this.tag = tag;
@@ -127,10 +128,10 @@ show("the constructor threw", sink.map(readThrows));
 
 function Other() {}
 Other.prototype.marker = "other";
-const forOther = hide(Reflect.construct(Fiber, [7, "for another new.target", null], Other));
+const forOther = hide(construct(Fiber, [7, "for another new.target", null], Other));
 show("made for another new.target", [readFiber(forOther), forOther.marker, forOther instanceof Fiber]);
 class Setter { set key(v) { this.hidden = v; } }
-const underSetter = hide(Reflect.construct(Fiber, [8, "under a setter", null], Setter));
+const underSetter = hide(construct(Fiber, [8, "under a setter", null], Setter));
 show("a setter above takes the store", [readFiber(underSetter), underSetter.hidden]);
 
 define(Fiber.prototype, "key", { set(v) { this.hidden = v; }, configurable: true });

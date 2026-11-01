@@ -168,6 +168,8 @@ impl Shared {
         }
     }
 
+    #[cold]
+    #[inline(never)]
     fn notify(&self) {
         let _g = self.drained.0.lock();
         self.drained.1.notify_all();

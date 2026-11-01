@@ -418,14 +418,59 @@ pub(crate) mod js_bundler {
         Ok(())
     }
 
+    /// A member of `compile` that holds a string or an array of strings.
+    fn read_names(
+        global_this: &JSGlobalObject,
+        compile: JSValue,
+        key: &str,
+    ) -> JsResult<Vec<Vec<u8>>> {
+        let mut list = Vec::new();
+        let Some(value) = compile.get(global_this, key)? else {
+            return Ok(list);
+        };
+        if value.is_undefined_or_null() {
+            return Ok(list);
+        }
+        let mut push = |names: JSValue| -> JsResult<()> {
+            if !names.is_string() {
+                return Err(global_this.throw_invalid_property_type_value(
+                    format!("compile.{key}").as_bytes(),
+                    b"string or array of strings",
+                    names,
+                ));
+            }
+            list.push(names.to_utf8(global_this)?.slice().to_vec());
+            Ok(())
+        };
+        if value.is_array() {
+            let mut iter = value.array_iterator(global_this)?;
+            while let Some(names) = iter.next()? {
+                push(names)?;
+            }
+        } else {
+            push(value)?;
+        }
+        Ok(list)
+    }
+
+    fn with_key<'a>(
+        key: &'static str,
+        list: &'a [Vec<u8>],
+    ) -> impl Iterator<Item = (&'static str, Option<&'a [u8]>)> {
+        list.iter().map(move |names| (key, Some(names.as_slice())))
+    }
+
     /// The members of `compile` whose meaning `compile_options::resolve` owns, as written.
     #[derive(Default)]
     struct RawCompileFlags {
         aot: bool,
         logs_type_mismatches: bool,
         explain: Vec<Vec<u8>>,
+        validates: bool,
+        check: Vec<Vec<u8>>,
         disable: Vec<Vec<u8>>,
         heat: Option<Vec<u8>>,
+        testing: Vec<Vec<u8>>,
         omits_function_source: bool,
         obfuscates: bool,
         admits_inspector: bool,
@@ -485,30 +530,12 @@ pub(crate) mod js_bundler {
             global_this: &JSGlobalObject,
             compile: JSValue,
         ) -> JsResult<()> {
-            if let Some(disable) = compile.get(global_this, "aotDisable")?
-                && !disable.is_undefined_or_null()
-            {
-                let mut push = |names: JSValue| -> JsResult<()> {
-                    if !names.is_string() {
-                        return Err(global_this.throw_invalid_property_type_value(
-                            b"compile.aotDisable",
-                            b"string or array of strings",
-                            names,
-                        ));
-                    }
-                    self.disable
-                        .push(names.to_utf8(global_this)?.slice().to_vec());
-                    Ok(())
-                };
-                if disable.is_array() {
-                    let mut iter = disable.array_iterator(global_this)?;
-                    while let Some(names) = iter.next()? {
-                        push(names)?;
-                    }
-                } else {
-                    push(disable)?;
-                }
-            }
+            self.validates = compile
+                .get_boolean_loose(global_this, "aotValidate")?
+                .unwrap_or(false);
+            self.check = read_names(global_this, compile, "aotCheck")?;
+            self.disable = read_names(global_this, compile, "aotDisable")?;
+            self.testing = read_names(global_this, compile, "aotTesting")?;
 
             if let Some(heat) = compile.get(global_this, "aotHeat")?
                 && !heat.is_undefined_or_null()
@@ -584,11 +611,12 @@ pub(crate) mod js_bundler {
                     logs: self.logs,
                     is_template: false,
                 },
-                developer_words: self
-                    .disable
-                    .iter()
-                    .map(|names| ("disable", Some(names.as_slice())))
+                // In the order of the command line's flags.
+                developer_words: (self.validates.then_some(("validate", None)).into_iter())
+                    .chain(with_key("check", &self.check))
+                    .chain(with_key("disable", &self.disable))
                     .chain(self.heat.iter().map(|word| ("heat", Some(word.as_slice()))))
+                    .chain(with_key("testing", &self.testing))
                     .collect(),
                 is_cross_compile: !compile.compile_target.is_this_bun(),
                 exec_argv: &compile.exec_argv.list,
@@ -1718,6 +1746,13 @@ pub(crate) mod js_bundler {
                     let define_keys = compile.compile_target.define_keys();
                     let define_values = compile.compile_target.define_values();
                     debug_assert_eq!(define_keys.len(), define_values.len());
+                    if let Some(aot) = compile.aot.as_mut() {
+                        let names = this.define.keys().iter();
+                        aot.user_defined_names = names
+                            .filter(|name| !define_keys.contains(&&***name))
+                            .cloned()
+                            .collect();
+                    }
                     for (key, value) in define_keys.iter().zip(define_values) {
                         this.define.insert(key, value)?;
                     }

@@ -45,7 +45,8 @@ test.skipIf(!!unsupported)(
           String(folder),
           bunEnv,
         );
-        expect({ stderr, exitCode, signal, rows: stdout.split("\n").length > 50 }).toEqual({
+        // 28 lines: most operations are grouped under the one statement where their object escapes.
+        expect({ stderr, exitCode, signal, rows: stdout.split("\n").length > 20 }).toEqual({
           stderr: expect.not.stringMatching(/^error\b/m),
           exitCode: 0,
           signal: null,

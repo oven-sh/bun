@@ -9,13 +9,16 @@ use bun_sema::hir::{
 use bun_sema::import_sites::{
     ImportSiteKind, ImportSpecifier, find_values_of_parameter, is_exported,
 };
-use bun_sema::program::{CodeAnswer, FileId, Files};
-use bun_sema::resolve::FinishedFile;
-use bun_sema::util::SharedSort;
+use bun_sema::program::{CodeAnswer, CodeView, FileId, Files};
+use bun_sema::resolve::{
+    CodeFailure, CodeResolution, ComputedResolution, ExternalKind, FinishedFile, SiteResolution,
+};
+use bun_sema::util::{FxHashMap, SharedSort};
 use smallvec::{SmallVec, smallvec};
 
 use crate::builtins::{BuiltinId, ResolvedBuiltins, RuntimeModule};
 use crate::ir::parallel::InParallel;
+use crate::load::is_in_node_modules;
 use crate::load::loader_aliases::{
     LoaderAlias, resolve_exported_loader_alias, resolve_loader_alias,
 };
@@ -58,7 +61,7 @@ struct Scan<'a, 's> {
 }
 
 // What an expression holds of a text that the program writes: the text itself, or a list or a set with the text in it.
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
 enum Held {
     Text,
     List,
@@ -78,18 +81,46 @@ struct Holder {
     handed_to: SmallVec<[u32; 2]>,
 }
 
-fn holder_of(holders: &mut Vec<Holder>, symbol: SymbolId, held: Held) -> u32 {
-    let is_same = |holder: &Holder| holder.symbol == symbol && holder.held == held;
-    let found = holders.iter().position(is_same).unwrap_or_else(|| {
-        holders.push(Holder {
-            symbol,
-            held,
-            leads_anywhere: false,
-            handed_to: SmallVec::new(),
-        });
-        holders.len() - 1
-    });
-    found as u32
+#[derive(Default)]
+struct Holders {
+    list: Vec<Holder>,
+    indexes: FxHashMap<(SymbolId, Held), u32>,
+}
+
+impl Holders {
+    fn holder_of(&mut self, symbol: SymbolId, held: Held) -> u32 {
+        *self.indexes.entry((symbol, held)).or_insert_with(|| {
+            self.list.push(Holder {
+                symbol,
+                held,
+                leads_anywhere: false,
+                handed_to: SmallVec::new(),
+            });
+            self.list.len() as u32 - 1
+        })
+    }
+
+    // A holder leads anywhere if one that it hands its text to does.
+    fn spread_back_what_leads_anywhere(&mut self) {
+        let mut handed_from: Vec<SmallVec<[u32; 2]>> = vec![SmallVec::new(); self.list.len()];
+        for (index, holder) in self.list.iter().enumerate() {
+            for &next in &holder.handed_to {
+                handed_from[next as usize].push(index as u32);
+            }
+        }
+        let indexes = 0..self.list.len() as u32;
+        let mut pending: Vec<u32> = indexes
+            .filter(|&index| self.list[index as usize].leads_anywhere)
+            .collect();
+        while let Some(index) = pending.pop() {
+            for &from in &handed_from[index as usize] {
+                let from_leads_anywhere = &mut self.list[from as usize].leads_anywhere;
+                if !std::mem::replace(from_leads_anywhere, true) {
+                    pending.push(from);
+                }
+            }
+        }
+    }
 }
 
 fn sort_modules(modules: &mut Vec<RuntimeModule>) {
@@ -134,7 +165,7 @@ fn sort_named_modules(named: &mut Vec<NamedModule>) {
 const MAX_REEXPORTS: usize = 8;
 
 pub(crate) fn find_import_of(
-    files: &Files<'_>,
+    files: &dyn CodeView<'_>,
     file: FileId,
     symbol: SymbolId,
 ) -> Option<(ImportId, Atom)> {
@@ -196,10 +227,82 @@ pub(crate) fn loads_by_unknown_name(application: &Files<'_>) -> bool {
 
 pub(crate) fn loads_by_unknown_path(application: &Files<'_>) -> bool {
     let names_unknown_path = |&file: &FileId| {
-        parsed_source(application, file).is_some_and(|source| !source.unknown_names_at.is_empty())
+        parsed_source(application, file).is_some_and(|source| {
+            !source.unknown_names_at.is_empty() || !source.files_missing_at_build_at.is_empty()
+        })
     };
     loads_by_unknown_name(application)
         || application.compiled_files().iter().any(names_unknown_path)
+}
+
+/// A path where the program may lay a file before it loads it. What a package looks for and does without, `require("./build/Release/addon.node")`, is none.
+pub(crate) fn is_path_that_program_may_write(importer: &[u8], specifier: &[u8]) -> bool {
+    (specifier.starts_with(b"./") || specifier.starts_with(b"../") || specifier.starts_with(b"/"))
+        && !is_in_node_modules(importer)
+}
+
+/// `writeFileSync(path, text); await import(path)`: where a load spells a path at which the build finds no file. The loader of the run time reads the file
+/// when the call runs, and nobody has read what its text imports. `is_there`: a file lies at the absolute path, or another program holds it.
+/// `is_data`: a file of that name has no code, `./made.json`. In a test run a statement counts too: an earlier test file may write what this file imports.
+pub(crate) fn find_loads_of_files_missing_at_build(
+    request: &FinishedFile<'_, '_>,
+    runs_tests: bool,
+    is_there: &dyn Fn(&[u8]) -> bool,
+    is_data: &dyn Fn(&[u8]) -> bool,
+) -> Vec<u32> {
+    let (analysis, atoms) = (request.analysis, request.atoms);
+    let may_be_written = |specifier: &ImportSpecifier| {
+        matches!(*specifier, ImportSpecifier::Constant(text)
+            if is_path_that_program_may_write(request.path, atoms.bytes(text))
+                && !is_data(atoms.bytes(text)))
+    };
+    let mut found = Vec::new();
+    for (site, resolution) in analysis.import_sites.iter().zip(request.resolutions) {
+        let hir = request.hir;
+        let position = match site.kind {
+            ImportSiteKind::ImportCall(call)
+            | ImportSiteKind::Require(call)
+            | ImportSiteKind::ImportMetaRequire(call) => {
+                if site.specifier_node.is_none() || analysis.decisions.is_dead_expr(call) {
+                    continue;
+                }
+                hir[site.specifier_node].pos
+            }
+            ImportSiteKind::Import(import) if runs_tests => hir[hir[import].stmt].start,
+            ImportSiteKind::ExportFrom(export) if runs_tests => hir[hir[export].stmt].start,
+            ImportSiteKind::ExportStar(statement) if runs_tests => hir[statement].start,
+            _ => continue,
+        };
+        let is_missing = match *resolution {
+            // A query asks for a copy of a file that is there.
+            SiteResolution::Constant(CodeResolution::External {
+                specifier,
+                kind: ExternalKind::UncompiledCode,
+            }) => {
+                bun_paths::is_absolute(specifier)
+                    && !bun_core::strings::contains_char(specifier, b'?')
+                    && !is_data(specifier)
+                    && !is_there(specifier)
+            }
+            SiteResolution::Constant(CodeResolution::NotFound(CodeFailure::ModuleNotFound)) => {
+                may_be_written(&site.specifier)
+            }
+            // `for (const name of ["a", "b"]) await import(`./plugin-${name}.mjs`)`: a value that found no file is resolved when the call runs.
+            SiteResolution::Computed(ComputedResolution::Candidates { spellings, .. }) => {
+                let is_spelled = |specifier: &ImportSpecifier| {
+                    matches!(*specifier, ImportSpecifier::Constant(text)
+                        if spellings.binary_search_by(|it| it.text.cmp(atoms.bytes(text))).is_ok())
+                };
+                let mut alternatives = analysis.alternatives_of(&site.specifier).iter();
+                alternatives.any(|it| may_be_written(it) && !is_spelled(it))
+            }
+            SiteResolution::Constant(_) | SiteResolution::Computed(_) => false,
+        };
+        if is_missing {
+            found.push(position);
+        }
+    }
+    found
 }
 
 // A loader that is given a parameter is given what the calls pass for it. One that is given a name the build does not know may be given any text that the program writes as a value, in whichever file. In the order of the registry.
@@ -211,12 +314,23 @@ pub(crate) fn find_library_modules_that_unknown_names_may_stand_for(
     let sources = || files.iter().filter_map(source_of);
     let passed = sources().flat_map(|it| &it.library_modules_passed_for_parameters);
     let mut modules: Vec<RuntimeModule> = passed.copied().collect();
+    let in_texts = sources().flat_map(|it| &it.library_modules_named_in_text_left_to_run_time);
+    modules.extend(in_texts.copied());
     if loads_by_unknown_name(application) {
         let written = sources().flat_map(|it| &it.library_modules_written_as_values);
         modules.extend(written.copied());
     }
     sort_modules(&mut modules);
     modules
+}
+
+// `AotOptions::imports_are_in_other_images`: the first of those images holds Bun's own modules, and the loader finds them there by the name that the program computes.
+pub(crate) fn leave_named_library_modules_to_loader(application: &Files<'_>) {
+    for &file in application.compiled_files() {
+        if let Some(source) = parsed_source(application, file) {
+            source.set_named_modules(Vec::new());
+        }
+    }
 }
 
 // esbuild exports `__require` from a shared chunk, so whether `__require("node:fs")` loads a module is only known once the exporting file is loaded.
@@ -537,18 +651,18 @@ impl Scan<'_, '_> {
         }
     }
 
-    fn follow_variables(&self, holders: &mut Vec<Holder>) {
+    fn follow_variables(&self, holders: &mut Holders) {
         let (hir, bound, analysis) = (self.request.hir, self.request.bound, self.request.analysis);
         let mut first_new = 0;
         for _ in 0..self.limits.get(LimitId::MaxVariablesFollowedToLoader) {
-            let end = holders.len();
+            let end = holders.list.len();
             if first_new == end {
                 break;
             }
-            for holder in &mut holders[first_new..end] {
+            for holder in &mut holders.list[first_new..end] {
                 holder.leads_anywhere = !self.is_read_by_name_alone(holder.symbol);
             }
-            let names = holders[first_new..end].iter();
+            let names = holders.list[first_new..end].iter();
             let mut names: Vec<Atom> = names.map(|it| bound.symbol(it.symbol).name).collect();
             names.shared_sort_unstable_by_key(|name| name.0);
             for mention in (0..hir.exprs.len() as u32).map(ExprId) {
@@ -561,37 +675,38 @@ impl Scan<'_, '_> {
                 {
                     continue;
                 }
-                let binding = bound.binding(mention);
-                for index in first_new..end {
-                    let holder = &holders[index];
-                    if holder.leads_anywhere || binding != Binding::Symbol(holder.symbol) {
+                let Binding::Symbol(symbol) = bound.binding(mention) else {
+                    continue;
+                };
+                let of_symbol = [Held::Text, Held::List].map(|held| {
+                    let index = holders.indexes.get(&(symbol, held)).map(|&it| it as usize);
+                    index.filter(|index| (first_new..end).contains(index))
+                });
+                let (first, second) = (
+                    of_symbol[0].min(of_symbol[1]),
+                    of_symbol[0].max(of_symbol[1]),
+                );
+                for index in [first, second].into_iter().flatten() {
+                    let holder = &holders.list[index];
+                    if holder.leads_anywhere {
                         continue;
                     }
                     match self.way_of_mention(mention, holder) {
-                        Way::Anywhere => holders[index].leads_anywhere = true,
+                        Way::Anywhere => holders.list[index].leads_anywhere = true,
                         Way::Nowhere => {}
                         Way::Variable(next, held) => {
-                            let next = holder_of(holders, next, held);
-                            holders[index].handed_to.push(next);
+                            let next = holders.holder_of(next, held);
+                            holders.list[index].handed_to.push(next);
                         }
                     }
                 }
             }
             first_new = end;
         }
-        for holder in &mut holders[first_new..] {
+        for holder in &mut holders.list[first_new..] {
             holder.leads_anywhere = true;
         }
-        loop {
-            let leads_on = |holder: &Holder| {
-                let mut next = holder.handed_to.iter();
-                !holder.leads_anywhere && next.any(|&it| holders[it as usize].leads_anywhere)
-            };
-            let Some(found) = holders.iter().position(leads_on) else {
-                break;
-            };
-            holders[found].leads_anywhere = true;
-        }
+        holders.spread_back_what_leads_anywhere();
     }
 
     fn find_modules_written_as_values(&self) -> Vec<RuntimeModule> {
@@ -602,7 +717,7 @@ impl Scan<'_, '_> {
         names_of_imports.shared_sort_unstable();
         let mut written: Vec<RuntimeModule> = Vec::new();
         let mut held_by_variables: Vec<(u32, RuntimeModule)> = Vec::new();
-        let mut holders: Vec<Holder> = Vec::new();
+        let mut holders = Holders::default();
         for expression in (0..hir.exprs.len() as u32).map(ExprId) {
             let is_text = matches!(
                 hir[expression].kind,
@@ -627,7 +742,7 @@ impl Scan<'_, '_> {
                 Way::Anywhere => written.push(module),
                 Way::Nowhere => {}
                 Way::Variable(symbol, held) => {
-                    let holder = holder_of(&mut holders, symbol, held);
+                    let holder = holders.holder_of(symbol, held);
                     held_by_variables.push((holder, module));
                 }
             }
@@ -636,7 +751,7 @@ impl Scan<'_, '_> {
         if !held_by_variables.is_empty() {
             self.follow_variables(&mut holders);
         }
-        held_by_variables.retain(|it| holders[it.0 as usize].leads_anywhere);
+        held_by_variables.retain(|it| holders.list[it.0 as usize].leads_anywhere);
         written.extend(held_by_variables.iter().map(|it| it.1));
         written
     }
@@ -758,6 +873,8 @@ mod tests {
             let further = FurtherLibraryCode {
                 lacked_before: &RuntimeUses::default(),
                 serves_unseen_code: false,
+                is_served_by_other_images: false,
+                holds_test_files_alone: false,
             };
             let roots =
                 collect_runtime_roots(input.files, &runtime_modules, input.platform, further);

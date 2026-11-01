@@ -87,108 +87,119 @@ console.log(nested[key]);
 // CHECK-NEXT: PutModuleVariable v2 variable=[[g_3]]
 // CHECK-NEXT: v4 = Integer integer=3
 // CHECK-NEXT: v5 = NewDictionary
-// CHECK-NEXT: v6 = ToPropertyKey v2
-// CHECK-NEXT: v7 = NewClosure function=[[f_4]]
-// CHECK-NEXT: SetFunctionName v7, v6 methodKind=Getter
-// CHECK-NEXT: DefineGetter v5, v7, v6
-// CHECK-NEXT: v10 = Convert v5 declared={type=undefined|null|string|object site=[[w_5]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v11 = String string="first"
-// CHECK-NEXT: v12 = Convert v11 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v13 = ToPropertyKey v4
-// CHECK-NEXT: v14 = NewObject -, v12 layout=[[L_6]] fields=[0]
-// CHECK-NEXT: v15 = NewClosure function=[[f_7]]
-// CHECK-NEXT: SetFunctionName v15, v13 methodKind=Getter
-// CHECK-NEXT: DefineGetter v14, v15, v13
-// CHECK-NEXT: v18 = FinishObject v14
-// CHECK-NEXT: v19 = Convert v18 declared={type=undefined|null|[[L_6]] site=[[w_8]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v20 = Integer integer=1227
-// CHECK-NEXT: v21 = NewObject -, v20 layout=[[L_9]] fields=[0]
-// CHECK-NEXT: v22 = NewClosure function=[[f_10]]
-// CHECK-NEXT: DefineGetter v21, v22 key="size"
-// CHECK-NEXT: v24 = FinishObject v21
-// CHECK-NEXT: v25 = Convert v24 declared={type=undefined|null|[[L_9]] site=[[w_11]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v26 = Data data=[[d_12]]
-// CHECK-NEXT: v27 = Convert v26 declared={type=undefined|null|Array site=[[w_13]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v28 = ToPropertyKey v2
-// CHECK-NEXT: v29 = NewObject -, v27 layout=[[L_14]] fields=[0]
-// CHECK-NEXT: v30 = NewClosure function=[[f_15]]
-// CHECK-NEXT: SetFunctionName v30, v28 methodKind=Getter
-// CHECK-NEXT: DefineGetter v29, v30, v28
-// CHECK-NEXT: v33 = ToPropertyKey v2
-// CHECK-NEXT: v34 = NewClosure function=[[f_16]]
-// CHECK-NEXT: SetFunctionName v34, v33 methodKind=Setter
-// CHECK-NEXT: DefineSetter v29, v34, v33
-// CHECK-NEXT: v37 = FinishObject v29
-// CHECK-NEXT: v38 = Convert v37 declared={type=undefined|null|[[L_14]] site=[[w_17]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v39 = NewDictionary
-// CHECK-NEXT: v40 = ToPropertyKey v2
-// CHECK-NEXT: v41 = NewClosure function=[[f_18]]
-// CHECK-NEXT: SetFunctionName v41, v40 methodKind=Getter
-// CHECK-NEXT: DefineGetter v39, v41, v40
-// CHECK-NEXT: v44 = Convert v39 declared={type=undefined|null|string|object site=[[w_19]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v45 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v46 = PropGet v45 key="console" [isFreeName]
-// CHECK-NEXT: v47 = Convert v46 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v48 = PropGet v47 key="log"
-// CHECK-NEXT: v49 = Convert v48 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v50 = PropGet v10 key="computed"
-// CHECK-NEXT: v51 = Builtin builtin=Object
-// CHECK-NEXT: v52 = Builtin builtin=ObjectKeys
-// CHECK-NEXT: v53 = Call v52, v51, v10 calleeName="Object.keys"
-// CHECK-NEXT: v54 = Convert v53 declared={type=undefined|null|Array<undefined|null|string> site=[[w_20]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v55 = Call v49, v47, v50, v54 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v56 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v57 = PropGet v56 key="console" [isFreeName]
-// CHECK-NEXT: v58 = Convert v57 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v59 = PropGet v58 key="log"
-// CHECK-NEXT: v60 = Convert v59 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v61 = Integer integer=3
-// CHECK-NEXT: v62 = ElemGet v19, v61
-// CHECK-NEXT: v63 = Builtin builtin=Object
-// CHECK-NEXT: v64 = Builtin builtin=ObjectKeys
-// CHECK-NEXT: v65 = Call v64, v63, v19 calleeName="Object.keys"
-// CHECK-NEXT: v66 = Convert v65 declared={type=undefined|null|Array<undefined|null|string> site=[[w_21]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v67 = Call v60, v58, v62, v66 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v68 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v69 = PropGet v68 key="console" [isFreeName]
-// CHECK-NEXT: v70 = Convert v69 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v71 = PropGet v70 key="log"
-// CHECK-NEXT: v72 = Convert v71 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v73 = PropGet v25 key="size"
-// CHECK-NEXT: v74 = TypeOf v73
-// CHECK-NEXT: v75 = PropGet v25 key="size"
-// CHECK-NEXT: v76 = Builtin builtin=ArrayBuffer
-// CHECK-NEXT: v77 = StrictEq v75, v76
-// CHECK-NEXT: v78 = Builtin builtin=Object
-// CHECK-NEXT: v79 = Builtin builtin=ObjectGetOwnPropertyDescriptor
-// CHECK-NEXT: v80 = String string="size"
-// CHECK-NEXT: v81 = Call v79, v78, v25, v80 calleeName="Object.getOwnPropertyDescriptor"
-// CHECK-NEXT: v82 = Convert v81 declared={type=undefined|null|number|string|symbol|bigint|[[L_22]] flags=[IsExpected]}
-// CHECK-NEXT: v83 = PropGet v82 key="get"
-// CHECK-NEXT: v84 = TypeTest v83 testedType=undefined
-// CHECK-NEXT: v85 = LogicalNot v84
-// CHECK-NEXT: v86 = Call v72, v70, v74, v77, v85 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v87 = String string="a"
-// CHECK-NEXT: PropSet v38, v87 key="computed"
-// CHECK-NEXT: v89 = Integer integer=2
-// CHECK-NEXT: PropSet v38, v89 key="computed"
-// CHECK-NEXT: v91 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v92 = PropGet v91 key="console" [isFreeName]
-// CHECK-NEXT: v93 = Convert v92 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v94 = PropGet v93 key="log"
-// CHECK-NEXT: v95 = Convert v94 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v96 = PropGet v38 key="computed"
-// CHECK-NEXT: v97 = PropGet v38 key="stored"
-// CHECK-NEXT: v98 = Call v95, v93, v96, v97 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v99 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v100 = PropGet v99 key="console" [isFreeName]
-// CHECK-NEXT: v101 = Convert v100 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v102 = PropGet v101 key="log"
-// CHECK-NEXT: v103 = Convert v102 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v104 = PropGet v44 key="computed"
-// CHECK-NEXT: v105 = Call v103, v101, v104 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v106 = Undefined
-// CHECK-NEXT: Return v106
+// CHECK-NEXT: v6 = String string="computed"
+// CHECK-NEXT: v7 = ToPropertyKey v6
+// CHECK-NEXT: v8 = NewClosure function=[[f_4]]
+// CHECK-NEXT: SetFunctionName v8, v7 methodKind=Getter
+// CHECK-NEXT: DefineGetter v5, v8, v7
+// CHECK-NEXT: v11 = Convert v5 declared={type=undefined|null|string|object site=[[w_5]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v12 = String string="first"
+// CHECK-NEXT: v13 = Convert v12 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v14 = Integer integer=3
+// CHECK-NEXT: v15 = ToPropertyKey v14
+// CHECK-NEXT: v16 = NewObject -, v13 layout=[[L_6]] fields=[0]
+// CHECK-NEXT: v17 = NewClosure function=[[f_7]]
+// CHECK-NEXT: SetFunctionName v17, v15 methodKind=Getter
+// CHECK-NEXT: DefineGetter v16, v17, v15
+// CHECK-NEXT: v20 = FinishObject v16
+// CHECK-NEXT: v21 = Convert v20 declared={type=undefined|null|[[L_6]] site=[[w_8]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v22 = Integer integer=1227
+// CHECK-NEXT: v23 = NewObject -, v22 layout=[[L_9]] fields=[0]
+// CHECK-NEXT: v24 = NewClosure function=[[f_10]]
+// CHECK-NEXT: DefineGetter v23, v24 key="size"
+// CHECK-NEXT: v26 = FinishObject v23
+// CHECK-NEXT: v27 = Convert v26 declared={type=undefined|null|[[L_9]] site=[[w_11]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v28 = Data data=[[d_12]]
+// CHECK-NEXT: v29 = Convert v28 declared={type=undefined|null|Array site=[[w_13]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v30 = String string="computed"
+// CHECK-NEXT: v31 = ToPropertyKey v30
+// CHECK-NEXT: v32 = NewObject -, v29 layout=[[L_14]] fields=[0]
+// CHECK-NEXT: v33 = NewClosure function=[[f_15]]
+// CHECK-NEXT: SetFunctionName v33, v31 methodKind=Getter
+// CHECK-NEXT: DefineGetter v32, v33, v31
+// CHECK-NEXT: v36 = String string="computed"
+// CHECK-NEXT: v37 = ToPropertyKey v36
+// CHECK-NEXT: v38 = NewClosure function=[[f_16]]
+// CHECK-NEXT: SetFunctionName v38, v37 methodKind=Setter
+// CHECK-NEXT: DefineSetter v32, v38, v37
+// CHECK-NEXT: v41 = FinishObject v32
+// CHECK-NEXT: v42 = Convert v41 declared={type=undefined|null|[[L_14]] site=[[w_17]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v43 = NewDictionary
+// CHECK-NEXT: v44 = String string="computed"
+// CHECK-NEXT: v45 = ToPropertyKey v44
+// CHECK-NEXT: v46 = NewClosure function=[[f_18]]
+// CHECK-NEXT: SetFunctionName v46, v45 methodKind=Getter
+// CHECK-NEXT: DefineGetter v43, v46, v45
+// CHECK-NEXT: v49 = Convert v43 declared={type=undefined|null|string|object site=[[w_19]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v50 = Builtin builtin=GlobalThis
+// CHECK-NEXT: v51 = PropGet v50 key="console" [isFreeName]
+// CHECK-NEXT: v52 = Convert v51 declared={type=builtin(Console) flags=[IsExpected]}
+// CHECK-NEXT: v53 = PropGet v52 key="log"
+// CHECK-NEXT: v54 = Convert v53 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+// CHECK-NEXT: v55 = String string="computed"
+// CHECK-NEXT: v56 = PropGet v11 key="computed"
+// CHECK-NEXT: v57 = Builtin builtin=Object
+// CHECK-NEXT: v58 = Builtin builtin=ObjectKeys
+// CHECK-NEXT: v59 = Call v58, v57, v11 calleeName="Object.keys"
+// CHECK-NEXT: v60 = Convert v59 declared={type=undefined|null|Array<undefined|null|string> site=[[w_20]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: v61 = Call v54, v52, v56, v60 calleeKey="log" calleeName="console.log"
+// CHECK-NEXT: v62 = Builtin builtin=GlobalThis
+// CHECK-NEXT: v63 = PropGet v62 key="console" [isFreeName]
+// CHECK-NEXT: v64 = Convert v63 declared={type=builtin(Console) flags=[IsExpected]}
+// CHECK-NEXT: v65 = PropGet v64 key="log"
+// CHECK-NEXT: v66 = Convert v65 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+// CHECK-NEXT: v67 = Integer integer=3
+// CHECK-NEXT: v68 = Integer integer=3
+// CHECK-NEXT: v69 = ElemGet v21, v68
+// CHECK-NEXT: v70 = Builtin builtin=Object
+// CHECK-NEXT: v71 = Builtin builtin=ObjectKeys
+// CHECK-NEXT: v72 = Call v71, v70, v21 calleeName="Object.keys"
+// CHECK-NEXT: v73 = Convert v72 declared={type=undefined|null|Array<undefined|null|string> site=[[w_21]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: v74 = Call v66, v64, v69, v73 calleeKey="log" calleeName="console.log"
+// CHECK-NEXT: v75 = Builtin builtin=GlobalThis
+// CHECK-NEXT: v76 = PropGet v75 key="console" [isFreeName]
+// CHECK-NEXT: v77 = Convert v76 declared={type=builtin(Console) flags=[IsExpected]}
+// CHECK-NEXT: v78 = PropGet v77 key="log"
+// CHECK-NEXT: v79 = Convert v78 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+// CHECK-NEXT: v80 = PropGet v27 key="size"
+// CHECK-NEXT: v81 = TypeOf v80
+// CHECK-NEXT: v82 = PropGet v27 key="size"
+// CHECK-NEXT: v83 = Builtin builtin=ArrayBuffer
+// CHECK-NEXT: v84 = StrictEq v82, v83
+// CHECK-NEXT: v85 = Builtin builtin=Object
+// CHECK-NEXT: v86 = Builtin builtin=ObjectGetOwnPropertyDescriptor
+// CHECK-NEXT: v87 = String string="size"
+// CHECK-NEXT: v88 = Call v86, v85, v27, v87 calleeName="Object.getOwnPropertyDescriptor"
+// CHECK-NEXT: v89 = Convert v88 declared={type=undefined|null|number|string|symbol|bigint|[[L_22]] flags=[IsExpected]}
+// CHECK-NEXT: v90 = PropGet v89 key="get"
+// CHECK-NEXT: v91 = TypeTest v90 testedType=undefined
+// CHECK-NEXT: v92 = LogicalNot v91
+// CHECK-NEXT: v93 = Call v79, v77, v81, v84, v92 calleeKey="log" calleeName="console.log"
+// CHECK-NEXT: v94 = String string="computed"
+// CHECK-NEXT: v95 = String string="a"
+// CHECK-NEXT: PropSet v42, v95 key="computed"
+// CHECK-NEXT: v97 = String string="computed"
+// CHECK-NEXT: v98 = Integer integer=2
+// CHECK-NEXT: PropSet v42, v98 key="computed"
+// CHECK-NEXT: v100 = Builtin builtin=GlobalThis
+// CHECK-NEXT: v101 = PropGet v100 key="console" [isFreeName]
+// CHECK-NEXT: v102 = Convert v101 declared={type=builtin(Console) flags=[IsExpected]}
+// CHECK-NEXT: v103 = PropGet v102 key="log"
+// CHECK-NEXT: v104 = Convert v103 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+// CHECK-NEXT: v105 = String string="computed"
+// CHECK-NEXT: v106 = PropGet v42 key="computed"
+// CHECK-NEXT: v107 = PropGet v42 key="stored"
+// CHECK-NEXT: v108 = Call v104, v102, v106, v107 calleeKey="log" calleeName="console.log"
+// CHECK-NEXT: v109 = Builtin builtin=GlobalThis
+// CHECK-NEXT: v110 = PropGet v109 key="console" [isFreeName]
+// CHECK-NEXT: v111 = Convert v110 declared={type=builtin(Console) flags=[IsExpected]}
+// CHECK-NEXT: v112 = PropGet v111 key="log"
+// CHECK-NEXT: v113 = Convert v112 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+// CHECK-NEXT: v114 = String string="computed"
+// CHECK-NEXT: v115 = PropGet v49 key="computed"
+// CHECK-NEXT: v116 = Call v113, v111, v115 calleeKey="log" calleeName="console.log"
+// CHECK-NEXT: v117 = Undefined
+// CHECK-NEXT: Return v117
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="describe"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[HasRestParameter, IsChecked] thisType={type=anything} parameters=[{type=Array site=[[w_23]] flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string site=[[w_24]] flags=[OmitsNull, OmitsUndefined]}] {
@@ -303,22 +314,20 @@ console.log(nested[key]);
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = NewDictionary
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v3 = CheckInitialized v2 name="key"
-// CHECK-NEXT: v4 = ToPropertyKey v3
-// CHECK-NEXT: v5 = NewClosure function=[[f_30]]
-// CHECK-NEXT: SetFunctionName v5, v4 methodKind=Getter
-// CHECK-NEXT: DefineGetter v1, v5, v4
-// CHECK-NEXT: v8 = Convert v1 declared={type=undefined|null|string|object site=[[w_31]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v9 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v10 = CheckInitialized v9 name="describe"
-// CHECK-NEXT: v11 = Convert v10 declared={type=undefined|null|function flags=[IsExpected]}
-// CHECK-NEXT: v12 = Convert v0 declared={type=undefined|null|string|object} illTypedCause=Assertion
-// CHECK-NEXT: v13 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v14 = CheckInitialized v13 name="key"
-// CHECK-NEXT: v15 = PropGet v8 key="computed"
-// CHECK-NEXT: v16 = Call v11, -, v12, v15 calleeName="describe"
-// CHECK-NEXT: ReturnCall v16
+// CHECK-NEXT: v2 = String string="computed"
+// CHECK-NEXT: v3 = ToPropertyKey v2
+// CHECK-NEXT: v4 = NewClosure function=[[f_30]]
+// CHECK-NEXT: SetFunctionName v4, v3 methodKind=Getter
+// CHECK-NEXT: DefineGetter v1, v4, v3
+// CHECK-NEXT: v7 = Convert v1 declared={type=undefined|null|string|object site=[[w_31]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v8 = GetModuleVariable variable=[[g_2]]
+// CHECK-NEXT: v9 = CheckInitialized v8 name="describe"
+// CHECK-NEXT: v10 = Convert v9 declared={type=undefined|null|function flags=[IsExpected]}
+// CHECK-NEXT: v11 = Convert v0 declared={type=undefined|null|string|object} illTypedCause=Assertion
+// CHECK-NEXT: v12 = String string="computed"
+// CHECK-NEXT: v13 = PropGet v7 key="computed"
+// CHECK-NEXT: v14 = Call v10, -, v11, v13 calleeName="describe"
+// CHECK-NEXT: ReturnCall v14
 // CHECK-NEXT: }
 // CHECK: function {{*}}
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined" site=[[w_32]] flags=[OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_33]]] {

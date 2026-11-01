@@ -6699,6 +6699,7 @@ declare module "bun" {
     | "tsx"
     | "json"
     | "jsonc"
+    | "json5"
     | "toml"
     | "yaml"
     | "xml"
@@ -6706,6 +6707,7 @@ declare module "bun" {
     | "napi"
     | "wasm"
     | "text"
+    | "md"
     | "css"
     | "html";
 
@@ -6801,7 +6803,12 @@ declare module "bun" {
     defer: () => Promise<void>;
   }
 
-  type OnLoadResult = OnLoadResultSourceCode | OnLoadResultObject | undefined | void;
+  /**
+   * Return `undefined` or `null` to skip the module. The next matching `onLoad`
+   * callback runs instead. If every callback skips it, the module is loaded as
+   * if no plugin had matched it.
+   */
+  type OnLoadResult = OnLoadResultSourceCode | OnLoadResultObject | undefined | null | void;
   type OnLoadCallback = (args: OnLoadArgs) => OnLoadResult | Promise<OnLoadResult>;
   type OnStartCallback = () => void | Promise<void>;
   type OnEndCallback = (result: BuildOutput) => void | Promise<void>;
@@ -6813,7 +6820,8 @@ declare module "bun" {
 
   interface OnResolveArgs {
     /**
-     * The import specifier of the module being loaded
+     * The import specifier of the module being loaded, exactly as written:
+     * `"react"`, `"@/utils"`, `"./file"`, `"./file.ts"`
      */
     path: string;
     /**
@@ -9789,12 +9797,18 @@ declare module "bun" {
      *   on this *machine* (HEIC/AVIF without the OS codec, TIFF on Linux).
      *   Catch this to fall back to a portable format.
      * - `ERR_IMAGE_TOO_MANY_PIXELS` — header dimensions or resize output
-     *   exceed `maxPixels`, or a path-backed input is over the 256 MiB cap.
+     *   exceed `maxPixels`, a row of a PNG takes 4 GiB or more, or a
+     *   path-backed input is over the 256 MiB cap.
      * - `ERR_IMAGE_DECODE_FAILED` / `ERR_IMAGE_ENCODE_FAILED` — codec error.
      *   A damaged JPEG that libjpeg-turbo decodes with only a warning (stray
      *   bytes, a missing end marker, truncated scan data) does not reject.
-     *   Blocks with no data come back flat grey.
+     *   Blocks with no data come back flat grey. A PNG with a wrong CRC or
+     *   Adler-32 does not reject either: Bun verifies neither. A PNG that ends
+     *   before its last row, or inside the data of the `IDAT` chunk that holds
+     *   it, rejects.
      * - `ERR_IMAGE_UNKNOWN_FORMAT` — input bytes didn't match any sniffer.
+     * - `ERR_OUT_OF_MEMORY` — there is no memory for the image, or for a buffer
+     *   that its decode or encode needs.
      * - `ERR_INVALID_STATE` — the input ArrayBuffer was transferred between
      *   construction and the terminal call.
      * - File-backed inputs surface the underlying syscall code (`ENOENT`,
@@ -9806,6 +9820,7 @@ declare module "bun" {
       | "ERR_IMAGE_DECODE_FAILED"
       | "ERR_IMAGE_ENCODE_FAILED"
       | "ERR_IMAGE_UNKNOWN_FORMAT"
+      | "ERR_OUT_OF_MEMORY"
       | "ERR_INVALID_STATE";
 
     /**
@@ -9832,8 +9847,10 @@ declare module "bun" {
        * Reject inputs whose `width × height` exceeds this many pixels. The
        * check runs after the header is read but before any pixel buffer is
        * allocated, so a tiny file claiming a huge canvas is refused cheaply.
-       * A lower limit also lowers how much a compressed PNG chunk, such as an
-       * ICC profile, may inflate to before the image is refused.
+       * A decoded image takes 4 bytes per pixel, which is 1 GiB at the default.
+       * A PNG of 32 KiB can decode to that size. Decoding a PNG that is one very
+       * wide row needs up to 20 bytes of memory per pixel, 5 GiB at the default.
+       * For untrusted input, set this to the largest image you accept.
        * @default 268402689 // 0x3FFF * 0x3FFF, same as Sharp
        */
       maxPixels?: number;
@@ -9872,9 +9889,9 @@ declare module "bun" {
   }
 
   /**
-   * Decode, transform and re-encode images. Ships JPEG, PNG and WebP via
-   * statically-linked libjpeg-turbo / libspng / libwebp; resize and rotate
-   * are SIMD kernels — no native module install, no `sharp`.
+   * Decode, transform and re-encode images. Ships JPEG and WebP via
+   * statically-linked libjpeg-turbo / libwebp, and its own PNG codec; resize
+   * and rotate are SIMD kernels — no native module install, no `sharp`.
    *
    * The constructor and every chainable method only *record* settings; the
    * decode → transform → encode pipeline runs on a worker thread when a
@@ -9886,7 +9903,8 @@ declare module "bun" {
    *
    * The source ICC colour profile (Display P3, Adobe RGB, Jpegli XYB, etc.)
    * is preserved through re-encode to JPEG, PNG, and WebP so non-sRGB
-   * images don't shift colour.
+   * images don't shift colour. Bun leaves out the profile of a PNG if it is
+   * damaged or inflates to more than a JPEG has room for (16,707,345 bytes).
    *
    * @example
    * ```ts

@@ -59,6 +59,9 @@ pub struct Transpiler<'a> {
     pub env: *mut dot_env::Loader,
 
     pub macro_context: Option<js_ast::Macro::MacroContext>,
+
+    /// `bun build --no-bundle --watch` only; bundling uses `BundleV2::bun_watcher`.
+    pub bun_watcher: Option<core::ptr::NonNull<bun_watcher::Watcher>>,
 }
 
 impl<'a> Transpiler<'a> {
@@ -241,6 +244,7 @@ impl<'a> Transpiler<'a> {
             // `MacroContext::init(transpiler)` takes the
             // transpiler's *address*; deferred to `wire_after_move`.
             macro_context: None,
+            bun_watcher: None,
         }
     }
 
@@ -1232,6 +1236,7 @@ impl<'a> Transpiler<'a> {
             ));
             core::ptr::addr_of_mut!((*p).env).write(env_loader);
             core::ptr::addr_of_mut!((*p).macro_context).write(None);
+            core::ptr::addr_of_mut!((*p).bun_watcher).write(None);
         }
         Ok(())
     }
@@ -2850,6 +2855,16 @@ impl<'a> Transpiler<'a> {
         let top_level_dir = Fs::FileSystem::get().top_level_dir();
         let rel = bun_paths::resolve_path::relative(top_level_dir, file_path_text);
         file_path.pretty = crate::linker::dupe(rel);
+
+        if let Some(mut watcher) = self.bun_watcher {
+            // SAFETY: BACKREF — `install_bun_watcher` leaked the `Box<Watcher>`;
+            // `add_file` is only driven from this (main) thread.
+            unsafe {
+                watcher
+                    .as_mut()
+                    .add_file_by_path_slow(file_path_text, bun_watcher::Loader(loader as u8));
+            }
+        }
 
         let mut output_file = options::OutputFile::zero_value();
         output_file.src_path = file_path;

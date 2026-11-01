@@ -1,5 +1,5 @@
 import type { Subprocess } from "bun";
-import { mkdirSync } from "node:fs";
+import { closeSync, mkdirSync, openSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { config } from "./config";
@@ -22,9 +22,15 @@ export const tart = {
   configure: (vm: string, cpu: number, memoryMb: number) =>
     run([bin, "set", vm, "--cpu", String(cpu), "--memory", String(memoryMb)]),
 
-  start(vm: string, logPath: string): Subprocess {
-    const log = Bun.file(logPath);
-    return Bun.spawn([bin, "run", vm, "--no-graphics"], { stdin: "ignore", stdout: log, stderr: log });
+  // appends by default: the command hook's retry starts a second `tart run` on the log of the boot that failed
+  start(vm: string, logPath: string, flags: "a" | "w" = "a"): Subprocess {
+    // one descriptor for both streams: a Bun.file is opened once per slot at offset 0, so they overwrite each other
+    const log = openSync(logPath, flags);
+    try {
+      return Bun.spawn([bin, "run", vm, "--no-graphics"], { stdin: "ignore", stdout: log, stderr: log });
+    } finally {
+      closeSync(log);
+    }
   },
 
   ip: (vm: string) => probe([bin, "ip", vm]),

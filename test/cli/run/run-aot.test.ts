@@ -290,6 +290,51 @@ describe.skipIf(!supported)("bun run --aot", () => {
     },
   );
 
+  test.concurrent.each([
+    [".", "assign legacy h"],
+    ["local", "define standard g"],
+  ])("the tsconfig.json of the working directory says how every file is transpiled: %s", async (cwd, expected) => {
+    const options = (defines: boolean, factory: string) =>
+      JSON.stringify({
+        compilerOptions: {
+          useDefineForClassFields: defines,
+          experimentalDecorators: !defines,
+          jsx: "react",
+          jsxFactory: factory,
+        },
+      });
+    const probe = `
+      const h = () => "h", g = () => "g";
+      let field = "define", decorators = "";
+      class Base { set x(value: number) { field = "assign"; } }
+      function mark(...args: unknown[]) { decorators = typeof args[1] === "object" ? "standard" : "legacy"; }
+      class Derived extends Base {
+        // @ts-ignore
+        x = 1;
+        // @ts-ignore
+        @mark method() {}
+      }
+      new Derived();
+      // @ts-ignore
+      console.log(field, decorators, <a />);`;
+    using dir = tempDir("run-aot", {
+      "tsconfig.json": options(false, "h"),
+      "local/tsconfig.json": options(true, "g"),
+      "node_modules/pkg/tsconfig.json": options(true, "g"),
+      "node_modules/pkg/package.json": `{ "name": "pkg", "main": "probe.tsx" }`,
+      "probe.tsx": probe,
+      "local/probe.tsx": probe,
+      "local/deeper/probe.tsx": probe,
+      "node_modules/pkg/probe.tsx": probe,
+      "main.ts": `import "./probe.tsx";\nimport "./local/probe.tsx";\nimport "./local/deeper/probe.tsx";\nimport "pkg";`,
+    });
+    const [plain, compiled] = await Promise.all(
+      [false, true].map(aot => run(join(String(dir), cwd), aot, join(String(dir), "main.ts"))),
+    );
+    expect(compiled).toEqual(plain);
+    expect(compiled.stdout).toBe((expected + "\n").repeat(4));
+  });
+
   test.concurrent("process.argv, process.execPath and Bun.main", async () => {
     const { stdout } = await expectSameAsBunRun(
       {

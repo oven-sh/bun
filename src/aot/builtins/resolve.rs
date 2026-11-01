@@ -3,17 +3,23 @@ mod evaluated_text;
 mod imports;
 mod mention_use;
 mod mentions;
+mod module_cache;
 mod module_objects;
 mod module_values;
 mod paths;
+mod replaced_members;
 mod resolver;
 mod runtime_dialect;
+mod spelled_values;
 #[cfg(test)]
 mod tests;
+mod unnamed_holders;
 mod walked_texts;
 
 pub use self::imports::find_module_export;
+pub use self::module_cache::KeyOfModuleCache;
 pub use self::module_values::commonjs_variable_builtin;
+pub use self::replaced_members::find_member_written_behind;
 pub use self::resolver::FileFacts;
 use super::names::BuiltinNames;
 use super::runtime_uses::RuntimeUses;
@@ -87,6 +93,8 @@ pub enum ModuleObjectOwner {
     EntryPoint,
     /// A file that `parent` or an element of `children` leads to, or a binding that something has stored a module object into.
     Related,
+    /// `require.cache[path]` in a test run, where the cache lists the compiled files: any of them.
+    ListedInCache,
 }
 
 /// A member of a module object whose value the record of the module has.
@@ -124,6 +132,23 @@ pub struct ModuleObjectMention {
     pub expr: ExprId,
     pub owner: ModuleObjectOwner,
     pub object_use: ModuleObjectUse,
+}
+
+/// `spyOn(object, key)`, `Object.defineProperty(object, key, d)`: one of the values that the file spells for `object`.
+#[derive(Copy, Clone, Debug)]
+pub struct ObjectSpelled {
+    pub key: ExprId,
+    pub object: ExprId,
+    pub is_builtin: bool,
+}
+
+/// `import { make } from "./helper"; make().prototype.get = f`
+#[derive(Clone, Debug)]
+pub struct WriteOnImport {
+    pub import: hir::ImportId,
+    /// The names between what is imported and the write, from the write on: `prototype`.
+    pub path: Vec<Atom>,
+    pub key: Atom,
 }
 
 pub struct ImportTargets {
@@ -164,6 +189,21 @@ pub struct ResolveInput<'a, 's> {
     pub names: &'a BuiltinNames,
     pub platform: Platforms,
     pub dialect: SourceDialect,
+    /// `LoadOptions::replaced_builtins`.
+    pub replaced: &'a [u32],
+    pub replaced_members_sought: ReplacedMembersSought,
+}
+
+/// What a file of a test run is searched for. See `replaced_members`.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum ReplacedMembersSought {
+    /// No test run.
+    None,
+    /// Where the file writes a member of a built-in object. In a package a helper that is handed an object and a name mostly reads: `getNative(Object, "create")`.
+    /// So there the object beside the name counts only for a member that is tested where it is used anyway, `fetch` and the timers: to open one costs nothing.
+    Written,
+    /// And where it may: the object beside the name.
+    WrittenOrNamed,
 }
 
 #[derive(Copy, Clone, Default)]
@@ -207,12 +247,25 @@ pub struct ResolvedBuiltins {
     evaluated_texts: Box<[EvaluatedText]>,
     module_object_mentions: Box<[ModuleObjectMention]>,
     stores_with_module_exports: Box<[ExprId]>,
+    replaced_members: Box<[BuiltinId]>,
+    names_added: Box<[(BuiltinId, Atom)]>,
+    holders_named_from_outside: Box<[BuiltinId]>,
+    builtins_handed_out: Box<[BuiltinId]>,
+    writes_on_imports: Box<[WriteOnImport]>,
     mentioned: Box<[BuiltinId]>,
     #[cfg(test)]
     exposed: Box<[BuiltinId]>,
     uses: RuntimeUses,
     guessed_uses: RuntimeUses,
     loads_unknown_modules: bool,
+    keys_spelled_on_other_objects: Box<[(ExprId, Atom)]>,
+    objects_spelled_for_calls: Box<[ObjectSpelled]>,
+    keys_partly_read: Box<[ExprId]>,
+    keys_taken_out_of_module_cache: Box<[KeyOfModuleCache]>,
+    keys_stored_in_module_cache: Box<[KeyOfModuleCache]>,
+    hands_module_cache_on: bool,
+    loses_sight_of_module_cache: bool,
+    reaches_module_cache: bool,
 }
 
 impl ResolvedBuiltins {
@@ -314,6 +367,31 @@ impl ResolvedBuiltins {
         self.stores_with_module_exports.contains(&target)
     }
 
+    /// Ascending. Of a file of a test run: the locked members of built-in objects that it writes under names that it spells.
+    pub fn replaced_members(&self) -> &[BuiltinId] {
+        &self.replaced_members
+    }
+
+    /// Of a file of a test run: the names of its own that it writes on built-in objects which take no new names. `Object.prototype.polluted = 1`.
+    pub fn names_added(&self) -> &[(BuiltinId, Atom)] {
+        &self.names_added
+    }
+
+    /// The objects that take no new names and that the file writes under a key which nothing in it spells: `export function plant(name) { Object.prototype[name] = 1; }`.
+    pub fn holders_named_from_outside(&self) -> &[BuiltinId] {
+        &self.holders_named_from_outside
+    }
+
+    /// The built-in objects that what the file exports stands for, holds or answers: `export const ofMath = () => new Proxy(Math, {})`.
+    pub fn builtins_handed_out(&self) -> &[BuiltinId] {
+        &self.builtins_handed_out
+    }
+
+    /// Where the file writes, under the name of a member of some built-in object, on what comes out of an import.
+    pub fn writes_on_imports(&self) -> &[WriteOnImport] {
+        &self.writes_on_imports
+    }
+
     pub fn mentioned(&self) -> &[BuiltinId] {
         &self.mentioned
     }
@@ -336,6 +414,57 @@ impl ResolvedBuiltins {
         self.loads_unknown_modules
     }
 
+    /// Of a file of a test run. `key`: the key of `spyOn(object, key)`, `Object.defineProperty(object, key, ..)` or `object[key] = ..` on an object that is no
+    /// built-in, without its type assertions. The names that the file spells for it: the key itself, what a constant holds, the elements of the list that a
+    /// loop walks, what the calls of a function of the file pass. Some of the names, not all of them.
+    /// `key` as for `keys_spelled_for`. What the file spells for the object of that call: `const files = fs as Record<string, F>; spyOn(files, key)`,
+    /// `[fs, fsPromises].map(module => spyOn(module, key))`. The object itself where nothing is known of it. A parameter may get more from another file.
+    pub fn objects_spelled_for(&self, key: ExprId) -> &[ObjectSpelled] {
+        let objects = &self.objects_spelled_for_calls;
+        let start = objects.partition_point(|entry| entry.key < key);
+        let end = objects.partition_point(|entry| entry.key <= key);
+        &objects[start..end]
+    }
+
+    /// `key` as for `keys_spelled_for`. Whether something reaches the key that the file does not spell: a parameter that nobody in the file passes,
+    /// what a call returns. `keys_spelled_for` then lists some of its names at most.
+    pub fn is_key_partly_read(&self, key: ExprId) -> bool {
+        self.keys_partly_read.binary_search(&key).is_ok()
+    }
+
+    pub fn keys_spelled_for(&self, key: ExprId) -> impl Iterator<Item = Atom> + '_ {
+        let keys = &self.keys_spelled_on_other_objects;
+        let start = keys.partition_point(|entry| entry.0 < key);
+        (keys[start..].iter())
+            .take_while(move |entry| entry.0 == key)
+            .map(|entry| entry.1)
+    }
+
+    /// `delete require.cache[key]`, `Reflect.deleteProperty(require.cache, key)` and `require.cache[key] = undefined`, also of `Module._cache` and of a name that holds the table.
+    pub fn keys_taken_out_of_module_cache(&self) -> &[KeyOfModuleCache] {
+        &self.keys_taken_out_of_module_cache
+    }
+
+    /// `require.cache[key] = entry`: those of `keys_taken_out_of_module_cache` under which the file may leave an entry of its own.
+    pub fn keys_stored_in_module_cache(&self) -> &[KeyOfModuleCache] {
+        &self.keys_stored_in_module_cache
+    }
+
+    pub fn hands_module_cache_on(&self) -> bool {
+        self.hands_module_cache_on
+    }
+
+    /// The file names the table, or lets go of something that leads there: it may read what the table lists.
+    pub fn reaches_module_cache(&self) -> bool {
+        self.reaches_module_cache
+    }
+
+    /// The table goes where this file does not follow it: whoever gets it may take any entry out.
+    /// Also where the file names `Bun.plugin`: what a plugin loads takes the place of a file as if that had been taken out.
+    pub fn loses_sight_of_module_cache(&self) -> bool {
+        self.loses_sight_of_module_cache
+    }
+
     pub fn loaded_modules(&self) -> impl Iterator<Item = RuntimeModule> + '_ {
         self.uses.modules.iter().copied()
     }
@@ -347,6 +476,11 @@ impl ResolvedBuiltins {
 
 pub fn resolve_file(input: &ResolveInput<'_, '_>) -> ResolvedBuiltins {
     resolver::run(input, None, None)
+}
+
+/// A file of a program of which `AotOptions::imports_are_in_other_images` holds.
+pub fn resolve_file_served_by_other_images(input: &ResolveInput<'_, '_>) -> ResolvedBuiltins {
+    resolver::run_for_program(input, None, None, true)
 }
 
 /// The built-ins of a part of a file: the code in these ranges of positions, which are in order and do not overlap.

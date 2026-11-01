@@ -14,6 +14,10 @@ mod unlisted;
 use unlisted::Constituents;
 pub(super) use unlisted::UnlistedIntersections;
 
+#[path = "class_members_by_name.rs"]
+mod by_name;
+pub(super) use by_name::ClassMembersByName;
+
 #[path = "sibling_intersections.rs"]
 mod siblings;
 pub(super) use siblings::SiblingIntersections;
@@ -2785,45 +2789,7 @@ impl<'p, 's> Checker<'p, 's> {
             if b.has(prop.name) {
                 continue;
             }
-            let mut prop = prop.clone_in(self.arena);
-            if self.types().separate_key(&prop).is_some() {
-                self.compose_mapper_of_prop(&mut prop, mapper);
-                // The composed mapper includes the property's key, so no other property shares it.
-                composed = (MapperId::IDENTITY, true, mapper);
-                b.add_new(prop);
-                continue;
-            }
-            match &mut prop.source {
-                PropSource::Type(t) | PropSource::Copy(t, ..) => *t = self.instantiate(*t, mapper),
-                // `instantiateSymbol` returns the symbol unchanged. A symbol that it instantiated
-                // for a base type has a mapper.
-                PropSource::Symbol(_) if prop.flags.contains(PropFlags::THISLESS) => {}
-                &mut PropSource::Symbol(sym)
-                    if prop.mapper == MapperId::IDENTITY
-                        && self.is_thisless_for_this_mapper(sym) =>
-                {
-                    prop.flags |= PropFlags::THISLESS;
-                }
-                source => {
-                    let is_member = matches!(source, PropSource::Symbol(_));
-                    if prop.mapper == MapperId::IDENTITY {
-                        prop.mapper = mapper;
-                    } else {
-                        if (prop.mapper, is_member) != (composed.0, composed.1) {
-                            // A member's mapper maps the type parameters of the class or interface
-                            // that declares it, and `mapper` maps those of `base`, which the
-                            // declaration can't mention. A plain composition would grow with every
-                            // level.
-                            let both = match is_member {
-                                true => self.map_mapper(prop.mapper, mapper),
-                                false => self.compose(prop.mapper, mapper),
-                            };
-                            composed = (prop.mapper, is_member, both);
-                        }
-                        prop.mapper = composed.2;
-                    }
-                }
-            }
+            let prop = self.copy_for_heir(prop, mapper, &mut composed);
             b.add_new(prop);
         }
         let members = match self.data(base) {
@@ -2848,6 +2814,55 @@ impl<'p, 's> Checker<'p, 's> {
             let value = self.instantiate(info.value, mapper);
             b.shape.index.push(IndexInfo { value, ..*info });
         }
+    }
+
+    /// The copy of `prop` that an heir gets. `prop` is a property of a base type whose members have `mapper`. `composed`
+    /// is described in `inherit`.
+    #[inline]
+    fn copy_for_heir(
+        &mut self,
+        prop: &Prop,
+        mapper: MapperId,
+        composed: &mut (MapperId, bool, MapperId),
+    ) -> Prop<'s> {
+        let mut prop = prop.clone_in(self.arena);
+        if self.types().separate_key(&prop).is_some() {
+            self.compose_mapper_of_prop(&mut prop, mapper);
+            // The composed mapper includes the property's key, so no other property shares it.
+            *composed = (MapperId::IDENTITY, true, mapper);
+            return prop;
+        }
+        match &mut prop.source {
+            PropSource::Type(t) | PropSource::Copy(t, ..) => *t = self.instantiate(*t, mapper),
+            // `instantiateSymbol` returns the symbol unchanged. A symbol that it instantiated
+            // for a base type has a mapper.
+            PropSource::Symbol(_) if prop.flags.contains(PropFlags::THISLESS) => {}
+            &mut PropSource::Symbol(sym)
+                if prop.mapper == MapperId::IDENTITY && self.is_thisless_for_this_mapper(sym) =>
+            {
+                prop.flags |= PropFlags::THISLESS;
+            }
+            source => {
+                let is_member = matches!(source, PropSource::Symbol(_));
+                if prop.mapper == MapperId::IDENTITY {
+                    prop.mapper = mapper;
+                } else {
+                    if (prop.mapper, is_member) != (composed.0, composed.1) {
+                        // A member's mapper maps the type parameters of the class or interface
+                        // that declares it, and `mapper` maps those of `base`, which the
+                        // declaration can't mention. A plain composition would grow with every
+                        // level.
+                        let both = match is_member {
+                            true => self.map_mapper(prop.mapper, mapper),
+                            false => self.compose(prop.mapper, mapper),
+                        };
+                        *composed = (prop.mapper, is_member, both);
+                    }
+                    prop.mapper = composed.2;
+                }
+            }
+        }
+        prop
     }
 
     /// True if, for the class or interface `sym`, "the members of a base type, instantiated" can
@@ -2957,6 +2972,11 @@ impl<'p, 's> Checker<'p, 's> {
         b.declaring = Some(declaring);
         let binding = self.binding_of_side(sym, false, binding);
         let is_late = binding == MemberBinding::Late;
+        let may_pass_by_lists_above = self.class_members_by_name.is_on
+            && is_late
+            && under == MapperId::IDENTITY
+            && base_members == BaseMembers::Inherited
+            && self.resolves_no_members();
         if is_late {
             self.declared_members_in_progress.push(declaring);
         }
@@ -3006,7 +3026,8 @@ impl<'p, 's> Checker<'p, 's> {
             self.resolving_at_base_types.pop();
         }
         let own = b.shape.props.len();
-        let inherits = base_members == BaseMembers::Inherited;
+        let inherits = base_members == BaseMembers::Inherited
+            && !(may_pass_by_lists_above && self.inherit_from_plain_classes(&mut b, sym));
         self.inheriting.extend(in_place.zip(resolving));
         for base in bases.iter().copied().filter(|_| inherits) {
             let base = self.instantiate(base, under);
@@ -3314,6 +3335,10 @@ impl<'p, 's> Checker<'p, 's> {
     /// `hasBaseType`: true if `ty` is any instantiation of `sym` or has one as a base type. This is
     /// why `class C<T> extends C<T[]>` has no base type.
     pub(super) fn has_base(&mut self, ty: TypeId, sym: Sym) -> bool {
+        let by_name = &self.class_members_by_name;
+        let passes_by_stored_ancestries =
+            by_name.is_on && !by_name.with_stored_ancestry.contains(&sym);
+        let mut is_all_stored = by_name.is_on;
         // FOR SPEED: a target that several paths lead to is visited once.
         let mut seen: SmallVec<[Sym; 16]> = SmallVec::new();
         // The targets seen after the first 16.
@@ -3326,6 +3351,11 @@ impl<'p, 's> Checker<'p, 's> {
                     if target == sym {
                         return true;
                     }
+                    if passes_by_stored_ancestries
+                        && (self.class_members_by_name.with_stored_ancestry).contains(&target)
+                    {
+                        continue;
+                    }
                     let is_new = !seen.contains(&target)
                         && if seen.len() < seen.inline_size() {
                             seen.push(target);
@@ -3334,7 +3364,9 @@ impl<'p, 's> Checker<'p, 's> {
                             seen_later.insert(target)
                         };
                     if is_new {
-                        todo.extend(self.base_types(target).iter().rev().copied());
+                        let bases = self.base_types(target);
+                        is_all_stored &= matches!(bases, List::Permanent(_));
+                        todo.extend(bases.iter().rev().copied());
                     }
                 }
                 // `getBaseTypes` of a tuple target is `getTupleBaseType`.
@@ -3349,6 +3381,10 @@ impl<'p, 's> Checker<'p, 's> {
                 TypeData::Intersection(ref parts) => todo.extend(parts.iter().rev().copied()),
                 _ => {}
             }
+        }
+        if is_all_stored {
+            let visited = seen.into_iter().chain(seen_later);
+            (self.class_members_by_name.with_stored_ancestry).extend(visited);
         }
         false
     }
@@ -3401,6 +3437,7 @@ impl<'p, 's> Checker<'p, 's> {
                     continue;
                 }
                 let base = self.type_from_node(file, node);
+                let base = self.base_of_interface_without_bun_types(base);
                 let valid = self.as_base_type(base, |checker, _, _| {
                     let at = (file, hir[node].pos, checker.end_of_type_node(file, node));
                     checker.error_at(at, 2312, &[]);
@@ -5879,6 +5916,7 @@ impl<'p, 's> Checker<'p, 's> {
             Some(ty) => ty,
             None => {
                 let mut types = Vec::with_capacity(declarations.len());
+                let mut listed: crate::util::FxHashSet<TypeId> = Default::default();
                 let mut declared = None;
                 for (i, &declaration) in declarations.iter().enumerate() {
                     let Some((of, e)) = assignment_declaration(declaration) else {
@@ -5920,7 +5958,10 @@ impl<'p, 's> Checker<'p, 's> {
                             assignment_declaration_kind(hir, e),
                             JsDeclarationKind::ExportsProperty(_)
                         );
-                    if !is_ignored && !types.contains(&assigned) {
+                    if is_ignored {
+                        continue;
+                    }
+                    if !crate::util::is_listed(&types, &mut listed, assigned) {
                         types.push(assigned);
                     }
                 }
@@ -6110,7 +6151,7 @@ impl<'p, 's> Checker<'p, 's> {
             &PropSource::Symbol(sym) => {
                 let flags = self.files().flags(sym);
                 if flags.contains(SymFlags::ASSIGNMENT) {
-                    return (self.assignments_of_symbol(sym).iter())
+                    return (self.calls_among_assignments_of_symbol(sym).iter())
                         .any(|&(file, e)| self.is_readonly_assignment_declaration(file, e));
                 }
                 // `Object.defineProperty(exports, "name", descriptor)`
@@ -7356,6 +7397,11 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// The property `name` of an object type, an intersection, or the wrapper type of a primitive.
     pub fn prop_ref(&mut self, ty: TypeId, name: Atom) -> Option<(&'p Prop<'p>, MapperId)> {
+        if self.class_members_by_name.is_on
+            && let Some(answer) = self.property_of_unlisted_class(ty, name, true)
+        {
+            return answer;
+        }
         let members = if self.is_intersection(ty) {
             match self.members_for_a_name(ty) {
                 Some(members) => members,
@@ -7442,6 +7488,32 @@ impl<'p, 's> Checker<'p, 's> {
         (self.declarations_of_property(sym).iter())
             .filter_map(assignment)
             .collect()
+    }
+
+    /// The `assignments_of_symbol` that are calls, like `Object.defineProperty(f, "name", descriptor)`. One name may be
+    /// assigned to at thousands of places, and each of them asks.
+    fn calls_among_assignments_of_symbol(&mut self, sym: Sym) -> SmallVec<[(FileId, ExprId); 2]> {
+        let declarations = self.declarations_of_property(sym);
+        let permanent = match declarations {
+            List::Permanent(permanent) if permanent.len() > 4 => Some(permanent.as_ptr() as usize),
+            _ => None,
+        };
+        if let Some(known) = permanent.and_then(|list| self.calls_among_assignments.get(&list)) {
+            return known.clone();
+        }
+        let call = |&(file, decl): &(FileId, Decl)| match decl {
+            Decl::Expando(e) | Decl::ThisProperty(e)
+                if matches!(self.hir(file)[e].kind, ExprKind::Call(_)) =>
+            {
+                Some((file, e))
+            }
+            _ => None,
+        };
+        let calls: SmallVec<[(FileId, ExprId); 2]> = declarations.iter().filter_map(call).collect();
+        if let Some(list) = permanent {
+            self.calls_among_assignments.insert(list, calls.clone());
+        }
+        calls
     }
 
     /// The `symbol.Declarations` that are members of classes, interfaces and type literals.
@@ -8326,6 +8398,13 @@ impl<'p, 's> Checker<'p, 's> {
         name: Atom,
         skip_object_function_property_augment: bool,
     ) -> Option<(&'p Prop<'p>, MapperId)> {
+        if self.class_members_by_name.is_on {
+            let apparent = self.reduced_apparent_type(ty);
+            let skips = skip_object_function_property_augment;
+            if let Some(answer) = self.property_of_unlisted_class(apparent, name, skips) {
+                return answer;
+            }
+        }
         let holder = self.property_holder_for_a_name(ty);
         if self.is_deferred(ty)
             && let PropertyHolder::Members(apparent, _) | PropertyHolder::Unlisted(apparent) =

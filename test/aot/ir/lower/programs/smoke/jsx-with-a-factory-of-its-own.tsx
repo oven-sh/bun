@@ -74,5 +74,5 @@ console.log(tree.tag, tree.children.length, JSON.stringify(tree.props));
 // CHECK-NEXT: v9 = NewObject -, v6 layout=[[L_9]] fields=[0]
 // CHECK-NEXT: v10 = FinishObject v9
 // CHECK-NEXT: v11 = Call v7, -, v8, v10, v6 calleeName="h"
-// CHECK-NEXT: Return v11
+// CHECK-NEXT: ReturnCall v11
 // CHECK-NEXT: }

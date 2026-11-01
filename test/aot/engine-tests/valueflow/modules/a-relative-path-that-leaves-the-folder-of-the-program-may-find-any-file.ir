@@ -1,0 +1,43 @@
+# let name; name = "../app/one.cjs"; require(name)()      in /app/main.cjs beside one.cjs and other.cjs
+# The run time lays the program under a folder of its own, and a path that goes up out of it may come back in: only the run time can say what it finds. So the call may find what any file exports that a name finds.
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: valueflow-solve calls
+# CHECK: f0 v4 -> {{*}}f3{{*}}f4
+
+variable g0 name="name" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m1 declared={type=anything} initialization=Undefined
+variable g2 name="exports" module=m2 declared={type=anything} initialization=Undefined
+variable g3 name="exports" module=m0 declared={type=anything} initialization=Undefined
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g3
+module m1 path="/app/one.cjs" displayPath="one.cjs" kind=CommonJs flags=[KeepsError, IsFoundByName] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g1
+module m2 path="/app/other.cjs" displayPath="other.cjs" kind=CommonJs flags=[KeepsError, IsFoundByName] exportRule=CommonJs requireResult=ModuleExports body=f2 exportsVariable=g2
+entry module=m0
+function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="../app/one.cjs"
+    PutModuleVariable v0 variable=g0
+    v2 = GetModuleVariable variable=g0
+    v3 = RequireDynamic v2 referrer=m0
+    v4 = Call v3
+    Return
+}
+function f1 name="one" module=m1 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    PutModuleVariable v0 variable=g1
+    Return
+}
+function f2 name="other" module=m2 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f4
+    PutModuleVariable v0 variable=g2
+    Return
+}
+function f3 name="exportedByOne" module=m1 results=[{type=anything}] {
+  b0():
+    Return
+}
+function f4 name="exportedByOther" module=m2 results=[{type=anything}] {
+  b0():
+    Return
+}

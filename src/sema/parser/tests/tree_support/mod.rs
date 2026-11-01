@@ -181,6 +181,7 @@ impl<'s> Workspace<'s> {
             &self.atoms,
             false,
             false,
+            false,
         );
         self.set_text(&mut hir, text);
         hir

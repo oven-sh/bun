@@ -377,18 +377,18 @@ function f28 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v32
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="describe"
-# CHECK: module=m0 position=236 flags=[HasExplicitName] length=4 thisType={type=anything} parameters=[{type=string}, {type=L2|L5}, {type=f6|f9}, {type=f2|f3}] results=[{type=undefined}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
+# CHECK: module=m0 position=236 flags=[HasExplicitName] length=4 thisType={type=anything} parameters=[{type="the one from before, again"|"the parent is chosen by a computed name"}, {type=L2|L5}, {type=f6|f9}, {type=f2|f3}] results=[{type=undefined}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function f11 module=
-# CHECK: m0 position=879 flags=[HasThis] thisType={type=L3} results=[{type=string}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
+# CHECK: m0 position=879 flags=[HasThis] thisType={type=L3} results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: L3):
-# CHECK-NEXT: v1: string = CallDirect function=f50
-# CHECK-NEXT: ReturnCall v1 requirement=Allowed
+# CHECK-NEXT: v1: "early undefined" = String string="early undefined"
+# CHECK-NEXT: Return v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function f12 module=
-# CHECK: m0 position=1510 flags=[HasThis] thisType={type=L3} results=[{type=string}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
+# CHECK: m0 position=1510 flags=[HasThis] thisType={type=L3} results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: L3):
-# CHECK-NEXT: v1: string = CallDirect function=f51
-# CHECK-NEXT: ReturnCall v1 requirement=Allowed
+# CHECK-NEXT: v1: "other undefined" = String string="other undefined"
+# CHECK-NEXT: Return v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function f13 module=
 # CHECK: m0 position=1974 kind=Arrow thisType={type=anything} results=[{type=string}] functionTypes=[f25] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -398,16 +398,16 @@ function f28 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: ReturnCall v1 casts=[{declared={type=undefined|null|string flags=[IsExpected]} resolution=Nothing}, {declared={type=string} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function f14 module=
-# CHECK: m0 position=3820 flags=[HasThis] thisType={type=L3} results=[{type=string}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
+# CHECK: m0 position=3820 flags=[HasThis] thisType={type=L3} results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: L3):
-# CHECK-NEXT: v1: string = CallDirect function=f52
-# CHECK-NEXT: ReturnCall v1 requirement=Allowed
+# CHECK-NEXT: v1: "changed undefined" = String string="changed undefined"
+# CHECK-NEXT: Return v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function f15 module=
-# CHECK: m0 position=3975 flags=[HasThis] thisType={type=L6} results=[{type=string}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
+# CHECK: m0 position=3975 flags=[HasThis] thisType={type=L6} results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: L6):
-# CHECK-NEXT: v1: string = CallDirect function=f53
-# CHECK-NEXT: ReturnCall v1 requirement=Allowed
+# CHECK-NEXT: v1: "hidden undefined" = String string="hidden undefined"
+# CHECK-NEXT: Return v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function f16 module=
 # CHECK: m0 position=4169 kind=Arrow thisType={type=anything} results=[{type=string}] functionTypes=[f28] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -417,7 +417,7 @@ function f28 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: ReturnCall v1 casts=[{declared={type=undefined|null|string flags=[IsExpected]} resolution=Nothing}, {declared={type=string} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function f17 module=
-# CHECK: m0 position=4217 kind=Arrow thisType={type=anything} results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: m0 position=4217 kind=Arrow thisType={type=anything} results=[{type="own "}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: "own " = String string="own "
 # CHECK-NEXT: Return v0
@@ -456,27 +456,21 @@ function f28 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Jump -> next b1(v2)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="describe"
-# CHECK: module=m0 position=236 flags=[HasExplicitName] length=4 thisType={type=anything} parameters=[{type=string}, {type=L2|L5}, {type=f6|f9}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f5 parameterMap=[{original=0}, {original=1}, {original=2}]} inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}] {
-# CHECK-NEXT: b0(v0: string, v1: L2|L5, v2: f6|f9):
-# CHECK-NEXT: v4: " prototype is the child's:" = String string=" prototype is the child's:"
-# CHECK-NEXT: v5: string = Add v0, v4
+# CHECK: module=m0 position=236 flags=[HasExplicitName] length=4 thisType={type=anything} parameters=[{type=L2|L5}, {type=f6|f9}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f5 parameterMap=[{original=1}, {original=2}]} inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0(v1: L2|L5, v2: f6|f9):
+# CHECK-NEXT: v4: f18 = NewClosure v1, v2 function=f18 allocationSite=14 storage=Frame
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: b1() handler=b2():
-# CHECK-NEXT: v6: f18 = NewClosure v1, v2 function=f18 allocationSite=14 storage=Frame
-# CHECK-NEXT: v7: anything ~ boolean = Call v6 calleeName="run" accessSite=32 callees=[f13, f16, f18, f19]
+# CHECK-NEXT: v5: anything ~ boolean = Call v4 calleeName="run" accessSite=32 callees=[f13, f16, f18, f19]
 # CHECK-NEXT: Jump -> next b3()
 # CHECK-NEXT: b2() role=CatchHandler:
 # CHECK-NEXT: Jump -> next b3()
-# CHECK-NEXT: b3():
-# CHECK-NEXT: v8: " keys:" = String string=" keys:"
-# CHECK-NEXT: v9: string = Add v0, v8
-# CHECK-NEXT: Jump -> next b4()
-# CHECK-NEXT: b4() handler=b5():
-# CHECK-NEXT: v10: string = CallDirect v1 function=f19 accessSite=32
-# CHECK-NEXT: Jump -> next b6()
-# CHECK-NEXT: b5() role=CatchHandler:
-# CHECK-NEXT: Jump -> next b6()
-# CHECK-NEXT: b6():
-# CHECK-NEXT: v11: undefined = Undefined
-# CHECK-NEXT: Return v11
+# CHECK-NEXT: b3() handler=b4():
+# CHECK-NEXT: v6: string = CallDirect v1 function=f19 accessSite=32
+# CHECK-NEXT: Jump -> next b5()
+# CHECK-NEXT: b4() role=CatchHandler:
+# CHECK-NEXT: Jump -> next b5()
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v7: undefined = Undefined
+# CHECK-NEXT: Return v7
 # CHECK-NEXT: }

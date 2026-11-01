@@ -794,7 +794,7 @@ await (async () => {
 
 // GENERATED: m call C [Symbol.species] make run
 // CHECK-LABEL: function {{*}}name="m"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=1 captures=[{type=env [[L_1]] flags=[IsFromCompiler]}, {type=[[f_2]] flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes={{*}}[[f_3]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=1 captures=[{type=env [[L_1]] flags=[IsFromCompiler]}, {type=[[f_2]] flags=[IsFromCompiler] variableName="once"}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes={{*}}[[f_3]]] {
 // CHECK-NEXT: b0(v0: env [[L_1]], v1: [[f_2]], v2: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -849,7 +849,7 @@ await (async () => {
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.species]"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[IsNamedByComputedKey] captures=[{type=[[f_7]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=undefined|null|[[f_8]] flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[IsNamedByComputedKey] captures=[{type=[[f_7]] flags=[IsFromCompiler] variableName="once"}] thisType={type=anything} results=[{type=undefined|null|[[f_8]] flags=[IsExpected]}] {
 // CHECK-NEXT: b0(v0: [[f_7]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -882,7 +882,7 @@ await (async () => {
 // CHECK-NEXT: Return v6
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="run"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow captures=[{type=[[f_15]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_16]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow captures=[{type=[[f_15]] flags=[IsFromCompiler] variableName="tag"}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_16]]] {
 // CHECK-NEXT: b0(v0: [[f_15]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

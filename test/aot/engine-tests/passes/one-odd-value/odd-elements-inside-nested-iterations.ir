@@ -309,179 +309,140 @@ function f80 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="throwsOn"
-# CHECK: module=m0 position=2170 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=Array<null|boolean|number|string|object, proven, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}, {type=string flags=[OmitsNull, OmitsUndefined]}] results=[{type=string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: Array<null|boolean|number|string|object, proven, pristine[Storage, Names]>, v1: string):
-# CHECK-NEXT: v2: 0 = Integer
-# CHECK-NEXT: v3: stringbuilder = StringBuilderBegin
+# CHECK: module=m0 position=2170 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=Array<null|boolean|number|string|object, proven, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}, {type="z" flags=[OmitsNull, OmitsUndefined]}] results=[{type=string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: Array<null|boolean|number|string|object, proven, pristine[Storage, Names]>, v1: "z"):
+# CHECK-NEXT: v2: "" = String string=""
+# CHECK-NEXT: v3: 0 = Integer
 # CHECK-NEXT: Jump -> next b1()
-# CHECK-NEXT: b1() handler=b38(v3):
+# CHECK-NEXT: b1() handler=b27(v2):
 # CHECK-NEXT: v4: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v5: boolean = Less v2, v4
-# CHECK-NEXT: Branch v5 -> taken b2(), notTaken b7()
+# CHECK-NEXT: v5: boolean = Less v3, v4
+# CHECK-NEXT: Branch v5 -> taken b2(), notTaken b6()
 # CHECK-NEXT: b2():
-# CHECK-NEXT: StringBuilderDiscard v3
-# CHECK-NEXT: v7: boolean = HasArrayStorage v0 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v7 -> taken b3(| 0), notTaken b5()
-# CHECK-NEXT: b3(v8: guard):
-# CHECK-NEXT: v9: boolean = IsElementPresent v0, v2, v8 arrayStorage=Contiguous [keyIsIntegral]
-# CHECK-NEXT: Branch v9 -> taken b4(| 0), notTaken b5()
-# CHECK-NEXT: b4(v10: guard):
-# CHECK-NEXT: v11: guard = AllGuards v8, v10
-# CHECK-NEXT: v12: null|boolean|number|string|object = GetArrayElement v0, v2, v11 arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent]
-# CHECK-NEXT: v13: null|boolean|number|string|object ~ null|L0 = Expect v12 expectedType=undefined|null|L0
-# CHECK-NEXT: Jump -> next b8(v13)
-# CHECK-NEXT: b5() frequency=Rare:
-# CHECK-NEXT: v14: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: Jump -> next b6()
-# CHECK-NEXT: b6() frequency=Rare handler=b38(v14):
-# CHECK-NEXT: v15: undefined|null|boolean|number|string|object = ElemGet v0, v2 [keyIsIntegral]
-# CHECK-NEXT: v16: undefined|null|boolean|number|string|object ~ undefined|null|L0 = Expect v15 expectedType=undefined|null|L0
-# CHECK-NEXT: v17: boolean|number|string|object ~ L0 = RequireObjectCoercible v16 name="items"
-# CHECK-NEXT: StringBuilderDiscard v14
-# CHECK-NEXT: Jump -> next b17(v17)
-# CHECK-NEXT: b7():
-# CHECK-NEXT: StringBuilderDiscard v3
+# CHECK-NEXT: v6: boolean = HasArrayStorage v0 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v6 -> taken b3(| 0), notTaken b5()
+# CHECK-NEXT: b3(v7: guard):
+# CHECK-NEXT: v8: boolean = IsElementPresent v0, v3, v7 arrayStorage=Contiguous [keyIsIntegral]
+# CHECK-NEXT: Branch v8 -> taken b4(| 0), notTaken b5()
+# CHECK-NEXT: b4(v9: guard):
+# CHECK-NEXT: v10: guard = AllGuards v7, v9
+# CHECK-NEXT: v11: null|boolean|number|string|object = GetArrayElement v0, v3, v10 arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent]
+# CHECK-NEXT: v12: null|boolean|number|string|object ~ null|L0 = Expect v11 expectedType=undefined|null|L0
+# CHECK-NEXT: Jump -> next b7(v12)
+# CHECK-NEXT: b5() frequency=Rare handler=b27(v2):
+# CHECK-NEXT: v13: undefined|null|boolean|number|string|object = ElemGet v0, v3 [keyIsIntegral]
+# CHECK-NEXT: v14: undefined|null|boolean|number|string|object ~ undefined|null|L0 = Expect v13 expectedType=undefined|null|L0
+# CHECK-NEXT: v15: boolean|number|string|object ~ L0 = RequireObjectCoercible v14 name="items"
+# CHECK-NEXT: Jump -> next b9(v15)
+# CHECK-NEXT: b6():
+# CHECK-NEXT: v16: undefined = Undefined
+# CHECK-NEXT: Jump -> next b7(v16)
+# CHECK-NEXT: b7(v17: undefined|null|boolean|number|string|object ~ undefined|null|L0) handler=b27(v2):
+# CHECK-NEXT: v18: boolean|number|string|object ~ L0 = RequireObjectCoercible v17 name="items"
+# CHECK-NEXT: v19: boolean ~ true = TypeTest v18 testedType=L0
+# CHECK-NEXT: Branch v19 -> taken b8(), notTaken b9(v18)
+# CHECK-NEXT: b8() handler=b27(v2):
 # CHECK-NEXT: v20: undefined = Undefined
-# CHECK-NEXT: Jump -> next b8(v20)
-# CHECK-NEXT: b8(v21: undefined|null|boolean|number|string|object ~ undefined|null|L0):
-# CHECK-NEXT: v22: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: Jump -> next b9()
-# CHECK-NEXT: b9() handler=b38(v22):
-# CHECK-NEXT: v23: boolean|number|string|object ~ L0 = RequireObjectCoercible v21 name="items"
-# CHECK-NEXT: v24: boolean ~ true = TypeTest v23 testedType=L0
-# CHECK-NEXT: Branch v24 -> taken b10(| 0), notTaken b16()
-# CHECK-NEXT: b10(v25: L0):
-# CHECK-NEXT: StringBuilderDiscard v22
-# CHECK-NEXT: v27: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: Jump -> next b11()
-# CHECK-NEXT: b11() handler=b38(v27):
-# CHECK-NEXT: v28: Array<undefined, proven, pristine[Storage, Names, Dense]> = GetSlot v25 key="items" receivers=[L0] level=Expected accessSite=6
-# CHECK-NEXT: v29: 0 = Integer
-# CHECK-NEXT: v30: int[0, 4294967295] = CallBuiltin v28 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v31: boolean = Less v29, v30
-# CHECK-NEXT: Branch v31 -> taken b12(), notTaken b13()
-# CHECK-NEXT: b12():
-# CHECK-NEXT: StringBuilderDiscard v27
-# CHECK-NEXT: Jump -> next b14()
-# CHECK-NEXT: b13():
-# CHECK-NEXT: StringBuilderDiscard v27
-# CHECK-NEXT: Jump -> next b14()
-# CHECK-NEXT: b14():
-# CHECK-NEXT: v34: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: Jump -> next b15()
-# CHECK-NEXT: b15() handler=b38(v34):
-# CHECK-NEXT: v35: undefined = Undefined
-# CHECK-NEXT: v36: never = RequireObjectCoercible v35 name="tag"
+# CHECK-NEXT: v21: never = RequireObjectCoercible v20 name="tag"
 # CHECK-NEXT: Unreachable
+# CHECK-NEXT: b9(v22: boolean|number|string|object ~ L0) frequency=Rare handler=b27(v2):
+# CHECK-NEXT: v23: anything ~ Array<undefined, proven, pristine[Storage, Names, Dense]> = PropGet v22 key="items" accessSite=6
+# CHECK-NEXT: v24: false = Boolean
+# CHECK-NEXT: v25: boolean ~ true = TypeTest v23 testedType=Array<undefined>
+# CHECK-NEXT: Branch v25 -> taken b10(| 0), notTaken b18()
+# CHECK-NEXT: b10(v26: Array<undefined> ~ Array<undefined, proven, pristine[Storage, Names, Dense]>) frequency=Rare:
+# CHECK-NEXT: v27: boolean = IsPristine v26 builtinClass=Array aspects=[Names]
+# CHECK-NEXT: Branch v27 -> taken b11(), notTaken b18()
+# CHECK-NEXT: b11() frequency=Rare handler=b27(v2):
+# CHECK-NEXT: v28: 0 = Integer
+# CHECK-NEXT: LoopHint [throwsOwedError]
+# CHECK-NEXT: Jump -> next b12(v2, v24, v28)
+# CHECK-NEXT: b12(v30: string ~ "", v31: boolean, v32: int[0, 4294967295]) frequency=Rare:
+# CHECK-NEXT: LoopHint [leavesOwedError]
+# CHECK-NEXT: Branch v31 -> taken b13(), notTaken b14()
+# CHECK-NEXT: b13() frequency=Rare:
+# CHECK-NEXT: v34: true = Boolean boolean=true
+# CHECK-NEXT: v35: undefined = Undefined
+# CHECK-NEXT: Jump -> next b17(v34, v35, v32)
+# CHECK-NEXT: b14() frequency=Rare handler=b27(v30):
+# CHECK-NEXT: v36: int[0, 4294967295] = CallBuiltin v26 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: LoopHint [throwsOwedError]
+# CHECK-NEXT: v38: boolean = Less v32, v36
+# CHECK-NEXT: Branch v38 -> taken b15(| 0), notTaken b16()
+# CHECK-NEXT: b15(v39: int[0, 4294967294]) frequency=Rare handler=b27(v30):
+# CHECK-NEXT: v40: anything ~ undefined = ElemGet v26, v39 [keyIsIntegral]
+# CHECK-NEXT: LoopHint [throwsOwedError]
+# CHECK-NEXT: v42: 1 = Integer integer=1
+# CHECK-NEXT: v43: int[1, 4294967295] = Add v39, v42
+# CHECK-NEXT: v44: false = Boolean
+# CHECK-NEXT: Jump -> next b17(v44, v40, v43)
 # CHECK-NEXT: b16() frequency=Rare:
-# CHECK-NEXT: StringBuilderDiscard v22
-# CHECK-NEXT: Jump -> next b17(v23)
-# CHECK-NEXT: b17(v38: boolean|number|string|object ~ L0) frequency=Rare:
-# CHECK-NEXT: v39: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: Jump -> next b18()
-# CHECK-NEXT: b18() frequency=Rare handler=b38(v39):
-# CHECK-NEXT: v40: anything ~ Array<undefined, proven, pristine[Storage, Names, Dense]> = PropGet v38 key="items" accessSite=6
-# CHECK-NEXT: v41: false = Boolean
-# CHECK-NEXT: v42: boolean ~ true = TypeTest v40 testedType=Array<undefined>
-# CHECK-NEXT: Branch v42 -> taken b19(| 0), notTaken b27()
-# CHECK-NEXT: b19(v43: Array<undefined> ~ Array<undefined, proven, pristine[Storage, Names, Dense]>) frequency=Rare:
-# CHECK-NEXT: StringBuilderDiscard v39
-# CHECK-NEXT: v45: boolean = IsPristine v43 builtinClass=Array aspects=[Names]
-# CHECK-NEXT: Branch v45 -> taken b20(), notTaken b28()
+# CHECK-NEXT: v45: true = Boolean boolean=true
+# CHECK-NEXT: v46: undefined = Undefined
+# CHECK-NEXT: Jump -> next b17(v45, v46, v32)
+# CHECK-NEXT: b17(v47: boolean, v48: anything ~ undefined, v49: int[0, 4294967295]) frequency=Rare handler=b27(v30):
+# CHECK-NEXT: v50: boolean|number|string|symbol|bigint|object = RequireObjectCoercible v48 name="tag"
+# CHECK-NEXT: v51: anything = PropGet v50 key="tag" accessSite=7
+# CHECK-NEXT: LoopHint [throwsOwedError]
+# CHECK-NEXT: v53: string = Add v30, v51
+# CHECK-NEXT: LoopHint [throwsOwedError]
+# CHECK-NEXT: Jump -> next b12(v53, v47, v49)
+# CHECK-NEXT: b18() frequency=Rare handler=b27(v2):
+# CHECK-NEXT: v55: 0 = Integer
+# CHECK-NEXT: v56: undefined = CallDirect v23 function=f84 [isNeverInlined]
+# CHECK-NEXT: v57: string|object = ResultAt v56
+# CHECK-NEXT: v58: anything = ResultAt v56 index=1
+# CHECK-NEXT: LoopHint [throwsOwedError]
+# CHECK-NEXT: Jump -> next b19(v2, v24, v55)
+# CHECK-NEXT: b19(v60: string, v61: boolean, v62: int[0, 2147483648]) frequency=Rare:
+# CHECK-NEXT: LoopHint [leavesOwedError]
+# CHECK-NEXT: Branch v61 -> taken b20(), notTaken b21()
 # CHECK-NEXT: b20() frequency=Rare:
-# CHECK-NEXT: v46: 0 = Integer
-# CHECK-NEXT: v47: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: Jump -> next b21(v41, v46)
-# CHECK-NEXT: b21(v48: boolean, v49: int[0, 4294967295]) frequency=Rare handler=b38(v47):
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: Branch v48 -> taken b22(), notTaken b23()
-# CHECK-NEXT: b22() frequency=Rare:
-# CHECK-NEXT: v51: true = Boolean boolean=true
-# CHECK-NEXT: v52: undefined = Undefined
-# CHECK-NEXT: Jump -> next b26(v51, v52, v49)
-# CHECK-NEXT: b23() frequency=Rare:
-# CHECK-NEXT: v53: int[0, 4294967295] = CallBuiltin v43 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v54: boolean = Less v49, v53
-# CHECK-NEXT: Branch v54 -> taken b24(| 0), notTaken b25()
-# CHECK-NEXT: b24(v55: int[0, 4294967294]) frequency=Rare handler=b38(v47):
-# CHECK-NEXT: v56: anything ~ undefined = ElemGet v43, v55 [keyIsIntegral]
-# CHECK-NEXT: v57: 1 = Integer integer=1
-# CHECK-NEXT: v58: int[1, 4294967295] = Add v55, v57
-# CHECK-NEXT: v59: false = Boolean
-# CHECK-NEXT: Jump -> next b26(v59, v56, v58)
+# CHECK-NEXT: v64: true = Boolean boolean=true
+# CHECK-NEXT: v65: undefined = Undefined
+# CHECK-NEXT: Jump -> next b26(v64, v65, v62)
+# CHECK-NEXT: b21() frequency=Rare:
+# CHECK-NEXT: v66: boolean = TypeTest v57 testedType=string
+# CHECK-NEXT: Branch v66 -> taken b22(| 0), notTaken b23(| 0)
+# CHECK-NEXT: b22(v67: string) frequency=Rare handler=b27(v60):
+# CHECK-NEXT: v68: undefined = CallDirect v67, v62 function=f85 [isNeverInlined]
+# CHECK-NEXT: LoopHint [throwsOwedError]
+# CHECK-NEXT: v70: boolean = ResultAt v68
+# CHECK-NEXT: v71: anything = ResultAt v68 index=1
+# CHECK-NEXT: v72: int[0, 2147483648] = ResultAt v68 index=2
+# CHECK-NEXT: Jump -> next b26(v70, v71, v72)
+# CHECK-NEXT: b23(v73: object) frequency=Rare handler=b27(v60):
+# CHECK-NEXT: v74: undefined = CallDirect v73, v58 function=f86 [isNeverInlined]
+# CHECK-NEXT: LoopHint [throwsOwedError]
+# CHECK-NEXT: v76: boolean = ResultAt v74
+# CHECK-NEXT: Branch v76 -> taken b24(), notTaken b25()
+# CHECK-NEXT: b24() frequency=Rare:
+# CHECK-NEXT: v77: true = Boolean boolean=true
+# CHECK-NEXT: v78: undefined = Undefined
+# CHECK-NEXT: Jump -> next b26(v77, v78, v62)
 # CHECK-NEXT: b25() frequency=Rare:
-# CHECK-NEXT: v60: true = Boolean boolean=true
-# CHECK-NEXT: v61: undefined = Undefined
-# CHECK-NEXT: Jump -> next b26(v60, v61, v49)
-# CHECK-NEXT: b26(v62: boolean, v63: anything ~ undefined, v64: int[0, 4294967295]) frequency=Rare handler=b38(v47):
-# CHECK-NEXT: v65: boolean|number|string|symbol|bigint|object = RequireObjectCoercible v63 name="tag"
-# CHECK-NEXT: v66: anything = PropGet v65 key="tag" accessSite=7
-# CHECK-NEXT: v67: "" = String string=""
-# CHECK-NEXT: v68: string = Add v67, v66
-# CHECK-NEXT: StringBuilderAppend v47, v68
-# CHECK-NEXT: Jump -> next b21(v62, v64)
-# CHECK-NEXT: b27() frequency=Rare:
-# CHECK-NEXT: StringBuilderDiscard v39
-# CHECK-NEXT: Jump -> next b28()
-# CHECK-NEXT: b28() frequency=Rare:
-# CHECK-NEXT: v71: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: Jump -> next b29()
-# CHECK-NEXT: b29() frequency=Rare handler=b38(v71):
-# CHECK-NEXT: v72: 0 = Integer
-# CHECK-NEXT: v73: undefined = CallDirect v40 function=f84 [isNeverInlined]
-# CHECK-NEXT: v74: string|object = ResultAt v73
-# CHECK-NEXT: v75: anything = ResultAt v73 index=1
-# CHECK-NEXT: Jump -> next b30(v41, v72)
-# CHECK-NEXT: b30(v76: boolean, v77: int[0, 2147483648]) frequency=Rare handler=b38(v71):
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: Branch v76 -> taken b31(), notTaken b32()
-# CHECK-NEXT: b31() frequency=Rare:
-# CHECK-NEXT: v79: true = Boolean boolean=true
-# CHECK-NEXT: v80: undefined = Undefined
-# CHECK-NEXT: Jump -> next b37(v79, v80, v77)
-# CHECK-NEXT: b32() frequency=Rare:
-# CHECK-NEXT: v81: boolean = TypeTest v74 testedType=string
-# CHECK-NEXT: Branch v81 -> taken b33(| 0), notTaken b34(| 0)
-# CHECK-NEXT: b33(v82: string) frequency=Rare handler=b38(v71):
-# CHECK-NEXT: v83: undefined = CallDirect v82, v77 function=f85 [isNeverInlined]
-# CHECK-NEXT: v84: boolean = ResultAt v83
-# CHECK-NEXT: v85: anything = ResultAt v83 index=1
-# CHECK-NEXT: v86: int[0, 2147483648] = ResultAt v83 index=2
-# CHECK-NEXT: Jump -> next b37(v84, v85, v86)
-# CHECK-NEXT: b34(v87: object) frequency=Rare handler=b38(v71):
-# CHECK-NEXT: v88: anything = Call v75, v87
-# CHECK-NEXT: v89: object = RequireObject v88 runtimeError=IteratorResultNotObject
-# CHECK-NEXT: v90: anything = PropGet v89 key="done"
-# CHECK-NEXT: v91: boolean = ToBoolean v90
-# CHECK-NEXT: Branch v91 -> taken b35(), notTaken b36()
-# CHECK-NEXT: b35() frequency=Rare:
-# CHECK-NEXT: v92: true = Boolean boolean=true
-# CHECK-NEXT: v93: undefined = Undefined
-# CHECK-NEXT: Jump -> next b37(v92, v93, v77)
-# CHECK-NEXT: b36() frequency=Rare handler=b38(v71):
-# CHECK-NEXT: v94: anything = PropGet v89 key="value"
-# CHECK-NEXT: v95: false = Boolean
-# CHECK-NEXT: Jump -> next b37(v95, v94, v77)
-# CHECK-NEXT: b37(v96: boolean, v97: anything, v98: int[0, 2147483648]) frequency=Rare handler=b38(v71):
-# CHECK-NEXT: v99: boolean|number|string|symbol|bigint|object = RequireObjectCoercible v97 name="tag"
-# CHECK-NEXT: v100: anything ~ undefined|null|string = PropGet v99 key="tag" accessSite=7
-# CHECK-NEXT: v101: "" = String string=""
-# CHECK-NEXT: v102: string = Add v101, v100
-# CHECK-NEXT: StringBuilderAppend v71, v102
-# CHECK-NEXT: Jump -> next b30(v96, v98)
-# CHECK-NEXT: b38(v104: stringbuilder) role=CatchHandler:
-# CHECK-NEXT: v105: anything = CatchValue
-# CHECK-NEXT: v106: "!" = String string="!"
-# CHECK-NEXT: StringBuilderAppend v104, v106
-# CHECK-NEXT: v108: f1 = GetModuleVariable variable=g0
-# CHECK-NEXT: v109: undefined|null|string = Call v108, -, v105 calleeName="describe" accessSite=8 callees=[f1]
-# CHECK-NEXT: StringBuilderAppend v104, v109
-# CHECK-NEXT: v111: string = StringBuilderFinish v104
-# CHECK-NEXT: Return v111
+# CHECK-NEXT: v79: anything = ResultAt v74 index=1
+# CHECK-NEXT: v80: false = Boolean
+# CHECK-NEXT: Jump -> next b26(v80, v79, v62)
+# CHECK-NEXT: b26(v81: boolean, v82: anything, v83: int[0, 2147483648]) frequency=Rare handler=b27(v60):
+# CHECK-NEXT: v84: boolean|number|string|symbol|bigint|object = RequireObjectCoercible v82 name="tag"
+# CHECK-NEXT: v85: anything ~ undefined|null|string = PropGet v84 key="tag" accessSite=7
+# CHECK-NEXT: LoopHint [throwsOwedError]
+# CHECK-NEXT: v87: string = Add v60, v85
+# CHECK-NEXT: LoopHint [throwsOwedError]
+# CHECK-NEXT: Jump -> next b19(v87, v81, v83)
+# CHECK-NEXT: b27(v89: string ~ "") role=CatchHandler:
+# CHECK-NEXT: v90: anything = CatchValue
+# CHECK-NEXT: v91: "!" = String string="!"
+# CHECK-NEXT: v92: string = Add v89, v91
+# CHECK-NEXT: v93: f1 = GetModuleVariable variable=g0
+# CHECK-NEXT: v94: undefined|null|string = Call v93, -, v90 calleeName="describe" accessSite=8 callees=[f1]
+# CHECK-NEXT: v95: string = Add v92, v94
+# CHECK-NEXT: Return v95
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="box"
-# CHECK: module=m0 position=3545 kind=Arrow flags=[HasRestParameter, IsChecked] length=1 thisType={type=anything} parameters=[{type=string flags=[OmitsNull, OmitsUndefined]}, {type=Array<undefined, proven, pristine[Storage, Names, Dense]> flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=L0 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f44] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: string, v1: Array<undefined, proven, pristine[Storage, Names, Dense]>):
+# CHECK: module=m0 position=3545 kind=Arrow flags=[HasRestParameter, IsChecked] length=1 thisType={type=anything} parameters=[{type="a"|"b"|"c" flags=[OmitsNull, OmitsUndefined]}, {type=Array<undefined, proven, pristine[Storage, Names, Dense]> flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=L0 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f44] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: "a"|"b"|"c", v1: Array<undefined, proven, pristine[Storage, Names, Dense]>):
 # CHECK-NEXT: v2: L0 = NewObject -, v1 layout=L0 fields=[0] allocationSite=7 allocationClass=0
 # CHECK-NEXT: v3: L0 = FinishObject v2
 # CHECK-NEXT: Return v3

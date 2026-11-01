@@ -1,0 +1,141 @@
+# `bytes[k] = i + k`: `i` is a number that does not change in the loop. It is tested for a whole number ahead of the loop, and each turn adds integers.
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot references=narrow
+# RUN(LOOPS): lower-to-b3 optimized loops f0
+# REQUIRES(LOOPS): unsanitized-code
+# -- source: main.ts
+# const bytes = new Uint8Array(64);
+# function turn(i: number): number {
+#   for (let k = 0; k < bytes.length; k++) bytes[k] = i + k;
+#   return bytes[63]!;
+# }
+# function bench(n: number): number {
+#   let sum = 0;
+#   for (let i = 0; i < n; i++) sum = (sum + turn(i)) | 0;
+#   return sum;
+# }
+# declare const input: any;
+# (globalThis as any).answer = bench(+input);
+# -- end of source
+# LOOPS-LABEL: steps by 8
+# LOOPS-NOT: Double b@{{*}} = Add(
+# LOOPS: Store8(
+# LOOPS-NOT: Double b@{{*}} = Add(
+# LOOPS-LABEL: end of loop
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+typesite w0 module=m0 position=48 kind=Parameter
+typesite w1 module=m0 position=34 kind=Result
+typesite w2 module=m0 position=6 kind=Variable
+typesite w3 module=m0 position=166 kind=Parameter
+typesite w4 module=m0 position=151 kind=Result
+typesite w5 module=m0 position=14 kind=CallResult
+typesite w6 module=m0 position=330 kind=CallResult
+typesite w7 module=m0 position=80 kind=Variable
+typesite w8 module=m0 position=91 kind=PropertyRead
+typesite w9 module=m0 position=193 kind=Variable
+typesite w10 module=m0 position=213 kind=Variable
+typesite w11 module=m0 position=245 kind=CallResult
+variable g0 name="turn" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="bytes" module=m0 declared={type=undefined|null|absent|Uint8Array site=w2 flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = Builtin builtin=Uint8Array @18
+    v3 = Integer integer=64 @29
+    v4 = Construct v2, -, v3 calleeName="Uint8Array" @18 constructs
+    v5 = Convert v4 declared={type=undefined|null|Uint8Array site=w5 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @14
+    PutModuleVariable v5 variable=g1 @6
+    v7 = Builtin builtin=GlobalThis @302
+    v8 = PropGet v7 key="globalThis" [isFreeName] @302
+    v9 = Convert v8 declared={type=builtin(GlobalThis) flags=[IsExpected]} @302
+    v10 = Convert v9 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @302
+    v11 = Builtin builtin=GlobalThis @342
+    v12 = PropGet v11 key="input" [isFreeName] @342
+    v13 = Convert v12 declared={type=number flags=[IsExpected]} @342
+    v14 = ToNumber v13 @336
+    v15 = Call v1, -, v14 calleeName="bench" @330
+    v16 = Convert v15 declared={type=number site=w6} @330
+    PropSet v10, v16 key="answer" @302
+    v18 = Undefined @302
+    Return v18 @302
+}
+function f1 name="turn" module=m0 position=34 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w0}] results=[{type=number site=w1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @34
+  b1():
+    v1 = Integer @84
+    v2 = Convert v1 declared={type=number site=w7} @84
+    Jump -> next b2(v2) @80
+  b2(v3: number):
+    LoopHint @80
+    v5 = Convert v3 declared={type=i32 flags=[IsExpected]} @87
+    v6 = GetModuleVariable variable=g1 @91
+    v7 = CheckInitialized v6 name="bytes" @91
+    v8 = PropGet v7 key="length" @91
+    v9 = Convert v8 declared={type=number site=w8} illTypedCause=Assertion @91
+    v10 = Less v5, v9 @87
+    Branch v10 -> taken b3(| 0), notTaken b6(| 0) @87
+  b3(v11):
+    Jump -> next b4() @87
+  b4():
+    v12 = GetModuleVariable variable=g1 @110
+    v13 = CheckInitialized v12 name="bytes" @110
+    v14 = Convert v11 declared={type=i32 flags=[IsExpected]} @116
+    v15 = Add v0, v14 @121
+    ElemSet v13, v14, v15 @110
+    Jump -> next b5() @110
+  b5():
+    v17 = Increment v14 @110
+    v18 = Convert v17 declared={type=number site=w7} @105
+    Jump -> next b2(v18) @105
+  b6(v19):
+    Jump -> next b7() @87
+  b7():
+    v20 = GetModuleVariable variable=g1 @137
+    v21 = CheckInitialized v20 name="bytes" @137
+    v22 = Integer integer=63 @137
+    v23 = ElemGet v21, v22 @137
+    v24 = Convert v23 declared={type=number} illTypedCause=Assertion @137
+    Return v24 @137
+}
+function f2 name="bench" module=m0 position=151 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w3}] results=[{type=number site=w4}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1() @151
+  b1():
+    v1 = Integer @199
+    v2 = Convert v1 declared={type=number site=w9} @199
+    v3 = Integer @217
+    v4 = Convert v3 declared={type=number site=w10} @217
+    Jump -> next b2(v2, v4) @213
+  b2(v5: number, v6: number):
+    LoopHint @213
+    v8 = Less v6, v0 @220
+    Branch v8 -> taken b3(| 0, 1), notTaken b6(| 0, 1) @220
+  b3(v9, v10):
+    Jump -> next b4() @220
+  b4():
+    v11 = Convert v5 declared={type=i32 flags=[IsExpected]} @239
+    v12 = GetModuleVariable variable=g0 @245
+    v13 = Call v12, -, v9 calleeName="turn" @245
+    v14 = Convert v13 declared={type=number site=w11} @245
+    v15 = Add v11, v14 @239
+    v16 = Integer @256
+    v17 = BitOr v15, v16 @239
+    v18 = Convert v17 declared={type=number site=w9} @232
+    Jump -> next b5() @232
+  b5():
+    v19 = Increment v9 @239
+    v20 = Convert v19 declared={type=number site=w10} @227
+    Jump -> next b2(v18, v20) @227
+  b6(v21, v22):
+    Jump -> next b7() @220
+  b7():
+    v23 = Convert v5 declared={type=i32 flags=[IsExpected]} @268
+    v24 = Convert v23 declared={type=number site=w4} @268
+    Return v24 @268
+}

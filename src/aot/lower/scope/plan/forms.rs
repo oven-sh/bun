@@ -16,6 +16,7 @@ pub(super) fn compute_arguments_objects(context: &Context<'_, '_>) -> ArgumentsO
     let mut objects = ArgumentsObjects {
         file: ArgumentsObject::None,
         functions: vec![ArgumentsObject::None; hir.fns.len()],
+        fields: Vec::new(),
     };
     for &(_, used) in &context.walk.uses {
         let BindingRef::Slot(scope, ScopeSlot::Arguments) = used else {
@@ -30,11 +31,10 @@ pub(super) fn compute_arguments_objects(context: &Context<'_, '_>) -> ArgumentsO
         match unit {
             CodeUnit::File => objects.file = created,
             CodeUnit::Function(function) => objects.functions[function.idx()] = created,
-            CodeUnit::FieldInitializer(_) => {
-                debug_assert!(false, "a field initializer has no arguments object");
-            }
+            CodeUnit::FieldInitializer(member) => objects.fields.push(member),
         }
     }
+    sort_unique(&mut objects.fields);
     objects
 }
 

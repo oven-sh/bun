@@ -75,7 +75,7 @@ const insideProgram = (code: string) => ({
 
 const besideLibrary = (code: string) =>
   insideProgram(`globalThis.kept = [process.argv, require("node:querystring").parse(K)];\n  ${code}`);
-const besideMuchOfTheLibrary = (code: string) => insideProgram(`process.stdout.write(K);\n  ${code}`);
+const besideMuchOfTheLibrary = (code: string) => insideProgram(`process.stdout.end(K);\n  ${code}`);
 // Beside one module these pass and are known to fail beside much of the library, or the other way around.
 const differBesideMuchOfTheLibrary = new Set([
   ...Object.keys(knownBesideMuchOfTheLibrary),

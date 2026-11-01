@@ -53,7 +53,9 @@ pub struct DefinedObjectTypes {
     first_definers: ShardedMap<DefinedObjectType, FirstDefiners>,
     first_definers_of_layouts: ShardedMap<TypeIdentity, AtomicU32>,
     first_placed_definers_of_layouts: ShardedMap<TypeIdentity, AtomicU32>,
-    names_of_types: ShardedMap<TypeId, NamesOfObjectType>,
+    // With `checker`: a checker that knows nothing yet gives the numbers out again.
+    names_of_types: ShardedMap<(u32, TypeId), NamesOfObjectType>,
+    checker: AtomicU32,
     names_of_files: Guarded<FxHashMap<FileId, Vec<(TypeId, NamesOfObjectType)>>>,
     // By file. Empty: the link orders the files by their own numbers.
     link_positions: Vec<u32>,
@@ -91,11 +93,18 @@ impl DefinedObjectTypes {
     }
 
     pub(super) fn find_names(&self, ty: TypeId) -> Option<NamesOfObjectType> {
-        self.names_of_types.get_ref(&ty).copied()
+        let checker = self.checker.load(Ordering::Relaxed);
+        self.names_of_types.get_ref(&(checker, ty)).copied()
     }
 
     pub(super) fn hold_names_of_file(&self, file: FileId, names: Vec<(TypeId, NamesOfObjectType)>) {
         self.names_of_files.lock().insert(file, names);
+    }
+
+    /// No file is being lowered.
+    pub fn forget_names_of_types(&self) {
+        self.checker.fetch_add(1, Ordering::Relaxed);
+        self.names_of_files.lock().clear();
     }
 
     pub fn publish_names_of_file(&self, file: FileId) {
@@ -103,7 +112,8 @@ impl DefinedObjectTypes {
         for (ty, names) in names.into_iter().flatten() {
             // Another task has another type under the number of a type that one task alone knows.
             if !ty.is_local() {
-                self.names_of_types.insert_ref(ty, names);
+                let checker = self.checker.load(Ordering::Relaxed);
+                self.names_of_types.insert_ref((checker, ty), names);
             }
         }
     }

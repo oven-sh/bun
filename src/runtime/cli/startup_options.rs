@@ -242,7 +242,7 @@ fn bootstrap_flag_name(flag: &[u8]) -> &[u8] {
 
 pub(crate) struct ExecArgvOptions {
     pub requirements: Vec<OptionRequirement>,
-    pub forbids_text_evaluation: bool,
+    pub code_generation_from_strings: CodeGenerationFromStrings,
 }
 
 impl ExecArgvOptions {
@@ -281,9 +281,11 @@ fn add_requirement(
     }
 }
 
-fn forbids_text_evaluation(option: &WrittenOption<'_>) -> bool {
-    option.index == CODE_GENERATION_PARAM
-        && CodeGenerationFromStrings::from_flag_value(option.value.unwrap_or_default()).is_some()
+fn code_generation_level(option: &WrittenOption<'_>) -> Option<CodeGenerationFromStrings> {
+    if option.index != CODE_GENERATION_PARAM {
+        return None;
+    }
+    CodeGenerationFromStrings::from_flag_value(option.value.unwrap_or_default())
 }
 
 fn read_option_words(words: &[&[u8]]) -> ExecArgvOptions {
@@ -311,7 +313,11 @@ fn read_option_words(words: &[&[u8]]) -> ExecArgvOptions {
     }
     ExecArgvOptions {
         requirements,
-        forbids_text_evaluation: options.iter().any(forbids_text_evaluation),
+        code_generation_from_strings: options
+            .iter()
+            .filter_map(code_generation_level)
+            .max()
+            .unwrap_or(CodeGenerationFromStrings::Allowed),
     }
 }
 

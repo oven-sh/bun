@@ -46,6 +46,15 @@ impl KnownPrimitive {
 impl FileLowering<'_, '_, '_, '_> {
     /// The value that stands in the place of a read of a member of an enum.
     pub(in crate::lower) fn find_enum_member_read(&mut self, access: ExprId) -> Option<Constant> {
+        if let Some(&read) = self.enum_member_reads.get(&access) {
+            return Some(read);
+        }
+        let read = self.compute_enum_member_read(access)?;
+        self.enum_member_reads.insert(access, read);
+        Some(read)
+    }
+
+    fn compute_enum_member_read(&mut self, access: ExprId) -> Option<Constant> {
         if let Ok(Some(value)) = self.queries.constant_enum_access(access) {
             return Some(to_constant(value));
         }

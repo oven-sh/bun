@@ -120,7 +120,7 @@ show("a parameter called Number", (x, Number = { isInteger: value => typeof valu
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="give"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow captures=[{type=env [[L_12]] flags=[IsFromCompiler]}, {type=anything}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_13]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow captures=[{type=env [[L_12]] flags=[IsFromCompiler]}, {type=anything variableName="x"}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_13]]] {
 // CHECK-NEXT: b0(v0: env [[L_12]], v1: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

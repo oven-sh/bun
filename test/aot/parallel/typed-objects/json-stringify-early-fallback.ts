@@ -13,8 +13,8 @@ function callsIn(counts: string, ...besides: string[]): number {
   }
   return sum;
 }
-// These make the text, and find a built-in function where it is first called.
-const owed = ["operationAOTStringBuilderBegin", "operationAOTStringBuilderFinish", "operationAOTStringBuilderAppendJSON", "operationAOTJSONAppendString", "operationAOTJSONAppendValue", "operationAOTJSONStringifyPrimitive", "operationAOTBuiltinCell"];
+// These make the text, find a built-in function where it is first called, and make the string of a literal where it is first asked for.
+const owed = ["operationAOTStringBuilderBegin", "operationAOTStringBuilderFinish", "operationAOTStringBuilderAppendJSON", "operationAOTJSONAppendString", "operationAOTJSONAppendValue", "operationAOTJSONStringifyPrimitive", "operationAOTBuiltinCell", "operationAOTLiteralStringToString"];
 const isCounted = typeof aotRuntimeCounters === "function";
 
 type Circle = { kind: "circle"; radius: number };

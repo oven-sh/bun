@@ -116,7 +116,7 @@ for (const [Parent, element] of [
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="WithConstructor"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] length=1 captures=[{type=undefined|null|[[f_1]]|[[f_4]]|[[f_5]]|[[f_6]]|[[f_7]]|[[f_8]]|[[f_9]]|[[f_10]]|[[f_11]]|[[f_12]]|[[f_13]]|[[f_14]]|[[f_15]] flags=[IsExpected]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] length=1 captures=[{type=undefined|null|[[f_1]]|[[f_4]]|[[f_5]]|[[f_6]]|[[f_7]]|[[f_8]]|[[f_9]]|[[f_10]]|[[f_11]]|[[f_12]]|[[f_13]]|[[f_14]]|[[f_15]] flags=[IsExpected] variableName="element"}] thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] {
 // CHECK-NEXT: b0(v0: undefined|null|[[f_1]]|[[f_4]]|[[f_5]]|[[f_6]]|[[f_7]]|[[f_8]]|[[f_9]]|[[f_10]]|[[f_11]]|[[f_12]]|[[f_13]]|[[f_14]]|[[f_15]], v1: function, v2: anything, v3: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

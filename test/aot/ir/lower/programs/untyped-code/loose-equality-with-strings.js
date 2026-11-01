@@ -40,8 +40,8 @@ console.log(isConstructor(rope), isConstructor(rope + "s"), isConstructor(("x" +
 // CHECK-NEXT: Return v4
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="countConstructors"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: undefined|null|string|Array):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] {
+// CHECK-NEXT: b0(v0: undefined|null|Array):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = Undefined
@@ -108,7 +108,7 @@ console.log(isConstructor(rope), isConstructor(rope + "s"), isConstructor(("x" +
 // CHECK-NEXT: Throw v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="toString"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} captures=[{type=undefined|null|string flags=[IsExpected]}] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes={{*}}[[f_4]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} captures=[{type=undefined|null|string flags=[IsExpected] variableName="text"}] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes={{*}}[[f_4]]] {
 // CHECK-NEXT: b0(v0: undefined|null|string):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

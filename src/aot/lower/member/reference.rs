@@ -4,9 +4,16 @@ use bun_sema::hir::{Chain, ExprId, ExprKind, MemberKey};
 
 use super::PropertyName;
 use crate::ir::generated::{NullishAccess, RuntimeErrorKind};
-use crate::ir::{TypeTable, ValueId, VariableId};
+use crate::ir::{StringId, TypeTable, ValueId, VariableId};
 use crate::lower::scope::{self, IdentifierTarget};
 use crate::lower::{FunctionLowering, commonjs, expression};
+
+// A variable that may still hold `undefined` where a member of it is named, and the name of that member.
+#[derive(Copy, Clone)]
+pub(in crate::lower) struct Holder {
+    pub(in crate::lower) value: ValueId,
+    pub(in crate::lower) member: Option<StringId>,
+}
 
 pub(in crate::lower) enum Reference {
     Identifier {
@@ -30,11 +37,11 @@ pub(in crate::lower) enum Reference {
     // What a module has under a name, or `module.exports`.
     ModuleVariable {
         variable: VariableId,
-        holder: Option<ValueId>,
+        holder: Option<Holder>,
     },
     // Nobody can see what is stored there.
     Discarded {
-        holder: Option<ValueId>,
+        holder: Option<Holder>,
     },
     Invalid,
 }

@@ -1775,6 +1775,30 @@ describe.concurrent("test environment with the real", () => {
     });
   });
 
+  test.each([[], ["--isolate"], ["--isolate=modules"]])(
+    "a name that globalThis has without a window is as enumerable with one, as in vitest: %s",
+    async (...args) => {
+      const log = `
+        import { test } from "bun:test";
+        import { basename } from "node:path";
+        test("enumerable", () => {
+          const names = ["navigator", "fetch", "document"];
+          console.log(basename(import.meta.path), ...names.filter(name => name in { ...globalThis }));
+        });
+      `;
+      using dir = project({
+        "a.test.js": log,
+        "b.test.js": `// ${VITEST} jsdom\n${log}`,
+        "c.test.js": `// ${VITEST} happy-dom\n${log}`,
+        "d.test.js": `// ${VITEST} jsdom\n${log}`,
+        "e.test.js": log,
+      });
+      const { stdout, exitCode } = await bunTest(String(dir), ...args);
+      expect(stdout).toEqual(["a", "b", "c", "d", "e"].map(name => `${name}.test.js navigator fetch`));
+      expect(exitCode).toBe(0);
+    },
+  );
+
   // The typed arrays and ArrayBuffer are the window's there, as in vitest, where these are all false but Response's.
   test.each([[], ["--isolate"], ["--isolate=modules"]])(
     "jsdom: binary data that Bun makes is an instance of the global classes: %s",

@@ -269,6 +269,23 @@ await $`
 `;
 ```
 
+Bun Shell removes the newlines at the end of the output, and any `\r` directly before them. Without double quotes, it then splits the output into arguments at whitespace, as `sh` does with the default `IFS`: each run of spaces, tabs and newlines ends an argument. Whitespace at the start or the end of the output ends an argument too:
+
+```js
+import { $ } from "bun";
+
+await $`touch $(echo "a.txt b.txt")`; // two arguments: a.txt and b.txt
+await $`touch log-$(echo " a.txt")`; // two arguments: log- and a.txt
+await $`touch "$(echo "my file.txt")"`; // one argument: my file.txt
+```
+
+Put the substitution in double quotes to get one argument. The value of an assignment (`NAME=$(...)`) is not split either. Other rules for an unquoted substitution:
+
+- A `\r` directly before a newline is a part of that newline, so a program that ends its lines with `\r\n` gives the same arguments. Any other `\r` stays in its argument.
+- Bun Shell does not read the `IFS` variable.
+- A redirect target that the output splits into two arguments fails with `ambiguous redirect`.
+- A `*` or a `{a,b}` in the same word expands only in the last argument that the word gives: `{a,b}$(echo " c")` gives `{a,b}` and `c`.
+
 <Note>
 
 Because Bun internally uses the special [`raw`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Template_literals#raw_strings) property on the input template literal, using the backtick syntax for command substitution doesn't work:

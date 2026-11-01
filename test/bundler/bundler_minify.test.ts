@@ -239,6 +239,20 @@ describe("bundler", () => {
     minifySyntax: true,
     run: { stdout: "Controller Model" },
   });
+  // A bundle renames bindings, so the function that a `let` or `const` names still moves to its only use.
+  itBundled("minify/SingleUseFunctionMovesToItsUse", {
+    files: {
+      "/entry.js": /* js */ `
+        export function arrow() { const q = () => {}; return q.name; }
+        export function block() { { function q() {} return q.name; } }
+      `,
+    },
+    minifySyntax: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("return (() => {}).name;");
+      api.expectFile("/out.js").toContain("return function() {}.name;");
+    },
+  });
   itBundled("minify/TemplateStringFolding", {
     files: {
       "/entry.js": /* js */ `

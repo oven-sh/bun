@@ -4736,6 +4736,27 @@ console.log(foo, array);
       // check("let x = arg0?.[foo]; (0, x)()", "let x = arg0?.[foo];\nx();");
     });
 
+    // https://github.com/oven-sh/bun/issues/20398
+    it("substitution leaves a let or const that names a function or class", () => {
+      const print = (options, body) =>
+        new Bun.Transpiler({ loader: "js", ...options }).transformSync(`function f() {\n${body}\n}`);
+
+      for (const options of [{ target: "bun" }, { minify: { syntax: true } }]) {
+        const check = (input, output) => expect(print(options, input)).toBe(`function f() {\n${output}\n}\n`);
+        check("const q = () => {}; return q.name;", "  const q = () => {};\n  return q.name;");
+        check("let q = function() {}; return q.name;", "  let q = function() {};\n  return q.name;");
+        check("const Q = class {}; return new Q;", "  const Q = class {\n  };\n  return new Q;");
+        check("{ function q() {} return q.name; }", "  {\n    let q = function() {};\n    return q.name;\n  }");
+        // These declarations give no name, so the value still moves.
+        check("const q = function named() {}; return q.name;", "  return function named() {}.name;");
+        check("const q = g(); return q.name;", "  return g().name;");
+        check("const q = (0, () => {}); return q.name;", "  return (() => {}).name;");
+      }
+
+      // A renamer prints another name, so the value still moves.
+      expect(print({ minify: true }, "const q = () => {}; return q.name;")).toContain("{return(()=>{}).name}");
+    });
+
     it("comma operator transforms", () => {
       const expectPrinted = (code, out) => {
         expect(parsed(code, true, true, transpilerMinifySyntax)).toBe(out);

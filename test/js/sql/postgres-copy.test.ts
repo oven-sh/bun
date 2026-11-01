@@ -5,15 +5,19 @@ import { bunEnv, bunExe, describeWithContainer, tempDir, withoutAsanQuarantine }
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import {
+  pgBackendKeyData,
   pgCommandComplete,
+  pgCopyBothResponse,
   pgCopyData,
   pgCopyDone,
   pgCopyInResponse,
   pgCopyOutResponse,
+  pgDataRow,
   pgErrorResponse,
   pgHold,
   pgMockServer,
   pgReadyForQuery,
+  pgRowDescription,
 } from "./wire-frames";
 
 const MiB = 1024 * 1024;
@@ -649,6 +653,79 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
   });
 });
 
+// START_REPLICATION on a replication connection. Physical replication needs no slot and no wal_level=logical: it
+// streams every WAL record. The superuser has the REPLICATION privilege.
+describeWithContainer("postgres, replication", { image: "postgres_plain", concurrent: true }, container => {
+  const connect = connectTo(container);
+  const replication = async () => {
+    await container.ready;
+    const url = `postgres://postgres@${container.host}:${container.port}/bun_sql_test`;
+    return new SQL(url, { max: 1, connection: { replication: "database" } });
+  };
+  /** The `r` message that the server wants within wal_sender_timeout, with `lsn` received, flushed and applied. */
+  const standbyStatusUpdate = (lsn: bigint) => {
+    const message = Buffer.alloc(34);
+    message.write("r");
+    for (const offset of [1, 9, 17]) message.writeBigUInt64BE(lsn, offset);
+    message.writeBigInt64BE(BigInt(Date.now() - Date.UTC(2000, 0, 1)) * 1000n, 25);
+    return message;
+  };
+  const parseLsn = (text: string) => {
+    const [hi, lo] = text.split("/");
+    return (BigInt("0x" + hi) << 32n) | BigInt("0x" + lo);
+  };
+  /** The server sends nothing until wal_sender_timeout / 2 on its own, so a WAL record is made for it to stream. */
+  const startReplication = async (sql: SQL, wal: SQL) => {
+    const [system] = await sql.unsafe("IDENTIFY_SYSTEM").simple();
+    const query = sql.unsafe(`START_REPLICATION ${system.xlogpos} TIMELINE ${system.timeline}`);
+    const reader = query.readable().getReader();
+    const writer = query.writable().getWriter();
+    await wal`select pg_logical_emit_message(true, 'bun', 'a record')`;
+    const message = (await reader.read()).value!;
+    // XLogData: 'w', walStart, walEnd, sendTime, data
+    expect(String.fromCharCode(message[0])).toBe("w");
+    const walEnd = Buffer.from(message).readBigUInt64BE(9);
+    expect(walEnd).toBeGreaterThan(parseLsn(system.xlogpos));
+    await writer.write(standbyStatusUpdate(walEnd));
+    return { query, reader, writer };
+  };
+
+  test("the writable ends the replication, and the connection runs the next query", async () => {
+    await using sql = await replication();
+    await using wal = await connect();
+    const { query, reader, writer } = await startReplication(sql, wal);
+    await writer.close();
+    // What the server sent before its CopyDone is still in the stream.
+    for (let next = await reader.read(); !next.done; next = await reader.read()) {
+      expect("wk").toContain(String.fromCharCode(next.value[0]));
+    }
+    // Resolves with one empty result per CommandComplete: START_STREAMING for the session, START_REPLICATION after.
+    expect([...(await query)].flat()).toEqual([]);
+    expect(await sql`select 1 as x`.simple()).toEqual([{ x: 1 }]);
+  });
+
+  test("cancelling the readable ends the replication, and the connection runs the next query", async () => {
+    await using sql = await replication();
+    await using wal = await connect();
+    const { query, reader, writer } = await startReplication(sql, wal);
+    await reader.cancel();
+    expect(failure(await outcome(query))).toMatchObject({ code: "ERR_POSTGRES_QUERY_CANCELLED" });
+    expect(failure(await outcome(writer.closed))).toMatchObject({ code: "ERR_POSTGRES_QUERY_CANCELLED" });
+    expect(await sql`select 1 as x`.simple()).toEqual([{ x: 1 }]);
+  });
+
+  test("without a stream", async () => {
+    await using sql = await replication();
+    const [system] = await sql.unsafe("IDENTIFY_SYSTEM").simple();
+    const query = sql.unsafe(`START_REPLICATION ${system.xlogpos} TIMELINE ${system.timeline}`).simple();
+    expect(failure(await outcome(query))).toMatchObject({
+      code: "ERR_POSTGRES_COPY_NOT_SUPPORTED",
+      message: "START_REPLICATION needs query.readable()",
+    });
+    expect(await sql`select 1 as x`.simple()).toEqual([{ x: 1 }]);
+  });
+});
+
 // One at a time: each keeps the thread busy, and a slow build has five seconds for a test.
 describeWithContainer("postgres, megabytes", { image: "postgres_plain" }, container => {
   const connect = connectTo(container);
@@ -925,6 +1002,365 @@ describe.concurrent("frames that a server cannot be made to send", () => {
       const failed = sql`copy t from stdin`.writable().getWriter();
       await failed.abort("why");
       expect(wire).toEqual(["Q copy t from stdin", "d 1\n", "d 2\n", "c ", "Q copy t from stdin", "f why"]);
+    } finally {
+      server.close();
+    }
+  });
+});
+
+// START_REPLICATION on a replication connection: CopyBothResponse, then CopyData both ways until a CopyDone from
+// each side. The readable carries the server's CopyData, the writable the client's.
+describe.concurrent("START_REPLICATION", () => {
+  const text = (chunk: Uint8Array | undefined) => Buffer.from(chunk!).toString();
+  const selectOne = [
+    pgRowDescription([{ name: "x", typeOid: 23 }]),
+    pgDataRow([Buffer.from("1")]),
+    pgCommandComplete("SELECT 1"),
+    pgReadyForQuery(),
+  ];
+  const needsReadable = {
+    code: "ERR_POSTGRES_COPY_NOT_SUPPORTED",
+    errno: undefined,
+    message: "START_REPLICATION needs query.readable()",
+  };
+  const cancelled = { code: "ERR_POSTGRES_QUERY_CANCELLED" };
+  const endOfCommand = [pgCommandComplete("COPY 0"), pgReadyForQuery()];
+  /**
+   * A walsender: CopyBothResponse and `data` to the START_REPLICATION, a CopyDone and the end of the command to the
+   * client's. A `pgHold` first keeps the CopyBothResponse back until `release()`; `queried` says that it is held.
+   */
+  const walsender = async (wire: string[], data: (Buffer | typeof pgHold)[] = [], startupFrames: Buffer[] = []) => {
+    const queried = Promise.withResolvers<void>();
+    const reply = data.map(frame => (frame === pgHold ? frame : pgCopyData(frame)));
+    if (reply[0] === pgHold) reply.splice(1, 0, pgCopyBothResponse([0]));
+    else reply.unshift(pgCopyBothResponse([0]));
+    const server = await pgMockServer((type, body) => {
+      wire.push(type + " " + body.toString().replaceAll("\0", ""));
+      if (type !== "Q") return type === "c" ? [pgCopyDone(), ...endOfCommand] : undefined;
+      if (!body.toString().startsWith("START_REPLICATION")) return selectOne;
+      queried.resolve();
+      return reply;
+    }, startupFrames);
+    return { ...server, queried: queried.promise };
+  };
+  const connect = (port: number) => new SQL(`postgres://u@127.0.0.1:${port}/db`, { max: 1 });
+
+  test("the writable ends the session, and the connection stays usable", async () => {
+    const wire: string[] = [];
+    const { port, server } = await walsender(wire, [Buffer.from("k1"), Buffer.from("w2")]);
+    try {
+      await using sql = connect(port);
+      const query = sql.unsafe("START_REPLICATION 0/0");
+      const reader = query.readable().getReader();
+      const writer = query.writable().getWriter();
+      // One chunk per CopyData, whatever the number of reads.
+      expect(text((await reader.read()).value)).toBe("k1");
+      expect(text((await reader.read()).value)).toBe("w2");
+      await writer.write("r1");
+      await writer.write(Buffer.from("r2"));
+      await writer.close();
+      expect(await reader.read()).toEqual({ done: true, value: undefined });
+      expect(summary(await query)).toEqual(copied(0));
+      expect(await sql`select 1 as x`.simple()).toEqual([{ x: 1 }]);
+      expect(wire).toEqual(["Q START_REPLICATION 0/0", "d r1", "d r2", "c ", "Q select 1 as x"]);
+    } finally {
+      server.close();
+    }
+  });
+
+  test.each([
+    ["at once", false],
+    ["while the server has not answered", true],
+  ])("writable() first, then readable() %s", async (_, held) => {
+    const wire: string[] = [];
+    const { port, server, release, queried } = await walsender(
+      wire,
+      held ? [pgHold, Buffer.from("k1")] : [Buffer.from("k1")],
+    );
+    try {
+      await using sql = connect(port);
+      const query = sql.unsafe("START_REPLICATION 0/0");
+      const writer = query.writable().getWriter();
+      if (held) await queried;
+      const reader = query.readable().getReader();
+      release();
+      expect(text((await reader.read()).value)).toBe("k1");
+      await writer.write("r1");
+      await writer.close();
+      expect(await reader.read()).toEqual({ done: true, value: undefined });
+      expect(await sql`select 1 as x`.simple()).toEqual([{ x: 1 }]);
+      expect(wire).toEqual(["Q START_REPLICATION 0/0", "d r1", "c ", "Q select 1 as x"]);
+    } finally {
+      server.close();
+    }
+  });
+
+  test("a stream added after the server has answered", async () => {
+    const wire: string[] = [];
+    const { port, server } = await walsender(wire, [Buffer.from("k1")]);
+    try {
+      await using sql = connect(port);
+      const query = sql.unsafe("START_REPLICATION 0/0");
+      const reader = query.readable().getReader();
+      expect(text((await reader.read()).value)).toBe("k1");
+      expect(() => query.writable()).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
+      expect(() => query.readable()).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
+      await reader.cancel();
+      expect(failure(await outcome(query))).toMatchObject(cancelled);
+    } finally {
+      server.close();
+    }
+  });
+
+  test("the server ends its side first: the client's CopyDone goes out, and the query ends", async () => {
+    const wire: string[] = [];
+    const { port, server } = await pgMockServer((type, body) => {
+      wire.push(type + " " + body.toString().replaceAll("\0", ""));
+      if (type === "Q") return [pgCopyBothResponse([0]), pgCopyData(Buffer.from("k1")), pgCopyDone()];
+      if (type === "c") return endOfCommand;
+    });
+    try {
+      await using sql = connect(port);
+      const query = sql.unsafe("START_REPLICATION 0/0");
+      const stream = query.readable();
+      const writer = query.writable().getWriter();
+      expect(await stream.text()).toBe("k1");
+      expect(summary(await query)).toEqual(copied(0));
+      await writer.close();
+      expect(wire).toEqual(["Q START_REPLICATION 0/0", "c "]);
+    } finally {
+      server.close();
+    }
+  });
+
+  test("the server ends its side first and then fails: the readable rejects", async () => {
+    const { port, server, release } = await pgMockServer(type => {
+      if (type === "Q") return [pgCopyBothResponse([0]), pgCopyData(Buffer.from("w1")), pgCopyDone(), pgHold];
+      if (type === "c")
+        return [pgErrorResponse({ S: "FATAL", C: "57P01", M: "terminating walsender" }), pgReadyForQuery()];
+    });
+    try {
+      await using sql = connect(port);
+      const query = sql.unsafe("START_REPLICATION 0/0");
+      const writer = query.writable().getWriter();
+      const seen: string[] = [];
+      const loop = (async () => {
+        for await (const chunk of query.readable()) {
+          seen.push(text(chunk));
+          release();
+        }
+      })();
+      expect(failure(await outcome(loop))).toMatchObject({ code: "ERR_POSTGRES_SERVER_ERROR", errno: "57P01" });
+      expect(seen).toEqual(["w1"]);
+      expect(failure(await outcome(writer.closed))).toMatchObject({ errno: "57P01" });
+    } finally {
+      server.close();
+    }
+  });
+
+  test("the readable alone: the server's CopyDone ends the query", async () => {
+    const wire: string[] = [];
+    const { port, server } = await pgMockServer((type, body) => {
+      wire.push(type + " " + body.toString().replaceAll("\0", ""));
+      if (type === "Q") return [pgCopyBothResponse([0]), pgCopyData(Buffer.from("k1")), pgCopyDone()];
+      if (type === "c") return endOfCommand;
+    });
+    try {
+      await using sql = connect(port);
+      const query = sql.unsafe("START_REPLICATION 0/0");
+      expect(await query.readable().text()).toBe("k1");
+      expect(summary(await query)).toEqual(copied(0));
+      expect(wire).toEqual(["Q START_REPLICATION 0/0", "c "]);
+    } finally {
+      server.close();
+    }
+  });
+
+  // The server is told in band, not with a CancelRequest: the walsender raises an error on a
+  // CancelRequest and drops the session's temporary slots. So no second connection is opened, and the
+  // pool keeps the connection whatever its size: the rejected query leaves no transaction behind.
+  test.each([
+    ["the readable alone", false, 1],
+    ["both streams", true, 1],
+    ["the readable alone, in a pool of two", false, 2],
+  ])("cancel() of %s ends the session with a CopyDone", async (_, withWriter, max) => {
+    const wire: string[] = [];
+    const { port, server } = await walsender(wire, [Buffer.from("k1")]);
+    let connections = 0;
+    let closed = false;
+    server.on("connection", () => connections++);
+    try {
+      await using sql = new SQL(`postgres://u@127.0.0.1:${port}/db`, { max, onclose: () => (closed = true) });
+      const query = sql.unsafe("START_REPLICATION 0/0");
+      const reader = query.readable().getReader();
+      const writer = withWriter ? query.writable().getWriter() : null;
+      expect(text((await reader.read()).value)).toBe("k1");
+      await reader.cancel();
+      expect(failure(await outcome(query))).toMatchObject(cancelled);
+      if (writer) expect(failure(await outcome(writer.closed))).toMatchObject(cancelled);
+      expect(await sql`select 1 as x`.simple()).toEqual([{ x: 1 }]);
+      expect(wire).toEqual(["Q START_REPLICATION 0/0", "c ", "Q select 1 as x"]);
+      // A pool of two runs the select on a second connection while the first awaits its ReadyForQuery.
+      expect([connections <= max, closed]).toEqual([true, false]);
+    } finally {
+      server.close();
+    }
+  });
+
+  test("an error while the readable is full: the query rejects and the connection stays usable", async () => {
+    const { port, server } = await pgMockServer((type, body) => {
+      if (type === "Q" && body.toString().startsWith("START_REPLICATION")) {
+        return [
+          pgCopyBothResponse([0]),
+          pgCopyData(Buffer.alloc(70 * 1024, "w")),
+          pgErrorResponse({ S: "ERROR", C: "XX000", M: "boom" }),
+          pgReadyForQuery(),
+        ];
+      }
+      if (type === "Q") return selectOne;
+    });
+    try {
+      await using sql = connect(port);
+      const query = sql.unsafe("START_REPLICATION 0/0");
+      const reader = query.readable().getReader();
+      expect((await reader.read()).value!.byteLength).toBe(70 * 1024);
+      expect(failure(await outcome(query))).toMatchObject({ code: "ERR_POSTGRES_SERVER_ERROR", errno: "XX000" });
+      expect(failure(await outcome(reader.read()))).toMatchObject({ errno: "XX000" });
+      expect(await sql`select 1 as x`.simple()).toEqual([{ x: 1 }]);
+    } finally {
+      server.close();
+    }
+  });
+
+  // With a BackendKeyData the CancelRequest goes out and the query is not rejected before the answer, so the
+  // CopyBothResponse opens the session: the CopyDone that ends it comes from the cancelled stream.
+  test("cancel() before the server has answered", async () => {
+    const wire: string[] = [];
+    const { port, server, release, queried } = await walsender(
+      wire,
+      [pgHold, Buffer.from("k1")],
+      [pgBackendKeyData(1, 2)],
+    );
+    try {
+      await using sql = connect(port);
+      const query = sql.unsafe("START_REPLICATION 0/0");
+      const reader = query.readable().getReader();
+      await queried;
+      await reader.cancel();
+      release();
+      expect(failure(await outcome(query))).toMatchObject(cancelled);
+      expect(await sql`select 1 as x`.simple()).toEqual([{ x: 1 }]);
+      expect(wire).toEqual(["Q START_REPLICATION 0/0", "c ", "Q select 1 as x"]);
+    } finally {
+      server.close();
+    }
+  });
+
+  test("abort() after the server has ended its side rejects with the reason", async () => {
+    const wire: string[] = [];
+    // The server ends first, so the client's CopyDone goes out on its own. Hold the server's
+    // CommandComplete and ReadyForQuery so the abort lands while the query is still open.
+    const gotCopyDone = Promise.withResolvers<import("node:net").Socket>();
+    const { port, server } = await pgMockServer((type, body, socket) => {
+      wire.push(type + " " + body.toString().replaceAll("\0", ""));
+      if (type === "Q" && body.toString().startsWith("START_REPLICATION")) {
+        return [pgCopyBothResponse([0]), pgCopyData(Buffer.from("k1")), pgCopyDone()];
+      }
+      if (type === "Q") return selectOne;
+      if (type === "c") gotCopyDone.resolve(socket);
+    });
+    try {
+      await using sql = connect(port);
+      const query = sql.unsafe("START_REPLICATION 0/0");
+      const reader = query.readable().getReader();
+      const writer = query.writable().getWriter();
+      expect(text((await reader.read()).value)).toBe("k1");
+      await writer.abort(new Error("boom"));
+      expect(failure(await outcome(query))).toEqual({ ...cancelled, errno: undefined, message: "Error: boom" });
+      // End the command now: the rejected query drops the results, and the connection runs the next one.
+      (await gotCopyDone.promise).write(Buffer.concat(endOfCommand));
+      expect(await sql`select 1 as x`.simple()).toEqual([{ x: 1 }]);
+      expect(wire).toEqual(["Q START_REPLICATION 0/0", "c ", "Q select 1 as x"]);
+    } finally {
+      server.close();
+    }
+  });
+
+  test("abort() of the writable ends the session with a CopyDone, and the query rejects with the reason", async () => {
+    const wire: string[] = [];
+    const { port, server } = await walsender(wire, [Buffer.from("k1")]);
+    try {
+      await using sql = connect(port);
+      const query = sql.unsafe("START_REPLICATION 0/0");
+      const reader = query.readable().getReader();
+      const writer = query.writable().getWriter();
+      expect(text((await reader.read()).value)).toBe("k1");
+      await writer.abort(new Error("boom"));
+      expect(failure(await outcome(query))).toEqual({ ...cancelled, errno: undefined, message: "Error: boom" });
+      expect(failure(await outcome(reader.read()))).toMatchObject({ message: "Error: boom" });
+      expect(await sql`select 1 as x`.simple()).toEqual([{ x: 1 }]);
+      expect(wire).toEqual(["Q START_REPLICATION 0/0", "c ", "Q select 1 as x"]);
+    } finally {
+      server.close();
+    }
+  });
+
+  // While streaming, a chunk over the high water mark pauses the socket, so memory stays bounded.
+  // After close(), the server's last messages are read to the end, so close() settles without a read.
+  test("close() of the writable while the readable is full", async () => {
+    const wire: string[] = [];
+    const { port, server } = await walsender(wire, [Buffer.alloc(70 * 1024, "w")]);
+    try {
+      await using sql = connect(port);
+      const query = sql.unsafe("START_REPLICATION 0/0");
+      const reader = query.readable().getReader();
+      const writer = query.writable().getWriter();
+      await writer.write("r1");
+      await writer.close();
+      expect(summary(await query)).toEqual(copied(0));
+      expect((await reader.read()).value!.byteLength).toBe(70 * 1024);
+      expect(await reader.read()).toEqual({ done: true, value: undefined });
+      expect(wire).toEqual(["Q START_REPLICATION 0/0", "d r1", "c "]);
+    } finally {
+      server.close();
+    }
+  });
+
+  test.each([
+    ["without a stream", (query: SQL.Query<any>) => query.simple()],
+    ["with writable() alone", (query: SQL.Query<any>) => query.writable().getWriter().write("r1")],
+  ])("%s: the query rejects, and the connection stays usable", async (_, run) => {
+    const wire: string[] = [];
+    const { port, server } = await walsender(wire);
+    try {
+      let closed = false;
+      await using sql = new SQL(`postgres://u@127.0.0.1:${port}/db`, { max: 1, onclose: () => (closed = true) });
+      expect(failure(await outcome(run(sql.unsafe("START_REPLICATION 0/0"))))).toEqual(needsReadable);
+      expect(await sql`select 1 as x`.simple()).toEqual([{ x: 1 }]);
+      expect([closed, wire]).toEqual([false, ["Q START_REPLICATION 0/0", "c ", "Q select 1 as x"]]);
+    } finally {
+      server.close();
+    }
+  });
+
+  test.each([
+    ["copy t to stdout", pgCopyOutResponse([0]), "COPY ... TO STDOUT has no writable()"],
+    ["copy t from stdin", pgCopyInResponse([0]), "COPY ... FROM STDIN has no readable()"],
+  ])("both streams on `%s`", async (statement, response, message) => {
+    const { port, server } = await pgMockServer(type => {
+      if (type === "Q") return response;
+      if (type === "f") return [pgErrorResponse({ S: "ERROR", C: "57014", M: "failed" }), pgReadyForQuery()];
+      if (type === "c") return [pgCommandComplete("COPY 0"), pgReadyForQuery()];
+    });
+    try {
+      await using sql = connect(port);
+      const query = sql.unsafe(statement);
+      const stream = query.readable();
+      const writer = query.writable().getWriter();
+      const expected = { code: "ERR_POSTGRES_COPY_NOT_SUPPORTED", errno: undefined, message };
+      expect(failure(await outcome(query))).toEqual(expected);
+      expect(failure(await outcome(stream.text()))).toEqual(expected);
+      expect(failure(await outcome(writer.closed))).toEqual(expected);
     } finally {
       server.close();
     }

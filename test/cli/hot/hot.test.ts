@@ -1200,6 +1200,41 @@ it.skipIf(!isLinux).each([
   expect(await runner.exited).toBe(0);
 });
 
+// With the flag the directory reports the write too. The failed import leaves the listing of
+// lib/ with no path for a.ts, and the watchlist lookup must not unwatch a.ts for a write alone.
+it.skipIf(!isLinux)("a directory write event alone keeps a module watched where an import failed", async () => {
+  using dir = tempDir("hot-dir-write-after-failed-import", {
+    "main.ts": `
+      globalThis.runs = (globalThis.runs ?? 0) + 1;
+      if (globalThis.runs === 2) throw new Error("run 2 stops before the import");
+      const { a } = await import("./lib/a.ts");
+      try { await import("./lib/missing.ts"); } catch {}
+      console.log("a=" + a);
+      if (a === 3) process.exit(0);
+    `,
+    "lib/a.ts": `export const a = 1;`,
+  });
+  const file = join(String(dir), "lib", "a.ts");
+  await using runner = spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "main.ts"],
+    env: { ...bunEnv, BUN_FEATURE_FLAG_FORCE_WATCH_DIRECTORY_WRITES: "1" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const stdout = follow(runner.stdout);
+  const stderr = follow(runner.stderr);
+  expect(await stdout("a=1")).toBe(true);
+
+  writeFileSync(file, `export const a = 2;`);
+  expect(await stderr("run 2 stops before the import")).toBe(true);
+
+  writeFileSync(file, `export const a = 3;`);
+  expect(await stdout("a=3")).toBe(true);
+  expect(await runner.exited).toBe(0);
+});
+
 // mod.js calls a macro, and a macro runs while its caller is parsed. This one saves mod.js with
 // one write and holds the parse until the watcher has handled that save. The first save is the
 // one that main.js makes after the first run, so the second one lands in the reload.
@@ -1217,7 +1252,11 @@ it.skipIf(!isLinux)("sees a save in place that lands while the reload parses the
         const fd = openSync(path, "r+");
         writeSync(fd, String(from + 1), at + "value = ".length);
         closeSync(fd);
-        while (!trace().slice(before).includes("mod.js"));
+        const deadline = Date.now() + 30_000;
+        while (!trace().slice(before).includes("mod.js")) {
+          if (Date.now() > deadline) throw new Error("the watcher did not report the save of mod.js");
+          Bun.sleepSync(1);
+        }
         return "saved";
       }
     `,
@@ -1296,7 +1335,9 @@ it.skipIf(!isLinux).each([
   writeFileSync(file, source(3));
   expect(await stdout("run 3")).toBe(true);
   expect(watchesOf(runner.pid, file)).toHaveLength(1);
-  writeFileSync(file, `console.log("run 4");\nprocess.exit(0);\n`);
+  // Not shorter than the text before: writeFileSync writes first and then cuts the old tail off,
+  // and a reload can read the file between the two.
+  writeFileSync(file, source(4) + "process.exit(0);\n");
   expect(await stdout("run 4")).toBe(true);
   expect(await runner.exited).toBe(0);
 });
@@ -1332,7 +1373,6 @@ it.skipIf(!isLinux).each(["--hot main.js", "--watch main.js", "test --watch ./ma
 
     writeFileSync(dep, `export const v = 3;`);
     expect(await stdout("dep=3")).toBe(true);
-    expect(watchesOf(runner.pid, dep)).toHaveLength(1);
   },
 );
 

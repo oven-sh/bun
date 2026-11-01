@@ -152,7 +152,7 @@ test("BUN_WATCHER_TRACE with --watch flag", async () => {
 // On Linux a watch of a directory can also report a write to a file in it. `--hot` does not ask
 // for that: a watched file reports its own writes, and `--hot` takes a file that its directory
 // names off the watchlist. `--watch` starts a new process for each change and keeps the events.
-test.skipIf(!isLinux).each([
+test.concurrent.skipIf(!isLinux).each([
   ["--hot gets no event", "--hot", {}, false],
   [
     "--hot with BUN_FEATURE_FLAG_FORCE_WATCH_DIRECTORY_WRITES gets an event",

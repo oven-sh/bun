@@ -1193,7 +1193,13 @@ where
                                         }
                                         // A listing that the resolver read again has no path
                                         // for a file until the resolver resolves that file.
-                                        // The watchlist has the file under this path.
+                                        // The watchlist has the file under this path. A write
+                                        // alone does not put another file under the name.
+                                        if !event.op.intersects(
+                                            WatchOp::CREATE | WatchOp::MOVE_TO | WatchOp::DELETE,
+                                        ) {
+                                            continue 'names;
+                                        }
                                         let folder = strings::trim_right(file_path, &[SEP]);
                                         let len = folder.len() + 1 + changed_name.len();
                                         if len > _on_file_update_path_buf.len() {

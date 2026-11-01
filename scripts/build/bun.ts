@@ -1139,6 +1139,8 @@ export function validateBunConfig(cfg: Config): void {
   // Keyed by string: these names are the user's.
   const depsByName = new Map<string, Dependency>(allDeps.map(d => [d.name, d]));
   for (const [name, path] of Object.entries(cfg.localDeps)) {
+    // The pinned WebKit and ICU are config.ts's entries, and configure has yet to fetch what their `build` reads.
+    if (path.startsWith(cfg.cacheDir + sep)) continue;
     const dep = depsByName.get(name);
     assert(dep !== undefined, `--local-deps: unknown dep '${name}'`, {
       hint: `Known deps: ${[...depsByName.keys()].sort().join(", ")}`,

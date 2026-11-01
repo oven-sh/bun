@@ -41,6 +41,11 @@ export function webkitSourceDir(cacheDir: string, version: string): string {
   return resolve(cacheDir, `webkit-source-${webkitVersionKey(version)}`);
 }
 
+/** A build that a git hook or `git rebase -x` starts inherits variables that point every git at that repository. */
+const outsideAnyRepository = Object.fromEntries(
+  Object.entries(process.env).filter(([name]) => !/^GIT_(DIR|WORK_TREE|INDEX_FILE|PREFIX|COMMON_DIR)$/.test(name)),
+);
+
 const git = (cwd: string, ...args: string[]) =>
   promisify(execFile)(
     "git",
@@ -52,7 +57,7 @@ const git = (cwd: string, ...args: string[]) =>
       ...["-c", "http.lowSpeedLimit=1000", "-c", "http.lowSpeedTime=60"],
       ...args,
     ],
-    { cwd, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } },
+    { cwd, env: { ...outsideAnyRepository, GIT_TERMINAL_PROMPT: "0" } },
   );
 
 /** `cfg.webkitVersion` is a commit or a release tag (`autobuild-<sha>`, `autobuild-preview-pr-<n>-<sha>`); git fetches either. */

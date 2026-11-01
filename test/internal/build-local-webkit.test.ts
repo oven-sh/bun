@@ -8,6 +8,7 @@ import { isWindows, tempDir } from "harness";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 
+import { validateBunConfig } from "../../scripts/build/bun.ts";
 import { cxx } from "../../scripts/build/compile.ts";
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
 import { bootstrapCmds } from "../../scripts/build/deps/bootstrap-cmds.ts";
@@ -111,6 +112,15 @@ describe("which builds compile WebKit", () => {
     expect(() => linux({ webkit: "vendored" as "source" })).toThrow("Unknown webkit: vendored");
     expect(() => linux({ webkit: "source", localDeps: "WebKit=/elsewhere/WebKit" })).toThrow(
       "webkit=source can't be combined with --local-deps=WebKit=<path>",
+    );
+  });
+
+  test("nothing reads the pinned trees before configure has fetched them", () => {
+    using dir = tempDir("build-empty-cache", {});
+    const cfg = linux({ buildDir: join(String(dir), "build"), cacheDir: join(String(dir), "cache") });
+    expect(() => validateBunConfig(cfg)).not.toThrow();
+    expect(() => validateBunConfig({ ...cfg, localDeps: { ...cfg.localDeps, icuu: "/elsewhere/icu" } })).toThrow(
+      "--local-deps: unknown dep 'icuu'",
     );
   });
 

@@ -337,12 +337,12 @@ function forbiddenImports(cfg: Config): string[] {
 }
 
 /**
- * TEMPORARY: exports bun.exe has only because the prebuilt WebKit's bmalloc is
+ * Exports bun.exe has only with `webkit: "prebuilt"`, whose bmalloc is
  * compiled with BEXPORT=__declspec(dllexport) (bmalloc/BExport.h has no
  * static-build carve-out the way WTF's export macros do), so every bmalloc.lib
- * member the link pulls carries `-export:` directives. Remove once
- * oven-sh/WebKit builds bmalloc with BEXPORT empty (`-DBEXPORT=`); the export
- * check then holds bun.exe to the Node-API / V8 / libuv / llhttp set alone.
+ * member the link pulls carries `-export:` directives. deps/webkit.ts compiles
+ * it with BEXPORT empty (`-DBEXPORT=`); the export check then holds bun.exe to
+ * the Node-API / V8 / libuv / llhttp set alone.
  *
  * The 23 names, from `llvm-readobj --coff-exports` on a released
  * bun-windows-x64 bun.exe: 22 MSVC-mangled members of namespace bmalloc
@@ -587,7 +587,7 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
             // `.drectve -export:` for WTF.dll's sake; statically linked, that
             // directive exports it from bun-debug.exe. Debug builds only.
             ...(cfg.debug ? ["currentStackPointer"] : []),
-            ...PREBUILT_BMALLOC_DLLEXPORTS.exact,
+            ...(cfg.webkit === "prebuilt" ? PREBUILT_BMALLOC_DLLEXPORTS.exact : []),
           ],
           // Node-API and the V8 / node C++ embedder API are exported from the
           // source with __declspec(dllexport) (NAPI_EXTERN, BUN_EXPORT), the
@@ -600,7 +600,7 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
             "?*@v8@@*",
             "?*@node@@*",
             "llhttp_*",
-            ...PREBUILT_BMALLOC_DLLEXPORTS.patterns,
+            ...(cfg.webkit === "prebuilt" ? PREBUILT_BMALLOC_DLLEXPORTS.patterns : []),
             // The debug WebKit prebuilt's libpas exports its system-heap entry
             // points the same way (`-export:` directives in the archive
             // members); the release prebuilt has none. Debug builds only.

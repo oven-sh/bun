@@ -75,6 +75,98 @@ module.exports = debugMode => {
       }
     },
 
+    test_v8_value_uint32_value() {
+      const valueOfError = new Error("valueOf threw");
+      const cases = [
+        ["int", 7],
+        ["negative int", -1],
+        ["negative zero", -0],
+        ["fraction", 1.5],
+        ["negative fraction", -1.5],
+        ["int stored as a double", Math.fround(1)],
+        ["INT32_MIN", -(2 ** 31)],
+        ["INT32_MAX + 1", 2 ** 31],
+        ["UINT32_MAX", 2 ** 32 - 1],
+        ["UINT32_MAX + 6", 2 ** 32 + 5],
+        ["2 ** 63 + 2 ** 11", 2 ** 63 + 2 ** 11],
+        ["Number.MAX_VALUE", Number.MAX_VALUE],
+        ["NaN", NaN],
+        ["Infinity", Infinity],
+        ["-Infinity", -Infinity],
+        ["numeric string", "42"],
+        ["numeric string above UINT32_MAX", "4294967301"],
+        ["numeric string below INT32_MIN", "-2147483649"],
+        ["negative fraction string", "-1.5"],
+        ["hex string", "0x10"],
+        ["empty string", ""],
+        ["non-numeric string", "abc"],
+        ["true", true],
+        ["false", false],
+        ["null", null],
+        ["undefined", undefined],
+        ["empty object", {}],
+        ["array with one number", [5]],
+        [
+          "object with valueOf",
+          {
+            valueOf() {
+              console.log("valueOf called");
+              return 9;
+            },
+          },
+        ],
+        [
+          "object with Symbol.toPrimitive",
+          {
+            [Symbol.toPrimitive](hint) {
+              console.log("hint:", hint);
+              return 2 ** 32 + 11;
+            },
+          },
+        ],
+        [
+          "object with throwing valueOf",
+          {
+            valueOf() {
+              throw valueOfError;
+            },
+          },
+        ],
+        ["bigint", 10n],
+        ["symbol", Symbol("s")],
+      ];
+      for (const [description, value] of cases) {
+        console.log(`====== ${description}`);
+        try {
+          nativeModule.perform_uint32_value(value);
+        } catch (e) {
+          // V8 and JSC word their own TypeErrors differently, so print the class only.
+          console.log("threw:", e === valueOfError ? "the error from valueOf" : e.constructor.name);
+        }
+      }
+    },
+
+    test_v8_value_uint32_value_empty_context() {
+      for (const value of [7, -1, 1.5, 2 ** 32 + 5, NaN]) {
+        console.log(`====== ${value}`);
+        nativeModule.perform_uint32_value_with_empty_context(value);
+      }
+    },
+
+    // Values that are not numbers and convert to a negative int32. The V8 in Node 26.12.1 returns 0
+    // for them, and Bun wraps them as ToUint32 says, so v8.test.ts does not compare the two outputs.
+    test_v8_value_uint32_value_negative_int_from_non_number() {
+      const cases = [
+        ["negative numeric string", "-1"],
+        ["array with one negative number", [-37]],
+        ["object with valueOf that returns a negative int", { valueOf: () => -1 }],
+      ];
+      for (const [description, value] of cases) {
+        console.log(`====== ${description}`);
+        nativeModule.perform_uint32_value(value);
+      }
+    },
+
     // Bun only: 48k collected instances with 128 internal fields each. Their
     // field storage is about 2 KB per instance, 100 MiB if none of it is freed.
     test_v8_internal_field_object_leak() {

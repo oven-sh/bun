@@ -384,6 +384,49 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
     });
   });
 
+  describe("Value::Uint32Value", () => {
+    it("converts values like the JS ToUint32 operation", async () => {
+      await checkSameOutput("test_v8_value_uint32_value");
+    });
+    it("converts a number without using the context", async () => {
+      await checkSameOutput("test_v8_value_uint32_value_empty_context");
+    });
+
+    // Node 26.12.1 returns 0 for these: its V8 clamps a negative Smi to 0 when the value was not a
+    // number to begin with. V8 fixed that in
+    // https://github.com/v8/v8/commit/42bc03b82e4792fc618e1ba41c7e8646184eaa6c, and a Node with that
+    // V8 prints what Bun prints. The Node on the machine can be either one.
+    it("wraps a value that is not a number and converts to a negative int32", async () => {
+      const testName = "test_v8_value_uint32_value_negative_int_from_non_number";
+      const expected = [
+        "====== negative numeric string",
+        "maybe.IsNothing() = 0",
+        "maybe.FromJust() = 4294967295",
+        "====== array with one negative number",
+        "maybe.IsNothing() = 0",
+        "maybe.FromJust() = 4294967259",
+        "====== object with valueOf that returns a negative int",
+        "maybe.IsNothing() = 0",
+        "maybe.FromJust() = 4294967295",
+      ];
+      const linesOf = (output: string) =>
+        output
+          .replaceAll(/^\[\w+\].+$/gm, "")
+          .trim()
+          .split(/\r?\n/)
+          .filter(Boolean);
+
+      for (const buildMode of [BuildMode.release, BuildMode.debug]) {
+        const output = await runOn(Runtime.bun, buildMode, testName);
+        expect(linesOf(output), `addon built in ${BuildMode[buildMode]} mode`).toEqual(expected);
+      }
+
+      const expectedWithV8Bug = expected.map(line => line.replace(/FromJust\(\) = \d+$/, "FromJust() = 0"));
+      const nodeOutput = await runOn(Runtime.node, BuildMode.release, testName);
+      expect([expected, expectedWithV8Bug], "under Node").toContainEqual(linesOf(nodeOutput));
+    });
+  });
+
   describe("Object::DefineOwnProperty", () => {
     it("applies PropertyAttribute flags to the defined property", async () => {
       await checkSameOutput("test_v8_define_own_property");

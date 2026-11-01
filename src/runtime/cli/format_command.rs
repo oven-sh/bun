@@ -6,8 +6,9 @@ use bun_format_conformance::{Bundle, Flags, Format};
 use bun_lint_driver::fmt::cli::{Options, UsageError};
 
 use super::command::{ContextData, Tag};
-use super::lint_command::{read_bunfigs, run_and_exit, usage_error};
-use bun_bunfig::Above;
+use super::lint_command::{
+    read_bunfigs, read_format_defaults, run_and_exit, serve_editor, usage_error,
+};
 
 pub(crate) struct FormatCommand;
 
@@ -108,6 +109,12 @@ impl FormatCommand {
             crate::cli::command::tag_print_help(Tag::FormatCommand, options.all);
             Global::exit(0);
         }
+        if let Some(message) = options.lsp_conflict_error() {
+            usage_error("fmt", &message);
+        }
+        if options.lsp {
+            serve_editor(b"fmt", &args);
+        }
         let cwd = options.cwd.clone();
         run_and_exit(b"fmt", cwd.as_deref(), |environment| {
             let mut defaults = None;
@@ -116,12 +123,7 @@ impl FormatCommand {
                 Tag::FormatCommand,
                 b"fmt",
                 &mut |file, path, is_from_flag| {
-                    let section = bun_lint_driver::bunfig::format(file)?;
-                    defaults = section.map(|it| it.from_bunfig_at(path, is_from_flag));
-                    Ok(match defaults {
-                        Some(_) => Above::Unwanted,
-                        None => Above::Needed,
-                    })
+                    read_format_defaults(&mut defaults, file, path, is_from_flag)
                 },
             );
             let options =

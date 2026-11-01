@@ -152,20 +152,6 @@ impl Host for Tester<'_> {
     }
 }
 
-fn registry() -> Registry {
-    Registry::new(&[
-        bun_lint_eslint::RULES,
-        bun_lint_typescript::RULES,
-        bun_lint_plugins::RULES,
-        bun_lint_unicorn::RULES,
-        bun_lint_react::RULES,
-        bun_lint_jest::RULES,
-        bun_lint_json::RULES,
-        bun_lint_markdown::RULES,
-    ])
-    .with_languages(crate::rules::LANGUAGES)
-}
-
 fn object(entries: Vec<(&[u8], Json)>) -> Json {
     let entries = entries.into_iter();
     Json::Object(entries.map(|(key, value)| (key.to_vec(), value)).collect())
@@ -254,7 +240,7 @@ fn configuration_case(registry: &Registry, case: &Json) -> Json {
 #[optimize(size)]
 fn configuration_cases(file: &[u8]) -> Option<Vec<u8>> {
     let cases = bun_lint::json::parse(&crate::fs::read(file).ok()?)?;
-    let registry = registry();
+    let registry = crate::rules::registry();
     let answers = cases.as_array()?.iter();
     let answers = answers.map(|it| configuration_case(&registry, it));
     let mut out = Vec::new();
@@ -313,7 +299,7 @@ pub fn run_eslint_tests(args: &[&[u8]], environment: &Environment) -> bool {
     bun_lint_conformance::run_from_command_line(
         args,
         &Tester {
-            linter: Linter::new(registry()),
+            linter: Linter::new(crate::rules::registry()),
             environment,
             js_plugins: js_plugin::Host::with_engine(
                 environment.js_engine,

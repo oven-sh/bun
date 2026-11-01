@@ -6,6 +6,7 @@ use bstr::BStr;
 
 use bun_core::{Global, Output, ZStr};
 use bun_lint_driver::cli::{Options, UsageError};
+use bun_lint_driver::lsp::{Args, Features, Process, Realms};
 use bun_lint_driver::{Environment, Outcome, Script, Stream, bunfig, git};
 use bun_sys::File;
 
@@ -87,6 +88,204 @@ pub(crate) fn read_bunfigs(
     }
     if config_path.is_none() && above != Above::Unwanted {
         bun_bunfig::load_config_above_for_tool(tag, ctx, above, &mut read);
+    }
+}
+
+/// Line and column of `at` in `text`, from 1. `None` if `at` is nowhere.
+fn line_and_column(text: &[u8], at: bun_ast::Loc) -> Option<(usize, usize)> {
+    let before = text.get(..usize::try_from(at.start).ok()?)?;
+    let line_start = bun_core::strings::last_index_of_char(before, b'\n').map_or(0, |it| it + 1);
+    let line = bun_core::strings::count_char(before, b'\n') + 1;
+    Some((line, before.len() - line_start + 1))
+}
+
+/// `Cannot use <shown>: <why>`, the reason a bunfig.toml isn't used.
+fn cannot_use(shown: &[u8], why: &[&[u8]]) -> Vec<u8> {
+    let mut message = b"Cannot use ".to_vec();
+    message.extend_from_slice(shown);
+    message.extend_from_slice(b": ");
+    why.iter().for_each(|it| message.extend_from_slice(it));
+    message
+}
+
+/// Calls `read` with the bunfig.toml whose text is `text`, as [`read_bunfigs_in`] does. `Err` says why the file
+/// can't be used, with the line and column of the error.
+fn read_bunfig_text(
+    text: &[u8],
+    shown: &[u8],
+    is_named: bool,
+    read: &mut dyn FnMut(&bun_ast::Expr, &[u8], bool) -> Result<Above, bunfig::BunfigError>,
+) -> Result<Above, Vec<u8>> {
+    use bun_lint_driver::json::{Notation, with_parsed_redacted};
+    let text = bun_core::strings::without_utf8_bom(text);
+    let parsed = with_parsed_redacted(Notation::Toml, text, |file| read(file, shown, is_named));
+    let (at, message) = match parsed {
+        Ok(Ok(above)) => return Ok(above),
+        Ok(Err(rejection)) => (line_and_column(text, rejection.at), rejection.message),
+        Err(error) => {
+            let at = (usize::try_from(error.line).ok()).zip(usize::try_from(error.column).ok());
+            (at, error.message)
+        }
+    };
+    let shown = match at {
+        Some((line, column)) => format!("{}:{line}:{column}", BStr::new(shown)).into_bytes(),
+        None => shown.to_vec(),
+    };
+    Err(cannot_use(&shown, &[&message]))
+}
+
+/// As [`read_bunfigs`] with `directory` as the working directory, for the editor's server: it touches nothing of
+/// the process and doesn't end it. `config_path` is bun's own `--config=<path>`, resolved once by the caller against
+/// the command the process was started as. `Err` says why a file that's needed, or that `config_path` names, can't
+/// be used.
+pub(crate) fn read_bunfigs_in(
+    directory: &[u8],
+    config_path: Option<&[u8]>,
+    read: &mut dyn FnMut(&bun_ast::Expr, &[u8], bool) -> Result<Above, bunfig::BunfigError>,
+) -> Result<(), Vec<u8>> {
+    use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
+    let mut buffer = bun_paths::path_buffer_pool::get();
+    let mut join = |shown: &[u8]| {
+        join_abs_string_buf_checked::<platform::Auto>(directory, &mut buffer[..], &[shown])
+            .map(<[u8]>::to_vec)
+    };
+    let read_file = |path: &[u8]| File::read_from(bun_core::Fd::cwd(), path);
+    if let Some(config_path) = config_path {
+        let Some(path) = join(config_path) else {
+            return Err(cannot_use(config_path, &[b"the path is too long"]));
+        };
+        let text = read_file(&path).map_err(|error| {
+            let why = error.msg().unwrap_or(b"unknown error");
+            cannot_use(config_path, &[error.name(), b": ", why])
+        })?;
+        read_bunfig_text(&text, config_path, true, &mut *read)?;
+        return Ok(());
+    }
+    let mut above = Above::Needed;
+    let mut shown = b"bunfig.toml".to_vec();
+    let mut below = Vec::new();
+    loop {
+        let Some(path) = join(&shown) else {
+            return Ok(());
+        };
+        // The root is its own parent.
+        if path == below {
+            return Ok(());
+        }
+        if let Ok(text) = read_file(&path) {
+            match read_bunfig_text(&text, &shown, false, &mut *read) {
+                Ok(found) => above = found,
+                // It can be that of another project.
+                Err(_) if above == Above::Optional => return Ok(()),
+                Err(why) => return Err(why),
+            }
+        }
+        if above == Above::Unwanted {
+            return Ok(());
+        }
+        shown.splice(0..0, *b"../");
+        below = path;
+    }
+}
+
+/// The defaults that `bun lint` takes from the bunfigs: `[lint]`, and `[fmt]` for the rule that compares a file with
+/// `bun fmt`'s output. It's the same `[fmt]` that `bun fmt` would read.
+#[derive(Default)]
+struct LintDefaults {
+    lint: Option<Options>,
+    format: Option<bun_lint_driver::fmt::cli::Options>,
+}
+
+impl LintDefaults {
+    /// Reads one bunfig, for `read_bunfigs`. `options` is the command line alone, and `cwd` the working directory
+    /// that `path` is relative to.
+    fn read(
+        &mut self,
+        options: &Options,
+        cwd: &[u8],
+        file: &bun_ast::Expr,
+        path: &[u8],
+        is_named: bool,
+    ) -> Result<Above, bunfig::BunfigError> {
+        if self.lint.is_none() {
+            self.lint = bunfig::lint(file)?.map(|it| it.from_bunfig_at(path, is_named, cwd));
+        }
+        if self.format.is_none() {
+            self.format = bunfig::format(file)?.map(|it| it.from_bunfig_at(path, is_named));
+        }
+        Ok(match (&self.lint, &self.format) {
+            (Some(_), Some(_)) => Above::Unwanted,
+            (Some(it), None) if it.mentions_format_rule() => Above::Needed,
+            (Some(_), None) if options.mentions_format_rule() => Above::Needed,
+            (Some(_), None) => Above::Optional,
+            (None, _) => Above::Needed,
+        })
+    }
+
+    /// The options of the run: `args` over the defaults. `None` if no bunfig has a section for `bun lint`.
+    fn options(self, args: &[&[u8]]) -> Result<Option<Options>, UsageError> {
+        let LintDefaults { mut lint, format } = self;
+        if let Some(format) = format {
+            lint.get_or_insert_default().bun_format_defaults = Some(Box::new(format));
+        }
+        lint.map(|defaults| Options::parse_with_defaults(defaults, args))
+            .transpose()
+    }
+}
+
+/// The options of `bun lint <args>` run in `directory`, with its bunfigs, for the editor's server. `config_path`
+/// is bun's own `--config=<path>`, as [`read_bunfigs_in`] takes it. `Err` is what the command would print before
+/// exiting with 2.
+pub(crate) fn lint_options_in(
+    directory: &[u8],
+    args: &[&[u8]],
+    config_path: Option<&[u8]>,
+) -> Result<Options, Vec<u8>> {
+    let options = Options::parse(args).map_err(|UsageError(message)| message)?;
+    let cwd = bun_lint_driver::from_native_path(directory);
+    let mut defaults = LintDefaults::default();
+    read_bunfigs_in(directory, config_path, &mut |file, path, is_named| {
+        defaults.read(&options, &cwd, file, path, is_named)
+    })?;
+    match defaults.options(args) {
+        Ok(found) => Ok(found.unwrap_or(options)),
+        Err(UsageError(message)) => Err(message),
+    }
+}
+
+/// Reads one bunfig for `bun fmt`, for `read_bunfigs`: `[fmt]`, nearest first. Stops once found.
+pub(crate) fn read_format_defaults(
+    defaults: &mut Option<bun_lint_driver::fmt::cli::Options>,
+    file: &bun_ast::Expr,
+    path: &[u8],
+    is_named: bool,
+) -> Result<Above, bunfig::BunfigError> {
+    let section = bunfig::format(file)?;
+    *defaults = section.map(|it| it.from_bunfig_at(path, is_named));
+    Ok(match defaults {
+        Some(_) => Above::Unwanted,
+        None => Above::Needed,
+    })
+}
+
+/// The options of `bun fmt <args>` run in `directory`, with its bunfigs, for the editor's server. `config_path`
+/// is bun's own `--config=<path>`, as [`read_bunfigs_in`] takes it. `Err` is what the command would print before
+/// exiting with 2.
+pub(crate) fn format_options_in(
+    directory: &[u8],
+    args: &[&[u8]],
+    config_path: Option<&[u8]>,
+) -> Result<bun_lint_driver::fmt::cli::Options, Vec<u8>> {
+    use bun_lint_driver::fmt::cli::{Options as FormatOptions, UsageError as FormatUsageError};
+    let options = FormatOptions::parse(args).map_err(|FormatUsageError(message)| message)?;
+    let mut defaults = None;
+    read_bunfigs_in(directory, config_path, &mut |file, path, is_named| {
+        read_format_defaults(&mut defaults, file, path, is_named)
+    })?;
+    match defaults.map(|defaults| FormatOptions::parse_with_defaults(defaults, args)) {
+        None => Ok(options),
+        Some(Ok(options)) => Ok(options),
+        Some(Err(FormatUsageError(message))) => Err(message),
     }
 }
 
@@ -258,11 +457,11 @@ pub(crate) fn usage_error(command: &str, message: &[u8]) -> ! {
 }
 
 /// Prints the output of `bun lint`, `bun fmt` or `bun check` and returns the exit code. `stdout` is the requested
-/// output: the formatted text, the report, a list. `Output` drops write errors, and with exit code 0 a script like
-/// `bun fmt --stdin-filepath f < f > f.tmp && mv f.tmp f` would then lose `f` on a full disk. So that's an error here.
-/// A reader that has gone away (`| head`) isn't.
-pub(crate) fn print(stdout: &[u8], stderr: &[u8], exit_code: u8) -> u8 {
-    let write_result = bun_sys::write_all_to_stdio(bun_core::Fd::stdout(), stdout);
+/// output: the formatted text, the report, a list. It goes to `to_stdout`. `Output` drops write errors, and with exit
+/// code 0 a script like `bun fmt --stdin-filepath f < f > f.tmp && mv f.tmp f` would then lose `f` on a full disk. So
+/// that's an error here. A reader that has gone away (`| head`) isn't.
+pub(crate) fn print(to_stdout: bun_core::Fd, stdout: &[u8], stderr: &[u8], exit_code: u8) -> u8 {
+    let write_result = bun_sys::write_all_to_stdio(to_stdout, stdout);
     let _ = Output::error_writer().write_all(stderr);
     let exit_code = match write_result {
         Err(error) if error.get_errno() != bun_sys::E::EPIPE => {
@@ -286,6 +485,17 @@ pub(crate) fn run_and_exit(
     cwd: Option<&[u8]>,
     run: impl FnOnce(&Environment) -> Outcome,
 ) -> ! {
+    run_and_exit_with(command, cwd, true, run)
+}
+
+/// `run_and_exit`, but `isolates_fd_1` says whether fd 1 becomes stderr for everything but the output. The rules'
+/// test runner writes its lines to fd 1 itself, so it keeps fd 1.
+fn run_and_exit_with(
+    command: &[u8],
+    cwd: Option<&[u8]>,
+    isolates_fd_1: bool,
+    run: impl FnOnce(&Environment) -> Outcome,
+) -> ! {
     disallow_code_generation_before(command);
     if let Some(cwd) = cwd_before(command) {
         change_directory(cwd);
@@ -304,6 +514,21 @@ pub(crate) fn run_and_exit(
         run_git(command)
     };
     let command_line: Vec<&[u8]> = bun_core::argv().iter().skip(1).collect();
+    // Only the output goes to fd 1 as it was: it becomes stderr for the rest, like a plugin's `console.log`, before
+    // any VM starts. Windows keeps fd 1, so there a plugin's output still lands in the output.
+    #[cfg(unix)]
+    let to_stdout = if isolates_fd_1 {
+        (bun_sys::dup(bun_core::Fd::stdout()).map(File::from_fd).ok())
+            .filter(|_| bun_sys::dup2(bun_core::Fd::stderr(), bun_core::Fd::stdout()).is_ok())
+            .unwrap_or_else(File::stdout)
+    } else {
+        File::stdout()
+    };
+    #[cfg(not(unix))]
+    let to_stdout = {
+        let _ = isolates_fd_1;
+        File::stdout()
+    };
     let js_engine = super::lint_js::Engines::default();
     // `path.win32.resolve` needs it when a path is on a different drive than its base.
     bun_paths::fs::FileSystem::init(&working_directory());
@@ -317,7 +542,8 @@ pub(crate) fn run_and_exit(
             is_tty: Output::is_stderr_tty(),
             colors: Output::enable_ansi_colors_stderr(),
         },
-        columns: super::run_command::RunCommand::columns_of_stdout,
+        to_stdout: to_stdout.fd(),
+        columns: columns_of,
         is_ai_agent: Output::is_ai_agent(),
         is_github_action: Output::is_github_action(),
         libs: bun_sema_driver::Libs::Bundled(super::typescript_libs::BUNDLED),
@@ -330,9 +556,86 @@ pub(crate) fn run_and_exit(
     };
     let outcome = run(&environment);
     // The report is the output. Everything else is printed separately.
-    let exit_code = print(&outcome.stdout, &outcome.stderr, outcome.exit_code);
+    let exit_code = print(
+        environment.to_stdout,
+        &outcome.stdout,
+        &outcome.stderr,
+        outcome.exit_code,
+    );
     js_engine.end_all();
     Global::exit(u32::from(exit_code));
+}
+
+/// Width of the terminal at `fd` in columns: `COLUMNS` if it's set, else what the terminal says, else 80.
+fn columns_of(fd: bun_core::Fd) -> u16 {
+    if let Some(env) = bun_core::getenv_z(bun_core::zstr!("COLUMNS"))
+        && let Ok(n) = bun_core::fmt::parse_int::<u16>(env, 10)
+        && n > 0
+    {
+        return n;
+    }
+    (bun_core::output::File::from(fd).winsize())
+        .map_or(80, |size| if size.col > 0 { size.col } else { 80 })
+}
+
+impl Realms for super::lint_js::Engines {
+    fn end_all(&self) {
+        super::lint_js::Engines::end_all(self);
+    }
+
+    fn free_all(&self) {
+        super::lint_js::Engines::free_all(self);
+    }
+}
+
+/// `bun lint --lsp` and `bun fmt --lsp`: serves the editor on standard input and output until it says `exit`.
+/// `command` is `lint` or `fmt`, `args` what follows it. `bun fmt --lsp` lints too where the build has `bun lint`.
+pub(crate) fn serve_editor(command: &[u8], args: &[&[u8]]) -> ! {
+    let (args, features) = match command {
+        b"lint" => (
+            Args::Lint(args),
+            Features {
+                lint: true,
+                format: true,
+            },
+        ),
+        _ => (
+            Args::Format(args),
+            Features {
+                lint: IS_ENABLED,
+                format: true,
+            },
+        ),
+    };
+    let from_client = File::stdin();
+    run_and_exit(command, None, |environment| {
+        // Bun's own `--config=` precedes `command`, and is relative to where the process started, not to a folder;
+        // neither half scans the other tool's flags for it.
+        let config_path = bunfig_before(command).map(|path| {
+            let path = bun_lint_driver::from_native_path(path);
+            bun_lint_driver::resolve_path(&environment.cwd, &path)
+        });
+        let config_path = config_path.as_deref();
+        // Only the messages go to the client: `run_and_exit` has made fd 1 stderr for the rest.
+        let to_client = File::borrow(&environment.to_stdout);
+        bun_lint_driver::lsp::serve(
+            args,
+            environment,
+            &Process {
+                read: &|buffer| from_client.read(buffer).unwrap_or(0),
+                write: &|message| _ = to_client.write_all(message),
+                // On Windows fd 1 still carries what a plugin prints, so no plugin runs there.
+                engines: &|| {
+                    (!cfg!(windows))
+                        .then(|| Box::new(super::lint_js::Engines::for_editor()) as Box<dyn Realms>)
+                },
+                exit: &|code| Global::exit(u32::from(code)),
+                features,
+                lint_options: &|directory, args| lint_options_in(directory, args, config_path),
+                format_options: &|directory, args| format_options_in(directory, args, config_path),
+            },
+        )
+    })
 }
 
 impl LintCommand {
@@ -345,7 +648,7 @@ impl LintCommand {
     pub(crate) fn exec(ctx: &mut ContextData, args: &[&ZStr]) -> ! {
         let args: Vec<&[u8]> = args.iter().map(|arg| arg.as_bytes()).collect();
         if HAS_TEST_RUNNER && let [b"--run-eslint-tests", rest @ ..] = &args[..] {
-            run_and_exit(b"lint", None, |environment| Outcome {
+            run_and_exit_with(b"lint", None, false, |environment| Outcome {
                 exit_code: u8::from(!bun_lint_driver::for_tests::run_eslint_tests(
                     rest,
                     environment,
@@ -383,40 +686,28 @@ impl LintCommand {
             crate::cli::command::tag_print_help(Tag::LintCommand, options.all);
             Global::exit(0);
         }
+        if let Some(message) = options.lsp_conflict_error() {
+            run_and_exit(b"lint", None, |environment| {
+                bun_lint_driver::reject_command_line(&message, environment)
+            })
+        }
+        if options.lsp {
+            serve_editor(b"lint", &args);
+        }
         run_and_exit(b"lint", options.cwd.as_deref(), |environment| {
-            // `[fmt]` is for the rule that compares a file with `bun fmt`'s output. It's the same `[fmt]` that
-            // `bun fmt` would read.
-            let (mut defaults, mut bun_format_defaults) = (None, None);
+            let mut defaults = LintDefaults::default();
             read_bunfigs(
                 ctx,
                 Tag::LintCommand,
                 b"lint",
                 &mut |file, path, is_named| {
-                    if defaults.is_none() {
-                        defaults = bunfig::lint(file)?
-                            .map(|it| it.from_bunfig_at(path, is_named, &environment.cwd));
-                    }
-                    if bun_format_defaults.is_none() {
-                        bun_format_defaults =
-                            bunfig::format(file)?.map(|it| it.from_bunfig_at(path, is_named));
-                    }
-                    Ok(match (&defaults, &bun_format_defaults) {
-                        (Some(_), Some(_)) => Above::Unwanted,
-                        (Some(it), None) if it.mentions_format_rule() => Above::Needed,
-                        (Some(_), None) if options.mentions_format_rule() => Above::Needed,
-                        (Some(_), None) => Above::Optional,
-                        (None, _) => Above::Needed,
-                    })
+                    defaults.read(&options, &environment.cwd, file, path, is_named)
                 },
             );
-            if let Some(bun_format_defaults) = bun_format_defaults {
-                defaults.get_or_insert_default().bun_format_defaults =
-                    Some(Box::new(bun_format_defaults));
-            }
-            match defaults.map(|defaults| Options::parse_with_defaults(defaults, &args)) {
-                None => bun_lint_driver::run(&options, environment),
-                Some(Ok(options)) => bun_lint_driver::run(&options, environment),
-                Some(Err(UsageError(message))) => {
+            match defaults.options(&args) {
+                Ok(None) => bun_lint_driver::run(&options, environment),
+                Ok(Some(options)) => bun_lint_driver::run(&options, environment),
+                Err(UsageError(message)) => {
                     bun_lint_driver::reject_command_line(&message, environment)
                 }
             }

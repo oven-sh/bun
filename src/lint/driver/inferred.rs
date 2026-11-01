@@ -13,7 +13,7 @@ use bun_lint::linter::globals::{
     InferredGlobal, InferredGlobals, ProgramGlobals, Tables as Whose, environment,
 };
 use bun_sema::resolve::to_path;
-use bun_sema::util::{AppendVec, FxHashMap};
+use bun_sema::util::{AppendVec, FxHashMap, FxHashSet};
 use bun_sema_driver::host::{Provided, from_native, to_native};
 use bun_sema_driver::outline::{Outline, Outlines};
 use bun_threading::Guarded;
@@ -22,13 +22,27 @@ use std::sync::{Arc, OnceLock};
 pub(crate) struct Inferred<'e> {
     environment: &'e Environment<'e>,
     threads: usize,
-    /// The run's files that can look up globals, each spelled like [`bun_lint::ast::File::path`].
+    /// The files of the first request, each spelled like [`bun_lint::ast::File::path`].
     paths: OnceLock<Vec<Vec<u8>>>,
+    /// The programs of the first request.
     tables: OnceLock<Tables>,
+    /// The programs of the files of later requests that `tables` didn't cover, one entry per request. An editor's
+    /// session lints one text at a time and requests each. Read up to `Asked::loaded`, which the lock orders after
+    /// the push.
+    later: AppendVec<Tables>,
+    asked: Guarded<Asked>,
     /// `Inferred::searched`
     searched: OnceLock<[Vec<Vec<u8>>; 2]>,
     /// Built on the first lookup.
     by_options: Option<OnceLock<ByOptions>>,
+}
+
+#[derive(Default)]
+struct Asked {
+    /// The native paths of later requests that were loaded, covered or not.
+    paths: FxHashSet<Vec<u8>>,
+    /// How many entries of `Inferred::later` are written.
+    loaded: u32,
 }
 
 /// `InferGlobals::ByOptions`
@@ -164,19 +178,57 @@ impl<'e> Inferred<'e> {
             threads,
             paths: OnceLock::new(),
             tables: OnceLock::new(),
+            later: AppendVec::new(),
+            asked: Guarded::new(Asked::default()),
             searched: OnceLock::new(),
             by_options: by_options.then(OnceLock::new),
         }
     }
 
-    /// Called once, before the first file is linted, and not from a pool thread. Without `ByOptions`, every file looks
-    /// up its globals in the types, so the request is made here, where it has the pool to itself.
+    /// Called before a file is linted, and not from a pool thread: once per run, or once per text in an editor's
+    /// session. Without `ByOptions`, every file looks up its globals in the types, so the request is made here, where
+    /// it has the pool to itself. A later request loads only the programs of files that no earlier one covered.
     pub(crate) fn files(&self, paths: Vec<Vec<u8>>) {
         let loads_now = self.by_options.is_none() && !paths.is_empty();
-        let _ = self.paths.set(paths);
-        if loads_now {
-            self.tables.get_or_init(|| self.load_all());
+        let Err(paths) = self.paths.set(paths) else {
+            if loads_now {
+                self.tables.get_or_init(|| self.load_all());
+            }
+            return;
+        };
+        if !loads_now {
+            return;
         }
+        let first = self.paths.get();
+        let mut asked = self.asked.lock();
+        let loaded = asked.loaded;
+        let uncovered: Vec<Vec<u8>> = paths
+            .into_iter()
+            .filter(|path| !first.is_some_and(|it| it.contains(path)))
+            .map(crate::paths::to_native)
+            .filter(|path| asked.paths.insert(path.clone()) && self.list_in(path, loaded).is_none())
+            .collect();
+        if !uncovered.is_empty() {
+            let at = self.later.push(self.load(None, &uncovered));
+            asked.loaded = at + 1;
+        }
+    }
+
+    /// The list of the program that `path`, a native path, belongs to.
+    fn list_of(&self, path: &[u8]) -> Option<&(Vec<InferredGlobal>, bool)> {
+        let loaded = self.asked.lock().loaded;
+        self.list_in(path, loaded)
+    }
+
+    /// `list_of` among `tables` and the first `loaded` entries of `later`.
+    fn list_in(&self, path: &[u8], loaded: u32) -> Option<&(Vec<InferredGlobal>, bool)> {
+        let tables = self.tables.get_or_init(|| self.load_all());
+        let path = from_native(path);
+        let key = to_path(&path, tables.is_case_sensitive);
+        let later = (0..loaded).map(|at| self.later.get(at));
+        std::iter::once(tables)
+            .chain(later)
+            .find_map(|tables| tables.lists.get(*tables.list_by_file.get(&*key)?))
     }
 
     /// Called once, before the first file is linted. `from` holds the directories where the file search began. Every
@@ -315,10 +367,7 @@ impl InferredGlobals for Inferred<'_> {
                 checks_javascript: program.outline.checks_javascript,
             });
         }
-        let tables = self.tables.get_or_init(|| self.load_all());
-        let path = from_native(&crate::paths::to_native(path.to_vec()));
-        let at = *(tables.list_by_file).get(&*to_path(&path, tables.is_case_sensitive))?;
-        let (names, checks_javascript) = &tables.lists[at];
+        let (names, checks_javascript) = self.list_of(&crate::paths::to_native(path.to_vec()))?;
         Some(ProgramGlobals {
             names,
             checks_javascript: *checks_javascript,

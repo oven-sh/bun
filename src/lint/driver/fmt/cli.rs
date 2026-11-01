@@ -116,6 +116,9 @@ const OTHER: &[Param] = &[
     clap::param!(
         "--no-script                     Run the formatter even if the project has a <b>fmt<r> script"
     ),
+    clap::param!(
+        "--lsp                           Serve editors as a language server over standard input and output"
+    ),
     clap::param!("-v, --version                   Print the version of Bun"),
     clap::param!(
         "-h, --help                      Print the common flags. With <b>--all<r>, every flag"
@@ -171,7 +174,6 @@ const OXFMT_COMPAT: &[Param] = &[
         "--disable-nested-config         Use the config file in the working directory for every file"
     ),
     clap::param!("--migrate <source>              Not supported"),
-    clap::param!("--lsp                           Not supported"),
 ];
 
 /// Flags that `--help` lists in their `--no-..` form.
@@ -363,6 +365,8 @@ pub struct Options {
     pub debug_check: bool,
     /// Print the files that would be formatted, without formatting.
     pub list_files: bool,
+    /// Serve editors as a language server over standard input and output, instead of formatting.
+    pub lsp: bool,
 }
 
 impl Default for Options {
@@ -412,6 +416,7 @@ impl Default for Options {
             cwd: None,
             debug_check: false,
             list_files: false,
+            lsp: false,
         }
     }
 }
@@ -507,9 +512,10 @@ impl Options {
                     }
                 };
             }
-            b"migrate" | b"lsp" => {
+            b"migrate" => {
                 return error(&[b"bun fmt does not support --", name]);
             }
+            b"lsp" => self.lsp = is_on,
             b"editorconfig" => self.editorconfig = is_on,
             b"config-precedence" => {
                 self.config_precedence = match text {
@@ -628,6 +634,30 @@ impl Options {
         })
     }
 
+    /// The error message if `--lsp` comes with a flag or a file that asks for a one-shot run.
+    pub fn lsp_conflict_error(&self) -> Option<Vec<u8>> {
+        if !self.lsp {
+            return None;
+        }
+        let conflicts: [(bool, &[u8]); 13] = [
+            (self.init, b"--init"),
+            (self.version, b"--version"),
+            (self.find_config_path.is_some(), b"--find-config-path"),
+            (self.doctor, b"--doctor"),
+            (self.list_files, b"--list-files"),
+            (self.write, b"--write"),
+            (self.check, b"--check"),
+            (self.list_different, b"--list-different"),
+            (self.debug_check, b"--debug-check"),
+            (self.stdin_filepath.is_some(), b"--stdin-filepath"),
+            (self.only.is_some(), b"--staged or --changed"),
+            (self.cwd.is_some(), b"--cwd"),
+            (!self.patterns.is_empty(), b"Files"),
+        ];
+        let (_, what) = conflicts.into_iter().find(|(is_on, _)| *is_on)?;
+        Some([what, b" cannot be used with --lsp"].concat())
+    }
+
     /// `args` is everything after `format` on the command line.
     pub fn parse(args: &[&[u8]]) -> Result<Options, UsageError> {
         Options::default().with(args)
@@ -700,6 +730,7 @@ impl Options {
 
     fn with(self, args: &[&[u8]]) -> Result<Options, UsageError> {
         let mut options = self;
+        let args = crate::cli::without_editor_flags(args);
         // The only flag that takes a value and can be negated.
         let args = args.iter().copied().filter(|arg| {
             let is_no_config = *arg == b"--no-config";

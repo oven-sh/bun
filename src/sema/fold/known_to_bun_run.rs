@@ -6,12 +6,22 @@ use super::inputs::DefineValue;
 use crate::bind::CommonJsVariable;
 use crate::check::aot::has_export_from;
 use crate::hir::{
-    BinOp, ExprId, ExprKind, FnBody, IdList, PatKind, StmtId, StmtKind, UnOp, VarKind,
+    BinOp, ExprId, ExprKind, File, FnBody, IdList, PatKind, StmtId, StmtKind, UnOp, VarKind,
 };
 use crate::import_sites::is_free_common_js;
+use smallvec::SmallVec;
 
 fn is_logical(op: BinOp) -> bool {
     matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish)
+}
+
+/// `E::BigInt::has_radix`: `0x10n` has one, and `0n` has none.
+fn has_radix(hir: &File<'_>, big_int: ExprId) -> bool {
+    let written = hir
+        .text
+        .get(hir[big_int].pos as usize..)
+        .unwrap_or_default();
+    matches!(written, [b'0', next, ..] if *next != b'n')
 }
 
 pub(super) enum NullishByShape {
@@ -24,7 +34,9 @@ pub(super) enum NullishByShape {
 #[inline]
 pub(super) fn nullish_by_shape(kind: ExprKind) -> NullishByShape {
     match kind {
-        ExprKind::Regex { .. }
+        ExprKind::String(_)
+        | ExprKind::BigInt(_)
+        | ExprKind::Regex { .. }
         | ExprKind::Fn(_)
         | ExprKind::Class(_)
         | ExprKind::Object(_)
@@ -134,15 +146,50 @@ impl<'s> Folder<'_, 's> {
         }
     }
 
-    pub(super) fn condition_in_bun_run(&self, e: ExprId) -> Option<bool> {
-        self.condition(e).filter(|_| self.is_folded_by_bun_run(e))
-    }
-
     /// `to_boolean`
     pub(super) fn is_truthy_in_bun_run(&self, e: ExprId) -> Option<bool> {
         self.condition(e).filter(|_| {
             self.is_folded_by_bun_run(e) || self.conditions_told_by_shape.contains(e.idx())
         })
+    }
+
+    /// `to_boolean` of what `simplify_boolean` leaves of a test, of the operand of `!` and of the test of `a ? b : c`: `a && b` is `a` there where `b` is true and does nothing, and `a || b` is `a` where `b` is false and does nothing.
+    #[inline]
+    pub(super) fn is_truthy_as_test_in_bun_run(&self, test: ExprId) -> Option<bool> {
+        // A build knows each condition that `bun run` knows.
+        let is_truthy = self.condition(test)?;
+        match self.is_folded_by_bun_run(test) || self.conditions_told_by_shape.contains(test.idx())
+        {
+            true => Some(is_truthy),
+            false => self.is_truthy_where_right_sides_are_dropped(test),
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn is_truthy_where_right_sides_are_dropped(&self, test: ExprId) -> Option<bool> {
+        let hir = self.hir;
+        let mut e = test;
+        loop {
+            let kind = hir[self.skip_to_item_in_place(hir.skip_type_assertions(e))].kind;
+            let ExprKind::Binary {
+                op: op @ (BinOp::And | BinOp::Or),
+                left,
+                right,
+            } = kind
+            else {
+                return None;
+            };
+            e = match self.find_operand_in_place_of_logical(op, left, right) {
+                Some(operand) => operand,
+                // The right side does not decide: `to_boolean` would have said so.
+                None if self.does_nothing_in_bun_run(right) => left,
+                None => return None,
+            };
+            if let Some(is_truthy) = self.is_truthy_in_bun_run(e) {
+                return Some(is_truthy);
+            }
+        }
     }
 
     /// As a condition, `void x` is false and `typeof x` is true whatever `x` is, so `bun run` knows them where the build alone knows `x`.
@@ -151,19 +198,22 @@ impl<'s> Folder<'_, 's> {
         match self.hir[e].kind {
             ExprKind::Unary { op, operand } => match op {
                 UnOp::Typeof | UnOp::Void => true,
-                UnOp::Not => is_known(operand),
+                UnOp::Not => self.is_truthy_as_test_in_bun_run(operand).is_some(),
                 _ => false,
             },
             ExprKind::Binary { op, left, right } => {
-                let is_decided_by = |deciding: bool| {
-                    let conditions =
-                        [left, right].map(|operand| self.is_truthy_in_bun_run(operand));
-                    conditions.contains(&Some(deciding)) || conditions.iter().all(Option::is_some)
-                };
                 match op {
                     BinOp::Comma => is_known(right),
-                    BinOp::And => is_decided_by(false),
-                    BinOp::Or => is_decided_by(true),
+                    // `x && false` is false and `x || true` is true whatever `x` is. `to_boolean` asks no more of what `bun run` keeps.
+                    BinOp::And | BinOp::Or | BinOp::Nullish => {
+                        match self.find_operand_in_place_of_logical(op, left, right) {
+                            Some(operand) => is_known(operand),
+                            None => {
+                                op != BinOp::Nullish
+                                    && self.is_truthy_in_bun_run(right) == Some(op == BinOp::Or)
+                            }
+                        }
+                    }
                     // `to_finite_number`
                     BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
                         [left, right].iter().all(|&operand| {
@@ -192,7 +242,7 @@ impl<'s> Folder<'_, 's> {
         let in_place = match self.hir[e].kind {
             ExprKind::Cond { test, branches } => {
                 let branches = self.hir.branches(branches);
-                self.is_truthy_in_bun_run(test).map(|is_truthy| {
+                self.is_truthy_as_test_in_bun_run(test).map(|is_truthy| {
                     if is_truthy { branches.yes } else { branches.no }
                 })
             }
@@ -223,17 +273,109 @@ impl<'s> Folder<'_, 's> {
             }
             if let ExprKind::Cond { test, branches } = kind {
                 let branches = hir.branches(branches);
-                e = match self.is_truthy_in_bun_run(test)? {
+                e = match self.is_truthy_as_test_in_bun_run(test)? {
                     true => branches.yes,
                     false => branches.no,
                 };
                 continue;
             }
-            match nullish_by_shape(kind) {
+            // `to_null_or_undefined` asks what the parser has in place of an operator.
+            let by_shape = match kind {
+                ExprKind::Unary {
+                    op: UnOp::Not,
+                    operand,
+                } => self.nullish_by_shape_of_not(operand),
+                ExprKind::Binary { op: BinOp::Add, .. } => self.nullish_by_shape_of_sum(e),
+                _ => nullish_by_shape(kind),
+            };
+            match by_shape {
                 NullishByShape::Known(is_nullish) => return Some(is_nullish),
                 NullishByShape::SameAs(operand) => e = operand,
                 NullishByShape::Unknown => return None,
             }
+        }
+    }
+
+    /// `maybe_simplify_not` has `x` in place of `!!x` where `x` is a boolean by its shape: a logical, a conditional or an assignment, of which `to_null_or_undefined` knows nothing. It has one node of its own for `!import.meta.main`.
+    #[inline(never)]
+    fn nullish_by_shape_of_not(&self, operand: ExprId) -> NullishByShape {
+        let hir = self.hir;
+        let mut negated = self.operand_behind_commas(operand);
+        let mut is_negated_twice = false;
+        while let ExprKind::Unary {
+            op: UnOp::Not,
+            operand,
+        } = hir[negated].kind
+        {
+            negated = self.operand_behind_commas(operand);
+            is_negated_twice = true;
+        }
+        let may_be_in_place = match hir[negated].kind {
+            ExprKind::Assign { .. } => is_negated_twice,
+            ExprKind::Dot { obj, .. } if matches!(hir[obj].kind, ExprKind::ImportMeta) => true,
+            _ => self.may_be_another_operand_to_bun_run(negated),
+        };
+        match may_be_in_place {
+            true => NullishByShape::Unknown,
+            false => NullishByShape::Known(false),
+        }
+    }
+
+    /// `fold_string_addition` has one template in place of a sum with a template. In place of a sum with `""` it has the other addend where that is a text by its shape: a conditional, a logical or an assignment. `to_null_or_undefined` knows nothing of these.
+    #[inline(never)]
+    fn nullish_by_shape_of_sum(&self, sum: ExprId) -> NullishByShape {
+        let hir = self.hir;
+        let mut pending: SmallVec<[ExprId; 4]> = SmallVec::from_slice(&[sum]);
+        while let Some(addend) = pending.pop() {
+            let addend = self.operand_behind_commas(addend);
+            match hir[addend].kind {
+                ExprKind::Binary {
+                    op: BinOp::Add,
+                    left,
+                    right,
+                } => pending.extend([left, right]),
+                ExprKind::Template { .. } if !self.is_literal_to_bun_run(addend) => {
+                    return NullishByShape::Unknown;
+                }
+                ExprKind::Assign { .. } => return NullishByShape::Unknown,
+                _ if self.may_be_another_operand_to_bun_run(addend) => {
+                    return NullishByShape::Unknown;
+                }
+                _ => {}
+            }
+        }
+        NullishByShape::Known(false)
+    }
+
+    /// A logical and a conditional, of which `bun run` may have one operand in place, and a member read of a literal that it may fold where a build does not.
+    fn may_be_another_operand_to_bun_run(&self, e: ExprId) -> bool {
+        let hir = self.hir;
+        match hir[e].kind {
+            ExprKind::Cond { .. } => true,
+            ExprKind::Binary { op, .. } => is_logical(op),
+            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => matches!(
+                hir[hir.skip_type_assertions(obj)].kind,
+                ExprKind::Array(_) | ExprKind::Object(_) | ExprKind::New(_)
+            ),
+            _ => false,
+        }
+    }
+
+    /// The operand that `to_null_or_undefined` asks behind a comma and behind a member read that `bun run` folds.
+    fn operand_behind_commas(&self, e: ExprId) -> ExprId {
+        let hir = self.hir;
+        let mut e = e;
+        loop {
+            e = self.skip_to_item_in_place(hir.skip_type_assertions(e));
+            let ExprKind::Binary {
+                op: BinOp::Comma,
+                right,
+                ..
+            } = hir[e].kind
+            else {
+                return e;
+            };
+            e = right;
         }
     }
 
@@ -367,10 +509,16 @@ impl<'s> Folder<'_, 's> {
                     // `bun run` writes `undefined` or a boolean in its place where the operand does nothing.
                     UnOp::Void => !self.is_removed_if_unused_by_bun_run(operand),
                     UnOp::Not => {
-                        self.is_truthy_in_bun_run(operand).is_none()
+                        self.is_truthy_as_test_in_bun_run(operand).is_none()
                             || !(self.is_literal_to_bun_run(operand)
                                 || self.is_removed_if_unused_by_bun_run(operand))
                     }
+                    // `to_number` reads no text that `bun run` holds in pieces: `-("a" + "b")` stays.
+                    UnOp::Plus | UnOp::Minus | UnOp::BitNot if self.is_text_in_pieces(operand) => {
+                        true
+                    }
+                    // The type of a BigInt needs none of its digits.
+                    UnOp::Typeof if self.is_big_int_literal(operand) => false,
                     _ => !is_type_of_require && by_build_alone(operand),
                 }
             }
@@ -385,10 +533,17 @@ impl<'s> Folder<'_, 's> {
                 {
                     true
                 }
+                // A BigInt is not null, however it is written.
+                BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq
+                    if self.compares_big_int_literal_with_null(left, right) =>
+                {
+                    false
+                }
                 _ if !by_build_alone(left) && !by_build_alone(right) => false,
-                BinOp::And => !self.is_logical_result_known_to_bun_run(left, right, false),
-                BinOp::Or => !self.is_logical_result_known_to_bun_run(left, right, true),
-                BinOp::Nullish => by_build_alone(left) || self.is_nullish(left) != Some(false),
+                // `bun run` has the value of the operand that it puts in place, and none for what it keeps.
+                BinOp::And | BinOp::Or | BinOp::Nullish => self
+                    .find_operand_in_place_of_logical(op, left, right)
+                    .is_none_or(by_build_alone),
                 _ => true,
             },
             ExprKind::Cond { test, branches } => {
@@ -398,7 +553,10 @@ impl<'s> Folder<'_, 's> {
                     || (is_selected(true) && by_build_alone(branches.yes))
                     || (is_selected(false) && by_build_alone(branches.no))
             }
-            ExprKind::Template { exprs } => hir.ids(exprs).any(by_build_alone),
+            // `Template::fold` joins what it holds in 8 bits: `é${1}` stays as it is written.
+            ExprKind::Template { exprs } => {
+                hir.ids(exprs).any(by_build_alone) || self.is_template_joined_by_build_alone(exprs)
+            }
             ExprKind::As { expr, .. }
             | ExprKind::Satisfies { expr, .. }
             | ExprKind::AsConst(expr)
@@ -407,23 +565,52 @@ impl<'s> Folder<'_, 's> {
             ExprKind::Dot { .. } | ExprKind::Index { .. } => {
                 self.find_item_in_place(e).is_some_and(by_build_alone)
             }
+            // `check_equality` and `to_string_expr_without_side_effects` read no digits of a BigInt that is written with a radix. `bun run` knows of such a literal that it is a BigInt and not null.
+            ExprKind::BigInt(_) => has_radix(hir, e),
             _ => false,
         }
     }
 
-    /// `x && false` is false and `x || true` is true whatever `x` is.
-    fn is_logical_result_known_to_bun_run(
-        &self,
-        left: ExprId,
-        right: ExprId,
-        deciding_condition: bool,
-    ) -> bool {
-        let (left, right) = (
-            self.condition_in_bun_run(left),
-            self.condition_in_bun_run(right),
-        );
-        let is_decided_by_one = [left, right].contains(&Some(deciding_condition));
-        is_decided_by_one || (left.is_some() && right.is_some())
+    fn is_big_int_literal(&self, e: ExprId) -> bool {
+        matches!(self.hir[self.held_by_bun_run(e)].kind, ExprKind::BigInt(_))
+    }
+
+    fn compares_big_int_literal_with_null(&self, left: ExprId, right: ExprId) -> bool {
+        [(left, right), (right, left)]
+            .iter()
+            .any(|&(big_int, null)| {
+                self.is_big_int_literal(big_int)
+                    && self.is_literal_to_bun_run(null)
+                    && self.is_nullish(null) == Some(true)
+            })
+    }
+
+    fn is_text_in_pieces(&self, e: ExprId) -> bool {
+        let held = self.held_by_bun_run(e);
+        let is_sum = matches!(self.hir[held].kind, ExprKind::Binary { op: BinOp::Add, .. });
+        is_sum
+            && matches!(self.folded(held).value, Value::Known(sum) if self.evaluator.is_string(sum))
+    }
+
+    /// A build has one text for a template whose parts it knows. `Template::fold` has one where it holds every piece in 8 bits.
+    fn is_template_joined_by_build_alone(&self, exprs: IdList<ExprId>) -> bool {
+        let hir = self.hir;
+        let is_known = |part: ExprId| matches!(self.folded(part).value, Value::Known(_));
+        let is_joined = |part: ExprId| matches!(self.folded(part).value, Value::Known(value) if self.evaluator.is_joined_to_text_by_bun_run(value));
+        let mut texts = hir.ids(hir.template_texts(exprs));
+        hir.ids(exprs).all(is_known)
+            && !(texts.all(|text| self.atoms.bytes(text).is_ascii())
+                && hir.ids(exprs).all(is_joined))
+    }
+
+    /// `fold_string_addition` joins `a + b + c` one `+` at a time. Where it stops, `bun run` has no literal.
+    pub(super) fn is_sum_joined_by_bun_run(&self, addends: &[ExprId]) -> bool {
+        let values = addends.iter().map(|&addend| self.folded(addend).value);
+        let literals = values.map_while(|value| match value {
+            Value::Known(literal) => Some(literal),
+            Value::Unknown => None,
+        });
+        self.evaluator.is_sum_computed_by_bun_run(literals)
     }
 
     /// `bun run` computes with two numbers and leaves `undefined + 1` alone.

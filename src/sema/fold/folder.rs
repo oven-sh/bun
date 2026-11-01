@@ -5,6 +5,7 @@ use super::folder_commonjs::LoaderNames;
 use super::folder_imports::ImportedNames;
 use super::inputs::{FoldInputs, PathState};
 use super::known_to_bun_run::ExcludedOperand;
+use super::removed_by_bun_run::SpreadArray;
 use super::run_order::RunOrder;
 use super::{
     Constant, Decision, Decisions, FoldError, FoldResult, FoldedConstant, FoldedValue, NodeBits,
@@ -89,6 +90,8 @@ pub(super) struct Folder<'a, 's> {
     pub(super) replaced_by: FxHashMap<ExprId, ExprId>,
     /// `bun run` folds what a build leaves as it is written: a member read of a literal, and what takes its value from one.
     pub(super) folded_by_bun_run_alone: FxHashSet<ExprId>,
+    /// The spreads in whose place `bun run` has the items of an array literal.
+    pub(super) spread_arrays: FxHashMap<ExprId, SpreadArray>,
     pub(super) short_circuited_links: PositionSet,
     pub(super) call_errors: Vec<(ExprId, FoldError)>,
     pub(super) strings_over_limit: Vec<ExprId>,
@@ -136,6 +139,7 @@ pub(super) fn run<'s>(
         conditions: FxHashMap::default(),
         replaced_by: FxHashMap::default(),
         folded_by_bun_run_alone: FxHashSet::default(),
+        spread_arrays: FxHashMap::default(),
         short_circuited_links: PositionSet::new(hir.exprs.len()),
         call_errors: Vec::new(),
         strings_over_limit: Vec::new(),

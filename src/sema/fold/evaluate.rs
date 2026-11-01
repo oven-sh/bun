@@ -182,6 +182,14 @@ impl<'a, 's> Evaluator<'a, 's> {
         is_string(self.operand(primitive))
     }
 
+    pub(super) fn is_string_outside_ascii(&self, primitive: Primitive) -> bool {
+        matches!(self.operand(primitive), Operand::String(text) if !text.is_ascii())
+    }
+
+    pub(super) fn is_joined_to_text_by_bun_run(&self, part: Primitive) -> bool {
+        is_joined_to_text_by_bun_run(self.operand(part))
+    }
+
     pub(super) fn push_text(&self, text: &mut Vec<u8>, primitive: Primitive) {
         push_string(text, self.operand(primitive));
     }
@@ -237,6 +245,18 @@ impl<'a, 's> Evaluator<'a, 's> {
         Value::Known(Primitive::ScratchString(ScratchString(index)))
     }
 
+    /// Whether `bun run` has one literal in place of `a + b + c`. It joins one `+` at a time.
+    pub(super) fn is_sum_computed_by_bun_run(
+        &self,
+        addends: impl IntoIterator<Item = Primitive>,
+    ) -> bool {
+        let mut addends = addends.into_iter().map(|addend| self.operand(addend));
+        let Some(first) = addends.next() else {
+            return false;
+        };
+        addends.try_fold(first, add_as_bun_run).is_some()
+    }
+
     /// Whether `bun run` puts the result in place of `left op right` where both are literals: `Data::eql` and `visit_binary` in `js_parser`.
     pub(super) fn is_computed_by_bun_run(
         &self,
@@ -260,10 +280,6 @@ impl<'a, 's> Evaluator<'a, 's> {
                 }
                 _ => false,
             },
-            BinOp::Add => matches!(
-                operands,
-                (Number(_), Number(_)) | (String(_), _) | (_, String(_))
-            ),
             BinOp::Sub
             | BinOp::Mul
             | BinOp::Div
@@ -287,7 +303,9 @@ impl<'a, 's> Evaluator<'a, 's> {
                 (String(_), String(_)) => true,
                 _ => false,
             },
-            BinOp::In
+            // `is_sum_computed_by_bun_run` answers for a sum.
+            BinOp::Add
+            | BinOp::In
             | BinOp::Instanceof
             | BinOp::And
             | BinOp::Or
@@ -438,6 +456,27 @@ fn evaluate_loose_equality(left: Operand<'_>, right: Operand<'_>) -> Value {
 
 fn is_string(operand: Operand<'_>) -> bool {
     matches!(operand, Operand::String(_))
+}
+
+/// `Template::fold` joins every literal but a text that is held in 16 bits. A BigInt that is written with a radix is no literal to `bun run`.
+fn is_joined_to_text_by_bun_run(part: Operand<'_>) -> bool {
+    !matches!(part, Operand::String(text) if !text.is_ascii())
+}
+
+/// The sum of two numbers, and `fold_string_addition`, which joins the texts that it holds in 8 bits. A text in the answer stands for the one that `bun run` has: it is as empty as that one, and as much in 8 bits.
+fn add_as_bun_run<'a>(left: Operand<'a>, right: Operand<'a>) -> Option<Operand<'a>> {
+    use Operand::{Number, String};
+    match (left, right) {
+        (Number(left), Number(right)) => Some(Number(left + right)),
+        // `"" + right` is `right`.
+        (String(b""), String(right)) => Some(String(right)),
+        (String(left), String(right)) => {
+            (left.is_ascii() && right.is_ascii()).then_some(String(left))
+        }
+        // A literal that is no text is joined as its text, which is not empty.
+        (String(text), _) | (_, String(text)) => text.is_ascii().then_some(String(b"0")),
+        _ => None,
+    }
 }
 
 fn is_strictly_equal(left: Operand<'_>, right: Operand<'_>) -> bool {

@@ -27,7 +27,7 @@ table.split("\n").forEach((text, index) => {
 });
 
 // `require` answers with the namespace of an ES module, and with `module.exports` of a CommonJS file.
-const main = `function ask(line, load) {
+const ask = `function ask(line, load) {
   globalThis.a = Object.assign(function () { return 0; }, { [Symbol.iterator]: function* () {} });
   let answer;
   try {
@@ -37,12 +37,11 @@ const main = `function ask(line, load) {
   }
   console.log(line + " " + answer);
 }
-${rows.map(row => `ask(${row.line}, () => require("./${row.file}"));`).join("\n")}
 `;
 
-async function answers(flags: string[]) {
+async function answers(rows: Row[], flags: string[]) {
   using dir = tempDir("what-a-file-is-taken-for", {
-    "main.cjs": main,
+    "main.cjs": ask + rows.map(row => `ask(${row.line}, () => require("./${row.file}"));\n`).join(""),
     "node_modules/a/index.js": "module.exports = {};\n",
     ...Object.fromEntries(rows.map(row => [row.file, row.source + "\n"])),
   });
@@ -56,24 +55,26 @@ test("the table has rows", () => {
 });
 
 test.concurrent("bun run takes each program for what the table says", async () => {
-  expect(await answers([])).toEqual({
+  expect(await answers(rows, [])).toEqual({
     rows: rows.map(row => `${row.line} ${row.underBunRun} ${row.source}`),
     stderr: "",
     exitCode: 0,
   });
 });
 
-testOfABuild.concurrent(
-  "a build takes each program for what the table says",
-  async () => {
-    expect(await answers(["--debug-aot"])).toEqual({
-      rows: rows.map(row => `${row.line} ${row.inABuild} ${row.source}`),
+// One build of every row takes longer than a test may.
+const rowsOfABuild = 60;
+for (let first = 0; first < rows.length; first += rowsOfABuild) {
+  const built = rows.slice(first, first + rowsOfABuild);
+  const lines = `lines ${built[0].line} to ${built[built.length - 1].line}`;
+  testOfABuild.concurrent(`a build takes each program for what the table says: ${lines}`, async () => {
+    expect(await answers(built, ["--debug-aot"])).toEqual({
+      rows: built.map(row => `${row.line} ${row.inABuild} ${row.source}`),
       stderr: "",
       exitCode: 0,
     });
-  },
-  240_000,
-);
+  });
+}
 
 testOfABuild.concurrent("an await behind a member read that bun run folds makes no importer wait", async () => {
   using dir = tempDir("what-a-file-is-taken-for-await", {

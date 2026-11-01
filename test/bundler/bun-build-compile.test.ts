@@ -28,7 +28,6 @@ import {
 } from "node:fs";
 import { builtinModules } from "node:module";
 import { isAbsolute, join, sep } from "path";
-import { isHardened } from "../aot/hardened";
 
 describe("Bun.build compile", () => {
   test("compile with current platform target string", async () => {
@@ -2397,14 +2396,16 @@ if (isLinux) {
       expect(foundBunSection).toBe(true);
     });
 
-    // Regression guard for #29963. WSL1's kernel ELF loader rejects `execve`
-    // with ENOEXEC when it sees a late PT_LOAD produced by repurposing
-    // PT_GNU_STACK. The compiled binary must instead:
+    // Regression guard for #29963. WSL1's kernel ELF loader rejected `execve`
+    // with ENOEXEC for the PT_LOAD that 1.3.12 made by repurposing
+    // PT_GNU_STACK. The payload gets a segment of its own, which WSL1 loads
+    // (the same kind that --aot adds). The compiled binary must:
     //
     //   1. Keep PT_GNU_STACK in the program header table (not repurposed).
-    //   2. Fit the .bun payload inside an existing writable PT_LOAD's
-    //      `[p_vaddr, p_vaddr + p_memsz)` range — i.e. the writable segment
-    //      was GROWN to cover .bun rather than a new segment being added.
+    //   2. Map .bun with one added PT_LOAD whose offset and address agree
+    //      modulo its alignment, as every ELF loader requires.
+    //   3. Leave .bss out of the file: no PT_LOAD has file bytes at its
+    //      addresses (otherwise ~2 MB of zeros on x64 are written to disk).
     //
     // The gate here is purely structural (we check the ELF layout); we don't
     // need a WSL1 host to validate the fix.
@@ -2412,7 +2413,7 @@ if (isLinux) {
     // Higher per-test timeout because `bun build --compile` copies + rewrites
     // the entire bun binary (~1GB under debug+ASAN), which blows the 5s
     // default.
-    test("compiled binary preserves PT_GNU_STACK and no late PT_LOAD for .bun (#29963)", async () => {
+    test("compiled binary maps .bun in a segment of its own and leaves .bss out of the file (#29963)", async () => {
       // Use a small payload — the shape check matters for all sizes but a
       // bigger payload guarantees the expansion path actually runs.
       const largeString = Buffer.alloc(20000, "z").toString();
@@ -2454,52 +2455,72 @@ if (isLinux) {
       const strtabOff = Number(view.getBigUint64(strtabHdr + 24, true));
       const strtabSize = Number(view.getBigUint64(strtabHdr + 32, true));
       const decoder = new TextDecoder();
-      let bunAddr = 0n;
-      let bunSize = 0n;
-      for (let i = 0; i < shnum; i++) {
-        const hdrOff = shoff + i * shentsize;
-        const nameIdx = view.getUint32(hdrOff, true);
-        if (nameIdx >= strtabSize) continue;
-        let end = strtabOff + nameIdx;
-        while (end < bytes.length && bytes[end] !== 0) end++;
-        const name = decoder.decode(bytes.slice(strtabOff + nameIdx, end));
-        if (name === ".bun") {
-          bunAddr = view.getBigUint64(hdrOff + 16, true); // sh_addr
-          bunSize = view.getBigUint64(hdrOff + 32, true); // sh_size
-          break;
+      const sectionAddress = (wanted: string) => {
+        for (let i = 0; i < shnum; i++) {
+          const hdrOff = shoff + i * shentsize;
+          const nameIdx = view.getUint32(hdrOff, true);
+          if (nameIdx >= strtabSize) continue;
+          let end = strtabOff + nameIdx;
+          while (end < bytes.length && bytes[end] !== 0) end++;
+          if (decoder.decode(bytes.slice(strtabOff + nameIdx, end)) === wanted) {
+            return { addr: view.getBigUint64(hdrOff + 16, true), size: view.getBigUint64(hdrOff + 32, true) };
+          }
         }
-      }
+        return { addr: 0n, size: 0n };
+      };
+      const { addr: bunAddr, size: bunSize } = sectionAddress(".bun");
+      const { addr: bssAddr, size: bssSize } = sectionAddress(".bss");
       expect(bunAddr).not.toBe(0n);
       expect(bunSize).toBeGreaterThan(0n);
+      expect(bssSize).toBeGreaterThan(0n);
 
-      // Walk program headers: count PT_LOADs, require PT_GNU_STACK to still
-      // be present, and find the writable PT_LOAD containing .bun.
+      const countLoads = (header: DataView, offset: number, count: number) => {
+        let loads = 0;
+        for (let i = 0; i < count; i++) {
+          if (header.getUint32(offset + i * header.getUint16(54, true), true) === PT_LOAD) loads++;
+        }
+        return loads;
+      };
+      const source = new DataView(
+        await Bun.file(bunExe())
+          .slice(0, 64 * 1024)
+          .arrayBuffer(),
+      );
+      const sourceLoadCount = countLoads(source, Number(source.getBigUint64(32, true)), source.getUint16(56, true));
+
+      // Walk program headers: require PT_GNU_STACK to still be present, find
+      // the PT_LOAD that maps .bun, and the file bytes mapped over .bss.
       let hasGnuStack = false;
-      let loadCount = 0;
-      let writableLoadCoversBun = false;
+      let bunLoad: { flags: number; offset: bigint; vaddr: bigint; filesz: bigint; align: bigint } | undefined;
+      let bssFileBytes = 0n;
       for (let i = 0; i < phnum; i++) {
         const off = phoff + i * phentsize;
         const pType = view.getUint32(off, true);
-        const pFlags = view.getUint32(off + 4, true);
-        const pVaddr = view.getBigUint64(off + 16, true);
-        const pMemsz = view.getBigUint64(off + 40, true);
-
+        const load = {
+          flags: view.getUint32(off + 4, true),
+          offset: view.getBigUint64(off + 8, true),
+          vaddr: view.getBigUint64(off + 16, true),
+          filesz: view.getBigUint64(off + 32, true),
+          align: view.getBigUint64(off + 48, true),
+        };
         if (pType === PT_GNU_STACK) hasGnuStack = true;
-        if (pType === PT_LOAD) {
-          loadCount++;
-          if ((pFlags & PF_W) !== 0 && pVaddr <= bunAddr && bunAddr + bunSize <= pVaddr + pMemsz) {
-            writableLoadCoversBun = true;
-          }
-        }
+        if (pType !== PT_LOAD) continue;
+        if (load.vaddr <= bunAddr && bunAddr + bunSize <= load.vaddr + load.filesz) bunLoad = load;
+        const fileEnd = load.vaddr + load.filesz;
+        const overlap =
+          (fileEnd < bssAddr + bssSize ? fileEnd : bssAddr + bssSize) - (load.vaddr > bssAddr ? load.vaddr : bssAddr);
+        if (overlap > 0n) bssFileBytes += overlap;
       }
 
       // #29963: PT_GNU_STACK must NOT be repurposed into a PT_LOAD.
       expect(hasGnuStack).toBe(true);
-      // #29963: the writable PT_LOAD must have been grown to cover .bun,
-      // rather than a new late PT_LOAD being appended.
-      expect(writableLoadCoversBun).toBe(true);
-      // A stock bun has 3 PT_LOAD segments (4 when built with --hardened=on); the fix must not add one.
-      expect(loadCount).toBe(isHardened ? 4 : 3);
+      // .bun is file-backed by one added PT_LOAD that the kernel can map.
+      expect(countLoads(view, phoff, phnum)).toBe(sourceLoadCount + 1);
+      expect(bunLoad).toBeDefined();
+      expect(bunLoad!.flags & PF_W).toBe(PF_W);
+      expect(bunLoad!.vaddr % bunLoad!.align).toBe(bunLoad!.offset % bunLoad!.align);
+      // .bss stays zero-filled memory, not bytes in the file.
+      expect(bssFileBytes).toBe(0n);
       // JSC bytecode cache requires 128-byte-aligned deserialization input.
       // StandaloneModuleGraph writes bytecode at payload offset 120 assuming
       // the `[u64 size]` header sits at a 128-byte-aligned vaddr (so bytecode

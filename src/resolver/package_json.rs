@@ -1470,6 +1470,12 @@ impl Status {
     pub(crate) fn is_undefined(self) -> bool {
         matches!(self, Status::Undefined | Status::UndefinedNoConditionsMatch)
     }
+
+    /// Whether `pkg/x.js` may be retried as `pkg/x` after an "exports" lookup ended with this status.
+    #[inline]
+    pub(crate) fn allows_js_retry(self) -> bool {
+        self != Status::PackagePathDisabled
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1927,6 +1933,9 @@ impl<'a> ESModule<'a> {
                         {
                             // Return the object { resolved, exact: false }.
                             result.status = Status::Inexact;
+                        } else if result.status == Status::Null {
+                            // Node does not match a key that ends in "/", so its null is not an exclusion.
+                            result.status = Status::Undefined;
                         }
                         return result;
                     }
@@ -1948,8 +1957,9 @@ impl<'a> ESModule<'a> {
             ));
         }
 
+        // Not `Null`: that is a matched key whose target is null.
         Resolution {
-            status: Status::Null,
+            status: Status::Undefined,
             ..Default::default()
         }
     }
@@ -2309,6 +2319,7 @@ impl<'a> ESModule<'a> {
                         || result.status == Status::Null
                     {
                         last_exception = result.status;
+                        continue;
                     }
 
                     if result.status.is_undefined() {

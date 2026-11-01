@@ -2963,6 +2963,7 @@ impl<'a> Resolver<'a> {
                                     // want problems due to Windows paths, which are very unlike URL
                                     // paths. We also want to avoid any "%" characters in the absolute
                                     // directory path accidentally being interpreted as URL escapes.
+                                    let first_status;
                                     {
                                         let esm_resolution = ESModule {
                                             conditions: match kind {
@@ -2981,6 +2982,7 @@ impl<'a> Resolver<'a> {
                                         }
                                         .resolve(b"/", esm.subpath, &exports_map.root);
                                         // ESModule temporary dropped here; `self` is unborrowed.
+                                        first_status = esm_resolution.status;
 
                                         if self
                                             .handle_esm_resolution(
@@ -3017,9 +3019,12 @@ impl<'a> Resolver<'a> {
                                     //     }
                                     // }
                                     //
-                                    // We limit this behavior just to ".js" files.
+                                    // We limit this behavior just to ".js" files, and skip it after a null target.
                                     let extname = bun_paths::extension(esm.subpath);
-                                    if extname == b".js" && esm.subpath.len() > 3 {
+                                    if first_status.allows_js_retry()
+                                        && extname == b".js"
+                                        && esm.subpath.len() > 3
+                                    {
                                         let esm_resolution = ESModule {
                                             conditions: match kind {
                                                 ast::ImportKind::Require
@@ -3507,6 +3512,7 @@ impl<'a> Resolver<'a> {
                                     // want problems due to Windows paths, which are very unlike URL
                                     // paths. We also want to avoid any "%" characters in the absolute
                                     // directory path accidentally being interpreted as URL escapes.
+                                    let first_status;
                                     {
                                         let esm_resolution = ESModule {
                                             conditions: match kind {
@@ -3520,6 +3526,7 @@ impl<'a> Resolver<'a> {
                                             stack_check: StackCheck::init(),
                                         }
                                         .resolve(b"/", esm.subpath, &exports_map.root);
+                                        first_status = esm_resolution.status;
 
                                         if self
                                             .handle_esm_resolution(
@@ -3544,9 +3551,12 @@ impl<'a> Resolver<'a> {
                                     // exports map, so we try again without the extension.
                                     // (same comment as above)
                                     //
-                                    // We limit this behavior just to ".js" files.
+                                    // We limit this behavior just to ".js" files, and skip it after a null target.
                                     let extname = bun_paths::extension(esm.subpath);
-                                    if extname == b".js" && esm.subpath.len() > 3 {
+                                    if first_status.allows_js_retry()
+                                        && extname == b".js"
+                                        && esm.subpath.len() > 3
+                                    {
                                         let esm_resolution = ESModule {
                                             conditions: match kind {
                                                 ast::ImportKind::Require

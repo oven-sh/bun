@@ -320,6 +320,7 @@
     "bundler/esbuild/extra.test.ts",
     "bundler/esbuild/importstar_ts.test.ts",
     "bundler/resolver/cache-invalidation.test.ts",
+    "bundler/transpiler/decorators.test.ts",
     "bundler/transpiler/jsx-production.test.ts",
     "bundler/transpiler/property.test.ts",
     "bundler/transpiler/runtime-transpiler.test.ts",

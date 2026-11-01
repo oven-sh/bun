@@ -181,28 +181,22 @@ pub(crate) fn raise_ignoring_panic_handler() {
     Global::raise_ignoring_panic_handler(bun_core::SignalCode::SIGSEGV);
 }
 
-/// Captures the stack from below a frame whose return address is signed as
-/// `-mbranch-protection=pac-ret` signs it, trimmed to that frame's return
-/// address, and says whether the trace starts there. It does only if the walk
-/// and the address to trim by both come without the signature. `None` where
-/// nothing signs.
+/// Whether a stack trace from below a frame with a signed return address,
+/// trimmed to that address, starts there: the walk and the address to trim by
+/// must both come without the signature. `None` where the test does not run.
 pub(crate) fn stack_trace_starts_at_signed_return_address() -> Option<bool> {
-    #[cfg(all(target_arch = "aarch64", unix, not(target_vendor = "apple")))]
+    #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
     {
-        #[derive(Default)]
-        struct Trace {
-            addresses: [usize; 32],
-            len: usize,
-        }
-        extern "C" fn capture(trace: &mut Trace) {
+        extern "C" fn capture() -> usize {
             use bun_core::debug::{frame_address, return_address_of_frame};
+            let mut addresses = [0; 32];
             // SAFETY: a frame record starts with the address of the caller's,
             // which here is the signed one.
             let begin = unsafe { return_address_of_frame(*(frame_address() as *const usize)) };
-            trace.len = bun_core::capture_stack_trace(begin, &mut trace.addresses);
+            bun_core::capture_stack_trace(begin, &mut addresses);
+            addresses[0]
         }
-        let mut trace = Trace::default();
-        let return_address: usize;
+        let (return_address, first): (usize, usize);
         // SAFETY: what a function does that saves its return address signed,
         // calls `capture` and returns to `2:`. The stack pointer and x29 end as
         // they began, and `capture` follows the C calling convention.
@@ -219,14 +213,14 @@ pub(crate) fn stack_trace_starts_at_signed_return_address() -> Option<bool> {
                 "2:",
                 // x20 outlives the call, and nothing writes x8 before it.
                 out("x20") return_address,
-                in("x8") capture as extern "C" fn(&mut Trace),
-                inout("x0") &raw mut trace => _,
+                in("x8") capture as extern "C" fn() -> usize,
+                lateout("x0") first,
                 clobber_abi("C"),
             )
         };
-        Some(trace.addresses[..trace.len].first() == Some(&return_address))
+        Some(first == return_address)
     }
-    #[cfg(not(all(target_arch = "aarch64", unix, not(target_vendor = "apple"))))]
+    #[cfg(not(all(target_arch = "aarch64", target_os = "linux")))]
     {
         None
     }

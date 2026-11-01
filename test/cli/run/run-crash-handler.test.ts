@@ -13,7 +13,7 @@ import {
   mergeWindowEnvs,
   tempDir,
 } from "harness";
-import { rmSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import path from "path";
 const { getMachOImageZeroOffset } = crash_handler;
@@ -44,9 +44,9 @@ test.if(isDebug && isLinux && hasSymbolizer)(
     expect(exitCode).not.toBe(0);
 
     // The innermost frame of the trace must be the code that crashed (the
-    // js_panic test hook)...
+    // `panic` test hook)...
     const firstFrame = stdout.split("\n").find(line => line.trim().length > 0);
-    expect(firstFrame ?? "<no frames printed>").toContain("js_panic");
+    expect(firstFrame ?? "<no frames printed>").toContain("crash_handler_jsc::panic");
 
     // ...not the capture machinery. A mismatched trim anchor used to leave
     // `capture_stack_trace` → `crash_handler` → `panic_impl` as the innermost
@@ -56,11 +56,9 @@ test.if(isDebug && isLinux && hasSymbolizer)(
   60_000, // symbolizing the debug binary takes several seconds
 );
 
-// Code compiled with -mbranch-protection=pac-ret saves its return addresses
-// signed. Read as it is, such a word is the address of nothing, and the caller
-// is missing from the crash report. Nothing is signed on a machine without
-// pointer authentication, where this passes as is. CI's machines have it.
-test.if(isLinux && isArm64)("a stack trace takes the signature off a return address", () => {
+// Read as it is, a return address that -mbranch-protection=pac-ret signed is the address of nothing.
+const hasPointerAuthentication = isLinux && isArm64 && /\bpaca\b/.test(readFileSync("/proc/cpuinfo", "utf8"));
+test.if(hasPointerAuthentication)("a stack trace takes the signature off a return address", () => {
   expect(crash_handler.stackTraceStartsAtSignedReturnAddress()).toBe(true);
 });
 

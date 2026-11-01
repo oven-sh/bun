@@ -24,5 +24,5 @@ export const crashHandler = b.namespace({
   fastfail: { length: 1 },
   trap: { length: 1 },
   raiseIgnoringPanicHandler: { length: 1 },
-  stackTraceStartsAtSignedReturnAddress: { returns: b.bool.optional, length: 0 },
+  stackTraceStartsAtSignedReturnAddress: { returns: b.bool.optional },
 });

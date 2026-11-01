@@ -71,6 +71,8 @@ fn read(context: *mut c_void) -> ([usize; NAMES.len()], usize, usize) {
     for (register, value) in registers.iter_mut().zip(machine.regs) {
         *register = value as usize;
     }
+    // Signed from the first instruction of a function that signs to its first call, and then no address to `write_value`.
+    registers[30] = bun_core::debug::strip_return_address_signature(registers[30]);
     (registers, machine.pc as usize, sp)
 }
 

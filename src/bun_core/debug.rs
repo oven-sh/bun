@@ -331,28 +331,18 @@ fn caller_of_faulting_stub(
 /// library, Bun itself) saves its return addresses signed, in the bits above
 /// the address. An address without a signature stays as it is.
 #[inline(always)]
-pub(crate) fn strip_return_address_signature(address: usize) -> usize {
-    #[cfg(all(target_arch = "aarch64", unix, not(target_vendor = "apple")))]
-    {
-        let mut address = address;
-        // SAFETY: XPACLRI works on x30 alone, and is a no-op on a processor
-        // without pointer authentication.
-        unsafe {
-            core::arch::asm!(
-                "mov x30, {address}",
-                "hint #7", // XPACLRI
-                "mov {address}, x30",
-                address = inout(reg) address,
-                out("x30") _,
-                options(pure, nomem, nostack, preserves_flags),
-            )
-        };
-        address
-    }
-    #[cfg(not(all(target_arch = "aarch64", unix, not(target_vendor = "apple"))))]
-    {
-        address
-    }
+pub fn strip_return_address_signature(#[allow(unused_mut)] mut address: usize) -> usize {
+    #[cfg(target_arch = "aarch64")]
+    // SAFETY: XPACLRI works on x30 alone, and is a no-op on a processor
+    // without pointer authentication.
+    unsafe {
+        core::arch::asm!(
+            "hint #7", // XPACLRI
+            inout("x30") address,
+            options(pure, nomem, nostack, preserves_flags),
+        )
+    };
+    address
 }
 
 /// Walks the frame-pointer chain, and frames of compiled code by their tables.
@@ -452,7 +442,6 @@ impl StackIterator {
 ///
 /// # Safety
 /// `fp` is the address of a frame record.
-#[inline(always)]
 pub unsafe fn return_address_of_frame(fp: usize) -> usize {
     // SAFETY: the caller's.
     let saved = unsafe { *((fp + StackIterator::PC_OFFSET) as *const usize) };
@@ -473,7 +462,7 @@ pub(crate) fn capture_current(first_address: Option<usize>, out: &mut [usize]) -
     // Miri can neither execute `frame_address`'s inline asm nor follow the
     // frame-pointer chain it returns. An empty trace keeps the debug-only
     // `StoredTrace` captures on the refcount paths interpretable. `cfg!` rather
-    // than `#[cfg]` so the walk below stays compiled (and `PC_OFFSET` live).
+    // than `#[cfg]` so the walk below stays compiled.
     if cfg!(miri) {
         return 0;
     }

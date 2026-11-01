@@ -2886,8 +2886,8 @@ pub fn return_address() -> usize {
     }
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     {
-        // SAFETY: the frame pointer is the address of this function's own
-        // frame record.
+        // SAFETY: this is inlined, so the frame pointer is the address of the
+        // caller's frame record.
         unsafe { debug::return_address_of_frame(debug::frame_address()) }
     }
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]

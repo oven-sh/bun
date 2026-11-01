@@ -2,6 +2,7 @@
 // SSLRequest
 
 use crate::mysql::Capabilities;
+use crate::mysql::capabilities::MariaDBCapabilities;
 use crate::mysql::protocol::any_mysql_error::Error as AnyMySQLError;
 use crate::mysql::protocol::character_set::CharacterSet;
 use crate::mysql::protocol::new_writer::NewWriter;
@@ -10,21 +11,11 @@ bun_core::declare_scope!(MySQLConnection, hidden);
 
 pub struct SSLRequest {
     pub capability_flags: Capabilities,
+    pub mariadb_capability_flags: MariaDBCapabilities,
     /// 16MB default
     pub max_packet_size: u32,
     pub character_set: CharacterSet,
     pub has_connection_attributes: bool,
-}
-
-impl Default for SSLRequest {
-    fn default() -> Self {
-        Self {
-            capability_flags: Capabilities::default(),
-            max_packet_size: 0xFFFFFF, // 16MB default
-            character_set: CharacterSet::default(),
-            has_connection_attributes: false,
-        }
-    }
 }
 
 impl SSLRequest {
@@ -52,8 +43,10 @@ impl SSLRequest {
         // Write character set (1 byte)
         writer.int1(self.character_set.to_int())?;
 
-        // Write 23 bytes of padding
-        writer.write(&[0u8; 23])?;
+        // Same padding layout as HandshakeResponse41: the SSLRequest is that
+        // packet's prefix and the server reads its capability bytes the same way.
+        writer.write(&[0u8; 19])?;
+        writer.int4(self.mariadb_capability_flags.to_int())?;
 
         packet.end()?;
         Ok(())

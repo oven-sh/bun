@@ -10,7 +10,10 @@ import {
   isDebug,
   isWindows,
   runFixtureMaxRSS,
+  tempDir,
 } from "harness";
+import path from "node:path";
+import { asyncIterableBodyShapes, settled } from "../../web/streams/async-iterable-body-shapes";
 
 describe("spawn stdin ReadableStream", () => {
   test("basic ReadableStream as stdin", async () => {
@@ -151,6 +154,32 @@ describe("spawn stdin ReadableStream", () => {
 
     const text = await proc.stdout.text();
     expect(text).toBe("async pull 1\nasync pull 2\nasync pull 3\n");
+    expect(await proc.exited).toBe(0);
+  });
+
+  // A direct stream's pull() runs once; its promise resolving without close() is the end of
+  // stdin. Before, the pipe was closed without flushing what the sink had buffered since its
+  // last flush, so the child saw a truncated stdin with no error anywhere.
+  test("direct ReadableStream whose pull() resolves without close()", async () => {
+    const stream = new ReadableStream({
+      type: "direct",
+      async pull(controller) {
+        controller.write("hello");
+        // The sink flushes "hello" to the pipe before this resolves.
+        await new Promise(resolve => setImmediate(resolve));
+        controller.write(" ");
+        controller.write(new TextEncoder().encode("world"));
+      },
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
+      stdin: stream,
+      stdout: "pipe",
+      env: bunEnv,
+    });
+
+    expect(await proc.stdout.text()).toBe("hello world");
     expect(await proc.exited).toBe(0);
   });
 
@@ -476,6 +505,47 @@ describe("spawn stdin ReadableStream", () => {
     await expectParentExitsAfterChildDies(false);
   });
 
+  // The child closes its stdin and lives on. Then the body gives its first chunk, and that write
+  // fails. The sink hands the error to the body, which is closed the way `for await` leaves an
+  // iterator: return(). The error is not thrown into it.
+  // Not on Windows: fs.closeSync(0) does nothing there (libuv keeps fds 0 to 2 open), so the child
+  // cannot close its stdin and live on.
+  describe.skipIf(isWindows).each(asyncIterableBodyShapes)(
+    "%s as stdin is closed with return() when the child closed its stdin before a chunk",
+    (_, make) => {
+      test.concurrent.each([
+        // A small write is buffered. Its failure comes back when the sink closes.
+        ["of 6 bytes", "chunk\n"],
+        // A large write goes straight to the pipe and fails at once.
+        ["of 64 KiB", Buffer.alloc(64 * 1024, "x")],
+      ])("%s", async (_, chunk) => {
+        const childClosedStdin = Promise.withResolvers<void>();
+        const shape = make({ chunk, start: childClosedStdin.promise });
+        await using proc = spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `require("fs").closeSync(0);
+             console.log("closed");
+             setTimeout(() => {}, 30_000);`,
+          ],
+          stdin: new Response(shape.body),
+          stdout: "pipe",
+          stderr: "inherit",
+          env: bunEnv,
+        });
+        let stdout = "";
+        for await (const bytes of proc.stdout) {
+          stdout += new TextDecoder().decode(bytes);
+          if (stdout.includes("closed")) break;
+        }
+        expect(stdout).toContain("closed");
+        childClosedStdin.resolve();
+        expect(await settled(shape)).toEqual(shape.expected);
+      });
+    },
+  );
+
   test("ReadableStream with process that exits immediately", async () => {
     const stream = new ReadableStream({
       start(controller) {
@@ -798,6 +868,138 @@ describe("spawn stdin ReadableStream", () => {
     },
   );
 
+  // Bun.spawn fails if the stdin stream is already locked, and it must not consume or modify that stream.
+  describe("a locked stdin stream is still readable by the consumer that locked it", () => {
+    const prelude = `
+      const bytes = new TextEncoder().encode("hello");
+      const decode = chunk => new TextDecoder().decode(chunk);
+      // For a locked stream, either Bun.spawn throws or its stdin pump rejects. The last printed line shows which.
+      const refusals = [];
+      const threw = error => refusals.push("threw " + error?.code);
+      process.on("unhandledRejection", error => refusals.push("unhandledRejection " + error?.code));
+      process.on("exit", () => console.log(refusals.join(", ") || "not refused"));
+      const exe = process.execPath;
+      const cmd = [exe, "-e", ""];
+      const count = [exe, "-e", "console.log((await Bun.stdin.bytes()).length)"];
+      const pulled = () => new ReadableStream({ type: "bytes", pull(c) { c.enqueue(bytes.slice()); c.close(); } });
+      const spawnWithStdin = stream => {
+        try { Bun.spawn({ cmd, stdin: stream, stdout: "ignore", stderr: "ignore" }); } catch (error) { threw(error); }
+      };
+    `;
+    // These don't use top-level await, so the child still exits if a read never settles.
+    const owners: [owner: string, read: string, script: string][] = [
+      [
+        "a BYOB reader",
+        "hello",
+        `
+          const stream = pulled();
+          const reader = stream.getReader({ mode: "byob" });
+          spawnWithStdin(stream);
+          reader.read(new Uint8Array(16)).then(({ value }) => console.log(decode(value)));
+        `,
+      ],
+      [
+        "a default reader",
+        "hello",
+        `
+          const stream = new ReadableStream({ start(c) { c.enqueue(bytes.slice()); c.close(); } });
+          const reader = stream.getReader();
+          spawnWithStdin(stream);
+          reader.read().then(({ value }) => console.log(decode(value)));
+        `,
+      ],
+      [
+        // The stream is unlocked when the stdin option is validated. The getter locks it before the pump starts.
+        "text() called from a later option getter",
+        "hello",
+        `
+          const stream = pulled();
+          let text;
+          try {
+            Bun.spawn({ cmd, stdin: stream, get stdout() { text ??= stream.text(); return "ignore"; }, stderr: "ignore" });
+          } catch (error) { threw(error); }
+          text.then(value => console.log(value));
+        `,
+      ],
+      [
+        // The stream is another child's stdout, so attaching it would steal the native source from the reader.
+        "a reader that a later option getter acquires on a child's stdout",
+        "hello 0",
+        `
+          const stream = Bun.spawn({ cmd: [exe, "-e", "await Bun.write(Bun.stdout, 'hello')"], stdout: "pipe", stderr: "inherit" }).stdout;
+          let reader, refused;
+          try {
+            refused = Bun.spawn({ cmd: count, stdin: stream, get stdout() { reader ??= stream.getReader(); return "pipe"; }, stderr: "inherit" });
+          } catch (error) { threw(error); }
+          (async () => {
+            let text = "";
+            for (let chunk; !(chunk = await reader.read()).done; ) text += decode(chunk.value);
+            console.log(text, refused ? (await refused.stdout.text()).trim() : 0);
+          })();
+        `,
+      ],
+    ];
+
+    test.concurrent.each(owners)("locked by %s", async (_owner, read, script) => {
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", prelude + script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      const lines = stdout.trim().split("\n");
+      expect({
+        read: lines.slice(0, -1).join("\n"),
+        refusal: lines.at(-1),
+        stderr,
+        exitCode,
+        signalCode: proc.signalCode,
+      }).toEqual({
+        read,
+        refusal: expect.stringMatching(/^(threw|unhandledRejection) ERR_INVALID_STATE$/),
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+  });
+
+  // Bun.write() locks the process's stdin stream without starting its lazy source. A call that fails on that lock
+  // must not start the source either. Nothing reads the child's stdout until the child reports, so its write is
+  // still paused at that point.
+  test.skipIf(isWindows)(
+    "process.stdin throws when Bun.write() has locked the stdin stream, and doesn't consume any bytes",
+    async () => {
+      using dir = tempDir("spawn-stdin-lazy", { "in": Buffer.alloc(1 << 20, "a").toString() });
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+        const written = Bun.write(Bun.stdout, Bun.stdin.stream());
+        let code;
+        try { process.stdin.resume(); } catch (error) { code = error.code; }
+        await Bun.write(Bun.stderr, String(code));
+        await written;
+      `,
+        ],
+        env: bunEnv,
+        stdin: Bun.file(path.join(String(dir), "in")),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const report = await proc.stderr.getReader().read();
+      const [stdout, exitCode] = await Promise.all([proc.stdout.bytes(), proc.exited]);
+      expect({ report: new TextDecoder().decode(report.value), length: stdout.length, exitCode }).toEqual({
+        report: "ERR_INVALID_STATE",
+        length: 1 << 20,
+        exitCode: 0,
+      });
+    },
+  );
+
   test("ReadableStream object type count", async () => {
     const iterations = isASAN
       ? // With ASAN, entire process gets killed. Likely an OOM or out of file
@@ -892,6 +1094,61 @@ describe("spawn stdin ReadableStream", () => {
     // iteration leaks one native FileSink (delta == iterations). Allow one
     // straggler whose wrapper has not yet been finalized.
     expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
+  });
+
+  // An HTMLRewriter body piped into a child's stdin is a native ByteStream →
+  // FileSink pump with a synchronous producer: the FileSink's drain callback
+  // resumes the ByteStream, which makes the rewriter feed the next file chunk
+  // and, at EOF, end the sink, all before the drain callback returns. The
+  // child reads slowly, so each chunk's output overfills the pipe and its
+  // tail stays buffered in the sink when the sink is ended from inside that
+  // callback. Every byte must still reach the child before its stdin closes:
+  // the buffered tail, and whatever the document-end handler emits after the
+  // last chunk's write reported backpressure.
+  describe("HTMLRewriter body as stdin while the child reads slowly", () => {
+    // Two file reads (256 KiB + the rest); each element's output grows by
+    // `appended`, so each chunk's output is about 1 MiB, more than a stdin
+    // pipe holds on any platform.
+    const piece = `<p>${Buffer.alloc(8192, "a").toString()}</p>`;
+    const count = 56;
+    const input = Buffer.alloc(piece.length * count, piece).toString();
+    const appended = Buffer.alloc(32 * 1024, "b").toString();
+    const footer = "<!-- end -->";
+
+    const slowChild = `
+      const fs = require("node:fs");
+      const buf = Buffer.allocUnsafe(4 * 1024 * 1024);
+      let total = 0;
+      for (;;) {
+        const n = fs.readSync(0, buf);
+        if (n === 0) break;
+        total += n;
+        Bun.sleepSync(10);
+      }
+      process.stdout.write(String(total));
+    `;
+
+    test.each([
+      ["no document-end output", false],
+      ["output appended at document end", true],
+    ])("every byte reaches the child: %s", async (_, appendAtEnd) => {
+      using dir = tempDir("hr-stdin-slow-child", { "in.html": input });
+      let rewriter = new HTMLRewriter().on("p", { element: e => void e.append(appended) });
+      if (appendAtEnd) rewriter = rewriter.onDocument({ end: e => void e.append(footer, { html: true }) });
+      const res = rewriter.transform(new Response(Bun.file(path.join(String(dir), "in.html"))));
+
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", slowChild],
+        env: bunEnv,
+        stdin: res,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(Number(stdout)).toBe(input.length + count * appended.length + (appendAtEnd ? footer.length : 0));
+      expect(exitCode).toBe(0);
+    });
   });
 
   // A fetch response body piped into a child's stdin is a native ByteStream →

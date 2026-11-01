@@ -37,7 +37,7 @@ size_t bytesUsedToEncodedLength(uint8_t octet)
     return octet - MaxLengthInOneByte + 1;
 }
 
-size_t extraBytesNeededForEncodedLength(size_t length)
+static size_t extraBytesNeededForEncodedLength(size_t length)
 {
     if (!length)
         return 0;
@@ -63,13 +63,6 @@ void addEncodedASN1Length(Vector<uint8_t>& in, size_t length)
         in[lastPosition - i] = length & 0xffull;
         length = length >> 8;
     }
-}
-
-size_t bytesNeededForEncodedLength(size_t length)
-{
-    if (length < MaxLengthInOneByte)
-        return 1;
-    return 1 + extraBytesNeededForEncodedLength(length);
 }
 
 } // namespace WebCore

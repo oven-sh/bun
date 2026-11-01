@@ -1,27 +1,16 @@
 import type { JSX } from "preact";
 import { createContext, render } from "preact";
 import { useCallback, useContext, useEffect, useRef, useState } from "preact/hooks";
-import type {
-  FallbackMessageContainer,
-  JSException,
-  JSException as JSExceptionType,
-  Location,
-  Message,
-  SourceLine,
-  StackFrame,
-  WebsocketMessageBuildFailure,
-} from "../../src/api/schema";
-import { messagesToMarkdown, problemsToMarkdown, withBunInfo } from "./markdown";
-import { fetchAllMappings, remapPosition, sourceMappings } from "./sourcemap";
-
-export enum StackFrameScope {
-  Eval = 1,
-  Module = 2,
-  Function = 3,
-  Global = 4,
-  Wasm = 5,
-  Constructor = 6,
-}
+import { problemsToMarkdown, withBunInfo } from "./markdown";
+import {
+  StackFrameScope,
+  type FallbackMessageContainer,
+  type JSException as JSExceptionType,
+  type Location,
+  type Message,
+  type SourceLine,
+  type StackFrame,
+} from "./schema";
 
 export enum JSErrorCode {
   Error = 0,
@@ -225,7 +214,7 @@ const srcFileURL = (filename: string, line?: number, column?: number): string =>
 };
 
 class FancyTypeError {
-  constructor(exception: JSException) {
+  constructor(exception: JSExceptionType) {
     this.runtimeType = exception.runtime_type || 0;
     this.runtimeTypeName = RuntimeType[this.runtimeType] || "undefined";
     this.message = exception.message || "";
@@ -239,7 +228,7 @@ class FancyTypeError {
   runtimeTypeName: string;
   message: string;
 
-  normalize(exception: JSException) {
+  normalize(exception: JSExceptionType) {
     if (!exception.message) return;
     const i = exception.message.lastIndexOf(" is ");
     if (i === -1) return;
@@ -317,7 +306,7 @@ const AsyncSourceLines = ({
 }: {
   highlight: number;
   highlightColumnStart: number;
-  highlightColumnEnd: number;
+  highlightColumnEnd?: number;
   children?: any;
   buildURL: (line?: number, column?: number) => string;
   sourceLines: SourceLine[];
@@ -432,7 +421,7 @@ const SourceLines = ({
   sourceLines: SourceLine[];
   highlight: number;
   highlightColumnStart: number;
-  highlightColumnEnd: number;
+  highlightColumnEnd?: number;
   children?: any;
   buildURL: (line?: number, column?: number) => string;
 }) => {
@@ -922,11 +911,7 @@ const ResolveError = ({ message }: { message: Message }) => {
     </div>
   );
 };
-const OverlayMessageContainer = ({
-  problems,
-  reason,
-  isClient = false,
-}: FallbackMessageContainer & { isClient: boolean }) => {
+const OverlayMessageContainer = ({ problems, isClient = false }: FallbackMessageContainer & { isClient: boolean }) => {
   const errorCount = problems ? problems.exceptions.length + problems.build.errors : 0;
   return (
     <div id="BunErrorOverlay-container">
@@ -982,29 +967,6 @@ const Footer = ({ toMarkdown, data }) => (
   </div>
 );
 
-const BuildFailureMessageContainer = ({ messages }: { messages: Message[] }) => {
-  return (
-    <div id="BunErrorOverlay-container">
-      <div className="BunError-content">
-        <div className="BunError-header">
-          <Summary onClose={dismissError} errorCount={messages.length} />
-        </div>
-        <div className={`BunError-list`}>
-          {messages.map((buildMessage, index) => {
-            if (buildMessage.on.build) {
-              return <BuildError key={index} message={buildMessage} />;
-            } else if (buildMessage.on.resolve) {
-              return <ResolveError key={index} message={buildMessage} />;
-            } else {
-              throw new Error("Unknown build message type");
-            }
-          })}
-        </div>
-        <Footer toMarkdown={messagesToMarkdown} data={messages} />
-      </div>
-    </div>
-  );
-};
 export var thisCwd = "";
 const ErrorGroupContext = createContext<{ cwd?: string }>({ cwd: undefined });
 var reactRoot;
@@ -1034,12 +996,6 @@ function renderWithFunc(func) {
       fallbackStyleSheet.remove();
       shadowRoot.appendChild(fallbackStyleSheet);
       reactRoot.classList.add("BunErrorRoot--FullPage");
-
-      const page = document.querySelector("style[data-bun-error-page-style]");
-      if (page) {
-        page.remove();
-        shadowRoot.appendChild(page);
-      }
     }
 
     shadowRoot.appendChild(reactRoot);
@@ -1055,9 +1011,6 @@ export function renderFallbackError(fallback: FallbackMessageContainer) {
   if (fallback && fallback.cwd) {
     thisCwd = fallback.cwd;
   }
-  // Not an error
-  if (fallback?.problems?.name === "JSDisabled") return;
-
   return renderWithFunc(() => (
     <ErrorGroupContext.Provider value={fallback}>
       <OverlayMessageContainer isClient {...fallback} />
@@ -1067,202 +1020,11 @@ export function renderFallbackError(fallback: FallbackMessageContainer) {
 
 globalThis[Symbol.for("Bun__renderFallbackError")] = renderFallbackError;
 
-import { parse as getStackTrace } from "./stack-trace-parser";
-var runtimeErrorController: AbortController | null = null;
-var pending: { stopped: boolean }[] = [];
-
-var onIdle = globalThis.requestIdleCallback || (cb => setTimeout(cb, 32));
-function clearSourceMappings() {
-  sourceMappings.clear();
-}
-export function renderRuntimeError(error: Error) {
-  runtimeErrorController = new AbortController();
-  if (typeof error === "string") {
-    error = {
-      name: "Error",
-      message: error,
-    };
-  }
-
-  const exception = {
-    name: String(error.name),
-    message: String(error.message),
-    runtime_type: 0,
-    stack: {
-      frames: error.stack ? getStackTrace(error.stack) : [],
-      source_lines: [],
-    },
-  };
-
-  var lineNumberProperty = "";
-  var columnNumberProperty = "";
-  var fileNameProperty = "";
-
-  if (error && typeof error === "object") {
-    // safari
-    if ("line" in error) {
-      lineNumberProperty = "line";
-      // firefox
-    } else if ("lineNumber" in error) {
-      lineNumberProperty = "lineNumber";
-    }
-
-    // safari
-    if ("column" in error) {
-      columnNumberProperty = "column";
-      // firefox
-    } else if ("columnNumber" in error) {
-      columnNumberProperty = "columnNumber";
-    }
-
-    // safari
-    if ("sourceURL" in error) {
-      fileNameProperty = "sourceURL";
-      // firefox
-    } else if ("fileName" in error) {
-      fileNameProperty = "fileName";
-    }
-  }
-
-  if (Number.isFinite(error[lineNumberProperty])) {
-    if (exception.stack?.frames.length == 0) {
-      exception.stack.frames.push({
-        file: error[fileNameProperty] || "",
-        position: {
-          line: +error[lineNumberProperty] || 1,
-          column: +error[columnNumberProperty] || 1,
-        },
-      } as StackFrame);
-    } else if (exception.stack && exception.stack.frames.length > 0) {
-      exception.stack.frames[0].position.line = error[lineNumberProperty];
-
-      if (Number.isFinite(error[columnNumberProperty])) {
-        exception.stack.frames[0].position.column = error[columnNumberProperty];
-      }
-    }
-  }
-  const signal = runtimeErrorController.signal;
-
-  const fallback: FallbackMessageContainer = {
-    message: error.message,
-
-    problems: {
-      build: {
-        warnings: 0,
-        errors: 0,
-        msgs: [],
-      },
-      code: 0,
-      name: error.name,
-      exceptions: [exception],
-    },
-  };
-
-  var stopThis = { stopped: false };
-  pending.push(stopThis);
-
-  const BunError = () => {
-    return (
-      <ErrorGroupContext.Provider value={fallback}>
-        <OverlayMessageContainer isClient {...fallback} />
-      </ErrorGroupContext.Provider>
-    );
-  };
-
-  // Remap the sourcemaps
-  // But! If we've already fetched the source mappings in this page load before
-  // Rely on the cached ones
-  // and don't fetch them again
-  const framePromises = fetchAllMappings(
-    exception.stack.frames.map(frame => normalizedFilename(frame.file, thisCwd)),
-    signal,
-  )
-    .map((frame, i) => {
-      if (stopThis.stopped) return null;
-      return [frame, i];
-    })
-    .map(result => {
-      if (!result) return;
-      const [mappings, frameIndex] = result;
-      if (mappings?.then) {
-        return mappings.then(mappings => {
-          if (!mappings || stopThis.stopped) {
-            return null;
-          }
-          var frame = exception.stack.frames[frameIndex];
-
-          const { line, column } = frame.position;
-          const remapped = remapPosition(mappings, line, column);
-          if (!remapped) return null;
-          frame.position.line_start = frame.position.line = remapped[0];
-          frame.position.column_stop =
-            frame.position.expression_stop =
-            frame.position.expression_start =
-            frame.position.column =
-              remapped[1];
-        }, console.error);
-      } else {
-        if (!mappings) return null;
-        var frame = exception.stack.frames[frameIndex];
-        const { line, column } = frame.position;
-        const remapped = remapPosition(mappings, line, column);
-        if (!remapped) return null;
-        frame.position.line_start = frame.position.line = remapped[0];
-        frame.position.column_stop =
-          frame.position.expression_stop =
-          frame.position.expression_start =
-          frame.position.column =
-            remapped[1];
-      }
-    });
-
-  var anyPromises = false;
-  for (let i = 0; i < framePromises.length; i++) {
-    if (framePromises[i] && framePromises[i].then) {
-      anyPromises = true;
-      break;
-    }
-  }
-
-  if (anyPromises) {
-    Promise.allSettled(framePromises).finally(() => {
-      if (stopThis.stopped || signal.aborted) return;
-      onIdle(clearSourceMappings);
-      return renderWithFunc(() => {
-        return <BunError />;
-      });
-    });
-  } else {
-    onIdle(clearSourceMappings);
-    renderWithFunc(() => {
-      return <BunError />;
-    });
-  }
-}
-
 export function dismissError() {
   if (reactRoot) {
     render(null, reactRoot);
     const root = document.getElementById("__bun__error-root");
     if (root) root.remove();
     reactRoot = null;
-    if (runtimeErrorController) {
-      runtimeErrorController.abort();
-      runtimeErrorController = null;
-    }
-
-    while (pending.length > 0) pending.shift().stopped = true;
   }
 }
-
-export const renderBuildFailure = (failure: WebsocketMessageBuildFailure, cwd: string) => {
-  thisCwd = cwd;
-  renderWithFunc(() => (
-    <ErrorGroupContext.Provider value={{ cwd }}>
-      <BuildFailureMessageContainer messages={failure.log.msgs} />
-    </ErrorGroupContext.Provider>
-  ));
-};
-
-export const clearBuildFailure = dismissError;
-globalThis.__BunClearBuildFailure = dismissError;

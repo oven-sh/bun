@@ -1,0 +1,10 @@
+class A extends B
+
+// 1
+
+implements C, D {}
+class E extends F implements
+
+// 2
+
+G, H {}

@@ -1,0 +1,64 @@
+-----------------------------------------------
+{ experimentalTernaries: true, printWidth: 80 }
+-----------------------------------------------
+type A<T> =
+  | string
+  | (T extends (
+      {
+        all: false;
+      }
+    ) ?
+      never
+    : T extends (
+
+        | {
+            all: true;
+          }
+        | {
+            all: boolean;
+          }
+    ) ?
+      (string | File)[]
+    : never);
+type B<T> =
+  T extends (
+
+      | { all: true }
+      | {
+          all: boolean;
+          aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: 1;
+        }
+  ) ?
+    1
+  : 2;
+
+------------------------------------------------
+{ experimentalTernaries: true, printWidth: 100 }
+------------------------------------------------
+type A<T> =
+  | string
+  | (T extends (
+      {
+        all: false;
+      }
+    ) ?
+      never
+    : T extends (
+
+        | {
+            all: true;
+          }
+        | {
+            all: boolean;
+          }
+    ) ?
+      (string | File)[]
+    : never);
+type B<T> =
+  T extends (
+    { all: true } | { all: boolean; aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: 1 }
+  ) ?
+    1
+  : 2;
+
+===================== End =====================

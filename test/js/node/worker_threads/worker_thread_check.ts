@@ -4,10 +4,7 @@ const RUN_COUNT = 5;
 import { Worker, isMainThread, workerData } from "worker_threads";
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-const rss =
-  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
-    ? Bun.unsafe.memoryFootprint
-    : process.memoryUsage.rss;
+const rss = process.memoryUsage.rss;
 
 const actions = {
   async ["Bun.connect"](port) {

@@ -1,5 +1,5 @@
 //! Shared parser for the wall-clock date/time text both SQL drivers receive
-//! over their text protocols: `YYYY-MM-DD[ |T]HH:MM:SS[.ffffff]`.
+//! over their text protocols: `YYYY-MM-DD[[ |T]HH:MM:SS[.ffffff]]`.
 //!
 //! The text carries no timezone, so callers convert the parsed components with
 //! UTC arithmetic to match their binary protocol paths. Routing these strings
@@ -14,7 +14,8 @@
 /// Components of a parsed wall-clock timestamp.
 #[derive(Default, Clone, Copy)]
 pub struct DateTimeText {
-    pub(crate) year: u16,
+    /// Astronomical: 1 BC is 0.
+    pub(crate) year: i32,
     pub(crate) month: u8,
     pub(crate) day: u8,
     pub(crate) hour: u8,
@@ -24,71 +25,116 @@ pub struct DateTimeText {
     pub(crate) microsecond: u32,
 }
 
-/// MySQL DATE/DATETIME/TIMESTAMP text. Accepts the 10-byte date-only form
-/// (`YYYY-MM-DD`) and either `' '` or `'T'` as the date/time separator.
+/// Which bytes may separate the date from the time.
+#[derive(Clone, Copy)]
+enum Separator {
+    Space,
+    SpaceOrT,
+}
+
 pub(crate) fn parse_mysql(text: &[u8]) -> Option<DateTimeText> {
-    parse(text, true, true)
+    let (dt, consumed) = parse(text, Separator::SpaceOrT)?;
+    (consumed == text.len()).then_some(dt)
 }
 
-/// Postgres `timestamp` (WITHOUT TIME ZONE) text. Requires the full
-/// `YYYY-MM-DD HH:MM:SS[.ffffff]` shape — anything else (date-only, `'T'`
-/// separator, `infinity`, BC dates, 5+ digit years) returns `None` so the
-/// caller can fall back to `Date.parse`.
-pub(crate) fn parse_postgres_timestamp(text: &[u8]) -> Option<DateTimeText> {
-    parse(text, false, false)
+/// `DateStyle = ISO` text. The `±HH[:MM[:SS]]` offset comes back in seconds east of UTC, 0 if absent.
+pub(crate) fn parse_postgres_timestamptz(text: &[u8]) -> Option<(DateTimeText, i32)> {
+    let (dt, rest) = parse_postgres(text)?;
+    let Some((&sign, offset)) = rest.split_first() else {
+        return Some((dt, 0));
+    };
+    let sign: i32 = match sign {
+        b'+' => 1,
+        b'-' => -1,
+        _ => return None,
+    };
+    let hours = parse_u(offset.get(0..2)?)?;
+    let (minutes, seconds) = match offset.len() {
+        2 => (0, 0),
+        5 if offset[2] == b':' => (parse_u(&offset[3..5])?, 0),
+        8 if offset[2] == b':' && offset[5] == b':' => {
+            (parse_u(&offset[3..5])?, parse_u(&offset[6..8])?)
+        }
+        _ => return None,
+    };
+    if minutes > 59 || seconds > 59 {
+        return None;
+    }
+    let offset_seconds = i32::try_from(hours * 3600 + minutes * 60 + seconds).ok()?;
+    Some((dt, sign * offset_seconds))
 }
 
-fn parse(text: &[u8], allow_date_only: bool, allow_t_separator: bool) -> Option<DateTimeText> {
-    fn parse_u(bytes: &[u8]) -> Option<u32> {
-        if bytes.is_empty() {
+/// Postgres prints a year before 1 AD as a positive number and ends the whole value with ` BC`.
+fn parse_postgres(text: &[u8]) -> Option<(DateTimeText, &[u8])> {
+    let (text, bc) = match text.strip_suffix(b" BC") {
+        Some(text) => (text, true),
+        None => (text, false),
+    };
+    let (mut dt, consumed) = parse(text, Separator::Space)?;
+    if bc {
+        dt.year = 1 - dt.year;
+    }
+    Some((dt, &text[consumed..]))
+}
+
+fn parse_u(bytes: &[u8]) -> Option<u32> {
+    if bytes.is_empty() {
+        return None;
+    }
+    let mut n: u32 = 0;
+    for &c in bytes {
+        if !c.is_ascii_digit() {
             return None;
         }
-        let mut n: u32 = 0;
-        for &c in bytes {
-            if !c.is_ascii_digit() {
-                return None;
-            }
-            n = n.checked_mul(10)?.checked_add(u32::from(c - b'0'))?;
-        }
-        Some(n)
+        n = n.checked_mul(10)?.checked_add(u32::from(c - b'0'))?;
     }
+    Some(n)
+}
 
-    if text.len() < 10 || text[4] != b'-' || text[7] != b'-' {
+/// Returns the components and how many bytes of `text` they took.
+fn parse(text: &[u8], separator: Separator) -> Option<(DateTimeText, usize)> {
+    // Postgres pads the year to four digits and prints a longer one in full, up to 5874897.
+    let year_len = text.iter().take_while(|c| c.is_ascii_digit()).count();
+    if !(4..=7).contains(&year_len) {
+        return None;
+    }
+    let (year, text) = text.split_at(year_len);
+    if text.len() < 6 || text[0] != b'-' || text[3] != b'-' {
         return None;
     }
     let mut result = DateTimeText {
-        year: u16::try_from(parse_u(&text[0..4])?).ok()?,
-        month: u8::try_from(parse_u(&text[5..7])?).ok()?,
-        day: u8::try_from(parse_u(&text[8..10])?).ok()?,
+        year: i32::try_from(parse_u(year)?).ok()?,
+        month: u8::try_from(parse_u(&text[1..3])?).ok()?,
+        day: u8::try_from(parse_u(&text[4..6])?).ok()?,
         ..Default::default()
     };
-    if text.len() == 10 {
-        return if allow_date_only { Some(result) } else { None };
+    if text.len() == 6 {
+        return Some((result, year_len + 6));
     }
 
-    let separator_ok = text[10] == b' ' || (allow_t_separator && text[10] == b'T');
-    if text.len() < 19 || !separator_ok || text[13] != b':' || text[16] != b':' {
+    let separator_ok = match separator {
+        Separator::Space => text[6] == b' ',
+        Separator::SpaceOrT => text[6] == b' ' || text[6] == b'T',
+    };
+    if text.len() < 15 || !separator_ok || text[9] != b':' || text[12] != b':' {
         return None;
     }
-    result.hour = u8::try_from(parse_u(&text[11..13])?).ok()?;
-    result.minute = u8::try_from(parse_u(&text[14..16])?).ok()?;
-    result.second = u8::try_from(parse_u(&text[17..19])?).ok()?;
+    result.hour = u8::try_from(parse_u(&text[7..9])?).ok()?;
+    result.minute = u8::try_from(parse_u(&text[10..12])?).ok()?;
+    result.second = u8::try_from(parse_u(&text[13..15])?).ok()?;
 
-    if text.len() == 19 {
-        return Some(result);
-    }
-    if text[19] != b'.' {
-        return None;
+    if text.len() == 15 || text[15] != b'.' {
+        return Some((result, year_len + 15));
     }
     // Fractional seconds: up to 6 digits, right-padded to microseconds.
-    let frac = &text[20..];
-    if frac.is_empty() || frac.len() > 6 {
+    let frac_len = text[16..].iter().take_while(|c| c.is_ascii_digit()).count();
+    if frac_len == 0 || frac_len > 6 {
         return None;
     }
-    let mut micro = parse_u(frac)?;
-    for _ in 0..(6 - frac.len()) {
+    let mut micro = parse_u(&text[16..16 + frac_len])?;
+    for _ in 0..(6 - frac_len) {
         micro *= 10;
     }
     result.microsecond = micro;
-    Some(result)
+    Some((result, year_len + 16 + frac_len))
 }

@@ -56,7 +56,7 @@ function handleClient(client: net.Socket) {
   let head = Buffer.alloc(0);
   let upstream: net.Socket | undefined;
   client.on("close", () => upstream?.destroy());
-  client.on("data", chunk => {
+  client.on("data", (chunk: Buffer) => {
     if (upstream) {
       upstream.write(chunk);
       return;
@@ -108,10 +108,7 @@ function recordError(i: number, e: unknown) {
   }
 }
 
-const rss =
-  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
-    ? Bun.unsafe.memoryFootprint
-    : process.memoryUsage.rss;
+const rss = process.memoryUsage.rss;
 
 async function one(i: number): Promise<void> {
   const path = mode === "redirect" ? "/start" : `/${i}`;

@@ -7,10 +7,6 @@ use bun_core::{Global, Output};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_standalone_graph::StandaloneModuleGraph::{Flags as GraphFlags, StandaloneModuleGraph};
 
-// Thin re-exports (mirrors `pub const X = @import(...)` at file top).
-pub use crate::api;
-pub use crate::webcore;
-
 pub(crate) fn apply_standalone_runtime_flags(
     b: &mut bun_bundler::Transpiler,
     graph: &StandaloneModuleGraph,

@@ -31,7 +31,10 @@
 #include "HTTPHeaderNames.h"
 
 #include "HTTPParsers.h"
+#include "StringSizeLimit.h"
 #include "wtf/DebugHeap.h"
+#include <algorithm>
+#include <array>
 
 namespace WebCore {
 
@@ -71,7 +74,7 @@ static ExceptionOr<bool> canWriteHeader(const HTTPHeaderName name, const String&
 {
     ASSERT(value.isEmpty() || (!isHTTPSpace(value[0]) && !isHTTPSpace(value[value.length() - 1])));
     if (!isValidHTTPHeaderValue((value)))
-        return Exception { TypeError, makeString("Header '"_s, httpHeaderNameString(name), "' has invalid value: '"_s, value, "'"_s) };
+        return Exception { TypeError, makeString("Header '"_s, httpHeaderNameString(name), "' has invalid value"_s) };
     if (guard == FetchHeaders::Guard::Immutable)
         return Exception { TypeError, "Headers object's guard is 'immutable'"_s };
     return true;
@@ -80,10 +83,10 @@ static ExceptionOr<bool> canWriteHeader(const HTTPHeaderName name, const String&
 static ExceptionOr<bool> canWriteHeader(const String& name, const String& value, const String& combinedValue, FetchHeaders::Guard guard)
 {
     if (!isValidHTTPToken(name))
-        return Exception { TypeError, makeString("Invalid header name: '"_s, name, "'"_s) };
+        return exceptionWithMessage(TypeError, "Invalid header name: '"_s, name, "'"_s);
     ASSERT(value.isEmpty() || (!isHTTPSpace(value[0]) && !isHTTPSpace(value[value.length() - 1])));
     if (!isValidHTTPHeaderValue((value)))
-        return Exception { TypeError, makeString("Header '"_s, name, "' has invalid value: '"_s, value, "'"_s) };
+        return exceptionWithMessage(TypeError, "Header '"_s, name, "' has invalid value"_s);
     if (guard == FetchHeaders::Guard::Immutable)
         return Exception { TypeError, "Headers object's guard is 'immutable'"_s };
     return true;
@@ -107,10 +110,12 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
             if (index.isValid()) {
                 auto existing = headers.getIndex(index);
                 if (headerName == HTTPHeaderName::Cookie) {
-                    combinedTemp = makeString(existing, "; "_s, normalizedValue);
+                    combinedTemp = tryMakeString(existing, "; "_s, normalizedValue);
                 } else {
-                    combinedTemp = makeString(existing, ", "_s, normalizedValue);
+                    combinedTemp = tryMakeString(existing, ", "_s, normalizedValue);
                 }
+                if (combinedTemp.isNull() || Bun::exceedsStringLimit(combinedTemp.length())) [[unlikely]]
+                    return Exception { OutOfMemoryError };
                 valueToSet = &combinedTemp;
             }
         }
@@ -125,15 +130,17 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
         if (headerName != HTTPHeaderName::SetCookie) {
             if (!headers.setIndex(index, *valueToSet))
                 headers.set(headerName, *valueToSet);
-        } else {
-            headers.add(headerName, normalizedValue);
+        } else if (!headers.tryAddSetCookie(normalizedValue)) [[unlikely]] {
+            return Exception { OutOfMemoryError };
         }
 
         return {};
     }
     auto index = headers.indexOf(name);
     if (index.isValid()) {
-        combinedTemp = makeString(headers.getIndex(index), ", "_s, normalizedValue);
+        combinedTemp = tryMakeString(headers.getIndex(index), ", "_s, normalizedValue);
+        if (combinedTemp.isNull() || Bun::exceedsStringLimit(combinedTemp.length())) [[unlikely]]
+            return Exception { OutOfMemoryError };
         valueToSet = &combinedTemp;
     }
     auto canWriteResult = canWriteHeader(name, normalizedValue, *valueToSet, guard);
@@ -207,23 +214,22 @@ ExceptionOr<Ref<FetchHeaders>> FetchHeaders::create(std::optional<Init>&& header
 
 ExceptionOr<void> FetchHeaders::fill(const Init& headerInit)
 {
-    return fillHeaderMap(m_headers, headerInit, m_guard);
+    return fillHeaderMap(m_headers.willChange(), headerInit, m_guard);
 }
 
 ExceptionOr<void> FetchHeaders::fill(const FetchHeaders& otherHeaders)
 {
     if (this->size() == 0) {
         HTTPHeaderMap headers;
-        headers.commonHeaders().appendVector(otherHeaders.m_headers.commonHeaders());
-        headers.uncommonHeaders().appendVector(otherHeaders.m_headers.uncommonHeaders());
-        headers.getSetCookieHeaders().appendVector(otherHeaders.m_headers.getSetCookieHeaders());
+        headers.commonHeaders().appendVector(otherHeaders.internalHeaders().commonHeaders());
+        headers.uncommonHeaders().appendVector(otherHeaders.internalHeaders().uncommonHeaders());
+        headers.getSetCookieHeaders().appendVector(otherHeaders.internalHeaders().getSetCookieHeaders());
         setInternalHeaders(WTF::move(headers));
-        m_updateCounter++;
         return {};
     }
 
-    for (auto& header : otherHeaders.m_headers) {
-        auto result = appendToHeaderMap(header, m_headers, m_guard);
+    for (auto& header : otherHeaders.internalHeaders()) {
+        auto result = appendToHeaderMap(header, m_headers.willChange(), m_guard);
         if (result.hasException())
             return result.releaseException();
     }
@@ -233,8 +239,7 @@ ExceptionOr<void> FetchHeaders::fill(const FetchHeaders& otherHeaders)
 
 ExceptionOr<void> FetchHeaders::append(const String& name, const String& value)
 {
-    ++m_updateCounter;
-    return appendToHeaderMap(name, value, m_headers, m_guard);
+    return appendToHeaderMap(name, value, m_headers.willChange(), m_guard);
 }
 
 // https://fetch.spec.whatwg.org/#dom-headers-delete
@@ -244,42 +249,49 @@ ExceptionOr<void> FetchHeaders::remove(const StringView name)
 
     HTTPHeaderName headerName;
     if (findHTTPHeaderName(name, headerName)) {
-        ++m_updateCounter;
-        m_headers.remove(headerName);
+        m_headers.willChange().remove(headerName);
         return {};
     }
 
     if (!isValidHTTPToken(name))
-        return Exception { TypeError, makeString("Invalid header name: '"_s, name, "'"_s) };
+        return exceptionWithMessage(TypeError, "Invalid header name: '"_s, name, "'"_s);
 
-    ++m_updateCounter;
-    m_headers.removeUncommonHeader(name);
+    m_headers.willChange().removeUncommonHeader(name);
 
     return {};
 }
 
 size_t FetchHeaders::memoryCost() const
 {
-    return m_headers.memoryCost() + sizeof(*this);
+    return internalHeaders().memoryCost() + sizeof(*this);
 }
 
 ExceptionOr<String> FetchHeaders::get(const StringView name) const
 {
-    auto result = m_headers.get(name);
-    if (result.isEmpty()) {
-        if (!isValidHTTPToken(name))
-            return Exception { TypeError, makeString("Invalid header name: '"_s, name, "'"_s) };
+    HTTPHeaderName headerName;
+    if (findHTTPHeaderName(name, headerName)) {
+        if (headerName == HTTPHeaderName::SetCookie) {
+            auto joined = internalHeaders().tryJoinSetCookieHeaders();
+            if (!joined) [[unlikely]]
+                return Exception { OutOfMemoryError };
+            return WTF::move(*joined);
+        }
+        return internalHeaders().get(headerName);
     }
+
+    auto result = internalHeaders().getUncommonHeader(name);
+    if (result.isEmpty() && !isValidHTTPToken(name))
+        return exceptionWithMessage(TypeError, "Invalid header name: '"_s, name, "'"_s);
 
     return result;
 }
 
 ExceptionOr<bool> FetchHeaders::has(const StringView name) const
 {
-    bool has = m_headers.contains(name);
+    bool has = internalHeaders().contains(name);
     if (!has) {
         if (!isValidHTTPToken(name))
-            return Exception { TypeError, makeString("Invalid header name: '"_s, name, '"') };
+            return exceptionWithMessage(TypeError, "Invalid header name: '"_s, name, "'"_s);
     }
     return has;
 }
@@ -293,11 +305,10 @@ ExceptionOr<void> FetchHeaders::set(const HTTPHeaderName name, const String& val
     if (!canWriteResult.releaseReturnValue())
         return {};
 
-    ++m_updateCounter;
-    m_headers.set(name, normalizedValue);
+    m_headers.willChange().set(name, normalizedValue);
 
     if (m_guard == FetchHeaders::Guard::RequestNoCors)
-        removePrivilegedNoCORSRequestHeaders(m_headers);
+        removePrivilegedNoCORSRequestHeaders(m_headers.willChange());
 
     return {};
 }
@@ -311,91 +322,104 @@ ExceptionOr<void> FetchHeaders::set(const String& name, const String& value)
     if (!canWriteResult.releaseReturnValue())
         return {};
 
-    ++m_updateCounter;
-    m_headers.set(name, normalizedValue);
+    m_headers.willChange().set(name, normalizedValue);
 
     if (m_guard == FetchHeaders::Guard::RequestNoCors)
-        removePrivilegedNoCORSRequestHeaders(m_headers);
+        removePrivilegedNoCORSRequestHeaders(m_headers.willChange());
 
     return {};
 }
 
-void FetchHeaders::filterAndFill(const HTTPHeaderMap& headers, Guard guard)
+// Where each known name stands among the known names when they are sorted in lowercase.
+static const std::array<uint8_t, numHTTPHeaderNames>& lowercaseHeaderNameRanks()
 {
-    for (auto& header : headers) {
-        String normalizedValue = trimHTTPSpaceIfNeeded(header.value);
-        auto canWriteResult = canWriteHeader(header.key, normalizedValue, header.value, guard);
-        if (canWriteResult.hasException())
-            continue;
-        if (!canWriteResult.releaseReturnValue())
-            continue;
-        if (header.keyAsHTTPHeaderName)
-            m_headers.add(header.keyAsHTTPHeaderName.value(), header.value);
-        else
-            m_headers.add(header.key, header.value);
+    static const std::array<uint8_t, numHTTPHeaderNames> ranks = [] {
+        std::array<uint8_t, numHTTPHeaderNames> sorted;
+        for (unsigned i = 0; i < numHTTPHeaderNames; ++i)
+            sorted[i] = i;
+        std::sort(sorted.begin(), sorted.end(), [](uint8_t a, uint8_t b) {
+            return WTF::codePointCompareLessThan(WTF::httpHeaderNameStringImpl(static_cast<HTTPHeaderName>(a)), WTF::httpHeaderNameStringImpl(static_cast<HTTPHeaderName>(b)));
+        });
+        std::array<uint8_t, numHTTPHeaderNames> result;
+        for (unsigned i = 0; i < numHTTPHeaderNames; ++i)
+            result[sorted[i]] = i;
+        return result;
+    }();
+    return ranks;
+}
+
+void FetchHeaders::Iterator::collectEntries()
+{
+    auto& map = m_headers->internalHeaders();
+
+    // Script did not ask for what fastRemove() took out, so that leaves the iterator on the name it stood on.
+    uint16_t nativeRemovals = m_headers->m_nativeRemovals - m_nativeRemovals;
+    if (nativeRemovals && nativeRemovals == m_headers->m_headers.updateCounter() - m_updateCounter) {
+        // The old entries point at what may be gone by now. Their names are still good.
+        for (auto& passed : m_entries.span().first(std::min(m_currentIndex, m_entries.size()))) {
+            if (passed.name && !map.contains(*passed.name))
+                --m_currentIndex;
+        }
     }
+    m_nativeRemovals = m_headers->m_nativeRemovals;
+
+    m_entries.shrink(0);
+    m_entries.reserveCapacity(map.size());
+    m_lowercasedKeys.shrink(0);
+
+    auto& knownName = m_lowerCaseKeys ? WTF::httpHeaderNameStringImpl : WTF::httpHeaderNameDefaultCaseStringImpl;
+    for (auto& header : map.commonHeaders())
+        m_entries.unsafeAppendWithoutCapacityCheck(Entry { &knownName(header.key), &header.value, header.key });
+    for (auto& header : map.uncommonHeaders()) {
+        const String* key = &header.key;
+        if (m_lowerCaseKeys) {
+            if (String lowercased = lowercaseHeaderName(header.key); lowercased.impl() != header.key.impl()) {
+                // Room for all of them before the first: the entries point at its elements.
+                m_lowercasedKeys.reserveCapacity(map.uncommonHeaders().size());
+                m_lowercasedKeys.unsafeAppendWithoutCapacityCheck(WTF::move(lowercased));
+                key = &m_lowercasedKeys.last();
+            }
+        }
+        m_entries.unsafeAppendWithoutCapacityCheck(Entry { key, &header.value, std::nullopt });
+    }
+    const uint8_t* ranks = m_lowerCaseKeys ? lowercaseHeaderNameRanks().data() : nullptr;
+    std::sort(m_entries.begin(), m_entries.end(), [ranks](const Entry& a, const Entry& b) {
+        if (ranks && a.name && b.name)
+            return ranks[static_cast<size_t>(*a.name)] < ranks[static_cast<size_t>(*b.name)];
+        return WTF::codePointCompareLessThan(*a.key, *b.key);
+    });
+    for (auto& cookie : map.getSetCookieHeaders())
+        m_entries.unsafeAppendWithoutCapacityCheck(Entry { &WTF::httpHeaderNameStringImpl(HTTPHeaderName::SetCookie), &cookie, HTTPHeaderName::SetCookie });
+
+    m_updateCounter = m_headers->m_headers.updateCounter();
+}
+
+const FetchHeaders::Iterator::Entry* FetchHeaders::Iterator::nextEntry()
+{
+    if (m_entries.isEmpty() || m_updateCounter != m_headers->m_headers.updateCounter())
+        collectEntries();
+
+    while (m_currentIndex < m_entries.size()) {
+        auto& entry = m_entries[m_currentIndex++];
+        if (!entry.value->isNull())
+            return &entry;
+    }
+
+    return nullptr;
 }
 
 std::optional<KeyValuePair<String, String>> FetchHeaders::Iterator::next()
 {
-    if (m_keys.isEmpty() || m_updateCounter != m_headers->m_updateCounter) {
-        bool hasSetCookie = !m_headers->getSetCookieHeaders().isEmpty();
-        m_keys.resize(0);
-        m_keys.reserveCapacity(m_headers->m_headers.size() + (hasSetCookie ? 1 : 0));
-        if (m_lowerCaseKeys) {
-            for (auto& header : m_headers->m_headers)
-                m_keys.unsafeAppendWithoutCapacityCheck(header.asciiLowerCaseName());
-        } else {
-            for (auto& header : m_headers->m_headers)
-                m_keys.unsafeAppendWithoutCapacityCheck(header.name());
-        }
-        std::sort(m_keys.begin(), m_keys.end(), WTF::codePointCompareLessThan);
-        if (hasSetCookie)
-            m_keys.unsafeAppendWithoutCapacityCheck(String());
-
-        m_currentIndex += m_cookieIndex;
-        if (hasSetCookie) {
-            size_t setCookieKeyIndex = m_keys.size() - 1;
-            if (m_currentIndex < setCookieKeyIndex)
-                m_cookieIndex = 0;
-            else {
-                m_cookieIndex = std::min(m_currentIndex - setCookieKeyIndex, m_headers->getSetCookieHeaders().size());
-                m_currentIndex -= m_cookieIndex;
-            }
-        } else
-            m_cookieIndex = 0;
-
-        m_updateCounter = m_headers->m_updateCounter;
-    }
-
-    auto& setCookieHeaders = m_headers->m_headers.getSetCookieHeaders();
-
-    while (m_currentIndex < m_keys.size()) {
-        auto key = m_keys[m_currentIndex];
-
-        if (key.isNull()) {
-            if (m_cookieIndex < setCookieHeaders.size()) {
-                String value = setCookieHeaders[m_cookieIndex++];
-                return KeyValuePair<String, String> { WTF::httpHeaderNameStringImpl(HTTPHeaderName::SetCookie), WTF::move(value) };
-            }
-            m_currentIndex++;
-            continue;
-        }
-
-        m_currentIndex++;
-        auto value = m_headers->m_headers.get(key);
-        if (!value.isNull())
-            return KeyValuePair<String, String> { WTF::move(key), WTF::move(value) };
-    }
-
-    return std::nullopt;
+    auto* entry = nextEntry();
+    if (!entry)
+        return std::nullopt;
+    return KeyValuePair<String, String> { *entry->key, *entry->value };
 }
 
 FetchHeaders::Iterator::Iterator(FetchHeaders& headers, bool lowerCaseKeys = true)
     : m_headers(headers)
+    , m_lowerCaseKeys(lowerCaseKeys)
 {
-    m_cookieIndex = 0;
-    m_lowerCaseKeys = lowerCaseKeys;
 }
 
 } // namespace WebCore

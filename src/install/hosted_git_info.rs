@@ -50,13 +50,12 @@
 //! tags like `github:` which are handled as "shortcuts" by this library.
 
 use core::ops::Range;
-use core::ptr::NonNull;
 
 use bun_alloc::AllocError;
 use bun_core::StringBuilder;
-use bun_core::{OwnedString, strings};
+use bun_core::strings;
 use bun_url::PercentEncoding;
-use bun_url::whatwg::URL as JscUrl;
+use bun_url::whatwg::{Parsed, URL};
 use enum_map::{Enum, EnumMap};
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -100,8 +99,6 @@ pub enum Representation {
     Shortcut,
     /// git+ssh://git@domain/user/project.git#committish
     Sshurl,
-    /// ssh://domain/user/project.git#committish
-    Ssh,
     /// https://domain/user/project.git#committish
     Https,
     /// git://domain/user/project.git#committish
@@ -257,8 +254,6 @@ impl HostedGitInfo {
         let Ok(parsed) = parse_url(git_url_mut) else {
             return Ok(None);
         };
-        // `parsed.url` is `OwnedJscUrl`; Drop handles `defer parsed.url.deinit()`.
-
         let host_provider = match parsed.proto {
             UrlProtocol::WellFormed(p) => p
                 .host_provider()
@@ -335,28 +330,8 @@ impl HostedGitInfo {
 // parse_url
 // ──────────────────────────────────────────────────────────────────────────
 
-/// RAII handle over a heap-allocated `WTF::URL` (C++). The allocation comes from
-/// `URL__fromString` (C++ `new`), so it MUST be freed via `URL__deinit` — wrapping
-/// the pointer in `Box` is allocator-mismatch UB and never runs the C++ destructor.
-pub struct OwnedJscUrl(NonNull<JscUrl>);
-impl core::ops::Deref for OwnedJscUrl {
-    type Target = JscUrl;
-    fn deref(&self) -> &JscUrl {
-        // SAFETY: `from_string`/`from_utf8` returned a live heap WTF::URL we own.
-        unsafe { self.0.as_ref() }
-    }
-}
-impl Drop for OwnedJscUrl {
-    fn drop(&mut self) {
-        // SAFETY: pointer is the unique owner of a `new WTF::URL` from C++; `deinit`
-        // calls `URL__deinit` which `delete`s it.
-        unsafe { self.0.as_mut() }.deinit();
-    }
-}
-
-// `url` is owned: `jsc.URL.fromString` creates it and the holder deinits.
 pub struct ParsedUrl<'a> {
-    pub url: OwnedJscUrl,
+    pub url: Parsed,
     pub(crate) proto: UrlProtocol<'a>,
 }
 
@@ -653,6 +628,7 @@ impl<'a> UrlProtocol<'a> {
     }
 }
 
+#[derive(Clone)]
 pub(crate) enum UrlProtocolPairUrl<'a> {
     Managed(Box<[u8]>),
     Unmanaged(&'a [u8]),
@@ -672,7 +648,7 @@ impl<'a> UrlProtocolPair<'a> {
     }
 
     /// Given a protocol pair, create a jsc.URL if possible. May allocate, but owns its memory.
-    fn to_url(&self) -> Option<OwnedJscUrl> {
+    fn to_url(&self) -> Option<Parsed> {
         let mut protocol_buf: StringWithColonBuffer =
             [0u8; WellDefinedProtocol::MAX_PROTOCOL_LENGTH + 1];
 
@@ -694,12 +670,12 @@ impl<'a> UrlProtocolPair<'a> {
         }
     }
 
-    fn concat_parts_to_url(parts: &[&[u8]]) -> Option<OwnedJscUrl> {
+    fn concat_parts_to_url(parts: &[&[u8]]) -> Option<Parsed> {
         // TODO(markovejnovic): There is a sad unnecessary allocation here that I don't know how to
         // get rid of -- in theory, the URL layer could allocate once.
         let new_str = strings::concat(parts);
         // Drop handles `defer allocator.free(new_str)`.
-        JscUrl::from_utf8(&new_str).map(OwnedJscUrl)
+        Parsed::from_utf8(&new_str)
     }
 }
 
@@ -868,24 +844,14 @@ pub(crate) fn correct_url<'a>(
         });
     }
 
-    if col_idx == -1 && matches!(url_proto_pair.protocol, UrlProtocol::Unknown) {
-        // `normalize_protocol` only ever returns `Unmanaged` here, so re-borrow
-        // rather than move; the `Managed` arm clones for completeness.
-        return Ok(UrlProtocolPair {
-            url: match &url_proto_pair.url {
-                UrlProtocolPairUrl::Unmanaged(s) => UrlProtocolPairUrl::Unmanaged(s),
-                UrlProtocolPairUrl::Managed(s) => UrlProtocolPairUrl::Managed(s.clone()),
-            },
-            protocol: UrlProtocol::WellFormed(WellDefinedProtocol::GitPlusSsh),
-        });
-    }
-
+    let protocol = if col_idx == -1 && matches!(url_proto_pair.protocol, UrlProtocol::Unknown) {
+        UrlProtocol::WellFormed(WellDefinedProtocol::GitPlusSsh)
+    } else {
+        url_proto_pair.protocol
+    };
     Ok(UrlProtocolPair {
-        url: match &url_proto_pair.url {
-            UrlProtocolPairUrl::Unmanaged(s) => UrlProtocolPairUrl::Unmanaged(s),
-            UrlProtocolPairUrl::Managed(s) => UrlProtocolPairUrl::Managed(s.clone()),
-        },
-        protocol: url_proto_pair.protocol,
+        url: url_proto_pair.url.clone(),
+        protocol,
     })
 }
 
@@ -922,7 +888,7 @@ impl HostProvider {
         HostProvider::Sourcehut,
     ];
 
-    fn extract(self, url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
+    fn extract(self, url: &URL) -> Result<Option<ExtractResult>, HostedGitInfoError> {
         (configs()[self].format_extract)(url)
     }
 
@@ -948,7 +914,7 @@ impl HostProvider {
     ///
     /// The second parameter allows you to declare whether the given string includes the protocol:
     /// colon or not.
-    fn from_shortcut(shortcut_str: &[u8], with_colon: bool) -> Option<HostProvider> {
+    pub(crate) fn from_shortcut(shortcut_str: &[u8], with_colon: bool) -> Option<HostProvider> {
         for provider in Self::ALL {
             let shortcut_matches = if with_colon {
                 provider.shortcut() == shortcut_str
@@ -965,15 +931,15 @@ impl HostProvider {
     }
 
     /// Find the appropriate host provider by its domain (e.g. "github.com").
-    fn from_domain(domain_str: &[u8]) -> Option<HostProvider> {
+    pub(crate) fn from_domain(domain_str: &[u8]) -> Option<HostProvider> {
         Self::ALL
             .into_iter()
             .find(|&provider| provider.domain() == domain_str)
     }
 
     /// Parse a URL and return the appropriate host provider, if any.
-    fn from_url(url: &JscUrl) -> Option<HostProvider> {
-        let proto_str = OwnedString::new(url.protocol());
+    fn from_url(url: &URL) -> Option<HostProvider> {
+        let proto_str = url.protocol();
 
         // Try shortcut first (github:, gitlab:, etc.)
         if let Some(provider) = HostProvider::from_shortcut(proto_str.byte_slice(), false) {
@@ -984,8 +950,8 @@ impl HostProvider {
     }
 
     /// Given a URL, use the domain in the URL to find the appropriate host provider.
-    fn from_url_domain(url: &JscUrl) -> Option<HostProvider> {
-        let hostname_str = OwnedString::new(url.hostname());
+    fn from_url_domain(url: &URL) -> Option<HostProvider> {
+        let hostname_str = url.hostname();
 
         let hostname_utf8 = hostname_str.to_utf8();
         let hostname = strings::without_prefix(hostname_utf8.slice(), b"www.");
@@ -1039,14 +1005,105 @@ pub(crate) mod formatters {
     pub(crate) mod extract {
         use super::*;
 
-        pub(crate) type Type =
-            fn(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError>;
+        pub(crate) type Type = fn(url: &URL) -> Result<Option<ExtractResult>, HostedGitInfoError>;
 
-        pub(crate) fn github(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
+        /// Percent-decodes the parts into one owned buffer.
+        fn build_result(
+            user: Option<&[u8]>,
+            project: &[u8],
+            committish: Option<&[u8]>,
+        ) -> Result<ExtractResult, HostedGitInfoError> {
+            let mut sb = StringBuilder::default();
+            if let Some(u) = user {
+                sb.count(u);
+            }
+            sb.count(project);
+            if let Some(c) = committish {
+                sb.count(c);
+            }
+
+            sb.allocate()?;
+
+            let user_slice = match user {
+                Some(u) => Some(HostedGitInfo::decode_and_append(&mut sb, u)?),
+                None => None,
+            };
+            let project_slice = HostedGitInfo::decode_and_append(&mut sb, project)?;
+            let committish_slice = match committish {
+                Some(c) => Some(HostedGitInfo::decode_and_append(&mut sb, c)?),
+                None => None,
+            };
+
+            Ok(ExtractResult {
+                user: user_slice,
+                project: project_slice,
+                committish: committish_slice,
+                _owned_buffer: Some(sb.move_to_slice()),
+            })
+        }
+
+        /// `/user/project[.git][/aux]` with the committish in the fragment.
+        fn user_project_committish(
+            url: &URL,
+            reject_aux: &[u8],
+            user_optional: bool,
+            error_as_none: bool,
+        ) -> Result<Option<ExtractResult>, HostedGitInfoError> {
             let pathname_owned = url.pathname().to_owned_slice();
             let pathname = strings::trim_prefix(&pathname_owned, b"/");
 
-            let mut iter = pathname.split(|&b| b == b'/');
+            let mut iter = strings::split(pathname, b"/");
+            let Some(mut user_part) = iter.next() else {
+                return Ok(None);
+            };
+            let mut project_part = iter.next();
+
+            if iter.next() == Some(reject_aux) {
+                return Ok(None);
+            }
+
+            if user_optional && project_part.is_none_or(<[u8]>::is_empty) {
+                project_part = Some(user_part);
+                user_part = b"";
+            }
+            let Some(project_part) = project_part else {
+                return Ok(None);
+            };
+
+            let project = strings::trim_suffix(project_part, b".git");
+            if project.is_empty() {
+                return Ok(None);
+            }
+            let user: Option<&[u8]> = if user_part.is_empty() {
+                if !user_optional {
+                    return Ok(None);
+                }
+                None
+            } else {
+                Some(user_part)
+            };
+
+            let fragment_str = url.fragment_identifier();
+            let fragment_utf8 = fragment_str.to_utf8();
+            let fragment = fragment_utf8.slice();
+            let committish: Option<&[u8]> = if !fragment.is_empty() {
+                Some(fragment)
+            } else {
+                None
+            };
+
+            match build_result(user, project, committish) {
+                Ok(result) => Ok(Some(result)),
+                Err(_) if error_as_none => Ok(None),
+                Err(err) => Err(err),
+            }
+        }
+
+        pub(crate) fn github(url: &URL) -> Result<Option<ExtractResult>, HostedGitInfoError> {
+            let pathname_owned = url.pathname().to_owned_slice();
+            let pathname = strings::trim_prefix(&pathname_owned, b"/");
+
+            let mut iter = strings::split(pathname, b"/");
             let Some(user_part) = iter.next() else {
                 return Ok(None);
             };
@@ -1062,20 +1119,17 @@ pub(crate) mod formatters {
                 return Ok(None);
             }
 
-            // If the type part says something other than "tree", we're not looking at a
-            // github URL that we understand.
+            // Only `/tree/<committish>` is a github URL that we understand.
             if let Some(tp) = type_part {
                 if tp != b"tree" {
                     return Ok(None);
                 }
             }
 
-            // Hold the owned fragment here so the `committish` borrow stays
-            // valid until it's copied into the StringBuilder.
+            // Owns the fragment that `committish` borrows.
             let fragment_utf8;
             let committish: Option<&[u8]> = if type_part.is_none() {
-                let fragment_str = OwnedString::new(url.fragment_identifier());
-                fragment_utf8 = fragment_str.to_utf8();
+                fragment_utf8 = url.fragment_identifier().into_utf8();
                 let fragment = fragment_utf8.slice();
                 if !fragment.is_empty() {
                     Some(fragment)
@@ -1086,89 +1140,16 @@ pub(crate) mod formatters {
                 committish_part
             };
 
-            let mut sb = StringBuilder::default();
-            sb.count(user_part);
-            sb.count(project);
-            if let Some(c) = committish {
-                sb.count(c);
-            }
-
-            sb.allocate()?;
-
-            let user_slice = HostedGitInfo::decode_and_append(&mut sb, user_part)?;
-            let project_slice = HostedGitInfo::decode_and_append(&mut sb, project)?;
-            let committish_slice = match committish {
-                Some(c) => Some(HostedGitInfo::decode_and_append(&mut sb, c)?),
-                None => None,
-            };
-
-            Ok(Some(ExtractResult {
-                user: Some(user_slice),
-                project: project_slice,
-                committish: committish_slice,
-                _owned_buffer: Some(sb.move_to_slice()),
-            }))
+            Ok(Some(build_result(Some(user_part), project, committish)?))
         }
 
-        pub(crate) fn bitbucket(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
-            let pathname_owned = url.pathname().to_owned_slice();
-            let pathname = strings::trim_prefix(&pathname_owned, b"/");
-
-            let mut iter = pathname.split(|&b| b == b'/');
-            let Some(user_part) = iter.next() else {
-                return Ok(None);
-            };
-            let Some(project_part) = iter.next() else {
-                return Ok(None);
-            };
-            let aux = iter.next();
-
-            if let Some(a) = aux {
-                if a == b"get" {
-                    return Ok(None);
-                }
-            }
-
-            let project = strings::trim_suffix(project_part, b".git");
-
-            if user_part.is_empty() || project.is_empty() {
-                return Ok(None);
-            }
-
-            let fragment_str = OwnedString::new(url.fragment_identifier());
-            let fragment_utf8 = fragment_str.to_utf8();
-            let fragment = fragment_utf8.slice();
-            let committish: Option<&[u8]> = if !fragment.is_empty() {
-                Some(fragment)
-            } else {
-                None
-            };
-
-            let mut sb = StringBuilder::default();
-            sb.count(user_part);
-            sb.count(project);
-            if let Some(c) = committish {
-                sb.count(c);
-            }
-
-            sb.allocate()?;
-
-            let user_slice = HostedGitInfo::decode_and_append(&mut sb, user_part)?;
-            let project_slice = HostedGitInfo::decode_and_append(&mut sb, project)?;
-            let committish_slice = match committish {
-                Some(c) => Some(HostedGitInfo::decode_and_append(&mut sb, c)?),
-                None => None,
-            };
-
-            Ok(Some(ExtractResult {
-                user: Some(user_slice),
-                project: project_slice,
-                committish: committish_slice,
-                _owned_buffer: Some(sb.move_to_slice()),
-            }))
+        pub(crate) fn bitbucket(url: &URL) -> Result<Option<ExtractResult>, HostedGitInfoError> {
+            user_project_committish(
+                url, b"get", /* user_optional */ false, /* error_as_none */ false,
+            )
         }
 
-        pub(crate) fn gitlab(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
+        pub(crate) fn gitlab(url: &URL) -> Result<Option<ExtractResult>, HostedGitInfoError> {
             let pathname_owned = url.pathname().to_owned_slice();
             let pathname = strings::trim_prefix(&pathname_owned, b"/");
 
@@ -1190,7 +1171,7 @@ pub(crate) mod formatters {
                 return Ok(None);
             }
 
-            let fragment_str = OwnedString::new(url.fragment_identifier());
+            let fragment_str = url.fragment_identifier();
             let fragment_utf8 = fragment_str.to_utf8();
             let committish = fragment_utf8.slice();
 
@@ -1222,177 +1203,16 @@ pub(crate) mod formatters {
             }))
         }
 
-        pub(crate) fn gist(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
-            let pathname_owned = url.pathname().to_owned_slice();
-            let pathname = strings::trim_prefix(&pathname_owned, b"/");
-
-            let mut iter = pathname.split(|&b| b == b'/');
-            let Some(mut user_part) = iter.next() else {
-                return Ok(None);
-            };
-            let mut project_part = iter.next();
-            let aux = iter.next();
-
-            if let Some(a) = aux {
-                if a == b"raw" {
-                    return Ok(None);
-                }
-            }
-
-            if project_part.is_none() || project_part.unwrap().is_empty() {
-                project_part = Some(user_part);
-                user_part = b"";
-            }
-
-            let project = strings::trim_suffix(project_part.unwrap(), b".git");
-            let user: Option<&[u8]> = if !user_part.is_empty() {
-                Some(user_part)
-            } else {
-                None
-            };
-
-            if project.is_empty() {
-                return Ok(None);
-            }
-
-            let fragment_str = OwnedString::new(url.fragment_identifier());
-            let fragment_utf8 = fragment_str.to_utf8();
-            let fragment = fragment_utf8.slice();
-            let committish: Option<&[u8]> = if !fragment.is_empty() {
-                Some(fragment)
-            } else {
-                None
-            };
-
-            let mut sb = StringBuilder::default();
-            if let Some(u) = user {
-                sb.count(u);
-            }
-            sb.count(project);
-            if let Some(c) = committish {
-                sb.count(c);
-            }
-
-            let Ok(()) = sb.allocate() else {
-                return Ok(None);
-            };
-
-            let user_slice = match user {
-                Some(u) => {
-                    let Ok(r) = HostedGitInfo::decode_and_append(&mut sb, u) else {
-                        return Ok(None);
-                    };
-                    Some(r)
-                }
-                None => None,
-            };
-            let Ok(project_slice) = HostedGitInfo::decode_and_append(&mut sb, project) else {
-                return Ok(None);
-            };
-            let committish_slice = match committish {
-                Some(c) => {
-                    let Ok(r) = HostedGitInfo::decode_and_append(&mut sb, c) else {
-                        return Ok(None);
-                    };
-                    Some(r)
-                }
-                None => None,
-            };
-
-            Ok(Some(ExtractResult {
-                user: user_slice,
-                project: project_slice,
-                committish: committish_slice,
-                _owned_buffer: Some(sb.move_to_slice()),
-            }))
+        pub(crate) fn gist(url: &URL) -> Result<Option<ExtractResult>, HostedGitInfoError> {
+            user_project_committish(
+                url, b"raw", /* user_optional */ true, /* error_as_none */ true,
+            )
         }
 
-        pub(crate) fn sourcehut(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
-            let pathname_owned = url.pathname().to_owned_slice();
-            let pathname = strings::trim_prefix(&pathname_owned, b"/");
-
-            let mut iter = pathname.split(|&b| b == b'/');
-            let Some(user_part) = iter.next() else {
-                return Ok(None);
-            };
-            let Some(project_part) = iter.next() else {
-                return Ok(None);
-            };
-            let aux = iter.next();
-
-            if let Some(a) = aux {
-                if a == b"archive" {
-                    return Ok(None);
-                }
-            }
-
-            let project = strings::trim_suffix(project_part, b".git");
-
-            if user_part.is_empty() || project.is_empty() {
-                return Ok(None);
-            }
-
-            let fragment_str = OwnedString::new(url.fragment_identifier());
-            let fragment_utf8 = fragment_str.to_utf8();
-            let fragment = fragment_utf8.slice();
-            let committish: Option<&[u8]> = if !fragment.is_empty() {
-                Some(fragment)
-            } else {
-                None
-            };
-
-            let mut sb = StringBuilder::default();
-            sb.count(user_part);
-            sb.count(project);
-            if let Some(c) = committish {
-                sb.count(c);
-            }
-
-            let Ok(()) = sb.allocate() else {
-                return Ok(None);
-            };
-
-            // Inline percent-decode rather than `decode_and_append`: this path
-            // returns None instead of erroring on decode failure.
-            let user_slice = 'blk: {
-                let start = sb.len;
-                let writable = sb.writable();
-                let Ok(decoded_len) = PercentEncoding::decode_into(writable, user_part) else {
-                    return Ok(None);
-                };
-                let decoded_len = decoded_len as usize;
-                sb.len += decoded_len;
-                break 'blk start..start + decoded_len;
-            };
-            let project_slice = 'blk: {
-                let start = sb.len;
-                let writable = sb.writable();
-                let Ok(decoded_len) = PercentEncoding::decode_into(writable, project) else {
-                    return Ok(None);
-                };
-                let decoded_len = decoded_len as usize;
-                sb.len += decoded_len;
-                break 'blk start..start + decoded_len;
-            };
-            let committish_slice = if let Some(c) = committish {
-                let start = sb.len;
-                let writable = sb.writable();
-                let Ok(decoded_len) = PercentEncoding::decode_into(writable, c) else {
-                    return Ok(None);
-                };
-                let decoded_len = decoded_len as usize;
-                sb.len += decoded_len;
-                Some(start..start + decoded_len)
-            } else {
-                None
-            };
-
-            Ok(Some(ExtractResult {
-                user: Some(user_slice),
-                project: project_slice,
-                committish: committish_slice,
-                _owned_buffer: Some(sb.move_to_slice()),
-            }))
+        pub(crate) fn sourcehut(url: &URL) -> Result<Option<ExtractResult>, HostedGitInfoError> {
+            user_project_committish(
+                url, b"archive", /* user_optional */ false, /* error_as_none */ true,
+            )
         }
     }
 }

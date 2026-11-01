@@ -1,0 +1,3 @@
+x = a   +   d && /* prettier-ignore */ b
+// note
+.c;

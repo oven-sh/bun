@@ -85,7 +85,6 @@ public:
 
     void signalAbort(JSC::JSGlobalObject* globalObject, CommonAbortReason reason);
     void signalAbort(JSC::JSValue reason);
-    void signalFollow(AbortSignal&);
 
     bool aborted() const { return m_flags & static_cast<uint8_t>(AbortSignalFlags::Aborted); }
     void markAborted(JSC::JSValue reason);
@@ -103,19 +102,24 @@ public:
     }
 
     bool hasActiveTimeoutTimer() const { return m_timeout != nullptr; }
+    // Frees the AbortSignal.timeout() timer and clears m_timeout. Also reached from the timer heap
+    // (WebCore__AbortSignal__cancelTimer) when it discards the timer unfired: hasActiveTimeoutTimer()
+    // has to turn false then, or JSAbortSignalOwner::isReachableFromOpaqueRoots keeps an observed
+    // signal's wrapper alive for a timeout that can no longer fire.
+    void cancelTimer();
     bool hasAbortEventListener() const { return m_flags & static_cast<uint8_t>(AbortSignalFlags::HasAbortEventListener); }
     bool isFiringEventListeners() const { return m_flags & static_cast<uint8_t>(AbortSignalFlags::IsFiringEventListeners); }
 
-    using RefCounted::deref;
-    using RefCounted::ref;
+    // ContextDestructionObserver.
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+    USING_CAN_MAKE_WEAKPTR(EventTargetWithInlineData);
 
     using Algorithm = Function<void(JSC::JSValue reason)>;
     uint32_t addAlgorithm(Algorithm&&);
     void removeAlgorithm(uint32_t);
 
     template<typename Visitor> void visitAbortAlgorithms(Visitor&);
-
-    bool isFollowingSignal() const { return !!m_followingSignal; }
 
     void throwIfAborted(JSC::JSGlobalObject&);
 
@@ -165,7 +169,6 @@ private:
     void addSourceSignal(AbortSignal&);
     void addDependentSignal(AbortSignal&);
     void releaseSourceObserverCounts();
-    void cancelTimer();
 
     void applyFlags(uint8_t flags) { m_flags |= flags; }
     void setIsDependent(bool isDependent)
@@ -174,14 +177,6 @@ private:
             m_flags |= static_cast<uint8_t>(AbortSignalFlags::Dependent);
         } else {
             m_flags &= ~static_cast<uint8_t>(AbortSignalFlags::Dependent);
-        }
-    }
-    void setAborted(bool aborted)
-    {
-        if (aborted) {
-            m_flags |= static_cast<uint8_t>(AbortSignalFlags::Aborted);
-        } else {
-            m_flags &= ~static_cast<uint8_t>(AbortSignalFlags::Aborted);
         }
     }
     void setHasAbortEventListener(bool hasAbortEventListener)
@@ -215,7 +210,6 @@ private:
     // Strong-ref cycle leak.
     Vector<std::pair<uint32_t, Ref<AbortAlgorithm>>> m_abortAlgorithms WTF_GUARDED_BY_LOCK(m_abortAlgorithmsLock);
     Lock m_abortAlgorithmsLock;
-    WeakPtr<AbortSignal, WeakPtrImplWithEventTargetData> m_followingSignal;
     AbortSignalSet m_sourceSignals;
     AbortSignalSet m_dependentSignals;
     JSValueInWrappedObject m_reason;

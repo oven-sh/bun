@@ -16,6 +16,7 @@
 // ERR_POSTGRES_INVALID_MESSAGE instead.
 import { SQL } from "bun";
 import { afterAll, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import {
   listeningServer,
   pgAuthenticationOk,
@@ -142,6 +143,35 @@ test("postgres: DataRow whose cell exactly fills the message still decodes", asy
   }
 });
 
+test("postgres: column names that are not valid UTF-8 decode to U+FFFD and the last duplicate column wins", async () => {
+  const fieldMeta = oneField.subarray(2);
+  simpleReply = [
+    pgRaw(
+      "T",
+      Buffer.concat([Buffer.from([0, 2]), Buffer.from([0x80, 0]), fieldMeta, Buffer.from([0x81, 0]), fieldMeta]),
+    ),
+    pgDataRow([Buffer.from("first"), Buffer.from("second")]),
+    pgCommandComplete("SELECT 1"),
+    pgReadyForQuery(),
+  ];
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const db = new Bun.SQL({ url: process.env.PGURL, max: 1 });
+       const rows = await db\`select n\`.simple();
+       console.log(rows.length, JSON.stringify(Object.keys(rows[0])), JSON.stringify(rows[0]));
+       await db.close({ timeout: 0 });`,
+    ],
+    env: { ...bunEnv, PGURL: `postgres://u@127.0.0.1:${simple.port}/db` },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: `1 ["�"] {"�":"second"}\n`, stderr: expect.any(String) });
+  expect(exitCode).toBe(0);
+});
+
 // --- ParameterDescription (extended-protocol path) -------------------------
 
 describe("postgres: ParameterDescription body overrun", () => {
@@ -154,7 +184,7 @@ describe("postgres: ParameterDescription body overrun", () => {
       const frame = pd;
       let pending = Buffer.alloc(0);
       let sawStartup = false;
-      socket.on("data", chunk => {
+      socket.on("data", (chunk: Buffer) => {
         pending = Buffer.concat([pending, chunk]);
         if (!sawStartup) {
           if (pending.length < 4) return;

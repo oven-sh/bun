@@ -9,7 +9,7 @@
   },
   "references": [
     { "path": "./src" },
-    { "path": "./src/bake" },
+    { "path": "./src/runtime/bake" },
     { "path": "./src/js" },
     { "path": "./test" },
     { "path": "./packages/bun-types" }

@@ -10,6 +10,8 @@ use crate::E;
 use crate::Fd;
 #[cfg(not(any(target_os = "linux", target_os = "android")))]
 use crate::Tag;
+#[cfg(not(windows))]
+use bun_core::vec::UninitBuf;
 
 // `declare_scope!` uses the ident as both static name AND tag string, but
 // `copy_file` would shadow `pub fn copy_file()` below. Hand-expand with the
@@ -20,9 +22,9 @@ static debug: bun_core::output::ScopedLogger =
     bun_core::output::ScopedLogger::new("copy_file", bun_core::output::Visibility::Hidden);
 
 #[cfg(windows)]
-pub type InputType<'a> = &'a bun_core::WStr; // bun.OSPathSliceZ == [:0]const u16
+type InputType<'a> = &'a bun_core::WStr; // bun.OSPathSliceZ == [:0]const u16
 #[cfg(not(windows))]
-pub type InputType<'a> = Fd;
+type InputType<'a> = Fd;
 // lifetime param is unused on posix (Fd is Copy); kept so callers
 // can write `InputType<'_>` uniformly across platforms.
 
@@ -177,17 +179,14 @@ pub fn copy_file_with_state(
         // FreeBSD 13+ has copy_file_range(2). Unlike Linux, we don't need
         // kernel-version probing — our minimum is 14.0.
         loop {
-            // SAFETY: FFI call; fds are valid, offset ptrs are null (kernel uses file position)
-            let rc = unsafe {
-                libc::copy_file_range(
-                    in_.native(),
-                    core::ptr::null_mut(),
-                    out.native(),
-                    core::ptr::null_mut(),
-                    (i32::MAX - 1) as usize,
-                    0,
-                )
-            };
+            let rc = crate::freebsd::copy_file_range(
+                in_.native(),
+                None,
+                out.native(),
+                None,
+                (i32::MAX - 1) as usize,
+                0,
+            );
             crate::syslog!(
                 "copy_file_range({}, {}) = {}",
                 in_.native(),
@@ -213,8 +212,8 @@ pub fn copy_file_with_state(
         // SAFETY: FFI call; in_/out are NUL-terminated WStr, pointers valid for duration of call
         let rc = unsafe { crate::windows::CopyFileW(in_.as_ptr(), out.as_ptr(), 0) };
         if rc == 0 {
-            return Err(crate::Error::from_code(
-                crate::windows::get_last_errno(),
+            return Err(crate::Error::from_win32(
+                crate::windows::Win32Error::get(),
                 Tag::copyfile,
             ));
         }
@@ -350,17 +349,7 @@ pub(crate) fn copy_file_range(
         && !copy_file_state.contains(LinuxCopyFileState::HAS_COPY_FILE_RANGE_FAILED)
     {
         loop {
-            // SAFETY: raw syscall; fds valid, offset ptrs null
-            let rc = unsafe {
-                crate::linux::copy_file_range(
-                    in_,
-                    core::ptr::null_mut(),
-                    out,
-                    core::ptr::null_mut(),
-                    len,
-                    flags,
-                )
-            };
+            let rc = crate::linux::copy_file_range(in_, None, out, None, len, flags);
             crate::syslog!("copy_file_range({}, {}, {}) = {}", in_, out, len, rc);
             match crate::get_errno(rc) {
                 E::SUCCESS => return Ok(rc as usize),
@@ -392,8 +381,7 @@ pub(crate) fn copy_file_range(
     }
 
     while !copy_file_state.contains(LinuxCopyFileState::HAS_SENDFILE_FAILED) {
-        // SAFETY: raw syscall; fds valid, offset ptr null
-        let rc = unsafe { crate::linux::sendfile(out, in_, core::ptr::null_mut(), len) };
+        let rc = crate::linux::sendfile(out, in_, None, len);
         crate::syslog!("sendfile({}, {}, {}) = {}", in_, out, len, rc);
         match crate::get_errno(rc) {
             E::SUCCESS => return Ok(rc as usize),
@@ -433,8 +421,9 @@ pub(crate) fn copy_file_range(
 
 #[cfg(not(windows))]
 pub(crate) fn copy_file_read_write_loop(in_: fd_t, out: fd_t, len: usize) -> crate::Result<usize> {
-    // PERF: 32 KiB stack buffer is zero-initialized — profile if it shows up on a hot path
-    let mut buf = [0u8; 8 * 4096];
+    let mut stack_buf = UninitBuf::<{ 8 * 4096 }>::uninit();
+    // SAFETY: `read` below is the only writer of `buf`; only `buf[..amt_read]` is read back.
+    let buf = unsafe { stack_buf.as_bytes_mut() };
     let adjusted_count = buf.len().min(len);
     match crate::read(Fd::from_native(in_ as _), &mut buf[0..adjusted_count]) {
         Ok(amt_read) => {
@@ -463,12 +452,10 @@ pub(crate) fn copy_file_read_write_loop(in_: fd_t, out: fd_t, len: usize) -> cra
     }
 }
 
-/// `Platform.kernelVersion().orderWithoutTag(.{ major, minor }).compare(.gte)`.
-/// `bun_analytics::generate_header::Platform` (T6) is the canonical
-/// source; T1 routes through `bun_core::linux_kernel_version()` (TYPE_ONLY
-/// move-down) so this crate stays leaf. Compare is
-/// lexicographic on major→minor→patch,
-/// with patch defaulting to 0 in the comparand.
+/// Same probe as `bun_analytics::generate_header::generate_platform::kernel_version()`,
+/// routed through `bun_core::linux_kernel_version()` so this crate stays leaf.
+/// Compare is lexicographic on major→minor→patch, with patch defaulting to 0
+/// in the comparand.
 #[inline]
 fn kernel_at_least(major: u32, minor: u32) -> bool {
     let v = bun_core::linux_kernel_version();

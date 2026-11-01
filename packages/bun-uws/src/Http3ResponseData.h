@@ -60,7 +60,6 @@ struct Http3ResponseData {
     bool endAfterDrain = false;
 
     uint64_t offset = 0;
-    uint64_t totalSize = 0;
     uint8_t state = 0;
 
     void appendHeader(const char *name, unsigned nlen, const char *value, unsigned vlen) {
@@ -88,7 +87,6 @@ struct Http3ResponseData {
         backpressure.clear();
         endAfterDrain = false;
         offset = 0;
-        totalSize = 0;
         state = HTTP_RESPONSE_PENDING;
     }
 };

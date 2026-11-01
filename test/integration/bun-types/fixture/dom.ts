@@ -23,3 +23,15 @@ INSPECT_MAX_BYTES;
   const r = Response.json({ hello: "world" });
   r.body;
 }
+
+{
+  // #40574: with lib.dom loaded, its `composedPath(): EventTarget[]` must win.
+  // Without lib.dom, the Node-style tuple type applies.
+  const fullPath = [] as EventTarget[];
+  fullPath satisfies Bun.__internal.LibDomIsLoaded extends true
+    ? ReturnType<Event["composedPath"]>
+    : EventTarget[];
+  new Event("test").composedPath() satisfies Bun.__internal.LibDomIsLoaded extends true
+    ? EventTarget[]
+    : [EventTarget?];
+}

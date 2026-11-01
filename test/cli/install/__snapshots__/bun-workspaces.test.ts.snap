@@ -419,7 +419,10 @@ exports[`dependency on workspace without version in package.json: version: kjwoe
     {
       "name": "no-deps",
       "literal": "kjwoehcojrgjoj",
-      "workspace": "packages/mono",
+      "dist_tag": {
+        "name": "no-deps",
+        "tag": "no-deps"
+      },
       "package_id": 2,
       "behavior": {
         "prod": true
@@ -804,7 +807,7 @@ exports[`dependency on workspace without version in package.json: version: 1 1`]
       "literal": "1",
       "npm": {
         "name": "no-deps",
-        "version": "<2.0.0 >=1.0.0"
+        "version": "<2.0.0-0 >=1.0.0"
       },
       "package_id": 3,
       "behavior": {
@@ -960,7 +963,7 @@ exports[`dependency on workspace without version in package.json: version: 1.* 1
       "literal": "1.*",
       "npm": {
         "name": "no-deps",
-        "version": "<2.0.0 >=1.0.0"
+        "version": "<2.0.0-0 >=1.0.0"
       },
       "package_id": 3,
       "behavior": {
@@ -1116,7 +1119,7 @@ exports[`dependency on workspace without version in package.json: version: 1.1.*
       "literal": "1.1.*",
       "npm": {
         "name": "no-deps",
-        "version": "<1.2.0 >=1.1.0"
+        "version": "<1.2.0-0 >=1.1.0"
       },
       "package_id": 3,
       "behavior": {

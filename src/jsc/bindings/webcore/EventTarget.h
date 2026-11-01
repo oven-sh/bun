@@ -99,10 +99,6 @@ public:
     virtual EventTargetInterface eventTargetInterface() const = 0;
     virtual ScriptExecutionContext* scriptExecutionContext() const = 0;
 
-    WEBCORE_EXPORT virtual bool isNode() const;
-
-    bool isContextStopped() const;
-
     using AddEventListenerOptionsOrBoolean = std::variant<AddEventListenerOptions, bool>;
     WEBCORE_EXPORT void addEventListenerForBindings(const AtomString& eventType, RefPtr<EventListener>&&, AddEventListenerOptionsOrBoolean&&);
     using EventListenerOptionsOrBoolean = std::variant<EventListenerOptions, bool>;

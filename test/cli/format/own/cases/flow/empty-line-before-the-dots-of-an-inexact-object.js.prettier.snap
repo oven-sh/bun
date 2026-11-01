@@ -1,0 +1,31 @@
+------------------
+{ printWidth: 80 }
+------------------
+// @flow
+export type A = {
+  a: () => Array<string>,
+  ...
+};
+export type B = {
+  a: 1,
+
+  // comment
+  ...
+};
+
+-------------------
+{ printWidth: 100 }
+-------------------
+// @flow
+export type A = {
+  a: () => Array<string>,
+  ...
+};
+export type B = {
+  a: 1,
+
+  // comment
+  ...
+};
+
+===================== End =====================

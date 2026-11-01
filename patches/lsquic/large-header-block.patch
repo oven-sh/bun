@@ -1,0 +1,73 @@
+--- a/src/liblsquic/lsquic_stream.c
++++ b/src/liblsquic/lsquic_stream.c
+@@ -53,6 +53,7 @@
+ #include "lsquic_ev_log.h"
+ #include "lsquic_enc_sess.h"
+ #include "lsqpack.h"
++#include "lsxpack_header.h"
+ #include "lsquic_frab_list.h"
+ #include "lsquic_http1x_if.h"
+ #include "lsquic_qdec_hdl.h"
+@@ -4113,7 +4114,9 @@ stream_write_buf (struct lsquic_stream *
+ }
+ 
+ 
+-/* This limits the cumulative size of the compressed header fields */
++/* bun: the compressed header fields that fit on the stack.  A larger header
++ * list gets a buffer from the heap.
++ */
+ #define MAX_HEADERS_SIZE (64 * 1024)
+ 
+ static int
+@@ -4131,8 +4134,8 @@ send_headers_ietf (struct lsquic_stream
+     const unsigned short n_buffered = stream->sm_n_buffered;
+     unsigned char *header_block;
+     enum lsqpack_enc_header_flags hflags;
+-    int rv;
+-    const size_t buf_sz = max_push_size + max_prefix_size + MAX_HEADERS_SIZE;
++    int rv, i;
++    size_t max_headers_sz;
+ 
+     if (stream->sm_send_headers_state != SSHS_BEGIN || stream->sm_header_block)
+     {
+@@ -4140,13 +4143,28 @@ send_headers_ietf (struct lsquic_stream
+         errno = EAGAIN;
+         return -1;
+     }
++
++    /* bun: a field is encoded as two strings at most, each behind its length,
++     * and a string is Huffman-coded only if that makes it shorter.  A buffer
++     * of this size is never too small, so the encoder is never rolled back.
++     */
++    max_headers_sz = 0;
++    for (i = 0; i < headers->count; ++i)
++        max_headers_sz += (size_t) headers->headers[i].name_len
++            + headers->headers[i].val_len + 2 * LSQPACK_UINT64_ENC_SZ;
++    if (max_headers_sz < MAX_HEADERS_SIZE)
++        max_headers_sz = MAX_HEADERS_SIZE;
++    const size_t buf_sz = max_push_size + max_prefix_size + max_headers_sz;
+ #ifndef WIN32
+-    unsigned char buf[buf_sz];
++    unsigned char stack_buf[max_push_size + max_prefix_size + MAX_HEADERS_SIZE];
++    unsigned char *buf = stack_buf;
++    if (buf_sz > sizeof(stack_buf))
++        buf = malloc(buf_sz);
+ #else
+     unsigned char *buf = _malloca(buf_sz);
++#endif
+     if (!buf)
+         return -1;
+-#endif
+ 
+     /* TODO: Optimize for the common case: write directly to sm_buf and fall
+      * back to a larger buffer if that fails.
+@@ -4234,6 +4252,9 @@ send_headers_ietf (struct lsquic_stream
+   clean:
+ #ifdef WIN32
+     _freea(buf);
++#else
++    if (buf != stack_buf)
++        free(buf);
+ #endif
+     return rv;
+ 

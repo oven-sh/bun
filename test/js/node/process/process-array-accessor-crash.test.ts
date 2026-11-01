@@ -8,7 +8,7 @@ describe.skipIf(isWindows)("process.setgroups", () => {
       configurable: true,
       get: () => new Date(),
     });
-    expect(() => process.setgroups(groups)).toThrow(TypeError);
+    expect(() => process.setgroups!(groups)).toThrow(TypeError);
   });
 
   test("propagates exceptions thrown from an accessor", () => {
@@ -19,19 +19,19 @@ describe.skipIf(isWindows)("process.setgroups", () => {
         throw new Error("getter threw");
       },
     });
-    expect(() => process.setgroups(groups)).toThrow("getter threw");
+    expect(() => process.setgroups!(groups)).toThrow("getter threw");
   });
 
   test("does not crash on a sparse array", () => {
     const groups = new Array(3);
     groups[0] = 1;
-    expect(() => process.setgroups(groups)).toThrow(TypeError);
+    expect(() => process.setgroups!(groups)).toThrow(TypeError);
   });
 });
 
 describe("process.hrtime", () => {
   test("does not crash when array has an accessor property", () => {
-    const time = [1, 2];
+    const time: [number, number] = [1, 2];
     Object.defineProperty(time, 0, {
       configurable: true,
       get: () => 0,
@@ -42,7 +42,7 @@ describe("process.hrtime", () => {
   });
 
   test("propagates exceptions thrown from an accessor", () => {
-    const time = [1, 2];
+    const time: [number, number] = [1, 2];
     Object.defineProperty(time, 0, {
       configurable: true,
       get: () => {

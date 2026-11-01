@@ -1,0 +1,659 @@
+# -- source: main.mjs
+# // A file that imports itself begins once. Whoever imports it runs behind its end, and what it reads of itself throws until the store has run, by whatever way the name is read.
+# import * as self from "./main.mjs";
+# import hooks, { readLate } from "./hooks.mjs";
+# import { a, readB } from "./a.mjs";
+# const attempt = (name, read) => {
+#   try {
+#     console.log(name, read());
+#   } catch (error) {
+#     console.log(name, error.name);
+#   }
+# };
+# attempt("own name ahead of its store", () => self.own);
+# export const own = "own";
+# attempt("own name behind its store", () => self.own);
+# attempt("members of the namespace of a file that imports itself", () => hooks.other + hooks["late"]);
+# attempt("a function of that file", readLate);
+# attempt("a cycle of two files that import themselves too", () => a + readB());
+# attempt("keys", () => Object.keys(hooks).join() + "|" + Object.keys(self).join());
+# -- source: hooks.mjs
+# import * as self from "./hooks.mjs";
+# import { late as lateOfSelf } from "./hooks.mjs";
+# export * as default from "./hooks.mjs";
+# const attempt = (name, read) => {
+#   try {
+#     console.log(name, read());
+#   } catch (error) {
+#     console.log(name, error.name);
+#   }
+# };
+# export const other = "other";
+# attempt("hooks: late through the namespace, early", () => self.late);
+# attempt("hooks: late by name, early", () => lateOfSelf);
+# attempt("hooks: late through default, early", () => self.default.late);
+# export function readLate() {
+#   return lateOfSelf + self.late;
+# }
+# attempt("hooks: a function, early", readLate);
+# export const late = "late";
+# attempt("hooks: late through the namespace", () => self.late);
+# attempt("hooks: a function", readLate);
+# -- source: b.mjs
+# import * as self from "./b.mjs";
+# import { a } from "./a.mjs";
+# try {
+#   console.log("b: a, early", a);
+# } catch (error) {
+#   console.log("b: a, early", error.name);
+# }
+# export const b = "b";
+# console.log("b: own", self.b);
+# -- source: a.mjs
+# import "./a.mjs";
+# import { b } from "./b.mjs";
+# export const a = "a";
+# export function readB() {
+#   return b;
+# }
+# -- end of source
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+# RUN(WHOLE): compile
+# WHOLE: image not empty
+
+module m0 path="hooks.mjs" displayPath="hooks.mjs" flags=[KeepsError, IsImportedAsNamespace] body=f0 requests=[{target=m0 completes=true}] exports=[{name="default" kind=Namespace module=m0}, {name="late" variable=g0}, {name="other" variable=g1}, {name="readLate" variable=g2}] namespaceLayout=L(m0)
+module m1 path="b.mjs" displayPath="b.mjs" flags=[KeepsError, IsImportedAsNamespace] body=f13 requests=[{target=m1 completes=true}, {target=m2 completes=true}] exports=[{name="b" variable=g3}] namespaceLayout=L(m1)
+module m2 path="a.mjs" displayPath="a.mjs" body=f14 requests=[{target=m2 completes=true}, {target=m1 completes=true}] namespaceLayout=L(m2)
+module m3 path="main.mjs" displayPath="main.mjs" flags=[KeepsError, IsImportedAsNamespace] body=f16 requests=[{target=m3 completes=true}, {target=m0 completes=true}, {target=m2 completes=true}] exports=[{name="own" variable=g6}] namespaceLayout=L(m3)
+entry module=m3
+variable g0 name="late" module=m0 declared={type=undefined|null|absent|"late" flags=[IsExpected]} flags=[IsImmutable]
+variable g1 name="other" module=m0 declared={type=undefined|null|absent|"other" flags=[IsExpected]} flags=[IsImmutable]
+variable g2 name="readLate" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g3 name="b" module=m1 declared={type=undefined|null|absent|"b" flags=[IsExpected]} flags=[IsImmutable]
+variable g4 name="a" module=m2 declared={type=undefined|null|absent|"a" flags=[IsExpected]} flags=[IsImmutable]
+variable g5 name="readB" module=m2 declared={type=f15 flags=[IsFromCompiler]} initialization=Function function=f15 flags=[IsImmutable]
+variable g6 name="own" module=m3 declared={type=undefined|null|absent|"own" flags=[IsExpected]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f2 @143
+    v1 = Convert v0 declared={type=undefined|null|function|f2 flags=[IsExpected]} @143
+    v2 = String string="other" @283
+    v3 = Convert v2 declared={type=undefined|null|"other" flags=[IsExpected]} @283
+    PutModuleVariable v3 variable=g1 @275
+    v5 = String string="hooks: late through the namespace, early" @300
+    v6 = NewClosure function=f3 @344
+    v7 = Call v1, -, v5, v6 calleeName="attempt" @292
+    v8 = String string="hooks: late by name, early" @370
+    v9 = NewClosure function=f4 @400
+    v10 = Call v1, -, v8, v9 calleeName="attempt" @362
+    v11 = String string="hooks: late through default, early" @427
+    v12 = NewClosure function=f5 @465
+    v13 = Call v1, -, v11, v12 calleeName="attempt" @419
+    v14 = String string="hooks: a function, early" @563
+    v15 = GetModuleVariable variable=g2 @599 @591
+    v16 = Call v1, -, v14, v15 calleeName="attempt" @555
+    v17 = String string="late" @622
+    v18 = Convert v17 declared={type=undefined|null|"late" flags=[IsExpected]} @622
+    PutModuleVariable v18 variable=g0 @615
+    v20 = String string="hooks: late through the namespace" @638
+    v21 = NewClosure function=f6 @675
+    v22 = Call v1, -, v20, v21 calleeName="attempt" @630
+    v23 = String string="hooks: a function" @701
+    v24 = GetModuleVariable variable=g2 @730 @722
+    v25 = Call v1, -, v23, v24 calleeName="attempt" @693
+    v26 = Undefined @693
+    Return v26 @693
+}
+function f1 name="readLate" module=m0 position=491 flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f11] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @491
+  b1():
+    v0 = GetModuleVariable variable=g0 @529
+    v1 = CheckInitialized v0 name="lateOfSelf" @529
+    v2 = GetModuleVariable variable=g0 @542
+    v3 = CheckInitialized v2 name="late" @542
+    v4 = Convert v3 declared={type=undefined|null|"late" flags=[IsExpected]} @542
+    v5 = Add v1, v4 @529
+    v6 = String string="latelate" @529
+    v7 = Convert v6 declared={type=undefined|null|string flags=[IsExpected]} @529
+    Return v7 @529
+}
+function f2 name="attempt" module=m0 position=143 kind=Arrow length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] functionTypes=[f7] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|function):
+    Jump -> next b1() @143
+  b1():
+    Jump -> next b2() @163
+  b2() handler=b4():
+    v2 = Builtin builtin=GlobalThis @173
+    v3 = PropGet v2 key="console" [isFreeName] @173
+    v4 = Convert v3 declared={type=builtin(Console) flags=[IsExpected]} @173
+    v5 = PropGet v4 key="log" @173
+    v6 = Convert v5 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @173
+    v7 = Call v1 calleeName="read" @191
+    v8 = Call v6, v4, v0, v7 calleeKey="log" calleeName="console.log" @181
+    Jump -> next b3() @173
+  b3():
+    Jump -> next b5() @173
+  b4() role=CatchHandler:
+    v9 = CatchValue @218
+    v10 = Builtin builtin=GlobalThis @224
+    v11 = PropGet v10 key="console" [isFreeName] @224
+    v12 = Convert v11 declared={type=builtin(Console) flags=[IsExpected]} @224
+    v13 = PropGet v12 key="log" @224
+    v14 = Convert v13 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @224
+    v15 = PropGet v9 key="name" @242
+    v16 = Call v14, v12, v0, v15 calleeKey="log" calleeName="console.log" @232
+    Jump -> next b5() @224
+  b5():
+    v17 = Undefined @224
+    Return v17 @224
+}
+function f3 module=m0 position=344 kind=Arrow thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f8] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @344
+  b1():
+    v0 = GetModuleVariable variable=g0 @350
+    v1 = CheckInitialized v0 name="late" @350
+    v2 = Convert v1 declared={type=undefined|null|"late" flags=[IsExpected]} @350
+    v3 = Convert v2 declared={type=undefined|null|string flags=[IsExpected]} @350
+    Return v3 @350
+}
+function f4 module=m0 position=400 kind=Arrow thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f9] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @400
+  b1():
+    v0 = GetModuleVariable variable=g0 @416 @406
+    v1 = CheckInitialized v0 name="lateOfSelf" @416 @406
+    v2 = Convert v1 declared={type=undefined|null|string flags=[IsExpected]} @406
+    Return v2 @406
+}
+function f5 module=m0 position=465 kind=Arrow thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f10] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @465
+  b1():
+    v0 = GetModuleVariable variable=g0 @471
+    v1 = CheckInitialized v0 name="late" @471
+    v2 = Convert v1 declared={type=undefined|null|"late" flags=[IsExpected]} @471
+    v3 = Convert v2 declared={type=undefined|null|string flags=[IsExpected]} @471
+    Return v3 @471
+}
+function f6 module=m0 position=675 kind=Arrow thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f12] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @675
+  b1():
+    v0 = GetModuleVariable variable=g0 @681
+    v1 = CheckInitialized v0 name="late" @681
+    v2 = Convert v1 declared={type=undefined|null|"late" flags=[IsExpected]} @681
+    v3 = Convert v2 declared={type=undefined|null|string flags=[IsExpected]} @681
+    Return v3 @681
+}
+function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f8 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f9 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f10 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f11 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f12 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f13 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    Jump -> next b2() @62
+  b2() handler=b4():
+    v0 = Builtin builtin=GlobalThis @70
+    v1 = PropGet v0 key="console" [isFreeName] @70
+    v2 = Convert v1 declared={type=builtin(Console) flags=[IsExpected]} @70
+    v3 = PropGet v2 key="log" @70
+    v4 = Convert v3 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @70
+    v5 = String string="b: a, early" @82
+    v6 = GetModuleVariable variable=g4 @98 @97
+    v7 = CheckInitialized v6 name="a" @98 @97
+    v8 = Convert v7 declared={type=undefined|null|"a" flags=[IsExpected]} @97
+    v9 = Call v4, v2, v5, v8 calleeKey="log" calleeName="console.log" @78
+    Jump -> next b3() @70
+  b3():
+    Jump -> next b5() @70
+  b4() role=CatchHandler:
+    v10 = CatchValue @117
+    v11 = Builtin builtin=GlobalThis @121
+    v12 = PropGet v11 key="console" [isFreeName] @121
+    v13 = Convert v12 declared={type=builtin(Console) flags=[IsExpected]} @121
+    v14 = PropGet v13 key="log" @121
+    v15 = Convert v14 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @121
+    v16 = String string="b: a, early" @133
+    v17 = PropGet v10 key="name" @148
+    v18 = Call v15, v13, v16, v17 calleeKey="log" calleeName="console.log" @129
+    Jump -> next b5() @121
+  b5():
+    v19 = String string="b" @180
+    v20 = Convert v19 declared={type=undefined|null|"b" flags=[IsExpected]} @180
+    PutModuleVariable v20 variable=g3 @176
+    v22 = Builtin builtin=GlobalThis @185
+    v23 = PropGet v22 key="console" [isFreeName] @185
+    v24 = Convert v23 declared={type=builtin(Console) flags=[IsExpected]} @185
+    v25 = PropGet v24 key="log" @185
+    v26 = Convert v25 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @185
+    v27 = String string="b: own" @197
+    v28 = GetModuleVariable variable=g3 @207
+    v29 = CheckInitialized v28 name="b" @207
+    v30 = Convert v29 declared={type=undefined|null|"b" flags=[IsExpected]} @207
+    v31 = Call v26, v24, v27, v30 calleeKey="log" calleeName="console.log" @193
+    v32 = Undefined @185
+    Return v32 @185
+}
+function f14 module=m2 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = String string="a" @64
+    v1 = Convert v0 declared={type=undefined|null|"a" flags=[IsExpected]} @64
+    PutModuleVariable v1 variable=g4 @60
+    v3 = Undefined @69
+    Return v3 @69
+}
+function f15 name="readB" module=m2 position=69 flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @69
+  b1():
+    v0 = GetModuleVariable variable=g3 @104
+    v1 = CheckInitialized v0 name="b" @104
+    v2 = Convert v1 declared={type=undefined|null|"b" flags=[IsExpected]} @104
+    v3 = Convert v2 declared={type=undefined|null|string flags=[IsExpected]} @104
+    Return v3 @104
+}
+function f16 module=m3 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f17 @312
+    v1 = Convert v0 declared={type=undefined|null|function|f17 flags=[IsExpected]} @312
+    v2 = String string="own name ahead of its store" @439
+    v3 = NewClosure function=f18 @470
+    v4 = Call v1, -, v2, v3 calleeName="attempt" @431
+    v5 = String string="own" @506
+    v6 = Convert v5 declared={type=undefined|null|"own" flags=[IsExpected]} @506
+    PutModuleVariable v6 variable=g6 @500
+    v8 = String string="own name behind its store" @521
+    v9 = NewClosure function=f19 @550
+    v10 = Call v1, -, v8, v9 calleeName="attempt" @513
+    v11 = String string="members of the namespace of a file that imports itself" @575
+    v12 = NewClosure function=f20 @633
+    v13 = Call v1, -, v11, v12 calleeName="attempt" @567
+    v14 = String string="a function of that file" @677
+    v15 = GetModuleVariable variable=g2 @712 @704
+    v16 = CheckInitialized v15 name="readLate" @712 @704
+    v17 = Call v1, -, v14, v16 calleeName="attempt" @669
+    v18 = String string="a cycle of two files that import themselves too" @723
+    v19 = NewClosure function=f21 @774
+    v20 = Call v1, -, v18, v19 calleeName="attempt" @715
+    v21 = String string="keys" @802
+    v22 = NewClosure function=f22 @810
+    v23 = Call v1, -, v21, v22 calleeName="attempt" @794
+    v24 = Undefined @794
+    Return v24 @794
+}
+function f17 name="attempt" module=m3 position=312 kind=Arrow length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] functionTypes=[f23] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|function):
+    Jump -> next b1() @312
+  b1():
+    Jump -> next b2() @332
+  b2() handler=b4():
+    v2 = Builtin builtin=GlobalThis @342
+    v3 = PropGet v2 key="console" [isFreeName] @342
+    v4 = Convert v3 declared={type=builtin(Console) flags=[IsExpected]} @342
+    v5 = PropGet v4 key="log" @342
+    v6 = Convert v5 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @342
+    v7 = Call v1 calleeName="read" @360
+    v8 = Call v6, v4, v0, v7 calleeKey="log" calleeName="console.log" @350
+    Jump -> next b3() @342
+  b3():
+    Jump -> next b5() @342
+  b4() role=CatchHandler:
+    v9 = CatchValue @387
+    v10 = Builtin builtin=GlobalThis @393
+    v11 = PropGet v10 key="console" [isFreeName] @393
+    v12 = Convert v11 declared={type=builtin(Console) flags=[IsExpected]} @393
+    v13 = PropGet v12 key="log" @393
+    v14 = Convert v13 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @393
+    v15 = PropGet v9 key="name" @411
+    v16 = Call v14, v12, v0, v15 calleeKey="log" calleeName="console.log" @401
+    Jump -> next b5() @393
+  b5():
+    v17 = Undefined @393
+    Return v17 @393
+}
+function f18 module=m3 position=470 kind=Arrow thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f24] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @470
+  b1():
+    v0 = GetModuleVariable variable=g6 @476
+    v1 = CheckInitialized v0 name="own" @476
+    v2 = Convert v1 declared={type=undefined|null|"own" flags=[IsExpected]} @476
+    v3 = Convert v2 declared={type=undefined|null|string flags=[IsExpected]} @476
+    Return v3 @476
+}
+function f19 module=m3 position=550 kind=Arrow thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f25] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @550
+  b1():
+    v0 = GetModuleVariable variable=g6 @556
+    v1 = CheckInitialized v0 name="own" @556
+    v2 = Convert v1 declared={type=undefined|null|"own" flags=[IsExpected]} @556
+    v3 = Convert v2 declared={type=undefined|null|string flags=[IsExpected]} @556
+    Return v3 @556
+}
+function f20 module=m3 position=633 kind=Arrow thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f26] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @633
+  b1():
+    v0 = GetModuleVariable variable=g1 @639
+    v1 = CheckInitialized v0 name="other" @639
+    v2 = Convert v1 declared={type=undefined|null|"other" flags=[IsExpected]} @639
+    v3 = GetModuleVariable variable=g0 @653
+    v4 = CheckInitialized v3 name="late" @653
+    v5 = Convert v4 declared={type=undefined|null|"late" flags=[IsExpected]} @653
+    v6 = Add v2, v5 @639
+    v7 = String string="otherlate" @639
+    v8 = Convert v7 declared={type=undefined|null|string flags=[IsExpected]} @639
+    Return v8 @639
+}
+function f21 module=m3 position=774 kind=Arrow thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f27] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @774
+  b1():
+    v0 = GetModuleVariable variable=g4 @780
+    v1 = CheckInitialized v0 name="a" @780
+    v2 = Convert v1 declared={type=undefined|null|"a" flags=[IsExpected]} @780
+    v3 = GetModuleVariable variable=g5 @784
+    v4 = CheckInitialized v3 name="readB" @784
+    v5 = Call v4 calleeName="readB" @784
+    v6 = Convert v5 declared={type=undefined|null|string flags=[IsExpected]} @784
+    v7 = Add v2, v6 @780
+    v8 = Convert v7 declared={type=undefined|null|string flags=[IsExpected]} @780
+    Return v8 @780
+}
+function f22 module=m3 position=810 kind=Arrow thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f28] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @810
+  b1():
+    v0 = Builtin builtin=Object @816
+    v1 = Builtin builtin=ObjectKeys @816
+    v2 = ModuleNamespace module=m0 @833 @828
+    v3 = Convert v2 declared={type=undefined|null|object flags=[IsExpected]} @828
+    v4 = Call v1, v0, v3 calleeName="Object.keys" @823
+    v5 = Convert v4 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]} @816
+    v6 = PropGet v5 key="join" @833
+    v7 = Convert v6 declared={type=undefined|null|function flags=[IsExpected]} @816
+    v8 = Call v7, v5 calleeKey="join" calleeName="join" @835
+    v9 = Convert v8 declared={type=undefined|null|string flags=[IsExpected]} @816
+    v10 = String string="|" @844
+    v11 = Add v9, v10 @835
+    v12 = Builtin builtin=Object @850
+    v13 = Builtin builtin=ObjectKeys @850
+    v14 = ModuleNamespace module=m3 @866 @862
+    v15 = Convert v14 declared={type=undefined|null|object flags=[IsExpected]} @862
+    v16 = Call v13, v12, v15 calleeName="Object.keys" @857
+    v17 = Convert v16 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]} @850
+    v18 = PropGet v17 key="join" @866
+    v19 = Convert v18 declared={type=undefined|null|function flags=[IsExpected]} @850
+    v20 = Call v19, v17 calleeKey="join" calleeName="join" @868
+    v21 = Convert v20 declared={type=undefined|null|string flags=[IsExpected]} @850
+    v22 = Add v11, v21 @868
+    v23 = Convert v22 declared={type=undefined|null|string flags=[IsExpected]} @868
+    Return v23 @868
+}
+function f23 module=m3 role=Signature thisType={type=anything} results=[{type=anything}]
+function f24 module=m3 role=Signature thisType={type=anything} results=[{type=anything}]
+function f25 module=m3 role=Signature thisType={type=anything} results=[{type=anything}]
+function f26 module=m3 role=Signature thisType={type=anything} results=[{type=anything}]
+function f27 module=m3 role=Signature thisType={type=anything} results=[{type=anything}]
+function f28 module=m3 role=Signature thisType={type=anything} results=[{type=anything}]
+function f29 module=m3 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: f0 readLate f3 f4 f5 f6 f13 f14 readB f16 f18 f19 f20 f21 f22 attempt
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] inlineFrames=[{}, {callee=f2 callPosition=630 module=m0}, {callee=f2 callPosition=419 module=m0}, {callee=f2 callPosition=362 module=m0}, {callee=f2 callPosition=292 module=m0}, {callee=f6 callPosition=191 parent=1 module=m0}] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: "other" = String string="other"
+# CHECK-NEXT: PutModuleVariable v0 variable=g1
+# CHECK-NEXT: v2: "hooks: late through the namespace, early" = String string="hooks: late through the namespace, early"
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1() handler=b2():
+# CHECK-NEXT: v3: "late" = CallDirect function=f3 accessSite=8
+# CHECK-NEXT: v4: undefined = CallBuiltin -, v2, v3 overload=ConsoleLog/0 accessSite=9
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b2() role=CatchHandler:
+# CHECK-NEXT: v5: anything = CatchValue
+# CHECK-NEXT: v6: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v7: anything = PropGet v5 key="name" accessSite=12
+# CHECK-NEXT: v8: undefined = CallBuiltin v6, v2, v7 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=13
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v9: "hooks: late by name, early" = String string="hooks: late by name, early"
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b4() handler=b5():
+# CHECK-NEXT: v10: "late" = CallDirect function=f4 accessSite=8
+# CHECK-NEXT: v11: undefined = CallBuiltin -, v9, v10 overload=ConsoleLog/0 accessSite=9
+# CHECK-NEXT: Jump -> next b6()
+# CHECK-NEXT: b5() role=CatchHandler:
+# CHECK-NEXT: v12: anything = CatchValue
+# CHECK-NEXT: v13: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v14: anything = PropGet v12 key="name" accessSite=12
+# CHECK-NEXT: v15: undefined = CallBuiltin v13, v9, v14 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=13
+# CHECK-NEXT: Jump -> next b6()
+# CHECK-NEXT: b6():
+# CHECK-NEXT: v16: "hooks: late through default, early" = String string="hooks: late through default, early"
+# CHECK-NEXT: Jump -> next b7()
+# CHECK-NEXT: b7() handler=b8():
+# CHECK-NEXT: v17: "late" = CallDirect function=f5 accessSite=8
+# CHECK-NEXT: v18: undefined = CallBuiltin -, v16, v17 overload=ConsoleLog/0 accessSite=9
+# CHECK-NEXT: Jump -> next b9()
+# CHECK-NEXT: b8() role=CatchHandler:
+# CHECK-NEXT: v19: anything = CatchValue
+# CHECK-NEXT: v20: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v21: anything = PropGet v19 key="name" accessSite=12
+# CHECK-NEXT: v22: undefined = CallBuiltin v20, v16, v21 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=13
+# CHECK-NEXT: Jump -> next b9()
+# CHECK-NEXT: b9():
+# CHECK-NEXT: v23: "hooks: a function, early" = String string="hooks: a function, early"
+# CHECK-NEXT: v24: f1 = GetModuleVariable variable=g2
+# CHECK-NEXT: v25: undefined = CallDirect v23, v24 function=f34 accessSite=3
+# CHECK-NEXT: v26: "late" = String string="late"
+# CHECK-NEXT: PutModuleVariable v26 variable=g0
+# CHECK-NEXT: v28: "hooks: late through the namespace" = String string="hooks: late through the namespace"
+# CHECK-NEXT: Jump -> next b10()
+# CHECK-NEXT: b10() handler=b11():
+# CHECK-NEXT: v29: undefined = CallBuiltin -, v28, v26 overload=ConsoleLog/0 accessSite=9
+# CHECK-NEXT: Jump -> next b12()
+# CHECK-NEXT: b11() role=CatchHandler:
+# CHECK-NEXT: v30: anything = CatchValue
+# CHECK-NEXT: v31: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v32: anything = PropGet v30 key="name" accessSite=12
+# CHECK-NEXT: v33: undefined = CallBuiltin v31, v28, v32 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=13
+# CHECK-NEXT: Jump -> next b12()
+# CHECK-NEXT: b12():
+# CHECK-NEXT: v34: "hooks: a function" = String string="hooks: a function"
+# CHECK-NEXT: v35: undefined = CallDirect v34, v24 function=f34 accessSite=5
+# CHECK-NEXT: v36: undefined = Undefined
+# CHECK-NEXT: Return v36
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="readLate"
+# CHECK: module=m0 position=491 flags=[HasExplicitName] thisType={type=anything} results=[{type="latelate"}] functionTypes=[f11] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: absent|"late" = GetModuleVariable variable=g0
+# CHECK-NEXT: v1: "late" = CheckInitialized v0 name="lateOfSelf"
+# CHECK-NEXT: v2: "latelate" = String string="latelate"
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="attempt"
+# CHECK: module=m0 position=143 kind=Arrow length=2 thisType={type=anything} parameters=[{type="hooks: a function"|"hooks: a function, early"|"hooks: late by name, early"|"hooks: late through default, early"|"hooks: late through the namespace"|"hooks: late through the namespace, early"}, {type=f1|f3|f4|f5|f6}] results=[{type=undefined}] functionTypes=[f7] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
+# CHECK-LABEL: function f3 module=
+# CHECK: m0 position=344 kind=Arrow thisType={type=anything} results=[{type="late"}] functionTypes=[f8] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: absent|"late" = GetModuleVariable variable=g0
+# CHECK-NEXT: v1: "late" = CheckInitialized v0 name="late"
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+# CHECK-LABEL: function f4 module=
+# CHECK: m0 position=400 kind=Arrow thisType={type=anything} results=[{type="late"}] functionTypes=[f9] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: absent|"late" = GetModuleVariable variable=g0
+# CHECK-NEXT: v1: "late" = CheckInitialized v0 name="lateOfSelf"
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+# CHECK-LABEL: function f5 module=
+# CHECK: m0 position=465 kind=Arrow thisType={type=anything} results=[{type="late"}] functionTypes=[f10] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: absent|"late" = GetModuleVariable variable=g0
+# CHECK-NEXT: v1: "late" = CheckInitialized v0 name="late"
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+# CHECK-LABEL: function f6 module=
+# CHECK: m0 position=675 kind=Arrow thisType={type=anything} results=[{type="late"}] functionTypes=[f12] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: absent|"late" = GetModuleVariable variable=g0
+# CHECK-NEXT: v1: "late" = AssumeType v0 provenType="late"
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+# CHECK-LABEL: function f13 module=
+# CHECK: m1 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] {
+# CHECK-NEXT: b0() handler=b1():
+# CHECK-NEXT: v0: "b: a, early" = String string="b: a, early"
+# CHECK-NEXT: v1: absent|"a" = GetModuleVariable variable=g4
+# CHECK-NEXT: v2: "a" = CheckInitialized v1 name="a"
+# CHECK-NEXT: v3: undefined = CallBuiltin -, v0, v2 overload=ConsoleLog/0 accessSite=16
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b1() role=CatchHandler:
+# CHECK-NEXT: v4: anything = CatchValue
+# CHECK-NEXT: v5: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v6: "b: a, early" = String string="b: a, early"
+# CHECK-NEXT: v7: anything = PropGet v4 key="name" accessSite=19
+# CHECK-NEXT: v8: undefined = CallBuiltin v5, v6, v7 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=20
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v9: "b" = String string="b"
+# CHECK-NEXT: PutModuleVariable v9 variable=g3
+# CHECK-NEXT: v11: "b: own" = String string="b: own"
+# CHECK-NEXT: v12: undefined = CallBuiltin -, v11, v9 overload=ConsoleLog/0 accessSite=23
+# CHECK-NEXT: v13: undefined = Undefined
+# CHECK-NEXT: Return v13
+# CHECK-NEXT: }
+# CHECK-LABEL: function f14 module=
+# CHECK: m2 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: "a" = String string="a"
+# CHECK-NEXT: PutModuleVariable v0 variable=g4
+# CHECK-NEXT: v2: undefined = Undefined
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="readB"
+# CHECK: module=m2 position=69 flags=[HasExplicitName] thisType={type=anything} results=[{type="b"}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: absent|"b" = GetModuleVariable variable=g3
+# CHECK-NEXT: v1: "b" = CheckInitialized v0 name="b"
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+# CHECK-LABEL: function f16 module=
+# CHECK: m3 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: boolean = BeginModuleEvaluation module=m3
+# CHECK-NEXT: Branch v0 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v1: undefined = CallDirect function=f0
+# CHECK-NEXT: v2: undefined = CallDirect function=f13
+# CHECK-NEXT: v3: undefined = CallDirect function=f14
+# CHECK-NEXT: v4: undefined = CallDirect function=f31
+# CHECK-NEXT: FinishModuleEvaluation module=m3
+# CHECK-NEXT: v6: undefined = Undefined
+# CHECK-NEXT: Return v6
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v7: undefined = Undefined
+# CHECK-NEXT: Return v7
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="attempt"
+# CHECK: module=m3 position=312 kind=Arrow length=2 thisType={type=anything} parameters=[{type="a cycle of two files that import themselves too"|"a function of that file"|"keys"|"members of the namespace of a file that imports itself"|"own name ahead of its store"|"own name behind its store"}, {type=f1|f18|f19|f20|f21|f22}] results=[{type=undefined}] functionTypes=[f23] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
+# CHECK-LABEL: function f18 module=
+# CHECK: m3 position=470 kind=Arrow thisType={type=anything} results=[{type="own"}] functionTypes=[f24] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: absent|"own" = GetModuleVariable variable=g6
+# CHECK-NEXT: v1: "own" = CheckInitialized v0 name="own"
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+# CHECK-LABEL: function f19 module=
+# CHECK: m3 position=550 kind=Arrow thisType={type=anything} results=[{type="own"}] functionTypes=[f25] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: absent|"own" = GetModuleVariable variable=g6
+# CHECK-NEXT: v1: "own" = AssumeType v0 provenType="own"
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+# CHECK-LABEL: function f20 module=
+# CHECK: m3 position=633 kind=Arrow thisType={type=anything} results=[{type="otherlate"}] functionTypes=[f26] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: "otherlate" = String string="otherlate"
+# CHECK-NEXT: Return v0
+# CHECK-NEXT: }
+# CHECK-LABEL: function f21 module=
+# CHECK: m3 position=774 kind=Arrow thisType={type=anything} results=[{type=string}] functionTypes=[f27] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: "b" = CallDirect function=f15 accessSite=38
+# CHECK-NEXT: v1: "ab" = String string="ab"
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+# CHECK-LABEL: function f22 module=
+# CHECK: m3 position=810 kind=Arrow thisType={type=anything} results=[{type=string}] functionTypes=[f28] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: InitializeBuiltin builtin=ObjectKeys
+# CHECK-NEXT: v1: L(m0) = ModuleNamespace module=m0
+# CHECK-NEXT: v2: Array<string> = CallBuiltin -, v1 overload=ObjectKeys/0 accessSite=39
+# CHECK-NEXT: v3: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v2 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v4: string = CallBuiltin v3 overload=ArrayPrototypeJoin/0 accessSite=41
+# CHECK-NEXT: v5: "|" = String string="|"
+# CHECK-NEXT: v6: string = Add v4, v5
+# CHECK-NEXT: v7: L(m3) = ModuleNamespace module=m3
+# CHECK-NEXT: v8: Array<string> = CallBuiltin -, v7 overload=ObjectKeys/0 accessSite=42
+# CHECK-NEXT: v9: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v8 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v10: string = CallBuiltin v9 overload=ArrayPrototypeJoin/0 accessSite=44
+# CHECK-NEXT: v11: string = Add v6, v10
+# CHECK-NEXT: Return v11
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="readLate"
+# CHECK: module=m0 position=491 role=GenericEntrypoint flags=[HasThis] captures=[{type=f1}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f1} creator=Entrypoint{target=f1 arguments=Registers} {
+# CHECK-NEXT: b0(v0: f1, v1: anything):
+# CHECK-NEXT: v2: "latelate" = CallDirect function=f1
+# CHECK-NEXT: ReturnCall v2 requirement=Allowed
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="attempt"
+# CHECK: module=m0 position=143 kind=Arrow role=CalleeVersion length=2 thisType={type=anything} parameters=[{type="hooks: a function"|"hooks: a function, early"|"hooks: late by name, early"|"hooks: late through default, early"|"hooks: late through the namespace"|"hooks: late through the namespace, early"}, {type=f1|f3|f4|f5|f6}] results=[{type=undefined}] functionTypes=[f7] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2 parameter=1073741825 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f2} {
+# CHECK-NEXT: b0(v0: "hooks: a function"|"hooks: a function, early"|"hooks: late by name, early"|"hooks: late through default, early"|"hooks: late through the namespace"|"hooks: late through the namespace, early", v1: f1|f3|f4|f5|f6) handler=b1():
+# CHECK-NEXT: v2: anything = Call v1 calleeName="read" accessSite=8 callees=[f1, f3, f4, f5, f6]
+# CHECK-NEXT: v3: "late"|"latelate" = AssumeType v2 provenType="late"|"latelate"
+# CHECK-NEXT: v4: undefined = CallBuiltin -, v0, v3 overload=ConsoleLog/0 accessSite=9
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b1() role=CatchHandler:
+# CHECK-NEXT: v5: anything = CatchValue
+# CHECK-NEXT: v6: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v7: anything = PropGet v5 key="name" accessSite=12
+# CHECK-NEXT: v8: undefined = CallBuiltin v6, v0, v7 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=13
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v9: undefined = Undefined
+# CHECK-NEXT: Return v9
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="attempt"
+# CHECK: module=m3 position=312 kind=Arrow role=CalleeVersion length=2 thisType={type=anything} parameters=[{type="a cycle of two files that import themselves too"|"a function of that file"|"keys"|"members of the namespace of a file that imports itself"|"own name ahead of its store"|"own name behind its store"}, {type=f1|f18|f19|f20|f21|f22}] results=[{type=undefined}] functionTypes=[f23] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f17 parameter=1073741825 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f17} {
+# CHECK-NEXT: b0(v0: "a cycle of two files that import themselves too"|"a function of that file"|"keys"|"members of the namespace of a file that imports itself"|"own name ahead of its store"|"own name behind its store", v1: f1|f18|f19|f20|f21|f22) handler=b1():
+# CHECK-NEXT: v2: anything = Call v1 calleeName="read" accessSite=32 callees=[f1, f18, f19, f20, f21, f22]
+# CHECK-NEXT: v3: string = AssumeType v2 provenType=string
+# CHECK-NEXT: v4: undefined = CallBuiltin -, v0, v3 overload=ConsoleLog/0 accessSite=33
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b1() role=CatchHandler:
+# CHECK-NEXT: v5: anything = CatchValue
+# CHECK-NEXT: v6: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v7: anything = PropGet v5 key="name" accessSite=36
+# CHECK-NEXT: v8: undefined = CallBuiltin v6, v0, v7 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=37
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v9: undefined = Undefined
+# CHECK-NEXT: Return v9
+# CHECK-NEXT: }

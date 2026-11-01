@@ -20,6 +20,21 @@
 // not from the loaded symbol table: the linker strips most local symbols from
 // .dynsym, and .symtab isn't a loaded segment.
 //
+// A process the traced one starts is normally left alone: the tracer takes
+// itself out of the environment once loaded. An application that re-executes
+// itself (a compiled CLI that respawns its own binary, say) does its work in
+// one of those processes, so BUN_FUNCTRACE_CHILDREN=1 keeps the tracer in the
+// environment instead. Every traced process needs a record of its own then,
+// which is what `%p` in BUN_FUNCTRACE_OUT is for: it expands to the process
+// id (with `.1`, `.2`, … appended if that name is taken: a process that execs
+// itself again keeps its id). The starts describe one binary, so that mode
+// also needs BUN_FUNCTRACE_EXE, the absolute path of the executable to trace.
+// A process running any other file (a wrapper such as `env` or `sh -c` in
+// front of the application, a tool it starts) passes the environment on and is
+// otherwise left alone. On macOS the loader drops DYLD_INSERT_LIBRARIES when a
+// protected binary such as /bin/sh runs, so a child reached only through one
+// of those is not followed.
+//
 //   linux: cc -O2 -shared -fPIC -o functrace.so functrace.c -ldl
 //   macos: cc -O2 -dynamiclib -fPIC -o functrace.dylib functrace.c
 //   BUN_FUNCTRACE_STARTS=/tmp/starts.bin BUN_FUNCTRACE_OUT=/tmp/trace.bin
@@ -33,6 +48,7 @@
 #define _DARWIN_C_SOURCE
 #define _XOPEN_SOURCE 700
 #include <dlfcn.h>
+#include <errno.h>
 #include <pthread.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -467,10 +483,24 @@ static int install_breakpoints(void)
     return 0;
 }
 
-static int open_record(const char *path)
+static int open_record(const char *path, int per_process)
 {
     size_t bytes = (TRACE_HEADER_WORDS + start_count) * 8;
-    int fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644);
+    int fd = -1;
+    if (!per_process) {
+        fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644);
+    } else {
+        // A process id names a record only once: a process that execs itself
+        // again keeps its id, and ids are reused. Never reopen an earlier
+        // process's record; take the next free name instead.
+        char unique[1100];
+        for (int n = 0; fd < 0 && n < 1000; n++) {
+            if (n == 0) snprintf(unique, sizeof unique, "%s", path);
+            else snprintf(unique, sizeof unique, "%s.%d", path, n);
+            fd = open(unique, O_CREAT | O_EXCL | O_RDWR, 0644);
+            if (fd < 0 && errno != EEXIST) break;
+        }
+    }
     if (fd < 0) return -1;
     void *map = ftruncate(fd, (off_t)bytes) != 0 ? MAP_FAILED
                                                  : mmap(NULL, bytes, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
@@ -484,6 +514,62 @@ static int open_record(const char *path)
     return 0;
 }
 
+/**
+ * Copies BUN_FUNCTRACE_OUT into `out`, expanding each `%p` to this process's id.
+ * Returns 1 if there was one, 0 if not, -1 if the result does not fit.
+ */
+static int expand_out_path(char *out, size_t size, const char *template)
+{
+    int expanded = 0;
+    size_t n = 0;
+    for (const char *c = template; *c; c++) {
+        int wrote;
+        if (c[0] == '%' && c[1] == 'p') {
+            wrote = snprintf(out + n, size - n, "%ld", (long)getpid());
+            expanded = 1;
+            c++;
+        } else {
+            wrote = snprintf(out + n, size - n, "%c", *c);
+        }
+        if (wrote < 0 || (size_t)wrote >= size - n) return -1;
+        n += (size_t)wrote;
+    }
+    if (n == 0) return -1;
+    return expanded;
+}
+
+/** Takes the tracer out of the environment, so no process started from here loads it. */
+static void leave_environment(void)
+{
+#if defined(__linux__)
+    unsetenv("LD_PRELOAD");
+#else
+    unsetenv("DYLD_INSERT_LIBRARIES");
+#endif
+    unsetenv("BUN_FUNCTRACE_STARTS");
+    unsetenv("BUN_FUNCTRACE_OUT");
+}
+
+/**
+ * Whether this process runs the file `traced` names: 1, 0, or -1 if there is no
+ * such file. Compared by device and inode, so it does not matter which path
+ * either was reached by.
+ */
+static int runs_traced_executable(const char *traced)
+{
+#if defined(__linux__)
+    const char *self = "/proc/self/exe";
+#else
+    char self[4096];
+    uint32_t size = sizeof self;
+    if (_NSGetExecutablePath(self, &size) != 0) return 0;
+#endif
+    struct stat ours, theirs;
+    if (stat(traced, &theirs) != 0) return -1;
+    if (stat(self, &ours) != 0) return 0;
+    return ours.st_dev == theirs.st_dev && ours.st_ino == theirs.st_ino;
+}
+
 __attribute__((constructor(101))) static void functrace_init(void)
 {
     const char *starts_env = getenv("BUN_FUNCTRACE_STARTS");
@@ -492,19 +578,36 @@ __attribute__((constructor(101))) static void functrace_init(void)
     // unsetenv below may invalidate what getenv returned.
     char starts_path[1024], out_path[1024];
     snprintf(starts_path, sizeof starts_path, "%s", starts_env);
-    snprintf(out_path, sizeof out_path, "%s", out_env);
+    int per_process = expand_out_path(out_path, sizeof out_path, out_env);
+    if (per_process < 0) return;
 
-    // Take ourselves out of the environment so a child exec'd by the workload
-    // (lifecycle scripts, shells) does not re-arm over the trace this process
-    // is still writing. ptyrun hands the preload down to the one process that
-    // should have it.
-#if defined(__linux__)
-    unsetenv("LD_PRELOAD");
-#else
-    unsetenv("DYLD_INSERT_LIBRARIES");
-#endif
-    unsetenv("BUN_FUNCTRACE_STARTS");
-    unsetenv("BUN_FUNCTRACE_OUT");
+    const char *children_env = getenv("BUN_FUNCTRACE_CHILDREN");
+    if (children_env && strcmp(children_env, "1") == 0) {
+        // Named rather than taken to be whichever process loads the tracer
+        // first: that is a wrapper as often as it is the application.
+        const char *traced = getenv("BUN_FUNCTRACE_EXE");
+        int runs_it = traced && *traced ? runs_traced_executable(traced) : -1;
+        if (runs_it < 0 || !per_process) {
+            // Said once: nothing started from here can be traced either.
+            if (!per_process) {
+                fprintf(stderr, "functrace: BUN_FUNCTRACE_CHILDREN=1 needs %%p in BUN_FUNCTRACE_OUT, "
+                                "or every process overwrites the same trace\n");
+            } else if (!traced || !*traced) {
+                fprintf(stderr, "functrace: BUN_FUNCTRACE_CHILDREN=1 needs BUN_FUNCTRACE_EXE, "
+                                "the absolute path of the executable to trace\n");
+            } else {
+                fprintf(stderr, "functrace: BUN_FUNCTRACE_EXE=%s: %s\n", traced, strerror(errno));
+            }
+            leave_environment();
+            return;
+        }
+        if (!runs_it) return;
+    } else {
+        // A child exec'd by the workload (lifecycle scripts, shells) must not
+        // re-arm over the trace this process is still writing. ptyrun hands the
+        // preload down to the one process that should have it.
+        leave_environment();
+    }
 
 #if defined(__linux__)
     dl_iterate_phdr(find_image, NULL);
@@ -516,7 +619,7 @@ __attribute__((constructor(101))) static void functrace_init(void)
     if (read_starts(starts_path) != 0) return;
     // The record backs every trap, so it must exist before the first breakpoint
     // can fire: `install_breakpoints()` is the point of no return.
-    if (open_record(out_path) != 0) return;
+    if (open_record(out_path, per_process) != 0) return;
 
     static char altstack[256 * 1024];
     stack_t ss = { .ss_sp = altstack, .ss_size = sizeof altstack, .ss_flags = 0 };

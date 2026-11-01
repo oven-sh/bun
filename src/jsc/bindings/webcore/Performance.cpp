@@ -56,11 +56,9 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(Performance);
 
 static constexpr Seconds timePrecision { 1_ms };
 
-Performance::Performance(ScriptExecutionContext* context, MonotonicTime timeOrigin)
+Performance::Performance(ScriptExecutionContext* context)
     : ContextDestructionObserver(context)
-    , m_timeOrigin(timeOrigin)
 {
-    ASSERT(m_timeOrigin);
 }
 
 Performance::~Performance() = default;
@@ -78,15 +76,9 @@ DOMHighResTimeStamp Performance::now() const
 
 DOMHighResTimeStamp Performance::timeOrigin() const
 {
-    // return reduceTimeResolution(m_timeOrigin.approximateWallTime().secondsSinceEpoch()).milliseconds();
-    return m_timeOrigin.secondsSinceEpoch().milliseconds();
+    // Read it each time: bun:test fake timers move the origin along with now().
+    return Bun__readOriginTimerStart(bunVM(scriptExecutionContext()->vm()));
 }
-
-// ReducedResolutionSeconds Performance::nowInReducedResolutionSeconds() const
-// {
-//     Seconds now = MonotonicTime::now() - m_timeOrigin;
-//     return reduceTimeResolution(now);
-// }
 
 Seconds Performance::reduceTimeResolution(Seconds seconds)
 {
@@ -95,16 +87,8 @@ Seconds Performance::reduceTimeResolution(Seconds seconds)
     return Seconds(reduced);
 }
 
-MonotonicTime Performance::monotonicTimeFromRelativeTime(DOMHighResTimeStamp relativeTime) const
-{
-    return m_timeOrigin + Seconds::fromMilliseconds(relativeTime);
-}
-
 PerformanceTiming* Performance::timing()
 {
-    // if (!is<Document>(scriptExecutionContext()))
-    //     return nullptr;
-    // ASSERT(isMainThread());
     if (!m_timing)
         m_timing = PerformanceTiming::create();
     return m_timing.get();
@@ -271,11 +255,13 @@ void Performance::unregisterPerformanceObserver(PerformanceObserver& observer)
     m_observers.remove(&observer);
 }
 
-// void Performance::scheduleNavigationObservationTaskIfNeeded()
-// {
-//     if (m_navigationTiming)
-//         scheduleTaskIfNeeded();
-// }
+void Performance::disconnectObserversOf(const ScriptExecutionContext& context)
+{
+    for (auto& observer : copyToVector(m_observers)) {
+        if (observer->scriptExecutionContext() == &context)
+            observer->disconnect();
+    }
+}
 
 void Performance::queueEntry(PerformanceEntry& entry)
 {

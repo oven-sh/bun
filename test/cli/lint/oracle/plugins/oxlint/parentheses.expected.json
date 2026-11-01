@@ -1,0 +1,51 @@
+{
+ "parentheses/await-thenable/default": [
+  "agg-paren-array-elements.ts:7:5+1 typescript(await-thenable)"
+ ],
+ "parentheses/consistent-return/option-treatUndefinedAsUnspecified": [],
+ "parentheses/dot-notation/default": [
+  "paren-null.ts:5:4+4 typescript(dot-notation)",
+  "paren-null.ts:6:4+4 typescript(dot-notation)",
+  "paren-string.ts:5:4+3 typescript(dot-notation)"
+ ],
+ "parentheses/no-implied-eval/default": [
+  "paren-callee.ts:4:14+10 typescript(no-implied-eval)",
+  "paren-callee.ts:5:15+10 typescript(no-implied-eval)",
+  "paren-function-ctor.ts:4:18+22 typescript(no-implied-eval)",
+  "paren-function-ctor.ts:5:18+26 typescript(no-implied-eval)",
+  "paren-function-ctor.ts:6:18+29 typescript(no-implied-eval)",
+  "paren-object.ts:4:21+10 typescript(no-implied-eval)",
+  "paren-object.ts:5:29+10 typescript(no-implied-eval)"
+ ],
+ "parentheses/no-unsafe-argument/default": [],
+ "parentheses/no-unsafe-return/default": [],
+ "parentheses/no-unsafe-type-assertion/default": [],
+ "parentheses/prefer-reduce-type-parameter/default": [
+  "paren-callee.ts:6:31+9 typescript(prefer-reduce-type-parameter)",
+  "paren-second-arg.ts:6:30+9 typescript(prefer-reduce-type-parameter)"
+ ],
+ "parentheses/require-array-sort-compare/default": [
+  "paren-callee.ts:5:1+10 typescript(require-array-sort-compare)",
+  "paren-callee.ts:6:1+14 typescript(require-array-sort-compare)"
+ ],
+ "parentheses/strict-boolean-expressions/default": [
+  "predicate-parenthesized-callee.ts:5:1+30 typescript(strict-boolean-expressions)"
+ ],
+ "parentheses/use-unknown-in-catch-callback-variable/default": [
+  "parenthesized-callee.ts:5:12+6 typescript(use-unknown-in-catch-callback-variable)"
+ ],
+ "parentheses/no-unnecessary-template-expression/default": [
+  "paren-literal-type.ts:4:12+8 typescript(no-unnecessary-template-expression)",
+  "paren-literal-type.ts:5:11+6 typescript(no-unnecessary-template-expression)",
+  "paren-literal-type.ts:6:12+9 typescript(no-unnecessary-template-expression)",
+  "paren-literal-type.ts:7:12+14 typescript(no-unnecessary-template-expression)",
+  "paren-literal-value.ts:4:12+6 typescript(no-unnecessary-template-expression)",
+  "paren-literal-value.ts:5:13+8 typescript(no-unnecessary-template-expression)",
+  "paren-literal-value.ts:6:13+14 typescript(no-unnecessary-template-expression)",
+  "paren-literal-value.ts:7:13+9 typescript(no-unnecessary-template-expression)",
+  "paren-literal-value.ts:8:13+9 typescript(no-unnecessary-template-expression)",
+  "paren-template-value.ts:5:13+12 typescript(no-unnecessary-template-expression)",
+  "paren-template-value.ts:6:13+8 typescript(no-unnecessary-template-expression)"
+ ],
+ "parentheses/restrict-template-expressions/default": []
+}

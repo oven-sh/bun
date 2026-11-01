@@ -29,7 +29,7 @@ Bun.serve({
     async message(ws, message) {
       // the contextual data is available as the `data` property
       // on the WebSocket instance
-      console.log(`Received ${message} from ${ws.data.socketId}}`);
+      console.log(`Received ${message} from ${ws.data.socketId}`);
     },
   },
 });
@@ -37,7 +37,7 @@ Bun.serve({
 
 ---
 
-It's common to read cookies/headers from the incoming request to identify the connecting client.
+It's common to read cookies/headers from the incoming request to identify the connecting client. If you authenticate with a cookie, [check the `Origin` header](/runtime/http/websockets#contextual-data) before calling `server.upgrade()`.
 
 ```ts server.ts icon="/icons/typescript.svg"
 type WebSocketData = {

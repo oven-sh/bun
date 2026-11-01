@@ -1,0 +1,38 @@
+{
+  "_id": "optional-peer-hoist-deep-child",
+  "name": "optional-peer-hoist-deep-child",
+  "dist-tags": {
+    "latest": "2.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "optional-peer-hoist-deep-child",
+      "version": "1.0.0",
+      "dependencies": {
+        "optional-peer-hoist-leaf": "1.0.0",
+        "optional-peer-hoist-target": "1.0.0"
+      },
+      "_id": "optional-peer-hoist-deep-child@1.0.0",
+      "dist": {
+        "integrity": "sha512-s+joWU9Q0rD813sf/B6wMc3b9wNT+gaKC0Z7+nFwFXx81J1mA+XIJ1ppLZg8JJup4f+7lBuz0viJDHudI/U08Q==",
+        "shasum": "ea89ffe7f38b2f18c9ca3d02f72030741a8347f4",
+        "tarball": "http://localhost:4873/optional-peer-hoist-deep-child/-/optional-peer-hoist-deep-child-1.0.0.tgz"
+      }
+    },
+    "2.0.0": {
+      "name": "optional-peer-hoist-deep-child",
+      "version": "2.0.0",
+      "dependencies": {
+        "optional-peer-hoist-leaf": "1.0.0",
+        "optional-peer-hoist-target": "3.0.0",
+        "optional-peer-hoist-tail": "1.0.0"
+      },
+      "_id": "optional-peer-hoist-deep-child@2.0.0",
+      "dist": {
+        "integrity": "sha512-YocWmQN6LECrF6fsAnQlTn63MxR1tmQiPmk2TfFe9UlTOHg4cJaLcxoRAx3ENFqiDA23z2O2YXXEQfH7CwgnDQ==",
+        "shasum": "590338e91f3aeb5e59a3f501d40e5244d4f3650c",
+        "tarball": "http://localhost:4873/optional-peer-hoist-deep-child/-/optional-peer-hoist-deep-child-2.0.0.tgz"
+      }
+    }
+  }
+}

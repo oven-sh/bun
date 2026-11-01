@@ -48,3 +48,9 @@ console.log(process.memoryUsage());
 // console.log(process.send);
 process.reallyExit();
 process.assert(false, "PleAsE don't Use THIs It IS dEpReCATED");
+
+for (const [errno, [name, description]] of process.binding("uv").getErrorMap()) {
+  errno.toFixed();
+  name.toUpperCase();
+  description.toUpperCase();
+}

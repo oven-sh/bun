@@ -1,0 +1,7 @@
+{
+  "name": "with",
+  "dependencies": {
+    "has-peer": "file:../../vendor/has-peer",
+    "peer": "file:../../vendor/peer"
+  }
+}

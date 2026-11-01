@@ -1,0 +1,51 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      hue:
+        specifier: github:org/hue#ec3d1d1
+        version: git+https://git@example.com:org/hue.git#ec3d1d18f73ab023b1fa3e31e1f4316f476566a5
+      pkg-a:
+        specifier: git+ssh://git@example.com/org/pkg-a.git#v1
+        version: git+ssh://git@example.com/org/pkg-a.git#0123456789abcdef0123456789abcdef01234567
+      priv:
+        specifier: https://token@tarballs.example.com/priv-1.0.0.tgz
+        version: https://token@tarballs.example.com/priv-1.0.0.tgz
+
+packages:
+
+  hue@git+https://git@example.com:org/hue.git#ec3d1d18f73ab023b1fa3e31e1f4316f476566a5:
+    resolution: {commit: ec3d1d18f73ab023b1fa3e31e1f4316f476566a5, repo: git@example.com:org/hue.git, type: git}
+    version: 0.2.3
+
+  pkg-a@git+ssh://git@example.com/org/pkg-a.git#0123456789abcdef0123456789abcdef01234567:
+    resolution: {commit: 0123456789abcdef0123456789abcdef01234567, repo: ssh://git@example.com/org/pkg-a.git, type: git}
+    version: 1.0.0
+
+  pkg-b@git+ssh://git@example.com/org/pkg-b.git#89abcdef0123456789abcdef0123456789abcdef:
+    resolution: {commit: 89abcdef0123456789abcdef0123456789abcdef, repo: ssh://git@example.com/org/pkg-b.git, type: git}
+    version: 2.0.0
+
+  priv@https://token@tarballs.example.com/priv-1.0.0.tgz:
+    resolution: {tarball: https://token@tarballs.example.com/priv-1.0.0.tgz}
+    version: 1.0.0
+
+snapshots:
+
+  hue@git+https://git@example.com:org/hue.git#ec3d1d18f73ab023b1fa3e31e1f4316f476566a5:
+    dependencies:
+      priv: https://token@tarballs.example.com/priv-1.0.0.tgz
+
+  pkg-a@git+ssh://git@example.com/org/pkg-a.git#0123456789abcdef0123456789abcdef01234567:
+    dependencies:
+      pkg-b: git+ssh://git@example.com/org/pkg-b.git#89abcdef0123456789abcdef0123456789abcdef
+
+  pkg-b@git+ssh://git@example.com/org/pkg-b.git#89abcdef0123456789abcdef0123456789abcdef: {}
+
+  priv@https://token@tarballs.example.com/priv-1.0.0.tgz: {}

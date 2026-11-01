@@ -1,0 +1,39 @@
+------------------
+{ printWidth: 80 }
+------------------
+.a {
+  right: calc(
+    -1 * var(--slider-padding) - min(1px, var(--sidebar-width))
+  ); // Center around the border
+  z-index: var(
+    --z-notifications-popover
+  ); // A bit above the navbar for a nicer experience when it is closed
+  color: red; // short
+  margin: 0; /* a block comment counts: it is as wide as it is, so what is before it breaks if it has to */
+}
+@mixin b {
+  height: calc(
+    100dvh - var(--terminal-dock-height, 0px)
+  ); // keep what is at the bottom reachable on mobile
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+.a {
+  right: calc(
+    -1 * var(--slider-padding) - min(1px, var(--sidebar-width))
+  ); // Center around the border
+  z-index: var(
+    --z-notifications-popover
+  ); // A bit above the navbar for a nicer experience when it is closed
+  color: red; // short
+  margin: 0; /* a block comment counts: it is as wide as it is, so what is before it breaks if it has to */
+}
+@mixin b {
+  height: calc(
+    100dvh - var(--terminal-dock-height, 0px)
+  ); // keep what is at the bottom reachable on mobile
+}
+
+===================== End =====================

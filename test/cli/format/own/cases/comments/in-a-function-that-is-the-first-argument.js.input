@@ -1,0 +1,11 @@
+f(function ( // a
+) {}, b);
+f(function (/* a */) {}, b);
+f(function () {} /* a */, b);
+f(function () {}, // a
+b);
+f(/* a */ function () {}, b);
+const a = useCallback((b)  /* a */ => { c; }, []);
+!function () {}(/* a */);
+!function () {}( // a
+);

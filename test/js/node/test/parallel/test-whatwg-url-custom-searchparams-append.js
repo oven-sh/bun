@@ -30,7 +30,7 @@ const assert = require('assert');
   assert.throws(() => params.set(obj, 'b'), /^Error: toString$/);
   assert.throws(() => params.set('a', obj), /^Error: toString$/);
   assert.throws(() => params.set(sym, 'b'),
-                /^TypeError: Cannot convert a symbol to a string$/);
+                /^TypeError: Cannot convert a Symbol value to a string$/);
   assert.throws(() => params.set('a', sym),
-                /^TypeError: Cannot convert a symbol to a string$/);
+                /^TypeError: Cannot convert a Symbol value to a string$/);
 }

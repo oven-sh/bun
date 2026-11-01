@@ -389,13 +389,13 @@ describe("decorator metadata", () => {
       }
       // @ts-ignore
       @d1
-      prop1: () => {};
+      prop1!: () => {};
       // @ts-ignore
       @d1
       prop2: "foo" = "foo";
       // @ts-ignore
       @d1
-      prop3: symbol;
+      prop3!: symbol;
     }
 
     expect(Reflect.getMetadata("design:type", A)).toBeUndefined();

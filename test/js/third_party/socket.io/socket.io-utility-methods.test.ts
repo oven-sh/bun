@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { createServer } from "http";
 import type { AddressInfo } from "net";
-import { Server } from "socket.io";
+import { Server, type Socket } from "socket.io";
 import { Adapter, BroadcastOptions } from "socket.io-adapter";
 import { Socket as ClientSocket, io as ioc } from "socket.io-client";
 

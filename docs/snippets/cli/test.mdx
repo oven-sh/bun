@@ -6,6 +6,10 @@ bun test <patterns>
 
 ### Execution Control
 
+<ParamField path="--check" type="boolean">
+  Type check the test files and everything they import. No test runs if there are type errors
+</ParamField>
+
 <ParamField path="--timeout" type="number" default="5000">
   Set the per-test timeout in milliseconds (default 5000)
 </ParamField>
@@ -15,7 +19,7 @@ bun test <patterns>
 </ParamField>
 
 <ParamField path="--retry" type="number">
-  Retry failed tests up to <code>NUMBER</code> times. Overridden by per-test <code>{`{ retry: N }`}</code>
+  Retry failed tests up to <code>NUMBER</code> times. Per-test <code>{`{ retry: N }`}</code> overrides this flag
 </ParamField>
 
 <ParamField path="--concurrent" type="boolean">
@@ -30,12 +34,28 @@ bun test <patterns>
   Set the random seed for test randomization
 </ParamField>
 
-<ParamField path="--bail" type="number" default="1">
+<ParamField path="--bail" type="number">
   Exit the test suite after <code>NUMBER</code> failures. If you do not specify a number, it defaults to 1.
 </ParamField>
 
 <ParamField path="--max-concurrency" type="number" default="20">
   Maximum number of concurrent tests to execute at once (default 20)
+</ParamField>
+
+<ParamField path="--environment" type="string" default="node">
+  The DOM that test files run with: <code>node</code> (no DOM), <code>jsdom</code> or <code>happy-dom</code>. A{" "}
+  <code>@vitest-environment</code> or <code>@jest-environment</code> comment in a file overrides it
+</ParamField>
+
+<ParamField path="--globals" type="string" default="bun">
+  Where <code>test</code>, <code>expect</code> and the other globals come from. With <code>bun</code>, a file that
+  imports from <code>"vitest"</code> gets them from there and any other file gets them from <code>"bun:test"</code>.
+  With <code>vitest</code>, every file gets them from <code>"vitest"</code>
+</ParamField>
+
+<ParamField path="--react-compiler" type="boolean">
+  Compile components and hooks with the React Compiler. Test files, preload scripts and <code>node_modules</code> are
+  left alone
 </ParamField>
 
 ### Test Filtering
@@ -56,7 +76,12 @@ bun test <patterns>
 </ParamField>
 
 <ParamField path="--reporter-outfile" type="string">
-  Output file path for the reporter format (required with --reporter)
+  Output file path for the reporter format (required with --reporter=junit)
+</ParamField>
+
+<ParamField path="--reporter-junit-suites" type="string">
+  How --reporter=junit writes describe blocks. <code>nested</code> (the default) gives each block its own testsuite
+  inside the file's testsuite. <code>flat</code> prefixes each test's name with its block names
 </ParamField>
 
 <ParamField path="--dots" type="boolean">
@@ -70,7 +95,8 @@ bun test <patterns>
 </ParamField>
 
 <ParamField path="--coverage-reporter" type="string" default="text">
-  Report coverage in <code>text</code> and/or <code>lcov</code>. Defaults to <code>text</code>
+  Report coverage in <code>text</code> and/or <code>lcov</code>. Defaults to <code>text</code>. Implies{" "}
+  <code>--coverage</code>
 </ParamField>
 
 <ParamField path="--coverage-dir" type="string" default="coverage">

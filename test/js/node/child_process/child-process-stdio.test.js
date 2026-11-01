@@ -1,7 +1,8 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isPosix } from "harness";
 import { execSync, spawn } from "node:child_process";
 import { once } from "node:events";
+import { join } from "node:path";
 
 const CHILD_PROCESS_FILE = import.meta.dir + "/spawned-child.js";
 const OUT_FILE = import.meta.dir + "/stdio-test-out.txt";
@@ -164,5 +165,58 @@ describe("child.stdin", () => {
       ret: false,
       cbCode: "ERR_STREAM_DESTROYED",
     });
+  });
+});
+
+describe.skipIf(!isPosix)("stdio handed to the child", () => {
+  // Prints whether O_NONBLOCK is set on each fd number given in argv.
+  const probe = join(import.meta.dir, "..", "..", "bun", "spawn", "fixtures", "fd-nonblock-probe.js");
+
+  it.concurrent("the ipc fd is blocking", async () => {
+    // A child that is not bun or node does a plain write(2) on NODE_CHANNEL_FD.
+    // On an O_NONBLOCK socket a large message is cut short and lost.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { spawn } = require("node:child_process");
+         const child = spawn(process.execPath, [${JSON.stringify(probe)}, "3"], { stdio: ["inherit", "inherit", "inherit", "ipc"] });
+         child.on("exit", code => process.exit(code ?? 1));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("3:blocking\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("a pipe slot after many ignore slots", async () => {
+    // Run in a fresh process so the pipe's source fd is a low number, below
+    // the slot it is dup2'd to. The close of each "ignore" slot used to hit it,
+    // and spawn() then threw EBADF synchronously.
+    const slots = 60;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { spawn, spawnSync } = require("node:child_process");
+         const stdio = ["ignore", "ignore", "ignore", ...Array(${slots - 3}).fill("ignore"), "pipe"];
+         const sync = spawnSync("true", [], { stdio });
+         console.log("spawnSync:", sync.error?.code ?? "ok", sync.status);
+         const child = spawn("true", [], { stdio });
+         child.on("error", e => console.log("error event", e.code));
+         child.on("exit", code => console.log("spawn:", code));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("spawnSync: ok 0\nspawn: 0\n");
+    expect(exitCode).toBe(0);
   });
 });

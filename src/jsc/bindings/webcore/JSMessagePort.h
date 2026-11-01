@@ -30,7 +30,6 @@ namespace WebCore {
 class WEBCORE_EXPORT JSMessagePort : public JSEventTarget {
 public:
     using Base = JSEventTarget;
-    using DOMWrapped = MessagePort;
     static JSMessagePort* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<MessagePort>&& impl)
     {
         JSMessagePort* ptr = new (NotNull, JSC::allocateCell<JSMessagePort>(globalObject->vm())) JSMessagePort(structure, *globalObject, WTF::move(impl));
@@ -46,7 +45,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
     }
 
     static JSC::JSValue getConstructor(JSC::VM&, const JSC::JSGlobalObject*);
@@ -83,11 +82,6 @@ inline JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, MessagePort*)
 {
     static NeverDestroyed<JSMessagePortOwner> owner;
     return &owner.get();
-}
-
-inline void* wrapperKey(MessagePort* wrappableObject)
-{
-    return wrappableObject;
 }
 
 WEBCORE_EXPORT JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, MessagePort&);

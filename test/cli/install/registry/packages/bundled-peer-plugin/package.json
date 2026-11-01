@@ -1,0 +1,23 @@
+{
+  "_id": "bundled-peer-plugin",
+  "name": "bundled-peer-plugin",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "bundled-peer-plugin",
+      "version": "1.0.0",
+      "main": "index.js",
+      "peerDependencies": {
+        "no-deps": "*"
+      },
+      "_id": "bundled-peer-plugin@1.0.0",
+      "dist": {
+        "integrity": "sha512-fpBrq79anWdGWgy/52aQewWyWgfjNl9Eve3lAXb3oT+r2GKUPoK5BLbfWuzbVLWiIgmFRmnmWhzfSqmCWwhcyQ==",
+        "shasum": "d450590975de902c9a85c8645a26e893fdd50cad",
+        "tarball": "http://localhost:4873/bundled-peer-plugin/-/bundled-peer-plugin-1.0.0.tgz"
+      }
+    }
+  }
+}

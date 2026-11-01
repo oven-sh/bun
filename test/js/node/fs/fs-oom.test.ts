@@ -1,9 +1,19 @@
 import { memfd_create, setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
-import { describe, expect, test } from "bun:test";
-import { closeSync, readFileSync, writeFileSync, writeSync } from "fs";
+import { afterAll, describe, expect, test } from "bun:test";
+import { closeSync, readFileSync, truncateSync, writeFileSync, writeSync } from "fs";
 import { bunEnv, bunExe, isASAN, isLinux, isPosix, tempDir } from "harness";
+import os from "node:os";
 import { join } from "path";
-setSyntheticAllocationLimitForTesting(128 * 1024 * 1024);
+
+// The limit is process-wide and a `--parallel` worker runs many files in one
+// process, so put it back for whatever runs after this file. A later file in
+// the same worker would otherwise fail to build any string over the lowered
+// limit with ERR_STRING_TOO_LONG.
+const FILE_LIMIT = 128 * 1024 * 1024;
+const previousLimit = setSyntheticAllocationLimitForTesting(FILE_LIMIT);
+afterAll(() => {
+  setSyntheticAllocationLimitForTesting(previousLimit);
+});
 
 // /dev/zero reports a size of 0. So we need a separate test for reDgular files that are huge.
 if (isPosix) {
@@ -41,12 +51,63 @@ if (isLinux) {
           "ENOMEM: not enough memory",
         );
       } finally {
+        setSyntheticAllocationLimitForTesting(FILE_LIMIT);
         Bun.gc(true);
         closeSync(memfd);
       }
     });
   });
 }
+
+// Files in [2^31, 2^32) bytes used to abort the process when decoded to a
+// string: the guards in front of WTF string construction only checked the
+// synthetic allocation limit (2^32 - 1 by default) and missed
+// WTF::StringImpl::MaxLength (2^31 - 1), tripping a RELEASE_ASSERT in
+// StringImplShape. The fs layer reports the dead string as ENOMEM (it speaks
+// errno), matching the existing >= 2^32 and /dev/zero behavior above.
+// 2^31 - 1 is the largest length WTF accepts and must keep working. The file
+// is sparse so only the in-memory read costs 2 GiB; each case runs in a
+// subprocess to keep the peak away from the test runner, and the block skips
+// on small machines (same gate as buffer.test.js's 4 GiB case).
+describe.skipIf(os.totalmem() < 10 * 1024 ** 3)("readFileSync at the 2 GiB string limit", () => {
+  const spawnRead = async (size: number) => {
+    using dir = tempDir("readfile-2gib", {});
+    const file = join(String(dir), "big.txt");
+    writeFileSync(file, "x");
+    truncateSync(file, size);
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        try {
+          const s = require("fs").readFileSync(${JSON.stringify(file)}, "utf8");
+          console.log(JSON.stringify({ length: s.length }));
+        } catch (e) {
+          console.log(JSON.stringify({ name: e.name, code: e.code }));
+        }
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { result: JSON.parse(stdout.trim() || JSON.stringify({ stdout, stderr, exitCode })), exitCode };
+  };
+
+  test("2^31 bytes throws ENOMEM instead of aborting", async () => {
+    const { result, exitCode } = await spawnRead(2 ** 31);
+    expect(result).toEqual({ name: "Error", code: "ENOMEM" });
+    expect(exitCode).toBe(0);
+  });
+
+  test("2^31 - 1 bytes still decodes", async () => {
+    const { result, exitCode } = await spawnRead(2 ** 31 - 1);
+    expect(result).toEqual({ length: 2 ** 31 - 1 });
+    expect(exitCode).toBe(0);
+  });
+});
 
 // The UTF-8 -> UTF-16 converters behind `fs.readFile*(.., "utf8")`,
 // `Buffer.prototype.toString("utf8")` and `TextDecoder.decode` must surface a
@@ -128,11 +189,11 @@ describe.skipIf(!isASAN)("utf8 to utf16 output buffer allocation failure is catc
     expect(JSON.parse(stdout.trim() || JSON.stringify({ stdout, stderr, exitCode }))).toEqual([
       { name: "Error", code: "ENOMEM" },
       { name: "Error", code: "ENOMEM" },
-      { name: "RangeError", code: undefined },
-      { name: "Error", code: "ERR_STRING_TOO_LONG" },
-      { name: "RangeError", code: undefined },
-      { name: "Error", code: "ERR_STRING_TOO_LONG" },
-      { name: "RangeError", code: undefined },
+      { name: "RangeError", code: "ERR_MEMORY_ALLOCATION_FAILED" },
+      { name: "RangeError", code: "ERR_MEMORY_ALLOCATION_FAILED" },
+      { name: "RangeError", code: "ERR_MEMORY_ALLOCATION_FAILED" },
+      { name: "RangeError", code: "ERR_MEMORY_ALLOCATION_FAILED" },
+      { name: "RangeError", code: "ERR_MEMORY_ALLOCATION_FAILED" },
     ]);
     expect(exitCode).toBe(0);
   });
@@ -141,10 +202,11 @@ describe.skipIf(!isASAN)("utf8 to utf16 output buffer allocation failure is catc
   // were written as if that call could never error (before the fix it could
   // only abort), so they collapsed `Err` into their all-ASCII fallback. Once
   // the allocation is fallible, `Response.text()` on an `Internal` blob must
-  // throw rather than return an empty string, and a store-backed
-  // `Blob.json()` must throw rather than reinterpret the UTF-8 bytes as
-  // Latin-1. `Blob.text()` is the sibling that was already correct.
-  test("Response.text, Blob.text and Blob.json recover", async () => {
+  // throw rather than return an empty string. `Blob.text()` is the sibling
+  // that was already correct. A store-backed `Blob.json()` parses the bytes
+  // where they lie: the string that it answers with has one byte a character,
+  // fits under the cap, and must not be the UTF-8 bytes read as Latin-1.
+  test("Response.text and Blob.text recover, and Blob.json reads UTF-8", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -155,12 +217,14 @@ describe.skipIf(!isASAN)("utf8 to utf16 output buffer allocation failure is catc
         // '"' + '\\u00e9' + 'a'.repeat(${SIZE} - 4) + '"': a valid JSON string literal.
         const json = Buffer.alloc(${SIZE}, "a");
         json[0] = 0x22; json[1] = 0xc3; json[2] = 0xa9; json[${SIZE} - 1] = 0x22;
-        for (const run of [() => new Response(buf).text(), () => new Blob([buf]).text(), () => new Blob([json]).json()]) {
+        for (const run of [() => new Response(buf).text(), () => new Blob([buf]).text()]) {
           await run().then(
             v => results.push("UNEXPECTED_SUCCESS length=" + JSON.stringify(v).length),
-            e => results.push({ name: e.name, message: e.message }),
+            e => results.push({ name: e.name, code: e.code, message: e.message }),
           );
         }
+        const parsed = await new Blob([json]).json();
+        results.push({ length: parsed.length, start: parsed.slice(0, 2) });
         console.log(JSON.stringify(results));
         `,
       ],
@@ -169,10 +233,15 @@ describe.skipIf(!isASAN)("utf8 to utf16 output buffer allocation failure is catc
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const allocationFailed = {
+      name: "RangeError",
+      code: "ERR_MEMORY_ALLOCATION_FAILED",
+      message: "Failed to allocate memory",
+    };
     expect(JSON.parse(stdout.trim() || JSON.stringify({ stdout, stderr, exitCode }))).toEqual([
-      { name: "RangeError", message: "Out of memory" },
-      { name: "RangeError", message: "Out of memory" },
-      { name: "RangeError", message: "Out of memory" },
+      allocationFailed,
+      allocationFailed,
+      { length: SIZE - 3, start: "\u00e9a" },
     ]);
     expect(exitCode).toBe(0);
   });

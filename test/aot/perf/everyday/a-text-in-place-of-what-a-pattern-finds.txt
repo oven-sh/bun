@@ -1,0 +1,61 @@
+//// groups-of-the-one-match-change-places
+const lines = ["2026-01-02 10:11:12 info worker-7 finished job 8123 in 41 ms with status ok, told ann@host.example.invalid", "2026-01-02 10:11:13 warn cache-2 evicted 17 entries of region eu-west, told bob-2@host.example.invalid"];
+const parts = /([a-z0-9-]+)@([a-z0-9-]+)/;
+function turn(i: number): number {
+  return lines[i & 1]!.replace(parts, "$2 at $1").length;
+}
+//// a-line-is-trimmed-by-one-pattern
+const lines = ["   worker-7 finished job 8123 in 41 ms with status ok   ", "\t cache-2 evicted 17 entries of region eu-west \t"];
+const whole = /^\s*(.*?)\s*$/;
+function turn(i: number): number {
+  return lines[i & 1]!.replace(whole, "$1").length;
+}
+//// the-end-of-a-line-is-replaced
+const lines = ["2026-01-02 10:11:12 info worker-7 finished job 8123 in 41 ms with status ok, told ann@host.example.invalid", "2026-01-02 10:11:13 warn cache-2 evicted 17 entries of region eu-west, told bob-2@host.example.invalid"];
+const atEnd = /invalid$/;
+function turn(i: number): number {
+  return lines[i & 1]!.replace(atEnd, "valid").length;
+}
+//// every-match-where-the-one-lies-far-behind-the-start
+const lines = ["worker seven finished the job in a few ms with status ok and told ann of 81234", "cache two evicted some entries of region eu-west and told bob of 90817"];
+const longNumber = /\d{4,}/g;
+function turn(i: number): number {
+  return lines[i & 1]!.replace(longNumber, "#").length;
+}
+//// every-run-of-spaces-becomes-one-sign
+const lines = ["2026-01-02 10:11:12 info worker-7 finished job 8123 in 41 ms with status ok, told ann@host.example.invalid", "2026-01-02 10:11:13 warn cache-2 evicted 17 entries of region eu-west, told bob-2@host.example.invalid"];
+const spaces = /\s+/g;
+function turn(i: number): number {
+  return lines[i & 1]!.replace(spaces, "_").length;
+}
+//// every-vowel-is-removed
+const lines = ["2026-01-02 10:11:12 info worker-7 finished job 8123 in 41 ms with status ok, told ann@host.example.invalid", "2026-01-02 10:11:13 warn cache-2 evicted 17 entries of region eu-west, told bob-2@host.example.invalid"];
+const vowels = /[aeiou]/g;
+function turn(i: number): number {
+  return lines[i & 1]!.replace(vowels, "").length;
+}
+//// every-number-is-put-in-brackets
+const lines = ["2026-01-02 10:11:12 info worker-7 finished job 8123 in 41 ms with status ok, told ann@host.example.invalid", "2026-01-02 10:11:13 warn cache-2 evicted 17 entries of region eu-west, told bob-2@host.example.invalid"];
+const numbers = /(\d+)/g;
+function turn(i: number): number {
+  return lines[i & 1]!.replace(numbers, "<$1>").length;
+}
+//// a-word-is-replaced-once
+const lines = ["2026-01-02 10:11:12 info worker-7 finished job 8123 in 41 ms with status ok, told ann@host.example.invalid", "2026-01-02 10:11:13 warn cache-2 evicted 17 entries of region eu-west, told bob-2@host.example.invalid"];
+const told = /told/;
+function turn(i: number): number {
+  return lines[i & 1]!.replace(told, "said").length;
+}
+//// every-dash-becomes-another-sign
+const lines = ["2026-01-02 10:11:12 info worker-7 finished job 8123 in 41 ms with status ok, told ann@host.example.invalid", "2026-01-02 10:11:13 warn cache-2 evicted 17 entries of region eu-west, told bob-2@host.example.invalid"];
+const dashes = /-/g;
+function turn(i: number): number {
+  return lines[i & 1]!.replace(dashes, "_").length;
+}
+//// every-address-of-a-line-is-listed
+const lines = ["2026-01-02 10:11:12 info worker-7 finished job 8123 in 41 ms with status ok, told ann@host.example.invalid", "2026-01-02 10:11:13 warn cache-2 evicted 17 entries of region eu-west, told bob-2@host.example.invalid"];
+let listed: string[] | null = null;
+function turn(i: number): number {
+  listed = lines[i & 1]!.match(/[a-z0-9-]+@[a-z]+/g);
+  return listed ? 1 : 0;
+}

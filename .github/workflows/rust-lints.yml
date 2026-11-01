@@ -28,6 +28,13 @@ on:
       - ".github/actions/setup-bun/**"
       - ".github/rust-matcher.json"
   merge_group:
+  # Caches saved from a pull_request run are scoped to that PR's merge ref, so
+  # every new PR rebuilt mordant. A main-branch copy is readable by all PRs.
+  # The cache key is defined in this file, so this path filter covers key bumps.
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/rust-lints.yml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -45,6 +52,7 @@ jobs:
   clippy:
     name: cargo clippy
     runs-on: ubuntu-latest
+    if: github.event_name != 'push'
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -78,6 +86,7 @@ jobs:
   miri:
     name: cargo miri test
     runs-on: ubuntu-latest
+    if: github.event_name != 'push'
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -106,6 +115,7 @@ jobs:
     # example, the parser's suspension bookkeeping or `Arena::compact()`.
     name: lol-html cargo test
     runs-on: ubuntu-latest
+    if: github.event_name != 'push'
     timeout-minutes: 30
     steps:
       - name: Checkout
@@ -188,6 +198,7 @@ jobs:
           key: ${{ steps.mordant-bin.outputs.cache-primary-key }}
 
       - name: mordant
+        if: github.event_name != 'push'
         # scripts/rust-mordant.ts names the targets (Linux, Windows and macOS
         # in one run) and installs their std, so that the job and `bun run
         # rust:mordant` cannot drift apart. `cargo mordant` exits with 101 when

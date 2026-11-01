@@ -1064,6 +1064,27 @@ pub mod fs {
             Ok(unsafe { &mut *opt })
         }
 
+        /// Like [`read_directory_error`], but the slot keeps its listing at its old generation, so
+        /// a reader at a newer generation opens the directory again.
+        fn read_directory_error_transient(
+            &mut self,
+            dir: &[u8],
+            err: crate::Error,
+            generation: Generation,
+        ) -> crate::CrateResult<&'static mut EntriesOption> {
+            if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+                let result = self.entries.get_or_put(dir)?;
+                self.entries.mark_not_found(result);
+            }
+            Ok(temp_entries_option_write(EntriesOption::Err(
+                dir_entry::Err {
+                    original_err: err,
+                    canonical_error: err,
+                    generation,
+                },
+            )))
+        }
+
         pub fn read_directory(
             &mut self,
             dir_: &[u8],
@@ -1512,7 +1533,9 @@ pub mod fs {
                         Err(err) => {
                             // SAFETY: see above.
                             unsafe { (*e_ptr).data.clear() };
-                            return self.read_directory_error(dir, err.into(), generation).ok();
+                            return self
+                                .read_directory_error_transient(dir, err.into(), generation)
+                                .ok();
                         }
                     };
                     let _close_guard = scopeguard::guard(handle, |h| {
@@ -1535,7 +1558,9 @@ pub mod fs {
                         Err(err) => {
                             // SAFETY: see above.
                             unsafe { (*e_ptr).data.clear() };
-                            return self.read_directory_error(dir, err, generation).ok();
+                            return self
+                                .read_directory_error_transient(dir, err, generation)
+                                .ok();
                         }
                     }
                 }

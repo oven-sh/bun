@@ -25,7 +25,7 @@ import {
   type PartialConfig,
   type Toolchain,
   detectHost,
-  findRepoRoot,
+  repoRoot,
   resolveCodegenConfig,
   resolveConfig,
 } from "./config.ts";
@@ -55,9 +55,6 @@ import { checkWorkarounds } from "./workarounds.ts";
 /** The JavaScript tools: what the code generators run with, and all that `mode: "codegen"` looks for. */
 export function resolveJsToolchain(packageManager: PackageManager = "bun"): JsToolchain {
   const host = detectHost();
-  // esbuild path is relative to REPO ROOT, not process.cwd() — when
-  // ninja's generator rule invokes reconfigure, cwd is the build dir.
-  const repoRoot = findRepoRoot();
 
   // esbuild — comes from the root install. Path is deterministic.
   // If not present, the first codegen build will fail with a clear error

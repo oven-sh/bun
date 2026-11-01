@@ -406,14 +406,9 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
         return {};
     }
 
-    // Create verification context
+    // Create verification context. A key that cannot verify is -2 from OpenSSL, which Node throws for, and 0 from BoringSSL.
     auto pkctx = keyPtr.newCtx();
-    if (!pkctx) {
-        return JSValue::encode(jsBoolean(false));
-    }
-
-    const int initResult = pkctx.initForVerify();
-    if (initResult == -2) {
+    if (!pkctx || pkctx.initForVerify() <= 0) {
         throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to initialize verification context"_s);
         return {};
     }
@@ -426,8 +421,7 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
     }
 
     // Options that the key does not take are a signature that does not verify, not an error.
-    bool result = initResult > 0
-        && (!keyPtr.isRsaVariant() || ncrypto::EVPKeyCtxPointer::setRsaPadding(pkctx.get(), padding, saltLen))
+    bool result = (!keyPtr.isRsaVariant() || ncrypto::EVPKeyCtxPointer::setRsaPadding(pkctx.get(), padding, saltLen))
         && pkctx.setSignatureMd(mdCtx)
         && pkctx.verify(sigBuf, data);
     return JSValue::encode(jsBoolean(result));

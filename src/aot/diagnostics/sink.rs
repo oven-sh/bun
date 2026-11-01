@@ -399,11 +399,6 @@ pub(crate) fn log_diagnostic_at(
     write_message(log, to_log_message(&reported, severity));
 }
 
-/// For an error found after the diagnostics of the build were written.
-pub fn log_internal_error(log: &mut Log, error: InternalError) {
-    write_internal_errors(log, vec![error]);
-}
-
 pub(super) fn write_message(log: &mut Log, message: Msg) {
     match message.kind {
         Kind::Err => log.errors += 1,

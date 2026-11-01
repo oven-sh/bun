@@ -114,8 +114,6 @@ const usesOfGetterWithoutWrapper: readonly UseSpec[] = [b.readsContents(), b.wri
 
 const usesThatReachResult: readonly UseSpec[] = [b.returned, heldValuesAnswered];
 
-const jsonSerializationUses: readonly UseSpec[] = [b.runsTransitively("OwnKeys", "OwnValues", "ToJSON", "ToPrimitive")];
-
 /** The thunk of a member takes the cell of its receiver behind the realm. */
 const receiverParameter: DirectParameterSpec = { value: "Receiver", cppType: "JSC::JSCell*" };
 

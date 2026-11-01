@@ -21,7 +21,6 @@
 
 #pragma once
 
-// #include "ThreadGlobalData.h"
 #include "EventTarget.h"
 #include <wtf/text/AtomString.h>
 
@@ -70,7 +69,6 @@ public:
 
 private:
     EventNames(); // Private to prevent accidental call to EventNames() instead of eventNames().
-    // friend class ThreadGlobalData; // Allow ThreadGlobalData to create the per-thread EventNames object.
 
     [[maybe_unused]] int dummy; // Needed to make initialization macro work.
 };

@@ -1127,7 +1127,7 @@ impl<'a> LinkerContext<'a> {
                 post_process_js_chunk(*ctx, worker, chunk, chunk_index)
             }
             crate::chunk::Content::Css(_) => post_process_css_chunk(*ctx, worker, chunk),
-            crate::chunk::Content::Html => post_process_html_chunk(*ctx, worker, chunk),
+            crate::chunk::Content::Html { .. } => post_process_html_chunk(*ctx, worker, chunk),
         };
         if let Err(err) = result {
             Output::panic(format_args!("TODO: handle error: {}", err.name()));

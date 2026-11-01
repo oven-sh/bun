@@ -6125,7 +6125,9 @@ pub mod bv2_impl {
                         source_index.get(),
                         source_index.get(),
                     ),
-                    content: chunk::Content::Html,
+                    content: chunk::Content::Html {
+                        js_chunk_index: None,
+                    },
                     output_source_map: SourceMap::SourceMapPieces::init(),
                     ..Chunk::default()
                 });

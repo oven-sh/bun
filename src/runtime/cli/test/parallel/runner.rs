@@ -1028,9 +1028,7 @@ pub(crate) fn run_as_worker(
     vm.test_isolation_state.shares_global = ctx.test_options.isolate_modules;
     vm.auto_killer.enabled = ctx.test_options.isolate;
 
-    // `vm.arena` is currently a write-only backref: the `MimallocArena.gc()`
-    // reader was dropped from the GC path (see web_worker.rs, which wires its
-    // own arena the same way and notes the dropped read).
+    // `vm.arena` is currently a write-only backref: the GC path no longer reads it.
     let mut arena = bun_alloc::MimallocArena::new();
     // SAFETY: event_loop pointer is valid while vm lives.
     unsafe { (*vm.event_loop()).ensure_waker() };

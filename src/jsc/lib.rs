@@ -87,7 +87,7 @@ pub mod zig_stack_frame_code;
 pub mod zig_stack_frame_position;
 
 /// Owned snapshots of a [`ZigException`] (see `ZigException::add_to_error_list`),
-/// collected into an [`ExceptionList`](virtual_machine::ExceptionList) so callers
+/// collected into an [`ExceptionList`](exception_list::ExceptionList) so callers
 /// such as the `Bun.serve` development error page can report errors after the
 /// JSC exception itself is gone.
 pub mod exception_list {
@@ -119,6 +119,14 @@ pub mod exception_list {
         pub runtime_type: JSRuntimeType,
         pub code: JSErrorCode,
         pub stack: StackTrace,
+    }
+
+    /// What one error report collected for the caller that asked for it.
+    #[derive(Default)]
+    pub struct ExceptionList {
+        pub exceptions: Vec<JsException>,
+        /// The message of each `BuildMessage` / `ResolveMessage` in the report.
+        pub build: Vec<bun_ast::Msg>,
     }
 }
 #[path = "array_buffer.rs"]

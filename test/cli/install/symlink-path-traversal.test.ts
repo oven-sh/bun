@@ -1079,7 +1079,9 @@ it.skipIf(isWindows)(
 describe.concurrent.skipIf(isWindows)("the root directory of a GitHub tarball", () => {
   const readers = ["buffered", "streaming"] as const;
 
-  async function install(reader: (typeof readers)[number], root: string, first: string[] = []) {
+  // With `again`, the result is that of a second install: one with an empty cache, from the
+  // bun.lock that the first install saved.
+  async function install(reader: (typeof readers)[number], root: string, first: string[] = [], again = false) {
     const tarball = createTarball([
       ...first.map(name => ({ name, type: "dir" as const })),
       {
@@ -1106,7 +1108,7 @@ describe.concurrent.skipIf(isWindows)("the root directory of a GitHub tarball", 
       port: 0,
       fetch(req) {
         const url = new URL(req.url);
-        if (!url.pathname.includes("/tarball/")) return new Response("Not Found", { status: 404 });
+        if (url.pathname !== "/repos/user/repo/tarball/main") return new Response("Not Found", { status: 404 });
         if (reader === "buffered") return new Response(tarball, { headers: { "Content-Type": "application/gzip" } });
         return new Response(
           new ReadableStream({
@@ -1127,33 +1129,43 @@ describe.concurrent.skipIf(isWindows)("the root directory of a GitHub tarball", 
       },
     });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "install", "--verbose"],
-      cwd: installDir,
-      stdout: "pipe",
-      stderr: "pipe",
-      env: {
-        ...env,
-        GITHUB_API_URL: `http://localhost:${server.port}`,
-        BUN_INSTALL_CACHE_DIR: join(installDir, ".bun-cache"),
-        BUN_TMPDIR: tmp,
-        BUN_INSTALL_STREAMING_DRAIN_THRESHOLD: "1",
-      },
-    });
-    void proc.exited.then(() => (exited = true));
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return {
-      error: stderr.match(/^error: .*$/m)?.[0],
-      streamed: stderr.includes("Streamed "),
-      installed: stdout.includes("1 package installed"),
-      lock: (
-        await Bun.file(join(installDir, "bun.lock"))
-          .text()
-          .catch(() => "")
-      ).match(/"test-package": \[.*\]/)?.[0],
-      tmp: await readdir(tmp),
-      exitCode,
+    const run = async (...args: string[]) => {
+      exited = false;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--verbose", ...args],
+        cwd: installDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: {
+          ...env,
+          GITHUB_API_URL: `http://localhost:${server.port}`,
+          BUN_INSTALL_CACHE_DIR: join(installDir, ".bun-cache"),
+          BUN_TMPDIR: tmp,
+          BUN_INSTALL_STREAMING_DRAIN_THRESHOLD: "1",
+        },
+      });
+      void proc.exited.then(() => (exited = true));
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return {
+        error: stderr.match(/^error: .*$/m)?.[0],
+        streamed: stderr.includes("Streamed "),
+        installed: stdout.includes("1 package installed"),
+        lock: (
+          await Bun.file(join(installDir, "bun.lock"))
+            .text()
+            .catch(() => "")
+        ).match(/"test-package": \[.*\]/)?.[0],
+        tmp: await readdir(tmp),
+        exitCode,
+      };
     };
+
+    const fresh = await run();
+    if (!again || fresh.exitCode !== 0) return fresh;
+    await Promise.all(
+      ["node_modules", ".bun-cache"].map(name => rm(join(installDir, name), { recursive: true, force: true })),
+    );
+    return await run("--frozen-lockfile");
   }
 
   it.each(
@@ -1170,6 +1182,19 @@ describe.concurrent.skipIf(isWindows)("the root directory of a GitHub tarball", 
       streamed: reader === "streaming",
       installed: true,
       lock: expect.stringContaining(', "pkg.root", "sha512-'),
+      tmp: [".keep"],
+      exitCode: 0,
+    });
+  });
+
+  // `pkg.root` ends in no commit, so bun.lock saves the package with the ref of package.json,
+  // and an install with an empty cache downloads that ref again.
+  it.each(readers)("is not saved as a commit when its name ends in none (%s)", async reader => {
+    expect(await install(reader, "pkg.root", [], true)).toEqual({
+      error: undefined,
+      streamed: reader === "streaming",
+      installed: true,
+      lock: expect.stringContaining('["test-package@github:user/repo#main", {}, "pkg.root", "sha512-'),
       tmp: [".keep"],
       exitCode: 0,
     });

@@ -115,12 +115,12 @@ export const scanner: Bun.Security.Scanner = {
 
 Each entry in `packages` describes one resolved package:
 
-| Field            | Description                                                                                                                                                                                                     |
-| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`           | The package name.                                                                                                                                                                                               |
-| `version`        | The exact version (`4.1.2`) of a registry package. For other sources, the resolved specifier as in `bun.lock`: `github:user/repo#<commit>`, `https://example.com/pkg.tgz`, `./pkg.tgz`, `file:pkg`, `link:pkg`. |
-| `requestedRange` | What `package.json` or the command line asked for: `^4.0.0`, `latest`, `github:user/repo`, `file:./pkg`.                                                                                                        |
-| `tarball`        | The URL (or local path) of the tarball. For `github:` dependencies, the GitHub API tarball URL of the resolved commit. Empty for `git+` dependencies and local directories.                                     |
+| Field            | Description                                                                                                                                                                                                                                                        |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `name`           | The package name.                                                                                                                                                                                                                                                  |
+| `version`        | The exact version (`4.1.2`) of a registry package. For other sources, the resolved specifier as in `bun.lock`: `github:user/repo#<commit>` (`#<ref>` when the host's tarball names no commit), `https://example.com/pkg.tgz`, `./pkg.tgz`, `file:pkg`, `link:pkg`. |
+| `requestedRange` | What `package.json` or the command line asked for: `^4.0.0`, `latest`, `github:user/repo`, `file:./pkg`.                                                                                                                                                           |
+| `tarball`        | The URL (or local path) of the tarball. For `github:` dependencies, the GitHub API tarball URL of the resolved commit, or of the requested ref when the host's tarball names no commit. Empty for `git+` dependencies and local directories.                       |
 
 Packages from every source are included: registry, git, GitHub, remote and local tarballs, local directories. Workspace packages are part of the project and are not included. Outside a registry `version` is not semver; `Bun.semver.satisfies()` returns `false` for it.
 

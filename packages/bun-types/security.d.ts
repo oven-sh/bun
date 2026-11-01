@@ -15,7 +15,8 @@ declare module "bun" {
        * For packages from a registry this is the exact semver version, like
        * `4.1.2`. For packages from other sources this is the resolved
        * specifier as it appears in `bun.lock`, for example
-       * `github:user/repo#<commit>`, `git+https://host/repo.git#<commit>`,
+       * `github:user/repo#<commit>` (`#<ref>` when the host's tarball names
+       * no commit), `git+https://host/repo.git#<commit>`,
        * `https://example.com/pkg.tgz`, `./vendor/pkg.tgz`, `file:packages/pkg`
        * or `link:pkg`. Compare it with {@link Bun.semver.satisfies}, which
        * returns `false` for such specifiers, rather than assuming it parses
@@ -32,7 +33,8 @@ declare module "bun" {
        * a local tarball.
        *
        * For `github:` dependencies this is the GitHub API tarball URL for the
-       * resolved commit (honoring `GITHUB_API_URL`). Empty for packages that
+       * resolved commit, or for the requested ref when the host's tarball names
+       * no commit (honoring `GITHUB_API_URL`). Empty for packages that
        * are not installed from a tarball, such as `git+` dependencies and
        * local `file:` / `link:` directories.
        */

@@ -636,6 +636,20 @@ describe.concurrent("brace + glob composition", () => {
     });
   });
 
+  // A dot item shares no walk, so `broken` walks alone. The walker then asks the file system for the name,
+  // which follows the link, as for `echo d/*/broken` with no brace group.
+  test.todo("a link to nothing is a match of a plain item that shares no walk", async () => {
+    using dir = tempDir("shell-brace-glob-literal-alone", {
+      "d/x/.dot": "",
+    });
+    symlinkSync("nothing", join(String(dir), "d", "x", "broken"));
+    expect(await run(String(dir), "echo d/*/{broken,.dot}")).toEqual({
+      stdout: "d/x/broken d/x/.dot\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test.skipIf(!isLinux)("a file name that is not UTF-8 is a match with or without a brace group", async () => {
     using dir = tempDir("shell-brace-glob-names", {
       "a.ts": "",
@@ -773,16 +787,16 @@ describe.concurrent("brace + glob composition", () => {
     });
     // No `.cwd()`: each word names the fixture by its full path, with the separators of the platform.
     const root = String(dir);
-    const at = (...words: string[]) => words.map(word => `${root}/${word}`.replaceAll("\\", "/"));
-    const words = async (command: ReturnType<typeof $>) => list((await command.quiet()).stdout.toString());
+    const slashed = (path: string) => path.replaceAll("\\", "/");
+    const at = (...words: string[]) => words.map(word => `<root>/${word}`);
+    // The path of the temporary folder can have a space, so it leaves the output before `list` splits it.
+    const words = async (command: ReturnType<typeof $>) =>
+      list(slashed((await command.quiet()).stdout.toString()).replaceAll(slashed(root), "<root>"));
     expect(await words($`echo ${root}/{d1,d2}/f*`)).toEqual(at("d1/f1", "d2/f3"));
     expect(await words($`echo ${root}/d1/{f*,s*}`)).toEqual(at("d1/f1", "d1/s1"));
     expect(await words($`echo ${root + sep + "d1" + sep}{f*,s*}`)).toEqual(at("d1/f1", "d1/s1"));
     // A directory that is not there, or that is a file, gives its variant no match.
-    expect(await words($`echo {${root},${root + "-nope"}}/d1/s*`)).toEqual([
-      ...at("d1/s1"),
-      `${root}-nope/d1/s*`.replaceAll("\\", "/"),
-    ]);
+    expect(await words($`echo {${root},${root + "-nope"}}/d1/s*`)).toEqual([...at("d1/s1"), "<root>-nope/d1/s*"]);
     expect(await words($`echo ${root}/{nope,d1}/f*`)).toEqual(at("nope/f*", "d1/f1"));
     expect(await words($`echo ${root}/{a.ts,d1}/f*`)).toEqual(at("a.ts/f*", "d1/f1"));
     expect(await words($`echo ${root}/{nope,d2}/*.{ts,zz}`)).toEqual(
@@ -809,16 +823,22 @@ describe.concurrent("brace + glob composition", () => {
     chmodSync(noaccess, 0o000);
     chmodSync(secret, 0o000);
     chmodSync(base, 0o111);
+    // The path of the temporary folder can have a space, so it is a value in each script and `<root>` in the output.
+    const result = async (command: ReturnType<typeof $>) => {
+      const { stdout, stderr, exitCode } = await command.quiet().nothrow();
+      const text = (output: Buffer) => output.toString().replaceAll(root, "<root>");
+      return { stdout: text(stdout), stderr: text(stderr), exitCode };
+    };
     try {
       // The other variant has a match, so the word does not fail, as in bash.
-      const words = [`${root}/base`, `${root}/noaccess`, `${noaccess}/*`, `${root}/placeholder.txt`];
-      const braced = await run(root, `echo {${root},${noaccess}}/*`);
+      const words = ["<root>/base", "<root>/noaccess", "<root>/noaccess/*", "<root>/placeholder.txt"];
+      const braced = await result($`echo {${root},${noaccess}}/*`);
       expect({ ...braced, stdout: braced.stdout.trim().split(" ").sort() }).toEqual({
         stdout: words,
         stderr: "",
         exitCode: 0,
       });
-      const assigned = await run(root, `FOO={${root},${noaccess}}/*; echo $FOO`);
+      const assigned = await result($`FOO={${root},${noaccess}}/*; echo $FOO`);
       expect({ ...assigned, stdout: assigned.stdout.trim().split(" ").sort() }).toEqual({
         stdout: words,
         stderr: "",
@@ -830,15 +850,15 @@ describe.concurrent("brace + glob composition", () => {
       expect(await run(cwd, "echo {..,d1}/*")).toEqual({ stdout: "../* d1/f1\n", stderr: "", exitCode: 0 });
 
       // When no variant has a match, the word fails with the error of the walk.
-      const noMatch = await run(root, `echo {${noaccess},${noaccess}}/*`);
-      expect(noMatch.stderr).toContain(`bun: Permission denied: ${noaccess}`);
+      const noMatch = await result($`echo {${noaccess},${noaccess}}/*`);
+      expect(noMatch.stderr).toContain("bun: Permission denied: <root>/noaccess");
       expect({ stdout: noMatch.stdout, exitCode: noMatch.exitCode }).toEqual({ stdout: "", exitCode: 1 });
       // The matches that a walk finds before it fails are not used, with or without a brace.
-      const partial = await run(root, `echo ${root}/**/placeholder*`);
+      const partial = await result($`echo ${root}/**/placeholder*`);
       expect(partial.stderr).toContain("bun: Permission denied: ");
       expect({ stdout: partial.stdout, exitCode: partial.exitCode }).toEqual({ stdout: "", exitCode: 1 });
-      expect(await run(root, `FOO=${root}/**/placeholder*; echo $FOO`)).toEqual({
-        stdout: `${root}/**/placeholder*\n`,
+      expect(await result($`FOO=${root}/**/placeholder*; echo $FOO`)).toEqual({
+        stdout: "<root>/**/placeholder*\n",
         stderr: "",
         exitCode: 0,
       });

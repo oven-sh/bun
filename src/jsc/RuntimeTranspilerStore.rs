@@ -718,15 +718,13 @@ impl TranspilerJob {
         let transpiler: &mut Transpiler<'_> = &mut transpiler_storage;
         transpiler.set_arena(&arena);
         transpiler.set_log(&raw mut *log_clone_guard.1);
-        // SAFETY: the copy is never dropped, so it can alias the job's list, which outlives it.
+        // SAFETY: `resolver.opts` is a value field of this copy, which is never dropped, so an alias of the job's list, which outlives the copy, can overwrite its list.
         unsafe {
             ptr::write(
                 &raw mut transpiler.resolver.opts.extra_cjs_extensions,
                 ptr::read(&raw const this.extra_cjs_extensions),
             );
         }
-        // Note: the resolver already shares opts with the parent
-        // Transpiler via raw pointer; set_arena/set_log keep them in sync.
         transpiler.macro_context = None;
         // The JS thread may have been in macro mode when its options were copied, but a job is never part of a macro.
         transpiler.options.target = bun_ast::Target::Bun;

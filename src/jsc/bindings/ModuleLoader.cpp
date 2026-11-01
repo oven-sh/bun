@@ -800,13 +800,10 @@ static JSValue requireFromIsolatedModuleCache(Zig::GlobalObject* globalObject, J
     void* bunVM = globalObject->bunVM();
     if (!Bun::IsolatedModuleCache::canUse(vm, bunVM, typeAttribute))
         return {};
-    if (!pluginContents) {
-        BunString specifier = Bun::toString(key);
-        if (NodeModuleModule__requireExtensionsSelect(bunVM, &specifier)) [[unlikely]] {
-            // Module._extensions answers this require(), so the cache does not, and what it loads stays with this test file.
-            Bun::IsolatedModuleCache::evictWhenTestFileEnds(vm, key);
-            return {};
-        }
+    if (!pluginContents && NodeModuleModule__requireExtensionsSelect(bunVM, key.impl())) [[unlikely]] {
+        // Module._extensions answers this require(), so the cache does not, and what it loads stays with this test file.
+        Bun::IsolatedModuleCache::evictWhenTestFileEnds(vm, key);
+        return {};
     }
     auto* cached = Bun::IsolatedModuleCache::lookup(vm, key, pluginContents);
     if (!cached)

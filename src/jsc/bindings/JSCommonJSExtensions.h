@@ -49,5 +49,5 @@ private:
 
 } // namespace Bun
 
-// Whether a function assigned to Module._extensions can answer require(specifier).
-extern "C" bool NodeModuleModule__requireExtensionsSelect(void* bunVM, const BunString* specifier);
+// Whether Module._extensions of the running test file answers require(specifier), so that a source cached for an earlier file does not.
+extern "C" bool NodeModuleModule__requireExtensionsSelect(void* bunVM, const WTF::StringImpl* specifier);

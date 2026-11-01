@@ -323,6 +323,7 @@ static void nativeAdjustChunkSize(JSNativeStreamSourceAdapter* adapter, size_t r
 }
 
 extern "C" size_t Bun__ByteBlobLoader__remaining(void* source);
+extern "C" bool Bun__ByteStream__pullsOnDemand(void* source);
 
 // A slab the size of what a blob has left is filled whole and handed over uncopied; one byte finds out that nothing is left.
 static size_t nativeSlabSize(JSNativeStreamSourceAdapter* adapter)
@@ -492,7 +493,13 @@ void materializeNativeSource(JSGlobalObject* globalObject, JSReadableStream* str
     auto* controller = WebCore::JSReadableStreamDefaultController::create(vm, WebCore::getDOMStructure<WebCore::JSReadableStreamDefaultController>(vm, *domGlobalObject));
     controller->m_algorithms.kind = SourceKind::Native;
     controller->m_algorithms.algorithmContext.set(vm, controller, adapter);
-    setUpReadableStreamDefaultController(globalObject, stream, controller, jsUndefined(), 1);
+    // A producer that reads only for a parked pull (a Bun.serve request body) gets no chunk queued ahead of read().
+    // Its end can then arrive with no pull to return it: the adapter has the controller from the start to close it.
+    auto* bytesSource = dynamicDowncast<JSBytesInternalReadableStreamSource>(handle);
+    const bool pullsOnDemand = bytesSource && Bun__ByteStream__pullsOnDemand(bytesSource->wrapped());
+    if (pullsOnDemand)
+        adapter->setController(vm, controller);
+    setUpReadableStreamDefaultController(globalObject, stream, controller, jsUndefined(), pullsOnDemand ? 0 : 1);
     RETURN_IF_EXCEPTION(scope, );
     nativeSourceStart(globalObject, controller);
     RETURN_IF_EXCEPTION(scope, );

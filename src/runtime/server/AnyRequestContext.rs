@@ -248,6 +248,15 @@ impl AnyRequestContext {
         )
     }
 
+    /// Whether the request reads its body from the socket only for a parked pull.
+    pub fn reads_request_body_on_demand(self) -> bool {
+        dispatch!(self, false, ptr | T, _ptr | T::READS_BODY_ON_DEMAND)
+    }
+
+    pub fn on_request_body_pull_parked(self) {
+        dispatch!(self, (), ptr | T, ptr | T::on_request_body_pull_parked(ptr))
+    }
+
     pub fn write_chunk(
         self,
         data: &crate::webcore::streams::Result,

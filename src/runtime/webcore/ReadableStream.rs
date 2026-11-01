@@ -814,6 +814,9 @@ pub trait SourceContext: Sized {
     /// `FileReader` releases its across-read ref.
     fn wrapper_finalized(&self) {}
 
+    /// `pull` returned its pending promise: the reader now waits for bytes. `ByteStream` tells its producer.
+    fn on_pull_parked(&self) {}
+
     /// `setRefUnrefFn` — default no-op.
     fn set_ref_unref(&self, _enable: bool) {}
 
@@ -1094,6 +1097,11 @@ impl<C: SourceContext> NewSource<C> {
             .is_none_or(|context| self.global_this().bun_vm().is_context_live(context))
     }
 
+    /// Whether a reader took this source over ([`Self::start`]): it pulls the bytes it wants.
+    pub fn is_started(&self) -> bool {
+        self.reader_context.get().is_some()
+    }
+
     /// Tell the C++ `JSNativeStreamSourceAdapter` (if a stream consumer attached one) that the native side closed.
     pub fn on_close(&self) {
         if self.cancelled.get() || !self.is_reader_live() {
@@ -1270,7 +1278,13 @@ impl<C: SourceContext> NewSource<C> {
             return Ok(JSValue::UNDEFINED);
         };
         let result = self.context.on_pull(buffer.slice_mut(), view);
-        Self::process_result(this_value.to_js(), &cx, flags.to_js(), result)
+        let parked = matches!(result, streams::Result::Pending(_));
+        let value = Self::process_result(this_value.to_js(), &cx, flags.to_js(), result)?;
+        // After `process_result`: the promise that a producer settles exists now.
+        if parked {
+            self.context.on_pull_parked();
+        }
+        Ok(value)
     }
 
     pub fn start(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {

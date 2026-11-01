@@ -682,7 +682,10 @@ private:
                     /* Only reset timeout if we got enough bytes (16kb/sec) since last time we reset here */
                     httpResponseData->received_bytes_per_timeout += (unsigned int) data.length();
                     if (httpResponseData->received_bytes_per_timeout >= HTTP_RECEIVE_THROUGHPUT_BYTES * httpResponseData->idleTimeout) {
-                        ((HttpResponse<SSL> *) user)->resetTimeout();
+                        /* Bun.serve: the rest of a read still arrives after pause(), which turned the timeout off. */
+                        if (IsNodeHttp || !((us_socket_t *) user)->flags.is_paused) {
+                            ((HttpResponse<SSL> *) user)->resetTimeout();
+                        }
                         httpResponseData->received_bytes_per_timeout = 0;
                     }
                 }
@@ -1012,8 +1015,11 @@ private:
             }
         }
 
-        /* Expect another writable event, or another request within the timeout */
-        reinterpret_cast<HttpResponse<SSL> *>(s)->resetTimeout();
+        /* Expect another writable event, or another request within the timeout. Not while Bun.serve paused
+         * the request: pause() turned the timeout off, and the writable event it polls for arrives here. */
+        if (IsNodeHttp || !s->flags.is_paused) {
+            reinterpret_cast<HttpResponse<SSL> *>(s)->resetTimeout();
+        }
 
         return s;
     }

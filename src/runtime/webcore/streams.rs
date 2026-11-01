@@ -1037,6 +1037,49 @@ impl SourceHandle {
         }
     }
 
+    /// Whether this producer reads its transport only while a pull is parked ([`Self::pull_parked`]).
+    pub fn reads_on_demand(self) -> bool {
+        match self {
+            SourceHandle::ServerRequestBody(any) => {
+                bun_removable_features::removable_body!(Serve, Abort, {
+                    any.reads_request_body_on_demand()
+                })
+            }
+            SourceHandle::None
+            | SourceHandle::JSController(_)
+            | SourceHandle::ByteStream(_)
+            | SourceHandle::FileReader(_)
+            | SourceHandle::Subprocess(_)
+            | SourceHandle::ShellWritable(_)
+            | SourceHandle::FetchResponseBody(_)
+            | SourceHandle::S3DownloadBody(_)
+            | SourceHandle::HTMLRewriter(_)
+            | SourceHandle::TestingCancelOnDrain(_) => false,
+        }
+    }
+
+    /// A reader parked a pull on the source: it waits for bytes now. A producer that reads only
+    /// for a waiting reader reads on from here.
+    pub fn pull_parked(self) {
+        match self {
+            SourceHandle::ServerRequestBody(any) => {
+                bun_removable_features::removable_body!(Serve, Abort, {
+                    any.on_request_body_pull_parked()
+                })
+            }
+            SourceHandle::None
+            | SourceHandle::JSController(_)
+            | SourceHandle::ByteStream(_)
+            | SourceHandle::FileReader(_)
+            | SourceHandle::Subprocess(_)
+            | SourceHandle::ShellWritable(_)
+            | SourceHandle::FetchResponseBody(_)
+            | SourceHandle::S3DownloadBody(_)
+            | SourceHandle::HTMLRewriter(_)
+            | SourceHandle::TestingCancelOnDrain(_) => {}
+        }
+    }
+
     pub fn start(&mut self) {
         match *self {
             SourceHandle::FetchResponseBody(p) => p.on_start(),

@@ -14,7 +14,8 @@ use crate::server::jsc::{self, JSGlobalObject, JSValue, JsResult};
 use crate::server::{RangeRequest, ServerLike};
 use crate::webcore::{
     self as WebCore, AbortSignal, AnyBlob, ByteStream, CookieMap, CookieMapRef, FetchHeaders,
-    Request, Response, blob::SizeType as BlobSizeType, body, readable_stream, request, response,
+    Request, Response, blob::SizeType as BlobSizeType, body, byte_stream, readable_stream, request,
+    response,
 };
 
 /// Q: Why is this needed?
@@ -4180,7 +4181,7 @@ where
                 return;
             }
 
-            let _exit = vm.enter_event_loop_scope();
+            let exit = vm.enter_event_loop_scope();
 
             // `RawSlice` is non-owning; ownership of `chunk` stays with the
             // caller for the duration of the synchronous `on_data` call.
@@ -4195,16 +4196,9 @@ where
                 );
                 bytes.on_data(WebCore::streams::Result::Temporary(borrowed));
 
-                // What `on_data` buffered; `on_stream_drained` resumes once it empties.
-                let buffered = bytes.buffered_len();
-                if bytes.buffer_action.get().is_some()
-                    || (bytes.sink.get().is_some() && !bytes.sink_paused.get())
-                {
-                    // buffer-action / draining sink: no `on_pull`; keep reading.
-                    this.resume_request_body_socket();
-                } else if buffered >= REQUEST_BODY_HIGH_WATER_MARK {
-                    this.pause_request_body_socket();
-                }
+                // The checkpoint: a reader takes the chunk here, and pulls again or does not.
+                drop(exit);
+                this.pace_request_body_socket();
             } else {
                 this.resume_request_body_socket();
                 // Moved out so the Strong (and its underlying GC handle) is
@@ -4318,11 +4312,39 @@ where
         }
     }
 
+    /// After a delivery to the body stream and the checkpoint in which script reacted to it (it can have
+    /// ended the request): read on only for a consumer that waits.
+    fn pace_request_body_socket(&self) {
+        if self.is_aborted_or_ended() || self.flags.has_marked_complete() {
+            return;
+        }
+        let Some(bytes) = self.request_body_byte_stream() else {
+            return;
+        };
+        match bytes.demand() {
+            byte_stream::Demand::Deliver => self.resume_request_body_socket(),
+            // `on_request_body_pull_parked` resumes.
+            byte_stream::Demand::Hold if Self::READS_BODY_ON_DEMAND => {
+                self.pause_request_body_socket()
+            }
+            // `on_request_body_stream_drained` resumes.
+            byte_stream::Demand::Hold | byte_stream::Demand::Buffer => {
+                if bytes.buffered_len() >= REQUEST_BODY_HIGH_WATER_MARK {
+                    self.pause_request_body_socket();
+                }
+            }
+        }
+    }
+
+    /// Whether the socket reads a started body stream only while its reader has a pull parked. A multiplexed
+    /// stream keeps the byte mark: its pause only withholds the window, and what the peer sent inside it still arrives.
+    pub(crate) const READS_BODY_ON_DEMAND: bool = !MUX;
+
     fn pause_request_body_socket(&self) {
         if self.flags.request_body_paused() {
             return;
         }
-        let Some(resp) = self.resp.get() else {
+        let Some(resp) = self.live_resp() else {
             return;
         };
         ctx_log!("pauseRequestBodySocket");
@@ -4356,31 +4378,60 @@ where
         self.resp.get()
     }
 
+    /// The body's native stream, while this context feeds it.
+    fn request_body_byte_stream(&self) -> Option<bun_ptr::BackRef<ByteStream>> {
+        self.request_body_readable_stream_ref
+            .get()
+            .get()?
+            .ptr
+            .bytes()
+    }
+
     /// Detach the body ByteStream's producer back-pointer (the stream can outlive this ctx in JS).
     fn detach_request_body_producer(&self) {
-        let Some(readable) = self.request_body_readable_stream_ref.get().get() else {
-            return;
-        };
-        if let Some(bytes) = readable.ptr.bytes() {
+        if let Some(bytes) = self.request_body_byte_stream() {
             let source = bytes.parent_const();
             source.producer.set(WebCore::streams::SourceHandle::None);
         }
     }
 
+    /// The body stream's buffer emptied, or a whole-body read or a sink attached to it.
     pub(crate) fn on_request_body_stream_drained(this: *mut Self) {
         // SAFETY: `this` is the registered live `*mut RequestContext`.
         let this = unsafe { &*this };
         if !this.flags.request_body_paused() {
             return;
         }
-        this.flags.set_request_body_paused(false);
-        if this.resp.get().is_none()
-            || this.flags.aborted()
-            || this.server.get().is_none_or(|s| s.terminated())
+        // An emptied buffer is not a reader's demand: its next parked pull is.
+        if Self::READS_BODY_ON_DEMAND
+            && this
+                .request_body_byte_stream()
+                .is_some_and(|bytes| matches!(bytes.demand(), byte_stream::Demand::Hold))
         {
             return;
         }
-        if let Some(resp) = this.live_resp() {
+        this.resume_request_body_for_stream();
+    }
+
+    /// The body stream's reader parked a pull: it waits for bytes.
+    pub(crate) fn on_request_body_pull_parked(this: *mut Self) {
+        // SAFETY: `this` is the registered live `*mut RequestContext`.
+        let this = unsafe { &*this };
+        if this.flags.request_body_paused() {
+            this.resume_request_body_for_stream();
+        }
+    }
+
+    /// Resume for a signal of the body stream. Script raises those, also after the response ended.
+    fn resume_request_body_for_stream(&self) {
+        self.flags.set_request_body_paused(false);
+        if self.resp.get().is_none()
+            || self.flags.aborted()
+            || self.server.get().is_none_or(|s| s.terminated())
+        {
+            return;
+        }
+        if let Some(resp) = self.live_resp() {
             resp.resume();
         }
     }
@@ -4513,7 +4564,8 @@ where
 const MAX_REQUEST_BODY_PREALLOCATE_LENGTH: usize = 1024 * 256;
 const MUX_REQUEST_BODY_PREALLOCATE_LENGTH: usize = 64 * 1024;
 
-/// Pause socket reads at this many unconsumed request-body bytes (two 512 KB uWS recv buffers).
+/// Pause socket reads at this many request-body bytes that no reader pulls: an untouched body, a stream nothing
+/// reads yet, a back-pressured sink (two 512 KB uWS recv buffers). A reader's pulls pace the socket themselves.
 const REQUEST_BODY_HIGH_WATER_MARK: usize = 1024 * 1024;
 
 /// `RequestContext.bind.ts` has one set of reactions for each instantiation.

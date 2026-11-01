@@ -141,6 +141,12 @@ impl Buffered {
 /// ReadableStream source backed by a ByteStream.
 pub(crate) type Source = readable_stream::NewSource<ByteStream>;
 
+/// Whether the stream's producer reads its transport only while a pull is parked: the reader then queues no chunk ahead of `read()`.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__ByteStream__pullsOnDemand(source: &Source) -> bool {
+    source.producer.get().reads_on_demand()
+}
+
 /// A network body producer's (fetch, S3) hold on the stream it feeds: a counted ref on the stream's
 /// `Source`, so delivery and unhooking go through memory the producer keeps alive rather than the
 /// JS wrapper (which the VM's last sweep destroys in no particular order), plus the parked bit of
@@ -263,6 +269,16 @@ impl core::ops::Deref for PinnedBytes {
     }
 }
 
+/// What the stream's consumer asks of a producer that can stop reading its transport.
+pub(crate) enum Demand {
+    /// A parked pull, a whole-body read, or a sink that takes writes: deliver.
+    Deliver,
+    /// A reader that does not wait. It parks a pull when it wants more ([`streams::SourceHandle::pull_parked`]).
+    Hold,
+    /// No consumer yet, or a back-pressured sink: what arrives collects in the buffer ([`ByteStream::buffered_len`]).
+    Buffer,
+}
+
 impl readable_stream::SourceContext for ByteStream {
     crate::source_context_codegen!(js_BytesInternalReadableStreamSource);
 
@@ -301,15 +317,21 @@ impl readable_stream::SourceContext for ByteStream {
             let to_write = self.buffered.copy_out(buffer);
             // Both sides are non-empty, so the copy moved at least one byte.
             debug_assert!(to_write > 0);
+            let into_array = IntoArray {
+                value: view,
+                len: to_write as blob::SizeType, // @truncate
+            };
 
             if self.buffered.is_empty() {
                 self.signal_drained();
+                // After the signal: a synchronous producer delivers more bytes inside it.
+                if self.ended_with_nothing_left() {
+                    self.done.set(true);
+                    return streams::Result::IntoArrayAndDone(into_array);
+                }
             }
 
-            return streams::Result::IntoArray(IntoArray {
-                value: view,
-                len: to_write as blob::SizeType, // @truncate
-            });
+            return streams::Result::IntoArray(into_array);
         }
 
         if self.has_received_last_chunk.get() {
@@ -334,6 +356,10 @@ impl readable_stream::SourceContext for ByteStream {
 
     fn on_cancel(&self) {
         Self::on_cancel(self)
+    }
+
+    fn on_pull_parked(&self) {
+        self.parent_const().producer.get().pull_parked();
     }
 
     fn deinit_fn(&self) {
@@ -483,6 +509,19 @@ impl ByteStream {
     #[inline]
     pub fn buffered_len(&self) -> usize {
         self.buffered.len()
+    }
+
+    pub(crate) fn demand(&self) -> Demand {
+        if self.pending.get().state == streams::PendingState::Pending
+            || self.buffer_action.get().is_some()
+            || (self.sink.get().is_some() && !self.sink_paused.get())
+        {
+            Demand::Deliver
+        } else if self.parent_const().is_started() && !self.done.get() {
+            Demand::Hold
+        } else {
+            Demand::Buffer
+        }
     }
 
     /// Sink's drain ack: unpause, push buffered bytes, end if last chunk already arrived.
@@ -790,6 +829,11 @@ impl ByteStream {
             // `&mut self` form.
             self.pending.with_mut(|p| p.run());
 
+            // The settled pull returns a byte count, which does not say that these were the last.
+            if is_really_done && to_copy_len > 0 {
+                self.close_reader_if_ended();
+            }
+
             return;
         }
 
@@ -797,6 +841,7 @@ impl ByteStream {
 
         self.append(stream, 0)
             .unwrap_or_else(|_| panic!("Out of memory while copying request body"));
+        self.close_reader_if_ended();
     }
 
     /// Buffer `stream`, whose first `offset` bytes a pending pull already took.
@@ -911,8 +956,21 @@ impl ByteStream {
             // resume from `buffer.len()`, and anything it emits inline queues
             // behind these bytes for the next pull.
             self.signal_drained();
+            self.close_reader_if_ended();
         }
         drained
+    }
+
+    /// The producer delivered its last chunk and a consumer took the last byte of it.
+    fn ended_with_nothing_left(&self) -> bool {
+        self.has_received_last_chunk.get() && self.buffered.is_empty() && !self.has_pending_error()
+    }
+
+    /// Tell the reader that the stream ended. A reader that pulls only for a waiting `read()` sends no pull to find out.
+    fn close_reader_if_ended(&self) {
+        if self.ended_with_nothing_left() {
+            self.parent_const().on_close();
+        }
     }
 
     /// The producer failed before anything attached and [`Self::append`] stored its error.

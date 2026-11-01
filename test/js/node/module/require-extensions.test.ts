@@ -162,6 +162,29 @@ test("wrapping an existing extension but it's secretly sync esm", () => {
     require.extensions[".cjs"] = original;
   }
 });
+// Node's handler is `(module, filename) => process.dlopen(module, filename)`.
+test("the .node handler calls what process.dlopen holds, with the module and the filename", () => {
+  const handler = require.extensions[".node"] as (...args: unknown[]) => unknown;
+  const original = process.dlopen;
+  try {
+    const dlopen = (process.dlopen = mock((..._: unknown[]) => "what process.dlopen returned"));
+    const module = { exports: {} };
+    expect(handler(module, "addon.node", 2, "more")).toBe("what process.dlopen returned");
+    handler(module);
+    expect(dlopen.mock.calls).toEqual([
+      [module, "addon.node"],
+      [module, undefined],
+    ]);
+    expect(dlopen.mock.contexts[0]).toBe(process);
+
+    process.dlopen = 42 as any;
+    expect(() => handler(module, "addon.node")).toThrow(
+      expect.objectContaining({ name: "TypeError", message: "process.dlopen is not a function" }),
+    );
+  } finally {
+    process.dlopen = original;
+  }
+});
 test.concurrent("default loader throws when module._compile was replaced with a non-function", async () => {
   using dir = tempDir("extensions-bad-compile", {
     "plain.js": `module.exports = "plain";`,

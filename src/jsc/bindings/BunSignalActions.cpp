@@ -403,6 +403,15 @@ static ALWAYS_INLINE bool isInExecutable(void* address)
 
 #endif // DEFINES_SIGNAL_FUNCTIONS_OF_LIBC
 
+bool interceptsSignalFunctionsOfLibraries()
+{
+#if DEFINES_SIGNAL_FUNCTIONS_OF_LIBC
+    return JSC::AOT::Image::isRegistered();
+#else
+    return false;
+#endif
+}
+
 } // namespace Bun
 
 #if DEFINES_SIGNAL_FUNCTIONS_OF_LIBC

@@ -1,14 +1,16 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, test } from "bun:test";
-import { copyFileSync } from "fs";
-import { bunEnv, bunExe, canBuildNodeAddons, isWindows, tempDirWithFiles } from "harness";
+import { copyFileSync, readFileSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, canBuildNodeAddons, isGlibc, isLinux, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 
-// These tests share one node-gyp build of two V8 addons (the compile
+// These tests share one node-gyp build of a few addons (the compile
 // dominates the wall time). They cover:
 // - duplicate loads: the second dlopen of the same module used to fail with
 //   "symbol 'napi_register_module_v1' not found" because static constructors
 //   only run once, so the module registration wasn't replayed
+// - flags: the third argument is the mode that dlopen() gets, converted and
+//   refused the way Node does it, and the handler of `.node` files takes none
 // - non-object exports: null/undefined/primitive exports used to segfault
 // - non-context-aware addons (NODE_MODULE, the NAN pattern): loading one from a
 //   second thread must not run the init function again, because that would
@@ -18,8 +20,80 @@ import { join } from "path";
 // - static constructor order: the init function must run after dlopen() returns,
 //   once the static constructors after the module registration have run
 
+// These need no addon: each throws before a library is opened, or for a file that does not exist.
+describe("process.dlopen arguments", () => {
+  const missing = join(import.meta.dir, "no-such-addon.node");
+  const dlopen = process.dlopen as (...args: unknown[]) => unknown;
+  const thrownBy = (call: () => unknown) => {
+    try {
+      call();
+    } catch (e: any) {
+      return { name: e.name, code: e.code, message: e.message };
+    }
+  };
+
+  test.each([[[]], [[{ exports: {} }]]])("fewer than two arguments: %j", args => {
+    expect(thrownBy(() => dlopen(...args))).toEqual({
+      name: "TypeError",
+      code: "ERR_MISSING_ARGS",
+      message: "process.dlopen needs at least 2 arguments",
+    });
+  });
+
+  test.each([
+    ["a symbol", Symbol("flags")],
+    ["a bigint", 1n],
+    [
+      "an object whose valueOf throws",
+      {
+        valueOf() {
+          throw new Error("thrown by valueOf");
+        },
+      },
+    ],
+  ])("flags that are %s", (_, flags) => {
+    const error = { name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message: "flag argument must be an integer." };
+    expect(thrownBy(() => dlopen({ exports: {} }, missing, flags))).toEqual(error);
+    // Node converts the flags first, so their error comes before the one for the module.
+    expect(thrownBy(() => dlopen(null, missing, flags))).toEqual(error);
+  });
+
+  test("the flags are converted, then exports is read, then the filename is converted", () => {
+    const order: string[] = [];
+    const module = {
+      get exports() {
+        order.push("exports");
+        return {};
+      },
+    };
+    const filename = {
+      toString() {
+        order.push("filename");
+        return missing;
+      },
+    };
+    const flags = {
+      valueOf() {
+        order.push("flags");
+        return 2;
+      },
+    };
+    expect(thrownBy(() => dlopen(module, filename, flags))).toMatchObject({ name: "Error", code: "ERR_DLOPEN_FAILED" });
+    expect(order).toEqual(["flags", "exports", "filename"]);
+  });
+});
+
 describe.skipIf(!canBuildNodeAddons())("process.dlopen native addon", () => {
   let addonPath: string;
+  // The names that it exports.
+  const addonExports = ["hello", "lateStaticConstructed"];
+  // Not on Windows: a Node-API addon, and a library that calls a function of it without being linked against it.
+  let corePath: string;
+  let pluginPath: string;
+  // Not on Windows: a V8 addon whose init function calls a function that nothing defines.
+  let undefinedSymbolPath: string;
+  // A library that registers no module.
+  let noRegistrationPath: string;
   let nonContextAwarePath: string;
   let workerFixturePath: string;
   // A copy of the same addon at a second path, which the loader treats as a different library.
@@ -94,6 +168,36 @@ static LateStatic late_static;
 }  // namespace demo
 `;
 
+    // The shape of https://github.com/oven-sh/bun/issues/26137: an addon whose symbols a library that it opens later needs.
+    // Node tests the same with test/addons/dlopen-ping-pong. test/aot/process-dlopen-flags.test.ts builds the two files too.
+    const sharedWithAot = join(import.meta.dir, "../../../aot/process-dlopen-flags");
+    const coreSource = readFileSync(join(sharedWithAot, "core.c"), "utf8");
+    const pluginSource = readFileSync(join(sharedWithAot, "plugin.c"), "utf8");
+
+    const undefinedSymbolSource = `
+#include <node.h>
+
+#ifndef _WIN32
+// Nothing defines this, so the loader cannot bind it.
+extern "C" void function_that_nothing_defines();
+#endif
+
+static void Initialize(v8::Local<v8::Object> exports,
+                       v8::Local<v8::Value> module,
+                       v8::Local<v8::Context> context,
+                       void* priv) {
+#ifndef _WIN32
+  function_that_nothing_defines();
+#endif
+}
+
+NODE_MODULE_CONTEXT_AWARE(undefined_symbol, Initialize)
+`;
+
+    const noRegistrationSource = `
+int no_registration_value(void) { return 1; }
+`;
+
     // Mimics what NAN generates: NODE_MODULE (no context-aware register function) and
     // a static Persistent that the init function sets for the isolate it ran in.
     const nonContextAwareSource = `
@@ -154,6 +258,22 @@ NODE_MODULE(non_context_aware, demo::Initialize)
     {
       "target_name": "addon",
       "sources": [ "addon.cpp" ]
+    },
+    {
+      "target_name": "core",
+      "sources": [ "core.c" ]
+    },
+    {
+      "target_name": "plugin",
+      "sources": [ "plugin.c" ]
+    },
+    {
+      "target_name": "undefined_symbol",
+      "sources": [ "undefined_symbol.cpp" ]
+    },
+    {
+      "target_name": "no_registration",
+      "sources": [ "no_registration.c" ]
     },
     {
       "target_name": "non_context_aware",
@@ -227,6 +347,10 @@ if (!isMainThread) {
 
     const dir = tempDirWithFiles("dlopen-duplicate-test", {
       "addon.cpp": addonSource,
+      "core.c": coreSource,
+      "plugin.c": pluginSource,
+      "undefined_symbol.cpp": undefinedSymbolSource,
+      "no_registration.c": noRegistrationSource,
       "non_context_aware.cpp": nonContextAwareSource,
       "worker-fixture.js": workerFixture,
       "binding.gyp": bindingGyp,
@@ -263,11 +387,27 @@ if (!isMainThread) {
     }
 
     addonPath = join(dir, "build", "Release", "addon.node");
+    corePath = join(dir, "build", "Release", "core.node");
+    pluginPath = join(dir, "build", "Release", "plugin.node");
+    undefinedSymbolPath = join(dir, "build", "Release", "undefined_symbol.node");
+    noRegistrationPath = join(dir, "build", "Release", "no_registration.node");
     nonContextAwarePath = join(dir, "build", "Release", "non_context_aware.node");
     workerFixturePath = join(dir, "worker-fixture.js");
     addonCopyPath = join(dir, "build", "Release", "addon-copy.node");
     copyFileSync(addonPath, addonCopyPath);
   }, 180_000);
+
+  async function runJsonFixture(cmd: string[], env: Record<string, string>) {
+    await using proc = Bun.spawn({
+      cmd,
+      env: { ...bunEnv, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ exe: cmd[0], stderr, exitCode }).toEqual({ exe: cmd[0], stderr: "", exitCode: 0 });
+    return JSON.parse(stdout);
+  }
 
   // Each test spawns an isolated child (dlopen state is process-global), so
   // they are safe to run in parallel once the addon has been built.
@@ -493,6 +633,180 @@ if (!isMainThread) {
     });
   });
 
+  // Not concurrent, and neither are the two groups after it: the crash report tests above take most of their 10 seconds in a
+  // debug build, and longer with every child that runs beside them.
+  describe("process.dlopen flags", () => {
+    // `report(path, ...flags)` answers the names that the addon exported, or what process.dlopen threw.
+    const report = `
+      const { ADDON, CORE, PLUGIN, UNDEFINED_SYMBOL } = process.env;
+      const { RTLD_LAZY, RTLD_NOW, RTLD_GLOBAL, RTLD_DEEPBIND } = require("node:os").constants.dlopen;
+      function report(path, ...flags) {
+        const module = { exports: {} };
+        try {
+          process.dlopen(module, path, ...flags);
+        } catch (e) {
+          return { name: e.name, code: e.code, message: e.message };
+        }
+        return Object.keys(module.exports);
+      }
+    `;
+    // Runs the script after `report` in a child, which prints one JSON value.
+    const run = (script: string, env: Record<string, string> = {}) =>
+      runJsonFixture([bunExe(), "-e", report + script], {
+        ADDON: addonPath,
+        CORE: corePath,
+        PLUGIN: pluginPath,
+        UNDEFINED_SYMBOL: undefinedSymbolPath,
+        ...env,
+      });
+
+    // With the default RTLD_LAZY the load succeeds, and the loader ends the process when the init function makes the call.
+    test.skipIf(isWindows)("RTLD_NOW: a symbol that nothing defines fails the load", async () => {
+      expect(await run(`console.log(JSON.stringify(report(UNDEFINED_SYMBOL, RTLD_NOW)));`)).toEqual({
+        name: "Error",
+        code: "ERR_DLOPEN_FAILED",
+        message: expect.stringContaining("function_that_nothing_defines"),
+      });
+    });
+
+    // A symbol has the bytes that its library gave it. Node replaces what is not UTF-8.
+    test.skipIf(!isLinux)("a loader error that is not UTF-8 keeps its text", async () => {
+      using dir = tempDir("dlopen-not-utf8", {});
+      const patched = join(String(dir), "not-utf8.node");
+      const bytes = readFileSync(undefinedSymbolPath);
+      const name = Buffer.from("function_that_nothing_defines");
+      let names = 0;
+      for (let at = bytes.indexOf(name); at !== -1; at = bytes.indexOf(name, at + 1), names++)
+        bytes[at + name.length - 1] = 0xff;
+      expect(names).toBeGreaterThan(0);
+      writeFileSync(patched, bytes);
+      expect(
+        await run(`console.log(JSON.stringify(report(process.env.PATCHED, RTLD_NOW)));`, { PATCHED: patched }),
+      ).toEqual({
+        name: "Error",
+        code: "ERR_DLOPEN_FAILED",
+        message: expect.stringContaining("function_that_nothing_define\uFFFD"),
+      });
+    });
+
+    // https://github.com/oven-sh/bun/issues/26137
+    describe.skipIf(isWindows)("RTLD_GLOBAL: a library that the addon opens finds the addon's symbols", () => {
+      const loadPlugin = `console.log(JSON.stringify(core.exports.loadPlugin(PLUGIN)));`;
+
+      test.each([
+        ["on the first load", `const core = { exports: {} }; process.dlopen(core, CORE, RTLD_LAZY | RTLD_GLOBAL);`],
+        [
+          "on a load after require() opened the addon without it",
+          `require(CORE); const core = { exports: {} }; process.dlopen(core, CORE, RTLD_LAZY | RTLD_GLOBAL);`,
+        ],
+        [
+          "under require(), from a process.dlopen that the program replaced",
+          `const dlopen = process.dlopen;
+           process.dlopen = function (module, filename) { return dlopen.call(this, module, filename, RTLD_LAZY | RTLD_GLOBAL); };
+           const core = { exports: require(CORE) };`,
+        ],
+      ])("%s", async (_, load) => {
+        expect(await run(load + loadPlugin)).toBe(43);
+      });
+
+      // macOS opens a library with RTLD_GLOBAL unless the flags have RTLD_LOCAL.
+      test.skipIf(!isLinux)("and not without the flag", async () => {
+        expect(await run(`const core = { exports: {} }; process.dlopen(core, CORE);` + loadPlugin)).toEqual(
+          expect.stringContaining("core_value"),
+        );
+      });
+    });
+
+    // Node converts the argument only when it is there, so none of these is the default RTLD_LAZY: each is 0, with neither
+    // RTLD_LAZY nor RTLD_NOW. glibc refuses that mode. The other C libraries take it, and Windows has no mode.
+    test("a third argument that converts to 0 is the mode 0", async () => {
+      const expected = isGlibc
+        ? {
+            name: "Error",
+            code: "ERR_DLOPEN_FAILED",
+            message: `${addonPath}: invalid mode for dlopen(): Invalid argument`,
+          }
+        : addonExports;
+      expect(
+        await run(`console.log(JSON.stringify([0, undefined, null, "abc", NaN].map(flags => report(ADDON, flags))));`),
+      ).toEqual([expected, expected, expected, expected, expected]);
+    });
+
+    test("the third argument is converted with ToInt32, and every flag of os.constants.dlopen loads", async () => {
+      // RTLD_NOW is 2 and RTLD_LAZY is 1 where they exist. RTLD_DEEPBIND is what Prisma passes.
+      const flags = `["2", 2.5, true, { valueOf: () => 1 }, 2 ** 32 + 1, RTLD_LAZY, RTLD_NOW, RTLD_LAZY | RTLD_GLOBAL, RTLD_NOW | RTLD_GLOBAL, RTLD_LAZY | RTLD_DEEPBIND]`;
+      expect(await run(`console.log(JSON.stringify(${flags}.map(flags => report(ADDON, flags))));`)).toEqual(
+        Array.from({ length: 10 }, () => addonExports),
+      );
+    });
+
+    // Node ends with a segmentation fault for both. 0x40000000 is a mode that glibc keeps for sprof(1), and 4 is RTLD_NOLOAD.
+    test.skipIf(!isGlibc)("a mode that gives glibc no usable library throws", async () => {
+      expect(
+        await run(
+          `console.log(JSON.stringify([report(ADDON, RTLD_LAZY | 0x40000000), report(ADDON, RTLD_LAZY | 4), report(ADDON), report(ADDON, RTLD_LAZY | 4)]));`,
+        ),
+      ).toEqual([
+        { name: "Error", code: "ERR_DLOPEN_FAILED", message: "invalid mode parameter" },
+        { name: "Error", code: "ERR_DLOPEN_FAILED", message: `${addonPath}: the library is not loaded` },
+        addonExports,
+        addonExports,
+      ]);
+    });
+  });
+
+  // In Node the handler is `(module, filename) => process.dlopen(module, filename)`, a function of its own.
+  describe("process.dlopen and the handler of .node files", () => {
+    test("the handler takes no flags", async () => {
+      // As the third argument of process.dlopen the first throws, and so does the second with glibc.
+      const script = `
+        const handler = require("node:module")._extensions[".node"];
+        console.log(JSON.stringify([Symbol("not flags"), 0].map(extra => {
+          const module = { exports: {} };
+          handler(module, process.env.ADDON, extra);
+          return Object.keys(module.exports);
+        })));
+      `;
+      expect(await runJsonFixture([bunExe(), "-e", script], { ADDON: addonPath })).toEqual([
+        addonExports,
+        addonExports,
+      ]);
+    });
+
+    test.each(["process.dlopen", `require.extensions[".node"]`])(
+      "%s is a handler for another extension",
+      async handler => {
+        using dir = tempDir("dlopen-other-extension", {});
+        const copy = join(String(dir), "addon.addon");
+        copyFileSync(addonPath, copy);
+        const script = `
+        require.extensions[".addon"] = ${handler};
+        console.log(JSON.stringify(Object.keys(require(process.env.COPY))));
+      `;
+        expect(await runJsonFixture([bunExe(), "-e", script], { COPY: copy })).toEqual(addonExports);
+      },
+    );
+  });
+
+  describe("process.dlopen of a library that registers no module", () => {
+    test("throws ERR_DLOPEN_FAILED", async () => {
+      const script = `
+        let thrown = null;
+        try {
+          process.dlopen({ exports: {} }, process.env.NO_REGISTRATION);
+        } catch (e) {
+          thrown = { name: e.name, code: e.code, message: e.message };
+        }
+        console.log(JSON.stringify(thrown));
+      `;
+      expect(await runJsonFixture([bunExe(), "-e", script], { NO_REGISTRATION: noRegistrationPath })).toEqual({
+        name: "Error",
+        code: "ERR_DLOPEN_FAILED",
+        message: `Module did not self-register: '${noRegistrationPath}'.`,
+      });
+    });
+  });
+
   describe.concurrent("process.dlopen with non-object exports", () => {
     test("should throw error when exports is null", async () => {
       const testScript = `
@@ -573,18 +887,6 @@ if (!isMainThread) {
   });
 
   describe.concurrent("process.dlopen of an addon that is already loaded", () => {
-    async function runJsonFixture(cmd: string[], env: Record<string, string>) {
-      await using proc = Bun.spawn({
-        cmd,
-        env: { ...bunEnv, ...env },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ exe: cmd[0], stderr, exitCode }).toEqual({ exe: cmd[0], stderr: "", exitCode: 0 });
-      return JSON.parse(stdout);
-    }
-
     const selfRegisterError = {
       loaded: false,
       code: "ERR_DLOPEN_FAILED",

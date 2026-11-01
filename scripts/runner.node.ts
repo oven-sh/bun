@@ -375,6 +375,7 @@ const aotTestsThatAskTheSystem = [
   "aot/native-addons",
   "aot/napi-addon",
   "aot/addons-named-by-the-platform",
+  "aot/process-dlopen-flags",
   "aot/build-plugins-native",
   "aot/build-plugins-external-code",
   "aot/load/native-plugins",

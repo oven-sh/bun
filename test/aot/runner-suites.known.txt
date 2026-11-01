@@ -69,7 +69,6 @@ test/js/bun/test/mock/mock-module.test.ts: a factory that require()s a module th
 test/js/bun/test/mock/mock-module.test.ts: a factory that returns a module namespace object > of a module that re-exports the mocked module fails
 test/js/bun/test/mock/mock-module.test.ts: a failing factory that import()s its own module, whose original imports itself, is only called once
 test/js/bun/test/mock/mock-module.test.ts: a mocked module's exports are read from the object the factory returned > in hot code, before and after the module is mocked
-test/js/bun/test/mock/mock-module.test.ts: a mocked module's exports are read from the object the factory returned > mocking the module again updates every binding linked to it
 test/js/bun/test/mock/mock-module.test.ts: a mocked module's exports are read from the object the factory returned > spyOn() on the namespace object spies on the object the factory returned
 test/js/bun/test/mock/mock-module.test.ts: a module imported with and without a `type` attribute is mocked, re-mocked and unmocked for both imports
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a mocked package that another package imports > files that mock it between files that don't

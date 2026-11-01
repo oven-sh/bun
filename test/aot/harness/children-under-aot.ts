@@ -11,7 +11,7 @@ function underAot<Start extends (...args: any[]) => any>(start: Start): Start {
     cmd.splice(2, 0, "--aot");
     appendFileSync(process.env.AOT_CHILDREN_STARTED!, ".");
     // A file that ends a hung child after seconds gives it the time of a plain run.
-    const timeout = options.timeout && Math.max(options.timeout, 240_000);
+    const timeout = options.timeout && Math.max(options.timeout, 120_000);
     return start.call(this, { ...options, cmd, timeout });
   } as Start;
 }

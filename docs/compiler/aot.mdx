@@ -93,9 +93,11 @@ error: TS2322: Type 'string' is not assignable to type 'number'.
 
 `bun run` removes your types and never checks them. `bun compile` relies on them, so it type checks the whole program first. If there's a type error, it writes no executable and exits with code `1`.
 
-[`bun check --aot`](/runtime/check) reports the same errors and builds nothing. Bun checks each file with the nearest `tsconfig.json`. If you can't fix an error yet, you can [suppress it](/compiler/troubleshooting#the-build-stops-at-a-type-error).
+One error is different. TypeScript gives up on a type after 100 nested steps and reports `TS2589` ("Type instantiation is excessively deep and possibly infinite"). The compiler works such a type out in parts instead, so `TS2589` only stops the build when the type really has no end. `bun check` still reports it wherever `tsc` does.
 
-During development, [`bun run --aot` and `bun test --aot`](/compiler/debugging#run-under-the-compilers-rules) run the same checks and then run your program from its source.
+[`bun check --aot`](/runtime/check) reports the same errors as the build and builds nothing. Bun checks each file with the nearest `tsconfig.json`. If you can't fix an error yet, you can [suppress it](/compiler/troubleshooting#the-build-stops-at-a-type-error).
+
+During development, [`bun run --aot`](/compiler/debugging#run-under-the-compilers-rules) runs the same checks and then runs your program from its source. [`bun test --aot`](/compiler/debugging#run-your-tests-compiled) compiles your tests and runs the compiled code.
 
 ## Read next
 

@@ -1,0 +1,16 @@
+# Module._extensions = input
+# Who replaces the object that holds the handlers has none of them in hand. Only a read counts as a load
+# RUN: valueflow-solve unseen
+# CHECK-NOT: NodeModuleExtensions
+# CHECK: unseen-code no
+# CHECK-NEXT: modules-by-name no
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=NodeModule
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="input" [isFreeName]
+    PropSet v0, v2 key="_extensions" mode=Strict
+    Return
+}

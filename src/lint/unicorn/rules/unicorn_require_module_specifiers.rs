@@ -7,7 +7,7 @@ use bun_lint::utils::visible::is_module_without_empty_exports;
 /// Enforce a non-empty specifier list in `import` and `export` statements.
 pub struct RequireModuleSpecifiers;
 
-const EMPTY_SPECIFIER: Message = Message::new("", "Empty {{statement_type}} specifier is not allowed");
+const EMPTY_SPECIFIER: &Message = &Message::new("", "Empty {{statement_type}} specifier is not allowed");
 
 /// The first `{` and the next `}` in `span`, if there's only whitespace between them.
 fn find_empty_braces_in_span<'a>(file: &'a File<'a>, span: Span) -> Option<Span> {

@@ -548,6 +548,25 @@ describe("bun", () => {
         fs.unlinkSync(path);
       }
     });
+
+    const files = {
+      "other.toml": `preload = ["./preload.js"]`,
+      "preload.js": `console.log("preload");`,
+      "index.js": `console.log("index");`,
+    };
+
+    test.concurrent.each(["--config=", "-c="])("%sother.toml is read", async flag => {
+      using dir = tempDir("config-flag", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), flag + "other.toml", "index.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: "preload\nindex\n", stderr: "" });
+      expect(exitCode).toBe(0);
+    });
   });
 
   test("--help lists check, lint and fmt", async () => {

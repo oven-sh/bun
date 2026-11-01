@@ -5,7 +5,7 @@ use bun_lint::rule::Plugin;
 /// Prefer `trimStart` / `trimEnd` over `trimLeft` / `trimRight` on String.
 pub struct PreferStringTrimStartEnd;
 
-const PREFER_STRING_TRIM_START_END: Message = Message::new("", "Prefer `{{good_trim}}` over `{{bad_trim}}`");
+const PREFER_STRING_TRIM_START_END: &Message = &Message::new("", "Prefer `{{good_trim}}` over `{{bad_trim}}`");
 
 impl Rule for PreferStringTrimStartEnd {
     const META: Meta =

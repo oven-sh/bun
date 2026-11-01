@@ -62,14 +62,21 @@ await once(server.listen(0, "127.0.0.1"), "listening");
 const { port } = server.address() as AddressInfo;
 // The request that follows the freeze reaches no handler.
 for (let index = 0; index < handlers.length + 1; index++) {
-  try {
-    const answer = await fetch(`http://127.0.0.1:${port}/${index}`, {
-      method: "POST",
-      signal: AbortSignal.timeout(20000),
-    });
-    say("answer", index, answer.status, await answer.text());
-  } catch (error) {
-    say("no answer", index, (error as Error)?.name);
+  for (let attempt = 0; ; attempt++) {
+    const handled = turn;
+    try {
+      const answer = await fetch(`http://127.0.0.1:${port}/${index}`, {
+        method: "POST",
+        signal: AbortSignal.timeout(20000),
+      });
+      say("answer", index, answer.status, await answer.text());
+    } catch (error) {
+      // The server dropped the connection after the last exchange. On a busy machine the client may send on it before it
+      // notices, and then the handler never sees the request. That says nothing about the frozen socket: send it again.
+      if (turn === handled && attempt < 3) continue;
+      say("no answer", index, (error as Error)?.name);
+    }
+    break;
   }
   await new Promise(resolve => setTimeout(resolve, 5));
 }

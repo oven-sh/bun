@@ -1,13 +1,5 @@
-// Objects that nothing holds but a function that waits: many async functions and async generators in flight at once, each with fresh objects alive across its awaits, while others allocate.
-//
-//   held      objects of a class, with references to one another, arrays of them, arrays of numbers, fresh strings, closures, Maps, `T | null`; made in front of an await and read behind it
-//   dead      objects that are read for the last time in front of an await; variables that only one path assigns and only that path reads, with awaits between
-//   waits     on nothing, on a settled promise, on an async function, on a microtask, on a timer of 0 to 30 ms, on setImmediate, on a message through a MessageChannel, on a promise that another task or another thread settles later
-//   flow      awaits in loops, in both arms of an if, in try, catch and finally, behind a rejection; for await over an async generator that is also left early
-//   at once   8 to 120 tasks of two to four kinds, started together; a task may start tasks of its own
-//   garbage   every task throws away objects between its waits, so that collections come while the others are suspended
-//
-// Each task folds what it held into a number; the program prints one line for each kind of task. Always TypeScript: the mode `erased` gives the untyped form.
+// Objects referenced only by a suspended function: many async functions and async generators in flight at once, each
+// with fresh objects live across its awaits, while others allocate.
 import type { Random } from "./random";
 
 const prelude = `declare function setImmediate(callback: () => void): unknown;
@@ -108,7 +100,7 @@ export function generate(random: Random): string {
   for (let kind = 0; kind < kinds; kind++) {
     let names = 0;
     let budget = random.pick([12, 25, 50, 90]);
-    // What is alive: name and how it folds into a number.
+    // What is live: its name and how it is reduced to a number.
     const held: { name: string; fold: string; type: string; make: () => string }[] = [];
     const number = () => pick(["k", "sum", "(k + sum)", `${below(50)}`, "(sum & 255)"]);
     const makers: [string, (name: string) => string, () => string][] = [
@@ -152,13 +144,13 @@ export function generate(random: Random): string {
           case 4: all += use(); break; // prettier-ignore
           case 5: all += renew(); break; // prettier-ignore
           case 6: all += `sum = (sum + churn(${pick([1, 3, 10, 40])})) | 0;`; break; // prettier-ignore
-          // Read for the last time in front of a wait.
+          // Last read before an await.
           case 7: all += `{ const gone = fresh(${number()}); sum = (sum + seen(gone)) | 0; } ${wait()}`; break; // prettier-ignore
           case 8: all += `${declare()}${wait()}${use()}`; break; // prettier-ignore
           case 9: case 10: all += `for (let c${names} = 0; c${names} < ${2 + below(4)}; c${names++}++) {${inner()}${wait()}${use()}}`; break; // prettier-ignore
           case 11: all += `if (${pick(["sum & 1", "k & 1", "sum > k", "(k + sum) % 3 === 0"])}) {${inner()}${wait()}} else {${inner()}}`; break; // prettier-ignore
           case 12: {
-            // Only one path assigns it, and only that path reads it, with waits between.
+            // Only one path assigns it, and only that path reads it, with awaits in between.
             const [name, test] = ["p" + names++, pick(["(k & 1) === 0", "k % 3 === 1", "(k & 4) !== 0"])];
             all += `let ${name}: Item | null = null; if (${test}) ${name} = fresh(${number()}); ${wait()}${inner()}${wait()} if (${test}) sum = (sum + seen(${name})) | 0;`;
             break;

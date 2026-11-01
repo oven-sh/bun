@@ -74,7 +74,10 @@ function look() {
     new Float64Array(group.shared)[0] = sum;
     const most = fattest.get(id);
     if (!most || performance.now() < group.waitsUntil) continue;
-    if (sum <= group.limit && !(isLinux && availableMemory() < group.limit / 7)) continue;
+    const left = isLinux ? availableMemory() : Infinity;
+    if (sum <= group.limit && left >= group.limit / 7) continue;
+    const shortage =
+      sum <= group.limit ? `; the machine had ${inMB(left)} left, and ${inMB(group.limit / 7)} have to stay free` : "";
     // The kernel takes a moment to take back what a killed process held.
     group.waitsUntil = performance.now() + 250;
     const members = [...watched.values()].filter(each => each.of === id);
@@ -82,7 +85,7 @@ function look() {
       if (!each.isOver)
         end(
           each,
-          `it held ${inMB(each.peak)} of the ${inMB(sum)} that ${members.length} processes held together, which may hold ${inMB(group.limit)}`,
+          `it held ${inMB(each.peak)} of the ${inMB(sum)} that ${members.length} processes held together, which may hold ${inMB(group.limit)}${shortage}`,
         );
   }
 }

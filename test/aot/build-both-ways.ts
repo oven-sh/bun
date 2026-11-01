@@ -186,7 +186,12 @@ function check(it: Case, plain: Record<string, any>, aot: Record<string, any>) {
       });
     expect(aot).toMatchObject({ success: true, messages: [] });
   }
-  expect(compared(aot)).toEqual({ ...compared(plain), ...it.differs });
+  const expected = { ...compared(plain), ...it.differs };
+  // What is compared leaves stderr out. Where an executable ends otherwise than expected, it says why.
+  if (aot.exitCode !== expected.exitCode || aot.signal !== expected.signal)
+    for (const { how, exitCode, signal, stderr } of [plain, aot])
+      console.error(`${how}: exit code ${exitCode}, signal ${signal}, stderr:\n${stderr}`);
+  expect(compared(aot)).toEqual(expected);
 }
 
 const entryPointOf = ({ options = "" }: Case) =>

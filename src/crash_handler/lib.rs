@@ -3976,4 +3976,55 @@ mod draft {
         bun_core::keep_symbols!(CrashHandler__unsupportedUVFunction);
     }
     // Rust links #[no_mangle] symbols unconditionally.
+
+    #[cfg(test)]
+    mod tests {
+        use super::{BoundedArray, StackLine, stored_zlib_stream};
+
+        fn encoded(line: Option<&StackLine<'_>>) -> BoundedArray<u8, 64> {
+            let mut link = BoundedArray::<u8, 64>::default();
+            StackLine::write_encoded(line, link.writer()).unwrap();
+            link
+        }
+
+        /// bun.report decodes these bytes, in the links of every release so far.
+        #[test]
+        fn frames_keep_their_encoding() {
+            let in_executable = StackLine {
+                address: 1,
+                object: None,
+            };
+            let compiled = StackLine {
+                address: 3,
+                object: Some(b"aot"),
+            };
+            let compiled_names_build = StackLine {
+                address: 19,
+                object: Some(b"aot1b26ec90d595fba2"),
+            };
+            assert_eq!(encoded(None).const_slice(), b"_");
+            assert_eq!(encoded(Some(&in_executable)).const_slice(), b"C");
+            assert_eq!(encoded(Some(&compiled)).const_slice(), b"CGaotG");
+            assert_eq!(
+                encoded(Some(&compiled_names_build)).const_slice(),
+                b"CmBaot1b26ec90d595fba2mB"
+            );
+        }
+
+        #[test]
+        fn message_without_memory_is_a_stored_zlib_stream() {
+            let mut buffer = [0u8; 2048];
+            let message = b"invoked crashByPanic() handler";
+            let stream = stored_zlib_stream(&mut buffer, message);
+            assert_eq!(stream[..7], [0x78, 0x01, 0x01, 0x1e, 0x00, 0xe1, 0xff]);
+            assert_eq!(stream[7..37], message[..]);
+            assert_eq!(stream[37..], [0xaf, 0xcb, 0x0b, 0x17]);
+
+            let long = [b'a'; 300];
+            let stream = stored_zlib_stream(&mut buffer, &long);
+            assert_eq!(stream[..7], [0x78, 0x01, 0x01, 0x00, 0x01, 0xff, 0xfe]);
+            assert_eq!(stream[7..263], long[..256]);
+            assert_eq!(stream[263..], [0xb4, 0x50, 0x61, 0x01]);
+        }
+    }
 } // end mod draft

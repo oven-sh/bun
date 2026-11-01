@@ -32,20 +32,26 @@ function openWriter(fifo) {
   return pipe;
 }
 
-// Takes `length` bytes out of the pipe. When the pipe is empty, the write job has more to write.
-async function read(reader, length) {
+// Takes `length` bytes out of the pipe, or fewer if the write settles before it wrote that many.
+// When the pipe is empty, a write that is pending has more to write.
+async function read(reader, length, written) {
+  let settled = false;
+  const settle = () => void (settled = true);
+  written.then(settle, settle);
   const bytes = Buffer.alloc(length);
-  for (let offset = 0; offset < length;) {
+  let offset = 0;
+  while (offset < length) {
     try {
       const count = fs.readSync(reader, bytes, offset, length - offset);
       if (count === 0) throw new Error("the pipe ended after " + offset + " bytes");
       offset += count;
     } catch (error) {
       if (error.code !== "EAGAIN") throw error;
+      if (settled) break;
       await new Promise(setImmediate);
     }
   }
-  return bytes;
+  return bytes.subarray(0, offset);
 }
 
 // Writes a string to the pipe and leaves the write as its only holder. The string is a property
@@ -127,15 +133,18 @@ if (mode === "copies") {
   const results = {};
   for (const [source, wrap] of Object.entries(wraps)) {
     const rows = (results[source] = {});
-    for (const [name, make] of Object.entries(strings)) {
-      let str = make();
-      const written = Bun.write(out, wrap(str));
-      // The caller makes the string a property key and drops it. The write can still be pending.
+    // The caller makes each string a property key and drops it. The writes can still be pending.
+    const started = Object.entries(strings).map(([name, make], i) => {
+      const str = make();
+      const path = out + "-" + i;
+      const written = Bun.write(path, wrap(str));
       ({})[str] = 1;
-      str = undefined;
-      Bun.gc(true);
+      return { name, make, path, written };
+    });
+    Bun.gc(true);
+    for (const { name, make, path, written } of started) {
       const size = await written;
-      const bytes = fs.readFileSync(out);
+      const bytes = fs.readFileSync(path);
       rows[name] = {
         written: size,
         same: bytes.equals(Buffer.from(make(), "utf8")),
@@ -157,7 +166,7 @@ if (mode === "copies") {
   const fifo = makeFifo();
   const reader = openReader(fifo);
   const written = writeAndDrop(openWriter(fifo));
-  const piped = await read(reader, MiB);
+  const piped = await read(reader, MiB, written);
   console.log(JSON.stringify({ written: await written, whole: piped.equals(Buffer.alloc(MiB, "abcd")) }));
 } else if (mode === "parked-in-worker") {
   // Nobody reads the pipe, so the write of the worker is pending when the worker is terminated.
@@ -189,7 +198,7 @@ if (mode === "copies") {
     await Bun.sleep(10);
     freed = process.memoryUsage.rss() < before + 32 * MiB;
   }
-  const piped = await read(reader, 2 * MiB);
+  const piped = await read(reader, 2 * MiB, written);
   console.log(JSON.stringify({ freed, written: await written, whole: piped.equals(Buffer.alloc(2 * MiB, "a")) }));
 } else {
   throw new Error("unknown mode " + mode);

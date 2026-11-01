@@ -14,6 +14,20 @@ To configure `bun test` in `bunfig.toml`, add a `[test]` section:
 # Options go here
 ```
 
+### Which file `bun test` reads
+
+`bun test` reads `bunfig.toml` from the current working directory only. It does not search parent directories, and it does not read the global `~/.bunfig.toml`, which is only used by package manager commands. To run tests from a subdirectory with the project's config, run `bun test` from the project root or pass `--cwd`.
+
+To use a different file, pass its path with `--config=<path>`. The path can be absolute or relative to the current working directory:
+
+```bash terminal icon="terminal"
+bun test --config=./config/bunfig.ci.toml
+```
+
+Write the flag with `=`. In `bun test --config ./bunfig.ci.toml`, the path is treated as a test filter rather than a config file.
+
+Relative paths inside the file, such as `preload` entries, resolve against the current working directory, not the directory the config file is in.
+
 ## Test Discovery
 
 ### root

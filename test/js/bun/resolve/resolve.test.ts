@@ -541,6 +541,34 @@ describe("NODE_PATH test", () => {
       expect(stderr).toContain(" 0 fail");
       expect(exitCode).toBe(0);
     });
+
+    // `import { assert } from "vitest"` imports "chai". pnpm links the chai of vitest next to vitest, and its bin shims
+    // put the packages that it hoists in NODE_PATH.
+    it.concurrent("the chai next to vitest comes before a chai that only NODE_PATH has", async () => {
+      const store = "node_modules/.pnpm/vitest@1.0.0/node_modules";
+      const chaiPackage = `{ "name": "chai", "type": "module", "main": "index.js" }`;
+      using dir = tempDir("node-path-chai", {
+        [`${store}/vitest/package.json`]: `{ "name": "vitest", "exports": { "./package.json": "./package.json" } }`,
+        [`${store}/chai/package.json`]: chaiPackage,
+        [`${store}/chai/index.js`]: `export const assert = () => "the chai next to vitest";`,
+        "hoisted/chai/package.json": chaiPackage,
+        "hoisted/chai/index.js": `export const assert = () => "a chai in NODE_PATH";`,
+        "a.test.js": `import { assert, test } from "vitest"; test("test", () => console.log(assert()));`,
+      });
+      symlinkSync(join(String(dir), store, "vitest"), join(String(dir), "node_modules", "vitest"), "junction");
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test"],
+        env: { ...bunEnv, NODE_PATH: join(String(dir), "hoisted") },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stdout, stderr).toContain("the chai next to vitest\n");
+      expect(exitCode).toBe(0);
+    });
   });
 
   // `setup.js` is in the cwd and in the NODE_PATH directory. Both commands resolve the Worker's preload the same way.

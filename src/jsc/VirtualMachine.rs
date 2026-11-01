@@ -5601,7 +5601,19 @@ impl VirtualMachine {
                 import_kind,
                 global_cache,
             ) {
-                ResultUnion::Success(r) => break r,
+                ResultUnion::Success(r) => {
+                    // The chai that vitest depends on comes before one that only NODE_PATH has.
+                    if r.flags.is_from_node_path()
+                        && let Some(chai) = self.resolve_chai_next_to_vitest(
+                            normalized_specifier,
+                            source_to_use,
+                            import_kind,
+                        )
+                    {
+                        break chai;
+                    }
+                    break r;
+                }
                 ResultUnion::Failure(e) => return Err(e.into()),
                 ResultUnion::Pending(_) | ResultUnion::NotFound => {
                     if core::mem::take(&mut may_retry_from_root)

@@ -2626,6 +2626,7 @@ impl<'a> Resolver<'a> {
                 result.flags.set_is_from_node_modules(
                     result.flags.is_from_node_modules() || res.is_node_module,
                 );
+                result.flags.set_is_from_node_path(res.is_from_node_path);
                 result.module_type = res.module_type;
                 // Potentially rewrite the import path if it's external that
                 // was remapped to a different path
@@ -3161,6 +3162,7 @@ impl<'a> Resolver<'a> {
                     .load_as_file_or_directory(abs_path, kind, out)
                     .is_success()
                 {
+                    out.is_from_node_path = true;
                     if let Some(d) = self.debug_logs.as_mut() {
                         d.decrease_indent();
                     }

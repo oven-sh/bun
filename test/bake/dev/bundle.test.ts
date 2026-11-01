@@ -683,6 +683,52 @@ devTest("removing 'use client' from a component with a pending resolution failur
       expect([...new Set(messages)]).toEqual([browserError]);
     },
   });
+  // The plugin fails the browser build of the component once its "use client" is gone.
+  devTest("a component that built keeps the build error of the save that removes its 'use client'", {
+    framework: framework(false),
+    pluginFile: `
+      import { readFileSync } from "node:fs";
+      export default [
+        {
+          name: "the browser build of Comp.ts fails without its directive",
+          setup(build) {
+            build.onLoad({ filter: /Comp\\.ts$/ }, args => {
+              if (args.side !== "client" || readFileSync(args.path, "utf8").includes("use client")) return undefined;
+              return { contents: "export const marker = ;", loader: "ts" };
+            });
+          },
+        },
+      ];
+    `,
+    files: {
+      ...componentFiles,
+      "routes/index.ts": `
+        import * as Comp from '../components/Comp';
+        import * as Other from '../components/Other';
+        export default () => typeof Comp.marker + typeof Other.other;
+      `,
+      "components/Other.ts": `
+        "use client";
+        import { marker } from './Comp';
+        export const other = marker;
+      `,
+    },
+    async test(dev) {
+      await using c = await dev.client("/");
+      await c.expectMessage("page: objectobject");
+      // One bundle builds the other component again, and that build asks for the browser build of this one.
+      await using batch = await dev.batchChanges({ errors: ["components/Comp.ts:1:23: error: Unexpected ;"] });
+      await dev.write("components/Comp.ts", `export const marker = "server only";`);
+      await dev.write(
+        "components/Other.ts",
+        `
+          "use client";
+          import { marker } from './Comp';
+          export const other = marker + " saved";
+        `,
+      );
+    },
+  });
 }
 // The bundler has no transform for a module that starts with "use server".
 // Bundling one used to abort the process from a bundler thread (the parser

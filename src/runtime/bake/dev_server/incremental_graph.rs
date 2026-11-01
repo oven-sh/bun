@@ -572,6 +572,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         // FrameworkRouter / SerializedFailure hold FileIndices into this graph.
         // Tombstoned slots are not reused; a free-list is a pending idea.
         self.bundled_files.keys_mut()[file_index.get() as usize] = Box::default();
+        // A trace from this slot has no path to find its server file by, so it goes to the importers of the slot.
+        self.bundled_files.values_mut()[file_index.get() as usize].is_hmr_root = false;
         let lists = &self.edge_lists[file_index.get() as usize];
         debug_assert!(lists.first_import.is_none());
         !has_importer

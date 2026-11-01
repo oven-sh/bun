@@ -535,8 +535,7 @@ mod tests {
         Expr::init(E::Array::default(), Loc::EMPTY)
     }
 
-    /// The finders share the resolver's caches with the process, so a lookup after a change on disk
-    /// starts from what an earlier lookup cached.
+    /// A lookup after a change on disk starts from what an earlier lookup cached: the finders share the caches of the process.
     #[cfg(unix)]
     #[allow(clippy::disallowed_methods)]
     mod after_a_miss {

@@ -730,8 +730,7 @@ pub fn lookups_run_again() -> usize {
     LOOKUPS_RUN_AGAIN.load(core::sync::atomic::Ordering::Relaxed)
 }
 
-/// `bun:internal-for-testing`: makes one thread wait between the replay of a miss and the verdict on it,
-/// so that a test can change the caches from another thread at that point.
+/// `bun:internal-for-testing`: one thread waits between the replay of a miss and its verdict, while a test changes the caches from another thread.
 pub mod miss_check_hold {
     use bun_threading::Futex;
     use core::sync::atomic::{AtomicU32, Ordering};
@@ -809,8 +808,7 @@ impl Drop for ReplayGuard {
     }
 }
 
-/// Whether this thread replays a lookup. A replay reads the caches and changes nothing.
-/// The test in front of each record: one load while no thread replays, this thread's `REPLAY` too while one does.
+/// Whether this thread replays a lookup, which reads the caches and changes nothing. One load while no thread replays.
 #[inline(always)]
 pub(crate) fn replaying() -> bool {
     ARMED_REPLAYS.load(core::sync::atomic::Ordering::Relaxed) != 0 && !REPLAY.get().is_null()
@@ -1305,8 +1303,7 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// For the resolver of a build that a command starts once, on caches that the same process filled:
-    /// its lookups, and those of every resolver made from it with `for_worker`, take a cached miss as it is.
+    /// For a build that a command starts once: its lookups, and those of each resolver made from it with `for_worker`, take a cached miss as it is.
     pub fn trust_cached_misses(&mut self) {
         self.trusts_cached_misses = true;
     }
@@ -2361,8 +2358,7 @@ impl<'a> Resolver<'a> {
         result
     }
 
-    /// For a caller's own lookups that fall back one to the next: one check on disk when all of them miss.
-    /// A resolver that trusts cached misses runs this check too, as the old retry of an entry point ran in every mode.
+    /// For a caller's own lookups that fall back one to the next: one check on disk when all of them miss, also in a resolver that trusts cached misses.
     pub fn with_deferred_miss_check<T, E>(
         &mut self,
         source_dir: &[u8],
@@ -2405,8 +2401,7 @@ impl<'a> Resolver<'a> {
         log.errors = errors;
     }
 
-    /// For a lookup that misses at last: what its earlier runs wrote to the log and its last run did not,
-    /// in front of what the last run wrote. The package manager reports a request that failed only once.
+    /// For a lookup that misses at last: puts back what its earlier runs logged and its last run did not. The package manager reports a failed request once.
     #[cold]
     fn put_back_log(&mut self, len: usize, earlier_msgs: Vec<bun_ast::Msg>) {
         let log = self.log_mut();
@@ -3269,8 +3264,7 @@ impl<'a> Resolver<'a> {
         stale
     }
 
-    /// The directories whose `DirInfo` the replay read, each with the slot that the cache maps it to now.
-    /// Every read of the cache by path that the judge needs is here, in one hold of the resolver mutex.
+    /// The directories whose `DirInfo` the replay read, each with the slot that the cache maps it to now: every read by path, in one hold of the resolver mutex.
     fn read_dirs_now(&mut self, slots: &[SlotRecord], floor: Option<(&[u8], u64)>) -> CacheNow {
         let mut read_dirs: bun_collections::smallvec::SmallVec<[ReadDir; 16]> = slots
             .iter()
@@ -3318,8 +3312,7 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// Compares what the replay read with the disk. With `&self` it cannot read the cache by path:
-    /// a slot that another thread read after the replay cannot make the miss look current.
+    /// Compares what the replay read with the disk. `&self`: it cannot read the cache by path, so a slot that another thread read later cannot make the miss look current.
     fn judge_touched_dirs<'t>(
         &self,
         touched: &'t TouchedDirs,
@@ -3440,9 +3433,7 @@ impl<'a> Resolver<'a> {
         stale
     }
 
-    /// Unmaps each read directory whose slot points at a parent slot that the cache no longer maps.
-    /// The listing stays. `read_dirs` has ancestors first: a directory that is unmapped here leaves
-    /// the one below it with such a link, so one pass relinks a chain of any length.
+    /// Unmaps each read directory whose slot points at an unmapped parent slot (its listing stays). Ancestors come first, so one pass relinks a chain of any length.
     fn relink_read_dirs(&mut self, read_dirs: &[ReadDir]) -> bool {
         let mutex = self.mutex;
         let _lock = mutex.lock_guard();
@@ -3599,8 +3590,7 @@ impl<'a> Resolver<'a> {
         self.dir_cache_mut().get(dir).map(DirInfoRef::from_slot)
     }
 
-    /// Whether `slot` points at a parent slot that the cache no longer maps: a walk up from it reads the old parent.
-    /// The caller holds the resolver mutex.
+    /// Whether `slot` points at a parent slot that the cache no longer maps. The caller holds the resolver mutex.
     fn parent_link_is_stale(&mut self, slot: DirInfoRef) -> bool {
         let Some(parent) = slot.get_parent() else {
             return false;

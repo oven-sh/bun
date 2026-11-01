@@ -112,11 +112,7 @@ export const resolverLookupsRunAgain = $bindgen(
   "resolverLookupsRunAgain",
 ) as () => number;
 
-/**
- * For a test with two threads. After `hold`, the next lookup of this thread that misses waits between
- * reading the caches again and the verdict on what it read. `waitUntilHeld`, on another thread, returns
- * true when that thread waits, and false when it called `release` first. `release` lets it continue.
- */
+/** For a test with two threads. After `hold`, the next lookup of this thread that misses waits before its verdict for `release`. `waitUntilHeld` answers false when it never waited. */
 export const resolverMissCheck = {
   hold: $bindgen("BunObjectInternals.bind.ts", "resolverHoldNextMissCheck") as () => void,
   waitUntilHeld: $bindgen("BunObjectInternals.bind.ts", "resolverWaitUntilMissCheckIsHeld") as () => boolean,

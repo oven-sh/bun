@@ -677,26 +677,20 @@ impl StatWatcher {
         let jsvalue = stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint)?;
         js::prev_stat_set_cached(js_this, global_this, jsvalue);
 
-        let result = js::listener_get_cached(js_this).unwrap().call(
+        // Reported, not returned: the watcher keeps running after a listener that throws (Node semantics).
+        global_this.bun_vm().event_loop_mut().run_callback(
+            bun_event_loop::ContextId::NONE,
+            js::listener_get_cached(js_this).unwrap(),
             global_this,
             JSValue::UNDEFINED,
             &[jsvalue, jsvalue],
         );
 
-        // Append to the scheduler before propagating a listener error so the
-        // watcher keeps running after a throwing listener (Node semantics).
-        // `append` does not enter JS, so it is safe with an exception pending.
         if !this_ref.closed.load(Ordering::Relaxed) {
             // SAFETY: scheduler is live (`RefPtr`); `this` is live (ref'd, guard above).
             StatWatcherScheduler::append(this_ref.scheduler.as_ptr(), this);
         }
-
-        // Propagate to the dispatcher: `report_error_or_terminate` reports a
-        // regular throw as uncaught and stops the tick loop on termination.
-        // Swallowing the error here leaves a termination exception on the VM
-        // and the next queued task re-enters JS under a
-        // `scope.assertNoException()` RELEASE_ASSERT.
-        result.map(drop)
+        Ok(())
     }
 
     /// Pool thread (the scheduler's pass).
@@ -764,19 +758,14 @@ impl StatWatcher {
             stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint)?;
         js::prev_stat_set_cached(js_this, global_this, current_jsvalue);
 
-        // Propagate to the dispatcher: `report_error_or_terminate` reports a
-        // regular throw as uncaught and stops the tick loop on termination.
-        // Swallowing the error here leaves a termination exception on the VM
-        // and the next queued task re-enters JS under a
-        // `scope.assertNoException()` RELEASE_ASSERT.
-        js::listener_get_cached(js_this)
-            .unwrap()
-            .call(
-                global_this,
-                JSValue::UNDEFINED,
-                &[current_jsvalue, prev_jsvalue],
-            )
-            .map(drop)
+        global_this.bun_vm().event_loop_mut().run_callback(
+            bun_event_loop::ContextId::NONE,
+            js::listener_get_cached(js_this).unwrap(),
+            global_this,
+            JSValue::UNDEFINED,
+            &[current_jsvalue, prev_jsvalue],
+        );
+        Ok(())
     }
 
     fn init(args: &Arguments) -> Result<*mut StatWatcher, crate::Error> {

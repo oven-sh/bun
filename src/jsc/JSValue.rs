@@ -1656,6 +1656,32 @@ impl JSValue {
         })
     }
 
+    /// [`call`](Self::call) that reports what the callee throws before the callee's async context is put back. `Err` is the VM's termination, or a callee that is not callable.
+    #[inline]
+    #[track_caller]
+    pub(crate) fn call_and_report_uncaught(
+        self,
+        global: &JSGlobalObject,
+        this_value: JSValue,
+        args: &[JSValue],
+    ) -> JsResult<JSValue> {
+        if self.has_nobody_to_call(global) {
+            return Ok(JSValue::UNDEFINED);
+        }
+        host_fn::from_js_host_call(global, || {
+            // SAFETY: as in `call`.
+            unsafe {
+                Bun__JSValue__callAndReportUncaught(
+                    global,
+                    self,
+                    this_value,
+                    args.len(),
+                    args.as_ptr(),
+                )
+            }
+        })
+    }
+
     /// A `Bun.ModuleGraph` that was disposed hears nothing more from native code, nor does a
     /// test file that finished (only `--isolate` retires a realm).
     #[inline]
@@ -2081,6 +2107,13 @@ unsafe extern "C" {
     safe fn JSC__JSValue__isTerminationException(this: JSValue) -> bool;
     safe fn JSC__JSValue__isException(this: JSValue, vm: &crate::VM) -> bool;
     fn Bun__JSValue__call(
+        global: *const JSGlobalObject,
+        function: JSValue,
+        this_value: JSValue,
+        args_len: usize,
+        args_ptr: *const JSValue,
+    ) -> JSValue;
+    fn Bun__JSValue__callAndReportUncaught(
         global: *const JSGlobalObject,
         function: JSValue,
         this_value: JSValue,

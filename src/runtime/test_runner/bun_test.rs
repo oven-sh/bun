@@ -1387,9 +1387,12 @@ impl BunTest {
                 global_this,
                 JSValue::UNDEFINED,
                 args_slice,
-                move || drop(on_stack),
+                // Before the drain, so `then()` runs before the rejections below are read, as with `await`.
+                move |returned| {
+                    drop(on_stack);
+                    Self::promise_of_thenable(global_this, returned?)
+                },
             )
-            .and_then(|returned| Self::promise_of_thenable(global_this, returned))
         {
             Ok(v) => v,
             Err(_) => {
@@ -1520,15 +1523,18 @@ impl BunTest {
         Some(cfg_data)
     }
 
-    /// A promise that follows `returned` if it's a thenable other than a promise. Otherwise `returned`.
+    /// What `await returned` waits on: a native promise as is, any other thenable through a promise that follows its `then()`. Otherwise `returned`.
     fn promise_of_thenable(global_this: &JSGlobalObject, returned: JSValue) -> JsResult<JSValue> {
-        if !returned.is_object() || returned.as_promise().is_some() {
+        if !returned.is_object() {
             return Ok(returned);
         }
-        // Reads `then` once. Only a value without a callable `then` fulfills the promise right away.
-        let promise = bun_jsc::JSPromise::create(global_this);
-        promise.resolve(global_this, returned)?;
-        Ok(if promise.status() == PromiseStatus::Fulfilled { returned } else { promise.to_js() })
+        let promise = bun_jsc::JSPromise::promise_resolve(global_this, returned)?;
+        if promise.to_js() == returned {
+            return Ok(returned);
+        }
+        // Reads `then` once. Only an object without a callable `then` fulfills the new promise right away.
+        let is_not_thenable = promise.status() == PromiseStatus::Fulfilled && returned.as_promise().is_none();
+        Ok(if is_not_thenable { returned } else { promise.to_js() })
     }
 
     /// Vitest runs a function returned by `beforeEach` / `beforeAll` after the matching after-hooks.

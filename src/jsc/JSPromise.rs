@@ -40,6 +40,10 @@ unsafe extern "C" {
         arg0: &JSGlobalObject,
         js_value1: JSValue,
     ) -> JSValue;
+    safe fn JSC__JSInternalPromise__resolvedPromise(
+        arg0: &JSGlobalObject,
+        js_value1: JSValue,
+    ) -> *mut JSPromise;
     safe fn JSC__JSPromise__wrap(
         arg0: &JSGlobalObject,
         ctx: *mut c_void,
@@ -261,6 +265,15 @@ impl JSPromise {
     /// This is the faster function for doing that.
     pub fn resolved_promise_value(global: &JSGlobalObject, value: JSValue) -> JSValue {
         JSC__JSPromise__resolvedPromiseValue(global, value)
+    }
+
+    /// Spec `PromiseResolve(%Promise%, value)`: what `await value` waits on. A native promise comes back as is.
+    pub fn promise_resolve(global: &JSGlobalObject, value: JSValue) -> JsResult<&mut JSPromise> {
+        // Reads `value.constructor` and `value.then`, which can throw.
+        let promise = crate::call_check_slow(global, || {
+            JSC__JSInternalPromise__resolvedPromise(global, value)
+        })?;
+        Ok(JSPromise::opaque_mut(promise))
     }
 
     /// Create a new rejected promise rejecting to a given value.

@@ -2551,6 +2551,209 @@ test.concurrent("a function that a thenable from beforeEach or beforeAll resolve
   });
 });
 
+// Like Bun.$ and a Bun.SQL query: a pending Promise subclass that starts its work in the first then(). If nothing
+// called then() by the next turn of the event loop it starts itself, so a runner that never calls it fails the
+// expectations below at once, and not by a timeout.
+const lazyPromiseClass = `
+  class Lazy extends Promise {
+    static get [Symbol.species]() { return Promise; }
+    #start;
+    constructor(name, work) {
+      let settle;
+      super((resolve, reject) => { settle = { resolve, reject }; });
+      this.#start = () => { console.log(name + ": then()"); setImmediate(work, settle.resolve, settle.reject); };
+      setImmediate(() => { if (this.#start) { console.log(name + ": the runner did not call then()"); this.then(() => {}, () => {}); } });
+    }
+    then(onFulfilled, onRejected) {
+      const start = this.#start;
+      this.#start = undefined;
+      start?.();
+      return super.then(onFulfilled, onRejected);
+    }
+  }
+`;
+
+describe.concurrent.each(["vitest", "bun:test", "@jest/globals"])("a Promise subclass: %s", module => {
+  test("is awaited through its own then() when a hook, a test or a describe() callback returns it", async () => {
+    const { log, results, exitCode } = await runTests({
+      "a.test.js": `
+        import { test, describe, beforeAll, beforeEach, afterEach, afterAll, onTestFinished } from "${module}";
+        ${lazyPromiseClass}
+        const lazy = (name, beforeItResolves) => new Lazy(name, resolve => { beforeItResolves?.(); console.log(name + ": resolves"); resolve(); });
+        beforeAll(() => lazy("beforeAll"));
+        beforeEach(() => lazy("beforeEach"));
+        afterEach(() => lazy("afterEach"));
+        afterAll(() => lazy("afterAll"));
+        describe("block", () => lazy("describe", () => {
+          test("test", () => { console.log("test"); onTestFinished(() => lazy("onTestFinished")); return lazy("test"); });
+        }));
+      `,
+    });
+    expect({ log, results, exitCode }).toEqual({
+      log: ["describe", "beforeAll", "beforeEach", "test", "afterEach", "onTestFinished", "afterAll"].flatMap(name => [
+        ...(name === "test" ? ["test"] : []),
+        `${name}: then()`,
+        `${name}: resolves`,
+      ]),
+      results: ["(pass) block > test"],
+      exitCode: 0,
+    });
+  });
+
+  test("fails the test if it rejects, and is awaited through then() when it is already settled", async () => {
+    const withDone =
+      module !== "vitest" &&
+      `
+        test("waits for done() and for the promise", done => {
+          setImmediate(() => { console.log("done()"); done(); });
+          return new Lazy("with done", resolve => { console.log("with done: resolves"); resolve(); });
+        });
+      `;
+    const { log, results, errors, exitCode } = await runTests({
+      "a.test.js": `
+        import { test } from "${module}";
+        ${lazyPromiseClass}
+        // The shape of the openai SDK's APIPromise: the promise is fulfilled at once, and each then() does the work.
+        class Settled extends Promise {
+          #work;
+          constructor(work) { super(resolve => resolve()); this.#work = work; }
+          then(onFulfilled, onRejected) { console.log("settled: then()"); return this.#work().then(onFulfilled, onRejected); }
+        }
+        class Plain extends Promise {}
+        class ConstructorThrows extends Promise {}
+        Object.defineProperty(ConstructorThrows.prototype, "constructor", { get() { throw new Error("the constructor getter threw"); } });
+        test("rejects", () => new Lazy("rejects", (resolve, reject) => reject(new Error("rejected"))));
+        test("already fulfilled, and then() rejects", () => new Settled(() => Promise.reject(new Error("rejected in then()"))));
+        test("already fulfilled, and then() resolves later", () => new Settled(() => new Promise(resolve => setImmediate(() => { console.log("settled: resolves"); resolve(); }))));
+        test("already rejected", () => Plain.reject(new Error("already rejected")));
+        test("reading constructor throws", () => new ConstructorThrows(resolve => resolve()));
+        ${withDone || ""}
+        test("the next test", () => console.log("the next test"));
+      `,
+    });
+    expect({ log, results, errors, exitCode }).toEqual({
+      log: [
+        "rejects: then()",
+        "settled: then()",
+        "settled: then()",
+        "settled: resolves",
+        ...(withDone ? ["with done: then()", "done()", "with done: resolves"] : []),
+        "the next test",
+      ],
+      results: [
+        "(fail) rejects",
+        "(fail) already fulfilled, and then() rejects",
+        "(pass) already fulfilled, and then() resolves later",
+        "(fail) already rejected",
+        "(fail) reading constructor throws",
+        ...(withDone ? ["(pass) waits for done() and for the promise"] : []),
+        "(pass) the next test",
+      ],
+      // Each error once: a rejection that then() handles is not also an unhandled error.
+      errors: [
+        "error: rejected",
+        "error: rejected in then()",
+        "error: already rejected",
+        "error: the constructor getter threw",
+      ],
+      exitCode: 1,
+    });
+  });
+});
+
+describe.concurrent("a value that a test returns", () => {
+  test("Bun.$ and a Bun.SQL query run, and fail the test when they reject", async () => {
+    const { results, errors, exitCode } = await runTests({
+      "a.test.js": `
+        import { SQL } from "bun";
+        import { test, expect } from "bun:test";
+        const sql = new SQL("sqlite://:memory:");
+        // Starts a value that the runner did not start by the next turn, so the file ends without a timeout.
+        let notStartedByTheRunner = 0;
+        const returned = value => {
+          const then = value.then;
+          let called = false;
+          value.then = function (...args) { called = true; return then.apply(this, args); };
+          setImmediate(() => { if (!called) { notStartedByTheRunner++; then.call(value, () => {}, () => {}); } });
+          return value;
+        };
+        test("a Bun.$ command runs", () => returned(Bun.$\`echo shell\`.quiet()));
+        test("a Bun.$ command that fails", () => returned(Bun.$\`exit 3\`.quiet()));
+        test("a Bun.SQL query runs", () => returned(sql\`create table returned (x integer)\`));
+        test("a Bun.SQL query that fails", () => returned(sql\`select * from missing\`));
+        test("the returned query created the table", async () => {
+          expect(await sql\`select count(*) as rows from returned\`).toEqual([{ rows: 0 }]);
+        });
+        test("the runner started every command and query", () => { expect(notStartedByTheRunner).toBe(0); });
+      `,
+    });
+    expect({ results, errors, exitCode }).toEqual({
+      results: [
+        "(pass) a Bun.$ command runs",
+        "(fail) a Bun.$ command that fails",
+        "(pass) a Bun.SQL query runs",
+        "(fail) a Bun.SQL query that fails",
+        "(pass) the returned query created the table",
+        "(pass) the runner started every command and query",
+      ],
+      errors: ["ShellError: Failed with exit code 3", "SQLiteError: no such table: missing"],
+      exitCode: 1,
+    });
+  });
+
+  test("a native promise is awaited without a then() call, also while Promise.prototype.then is replaced", async () => {
+    const { log, results, exitCode } = await runTests({
+      "a.test.js": `
+        import { test } from "bun:test";
+        import { runInNewContext } from "node:vm";
+        test("while then is replaced", async () => {
+          const then = Promise.prototype.then;
+          Promise.prototype.then = function () { console.log("the replaced then() was called"); return then.apply(this, arguments); };
+          try {
+            await new Promise(resolve => setImmediate(resolve));
+          } finally {
+            Promise.prototype.then = then;
+          }
+        });
+        test("after then was replaced", () => new Promise(resolve => setImmediate(resolve)));
+        // Not a subclass, and not this realm's Promise either: it is followed without a then() call.
+        test("a promise of another realm", () => {
+          const OtherPromise = runInNewContext("Promise");
+          return new OtherPromise(resolve => setImmediate(() => { console.log("the other realm's promise resolves"); resolve(); }));
+        });
+      `,
+    });
+    expect({ log, results, exitCode }).toEqual({
+      log: ["the other realm's promise resolves"],
+      results: ["(pass) while then is replaced", "(pass) after then was replaced", "(pass) a promise of another realm"],
+      exitCode: 0,
+    });
+  });
+
+  test("then() runs before the runner reads unhandled rejections", async () => {
+    // then() hands its callbacks to a promise that was already rejected when the callback returned.
+    const forwardsRejected = `() => {
+      const rejected = Promise.reject(new Error("forwarded rejection"));
+      return { then(resolve, reject) { rejected.then(resolve, reject); } };
+    }`;
+    const [fails, expectedToFail] = await Promise.all([
+      runTests({ "a.test.js": `import { test } from "bun:test"; test("test", ${forwardsRejected});` }),
+      runTests({ "a.test.js": `import { test } from "bun:test"; test.failing("test", ${forwardsRejected});` }),
+    ]);
+    expect({
+      fails: { results: fails.results, errors: fails.errors, exitCode: fails.exitCode },
+      expectedToFail: {
+        results: expectedToFail.results,
+        errors: expectedToFail.errors,
+        exitCode: expectedToFail.exitCode,
+      },
+    }).toEqual({
+      fails: { results: ["(fail) test"], errors: ["error: forwarded rejection"], exitCode: 1 },
+      expectedToFail: { results: ["(pass) test"], errors: [], exitCode: 0 },
+    });
+  });
+});
+
 describe.concurrent("behavior depends on the module a function is imported from", () => {
   test(`"bun:test" tests get no context and "vitest" tests get no signal until they read it`, async () => {
     const file = (module: string) => `

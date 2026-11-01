@@ -1,0 +1,360 @@
+# The life of the mock of a module under `bun test --aot`: every step that the run time is known to take. mock-states.test.ts holds the run time against it.
+#
+#   <mark> <kind of file> <state> (body <status>) > <door> > <kind of file> <state> (body <status>)
+#
+# The states, as Modules::mockState() computes them:
+#   none                                  no mock
+#   waits                                 a mock is registered; its factory has not been called; no load has come to the module
+#   runs                                  the factory has been called and has not settled
+#   in place                              the mock answers for the module, whose body has never run
+#   in place while another waits          a second mock waits for the next load
+#   in place over a module that has run   later importers get the mock; whoever was linked before keeps the module
+#   fills                                 the names of the module hold what the mock gave, and its body never runs
+#   laid over                             the body had run; the values of the mock are stored over its own, which are kept
+#   failed                                the factory threw or rejected, and an error is kept
+#   ended                                 the mock has ended; whoever was linked against it reads it until a load comes to the module
+#   ended while another waits            the ended mock still stands, and a new one waits for the next load
+#   NONE OF THEM [..]                     what is set together is no state: a fault, or a state that this table lacks
+# The doors: the mock call, deferMock, runMock, setMock, willMockModule, didMockModule, exportsBeforeMock, didEndMock, the loader fetches it, runBodyOfRequiredFileAheadOfMock,
+#   the mocks of its body wait for the next load, the mocks of its body are laid again (of the module that laid them, not of the mocked one: mock-helper.test.ts).
+# And which call meets which state: <kind of file> <state> (body <status>) x <mock.module | vi.mock | jest.mock | vi.doMock | jest.doMock>, <spy | no factory | a file of __mocks__ | a factory that takes the original | a factory>.
+# A call that meets no compiled module: no compiled module (the loader holds it | nothing holds it) x <call>, <factory>.
+# The marks: `ok` . `?none`: a side is no state . `?end-leaves`: the end of a mock leaves the module mocked . `?new`: appended by BUN_AOT_REWRITE_MOCK_STATES=1, not yet looked at.
+# A landing that cures a doubted line takes it out; one that adds a step adds its line, with `ok` if a test against `bun test` stands behind it.
+ok CommonJS none (body linked) > deferMock > CommonJS waits (body linked)
+ok CommonJS runs (body evaluated) > deferMock > CommonJS waits (body evaluated)
+?none ES NONE OF THEM (body linked) [ to-run waited error-kept ] > deferMock > ES waits (body linked)
+?none ES ended (body evaluated) > deferMock > ES NONE OF THEM (body evaluated) [ mocked to-run waited in-place to-let-go ]
+ok ES ended (body evaluated) > deferMock > ES ended while another waits (body evaluated)
+ok ES ended (body evaluated) > deferMock > ES waits (body linked)
+?none ES ended (body linked) > deferMock > ES NONE OF THEM (body linked) [ mocked to-run waited in-place to-let-go ]
+ok ES ended (body linked) > deferMock > ES waits (body linked)
+ok ES failed (body linked) > deferMock > ES waits (body linked)
+ok ES in place (body linked) > deferMock > ES in place while another waits (body linked)
+ok ES none (body linked) > deferMock > ES waits (body linked)
+ok ES none (body unlinked) > deferMock > ES waits (body unlinked)
+ok ES runs (body evaluated) > deferMock > ES waits (body evaluated)
+ok ES waits (body linked) > deferMock > ES waits (body linked)
+ok library none (body evaluated) > deferMock > library waits (body evaluated)
+ok library none (body unlinked) > deferMock > library waits (body unlinked)
+ok other none (body linked) > deferMock > other waits (body linked)
+ok CommonJS none (body linked) > deferMock, asks again > CommonJS waits (body linked)
+ok CommonJS runs (body evaluated) > deferMock, asks again > CommonJS waits (body evaluated)
+ok CommonJS runs (body linked) > deferMock, asks again > CommonJS waits (body linked)
+?none ES NONE OF THEM (body linked) [ waited asks-again ] > deferMock, asks again > ES waits (body linked)
+?none ES ended (body evaluated) > deferMock, asks again > ES NONE OF THEM (body evaluated) [ mocked to-run waited asks-again in-place to-let-go ]
+ok ES ended (body evaluated) > deferMock, asks again > ES ended while another waits (body evaluated)
+ok ES ended (body evaluated) > deferMock, asks again > ES waits (body linked)
+ok ES in place (body linked) > deferMock, asks again > ES in place while another waits (body linked)
+?none ES none (body evaluated) > deferMock, asks again > ES NONE OF THEM (body evaluated) [ mocked to-run waited asks-again ]
+ok ES none (body linked) > deferMock, asks again > ES waits (body linked)
+ok ES none (body unlinked) > deferMock, asks again > ES waits (body unlinked)
+?none ES runs (body evaluated) > deferMock, asks again > ES NONE OF THEM (body evaluated) [ mocked to-run waited asks-again ]
+ok ES runs (body evaluated) > deferMock, asks again > ES waits (body evaluated)
+ok ES runs (body linked) > deferMock, asks again > ES waits (body linked)
+ok other none (body linked) > deferMock, asks again > other waits (body linked)
+ok other none (body linked, left to the host) > deferMock, asks again > other waits (body linked, left to the host)
+ok other waits (body linked) > deferMock, asks again > other waits (body linked)
+?none CommonJS NONE OF THEM (body linked, left to the host) [ mocked laid-over ] > didEndMock > CommonJS none (body linked, left to the host)
+ok CommonJS failed (body linked) > didEndMock > CommonJS none (body linked)
+?end-leaves CommonJS fills (body evaluated) > didEndMock > CommonJS fills (body evaluated)
+ok CommonJS in place (body evaluated) > didEndMock > CommonJS none (body evaluated)
+ok CommonJS in place (body evaluated) > didEndMock > CommonJS none (body linked)
+ok CommonJS in place (body evaluated, left to the host) > didEndMock > CommonJS none (body linked, left to the host)
+ok CommonJS in place over a module that has run (body evaluated) > didEndMock > CommonJS none (body evaluated)
+ok CommonJS laid over (body evaluated) > didEndMock > CommonJS none (body evaluated)
+ok CommonJS laid over (body evaluated, left to the host) > didEndMock > CommonJS none (body evaluated, left to the host)
+ok CommonJS none (body evaluated) > didEndMock > CommonJS none (body evaluated)
+ok CommonJS none (body evaluated, left to the host) > didEndMock > CommonJS none (body evaluated, left to the host)
+ok CommonJS none (body linked) > didEndMock > CommonJS none (body linked)
+ok CommonJS none (body linked, left to the host) > didEndMock > CommonJS none (body linked, left to the host)
+ok CommonJS runs (body evaluated) > didEndMock > CommonJS none (body evaluated)
+ok CommonJS runs (body linked) > didEndMock > CommonJS none (body linked)
+ok CommonJS waits (body evaluated) > didEndMock > CommonJS none (body evaluated)
+ok CommonJS waits (body linked) > didEndMock > CommonJS none (body linked)
+?none ES NONE OF THEM (body evaluated) [ mocked to-run waited asks-again ] > didEndMock > ES none (body evaluated)
+?none ES NONE OF THEM (body evaluated) [ mocked to-run waited error-kept ] > didEndMock > ES none (body evaluated)
+?none ES NONE OF THEM (body linked) [ to-run waited asks-again ] > didEndMock > ES none (body linked)
+?none ES NONE OF THEM (body linked) [ to-run waited error-kept ] > didEndMock > ES none (body linked)
+?none ES NONE OF THEM (body linked) [ waited ] > didEndMock > ES none (body linked)
+ok ES failed (body linked) > didEndMock > ES none (body linked)
+?end-leaves ES fills (body evaluated) > didEndMock > ES fills (body evaluated)
+?end-leaves ES fills (body linked) > didEndMock > ES fills (body linked)
+?end-leaves ES fills (body unlinked) > didEndMock > ES fills (body unlinked)
+ok ES in place (body evaluated) > didEndMock > ES ended (body evaluated)
+ok ES in place (body evaluated) > didEndMock > ES none (body linked)
+ok ES in place (body evaluated) > didEndMock > ES none (body unlinked)
+ok ES in place (body evaluated, left to the host) > didEndMock > ES ended (body evaluated, left to the host)
+ok ES in place (body evaluated, left to the host) > didEndMock > ES none (body linked, left to the host)
+ok ES in place (body evaluated, left to the host) > didEndMock > ES none (body unlinked, left to the host)
+ok ES in place (body linked) > didEndMock > ES ended (body linked)
+ok ES in place (body linked) > didEndMock > ES none (body linked)
+ok ES in place (body linked, left to the host) > didEndMock > ES ended (body linked, left to the host)
+ok ES in place over a module that has run (body evaluated) > didEndMock > ES none (body evaluated)
+ok ES in place over a module that has run (body evaluated, left to the host) > didEndMock > ES none (body evaluated, left to the host)
+?end-leaves ES laid over (body evaluated) > didEndMock > ES fills (body evaluated)
+ok ES laid over (body evaluated) > didEndMock > ES none (body evaluated)
+ok ES laid over (body evaluated, left to the host) > didEndMock > ES none (body evaluated, left to the host)
+ok ES none (body evaluated) > didEndMock > ES none (body evaluated)
+ok ES none (body evaluated, left to the host) > didEndMock > ES none (body evaluated, left to the host)
+ok ES none (body linked) > didEndMock > ES none (body linked)
+ok ES none (body linked, left to the host) > didEndMock > ES none (body linked, left to the host)
+ok ES none (body unlinked) > didEndMock > ES none (body unlinked)
+ok ES none (body unlinked, left to the host) > didEndMock > ES none (body unlinked, left to the host)
+ok ES runs (body evaluated) > didEndMock > ES none (body evaluated)
+ok ES runs (body evaluated, left to the host) > didEndMock > ES none (body evaluated, left to the host)
+ok ES runs (body linked) > didEndMock > ES none (body linked)
+ok ES runs (body linked, left to the host) > didEndMock > ES none (body linked, left to the host)
+ok ES runs (body unlinked) > didEndMock > ES none (body unlinked)
+ok ES waits (body evaluated) > didEndMock > ES none (body evaluated)
+ok ES waits (body evaluated, left to the host) > didEndMock > ES none (body evaluated, left to the host)
+ok ES waits (body linked) > didEndMock > ES none (body linked)
+ok ES waits (body unlinked) > didEndMock > ES none (body unlinked)
+ok ES waits (body unlinked, left to the host) > didEndMock > ES none (body unlinked, left to the host)
+?none library none (body evaluated) > didEndMock > library NONE OF THEM (body evaluated) [ to-let-go ]
+ok library none (body evaluated) > didEndMock > library none (body evaluated)
+?none library none (body unlinked) > didEndMock > library NONE OF THEM (body unlinked) [ to-let-go ]
+ok library none (body unlinked) > didEndMock > library none (body unlinked)
+ok library waits (body evaluated) > didEndMock > library none (body evaluated)
+ok library waits (body unlinked) > didEndMock > library none (body unlinked)
+ok other in place (body evaluated) > didEndMock > other none (body linked)
+ok other in place (body evaluated, left to the host) > didEndMock > other none (body linked, left to the host)
+ok other none (body evaluated, left to the host) > didEndMock > other none (body evaluated, left to the host)
+ok other waits (body linked) > didEndMock > other none (body linked)
+ok CommonJS fills (body evaluated) > didMockModule > CommonJS fills (body evaluated)
+ok CommonJS laid over (body evaluated) > didMockModule > CommonJS laid over (body evaluated)
+?none ES NONE OF THEM (body linked) [ mocked laid-over ] > didMockModule > ES NONE OF THEM (body linked) [ mocked laid-over ]
+ok ES fills (body linked) > didMockModule > ES fills (body linked)
+ok ES fills (body unlinked) > didMockModule > ES fills (body unlinked)
+ok ES laid over (body awaiting) > didMockModule > ES laid over (body awaiting)
+ok ES laid over (body evaluated) > didMockModule > ES laid over (body evaluated)
+ok library none (body evaluated) > didMockModule > library none (body evaluated)
+ok library none (body unlinked) > didMockModule > library none (body unlinked)
+ok CommonJS in place (body evaluated) > exportsBeforeMock > CommonJS in place (body evaluated)
+ok CommonJS laid over (body evaluated) > exportsBeforeMock > CommonJS laid over (body evaluated)
+ok CommonJS none (body evaluated) > exportsBeforeMock > CommonJS none (body evaluated)
+ok CommonJS runs (body evaluated) > exportsBeforeMock > CommonJS runs (body evaluated)
+ok CommonJS runs (body linked) > exportsBeforeMock > CommonJS runs (body linked)
+ok CommonJS waits (body linked) > exportsBeforeMock > CommonJS waits (body linked)
+?none ES NONE OF THEM (body linked) [ waited asks-again ] > exportsBeforeMock > ES NONE OF THEM (body linked) [ waited asks-again ]
+ok ES in place (body evaluated) > exportsBeforeMock > ES in place (body evaluated)
+ok ES in place (body linked) > exportsBeforeMock > ES in place (body linked)
+ok ES in place over a module that has run (body evaluated) > exportsBeforeMock > ES in place over a module that has run (body evaluated)
+ok ES laid over (body evaluated) > exportsBeforeMock > ES laid over (body evaluated)
+ok ES none (body awaiting) > exportsBeforeMock > ES none (body awaiting)
+ok ES none (body evaluated) > exportsBeforeMock > ES none (body evaluated)
+ok ES none (body linked) > exportsBeforeMock > ES none (body linked)
+ok ES none (body unlinked) > exportsBeforeMock > ES none (body unlinked)
+ok ES runs (body evaluated) > exportsBeforeMock > ES runs (body evaluated)
+ok ES runs (body linked) > exportsBeforeMock > ES runs (body linked)
+ok ES runs (body unlinked) > exportsBeforeMock > ES runs (body unlinked)
+ok ES waits (body evaluated) > exportsBeforeMock > ES waits (body evaluated)
+ok ES waits (body linked) > exportsBeforeMock > ES waits (body linked)
+ok ES waits (body unlinked) > exportsBeforeMock > ES waits (body unlinked)
+ok library none (body evaluated) > exportsBeforeMock > library none (body evaluated)
+ok library none (body unlinked) > exportsBeforeMock > library none (body unlinked)
+ok library waits (body evaluated) > exportsBeforeMock > library waits (body evaluated)
+ok library waits (body unlinked) > exportsBeforeMock > library waits (body unlinked)
+ok other runs (body linked) > exportsBeforeMock > other runs (body linked)
+ok other waits (body linked) > exportsBeforeMock > other waits (body linked)
+ok CommonJS runs (body linked) > runBodyOfRequiredFileAheadOfMock > CommonJS none (body evaluated)
+ok library none (body unlinked) > runBodyOfRequiredFileAheadOfMock > library none (body evaluated)
+ok CommonJS failed (body linked) > runMock > CommonJS failed (body linked)
+ok CommonJS waits (body evaluated) > runMock > CommonJS in place over a module that has run (body evaluated)
+ok CommonJS waits (body evaluated) > runMock > CommonJS runs (body evaluated)
+ok CommonJS waits (body evaluated) > runMock > CommonJS waits (body evaluated)
+ok CommonJS waits (body linked) > runMock > CommonJS in place (body evaluated)
+ok CommonJS waits (body linked) > runMock > CommonJS laid over (body evaluated)
+ok CommonJS waits (body linked) > runMock > CommonJS none (body evaluated)
+ok CommonJS waits (body linked) > runMock > CommonJS runs (body linked)
+ok CommonJS waits (body linked) > runMock > CommonJS waits (body evaluated)
+ok CommonJS waits (body linked) > runMock > CommonJS waits (body linked)
+?none ES NONE OF THEM (body evaluated) [ mocked to-run waited asks-again ] > runMock > ES runs (body evaluated)
+?none ES NONE OF THEM (body linked) [ to-run waited ] > runMock > ES NONE OF THEM (body linked) [ to-run waited ]
+?none ES NONE OF THEM (body linked) [ to-run waited ] > runMock > ES NONE OF THEM (body linked) [ waited ]
+?none ES NONE OF THEM (body linked) [ to-run waited ] > runMock > ES in place (body linked)
+?none ES NONE OF THEM (body linked) [ to-run waited asks-again ] > runMock > ES NONE OF THEM (body linked) [ to-run waited asks-again ]
+?none ES NONE OF THEM (body linked) [ to-run waited asks-again ] > runMock > ES NONE OF THEM (body linked) [ waited asks-again ]
+?none ES NONE OF THEM (body linked) [ to-run waited error-kept ] > runMock > ES NONE OF THEM (body linked) [ to-run waited error-kept ]
+ok ES failed (body linked) > runMock > ES failed (body linked)
+ok ES in place while another waits (body linked) > runMock > ES in place (body linked)
+ok ES waits (body evaluated) > runMock > ES in place over a module that has run (body evaluated)
+ok ES waits (body evaluated) > runMock > ES in place over a module that has run (body evaluated, left to the host)
+ok ES waits (body evaluated) > runMock > ES runs (body evaluated)
+ok ES waits (body evaluated) > runMock > ES waits (body evaluated)
+ok ES waits (body evaluated, left to the host) > runMock > ES waits (body evaluated, left to the host)
+?none ES waits (body linked) > runMock > ES NONE OF THEM (body evaluated) [ mocked to-run waited ]
+ok ES waits (body linked) > runMock > ES failed (body linked)
+ok ES waits (body linked) > runMock > ES in place (body evaluated)
+ok ES waits (body linked) > runMock > ES in place (body linked)
+ok ES waits (body linked) > runMock > ES none (body linked)
+ok ES waits (body linked) > runMock > ES runs (body linked)
+ok ES waits (body linked) > runMock > ES waits (body linked)
+ok ES waits (body unlinked) > runMock > ES in place (body evaluated)
+ok ES waits (body unlinked) > runMock > ES in place (body linked)
+ok ES waits (body unlinked) > runMock > ES in place (body unlinked)
+ok ES waits (body unlinked) > runMock > ES runs (body unlinked)
+ok ES waits (body unlinked) > runMock > ES waits (body unlinked)
+ok library waits (body evaluated) > runMock > library none (body evaluated)
+ok library waits (body unlinked) > runMock > library none (body evaluated)
+ok library waits (body unlinked) > runMock > library none (body unlinked)
+ok other waits (body linked) > runMock > other in place (body linked)
+ok other waits (body linked) > runMock > other runs (body linked)
+ok other waits (body linked, left to the host) > runMock > other in place (body linked, left to the host)
+ok CommonJS in place over a module that has run (body evaluated) > setMock > CommonJS in place over a module that has run (body evaluated)
+ok CommonJS none (body evaluated) > setMock > CommonJS in place (body evaluated)
+ok CommonJS none (body linked) > setMock > CommonJS in place (body evaluated)
+ok CommonJS runs (body evaluated) > setMock > CommonJS in place over a module that has run (body evaluated)
+ok CommonJS runs (body linked) > setMock > CommonJS in place (body evaluated)
+ok CommonJS waits (body evaluated) > setMock > CommonJS waits (body evaluated)
+?none ES NONE OF THEM (body linked) [ waited ] > setMock > ES in place (body linked)
+?none ES NONE OF THEM (body linked) [ waited asks-again ] > setMock > ES in place (body linked)
+ok ES ended (body evaluated) > setMock > ES in place (body linked)
+ok ES failed (body linked) > setMock > ES in place while another waits (body linked)
+ok ES in place (body evaluated) > setMock > ES in place (body evaluated)
+ok ES in place (body linked) > setMock > ES in place (body linked)
+ok ES in place over a module that has run (body evaluated) > setMock > ES in place over a module that has run (body evaluated)
+ok ES none (body evaluated) > setMock > ES in place (body evaluated)
+ok ES none (body linked) > setMock > ES in place (body linked)
+ok ES none (body unlinked) > setMock > ES in place (body unlinked)
+ok ES runs (body evaluated) > setMock > ES in place (body evaluated)
+ok ES runs (body evaluated) > setMock > ES in place over a module that has run (body evaluated)
+ok ES runs (body evaluated, left to the host) > setMock > ES in place over a module that has run (body evaluated, left to the host)
+ok ES runs (body linked) > setMock > ES in place (body linked)
+ok ES runs (body unlinked) > setMock > ES in place (body unlinked)
+ok ES waits (body evaluated) > setMock > ES waits (body evaluated)
+ok ES waits (body linked) > setMock > ES in place while another waits (body linked)
+ok other runs (body linked) > setMock > other in place (body linked)
+ok other runs (body linked, left to the host) > setMock > other in place (body linked, left to the host)
+ok CommonJS failed (body linked) > the loader fetches it > CommonJS failed (body linked)
+ok CommonJS failed (body linked) > the loader fetches it > CommonJS waits (body linked)
+ok CommonJS in place (body evaluated) > the loader fetches it > CommonJS in place (body evaluated)
+ok CommonJS in place over a module that has run (body evaluated) > the loader fetches it > CommonJS in place over a module that has run (body evaluated)
+ok CommonJS laid over (body evaluated) > the loader fetches it > CommonJS laid over (body evaluated)
+ok CommonJS none (body evaluated) > the loader fetches it > CommonJS none (body evaluated)
+ok CommonJS none (body linked) > the loader fetches it > CommonJS none (body linked)
+ok CommonJS waits (body evaluated) > the loader fetches it > CommonJS waits (body evaluated)
+ok CommonJS waits (body linked) > the loader fetches it > CommonJS in place (body evaluated)
+ok CommonJS waits (body linked) > the loader fetches it > CommonJS runs (body linked)
+ok CommonJS waits (body linked) > the loader fetches it > CommonJS waits (body linked)
+?none ES NONE OF THEM (body evaluated) [ mocked to-run waited asks-again ] > the loader fetches it > ES runs (body evaluated)
+?none ES NONE OF THEM (body linked) [ to-run waited ] > the loader fetches it > ES NONE OF THEM (body linked) [ to-run waited ]
+?none ES NONE OF THEM (body linked) [ to-run waited ] > the loader fetches it > ES NONE OF THEM (body linked) [ waited ]
+?none ES NONE OF THEM (body linked) [ to-run waited ] > the loader fetches it > ES in place (body linked)
+?none ES NONE OF THEM (body linked) [ to-run waited asks-again ] > the loader fetches it > ES NONE OF THEM (body linked) [ to-run waited asks-again ]
+?none ES NONE OF THEM (body linked) [ to-run waited asks-again ] > the loader fetches it > ES NONE OF THEM (body linked) [ waited asks-again ]
+?none ES NONE OF THEM (body linked) [ to-run waited error-kept ] > the loader fetches it > ES NONE OF THEM (body linked) [ to-run waited ]
+ok ES failed (body linked) > the loader fetches it > ES failed (body linked)
+ok ES failed (body linked) > the loader fetches it > ES waits (body linked)
+ok ES in place (body evaluated) > the loader fetches it > ES in place (body evaluated)
+ok ES in place (body linked) > the loader fetches it > ES in place (body linked)
+ok ES in place over a module that has run (body evaluated) > the loader fetches it > ES in place over a module that has run (body evaluated)
+ok ES in place while another waits (body linked) > the loader fetches it > ES in place (body linked)
+ok ES laid over (body evaluated) > the loader fetches it > ES laid over (body evaluated)
+ok ES none (body evaluated) > the loader fetches it > ES none (body evaluated)
+ok ES none (body linked) > the loader fetches it > ES failed (body linked)
+ok ES none (body linked) > the loader fetches it > ES none (body linked)
+ok ES none (body unlinked) > the loader fetches it > ES failed (body unlinked)
+ok ES none (body unlinked) > the loader fetches it > ES none (body evaluated)
+ok ES none (body unlinked) > the loader fetches it > ES none (body unlinked)
+ok ES runs (body linked) > the loader fetches it > ES runs (body linked)
+ok ES runs (body unlinked) > the loader fetches it > ES runs (body unlinked)
+ok ES waits (body evaluated) > the loader fetches it > ES in place over a module that has run (body evaluated)
+ok ES waits (body evaluated) > the loader fetches it > ES in place over a module that has run (body evaluated, left to the host)
+ok ES waits (body evaluated) > the loader fetches it > ES runs (body evaluated)
+ok ES waits (body evaluated) > the loader fetches it > ES waits (body evaluated)
+?none ES waits (body linked) > the loader fetches it > ES NONE OF THEM (body evaluated) [ mocked to-run waited ]
+ok ES waits (body linked) > the loader fetches it > ES failed (body linked)
+ok ES waits (body linked) > the loader fetches it > ES in place (body evaluated)
+ok ES waits (body linked) > the loader fetches it > ES in place (body linked)
+ok ES waits (body linked) > the loader fetches it > ES runs (body linked)
+ok ES waits (body linked) > the loader fetches it > ES waits (body linked)
+ok ES waits (body unlinked) > the loader fetches it > ES in place (body evaluated)
+ok ES waits (body unlinked) > the loader fetches it > ES in place (body unlinked)
+ok ES waits (body unlinked) > the loader fetches it > ES runs (body unlinked)
+ok ES waits (body unlinked) > the loader fetches it > ES waits (body unlinked)
+ok library none (body evaluated) > the loader fetches it > library none (body evaluated)
+ok library none (body unlinked) > the loader fetches it > library none (body unlinked)
+ok other in place (body evaluated) > the loader fetches it > other in place (body evaluated)
+ok CommonJS in place over a module that has run (body evaluated) > the mock call > CommonJS in place over a module that has run (body evaluated)
+ok CommonJS laid over (body evaluated) > the mock call > CommonJS laid over (body evaluated)
+ok CommonJS none (body evaluated) > the mock call > CommonJS none (body evaluated)
+ok CommonJS none (body linked) > the mock call > CommonJS none (body linked)
+ok CommonJS waits (body evaluated) > the mock call > CommonJS waits (body evaluated)
+?none ES NONE OF THEM (body linked) [ to-run waited error-kept ] > the mock call > ES NONE OF THEM (body linked) [ to-run waited error-kept ]
+ok ES ended (body evaluated) > the mock call > ES ended (body evaluated)
+ok ES ended (body linked) > the mock call > ES ended (body linked)
+ok ES failed (body linked) > the mock call > ES failed (body linked)
+ok ES in place (body evaluated) > the mock call > ES in place (body evaluated)
+ok ES in place (body linked) > the mock call > ES in place (body linked)
+ok ES in place over a module that has run (body evaluated) > the mock call > ES in place over a module that has run (body evaluated)
+ok ES laid over (body evaluated) > the mock call > ES laid over (body evaluated)
+ok ES none (body awaiting) > the mock call > ES none (body awaiting)
+ok ES none (body evaluated) > the mock call > ES none (body evaluated)
+ok ES none (body linked) > the mock call > ES none (body awaiting)
+ok ES none (body linked) > the mock call > ES none (body evaluated)
+ok ES none (body linked) > the mock call > ES none (body failed)
+ok ES none (body linked) > the mock call > ES none (body linked)
+ok ES none (body unlinked) > the mock call > ES none (body evaluated)
+ok ES none (body unlinked) > the mock call > ES none (body unlinked)
+ok ES waits (body evaluated) > the mock call > ES waits (body evaluated)
+ok ES waits (body linked) > the mock call > ES waits (body linked)
+ok library none (body evaluated) > the mock call > library none (body evaluated)
+ok library none (body unlinked) > the mock call > library none (body unlinked)
+ok other none (body linked) > the mock call > other none (body linked)
+ok ES none (body evaluated) > the mocks of its body are laid again > ES none (body evaluated)
+ok ES none (body linked) > the mocks of its body are laid again > ES none (body linked)
+ok ES none (body unlinked) > the mocks of its body are laid again > ES none (body unlinked)
+ok ES none (body evaluated) > the mocks of its body wait for the next load > ES none (body evaluated)
+ok ES none (body linked) > the mocks of its body wait for the next load > ES none (body linked)
+ok ES none (body unlinked) > the mocks of its body wait for the next load > ES none (body unlinked)
+ok CommonJS laid over (body evaluated) > willMockModule > CommonJS laid over (body evaluated)
+ok CommonJS none (body evaluated) > willMockModule > CommonJS laid over (body evaluated)
+ok CommonJS none (body linked) > willMockModule > CommonJS fills (body evaluated)
+ok ES fills (body linked) > willMockModule > ES fills (body linked)
+ok ES fills (body unlinked) > willMockModule > ES fills (body unlinked)
+ok ES laid over (body evaluated) > willMockModule > ES laid over (body evaluated)
+ok ES none (body awaiting) > willMockModule > ES laid over (body awaiting)
+ok ES none (body evaluated) > willMockModule > ES laid over (body evaluated)
+?none ES none (body linked) > willMockModule > ES NONE OF THEM (body linked) [ mocked laid-over ]
+ok ES none (body linked) > willMockModule > ES fills (body linked)
+ok ES none (body unlinked) > willMockModule > ES fills (body unlinked)
+ok library none (body evaluated) > willMockModule > library none (body evaluated)
+ok library none (body unlinked) > willMockModule > library none (body unlinked)
+ok CommonJS in place over a module that has run (body evaluated) x mock.module, a factory
+ok CommonJS none (body evaluated) x mock.module, a factory
+ok CommonJS none (body evaluated) x vi.doMock, a factory
+ok CommonJS none (body evaluated) x vi.doMock, a factory that takes the original
+ok CommonJS none (body evaluated) x vi.doMock, no factory
+ok CommonJS none (body linked) x mock.module, a factory
+ok CommonJS none (body linked) x vi.doMock, a factory
+ok CommonJS none (body linked) x vi.doMock, a factory that takes the original
+ok CommonJS none (body linked) x vi.doMock, no factory
+ok CommonJS waits (body evaluated) x mock.module, a factory
+?none ES NONE OF THEM (body linked) [ to-run waited error-kept ] x mock.module, a factory
+ok ES ended (body evaluated) x vi.doMock, a factory
+ok ES ended (body evaluated) x vi.doMock, a factory that takes the original
+ok ES ended (body evaluated) x vi.doMock, no factory
+ok ES in place (body evaluated) x mock.module, a factory
+ok ES in place over a module that has run (body evaluated) x mock.module, a factory
+ok ES laid over (body evaluated) x mock.module, a factory
+ok ES none (body evaluated) x mock.module, a factory
+ok ES none (body evaluated) x vi.doMock, a factory
+ok ES none (body evaluated) x vi.doMock, a factory that takes the original
+ok ES none (body evaluated) x vi.doMock, no factory
+ok ES none (body evaluated) x vi.mock, a factory
+ok ES none (body linked) x mock.module, a factory
+ok ES none (body linked) x vi.doMock, a factory
+ok ES none (body linked) x vi.doMock, a factory that takes the original
+ok ES none (body linked) x vi.doMock, no factory
+ok ES none (body linked, left to the host) x vi.doMock, a factory
+ok ES none (body linked) x vi.mock, a factory
+ok ES none (body linked) x vi.mock, a factory that takes the original
+ok ES waits (body evaluated) x mock.module, a factory
+ok ES waits (body linked) x mock.module, a factory
+ok ES waits (body linked) x vi.mock, a factory
+ok no compiled module (nothing holds it) x mock.module, a factory
+ok no compiled module (nothing holds it) x vi.doMock, a factory
+ok no compiled module (nothing holds it) x vi.doMock, a factory that takes the original
+ok no compiled module (nothing holds it) x vi.doMock, no factory
+?new ES failed (body linked) x mock.module, a factory

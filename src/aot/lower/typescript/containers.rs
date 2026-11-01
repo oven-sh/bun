@@ -10,6 +10,7 @@ pub(super) struct Container {
     pub(super) binding: SymbolId,
     pub(super) merged: SymbolId,
     pub(super) name: Atom,
+    is_single_declaration: bool,
     ends_dead_zone: bool,
 }
 
@@ -20,13 +21,22 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         // Each block of a namespace has a binding of its own for what it exports, and a class or a function that a namespace merges with is the binding.
         let has_dead_zone = bound.binding_kind(binding) == BindingKind::TypeScriptContainer
             && bound.initial_state(binding) == InitialState::Uninitialized;
-        let mut declarations = bound.symbol(binding).decls.iter().copied();
-        let first = declarations.find(|&it| self.produces_code(it));
+        // The local symbol lists what is declared under the name, with `export` and without.
+        let locals = bound.scopes[bound.symbol_scope(binding).idx()].locals;
+        let local = bound.lookup(locals, name).unwrap_or(binding);
+        let declarations = &bound.symbol(local).decls;
+        let first = declarations.iter().find(|&&it| self.produces_code(it));
+        // `namespace K` beside `export class K` is not exported itself.
+        let exported = bound.export_symbol_of_value_symbol_if_exported(binding);
+        let is_exported = bound.symbol(exported).decls.contains(&declaration);
         Container {
             binding,
-            merged: bound.export_symbol_of_value_symbol_if_exported(binding),
+            merged: if is_exported { exported } else { binding },
             name,
-            ends_dead_zone: has_dead_zone && first == Some(declaration),
+            // The blocks of a namespace have a local symbol each, and the exported symbol lists what all of them export.
+            is_single_declaration: declarations.len() == 1
+                && bound.symbol(exported).decls.len() == 1,
+            ends_dead_zone: has_dead_zone && first == Some(&declaration),
         }
     }
 
@@ -40,7 +50,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     pub(super) fn has_single_declaration(&self, container: Container) -> bool {
-        self.file.bound.symbol(container.merged).decls.len() == 1
+        container.is_single_declaration
     }
 
     pub(super) fn initialize_container(&mut self, container: Container, created: ValueId) {

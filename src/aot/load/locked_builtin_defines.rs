@@ -116,6 +116,25 @@ pub(crate) enum RuntimeIdentity {
     MayBeReplaced,
 }
 
+fn is_folded_under(identity: RuntimeIdentity, names: &[&str]) -> bool {
+    identity == RuntimeIdentity::IsLocked || names.len() == 1
+}
+
+pub(crate) fn is_folded_in_test_runs(member: BuiltinId) -> bool {
+    let folded = RUNTIME_IDENTITY.iter().map(|&(names, _)| names);
+    let mut folded = folded.filter(|names| is_folded_under(RuntimeIdentity::MayBeReplaced, names));
+    folded.any(|names| {
+        let mut found = Some(BuiltinId::GlobalThis);
+        for name in names {
+            let name = table::find_name(name.as_bytes());
+            found = found
+                .zip(name)
+                .and_then(|(holder, name)| table::own_member(holder, name));
+        }
+        found == Some(member)
+    })
+}
+
 pub(crate) fn runtime_identity_defines<'s>(
     identity: RuntimeIdentity,
     arena: &'s Arena,
@@ -124,7 +143,7 @@ pub(crate) fn runtime_identity_defines<'s>(
     let global_this = atoms.intern(b"globalThis");
     let mut defines = Vec::with_capacity(2 * RUNTIME_IDENTITY.len());
     for (names, known) in RUNTIME_IDENTITY {
-        if identity == RuntimeIdentity::MayBeReplaced && names.len() > 1 {
+        if !is_folded_under(identity, names) {
             continue;
         }
         let names: Vec<Atom> = names
@@ -228,6 +247,31 @@ mod tests {
             runtime_identity_defines(open, session.arena(), &atoms).len(),
             2
         );
+    }
+
+    #[test]
+    fn tests_replace_nothing_that_their_run_folds() {
+        let session = Session::new();
+        let atoms = Interner::new_in(&session);
+        let open = RuntimeIdentity::MayBeReplaced;
+        let defines = runtime_identity_defines(open, session.arena(), &atoms);
+        let global = |define: &Define<'_>| match (define.path.root, define.path.members) {
+            (DefineRoot::Global(root), []) => table::find_name(atoms.bytes(root)),
+            _ => None,
+        };
+        let folded: Vec<BuiltinId> = (defines.iter().filter_map(global))
+            .filter_map(table::global)
+            .collect();
+        assert_eq!(folded.len(), 1);
+        for &member in table::members(BuiltinId::GlobalThis) {
+            assert_eq!(
+                is_folded_in_test_runs(member),
+                folded.contains(&member),
+                "{}",
+                table::text_of(member)
+            );
+        }
+        assert!(!is_folded_in_test_runs(BuiltinId::Process));
     }
 
     #[test]

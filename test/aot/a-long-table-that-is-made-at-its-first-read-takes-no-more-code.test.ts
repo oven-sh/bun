@@ -6,7 +6,8 @@ import { readFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { run } from "./harness/run";
-import { test } from "./supported";
+// One by one: the runner gives this file a process of its own and eight cases at once, beside two more like it: too many builds for four cores.
+import { testOneByOne as test } from "./supported";
 
 const entries = Array.from({ length: 200 }, (_, index) => index + 1);
 const types = `export enum Category { Warning, Error, Suggestion, Message }

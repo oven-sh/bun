@@ -1,0 +1,14 @@
+# The same in a function that one more pass looks at: it walks over the own keys of an object.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass ExpandOwnKeys
+# CHECK: = Call v0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Pair" fields=[{key="a" declared={type=number} flow={occupancy=AlwaysFilled}}, {key="b" declared={type=number} flow={occupancy=AlwaysFilled}}]
+
+function f0 name="callsBesideAWalk" parameters=[{type=anything}, {type=L0}] results=[{type=anything}] {
+    v2 = Call v0, -
+    v3 = CallBuiltin -, v1 overload=ObjectValues/0
+    Return v3
+}

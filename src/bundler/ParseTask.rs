@@ -2509,8 +2509,12 @@ pub mod parse_worker {
             output_format == options::Format::Esm && !opts.features.hot_module_reloading;
         opts.features.react_fast_refresh =
             topts.react_fast_refresh && loader.is_jsx() && !source.path.is_node_module();
+        let is_wanted_by_react_compiler = match topts.react_compiler_filter {
+            Some(is_compiled) => loader.is_javascript_like() && is_compiled(source.path.text),
+            None => loader.is_jsx(),
+        };
         opts.features.react_compiler = if topts.react_compiler.is_enabled()
-            && (loader.is_jsx() || topts.react_compiler_filter.is_some())
+            && is_wanted_by_react_compiler
             && !source.path.is_node_module()
         {
             topts.react_compiler

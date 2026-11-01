@@ -229,6 +229,7 @@ fn add_import(file: &mut FileBuilder, default: Atom, attributes: ExprId) -> Stmt
         mode: ResolutionMode::default(),
         stmt: StmtId::NONE,
         attributes,
+        loaded_as: Atom::NONE,
     });
     file.stmt(StmtKind::Import(import), 0)
 }

@@ -686,6 +686,26 @@
     "typed": 724,
     "untyped": 1089
   },
+  "everyday-benchmarks/nested-loops-sum-quotients-by-a-whole-number": {
+    "typed": 621,
+    "untyped": 620
+  },
+  "everyday-benchmarks/nested-loops-sum-remainders-by-a-number": {
+    "typed": 835,
+    "untyped": 833
+  },
+  "everyday-benchmarks/nested-loops-sum-remainders-by-a-parameter": {
+    "typed": 822,
+    "untyped": 818
+  },
+  "everyday-benchmarks/nested-loops-sum-remainders-by-a-whole-number": {
+    "typed": 826,
+    "untyped": 824
+  },
+  "everyday-benchmarks/nested-loops-sum-remainders-of-either-sign": {
+    "typed": 953,
+    "untyped": 949
+  },
   "everyday-benchmarks/object-insert-a-hundred-string-keys": {
     "typed": 6962.8,
     "untyped": 6964.3
@@ -1186,14 +1206,15 @@
     "untyped": 90
   },
   "everyday-collections/map-set-and-delete": {
-    "typed": 417,
-    "untyped": 408,
+    "typed": 433.1,
+    "untyped": 424.1,
     "owed": {
       "forms": [
         "untyped"
       ],
-      "why": "read 417 when the bound went from 10% to 2%, over half of it native code: nobody has looked for the change yet"
-    }
+      "why": "read 417, less what the pin was raised by, when the bound went from 10% to 2%, over half of it native code: nobody has looked for the change yet"
+    },
+    "raised": "417 | 408 > 433.1 | 424.1: a deletion asks whether the table has lost three in four of its entries and is to shrink and frees the slot of the index where no search can miss it: a Map or Set kept the table of its peak for good, and a key deleted and set again cost the size of the table"
   },
   "everyday-collections/map-set-over-existing-keys": {
     "typed": 73,
@@ -1216,8 +1237,9 @@
     "untyped": 2745.4
   },
   "everyday-collections/set-add-and-delete": {
-    "typed": 375.5,
-    "untyped": 375.5
+    "typed": 387.4,
+    "untyped": 387.3,
+    "raised": "375.5 | 375.5 > 387.4 | 387.3: a deletion asks whether the table has lost three in four of its entries and is to shrink and frees the slot of the index where no search can miss it: a Map or Set kept the table of its peak for good, and a key deleted and set again cost the size of the table"
   },
   "everyday-collections/set-add-existing": {
     "typed": 59,

@@ -29,7 +29,7 @@ extern "C" BunString Bun__JSFunction__compiledSource(JSC::EncodedJSValue encoded
     if (auto* frame = dynamicDowncast<AsyncContextFrame>(value))
         value = frame->callback.get();
     JSC::JSObject* callee = value.getObject();
-    if (!callee || !JSC::AOT::CompiledCallee::isCompiledCallee(callee) || JSC::AOT::CompiledCallee::isBoundFunction(callee))
+    if (!callee || !callee->vm().hasCompiledCode() || !JSC::AOT::CompiledCallee::isCompiledCallee(callee) || JSC::AOT::CompiledCallee::isBoundFunction(callee))
         return { BunStringTag::Dead };
     auto kind = JSC::AOT::CompiledCallee::kind(callee);
     if (kind == JSC::AOT::CompiledCallee::FunctionKind::Class || kind == JSC::AOT::CompiledCallee::FunctionKind::Builtin)

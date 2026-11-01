@@ -120,7 +120,7 @@ async function seenIn(bun: string, words: string | undefined, ...flags: string[]
   return {
     seen: linesThatStartWith("SEEN "),
     lock: linesThatStartWith("LOCK "),
-    form: stderr.match(/^AOT test run \| .*$/m)?.[0] ?? "",
+    form: stderr.match(/^AOT test run \| (?:layers|one program|programs without layers)\b.*$/m)?.[0] ?? "",
     warnings: stderr.split("\n").filter(line => line.startsWith("warn: ") || line.startsWith("error: ")),
     exitCode,
   };

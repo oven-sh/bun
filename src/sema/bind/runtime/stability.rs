@@ -113,13 +113,11 @@ impl StabilityPass<'_, '_> {
     }
 
     fn add_container(&mut self, symbol: SymbolId, decl: Decl) {
-        let bound = self.bound;
+        let listed = &self.bound.symbols[symbol.idx()].decls;
         if let Some(recorded) = self.initializers.get_mut(symbol.idx()) {
             *recorded = match *recorded {
                 Initializers::None => Initializers::One(decl),
-                Initializers::One(merged)
-                    if bound.symbols[symbol.idx()].decls.contains(&merged) =>
-                {
+                Initializers::One(merged) if listed.contains(&merged) && listed.contains(&decl) => {
                     Initializers::One(merged)
                 }
                 Initializers::One(_) | Initializers::Several => Initializers::Several,

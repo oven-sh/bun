@@ -7,7 +7,11 @@ import { test } from "./supported";
 const attempt = (statement: string) =>
   `try {\n  ${statement};\n  console.log(new Date(0).getTime());\n} catch (error) {\n  console.log(error.constructor.name);\n}\n`;
 
-const programs = {
+const attemptToAdd = (statement: string) =>
+  `try {\n  ${statement};\n  console.log(new Response("").upper());\n} catch (error) {\n  console.log(error.constructor.name);\n}\n`;
+
+type Program = { source: string; files?: Record<string, string>; warnings: string[]; stdout: string };
+const programs: Record<string, Program> = {
   "a descriptor that gets its value behind the literal": {
     source:
       `const put = (object, key, value) => {\n  const descriptor = { configurable: true };\n  descriptor.value = value;\n  Object.defineProperty(object, key, descriptor);\n};\n` +
@@ -113,6 +117,48 @@ const programs = {
     warnings: [],
     stdout: "0\n",
   },
+  "a name that the object lacks is let in out of a literal": {
+    source: attemptToAdd(`Object.assign(Response.prototype, { upper: () => "up" })`),
+    warnings: [],
+    stdout: "up\n",
+  },
+  "a name that the object lacks is let in out of a call": {
+    source: `const make = () => ({ upper: () => "up" });\n` + attemptToAdd(`Object.assign(Response.prototype, make())`),
+    warnings: [],
+    stdout: "up\n",
+  },
+  "a name that the object lacks is let in out of an instance": {
+    source:
+      `class Mixin {\n  upper = () => "up";\n}\n` + attemptToAdd(`Object.assign(Response.prototype, new Mixin())`),
+    warnings: [],
+    stdout: "up\n",
+  },
+  "a name that the object lacks is let in out of a frozen constant": {
+    source:
+      `const helpers = Object.freeze({ upper: () => "up" });\n` +
+      attemptToAdd(`Object.assign(Response.prototype, helpers)`),
+    warnings: [],
+    stdout: "up\n",
+  },
+  "a name that the object lacks is let in out of descriptors that a call makes": {
+    source:
+      `const make = () => ({ upper: { value: () => "up" } });\n` +
+      attemptToAdd(`Object.defineProperties(Response.prototype, make())`),
+    warnings: [],
+    stdout: "up\n",
+  },
+  "a name that the object lacks, out of another file": {
+    source: attemptToAdd(`Object.assign(Response.prototype, require("./helpers.cjs"))`),
+    files: { "helpers.cjs": `module.exports = { upper: () => "up" };\n` },
+    warnings: ["main.mjs:2:10"],
+    stdout: "TypeError\n",
+  },
+  "a name that the object lacks, stored behind the literal": {
+    source:
+      `const helpers = {};\nhelpers.upper = () => "up";\n` + attemptToAdd(`Object.assign(Response.prototype, helpers)`),
+    warnings: ["main.mjs:4:10"],
+    stdout: "TypeError\n",
+  },
   "mock.method() of node:test": {
     source: `import { mock } from "node:test";\n` + attempt(`mock.method(Date.prototype, "getTime", () => 7)`),
     warnings: ["main.mjs:3:8"],
@@ -120,9 +166,9 @@ const programs = {
   },
 };
 
-for (const [name, { source, warnings, stdout }] of Object.entries(programs)) {
+for (const [name, { source, files, warnings, stdout }] of Object.entries(programs)) {
   test(`TS100014: ${name}`, async () => {
-    using dir = tempDir("aot-locked-built-in-write-warnings", { "main.mjs": source });
+    using dir = tempDir("aot-locked-built-in-write-warnings", { "main.mjs": source, ...files });
     const cwd = String(dir);
     const executable = join(cwd, "main");
     const built = await run([bunExe(), "build", "--compile", "--aot", "./main.mjs", "--outfile", executable], cwd, {
@@ -137,6 +183,20 @@ for (const [name, { source, warnings, stdout }] of Object.entries(programs)) {
     expect((await run([executable], cwd)).stdout).toBe(stdout);
   }, 240_000);
 }
+
+test("a test adds a name through Object.assign()", async () => {
+  using dir = tempDir("aot-locked-built-in-write-warnings", {
+    "main.test.mjs": `import { expect, test } from "bun:test";\nconst make = () => ({ upper: () => "up" });\ntest("t", () => {\n  Object.assign(Response.prototype, make());\n  expect(new Response("").upper()).toBe("up");\n});\n`,
+  });
+  for (const words of ["TestRunLayers:0", "TestRunLayers:2"]) {
+    const env = { ...bunEnv, NO_COLOR: "1", BUN_DEBUG_TEST_AOT_WORDS: words };
+    const ran = await run([bunExe(), "test", "--aot", "./main.test.mjs"], String(dir), env);
+    expect({ warned: (ran.stdout + ran.stderr).includes("TS100014"), exitCode: ran.exitCode }).toEqual({
+      warned: false,
+      exitCode: 0,
+    });
+  }
+}, 240_000);
 
 test("a test replaces a member through Object.assign()", async () => {
   using dir = tempDir("aot-locked-built-in-write-warnings", {

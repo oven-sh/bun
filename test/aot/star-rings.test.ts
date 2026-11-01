@@ -34,21 +34,78 @@ const projects: Record<string, Record<string, string>> = {
   },
 };
 
-for (const [name, files] of Object.entries(projects)) {
-  test.concurrent(
-    name,
-    async () => {
-      using dir = tempDir("aot-star-rings", files);
-      const seen = async (words: string | undefined, flags: string[]) => {
-        const env = words ? { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words } : bunEnv;
-        const { stdout, exitCode } = await run([bunExe(), "test", ...flags], String(dir), env);
-        return { stdout: stdout.split("\n").filter(line => line.startsWith("SEEN")), exitCode };
-      };
-      const plain = await seen(undefined, []);
-      expect(plain).toEqual({ stdout: ["SEEN caught SyntaxError"], exitCode: 0 });
-      for (const words of ["TestRunLayers:0", "TestRunLayers:1", "TestRunLayers:2"])
-        expect({ words, ...(await seen(words, ["--aot"])) }).toEqual({ words, ...plain });
+// Two modules a level, each with a star over both of the next level: as many ways down as two to the power of the levels.
+const forks = (levels: number, main: string) => ({
+  "package.json": `{ "name": "p" }`,
+  ...Object.fromEntries(
+    Array.from({ length: levels * 2 }, (_, index) => {
+      const level = index >> 1;
+      const next = level + 1 < levels ? ["a", "b"].map(side => `l${level + 1}${side}`) : ["m"];
+      return [`l${level}${"ab"[index & 1]}.mjs`, next.map(name => `export * from "./${name}.mjs";\n`).join("")];
+    }),
+  ),
+  "m.mjs": `export const m = "real m", gone = "real gone";\n`,
+  "main.mjs": main,
+  "a.test.mjs": `import { mock, test } from "bun:test";
+test("t", async () => {
+  mock.module("./m.mjs", () => ({ m: "mock m" }));
+  await import("./main.mjs");
+});
+`,
+});
+
+const forked: Record<string, { main: string; expected: string[]; more?: Record<string, string> }> = {
+  "a name that the mock has, and the namespace object": {
+    main: `import * as ns from "./l0a.mjs";\nimport { m } from "./l0a.mjs";\nconsole.log("SEEN main", m, ns.gone, Object.keys(ns).join());\n`,
+    expected: ["SEEN main mock m undefined m"],
+  },
+  "a name that the mock leaves out": {
+    main: `import { gone } from "./l0a.mjs";\nconsole.log("SEEN main", gone);\n`,
+    expected: ["SEEN main undefined"],
+  },
+  // A mock that lacks the name sends the run past what lies below it, so what was asked there is asked again behind it.
+  "below modules that another test file mocks": {
+    main: `import { m, gone } from "./top.mjs";\nconsole.log("SEEN main", m, gone);\n`,
+    expected: ["SEEN main mock m undefined", "SEEN other real m mock own"],
+    more: {
+      "top.mjs": `export * from "./l0a.mjs";\nexport * from "./l0b.mjs";\n`,
+      "l0a.mjs": `export * from "./l1a.mjs";\nexport * from "./l1b.mjs";\nexport const own = "real own";\n`,
+      "other.mjs": `import { m, own } from "./top.mjs";\nconsole.log("SEEN other", m, own);\n`,
+      "b.test.mjs": `import { mock, test } from "bun:test";
+test("t", async () => {
+  mock.module("./l0a.mjs", () => ({ own: "mock own" }));
+  mock.module("./l1a.mjs", () => ({}));
+  await import("./other.mjs");
+});
+`,
     },
-    120_000,
-  );
+  },
+};
+
+async function seen(files: Record<string, string>, words?: string) {
+  using dir = tempDir("aot-star-rings", files);
+  const env = words ? { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words } : bunEnv;
+  const { stdout, exitCode } = await run([bunExe(), "test", ...(words ? ["--aot"] : [])], String(dir), env);
+  return { stdout: stdout.split("\n").filter(line => line.startsWith("SEEN")), exitCode };
+}
+
+for (const [name, { main, expected, more }] of Object.entries(forked)) {
+  test.concurrent.each([
+    ["plain Bun", undefined],
+    ["one program", "TestRunLayers:0"],
+    ["two layers", "TestRunLayers:2"],
+  ])(`26 levels of forked stars over a mocked module: ${name}: %s`, async (_, words) => {
+    expect(await seen({ ...forks(26, main), ...more }, words)).toEqual({ stdout: expected, exitCode: 0 });
+  });
+}
+
+for (const [name, files] of Object.entries(projects)) {
+  test.concurrent.each([
+    ["plain Bun", undefined],
+    ["one program", "TestRunLayers:0"],
+    ["one layer", "TestRunLayers:1"],
+    ["two layers", "TestRunLayers:2"],
+  ])(`${name}: %s`, async (_, words) => {
+    expect(await seen(files, words)).toEqual({ stdout: ["SEEN caught SyntaxError"], exitCode: 0 });
+  });
 }

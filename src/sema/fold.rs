@@ -27,8 +27,9 @@ pub use inputs::{
 };
 pub use removed_by_bun_run::is_removed_where_never_run;
 pub(crate) use string_affixes::{
-    PathBelowFolder, find_export_of_module, find_members_below_module, trim_lead_surrogate_at_end,
-    trim_to_last_segment, trim_trail_surrogate_at_start,
+    MembersBehindNames, PathBelowFolder, find_export_of_module, find_export_of_module_with,
+    find_members_below_module, trim_lead_surrogate_at_end, trim_to_last_segment,
+    trim_trail_surrogate_at_start,
 };
 
 use crate::atom::{Atom, Interner};

@@ -50,7 +50,6 @@ const ofServers = (member: string, classes: string, text: string[]) =>
   Object.fromEntries([`%HTTPServer%.prototype.${member} > ${classes}`].map(key => [key, text]));
 
 export const calls: Record<string, string[]> = {
-  "crypto > Crypto": ["crypto"],
   "Bun.Cookie.from": ['Bun.Cookie.from("name", "value")'],
   "Bun.Cookie.parse": ['Bun.Cookie.parse("name=value")'],
   "Bun.dns.getServers": ["Bun.dns.getServers()"],
@@ -114,6 +113,7 @@ export const calls: Record<string, string[]> = {
   "Bun.stderr > Blob": ["Bun.stderr"],
   "Bun.stdin > Blob": ["Bun.stdin"],
   "Bun.stdout > Blob": ["Bun.stdout"],
+  "Bun.argv > Array": ["Bun.argv"],
   "process.argv > Array": ["process.argv"],
   "process.execArgv > Array": ["process.execArgv"],
   "AbortController.prototype.signal > AbortSignal": ["new AbortController().signal"],

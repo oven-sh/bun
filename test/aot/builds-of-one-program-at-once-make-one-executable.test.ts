@@ -8,9 +8,11 @@ import { join } from "path";
 import { built, spawned, withoutDebugInformation } from "./harness/commands";
 import { afterAll } from "./harness/default-timeout";
 import { compileCommand } from "./harness/flags";
+import { runsWholeGrids } from "./harness/ways";
 import { describe, test } from "./supported";
 
-const builds = 8;
+// Two or three executables came of eight builds: three builds tell it often, and a build takes twenty seconds of a processor. The benches make all eight.
+const builds = runsWholeGrids ? 8 : 3;
 const folder = join(import.meta.dir, "parallel", "classes");
 // A list, so that a program that comes to the folder later cannot stop this build. One that has left the folder, or asks for flags by now, is left out.
 const listed = `
@@ -73,7 +75,7 @@ describe("compile/aot/builds of one program at once make one executable", () => 
   const root = String(tempDir("aot-builds-at-once", {}));
   afterAll(() => rmSync(root, { recursive: true, force: true }));
 
-  test("eight builds", async () => {
+  test("builds at once", async () => {
     const programs = listed.filter(
       name => existsSync(join(folder, name)) && !asksForSomething.test(readFileSync(join(folder, name), "utf8")),
     );

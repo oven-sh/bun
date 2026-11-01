@@ -1,0 +1,6 @@
+# sabotage=MovedBodiesAreNotAnnounced: the pass moves the body of a function into another one and tells nobody. The listener goes with the body, so the old body would be compared with whatever stands in its place: the build stops
+# FORM: Prepared
+# RUN: pass SplitBehindEntryChecks
+# DIAGNOSTIC: VerificationFailedAfterPass 1
+# OPTIONS: check=VerifyEachPass sabotage=MovedBodiesAreNotAnnounced
+# PROGRAM-OF: moved-bodies-are-not-announced-left-alone.ir

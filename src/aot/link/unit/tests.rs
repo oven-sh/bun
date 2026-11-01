@@ -278,7 +278,7 @@ fn target_and_referrer_are_separate_lists() {
     let function = build_function(&[], |builder| {
         builder.import_module(target, None, referrer);
         builder.resolve_module(resolved, referrer, StringId::new(0), false);
-        builder.module_namespace(referrer, ImportPhase::Evaluation);
+        builder.module_namespace(referrer, ImportPhase::Evaluation, false, false);
         builder.return_value(None);
     });
     assert_eq!(function.module, owner);

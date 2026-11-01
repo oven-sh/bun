@@ -18,7 +18,7 @@ export type Invocation = {
 const prototypeOf = (value: unknown): object => Reflect.getPrototypeOf(Object(value))!;
 const modulesInPlaceOfPackages = ["utf-8-validate", "bun:test/vitest"];
 
-const preludeFolder = join(import.meta.dir, "../../../../src/aot/prelude");
+const preludeFolder = join(process.env.AOT_BUILTINS_FOLDER ?? join(import.meta.dir, ".."), "../../../src/aot/prelude");
 
 // The helpers that are written in TypeScript and compiled with a program. Here they run as they are written.
 function loadCompiledHelpers(): object {

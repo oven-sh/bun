@@ -36,7 +36,7 @@ use crate::load::data_modules::{parse_data_module, report_blank_json};
 use crate::load::disk_delegation::{
     delegate_host_services_to_disk, delegate_runtime_config_parsers_to_disk,
 };
-use crate::load::evaluated_texts::EvaluatedTexts;
+use crate::load::evaluated_texts::{EvaluatedTexts, find_source_url};
 use crate::load::externals::{contains, is_external};
 use crate::load::import_meta_glob;
 use crate::load::loaders::{
@@ -45,6 +45,7 @@ use crate::load::loaders::{
     to_host_loader_of_attribute, to_host_loader_of_query,
 };
 use crate::load::macros;
+use crate::load::made_own_require;
 use crate::load::manual_mocks::find_manual_mocks;
 use crate::load::modules_with_queries::ModulesWithQueries;
 use crate::load::named_loads::{
@@ -192,7 +193,7 @@ fn holds_statements_that_run(path: &[u8], text: &[u8]) -> bool {
         experimental_decorators: false,
         every_file_is_a_module: false,
         reads_jsdoc: false,
-        keeps_function_directives: false,
+        ignores_pure_comments: false,
     };
     let hir = parse_for_compile(session.arena(), &parse_options, text, &atoms);
     hir.ids(hir.body).len() != 0 && !hir.only_declares()
@@ -384,10 +385,16 @@ impl<'a> LoadHost<'a> {
         holder
     }
 
-    fn is_of_tests(&self, path: &[u8]) -> bool {
+    pub(crate) fn is_of_tests(&self, path: &[u8]) -> bool {
         let mut buffer = path_buffer_pool::get();
         let path = to_path_in(path, self.disk.is_case_sensitive(), &mut buffer[..]);
         (self.files_of_tests.as_ref()).is_some_and(|files| files.holds(&path))
+    }
+
+    fn is_test_file(&self, path: &[u8]) -> bool {
+        let mut buffer = path_buffer_pool::get();
+        let path = to_path_in(path, self.disk.is_case_sensitive(), &mut buffer[..]);
+        (self.files_of_tests.as_ref()).is_some_and(|files| files.is_test_file(&path))
     }
 
     /// The entry points of a layer below the test files are the files that those import.
@@ -1180,7 +1187,7 @@ impl CodeHost for LoadHost<'_> {
                 experimental_decorators: false,
                 every_file_is_a_module: false,
                 reads_jsdoc: false,
-                keeps_function_directives: false,
+                ignores_pure_comments: false,
             };
             return ParsedCode {
                 hir: parse_for_compile(arena, &options, IN_PLACE_OF_NO_PROGRAM, atoms),
@@ -1261,7 +1268,7 @@ impl CodeHost for LoadHost<'_> {
                 && !script_kind.is_javascript(),
             every_file_is_a_module: request.options.module_detection == ModuleDetection::Force,
             reads_jsdoc: request.reads_jsdoc,
-            keeps_function_directives: source_kind == SourceKind::EvaluatedText
+            ignores_pure_comments: source_kind == SourceKind::EvaluatedText
                 || hir::find_transpiled_mark(text).is_some(),
         };
         let mut hir = parse_for_compile(arena, &compile_options, text, atoms);
@@ -1350,16 +1357,35 @@ impl CodeHost for LoadHost<'_> {
         payload: &mut Option<HostPayload>,
     ) -> TreeChange {
         let source = parsed_source_mut(payload);
-        let changed = self.import_names_or_compile_components(arena, atoms, request, source);
-        // It goes by the shape of the tree alone, and what stood in the tree keeps its place.
+        if source.kind == SourceKind::EvaluatedText && source.source_url_of_text.is_none() {
+            let (text, comments) = (&request.hir.text, &request.hir.comments);
+            source.source_url_of_text = find_source_url(text, comments).map(Box::from);
+        }
+        if source.kind == SourceKind::Program
+            && made_own_require::keep_own_require(request) == TreeChange::Changed
+        {
+            return TreeChange::ChangedAndUnfinished;
+        }
+        // It goes by the shape of the tree alone. The imports that it writes for eager entries are imports like any other to what follows: a hoisted mock goes above
+        // them too. That asks for their bindings.
         let (provider, messages) = (self.input.provider, self.input.messages);
         let runs_tests = self.input.options.load.runs_tests;
-        match import_meta_glob::expand_calls(
-            provider, messages, arena, atoms, request, source, runs_tests,
-        ) {
-            TreeChange::Changed => TreeChange::Changed,
-            TreeChange::Unchanged => changed,
+        if !std::mem::replace(&mut source.has_expanded_globs, true)
+            && import_meta_glob::expand_calls(
+                provider, messages, arena, atoms, request, source, runs_tests,
+            ) == TreeChange::Changed
+        {
+            return TreeChange::ChangedAndUnfinished;
         }
+        let changed = self.import_names_or_compile_components(arena, atoms, request, source);
+        if changed == TreeChange::Unchanged {
+            return changed;
+        }
+        // A component comes back from its compiler as it was written.
+        import_meta_glob::expand_calls(
+            provider, messages, arena, atoms, request, source, runs_tests,
+        );
+        changed
     }
 
     fn finish_file(
@@ -1374,18 +1400,19 @@ impl CodeHost for LoadHost<'_> {
         // A text that a file evaluates has a path of its own, which lies nowhere: `new Function("fake", "Date.now = fake")`. It goes by the file that holds it.
         let holder = self.find_file_that_holds_text(request.path);
         let is_in_package = is_in_node_modules(holder.as_deref().unwrap_or(request.path));
-        let is_of_tests = match &holder {
-            Some(holder) => {
-                self.is_of_tests(holder) || self.take_from_test_runner.lock().contains(holder)
-            }
+        let takes = match &holder {
+            Some(holder) => self.take_from_test_runner.lock().contains(holder),
             None => {
                 let takes = !is_in_package && builtin_uses::takes_from_test_runner(request);
                 if takes {
                     (self.take_from_test_runner.lock()).insert(request.path.to_vec());
                 }
-                takes || self.is_of_tests(request.path)
+                takes
             }
         };
+        let place = holder.as_deref().unwrap_or(request.path);
+        let is_of_tests = takes || self.is_of_tests(place);
+        let is_of_tests_by_itself = takes || self.is_test_file(place);
         let input = BuiltinUseInput {
             names: self.input.builtin_names,
             platform: self.input.platform,
@@ -1429,6 +1456,7 @@ impl CodeHost for LoadHost<'_> {
         }
         source.loads_by_unknown_name = named.loads_by_unknown_name;
         source.is_of_tests = AtomicBool::new(is_of_tests);
+        source.is_of_tests_by_itself = is_of_tests_by_itself;
         source.is_in_package = is_in_package;
         source.unknown_names_at = named.unknown_names_at;
         // Without the option the run time refuses code that is not in the program.
@@ -1447,6 +1475,7 @@ impl CodeHost for LoadHost<'_> {
         if self.input.options.load.runs_tests {
             let started_in = from_native(&self.input.options.code.working_directory);
             let mocks = find_manual_mocks(request, &started_in, &|path| self.is_file(path));
+            source.manual_mocks.clone_from(&mocks);
             answers.extend(mocks.into_iter().map(HostResolution::Path));
         }
         answers

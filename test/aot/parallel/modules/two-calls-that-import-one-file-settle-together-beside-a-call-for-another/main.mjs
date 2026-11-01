@@ -1,7 +1,7 @@
+// Reference: bun build --compile
 // Env: BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER=0
-// Two import() calls for one file settle next to each other, though a call for another file stands between them.
-// Plain Bun gets its texts from threads, so on a crowded machine the other call's answer comes between now and then: in six or seven runs of a thousand, and as often in an executable.
-// So eight groups of files are imported, one group behind the other, and most of them must settle together.
+// Two import() calls for one file, and a call for another file between them. An executable holds every text: the three settle in the order of the calls, so the two never settle next to each other.
+// The name says what `bun run` does.
 const groups = [
   [() => import("./twice-1.mjs"), () => import("./other-1.mjs"), () => import("./twice-1.mjs")],
   [() => import("./b/twice-1.mjs"), () => import("./b/other-1.mjs"), () => import("./b/twice-1.mjs")],

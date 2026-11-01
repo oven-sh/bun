@@ -228,6 +228,7 @@ const oneOfFew: Record<string, Program> = {
       "no-program.js": "this is no program (\n",
     },
     addons: [beside],
+    isConstant: true,
   },
   "names that a list hands to a function, made of what node:os answers": {
     entry: "main.cjs",

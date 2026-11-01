@@ -12,6 +12,7 @@ use crate::link::{
     self, LinkError, LinkInput, LinkProject, LinkUnit, Linked, ProgramKeys, ProgramModule,
     ProgramVariableKey,
 };
+use crate::load::locked_builtin_defines::is_folded_in_test_runs;
 use crate::load::sources::parsed_source;
 use crate::load::{ProgramFile, ProjectId};
 use crate::module_keys::stamp_of_file;
@@ -230,6 +231,7 @@ impl Build<'_> {
             let sources = sources.filter(|it| !it.finds_builtins_read_only());
             replaced.extend(sources.flat_map(|source| source.builtins.replaced_members()));
         }
+        replaced.retain(|&member| !is_folded_in_test_runs(member));
         replaced.shared_sort_unstable();
         replaced.dedup();
         let numbers = replaced.iter().map(|&member| member as u32);

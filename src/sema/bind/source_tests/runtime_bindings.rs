@@ -1313,6 +1313,7 @@ fn classic_jsx() {
             kind: JsxFactory,
             name: s.workspace.atom("React"),
             binding: Symbol(react),
+            member: Atom::NONE,
         };
         assert_eq!(s.bound.runtime.implicit_references(), [expected]);
         assert_eq!(s.analysis.unused_import_symbols, []);

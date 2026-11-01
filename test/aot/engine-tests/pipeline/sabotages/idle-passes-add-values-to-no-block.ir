@@ -1,0 +1,6 @@
+# sabotage=IdlePassesAddValuesToNoBlock: the pass has added a value, has made the log forget and says that it changed nothing: the build stops
+# FORM: Prepared
+# RUN: pass FoldConstants
+# DIAGNOSTIC: VerificationFailedAfterPass 1
+# OPTIONS: check=VerifyEachPass sabotage=IdlePassesAddValuesToNoBlock
+# PROGRAM-OF: idle-passes-add-values-to-no-block-left-alone.ir

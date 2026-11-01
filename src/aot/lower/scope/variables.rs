@@ -31,15 +31,19 @@ impl FileLowering<'_, '_, '_, '_> {
             VariableKey::MockOf(_) => {
                 let mut declared = DeclaredType::untyped();
                 declared.ty = self.fragment.types.union(declared.ty, TypeTable::ABSENT);
+                let mut flags = VariableFlags::IS_REPLACEABLE | VariableFlags::HOLDS_MOCK;
+                if self.inputs.modules.originals_beside_mocks_may_run() {
+                    flags |= VariableFlags::ORIGINAL_MAY_RUN;
+                }
                 Variable {
                     name: None,
                     declared,
                     initialization: VariableInitialization::Uninitialized,
-                    flags: VariableFlags::IS_REPLACEABLE | VariableFlags::HOLDS_MOCK,
+                    flags,
                     ..self.create_untyped_variable(known::default)
                 }
             }
-            VariableKey::RequiredAnswer(_) => {
+            VariableKey::RequiredAnswer(_) | VariableKey::RequireMadeForOwnFile(_) => {
                 let mut declared = DeclaredType::untyped();
                 declared.ty = self.fragment.types.union(declared.ty, TypeTable::ABSENT);
                 Variable {

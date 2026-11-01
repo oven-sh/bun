@@ -94,7 +94,7 @@ export {};
 
 // GENERATED: setLater setEach describe
 // CHECK-LABEL: function {{*}}name="setLater"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] site=[[w_2]]}, {type=undefined|null|[[L_3]] site=[[w_4]]}, {type=undefined|null|Promise flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Promise flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=3 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] site=[[w_2]]}, {type=undefined|null|[[L_3]] site=[[w_4]]}, {type=undefined|null|Promise flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Promise flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: anything, v1: undefined|null|[[L_1]], v2: undefined|null|[[L_3]], v3: undefined|null|Promise):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

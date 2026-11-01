@@ -15,7 +15,7 @@ use super::expression::{Evaluation, Tail, TailCast};
 use super::positions::SiteOrigin;
 use super::{FileLowering, FunctionLowering, scope};
 use crate::builtins::id::BuiltinId;
-use crate::builtins::{Intrinsic, Resolved, builtin_value_of};
+use crate::builtins::{Intrinsic, Resolved, builtin_value_of, table};
 use crate::ir::generated::{BlockFrequency, TypeSiteKind};
 use crate::ir::{
     DeclaredType, ExpectedResultId, Mapped, PositionFlags, PropertyKeyId, StringId, Type,
@@ -25,6 +25,7 @@ use crate::ir::{
 pub(in crate::lower) use self::callee::PrintedOperators;
 pub(in crate::lower) use self::intrinsic::lower_intrinsic_expression;
 
+#[derive(Clone)]
 pub(crate) enum Arguments {
     Values(SmallVec<[ValueId; 4]>),
     List(ValueId),
@@ -158,6 +159,25 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.emit_call_expression(call, callee, arguments, tail)
     }
 
+    // The host reads two operands. The table can say what is written only of an operand.
+    fn hand_global_object_to_stub(&mut self, arguments: Arguments) -> Arguments {
+        let mut values: SmallVec<[ValueId; 4]> = match arguments {
+            Arguments::Values(values) => values,
+            Arguments::List(list) => (0..2)
+                .map(|index| {
+                    let index = self.builder.integer(index);
+                    self.builder.elem_get(list, index)
+                })
+                .collect(),
+        };
+        while values.len() < 2 {
+            values.push(self.builder.undefined());
+        }
+        values.truncate(2);
+        values.push(self.builder.builtin(BuiltinId::GlobalThis, false));
+        Arguments::Values(values)
+    }
+
     pub(in crate::lower) fn lower_new(&mut self, expression: ExprId, tail: Tail<'_>) -> ValueId {
         let builtins = self.file.builtins;
         if let Some(text) = builtins.evaluated_text(expression) {
@@ -211,10 +231,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             (split.not_taken, split.not_taken_value),
         ] {
             self.builder.switch_to(block);
-            let arguments = match &arguments {
-                Arguments::Values(values) => Arguments::Values(values.clone()),
-                Arguments::List(list) => Arguments::List(*list),
-            };
+            let arguments = arguments.clone();
             let callee = Callee { function, ..callee };
             let value = self.emit_call_of_one_callee(callee, arguments, options);
             self.builder.write_variable(result, value);
@@ -286,6 +303,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let hir = self.file.hir;
         let site = call_site(self.file, call);
         self.convert_argument_values(call, &mut arguments);
+        let named = self.file.skip_type_syntax(site.callee);
+        let named = self.file.builtins.builtin_of_expression(named);
+        if matches!(hir[call].kind, ExprKind::Call(_)) && named.is_some_and(table::stubs_global) {
+            arguments = self.hand_global_object_to_stub(arguments);
+        }
+        let stubs: SmallVec<[BuiltinId; 2]> =
+            self.file.builtins.stubs_that_call_may_be(call).collect();
         let is_reflect_construct_syntax = self.file.is_reflect_construct_syntax(site.callee)
             && matches!(&arguments, Arguments::Values(values) if values.len() >= 2);
         let options = CallOptions {
@@ -304,7 +328,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let construction = tests_callee.then_some(call);
         match tail {
             Tail::No => {
-                let value = self.emit_written_call(construction, callee, arguments, options);
+                let value = match stubs.is_empty() {
+                    true => self.emit_written_call(construction, callee, arguments, options),
+                    false => self.emit_stub_or_call(&stubs, callee, arguments, options),
+                };
                 self.set_position(hir[call].pos);
                 self.claim_call_result(call, value)
             }
@@ -316,9 +343,43 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let tail = Tail::Yes { casts: Some(&cast) };
                 self.describe_int32_tail_call(call);
                 let options = CallOptions { tail, ..options };
-                self.emit_written_call(construction, callee, arguments, options)
+                match stubs.is_empty() {
+                    true => self.emit_written_call(construction, callee, arguments, options),
+                    false => self.emit_stub_or_call(&stubs, callee, arguments, options),
+                }
             }
         }
+    }
+
+    fn emit_stub_or_call(
+        &mut self,
+        stubs: &[BuiltinId],
+        callee: Callee,
+        arguments: Arguments,
+        options: CallOptions<'_>,
+    ) -> ValueId {
+        let Some((&stub, others)) = stubs.split_first() else {
+            return self.emit_call_at(callee, arguments, options);
+        };
+        let call_position = self.position();
+        let tested = self.file.fragment.types.intern(Type::builtin(stub));
+        let split = self.split_on_type(callee.function, tested);
+        let result = self.builder.create_variable(None);
+        let join = self.create_block();
+        self.builder.switch_to(split.taken);
+        self.set_position(call_position);
+        let handed = self.hand_global_object_to_stub(arguments.clone());
+        let function = split.taken_value;
+        let value = self.emit_call_at(Callee { function, ..callee }, handed, options);
+        self.builder.write_variable(result, value);
+        self.jump(join);
+        self.builder.switch_to(split.not_taken);
+        self.set_position(call_position);
+        let value = self.emit_stub_or_call(others, callee, arguments, options);
+        self.builder.write_variable(result, value);
+        self.jump(join);
+        self.continue_in(join);
+        self.builder.read_variable(result)
     }
 
     fn emit_written_call(
@@ -367,10 +428,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             if is_done_in_place {
                 self.set_position_of_construction_in_place(call);
             }
-            let arguments = match arguments {
-                Arguments::Values(values) => Arguments::Values(values.clone()),
-                Arguments::List(list) => Arguments::List(*list),
-            };
+            let arguments = arguments.clone();
             let callee = Callee { function, ..callee };
             let options = CallOptions {
                 is_done_in_place,

@@ -24,8 +24,7 @@ impl FileLowering<'_, '_, '_, '_> {
 
     /// The module that throws for a name that the ES graph below the file imports and no CommonJS file of it has stored.
     pub(super) fn declare_check_body(&mut self) {
-        let commonjs = self.inputs.modules.commonjs();
-        if !commonjs.checked_copies(self.file).is_empty() {
+        if !self.inputs.modules.checks_of(self.file).is_empty() {
             declare_body(self, FunctionKey::CheckBody(self.file));
         }
     }
@@ -66,7 +65,7 @@ impl FileLowering<'_, '_, '_, '_> {
         let modules = self.inputs.modules;
         let own_file = self.file;
         let mut lowering = FunctionLowering::begin(self, function);
-        for &(export, failure) in modules.commonjs().checked_copies(own_file) {
+        for &(export, failure) in modules.checks_of(own_file) {
             // A file that is left out is never linked, no import is linked to one, and nothing stores the copies of one.
             let written = modules.failure(failure);
             let importer = Some(ModuleRef::File(written.importer));

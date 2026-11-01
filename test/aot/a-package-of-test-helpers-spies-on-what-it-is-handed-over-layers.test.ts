@@ -1,6 +1,6 @@
 // An installed package of test helpers wraps spyOn and makes the names itself: `exports.spyAll = object => Object.keys(object).map(name => spyOn(object, name))`.
 // A test hands it the namespace of an ES module of the project. Over layers only the program that holds the package knew of such a spy, and the exports of the
-// project's file were compiled as nobody's to replace: "TypeError: Cannot spy on 'inner' because module exports can't be replaced in a compiled executable".
+// project's file were compiled as nobody's to replace: "TypeError: Cannot spy on 'inner' of .. because the build didn't see a test spy on it".
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { test } from "./supported";

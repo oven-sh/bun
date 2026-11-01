@@ -3,7 +3,8 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { renameSync } from "node:fs";
 import { join } from "node:path";
 import { run } from "./harness/run";
-import { test } from "./supported";
+// One by one: the runner gives this file a process of its own and eight cases at once, beside two more like it: too many builds for four cores.
+import { testOneByOne as test } from "./supported";
 
 // As esbuild's lib/main.js has it: the module lies in a variable that is assigned in a try, and the function that starts the Worker is handed it.
 const startsItself = (name: string) => `var threads;

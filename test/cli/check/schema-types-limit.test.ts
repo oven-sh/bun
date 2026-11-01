@@ -6,11 +6,12 @@
 //
 // schema.d.ts.txt is cut by a script from the declaration files of two packages (LICENSE beside it). It is a text, because `tsc` checks every .ts file under test/. It is
 // as long as it is because what the checker of before took goes by the size of the graphs: cut further, it ended within a minute.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { run } from "../../aot/harness/run";
+import { test } from "../../aot/listed";
 
 const files = {
   "tsconfig.json": JSON.stringify({

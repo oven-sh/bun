@@ -1,0 +1,6 @@
+# sabotage=PassesDropCalls: behind the pass the only value of the function is gone. A function that a pass has emptied is looked at like any other: the build stops
+# FORM: Prepared
+# RUN: pass RetypeValues
+# DIAGNOSTIC: VerificationFailedAfterPass 1
+# OPTIONS: check=VerifyEachPass sabotage=PassesDropCalls
+# PROGRAM-OF: passes-drop-calls-and-leave-nothing-left-alone.ir

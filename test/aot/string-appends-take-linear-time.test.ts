@@ -10,7 +10,7 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { built, spawned } from "./harness/commands";
 import { afterAll } from "./harness/default-timeout";
-import { describe, test } from "./supported";
+import { describe, test } from "./measures";
 
 // `build(appends)` answers the length of the string it has built.
 const idioms: Record<string, string> = {

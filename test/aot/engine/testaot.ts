@@ -7,14 +7,16 @@
 // By hand:
 //   testaot run <file or folder>.. --show-output      IR tests: a .ir file says what is run on it and what must be printed
 //   testaot native <part of a name>                   tests written in C++
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isArm64, isASAN, isCI, isDebug, isLinux, isMusl, isWindows, tempDir } from "harness";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { countsInstructions } from "../analysis-scaling/measure-check";
+import { declare } from "../harness/capabilities";
 import { slot, slots } from "../harness/commands";
 import { unsupported } from "../harness/compiler";
 import { sharedSlot } from "../harness/shared-slots";
+import { test } from "../listed";
 import { findTool } from "../shell/find-tools";
 
 const repository = join(import.meta.dir, "..", "..", "..");
@@ -251,3 +253,6 @@ export function nativeTests(part: number, parts: number) {
     );
   }
 }
+
+declare("testaot", () => whyNoTestaot);
+declare("the tests of the engine", () => whyNoNativeTests);

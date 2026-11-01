@@ -77,6 +77,29 @@ const spyOn = {
   implementation: b.generic,
 } satisfies b.FunctionField;
 
+const stubbedName = b.keyFrom("name");
+const stubGlobal = [
+  {
+    args: { name: b.propertyKey.loose, value: b.any, global: b.builtin("globalThis") },
+    returns: b.any,
+    capability: "js",
+    throws: true,
+    uses: {
+      value: b.inspected,
+      global: [
+        b.readByKey(stubbedName, b.nativeMemory),
+        b.accessorReadByKey("Getter", stubbedName, b.nativeMemory),
+        b.accessorReadByKey("Setter", stubbedName, b.nativeMemory),
+        b.definesName(stubbedName, b.operand("value")),
+        b.deletedByKey(stubbedName),
+        ...b.ownPropertyTraps,
+      ],
+    },
+    implementation: b.generic,
+  },
+  b.otherwise,
+] satisfies readonly b.FunctionField[];
+
 const moduleCache = b.builtin("%ModuleCache%");
 const moduleExtensions = b.builtin("%ModuleExtensions%");
 const moduleObject = b.builtin("%ModuleObject%");
@@ -221,6 +244,7 @@ export default b.declarations(
     returns: b.builtin("%ModuleRequire%"),
     capability: "js",
     throws: true,
+    uses: { filename: [b.printedByFormatter("constructor")] },
     implementation: b.generic,
     mutability: "AlwaysLocked",
   }),
@@ -282,14 +306,14 @@ export default b.declarations(
   }),
   b.fn("bun:test.spyOn", spyOn),
   b.namespace("bun:test.jest", { spyOn, resetModules: b.otherwise, useFakeTimers: b.otherwise }),
-  b.namespace("bun:test.vi", { spyOn, resetModules: b.otherwise, useFakeTimers: b.otherwise, stubGlobal: b.otherwise }),
+  b.namespace("bun:test.vi", { spyOn, resetModules: b.otherwise, useFakeTimers: b.otherwise, stubGlobal }),
   b.fn("bun:test/vitest.spyOn", spyOn),
   b.namespace("bun:test/vitest.jest", { spyOn, resetModules: b.otherwise, useFakeTimers: b.otherwise }),
   b.namespace("bun:test/vitest.vi", {
     spyOn,
     resetModules: b.otherwise,
     useFakeTimers: b.otherwise,
-    stubGlobal: b.otherwise,
+    stubGlobal,
   }),
   b.same("bun:test/vitest.vitest", "bun:test/vitest.vi"),
   b.namespace("%bun:bundle%", {

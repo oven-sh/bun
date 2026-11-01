@@ -384,6 +384,7 @@ pub struct TransformRequest<'a, 's> {
 pub enum TreeChange {
     Unchanged,
     Changed,
+    ChangedAndUnfinished,
 }
 
 pub struct FinishedFile<'a, 's> {

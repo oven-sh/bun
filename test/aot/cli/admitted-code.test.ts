@@ -189,8 +189,11 @@ describe.concurrent("a default build", () => {
     expect(await started("default", { BUN_OPTIONS: options })).toEqual(runsOnlyCompiledCode(option));
   });
 
-  test("ignores the preload of the bunfig.toml that it finds where it is started: the file may be there for bun", async () => {
-    expect(await started("default", {}, join(folder, "configured"))).toEqual(alone);
+  test("ignores the preload of the bunfig.toml that it finds where it is started, and says so: the file may be there for bun", async () => {
+    expect(await started("default", {}, join(folder, "configured"))).toEqual({
+      ...alone,
+      stderr: `warn: "preload" in bunfig.toml is ignored by this executable because it only runs code that was compiled into it. Rebuild it with --compile-inspector to load other code\n`,
+    });
   });
 
   test("ignores the plugins that a bunfig.toml passes to servers: its pages were bundled by the build", async () => {

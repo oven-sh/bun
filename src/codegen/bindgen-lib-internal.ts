@@ -2443,7 +2443,11 @@ export class EnumerationType extends NamedType {
     return ["string"];
   }
   get parameterType(): ParameterType {
-    return strictType({ type: "StringLiterals", values: this.spellings.flat() });
+    return strictType(unionType({ type: "StringLiterals", values: this.spellings.flat() }, instanceType("String")));
+  }
+  /** A String object whose characters are none of the values. */
+  get canRefuse(): boolean {
+    return true;
   }
   get resultType(): TypeSpec {
     return { type: "StringLiterals", values: this.spellings.map(([canonical]) => canonical) };

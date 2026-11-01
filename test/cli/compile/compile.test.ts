@@ -1,9 +1,10 @@
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { existsSync, rmSync, statSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { basename, join } from "path";
 import { unsupported } from "../../aot/harness/commands";
 import { run as runCommand } from "../../aot/harness/run";
+import { describe, test } from "../../aot/listed";
 
 async function run(cwd: string, cmd: string[]) {
   const { stdout, stderr, exitCode } = await runCommand(cmd, cwd, { ...bunEnv, NO_COLOR: "1" });
@@ -123,26 +124,39 @@ describe.concurrent("bun compile", () => {
     120_000,
   );
 
+  const doubledNumbers = { "app.ts": `console.log([1, 2, 3].map((x: number) => x * 2).join());` };
+
+  function builderIn(dir: string) {
+    return async (...args: string[]) => {
+      rmSync(executable(dir, "app"), { force: true });
+      const { stderr, exitCode } = await bun(dir, ...args, "app.ts", "--outfile", "app");
+      if (exitCode !== 0) return { stderr, exitCode };
+      return {
+        stderr,
+        exitCode,
+        size: statSync(executable(dir, "app")).size,
+        ...(await run(dir, [executable(dir, "app")])),
+      };
+    };
+  }
+
   test.skipIf(!!unsupported)(
     "writes what bun build --compile --aot writes",
     async () => {
-      using dir = tempDir("compile-same-as-build", {
-        "app.ts": `console.log([1, 2, 3].map((x: number) => x * 2).join());`,
-      });
-      async function build(...args: string[]) {
-        rmSync(executable(String(dir), "app"), { force: true });
-        const { stderr, exitCode } = await bun(String(dir), ...args, "app.ts", "--outfile", "app");
-        if (exitCode !== 0) return { stderr, exitCode };
-        return {
-          stderr,
-          exitCode,
-          size: statSync(executable(String(dir), "app")).size,
-          ...(await run(String(dir), [executable(String(dir), "app")])),
-        };
-      }
+      using dir = tempDir("compile-same-as-build", doubledNumbers);
+      const build = builderIn(String(dir));
       const compiled = await build("compile");
       expect(compiled).toMatchObject({ stdout: "2,4,6\n", exitCode: 0 });
       expect(compiled).toEqual(await build("build", "--compile", "--aot"));
+    },
+    60_000,
+  );
+
+  test.skipIf(!!unsupported)(
+    "with --trim writes what bun build --compile --aot --trim writes",
+    async () => {
+      using dir = tempDir("compile-trim-same-as-build", doubledNumbers);
+      const build = builderIn(String(dir));
       const trimmed = await build("compile", "--trim");
       expect(trimmed).toEqual(await build("build", "--compile", "--aot", "--trim"));
       expect(await build("build", "--trim")).toEqual({ stderr: "error: --trim requires --compile\n", exitCode: 1 });

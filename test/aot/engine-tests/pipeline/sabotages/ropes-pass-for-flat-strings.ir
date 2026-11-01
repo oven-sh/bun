@@ -1,0 +1,7 @@
+# sabotage=RopesPassForFlatStrings: every string passes for the result of FlattenString, so the characters of a rope are read as if the rope were flat. The run stops in front of the read, and names the operation
+# FORM: AsRead
+# RUN: run-in-shell globalThis.argumentCount = 2;
+# REQUIRES: not-windows
+# OPTIONS: disable=pass:InlineCalls,pass:InlineHeads testing=CheckProofsAtRunTime sabotage=RopesPassForFlatStrings
+# CHECK: AOT validation: OperationPreconditionBroken f
+# PROGRAM-OF: ropes-pass-for-flat-strings-left-alone.ir

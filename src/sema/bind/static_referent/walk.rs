@@ -14,7 +14,9 @@ use crate::hir::*;
 use crate::import_sites::is_free_common_js;
 use crate::program::{FileId, Sym};
 use bun_sort_by_number::{SortByNumber, number_of_pair};
+use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
+use std::hash::Hash;
 use std::marker::PhantomData;
 
 #[derive(Copy, Clone)]
@@ -403,20 +405,102 @@ fn find_deciding_store(
     }
 }
 
+struct Trail<T> {
+    items: SmallVec<[T; 8]>,
+    first_seen: usize,
+    places: Option<FxHashMap<T, SmallVec<[u32; 1]>>>,
+}
+
 #[derive(Copy, Clone)]
-struct EnteredCall {
-    callee: FunctionRef,
-    file: FileId,
-    call: CallId,
+struct PlaceInTrail {
+    len: usize,
+    first_seen: usize,
+}
+
+impl<T: Copy + Eq + Hash> Trail<T> {
+    const LONG: usize = 32;
+
+    fn new() -> Self {
+        Trail {
+            items: SmallVec::new(),
+            first_seen: 0,
+            places: None,
+        }
+    }
+
+    fn seen(&self) -> &[T] {
+        &self.items[self.first_seen..]
+    }
+
+    fn last_place_of(&self, item: T) -> Option<usize> {
+        match &self.places {
+            Some(places) => {
+                let place = *places.get(&item)?.last()? as usize;
+                (place >= self.first_seen).then_some(place)
+            }
+            None => {
+                let place = self.seen().iter().rposition(|&it| it == item)?;
+                Some(self.first_seen + place)
+            }
+        }
+    }
+
+    fn contains(&self, item: T) -> bool {
+        self.last_place_of(item).is_some()
+    }
+
+    fn push(&mut self, item: T) {
+        let place = self.items.len() as u32;
+        self.items.push(item);
+        match &mut self.places {
+            Some(places) => places.entry(item).or_default().push(place),
+            None if self.items.len() > Self::LONG => {
+                let mut places = FxHashMap::<T, SmallVec<[u32; 1]>>::default();
+                for (place, &item) in self.items.iter().enumerate() {
+                    places.entry(item).or_default().push(place as u32);
+                }
+                self.places = Some(places);
+            }
+            None => {}
+        }
+    }
+
+    fn forget(&mut self) {
+        self.first_seen = self.items.len();
+    }
+
+    fn place(&self) -> PlaceInTrail {
+        PlaceInTrail {
+            len: self.items.len(),
+            first_seen: self.first_seen,
+        }
+    }
+
+    fn go_back_to(&mut self, place: PlaceInTrail) {
+        while self.items.len() > place.len {
+            let Some(item) = self.items.pop() else { break };
+            let Some(places) = &mut self.places else {
+                continue;
+            };
+            if let Some(places_of_item) = places.get_mut(&item) {
+                places_of_item.pop();
+                if places_of_item.is_empty() {
+                    places.remove(&item);
+                }
+            }
+        }
+        self.first_seen = place.first_seen;
+    }
 }
 
 pub(super) struct ReferentWalk<'c, 's, C: ReferentContext<'s>> {
     context: &'c C,
-    visited: SmallVec<[Sym; 8]>,
+    visited: Trail<Sym>,
     pending_members: SmallVec<[Atom; 4]>,
-    entered_calls: SmallVec<[EnteredCall; 2]>,
-    open_calls: SmallVec<[(FileId, CallId); 4]>,
-    followed_stores: SmallVec<[(FileId, ExprId); 4]>,
+    entered_callees: Trail<FunctionRef>,
+    entered_calls: SmallVec<[(FileId, CallId); 2]>,
+    open_calls: Trail<(FileId, CallId)>,
+    followed_stores: Trail<(FileId, ExprId)>,
     certainty: ReferentCertainty,
     follows_stored_members: bool,
     session: PhantomData<&'s ()>,
@@ -426,11 +510,12 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
     pub(super) fn new(context: &'c C) -> Self {
         ReferentWalk {
             context,
-            visited: SmallVec::new(),
+            visited: Trail::new(),
             pending_members: SmallVec::new(),
+            entered_callees: Trail::new(),
             entered_calls: SmallVec::new(),
-            open_calls: SmallVec::new(),
-            followed_stores: SmallVec::new(),
+            open_calls: Trail::new(),
+            followed_stores: Trail::new(),
             certainty: ReferentCertainty::Proven,
             follows_stored_members: false,
             session: PhantomData,
@@ -450,18 +535,18 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
     }
 
     pub(super) fn resolve_expression(
-        self,
+        mut self,
         file: FileId,
         expr: ExprId,
     ) -> ResolvedReferent<C::Builtin, C::Module> {
         self.run(Step::Expression(file, expr))
     }
 
-    pub(super) fn resolve_symbol(self, symbol: Sym) -> ResolvedReferent<C::Builtin, C::Module> {
+    pub(super) fn resolve_symbol(mut self, symbol: Sym) -> ResolvedReferent<C::Builtin, C::Module> {
         self.run(Step::Symbol(symbol))
     }
 
-    fn run(mut self, mut step: StepOf<'s, C>) -> ResolvedReferent<C::Builtin, C::Module> {
+    fn run(&mut self, mut step: StepOf<'s, C>) -> ResolvedReferent<C::Builtin, C::Module> {
         loop {
             step = match step {
                 Step::Expression(file, expr) => self.step_expression(file, expr),
@@ -490,36 +575,42 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
         }
     }
 
-    fn walk_from_here(&self) -> Self {
-        ReferentWalk {
-            context: self.context,
-            visited: self.visited.clone(),
-            pending_members: self.pending_members.clone(),
-            entered_calls: self.entered_calls.clone(),
-            open_calls: self.open_calls.clone(),
-            followed_stores: self.followed_stores.clone(),
-            certainty: self.certainty,
-            follows_stored_members: self.follows_stored_members,
-            session: PhantomData,
-        }
+    fn branch_off<R>(&mut self, walk_on: impl FnOnce(&mut Self) -> R) -> R {
+        let visited = self.visited.place();
+        let entered_callees = self.entered_callees.place();
+        let open_calls = self.open_calls.place();
+        let followed_stores = self.followed_stores.place();
+        let pending_members = self.pending_members.clone();
+        let (certainty, follows_stored_members) = (self.certainty, self.follows_stored_members);
+        let result = walk_on(self);
+        self.visited.go_back_to(visited);
+        self.entered_callees.go_back_to(entered_callees);
+        self.entered_calls.truncate(entered_callees.len);
+        self.open_calls.go_back_to(open_calls);
+        self.followed_stores.go_back_to(followed_stores);
+        self.pending_members = pending_members;
+        (self.certainty, self.follows_stored_members) = (certainty, follows_stored_members);
+        result
     }
 
     fn resolve_from_here(
-        &self,
+        &mut self,
         file: FileId,
         expr: ExprId,
     ) -> ResolvedReferent<C::Builtin, C::Module> {
-        self.walk_from_here().run(Step::Expression(file, expr))
+        self.branch_off(|walk| walk.run(Step::Expression(file, expr)))
     }
 
     fn step_export_of_common_js(&mut self, file: FileId, name: Option<Atom>) -> StepOf<'s, C> {
         self.certainty = ReferentCertainty::Expected;
         match name {
             Some(known::default) => {
-                let mut marked = self.walk_from_here();
-                marked.pending_members.push(known::default);
-                let step = marked.step_module_exports(file);
-                match marked.run(step).referent {
+                let marked = self.branch_off(|marked| {
+                    marked.pending_members.push(known::default);
+                    let step = marked.step_module_exports(file);
+                    marked.run(step).referent
+                });
+                match marked {
                     StaticReferent::Unknown(_) => self.step_module_exports(file),
                     found => {
                         self.pending_members.clear();
@@ -537,15 +628,15 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
 
     fn step_into_call(&mut self, callee: FunctionRef, file: FileId, call: CallId) -> StepOf<'s, C> {
         let context = self.context;
-        let is_entered = |entered: &EnteredCall| entered.callee == callee;
-        if self.entered_calls.iter().any(is_entered) {
+        if self.entered_callees.contains(callee) {
             return unknown(UnknownReferent::Cycle);
         }
         let (hir, bound) = (context.hir(callee.file), context.bound(callee.file));
         match find_only_returned_value(hir, bound, callee.function) {
             Some(value) => {
                 self.certainty = ReferentCertainty::Expected;
-                self.entered_calls.push(EnteredCall { callee, file, call });
+                self.entered_callees.push(callee);
+                self.entered_calls.push((file, call));
                 Step::Expression(callee.file, value)
             }
             None => unknown(UnknownReferent::NotAReference),
@@ -562,14 +653,13 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
             file: parameter.file,
             function,
         };
-        let entered = self.entered_calls.iter().rev();
-        let entered = entered.copied().find(|it| it.callee == callee)?;
-        let argument = find_argument_at(self.context.hir(entered.file), entered.call, index)?;
-        Some((entered.file, argument))
+        let (file, call) = self.entered_calls[self.entered_callees.last_place_of(callee)?];
+        let argument = find_argument_at(self.context.hir(file), call, index)?;
+        Some((file, argument))
     }
 
     fn visit(&mut self, symbol: Sym) -> bool {
-        let is_first_visit = !self.visited.contains(&symbol);
+        let is_first_visit = !self.visited.contains(symbol);
         if is_first_visit {
             self.visited.push(symbol);
         }
@@ -660,14 +750,15 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
     fn step_call_that_returns_its_argument(&mut self, file: FileId, site: CallId) -> StepOf<'s, C> {
         let context = self.context;
         let hir = context.hir(file);
-        if self.open_calls.contains(&(file, site)) {
+        if self.open_calls.contains((file, site)) {
             return unknown(UnknownReferent::Cycle);
         }
         self.open_calls.push((file, site));
-        let mut walk_to_callee = self.walk_from_here();
-        walk_to_callee.pending_members.clear();
-        walk_to_callee.certainty = ReferentCertainty::Proven;
-        let callee = walk_to_callee.resolve_expression(file, hir[site].callee);
+        let callee = self.branch_off(|walk_to_callee| {
+            walk_to_callee.pending_members.clear();
+            walk_to_callee.certainty = ReferentCertainty::Proven;
+            walk_to_callee.run(Step::Expression(file, hir[site].callee))
+        });
         let StaticReferent::Function(callee) = callee.referent else {
             return unknown(UnknownReferent::NotAReference);
         };
@@ -971,7 +1062,7 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
 
     fn step_stored_member(&mut self, name: Atom) -> StepOf<'s, C> {
         let mut stored = None;
-        for &holder in &self.visited {
+        for &holder in self.visited.seen() {
             for value in self.values_stored_in_member(holder, name) {
                 if stored.replace((holder.file, value)).is_some() {
                     let unstable = BindingStability::NotInitializedOnce;
@@ -980,9 +1071,9 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
             }
         }
         self.certainty = ReferentCertainty::Expected;
-        self.visited.clear();
+        self.visited.forget();
         match stored {
-            Some(store) if self.followed_stores.contains(&store) => unknown(UnknownReferent::Cycle),
+            Some(store) if self.followed_stores.contains(store) => unknown(UnknownReferent::Cycle),
             Some((file, value)) => {
                 self.followed_stores.push((file, value));
                 Step::Expression(file, value)

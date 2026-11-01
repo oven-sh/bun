@@ -1,0 +1,70 @@
+# util = jest.requireActual("node:util"); util[key] = value
+# A site of the test runner names node:util by a constant, so the runner hands the object with its exports to the test. No row of the built-ins describes the call: its answer is a value nobody knows.
+# `format` is an accessor on that object. The store under a key that the build can't read calls its setter, and a copy of the object calls its getter: both are entered.
+# node:readline has the same shape and no site names it: its accessors stay unreached.
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f2
+# CHECK-NOT: unreached f3
+# CHECK: unreached f4
+# CHECK-NEXT: unreached f5
+# CHECK-NEXT: unreached f6
+# RUN(ORDERS): valueflow-solve every-order
+# ORDERS: orders 512 answers 1
+# RUN(STATED): valueflow-solve stated-in-every-order
+# STATED: orders 128 | proofs: answers 1 | predictions: answers 1
+# STATED: threads 1 2 4 16 | answers 1
+
+module m0 path="/app/a.test.js" displayPath="a.test.js" kind=SourceText body=f0
+module m1 path="node:util" displayPath="node:util" kind=RuntimeSource flags=[IsHandedOutByTestRunner] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeUtil body=f1
+module m2 path="node:readline" displayPath="node:readline" kind=RuntimeSource flags=[IsLoadedByImportOnly] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeReadline body=f4
+entry module=m0
+layout L0 name="Exports" fields=[{key="other" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="requireActual" [isFreeName]
+    v2 = String string="node:util"
+    v3 = Call v1, -, v2
+    v4 = PropGet v0 key="key" [isFreeName]
+    v5 = Integer integer=1
+    ElemSet v3, v4, v5
+    Return
+}
+function f1 name="util" module=m1 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure function=f2
+    DefineGetter v1, v2 key="format"
+    v4 = NewClosure function=f3
+    DefineSetter v1, v4 key="format"
+    Return v1
+}
+function f2 name="format" module=m1 kind=Getter role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=7
+    Return v0
+}
+function f3 name="format" module=m1 kind=Setter role=Library thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f4 name="readline" module=m2 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure function=f5
+    DefineGetter v1, v2 key="format"
+    v4 = NewClosure function=f6
+    DefineSetter v1, v4 key="format"
+    Return v1
+}
+function f5 name="format" module=m2 kind=Getter role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=7
+    Return v0
+}
+function f6 name="format" module=m2 kind=Setter role=Library thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

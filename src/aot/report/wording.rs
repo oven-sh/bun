@@ -408,6 +408,9 @@ pub(super) fn decline_sentence(kind: DeclineKind) -> &'static str {
         DeclineKind::ResultNodeInterpreted => {
             "part of the type that a parse is written under is built by the generic parser, not compiled code"
         }
+        DeclineKind::TagLookupKeyNotConstant => {
+            "a Map or Set lookup searches a small table by a key that isn't a string constant, so the key is checked on every lookup"
+        }
     }
 }
 
@@ -734,6 +737,7 @@ pub(super) fn missed_optimization_code(kind: DeclineKind) -> &'static str {
         DeclineKind::LoopBoundNotClamped => "bounds-checks-not-hoisted",
         DeclineKind::StretchNotGuarded => "no-fast-path",
         DeclineKind::ResultNodeInterpreted => "generic-parser",
+        DeclineKind::TagLookupKeyNotConstant => "lookup-key-not-constant",
     }
 }
 

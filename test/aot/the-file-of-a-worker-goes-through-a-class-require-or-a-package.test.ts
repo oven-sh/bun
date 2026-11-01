@@ -3,7 +3,8 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { renameSync } from "node:fs";
 import { join } from "node:path";
 import { run } from "./harness/run";
-import { test } from "./supported";
+// One by one: the runner gives this file a process of its own and eight cases at once, beside two more like it: too many builds for four cores.
+import { testOneByOne as test } from "./supported";
 
 // A test file writes `new URL("./src/worker/w1.ts", import.meta.url)`, and the `new Worker(entry)` that gets it stands somewhere else: behind a constructor or
 // a method, in a field or in an options object, behind `require()`, or in a package. The build follows `entry` back to the URL and compiles the file.

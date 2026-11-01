@@ -1,11 +1,12 @@
 // On ARM64 a call reaches 128 MB. In a larger program a call between functions that lie further apart goes through a jump behind the caller, and the code that all
 // functions share is there several times, each copy within reach of its callers. No test program is that large, so the reach is lowered.
 // How the code is laid out: the engine's native tests image/layout/*. Here a program runs that is laid out so.
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { unsupported } from "./harness/compiler";
 import { run } from "./harness/run";
 import { sharedBuilds } from "./harness/shared-builds";
+import { describe, test } from "./listed";
 
 const count = 1200;
 const callee = (index: number) => `f${(index * 7 + 3) % count}`;

@@ -293,6 +293,10 @@ pub(super) fn find_mocked_modules(
         mocked.out_of_sight.push(module);
         mocked.out_of_sight.extend(modules.forms_of(module));
     }
+    for module in input.mocked_modules {
+        let found = replaced_modules.find_in_other_programs(module);
+        mocked.out_of_sight.extend(found.iter().copied());
+    }
     mocked.modules.extend(mocked.out_of_sight.iter().copied());
     for &file in &modules.compiled_files {
         let sites = input.files.analysis(file).import_sites.iter();

@@ -3646,6 +3646,5 @@ runtimefunction id=ArrayTraversalTraverseArray function=f22 visibility=Private
 # CHECK-NEXT: v13: int|whole = Increment v12
 # CHECK-NEXT: v14: int[1, 9007199254740992] = AssumeType v13 provenType=int[1, 9007199254740992]
 # CHECK-NEXT: PutEnvironmentField v3, v14 layout=L0
-# CHECK-NEXT: v16: int[1, 9007199254740992] = Upcast v14 castType=int[1, 9007199254740992] @2023 tail
-# CHECK-NEXT: Return v16
+# CHECK-NEXT: Return v14
 # CHECK-NEXT: }

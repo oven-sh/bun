@@ -1,0 +1,6 @@
+# sabotage=PassesDropCalls behind a pass over the whole program: a call of an unknown function is gone. The pass expands the yields that save a frame, and answers for those alone: the build stops
+# FORM: Prepared
+# RUN: pass MoveGeneratorFramesToHeap
+# DIAGNOSTIC: VerificationFailedAfterPass 1
+# OPTIONS: check=VerifyEachPass sabotage=PassesDropCalls
+# PROGRAM-OF: passes-drop-calls-left-alone.ir

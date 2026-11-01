@@ -642,3 +642,82 @@ fn class_stored_under_a_name_that_nobody_reads_leaves_its_checks() {
         ]
     );
 }
+
+const NAME_OF_A_CLASS_BEHIND_A_REMOVED_IMPORT: [(&str, &str); 6] = [
+    (
+        "main.mjs",
+        "import { C } from './p/index.mjs'; console.log(C); const m = await import('./p/b.mjs'); console.log(m);",
+    ),
+    ("p/package.json", r#"{ "name": "p", "sideEffects": false }"#),
+    (
+        "p/index.mjs",
+        "export * from './c2.mjs'; export * from './b.mjs';",
+    ),
+    ("p/c2.mjs", "export const C = 1;"),
+    ("p/b.mjs", "export { K1 } from './c.cjs';"),
+    ("p/c.cjs", "exports.K1 = class {};"),
+];
+
+// The roots that have a check, and then what `find_check_of_copy_that_nothing_stores` answers.
+fn describe_checks(
+    files: &[(&str, &str)],
+    checks_what_is_written: bool,
+) -> (Vec<String>, Option<(String, String)>) {
+    with_loaded_build(files, &default_settings(), |build, loaded| {
+        let Ok(mut bound) = build.bind_modules(loaded) else {
+            panic!("the modules were not bound");
+        };
+        let graph = &mut bound.projects.application.graph;
+        if checks_what_is_written {
+            graph.check_every_written_importer();
+        }
+        let files = loaded.project(ProjectId::Application).loaded.files();
+        let name_of = |file: FileId| {
+            let name = files.module(file).file_name();
+            name.strip_prefix(b"/project/")
+                .unwrap_or(name)
+                .as_bstr()
+                .to_string()
+        };
+        let roots = graph.prefix_roots().iter();
+        let roots = roots.filter(|&&root| !graph.checks_of(root).is_empty());
+        let found = graph.find_check_of_copy_that_nothing_stores();
+        let found = found.map(|(root, owner)| match owner {
+            ModuleRef::File(owner) => (name_of(root), name_of(owner)),
+            _ => panic!("a file has the name"),
+        });
+        (roots.map(|&root| name_of(root)).collect(), found)
+    })
+}
+
+#[test]
+fn root_does_not_check_an_importer_behind_an_import_that_is_removed() {
+    let files = &NAME_OF_A_CLASS_BEHIND_A_REMOVED_IMPORT;
+    assert_eq!(
+        describe_checks(files, false),
+        (vec!["p/b.mjs".to_string()], None)
+    );
+}
+
+// The entry point stays the importer. Nothing uses the name, so the file that hands it on to the index is left out, and with it the way to the CommonJS file.
+#[test]
+fn root_does_not_check_a_name_that_it_takes_through_a_file_that_is_left_out() {
+    let mut files = NAME_OF_A_CLASS_BEHIND_A_REMOVED_IMPORT.to_vec();
+    files[0].1 = "import { C, K1 } from './p/index.mjs'; console.log(C); const m = await import('./p/b.mjs'); console.log(m);";
+    files[2].1 = "export { C } from './c2.mjs'; export { K1 } from './a2.mjs';";
+    files.push(("p/a2.mjs", "export { K1 } from './b.mjs';"));
+    assert_eq!(
+        describe_checks(&files, false),
+        (vec!["p/b.mjs".to_string()], None)
+    );
+    let names = ("main.mjs".to_string(), "p/c.cjs".to_string());
+    assert_eq!(describe_checks(&files, true).1, Some(names));
+}
+
+#[test]
+fn check_of_a_copy_that_nothing_stores_is_found() {
+    let (roots, found) = describe_checks(&NAME_OF_A_CLASS_BEHIND_A_REMOVED_IMPORT, true);
+    assert_eq!(roots, ["main.mjs", "p/b.mjs"]);
+    let names = ("main.mjs".to_string(), "p/c.cjs".to_string());
+    assert_eq!(found, Some(names));
+}

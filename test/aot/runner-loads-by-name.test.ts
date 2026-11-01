@@ -75,6 +75,27 @@ const project = {
       console.log("a file that nothing else names:", jest.requireActual("./only-required.cjs").alone(), (globalThis as any).onlyRequiredRuns);
       console.log("an ES module:", jest.requireActual("./below.ts").below);
     });`,
+  // The folder keeps what these names may reach apart from the files above.
+  "computed/counter.ts": `export const increment = () => 1;
+    export const unread = () => 2;`,
+  "computed/user.ts": `import { increment } from "./counter";
+    export const use = () => increment();`,
+  "computed/common.cjs": `exports.plain = () => "real";
+    exports.unread = 3;`,
+  "5.test.ts": `import { jest, test, vi } from "bun:test";
+    import { join } from "node:path";
+    import common from "./computed/common.cjs";
+    import { use } from "./computed/user";
+    test("a computed name", async () => {
+      const keys = (module: object) => Object.keys(module).sort().join();
+      const counter = join(import.meta.dir, "computed", ["coun", "ter"].join("") + ".ts");
+      console.log("importMock:", keys(await vi.importMock(counter)), use());
+      console.log("importActual:", keys(await vi.importActual(counter)), (await vi.importActual<any>(counter)).unread());
+      const required = join(import.meta.dir, "computed", ["com", "mon"].join("") + ".cjs");
+      console.log("requireActual:", keys(jest.requireActual(required)), jest.requireActual(required) === common);
+      console.log("requireMock:", keys(jest.requireMock(required)), String(jest.requireMock(required).plain()));
+      console.log("createMockFromModule:", keys(jest.createMockFromModule(required) as object));
+    });`,
 };
 
 const ways: [string, Record<string, string>][] = [
@@ -98,6 +119,7 @@ describe.each([[] as string[], ["--isolate"]])("bun test %s", (...isolate) => {
       "pass importActual",
       "pass a name that leads nowhere",
       "pass the three of jest",
+      "pass a computed name",
     ]);
     expect(await runTests(String(dir), env, "--aot", ...isolate)).toEqual(plain);
   });

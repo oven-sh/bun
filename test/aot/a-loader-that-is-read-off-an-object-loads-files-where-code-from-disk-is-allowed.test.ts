@@ -2,8 +2,11 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { isHardened } from "./hardened";
+import { afterAll } from "./harness/default-timeout";
 import { run } from "./harness/run";
-import { test as testWhereSupported } from "./supported";
+import { runsWholeGrids } from "./harness/ways";
+// One by one: a case builds for minutes, and beside others it would pass its limit where Bun has a sanitizer.
+import { beforeAll, testOneByOne as testWhereSupported } from "./supported";
 
 // A hardened Bun runs only what was compiled.
 const test = testWhereSupported.skipIf(isHardened);
@@ -61,19 +64,28 @@ const expected = [
   "SAID the program's own, afterwards state 3,old 2",
 ];
 
-test("in a test run, as one program and in two layers", async () => {
-  using dir = tempDir("aot-module-graph-loads-files", files);
-  const directory = String(dir);
-  const ask = async (flags: string[], words: string) => {
+let ofTestRuns: ReturnType<typeof tempDir> | undefined;
+beforeAll(() => {
+  ofTestRuns = tempDir("aot-module-graph-loads-files", files);
+});
+afterAll(() => ofTestRuns?.[Symbol.dispose]());
+
+const forms: [string, string[], string][] = [
+  ["plain Bun", [], ""],
+  ["as the run builds itself", ["--aot"], ""],
+  ["one program", ["--aot", "--isolate"], "TestRunLayers:0"],
+  ["two layers", ["--aot", "--isolate"], "TestRunLayers:2,TestRunPartFiles:1"],
+];
+// The fault was in the one program, which a user's flags build. Over layers nothing was wrong.
+test.each<[string, string[], string]>(forms.slice(0, runsWholeGrids ? 4 : 2))(
+  "in a test run: %s",
+  async (_, flags, words) => {
+    const directory = String(ofTestRuns);
     const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words, BUN_TMPDIR: directory };
     const ran = await run([bunExe(), "test", ...flags, "./a.test.ts"], directory, env);
-    return said(ran.stdout + "\n" + ran.stderr);
-  };
-  expect(await ask([], "")).toEqual(expected);
-  expect(await ask(["--aot"], "")).toEqual(expected);
-  expect(await ask(["--aot", "--isolate"], "TestRunLayers:0")).toEqual(expected);
-  expect(await ask(["--aot", "--isolate"], "TestRunLayers:2,TestRunPartFiles:1")).toEqual(expected);
-});
+    expect(said(ran.stdout + "\n" + ran.stderr)).toEqual(expected);
+  },
+);
 
 test("in an executable that stays beside its files", async () => {
   using dir = tempDir("aot-module-graph-loads-files-in-place", files);

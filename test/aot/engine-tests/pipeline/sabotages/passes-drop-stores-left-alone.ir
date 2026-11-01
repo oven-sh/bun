@@ -1,0 +1,13 @@
+# A store by name may run a setter. A pass may let it go only where somebody answers for it, as for a call: see passes-drop-calls-left-alone.ir.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass RetypeValues
+# CHECK: PropSet v0, v1
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="storesBesideACall" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="x" mode=Strict
+    v3 = Call v0, -
+    Return v3
+}

@@ -360,7 +360,7 @@ function putRestOfSortedValues<T>(
 
 // Puts `count` sorted values back, then undefined as often as it was met, then holes up to `length`.
 function putSortedValues<T>(array: T[], length: number, from: T[], count: number, undefinedCount: number): void {
-  // Storage for numbers has been that since before the values were taken out of it.
+  // Storage for doubles may be younger than the values: no number, and it is false.
   const areStored: boolean = $tryPutElements(array, from, count);
   const index = areStored ? count : 0;
   if (index < length) putRestOfSortedValues<T>(array, length, from, count, index, undefinedCount);

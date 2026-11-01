@@ -7,11 +7,13 @@ use super::bindings::{
     SyntheticExportId,
 };
 use super::evicted::LibraryModulesStoredInCache;
+use super::failures::ModuleFailureId;
 use super::graph::{ModuleGraph, find};
 use super::imports::NamedMember;
 use super::interop::ModuleKind;
 use super::order::{OrderParts, SiteKey};
 use super::reached_targets::ReachedTargets;
+use super::requests::Spelling;
 use super::wrapped::InnerModuleKind;
 use crate::builtins::RuntimeModule;
 use crate::ir::generated::ModuleRequestKind;
@@ -24,7 +26,7 @@ use bun_sema::bind::SymbolId;
 use bun_sema::hir::{ExprId, FnId, ImportEqualsId, StmtId};
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::program::{FileId, Sym};
-use bun_sema::util::FxHashMap;
+use bun_sema::util::{FxHashMap, FxHashSet};
 use core::ops::Range;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -148,6 +150,7 @@ pub(super) struct Plan {
     is_marker_stored: Vec<bool>,
     is_imported_as_namespace: Vec<bool>,
     externals_imported_as_namespace: Vec<ModuleRef>,
+    externals_named_by_mocks: Vec<ModuleRef>,
     /// `mock.module` names the module.
     may_be_mocked: Vec<bool>,
     is_named_by_mock: Vec<bool>,
@@ -155,9 +158,13 @@ pub(super) struct Plan {
     /// The order numbers no module of the library.
     mocked_runtime_modules: Vec<RuntimeModule>,
     may_mock_every_module: bool,
+    originals_beside_mocks_may_run: bool,
+    runtime_modules_handed_out_by_test_runner: Vec<RuntimeModule>,
+    test_runner_hands_out_every_runtime_module: bool,
     runs_tests: bool,
     /// A test run: `require.cache` lists the files of the program that have run.
     lists_files_in_cache: bool,
+    names_plugin: bool,
     /// `EvictedModules::is_table_reached`
     reaches_entries_of_cache: bool,
     /// `EvictedModules::are_entries_read`
@@ -168,6 +175,9 @@ pub(super) struct Plan {
     is_changed_on_disk_by_run: Vec<bool>,
     loads_compiled_files_alone: Vec<bool>,
     finds_builtins_read_only: Vec<bool>,
+    is_reached_without_extension: Vec<bool>,
+    is_reached_under_another_extension: Vec<bool>,
+    is_reached_as_folder: Vec<bool>,
     library_modules_stored_in_cache: LibraryModulesStoredInCache,
     may_evict_every_module: bool,
     /// The host loads the entry point several times in one realm: `AotOptions::entry_points_run_again`.
@@ -186,6 +196,8 @@ pub(super) struct Plan {
     pub(super) inner_requests: Vec<Vec<ModuleRequest>>,
     final_requests: Vec<ModuleRequest>,
     final_ranges: FxHashMap<ModuleRef, Range<u32>>,
+    /// `ModuleGraph::checks_of`
+    final_checks: FxHashMap<FileId, Vec<(SyntheticExportId, ModuleFailureId)>>,
     pub is_finished: bool,
 }
 
@@ -208,19 +220,27 @@ impl Plan {
             is_marker_stored: vec![false; order.numbers.len()],
             is_imported_as_namespace: vec![false; order.numbers.len()],
             externals_imported_as_namespace: Vec::new(),
+            externals_named_by_mocks: Vec::new(),
             may_be_mocked: vec![false; order.numbers.len()],
             is_named_by_mock: vec![false; order.numbers.len()],
             runtime_modules_named_by_mocks: Vec::new(),
             mocked_runtime_modules: Vec::new(),
             may_mock_every_module: false,
+            originals_beside_mocks_may_run: false,
+            runtime_modules_handed_out_by_test_runner: Vec::new(),
+            test_runner_hands_out_every_runtime_module: false,
             runs_tests: false,
             lists_files_in_cache: false,
+            names_plugin: false,
             reaches_entries_of_cache: false,
             reads_entries_of_cache: false,
             may_be_evicted: vec![false; order.numbers.len()],
             is_changed_on_disk_by_run: vec![false; order.numbers.len()],
             loads_compiled_files_alone: vec![false; order.numbers.len()],
             finds_builtins_read_only: vec![false; order.numbers.len()],
+            is_reached_without_extension: vec![false; order.numbers.len()],
+            is_reached_under_another_extension: vec![false; order.numbers.len()],
+            is_reached_as_folder: vec![false; order.numbers.len()],
             library_modules_stored_in_cache: LibraryModulesStoredInCache::default(),
             may_evict_every_module: false,
             runs_again: vec![false; order.numbers.len()],
@@ -235,6 +255,7 @@ impl Plan {
             inner_requests: Vec::new(),
             final_requests: Vec::new(),
             final_ranges: FxHashMap::default(),
+            final_checks: FxHashMap::default(),
             is_finished: false,
         }
     }
@@ -275,8 +296,22 @@ impl Plan {
                     self.runtime_modules_named_by_mocks.push(module);
                 }
             }
+            ModuleRef::External { .. } => self.externals_named_by_mocks.push(module),
             _ => self.add(|plan| &mut plan.is_named_by_mock, module),
         }
+    }
+
+    pub(super) fn set_is_handed_out_by_test_runner(&mut self, module: RuntimeModule) {
+        if !self
+            .runtime_modules_handed_out_by_test_runner
+            .contains(&module)
+        {
+            self.runtime_modules_handed_out_by_test_runner.push(module);
+        }
+    }
+
+    pub(super) fn set_test_runner_hands_out_every_runtime_module(&mut self) {
+        self.test_runner_hands_out_every_runtime_module = true;
     }
 
     pub(super) fn set_runs_tests(&mut self) {
@@ -285,6 +320,10 @@ impl Plan {
 
     pub(super) fn set_lists_files_in_cache(&mut self) {
         self.lists_files_in_cache = true;
+    }
+
+    pub(super) fn set_names_plugin(&mut self) {
+        self.names_plugin = true;
     }
 
     pub(super) fn set_reaches_entries_of_cache(&mut self) {
@@ -297,6 +336,18 @@ impl Plan {
 
     pub(super) fn set_may_be_evicted(&mut self, module: ModuleRef) {
         self.add(|plan| &mut plan.may_be_evicted, module);
+    }
+
+    pub(super) fn set_is_reached_by(&mut self, module: ModuleRef, spelling: Spelling) {
+        match spelling {
+            Spelling::WithoutExtension => {
+                self.add(|plan| &mut plan.is_reached_without_extension, module);
+            }
+            Spelling::UnderAnotherExtension => {
+                self.add(|plan| &mut plan.is_reached_under_another_extension, module);
+            }
+            Spelling::AsFolder => self.add(|plan| &mut plan.is_reached_as_folder, module),
+        }
     }
 
     pub(super) fn set_is_changed_on_disk_by_run(&mut self, module: ModuleRef) {
@@ -346,6 +397,10 @@ impl Plan {
 
     pub(super) fn set_every_module_may_be_mocked(&mut self) {
         self.may_mock_every_module = true;
+    }
+
+    pub(super) fn set_originals_beside_mocks_may_run(&mut self) {
+        self.originals_beside_mocks_may_run = true;
     }
 
     pub(super) fn set_replaced_variables(&mut self, mut variables: Vec<Sym>) {
@@ -695,6 +750,10 @@ impl ModuleGraph {
         self.plan.lists_files_in_cache
     }
 
+    pub fn names_plugin(&self) -> bool {
+        self.plan.names_plugin
+    }
+
     /// A test run in which a file of the program may get at the entry of a file in `require.cache`.
     pub fn reaches_entries_of_cache(&self) -> bool {
         self.plan.reaches_entries_of_cache
@@ -717,6 +776,16 @@ impl ModuleGraph {
     /// `writeFileSync(path, text)` with the path of the file: what the run loads from there is a text that the build has not read.
     pub fn is_changed_on_disk_by_run(&self, module: ModuleRef) -> bool {
         (self.plan).has(&self.plan.is_changed_on_disk_by_run, module)
+    }
+
+    /// Of a test run: some file loads the module under a relative name that is not its path. A mock under such a name reaches those files.
+    pub fn is_reached_by(&self, module: ModuleRef, spelling: Spelling) -> bool {
+        let set = match spelling {
+            Spelling::WithoutExtension => &self.plan.is_reached_without_extension,
+            Spelling::UnderAnotherExtension => &self.plan.is_reached_under_another_extension,
+            Spelling::AsFolder => &self.plan.is_reached_as_folder,
+        };
+        self.plan.has(set, module)
     }
 
     /// A file of a test run that an executable would hold too: its `require(name)` finds what it finds there.
@@ -781,8 +850,38 @@ impl ModuleGraph {
         let plan = &self.plan;
         match module {
             ModuleRef::Runtime(module) => plan.runtime_modules_named_by_mocks.contains(&module),
+            ModuleRef::External { .. } => {
+                plan.may_mock_every_module || plan.externals_named_by_mocks.contains(&module)
+            }
             _ => plan.may_mock_every_module || plan.has(&plan.is_named_by_mock, module),
         }
+    }
+
+    /// The numbers of the atoms that spell the external modules that mocks name. Ascending. Where a mock's name is computed, none.
+    pub(super) fn specifiers_named_by_mocks(&self) -> Vec<u32> {
+        let named = self.plan.externals_named_by_mocks.iter();
+        let mut specifiers: Vec<u32> = named
+            .filter_map(|module| match *module {
+                ModuleRef::External { specifier, .. } => Some(specifier.0),
+                _ => None,
+            })
+            .collect();
+        specifiers.sort_unstable();
+        specifiers.dedup();
+        specifiers
+    }
+
+    pub fn is_handed_out_by_test_runner(&self, module: RuntimeModule) -> bool {
+        let plan = &self.plan;
+        plan.test_runner_hands_out_every_runtime_module
+            || plan
+                .runtime_modules_handed_out_by_test_runner
+                .contains(&module)
+    }
+
+    pub fn is_named_to_test_runner(&self, module: RuntimeModule) -> bool {
+        let named = &self.plan.runtime_modules_handed_out_by_test_runner;
+        named.contains(&module)
     }
 
     /// In no order that means anything. Where a mock's name is computed, none: such a mock is laid over the module as before.
@@ -828,6 +927,11 @@ impl ModuleGraph {
     pub fn names_way_to_module_objects(&self, module: ModuleRef) -> bool {
         let plan = &self.plan;
         plan.has(&plan.names_way_to_module_objects, module)
+    }
+
+    /// Something in the run may ask for the original of a file beside its mock, which is the file once more, from disk. `asks_for_original_beside_mock()`.
+    pub fn originals_beside_mocks_may_run(&self) -> bool {
+        self.plan.originals_beside_mocks_may_run
     }
 
     /// A load under a name that the build does not follow may find the file.
@@ -1023,8 +1127,10 @@ impl ModuleGraph {
         }
         let linked_files = self.find_linked_files(ModuleKind::CommonJs);
         let data_files = self.find_linked_files(ModuleKind::Data);
+        let prefixes = self.collect_prefixes(&linked_files, in_parallel);
+        self.plan.final_checks = self.settle_checks(&linked_files, &prefixes);
         (self.plan.final_requests, self.plan.final_ranges) =
-            self.settle_requests(&linked_files, &data_files, in_parallel);
+            self.settle_requests(prefixes, &data_files, in_parallel);
         // Nothing of the program runs before the loader has come to the first CommonJS file that the imports below an entry point lead to.
         let mut first_requests = self.plan.order.first_requests_of_host.iter();
         self.plan.is_first_require_seen = self.plan.names_way_to_module_objects.contains(&true)
@@ -1033,6 +1139,98 @@ impl ModuleGraph {
                     && !linked_files.targets_below.leads_to_target(file)
             });
         self.plan.is_finished = true;
+    }
+
+    // A root is linked with the importers that its requests still lead to, and the CommonJS files below those run ahead of its check: `collect_prefix`. An importer
+    // behind a request that has gone is linked where something else loads it, and is checked there. So is a name that an importer takes through a file that is
+    // left out: nothing of the root runs the file that has it.
+    fn settle_checks(
+        &self,
+        linked: &LinkedFiles,
+        prefixes: &[(FileId, Vec<ModuleRef>)],
+    ) -> FxHashMap<FileId, Vec<(SyntheticExportId, ModuleFailureId)>> {
+        let mut checks = FxHashMap::default();
+        for (root, prefix) in prefixes {
+            let root = *root;
+            let written = self.commonjs().checked_copies(root);
+            if written.is_empty() {
+                continue;
+            }
+            let mut is_linked = vec![false; linked.by_importer.len()];
+            is_linked[root.idx()] = true;
+            let mut importers = vec![root];
+            while let Some(file) = importers.pop() {
+                for &target in &linked.by_importer[file.idx()] {
+                    if !core::mem::replace(&mut is_linked[target.idx()], true) {
+                        importers.push(target);
+                    }
+                }
+            }
+            let mut left = written.to_vec();
+            left.retain(|&(_, failure)| is_linked[self.failure(failure).importer.idx()]);
+            // The loader runs the files of a root of its own where it comes to them, and the check behind them.
+            if !self.is_loaded_by_loader(ModuleRef::File(root)) {
+                let stored = self.find_copies_stored_by(prefix.iter().copied());
+                left.retain(|(copy, _)| stored.contains(copy));
+            }
+            if !left.is_empty() {
+                checks.insert(root, left);
+            }
+        }
+        checks
+    }
+
+    fn find_copies_stored_by(
+        &self,
+        modules: impl Iterator<Item = ModuleRef>,
+    ) -> FxHashSet<SyntheticExportId> {
+        let mut stored = FxHashSet::default();
+        for module in modules {
+            if let ModuleRef::Face(face) = module {
+                stored.extend(self.commonjs().copies(face));
+            }
+        }
+        stored
+    }
+
+    /// `CommonJsExports::checked_copies` of the importers that the graph of imports below `root` still has. Final behind `finish_plan`.
+    pub fn checks_of(&self, root: FileId) -> &[(SyntheticExportId, ModuleFailureId)] {
+        self.plan.final_checks.get(&root).map_or(&[], |it| &it[..])
+    }
+
+    /// Every root checks all that is written below it, whatever has become of its requests.
+    #[cfg(test)]
+    pub fn check_every_written_importer(&mut self) {
+        for root in self.plan.order.prefix_roots.clone() {
+            let written = self.commonjs().checked_copies(root).to_vec();
+            if !written.is_empty() {
+                self.plan.final_checks.insert(root, written);
+            }
+        }
+    }
+
+    /// A check reads the copies of names, and the faces that are hoisted in front of it store them. The first root whose check reads a copy that none of them
+    /// stores, with the module that has the name: such an executable throws for a name that is there.
+    pub fn find_check_of_copy_that_nothing_stores(&self) -> Option<(FileId, ModuleRef)> {
+        let mut roots: Vec<FileId> = self.plan.final_checks.keys().copied().collect();
+        roots.sort_unstable();
+        // The loader of the run time runs the files below a root of its own where it comes to them, and the check behind them.
+        roots.retain(|&root| !self.is_loaded_by_loader(ModuleRef::File(root)));
+        roots.into_iter().find_map(|root| {
+            let requests = self.requests_of(ModuleRef::File(root)).iter();
+            let in_front = requests.take_while(|it| it.target != ModuleRef::Check(root));
+            let stored = self.find_copies_stored_by(in_front.map(|it| it.target));
+            let is_read = |&&(export, failure): &&(SyntheticExportId, ModuleFailureId)| {
+                let written = self.failure(failure);
+                let importer = Some(ModuleRef::File(written.importer));
+                let owner = Some(self.synthetic_export(export).module);
+                let mut linked = [importer, written.exporter(), owner].into_iter().flatten();
+                !linked.any(|module| self.is_left_out(module))
+            };
+            let mut read = self.checks_of(root).iter().filter(is_read);
+            let missing = read.find(|(export, _)| !stored.contains(export))?;
+            Some((root, self.synthetic_export(missing.0).module))
+        })
     }
 
     // The files of that kind, or their faces, that imports between ES modules reach from `root`, in the order in which `bun run` loads them: what a module imports comes behind everything that was asked for before.
@@ -1164,23 +1362,23 @@ impl ModuleGraph {
         owners
     }
 
-    fn settle_requests(
+    fn is_es_module_of_program(&self, file: FileId) -> bool {
+        self.is_code_of_program(ModuleRef::File(file)) && self.kind(file) == ModuleKind::SourceText
+    }
+
+    fn is_prefix_root(&self, file: FileId) -> bool {
+        self.plan.order.prefix_roots.binary_search(&file).is_ok()
+    }
+
+    // `collect_prefix` of each root that has a record, in the order of the records.
+    fn collect_prefixes(
         &self,
         linked_files: &LinkedFiles,
-        data_files: &LinkedFiles,
         in_parallel: InParallel<'_>,
-    ) -> (Vec<ModuleRequest>, FxHashMap<ModuleRef, Range<u32>>) {
-        let mut requests: Vec<ModuleRequest> = Vec::new();
-        let mut ranges = FxHashMap::default();
-        let is_es_module = |file: FileId| {
-            self.is_code_of_program(ModuleRef::File(file))
-                && self.kind(file) == ModuleKind::SourceText
-        };
-        let prefix_roots = &self.plan.order.prefix_roots;
-        let is_prefix_root = |file: FileId| prefix_roots.binary_search(&file).is_ok();
+    ) -> Vec<(FileId, Vec<ModuleRef>)> {
         let roots = self.record_files().iter().copied();
         let mut prefixes: Vec<(FileId, Vec<ModuleRef>)> = roots
-            .filter(|&file| is_es_module(file) && is_prefix_root(file))
+            .filter(|&file| self.is_es_module_of_program(file) && self.is_prefix_root(file))
             .map(|root| (root, Vec::new()))
             .collect();
         for_each_mut(&mut prefixes, in_parallel, &|(root, prefix)| {
@@ -1189,6 +1387,19 @@ impl ModuleGraph {
                 *prefix = self.collect_prefix(*root, linked_files);
             }
         });
+        prefixes
+    }
+
+    fn settle_requests(
+        &self,
+        prefixes: Vec<(FileId, Vec<ModuleRef>)>,
+        data_files: &LinkedFiles,
+        in_parallel: InParallel<'_>,
+    ) -> (Vec<ModuleRequest>, FxHashMap<ModuleRef, Range<u32>>) {
+        let mut requests: Vec<ModuleRequest> = Vec::new();
+        let mut ranges = FxHashMap::default();
+        let is_es_module = |file: FileId| self.is_es_module_of_program(file);
+        let is_prefix_root = |file: FileId| self.is_prefix_root(file);
         let mut prefixes = prefixes.into_iter();
         // `bun run` has made what a data file exports when the graph is loaded. Only a function that is called across a cycle, ahead of the body of its module, can tell.
         let mut data_prefixes: Vec<(FileId, Vec<ModuleRef>)> = self
@@ -1210,7 +1421,7 @@ impl ModuleGraph {
                 let (root, prefix) = prefixes.next().expect("a prefix for each root");
                 debug_assert_eq!(root, file);
                 requests.extend(prefix.into_iter().map(ModuleRequest::hoisted_import));
-                if !self.commonjs().checked_copies(file).is_empty() {
+                if !self.checks_of(file).is_empty() {
                     requests.push(ModuleRequest::hoisted_import(ModuleRef::Check(file)));
                 }
             }

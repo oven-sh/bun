@@ -46,23 +46,23 @@ const c = Promise.resolve.call(Cap, 5); console.log(c instanceof Cap, attempt(()
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="exec"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=[[L_1]] flags=[IsExpected]} parameters=[{type=anything}] results=[{type=null flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=[[L_1]] site=[[w_3]]} parameters=[{type=anything}] results=[{type=null flags=[IsExpected]}] {
 // CHECK-NEXT: b0(v0: [[L_1]], v1: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_3]]
+// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_4]]
 // CHECK-NEXT: v3 = CheckInitialized v2 name="seen"
 // CHECK-NEXT: v4 = PropGet v3 key="push"
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|[[f_4]] flags=[IsExpected]}
-// CHECK-NEXT: v6 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v7 = NewClosure v0 function=[[f_6]]
+// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|[[f_5]] flags=[IsExpected]}
+// CHECK-NEXT: v6 = GetModuleVariable variable=[[g_6]]
+// CHECK-NEXT: v7 = NewClosure v0 function=[[f_7]]
 // CHECK-NEXT: v8 = Call v6, -, v7 calleeName="attempt"
 // CHECK-NEXT: v9 = Convert v8 declared={type=undefined|null|string flags=[IsExpected]}
 // CHECK-NEXT: v10 = String string=":"
 // CHECK-NEXT: v11 = Add v9, v10
 // CHECK-NEXT: v12 = Convert v0 declared={type=undefined|null|[[L_1]] flags=[IsExpected]}
 // CHECK-NEXT: v13 = PropGet v12 key="lastIndex"
-// CHECK-NEXT: v14 = Convert v13 declared={type=undefined|null|[[L_7]] flags=[IsExpected]}
+// CHECK-NEXT: v14 = Convert v13 declared={type=undefined|null|[[L_8]] flags=[IsExpected]}
 // CHECK-NEXT: v15 = TypeOf v14
 // CHECK-NEXT: v16 = Add v11, v15
 // CHECK-NEXT: v17 = Call v5, v3, v16 calleeKey="push" calleeName="seen.push"
@@ -75,12 +75,12 @@ const c = Promise.resolve.call(Cap, 5); console.log(c instanceof Cap, attempt(()
 // CHECK-NEXT: b0(v0: anything, v1: undefined|null|function):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = GetConstructPrototype v0 layout=[[L_8]]
-// CHECK-NEXT: v3 = NewObject v2 layout=[[L_8]]
-// CHECK-NEXT: v4 = Convert v3 declared={type=[[L_8]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: v5 = CallDirect v4 function=[[f_9]]
-// CHECK-NEXT: v6 = NewClosure v4 function=[[f_10]]
-// CHECK-NEXT: v7 = NewClosure function=[[f_11]]
+// CHECK-NEXT: v2 = GetConstructPrototype v0 layout=[[L_9]]
+// CHECK-NEXT: v3 = NewObject v2 layout=[[L_9]]
+// CHECK-NEXT: v4 = Convert v3 declared={type=[[L_9]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v5 = CallDirect v4 function=[[f_10]]
+// CHECK-NEXT: v6 = NewClosure v4 function=[[f_11]]
+// CHECK-NEXT: v7 = NewClosure function=[[f_12]]
 // CHECK-NEXT: v8 = Call v1, -, v6, v7 calleeName="ex"
 // CHECK-NEXT: v9 = Undefined
 // CHECK-NEXT: v10 = TypeTest v9 testedType=object

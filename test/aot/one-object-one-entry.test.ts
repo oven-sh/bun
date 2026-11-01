@@ -2,10 +2,8 @@
 // Here plain Bun walks every entry that it can reach by names and groups them by identity. A module written in JavaScript is followed by its own code: the table answers for the native ones.
 import { expect } from "bun:test";
 import { bunEnv, bunExe } from "harness";
-import { findBuiltinTable } from "./harness/builtin-table";
+import { builtinTableOf } from "./harness/builtin-table";
 import { test } from "./supported";
-
-const table = findBuiltinTable(bunExe());
 
 const script = `
 const table = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
@@ -54,23 +52,21 @@ console.log(JSON.stringify(found));
 process.exit(0);
 `;
 
-test.skipIf(table === undefined)(
-  "what a built-in module exports and a global names has one entry in the table of built-ins",
-  () => {
-    const { stdout, exitCode } = Bun.spawnSync({
-      cmd: [bunExe(), "-e", script, table!],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "inherit",
-    });
-    const found = JSON.parse(stdout.toString()) as {
-      objects: number;
-      exportsWithEntryOfTheirOwn: string[];
-      namesTiedToAnotherObject: string[];
-    };
-    expect(found.exportsWithEntryOfTheirOwn).toEqual([]);
-    expect(found.namesTiedToAnotherObject).toEqual([]);
-    expect(found.objects).toBeGreaterThan(2000);
-    expect(exitCode).toBe(0);
-  },
-);
+test("what a built-in module exports and a global names has one entry in the table of built-ins", () => {
+  const table = builtinTableOf(bunExe());
+  const { stdout, exitCode } = Bun.spawnSync({
+    cmd: [bunExe(), "-e", script, table],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const found = JSON.parse(stdout.toString()) as {
+    objects: number;
+    exportsWithEntryOfTheirOwn: string[];
+    namesTiedToAnotherObject: string[];
+  };
+  expect(found.exportsWithEntryOfTheirOwn).toEqual([]);
+  expect(found.namesTiedToAnotherObject).toEqual([]);
+  expect(found.objects).toBeGreaterThan(2000);
+  expect(exitCode).toBe(0);
+});

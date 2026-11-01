@@ -44,7 +44,7 @@ console.log(total);
 
 // GENERATED: resolveRequest getRouter terminal
 // CHECK-LABEL: function {{*}}name="resolveRequest"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[IsExpected]}, {type=undefined|null|number|string|symbol|bigint|[[L_2]] flags=[IsExpected]}, {type=undefined|null|[[L_3]] flags=[IsExpected]}] results=[{type=undefined|null|Promise flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, HasExplicitName] length=3 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[IsExpected]}, {type=undefined|null|number|string|symbol|bigint|[[L_2]] flags=[IsExpected]}, {type=undefined|null|[[L_3]] flags=[IsExpected]}] results=[{type=undefined|null|Promise flags=[IsExpected]}] {
 // CHECK-NEXT: b0(v0: anything, v1: undefined|null|[[L_1]], v2: undefined|null|number|string|symbol|bigint|[[L_2]], v3: undefined|null|[[L_3]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

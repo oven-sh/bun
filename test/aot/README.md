@@ -129,6 +129,8 @@ The cheapest kind that still asks the question.
 | Anything that needs several builds, a server, or looks into the executable | a `<what-it-tests>.test.ts` of its own. A build is what costs: one build for many cases                                                                                                                   |
 | Programs that a script writes                                              | a source of `fuzz/run.ts` ([`fuzz/README.md`](fuzz/README.md)). What it finds is cut down and becomes one of the kinds above, with the fix                                                                |
 
+A function of a sloppy file that starts with `"use strict"` is strict mode code in an executable and in a test run, as in Node, and plain Bun drops the directive. A program that can tell has a stored `/* Output: .. */`. What to store is what plain Bun prints for the text as it is written: with `// @bun @bun-cjs` as the first line and `(function(exports, require, module, __filename, __dirname) {` .. `})` round the rest nothing is transpiled, so the engine itself reads the directive.
+
 ## The tools
 
 No test. Somebody starts them at the desk.

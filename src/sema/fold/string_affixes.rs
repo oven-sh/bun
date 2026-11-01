@@ -2,15 +2,16 @@ use super::Constant;
 use super::evaluate::{Primitive, Value};
 use super::folder::Folder;
 use crate::atom::{Atom, known};
-use crate::bind::{Binding, BindingInitializer, Bound, CommonJsVariable};
+use crate::bind::{Binding, BindingInitializer, Bound, CommonJsVariable, SymbolId};
 use crate::hir::{BinOp, Branches, Call, Chain, ExprId, ExprKind, File, IdList, MemberKey};
 use crate::import_sites::{
     ENCODERS, ImportSiteKind, ImportSpecifier, call_site_arguments, call_site_kind,
     find_imported_export, names_own_file, settled_symbol,
 };
-use crate::util::FxHashSet;
+use crate::util::{FxHashMap, FxHashSet};
 use bun_core::strings;
 use smallvec::SmallVec;
+use std::cell::RefCell;
 
 #[derive(Copy, Clone)]
 enum Part {
@@ -600,11 +601,26 @@ pub(crate) fn find_export_of_module(
     find_constant: &dyn Fn(ExprId) -> Option<Constant>,
     is_module: &dyn Fn(Atom) -> bool,
 ) -> Option<Atom> {
-    match find_members_below_module(hir, bound, callee, find_constant, is_module, false)?[..] {
+    find_export_of_module_with(hir, bound, callee, find_constant, is_module, None)
+}
+
+pub(crate) fn find_export_of_module_with(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    callee: ExprId,
+    find_constant: &dyn Fn(ExprId) -> Option<Constant>,
+    is_module: &dyn Fn(Atom) -> bool,
+    known: Option<&MembersBehindNames>,
+) -> Option<Atom> {
+    let members = walk_to_module(hir, bound, callee, find_constant, is_module, false, known)?;
+    match members[..] {
         [member] => Some(member),
         _ => None,
     }
 }
+
+#[derive(Default)]
+pub(crate) struct MembersBehindNames(RefCell<FxHashMap<SymbolId, Option<SmallVec<[Atom; 4]>>>>);
 
 /// `fs.promises.writeFile`: the names that lead from the module to `callee`, the last one first.
 pub(crate) fn find_members_below_module(
@@ -615,7 +631,21 @@ pub(crate) fn find_members_below_module(
     is_module: &dyn Fn(Atom) -> bool,
     follows_awaited_imports: bool,
 ) -> Option<SmallVec<[Atom; 4]>> {
+    let follows = follows_awaited_imports;
+    walk_to_module(hir, bound, callee, find_constant, is_module, follows, None)
+}
+
+fn walk_to_module(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    callee: ExprId,
+    find_constant: &dyn Fn(ExprId) -> Option<Constant>,
+    is_module: &dyn Fn(Atom) -> bool,
+    follows_awaited_imports: bool,
+    known: Option<&MembersBehindNames>,
+) -> Option<SmallVec<[Atom; 4]>> {
     let mut pending_members: SmallVec<[Atom; 4]> = SmallVec::new();
+    let mut came_by: Vec<(SymbolId, usize)> = Vec::new();
     let mut e = callee;
     let is_export = loop {
         e = hir.skip_type_assertions(e);
@@ -638,7 +668,23 @@ pub(crate) fn find_members_below_module(
                 let Some(symbol) = settled_symbol(hir, bound, e) else {
                     break false;
                 };
-                match bound.binding_initializer(hir, symbol) {
+                let initializer = bound.binding_initializer(hir, symbol);
+                let goes_on = matches!(
+                    initializer,
+                    BindingInitializer::Expression(source)
+                    | BindingInitializer::PatternProperty { source, .. } if source < e
+                );
+                if goes_on && let Some(known) = known {
+                    match known.0.borrow().get(&symbol) {
+                        Some(Some(rest)) => {
+                            pending_members.extend(rest.iter().copied());
+                            break true;
+                        }
+                        Some(None) => break false,
+                        None => came_by.push((symbol, pending_members.len())),
+                    }
+                }
+                match initializer {
                     BindingInitializer::Expression(source) if source < e => e = source,
                     BindingInitializer::PatternProperty { source, path } if source < e => {
                         pending_members.extend(path.iter().rev().copied());
@@ -671,6 +717,13 @@ pub(crate) fn find_members_below_module(
             _ => break false,
         }
     };
+    if let Some(known) = known {
+        let mut known = known.0.borrow_mut();
+        for (symbol, pending) in came_by {
+            let rest = is_export.then(|| pending_members[pending..].iter().copied().collect());
+            known.insert(symbol, rest);
+        }
+    }
     is_export.then_some(pending_members)
 }
 

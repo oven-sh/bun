@@ -30,7 +30,15 @@ import {
   type Program,
   type Run,
 } from "./runners";
-import { allSources, multiFileSuffix, neverTakenSuffix, rewrittenSuffix } from "./sources";
+import {
+  allSources,
+  anotherCallSuffix,
+  fourCallersSuffix,
+  multiFileSuffix,
+  neverTakenSuffix,
+  ownCopiesSuffix,
+  rewrittenSuffix,
+} from "./sources";
 
 const option = (name: string) => {
   const at = process.argv.indexOf("--" + name);
@@ -49,6 +57,7 @@ const layers = option("layers");
  * the word, the plain one and the executable too: a program may print its environment.
  */
 const words = layers ? { BUN_DEBUG_TEST_AOT_WORDS: `TestRunLayers:${layers}` } : undefined;
+const setting = Object.entries(words ?? {}).map(([name, value]) => `${name}=${value} `).join(""); // prettier-ignore
 const work = join(process.env.TMPDIR ?? "/tmp", `aot-fuzz-as-tests-${process.pid}`);
 
 // As in a user's run: the compiler's verifiers are off.
@@ -74,6 +83,9 @@ const wanted = (
       name.endsWith(multiFileSuffix) === process.argv.includes("--multi-file") &&
       !name.endsWith(rewrittenSuffix) &&
       !name.endsWith(neverTakenSuffix) &&
+      !name.endsWith(anotherCallSuffix) &&
+      !name.endsWith(ownCopiesSuffix) &&
+      !name.endsWith(fourCallersSuffix) &&
       // They run out of stack on purpose, and where the stack ends goes by the frames below: run.ts judges them, each alone.
       !/^(stack-overflow-points|work-during-stack-unwinding)(-|$)/.test(name),
   )
@@ -139,9 +151,10 @@ function write(folder: string, name: string, given: Program, index?: number) {
  * stderr, file by file, between what it says about itself: the names of the files, the tests, the errors nobody caught, the sums.
  */
 const parallel = more.some(flag => flag.startsWith("--parallel"));
-/** An error, a warning or a note of the run, a frame, a line of source under an error. */
+/** An error, a warning or a note of the run, a frame, a line of source under an error, what a compiled run says under a test that failed. */
 const isDiagnostic = (line: string) =>
-  /^AOT test run \| |^(error|warn|note): |^\s+at |^\s*\d+ \| |^\s*\^+\s*$|^\u2717 /.test(line);
+  /^AOT test run \| |^(error|warn|note): |^\s+at |^\s*\d+ \| |^\s*\^+\s*$|^\u2717 /.test(line) ||
+  /^ +\^ while this file ran, /.test(line);
 /** With --parallel a line may come in two pieces, with the name of another file between them. */
 const flat = (text: string) => (parallel ? text.replaceAll("\n", "") : text);
 function printed(run: Run): string {
@@ -352,7 +365,7 @@ async function round(slot: number) {
     for (const [index, text] of judged.executables) writeFileSync(join(kept, `executable-p${index}.txt`), text);
     writeFileSync(
       join(kept, "commands.txt"),
-      `bun test ${more.join(" ")} .\nbun test --aot ${more.join(" ")} .\n# ${how}: ${names}\n# all: ${drawn.map(each => `${each.source}:${each.seed}`).join(",")}\n`,
+      `${setting}bun test ${more.join(" ")} .\n${setting}bun test --aot ${more.join(" ")} .\n# ${how}: ${names}\n# all: ${drawn.map(each => `${each.source}:${each.seed}`).join(",")}\n`,
     );
   }
   rmSync(folder, { recursive: true, force: true });

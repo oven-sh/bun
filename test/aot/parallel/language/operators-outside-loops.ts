@@ -1,4 +1,5 @@
 // Flags: --aot-check=validate-back-end
+// Todo alone under a check: Not every time: the build takes up to twenty times as long, and may pass the time limit
 // Binary operators, `===`, truthiness, string conversion and comparisons with string literals in code outside loops.
 function rope(a: string, b: string): string {
   return a + b;

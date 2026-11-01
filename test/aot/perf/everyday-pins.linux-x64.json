@@ -247,14 +247,7 @@
   },
   "everyday-array-methods-on-lists-nobody-proves/what-a-function-nobody-knows-returns-map": {
     "typed": 85.4,
-    "untyped": 85.3,
-    "owed": {
-      "forms": [
-        "typed",
-        "untyped"
-      ],
-      "why": "read 93.5 | 93.4 when the bound went from 10% to 2%, compiled and native code: nobody has looked for the change yet"
-    }
+    "untyped": 85.3
   },
   "everyday-arrays/array-from-a-length": {
     "typed": 219.7,
@@ -475,9 +468,10 @@
     "untyped": 110.5,
     "owed": {
       "forms": [
+        "typed",
         "untyped"
       ],
-      "why": "read 112.1 when the bound went from 10% to 2%, compiled and native code: nobody has looked for the change yet"
+      "why": "read 112.6 | 112.8 when the bound went from 10% to 2%, compiled and native code: nobody has looked for the change yet"
     }
   },
   "everyday-arrays/read-past-the-end": {
@@ -725,6 +719,26 @@
   "everyday-benchmarks/n-body-step": {
     "typed": 744,
     "untyped": 1135
+  },
+  "everyday-benchmarks/nested-loops-sum-quotients-by-a-whole-number": {
+    "typed": 820,
+    "untyped": 820
+  },
+  "everyday-benchmarks/nested-loops-sum-remainders-by-a-number": {
+    "typed": 934,
+    "untyped": 936
+  },
+  "everyday-benchmarks/nested-loops-sum-remainders-by-a-parameter": {
+    "typed": 922,
+    "untyped": 919
+  },
+  "everyday-benchmarks/nested-loops-sum-remainders-by-a-whole-number": {
+    "typed": 923,
+    "untyped": 927
+  },
+  "everyday-benchmarks/nested-loops-sum-remainders-of-either-sign": {
+    "typed": 1144,
+    "untyped": 1146
   },
   "everyday-benchmarks/object-insert-a-hundred-string-keys": {
     "typed": 6352.2,
@@ -1220,15 +1234,8 @@
     }
   },
   "everyday-collections/map-get-or-create": {
-    "typed": 89.4,
-    "untyped": 89.4,
-    "owed": {
-      "forms": [
-        "typed",
-        "untyped"
-      ],
-      "why": "read 104.5 | 104.5 when the bound went from 10% to 2%, compiled and native code: nobody has looked for the change yet"
-    }
+    "typed": 73.4,
+    "untyped": 73.4
   },
   "everyday-collections/map-group-by": {
     "typed": 1327.1,
@@ -1287,8 +1294,8 @@
     "untyped": 382
   },
   "everyday-collections/map-written-in-a-function-asked-about-each-word": {
-    "typed": 2916.4,
-    "untyped": 2916.4
+    "typed": 2981.1,
+    "untyped": 2981.7
   },
   "everyday-collections/set-add-and-delete": {
     "typed": 361.2,
@@ -1393,14 +1400,14 @@
     "untyped": 1339.2
   },
   "everyday-collections/set-written-in-a-function-asked-about-each-letter": {
-    "typed": 2441.8,
-    "untyped": 2474.8
+    "typed": 2505.6,
+    "untyped": 2507.9
   },
   "everyday-collections/weak-map-get": {
     "typed": 40.2,
     "untyped": 44.8,
-    "wavers": 12,
-    "note": "runs of two builds of one evening on two machines read 40.2, 40.2, 44.3 | 44.8, 44.7, 44.8"
+    "wavers": 19,
+    "note": "it hashes by address: runs of five builds of one evening on two machines read 40.2, 40.2, 44.3, 47.3, 46.5 | 44.8, 44.7, 44.8, 44.7, 44.7"
   },
   "everyday-collections/weak-map-private-data": {
     "typed": 33,
@@ -1465,7 +1472,7 @@
     "untyped": 162
   },
   "everyday-copies-of-lists-of-every-kind/array-from.with-nan": {
-    "typed": 62.3,
+    "typed": 62.2,
     "untyped": 60.3
   },
   "everyday-copies-of-lists-of-every-kind/concat-a-number-of-unknown-size.read-twice": {
@@ -1521,8 +1528,8 @@
     "untyped": 170.9
   },
   "everyday-copies-of-lists-of-every-kind/concat-itself.with-nan": {
-    "typed": 631.5,
-    "untyped": 631.3
+    "typed": 215,
+    "untyped": 214.9
   },
   "everyday-copies-of-lists-of-every-kind/concat.fractions-literal": {
     "typed": 101,
@@ -1569,8 +1576,8 @@
     "untyped": 106.1
   },
   "everyday-copies-of-lists-of-every-kind/concat.with-nan": {
-    "typed": 367.4,
-    "untyped": 367.4
+    "typed": 151.9,
+    "untyped": 151.9
   },
   "everyday-copies-of-lists-of-every-kind/filter.fractions-literal": {
     "typed": 231.2,
@@ -1618,7 +1625,7 @@
   },
   "everyday-copies-of-lists-of-every-kind/filter.with-nan": {
     "typed": 311.6,
-    "untyped": 350.7
+    "untyped": 350.6
   },
   "everyday-copies-of-lists-of-every-kind/slice-a-part.fractions-literal": {
     "typed": 126.3,
@@ -1665,14 +1672,8 @@
     "untyped": 122.7
   },
   "everyday-copies-of-lists-of-every-kind/slice-a-part.with-nan": {
-    "typed": 200.4,
-    "untyped": 203.8,
-    "owed": {
-      "forms": [
-        "typed"
-      ],
-      "why": "read 205.4 when the bound went from 10% to 2%, compiled and native code: nobody has looked for the change yet"
-    }
+    "typed": 139.5,
+    "untyped": 139.6
   },
   "everyday-copies-of-lists-of-every-kind/slice.fractions-literal": {
     "typed": 118,
@@ -1719,8 +1720,8 @@
     "untyped": 110.3
   },
   "everyday-copies-of-lists-of-every-kind/slice.with-nan": {
-    "typed": 224,
-    "untyped": 224
+    "typed": 158,
+    "untyped": 158
   },
   "everyday-copies-of-lists-of-every-kind/spread.fractions-literal": {
     "typed": 19.3,
@@ -1767,7 +1768,7 @@
     "untyped": 147.7
   },
   "everyday-copies-of-lists-of-every-kind/spread.with-nan": {
-    "typed": 62.3,
+    "typed": 62.2,
     "untyped": 60.3
   },
   "everyday-copies-of-lists-of-every-kind/to-reversed.fractions-literal": {
@@ -1819,18 +1820,17 @@
   },
   "everyday-copies-of-lists-of-every-kind/to-reversed.whole-with-a-hole": {
     "typed": 469.1,
-    "untyped": 464.3
-  },
-  "everyday-copies-of-lists-of-every-kind/to-reversed.with-nan": {
-    "typed": 452,
-    "untyped": 452.2,
+    "untyped": 464.3,
     "owed": {
       "forms": [
-        "typed",
         "untyped"
       ],
-      "why": "read 465.4 | 465.5 when the bound went from 10% to 2%, over half of it native code: nobody has looked for the change yet"
+      "why": "read 472.8 when the bound went from 10% to 2%, over half of it native code: nobody has looked for the change yet"
     }
+  },
+  "everyday-copies-of-lists-of-every-kind/to-reversed.with-nan": {
+    "typed": 157,
+    "untyped": 156.8
   },
   "everyday-copies-of-lists-of-every-kind/to-sorted.fractions-literal": {
     "typed": 6008.7,
@@ -1974,15 +1974,8 @@
     "untyped": 1794.7
   },
   "everyday-copies-of-lists-of-every-kind/to-spliced.with-nan": {
-    "typed": 527.4,
-    "untyped": 527.2,
-    "owed": {
-      "forms": [
-        "typed",
-        "untyped"
-      ],
-      "why": "read 539.1 | 539 when the bound went from 10% to 2%, over half of it native code: nobody has looked for the change yet"
-    }
+    "typed": 163.7,
+    "untyped": 163.5
   },
   "everyday-copies-of-lists-of-every-kind/with.fractions-literal": {
     "typed": 121,
@@ -2042,15 +2035,8 @@
     }
   },
   "everyday-copies-of-lists-of-every-kind/with.with-nan": {
-    "typed": 469.8,
-    "untyped": 469,
-    "owed": {
-      "forms": [
-        "typed",
-        "untyped"
-      ],
-      "why": "read 481.2 | 481 when the bound went from 10% to 2%, over half of it native code: nobody has looked for the change yet"
-    }
+    "typed": 140.8,
+    "untyped": 140.6
   },
   "everyday-copies-that-nobody-keeps/a-list-with-one-more": {
     "typed": 6,
@@ -2264,7 +2250,14 @@
   },
   "everyday-data-and-control/intl-number-format-kept": {
     "typed": 746.6,
-    "untyped": 746.6
+    "untyped": 746.6,
+    "owed": {
+      "forms": [
+        "typed",
+        "untyped"
+      ],
+      "why": "read 766.4 | 766.6 when the bound went from 10% to 2%, over half of it native code: nobody has looked for the change yet"
+    }
   },
   "everyday-data-and-control/json-parse-a-list-by-a-type-that-lists-one-of-three-members": {
     "typed": 4182.4,
@@ -3598,7 +3591,14 @@
   },
   "everyday-iteration-and-async/construct-an-error-that-captures-below-its-class-two-thousand-calls-deep": {
     "typed": 32250.1,
-    "untyped": 32241.1
+    "untyped": 32241.1,
+    "owed": {
+      "forms": [
+        "typed",
+        "untyped"
+      ],
+      "why": "read 32823.3 | 32823.2 when the bound went from 10% to 2%, compiled and native code: nobody has looked for the change yet"
+    }
   },
   "everyday-iteration-and-async/destructuring-from-a-generator": {
     "typed": 84,
@@ -3606,11 +3606,24 @@
   },
   "everyday-iteration-and-async/error-made-not-thrown": {
     "typed": 2116.8,
-    "untyped": 2106.7
+    "untyped": 2106.7,
+    "owed": {
+      "forms": [
+        "untyped"
+      ],
+      "why": "read 2144 when the bound went from 10% to 2%, over half of it native code: nobody has looked for the change yet"
+    }
   },
   "everyday-iteration-and-async/error-stack-read": {
     "typed": 16306.8,
-    "untyped": 16291.7
+    "untyped": 16291.7,
+    "owed": {
+      "forms": [
+        "typed",
+        "untyped"
+      ],
+      "why": "read 16604 | 16603.8 when the bound went from 10% to 2%, over half of it native code: nobody has looked for the change yet"
+    }
   },
   "everyday-iteration-and-async/error-told-apart-by-instanceof": {
     "typed": 3031.7,
@@ -3771,9 +3784,10 @@
     "untyped": 1883.5,
     "owed": {
       "forms": [
+        "typed",
         "untyped"
       ],
-      "why": "read 1939 when the bound went from 10% to 2%, over half of it native code: nobody has looked for the change yet"
+      "why": "read 1893.6 | 1939.4 when the bound went from 10% to 2%, over half of it native code: nobody has looked for the change yet"
     }
   },
   "everyday-iteration-and-async/throw-and-catch-an-error-two-thousand-calls-deep": {
@@ -4706,9 +4720,10 @@
     "untyped": 736.5,
     "owed": {
       "forms": [
+        "typed",
         "untyped"
       ],
-      "why": "read 753.5 when the bound went from 10% to 2%, all of it compiled code: nobody has looked for the change yet"
+      "why": "read 750.5 | 753.5 when the bound went from 10% to 2%, all of it compiled code: nobody has looked for the change yet"
     }
   },
   "everyday-loops-over-lists-and-typed-arrays/float64-array-in-a-field": {
@@ -4851,7 +4866,13 @@
   },
   "everyday-microtasks-and-promises/async-local-storage-snapshot": {
     "typed": 256.8,
-    "untyped": 263.7
+    "untyped": 263.7,
+    "owed": {
+      "forms": [
+        "untyped"
+      ],
+      "why": "read 268.6 when the bound went from 10% to 2%, all of it compiled code: nobody has looked for the change yet"
+    }
   },
   "everyday-microtasks-and-promises/async-resource-bind": {
     "typed": 2486.7,
@@ -5232,7 +5253,14 @@
   },
   "everyday-numbers/parse-float": {
     "typed": 294.3,
-    "untyped": 294.2
+    "untyped": 294.2,
+    "owed": {
+      "forms": [
+        "typed",
+        "untyped"
+      ],
+      "why": "read 299.8 | 299.8 when the bound went from 10% to 2%, over half of it native code: nobody has looked for the change yet"
+    }
   },
   "everyday-numbers/parse-int": {
     "typed": 97,
@@ -5648,7 +5676,14 @@
   },
   "everyday-paths-and-files/a-long-path-is-taken-apart": {
     "typed": 410,
-    "untyped": 409.9
+    "untyped": 409.9,
+    "owed": {
+      "forms": [
+        "typed",
+        "untyped"
+      ],
+      "why": "reads 446.2 | 446.2 without a change to node:path's native code that is left out of this pull request: the pin was read with it"
+    }
   },
   "everyday-paths-and-files/a-long-tidy-path-is-normalized": {
     "typed": 131.2,
@@ -6850,7 +6885,14 @@
   },
   "everyday-spellings/filled-list.literal": {
     "typed": 621,
-    "untyped": 619.8
+    "untyped": 619.8,
+    "owed": {
+      "forms": [
+        "typed",
+        "untyped"
+      ],
+      "why": "read 632.3 | 631.8 when the bound went from 10% to 2%, over half of it native code: nobody has looked for the change yet"
+    }
   },
   "everyday-spellings/filled-list.loop-push": {
     "typed": 263.4,
@@ -7949,7 +7991,14 @@
   },
   "everyday-strings/strip-what-is-not-ascii-from-one-of-four-long-texts": {
     "typed": 22680.6,
-    "untyped": 22693
+    "untyped": 22693,
+    "owed": {
+      "forms": [
+        "typed",
+        "untyped"
+      ],
+      "why": "read 23132.9 | 23103.3 when the bound went from 10% to 2%, compiled and native code: nobody has looked for the change yet"
+    }
   },
   "everyday-strings/strip-what-is-not-ascii-from-one-of-four-long-texts-that-are-all-ascii": {
     "typed": 13718,

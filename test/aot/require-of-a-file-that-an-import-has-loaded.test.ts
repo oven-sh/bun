@@ -1,7 +1,8 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { afterAll } from "./harness/default-timeout";
 import { run } from "./harness/run";
-import { test } from "./supported";
+import { beforeAll, test } from "./supported";
 
 // `bun test` reads a file of a kind that nothing names, `a.png`, as code for require(), and an import of it gets its path. The loader has one place for the
 // path, so what an import has loaded answers a later require(), with the namespace object. A compiled run read the file as code whatever had been imported,
@@ -70,13 +71,27 @@ async function seenIn(directory: string, words: string | undefined, ...flags: st
   return { seen: lines.filter(line => line.startsWith("SEEN ")).sort(), exitCode };
 }
 
-test("require() of a file that nothing names the kind of answers what an import has loaded", async () => {
-  using directory = tempDir("require-of-a-file-that-an-import-has-loaded", files);
-  const plain = await seenIn(String(directory), undefined);
+let dir: ReturnType<typeof tempDir> | undefined;
+let plain: Awaited<ReturnType<typeof seenIn>>;
+beforeAll(async () => {
+  dir = tempDir("require-of-a-file-that-an-import-has-loaded", files);
+  plain = await seenIn(String(dir), undefined);
+});
+afterAll(() => dir?.[Symbol.dispose]());
+
+test("what plain Bun answers require() of a file that nothing names the kind of", () => {
   expect(plain.seen).toContain(`SEEN w require behind the statement | {"default":"w1.png"}`);
   expect(plain.seen).toContain(`SEEN w require alone | throws BuildMessage`);
   expect(plain.seen).toContain(`SEEN u require of code under an ending that nothing names | 7`);
   expect(plain.seen).toHaveLength(33);
-  expect(await seenIn(String(directory), "TestRunLayers:0", "--aot")).toEqual(plain);
-  expect(await seenIn(String(directory), "TestRunLayers:2,TestRunPartFiles:1", "--aot", "--parallel=2")).toEqual(plain);
-}, 240_000);
+});
+
+test.each([
+  ["one program", "TestRunLayers:0", []],
+  ["two layers", "TestRunLayers:2,TestRunPartFiles:1", ["--parallel=2"]],
+])(
+  "require() of a file that nothing names the kind of answers what an import has loaded: %s",
+  async (_, words, flags) => {
+    expect(await seenIn(String(dir), words, "--aot", ...flags)).toEqual(plain);
+  },
+);

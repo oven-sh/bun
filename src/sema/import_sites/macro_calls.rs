@@ -9,7 +9,7 @@ use crate::hir::{
 use crate::hir_from_data::HostValue;
 use crate::util::{PositionSet, SharedSort};
 
-fn macro_import_symbols(hir: &File<'_>, bound: &Bound<'_>) -> Vec<SymbolId> {
+pub fn macro_import_symbols(hir: &File<'_>, bound: &Bound<'_>) -> Vec<SymbolId> {
     let mut symbols = Vec::new();
     for index in 0..hir.imports.len() {
         let import = ImportId(index as u32);

@@ -157,7 +157,7 @@ BUN_FOREACH_LAZY_ESM_NATIVE_MODULE(FORWARD_DECL_LAZY_GENERATOR)
 // while the module loads, as every export was before exports became lazy.
 inline bool isBunDefinedGetter(JSC::JSObject *getter) {
 #if ENABLE(AOT)
-  if (JSC::AOT::CompiledCallee::isCompiledCallee(getter))
+  if (getter->vm().hasCompiledCode() && JSC::AOT::CompiledCallee::isCompiledCallee(getter))
     return JSC::AOT::belongsToBuiltinModule(getter);
 #endif
   auto *function = dynamicDowncast<JSC::JSFunction>(getter);

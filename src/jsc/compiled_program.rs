@@ -50,6 +50,8 @@ unsafe extern "C" {
     safe fn Bun__isCompiledProgramFile(path: &bun_core::String) -> bool;
     safe fn Bun__isCompiledProgramFileInSomeForm(path: &bun_core::String) -> bool;
     safe fn Bun__AOT__willRunEntryPointAgain(global: &JSGlobalObject, path: &bun_core::String);
+    safe fn Bun__AOT__willRunPreloads(global: &JSGlobalObject);
+    safe fn Bun__AOT__didRunPreloads(global: &JSGlobalObject);
     safe fn Bun__AOT__mayHoldPathStartingWith(start: &bun_core::String) -> bool;
     safe fn Bun__AOT__isLeftToCodeOutsideImage(
         specifier: &bun_core::String,
@@ -281,6 +283,18 @@ fn entry_module_key_in<'a>(graph: &'static dyn StandaloneModuleGraph, path: &'a 
 pub fn will_run_entry_point_again(global: &JSGlobalObject, key: &[u8]) {
     if compiled_program().is_some() {
         Bun__AOT__willRunEntryPointAgain(global, &bun_core::StringView::from_bytes(key));
+    }
+}
+
+pub fn will_run_preloads(global: &JSGlobalObject) {
+    if compiled_program().is_some() {
+        Bun__AOT__willRunPreloads(global);
+    }
+}
+
+pub fn did_run_preloads(global: &JSGlobalObject) {
+    if compiled_program().is_some() {
+        Bun__AOT__didRunPreloads(global);
     }
 }
 

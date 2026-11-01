@@ -121,6 +121,17 @@ pub(super) struct Reference {
 }
 
 impl Reference {
+    fn path_key(&self) -> u64 {
+        self.path.iter().fold(0, |key: u64, step| {
+            let part = match step.name.get() {
+                AccessedName::Some(name) => u64::from(name.0) << 2 | 1,
+                AccessedName::None => u64::from(root_key(step.variable)) << 2 | 2,
+                AccessedName::Unresolved(at) => u64::from(at.0) << 2 | 3,
+            };
+            (key.rotate_left(5) ^ part).wrapping_mul(0x517c_c1b7_2722_0a95)
+        })
+    }
+
     /// A reference that isn't an expression in the source: `root`, or `root.a.b`.
     fn synthetic(file: FileId, root: Root, path: SmallVec<[Step; 4]>, node: Node) -> Reference {
         Reference {
@@ -214,7 +225,8 @@ pub(super) struct FlowMemo {
     equal_types: FxHashMap<(TypeId, TypeId, bool, bool), TypeId>,
     /// `flowLoopCache`, keyed by the loop label and `getFlowReferenceKey`: the declared and the
     /// initial type, then the reference.
-    flow_loop_cache: FxHashMap<FlowLoopKey, SmallVec<[(Reference, TypeId); 1]>>,
+    flow_loop_cache: FxHashMap<FlowLoopKey, SmallVec<[(u32, TypeId); 1]>>,
+    flow_loop_references: Vec<Reference>,
     /// `Checker::work` when it got its latest entry.
     flow_loop_cached_at: u64,
     /// `switchStatementLinks`
@@ -375,7 +387,7 @@ struct ElementsSoFar {
 
 /// `FlowLoopKey`, with the `root_key` of the reference in its place. Without that, n names in n nested loops take n * n * n
 /// comparisons.
-type FlowLoopKey = (FileId, FlowId, TypeId, TypeId, u32);
+type FlowLoopKey = (FileId, FlowId, TypeId, TypeId, u32, u64);
 
 /// `SwitchStatementLinks`. tsgo assigns both unconditionally, so they keep the first computation's
 /// result even if it saw a loop's incomplete types.
@@ -436,7 +448,19 @@ impl FlowMemo {
 
     fn cached_flow_loop_type(&self, key: &FlowLoopKey, reference: &Reference) -> Option<TypeId> {
         let cached = self.flow_loop_cache.get(key)?;
-        cached.iter().find(|c| c.0 == *reference).map(|c| c.1)
+        let is_same = |c: &&(u32, TypeId)| self.flow_loop_references[c.0 as usize] == *reference;
+        cached.iter().find(is_same).map(|c| c.1)
+    }
+
+    fn cache_flow_loop_type(&mut self, key: FlowLoopKey, reference: &Reference, ty: TypeId) {
+        if self.flow_loop_references.last() != Some(reference) {
+            self.flow_loop_references.push(reference.clone());
+        }
+        let index = (self.flow_loop_references.len() - 1) as u32;
+        self.flow_loop_cache
+            .entry(key)
+            .or_default()
+            .push((index, ty));
     }
 }
 
@@ -7237,6 +7261,7 @@ impl<'p, 's> Checker<'p, 's> {
                         walk.declared,
                         initial,
                         root_key(walk.reference.root),
+                        walk.reference.path_key(),
                     );
                     if let Some(cached) =
                         self.flow_memo.cached_flow_loop_type(&key, &walk.reference)
@@ -7331,10 +7356,7 @@ impl<'p, 's> Checker<'p, 's> {
                         && interruptions_before == self.interruptions()
                     {
                         self.flow_memo
-                            .flow_loop_cache
-                            .entry(key)
-                            .or_default()
-                            .push((walk.reference.clone(), result.ty));
+                            .cache_flow_loop_type(key, &walk.reference, result.ty);
                         self.flow_memo.flow_loop_cached_at = self.work;
                         walk.deepest = deepest_at_label;
                     } else {

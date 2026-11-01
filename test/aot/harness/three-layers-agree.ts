@@ -2,7 +2,8 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { test } from "../supported";
+// One by one: a case builds for minutes, and beside others it would pass its limit where Bun has a sanitizer.
+import { beforeAll, testOneByOne as test } from "../supported";
 import { run } from "./run";
 
 // A layered test run has three images in one realm: the packages with Bun's library, what else the test files import, and the test files.
@@ -23,6 +24,10 @@ const files = Object.fromEntries(
     ]),
 );
 
+// What a run that was stopped says of it. Without these lines an abort reads "exitCode 134" and a result that is missing.
+const stop =
+  /ASSERTION FAILED|Unchecked JS exception|This scope can throw|unchecked as of this scope|AddressSanitizer|LeakSanitizer|panic[:(]|Segmentation fault/;
+
 async function seenIn(words: string | undefined, flags: string[] = [], more: Record<string, string> = {}) {
   using dir = tempDir("aot-three-layers", files);
   // Not CI: each run writes the snapshot that it is held to.
@@ -31,7 +36,10 @@ async function seenIn(words: string | undefined, flags: string[] = [], more: Rec
   const command = [bunExe(), "test", "--isolate", "--timeout=60000", ...flags];
   const { stdout, stderr, exitCode } = await run(command, String(dir), env);
   const seen = stdout.split("\n").filter(line => line.startsWith("RESULT|"));
-  return { seen: seen.sort(), failed: stderr.split("\n").filter(line => /^\(fail\)|^✗|^panic/.test(line)), exitCode };
+  const said = stderr.split("\n");
+  const failed = said.filter(line => /^\(fail\)|^✗|^panic/.test(line));
+  const stopped = said.filter(line => stop.test(line)).map(line => line.trim());
+  return { seen: seen.sort(), failed, stopped: stopped.slice(0, 12), exitCode };
 }
 
 type Way = { words?: string; env?: Record<string, string> };
@@ -41,14 +49,19 @@ type Way = { words?: string; env?: Record<string, string> };
  * processor time, so the ways are dealt to several test files, and each file makes the plain run for itself.
  */
 export function answerAsPlainBunTest(ways: Record<string, Way>) {
-  test(`three layers answer as plain bun test: ${Object.keys(ways).join(", ")}`, async () => {
-    const [plain, ...compiled] = await Promise.all([
-      seenIn(undefined),
-      ...Object.values(ways).map(({ words, env }) => seenIn(words, ["--aot"], env)),
-    ]);
+  let plain: Awaited<ReturnType<typeof seenIn>>;
+  beforeAll(async () => {
+    plain = await seenIn(undefined);
+  });
+
+  test("plain bun test answers", () => {
     expect(plain.seen.length).toBeGreaterThan(320);
     expect(plain.failed).toEqual([]);
-    for (const [index, way] of Object.keys(ways).entries())
-      expect({ way, ...compiled[index] }).toEqual({ way, ...plain });
-  }, 240_000);
+  });
+
+  test.each(Object.entries(ways))("three layers answer as plain bun test: %s", async (way, { words, env }) => {
+    const compiled = await seenIn(words, ["--aot"], env);
+    if (compiled.stopped.length) console.error(`${way}: the run was stopped:\n${compiled.stopped.join("\n")}`);
+    expect(compiled).toEqual(plain);
+  });
 }

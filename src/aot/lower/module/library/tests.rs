@@ -45,7 +45,7 @@ fn with_runtime_source<R>(text: &str, then: impl FnOnce(&LibrarySource<'_, '_>) 
         experimental_decorators: false,
         every_file_is_a_module: false,
         reads_jsdoc: true,
-        keeps_function_directives: false,
+        ignores_pure_comments: false,
     };
     let mut hir = parse_for_compile(arena, &parse_options, text.as_bytes(), &atoms);
     hir.text = Cow::Borrowed(text.as_bytes());
@@ -139,6 +139,7 @@ fn lower_library_file_for(
         obfuscates: false,
         counts_executions: false,
         imports_are_untyped: false,
+        runs_tests: false,
     };
     let mut lowered = lower_program(&files, options);
     assert_eq!(lowered.len(), 2, "the entry point and the library file");

@@ -2,13 +2,14 @@
 // says as an executable without --aot, where the bundler has linked its require() calls. Where this Bun can leave parts of the runtime
 // out, the executable that is trimmed by what the program names must say the same again. What --trim removes is decided behind the
 // compiler, so one build compiles the program and writes both executables.
-import { describe, expect } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { canTrim } from "../bundler/compile-trim-features";
 import { slot } from "./harness/commands";
 import { test } from "./supported";
 import { run as runCommand } from "./harness/run";
+import { describe } from "./listed";
 
 export type Program = { source: string; name?: string; files?: Record<string, string>; stdin?: string; ipc?: "json" | "advanced"; greeting?: unknown; exitCode?: number; runsTextAsCode?: true; aheadOfTime?: string };
 

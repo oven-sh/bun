@@ -25,8 +25,12 @@ const MODULE_OF_CHAI: &[u8] = b"chai";
 // No program can write such a name, so it meets no declaration of the file: `declare const test: ..` stands beside it.
 const LOCAL_NAME_PREFIX: &[u8] = b"%test:";
 const OWN_GLOBAL_PREFIX: &[u8] = b"%global:";
+const NAME_OF_VITEST_PREFIX: &[u8] = b"%vitest:";
 const LOADED_BELOW_VITEST: &[u8] = b"%loaded-below-vitest";
 const LOADED_BY_WORKER: &[u8] = b"%loaded-by-worker";
+// The object `Bun`, whatever the file itself calls `Bun`.
+const MODULE_OF_BUN: &[u8] = b"bun";
+const LOCAL_NAME_OF_BUN: &[u8] = b"%bun";
 
 /// `jest` for the name that stands in its place in a file that got the import, as a message quotes it. Any other name unchanged.
 pub(crate) fn written_name_of_local(name: &[u8]) -> &[u8] {
@@ -180,10 +184,61 @@ fn write_use_by_flavor(
     }
 }
 
+/// Both runners have the name, and theirs behave differently: vitest runs `afterEach` hooks last laid first, runs what a `beforeAll` hook returns, ignores a hook laid by a running
+/// test and hands a test its context. `vi` and `expect` stay "bun:test"'s: the build reads what is spied on and replaced by them.
+fn differs_by_flavor(name: &str) -> bool {
+    matches!(
+        name,
+        "test"
+            | "it"
+            | "describe"
+            | "beforeAll"
+            | "beforeEach"
+            | "afterEach"
+            | "afterAll"
+            | "onTestFinished"
+            | "aroundEach"
+            | "aroundAll"
+    )
+}
+
+/// `beforeEach` is `loadedBelowVitest ? ofVitest : ofBun`, and `loadedByWorker ? beforeEach : ..` around that where a Worker may load the file.
+fn write_use_of_either_runner(
+    file: &mut FileBuilder,
+    atoms: &Interner<'_>,
+    expression: ExprId,
+    (written, of_bun, of_vitest): (Atom, Atom, Atom),
+    asked: Asked,
+) {
+    let (pos, end) = (file[expression].pos, file[expression].end);
+    let yes = file.expr(ExprKind::Ident(written), pos, end);
+    write_use(file, yes, written, of_vitest);
+    let no = file.expr(ExprKind::Ident(written), pos, end);
+    write_use(file, no, written, of_bun);
+    let by_flavor = Asked {
+        by_worker: None,
+        ..asked
+    };
+    if asked.by_worker.is_none() {
+        return choose_by_flavor(file, atoms, expression, by_flavor, Branches { yes, no });
+    }
+    let of_runner = file.expr(ExprKind::Ident(written), pos, end);
+    choose_by_flavor(file, atoms, of_runner, by_flavor, Branches { yes, no });
+    let branches = Branches {
+        yes: file.expr(ExprKind::Ident(written), pos, end),
+        no: of_runner,
+    };
+    let by_realm = Asked {
+        flavor: None,
+        ..asked
+    };
+    choose_by_flavor(file, atoms, expression, by_realm, branches);
+}
+
 /// `!Bun.isMainThread`
 fn write_question_of_realm(file: &mut FileBuilder, atoms: &Interner<'_>) -> ExprId {
     let add = |file: &mut FileBuilder, kind: ExprKind| file.expr(kind, POSITION, POSITION);
-    let mut bun = add(file, ExprKind::Ident(atoms.intern(b"Bun")));
+    let mut bun = add(file, ExprKind::Ident(atoms.intern(LOCAL_NAME_OF_BUN)));
     if !file.is_js {
         let ty = file.ty(TypeNodeKind::Keyword(Keyword::Any), POSITION, POSITION);
         bun = add(file, ExprKind::As { expr: bun, ty });
@@ -197,7 +252,7 @@ fn write_question_of_realm(file: &mut FileBuilder, atoms: &Interner<'_>) -> Expr
 /// `typeof Bun.jest(path, true).suite === "function"`: "vitest" alone has `suite`.
 fn write_question(file: &mut FileBuilder, atoms: &Interner<'_>, path: Atom) -> ExprId {
     let add = |file: &mut FileBuilder, kind: ExprKind| file.expr(kind, POSITION, POSITION);
-    let mut bun = add(file, ExprKind::Ident(atoms.intern(b"Bun")));
+    let mut bun = add(file, ExprKind::Ident(atoms.intern(LOCAL_NAME_OF_BUN)));
     if !file.is_js {
         let ty = file.ty(TypeNodeKind::Keyword(Keyword::Any), POSITION, POSITION);
         bun = add(file, ExprKind::As { expr: bun, ty });
@@ -301,6 +356,22 @@ fn write_require(
     let pat = file.pat(PatKind::Object(properties), POSITION, POSITION);
     let callee = file.expr(ExprKind::Ident(known::require), POSITION, POSITION);
     write_constant(file, pat, callee, atoms.intern(module))
+}
+
+/// `import { default as %bun } from "bun";`, `const %bun = require("bun");`
+fn write_bun(file: &mut FileBuilder, atoms: &Interner<'_>, format: ModuleFormat) -> StmtId {
+    let local = atoms.intern(LOCAL_NAME_OF_BUN);
+    match format {
+        ModuleFormat::Esm => {
+            let names = core::iter::once((known::default, local));
+            write_import(file, atoms, MODULE_OF_BUN, names)
+        }
+        ModuleFormat::CommonJs => {
+            let pat = file.pat(PatKind::Ident(local), POSITION, POSITION);
+            let callee = file.expr(ExprKind::Ident(known::require), POSITION, POSITION);
+            write_constant(file, pat, callee, atoms.intern(MODULE_OF_BUN))
+        }
+    }
 }
 
 /// `const { expect: %global:expect = %test:expect } = globalThis;`
@@ -466,9 +537,24 @@ pub(crate) fn import_used_names<'s>(
     let by_worker = (file_of_run.may_load_in_worker).then(|| atoms.intern(LOADED_BY_WORKER));
     let mut asks_flavor = false;
     let mut asks_realm = false;
+    let of_vitest = with_prefix(NAME_OF_VITEST_PREFIX);
+    let mut taken_from_vitest: Vec<usize> = Vec::new();
     for &(expression, name) in &uses {
-        let flavor = flavor
-            .filter(|_| Jest::is_of_bun_only(core::str::from_utf8(given[name]).unwrap_or("")));
+        let text = core::str::from_utf8(given[name]).unwrap_or("");
+        if flavor.is_some()
+            && !keeps_own_globals
+            && differs_by_flavor(text)
+            && find_how_use_reads(request, expression) == Some(Reads::Value)
+        {
+            asks_flavor = true;
+            asks_realm |= by_worker.is_some();
+            taken_from_vitest.push(name);
+            let atoms_of_use = (names[name], locals[name], of_vitest[name]);
+            let asked = Asked { by_worker, flavor };
+            write_use_of_either_runner(&mut file, atoms, expression, atoms_of_use, asked);
+            continue;
+        }
+        let flavor = flavor.filter(|_| Jest::is_of_bun_only(text));
         let asked = Asked { by_worker, flavor };
         let reads = (by_worker.is_some() || flavor.is_some())
             .then(|| find_how_use_reads(request, expression))
@@ -501,12 +587,30 @@ pub(crate) fn import_used_names<'s>(
         ModuleFormat::Esm => write_import(&mut file, atoms, module, imported.iter().copied()),
         ModuleFormat::CommonJs => write_require(&mut file, atoms, module, &imported),
     }];
+    taken_from_vitest.sort_unstable();
+    taken_from_vitest.dedup();
+    if !taken_from_vitest.is_empty() {
+        let imported = taken_from_vitest.iter();
+        let imported: Vec<(Atom, Atom)> = imported
+            .map(|&name| (names[name], of_vitest[name]))
+            .collect();
+        added.push(match request.analysis.module_format {
+            ModuleFormat::Esm => {
+                write_import(&mut file, atoms, MODULE_OF_VITEST, imported.iter().copied())
+            }
+            ModuleFormat::CommonJs => write_require(&mut file, atoms, MODULE_OF_VITEST, &imported),
+        });
+    }
     if keeps_own_globals {
         let own = used
             .iter()
             .map(|&name| (names[name], locals[name], of_runner[name]));
         let own: Vec<(Atom, Atom, Atom)> = own.collect();
         added.push(write_own_globals(&mut file, &own));
+    }
+    if asks_flavor || asks_realm {
+        let format = request.analysis.module_format;
+        added.push(write_bun(&mut file, atoms, format));
     }
     if let Some(flavor) = flavor.filter(|_| asks_flavor) {
         added.push(write_flavor(&mut file, atoms, flavor));

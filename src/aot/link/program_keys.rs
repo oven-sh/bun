@@ -283,14 +283,16 @@ impl Rehoming<'_> {
         key
     }
 
+    // A variable goes by the symbol that its own file declares, also where the application merges that symbol with a declaration of another file: `declare module "package" { interface Class {} }`.
     fn variable_key(&self, mut key: VariableKey) -> VariableKey {
         match &mut key {
             VariableKey::Symbol(symbol)
             | VariableKey::RequiredAnswer(symbol)
+            | VariableKey::RequireMadeForOwnFile(symbol)
             | VariableKey::PrivateState {
                 state: symbol,
                 part: _,
-            } => *symbol = self.symbol(*symbol),
+            } => symbol.file = self.file(symbol.file),
             VariableKey::SyntheticExport(_)
             | VariableKey::Copy(_)
             | VariableKey::MockOfRuntimeModule(_) => {}

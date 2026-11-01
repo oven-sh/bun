@@ -21,6 +21,8 @@ use smallvec::SmallVec;
 use std::cell::{Cell, RefCell};
 use std::hash::{Hash, Hasher};
 use std::hint::cold_path;
+use std::marker::PhantomData;
+use std::ptr::NonNull;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU16, AtomicU32, AtomicU64, Ordering};
 
 /// A list that's stored once, as one exactly sized block in the arena of the thread that built it.
@@ -929,10 +931,10 @@ pub struct Shape<'s> {
 #[repr(C)]
 pub struct Listed<'s> {
     /// This field and the next five are documented on `Shape`.
-    pub props: List<'s, Prop<'s>>,
-    pub call: List<'s, SigId>,
-    pub construct: List<'s, SigId>,
-    pub index: List<'s, IndexInfo>,
+    pub props: ListedItems<'s, Prop<'s>>,
+    pub call: ListedItems<'s, SigId>,
+    pub construct: ListedItems<'s, SigId>,
+    pub index: ListedItems<'s, IndexInfo>,
     /// `TypeId::UNRESOLVED` means none.
     properties_of: TypeId,
     pub literal: Literalness,
@@ -940,24 +942,130 @@ pub struct Listed<'s> {
     pub has_symbol_declared_at: bool,
     /// True if the `Shape` was plain (`Shape::is_plain`).
     is_plain: bool,
+    is_lent: bool,
+}
+
+const _: () = assert!(size_of::<Listed<'static>>() == 72);
+
+pub struct ListedItems<'s, T>(NonNull<[T]>, PhantomData<List<'s, T>>);
+
+// SAFETY: it's used as a `List<T>` or as a `&[T]`.
+unsafe impl<T: Send + Sync> Send for ListedItems<'_, T> {}
+// SAFETY: as above.
+unsafe impl<T: Sync> Sync for ListedItems<'_, T> {}
+
+impl<'s, T> ListedItems<'s, T> {
+    fn own(list: List<'s, T>) -> Self {
+        // SAFETY: the pointer of a box isn't null.
+        ListedItems(
+            unsafe { NonNull::new_unchecked(list.into_raw()) },
+            PhantomData,
+        )
+    }
+
+    fn lent(list: &[T]) -> Self {
+        ListedItems(NonNull::from(list), PhantomData)
+    }
+
+    unsafe fn free(&mut self) {
+        // SAFETY: caller contract.
+        drop(unsafe { List::from_raw(self.0.as_ptr()) });
+    }
+}
+
+impl<T> std::ops::Deref for ListedItems<'_, T> {
+    type Target = [T];
+    #[inline]
+    fn deref(&self) -> &[T] {
+        // SAFETY: the list is the `Listed`'s own, or outlives it (`Listed::lent_by`).
+        unsafe { self.0.as_ref() }
+    }
+}
+
+impl<'v, T> IntoIterator for &'v ListedItems<'_, T> {
+    type Item = &'v T;
+    type IntoIter = std::slice::Iter<'v, T>;
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+impl<T: std::fmt::Debug> std::fmt::Debug for ListedItems<'_, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self[..].fmt(f)
+    }
+}
+
+impl Drop for Listed<'_> {
+    fn drop(&mut self) {
+        if self.is_lent {
+            return;
+        }
+        // SAFETY: `From<Shape>` made all four with `own`.
+        unsafe {
+            self.props.free();
+            self.call.free();
+            self.construct.free();
+            self.index.free();
+        }
+    }
 }
 
 impl<'s> From<Shape<'s>> for Listed<'s> {
     fn from(shape: Shape<'s>) -> Listed<'s> {
         Listed {
             is_plain: shape.is_plain(),
-            props: shape.props.into(),
-            call: shape.call.into(),
-            construct: shape.construct.into(),
-            index: shape.index.into(),
+            props: ListedItems::own(shape.props.into()),
+            call: ListedItems::own(shape.call.into()),
+            construct: ListedItems::own(shape.construct.into()),
+            index: ListedItems::own(shape.index.into()),
             properties_of: shape.properties_of.unwrap_or(TypeId::UNRESOLVED),
             literal: shape.literal,
             has_symbol_declared_at: shape.symbol_declared_at.is_some(),
+            is_lent: false,
         }
     }
 }
 
 impl<'s> Listed<'s> {
+    pub unsafe fn lent_by(shape: &Shape<'_>) -> Listed<'s> {
+        // SAFETY: caller contract.
+        let shape: &Shape<'s> = unsafe { &*std::ptr::from_ref(shape).cast() };
+        Listed {
+            is_plain: shape.is_plain(),
+            props: ListedItems::lent(&shape.props),
+            call: ListedItems::lent(&shape.call),
+            construct: ListedItems::lent(&shape.construct),
+            index: ListedItems::lent(&shape.index),
+            properties_of: shape.properties_of.unwrap_or(TypeId::UNRESOLVED),
+            literal: shape.literal,
+            has_symbol_declared_at: shape.symbol_declared_at.is_some(),
+            is_lent: true,
+        }
+    }
+
+    #[allow(clippy::type_complexity)]
+    pub fn lists_mut(
+        &mut self,
+    ) -> (
+        &mut [Prop<'s>],
+        &mut [SigId],
+        &mut [SigId],
+        &mut [IndexInfo],
+    ) {
+        assert!(!self.is_lent);
+        // SAFETY: the lists are its own, and four different blocks.
+        unsafe {
+            (
+                self.props.0.as_mut(),
+                self.call.0.as_mut(),
+                self.construct.0.as_mut(),
+                self.index.0.as_mut(),
+            )
+        }
+    }
+
     #[inline]
     pub fn properties_of(&self) -> Option<TypeId> {
         (self.properties_of != TypeId::UNRESOLVED).then_some(self.properties_of)
@@ -4475,6 +4583,12 @@ impl<T: Follow> Follow for ArenaVec<'_, T> {
     }
 }
 
+impl<T: Follow> Follow for ListedItems<'_, T> {
+    fn visit<V: Visitor>(&self, visitor: &mut V) {
+        self[..].visit(visitor);
+    }
+}
+
 impl<T: Follow, const N: usize, L: std::ops::DerefMut<Target = [T]>> Follow for ShortList<T, N, L> {
     fn visit<V: Visitor>(&self, visitor: &mut V) {
         (**self).visit(visitor);
@@ -4693,7 +4807,8 @@ follow_struct!(Listed<'_> {
     properties_of,
     literal,
     has_symbol_declared_at,
-    is_plain
+    is_plain,
+    is_lent
 });
 follow_struct!(SigParam {
     name,
@@ -4961,16 +5076,22 @@ clone_in_struct!(Shape {
     pattern_at,
     mapper
 });
-clone_in_struct!(Listed {
-    props,
-    call,
-    construct,
-    index,
-    properties_of,
-    literal,
-    has_symbol_declared_at,
-    is_plain
-});
+impl CloneIn for Listed<'_> {
+    type In<'t> = Listed<'t>;
+    fn clone_in<'t>(&self, arena: &'t Arena) -> Listed<'t> {
+        Listed {
+            props: ListedItems::own(self.props.clone_in(arena)),
+            call: ListedItems::own(self.call.clone_in(arena)),
+            construct: ListedItems::own(self.construct.clone_in(arena)),
+            index: ListedItems::own(self.index.clone_in(arena)),
+            properties_of: self.properties_of,
+            literal: self.literal,
+            has_symbol_declared_at: self.has_symbol_declared_at,
+            is_plain: self.is_plain,
+            is_lent: false,
+        }
+    }
+}
 clone_in_enum!(SigData {
     Decl { file, func, mapper },
     DefaultConstruct { class, base, mapper },

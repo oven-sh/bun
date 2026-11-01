@@ -126,7 +126,7 @@ pub(super) fn load_code_file<'s, 'r>(
         &mut tree,
     );
     if !tree.request.options.keeps_comments {
-        tree.hir.comments = Default::default();
+        crate::erasure::keep_only_comments_beside_types(&mut tree.hir, arena);
     }
     rename_private_names_with(&mut tree.hir, &bound, atoms, path, |reference, _| {
         bound.runtime.private_class(reference)
@@ -504,6 +504,10 @@ fn analyze_with_host<'s>(
             };
             match host.transform_tree(arena, atoms, &mut request, &mut tree.payload) {
                 TreeChange::Changed => continue,
+                TreeChange::ChangedAndUnfinished => {
+                    is_transformed = false;
+                    continue;
+                }
                 TreeChange::Unchanged => {}
             }
         }

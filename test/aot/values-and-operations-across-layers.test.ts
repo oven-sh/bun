@@ -2,8 +2,9 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { afterAll } from "./harness/default-timeout";
 import { run } from "./harness/run";
-import { test } from "./supported";
+import { beforeAll, test } from "./supported";
 
 // The same values, operations, callbacks and functions that take callbacks stand in a package (the lowest layer of a test run), in a helper (the layer over it) and in
 // each test file (a piece). Every value of one is put under every operation of another, and what comes of it is written down: 57,000 lines.
@@ -54,18 +55,22 @@ async function linesOf(directory: string, way: string, words: string) {
   return ["one", "two"].map(name => readFileSync(join(seenIn, name + ".txt"), "utf8").split("\n"));
 }
 
-test("a run in layers writes what a run as one program writes", async () => {
-  using dir = tempDir("aot-values-and-operations-across-layers", files);
-  const asOneProgram = await linesOf(String(dir), "one-program", "TestRunLayers:0");
-  for (const layers of [2, 3]) {
-    const inLayers = await linesOf(String(dir), `layers-${layers}`, `TestRunLayers:${layers},TestRunPartFiles:1`);
-    for (const file of [0, 1]) {
-      expect(asOneProgram[file].length).toBeGreaterThan(50000);
-      const unlike = asOneProgram[file].flatMap((line, index) =>
-        line === inLayers[file][index] ? [] : [`${line}\n  in ${layers} layers: ${inLayers[file][index]}`],
-      );
-      expect(unlike.slice(0, 20)).toEqual([]);
-      expect(inLayers[file].length).toBe(asOneProgram[file].length);
-    }
+let dir: ReturnType<typeof tempDir> | undefined;
+let asOneProgram: string[][];
+beforeAll(async () => {
+  dir = tempDir("aot-values-and-operations-across-layers", files);
+  asOneProgram = await linesOf(String(dir), "one-program", "TestRunLayers:0");
+});
+afterAll(() => dir?.[Symbol.dispose]());
+
+test.each([2, 3])("a run in %d layers writes what a run as one program writes", async layers => {
+  const inLayers = await linesOf(String(dir), `layers-${layers}`, `TestRunLayers:${layers},TestRunPartFiles:1`);
+  for (const file of [0, 1]) {
+    expect(asOneProgram[file].length).toBeGreaterThan(50000);
+    const unlike = asOneProgram[file].flatMap((line, index) =>
+      line === inLayers[file][index] ? [] : [`${line}\n  in ${layers} layers: ${inLayers[file][index]}`],
+    );
+    expect(unlike.slice(0, 20)).toEqual([]);
+    expect(inLayers[file].length).toBe(asOneProgram[file].length);
   }
-}, 600000);
+});

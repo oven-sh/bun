@@ -139,7 +139,7 @@ export default b.declarations(
       { ...startedWorker, args: { url: b.string, options: b.undefined }, uses: { url: [b.workerEntryPath] } },
       {
         ...startedWorker,
-        args: { url: b.any, options: b.any.optional },
+        args: { url: b.any.optional, options: b.any.optional },
         uses: { url: [b.everything, b.workerEntryPath], options: [b.everything] },
       },
     ],
@@ -170,13 +170,11 @@ export default b.declarations(
   }),
   // FormData.bind.ts: a Blob, a string or bytes, and it throws for anything else. Parsing runs no JavaScript.
   b.static("FormData.from", {
+    ...runsCodeOfOperands,
     args: { input: b.any.optional, boundary: b.any.optional },
     returns: b.instance("FormData").fresh,
-    capability: "heap",
-    throws: true,
-    uses: { input: b.inspected, boundary: b.inspected },
+    uses: { input: [b.readsContents(), b.runs("ToPrimitive")], boundary: convertedToCharacters },
     reads: ["TypedArrayStorage", "TypedArrayElements", ...externalState],
-    implementation: b.generic,
   }),
   // JSSubtleCrypto.cpp: it reads the members of the algorithms as the methods of crypto.subtle do.
   b.static("SubtleCrypto.supports", {
@@ -203,13 +201,11 @@ export default b.declarations(
     implementation: b.generic,
   }),
   b.static("URL.revokeObjectURL", {
+    ...runsCodeOfOperands,
     args: { url: b.any.optional },
     returns: b.undefined,
-    capability: "heap",
-    throws: true,
-    uses: { url: b.inspected },
+    uses: { url: convertedToCharacters },
     reads: externalState,
     writes: externalState,
-    implementation: b.generic,
   }),
 );

@@ -1,7 +1,8 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { afterAll } from "./harness/default-timeout";
 import { run } from "./harness/run";
-import { test } from "./supported";
+import { beforeAll, test } from "./supported";
 
 const files: Record<string, string> = {
   "package.json": `{ "name": "p", "type": "module" }`,
@@ -92,14 +93,25 @@ async function seenIn(directory: string, env: Record<string, string>, ...flags: 
   return { seen: stdout.split("\n").filter(line => line.startsWith("SEEN ")), exitCode };
 }
 
-test("a callback whose last call is a built-in that throws, called by a built-in", async () => {
-  using dir = tempDir("aot-error-from-a-built-in-that-a-callback-calls-last", files);
-  const plain = await seenIn(String(dir), {});
+let dir: ReturnType<typeof tempDir> | undefined;
+let plain: Awaited<ReturnType<typeof seenIn>>;
+beforeAll(async () => {
+  dir = tempDir("aot-error-from-a-built-in-that-a-callback-calls-last", files);
+  plain = await seenIn(String(dir), {});
+});
+afterAll(() => dir?.[Symbol.dispose]());
+
+test("a callback whose last call is a built-in that throws, called by a built-in: plain Bun", () => {
   expect(plain.exitCode).toBe(0);
   expect(plain.seen.length).toBe(64);
-  const oneProgram = { BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:0" };
-  const layers = { BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:2,TestRunPartFiles:1" };
-  expect(await seenIn(String(dir), oneProgram, "--aot")).toEqual(plain);
-  expect(await seenIn(String(dir), layers, "--aot")).toEqual(plain);
-  expect(await seenIn(String(dir), { ...layers, BUN_JSC_validateAOTRuntime: "1" }, "--aot")).toEqual(plain);
-}, 240_000);
+});
+
+const oneProgram = { BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:0" };
+const layers = { BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:2,TestRunPartFiles:1" };
+test.each([
+  ["one program", oneProgram],
+  ["two layers", layers],
+  ["two layers that validate", { ...layers, BUN_JSC_validateAOTRuntime: "1" }],
+])("a callback whose last call is a built-in that throws, called by a built-in: %s", async (_, env) => {
+  expect(await seenIn(String(dir), env, "--aot")).toEqual(plain);
+});

@@ -36,6 +36,7 @@ const HAS_ROOT_FOLDERS_SPELLED: u32 = 16;
 const HAS_ROOT_FROM_EXECUTABLE: u32 = 32;
 const HAS_FURTHER_PACKAGE_NAMES: u32 = 64;
 const HAS_ROOT_ON_BUILD_MACHINE: u32 = 128;
+const HAS_ASSETS_NAMED_AT_ROOT: u32 = 256;
 /// The length of the path, what `require` and what `import` find, and what the name hides.
 const PACKAGE_NAME_SIZE: usize = 4 * size_of::<u32>();
 const HIDES_OTHER_PATHS: u32 = 1;
@@ -119,6 +120,7 @@ pub struct CompiledProgramInput<'a> {
     pub root_from_executable: Option<&'a [u8]>,
     /// `CompiledProgram::root_on_build_machine`
     pub root_on_build_machine: Option<&'a [u8]>,
+    pub assets_named_at_root: &'a [u8],
     /// Ascending by path.
     pub further_package_names: &'a [FurtherPackageName],
     pub preserves_source_paths: bool,
@@ -167,6 +169,8 @@ pub(crate) fn capacity(input: &CompiledProgramInput<'_>) -> usize {
         + input.root_from_executable.map_or(0, <[u8]>::len)
         + size_of::<u32>()
         + input.root_on_build_machine.map_or(0, <[u8]>::len)
+        + size_of::<u32>()
+        + input.assets_named_at_root.len()
         + encode_further_package_names(input.further_package_names).len()
 }
 
@@ -271,6 +275,7 @@ pub(crate) fn append_record(
             | (u32::from(!input.root_folders_spelled.is_empty()) * HAS_ROOT_FOLDERS_SPELLED)
             | (u32::from(input.root_from_executable.is_some()) * HAS_ROOT_FROM_EXECUTABLE)
             | (u32::from(input.root_on_build_machine.is_some()) * HAS_ROOT_ON_BUILD_MACHINE)
+            | (u32::from(!input.assets_named_at_root.is_empty()) * HAS_ASSETS_NAMED_AT_ROOT)
             | (u32::from(!input.further_package_names.is_empty()) * HAS_FURTHER_PACKAGE_NAMES),
     };
     let root = match input.root_below_working_directory {
@@ -313,6 +318,16 @@ pub(crate) fn append_record(
         .concat(),
         None => Vec::new(),
     };
+    let assets_named_at_root = match input.assets_named_at_root {
+        b"" => Vec::new(),
+        paths => [
+            &u32::try_from(paths.len())
+                .map_err(|_| CORRUPTED)?
+                .to_le_bytes()[..],
+            paths,
+        ]
+        .concat(),
+    };
     let mut image_ranges: Vec<u32> = Vec::new();
     if has_images {
         let lengths = core::iter::once(input.image).chain(input.further_images.iter().copied());
@@ -338,6 +353,7 @@ pub(crate) fn append_record(
         &root_folders,
         &root_from_executable,
         &root_on_build_machine,
+        &assets_named_at_root,
         &encode_further_package_names(input.further_package_names),
         slice_as_bytes(&image_ranges),
     ]);
@@ -633,6 +649,14 @@ fn try_read(
         root_on_build_machine = Some(payload.bytes(end, length)?);
         end += length;
     }
+    let mut assets_named_at_root: &'static [u8] = b"";
+    if header.flags & HAS_ASSETS_NAMED_AT_ROOT != 0 {
+        let length = payload.bytes(end, size_of::<u32>())?;
+        let length = u32::from_le_bytes(length.try_into().ok()?) as usize;
+        end += size_of::<u32>();
+        assets_named_at_root = payload.bytes(end, length)?;
+        end += length;
+    }
     let mut further_package_names = Vec::new();
     if header.flags & HAS_FURTHER_PACKAGE_NAMES != 0 {
         further_package_names = read_further_package_names(payload, &mut end)?;
@@ -671,6 +695,7 @@ fn try_read(
     let program = program.with_root_folders_spelled(root_folders_spelled);
     let program = program.with_root_from_executable(root_from_executable);
     let program = program.with_root_on_build_machine(root_on_build_machine);
+    let program = program.with_assets_named_at_root(assets_named_at_root);
     let program = program.with_further_package_names(further_package_names.into_boxed_slice());
     Some(program.with_path_aliases(path_aliases))
 }
@@ -1141,9 +1166,16 @@ impl StandaloneModuleGraph {
         if !is_bun_standalone_file_path(name) {
             return None;
         }
-        self.files
-            .get(name)
+        self.lookup_file(name)
             .filter(|file| self.is_asset_of_compiled_program(name, file))
+    }
+
+    pub(crate) fn key_of_asset_named_at_root(&self, name: &[u8]) -> Option<Vec<u8>> {
+        let root = BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes();
+        let program = self.compiled_program.as_ref()?;
+        let path = program.asset_named_at_root(name.strip_prefix(root)?)?;
+        let is_taken = program.holds_module_at(name) || program.holds_module_below(name);
+        (!is_taken).then(|| [root, path].concat())
     }
 
     pub fn find_at_source_path(&self, name: &[u8]) -> Option<&File> {
@@ -1284,6 +1316,7 @@ pub(crate) mod tests {
             root_folders_spelled: b"",
             root_from_executable: None,
             root_on_build_machine: None,
+            assets_named_at_root: b"",
             further_package_names: &[],
             preserves_source_paths,
             symbols: b"",
@@ -1602,6 +1635,26 @@ pub(crate) mod tests {
         use bun_resolver::compiled_program::PackageLookup::Found;
         assert_eq!(find(b"@lib/job.js"), Found(b"/$bunfs/root/aliased/job.js"));
         assert_eq!(find(b"task.js"), Found(b"/$bunfs/root/src/task.js"));
+        assert_eq!(
+            read_back(bytes[..bytes.len() - 1].to_vec(), record_at).err(),
+            Some(CORRUPTED)
+        );
+    }
+
+    #[test]
+    fn assets_named_at_root_round_trip() {
+        let entry_points = [entry_point(10, b"/$bunfs/root/main.js")];
+        let mut input = program(&IMAGE, ALIGNMENT, &entry_points, false);
+        input.assets_named_at_root = b"a/config.json\0deep/down/one.txt\0";
+        let (bytes, record_at, _) = write(&input, &[Some(0)], 5).unwrap();
+        let (program, record_end) = read_back(bytes.clone(), record_at).unwrap();
+        assert_eq!(record_end, bytes.len());
+        let find = |name: &[u8]| program.asset_named_at_root(name);
+        assert_eq!(find(b"config.json"), Some(&b"a/config.json"[..]));
+        assert_eq!(find(b"one.txt"), Some(&b"deep/down/one.txt"[..]));
+        assert_eq!(find(b"a/config.json"), None);
+        assert_eq!(find(b"down"), None);
+        assert_eq!(find(b""), None);
         assert_eq!(
             read_back(bytes[..bytes.len() - 1].to_vec(), record_at).err(),
             Some(CORRUPTED)

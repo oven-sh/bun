@@ -77,6 +77,8 @@ function f4 name="runtime" module=m6 kind=Module results=[{type=anything}] {
 # CHECK-NEXT: modulesOfUncompiledCode 0 0
 # CHECK-NEXT: modulesThatLoadCompiledFilesAlone 0 0
 # CHECK-NEXT: modulesThatFindBuiltinsReadOnly 0 0
+# CHECK-NEXT: modulesReachedUnderOtherNames 0 0
+# CHECK-NEXT: asyncFunctionsWithoutAwait 0 0
 # CHECK-NEXT: importsOfHeldFiles 0 0
 # The variable of the library's file m3 is left out.
 # CHECK-NEXT: namedVariables 8 8

@@ -51,3 +51,42 @@ show("in an arrow", () => { Reflect.construct(F, []); });
 show("in a constructor", function () { class K { constructor() { return Reflect.construct(F, [], new.target); } } new K(); });
 show("in tail position", function () { "use strict"; return Reflect.construct(F, []); });
 show("held, in tail position", function () { "use strict"; return held(F, []); });
+/* Output:
+written | Error | new F < 
+written, three arguments | Error | new F < 
+written, four arguments | Error | new F < 
+written, a class | Error | new C < 
+written, one argument | TypeError | construct [native] < 
+written, no argument | TypeError | construct [native] < 
+written, optional call | Error | new F < 
+written, optional member | Error | new F < 
+written, brackets | Error | new F < 
+written, parentheses | Error | new F < 
+spread of everything | Error | new F < construct [native] < 
+spread of the second | Error | new F < construct [native] < 
+spread of the third | Error | new F < construct [native] < 
+held in a constant | Error | new F < construct [native] < 
+held in a local | Error | new F < construct [native] < 
+behind a comma | Error | new F < construct [native] < 
+another name of Reflect | Error | new F < construct [native] < 
+globalThis.Reflect | Error | new F < construct [native] < 
+Reflect as a member | Error | new F < construct [native] < 
+construct as a member | Error | new F < construct [native] < 
+call | Error | new F < construct [native] < 
+apply | Error | new F < construct [native] < 
+Reflect.apply | Error | new F < construct [native] < 
+bound | Error | new F < construct [native] < 
+a parameter named Reflect | Error | new F <  < 
+Reflect through a function | Error | new F < construct [native] < 
+no constructor | TypeError | construct [native] < 
+no list | TypeError | construct [native] < 
+new target is no constructor | TypeError | construct [native] < 
+bound target | Error | new F < 
+host target | TypeError | URL [native] < 
+new target is a function | Error | new F < 
+new target is a class | Error | new C < 
+in an arrow | Error | new F < 
+in a constructor | Error | new F < new K < 
+in tail position | Error | new F < 
+held, in tail position | Error | new F < construct [native]
+*/

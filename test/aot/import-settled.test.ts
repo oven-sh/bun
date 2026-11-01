@@ -22,6 +22,7 @@ export const value = "inner loaded";
 setTimeout(() => (globalThis.timerThen = "timer ran"), 0);
 `,
   "timer-bare.js": `console.log("seen: timer-bare.js runs");
+await new Promise(done => setTimeout(done, 30));
 setTimeout(() => (globalThis.timerBare = "timer ran"), 0);
 `,
   "throws.js": `console.log("seen: throws.js runs");

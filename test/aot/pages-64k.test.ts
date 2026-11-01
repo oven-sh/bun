@@ -1,6 +1,7 @@
 // A kernel for Linux on ARM64 may have pages of 64 KB: RHEL 8, Oracle's UEK, the 64k kernels for NVIDIA Grace. Plain Bun runs there. A compiled program aborted
 // before its first statement: what lies above its instance was laid out in steps of 16 KB, and the page that a loop polls could not be a page of its own.
 // No machine of CI has such a kernel, so a library in front of libc imitates one: ./pages-64k.c.
+// A real one has confirmed the library (2026-11-01, Linux 6.18 with pages of 64 KB on a Graviton3): the three programs below ran there, and what aborts under the library aborted there.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isArm64, isASAN, isLinux, tempDir } from "harness";
 import { join } from "path";

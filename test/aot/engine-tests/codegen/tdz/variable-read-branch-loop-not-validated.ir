@@ -96,5 +96,5 @@ function f2 name="readVar" module=m0 position=2499 flags=[HasExplicitName] lengt
 # -- generated: readInBranch
 # CHECK-LABEL: function {{*}}name="readInBranch"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 70, patchpoints: 24, rare instructions: 40, polls: 1
+# CHECK-NEXT: instructions: 68, patchpoints: 24, rare instructions: 38, polls: 1
 # CHECK-NEXT: end of function f6

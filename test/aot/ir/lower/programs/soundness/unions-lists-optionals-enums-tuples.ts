@@ -42,7 +42,7 @@ Promise.all([load(0), load(1)]).then(rows => console.log(rows.map(r => r.id + ":
 
 // GENERATED: load List push [Symbol.iterator]
 // CHECK-LABEL: function {{*}}name="load"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=[[w_1]]}] results=[{type=undefined|null|Promise<undefined|null|[[L_2]]> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=1 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=number site=[[w_1]]}] results=[{type=undefined|null|Promise<undefined|null|[[L_2]]> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: anything, v1: number):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

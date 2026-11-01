@@ -2,8 +2,10 @@
 // behind a way back through require(), a CommonJS file ran although its one importer was mocked.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { beforeAll, describe, test } from "../supported";
+import { afterAll } from "./default-timeout";
 import { run } from "./run";
-import { test } from "../supported";
+import { runsWholeGrids } from "./ways";
 
 const main = (lib: string) => `import { v } from "./${lib}";\nconsole.log("SEEN main", v);\n`;
 const hoisted = (lib: string) => `import { test, vi } from "bun:test";
@@ -14,6 +16,13 @@ test("t", () => {});
 const inTest = (mocked: string, body: string, exports = `{ v: "mock v" }`) => `import { mock, test } from "bun:test";
 test("t", async () => {
   mock.module("./${mocked}", () => (${exports}));
+  ${body}
+});
+`;
+const inCommonJSTest = (body: string) => `const { mock, test } = require("bun:test");
+test("t", async () => {
+  mock.module("./lib.mjs", () => ({ v: "mock v" }));
+  await import("./main.mjs");
   ${body}
 });
 `;
@@ -87,6 +96,67 @@ test("t", async () => {
     "a.test.mjs": inTest("x.mjs", `console.log("SEEN main mock v", (await import("./lib.mjs")).v);`, `{ x: "mock x" }`),
     "b.test.mjs": inTest("lib.mjs", `await import("./root.mjs");`),
   },
+  // The loader has not come to such a file, so nothing that asks what the loader holds finds it.
+  "a file that throws runs again at every require()": {
+    "lib.mjs": `import h from "./hidden.cjs";\nexport let v = "real v" + h.d;\n`,
+    "hidden.cjs": `console.log("SEEN hidden runs");\nthrow new Error("hidden threw");\n`,
+    "a.test.mjs": `${hoisted("lib.mjs").replace(/test\("t".*\n/, "")}import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+test("t", () => {
+  for (const turn of [1, 2, 3]) {
+    try {
+      require("./hidden.cjs");
+    } catch (error) {
+      console.log("SEEN caught", turn, error.message);
+    }
+  }
+});
+`,
+  },
+  "a file that throws runs again at every require() of a CommonJS test file": {
+    "lib.mjs": `import h from "./hidden.cjs";\nexport let v = "real v" + h.d;\n`,
+    "hidden.cjs": `console.log("SEEN hidden runs");\nthrow new Error("hidden threw");\n`,
+    "a.test.cjs": inCommonJSTest(`for (const turn of [1, 2, 3]) {
+    try {
+      require("./hidden.cjs");
+    } catch (error) {
+      console.log("SEEN caught", turn, error.message);
+    }
+  }`),
+  },
+  "a file runs again behind a falsy entry in require.cache": {
+    "lib.mjs": `import h from "./hidden.cjs";\nexport let v = "real v" + h.d;\n`,
+    "hidden.cjs": `console.log("SEEN hidden runs");\nexports.d = 1;\n`,
+    "a.test.cjs": inCommonJSTest(`for (const entry of [undefined, 0, false]) {
+    console.log("SEEN required", require("./hidden.cjs").d);
+    require.cache[require.resolve("./hidden.cjs")] = entry;
+  }`),
+  },
+  "require.cache lists neither the module nor a built-in module that it alone imports": {
+    "lib.mjs": `import "ws";\nimport "undici";\nimport "./hidden.mjs";\nexport let v = "real v";\n`,
+    "hidden.mjs": `console.log("SEEN hidden runs");\n`,
+    "a.test.cjs": inCommonJSTest(
+      `console.log("SEEN listed", Object.keys(require.cache).map(key => require("node:path").basename(key)).filter(key => /^(hidden|lib|main|ws|undici)/.test(key)).sort().join());`,
+    ),
+  },
+  "a data file comes in the form that is asked for": {
+    "lib.mjs": `import path from "./d.txt" with { type: "file" };\nexport let v = "real v" + path.length;\n`,
+    "d.txt": "the text",
+    "a.test.cjs": inCommonJSTest(
+      `console.log("SEEN text", (await import("./d.txt", { with: { type: "text" } })).default);`,
+    ),
+  },
+  "a plugin that is laid later serves the module": {
+    "lib.mjs": `import { e } from "./hidden.mjs";\nexport let v = "real v" + e;\n`,
+    "hidden.mjs": `console.log("SEEN hidden runs");\nexport let e = "of the file";\n`,
+    "a.test.cjs": inCommonJSTest(`Bun.plugin({
+    name: "p",
+    setup(build) {
+      build.onLoad({ filter: /hidden\\.mjs$/ }, () => ({ contents: 'export let e = "of the plugin";', loader: "js" }));
+    },
+  });
+  console.log("SEEN e", (await import("./hidden.mjs")).e);`),
+  },
   // Such a mock has no `export *`.
   ...Object.fromEntries(
     Object.entries({
@@ -136,43 +206,150 @@ test("t", () => {
 
 async function runTests(directory: string, words: string | undefined, flags: string[]) {
   const env = words ? { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words } : bunEnv;
-  const { stdout, exitCode } = await run([bunExe(), "test", ...flags], directory, env);
-  return { stdout: stdout.split("\n").filter(line => line.startsWith("SEEN")), exitCode };
+  const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], directory, env);
+  // What several workers print comes out on stderr, under the name of the test file.
+  const printed = `${stdout}\n${stderr}`.split("\n").filter(line => line.startsWith("SEEN"));
+  return { stdout: printed, stderr, exitCode };
+}
+
+const filesOf = (files: Record<string, string>) => ({
+  "package.json": `{ "name": "p" }`,
+  "lib.mjs": lib,
+  "main.mjs": main("lib.mjs"),
+  ...files,
+});
+
+function expectOfPlain(name: string, stdout: string[]) {
+  const first = /^another file|was loaded before/.test(name)
+    ? "driver runs"
+    : name.endsWith("that is followed")
+      ? "second runs"
+      : "main mock v";
+  expect(stdout[0]).toStartWith("SEEN " + first);
+}
+
+const layers = ["TestRunLayers:0", "TestRunLayers:1", "TestRunLayers:2"];
+const workers = "two workers, and no memory to spare";
+const compiled = (directory: string, way: string, testFiles: string[] = []) =>
+  way === workers
+    ? runTests(directory, undefined, ["--aot", "--parallel=2", "--aot-memory-limit=1KB", ...testFiles])
+    : runTests(directory, way, ["--aot", ...testFiles]);
+
+/**
+ * All the projects as one, each in a folder of its own, which every line that it prints names: one build judges them all, project by project.
+ * The lowest layer holds all of Bun's own library whatever stands above it: a project that is built by itself pays that for itself.
+ */
+function asOneProject(way: string) {
+  const folders = Object.entries(projects).map(([name, files], index) => ({
+    name,
+    index,
+    folder: String(index).padStart(2, "0"),
+    files: filesOf(files),
+    testFiles: Object.keys(files).filter(path => path.includes(".test.")),
+  }));
+  // What lists require.cache goes first: without `--isolate` the files of a run share it.
+  const inTurn = folders
+    .toSorted(
+      (a, b) => Number(b.name.startsWith("require.cache lists")) - Number(a.name.startsWith("require.cache lists")),
+    )
+    .flatMap(({ folder, testFiles }) => testFiles.map(path => `./${folder}/${path}`));
+  type Seen = { stdout: string[]; tests: string[] };
+  const byFolder = ({ stdout, stderr, exitCode }: Awaited<ReturnType<typeof runTests>>) => {
+    const seen: Seen[] = folders.map(() => ({ stdout: [], tests: [] }));
+    for (const line of stdout) seen[Number(line.slice(5, 7))].stdout.push("SEEN " + line.slice(8));
+    let folder = -1;
+    // The run ends with a list of all that failed.
+    for (const line of stderr.split(/^\d+ tests failed:$/m)[0].split("\n")) {
+      const file = line.match(/^(\d\d)[\\/]\S+:$/);
+      if (file) folder = Number(file[1]);
+      else if (/^\((pass|fail)\) /.test(line)) seen[folder].tests.push(line.replace(/ \[[\d.]+m?s\]$/, ""));
+    }
+    return { seen, exitCode };
+  };
+  // Two workers print their files as they end.
+  const inOrder = ({ stdout, tests }: Seen) =>
+    way === workers ? { stdout: stdout.toSorted(), tests: tests.toSorted() } : { stdout, tests };
+
+  describe("as one project", () => {
+    let dir: ReturnType<typeof tempDir> | undefined;
+    let plain: ReturnType<typeof byFolder>;
+    let expected: typeof plain;
+    let built: Promise<typeof plain> | undefined;
+    const whenBuilt = () => (built ??= compiled(String(dir), way, inTurn).then(byFolder));
+    beforeAll(async () => {
+      const all: Record<string, string> = { "package.json": `{ "name": "all" }` };
+      for (const { folder, files } of folders)
+        for (const [path, text] of Object.entries(files))
+          all[`${folder}/${path}`] = text.replaceAll("SEEN ", `SEEN ${folder} `);
+      dir = tempDir("aot-mock-hides-packages", all);
+      plain = byFolder(await runTests(String(dir), undefined, inTurn));
+      expected =
+        way === workers ? byFolder(await runTests(String(dir), undefined, ["--parallel=2", ...inTurn])) : plain;
+    });
+    afterAll(() => dir?.[Symbol.dispose]());
+
+    describe.each(folders)("$name", ({ name, index, testFiles }) => {
+      test("plain Bun", () => {
+        expect(plain.seen[index].tests).toEqual(testFiles.map(() => "(pass) t"));
+        expectOfPlain(name, plain.seen[index].stdout);
+      });
+
+      test(way, async () => {
+        const { seen } = await whenBuilt();
+        expect(inOrder(seen[index])).toEqual(inOrder(expected.seen[index]));
+      });
+    });
+
+    test("the exit code", async () => {
+      expect(plain.exitCode).toBe(0);
+      expect((await whenBuilt()).exitCode).toBe(expected.exitCode);
+    });
+  });
 }
 
 /**
- * Every case builds its project four times, three of them in layers: under a sanitizer minutes of processor time.
- * So the cases are dealt to several test files: of `of` files, this one takes every `of`-th case, from the `part`-th on.
+ * Built by themselves too in front of every merge. What one project does can make a build careful with the files of all: a fault in which files
+ * may load again showed in the second by itself, and not beside the others.
+ */
+const witnesses = ["a CommonJS package", "a file that throws runs again at every require()"];
+
+/**
+ * The family is about the layers, so every project goes through every way. By itself a project is built four times, three of them in layers, each build in a case
+ * of its own: under a sanitizer minutes of processor time. So the projects are dealt to several test files: of `of` files, this one takes every `of`-th project,
+ * from the `part`-th on. In front of a merge only the witnesses are built so: each of the first four files builds all the projects as one, in one way.
  */
 export function mockHidesPackages(part: number, of: number) {
+  const way = [...layers, workers][part];
+  if (way && !runsWholeGrids) asOneProject(way);
   for (const [name, files] of Object.entries(projects).filter((_, index) => index % of === part)) {
-    test.concurrent(
-      name,
-      async () => {
-        using dir = tempDir("aot-mock-hides-packages", {
-          "package.json": `{ "name": "p" }`,
-          "lib.mjs": lib,
-          "main.mjs": main("lib.mjs"),
-          ...files,
-        });
-        const plain = await runTests(String(dir), undefined, []);
+    const isBuilt = runsWholeGrids || witnesses.includes(name);
+    describe(name, () => {
+      let dir: ReturnType<typeof tempDir> | undefined;
+      let plain: { stdout: string[]; exitCode: number };
+      let parallel: typeof plain;
+      const answers = ({ stdout, exitCode }: Awaited<ReturnType<typeof runTests>>) => ({ stdout, exitCode });
+      beforeAll(async () => {
+        dir = tempDir("aot-mock-hides-packages", filesOf(files));
+        plain = answers(await runTests(String(dir), undefined, []));
+        if (isBuilt) parallel = answers(await runTests(String(dir), undefined, ["--parallel=2"]));
+      });
+      afterAll(() => dir?.[Symbol.dispose]());
+
+      test("plain Bun", () => {
         expect(plain.exitCode).toBe(0);
-        const first = /^another file|was loaded before/.test(name)
-          ? "driver runs"
-          : name.endsWith("that is followed")
-            ? "second runs"
-            : "main mock v";
-        expect(plain.stdout[0]).toStartWith("SEEN " + first);
-        for (const words of ["TestRunLayers:0", "TestRunLayers:1", "TestRunLayers:2"])
-          expect({ words, ...(await runTests(String(dir), words, ["--aot"])) }).toEqual({ words, ...plain });
+        expectOfPlain(name, plain.stdout);
+      });
+      if (!isBuilt) return;
+
+      test.concurrent.each(layers)("%s", async words => {
+        expect(answers(await compiled(String(dir), words))).toEqual(plain);
+      });
+
+      test.concurrent(workers, async () => {
         // Two workers print their files as they end.
         const sorted = ({ stdout, exitCode }: typeof plain) => ({ stdout: stdout.toSorted(), exitCode });
-        const parallel = await runTests(String(dir), undefined, ["--parallel=2"]);
-        expect(
-          sorted(await runTests(String(dir), undefined, ["--aot", "--parallel=2", "--aot-memory-limit=1KB"])),
-        ).toEqual(sorted(parallel));
-      },
-      300_000,
-    );
+        expect(sorted(answers(await compiled(String(dir), workers)))).toEqual(sorted(parallel));
+      });
+    });
   }
 }

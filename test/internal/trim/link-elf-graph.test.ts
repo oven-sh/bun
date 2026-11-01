@@ -120,6 +120,40 @@ describeLink("the graph reader", () => {
     expect(graph.output).not.toContain(".toy_notes");
   });
 
+  test("follows a reference to an object without bytes to nothing, whatever stands at its address", async () => {
+    using dir = tempDir("trim-elf-reader", {
+      ...files,
+      "more.c": `
+        struct nothing {};
+        extern const struct nothing handle;
+        __attribute__((noinline)) static int takes(const struct nothing* at, int x) { __asm__("" : "+r"(at)); return x + (at != 0); }
+        int more(int x) { return takes(&handle, x); }
+      `,
+      // One file, so that the linker lays the two sections side by side.
+      "handle.c": String.raw`
+        __asm__(".section .rodata.handle,\"a\",@progbits\n.globl handle\n.type handle,@object\n.size handle,0\nhandle:\n"
+                ".section .rodata.neighbour,\"a\",@progbits\n.globl neighbour\n.type neighbour,@object\n.size neighbour,8\nneighbour:\n.quad 7\n.text\n");
+      `,
+    });
+    const folder = String(dir);
+    const linkedObjects = [...objects, "handle"];
+    await compileObjects(folder, linkedObjects);
+    // Nothing names the neighbour, and the linker would drop it.
+    const link = { name: "second", output: "hand", objects: linkedObjects, linkFlags: ["-Wl,--undefined=neighbour"] };
+    const { executable, map, log } = await linkByHand(folder, link);
+    const addressOf = (section: string) =>
+      new RegExp(String.raw`^ +([0-9a-f]+) .*:\(\.rodata\.${section}\)$`, "m").exec(readFileSync(map, "latin1"))?.[1];
+    expect(addressOf("handle")).toBeDefined();
+    expect(addressOf("handle")).toBe(addressOf("neighbour"));
+    const { graph, failures } = readElfGraph(executable, map, log);
+    expect(failures).toEqual([]);
+    const neighbour = graph.section.indexOf(".rodata.neighbour");
+    expect(neighbour).toBeGreaterThanOrEqual(0);
+    const reaches = (node: number) =>
+      graph.successors.subarray(graph.successorStart[node]!, graph.successorStart[node + 1]!).includes(neighbour);
+    expect(graph.section.filter((_, node) => reaches(node))).toEqual([]);
+  });
+
   test("reports a reference to a section the map does not list", async () => {
     using dir = tempDir("trim-elf-reader", files);
     const folder = String(dir);

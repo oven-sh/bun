@@ -2701,7 +2701,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f32 visibility=Private
 # -- generated: f0 sum
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 1008, patchpoints: 120, rare instructions: 1885, polls: 7
+# CHECK-NEXT: instructions: 1014, patchpoints: 120, rare instructions: 1889, polls: 7
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="sum"
 # CHECK: role=Source

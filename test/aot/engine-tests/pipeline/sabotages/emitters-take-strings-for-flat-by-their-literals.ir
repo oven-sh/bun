@@ -1,0 +1,6 @@
+# sabotage=EmittersTakeStringsForFlat: a type that names the texts a string may be says what the characters are, not which object holds them: the build stops
+# FORM: Selected
+# RUN: lower-to-b3 f0
+# DIAGNOSTIC: EmitterAssumesFlatString 1
+# OPTIONS: sabotage=EmittersTakeStringsForFlat
+# PROGRAM-OF: emitters-take-strings-for-flat-by-their-literals-left-alone.ir

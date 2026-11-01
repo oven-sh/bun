@@ -542,6 +542,40 @@ pub(super) struct SpreadSymbolOptions {
     pub(super) resolves: bool,
 }
 
+#[derive(Copy, Clone)]
+pub(super) struct SymbolOfSpread {
+    pub(super) declared_at: (FileId, u32, ExprId),
+    pub(super) mapper: MapperId,
+    pub(super) object_flags: ObjectFlags,
+}
+
+impl SymbolOfSpread {
+    pub(super) fn put_on(self, shape: &mut Shape) {
+        if self.is_non_inferrable() {
+            shape.literal = Literalness::Partial;
+        }
+        shape.contains_widening_type |= self.contains_widening_type();
+        shape.symbol_declared_at = Some(self.declared_at);
+        shape.mapper = self.mapper;
+    }
+
+    pub(super) fn is_on(self, shape: &Shape) -> bool {
+        (!self.is_non_inferrable() || shape.literal == Literalness::Partial)
+            && (!self.contains_widening_type() || shape.contains_widening_type)
+            && shape.symbol_declared_at == Some(self.declared_at)
+            && shape.mapper == self.mapper
+    }
+
+    fn is_non_inferrable(self) -> bool {
+        self.object_flags.contains(ObjectFlags::NON_INFERRABLE_TYPE)
+    }
+
+    fn contains_widening_type(self) -> bool {
+        self.object_flags
+            .contains(ObjectFlags::CONTAINS_WIDENING_TYPE)
+    }
+}
+
 /// Collects properties by name, in the order they are first seen.
 struct Builder<'s> {
     shape: Shape<'s>,
@@ -973,12 +1007,43 @@ impl<'p, 's> Checker<'p, 's> {
         shape.call.shrink_to_fit();
         shape.construct.shrink_to_fit();
         shape.index.shrink_to_fit();
-        let resolved = Resolved::new(shape);
+        self.cache_resolved(key, Resolved::new(shape), stored)
+    }
+
+    fn cache_resolved(&mut self, key: TypeId, resolved: Resolved<'s>, stored: Stored) -> Built<'p> {
         let (shape_handle, resolved) =
             (self.p.shapes).insert_ref(&self.task, key, resolved, stored);
         Built {
             resolved,
             store_handle: Some(shape_handle),
+        }
+    }
+
+    fn members_of_synthesized_type(&mut self, key: TypeId, shape: &Shape) -> Built<'p> {
+        if let Some(shape_handle) = self.p.shapes.handle(&self.task, &key) {
+            return Built {
+                resolved: self.p.shapes.at(&self.task, shape_handle),
+                store_handle: Some(shape_handle),
+            };
+        }
+        if let Some(built) = self.provisionally_cached_shape(Query::Shape(key)) {
+            return built;
+        }
+        if !self.enter(Query::Shape(key)) {
+            return self.provisional_shape(Shape::new_in(self.arena));
+        }
+        // SAFETY: `shape` is boxed in the record of `key` and never changes. A published record lives as long as the
+        // session. A task's own record lives until `Task::drop_everything`, which also drops every entry under its id,
+        // and no such entry is shared. Provisional members don't outlive the file.
+        let resolved = Resolved::of(unsafe { Listed::lent_by(shape) }, self.arena);
+        match self.leave(Query::Shape(key)) {
+            Ok(stored) => self.cache_resolved(key, resolved, stored),
+            Err(open) => {
+                let built = self.provisional_members(resolved);
+                let raw = std::ptr::from_ref(built.resolved) as usize as u64;
+                self.cache_provisionally(Query::Shape(key), raw, open);
+                built
+            }
         }
     }
 
@@ -1670,7 +1735,7 @@ impl<'p, 's> Checker<'p, 's> {
                 ))
             }
             TypeData::Synth(shape) => {
-                let resolved = self.shape_memo(ty, |_| (**shape).clone_in(self.arena));
+                let resolved = self.members_of_synthesized_type(ty, shape);
                 Some((resolved, MapperId::IDENTITY))
             }
             &TypeData::ReverseMapped { source, mapped, of } => {
@@ -1767,13 +1832,14 @@ impl<'p, 's> Checker<'p, 's> {
             (self.cycles, self.members_in_place_hit_at) = (scope.counters.0, hit_at);
         }
         let mut shape = declared.clone_in(self.arena);
-        for prop in &mut shape.props {
+        let (props, call, construct, index) = shape.lists_mut();
+        for prop in props {
             self.instantiate_prop(prop, mapper);
         }
-        for sig in shape.call.iter_mut().chain(shape.construct.iter_mut()) {
+        for sig in call.iter_mut().chain(construct) {
             *sig = self.instantiate_sig(*sig, mapper);
         }
-        for (info, value) in shape.index.iter_mut().zip(values) {
+        for (info, value) in index.iter_mut().zip(values) {
             info.value = value;
         }
         let own = Resolved::of(shape, self.arena);
@@ -5257,7 +5323,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getSpreadType`: `{ ...left, ...right }`
     pub fn spread(&mut self, left: TypeId, right: TypeId) -> TypeId {
-        self.get_spread_type(left, right, false, &mut 0)
+        self.get_spread_type(left, right, false, &mut 0, None)
     }
 
     /// `getSpreadSymbol(prop, readonly)` for `prop`, a property of a type whose members have the
@@ -5354,6 +5420,7 @@ impl<'p, 's> Checker<'p, 's> {
         right: TypeId,
         readonly: bool,
         rank: &mut u32,
+        symbol: Option<SymbolOfSpread>,
     ) -> TypeId {
         if self.is_any(left) || self.is_any(right) {
             return if left == TypeId::UNRESOLVED || right == TypeId::UNRESOLVED {
@@ -5380,7 +5447,7 @@ impl<'p, 's> Checker<'p, 's> {
             self.members_in_map_type_order(left, &mut members);
             let spread: Vec<TypeId> = members
                 .into_iter()
-                .map(|p| self.get_spread_type(p, right, readonly, rank))
+                .map(|p| self.get_spread_type(p, right, readonly, rank, symbol))
                 .collect();
             return self.union(&spread);
         }
@@ -5393,7 +5460,7 @@ impl<'p, 's> Checker<'p, 's> {
             self.members_in_map_type_order(right, &mut members);
             let spread: Vec<TypeId> = members
                 .into_iter()
-                .map(|p| self.get_spread_type(left, p, readonly, rank))
+                .map(|p| self.get_spread_type(left, p, readonly, rank, symbol))
                 .collect();
             return self.union(&spread);
         }
@@ -5417,7 +5484,7 @@ impl<'p, 's> Checker<'p, 's> {
                 && self.is_non_generic_object_type(right)
             {
                 let mut parts = others.to_vec();
-                parts.push(self.get_spread_type(last, right, readonly, rank));
+                parts.push(self.get_spread_type(last, right, readonly, rank, symbol));
                 return self.intersection(&parts);
             }
             return self.intersection(&[left, right]);
@@ -5602,6 +5669,9 @@ impl<'p, 's> Checker<'p, 's> {
         b.shape.created_from = Some((left, right));
         b.shape.spread_rank = *rank;
         *rank += 1;
+        if let Some(symbol) = symbol {
+            symbol.put_on(&mut b.shape);
+        }
         self.synth(b.shape)
     }
 

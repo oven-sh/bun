@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { builtinModules } from "node:module";
 import { run } from "./harness/run";
+import { testFilesOf } from "./harness/test-files";
 import { test } from "./supported";
 
 // `get EOL()` of node:os, `get promises()` of node:fs, `get inspect()` of node:util: the host reads such an export when something first asks for it.
@@ -113,7 +114,8 @@ function everyWayToTheNamespace() {
 
 async function report(directory: string, flags: string[], words?: string) {
   const env = words ? { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words } : bunEnv;
-  const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags, "."], directory, env);
+  const files = testFilesOf(directory);
+  const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags, ...files], directory, env);
   const printed = (stdout + "\n" + stderr).split("\n").filter(line => line.startsWith("| "));
   const counts = stderr.match(/^ *\d+ (pass|fail)$/gm)?.map(line => line.trim());
   if (exitCode !== 0) console.error(stderr);

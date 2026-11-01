@@ -5,10 +5,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "node:path";
-import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { test } from "./supported";
-
-raiseDefaultTimeout(600_000);
 
 const isolations = [`[]`, `["--isolate"]`, `["--isolate=modules"]`];
 const laterConst = "factory can read a later const though an earlier file or a preload loaded the module";
@@ -32,24 +29,47 @@ const differs = {
   ],
 };
 
-test("the specification of plain `bun test` holds compiled", async () => {
-  await using run = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "test",
-      "--timeout=120000",
-      "--preload",
-      join(import.meta.dir, "harness/spawn-bun-test-compiled.ts"),
-      join(import.meta.dir, "../js/bun/test/mock/mock-hoist.test.ts"),
-    ],
-    env: bunEnv,
-    cwd: join(import.meta.dir, ".."),
-    stdout: "ignore",
-    stderr: "pipe",
-  });
-  const [stderr] = await Promise.all([run.stderr.text(), run.exited]);
-  const results = [...stderr.matchAll(/^\((pass|fail)\) (.*?)(?: \[[\d.]+ms\])?$/gm)];
-  const named = (result: string) => [...new Set(results.filter(it => it[1] === result).map(it => it[2]))].sort();
-  expect(named("fail")).toEqual(Object.values(differs).flat().sort());
-  expect(named("pass")).toHaveLength(121);
-});
+// How many cases of each section of the specification pass.
+const sections = {
+  "hoisting": 36,
+  "imports that stay static": 4,
+  "not hoisted": 19,
+  "vi.mock(import(path))": 12,
+  "modes": 7,
+  "a top-level variable in a factory of jest.mock": 18,
+  "a top-level variable in a factory of vi.mock": 18,
+  "errors": 3,
+  "source locations": 4,
+};
+
+test.each(Object.entries(sections))(
+  "the specification of plain `bun test` holds compiled: %s",
+  async (section, passing) => {
+    await using run = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "test",
+        "--timeout=120000",
+        "-t",
+        `^${section.replace(/[.()]/g, "\\$&")} `,
+        "--preload",
+        join(import.meta.dir, "harness/spawn-bun-test-compiled.ts"),
+        join(import.meta.dir, "../js/bun/test/mock/mock-hoist.test.ts"),
+      ],
+      env: bunEnv,
+      cwd: join(import.meta.dir, ".."),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr] = await Promise.all([run.stderr.text(), run.exited]);
+    const results = [...stderr.matchAll(/^\((pass|fail)\) (.*?)(?: \[[\d.]+ms\])?$/gm)];
+    const named = (result: string) => [...new Set(results.filter(it => it[1] === result).map(it => it[2]))].sort();
+    const differing = Object.values(differs)
+      .flat()
+      .filter(name => name.startsWith(`${section} > `));
+    expect(named("fail")).toEqual(differing.sort());
+    expect(named("pass")).toHaveLength(passing);
+    // A section that is not listed here would run in no case.
+    expect(Number(/^ *(\d+) filtered out$/m.exec(stderr)?.[1])).toBe(121 + 13 - passing - differing.length);
+  },
+);

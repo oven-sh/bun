@@ -11,6 +11,7 @@ different output plain "(.*?)(Error|is not a|is not an|Cannot |undefined is|null
 ^engine .*(Iterator result interface is not an object|this. is not a Promise|executor did not take)	runner	a stand-in replaces the built-ins that are written in JavaScript
 ^engine .* compiled ".*\blibrary\b	runner	the stand-in's name
 different output plain ".*\{ ?\}.*" compiled ".*\{"$	language	Function.prototype.toString returns the source text in a compiled program and the transpiler's output in plain Bun
+different output plain " +collectInside\(\);" compiled "collectInside\(\);"	language	the text of a function into which a call was written without indentation: the source text in a compiled program, the transpiler's output, indented anew, in plain Bun
 function (\w+)\(\) \{\s*\w+\+\+;?\s*try \{\s*\1\(\)	language	the recursion depth at which the stack overflows is unspecified	reduced
 different output plain ".*iterable should have an iterator symbol.*" compiled ".*is not iterable	language	engine error messages differ
 different output plain ".* at /.*program\.[jt]s:\d+:\d+" compiled ".*\$bunfs	runner	the program's path in a printed stack trace

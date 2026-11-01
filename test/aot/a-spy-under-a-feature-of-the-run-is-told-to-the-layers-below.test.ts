@@ -4,6 +4,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
+import { runsWholeGrids } from "./harness/ways";
 import { test } from "./supported";
 
 raiseDefaultTimeout(120_000);
@@ -34,8 +35,12 @@ const forms = {
   },
 };
 
+// Over layers two of the three were wrong. There the benches run the third.
+const formsOver = (layers: number) =>
+  Object.entries(forms).filter(([name]) => !layers || runsWholeGrids || name !== "where the feature is off");
+
 for (const layers of [0, 2])
-  for (const [name, form] of Object.entries(forms))
+  for (const [name, form] of formsOver(layers))
     test(`${name}, ${layers} layers`, async () => {
       using dir = tempDir("aot-spy-under-a-feature", {
         "package.json": `{ "name": "spy-under-a-feature", "type": "module" }`,

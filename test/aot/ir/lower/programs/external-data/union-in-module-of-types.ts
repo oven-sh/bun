@@ -37,7 +37,7 @@ export type Act<In> = { early: Promise<In>; isEarly(): boolean };
 
 // GENERATED: either isEarly
 // CHECK-LABEL: function {{*}}name="either"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] site=[[w_2]] flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|Promise<undefined|null|[[L_3]]> flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Promise<undefined|null|[[L_4]]> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=2 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] site=[[w_2]] flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|Promise<undefined|null|[[L_3]]> flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Promise<undefined|null|[[L_4]]> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: anything, v1: undefined|null|[[L_1]], v2: undefined|null|Promise<undefined|null|[[L_3]]>):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

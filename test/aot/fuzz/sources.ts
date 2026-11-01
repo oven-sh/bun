@@ -16,6 +16,7 @@
 //                         become packages in node_modules, some are imported through a barrel file
 //   <source>-rewritten    the same program transformed so that it prints the same and the compiler knows less about it (see asRewritten below)
 //   <source>-never-taken  the same program with code that this run never takes and that no build can rule out (see asNeverTaken below)
+//   <source>-another-call the same program with one more call of its own functions, with values of other kinds (see asAnotherCall below)
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { join, relative } from "path";
 import { withPackedPrograms } from "../generate";
@@ -58,6 +59,9 @@ export type Source = (seed: number, runner: Runner) => Generated | undefined;
 export const multiFileSuffix = "-multi-file";
 export const rewrittenSuffix = "-rewritten";
 export const neverTakenSuffix = "-never-taken";
+export const anotherCallSuffix = "-another-call";
+export const ownCopiesSuffix = "-own-copies";
+export const fourCallersSuffix = "-four-callers";
 
 // At the top level of a file with an `import`, `this` is null in plain Bun and undefined in an executable; without one
 // it is an object in both. The transpiler knows which `this` is at the top level: in a module it prints null instead.
@@ -515,6 +519,64 @@ const asNeverTaken =
     return { ...rest, text, source: whole.source + neverTakenSuffix, needsOwnBuild: true };
   };
 
+/**
+ * The another-call variant of a source: one or two of the program's own functions are called once more, ahead of
+ * everything else, with values of other kinds (see another-call-of-what-the-program-holds.ts). That call does run. What
+ * is known of a function from all its calls has to hold for this one too.
+ */
+const asAnotherCall =
+  (source: Source): Source =>
+  (seed, runner) => {
+    if (runner.name !== "product") return;
+    const whole = source(seed, runner);
+    if (!whole || whole.files || (whole.extension !== "ts" && whole.extension !== "js")) return;
+    // This parses the program with the TypeScript package, which is only loaded when this variant is used.
+    const { withAnotherCall } =
+      require("./another-call-of-what-the-program-holds") as typeof import("./another-call-of-what-the-program-holds");
+    const text = withAnotherCall(`main.${whole.extension}`, whole.text, new Random(new Random(seed).next() ^ 0x51c3a9));
+    if (!text) return;
+    const { alone, ...rest } = whole;
+    return { ...rest, text, source: whole.source + anotherCallSuffix, needsOwnBuild: true };
+  };
+
+/**
+ * The own-copies variant of a source: each statement at the top of the program that names one of its functions or classes
+ * gets a copy of its own (see own-copies.ts). What is known of a function or class from all its users is then known from
+ * one scene alone.
+ */
+const asOwnCopies =
+  (source: Source): Source =>
+  (seed, runner) => {
+    if (runner.name !== "product") return;
+    const whole = source(seed, runner);
+    if (!whole || whole.files || (whole.extension !== "ts" && whole.extension !== "js")) return;
+    // This parses the program with the TypeScript package, which is only loaded when this variant is used.
+    const { withOwnCopies } = require("./own-copies") as typeof import("./own-copies");
+    const text = withOwnCopies(`main.${whole.extension}`, whole.text, new Random(new Random(seed).next() ^ 0x3d9e15));
+    if (!text) return;
+    const { alone, ...rest } = whole;
+    return { ...rest, text, source: whole.source + ownCopiesSuffix, needsOwnBuild: true };
+  };
+
+/**
+ * The four-callers variant of a source: what the program does at its top is done by four functions, each called twice (see
+ * four-callers.ts). In the mode "large" its functions are then compiled as the hot part of a very large program; as
+ * generated, called from the top alone, they are compiled as its cold part.
+ */
+const asFourCallers =
+  (source: Source): Source =>
+  (seed, runner) => {
+    if (runner.name !== "product") return;
+    const whole = source(seed, runner);
+    if (!whole || whole.files || (whole.extension !== "ts" && whole.extension !== "js")) return;
+    // This parses the program with the TypeScript package, which is only loaded when this variant is used.
+    const { withFourCallers } = require("./four-callers") as typeof import("./four-callers");
+    const text = withFourCallers(`main.${whole.extension}`, whole.text);
+    if (!text) return;
+    const { alone, ...rest } = whole;
+    return { ...rest, text, source: whole.source + fourCallersSuffix, needsOwnBuild: true };
+  };
+
 /** The stored single-file programs that print the same compiled and plain and have no files stored beside them. */
 function singleFilePrograms(root: string) {
   const found: string[] = [];
@@ -710,6 +772,9 @@ const standAlone = new Set([
   "two-roads",
   "objects-of-several-constructors-met-at-a-choice",
   "functions-put-away-read-back-and-called",
+  "crossed-ingredients",
+  "a-store-through-a-second-name-between-two-reads",
+  "locals-that-change-their-kind-compared-in-loops",
 ]);
 const flagsOfSource: Record<string, string[]> = {
   "unseen-code-mutates-arguments": ["--aot-allow-code-from-disk"],
@@ -755,6 +820,9 @@ export async function allSources(
       [
         [name + rewrittenSuffix, asRewritten(source)],
         [name + neverTakenSuffix, asNeverTaken(source)],
+        [name + anotherCallSuffix, asAnotherCall(source)],
+        [name + ownCopiesSuffix, asOwnCopies(source)],
+        [name + fourCallersSuffix, asFourCallers(source)],
       ] as const,
   );
   if (alsoMultiFile)
@@ -856,6 +924,8 @@ async function singleFileSources(programsRoot: string, rejected: Set<string>): P
     "words-held-over-the-turns-of-a-loop",
     "functions-put-away-read-back-and-called",
     "tables-asked-and-then-read",
+    "a-store-through-a-second-name-between-two-reads",
+    "locals-that-change-their-kind-compared-in-loops",
   ])
     sources[name] = productSource(name, generateOf(name), oddSeeds);
   sources["computed-key-stores-with-mutations"] = productSource(
@@ -1004,6 +1074,7 @@ async function singleFileSources(programsRoot: string, rejected: Set<string>): P
     "runtime-detection",
     "declarations-under-call-and-apply",
     "factories-with-own-prototypes",
+    "made-twice",
     "hot-indirect-builtin-calls",
     "liveness-around-suspension",
     "tail-calls-into-dynamic-code",
@@ -1065,6 +1136,7 @@ async function singleFileSources(programsRoot: string, rejected: Set<string>): P
     "variables-let-go-behind-suspensions",
     "loop-tests-whose-answer-is-read-again",
     "hidden-writes",
+    "crossed-ingredients",
   ])
     sources[name] = productSource(name, generateOf(name), never);
   const named =

@@ -1,5 +1,6 @@
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
+import { declare } from "../harness/capabilities";
 import { memoryLimit } from "../harness/memory-limit";
 import { measureHere, notCounted, openInstructionCounter, sayOnce, type Measured } from "./measure-here";
 
@@ -96,3 +97,7 @@ export async function measureLeast(cwd: string, args: string[], runs: number): P
     peakBytes: Math.min(...all.map(cost => cost.peakBytes)),
   };
 }
+
+declare("a counter of instructions", () =>
+  countsInstructions() ? undefined : "perf_event_open() hands out no counter here",
+);

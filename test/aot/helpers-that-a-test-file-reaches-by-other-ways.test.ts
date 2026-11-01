@@ -1,7 +1,7 @@
 // A compiled test run reads what its test files and the helpers beside them mock and spy on before it builds. It looked for a helper under a relative name alone:
 // one that a test file imports as "@/test/helpers/guard", a name that tsconfig.json gives to the file, was read by nobody, and neither were the names that go to
 // it. Over several programs the one that holds a module that such a helper mocks was built closed:
-// "mock(module, fn) cannot replace a module that was compiled ahead of time".
+// "mock(module, fn) cannot replace .. because the build didn't see a test mock it".
 // The same for a helper's function that goes on into a parameter, and for the files of a folder that a test file names and loads one by one.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";

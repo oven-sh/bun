@@ -135,7 +135,7 @@ fn write_product(
 ) -> Result<(), CompileFailure> {
     let started = Instant::now();
     let options = request.options;
-    add_assets(
+    let assets_named_at_root = add_assets(
         request,
         product.outfile,
         &build.root_directory,
@@ -238,6 +238,7 @@ fn write_product(
             // The program holds `__dirname` or the like, so it tells the folder itself, and asks for its own modules by paths below it.
             root_on_build_machine: (build.holds_source_paths && !options.runs_in_place)
                 .then(|| trim_trailing_separators(&build.root_directory)),
+            assets_named_at_root: &assets_named_at_root,
             further_package_names: &build.further_package_names,
             root_folders_spelled: match options.runs_in_place {
                 true => b"",
@@ -495,13 +496,13 @@ fn add_assets(
     outfile: Option<&[u8]>,
     root_directory: &[u8],
     output_files: &mut Vec<OutputFile>,
-) -> Result<(), CompileFailure> {
+) -> Result<Vec<u8>, CompileFailure> {
     let assets = request.executable.assets;
     if assets.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let added = if request.options.runs_in_place {
-        add_assets_in_place(assets, output_files)
+        add_assets_in_place(assets, output_files).map(|()| Vec::new())
     } else {
         let entry_name = outfile.map_or(&b""[..], configuration::compile_outfile);
         add_assets_under_root(assets, entry_name, root_directory, output_files)
@@ -555,10 +556,11 @@ fn add_assets_under_root(
     entry_name: &[u8],
     root_directory: &[u8],
     output_files: &mut Vec<OutputFile>,
-) -> Result<(), AssetError> {
+) -> Result<Vec<u8>, AssetError> {
     let working_directory =
         bun_sys::getcwd_alloc().map_err(AssetError::WorkingDirectoryUnreadable)?;
     let mut modules_without_text = modules_without_text(output_files);
+    let mut paths_of_files_given: Vec<Box<[u8]>> = Vec::new();
     let mut taken: std::collections::BTreeMap<Box<[u8]>, Option<usize>> = output_files
         .iter()
         .enumerate()
@@ -587,12 +589,16 @@ fn add_assets_under_root(
             });
         }
         for mut file in files {
+            let is_file_given = file.dest_path[..] == asset_name[..];
             if let Some(under_root) = &under_root {
                 let path_in_asset = file
                     .dest_path
                     .strip_prefix(&asset_name[..])
                     .expect("collect_compile_assets names files under the asset's name");
                 file.dest_path = graph_path(under_root, path_in_asset).into_boxed_slice();
+            }
+            if is_file_given {
+                paths_of_files_given.push(file.dest_path.clone());
             }
             let Some(earlier) = taken.insert(file.dest_path.clone(), None) else {
                 add_asset(file, &mut modules_without_text, output_files);
@@ -609,7 +615,39 @@ fn add_assets_under_root(
             }
         }
     }
-    Ok(())
+    Ok(find_assets_named_at_root(
+        &paths_of_files_given,
+        output_files,
+    ))
+}
+
+fn find_assets_named_at_root(
+    paths_of_files_given: &[Box<[u8]>],
+    output_files: &[OutputFile],
+) -> Vec<u8> {
+    let is_taken = |base_name: &[u8]| {
+        output_files
+            .iter()
+            .filter(|file| file.output_kind.is_file_in_standalone_mode())
+            .filter_map(|file| {
+                bun_core::strings::remove_leading_dot_slash(&file.dest_path).strip_prefix(base_name)
+            })
+            .any(|rest| matches!(rest, [] | [b'/', ..]))
+    };
+    let is_shared = |base_name: &[u8]| {
+        let base_names = paths_of_files_given
+            .iter()
+            .map(|path| bun_paths::basename(path));
+        base_names.filter(|&name| name == base_name).count() > 1
+    };
+    paths_of_files_given
+        .iter()
+        .filter(|path| {
+            let base_name = bun_paths::basename(path);
+            !is_shared(base_name) && !is_taken(base_name)
+        })
+        .flat_map(|path| path.iter().copied().chain([0]))
+        .collect()
 }
 
 fn path_under_root(

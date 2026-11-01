@@ -3,8 +3,8 @@ use bun_sema::bind::{Bound, Parent};
 use bun_sema::erasure::ReplacedText;
 use bun_sema::fold::{Constant, Decision, Decisions};
 use bun_sema::hir::{
-    BinOp, Branches, ExprId, ExprKind, File, PropKind, StmtKind, UnOp, end_of_expr,
-    start_inside_parentheses, start_of,
+    BinOp, Branches, ExprId, ExprKind, File, FnBody, FnKind, PropKind, StmtId, StmtKind, UnOp,
+    end_of_expr, is_parenthesized, start_inside_parentheses, start_of,
 };
 use bun_sema::hir_from_data::DataValue;
 use rustc_hash::FxHashSet;
@@ -25,10 +25,29 @@ pub(super) fn find_text_replaced_by_bundling<'s>(
         atoms,
         find_operand_printed_alone,
         replaced: Vec::new(),
+        opened: FxHashSet::default(),
+        defined_at_heads: FxHashSet::default(),
+        heads_of_loops: Vec::new(),
     };
     finder.add_branches_of_statements();
+    finder.add_parentheses_at_heads();
     finder.add_expressions();
-    finder.replaced
+    join_text_to_part_in_front(finder.replaced)
+}
+
+// Text that is only added goes with a part that is left out right in front of it, and would be written into a text there that is longer than what it replaces.
+fn join_text_to_part_in_front(mut replaced: Vec<ReplacedText>) -> Vec<ReplacedText> {
+    replaced.sort_by_key(|part| (part.start, part.end));
+    let mut joined: Vec<ReplacedText> = Vec::with_capacity(replaced.len());
+    for part in replaced {
+        match joined.last_mut() {
+            Some(last) if last.end == part.start && part.start == part.end => {
+                last.text = [&last.text[..], &part.text[..]].concat().into_boxed_slice();
+            }
+            _ => joined.push(part),
+        }
+    }
+    joined
 }
 
 struct Finder<'a, 's> {
@@ -39,6 +58,12 @@ struct Finder<'a, 's> {
     // `FileLowering::find_operand_printed_alone`
     find_operand_printed_alone: &'a dyn Fn(ExprId) -> Option<ExprId>,
     replaced: Vec<ReplacedText>,
+    // Of these only an operand is kept, and `(` is printed in front of it.
+    opened: FxHashSet<ExprId>,
+    // Names that a define replaces, with which a statement or the body of an arrow function starts.
+    defined_at_heads: FxHashSet<ExprId>,
+    // Where the first part of the head of each `for (;;)` starts, in order, and the furthest end of those up to it.
+    heads_of_loops: Vec<(u32, u32)>,
 }
 
 impl Finder<'_, '_> {
@@ -97,36 +122,16 @@ impl Finder<'_, '_> {
             let expression = ExprId(index as u32);
             match hir[expression].kind {
                 ExprKind::Binary {
-                    op: op @ (BinOp::And | BinOp::Or | BinOp::Nullish),
+                    op: BinOp::And | BinOp::Or | BinOp::Nullish,
                     left,
                     right,
-                } => {
-                    if decisions.is_dead_expr(right) {
-                        self.leave_out(end_of_expr(hir, left), end_of_expr(hir, right));
-                    } else if self.is_always_right_operand(op, left) {
-                        let start = start_inside_parentheses(hir, expression);
-                        self.leave_out(start, start_of(hir, right));
-                    }
+                } if decisions.is_dead_expr(right) => {
+                    self.leave_out(end_of_expr(hir, left), end_of_expr(hir, right));
                 }
-                ExprKind::Cond { branches, .. } => {
-                    let Branches { yes, no } = hir.branches(branches);
-                    let kept = match (decisions.is_dead_expr(yes), decisions.is_dead_expr(no)) {
-                        (true, false) => no,
-                        (false, true) => yes,
-                        _ => continue,
-                    };
-                    let (start, end) = (
-                        start_inside_parentheses(hir, expression),
-                        hir[expression].end,
-                    );
-                    // Of `a ? b : c ? d : b` with `a` and `c` false `bun run` prints the first `b`. An error quotes what stands there, so that one is kept.
-                    let printed =
-                        (self.find_operand_printed_alone)(expression).filter(|&printed| {
-                            start <= start_of(hir, printed) && end_of_expr(hir, printed) <= end
-                        });
-                    let kept = printed.unwrap_or(kept);
-                    self.leave_out(start, start_of(hir, kept));
-                    self.leave_out(end_of_expr(hir, kept), end);
+                ExprKind::Binary { .. } | ExprKind::Cond { .. } => {
+                    if let Some(kept) = self.find_operand_kept(expression) {
+                        self.keep_alone(expression, kept);
+                    }
                 }
                 ExprKind::Ident(_) | ExprKind::Dot { .. }
                     if !shorthand_values.contains(&expression) =>
@@ -136,6 +141,191 @@ impl Finder<'_, '_> {
                 _ => {}
             }
         }
+    }
+
+    // The operand that is printed in place of all of `true ? a : b`, `true && a`, `false || a` and `null ?? a`.
+    fn find_operand_kept(&self, expression: ExprId) -> Option<ExprId> {
+        let (hir, decisions) = (self.hir, self.decisions);
+        match hir[expression].kind {
+            ExprKind::Binary {
+                op: op @ (BinOp::And | BinOp::Or | BinOp::Nullish),
+                left,
+                right,
+            } => {
+                let is_kept = !decisions.is_dead_expr(right);
+                (is_kept && self.is_always_right_operand(op, left)).then_some(right)
+            }
+            ExprKind::Cond { branches, .. } => {
+                let Branches { yes, no } = hir.branches(branches);
+                let kept = match (decisions.is_dead_expr(yes), decisions.is_dead_expr(no)) {
+                    (true, false) => no,
+                    (false, true) => yes,
+                    _ => return None,
+                };
+                let (start, end) = (
+                    start_inside_parentheses(hir, expression),
+                    hir[expression].end,
+                );
+                // Of `a ? b : c ? d : b` with `a` and `c` false `bun run` prints the first `b`. An error quotes what stands there, so that one is kept.
+                let printed = (self.find_operand_printed_alone)(expression).filter(|&printed| {
+                    start <= start_of(hir, printed) && end_of_expr(hir, printed) <= end
+                });
+                Some(printed.unwrap_or(kept))
+            }
+            _ => None,
+        }
+    }
+
+    // What is printed in front of the operand stands in place of what is left out there: text that is only added behind a part that goes would go with it.
+    fn keep_alone(&mut self, expression: ExprId, kept: ExprId) {
+        let hir = self.hir;
+        let end_of_kept = end_of_expr(hir, kept);
+        let in_front: &[u8] = if self.opened.contains(&expression) {
+            b"("
+        } else if self.would_be_reference(expression, kept) {
+            b"0, "
+        } else if self.would_end_head_of_loop(expression, kept) {
+            self.replace(end_of_kept, end_of_kept, Box::new(*b")"));
+            b"("
+        } else {
+            b""
+        };
+        let start = start_inside_parentheses(hir, expression);
+        self.replace(start, start_of(hir, kept), in_front.into());
+        self.leave_out(end_of_kept, hir[expression].end);
+    }
+
+    // At the head of a statement or of the body of an arrow function `{ a }` alone is a block, and at the head of a statement `function` and `class` start a declaration. `bun build` prints `({ a })`.
+    fn add_parentheses_at_heads(&mut self) {
+        let (hir, bound) = (self.hir, self.bound);
+        for index in 0..hir.stmts.len() {
+            let statement = StmtId(index as u32);
+            match hir[statement].kind {
+                StmtKind::Expr(expression) => {
+                    let is_head_of_loop = matches!(
+                        bound.parent_of_stmt(statement),
+                        Parent::Stmt(parent) if matches!(hir[parent].kind, StmtKind::For { init, .. } if init == statement)
+                    );
+                    if !is_head_of_loop {
+                        self.add_parentheses_at_head(expression, true);
+                    }
+                }
+                StmtKind::For { init, .. } if init.is_some() => {
+                    (self.heads_of_loops).push((hir[init].start, hir[init].loc.end));
+                }
+                _ => {}
+            }
+        }
+        self.heads_of_loops.sort_unstable();
+        let mut furthest = 0;
+        for head in &mut self.heads_of_loops {
+            furthest = furthest.max(head.1);
+            head.1 = furthest;
+        }
+        for function in hir.fns.iter() {
+            if let (FnKind::Arrow, FnBody::Expr(body)) = (function.kind, function.body) {
+                self.add_parentheses_at_head(body, false);
+            }
+        }
+    }
+
+    fn add_parentheses_at_head(&mut self, mut first: ExprId, is_statement: bool) {
+        let hir = self.hir;
+        let mut folded = None;
+        let mut assignment = None;
+        while !is_parenthesized(hir, first) {
+            if let Some(kept) = self.find_operand_kept(first) {
+                (folded, assignment, first) = (Some(first), None, kept);
+                continue;
+            }
+            if matches!(self.decisions.decision(first), Decision::Data(_)) {
+                self.defined_at_heads.insert(first);
+                return;
+            }
+            let needs_parentheses = match hir[first].kind {
+                ExprKind::Object(_) => true,
+                ExprKind::Fn(function) => is_statement && hir[function].kind != FnKind::Arrow,
+                ExprKind::Class(_) => is_statement,
+                _ => false,
+            };
+            if let (true, Some(folded)) = (needs_parentheses, folded) {
+                let end = hir[assignment.unwrap_or(first)].end;
+                self.opened.insert(folded);
+                self.replace(end, end, Box::new(*b")"));
+                return;
+            }
+            // `({ a } = b)`
+            assignment = match hir[first].kind {
+                ExprKind::Assign { .. } => Some(first),
+                _ => None,
+            };
+            match find_first_operand(hir, first) {
+                Some(operand) => first = operand,
+                None => return,
+            }
+        }
+    }
+
+    // `(true ? o.m : 0)()` calls the function without `o`, and `(o.m)()` would call it on `o`. `bun build` prints `(0, o.m)()`.
+    fn would_be_reference(&self, expression: ExprId, mut kept: ExprId) -> bool {
+        let hir = self.hir;
+        let Parent::Expr(parent) = self.bound.parent_of_expr(expression) else {
+            return false;
+        };
+        let (takes_member, takes_name) = match hir[parent].kind {
+            ExprKind::Call(call) | ExprKind::TaggedTemplate(call) => {
+                let is_callee = hir[call].callee == expression;
+                (is_callee, is_callee)
+            }
+            ExprKind::Unary { op, .. } => (op == UnOp::Delete, op == UnOp::Typeof),
+            _ => return false,
+        };
+        while let Some(operand) = self.find_operand_kept(kept) {
+            kept = operand;
+        }
+        match hir[kept].kind {
+            ExprKind::Dot { .. } | ExprKind::Index { .. } => takes_member,
+            ExprKind::Ident(_) => takes_name,
+            _ => false,
+        }
+    }
+
+    // `for (let i = true ? "a" in o : 0; ..)`: between `?` and `:` an `in` is an operator, and without them it would make this a `for (.. in ..)`.
+    fn would_end_head_of_loop(&self, expression: ExprId, kept: ExprId) -> bool {
+        let hir = self.hir;
+        let start = hir[expression].pos;
+        let heads_in_front = (self.heads_of_loops).partition_point(|head| head.0 <= start);
+        let is_in_head = heads_in_front
+            .checked_sub(1)
+            .is_some_and(|last| start < self.heads_of_loops[last].1);
+        if !is_in_head || !matches!(hir[expression].kind, ExprKind::Cond { .. }) {
+            return false;
+        }
+        let mut operands = vec![kept];
+        while let Some(operand) = operands.pop() {
+            if is_parenthesized(hir, operand) {
+                continue;
+            }
+            match hir[operand].kind {
+                ExprKind::Binary { op: BinOp::In, .. } => return true,
+                ExprKind::Binary { left, right, .. } => operands.extend([left, right]),
+                ExprKind::Assign { value, .. } => operands.push(value),
+                ExprKind::Cond { test, branches } => {
+                    operands.extend([test, hir.branches(branches).no]);
+                }
+                ExprKind::Unary { operand, .. }
+                | ExprKind::Await(operand)
+                | ExprKind::Spread(operand)
+                | ExprKind::Yield { value: operand, .. } => operands.push(operand),
+                ExprKind::Fn(function) => {
+                    if let FnBody::Expr(body) = hir[function].body {
+                        operands.push(body);
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
     }
 
     // `true && f()` is printed as `f()`.
@@ -185,10 +375,38 @@ impl Finder<'_, '_> {
         let start = start_inside_parentheses(self.hir, expression);
         let end = self.hir[expression].end;
         let written = self.hir.text.get(start as usize..end as usize);
-        if let Some(printed) = self.print(decision)
+        if let Some(mut printed) = self.print(decision)
             && written.is_some_and(|written| written != &printed[..])
         {
+            if self.needs_parentheses(expression, &printed) {
+                printed = [b"(", &printed[..], b")"].concat();
+            }
             self.replace(start, end, printed.into_boxed_slice());
+        }
+    }
+
+    // Where a name stood: `{ a: 1 }` at a head is a block, `-1 ** 2` and `5.toFixed()` are no expressions, `-1.toFixed()` negates the text, and `--1` is another operator.
+    fn needs_parentheses(&self, expression: ExprId, printed: &[u8]) -> bool {
+        let hir = self.hir;
+        if is_parenthesized(hir, expression) {
+            return false;
+        }
+        let parent = match self.bound.parent_of_expr(expression) {
+            Parent::Expr(parent) => hir[parent].kind,
+            _ => ExprKind::Missing,
+        };
+        let is_object_of_name = matches!(parent, ExprKind::Dot { obj, .. } if obj == expression);
+        match printed.first() {
+            Some(b'{') => self.defined_at_heads.contains(&expression),
+            Some(b'0'..=b'9') => is_object_of_name,
+            Some(b'-') => {
+                let in_front = (hir[expression].pos as usize).checked_sub(1);
+                is_object_of_name
+                    || in_front.and_then(|at| hir.text.get(at)) == Some(&b'-')
+                    || matches!(parent, ExprKind::Index { obj, .. } if obj == expression)
+                    || matches!(parent, ExprKind::Binary { op: BinOp::Pow, left, .. } if left == expression)
+            }
+            _ => false,
         }
     }
 
@@ -262,6 +480,28 @@ impl Finder<'_, '_> {
             }
         }
         Some(())
+    }
+}
+
+// The operand with whose first token the expression starts.
+fn find_first_operand(hir: &File<'_>, expression: ExprId) -> Option<ExprId> {
+    match hir[expression].kind {
+        ExprKind::Dot { obj: first, .. }
+        | ExprKind::Index { obj: first, .. }
+        | ExprKind::Binary { left: first, .. }
+        | ExprKind::Assign { target: first, .. }
+        | ExprKind::Cond { test: first, .. }
+        | ExprKind::Unary {
+            op: UnOp::PostInc | UnOp::PostDec,
+            operand: first,
+        }
+        | ExprKind::As { expr: first, .. }
+        | ExprKind::Satisfies { expr: first, .. }
+        | ExprKind::Instantiation { expr: first, .. }
+        | ExprKind::AsConst(first)
+        | ExprKind::NonNull(first) => Some(first),
+        ExprKind::Call(call) | ExprKind::TaggedTemplate(call) => Some(hir[call].callee),
+        _ => None,
     }
 }
 

@@ -1,6 +1,7 @@
 mod support;
 use support::*;
 
+use bun_sema::erasure::keep_only_comments_beside_types;
 use std::borrow::Cow;
 use std::sync::Mutex;
 
@@ -173,6 +174,82 @@ const KEPT_TEXT_ROWS: &[(&str, &str, &str)] = &[
         "const e = <A<T> b={c as U} />;",
         "const e = <A b={c} />;",
     ),
+    (
+        "a.ts",
+        "function f(a: unknown) {\n  return <number>\n    a;\n}",
+        "function f(a) {\n  return a;\n}",
+    ),
+    (
+        "a.ts",
+        "function f(a: unknown) {\n  throw <number> // why\n    a;\n}",
+        "function f(a) {\n  throw a;\n}",
+    ),
+    (
+        "a.ts",
+        "function* f(a: unknown) {\n  yield<number>\n    a;\n}",
+        "function* f(a) {\n  yield a;\n}",
+    ),
+    (
+        "a.ts",
+        "const g = async <T,>\n  (x: T) => x; class A<T>\nextends B {}",
+        "const g = async (x) => x; class A\nextends B {}",
+    ),
+    (
+        "a.ts",
+        "let x = a\ntype T = number;\n[x].length",
+        "let x = a\n;\n[x].length",
+    ),
+    (
+        "a.ts",
+        "let x = a\ninterface I { p: number }\n(x)",
+        "let x = a\n;\n(x)",
+    ),
+    ("a.ts", "let x = <A>{} as B\n(x)", "let x = ({});\n(x)"),
+    (
+        "a.ts",
+        "let x = a\ndeclare const d: number\n`${x}`\ntype T = 1\ny()",
+        "let x = a\n;\n`${x}`\n\ny()",
+    ),
+    (
+        "a.ts",
+        "let x = a as number\n(x); let y = [1] as const\n[y]; k as string in o; (a as T)(b);",
+        "let x = a;\n(x); let y = [1];\n[y]; k in o; (a)(b);",
+    ),
+    (
+        "a.ts",
+        "class K {\n  static?: number\n  x = a\n}",
+        "class K {\n  static;\n  x = a\n}",
+    ),
+    (
+        "a.ts",
+        "class K {\n  get!: number\n  x = a\n  public set: number\n  y = a\n  static?: number;\n  get?: number\n}",
+        "class K {\n  get;\n  x = a\n  set;\n  y = a\n  static;\n  get\n}",
+    ),
+    (
+        "a.ts",
+        "class K {\n  x = a\n  declare y: number\n  [k] = 1\n  z = a\n  abstract w: number\n  in = 1\n}",
+        "class K {\n  x = a\n  ;\n  [k] = 1\n  z = a\n  ;\n  in = 1\n}",
+    ),
+    (
+        "a.ts",
+        "function f(a: number) /* see /* above */ : number {\n  return a;\n}",
+        "function f(a) {\n  return a;\n}",
+    ),
+    (
+        "a.ts",
+        "const quote = /\"/; function g() // the rest  \n  : string { return a; }",
+        "const quote = /\"/; function g() { return a; }",
+    ),
+    (
+        "a.ts",
+        "const slashes = /[//]/; function g()\n  : string { return a; }",
+        "const slashes = /[//]/; function g() { return a; }",
+    ),
+    (
+        "a.ts",
+        "const page = `\n// ${a}`; function g()\n  : string { return page; }",
+        "const page = `\n// ${a}`; function g() { return page; }",
+    ),
 ];
 
 fn parse_typescript<'s>(w: &Workspace<'s>, path: &str, text: &[u8]) -> File<'s> {
@@ -182,7 +259,7 @@ fn parse_typescript<'s>(w: &Workspace<'s>, path: &str, text: &[u8]) -> File<'s> 
         experimental_decorators: false,
         every_file_is_a_module: true,
         reads_jsdoc: true,
-        keeps_function_directives: false,
+        ignores_pure_comments: false,
     };
     let mut file = parse_for_compile(w.arena, &options, text, &w.atoms);
     file.text = Cow::Borrowed(w.arena.alloc_slice_copy(text));
@@ -229,9 +306,24 @@ fn text_without_type_ranges_is_javascript() {
 fn syntax_that_emits_code_is_kept_without_its_types() {
     with_workspace(|w| {
         for &(path, text, expected) in KEPT_TEXT_ROWS {
-            let kept = remove_types(&parse_typescript(w, path, text.as_bytes()));
+            let mut typed = parse_typescript(w, path, text.as_bytes());
+            let kept = remove_types(&typed);
             assert_eq!(String::from_utf8_lossy(&kept), expected, "{text}");
+            keep_only_comments_beside_types(&mut typed, w.arena);
+            assert_eq!(remove_types(&typed), kept, "{text}");
         }
+    });
+}
+
+#[test]
+fn comments_away_from_types_are_dropped() {
+    let text = "// a\nfunction f() // b\n: void {} /* c */";
+    with_workspace(|w| {
+        let mut typed = parse_typescript(w, "a.ts", text.as_bytes());
+        assert_eq!(typed.comments.len(), 3);
+        keep_only_comments_beside_types(&mut typed, w.arena);
+        let kept: Vec<u32> = typed.comments.iter().map(|comment| comment.pos).collect();
+        assert_eq!(kept, [text.find("// b").unwrap() as u32]);
     });
 }
 

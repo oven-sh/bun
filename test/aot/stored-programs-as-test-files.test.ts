@@ -7,7 +7,7 @@ import { test } from "./supported";
 
 // `bun test --aot` compiles what the test files share as programs of their own, below the test files. Here the main file of a stored program
 // is itself the test file, so each of its imports and require() calls, and every object that comes back, crosses from one program into another.
-// Plain `bun test` says what each must print.
+// Plain `bun test` says what each must print, but for a program that ends with what it prints where that is not what plain Bun does.
 const programs = [
   "commonjs/call-in-front-comma-module-exports-read",
   "commonjs/every-key-require-cache-lists-can-read",
@@ -49,12 +49,15 @@ const programs = [
 ];
 
 const stored = join(import.meta.dir, "parallel");
+const storedOutputs = new Map<string, string[]>();
 
 function copyAsTestFile(directory: string, program: string) {
   const folder = join(directory, "p", program);
   cpSync(join(stored, program), folder, { recursive: true });
   const main = readdirSync(folder).find(name => /^main\.[a-z]+$/.test(name))!;
   const text = readFileSync(join(folder, main), "utf8");
+  const output = /\n\/\* Output:\n((?:(?!\*\/)[^])*)\*\/\s*$/.exec(text)?.[1];
+  if (output !== undefined) storedOutputs.set(program, output.split("\n").slice(0, -1));
   const extension = main.slice("main.".length);
   const isCommonJS = extension === "cjs" || extension === "cts";
   const runner = isCommonJS ? `require("bun:test")` : `await import("bun:test")`;
@@ -87,5 +90,6 @@ test("the main files of stored programs run as test files", async () => {
   for (const program of programs) copyAsTestFile(String(dir), program);
   const plain = await runTests(String(dir));
   expect(Object.keys(plain.printed).sort()).toEqual([...programs].sort());
+  for (const [program, lines] of storedOutputs) plain.printed[program] = lines;
   expect(await runTests(String(dir), "--aot")).toEqual(plain);
 }, 300_000);

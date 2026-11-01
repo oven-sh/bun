@@ -1,0 +1,6 @@
+# sabotage=PassesDropCalls: behind the pass a call of an unknown function is gone. The pass joins an await with the call that it awaits, a call of a known async function or of a built-in, and answers for those alone: the build stops
+# FORM: Prepared
+# RUN: pass ResolveAwaitedCalls
+# DIAGNOSTIC: VerificationFailedAfterPass 1
+# OPTIONS: check=VerifyEachPass sabotage=PassesDropCalls
+# PROGRAM-OF: passes-drop-calls-beside-an-await-left-alone.ir

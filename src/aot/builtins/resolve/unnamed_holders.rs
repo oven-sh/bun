@@ -10,14 +10,16 @@
 //! at thousands of places, which call one another, has more ways through it than anybody can walk.
 
 use super::resolver::Resolver;
+use super::spelled_values::on_a_stack_with_room;
 use crate::builtins::table::{self, BuiltinId, MemberLookup, Prototype};
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, Decl, FnOwner, Parent, PatParent, SymbolId};
 use bun_sema::fold::{TreeNode, push_children};
 use bun_sema::hir::{
-    BinOp, CallId, ClassId, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, ImportId, MemberKey,
-    MemberKind, PatKind, PropKey, PropKind, StmtKind, VarDeclId,
+    BinOp, CallId, ClassId, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, MemberKey, MemberKind,
+    PatKind, PropKey, PropKind, StmtKind, VarDeclId,
 };
+use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::util::{FxHashMap, FxHashSet};
 use std::rc::Rc;
 
@@ -89,9 +91,9 @@ impl Resolver<'_, '_> {
         }
     }
 
-    /// The imports that the object of a write comes out of, each with the names on the way, from the write on:
+    /// The modules that the object of a write comes out of, as the file writes them, each with the names on the way, from the write on:
     /// `make().prototype`, `const made = await make(); made.proxy`, `tools.make()`, `wrap(imported)`, `withProxy(proxy => { proxy .. })`.
-    pub(super) fn find_imports_behind(&self, object: ExprId) -> Vec<(ImportId, Vec<Atom>)> {
+    pub(super) fn find_imports_behind(&self, object: ExprId) -> Vec<(Atom, Vec<Atom>)> {
         let (mut found, mut seen) = (Vec::new(), FxHashSet::default());
         self.push_imports_behind(object, &mut Vec::new(), &mut seen, &mut found);
         found
@@ -102,13 +104,14 @@ impl Resolver<'_, '_> {
         expr: ExprId,
         path: &mut Vec<Atom>,
         seen: &mut FxHashSet<ExprId>,
-        found: &mut Vec<(ImportId, Vec<Atom>)>,
+        found: &mut Vec<(Atom, Vec<Atom>)>,
     ) {
         let (hir, bound) = (self.input.hir, self.input.bound);
         let expr = hir.skip_type_assertions(expr);
         if !seen.insert(expr) || self.find_builtin(expr).is_some() {
             return;
         }
+        let module_named_by = |name: Option<ExprId>| name.and_then(|name| self.constant_key(name));
         match hir[expr].kind {
             ExprKind::Ident(_) => {
                 let Binding::Symbol(symbol) = bound.binding(expr) else {
@@ -120,7 +123,21 @@ impl Resolver<'_, '_> {
                     _ => None,
                 };
                 if let Some(import) = import {
-                    return found.push((import, path.clone()));
+                    return found.push((hir[import].spec, path.clone()));
+                }
+                // `const { File } = require("parts")`
+                if let [Decl::Require(mut pattern)] = *bound.symbol(symbol).decls {
+                    while let PatParent::Elem(whole, _) | PatParent::Prop(whole, _) =
+                        bound.pat_parent[pattern.idx()]
+                    {
+                        pattern = whole;
+                    }
+                    if let PatParent::Var(declaration) = bound.pat_parent[pattern.idx()]
+                        && hir[declaration].init.is_some()
+                    {
+                        self.push_imports_behind(hir[declaration].init, path, seen, found);
+                    }
+                    return;
                 }
                 for &value in self.spelled_values_of(expr).iter() {
                     self.push_imports_behind(value, path, seen, found);
@@ -130,6 +147,21 @@ impl Resolver<'_, '_> {
                 for source in whole.into_iter().chain(call) {
                     self.push_imports_behind(source, path, seen, found);
                 }
+            }
+            ExprKind::ImportCall { args } => {
+                let module = module_named_by(hir.ids(args).next());
+                found.extend(module.map(|module| (module, path.clone())));
+            }
+            ExprKind::Call(call)
+                if [
+                    ImportSiteKind::Require(expr),
+                    ImportSiteKind::ImportMetaRequire(expr),
+                ]
+                .into_iter()
+                .any(|site| self.input.targets.has_site(site)) =>
+            {
+                let module = module_named_by(hir.ids(hir[call].args).next());
+                found.extend(module.map(|module| (module, path.clone())));
             }
             ExprKind::Call(call) | ExprKind::New(call) => {
                 self.push_imports_behind(hir[call].callee, path, seen, found);
@@ -340,7 +372,7 @@ impl Resolver<'_, '_> {
             .borrow_mut()
             .builtins
             .insert(expr, open);
-        let answer: Builtins = self.look_for_builtins_behind(expr).into();
+        let answer: Builtins = on_a_stack_with_room(|| self.look_for_builtins_behind(expr)).into();
         let kept = Rc::clone(&answer);
         self.unnamed_holders
             .borrow_mut()
@@ -521,7 +553,7 @@ impl Resolver<'_, '_> {
     }
 
     /// The functions of the file that the callee may be: `function wrap(..) { .. }`, `const wrap = .. => ..`, `tools.wrap` of `{ wrap(..) { .. } }`.
-    fn find_functions_behind(&self, callee: ExprId) -> Vec<FnId> {
+    pub(super) fn find_functions_behind(&self, callee: ExprId) -> Vec<FnId> {
         let (hir, bound) = (self.input.hir, self.input.bound);
         let callee = hir.skip_type_assertions(callee);
         let mut methods = Vec::new();
@@ -573,7 +605,7 @@ impl Resolver<'_, '_> {
     }
 
     /// The classes of the file that the expression may be: `class Tools { .. }`, `const Tools = class { .. }`.
-    fn find_classes_behind(&self, class: ExprId) -> Vec<ClassId> {
+    pub(super) fn find_classes_behind(&self, class: ExprId) -> Vec<ClassId> {
         let (hir, bound) = (self.input.hir, self.input.bound);
         let values = self.spelled_values_of(class);
         let classes =
@@ -704,7 +736,7 @@ impl Resolver<'_, '_> {
         found
     }
 
-    fn values_returned_by(&self, function: FnId) -> Rc<[ExprId]> {
+    pub(super) fn values_returned_by(&self, function: FnId) -> Rc<[ExprId]> {
         if let Some(values) = self.unnamed_holders.borrow().returned.get(&function) {
             return Rc::clone(values);
         }

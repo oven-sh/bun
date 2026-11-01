@@ -5,10 +5,10 @@
 
 mod tidy;
 pub use tidy::{
-    BLOCK, ParsedPosixLatin1, RelativePosixLatin1, basename_posix_ascii, basename_posix_latin1,
-    basename_without_suffix_posix_latin1, dirname_posix_ascii, extname_posix_ascii, is_ascii,
-    is_ascii_of_few, is_resolved_ascii_posix, is_tidy_ascii_posix, normalize_posix_latin1,
-    parse_posix_latin1, relative_posix_latin1, resolve_absolute_posix_latin1,
+    ParsedPosixLatin1, RelativePosixLatin1, basename_posix_latin1,
+    basename_without_suffix_posix_latin1, dirname_posix_latin1, extname_posix_latin1, is_ascii,
+    is_resolved_ascii_posix, is_tidy_ascii_posix, normalize_posix_latin1, parse_posix_latin1,
+    relative_posix_latin1, resolve_absolute_posix_latin1,
 };
 
 #[cfg(windows)]

@@ -1,10 +1,10 @@
 use bun_ast::import_record::is_test_module;
-use bun_sema::atom::{Atom, Interner};
+use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::bind::{Binding, Decl, SymbolId};
 use bun_sema::hir::{
-    BinOp, Chain, ExprFlags, ExprId, ExprKind, FAR_IN_BRACKETS, File, FileBuilder, Flags, Import,
-    ImportId, PatKind, PropKind, ResolutionMode, Span, SpecifierKind, SpecifierUse, StmtId,
-    StmtKind, TypeNodeId, UnOp, VarDecl, VarKind, rare,
+    BinOp, Chain, ExportSpecId, ExprFlags, ExprId, ExprKind, FAR_IN_BRACKETS, File, FileBuilder,
+    Flags, Import, ImportEqualsId, ImportId, PatKind, PropKind, ResolutionMode, Span,
+    SpecifierKind, SpecifierUse, StmtId, StmtKind, TypeNodeId, UnOp, VarDecl, VarKind, rare,
 };
 use bun_sema::module_format::ModuleFormat;
 use bun_sema::resolve::TransformRequest;
@@ -53,6 +53,11 @@ struct Use {
 pub(crate) struct Plan {
     places: Vec<(StmtId, Place)>,
     uses: Vec<Use>,
+    /// The factory and the fragment of classic JSX, and a class that decorator metadata names: no expression spells the name, so there is none to rewrite.
+    /// The binder finds the loaded module by `Import::loaded_as`.
+    named_implicitly: Vec<ImportId>,
+    /// `import * as ns`, `export { ns }`: the clause names the variable of the load.
+    exported_namespaces: Vec<(ExportSpecId, ImportId)>,
     paths_written_as_imports: Vec<(ExprId, ExprId)>,
 }
 
@@ -110,15 +115,8 @@ impl<'a, 'r, 's> Planner<'a, 'r, 's> {
         }
     }
 
-    fn without_type_syntax(&self, mut expression: ExprId) -> ExprId {
-        while let ExprKind::As { expr, .. }
-        | ExprKind::Satisfies { expr, .. }
-        | ExprKind::AsConst(expr)
-        | ExprKind::NonNull(expr) = self.hir[expression].kind
-        {
-            expression = expr;
-        }
-        expression
+    fn without_type_syntax(&self, expression: ExprId) -> ExprId {
+        self.hir.skip_type_assertions(expression)
     }
 
     fn find_mock_call(&self, expression: ExprId) -> Option<(MockApi, &'a [u8])> {
@@ -138,7 +136,7 @@ impl<'a, 'r, 's> Planner<'a, 'r, 's> {
                 name,
                 chain,
                 name_before_end,
-            } = self.hir[call.callee].kind
+            } = self.hir[self.without_type_syntax(call.callee)].kind
             else {
                 return None;
             };
@@ -151,6 +149,7 @@ impl<'a, 'r, 's> Planner<'a, 'r, 's> {
                 return None;
             }
             let last_name = *last_name.get_or_insert(name);
+            let obj = self.without_type_syntax(obj);
             match self.hir[obj].kind {
                 ExprKind::Ident(_) => {
                     let api = self.find_api(obj)?;
@@ -184,6 +183,7 @@ impl<'a, 'r, 's> Planner<'a, 'r, 's> {
     }
 
     fn is_primitive_literal(&self, expression: ExprId) -> bool {
+        let expression = self.without_type_syntax(expression);
         match self.hir[expression].kind {
             ExprKind::String(_)
             | ExprKind::Number(_)
@@ -196,7 +196,7 @@ impl<'a, 'r, 's> Planner<'a, 'r, 's> {
                 op: UnOp::Minus,
                 operand,
             } => matches!(
-                self.hir[operand].kind,
+                self.hir[self.without_type_syntax(operand)].kind,
                 ExprKind::Number(_) | ExprKind::BigInt(_)
             ),
             ExprKind::Ident(name) => {
@@ -246,6 +246,26 @@ impl<'a, 'r, 's> Planner<'a, 'r, 's> {
             .collect()
     }
 
+    fn find_exported_namespaces(
+        &self,
+        body: &[StmtId],
+        lowered: &[ImportId],
+    ) -> Vec<(ExportSpecId, ImportId)> {
+        let clauses = body.iter().filter_map(|&it| match self.hir[it].kind {
+            StmtKind::ExportNamed(export) => Some(self.hir[export]),
+            _ => None,
+        });
+        let clauses = clauses.filter(|it| !it.has_module_specifier && !it.type_only);
+        let items = clauses.flat_map(|it| it.items.iter());
+        let items = items.filter(|&it| !self.hir[it].type_only);
+        let exported = items.filter_map(|item| {
+            let mut imports = lowered.iter().copied();
+            let import = imports.find(|&it| self.hir[it].namespace == self.hir[item].local)?;
+            Some((item, import))
+        });
+        exported.collect()
+    }
+
     fn names_of(&self, import: ImportId) -> Vec<(Decl, Atom, Atom)> {
         let node = self.hir[import];
         let mut names = Vec::new();
@@ -271,20 +291,34 @@ impl<'a, 'r, 's> Planner<'a, 'r, 's> {
         if is_test_module(path) || path == b"bun" {
             return Place::BeforeHoisted;
         }
-        if node.is_deferred || node.attributes != ExprId::NONE {
+        // Only an attribute that chooses how the file is loaded keeps the statement.
+        let chooses_loader = |attributes: ExprId| {
+            let keys = [known::r#type, known::embed];
+            keys.iter()
+                .any(|&key| self.hir.import_attribute(attributes, key).is_some())
+        };
+        if node.is_deferred || node.attributes.some().is_some_and(chooses_loader) {
             return Place::InPlace;
         }
+        // `export { a }` needs `a` to be a binding. The variable of a load is one, and holds what a namespace names.
         let names = self.names_of(import);
-        if names.iter().any(|it| exported.contains(&it.1)) {
-            return Place::InPlace;
-        }
-        // The factory and the fragment of classic JSX, and a class that decorator metadata names: no expression spells the name, so there is none to rewrite.
-        let bound = self.request.bound;
-        let mut symbols = names.iter().map(|it| bound.declared_symbol(it.0));
-        if symbols.any(|symbol| bound.runtime.is_named_implicitly(symbol)) {
+        let mut members = names.iter().filter(|it| it.2 != Atom::NONE);
+        if members.any(|it| exported.contains(&it.1)) {
             return Place::InPlace;
         }
         Place::LoweredImport
+    }
+
+    fn is_named_implicitly(&self, import: ImportId) -> bool {
+        let bound = self.request.bound;
+        let names = self.names_of(import);
+        let mut symbols = names.iter().map(|it| bound.declared_symbol(it.0));
+        // `import a = ns.a`: an entity name is no expression either.
+        let aliases = (0..self.hir.import_equals.len() as u32).map(ImportEqualsId);
+        let roots: Vec<Binding> = aliases.map(|it| bound.entity_root_binding(it)).collect();
+        symbols.any(|symbol| {
+            bound.runtime.is_named_implicitly(symbol) || roots.contains(&Binding::Symbol(symbol))
+        })
     }
 
     fn find_uses(&self, lowered: &[ImportId]) -> Vec<Use> {
@@ -328,16 +362,16 @@ impl<'a, 'r, 's> Planner<'a, 'r, 's> {
                 name,
                 name_before_end,
                 ..
-            } = self.hir[call.callee].kind
+            } = self.hir[self.without_type_syntax(call.callee)].kind
             else {
                 return None;
             };
             if name_before_end == FAR_IN_BRACKETS {
                 return None;
             }
-            let first = self.hir.ids(call.args).next()?;
+            let first = self.without_type_syntax(self.hir.ids(call.args).next()?);
             let written = match self.hir[first].kind {
-                ExprKind::Await(value) => value,
+                ExprKind::Await(value) => self.without_type_syntax(value),
                 _ => first,
             };
             let ExprKind::ImportCall { args } = self.hir[written].kind else {
@@ -348,6 +382,7 @@ impl<'a, 'r, 's> Planner<'a, 'r, 's> {
                 text_of(self.atoms, name),
                 b"mock" | b"unmock" | b"doMock" | b"doUnmock"
             );
+            let obj = self.without_type_syntax(obj);
             (takes_path && self.find_api(obj).is_some()).then_some((written, path))
         });
         paths.collect()
@@ -370,6 +405,8 @@ pub(crate) fn plan<'s>(
         return (!paths_written_as_imports.is_empty()).then_some(Plan {
             places: Vec::new(),
             uses: Vec::new(),
+            named_implicitly: Vec::new(),
+            exported_namespaces: Vec::new(),
             paths_written_as_imports,
         });
     }
@@ -399,13 +436,21 @@ pub(crate) fn plan<'s>(
     let lowered = places.iter().filter(|it| it.1 == Place::LoweredImport);
     let lowered: Vec<ImportId> = lowered.filter_map(|it| import_of(it.0)).collect();
     let mut uses = planner.find_uses(&lowered);
+    let named_implicitly = lowered.iter().copied();
+    let named_implicitly: Vec<ImportId> = named_implicitly
+        .filter(|&it| planner.is_named_implicitly(it))
+        .collect();
+    let exported_namespaces = planner.find_exported_namespaces(&body, &lowered);
     if !hir.is_js {
         let is_removed = |import: ImportId| {
             let node = hir[import];
             let has_names = node.default != Atom::NONE
                 || node.namespace != Atom::NONE
                 || !node.named.is_empty();
-            has_names && !uses.iter().any(|it| it.import == import)
+            has_names
+                && !uses.iter().any(|it| it.import == import)
+                && !named_implicitly.contains(&import)
+                && !exported_namespaces.iter().any(|it| it.1 == import)
         };
         for (statement, place) in &mut places {
             if *place == Place::LoweredImport && import_of(*statement).is_some_and(is_removed) {
@@ -421,6 +466,8 @@ pub(crate) fn plan<'s>(
     Some(Plan {
         places,
         uses,
+        named_implicitly,
+        exported_namespaces,
         paths_written_as_imports,
     })
 }
@@ -602,15 +649,24 @@ impl Plan {
         if self.places.is_empty() {
             return;
         }
+        for &(item, import) in &self.exported_namespaces {
+            file[item].local = local_of(import);
+        }
         let mut loads = Vec::new();
         for &(statement, import) in &lowered {
-            let is_used = self.uses.iter().any(|it| it.import == import);
+            let is_named_implicitly = self.named_implicitly.contains(&import);
+            let is_used = is_named_implicitly
+                || self.exported_namespaces.iter().any(|it| it.1 == import)
+                || self.uses.iter().any(|it| it.import == import);
             let local = if is_used {
                 local_of(import)
             } else {
                 Atom::NONE
             };
             loads.push(write_load(file, statement, import, local));
+            if is_named_implicitly {
+                file[import].loaded_as = local;
+            }
             loads.extend(keep_for_types_alone(file, statement, import));
         }
         let at = |place: Place| {

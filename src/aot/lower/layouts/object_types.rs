@@ -35,8 +35,6 @@ use crate::modules::ModuleRef;
 const _: () = assert!(PropertyKeyKind::COUNT <= 1 << u8::BITS);
 const _: () = assert!(WellKnownSymbol::COUNT <= 1 << u8::BITS);
 
-const MAX_ROUNDS_OF_FIELD_TYPES: usize = 4;
-
 type Member = (PropertyKeyId, ObjectMemberKind);
 type Members = SmallVec<[Member; 8]>;
 type KeyDescription = SmallVec<[u8; 24]>;
@@ -194,16 +192,18 @@ impl FileLowering<'_, '_, '_, '_> {
 
     // Every member of such a type is a type that nothing has made yet, with the same layout, and looking at its members makes the next ones.
     fn grows_without_end(&mut self, ty: CheckerTypeId) -> bool {
-        const LONGEST_PATH: usize = 64;
+        let longest_path = self.inputs.limits.get(LimitId::MaxHoldersFollowed) as usize;
         let holder = match self.layouts.holder_in_progress {
             Some(holder) if holder != ty => holder,
             Some(_) | None => return false,
         };
         self.layouts.holders.insert(ty, holder);
         let mut path = vec![ty];
-        while let Some(&holder) = self.layouts.holders.get(&path[path.len() - 1])
-            && path.len() < LONGEST_PATH
-        {
+        while let Some(&holder) = self.layouts.holders.get(&path[path.len() - 1]) {
+            if path.len() >= longest_path {
+                self.gave_up_at_no_position(LimitId::MaxHoldersFollowed);
+                break;
+            }
             path.push(holder);
         }
         path.reverse();
@@ -361,7 +361,14 @@ impl FileLowering<'_, '_, '_, '_> {
             return OwnFields::default();
         }
         // The type of a field may be the first mention of another type with this very layout (`interface Even { other: Odd }`), which then adds to the fields that have been looked at.
-        for _ in 0..MAX_ROUNDS_OF_FIELD_TYPES {
+        let mut rounds_left = self.inputs.limits.get(LimitId::MaxRoundsOfFieldTypes);
+        loop {
+            let Some(left) = rounds_left.checked_sub(1) else {
+                let position = self.find_position_in_file(layout);
+                self.gave_up(LimitId::MaxRoundsOfFieldTypes, position);
+                break;
+            };
+            rounds_left = left;
             let number_of_types = self.layouts.source_types(layout).len();
             for index in 0..listed.fields.len() as u32 {
                 self.listed_field_position(layout, &listed, index);

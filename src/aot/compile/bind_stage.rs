@@ -187,6 +187,10 @@ impl Build<'_> {
                 ProjectId::Application => &self.options.load.mocked_modules,
                 ProjectId::Runtime => &mocked_modules,
             },
+            modules_that_mocked_files_export_whole: match project {
+                ProjectId::Application => &self.options.load.modules_that_mocked_files_export_whole,
+                ProjectId::Runtime => &[],
+            },
             mocks_any_module: project == ProjectId::Application && self.mocks_any_module(),
             handed_on_modules: match project {
                 ProjectId::Application => &self.options.load.handed_on_modules,
@@ -197,7 +201,10 @@ impl Build<'_> {
             names_spied_on_unknown_objects: &self.options.load.names_spied_on_unknown_objects,
             names_spied_in_text: &self.options.load.names_spied_in_text,
             modules_replaced_in_text: &self.options.load.modules_replaced_in_text,
+            tests_load_by_unknown_path: self.options.load.tests_load_by_unknown_path,
             every_export_is_asked_for: self.options.load.every_export_is_asked_for,
+            copies_name_no_file: (self.options.aot.option_words.iter())
+                .any(|it| **it == *b"sabotage=CopiesNameNoFile"),
             evicted_modules: match project {
                 ProjectId::Application => &self.options.load.evicted_modules,
                 ProjectId::Runtime => &[],
@@ -387,6 +394,21 @@ impl Build<'_> {
         };
         steps.end("leave_out_files, limit_exports");
         graph.finish_plan(&in_parallel);
+        if let Some((root, owner)) = graph.find_check_of_copy_that_nothing_stores() {
+            let path_of = |file: bun_sema::program::FileId| {
+                bstr::BStr::new(view.sources.module_paths(file).display_path)
+            };
+            let owner = match owner {
+                crate::modules::ModuleRef::File(file) | crate::modules::ModuleRef::Face(file) => {
+                    path_of(file)
+                }
+                _ => bstr::BStr::new("a module that is no file"),
+            };
+            panic!(
+                "{} would look for a name of {owner} before anything has run that file",
+                path_of(root),
+            );
+        }
         steps.end("finish_plan");
         if self.options.aot.imports_are_in_other_images {
             graph.join_externals_that_spell_paths(&view.files().atoms);

@@ -1,0 +1,28 @@
+# The same in a function that more passes look at: it has a loop that carries a number, and an access by name.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass ConvertCountersToIntegers
+# RUN(RETYPED): pass RetypeValues
+# RUN(SPLIT): pass SplitUnions
+# CHECK: = Call v0
+# RETYPED: = Call v0
+# SPLIT: = Call v0
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="callsInALoop" parameters=[{type=anything}, {type=number}, {type=int[2, 100]}] results=[{type=anything}] {
+    Jump -> next b1(v1)
+  b1(v3: number):
+    LoopHint
+    v5 = Call v0, -
+    v6 = PropGet v0 key="x"
+    v7 = Mod v3, v2
+    v8 = Integer
+    v9 = StrictEq v7, v8
+    Branch v9 -> taken b2(), notTaken b3()
+  b2():
+    v10 = Div v3, v2
+    Jump -> next b1(v10)
+  b3():
+    Return v6
+}

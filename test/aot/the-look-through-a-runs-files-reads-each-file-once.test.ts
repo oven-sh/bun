@@ -34,18 +34,21 @@ async function run(flags: string[], words = "") {
   return {
     printed: lines.filter(line => line.startsWith("OUT")),
     looks: lines.filter(line => line.startsWith("AOT test run | the scan looked at ")),
+    library: lines.filter(line => line.startsWith("AOT test run | modules of Bun that a scan has looked at: ")),
     exitCode,
   };
 }
 
 test("in the build of the packages' layer", async () => {
   const plain = await run(["--isolate"]);
-  expect(plain).toEqual({ printed: ["OUT number,c,d true 7"], looks: [], exitCode: 0 });
+  expect(plain).toEqual({ printed: ["OUT number,c,d true 7"], looks: [], library: [], exitCode: 0 });
   const layers = await run(["--aot", "--isolate"], "TestRunLayers:2");
-  expect({ ...layers, looks: [] }).toEqual(plain);
+  expect({ ...layers, looks: [], library: [] }).toEqual(plain);
   // The test file and the seven files of the project, once each, and src/d/index.ts once more as "src/d": what is kept by spelling is looked up
-  // without the extension, and that spelling differs in more. Bun's own library is looked at apart.
+  // without the extension, and that spelling differs in more.
   expect(layers.looks[0]).toBe(
     "AOT test run | the scan looked at 9 texts | 6 names led to a file that it had looked at under another",
   );
+  // Of Bun's own library a scan reads what the files name and what that loads. These name none of it: reading all of it was three quarters of a small run.
+  expect(layers.library[0]).toMatch(/: 0 of \d+$/);
 }, 240_000);

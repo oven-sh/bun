@@ -1,4 +1,4 @@
-use super::answers::{CheckedType, GaveUp, MemberLookup};
+use super::answers::{CheckedType, GaveUp, MemberLookup, QueryLimit};
 use super::builtin_types::BuiltinClassIndex;
 use super::prototype_links::{NamedValue, PrototypeOperation};
 use super::queries::Queries;
@@ -17,6 +17,7 @@ use crate::types::{
 use crate::util::FxHashMap;
 use bun_sort_by_number::{SortByNumber, number_of_pair, wide_number_of_pair};
 use smallvec::SmallVec;
+use std::cell::Cell;
 use std::rc::Rc;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -956,11 +957,14 @@ fn is_int32_literal(hir: &hir::File<'_>, value: ExprId) -> bool {
     number == f64::from(number as i32)
 }
 
-const MAX_TERMS_READ: usize = 16;
+struct TermsRead {
+    most: u64,
+    ran_out: Cell<bool>,
+}
 
-fn is_sum_with_product(hir: &hir::File<'_>, value: ExprId) -> bool {
+fn is_sum_with_product(hir: &hir::File<'_>, value: ExprId, read: &TermsRead) -> bool {
     let mut terms = vec![value];
-    for _ in 0..MAX_TERMS_READ {
+    for _ in 0..read.most {
         let Some(term) = terms.pop() else {
             return false;
         };
@@ -977,11 +981,19 @@ fn is_sum_with_product(hir: &hir::File<'_>, value: ExprId) -> bool {
             _ => {}
         }
     }
+    if !terms.is_empty() {
+        read.ran_out.set(true);
+    }
     false
 }
 
 /// `var v = x * digit + carry; low = v & mask`: a bit operation takes any number, and cuts one that has left the range.
-fn is_given_product(hir: &hir::File<'_>, bound: &Bound<'_>, reference: ExprId) -> bool {
+fn is_given_product(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    reference: ExprId,
+    read: &TermsRead,
+) -> bool {
     let ExprKind::Ident(_) = hir[reference].kind else {
         return false;
     };
@@ -996,7 +1008,7 @@ fn is_given_product(hir: &hir::File<'_>, bound: &Bound<'_>, reference: ExprId) -
             return false;
         };
         let initializer = hir[variable].init.some();
-        initializer.is_some_and(|initializer| is_sum_with_product(hir, initializer))
+        initializer.is_some_and(|initializer| is_sum_with_product(hir, initializer, read))
     });
     starts_as_product
         || bound.stores_to(symbol).iter().any(|store| {
@@ -1004,7 +1016,7 @@ fn is_given_product(hir: &hir::File<'_>, bound: &Bound<'_>, reference: ExprId) -
                 return false;
             };
             match op {
-                None => is_sum_with_product(hir, value),
+                None => is_sum_with_product(hir, value, read),
                 Some(op) => matches!(op, BinOp::Mul | BinOp::Div | BinOp::Pow),
             }
         })
@@ -1067,8 +1079,6 @@ fn is_used_as_int32(
     answers.extend(walked.into_iter().map(|sum| (sum, answer)));
     answer
 }
-
-const MAX_CALLS_READ: usize = 16;
 
 fn find_name_of_function(
     hir: &hir::File<'_>,
@@ -1834,7 +1844,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let index = hir[function].params.position_of(parameter.idx())?;
         let callee = find_name_of_function(hir, bound, function)?;
         let references = references_to(self.reference_index().to_bindings, callee);
-        if references.len() > MAX_CALLS_READ || self.is_exported(callee) {
+        if references.len() as u64 > self.limit(QueryLimit::CallsReadForParameter) {
+            self.note_walk_ended_by(QueryLimit::CallsReadForParameter);
+            return None;
+        }
+        if self.is_exported(callee) {
             return None;
         }
         let first_spreads = &mut self.memo.first_spread_arguments;
@@ -2572,8 +2586,15 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             Use::Number => usage.facts |= self.number_fact_of_operand(value),
             Use::Int32 => {
                 usage.facts |= self.number_fact_of_operand(value);
-                if !is_given_product(self.hir(), self.bound(), value) {
+                let read = TermsRead {
+                    most: self.limit(QueryLimit::TermsReadForProduct),
+                    ran_out: Cell::new(false),
+                };
+                if !is_given_product(self.hir(), self.bound(), value, &read) {
                     usage.facts |= Facts::INT32;
+                }
+                if read.ran_out.get() {
+                    self.note_walk_ended_by(QueryLimit::TermsReadForProduct);
                 }
             }
             Use::Updated => {

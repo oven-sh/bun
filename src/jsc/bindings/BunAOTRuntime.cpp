@@ -260,12 +260,23 @@ extern "C" bool Bun__AOT__takesImagesAboveOthers()
     return JSC::AOT::takesImagesAboveOthers();
 }
 
+extern "C" void Bun__AOT__recordMissingExport(const BunString* name, const BunString* exporter, const BunString* importer);
+
+static void recordMissingExport(const String& name, const String& exporter, const String& importer)
+{
+    BunString texts[] = { Bun::toStringRef(name), Bun::toStringRef(exporter), Bun::toStringRef(importer) };
+    Bun__AOT__recordMissingExport(&texts[0], &texts[1], &texts[2]);
+    for (BunString& text : texts)
+        text.deref();
+}
+
 static bool listsRefusedChanges;
 
 extern "C" void Bun__AOT__listRefusedChanges()
 {
     listsRefusedChanges = true;
     JSC::AOT::setRefusedChangeListener(recordRefusedChange);
+    JSC::AOT::setMissingExportListener(recordMissingExport);
 }
 
 extern "C" void Bun__AOT__openNameWithoutImage(uint32_t holder, const uint8_t* name, size_t length)

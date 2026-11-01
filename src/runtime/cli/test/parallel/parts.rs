@@ -376,6 +376,12 @@ impl Parts {
         for message in bun_core::strings::split(messages, b"\n\n") {
             if !message.is_empty() && !self.messages_seen.contains(message) {
                 let _ = self.messages_seen.insert(message);
+                // Lines of the log are no message of the build: no empty line stands behind them.
+                if message.starts_with(b"AOT ") {
+                    let _ = writer.write_all(bun_core::strings::trim_right(message, b"\n"));
+                    let _ = writer.write_all(b"\n");
+                    continue;
+                }
                 let _ = writer.write_all(message);
                 let _ = writer.write_all(b"\n\n");
             }

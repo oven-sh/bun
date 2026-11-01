@@ -44,6 +44,7 @@ fn ask_for_calls(threads: usize) -> Vec<(String, String)> {
             builtin_types: &BuiltinTypeSymbols::compute(all, &[], Box::new(|| &[])),
             named_values: &NoNamedValues,
             max_inference_nodes: 0,
+            limits: Default::default(),
         };
         let dep = program.file("node_modules/dep/index.ts");
         let answers = Mutex::new(Vec::new());
@@ -51,7 +52,7 @@ fn ask_for_calls(threads: usize) -> Vec<(String, String)> {
             if file != dep {
                 return;
             }
-            checker.with_queries(file, inputs, |queries| {
+            checker.with_queries(file, &inputs, |queries| {
                 let mut calls: Vec<(u32, u32, ExprId)> = (queries.hir().exprs.iter().enumerate())
                     .filter(|(_, expression)| matches!(expression.kind, ExprKind::Call(_)))
                     .map(|(index, it)| (it.pos, u32::MAX - it.end, ExprId(index as u32)))

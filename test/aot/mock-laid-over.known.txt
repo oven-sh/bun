@@ -1,0 +1,357 @@
+# What a reader sees otherwise than under `bun test` where a mock is laid over a module that has run. See harness/mock-laid-over.ts.
+packed beside preloads that mock | bun_sqlite.vi.mock.none.hoisted | after required | class: SILENT | undefined | at 1 3 4
+packed beside preloads that mock | bun_sqlite.vi.mock.none.hoisted | after required | kept: SILENT | undefined | at 1 3 4
+packed beside preloads that mock | bun_sqlite.vi.mock.none.hoisted | require() | class: SILENT | undefined | at 1
+packed beside preloads that mock | bun_sqlite.vi.mock.none.hoisted | require() | kept: SILENT | undefined | at 1
+packed beside preloads that mock | bun_sqlite.vi.mock.none.hoisted | required | class: SILENT | undefined | at 1 3 4
+packed beside preloads that mock | bun_sqlite.vi.mock.none.hoisted | required | kept: SILENT | undefined | at 1 3 4
+packed beside preloads that mock | project.jest.mock.factory.hoisted | after namespace | Fixed.A: SILENT | real a | at 1 2
+packed beside preloads that mock | project.jest.mock.factory.hoisted | after namespace | again.inner: SILENT | real inner | at 1 2
+packed beside preloads that mock | project.jest.mock.factory.hoisted | after namespace | space.inner: SILENT | real inner | at 1 2
+packed beside preloads that mock | project.jest.mock.factory.hoisted | after | Fixed.A: SILENT | real a | at 1 2
+packed beside preloads that mock | project.jest.mock.factory.hoisted | after | again.inner: SILENT | real inner | at 1 2
+packed beside preloads that mock | project.jest.mock.factory.hoisted | after | space.inner: SILENT | real inner | at 1 2
+packed beside preloads that mock | project.jest.mock.factory.hoisted | before | Fixed.A: SILENT | real a | at 1 2
+packed beside preloads that mock | project.jest.mock.factory.hoisted | before | again.inner: SILENT | real inner | at 1 2
+packed beside preloads that mock | project.jest.mock.factory.hoisted | before | space.inner: SILENT | real inner | at 1 2
+packed beside preloads that mock | project.jest.mock.factory.hoisted | import() | again.inner: SILENT | real inner | at 1 2
+packed beside preloads that mock | project.jest.mock.factory.hoisted | import() | space.inner: SILENT | real inner | at 1 2
+packed beside preloads that mock | project.jest.mock.factory.hoisted | namespace | Fixed.A: SILENT | real a | at 1 2
+packed beside preloads that mock | project.jest.mock.factory.hoisted | namespace | again.inner: SILENT | real inner | at 1 2
+packed beside preloads that mock | project.jest.mock.factory.hoisted | namespace | space.inner: SILENT | real inner | at 1 2
+packed beside preloads that mock | project.laid-by-helper-call.restore | after namespace | Fixed.A: SILENT | real a | at 1 2 3 4
+packed beside preloads that mock | project.laid-by-helper-call.restore | after namespace | again.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.laid-by-helper-call.restore | after namespace | space.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.laid-by-helper-call.restore | after | Fixed.A: SILENT | real a | at 1 2 3 4
+packed beside preloads that mock | project.laid-by-helper-call.restore | after | again.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.laid-by-helper-call.restore | after | space.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.laid-by-helper-call.restore | before | Fixed.A: SILENT | real a | at 1 2 3 4
+packed beside preloads that mock | project.laid-by-helper-call.restore | before | again.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.laid-by-helper-call.restore | before | space.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.laid-by-helper-call.restore | import() | again.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.laid-by-helper-call.restore | import() | space.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.laid-by-helper-call.restore | namespace | Fixed.A: SILENT | real a | at 1 2 3 4
+packed beside preloads that mock | project.laid-by-helper-call.restore | namespace | again.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.laid-by-helper-call.restore | namespace | space.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.laid-by-helper-import.file-end | after namespace | Fixed.A: SILENT | real a | at 1 2 3 4
+packed beside preloads that mock | project.laid-by-helper-import.file-end | after namespace | again.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.laid-by-helper-import.file-end | after namespace | space.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.laid-by-helper-import.file-end | after | Fixed.A: SILENT | real a | at 1 2 3 4
+packed beside preloads that mock | project.laid-by-helper-import.file-end | after | again.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.laid-by-helper-import.file-end | after | space.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.laid-by-helper-import.file-end | before | Fixed.A: SILENT | real a | at 1 2 3 4
+packed beside preloads that mock | project.laid-by-helper-import.file-end | before | again.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.laid-by-helper-import.file-end | before | space.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.laid-by-helper-import.file-end | import() | again.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.laid-by-helper-import.file-end | import() | space.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.laid-by-helper-import.file-end | namespace | Fixed.A: SILENT | real a | at 1 2 3 4
+packed beside preloads that mock | project.laid-by-helper-import.file-end | namespace | again.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.laid-by-helper-import.file-end | namespace | space.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.laid-by-preload.file-end | after namespace | Fixed.A: SILENT | real a | at 1 2 3 4
+packed beside preloads that mock | project.laid-by-preload.file-end | after namespace | again.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.laid-by-preload.file-end | after namespace | space.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.laid-by-preload.file-end | after | Fixed.A: SILENT | real a | at 1 2 3 4
+packed beside preloads that mock | project.laid-by-preload.file-end | after | again.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.laid-by-preload.file-end | after | space.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.laid-by-preload.file-end | before | Fixed.A: SILENT | real a | at 1 2 3 4 5
+packed beside preloads that mock | project.laid-by-preload.file-end | before | again.inner: SILENT | real inner | at 1 2 3 4 5
+packed beside preloads that mock | project.laid-by-preload.file-end | before | space.inner: SILENT | real inner | at 1 2 3 4 5
+packed beside preloads that mock | project.laid-by-preload.file-end | import() | again.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.laid-by-preload.file-end | import() | space.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.laid-by-preload.file-end | namespace | Fixed.A: SILENT | real a | at 1 2 3 4 5
+packed beside preloads that mock | project.laid-by-preload.file-end | namespace | again.inner: SILENT | real inner | at 1 2 3 4 5
+packed beside preloads that mock | project.laid-by-preload.file-end | namespace | space.inner: SILENT | real inner | at 1 2 3 4 5
+packed beside preloads that mock | project.mock.module.factory.test | after namespace | Fixed.A: SILENT | real a | at 1 2 3 4
+packed beside preloads that mock | project.mock.module.factory.test | after namespace | again.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.mock.module.factory.test | after namespace | space.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.mock.module.factory.test | after | Fixed.A: SILENT | real a | at 1 2 3 4
+packed beside preloads that mock | project.mock.module.factory.test | after | again.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.mock.module.factory.test | after | space.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.mock.module.factory.test | before | Fixed.A: SILENT | real a | at 1 2 3 4
+packed beside preloads that mock | project.mock.module.factory.test | before | again.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.mock.module.factory.test | before | space.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.mock.module.factory.test | import() | again.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.mock.module.factory.test | import() | space.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.mock.module.factory.test | namespace | Fixed.A: SILENT | real a | at 1 2 3 4
+packed beside preloads that mock | project.mock.module.factory.test | namespace | again.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.mock.module.factory.test | namespace | space.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.mock.module.factory.top | after namespace | Fixed.A: SILENT | real a | at 1 2 3 4
+packed beside preloads that mock | project.mock.module.factory.top | after namespace | again.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.mock.module.factory.top | after namespace | space.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.mock.module.factory.top | after | Fixed.A: SILENT | real a | at 1 2 3 4
+packed beside preloads that mock | project.mock.module.factory.top | after | again.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.mock.module.factory.top | after | space.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.mock.module.factory.top | before | Fixed.A: SILENT | real a | at 1 2 3 4
+packed beside preloads that mock | project.mock.module.factory.top | before | again.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.mock.module.factory.top | before | space.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.mock.module.factory.top | import() | again.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.mock.module.factory.top | import() | space.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.mock.module.factory.top | namespace | Fixed.A: SILENT | real a | at 1 2 3 4
+packed beside preloads that mock | project.mock.module.factory.top | namespace | again.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.mock.module.factory.top | namespace | space.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.mock.module.original.top | after namespace | Fixed.A: SILENT | real a | at 1 2 3 4
+packed beside preloads that mock | project.mock.module.original.top | after namespace | again.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.mock.module.original.top | after namespace | space.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.mock.module.original.top | after | Fixed.A: SILENT | real a | at 1 2 3 4
+packed beside preloads that mock | project.mock.module.original.top | after | again.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.mock.module.original.top | after | space.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.mock.module.original.top | before | Fixed.A: SILENT | real a | at 1 2 3 4
+packed beside preloads that mock | project.mock.module.original.top | before | again.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.mock.module.original.top | before | space.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.mock.module.original.top | import() | again.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.mock.module.original.top | import() | space.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.mock.module.original.top | namespace | Fixed.A: SILENT | real a | at 1 2 3 4
+packed beside preloads that mock | project.mock.module.original.top | namespace | again.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.mock.module.original.top | namespace | space.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.vi.doMock.factory.test | after namespace | Fixed.A: SILENT | real a | at 1 2
+packed beside preloads that mock | project.vi.doMock.factory.test | after namespace | again.inner: SILENT | real inner | at 1 2
+packed beside preloads that mock | project.vi.doMock.factory.test | after namespace | space.inner: SILENT | real inner | at 1 2
+packed beside preloads that mock | project.vi.doMock.factory.test | after | Fixed.A: SILENT | real a | at 1 2
+packed beside preloads that mock | project.vi.doMock.factory.test | after | again.inner: SILENT | real inner | at 1 2
+packed beside preloads that mock | project.vi.doMock.factory.test | after | space.inner: SILENT | real inner | at 1 2
+packed beside preloads that mock | project.vi.doMock.factory.test | barrel | keys: SILENT | Color+Fixed+Klass+again+arrow+counter+default+fn+handed+lazy+space+starred+table | at 1 2
+packed beside preloads that mock | project.vi.mock.factory.hoisted | after namespace | Fixed.A: SILENT | real a | at 1 2
+packed beside preloads that mock | project.vi.mock.factory.hoisted | after namespace | again.inner: SILENT | real inner | at 1 2
+packed beside preloads that mock | project.vi.mock.factory.hoisted | after namespace | counter: SILENT | 1 | at 3 4
+packed beside preloads that mock | project.vi.mock.factory.hoisted | after namespace | space.inner: SILENT | real inner | at 1 2
+packed beside preloads that mock | project.vi.mock.factory.hoisted | after namespace | table.n: SILENT | 2 | at 3 4
+packed beside preloads that mock | project.vi.mock.factory.hoisted | after | Fixed.A: SILENT | real a | at 1 2
+packed beside preloads that mock | project.vi.mock.factory.hoisted | after | again.inner: SILENT | real inner | at 1 2
+packed beside preloads that mock | project.vi.mock.factory.hoisted | after | counter: SILENT | 1 | at 3 4
+packed beside preloads that mock | project.vi.mock.factory.hoisted | after | space.inner: SILENT | real inner | at 1 2
+packed beside preloads that mock | project.vi.mock.factory.hoisted | after | table.n: SILENT | 2 | at 3 4
+packed beside preloads that mock | project.vi.mock.factory.hoisted | barrel | default: SILENT | real default | at 3 4
+packed beside preloads that mock | project.vi.mock.factory.hoisted | barrel | fn: SILENT | real fn | at 3 4
+packed beside preloads that mock | project.vi.mock.factory.hoisted | barrel | keys: SILENT | Color+Fixed+Klass+added+again+arrow+bump+counter+default+fn+grow+handed+kept+lazy+space+starred+table+viaSibling | at 3 4
+packed beside preloads that mock | project.vi.mock.factory.hoisted | import() | counter: SILENT | 1 | at 3 4
+packed beside preloads that mock | project.vi.mock.factory.hoisted | import() | table.n: SILENT | 2 | at 3 4
+packed beside preloads that mock | project.vi.mock.factory.hoisted | namespace | Fixed.A: SILENT | real a | at 1 2 3 4
+packed beside preloads that mock | project.vi.mock.factory.hoisted | namespace | added: SILENT | undefined | at 3 4
+packed beside preloads that mock | project.vi.mock.factory.hoisted | namespace | again.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.vi.mock.factory.hoisted | namespace | keys: SILENT | Color+Fixed+Klass+again+arrow+bump+counter+default+fn+grow+handed+kept+lazy+space+starred+table+viaSibling | at 3 4
+packed beside preloads that mock | project.vi.mock.factory.hoisted | namespace | space.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | project.vi.mock.factory.hoisted | require() | counter: SILENT | 1 | at 3 4
+packed beside preloads that mock | project.vi.mock.factory.hoisted | require() | table.n: SILENT | 2 | at 3 4
+packed beside preloads that mock | project.vi.mock.spy.hoisted | after namespace | counter: SILENT | 1 | at 3 4
+packed beside preloads that mock | project.vi.mock.spy.hoisted | after namespace | table.n: SILENT | 2 | at 3 4
+packed beside preloads that mock | project.vi.mock.spy.hoisted | after | counter: SILENT | 1 | at 3 4
+packed beside preloads that mock | project.vi.mock.spy.hoisted | after | table.n: SILENT | 2 | at 3 4
+packed beside preloads that mock | project.vi.mock.spy.hoisted | import() | counter: SILENT | 1 | at 3 4
+packed beside preloads that mock | project.vi.mock.spy.hoisted | import() | table.n: SILENT | 2 | at 3 4
+packed beside preloads that mock | project.vi.mock.spy.hoisted | require() | counter: SILENT | 1 | at 3 4
+packed beside preloads that mock | project.vi.mock.spy.hoisted | require() | table.n: SILENT | 2 | at 3 4
+packed beside preloads that mock | typed-package.mock.module.factory.top | after namespace | again.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | typed-package.mock.module.factory.top | after namespace | space.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | typed-package.mock.module.factory.top | after | again.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | typed-package.mock.module.factory.top | after | space.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | typed-package.mock.module.factory.top | before | again.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | typed-package.mock.module.factory.top | before | space.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | typed-package.mock.module.factory.top | import() | again.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | typed-package.mock.module.factory.top | import() | space.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | typed-package.mock.module.factory.top | namespace | again.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | typed-package.mock.module.factory.top | namespace | space.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | untyped-package.laid-by-preload.doUnmock | after namespace | again.inner: SILENT | real inner | at 1 2
+packed beside preloads that mock | untyped-package.laid-by-preload.doUnmock | after namespace | space.inner: SILENT | real inner | at 1 2
+packed beside preloads that mock | untyped-package.laid-by-preload.doUnmock | after | again.inner: SILENT | real inner | at 1 2
+packed beside preloads that mock | untyped-package.laid-by-preload.doUnmock | after | space.inner: SILENT | real inner | at 1 2
+packed beside preloads that mock | untyped-package.laid-by-preload.doUnmock | before | again.inner: SILENT | real inner | at 1 2 5
+packed beside preloads that mock | untyped-package.laid-by-preload.doUnmock | before | space.inner: SILENT | real inner | at 1 2 5
+packed beside preloads that mock | untyped-package.laid-by-preload.doUnmock | import() | again.inner: SILENT | real inner | at 1 2
+packed beside preloads that mock | untyped-package.laid-by-preload.doUnmock | import() | space.inner: SILENT | real inner | at 1 2
+packed beside preloads that mock | untyped-package.laid-by-preload.doUnmock | namespace | again.inner: SILENT | real inner | at 1 2 5
+packed beside preloads that mock | untyped-package.laid-by-preload.doUnmock | namespace | space.inner: SILENT | real inner | at 1 2 5
+packed beside preloads that mock | untyped-package.mock.module.factory.top | after namespace | again.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | untyped-package.mock.module.factory.top | after namespace | space.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | untyped-package.mock.module.factory.top | after | again.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | untyped-package.mock.module.factory.top | after | space.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | untyped-package.mock.module.factory.top | before | again.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | untyped-package.mock.module.factory.top | before | space.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | untyped-package.mock.module.factory.top | import() | again.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | untyped-package.mock.module.factory.top | import() | space.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | untyped-package.mock.module.factory.top | namespace | again.inner: SILENT | real inner | at 1 2 3 4
+packed beside preloads that mock | untyped-package.mock.module.factory.top | namespace | space.inner: SILENT | real inner | at 1 2 3 4
+packed | bun_sqlite.mock.module.spread.test | after default | added: loud | nothing | at 1 3
+packed | bun_sqlite.mock.module.spread.test | after default | class: loud | nothing | at 1 3
+packed | bun_sqlite.mock.module.spread.test | after default | kept: loud | nothing | at 1 3
+packed | bun_sqlite.mock.module.spread.test | after namespace | added: loud | nothing | at 1 3
+packed | bun_sqlite.mock.module.spread.test | after namespace | class: SILENT | function | at 4
+packed | bun_sqlite.mock.module.spread.test | after namespace | class: loud | nothing | at 1 3
+packed | bun_sqlite.mock.module.spread.test | after namespace | has default: loud | nothing | at 1 3
+packed | bun_sqlite.mock.module.spread.test | after namespace | kept: loud | nothing | at 1 3
+packed | bun_sqlite.mock.module.spread.test | after required | added: SILENT | undefined | at 4
+packed | bun_sqlite.mock.module.spread.test | after required | added: loud | nothing | at 1 3
+packed | bun_sqlite.mock.module.spread.test | after required | class: SILENT | function | at 4
+packed | bun_sqlite.mock.module.spread.test | after required | class: loud | nothing | at 1 3
+packed | bun_sqlite.mock.module.spread.test | after required | kept: loud | nothing | at 1 3
+packed | bun_sqlite.mock.module.spread.test | after | class: SILENT | function | at 4
+packed | bun_sqlite.mock.module.spread.test | after | class: loud | nothing | at 1 3
+packed | bun_sqlite.mock.module.spread.test | after | kept: loud | nothing | at 1 3
+packed | bun_sqlite.mock.module.spread.test | before | class: SILENT | function | at 4
+packed | bun_sqlite.mock.module.spread.test | before | class: loud | nothing | at 1 3
+packed | bun_sqlite.mock.module.spread.test | before | kept: loud | nothing | at 1 3
+packed | bun_sqlite.mock.module.spread.test | captured | same: SILENT | true | at 4
+packed | bun_sqlite.mock.module.spread.test | captured | same: loud | nothing | at 1 3
+packed | bun_sqlite.mock.module.spread.test | default | added: loud | nothing | at 1 3
+packed | bun_sqlite.mock.module.spread.test | default | class: loud | nothing | at 1 3
+packed | bun_sqlite.mock.module.spread.test | default | kept: loud | nothing | at 1 3
+packed | bun_sqlite.mock.module.spread.test | import() | class: SILENT | function | at 4
+packed | bun_sqlite.mock.module.spread.test | import() | class: loud | nothing | at 1 3
+packed | bun_sqlite.mock.module.spread.test | import() | kept: loud | nothing | at 1 3
+packed | bun_sqlite.mock.module.spread.test | namespace | added: loud | nothing | at 1 3
+packed | bun_sqlite.mock.module.spread.test | namespace | class: SILENT | function | at 4
+packed | bun_sqlite.mock.module.spread.test | namespace | class: loud | nothing | at 1 3
+packed | bun_sqlite.mock.module.spread.test | namespace | has default: loud | nothing | at 1 3
+packed | bun_sqlite.mock.module.spread.test | namespace | kept: loud | nothing | at 1 3
+packed | bun_sqlite.mock.module.spread.test | require() | class: SILENT | function | at 4
+packed | bun_sqlite.mock.module.spread.test | require() | class: loud | nothing | at 1 3
+packed | bun_sqlite.mock.module.spread.test | require() | kept: loud | nothing | at 1 3
+packed | bun_sqlite.mock.module.spread.test | required | added: loud | nothing | at 1 3
+packed | bun_sqlite.mock.module.spread.test | required | class: loud | nothing | at 1 3
+packed | bun_sqlite.mock.module.spread.test | required | kept: loud | nothing | at 1 3
+packed | bun_sqlite.vi.mock.none.hoisted | after required | class: SILENT | undefined | at 1 3 4
+packed | bun_sqlite.vi.mock.none.hoisted | after required | kept: SILENT | undefined | at 1 3 4
+packed | bun_sqlite.vi.mock.none.hoisted | require() | class: SILENT | undefined | at 1
+packed | bun_sqlite.vi.mock.none.hoisted | require() | kept: SILENT | undefined | at 1
+packed | bun_sqlite.vi.mock.none.hoisted | required | class: SILENT | undefined | at 1 3 4
+packed | bun_sqlite.vi.mock.none.hoisted | required | kept: SILENT | undefined | at 1 3 4
+packed | project.jest.mock.factory.hoisted | after namespace | Fixed.A: SILENT | real a | at 1 2
+packed | project.jest.mock.factory.hoisted | after namespace | again.inner: SILENT | real inner | at 1 2
+packed | project.jest.mock.factory.hoisted | after namespace | space.inner: SILENT | real inner | at 1 2
+packed | project.jest.mock.factory.hoisted | after | Fixed.A: SILENT | real a | at 1 2
+packed | project.jest.mock.factory.hoisted | after | again.inner: SILENT | real inner | at 1 2
+packed | project.jest.mock.factory.hoisted | after | space.inner: SILENT | real inner | at 1 2
+packed | project.jest.mock.factory.hoisted | before | Fixed.A: SILENT | real a | at 1 2
+packed | project.jest.mock.factory.hoisted | before | again.inner: SILENT | real inner | at 1 2
+packed | project.jest.mock.factory.hoisted | before | space.inner: SILENT | real inner | at 1 2
+packed | project.jest.mock.factory.hoisted | import() | again.inner: SILENT | real inner | at 1 2
+packed | project.jest.mock.factory.hoisted | import() | space.inner: SILENT | real inner | at 1 2
+packed | project.jest.mock.factory.hoisted | namespace | Fixed.A: SILENT | real a | at 1 2
+packed | project.jest.mock.factory.hoisted | namespace | again.inner: SILENT | real inner | at 1 2
+packed | project.jest.mock.factory.hoisted | namespace | space.inner: SILENT | real inner | at 1 2
+packed | project.laid-by-helper-call.restore | after namespace | Fixed.A: SILENT | real a | at 1 2 3 4
+packed | project.laid-by-helper-call.restore | after namespace | again.inner: SILENT | real inner | at 1 2 3 4
+packed | project.laid-by-helper-call.restore | after namespace | space.inner: SILENT | real inner | at 1 2 3 4
+packed | project.laid-by-helper-call.restore | after | Fixed.A: SILENT | real a | at 1 2 3 4
+packed | project.laid-by-helper-call.restore | after | again.inner: SILENT | real inner | at 1 2 3 4
+packed | project.laid-by-helper-call.restore | after | space.inner: SILENT | real inner | at 1 2 3 4
+packed | project.laid-by-helper-call.restore | before | Fixed.A: SILENT | real a | at 1 2 3 4
+packed | project.laid-by-helper-call.restore | before | again.inner: SILENT | real inner | at 1 2 3 4
+packed | project.laid-by-helper-call.restore | before | space.inner: SILENT | real inner | at 1 2 3 4
+packed | project.laid-by-helper-call.restore | import() | again.inner: SILENT | real inner | at 1 2 3 4
+packed | project.laid-by-helper-call.restore | import() | space.inner: SILENT | real inner | at 1 2 3 4
+packed | project.laid-by-helper-call.restore | namespace | Fixed.A: SILENT | real a | at 1 2 3 4
+packed | project.laid-by-helper-call.restore | namespace | again.inner: SILENT | real inner | at 1 2 3 4
+packed | project.laid-by-helper-call.restore | namespace | space.inner: SILENT | real inner | at 1 2 3 4
+packed | project.laid-by-helper-import.file-end | after namespace | Fixed.A: SILENT | real a | at 1 2 3 4
+packed | project.laid-by-helper-import.file-end | after namespace | again.inner: SILENT | real inner | at 1 2 3 4
+packed | project.laid-by-helper-import.file-end | after namespace | space.inner: SILENT | real inner | at 1 2 3 4
+packed | project.laid-by-helper-import.file-end | after | Fixed.A: SILENT | real a | at 1 2 3 4
+packed | project.laid-by-helper-import.file-end | after | again.inner: SILENT | real inner | at 1 2 3 4
+packed | project.laid-by-helper-import.file-end | after | space.inner: SILENT | real inner | at 1 2 3 4
+packed | project.laid-by-helper-import.file-end | before | Fixed.A: SILENT | real a | at 1 2 3 4
+packed | project.laid-by-helper-import.file-end | before | again.inner: SILENT | real inner | at 1 2 3 4
+packed | project.laid-by-helper-import.file-end | before | space.inner: SILENT | real inner | at 1 2 3 4
+packed | project.laid-by-helper-import.file-end | import() | again.inner: SILENT | real inner | at 1 2 3 4
+packed | project.laid-by-helper-import.file-end | import() | space.inner: SILENT | real inner | at 1 2 3 4
+packed | project.laid-by-helper-import.file-end | namespace | Fixed.A: SILENT | real a | at 1 2 3 4
+packed | project.laid-by-helper-import.file-end | namespace | again.inner: SILENT | real inner | at 1 2 3 4
+packed | project.laid-by-helper-import.file-end | namespace | space.inner: SILENT | real inner | at 1 2 3 4
+packed | project.mock.module.factory.test | after namespace | Fixed.A: SILENT | real a | at 1 2 3 4
+packed | project.mock.module.factory.test | after namespace | again.inner: SILENT | real inner | at 1 2 3 4
+packed | project.mock.module.factory.test | after namespace | space.inner: SILENT | real inner | at 1 2 3 4
+packed | project.mock.module.factory.test | after | Fixed.A: SILENT | real a | at 1 2 3 4
+packed | project.mock.module.factory.test | after | again.inner: SILENT | real inner | at 1 2 3 4
+packed | project.mock.module.factory.test | after | space.inner: SILENT | real inner | at 1 2 3 4
+packed | project.mock.module.factory.test | before | Fixed.A: SILENT | real a | at 1 2 3 4
+packed | project.mock.module.factory.test | before | again.inner: SILENT | real inner | at 1 2 3 4
+packed | project.mock.module.factory.test | before | space.inner: SILENT | real inner | at 1 2 3 4
+packed | project.mock.module.factory.test | import() | again.inner: SILENT | real inner | at 1 2 3 4
+packed | project.mock.module.factory.test | import() | space.inner: SILENT | real inner | at 1 2 3 4
+packed | project.mock.module.factory.test | namespace | Fixed.A: SILENT | real a | at 1 2 3 4
+packed | project.mock.module.factory.test | namespace | again.inner: SILENT | real inner | at 1 2 3 4
+packed | project.mock.module.factory.test | namespace | space.inner: SILENT | real inner | at 1 2 3 4
+packed | project.mock.module.factory.top | after namespace | Fixed.A: SILENT | real a | at 1 2 3 4
+packed | project.mock.module.factory.top | after namespace | again.inner: SILENT | real inner | at 1 2 3 4
+packed | project.mock.module.factory.top | after namespace | space.inner: SILENT | real inner | at 1 2 3 4
+packed | project.mock.module.factory.top | after | Fixed.A: SILENT | real a | at 1 2 3 4
+packed | project.mock.module.factory.top | after | again.inner: SILENT | real inner | at 1 2 3 4
+packed | project.mock.module.factory.top | after | space.inner: SILENT | real inner | at 1 2 3 4
+packed | project.mock.module.factory.top | before | Fixed.A: SILENT | real a | at 1 2 3 4
+packed | project.mock.module.factory.top | before | again.inner: SILENT | real inner | at 1 2 3 4
+packed | project.mock.module.factory.top | before | space.inner: SILENT | real inner | at 1 2 3 4
+packed | project.mock.module.factory.top | import() | again.inner: SILENT | real inner | at 1 2 3 4
+packed | project.mock.module.factory.top | import() | space.inner: SILENT | real inner | at 1 2 3 4
+packed | project.mock.module.factory.top | namespace | Fixed.A: SILENT | real a | at 1 2 3 4
+packed | project.mock.module.factory.top | namespace | again.inner: SILENT | real inner | at 1 2 3 4
+packed | project.mock.module.factory.top | namespace | space.inner: SILENT | real inner | at 1 2 3 4
+packed | project.mock.module.original.top | after namespace | Fixed.A: SILENT | real a | at 1 2 3 4
+packed | project.mock.module.original.top | after namespace | again.inner: SILENT | real inner | at 1 2 3 4
+packed | project.mock.module.original.top | after namespace | space.inner: SILENT | real inner | at 1 2 3 4
+packed | project.mock.module.original.top | after | Fixed.A: SILENT | real a | at 1 2 3 4
+packed | project.mock.module.original.top | after | again.inner: SILENT | real inner | at 1 2 3 4
+packed | project.mock.module.original.top | after | space.inner: SILENT | real inner | at 1 2 3 4
+packed | project.mock.module.original.top | before | Fixed.A: SILENT | real a | at 1 2 3 4
+packed | project.mock.module.original.top | before | again.inner: SILENT | real inner | at 1 2 3 4
+packed | project.mock.module.original.top | before | space.inner: SILENT | real inner | at 1 2 3 4
+packed | project.mock.module.original.top | import() | again.inner: SILENT | real inner | at 1 2 3 4
+packed | project.mock.module.original.top | import() | space.inner: SILENT | real inner | at 1 2 3 4
+packed | project.mock.module.original.top | namespace | Fixed.A: SILENT | real a | at 1 2 3 4
+packed | project.mock.module.original.top | namespace | again.inner: SILENT | real inner | at 1 2 3 4
+packed | project.mock.module.original.top | namespace | space.inner: SILENT | real inner | at 1 2 3 4
+packed | project.vi.doMock.factory.test | after namespace | Fixed.A: SILENT | real a | at 1 2
+packed | project.vi.doMock.factory.test | after namespace | again.inner: SILENT | real inner | at 1 2
+packed | project.vi.doMock.factory.test | after namespace | space.inner: SILENT | real inner | at 1 2
+packed | project.vi.doMock.factory.test | after | Fixed.A: SILENT | real a | at 1 2
+packed | project.vi.doMock.factory.test | after | again.inner: SILENT | real inner | at 1 2
+packed | project.vi.doMock.factory.test | after | space.inner: SILENT | real inner | at 1 2
+packed | project.vi.doMock.factory.test | barrel | keys: SILENT | Color+Fixed+Klass+again+arrow+counter+default+fn+handed+lazy+space+starred+table | at 1 2
+packed | project.vi.mock.factory.hoisted | after namespace | Fixed.A: SILENT | real a | at 1 2
+packed | project.vi.mock.factory.hoisted | after namespace | again.inner: SILENT | real inner | at 1 2
+packed | project.vi.mock.factory.hoisted | after namespace | counter: SILENT | 1 | at 3 4
+packed | project.vi.mock.factory.hoisted | after namespace | space.inner: SILENT | real inner | at 1 2
+packed | project.vi.mock.factory.hoisted | after namespace | table.n: SILENT | 2 | at 3 4
+packed | project.vi.mock.factory.hoisted | after | Fixed.A: SILENT | real a | at 1 2
+packed | project.vi.mock.factory.hoisted | after | again.inner: SILENT | real inner | at 1 2
+packed | project.vi.mock.factory.hoisted | after | counter: SILENT | 1 | at 3 4
+packed | project.vi.mock.factory.hoisted | after | space.inner: SILENT | real inner | at 1 2
+packed | project.vi.mock.factory.hoisted | after | table.n: SILENT | 2 | at 3 4
+packed | project.vi.mock.factory.hoisted | barrel | default: SILENT | real default | at 3 4
+packed | project.vi.mock.factory.hoisted | barrel | fn: SILENT | real fn | at 3 4
+packed | project.vi.mock.factory.hoisted | barrel | keys: SILENT | Color+Fixed+Klass+added+again+arrow+bump+counter+default+fn+grow+handed+kept+lazy+space+starred+table+viaSibling | at 3 4
+packed | project.vi.mock.factory.hoisted | import() | counter: SILENT | 1 | at 3 4
+packed | project.vi.mock.factory.hoisted | import() | table.n: SILENT | 2 | at 3 4
+packed | project.vi.mock.factory.hoisted | namespace | Fixed.A: SILENT | real a | at 1 2 3 4
+packed | project.vi.mock.factory.hoisted | namespace | added: SILENT | undefined | at 3 4
+packed | project.vi.mock.factory.hoisted | namespace | again.inner: SILENT | real inner | at 1 2 3 4
+packed | project.vi.mock.factory.hoisted | namespace | keys: SILENT | Color+Fixed+Klass+again+arrow+bump+counter+default+fn+grow+handed+kept+lazy+space+starred+table+viaSibling | at 3 4
+packed | project.vi.mock.factory.hoisted | namespace | space.inner: SILENT | real inner | at 1 2 3 4
+packed | project.vi.mock.factory.hoisted | require() | counter: SILENT | 1 | at 3 4
+packed | project.vi.mock.factory.hoisted | require() | table.n: SILENT | 2 | at 3 4
+packed | project.vi.mock.spy.hoisted | after namespace | counter: SILENT | 1 | at 3 4
+packed | project.vi.mock.spy.hoisted | after namespace | table.n: SILENT | 2 | at 3 4
+packed | project.vi.mock.spy.hoisted | after | counter: SILENT | 1 | at 3 4
+packed | project.vi.mock.spy.hoisted | after | table.n: SILENT | 2 | at 3 4
+packed | project.vi.mock.spy.hoisted | import() | counter: SILENT | 1 | at 3 4
+packed | project.vi.mock.spy.hoisted | import() | table.n: SILENT | 2 | at 3 4
+packed | project.vi.mock.spy.hoisted | require() | counter: SILENT | 1 | at 3 4
+packed | project.vi.mock.spy.hoisted | require() | table.n: SILENT | 2 | at 3 4
+packed | typed-package.mock.module.factory.top | after namespace | again.inner: SILENT | real inner | at 1 2 3 4
+packed | typed-package.mock.module.factory.top | after namespace | space.inner: SILENT | real inner | at 1 2 3 4
+packed | typed-package.mock.module.factory.top | after | again.inner: SILENT | real inner | at 1 2 3 4
+packed | typed-package.mock.module.factory.top | after | space.inner: SILENT | real inner | at 1 2 3 4
+packed | typed-package.mock.module.factory.top | before | again.inner: SILENT | real inner | at 1 2 3 4
+packed | typed-package.mock.module.factory.top | before | space.inner: SILENT | real inner | at 1 2 3 4
+packed | typed-package.mock.module.factory.top | import() | again.inner: SILENT | real inner | at 1 2 3 4
+packed | typed-package.mock.module.factory.top | import() | space.inner: SILENT | real inner | at 1 2 3 4
+packed | typed-package.mock.module.factory.top | namespace | again.inner: SILENT | real inner | at 1 2 3 4
+packed | typed-package.mock.module.factory.top | namespace | space.inner: SILENT | real inner | at 1 2 3 4
+packed | untyped-package.mock.module.factory.top | after namespace | again.inner: SILENT | real inner | at 1 2 3 4
+packed | untyped-package.mock.module.factory.top | after namespace | space.inner: SILENT | real inner | at 1 2 3 4
+packed | untyped-package.mock.module.factory.top | after | again.inner: SILENT | real inner | at 1 2 3 4
+packed | untyped-package.mock.module.factory.top | after | space.inner: SILENT | real inner | at 1 2 3 4
+packed | untyped-package.mock.module.factory.top | before | again.inner: SILENT | real inner | at 1 2 3 4
+packed | untyped-package.mock.module.factory.top | before | space.inner: SILENT | real inner | at 1 2 3 4
+packed | untyped-package.mock.module.factory.top | import() | again.inner: SILENT | real inner | at 1 2 3 4
+packed | untyped-package.mock.module.factory.top | import() | space.inner: SILENT | real inner | at 1 2 3 4
+packed | untyped-package.mock.module.factory.top | namespace | again.inner: SILENT | real inner | at 1 2 3 4
+packed | untyped-package.mock.module.factory.top | namespace | space.inner: SILENT | real inner | at 1 2 3 4

@@ -24,36 +24,31 @@ fn with_statement() {
 
 #[test]
 fn directives() {
-    for (text, directives, is_strict_if_kept, is_strict_if_dropped) in [
-        (r#"function f() { "a"; 'use strict'; x }"#, 2, true, false),
-        (r#"function f() { "a"; x }"#, 1, false, false),
-        (r#"() => { "use strict" }"#, 1, true, false),
-        (r#"({ m() { "use strict" } })"#, 1, true, false),
-        (r#"function f() { ("use strict") }"#, 0, false, false),
-        ("function f() { `use strict` }", 0, false, false),
-        (r#"function f() { "use strict" + 1 }"#, 0, false, false),
-        (r#"function f() { x; "use strict" }"#, 0, false, false),
-        (r#"function f() { { "use strict" } }"#, 0, false, false),
-        (r#"function f() { "use\x20strict" }"#, 1, false, false),
-        (r#"namespace N { "use strict"; () => 1 }"#, 0, false, false),
-        (r#"class A { static { "use strict" } }"#, 0, true, true),
-        (r#"class A { m() { "use strict" } }"#, 1, true, true),
+    for (text, directives, is_strict) in [
+        (r#"function f() { "a"; 'use strict'; x }"#, 2, true),
+        (r#"function f() { "a"; x }"#, 1, false),
+        (r#"() => { "use strict" }"#, 1, true),
+        (r#"({ m() { "use strict" } })"#, 1, true),
+        (r#"function f() { ("use strict") }"#, 0, false),
+        ("function f() { `use strict` }", 0, false),
+        (r#"function f() { "use strict" + 1 }"#, 0, false),
+        (r#"function f() { x; "use strict" }"#, 0, false),
+        (r#"function f() { { "use strict" } }"#, 0, false),
+        (r#"function f() { "use\x20strict" }"#, 1, false),
+        (r#"namespace N { "use strict"; () => 1 }"#, 0, false),
+        (r#"class A { static { "use strict" } }"#, 0, true),
+        (r#"class A { m() { "use strict" } }"#, 1, true),
     ] {
-        for (keeps_function_directives, is_strict) in
-            [(true, is_strict_if_kept), (false, is_strict_if_dropped)]
-        {
-            let options = Options {
-                compiles: true,
-                keeps_function_directives,
-                ..typescript()
-            };
-            let (file, _) = parsed(text, options);
-            let is_directive = |it: &&Stmt| matches!(it.kind, StmtKind::Directive { .. });
-            let found = file.stmts.iter().filter(is_directive).count();
-            assert_eq!(found, directives, "{text}");
-            assert_eq!(file.fns[0].is_strict, is_strict, "{text}");
-            assert_eq!(file.fns[0].is_strict_by_syntax, is_strict, "{text}");
-        }
+        let options = Options {
+            compiles: true,
+            ..typescript()
+        };
+        let (file, _) = parsed(text, options);
+        let is_directive = |it: &&Stmt| matches!(it.kind, StmtKind::Directive { .. });
+        let found = file.stmts.iter().filter(is_directive).count();
+        assert_eq!(found, directives, "{text}");
+        assert_eq!(file.fns[0].is_strict, is_strict, "{text}");
+        assert_eq!(file.fns[0].is_strict_by_syntax, is_strict, "{text}");
     }
 }
 

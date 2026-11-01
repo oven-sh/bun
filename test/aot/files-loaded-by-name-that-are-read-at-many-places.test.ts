@@ -4,7 +4,7 @@
 // receivers lie below an accessor that nobody knows. Asked of each receiver by itself that left readers behind for each:
 // reads times files. The program below needs about a tenth of the bound when receivers that lie below one prototype are
 // asked together, and four times the bound when they are not.
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 import { readBuildReport } from "./harness/build-report";
@@ -12,6 +12,7 @@ import { unsupported } from "./harness/compiler";
 import { withReport } from "./harness/flags";
 import { run } from "./harness/run";
 import { sharedBuilds } from "./harness/shared-builds";
+import { describe, test } from "./listed";
 
 const packages = 300;
 const filesOfPackage = 2;

@@ -3,6 +3,7 @@
 // so the store was refused: "Cannot assign to Math because built-in objects are read-only in compiled code".
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { waysFor } from "./harness/ways";
 import { test } from "./supported";
 
 const project = `
@@ -55,13 +56,14 @@ async function linesOf(way: string, flags: string[], words?: string) {
 
 test.concurrent.each(Object.entries(ways))(
   "%s",
-  async (_, way) => {
+  async (name, way) => {
     const plain = await linesOf(way, []);
     expect(plain.lines.length).toBe(3);
     expect(plain.lines[1]).toStartWith("OUT done ");
     expect(plain.lines[1].slice(9)).not.toBe(plain.lines[0].slice(11));
-    expect(await linesOf(way, ["--aot"])).toEqual(plain);
-    expect(await linesOf(way, ["--aot"], "TestRunLayers:2")).toEqual(plain);
+    // Each was refused in both forms on the build in front of the cure: over layers one is the witness and the benches run the others.
+    for (const words of waysFor([undefined, "TestRunLayers:2"], name === "Math by an heir of it"))
+      expect(await linesOf(way, ["--aot"], words)).toEqual(plain);
   },
   240_000,
 );

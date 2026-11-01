@@ -1,3 +1,3 @@
 import { mockHidesPackages } from "../harness/mock-hides-packages";
 
-mockHidesPackages(3, 20);
+mockHidesPackages(3, 26);

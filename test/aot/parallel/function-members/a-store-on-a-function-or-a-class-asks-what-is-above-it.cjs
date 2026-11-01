@@ -196,3 +196,51 @@ filled.n3 = "again";
 say("filled", Object.keys(filled).length, filled.n3, filled.n79);
 
 console.log(lines.join("\n"));
+/* Output:
+plain value 2 true true true value x true true true extra,more
+classes none value 1 true true true value 2 true true true
+the setter of Base got 3 Below
+the setter of Base got 4 Lowest
+guarded none none from the getter
+declared 1 value 5 true true true 5
+method function function value 6 true true true
+only read, sloppy none only read
+only read, strict threw TypeError
+fixed, sloppy none fixed
+fixed, strict threw TypeError
+fixed no more value 11 true true true loose
+the setter of Untouched got 12
+untouched none value 13 true true true value 14 true true true kept
+functions none value 1 true true true
+the setter of Parent got 2 true
+watched none
+watched no more value 3 true true true
+name and length, sloppy special 0 value special false false true
+name, strict threw TypeError
+length, strict threw TypeError
+prototype true value true false false true
+prototype of a class, strict threw TypeError
+prototype of a class, sloppy true
+caller null
+arguments null
+displayName value shown true true true
+indices 0,1,-1,4294967295 zero one
+symbols value symbol true true true value symbol true true true none
+hasInstance, strict threw TypeError
+hasInstance, sloppy none
+__proto__ true none
+nothing above value 1 true true true value 2 true true true
+not extensible, sloppy value 2 true true true none
+not extensible, strict threw TypeError
+frozen, sloppy value 1 false true false none
+frozen, strict threw TypeError
+a proxy above extra 21 true value 4 true true true
+another receiver true none value 1 true true true
+the setter of Base got 2 undefined
+another receiver, a class true none
+another receiver, a function true none value 3 true true true
+a primitive receiver false none
+other kinds value 1 true true true value 2 true true true value 3 true true true value 4 true true true 5
+many 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39
+filled 80 again 79
+*/

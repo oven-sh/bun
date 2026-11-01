@@ -1,6 +1,8 @@
-// The body of a module, a job and a timer call import(). `bun run` reads the text of the file on another thread and hears of it in a later turn of the event loop: every job and every
-// tick that waits runs first. The last call is all that keeps the process alive.
+// Reference: bun build --compile
 // Env: BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER=0
+// Todo: an import() of compiled code waits as many jobs as the loader of `bun run` takes, and more for a deeper graph
+// The body of a module, a job and a timer call import(). An executable holds the text: the file runs in the next job. The last call is all that keeps the process alive.
+// The name says what `bun run` does.
 let jobs = 0;
 const count = () => {
   if (++jobs < 40) Promise.resolve().then(count);

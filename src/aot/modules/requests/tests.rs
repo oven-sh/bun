@@ -55,6 +55,8 @@ fn with_scanner(source: &str, check: impl FnOnce(&mut FileScanner<'_, '_>, &[Imp
             runs_tests: program.input.runs_tests,
             loads_code_from_disk: program.input.loads_code_from_disk,
             mocks_any_module: false,
+            asks_loader_where_bundler_does: false,
+            asks_loader_for_names_not_found: false,
             hir: files.hir(main),
             compiled,
             named_in_choices: &[],

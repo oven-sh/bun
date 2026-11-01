@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { spawn } from "child_process";
 import { once } from "events";
 import { chmodSync, readdirSync } from "fs";
@@ -8,6 +8,7 @@ import type { Readable } from "stream";
 import { text } from "stream/consumers";
 import { unsupported } from "../../aot/harness/commands";
 import { run as runCommand } from "../../aot/harness/run";
+import { describe, test } from "../../aot/listed";
 
 const supported = !unsupported;
 
@@ -462,13 +463,26 @@ describe.skipIf(!supported)("bun run --aot", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("import() and require() of what is only known when it runs", async () => {
+  test.concurrent("import() and require() of a name that is put together, which the build reads", async () => {
     await expectSameAsBunRun(
       {
         "entry.ts": `
           const name = "./sub/" + ["oth", "er"].join("");
           console.log((await import(name)).default, require(name + ".ts").default, require.resolve(name));
           console.log((await import(import.meta.dir + "/sub/other.ts")).default);
+        `,
+        "sub/other.ts": `export default "the other module";`,
+      },
+      "entry.ts",
+    );
+  });
+
+  test.concurrent("import() of what is only known when it runs", async () => {
+    await expectSameAsBunRun(
+      {
+        "entry.ts": `
+          import written from "./sub/other";
+          console.log(written, (await import(process.env.NAME_THAT_NOBODY_SETS ?? "./sub/other")).default);
         `,
         "sub/other.ts": `export default "the other module";`,
       },
@@ -522,7 +536,6 @@ describe.skipIf(!supported)("bun run --aot", () => {
         `,
         },
         "entry.ts",
-        { warns: ["TS100064"] },
       );
       expect(stdout).toBe("lib begins\nother runs\nsaid: lib has a word\nentry: lib has a word\n");
     },

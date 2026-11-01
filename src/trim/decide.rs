@@ -85,7 +85,7 @@ pub fn decide(input: &TrimInput<'_>, edges: &FeatureEdges) -> Decision {
     let mut retained = compute_seed(input, &requirements);
     retain_what_allowed_builtins_need(&mut retained, edges);
     if !request.removes_unused {
-        retain_all_a_program_can_enter(&mut retained);
+        retain_all_a_program_can_enter(&mut retained, request.is_template);
     }
     close(&mut retained, edges);
 
@@ -179,7 +179,7 @@ fn retain_what_allowed_builtins_need(retained: &mut RetainedFeatures, edges: &Fe
     }
 }
 
-fn retain_all_a_program_can_enter(retained: &mut RetainedFeatures) {
+fn retain_all_a_program_can_enter(retained: &mut RetainedFeatures, is_template: bool) {
     if retained.set.contains(Feature::Bundler) {
         let reason = RetainReason::NeededBy {
             feature: Feature::Bundler,
@@ -191,6 +191,9 @@ fn retain_all_a_program_can_enter(retained: &mut RetainedFeatures) {
     }
     let mut features = FeatureSet::all();
     features.subtract(&Feature::all_outside_compiled_programs());
+    if !is_template {
+        features.subtract(&Feature::all_entered_from(EnteredFrom::CompiledCode));
+    }
     retained.insert_set(&features, RetainReason::NotRequested);
 }
 
@@ -210,7 +213,11 @@ fn features_reachable_by(cause: UnseenCodeCause) -> FeatureSet {
             features.insert(Feature::Jit);
             features
         }
-        UnseenCodeCause::ReportMissing => program_features,
+        UnseenCodeCause::ReportMissing => {
+            let mut features = program_features;
+            features.union_with(&Feature::all_entered_from(EnteredFrom::CompiledCode));
+            features
+        }
         UnseenCodeCause::FlowResultDisabled => program_features,
         UnseenCodeCause::EvaluatesText => features_reachable_by_text(),
         UnseenCodeCause::ImportsUncompiledCode => program_features,
@@ -430,6 +437,11 @@ mod tests {
                 match feature.entered_from() {
                     EnteredFrom::Program => assert!(!is_removed, "{cause:?} {feature:?}"),
                     EnteredFrom::CommandLine => assert!(is_removed, "{cause:?} {feature:?}"),
+                    EnteredFrom::CompiledCode => assert_eq!(
+                        is_removed,
+                        cause != UnseenCodeCause::ReportMissing,
+                        "{cause:?} {feature:?}"
+                    ),
                     EnteredFrom::Startup => {}
                 }
             }
@@ -736,6 +748,9 @@ mod tests {
             for &feature in Feature::ALL {
                 let is_expected = match cause {
                     UnseenCodeCause::ProgramNotCompiled => false,
+                    _ if feature.entered_from() == EnteredFrom::CompiledCode => {
+                        cause != UnseenCodeCause::ReportMissing
+                    }
                     _ => {
                         outside.contains(feature)
                             && !(opens_whole_runtime && ENTERED_BY_BUNDLER.contains(&feature))
@@ -750,7 +765,25 @@ mod tests {
         }
         assert_eq!(
             decide_request(&using(&[Feature::Sql]), &TrimRequest::default()).unused,
-            outside
+            Feature::all_that_leave_unasked()
+        );
+    }
+
+    #[test]
+    fn what_compiled_code_enters_stays_where_the_image_lists_it() {
+        let used = using(&[Feature::OperationsOnMapsAndSets]);
+        for request in [TrimRequest::default(), removing_unused()] {
+            let decision = decide_request(&used, &request);
+            assert!(!decision.unused.contains(Feature::OperationsOnMapsAndSets));
+            assert!(decision.unused.contains(Feature::OperationsOnProxies));
+        }
+        let template = TrimRequest {
+            is_template: true,
+            ..TrimRequest::default()
+        };
+        assert_eq!(
+            decide_request(&used, &template).unused,
+            Feature::all_outside_compiled_programs()
         );
     }
 
@@ -809,7 +842,7 @@ mod tests {
             ..TrimRequest::default()
         };
         let internal_only = decide_request(&used, &request);
-        let mut removed = Feature::all_outside_compiled_programs();
+        let mut removed = Feature::all_that_leave_unasked();
         removed.insert(Feature::Ffi);
         assert_eq!(internal_only.unused, removed);
         let expected = [

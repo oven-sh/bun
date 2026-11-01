@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { run } from "./harness/run";
+import { runsWholeGrids, waysFor } from "./harness/ways";
 import { test } from "./supported";
 
 // `bun test` hands `expect`, `test`, `jest` and the like to every file that the thread of the tests loads. A Worker's thread gets none of them:
@@ -66,15 +67,19 @@ function ran(project: string, flags: string[], words = "") {
   });
 }
 
-const ways: [string[], string][] = [
+const everyWay: [string[], string][] = [
   [[], ""],
   [["--isolate"], "TestRunLayers:0"],
   [["--isolate"], "TestRunLayers:2,TestRunPartFiles:1"],
   [["--isolate"], "TestRunLayers:3,TestRunPartFiles:1"],
 ];
+// No case is about the layers. On a build that gives the names by the file and asks no realm, c01 to c05 of the first project fail in each of the four ways alike: that project is
+// the witness, and two layers stand for three. The second project passes there in every way, so nothing says which of its ways sees the most.
+const ways = runsWholeGrids ? everyWay : everyWay.slice(0, 3);
+const witness = "nothing but Workers loads the files";
 
-for (const [flags, words] of ways) {
-  for (const [project, files] of Object.entries(projects)) {
+for (const [project, files] of Object.entries(projects)) {
+  for (const [flags, words] of waysFor(ways, project === witness)) {
     const ids = [...new Set(Object.keys(files).flatMap(path => path.match(/^c\d+/) ?? []))];
     test.each(ids)(
       `${project}, %s: ${JSON.stringify(flags)} ${words}`,

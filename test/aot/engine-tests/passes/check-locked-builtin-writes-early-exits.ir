@@ -1,0 +1,98 @@
+# A write to a locked built-in is an error only if every run reaches it. process.exit() in a branch or two calls deep, a throw in a callee, a read of an undeclared global and an earlier import that exits each make it a warning; typeof of an undeclared global does not
+# RUN: pipeline CheckLockedBuiltinWrites
+# DIAGNOSTIC: LockedBuiltinWriteMayRun 5
+# DIAGNOSTIC: LockedBuiltinWriteAlwaysRuns 1
+
+module m0 path="exit.js" displayPath="exit.js" body=f0
+module m1 path="helper.js" displayPath="helper.js" body=f1
+module m2 path="throw.js" displayPath="throw.js" body=f4
+module m3 path="name.js" displayPath="name.js" body=f6
+module m4 path="exits.js" displayPath="exits.js" body=f7
+module m5 path="importer.js" displayPath="importer.js" body=f8 requests=[{target=m4 completes=true}]
+module m6 path="reached.js" displayPath="reached.js" body=f9
+entry module=m6
+entry module=m0
+entry module=m1
+entry module=m2
+entry module=m3
+entry module=m5
+function f0 name="exit" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=ObjectPrototype
+    v1 = Integer integer=1
+    v2 = Builtin builtin=Process
+    v3 = PropGet v2 key="argv" @10
+    v4 = ToBoolean v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Builtin builtin=ProcessExit
+    v6 = Call v5, v2, v1 @20
+    Jump -> next b2()
+  b2():
+    PropSet v0, v1 key="afterExit" mode=Strict @30
+    Return
+}
+function f1 name="helper" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=ObjectPrototype
+    v1 = Integer integer=1
+    v2 = CallDirect function=f2 @40
+    PropSet v0, v1 key="afterHelper" mode=Strict @50
+    Return
+}
+function f2 name="outer" module=m1 results=[{type=anything}] {
+    v0 = CallDirect function=f3 @60
+    Return
+}
+function f3 name="inner" module=m1 results=[{type=anything}] {
+    v0 = Builtin builtin=Process
+    v1 = Builtin builtin=ProcessExit
+    v2 = Integer integer=0
+    v3 = Call v1, v0, v2 @70
+    Return
+}
+function f4 name="throw" module=m2 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=ObjectPrototype
+    v1 = Integer integer=1
+    v2 = CallDirect function=f5 @80
+    PropSet v0, v1 key="afterThrow" mode=Strict @90
+    Return
+}
+function f5 name="check" module=m2 results=[{type=anything}] {
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="argv" @100
+    v2 = ToBoolean v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = String string="early"
+    Throw v3 @110
+  b2():
+    Return
+}
+function f6 name="name" module=m3 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=ObjectPrototype
+    v1 = Integer integer=1
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="undeclared" [isFreeName] @120
+    PropSet v0, v1 key="afterUndeclaredName" mode=Strict @130
+    Return
+}
+function f7 name="exits" module=m4 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Process
+    v1 = Builtin builtin=ProcessExit
+    v2 = Integer integer=0
+    v3 = Call v1, v0, v2 @140
+    Return
+}
+function f8 name="importer" module=m5 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=ObjectPrototype
+    v1 = Integer integer=1
+    PropSet v0, v1 key="afterImport" mode=Strict @150
+    Return
+}
+function f9 name="reached" module=m6 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=ObjectPrototype
+    v1 = Integer integer=1
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="undeclared" [isFreeName, isForTypeOf] @160
+    PropSet v0, v1 key="reached" mode=Strict @170
+    Return
+}

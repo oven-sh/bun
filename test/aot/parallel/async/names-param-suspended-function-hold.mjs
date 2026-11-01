@@ -1,4 +1,5 @@
 // What the names of the parameters of a suspended function hold, asked while the function is suspended.
+// Todo alone under --aot-validate --aot-check=ValidateBackEnd: Not every time: a build that validates the back end keeps registers alive for longer, and the collector finds the object in one: lines print that it is kept
 let last;
 let sink = 0;
 function watched(value) {

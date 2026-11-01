@@ -3,13 +3,14 @@
 // Behind AOT_PERF_MOST_STEPS steps it ends the command and says `marks 1`.
 // No counter of the processor, which the machines of CI do not have: the system stops the thread behind every instruction. Exact, the same on every run, and some ten thousand times slower
 // than the thread by itself, so what lies between the marks is short.
-import { dlopen, ptr } from "bun:ffi";
+import { dlopen, ptr, read } from "bun:ffi";
 import { readFileSync } from "fs";
 
 const { symbols: c } = dlopen("libc.so.6", {
   ptrace: { args: ["i64", "i32", "u64", "u64"], returns: "i64_fast" },
   waitpid: { args: ["i32", "ptr", "i32"], returns: "i32" },
   kill: { args: ["i32", "i32"], returns: "i32" },
+  __errno_location: { args: [], returns: "ptr" },
 });
 const PTRACE_PEEKUSER = 3, PTRACE_CONT = 7, PTRACE_SINGLESTEP = 9, PTRACE_GETREGSET = 0x4204, PTRACE_SEIZE = 0x4206;
 /** Of `rip` in `struct user`. */
@@ -43,7 +44,16 @@ function giveUp(why: string): never {
   throw new Error(why);
 }
 if (!isStopped(wait(WUNTRACED))) giveUp("the child did not stop");
-if (c.ptrace(PTRACE_SEIZE, pid, 0, 0) !== 0) giveUp("ptrace is refused here");
+if (c.ptrace(PTRACE_SEIZE, pid, 0, 0) !== 0) {
+  const errno = read.i32(c.__errno_location()!, 0);
+  const lineOf = (path: string, start: string) => {
+    try {
+      return readFileSync(path, "utf8").split("\n").find(line => line.startsWith(start))?.trim();
+    } catch {}
+  };
+  const name = { 1: "EPERM", 3: "ESRCH", 13: "EACCES", 38: "ENOSYS" }[errno] ?? `errno ${errno}`;
+  giveUp(`ptrace(PTRACE_SEIZE) of a child answers ${name}; yama/ptrace_scope: ${lineOf("/proc/sys/kernel/yama/ptrace_scope", "") ?? "none"}; ${lineOf("/proc/self/status", "Seccomp:") ?? "Seccomp: ?"}; ${lineOf("/proc/self/status", "CapEff:") ?? "CapEff: ?"}`);
+}
 wait(__WALL);
 c.kill(pid, SIGCONT);
 c.ptrace(PTRACE_CONT, pid, 0, 0);

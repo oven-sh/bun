@@ -49,3 +49,36 @@ function many(n) {
   return sum + " " + missing;
 }
 console.log(many(3000));
+/* Output:
+Named sloppy  {} {"x":7} {"x":7,"y":"two"} {"x":7,"y":"two"} {}
+Named strict  {} {"x":7} {"x":7,"y":"two"} {"x":7,"y":"two"} {}
+Named strictTwo  {} {"x":7} {"x":7,"y":"two"} {"x":7,"y":"two"} {}
+Named strictNone  {} {"x":7} {"x":7,"y":"two"} {"x":7,"y":"two"} {}
+Named parameterStored  {} {"x":"stored"} {"x":"stored","y":"two"} {"x":"stored","y":"two"} {"x":"stored"}
+Named parameterStoredStrict  {} {"x":7} {"x":7,"y":"two"} {"x":7,"y":"two"} {}
+Named elementStored  {} {"x":"element"} {"x":"element","y":"two"} {"x":"element","y":"two"} {"x":"element"}
+Named elementAdded  {} {"x":7} {"x":7,"y":"added"} {"x":7,"y":"added"} {"y":"added"}
+Named lengthStored  {} {} {} {} {}
+Named lengthRaised  {} {"x":7} {"x":7,"y":"two"} {"x":7,"y":"two"} {}
+Counts sloppy  {"n":0} {"n":1,"last":7} {"n":2,"last":"two"} {"n":3,"last":"three"} {"n":2}
+Counts strict  {"n":0} {"n":1,"last":7} {"n":2,"last":"two"} {"n":3,"last":"three"} {"n":2}
+Counts strictTwo  {"n":0} {"n":1,"last":7} {"n":2,"last":"two"} {"n":3,"last":"three"} {"n":2}
+Counts strictNone  {"n":0} {"n":1,"last":7} {"n":2,"last":"two"} {"n":3,"last":"three"} {"n":2}
+Counts parameterStored  {"n":0} {"n":1,"last":"stored"} {"n":2,"last":"two"} {"n":3,"last":"three"} {"n":2}
+Counts parameterStoredStrict  {"n":0} {"n":1,"last":7} {"n":2,"last":"two"} {"n":3,"last":"three"} {"n":2}
+Counts elementStored  {"n":0} {"n":1,"last":"element"} {"n":2,"last":"two"} {"n":3,"last":"three"} {"n":2}
+Counts elementAdded  {"n":0} {"n":1,"last":7} {"n":2,"last":"added"} {"n":3,"last":"three"} {"n":2,"last":"added"}
+Counts lengthStored  {"n":0} {"n":0} {"n":0} {"n":0} {"n":0}
+Counts lengthRaised  {"n":3} {"n":3} {"n":3} {"n":3,"last":"three"} {"n":3}
+Rest sloppy  {"others":""} {"first":7,"others":""} {"first":7,"others":"two"} {"first":7,"others":"two,three"} {"others":""}
+Rest strict  {"others":""} {"first":7,"others":""} {"first":7,"others":"two"} {"first":7,"others":"two,three"} {"others":""}
+Rest strictTwo  {"others":""} {"first":7,"others":""} {"first":7,"others":"two"} {"first":7,"others":"two,three"} {"others":""}
+Rest strictNone  {"others":""} {"first":7,"others":""} {"first":7,"others":"two"} {"first":7,"others":"two,three"} {"others":""}
+Rest parameterStored  {"others":""} {"first":"stored","others":""} {"first":"stored","others":"two"} {"first":"stored","others":"two,three"} {"first":"stored","others":""}
+Rest parameterStoredStrict  {"others":""} {"first":7,"others":""} {"first":7,"others":"two"} {"first":7,"others":"two,three"} {"others":""}
+Rest elementStored  {"others":""} {"first":"element","others":""} {"first":"element","others":"two"} {"first":"element","others":"two,three"} {"first":"element","others":""}
+Rest elementAdded  {"others":""} {"first":7,"others":""} {"first":7,"others":"added"} {"first":7,"others":"added,three"} {"others":"added"}
+Rest lengthStored  {"others":""} {"others":""} {"others":""} {"others":""} {"others":""}
+Rest lengthRaised  {"others":","} {"first":7,"others":","} {"first":7,"others":"two,"} {"first":7,"others":"two,three"} {"others":","}
+21000 3000
+*/

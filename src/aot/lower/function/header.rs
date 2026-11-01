@@ -342,7 +342,6 @@ fn create_source_header(
         None => None,
     };
     if header.flags.contains(FunctionFlags::IS_ASYNC)
-        && !header.flags.contains(FunctionFlags::HAS_EXPLICIT_NAME)
         && has_live_await(hir, &file.decisions().as_folded_by_bun_run(), function)
     {
         header.syntax |= FunctionSyntax::HAS_WRITTEN_AWAIT;

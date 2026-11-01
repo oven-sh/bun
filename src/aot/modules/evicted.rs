@@ -23,12 +23,13 @@ use bun_resolve_builtins::{Alias, Cfg};
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::bind::{Binding, BindingInitializer, Bound, FnOwner, Parent};
 use bun_sema::fold::{Constant, FoldedValue};
-use bun_sema::hir::{ExprId, ExprKind, StmtId, StmtKind};
+use bun_sema::hir::{BinOp, Chain, ExprId, ExprKind, PatId, PatKind, PropKey, StmtId, StmtKind};
 use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier, is_made_require};
 use bun_sema::program::{FileId, Files};
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 use bun_sema_driver::host::{from_argument, to_native};
 use std::collections::VecDeque;
+use std::collections::hash_map::Entry;
 
 #[derive(Default)]
 pub(super) struct EvictedModules {
@@ -161,9 +162,9 @@ pub(crate) fn stands_where_a_throw_is_caught(
         }
         while let Some(inner) = statement_around(parent) {
             parent = bound.parent_of_stmt(inner);
-            let is_guarded = statement_around(parent).is_some_and(|outer| {
-                matches!(hir[outer].kind, StmtKind::Try { block, handler, .. } if block == inner && handler.is_some())
-            });
+            let is_guarded = statement_around(parent).is_some_and(
+                |outer| matches!(hir[outer].kind, StmtKind::Try { block, .. } if block == inner),
+            );
             if is_guarded {
                 return true;
             }
@@ -193,10 +194,29 @@ pub(crate) fn stands_where_a_throw_is_caught(
 enum LoadedWhen {
     /// While the files are loaded one below the other from an entry point, with no handler around: a throw ends the process.
     AtTheTop,
+    /// Then too, where the file may pass the call by: in a branch, in a loop, behind `&&`.
+    AtTheTopPerhaps,
     /// Then too, with a handler around it, or as a promise.
     AtTheTopAndCaught,
     /// When a function is called: a handler may stand around that call.
     Later,
+}
+
+/// `a && operand`, `a ? operand : b`, `a?.(operand)`
+fn may_pass_operand_by(hir: &bun_sema::hir::File<'_>, outer: ExprId, operand: ExprId) -> bool {
+    const STOPS_EARLY: [BinOp; 3] = [BinOp::And, BinOp::Or, BinOp::Nullish];
+    match hir[outer].kind {
+        ExprKind::Binary { op, right, .. } => STOPS_EARLY.contains(&op) && right == operand,
+        ExprKind::Assign { op, value, .. } => {
+            op.is_some_and(|op| STOPS_EARLY.contains(&op)) && value == operand
+        }
+        ExprKind::Cond { test, .. } => test != operand,
+        ExprKind::Index { obj, chain, .. } => !matches!(chain, Chain::No) && obj != operand,
+        ExprKind::Call(site) | ExprKind::New(site) => {
+            !matches!(hir[site].chain, Chain::No) && hir[site].callee != operand
+        }
+        _ => false,
+    }
 }
 
 fn find_when_call_runs(
@@ -205,16 +225,30 @@ fn find_when_call_runs(
     call: ExprId,
 ) -> LoadedWhen {
     let mut when = LoadedWhen::AtTheTop;
+    let mut operand = call;
     let mut parent = bound.parent_of_expr(call);
     loop {
+        let mut may_be_passed_by = false;
         let inner = match parent {
             Parent::Expr(outer) => {
+                if when == LoadedWhen::AtTheTop && may_pass_operand_by(hir, outer, operand) {
+                    when = LoadedWhen::AtTheTopPerhaps;
+                }
+                operand = outer;
                 parent = bound.parent_of_expr(outer);
                 continue;
             }
-            Parent::Stmt(statement) => statement.some(),
+            Parent::Stmt(statement) => {
+                may_be_passed_by = statement.some().is_some_and(
+                    |it| matches!(hir[it].kind, StmtKind::For { update, .. } if update == operand),
+                );
+                statement.some()
+            }
             Parent::VarInit(declaration) => bound.var_stmt[declaration.idx()].some(),
-            Parent::Case(case) => bound.case_stmt[case.idx()].some(),
+            Parent::Case(case) => {
+                may_be_passed_by = true;
+                bound.case_stmt[case.idx()].some()
+            }
             Parent::File => return when,
             _ => return LoadedWhen::Later,
         };
@@ -222,16 +256,79 @@ fn find_when_call_runs(
             return LoadedWhen::Later;
         };
         parent = bound.parent_of_stmt(inner);
-        let Parent::Stmt(outer) = parent else {
-            continue;
-        };
-        let is_guarded = outer.some().is_some_and(|outer| {
-            matches!(hir[outer].kind, StmtKind::Try { block, handler, .. } if block == inner && handler.is_some())
-        });
-        if is_guarded {
-            when = LoadedWhen::AtTheTopAndCaught;
+        if let Parent::Stmt(outer) = parent
+            && let Some(outer) = outer.some()
+        {
+            match hir[outer].kind {
+                StmtKind::Try { block, .. } if block == inner => {
+                    when = LoadedWhen::AtTheTopAndCaught;
+                }
+                StmtKind::Try { finalizer, .. } if finalizer == inner => {}
+                StmtKind::For { init, .. } if init == inner => {}
+                StmtKind::Block(_) => {}
+                _ => may_be_passed_by = true,
+            }
+        }
+        if may_be_passed_by && when == LoadedWhen::AtTheTop {
+            when = LoadedWhen::AtTheTopPerhaps;
         }
     }
+}
+
+/// `if (done) return;` at the top of a CommonJS file: where the first one stands. The file may pass by what stands behind it.
+fn find_first_return_at_the_top(hir: &bun_sema::hir::File<'_>) -> u32 {
+    let mut first = u32::MAX;
+    let mut to_visit: Vec<StmtId> = hir.ids(hir.body).collect();
+    while let Some(statement) = to_visit.pop() {
+        match hir[statement].kind {
+            StmtKind::Return(_) => first = first.min(hir[statement].start),
+            StmtKind::If { yes, no, .. } => {
+                to_visit.extend([yes, no].iter().filter_map(|it| it.some()))
+            }
+            StmtKind::For { body, .. }
+            | StmtKind::ForIn { body, .. }
+            | StmtKind::ForOf { body, .. }
+            | StmtKind::While { body, .. }
+            | StmtKind::DoWhile { body, .. }
+            | StmtKind::Labeled { body, .. } => to_visit.extend(body.some()),
+            StmtKind::Block(statements) => to_visit.extend(hir.ids(statements)),
+            StmtKind::Switch { cases, .. } => {
+                cases
+                    .iter()
+                    .for_each(|case| to_visit.extend(hir.ids(hir[case].body)));
+            }
+            StmtKind::Try {
+                block,
+                handler,
+                finalizer,
+                ..
+            } => {
+                to_visit.extend(
+                    [block, handler, finalizer]
+                        .iter()
+                        .filter_map(|it| it.some()),
+                );
+            }
+            _ => {}
+        }
+    }
+    first
+}
+
+/// `await import("./a.ts")`: nobody but the `await` holds the promise, so what the file throws goes on from there as it does from an import statement.
+fn is_awaited_at_once(hir: &bun_sema::hir::File<'_>, bound: &Bound<'_>, call: ExprId) -> bool {
+    let mut inner = call;
+    while let Parent::Expr(outer) = bound.parent_of_expr(inner) {
+        match hir[outer].kind {
+            ExprKind::Await(_) => return true,
+            ExprKind::As { .. }
+            | ExprKind::Satisfies { .. }
+            | ExprKind::AsConst(_)
+            | ExprKind::NonNull(_) => inner = outer,
+            _ => return false,
+        }
+    }
+    false
 }
 
 fn add_all_that_they_load(
@@ -294,8 +391,263 @@ fn find_files_on_every_way_to(
     way.into_iter().filter(is_on_every_way).collect()
 }
 
-/// `require()` runs a CommonJS file again whose last run threw. That takes somebody who caught the throw. The files that are loaded at the top have run, or
-/// have ended the process, when a function is called later: a call in a function is taken to load none of them first.
+/// `require("a")`, `require("a").b`, `require("a")("name")`
+fn only_loads(hir: &bun_sema::hir::File<'_>, loading_calls: &[ExprId], value: ExprId) -> bool {
+    let is_constant = |argument: ExprId| {
+        use ExprKind::{False, Null, Number, String, True};
+        matches!(
+            hir[argument].kind,
+            String(_) | Number(_) | True | False | Null
+        )
+    };
+    let mut value = value;
+    loop {
+        match hir[value].kind {
+            ExprKind::Dot { obj, .. } => value = obj,
+            ExprKind::Call(site) if hir.ids(hir[site].args).all(is_constant) => {
+                if loading_calls.binary_search(&value).is_ok() {
+                    return true;
+                }
+                value = hir[site].callee;
+            }
+            _ => return false,
+        }
+    }
+}
+
+/// `{ a, b: [c] }`: it evaluates nothing that the file has written.
+fn only_takes_apart(hir: &bun_sema::hir::File<'_>, pattern: PatId) -> bool {
+    let mut to_visit = vec![pattern];
+    while let Some(pattern) = to_visit.pop() {
+        match hir[pattern].kind {
+            PatKind::Missing | PatKind::Ident(_) => {}
+            PatKind::Object(properties) => {
+                for property in properties.iter().map(|it| &hir[it]) {
+                    if property.default.is_some() || matches!(property.key, PropKey::Computed(_)) {
+                        return false;
+                    }
+                    to_visit.push(property.value);
+                }
+            }
+            PatKind::Array(elements) => {
+                for element in elements.iter().map(|it| &hir[it]) {
+                    if element.default.is_some() {
+                        return false;
+                    }
+                    to_visit.push(element.pat);
+                }
+            }
+        }
+    }
+    true
+}
+
+/// Where the first statement at the top stands that does more than load a file and keep what it gets. Until then the file has called none of its functions
+/// and has handed none to anybody.
+fn find_where_top_does_more_than_load(
+    hir: &bun_sema::hir::File<'_>,
+    loading_calls: &[ExprId],
+) -> u32 {
+    let does_more = |&statement: &StmtId| match hir[statement].kind {
+        StmtKind::Empty
+        | StmtKind::Directive { .. }
+        | StmtKind::Fn(_)
+        | StmtKind::Interface(_)
+        | StmtKind::TypeAlias(_)
+        | StmtKind::Import(_)
+        | StmtKind::ImportEquals(_)
+        | StmtKind::ExportNamed(_)
+        | StmtKind::ExportStar { .. } => false,
+        StmtKind::Expr(value) => !only_loads(hir, loading_calls, value),
+        StmtKind::Var(declarations) => declarations.iter().map(|it| &hir[it]).any(|it| {
+            !only_takes_apart(hir, it.pat)
+                || (it.init.is_some() && !only_loads(hir, loading_calls, it.init))
+        }),
+        _ => true,
+    };
+    let first = hir.ids(hir.body).find(does_more);
+    first.map_or(u32::MAX, |statement: StmtId| hir[statement].start)
+}
+
+#[derive(Copy, Clone)]
+enum Loaded {
+    File(FileId),
+    AnyFile,
+}
+
+/// One place in a file that loads another.
+#[derive(Copy, Clone)]
+struct Load {
+    what: Loaded,
+    when: LoadedWhen,
+    /// An import statement: it loads ahead of the body of its file.
+    is_ahead_of_body: bool,
+    position: u32,
+}
+
+#[derive(Default)]
+struct LoadsOfFile {
+    /// In the order in which the file reaches them.
+    loads: Vec<Load>,
+    /// `find_where_top_does_more_than_load`
+    does_more_than_load_from: u32,
+}
+
+/// Something other than the sure way down from the entry point may load a file from `time` on.
+#[derive(Copy, Clone)]
+struct Ask {
+    time: u32,
+    what: Loaded,
+    may_be_caught: bool,
+}
+
+/// The files whose first run begins at the top with no handler around it: they have run, or have ended the process, when anybody else asks for them.
+/// The top is followed in the order in which it runs, through the loads that no file passes by, and each file gets the time at which it begins. A call in a
+/// function may run as soon as the top of its file does more than load, a call at the top where it stands; what such a call loads may run from then on, with
+/// all that it loads in turn. A file that has not begun by then may be loaded by that call first.
+fn find_files_that_top_loads_first(
+    started: &[FileId],
+    found_by_name: &[FileId],
+    all_files: &[FileId],
+    loads_of: &FxHashMap<FileId, LoadsOfFile>,
+    is_commonjs: impl Fn(FileId) -> bool,
+) -> FxHashSet<FileId> {
+    struct Running {
+        file: FileId,
+        next_load: usize,
+        has_begun_body: bool,
+        functions_run_from: Option<u32>,
+    }
+    let begin = |file: FileId| Running {
+        file,
+        next_load: 0,
+        has_begun_body: false,
+        functions_run_from: None,
+    };
+    let loads_in = |file: FileId| loads_of.get(&file).map_or(&[][..], |it| &it.loads[..]);
+    let mut time = 0;
+    let mut began_at: FxHashMap<FileId, u32> = FxHashMap::default();
+    let mut depth_of_running: FxHashMap<FileId, usize> = FxHashMap::default();
+    // The functions that an ES module declares can be called ahead of its body by what it loads, where that loads the module in turn.
+    let mut least_depth_imported_while_running = usize::MAX;
+    let mut asks: Vec<Ask> = Vec::new();
+    // Another thread starts there, where nothing has run.
+    asks.extend(found_by_name.iter().map(|&file| Ask {
+        time: 0,
+        what: Loaded::File(file),
+        may_be_caught: false,
+    }));
+    for &entry_point in started {
+        let Entry::Vacant(has_not_begun) = began_at.entry(entry_point) else {
+            continue;
+        };
+        time += 1;
+        has_not_begun.insert(time);
+        depth_of_running.insert(entry_point, 0);
+        let mut running = vec![begin(entry_point)];
+        while let Some(top) = running.last_mut() {
+            let file = top.file;
+            let load = loads_in(file).get(top.next_load).copied();
+            if !top.has_begun_body && !load.is_some_and(|load| load.is_ahead_of_body) {
+                time += 1;
+                top.has_begun_body = true;
+            }
+            let does_more_from = loads_of
+                .get(&file)
+                .map_or(0, |it| it.does_more_than_load_from);
+            if top.has_begun_body && !load.is_some_and(|load| load.position < does_more_from) {
+                top.functions_run_from.get_or_insert(time);
+            }
+            top.next_load += 1;
+            let functions_run_from = top.functions_run_from.unwrap_or(time);
+            let Some(load) = load else {
+                let depth = running.len() - 1;
+                let is_imported_ahead_of_body =
+                    depth >= least_depth_imported_while_running && !is_commonjs(file);
+                let functions_run_from = match is_imported_ahead_of_body {
+                    true => began_at[&file],
+                    false => functions_run_from,
+                };
+                if depth <= least_depth_imported_while_running {
+                    least_depth_imported_while_running = usize::MAX;
+                }
+                let in_functions = loads_in(file)
+                    .iter()
+                    .filter(|it| it.when == LoadedWhen::Later);
+                asks.extend(in_functions.map(|load| Ask {
+                    time: functions_run_from,
+                    what: load.what,
+                    may_be_caught: true,
+                }));
+                depth_of_running.remove(&file);
+                running.pop();
+                continue;
+            };
+            match (load.when, load.what) {
+                (LoadedWhen::Later, _) => {}
+                (LoadedWhen::AtTheTop, Loaded::File(target)) => {
+                    if let Some(&depth) = depth_of_running.get(&target) {
+                        least_depth_imported_while_running =
+                            least_depth_imported_while_running.min(depth);
+                    } else if let Entry::Vacant(has_not_begun) = began_at.entry(target) {
+                        time += 1;
+                        has_not_begun.insert(time);
+                        depth_of_running.insert(target, running.len());
+                        running.push(begin(target));
+                    }
+                }
+                (when, what) => asks.push(Ask {
+                    time,
+                    what,
+                    may_be_caught: when == LoadedWhen::AtTheTopAndCaught,
+                }),
+            }
+        }
+    }
+
+    asks.shared_sort_by_key(|ask| ask.time);
+    // Whether somebody may catch what the file throws where it is loaded ahead of its time.
+    let mut loaded_early: FxHashMap<FileId, bool> = FxHashMap::default();
+    let mut is_any_file_loaded_early = [false; 2];
+    let mut to_follow: Vec<(Loaded, bool)> = Vec::new();
+    for ask in asks {
+        to_follow.push((ask.what, ask.may_be_caught));
+        while let Some((what, may_be_caught)) = to_follow.pop() {
+            let target = match what {
+                Loaded::File(target) => target,
+                Loaded::AnyFile => {
+                    let is_new = !is_any_file_loaded_early[1]
+                        && !std::mem::replace(
+                            &mut is_any_file_loaded_early[may_be_caught as usize],
+                            true,
+                        );
+                    if is_new {
+                        let files = all_files.iter().map(|&file| Loaded::File(file));
+                        to_follow.extend(files.map(|file| (file, may_be_caught)));
+                    }
+                    continue;
+                }
+            };
+            if began_at.get(&target).is_some_and(|&at| at <= ask.time) {
+                continue;
+            }
+            match loaded_early.insert(target, may_be_caught) {
+                Some(true) => _ = loaded_early.insert(target, true),
+                Some(false) if !may_be_caught => {}
+                _ => to_follow.extend(loads_in(target).iter().map(|load| {
+                    let catches =
+                        matches!(load.when, LoadedWhen::AtTheTopAndCaught | LoadedWhen::Later);
+                    (load.what, may_be_caught || catches)
+                })),
+            }
+        }
+    }
+    let is_first = |file: &FileId| loaded_early.get(file) != Some(&true);
+    began_at.into_keys().filter(is_first).collect()
+}
+
+/// `require()` runs a CommonJS file again whose last run threw. That takes somebody who caught the throw. A file that the top is the first to load has run, or
+/// has ended the process, when a function that is called loads it: `find_files_that_top_loads_first`.
 pub(super) fn find_files_that_run_again(
     input: &BindInput<'_, '_>,
     scans: &Scans,
@@ -303,7 +655,7 @@ pub(super) fn find_files_that_run_again(
     evicted: &EvictedModules,
 ) -> Vec<ModuleRef> {
     let mut loaded_by: FxHashMap<FileId, Vec<FileId>> = FxHashMap::default();
-    let mut loaded_at_the_top_by: FxHashMap<FileId, Vec<FileId>> = FxHashMap::default();
+    let mut loads_of: FxHashMap<FileId, LoadsOfFile> = FxHashMap::default();
     let mut caught_at_the_top: FxHashSet<FileId> = FxHashSet::default();
     let mut loaded_later: FxHashSet<FileId> = FxHashSet::default();
     let mut catch_any_file_at_the_top: FxHashSet<FileId> = FxHashSet::default();
@@ -314,8 +666,17 @@ pub(super) fn find_files_that_run_again(
         }
         let (hir, bound) = (input.files.hir(file), input.files.bound(file));
         let (analysis, scan) = (input.files.analysis(file), scans.of(file));
+        // In a layer below the test files a file of the runner's stands for them. What they load they load in tests, and the runner catches what a test throws.
+        let stands_for_tests = is_written_by_test_runner(input.files.module(file).file_name());
+        let mut first_return_at_the_top = None;
+        let LoadsOfFile {
+            loads,
+            does_more_than_load_from,
+        } = loads_of.entry(file).or_default();
         for (site, answer) in analysis.import_sites.iter().zip(&scan.sites) {
-            let when = match site.kind {
+            let mut is_ahead_of_body = false;
+            let mut position = site.kind.call().map_or(0, |call| hir[call].pos);
+            let mut when = match site.kind {
                 ImportSiteKind::Require(call)
                 | ImportSiteKind::ImportMetaRequire(call)
                 | ImportSiteKind::RequireByTestRunner(call) => {
@@ -324,31 +685,58 @@ pub(super) fn find_files_that_run_again(
                 ImportSiteKind::ImportCall(call) | ImportSiteKind::ImportByTestRunner(call) => {
                     match find_when_call_runs(hir, bound, call) {
                         LoadedWhen::Later => LoadedWhen::Later,
-                        LoadedWhen::AtTheTop | LoadedWhen::AtTheTopAndCaught => {
-                            LoadedWhen::AtTheTopAndCaught
+                        when @ (LoadedWhen::AtTheTop | LoadedWhen::AtTheTopPerhaps)
+                            if !stands_for_tests && is_awaited_at_once(hir, bound, call) =>
+                        {
+                            when
                         }
+                        _ => LoadedWhen::AtTheTopAndCaught,
                     }
+                }
+                ImportSiteKind::ImportEquals(import) => {
+                    position = hir[hir[import].stmt].start;
+                    LoadedWhen::AtTheTop
                 }
                 ImportSiteKind::JsxRuntime
                 | ImportSiteKind::JsxPackage
                 | ImportSiteKind::Import(_)
                 | ImportSiteKind::ExportFrom(_)
-                | ImportSiteKind::ExportStar(_)
-                | ImportSiteKind::ImportEquals(_) => LoadedWhen::AtTheTop,
+                | ImportSiteKind::ExportStar(_) => {
+                    is_ahead_of_body = true;
+                    LoadedWhen::AtTheTop
+                }
                 ImportSiteKind::RequireResolve(_)
                 | ImportSiteKind::ImportMetaResolve(_)
                 | ImportSiteKind::GetBuiltinModule(_)
                 | ImportSiteKind::MockModule(_) => continue,
+            };
+            let is_one_of_several =
+                matches!(answer, ScannedSite::Candidates(range) if range.end - range.start > 1);
+            if when == LoadedWhen::AtTheTop
+                && !is_ahead_of_body
+                && (is_one_of_several
+                    || position
+                        > *first_return_at_the_top
+                            .get_or_insert_with(|| find_first_return_at_the_top(hir)))
+            {
+                when = LoadedWhen::AtTheTopPerhaps;
+            }
+            let mut add = |what: Loaded| {
+                loads.push(Load {
+                    what,
+                    when,
+                    is_ahead_of_body,
+                    position,
+                })
             };
             let mut note = |target: ModuleRef| {
                 let ModuleRef::File(target) = target else {
                     return;
                 };
                 loaded_by.entry(file).or_default().push(target);
+                add(Loaded::File(target));
                 match when {
-                    LoadedWhen::AtTheTop => {
-                        loaded_at_the_top_by.entry(file).or_default().push(target)
-                    }
+                    LoadedWhen::AtTheTop | LoadedWhen::AtTheTopPerhaps => {}
                     LoadedWhen::AtTheTopAndCaught => _ = caught_at_the_top.insert(target),
                     LoadedWhen::Later => _ = loaded_later.insert(target),
                 }
@@ -359,13 +747,26 @@ pub(super) fn find_files_that_run_again(
                     let spelled = &scan.spellings[range.start as usize..range.end as usize];
                     spelled.iter().for_each(|spelled| note(spelled.module));
                 }
-                ScannedSite::AllModules => match when {
-                    LoadedWhen::AtTheTop => {}
-                    LoadedWhen::AtTheTopAndCaught => _ = catch_any_file_at_the_top.insert(file),
-                    LoadedWhen::Later => is_any_file_loaded_later = true,
-                },
+                ScannedSite::AllModules => {
+                    add(Loaded::AnyFile);
+                    match when {
+                        LoadedWhen::AtTheTop | LoadedWhen::AtTheTopPerhaps => {}
+                        LoadedWhen::AtTheTopAndCaught => _ = catch_any_file_at_the_top.insert(file),
+                        LoadedWhen::Later => is_any_file_loaded_later = true,
+                    }
+                }
                 ScannedSite::Unresolved | ScannedSite::Erased => {}
             }
+        }
+        loads.shared_sort_by_key(|load| (!load.is_ahead_of_body, load.position));
+        if loads.iter().any(|load| load.when == LoadedWhen::Later) {
+            let calls = analysis
+                .import_sites
+                .iter()
+                .filter_map(|site| site.kind.call());
+            let mut calls: Vec<ExprId> = calls.collect();
+            calls.shared_sort_unstable();
+            *does_more_than_load_from = find_where_top_does_more_than_load(hir, &calls);
         }
     }
     let entry_points: Vec<FileId> = input
@@ -377,9 +778,20 @@ pub(super) fn find_files_that_run_again(
     // A further entry point of an executable is there to be found by name.
     let starts =
         |it: &&EntryPoint| it.kind == EntryPointKind::Main || input.runner_starts_entry_points;
-    let started = input.sources.entry_points().iter().filter(starts);
-    let mut at_the_top: FxHashSet<FileId> = started.map(|it| it.file).collect();
-    add_all_that_they_load(&mut at_the_top, &loaded_at_the_top_by, |_| false);
+    let (started, mut found_by_name): (Vec<&EntryPoint>, Vec<&EntryPoint>) =
+        input.sources.entry_points().iter().partition(starts);
+    // Over layers every file of a part is one, for the programs that no build sees.
+    found_by_name.retain(|it| it.kind == EntryPointKind::Additional && !input.runs_tests);
+    let files_of = |entry_points: Vec<&EntryPoint>| -> Vec<FileId> {
+        entry_points.iter().map(|it| it.file).collect()
+    };
+    let at_the_top = find_files_that_top_loads_first(
+        &files_of(started),
+        &files_of(found_by_name),
+        &modules.compiled_files,
+        &loads_of,
+        |file| modules.find_commonjs_file(ModuleRef::File(file)).is_some(),
+    );
     if !catch_any_file_at_the_top.is_empty() {
         let has_begun =
             find_files_on_every_way_to(&entry_points, &loaded_by, &catch_any_file_at_the_top);
@@ -395,11 +807,18 @@ pub(super) fn find_files_that_run_again(
         at_the_top.contains(&file)
     });
     caught_at_the_top.extend(loaded_later);
-    caught_at_the_top
+    let run_again: Vec<ModuleRef> = caught_at_the_top
         .into_iter()
         .map(ModuleRef::File)
         .filter(|&file| modules.find_commonjs_file(file).is_some() && !evicted.contains(file))
-        .collect()
+        .collect();
+    if logs_stages() {
+        bun_core::print_errorln!(
+            "AOT modules | CommonJS files that may run again {}",
+            run_again.len(),
+        );
+    }
+    run_again
 }
 
 /// `import("./a.js?again")` loads the file once more, from disk. What stands in front of the `?` in each specifier that has one.
@@ -813,6 +1232,9 @@ pub(super) fn find_evicted_modules(
         .flat_map(|&it| modules.forms_of(it))
         .collect();
     evicted.named_by_copies.extend(forms);
+    if input.copies_name_no_file {
+        evicted.named_by_copies.clear();
+    }
     evicted
 }
 

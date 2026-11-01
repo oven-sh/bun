@@ -3,6 +3,7 @@
 // There the setter did nothing and said nothing: `self` stayed the global object. Now it throws what `globalThis.self = 1` throws there, and the run lists it.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { waysFor } from "./harness/ways";
 import { test } from "./supported";
 
 const ways = {
@@ -32,14 +33,15 @@ async function run(setter: string, flags: string[], words?: string) {
 
 test.concurrent.each(Object.entries(ways))(
   "taken by %s",
-  async (_, setter) => {
+  async (name, setter) => {
     const plain = await run(setter, []);
     expect(plain).toEqual(["OUT set string true"]);
     expect(await run(setter, ["--aot"])).toEqual(plain);
-    // Either answer is honest. "OUT set object false" is not.
-    expect([plain, ["OUT TypeError: Cannot assign to self object false"]]).toContainEqual(
-      await run(setter, ["--aot"], "TestRunLayers:2"),
-    );
+    // Either answer is honest. "OUT set object false" is not. That was the answer to the one that __lookupSetter__ had found.
+    for (const words of waysFor([undefined, "TestRunLayers:2"], name === "__lookupSetter__").slice(1))
+      expect([plain, ["OUT TypeError: Cannot assign to self object false"]]).toContainEqual(
+        await run(setter, ["--aot"], words),
+      );
   },
   240_000,
 );

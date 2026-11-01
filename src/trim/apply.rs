@@ -360,7 +360,7 @@ fn write_removal_state(
     let is_trimmed = u32::from(
         !plan
             .removed()
-            .is_subset_of(&Feature::all_outside_compiled_programs()),
+            .is_subset_of(&Feature::all_that_leave_unasked()),
     );
     write_state_field(
         state,

@@ -81,7 +81,7 @@ const obj = { v: 1, m() { return () => this.v; } }; const arrow = obj.m(); obj.v
 // CHECK-NEXT: Return v24
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="a2"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|Promise<number> flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, HasExplicitName] syntax=[HasWrittenAwait] thisType={type=anything} results=[{type=undefined|null|Promise<number> flags=[IsExpected]}] {
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

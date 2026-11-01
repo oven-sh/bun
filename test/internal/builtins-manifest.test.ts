@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunExe, tempDir } from "harness";
 import { readdirSync, readFileSync, realpathSync, statSync, utimesSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -27,6 +27,7 @@ import {
   Words,
 } from "../../src/codegen/bundled-positions";
 import { run } from "../aot/harness/run";
+import { afterAll, beforeAll, describe, test } from "../aot/listed";
 
 const root = join(import.meta.dir, "..", "..");
 const textsForTheCompiler = readdirSync(join(root, "src", "js", "ahead-of-time"), {

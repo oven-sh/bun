@@ -1,7 +1,7 @@
 // A compiled test run reads what its test files and preloads mock and spy on before it builds, and opens that alone. A preload is named as it was written,
 // `--preload ./test/preload.ts`, and what it imports was looked for from "./test", which is no folder to the resolver: a mock in a file that the preload imports
 // was seen by nobody. Over several programs the one that holds the module was then built closed:
-// "mock(module, fn) cannot replace a module that was compiled ahead of time". A run whose layers open every module for another reason hides that, so the
+// "mock(module, fn) cannot replace .. because the build didn't see a test mock it". A run whose layers open every module for another reason hides that, so the
 // scan's own count is read as well.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";

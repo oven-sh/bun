@@ -11,6 +11,7 @@ use bun_sema::check::aot::QueryStatistics;
 
 pub use self::limit_values::{
     HOST_ARCHITECTURE, LimitValues, can_be_lowered, fails_build, is_lowered_by_all,
+    limit_of_queries,
 };
 use crate::diagnostics::{ProgramView, SourcePosition, Span, SpanLocator};
 pub use crate::ir::generated::{Architecture, DegradesTo, LimitId, Stage, StatisticId};
@@ -69,6 +70,16 @@ impl Counters {
             subject,
             count: 1,
         });
+    }
+
+    pub fn gave_up_times(&mut self, limit: LimitId, count: u32) {
+        if count > 0 {
+            self.add_loss(Loss {
+                limit,
+                subject: None,
+                count,
+            });
+        }
     }
 
     pub fn add_computed_import(&mut self, import: ComputedImport<Span>) {

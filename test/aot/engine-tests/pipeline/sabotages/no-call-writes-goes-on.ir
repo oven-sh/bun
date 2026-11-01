@@ -1,0 +1,8 @@
+# sabotage=NoCallWrites with check=KeepGoing beside the check: the place is printed once and the run goes on to its end
+# FORM: AsRead
+# RUN: run-in-shell
+# OPTIONS: check=MovedLoads,KeepGoing disable=pass:UnrollShortLoops sabotage=NoCallWrites
+# CHECK: AOT claim check: LoadMayMove
+# CHECK-NOT: AOT claim check
+# CHECK: exited with 0
+# PROGRAM-OF: no-call-writes-left-alone.ir

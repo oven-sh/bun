@@ -35,6 +35,12 @@ test.each([
   ["a store", "target[key] = value;", "number,number"],
   ["delete", "delete target[key];", "undefined,undefined"],
   ["Reflect.deleteProperty", "Reflect.deleteProperty(target, key);", "undefined,undefined"],
+  [
+    "Object.defineProperties",
+    "Object.defineProperties(target, { [key]: { value, writable: true, configurable: true } });",
+    "number,number",
+  ],
+  ["__defineGetter__", "target.__defineGetter__(key, () => value);", "number,number"],
 ])("%s under a key nobody knows changes a member of console in a test run", async (_, change, answer) => {
   using dir = tempDir("aot-write-unknown-key", files(change));
   const { stdout, stderr, exitCode } = await run([bunExe(), "test", "--aot", "."], String(dir), bunEnv);

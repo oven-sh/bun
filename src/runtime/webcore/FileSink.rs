@@ -561,9 +561,6 @@ impl FileSink {
                     return;
                 }
                 (*this).done.set(true);
-                #[cfg(unix)]
-                (*this).writer.with_mut(|w| w.close_on_this_thread());
-                #[cfg(windows)]
                 (*this).writer.with_mut(|w| w.close());
                 FileSink::run_pending(this);
                 FileSink::clear_keep_alive_ref(this);

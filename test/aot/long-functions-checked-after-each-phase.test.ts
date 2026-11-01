@@ -29,7 +29,8 @@ function writeCallsOnElementsOfOneArray(callCount: number): Program {
 test.skipIf(isSlowBuild || !countsInstructions())(
   "the instructions of a build that checks the back end after each phase are linear in the length of a function",
   async () => {
-    await expectLinearInstructionCount(400, writeCallsOnElementsOfOneArray, 4.5, [
+    // As counted on Linux: x64 4.02 times, and 4.00 times from 1,600 calls to 6,400; arm64 4.57 times, then 3.58 times: dearer in the middle, squared nowhere.
+    await expectLinearInstructionCount(400, writeCallsOnElementsOfOneArray, process.arch === "arm64" ? 4.7 : 4.5, [
       buildFlags.validateBackEnd,
       buildFlags.validate,
     ]);

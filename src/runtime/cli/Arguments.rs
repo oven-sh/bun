@@ -1376,7 +1376,8 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     if command::LOADS_CONFIG[cmd] {
         load_config_with_cmd_args(cmd, &args, ctx)?;
         if may_refuse_options {
-            startup_options::reject_unusable_bunfig_settings(ctx);
+            let named_file = args.option(b"--config").filter(|file| !file.is_empty());
+            startup_options::reject_unusable_bunfig_settings(ctx, named_file);
         }
     }
 

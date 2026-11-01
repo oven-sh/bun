@@ -148,7 +148,8 @@ pub struct ObjectSpelled {
 /// `import { make } from "./helper"; make().prototype.get = f`
 #[derive(Clone, Debug)]
 pub struct WriteOnImport {
-    pub import: hir::ImportId,
+    /// As the file writes it.
+    pub module: Atom,
     /// The names between what is imported and the write, from the write on: `prototype`.
     pub path: Vec<Atom>,
     pub key: Atom,
@@ -295,6 +296,7 @@ pub struct ResolvedBuiltins {
     builtins_handed_out: Box<[BuiltinId]>,
     builtins_exported: Box<[BuiltinExported]>,
     writes_on_imports: Box<[WriteOnImport]>,
+    modules_written_on: Box<[Atom]>,
     mentioned: Box<[BuiltinId]>,
     #[cfg(test)]
     exposed: Box<[BuiltinId]>,
@@ -304,10 +306,12 @@ pub struct ResolvedBuiltins {
     keys_spelled_on_other_objects: Box<[(ExprId, Atom)]>,
     objects_spelled_for_calls: Box<[ObjectSpelled]>,
     keys_partly_read: Box<[ExprId]>,
+    calls_that_may_stub_global: Box<[(ExprId, BuiltinId)]>,
     keys_taken_out_of_module_cache: Box<[KeyOfModuleCache]>,
     keys_stored_in_module_cache: Box<[KeyOfModuleCache]>,
     hands_module_cache_on: bool,
     loses_sight_of_module_cache: bool,
+    names_plugin: bool,
     reaches_module_cache: bool,
     reads_entries_of_module_cache: bool,
 }
@@ -451,6 +455,11 @@ impl ResolvedBuiltins {
         &self.writes_on_imports
     }
 
+    /// The modules, as the file writes them, on whose exports it writes under a name that it spells: `import { File } from "parts"; File.prototype.own = 1`.
+    pub fn modules_written_on(&self) -> &[Atom] {
+        &self.modules_written_on
+    }
+
     pub fn mentioned(&self) -> &[BuiltinId] {
         &self.mentioned
     }
@@ -489,6 +498,13 @@ impl ResolvedBuiltins {
     /// what a call returns. `keys_spelled_for` then lists some of its names at most.
     pub fn is_key_partly_read(&self, key: ExprId) -> bool {
         self.keys_partly_read.binary_search(&key).is_ok()
+    }
+
+    pub fn stubs_that_call_may_be(&self, call: ExprId) -> impl Iterator<Item = BuiltinId> + '_ {
+        let calls = &self.calls_that_may_stub_global;
+        let start = calls.partition_point(|entry| entry.0 < call);
+        let end = calls.partition_point(|entry| entry.0 <= call);
+        calls[start..end].iter().map(|entry| entry.1)
     }
 
     pub fn keys_spelled_for(&self, key: ExprId) -> impl Iterator<Item = Atom> + '_ {
@@ -530,6 +546,10 @@ impl ResolvedBuiltins {
     /// Also where the file names `Bun.plugin`: what a plugin loads takes the place of a file as if that had been taken out.
     pub fn loses_sight_of_module_cache(&self) -> bool {
         self.loses_sight_of_module_cache
+    }
+
+    pub fn names_plugin(&self) -> bool {
+        self.names_plugin
     }
 
     pub fn loaded_modules(&self) -> impl Iterator<Item = RuntimeModule> + '_ {

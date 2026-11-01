@@ -1723,6 +1723,23 @@ fn import_meta_main() {
     for text in UNMATCHED_IMPORT_META_MAIN {
         check_import_meta_main(text, Some(true), Decision::Unknown);
     }
+    for text in [
+        "import.meta.main = 1; import.meta.main;",
+        "import.meta.main &&= 1; import.meta.main;",
+        "delete import.meta.main; import.meta.main;",
+        "import.meta[key] = 1; import.meta.main;",
+        "const meta = import.meta; import.meta.main;",
+        "Reflect.set(import.meta, key, 1); import.meta.main;",
+        "function write() { import.meta.main = 1; } import.meta.main;",
+    ] {
+        check_import_meta_main(text, Some(true), Decision::Unknown);
+    }
+    for text in [
+        "import.meta.url = 1; import.meta.main;",
+        "import.meta.resolve(name); import.meta[key]; import.meta.env.A = 1; import.meta.main;",
+    ] {
+        check_import_meta_main(text, Some(true), boolean(true));
+    }
 }
 
 #[test]

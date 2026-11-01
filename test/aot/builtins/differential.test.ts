@@ -8,6 +8,9 @@
 //   AOT_BUILTINS_TABLE=<f>  takes the table from the generator's aot_builtin_table.json in place of the one in this build of Bun
 //   AOT_BUILTINS_FILTER=<r> only the entries whose path matches the regular expression
 //   AOT_BUILTINS_SECONDS_A_CALL=<n>  how long a call may take before its process is ended (45)
+//   AOT_BUILTINS_WAY=<way>  makes the calls under `bun test` (test), in a Worker (worker) or in an executable (executable), where the host
+//                           makes some objects differently. ways.test.ts asks the objects in each way, always; this asks the functions too,
+//                           and takes as long again for each way: for when a merge has moved the host. The list is written for `bun run`.
 // A position of a call is not tried with every value that there is: differential/instances.ts has them in families, a few of each family are
 // passed everywhere, and the others where the table or one of those few shows that native code tells the family from the rest.
 import { aotBuiltinEntries } from "bun:internal-for-testing";
@@ -37,6 +40,7 @@ import { leavesProcessChanged } from "./native-contract/targets";
 
 const notCheckedPath = join(import.meta.dir, "differential/not-checked.txt");
 const isUpdate = !!process.env.AOT_BUILTINS_UPDATE;
+const way = process.env.AOT_BUILTINS_WAY ?? "run";
 const tablePath = process.env.AOT_BUILTINS_TABLE ?? null;
 const filter = new RegExp(process.env.AOT_BUILTINS_FILTER ?? ".");
 const secondsPerAttempt = 600;
@@ -270,7 +274,40 @@ const wrongEntries: WrongEntry[] = [
     path: "JSON.stringify",
     mode: "Call",
     column: "parameters[0].uses",
-    applyTo: overload => ({ ...overload, propertyActions: [] }),
+    applyTo: overload => ({
+      ...overload,
+      propertyActions: [],
+      parameters: overload.parameters.map(parameter => ({
+        ...parameter,
+        protocols: parameter.protocols.filter(protocol => protocol !== "Named"),
+      })),
+    }),
+  },
+  {
+    title: "Blob.prototype.slice that converts no String object",
+    path: "Blob.prototype.slice",
+    mode: "Call",
+    column: "parameters[0].protocols",
+    applyTo: overload => ({
+      ...overload,
+      parameters: overload.parameters.map(parameter => ({
+        ...parameter,
+        protocols: parameter.protocols.filter(protocol => protocol !== "ToPrimitive"),
+      })),
+    }),
+  },
+  {
+    title: "createRequire that prints nothing of what it refuses",
+    path: "node:module.createRequire",
+    mode: "Call",
+    column: "parameters[0].uses",
+    applyTo: overload => ({
+      ...overload,
+      parameters: overload.parameters.map(parameter => ({
+        ...parameter,
+        protocols: parameter.protocols.filter(protocol => protocol !== "OwnValues"),
+      })),
+    }),
   },
   {
     title: "Intl.DateTimeFormat.prototype.format that asks no receiver for its prototype",
@@ -425,6 +462,15 @@ function defineTests(): void {
     }
   }
 
+  // Without --no-install `require("a")` fetches the package of that name from the registry and runs it.
+  function commandOf(folder: string, requestPath: string, reportsPath: string): string[] {
+    const file = (name: string) => join(import.meta.dir, "differential", name);
+    if (way === "test") return [bunExe(), "test", "--no-install", file("in-test-run.fixture.ts")];
+    if (way === "executable") return [join(folder, "worker"), requestPath, reportsPath];
+    const main = file(way === "worker" ? "in-worker.ts" : "worker.ts");
+    return [bunExe(), "--no-install", "--expose-internals", main, requestPath, reportsPath];
+  }
+
   // A call that ends its process or outlasts the time is left out of the next attempt, which goes on behind it.
   async function runWorker(folder: string, index: number, calls: WorkerRequest["calls"]): Promise<void> {
     const requestPath = join(folder, `request.${index}.json`);
@@ -444,17 +490,13 @@ function defineTests(): void {
         JSON.stringify({ notStarted: "the process exited without a message" } satisfies WorkerNote),
       );
       await using worker = Bun.spawn({
-        // Without --no-install `require("a")` fetches the package of that name from the registry and runs it.
-        cmd: [
-          bunExe(),
-          "--no-install",
-          "--expose-internals",
-          join(import.meta.dir, "differential/worker.ts"),
-          requestPath,
-          reportsPath,
-        ],
+        cmd: commandOf(folder, requestPath, reportsPath),
         cwd: workingFolder,
-        env: workerEnv,
+        env: {
+          ...workerEnv,
+          AOT_BUILTINS_FOLDER: import.meta.dir,
+          ...(way === "test" ? { AOT_BUILTINS_WORKER_FILES: `${requestPath}\n${reportsPath}` } : {}),
+        },
         stdin: "ignore",
         stdout: "ignore",
         stderr: "ignore",
@@ -523,6 +565,15 @@ function defineTests(): void {
   }
   async function runWorkers(): Promise<void> {
     using folder = tempDir("aot-builtins-differential", {});
+    if (way === "executable") {
+      const main = join(import.meta.dir, "differential/worker.ts");
+      const outfile = join(String(folder), "worker");
+      const { exitCode, stderr } = Bun.spawnSync({
+        cmd: [bunExe(), "build", "--compile", "--compile-exec-argv=--no-install", main, "--outfile", outfile],
+        env: bunEnv,
+      });
+      if (exitCode !== 0) throw new Error(stderr.toString());
+    }
     const workerCount = Math.min(availableParallelism(), maxWorkers, checkedCalls.length);
     const slices = Array.from({ length: workerCount }, (): WorkerRequest["calls"] => []);
     // A collection takes the longer the more a process has made.

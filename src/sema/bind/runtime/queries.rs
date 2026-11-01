@@ -181,7 +181,7 @@ impl<S: Storage> BoundIn<S> {
     }
 
     /// `var v` beside `export var v` in a file declares the exported binding again.
-    fn file_binding(&self, declared: SymbolId) -> SymbolId {
+    pub fn file_binding(&self, declared: SymbolId) -> SymbolId {
         if declared.is_none() {
             return declared;
         }
@@ -203,7 +203,7 @@ impl<S: Storage> BoundIn<S> {
             | Decl::Enum(_)
             | Decl::Module(_)
             | Decl::ExportExpr(_) => find_symbol(&declarations.declared_symbols, decl)
-                .unwrap_or_else(|| declaration_symbol(self, decl)),
+                .unwrap_or_else(|| self.file_binding(declaration_symbol(self, decl))),
             Decl::ImportDefault(import) => {
                 symbol_at(&declarations.import_default_symbols, import.idx())
             }

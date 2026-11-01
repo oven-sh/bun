@@ -20,7 +20,7 @@ use crate::load::{PerProject, ProgramFile, ProjectId, SourceKind};
 use crate::module_keys::type_attribute_of;
 use crate::modules::{
     self, ExportBinding, ExportLookup, ImportBinding, Interop, ModuleFailureKind, ModuleKind,
-    ModuleRef, compare_code_units,
+    ModuleRef, Spelling, compare_code_units,
 };
 use bun_ast::Loader;
 use bun_resolve_builtins::HardcodedModule::BUN_ALIASES;
@@ -209,22 +209,36 @@ fn mock_may_answer_ahead_of_declaration(
     let mut followed = followed.filter(|request| request.is_dynamic_star_export);
     let is_found_by_run = followed.any(|request| {
         request.target == ModuleRef::File(declaring_file)
-            || matches!(
-                graph.find_export(request.target, name, atoms),
-                ExportLookup::Found(_)
-            )
+            || graph.lists_export(request.target, name, atoms)
     });
     let mut answer = false;
     for request in graph.requests(file) {
+        if !is_found_by_run {
+            break;
+        }
         let ModuleRef::File(target) = request.target else {
+            // `export * from "pkg"`, and the package lies in a program below this one.
+            if request.is_dynamic_star_export && graph.is_named_by_mock(request.target) {
+                answer = true;
+                break;
+            }
             continue;
         };
-        if !request.is_dynamic_star_export || !is_found_by_run {
-            continue;
-        }
         // The mock of the file that declares the name answers for the variable wherever it is handed on.
         if target == declaring_file {
             break;
+        }
+        let has_name = || graph.lists_export(request.target, name, atoms);
+        // The stars count in the order of the text, whoever follows them: what a star that the build has settled brings comes ahead of the stars behind it.
+        if !request.is_dynamic_star_export {
+            if has_name() {
+                break;
+            }
+            continue;
+        }
+        // `export * from "./b.js"` in a.js, `export * from "./a.js"` in b.js: the stars lead back to a file on the way, whose mock stands in place of all of this.
+        if path.contains(&target) {
+            continue;
         }
         if graph.is_named_by_mock(request.target)
             || mock_may_answer_ahead_of_declaration(graph, atoms, target, asked, path)
@@ -232,7 +246,7 @@ fn mock_may_answer_ahead_of_declaration(
             answer = true;
             break;
         }
-        if let ExportLookup::Found(_) = graph.find_export(request.target, name, atoms) {
+        if has_name() {
             break;
         }
     }
@@ -392,8 +406,11 @@ impl RecordBuilder<'_, '_, '_> {
                 record.other_names = self.other_names_of(record.runtime_module);
                 record.flags |= self.flags_of_runtime_module(record.runtime_module);
                 record.synthetic_exports = self.build_synthetic_exports(index);
+                let application = input.projects.get(ProjectId::Application).graph;
                 // Native code asks for a module by its number. Only a name that the build does not know is looked up among the modules.
-                if !self.is_named_at_run_time[index as usize] {
+                let is_named_to_test_runner = (record.runtime_module)
+                    .is_some_and(|module| application.is_named_to_test_runner(module));
+                if !self.is_named_at_run_time[index as usize] && !is_named_to_test_runner {
                     record.flags |= ModuleFlags::IS_LOADED_BY_IMPORT_ONLY;
                 }
             }
@@ -473,6 +490,9 @@ impl RecordBuilder<'_, '_, '_> {
         if graph.is_held_under_name_without_prefix(module) {
             flags |= ModuleFlags::IS_HELD_UNDER_NAME_WITHOUT_PREFIX;
         }
+        if graph.is_handed_out_by_test_runner(module) {
+            flags |= ModuleFlags::IS_HANDED_OUT_BY_TEST_RUNNER;
+        }
         flags
     }
 
@@ -517,6 +537,15 @@ impl RecordBuilder<'_, '_, '_> {
         }
         if graph.finds_builtins_read_only(module) {
             flags |= ModuleFlags::FINDS_BUILTINS_READ_ONLY;
+        }
+        if graph.is_reached_by(module, Spelling::WithoutExtension) {
+            flags |= ModuleFlags::IS_REACHED_WITHOUT_EXTENSION;
+        }
+        if graph.is_reached_by(module, Spelling::UnderAnotherExtension) {
+            flags |= ModuleFlags::IS_REACHED_UNDER_ANOTHER_EXTENSION;
+        }
+        if graph.is_reached_by(module, Spelling::AsFolder) {
+            flags |= ModuleFlags::IS_REACHED_AS_FOLDER;
         }
         if matches!(module, ModuleRef::File(file) if graph.runs_again(file)) {
             flags |= ModuleFlags::RUNS_AGAIN;

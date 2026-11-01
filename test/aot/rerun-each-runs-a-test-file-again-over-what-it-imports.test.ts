@@ -3,6 +3,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { run } from "./harness/run";
+import { runsWholeGrids } from "./harness/ways";
 import { test } from "./supported";
 
 const projects: Record<string, Record<string, string>> = {
@@ -188,8 +189,11 @@ const differs = [
   "a file that imports the test file back reads what the run that it was linked to exports",
 ];
 
+const witnessOverLayers = "a mock of an earlier run stays, and import.meta is a new object";
+
 for (const [way, flags, words] of ways) {
   for (const [name, files] of Object.entries(projects)) {
+    if (words && !runsWholeGrids && name !== witnessOverLayers) continue;
     const declare = differs.includes(name) ? test.todo : test.concurrent;
     declare(`${name}: ${way}`, async () => {
       using dir = tempDir("rerun-each", {
@@ -203,6 +207,7 @@ for (const [way, flags, words] of ways) {
       expect(await runTests(String(dir), words, "--aot", ...flags)).toEqual(plain);
     });
   }
+  if (words && !runsWholeGrids) continue;
   test.concurrent(`the hooks of a preload stay, and the preload does not run again: ${way}`, async () => {
     using dir = tempDir("rerun-each", { "package.json": `{ "type": "module" }`, ...preloaded });
     const plain = await runTests(String(dir), undefined, "--preload", "./preload.ts", ...flags);

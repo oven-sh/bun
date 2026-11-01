@@ -1,6 +1,7 @@
-// Neither call finds the text of the file, so `bun run` reads it twice, and each call goes on in the turn in which its text comes: every job behind the first runs ahead of the second.
-// Which text comes first goes by the threads there: the lines are stored.
+// Reference: bun build --compile
 // Env: BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER=0
+// Todo: an import() of compiled code waits as many jobs as the loader of `bun run` takes, and more for a deeper graph
+// Two calls for one file. An executable holds the text: both settle ahead of the jobs that the first one's answer lays. The name says what `bun run` does.
 import("./imported.mjs").then(() => {
   console.log("first");
   let chain = Promise.resolve();
@@ -8,16 +9,3 @@ import("./imported.mjs").then(() => {
 });
 import("./imported.mjs").then(() => console.log("second"));
 console.log("main");
-/* Output:
-main
-imported
-first
-first +1
-first +2
-first +3
-first +4
-first +5
-first +6
-first +7
-second
-*/

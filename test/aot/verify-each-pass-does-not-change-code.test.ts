@@ -2,8 +2,10 @@ import { expect } from "bun:test";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
+import { afterAll } from "./harness/default-timeout";
 import { run } from "./harness/run";
-import { test } from "./supported";
+// One by one: beside one another its builds took half as long again where Bun has a sanitizer.
+import { beforeAll, testOneByOne as test } from "./supported";
 
 // #parseAST of internal:fs/glob holds allocations that SinkAllocations gives up on in one round and could sink in a later one.
 const main = `import { globSync } from "node:fs";
@@ -23,47 +25,59 @@ function imageOf(executable: Buffer) {
   throw new Error("the executable holds no image of compiled code");
 }
 
-test("--aot-check=verify-each-pass generates the image of a build without it", async () => {
-  using dir = tempDir("aot-verify-each-pass-same-code", { "main.mjs": main });
+let dir: ReturnType<typeof tempDir> | undefined;
+let expectedImage: Buffer;
+let expectedSteps: string[];
+beforeAll(async () => {
+  dir = tempDir("aot-verify-each-pass-same-code", { "main.mjs": main, "small.mjs": "console.log(1);\n" });
+  [expectedImage, expectedSteps] = await Promise.all([build("plain", []), stepsOf("plain-steps", [])]);
+});
+afterAll(() => dir?.[Symbol.dispose]());
+
+async function build(folder: string, flags: string[]) {
   const cwd = String(dir);
-  const build = async (folder: string, flags: string[]) => {
-    const executable = join(cwd, folder, isWindows ? "main.exe" : "main");
-    const built = await run(
-      [bunExe(), "build", "--compile", "--aot", ...flags, "./main.mjs", "--outfile", executable],
-      cwd,
-      bunEnv,
-    );
-    expect({ output: built.exitCode ? built.stdout + built.stderr : "", exitCode: built.exitCode }).toEqual({
-      output: "",
-      exitCode: 0,
-    });
-    expect((await run([executable], cwd)).stdout).toBe("0\n");
-    return imageOf(readFileSync(executable));
-  };
-  const [expected, image] = [await build("plain", []), await build("verified", ["--aot-check=verify-each-pass"])];
+  const executable = join(cwd, folder, isWindows ? "main.exe" : "main");
+  const built = await run(
+    [bunExe(), "build", "--compile", "--aot", ...flags, "./main.mjs", "--outfile", executable],
+    cwd,
+    bunEnv,
+  );
+  expect({ output: built.exitCode ? built.stdout + built.stderr : "", exitCode: built.exitCode }).toEqual({
+    output: "",
+    exitCode: 0,
+  });
+  expect((await run([executable], cwd)).stdout).toBe("0\n");
+  return imageOf(readFileSync(executable));
+}
+
+test("--aot-check=verify-each-pass generates the image of a build without it", async () => {
+  const [expected, image] = [expectedImage, await build("verified", ["--aot-check=verify-each-pass"])];
   let differingBytes = Math.abs(expected.length - image.length);
   for (let at = 0; at < Math.min(expected.length, image.length); at++)
     differingBytes += Number(expected[at] !== image[at]);
   expect({ differingBytes, size: image.length }).toEqual({ differingBytes: 0, size: expected.length });
-}, 240_000);
+});
 
-for (const check of ["verify-each-stage", "verify-each-pass"]) {
-  test(`--aot-check=${check} takes the steps of the Select stage of a build without it`, async () => {
-    using dir = tempDir("aot-verifying-flag-same-select-steps", { "main.mjs": "console.log(1);\n" });
-    const cwd = String(dir);
-    const stepsOf = async (flags: string[]) => {
-      const built = await run(
-        [bunExe(), "build", "--compile", "--aot", ...flags, "./main.mjs", "--outfile", join(cwd, "main")],
-        cwd,
-        { ...bunEnv, BUN_JSC_logAOTPhaseTimes: "1" },
-      );
-      expect(built.exitCode).toBe(0);
-      return [...(built.stdout + built.stderr).matchAll(/^AOT phase times: Select \| ([^|]+) \|/gm)]
-        .map(match => match[1])
-        .filter(step => step !== "VerifyProgram");
-    };
-    const expected = await stepsOf([]);
-    expect(expected).toContain("Select");
-    expect(await stepsOf([`--aot-check=${check}`])).toEqual(expected);
-  }, 240_000);
+async function stepsOf(folder: string, flags: string[]) {
+  const cwd = String(dir);
+  const built = await run(
+    [bunExe(), "build", "--compile", "--aot", ...flags, "./small.mjs", "--outfile", join(cwd, folder, "small")],
+    cwd,
+    { ...bunEnv, BUN_JSC_logAOTPhaseTimes: "1" },
+  );
+  expect(built.exitCode).toBe(0);
+  return [...(built.stdout + built.stderr).matchAll(/^AOT phase times: Select \| ([^|]+) \|/gm)]
+    .map(match => match[1])
+    .filter(step => step !== "VerifyProgram");
 }
+
+test("a build without a check takes the steps of the Select stage", () => {
+  expect(expectedSteps).toContain("Select");
+});
+
+test.each(["verify-each-stage", "verify-each-pass"])(
+  "--aot-check=%s takes the steps of the Select stage of a build without it",
+  async check => {
+    expect(await stepsOf(check, [`--aot-check=${check}`])).toEqual(expectedSteps);
+  },
+);

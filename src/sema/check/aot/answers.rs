@@ -30,9 +30,55 @@ impl GaveUp {
     }
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+#[repr(u8)]
+pub enum QueryLimit {
+    ConstructorParentsFollowed,
+    HelpersFollowedToPrototypeLink,
+    FunctionsGivenThis,
+    CallsReadForParameter,
+    TermsReadForProduct,
+    DeclaredSignatureDepth,
+}
+
+impl QueryLimit {
+    pub const COUNT: usize = 6;
+    pub const ALL: [QueryLimit; QueryLimit::COUNT] = [
+        QueryLimit::ConstructorParentsFollowed,
+        QueryLimit::HelpersFollowedToPrototypeLink,
+        QueryLimit::FunctionsGivenThis,
+        QueryLimit::CallsReadForParameter,
+        QueryLimit::TermsReadForProduct,
+        QueryLimit::DeclaredSignatureDepth,
+    ];
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct QueryLimits(pub [u64; QueryLimit::COUNT]);
+
+impl QueryLimits {
+    pub fn get(&self, limit: QueryLimit) -> u64 {
+        self.0[limit as usize]
+    }
+}
+
+impl Default for QueryLimits {
+    fn default() -> QueryLimits {
+        QueryLimits(QueryLimit::ALL.map(|limit| match limit {
+            QueryLimit::ConstructorParentsFollowed => 64,
+            QueryLimit::HelpersFollowedToPrototypeLink => 8,
+            QueryLimit::FunctionsGivenThis => 32,
+            QueryLimit::CallsReadForParameter => 16,
+            QueryLimit::TermsReadForProduct => 16,
+            QueryLimit::DeclaredSignatureDepth => 3,
+        }))
+    }
+}
+
 #[derive(Copy, Clone, Default, Debug)]
 pub struct QueryStatistics {
     pub asked: u64,
+    pub limit_hits: [u32; QueryLimit::COUNT],
     pub gave_up: [u32; GaveUp::COUNT],
     pub members_gave_up: [u32; GaveUp::COUNT],
     /// See `Checker::closed_cycle_count`.

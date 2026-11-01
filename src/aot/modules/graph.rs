@@ -108,6 +108,12 @@ pub(super) struct FileRow {
     pub is_left_to_loader: bool,
     pub required_names: Vec<RequiredName>,
     pub names_searched_behind_stars: Vec<(FileId, Atom)>,
+    /// `export { a as b } from "./c"`, or the import whose name the file exports: b, with c and a. Ascending by the number of b. Only where a mock may stand: the tables name the variable.
+    pub handed_on: Vec<(Atom, (ModuleRef, Atom))>,
+    /// Of the files that `export *` names, in the order of the text, those from which stars and names that are handed on lead to a mock.
+    pub named_by_stars: Vec<FileId>,
+    /// A mock names the file, or the file comes by requests to one that a mock names.
+    pub reaches_mock: bool,
 }
 
 pub(super) fn find<K: Copy + Ord, V: Copy>(entries: &[(K, V)], key: K) -> Option<V> {
@@ -194,11 +200,15 @@ impl ModuleGraph {
     /// that of the first file that imports it: the run time makes what it keeps for a module once for the file, not once for each importer.
     pub fn join_externals_that_spell_paths(&mut self, atoms: &Interner<'_>) {
         let is_kept = |file: FileId| self.left_out_files.binary_search(&file).is_err();
+        // Who sees a mock of the file goes by when the importer was linked: each importer has a module of its own for it.
+        let mocked = self.specifiers_named_by_mocks();
         let mut importers: Vec<(Atom, FileId)> = (self.external_kinds.iter())
             .filter(|(_, kind)| *kind == ExternalKind::UncompiledCode)
             .map(|&((importer, specifier), _)| (specifier, importer))
             .filter(|&(specifier, importer)| {
-                atoms.bytes(specifier).starts_with(b"/") && is_kept(importer)
+                atoms.bytes(specifier).starts_with(b"/")
+                    && is_kept(importer)
+                    && mocked.binary_search(&specifier.0).is_err()
             })
             .collect();
         importers.shared_sort_unstable_by_key(|&(specifier, importer)| (specifier.0, importer));
@@ -593,6 +603,18 @@ impl ModuleGraph {
         }
     }
 
+    /// Whether the build found the name for the module, be it that a star whose names show in the run may make it ambiguous.
+    pub fn lists_export(&self, module: ModuleRef, name: Atom, atoms: &Interner<'_>) -> bool {
+        let ModuleRef::File(file) = module else {
+            return false;
+        };
+        let row = self.row(file);
+        let name_bytes = atoms.bytes(name);
+        let compare =
+            |export: &ModuleExport| compare_code_units(atoms.bytes(export.name), name_bytes);
+        row.interop.has_export_table() && row.exports.binary_search_by(compare).is_ok()
+    }
+
     pub fn required_names(&self, file: FileId) -> &[RequiredName] {
         &self.row(file).required_names
     }
@@ -600,6 +622,30 @@ impl ModuleGraph {
     /// Where a required name of the file comes through `export *` and a mock may take it away: the files behind the module that a link looks into, with the name.
     pub fn names_searched_behind_stars(&self, file: FileId) -> &[(FileId, Atom)] {
         &self.row(file).names_searched_behind_stars
+    }
+
+    /// A mock that comes before the body of the file has run stands in place of the file, in a variable of the file.
+    pub fn holds_mock_in_variable(&self, file: FileId) -> bool {
+        let is_file_of_program = matches!(
+            self.kind(file),
+            ModuleKind::SourceText | ModuleKind::CommonJs | ModuleKind::Data
+        );
+        is_file_of_program && !self.is_library(file) && self.is_named_by_mock(ModuleRef::File(file))
+    }
+
+    pub fn reaches_mock(&self, file: FileId) -> bool {
+        self.row(file).reaches_mock || self.is_named_by_mock(ModuleRef::File(file))
+    }
+
+    pub fn files_named_by_stars(&self, file: FileId) -> &[FileId] {
+        &self.row(file).named_by_stars
+    }
+
+    /// The module that the statement names which hands `name` on, and the name that it asks for there.
+    pub fn find_what_hands_on_names(&self, file: FileId, name: Atom) -> Option<(ModuleRef, Atom)> {
+        let handed_on = &self.row(file).handed_on;
+        let at = handed_on.binary_search_by_key(&name.0, |entry| entry.0.0);
+        Some(handed_on[at.ok()?].1)
     }
 
     pub fn synthetic_export(&self, id: SyntheticExportId) -> &SyntheticExport {

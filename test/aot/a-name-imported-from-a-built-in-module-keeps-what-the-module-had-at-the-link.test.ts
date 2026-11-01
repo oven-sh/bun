@@ -5,9 +5,11 @@ import { expect } from "bun:test";
 import { casesOfOneRun, sayOf } from "./harness/cases-of-one-run";
 import { test } from "./supported";
 
-const project = casesOfOneRun("a-name-imported-from-a-built-in-module-keeps-what-the-module-had-at-the-link", {
-  "package.json": `{ "name": "p", "type": "module" }`,
-});
+const project = casesOfOneRun(
+  "a-name-imported-from-a-built-in-module-keeps-what-the-module-had-at-the-link",
+  { "package.json": `{ "name": "p", "type": "module" }` },
+  [[[]], [["--aot"], "TestRunLayers:0"], [["--aot"], "TestRunLayers:2,TestRunPartFiles:1"]],
+);
 
 type Case = {
   /** How the test file gets the object of the module. */

@@ -4,6 +4,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
+import { waysFor } from "./harness/ways";
 import { describe, test } from "./supported";
 
 raiseDefaultTimeout(120_000);
@@ -48,8 +49,12 @@ async function runTests(directory: string, env: Record<string, string>, ...flags
   return { printed: stdout.split("\n").filter(line => line.startsWith("| ")), exitCode };
 }
 
-describe.each(ways)("%s", (_, env) => {
-  test.each(Object.keys(projects) as (keyof typeof projects)[])("%s", async name => {
+// It failed in both ways on the build in front of the cure.
+const witness = "an ES module";
+
+describe.each(ways)("%s", (way, env) => {
+  const runsIn = (name: string) => waysFor(ways, name === witness).some(([each]) => each === way);
+  test.each((Object.keys(projects) as (keyof typeof projects)[]).filter(runsIn))("%s", async name => {
     using dir = tempDir("mock-factory-throws", projects[name]);
     const plain = await runTests(String(dir), {});
     expect(plain.printed.filter(line => line.startsWith("| factory runs")).length).toBeGreaterThan(4);

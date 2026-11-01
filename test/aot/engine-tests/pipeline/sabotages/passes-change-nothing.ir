@@ -1,0 +1,6 @@
+# sabotage=PassesChangeNothing: the pass has cut blocks and says that it changed nothing: the build stops
+# FORM: Prepared
+# RUN: pass PlanArrayCapacities
+# DIAGNOSTIC: VerificationFailedAfterPass 1
+# OPTIONS: check=VerifyEachPass sabotage=PassesChangeNothing
+# PROGRAM-OF: passes-change-nothing-left-alone.ir

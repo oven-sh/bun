@@ -12,11 +12,13 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { test } from "../supported";
+import { test } from "../measures";
 import { runtimeEnvironment } from "./flags";
 import { run } from "./run";
+import { runsWholeGrids } from "./ways";
 
-const sizes = [250, 1_000, 4_000];
+// Each size pays for "ws" anew. Questions times modules show between the first two.
+const sizes = runsWholeGrids ? [250, 1_000, 4_000] : [250, 1_000];
 
 const asks = `import { test } from "bun:test";
 import "ws";
@@ -99,6 +101,6 @@ export function costsTheSameInALargerProgram(way: string, words: string) {
     // The walk looks at each module of the program once and follows each loaded one once.
     expect(small).toBeGreaterThan(0);
     expect(middle - small).toBeLessThanOrEqual(3 * (sizes[1] - sizes[0]));
-    expect(large - middle).toBeLessThanOrEqual(3 * (sizes[2] - sizes[1]));
+    if (large !== undefined) expect(large - middle).toBeLessThanOrEqual(3 * (sizes[2] - sizes[1]));
   });
 }

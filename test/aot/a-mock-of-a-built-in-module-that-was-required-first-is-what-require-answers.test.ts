@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
 import { casesOfOneRun, sayOf } from "./harness/cases-of-one-run";
-import { test } from "./supported";
+// One by one: a case builds for minutes, and beside others it would pass its limit where Bun has a sanitizer.
+import { testOneByOne as test } from "./supported";
 
 // Under `bun run` the first require("bun:sqlite") leaves a module object in require.cache, and that object answers every later require().
 // mock.module() stores what its factory made into a module object that is there, so the next require() answers that very object.
@@ -75,9 +76,14 @@ const testFileOf = (name: string, order: string) => (id: string) => `
   });`;
 
 const shared = { "package.json": `{ "name": "p", "type": "module" }`, "tsconfig.json": "{}" };
-const asOneProgram = casesOfOneRun("a-mock-behind-a-require", shared);
+const asOneProgram = casesOfOneRun("a-mock-behind-a-require", shared, [[[]], [["--debug-aot"]]], test);
 // Each test file is an image of its own over the image of the library, so the loader of the host stands between them.
-const inLayers = casesOfOneRun("a-mock-behind-a-require-in-layers", shared);
+const inLayers = casesOfOneRun(
+  "a-mock-behind-a-require-in-layers",
+  shared,
+  [[[]], [["--debug-aot"], "TestRunLayers:2,TestRunPartFiles:1"]],
+  test,
+);
 
 // One with code whose exports say `__esModule`, one with code, one of native code.
 for (const name of ["bun:sqlite", "ws", "bun:jsc"]) {

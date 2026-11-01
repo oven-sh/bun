@@ -1,0 +1,6 @@
+# sabotage=PassesDropCalls behind a pass over the whole program: the check is shown a copy of the first body that has such a call, without it. Nobody answers for what goes behind this pass: the build stops
+# FORM: Prepared
+# RUN: pass NarrowConstantVariables
+# DIAGNOSTIC: VerificationFailedAfterPass 1
+# OPTIONS: check=VerifyEachPass sabotage=PassesDropCalls
+# PROGRAM-OF: passes-drop-calls-left-alone.ir

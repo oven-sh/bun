@@ -75,12 +75,12 @@ describe("compile/aot/a build that stops says where", () => {
     [
       "FunctionPassFailsAssertion",
       failedAssertion,
-      `${inTheFunction} in EliminateDeadCode\\.\nTo build without that step, add --aot-disable=pass:EliminateDeadCode\\.\n`,
+      `${inTheFunction} in EliminateDeadCode\\.\nTo build without that step, add --aot-disable=pass:EliminateDeadCode\\.\nAn earlier step may be at fault: --aot-check=verify-each-pass names it\\.\n`,
     ],
     [
       "FunctionPassReadsBadAddress",
       /^SIGSEGV$/,
-      `${inTheFunction} in EliminateDeadCode\\.\nTo build without that step, add --aot-disable=pass:EliminateDeadCode\\.\n`,
+      `${inTheFunction} in EliminateDeadCode\\.\nTo build without that step, add --aot-disable=pass:EliminateDeadCode\\.\nAn earlier step may be at fault: --aot-check=verify-each-pass names it\\.\n`,
     ],
     ["CodeGenerationFailsAssertion", failedAssertion, `${inTheFunction} in GenerateCode\\.\n`],
     ["ProgramPassFailsAssertion", failedAssertion, "Stopped while compiling in BuildCallGraph\\.\n"],

@@ -2,7 +2,7 @@ mod key;
 mod reference;
 
 use bun_sema::atom::known;
-use bun_sema::bind::Parent;
+use bun_sema::bind::{Binding, CommonJsVariable, Parent};
 use bun_sema::check::aot::ShapeKind;
 use bun_sema::fold::Constant;
 use bun_sema::hir::{
@@ -327,6 +327,67 @@ pub(in crate::lower) fn lower_member_operands(
 }
 
 pub(in crate::lower) fn emit_member_read(
+    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
+    access: ExprId,
+    object: ValueId,
+    name: PropertyName,
+) -> ValueId {
+    match name {
+        PropertyName::Computed(key) if spells_require_for_holder(lowering, access) => {
+            emit_read_that_may_find_require(lowering, access, object, key)
+        }
+        _ => emit_member_read_as_written(lowering, access, object, name),
+    }
+}
+
+/// `module[("require" + Math.random()).slice(0, 7)]`, as React writes it "to get around the bundlers". What holds the loader is found by its name alone: a file that reads a
+/// module object or `import.meta` under a key that nobody follows has spelled the name where a text of the file is the name.
+fn spells_require_for_holder(
+    lowering: &FunctionLowering<'_, '_, '_, '_, '_>,
+    access: ExprId,
+) -> bool {
+    let (hir, bound) = (lowering.file.hir, lowering.file.bound);
+    let Some((object, _)) = hir.member_key(access) else {
+        return false;
+    };
+    let object = hir.skip_type_assertions(object);
+    let own_module = Binding::CommonJs(CommonJsVariable::Module);
+    let builtins = lowering.file.builtins;
+    let holds_require = match hir[object].kind {
+        ExprKind::ImportMeta => true,
+        ExprKind::Ident(_) if bound.binding(object) == own_module => true,
+        _ => builtins.module_object_mention(object).is_some(),
+    };
+    let is_name = |text| text == known::require;
+    holds_require
+        && (hir.exprs.iter()).any(|it| matches!(it.kind, ExprKind::String(text) if is_name(text)))
+}
+
+/// `key === "require" ? module.require : module[key]`: the same value, and the name stands in the code.
+fn emit_read_that_may_find_require(
+    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
+    access: ExprId,
+    holder: ValueId,
+    key: ValueId,
+) -> ValueId {
+    let text = lowering.file.intern_bytes(b"require");
+    let spelled = lowering.builder.string(text);
+    let is_require = lowering.builder.strict_eq(key, spelled);
+    let split = lowering.split_on_truthiness(is_require);
+    let join = lowering.create_block();
+    let result = lowering.builder.add_parameter(join, None);
+    lowering.builder.switch_to(split.taken);
+    let name = PropertyName::Constant(lowering.file.text_key(text));
+    let require = emit_member_read_as_written(lowering, access, holder, name);
+    lowering.jump_with(join, &[require]);
+    lowering.builder.switch_to(split.not_taken);
+    let other = emit_member_read_as_written(lowering, access, holder, PropertyName::Computed(key));
+    lowering.jump_with(join, &[other]);
+    lowering.continue_in(join);
+    result
+}
+
+fn emit_member_read_as_written(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     access: ExprId,
     object: ValueId,

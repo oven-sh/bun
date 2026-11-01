@@ -1,7 +1,7 @@
 // `bun test --aot` is there to say whether the executable works, so it has to run the executable's code. ../a-test-run-compiles-what-an-executable-compiles.test.ts
 // asks that of small programs, and they flatter: what opens a real program is a package that hands a namespace object on, reads require.cache or requires
-// by a name it puts together. So three servers of ./app are each built twice here: as an executable, and as a test file that does nothing but import the
-// server. No spy, no mock, nothing is taken out of require.cache: whatever differs, no test asked for it.
+// by a name it puts together. So three servers of ./app are each built three times here: as an executable, as a test file that does nothing but import the
+// server, and as that test file behind another one. No spy, no mock, nothing is taken out of require.cache: whatever differs, no test asked for it.
 //
 // The compiler's map lists every function it made: its file and position, its name, which form of it (typed, generic ..) and how many bytes. A function
 // counts as equal where the test run has a function with the same five. The share of the executable's functions that are equal is held from below.
@@ -17,7 +17,8 @@ import { join } from "path";
 import { built, slot, spawned } from "../harness/commands";
 import { afterAll, raiseDefaultTimeout } from "../harness/default-timeout";
 import { buildEnvironment, compileCommand } from "../harness/flags";
-import { beforeAll, describe, test } from "../supported";
+// One by one: a case builds for minutes, and beside others it would pass its limit where Bun has a sanitizer.
+import { beforeAll, describe, testOneByOne as test } from "../supported";
 import { functionsOfProgram } from "./functions-of-a-map";
 import { copyApp } from "./run-servers";
 
@@ -30,17 +31,25 @@ const equalAtLeast: Record<string, number> = {
   fastify: 71,
   express: 95,
 };
+/** The same where another test file runs first, as in every project with two. TODO: each is owed the number above. */
+const equalBehindAnotherFileAtLeast: Record<string, number> = {
+  hono: 92, // owed: 98
+  fastify: 63, // owed: 71
+  express: 77, // owed: 95
+};
 const servers = Object.keys(equalAtLeast);
+type Shares = { equal: number; equalBehindAnotherFile: number; executable: number; testRun: number };
 
 // The forms are the same on every platform. The bytes are not, and neither are the files that a package loads.
 describe.skipIf(!isLinux || process.arch !== "x64")("a test run compiles what an executable compiles: servers", () => {
   const work = String(tempDir("aot-servers-both-ways", {}));
   const app = join(work, "app");
-  const shares = new Map<string, { equal: number; executable: number; testRun: number }>();
+  const shares = new Map<string, Shares>();
   afterAll(() => rmSync(work, { recursive: true, force: true }));
 
   beforeAll(async () => {
     await copyApp(app);
+    writeFileSync(join(app, "0-first.test.ts"), `import { test } from "bun:test";\ntest("first", () => {});\n`);
     await Promise.all(
       servers.map(name =>
         slot(async () => {
@@ -54,17 +63,24 @@ describe.skipIf(!isLinux || process.arch !== "x64")("a test run compiles what an
             join(app, `${name}.test.ts`),
             `import { test } from "bun:test";\nimport "./${name}.ts";\ntest("is loaded", () => process.exit(0));\n`,
           );
-          const run = await spawned([bunExe(), "test", "--aot", `./${name}.test.ts`], app, withMap("test-run"));
-          expect({ stderr: run.exitCode ? run.stderr : "", exitCode: run.exitCode }).toEqual({
-            stderr: "",
-            exitCode: 0,
-          });
-          const [ofExecutable, ofTestRun] = [
+          const filesAheadOf = { "test-run": [], "test-run-behind-another-file": ["./0-first.test.ts"] };
+          for (const [kind, filesAhead] of Object.entries(filesAheadOf)) {
+            const command = [bunExe(), "test", "--aot", ...filesAhead, `./${name}.test.ts`];
+            const run = await spawned(command, app, withMap(kind));
+            expect({ kind, stderr: run.exitCode ? run.stderr : "", exitCode: run.exitCode }).toEqual({
+              kind,
+              stderr: "",
+              exitCode: 0,
+            });
+          }
+          const [ofExecutable, ofTestRun, ofTestRunBehindAnotherFile] = [
             functionsOfProgram(map("executable")),
             functionsOfProgram(map("test-run")),
+            functionsOfProgram(map("test-run-behind-another-file")),
           ];
           shares.set(name, {
             equal: [...ofExecutable].filter(it => ofTestRun.has(it)).length,
+            equalBehindAnotherFile: [...ofExecutable].filter(it => ofTestRunBehindAnotherFile.has(it)).length,
             executable: ofExecutable.size,
             testRun: ofTestRun.size,
           });
@@ -82,4 +98,19 @@ describe.skipIf(!isLinux || process.arch !== "x64")("a test run compiles what an
     expect(executable).toBeGreaterThan(500);
     expect({ name, percent: Math.min(percent, equalAtLeast[name]) }).toEqual({ name, percent: equalAtLeast[name] });
   });
+
+  test.each(servers)("%s, behind another test file", name => {
+    const { equalBehindAnotherFile: equal, executable } = shares.get(name)!;
+    const [percent, atLeast] = [Math.floor((100 * equal) / executable), equalBehindAnotherFileAtLeast[name]];
+    console.log(
+      `EQUAL ${name}, behind another test file: ${percent}% (${equal} of the executable's ${executable} functions)`,
+    );
+    expect({ name, percent: Math.min(percent, atLeast) }).toEqual({ name, percent: atLeast });
+  });
+
+  for (const name of servers)
+    test.todo(`${name}: a test file is compiled alike wherever it stands in the run`, () => {
+      const { equal, equalBehindAnotherFile } = shares.get(name)!;
+      expect({ name, equalBehindAnotherFile }).toEqual({ name, equalBehindAnotherFile: equal });
+    });
 });

@@ -1,7 +1,8 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { afterAll } from "./harness/default-timeout";
 import { run } from "./harness/run";
-import { test } from "./supported";
+import { beforeAll, test } from "./supported";
 
 const reads: [name: string, expression: string][] = [
   ["constant", "count"],
@@ -59,21 +60,31 @@ test("reads", async () => {${reads.map(([name, expression]) => places(name, expr
 `,
 };
 
-test("a test file stores what it imports in an int32, however the run is built", async () => {
-  using dir = tempDir("aot-int32-from-imports", files);
-  const said = async (flags: string[], words: string) => {
-    const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words, BUN_TMPDIR: String(dir) };
-    const ran = await run([bunExe(), "test", ...flags, "."], String(dir), env);
-    return {
-      errors: ran.stderr.split("\n").filter(line => line.startsWith("error")),
-      lines: ran.stdout.split("\n").filter(line => line.startsWith("SAID")),
-      summary: ran.stderr.split("\n").filter(line => /^ *\d+ (pass|fail)$/.test(line)),
-    };
+let dir: ReturnType<typeof tempDir> | undefined;
+let plain: Awaited<ReturnType<typeof said>>;
+async function said(flags: string[], words: string) {
+  const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words, BUN_TMPDIR: String(dir) };
+  const ran = await run([bunExe(), "test", ...flags, "."], String(dir), env);
+  return {
+    errors: ran.stderr.split("\n").filter(line => line.startsWith("error")),
+    lines: ran.stdout.split("\n").filter(line => line.startsWith("SAID")),
+    summary: ran.stderr.split("\n").filter(line => /^ *\d+ (pass|fail)$/.test(line)),
   };
-  const plain = await said([], "");
+}
+beforeAll(async () => {
+  dir = tempDir("aot-int32-from-imports", files);
+  plain = await said([], "");
+});
+afterAll(() => dir?.[Symbol.dispose]());
+
+test("what plain Bun says", () => {
   expect(plain).toMatchObject({ errors: [], summary: [" 1 pass", " 0 fail"] });
   expect(plain.lines.length).toBe(reads.length);
-  expect(await said(["--aot"], "TestRunLayers:0")).toEqual(plain);
-  expect(await said(["--aot"], "TestRunLayers:1")).toEqual(plain);
-  expect(await said(["--aot"], "TestRunLayers:2")).toEqual(plain);
-}, 240_000);
+});
+
+test.each(["TestRunLayers:0", "TestRunLayers:1", "TestRunLayers:2"])(
+  "a test file stores what it imports in an int32, however the run is built: %s",
+  async words => {
+    expect(await said(["--aot"], words)).toEqual(plain);
+  },
+);

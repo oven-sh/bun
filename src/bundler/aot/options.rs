@@ -60,13 +60,15 @@ pub(crate) fn options_from_bundler<'r>(
     };
     let mut load = load_options(input);
     load.test_files = follow_links(input, input.aot.test_files_of_run.clone());
+    let stand_in = (input.aot.stand_in_for_files_from_disk.as_ref())
+        .and_then(|path| entry_points.iter().find(|entry| *entry == path));
     if input.aot.host_runs_files_from_disk {
-        load.stand_in_for_files_from_disk = entry_points.last().cloned();
+        load.stand_in_for_files_from_disk = stand_in.cloned();
     }
     if !input.aot.main_modules_beside_entry_points.is_empty() {
         let test_files = input.aot.main_modules_beside_entry_points.iter();
         let listed = test_files.chain(&input.aot.preloads_of_test_run);
-        load.files_of_tests = listed.chain(entry_points.last()).cloned().collect();
+        load.files_of_tests = listed.chain(stand_in).cloned().collect();
     }
     for preload in &input.aot.preloads_of_test_run {
         let absolute = absolute_path(input.working_directory, preload);
@@ -331,6 +333,10 @@ fn load_options(input: &OptionsInput<'_, '_, '_>) -> LoadOptions {
                 }),
         ),
         mocked_modules: sorted(replaced.modules.iter().cloned().map(ReplacedModule::File)),
+        modules_that_mocked_files_export_whole: sorted({
+            let whole = replaced.modules_that_mocked_files_export_whole.iter();
+            whole.cloned().map(ReplacedModule::File)
+        }),
         // A name that no file spells finds any file of the program. Where the host alone runs what the build has not seen it finds the entry points, and flow says
         // which of their objects a spy meets.
         mocks_any_module: replaced.any_module
@@ -343,8 +349,9 @@ fn load_options(input: &OptionsInput<'_, '_, '_>) -> LoadOptions {
         hands_on_any_module: replaced.hands_on_any_module,
         spies_on_unknown_objects: replaced.spies_on_unknown_objects,
         names_spied_on_unknown_objects: replaced.names_spied_on_unknown_objects.clone(),
-        names_spied_in_text: Vec::new(),
-        modules_replaced_in_text: Vec::new(),
+        names_spied_in_text: replaced.names_spied_in_text.clone(),
+        modules_replaced_in_text: replaced.modules_replaced_in_text.clone(),
+        tests_load_by_unknown_path: replaced.loads_by_unknown_path,
         evicted_modules: sorted(
             replaced
                 .evicted_modules
@@ -382,6 +389,7 @@ fn load_options(input: &OptionsInput<'_, '_, '_>) -> LoadOptions {
         files_of_tests: Vec::new(),
         test_files: Vec::new(),
         package_files_that_product_imports: replaced.package_files_that_product_imports.clone(),
+        package_files_imported_beside_tests: replaced.package_files_imported_beside_tests.clone(),
         paths_of_preloads: Vec::new(),
     }
 }

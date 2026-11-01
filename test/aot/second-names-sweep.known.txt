@@ -1,0 +1,2 @@
+# Cases of second-names-sweep.test.ts whose build the compiler's own look at the end refuses today: `<folder>/<program> <road> <act>`, a line each.
+# A case that is refused and isn't named fails, and so does one that is named and builds: take its line out with the fix.

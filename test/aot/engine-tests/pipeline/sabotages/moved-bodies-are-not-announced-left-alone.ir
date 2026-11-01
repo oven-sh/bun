@@ -1,0 +1,21 @@
+# The pass that splits a function behind its entry checks moves the body into another function, and the tests take its place. It says so first, so the check of operations that went compares nothing there.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass SplitBehindEntryChecks
+# STATISTIC: FunctionsSplitBehindEntryChecks = 1
+# CHECK: outcome: Changed
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+typesite w0 module=m0 position=10 kind=Parameter
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    Return
+}
+function f1 name="lengthOf" module=m0 position=100 flags=[IsChecked] length=1 parameters=[{type=undefined|null|Uint16Array site=w0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ undefined|null|Uint16Array):
+    v1 = AssumeType v0 provenType=TypedArray
+    v2 = Check v1 expectedType=undefined|null|Uint16Array site=w0
+    v3 = PropGet v2 key="length"
+    Return v3
+}

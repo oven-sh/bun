@@ -1075,7 +1075,7 @@ runtimefunction id=SetIteratorPrototypeNext function=f48 visibility=Private
 # CHECK-NEXT: end of function f67
 # CHECK-LABEL: function {{*}}name="withFinally"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 213, patchpoints: 10, rare instructions: 77
+# CHECK-NEXT: instructions: 213, patchpoints: 10, rare instructions: 83
 # CHECK-NEXT: end of function f7
 # CHECK-LABEL: function {{*}}name="withFinally"
 # CHECK: role=GenericEntrypoint

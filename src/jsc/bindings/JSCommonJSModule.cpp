@@ -750,6 +750,10 @@ JSC_DEFINE_CUSTOM_SETTER(setterChildren,
     JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
     if (!thisObject)
         return false;
+#if ENABLE(AOT)
+    if (thisObject->compiledModule != JSCommonJSModule::noCompiledModule) [[unlikely]]
+        Bun::dropNewChildrenOfCompiledModule(thisObject);
+#endif
     {
         WTF::Locker locker { thisObject->cellLock() };
         thisObject->m_children.clear();

@@ -8,18 +8,21 @@ use super::imports::has_source;
 use super::mentions::mentioned_id;
 use super::resolver::{ExprState, Resolver};
 use super::{ObjectSpelled, ReplacedMembersSought, WriteOnImport};
+use crate::builtins::returns_first_argument;
 use crate::builtins::table::{
     self, BuiltinFlags, BuiltinId, BuiltinKind, BuiltinName, MemberLookup, Mutability, Platforms,
     Prototype, RuntimeModule, Scope,
 };
 use bun_sema::atom::{Atom, known};
-use bun_sema::bind::{Binding, BindingInitializer, Decl, Parent, SymbolId};
+use bun_sema::bind::{AssignmentTarget, Binding, BindingInitializer, Decl, Parent, SymbolId};
 use bun_sema::fold::{Constant, FoldedValue};
 use bun_sema::hir::{
-    BinOp, ExprId, ExprKind, MemberKey, NodeData, PropKey, StmtId, StmtKind, UnOp,
+    BinOp, ExprId, ExprKind, Flags, MemberKey, MemberKind, NodeData, PropKey, PropKind, StmtId,
+    StmtKind, UnOp,
 };
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::util::{FxHashSet, SharedSort};
+use std::ops::ControlFlow;
 
 // Takes an object and a key, and writes the property.
 fn writes_member_of_operand(callee: BuiltinId) -> bool {
@@ -46,12 +49,26 @@ enum KeyOfWrite {
     Computed(ExprId),
 }
 
+impl KeyOfWrite {
+    fn of(key: MemberKey) -> Option<Self> {
+        match key {
+            MemberKey::Name(name) => Some(Self::Name(name)),
+            MemberKey::Computed(key) => Some(Self::Computed(key)),
+            MemberKey::PrivateName(_) => None,
+        }
+    }
+}
+
 #[derive(Default)]
 struct Found {
     members: Vec<BuiltinId>,
     names: Vec<(BuiltinId, Atom)>,
     /// Objects that take no new names and go where the file does not follow them.
     handed_on: Vec<BuiltinId>,
+    calls_that_may_stub_global: Vec<(ExprId, BuiltinId)>,
+    mentions_stub_of_global: bool,
+    /// `ResolvedBuiltins::modules_written_on`
+    modules_written_on: Vec<Atom>,
 }
 
 fn find_locked_member_of(holder: BuiltinId, name: BuiltinName) -> Option<BuiltinId> {
@@ -138,7 +155,8 @@ impl Resolver<'_, '_> {
                 .dynamic_lookup_scope(NodeData::Expr(target))
                 .is_none();
         let global = table::global(input.names.get(name)?).filter(|_| is_free)?;
-        (table::entry(global).mutability == Mutability::AlwaysLocked).then_some(global)
+        // As in find_locked_member_of(): an image that does not hold the file with the write would lock it at its start.
+        (table::entry(global).mutability != Mutability::ChangesOnItsOwn).then_some(global)
     }
 
     fn holder_of(id: BuiltinId) -> BuiltinId {
@@ -196,6 +214,18 @@ impl Resolver<'_, '_> {
             ExprKind::Call(call) => {
                 let callee = self.value_of(hir[call].callee)?.path.id;
                 let mut operands = hir.ids(hir[call].args);
+                // `holder.__defineGetter__(key, getter)` writes on its receiver.
+                if matches!(
+                    callee,
+                    BuiltinId::ObjectPrototype__defineGetter__
+                        | BuiltinId::ObjectPrototype__defineSetter__
+                ) {
+                    let callee = hir.skip_type_assertions(hir[call].callee);
+                    return Some(Write {
+                        object: hir.member_key(callee)?.0,
+                        key: KeyOfWrite::Computed(operands.next()?),
+                    });
+                }
                 let (first, key) = (operands.next()?, operands.next()?);
                 let receiver = operands.nth(1).filter(|&receiver| {
                     callee == BuiltinId::ReflectSet
@@ -211,12 +241,48 @@ impl Resolver<'_, '_> {
         let (object, key) = hir.member_key(hir.skip_type_assertions(target))?;
         Some(Write {
             object,
-            key: match key {
-                MemberKey::Name(name) => KeyOfWrite::Name(name),
-                MemberKey::Computed(key) => KeyOfWrite::Computed(key),
-                MemberKey::PrivateName(_) => return None,
-            },
+            key: KeyOfWrite::of(key)?,
         })
+    }
+
+    // `[object.name] = list`, `({ a: object.name } = o)`, `for (object.name of list)`: a member in a pattern or at the head of a loop is stored to.
+    fn find_write_by_pattern(&self, expr: ExprId) -> Option<Write> {
+        let hir = self.input.hir;
+        let (object, key) = hir.member_key(expr)?;
+        let bound = self.input.bound;
+        let is_written = match bound.get_assignment_target_or_pattern_around(hir, expr) {
+            ControlFlow::Continue(pattern) => bound.get_assignment_target(hir, pattern).is_some(),
+            ControlFlow::Break(target) => matches!(target, Some(AssignmentTarget::ForInOrOf)),
+        };
+        is_written.then_some(Write {
+            object,
+            key: KeyOfWrite::of(key)?,
+        })
+    }
+
+    // `Promise.prototype.extra ??= f`: the store runs where the name is not there, so it adds a name and replaces no member.
+    fn note_names_stored_where_missing(&self, expr: ExprId, found: &mut Found) {
+        let hir = self.input.hir;
+        let ExprKind::Assign {
+            op: Some(BinOp::Nullish | BinOp::Or),
+            target,
+            ..
+        } = hir[expr].kind
+        else {
+            return;
+        };
+        let key = match hir.member_key(hir.skip_type_assertions(target)) {
+            Some((object, MemberKey::Name(name))) => (object, KeyOfWrite::Name(name)),
+            Some((object, MemberKey::Computed(key))) => (object, KeyOfWrite::Computed(key)),
+            Some((_, MemberKey::PrivateName(_))) | None => return,
+        };
+        let mut noted = Found::default();
+        for holder in self.find_builtins_spelled_for(key.0) {
+            for name in self.find_keys_written(&key.1) {
+                self.note_write(holder, name, &mut noted);
+            }
+        }
+        found.names.append(&mut noted.names);
     }
 
     /// An object, a function or a symbol, on every platform. `RegExp.prototype.flags` is "" and `Array.prototype.length` 0.
@@ -441,9 +507,14 @@ impl Resolver<'_, '_> {
     /// `function plant(name) { Object.defineProperty(Object.prototype, name, d); }`, `plant("polluted")`.
     pub(super) fn find_keys_spelled_for(&self, key: ExprId) -> Vec<Atom> {
         let values = self.find_values_spelled_for(key).into_iter();
-        values
+        let mut keys: Vec<Atom> = values
             .filter_map(|value| self.constant_key(value))
-            .collect()
+            .collect();
+        // `for (const [name, value] of Object.entries(stubs)) Object.defineProperty(globalThis, name, { value })`, `withGlobals({ process: undefined })`
+        if let Some(listed) = self.find_object_whose_keys_are_listed_for(key) {
+            self.push_keys_of_literal(listed, &mut keys);
+        }
+        keys
     }
 
     /// `Symbol.iterator`, spelled in the same ways.
@@ -454,7 +525,7 @@ impl Resolver<'_, '_> {
         symbols.map(table::name_of_symbol).collect()
     }
 
-    fn constant_key(&self, key: ExprId) -> Option<Atom> {
+    pub(super) fn constant_key(&self, key: ExprId) -> Option<Atom> {
         let input = self.input;
         match input
             .decisions
@@ -515,29 +586,82 @@ impl Resolver<'_, '_> {
         }
     }
 
-    /// The keys of an object literal, which may stand in a constant: `const members = { now: () => 0 }`.
+    /// The keys of an object literal, which may stand in a constant, `const members = { now: () => 0 }`, and may spread another.
+    /// A function of the file may return it, `makeMixin()`, `Object.freeze()` hands it on, and `new Mixin()` has the fields of its class.
     fn push_keys_of_literal(&self, value: ExprId, keys: &mut Vec<Atom>) {
         let hir = self.input.hir;
-        for value in self.find_values_spelled_for(value) {
-            let ExprKind::Object(properties) = hir[hir.skip_type_assertions(value)].kind else {
-                continue;
-            };
-            for property in properties.iter() {
-                match hir[property].key {
-                    PropKey::Name(name) => keys.push(name),
-                    PropKey::Computed(key) => keys.extend(self.find_keys_spelled_for(key)),
-                    PropKey::None | PropKey::Private(_) => {}
+        let mut seen = FxHashSet::default();
+        let mut values = vec![value];
+        while let Some(value) = values.pop() {
+            for value in self.find_values_spelled_for(value) {
+                let value = hir.skip_type_assertions(value);
+                if !seen.insert(value) {
+                    continue;
+                }
+                let properties = match hir[value].kind {
+                    ExprKind::Object(properties) => properties,
+                    ExprKind::Call(call) => {
+                        let callee = self.value_of(hir[call].callee).map(|it| it.path.id);
+                        match callee {
+                            Some(callee) if returns_first_argument(callee) => {
+                                values.extend(hir.ids(hir[call].args).next());
+                            }
+                            Some(_) => {}
+                            None => {
+                                for function in self.find_functions_behind(hir[call].callee) {
+                                    values.extend_from_slice(&self.values_returned_by(function));
+                                }
+                            }
+                        }
+                        continue;
+                    }
+                    ExprKind::New(call) => {
+                        for class in self.find_classes_behind(hir[call].callee) {
+                            let members = hir[class].members.iter().map(|it| hir[it]);
+                            keys.extend(members.filter_map(|it| match it.key {
+                                PropKey::Name(name)
+                                    if it.kind == MemberKind::Property
+                                        && !it.flags.contains(Flags::STATIC) =>
+                                {
+                                    Some(name)
+                                }
+                                _ => None,
+                            }));
+                        }
+                        continue;
+                    }
+                    _ => continue,
+                };
+                for property in properties.iter() {
+                    match hir[property].key {
+                        PropKey::Name(name) => keys.push(name),
+                        PropKey::Computed(key) => keys.extend(self.find_keys_spelled_for(key)),
+                        PropKey::None if hir[property].kind == PropKind::Spread => {
+                            values.push(hir[property].value);
+                        }
+                        PropKey::None | PropKey::Private(_) => {}
+                    }
                 }
             }
         }
+    }
+
+    // On the object, or on one above it.
+    fn finds_member(&self, holder: BuiltinId, key: Atom) -> bool {
+        let found = (self.input.names.get(key)).map(|name| table::member(holder, name));
+        matches!(found, Some(MemberLookup::Found(_)))
     }
 
     /// What a write of `key` on `holder` replaces or adds.
     fn note_write(&self, holder: BuiltinId, key: Atom, found: &mut Found) {
         let name = self.input.names.get(key);
         match name.map(|name| (name, table::member(holder, name))) {
-            Some((name, MemberLookup::Found(_))) => {
+            Some((name, MemberLookup::Found(member))) => {
                 found.members.extend(self.find_locked_member(holder, name));
+                // `spyOn(Uint8Array.prototype, "set")`: an object above has the member, and what is written stands in front of it.
+                if table::entry(member).holder.map(table::canonical_id) != Some(holder) {
+                    found.names.push((holder, key));
+                }
             }
             _ if Self::takes_no_names(holder) => found.names.push((holder, key)),
             _ => {}
@@ -597,14 +721,18 @@ impl Resolver<'_, '_> {
         }
     }
 
-    fn find_members_named_beside_holders(&self, values: &[ExprId], found: &mut Found) {
+    fn find_members_named_beside_holders(
+        &self,
+        values: &[ExprId],
+        found: &mut Found,
+    ) -> Vec<BuiltinId> {
         self.find_members_named_beside_names_of_holders(values, found);
         let holders = values.iter();
         let holders: Vec<BuiltinId> = holders
             .flat_map(|&value| self.find_builtins_spelled_for(value))
             .collect();
         if holders.is_empty() {
-            return;
+            return holders;
         }
         let keys = values
             .iter()
@@ -622,6 +750,7 @@ impl Resolver<'_, '_> {
             (found.members)
                 .extend(members.filter_map(|&holder| self.find_locked_member(holder, name)));
         }
+        holders
     }
 
     /// `value.__proto__`, `value["__proto__"]`, `Reflect.get(value, "__proto__")`, `Object.getPrototypeOf(value)`: a prototype that the file does not name.
@@ -658,15 +787,15 @@ impl Resolver<'_, '_> {
     fn find_members_named_by(&self, expr: ExprId, found: &mut Found) {
         let hir = self.input.hir;
         let mut values = Vec::new();
-        let mut keys = Vec::new();
+        let mut operands = Vec::new();
         match hir[expr].kind {
             // What a function of the table does with its operands is known: `Object.getOwnPropertyDescriptor(Object.prototype, "__proto__")` writes nothing.
             ExprKind::Call(call) | ExprKind::New(call) => {
                 if self.value_of(hir[call].callee).is_none() {
                     // `wrap(Map.prototype, ["set", "get"])`
-                    for operand in hir.ids(hir[call].args) {
+                    operands.extend(hir.ids(hir[call].args));
+                    for &operand in &operands {
                         self.push_values_of_literal(operand, 1, &mut values);
-                        self.push_keys_of_literal(operand, &mut keys);
                     }
                 }
             }
@@ -677,12 +806,14 @@ impl Resolver<'_, '_> {
         }
         // A text in a table may be a label. An operand of a helper beside the object is taken for a name: `plant(Object.prototype, "polluted")`.
         let names_before = found.names.len();
-        self.find_members_named_beside_holders(&values, found);
+        let holders = self.find_members_named_beside_holders(&values, found);
         // `swap(Date, { now: () => 0 })`: the helper stores what it is handed under the names that it is handed it under.
-        if !keys.is_empty() {
-            let holders = values.iter();
-            let holders = holders.flat_map(|&value| self.find_builtins_spelled_for(value));
-            for holder in holders.collect::<Vec<BuiltinId>>() {
+        if !holders.is_empty() {
+            let mut keys = Vec::new();
+            for &operand in &operands {
+                self.push_keys_of_literal(operand, &mut keys);
+            }
+            for holder in holders {
                 for &key in &keys {
                     self.note_write(holder, key, found);
                 }
@@ -704,10 +835,19 @@ impl Resolver<'_, '_> {
         let ExprKind::Call(call) = hir[expr].kind else {
             return;
         };
-        let Some(callee) = self.value_of(hir[call].callee).map(|callee| callee.path.id) else {
-            return;
+        let callees = match self.value_of(hir[call].callee) {
+            Some(callee) => vec![callee.path.id],
+            None => {
+                let follows_names = found.mentions_stub_of_global;
+                let callees =
+                    self.find_members_of_runner_spelled_for(hir[call].callee, follows_names);
+                let stubs = (callees.iter().copied()).filter(|&callee| table::stubs_global(callee));
+                let stubs = stubs.map(|stub| (expr, table::canonical_id(stub)));
+                found.calls_that_may_stub_global.extend(stubs);
+                callees
+            }
         };
-        if table::fakes_timers(callee) {
+        if callees.iter().any(|&callee| table::fakes_timers(callee)) {
             const TIMERS: [&[u8]; 8] = [
                 b"setTimeout",
                 b"clearTimeout",
@@ -727,7 +867,7 @@ impl Resolver<'_, '_> {
             let tick = process.and_then(|process| member_of(process, b"nextTick"));
             found.members.extend(tick);
         }
-        if table::stubs_global(callee)
+        if callees.iter().any(|&callee| table::stubs_global(callee))
             && let Some(name) = hir.ids(hir[call].args).next()
         {
             let names = self.find_keys_spelled_for(name);
@@ -738,6 +878,64 @@ impl Resolver<'_, '_> {
                 self.note_write(BuiltinId::GlobalThis, name, found);
             }
         }
+    }
+
+    fn find_members_of_runner_spelled_for(
+        &self,
+        callee: ExprId,
+        follows_names: bool,
+    ) -> Vec<BuiltinId> {
+        let hir = self.input.hir;
+        let callee = hir.skip_type_assertions(callee);
+        let is_sought =
+            |member: BuiltinId| table::fakes_timers(member) || table::stubs_global(member);
+        if follows_names && matches!(hir[callee].kind, ExprKind::Ident(_)) {
+            let values = self.find_values_spelled_for(callee).into_iter();
+            let members = values.filter_map(|value| mentioned_id(self.state(value)));
+            return members.filter(|&member| is_sought(member)).collect();
+        }
+        let Some((mut object, MemberKey::Name(name))) = hir.member_key(callee) else {
+            return Vec::new();
+        };
+        let Some(name) = self.input.names.get(name) else {
+            return Vec::new();
+        };
+        let member_of = |holder: BuiltinId| match table::member(holder, name) {
+            MemberLookup::Found(member) if is_sought(member) => Some(member),
+            _ => None,
+        };
+        if [BuiltinId::BunTestVi, BuiltinId::BunTestJest]
+            .into_iter()
+            .all(|runner| member_of(runner).is_none())
+        {
+            return Vec::new();
+        }
+        while let ExprKind::Call(link) = hir[hir.skip_type_assertions(object)].kind
+            && let link = hir.skip_type_assertions(hir[link].callee)
+            && let Some((receiver, MemberKey::Name(_))) = hir.member_key(link)
+        {
+            object = receiver;
+        }
+        let mut holders = Vec::new();
+        for value in self.find_values_spelled_for(object) {
+            holders.extend(self.find_builtin(value));
+            if let ExprKind::Object(properties) = hir[value].kind {
+                let spreads = properties.iter().map(|it| hir[it]);
+                let spreads = spreads.filter(|it| it.kind == PropKind::Spread);
+                holders.extend(spreads.flat_map(|it| self.find_builtins_spelled_for(it.value)));
+            }
+        }
+        holders.into_iter().filter_map(member_of).collect()
+    }
+
+    fn find_object_described_by(&self, descriptors: ExprId) -> Option<ExprId> {
+        let hir = self.input.hir;
+        let ExprKind::Call(call) = hir[hir.skip_type_assertions(descriptors)].kind else {
+            return None;
+        };
+        let callee = self.value_of(hir[call].callee)?.path.id;
+        let described = hir.ids(hir[call].args).next()?;
+        (callee == BuiltinId::ObjectGetOwnPropertyDescriptors).then_some(described)
     }
 
     // `Object.assign(Date, { now: () => 0 })`, `Object.defineProperties(Math, { random: d })`: the keys of the literals are written on the first operand.
@@ -756,22 +954,20 @@ impl Resolver<'_, '_> {
         };
         let holders = self.find_builtins_spelled_for(object);
         if holders.is_empty() {
+            if self.input.replaced_members_sought == ReplacedMembersSought::WrittenOrNamed {
+                let modules = self.find_imports_behind(object).into_iter();
+                (found.modules_written_on).extend(modules.map(|behind| behind.0));
+            }
             return;
         }
         for source in operands {
-            let ExprKind::Object(properties) = hir[hir.skip_type_assertions(source)].kind else {
-                continue;
-            };
-            for property in properties.iter() {
-                let keys = match hir[property].key {
-                    PropKey::Name(name) => vec![name],
-                    PropKey::Computed(key) => self.find_keys_spelled_for(key),
-                    PropKey::None | PropKey::Private(_) => continue,
-                };
-                for key in keys {
-                    for &holder in &holders {
-                        self.note_write(holder, key, found);
-                    }
+            // `Object.getOwnPropertyDescriptors(mixin)` has the keys of `mixin`.
+            let source = self.find_object_described_by(source).unwrap_or(source);
+            let mut keys = Vec::new();
+            self.push_keys_of_literal(source, &mut keys);
+            for key in keys {
+                for &holder in &holders {
+                    self.note_write(holder, key, found);
                 }
             }
         }
@@ -841,13 +1037,20 @@ impl Resolver<'_, '_> {
 
     pub(super) fn collect_replaced_members(&mut self) {
         let sought = self.input.replaced_members_sought;
-        if sought == ReplacedMembersSought::None || self.seeks_names_added_alone() {
+        if matches!(
+            sought,
+            ReplacedMembersSought::None | ReplacedMembersSought::NamesAdded
+        ) {
             return;
         }
         let evaluated = self.evaluated_ids().map(ExprId);
         let evaluated =
             evaluated.filter(|&expr| !matches!(self.state(expr), ExprState::NotEvaluated));
-        let mut found = Found::default();
+        let mut found = Found {
+            mentions_stub_of_global: (self.evaluated_ids().map(ExprId))
+                .any(|expr| mentioned_id(self.state(expr)).is_some_and(table::stubs_global)),
+            ..Found::default()
+        };
         // A mock stands under every name of the module, whatever the table says of the member: `mock.module("node:module", () => ({ createRequire }))`.
         // Only the names of a module of native code are taken for members of the table, collect_import_aliases(), and only a locked one is bound without a look at the import.
         // `import { file } from "bun"` reads the object Bun, which no mock replaces. The build has to see which calls are spies, so the members of bun:test stay known.
@@ -893,7 +1096,17 @@ impl Resolver<'_, '_> {
             self.find_members_written_from_literals(expr, &mut found);
             self.find_members_replaced_by_runner(expr, &mut found);
             self.find_members_whose_setter_is_handed_out(expr, &mut found);
-            let Some(write) = self.find_write(expr) else {
+            self.note_names_stored_where_missing(expr, &mut found);
+            let write = self.find_write(expr);
+            let Some(write) = write.or_else(|| self.find_write_by_pattern(expr)) else {
+                // `[Set] = [Fake]`, `({ Set } = fakes)`, `for (Set of fakes)`, `Set++`
+                if let Some(global) = self.find_locked_global(expr)
+                    && (self.input.bound)
+                        .get_assignment_target(self.input.hir, expr)
+                        .is_some()
+                {
+                    found.members.push(global);
+                }
                 if let ExprKind::Assign { target, .. } = self.input.hir[expr].kind {
                     let target = self.input.hir.skip_type_assertions(target);
                     found.members.extend(self.find_locked_global(target));
@@ -986,23 +1199,24 @@ impl Resolver<'_, '_> {
                     .copied()
                     .filter(|&name| self.input.names.get(name).is_some())
                     .collect();
-                let imports = match keys.is_empty() {
+                let imports = match written.is_empty() {
                     true => Vec::new(),
                     false => self.find_imports_behind(write.object),
                 };
                 // A helper of another file may answer what stands above its operand, or the operand's `prototype`:
                 // `above(Uint8Array).prototype.fill = f`, `protoOf(Array).join = f`. Only a member that is there counts: a new name on an
                 // object that stands above others would be opened for all of them.
-                let reached = unnamed.iter().filter(|_| !imports.is_empty());
+                let reached = (unnamed.iter()).filter(|_| !imports.is_empty() && !keys.is_empty());
                 for around in reached.flat_map(|&it| find_builtins_around(it)) {
                     let names = keys.iter().filter_map(|&key| self.input.names.get(key));
                     let names = names.chain(symbols.iter().copied());
                     (found.members)
                         .extend(names.filter_map(|name| self.find_locked_member(around, name)));
                 }
-                for (import, path) in imports {
+                for (module, path) in imports {
+                    found.modules_written_on.push(module);
                     writes_on_imports.extend(keys.iter().map(|&key| WriteOnImport {
-                        import,
+                        module,
                         path: path.clone(),
                         key,
                     }));
@@ -1033,20 +1247,29 @@ impl Resolver<'_, '_> {
             }
         }
         keys_spelled.shared_sort_by_key(|entry: &(ExprId, Atom)| entry.0);
+        // An executable takes a store on `fetch` or a timer: its build sees the store. A layer doesn't see the files above it, so it has to be told.
+        if sought == ReplacedMembersSought::NamesAddedByProduct {
+            (found.members).retain(|&member| {
+                table::entry(member).mutability == Mutability::ConstantUnlessWritten
+            });
+            self.output.replaced_members = found.members;
+            return;
+        }
         self.output.keys_spelled_on_other_objects = keys_spelled;
         objects_spelled.shared_sort_by_key(|entry: &ObjectSpelled| entry.key);
         self.output.objects_spelled_for_calls = objects_spelled;
         keys_partly_read.shared_sort_unstable();
         self.output.keys_partly_read = keys_partly_read;
+        found.calls_that_may_stub_global.shared_sort_unstable();
+        found.calls_that_may_stub_global.dedup();
+        self.output.calls_that_may_stub_global =
+            core::mem::take(&mut found.calls_that_may_stub_global);
         // A list of objects here, a loop that writes one key on each of them there: every object that the file hands on meets every such key.
         found.handed_on.shared_sort_unstable();
         found.handed_on.dedup();
         for holder in core::mem::take(&mut found.handed_on) {
             for &key in &keys {
-                if !matches!(
-                    (self.input.names.get(key)).map(|name| table::member(holder, name)),
-                    Some(MemberLookup::Found(_))
-                ) {
+                if !self.finds_member(holder, key) {
                     found.names.push((holder, key));
                 }
             }
@@ -1058,6 +1281,9 @@ impl Resolver<'_, '_> {
         self.output.holders_named_from_outside = named_from_outside;
         self.output.writes_on_parameters_under_any_name = writes_on_parameters_under_any_name;
         self.output.writes_on_imports = writes_on_imports;
+        let mut seen = FxHashSet::default();
+        (found.modules_written_on).retain(|&module| seen.insert(module));
+        self.output.modules_written_on = found.modules_written_on;
         self.output.builtins_handed_out = self.find_builtins_handed_out();
         self.output.builtins_exported = self.find_builtins_exported();
     }
@@ -1081,7 +1307,9 @@ impl Resolver<'_, '_> {
         let mut found = Found::default();
         for expr in evaluated {
             self.find_members_written_from_literals(expr, &mut found);
-            let Some(write) = self.find_write(expr) else {
+            self.note_names_stored_where_missing(expr, &mut found);
+            let write = self.find_write(expr);
+            let Some(write) = write.or_else(|| self.find_write_by_pattern(expr)) else {
                 continue;
             };
             let holders = self.find_builtins_spelled_for(write.object);
@@ -1095,6 +1323,8 @@ impl Resolver<'_, '_> {
                 }
             }
         }
+        // A name that an object above has hides a built-in member: in an executable that write throws, like the one that replaces the member.
+        (found.names).retain(|&(holder, key)| !self.finds_member(holder, key));
         let mut seen = FxHashSet::default();
         (found.names).retain(|&name| name.0 != BuiltinId::ObjectPrototype && seen.insert(name));
         match is_read_both_ways {

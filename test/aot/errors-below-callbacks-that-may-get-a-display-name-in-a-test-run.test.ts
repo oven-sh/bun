@@ -1,7 +1,9 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { afterAll } from "./harness/default-timeout";
 import { run } from "./harness/run";
-import { test } from "./supported";
+import { runsWholeGrids } from "./harness/ways";
+import { beforeAll, test } from "./supported";
 
 // One statement like `render.displayName = name` in react's memo(), on a function that nobody follows, means that any callback that is made more than once may be the one
 // that was renamed: a frame of such a callback is named by the function object that ran in it. A stack that nobody has read yet is kept as return addresses, with those
@@ -96,19 +98,36 @@ async function seenIn(directory: string, words: string | undefined, flag?: strin
   return { seen: stdout.split("\n").filter(line => line.startsWith("SEEN ")), exitCode };
 }
 
-test("a stack through three programs names its callbacks as plain Bun does", async () => {
-  using dir = tempDir("aot-errors-below-callbacks-that-may-get-a-display-name", files);
-  const plain = await seenIn(String(dir), undefined);
+let dir: ReturnType<typeof tempDir> | undefined;
+let plain: Awaited<ReturnType<typeof seenIn>>;
+beforeAll(async () => {
+  dir = tempDir("aot-errors-below-callbacks-that-may-get-a-display-name", files);
+  plain = await seenIn(String(dir), undefined);
+});
+afterAll(() => dir?.[Symbol.dispose]());
+
+test("plain Bun names the callbacks of a stack through three programs", () => {
   expect(plain.exitCode).toBe(0);
   expect(plain.seen.length).toBe(28);
   expect(plain.seen[1]).toContain("made < visit < step < each < inThePackage < forEachOf < work");
   expect(plain.seen[4]).toContain("probed by made < visit < step < for each < in a package < forEachOf < work");
-  expect(await seenIn(String(dir), "TestRunLayers:0", "--aot")).toEqual(plain);
-  expect(await seenIn(String(dir), "TestRunLayers:1,TestRunPartFiles:1", "--aot")).toEqual(plain);
-  expect(await seenIn(String(dir), "TestRunLayers:2,TestRunPartFiles:1", "--aot")).toEqual(plain);
-  // The run time holds every trace that it keeps as return addresses against the frames listed one by one.
-  const validating = { BUN_JSC_validateAOTRuntime: "1" };
-  expect(await seenIn(String(dir), "TestRunLayers:0", "--aot", validating)).toEqual(plain);
-  expect(await seenIn(String(dir), "TestRunLayers:1,TestRunPartFiles:1", "--aot", validating)).toEqual(plain);
-  expect(await seenIn(String(dir), "TestRunLayers:2,TestRunPartFiles:1", "--aot", validating)).toEqual(plain);
-}, 480_000);
+});
+
+// The run time holds every trace that it keeps as return addresses against the frames listed one by one.
+const validating = { BUN_JSC_validateAOTRuntime: "1" };
+const forms: [string, string, Record<string, string>][] = [
+  ["one program", "TestRunLayers:0", {}],
+  ["one layer", "TestRunLayers:1,TestRunPartFiles:1", {}],
+  ["two layers", "TestRunLayers:2,TestRunPartFiles:1", {}],
+  ["one program that validates", "TestRunLayers:0", validating],
+  ["one layer that validates", "TestRunLayers:1,TestRunPartFiles:1", validating],
+  ["two layers that validate", "TestRunLayers:2,TestRunPartFiles:1", validating],
+];
+// A layer costs ten times the one program. In front of a merge: what a user's flags build, and the form that was wrong, under the run time's own check.
+const inFrontOfAMerge = ["one program", "two layers that validate"];
+test.each(forms.filter(([form]) => runsWholeGrids || inFrontOfAMerge.includes(form)))(
+  "a stack through three programs names its callbacks as plain Bun does: %s",
+  async (_, words, more) => {
+    expect(await seenIn(String(dir), words, "--aot", more)).toEqual(plain);
+  },
+);

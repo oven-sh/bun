@@ -1,0 +1,226 @@
+# const o0 = { v0: 0 }; const o1 = { v1: 1, next: o0 }; .. const o24 = { v24: 24, next: o23 }; console.log(JSON.stringify(o24).length)
+# JSON.stringify walks what it is handed, a level of the objects a round: more rounds than a statement runs without waiting. The walk comes to the last object all the
+# same, so the field that only the walk reads counts as read.
+# FORM: AsRead
+# RUN: valueflow-apply
+# OPTIONS: exclude=CodeOutsideImage
+# CHECK: layout L0 {{*}}key="v0"
+# CHECK-NOT: reads=NeverRead
+layout L0 module=m0 position=11 fields=[{key="v0" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+layout L1 module=m0 position=33 fields=[{key="next" declared={type=undefined|null|L0 flags=[IsExpected]} flags=[IsRequired]}, {key="v1" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L2 module=m0 position=65 fields=[{key="next" declared={type=undefined|null|L1 flags=[IsExpected]} flags=[IsRequired]}, {key="v2" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L3 module=m0 position=97 fields=[{key="next" declared={type=undefined|null|L2 flags=[IsExpected]} flags=[IsRequired]}, {key="v3" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L4 module=m0 position=129 fields=[{key="next" declared={type=undefined|null|L3 flags=[IsExpected]} flags=[IsRequired]}, {key="v4" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L5 module=m0 position=161 fields=[{key="next" declared={type=undefined|null|L4 flags=[IsExpected]} flags=[IsRequired]}, {key="v5" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L6 module=m0 position=193 fields=[{key="next" declared={type=undefined|null|L5 flags=[IsExpected]} flags=[IsRequired]}, {key="v6" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L7 module=m0 position=225 fields=[{key="next" declared={type=undefined|null|L6 flags=[IsExpected]} flags=[IsRequired]}, {key="v7" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L8 module=m0 position=257 fields=[{key="next" declared={type=undefined|null|L7 flags=[IsExpected]} flags=[IsRequired]}, {key="v8" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L9 module=m0 position=289 fields=[{key="next" declared={type=undefined|null|L8 flags=[IsExpected]} flags=[IsRequired]}, {key="v9" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L10 module=m0 position=322 fields=[{key="next" declared={type=undefined|null|L9 flags=[IsExpected]} flags=[IsRequired]}, {key="v10" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L11 module=m0 position=357 fields=[{key="next" declared={type=undefined|null|L10 flags=[IsExpected]} flags=[IsRequired]}, {key="v11" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L12 module=m0 position=393 fields=[{key="next" declared={type=undefined|null|L11 flags=[IsExpected]} flags=[IsRequired]}, {key="v12" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L13 module=m0 position=429 fields=[{key="next" declared={type=undefined|null|L12 flags=[IsExpected]} flags=[IsRequired]}, {key="v13" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L14 module=m0 position=465 fields=[{key="next" declared={type=undefined|null|L13 flags=[IsExpected]} flags=[IsRequired]}, {key="v14" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L15 module=m0 position=501 fields=[{key="next" declared={type=undefined|null|L14 flags=[IsExpected]} flags=[IsRequired]}, {key="v15" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L16 module=m0 position=537 fields=[{key="next" declared={type=undefined|null|L15 flags=[IsExpected]} flags=[IsRequired]}, {key="v16" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L17 module=m0 position=573 fields=[{key="next" declared={type=undefined|null|L16 flags=[IsExpected]} flags=[IsRequired]}, {key="v17" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L18 module=m0 position=609 fields=[{key="next" declared={type=undefined|null|L17 flags=[IsExpected]} flags=[IsRequired]}, {key="v18" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L19 module=m0 position=645 fields=[{key="next" declared={type=undefined|null|L18 flags=[IsExpected]} flags=[IsRequired]}, {key="v19" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L20 module=m0 position=681 fields=[{key="next" declared={type=undefined|null|L19 flags=[IsExpected]} flags=[IsRequired]}, {key="v20" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L21 module=m0 position=717 fields=[{key="next" declared={type=undefined|null|L20 flags=[IsExpected]} flags=[IsRequired]}, {key="v21" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L22 module=m0 position=753 fields=[{key="next" declared={type=undefined|null|L21 flags=[IsExpected]} flags=[IsRequired]}, {key="v22" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L23 module=m0 position=789 fields=[{key="next" declared={type=undefined|null|L22 flags=[IsExpected]} flags=[IsRequired]}, {key="v23" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L24 module=m0 position=825 fields=[{key="next" declared={type=undefined|null|L23 flags=[IsExpected]} flags=[IsRequired]}, {key="v24" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+module m0 path="/$bunfs/root/json-24.mjs" displayPath="json-24.mjs" flags=[KeepsError] body=f0 positions={lineStarts=[0, 22, 54, 86, 118, 150, 182, 214, 246, 278, 310, 345, 381, 417, 453, 489, 525, 561, 597, 633, 669, 705, 741, 777, 813, 849, 890] textOfBody="\x16\x1f\x01\x1f\x01\x1f\x01\x1f\x01\x1f\x01\x1f\x01\x1f\x01\x1f\x01\x1f\x01\x22\x01#\x01#\x01#\x01#\x01#\x01#\x01#\x01#\x01#\x01#\x01#\x01#\x01#\x01#\x01("} functionText="const o0 = { v0: 0 };\x0aconst o1 = { v1: 1, next: o0 };\x0aconst o2 = { v2: 2, next: o1 };\x0aconst o3 = { v3: 3, next: o2 };\x0aconst o4 = { v4: 4, next: o3 };\x0aconst o5 = { v5: 5, next: o4 };\x0aconst o6 = { v6: 6, next: o5 };\x0aconst o7 = { v7: 7, next: o6 };\x0aconst o8 = { v8: 8, next: o7 };\x0aconst o9 = { v9: 9, next: o8 };\x0aconst o10 = { v10: 10, next: o9 };\x0aconst o11 = { v11: 11, next: o10 };\x0aconst o12 = { v12: 12, next: o11 };\x0aconst o13 = { v13: 13, next: o12 };\x0aconst o14 = { v14: 14, next: o13 };\x0aconst o15 = { v15: 15, next: o14 };\x0aconst o16 = { v16: 16, next: o15 };\x0aconst o17 = { v17: 17, next: o16 };\x0aconst o18 = { v18: 18, next: o17 };\x0aconst o19 = { v19: 19, next: o18 };\x0aconst o20 = { v20: 20, next: o19 };\x0aconst o21 = { v21: 21, next: o20 };\x0aconst o22 = { v22: 22, next: o21 };\x0aconst o23 = { v23: 23, next: o22 };\x0aconst o24 = { v24: 24, next: o23 };\x0aconsole.log(JSON.stringify(o24).length);\x0a" namespaceLayout=L(m0)
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = Data data=d0 @11
+    v1 = Convert v0 declared={type=undefined|null|L0 flags=[IsExpected]} @11
+    v2 = Integer integer=1 @39
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @39
+    v4 = NewObject layout=L1 @35
+    PropDefine v4, v3 key="v1" @35
+    PropDefine v4, v1 key="next" @42
+    v7 = FinishObject v4 @33
+    v8 = Convert v7 declared={type=undefined|null|L1 flags=[IsExpected]} @33
+    v9 = Integer integer=2 @71
+    v10 = Convert v9 declared={type=number flags=[IsExpected]} @71
+    v11 = NewObject layout=L2 @67
+    PropDefine v11, v10 key="v2" @67
+    PropDefine v11, v8 key="next" @74
+    v14 = FinishObject v11 @65
+    v15 = Convert v14 declared={type=undefined|null|L2 flags=[IsExpected]} @65
+    v16 = Integer integer=3 @103
+    v17 = Convert v16 declared={type=number flags=[IsExpected]} @103
+    v18 = NewObject layout=L3 @99
+    PropDefine v18, v17 key="v3" @99
+    PropDefine v18, v15 key="next" @106
+    v21 = FinishObject v18 @97
+    v22 = Convert v21 declared={type=undefined|null|L3 flags=[IsExpected]} @97
+    v23 = Integer integer=4 @135
+    v24 = Convert v23 declared={type=number flags=[IsExpected]} @135
+    v25 = NewObject layout=L4 @131
+    PropDefine v25, v24 key="v4" @131
+    PropDefine v25, v22 key="next" @138
+    v28 = FinishObject v25 @129
+    v29 = Convert v28 declared={type=undefined|null|L4 flags=[IsExpected]} @129
+    v30 = Integer integer=5 @167
+    v31 = Convert v30 declared={type=number flags=[IsExpected]} @167
+    v32 = NewObject layout=L5 @163
+    PropDefine v32, v31 key="v5" @163
+    PropDefine v32, v29 key="next" @170
+    v35 = FinishObject v32 @161
+    v36 = Convert v35 declared={type=undefined|null|L5 flags=[IsExpected]} @161
+    v37 = Integer integer=6 @199
+    v38 = Convert v37 declared={type=number flags=[IsExpected]} @199
+    v39 = NewObject layout=L6 @195
+    PropDefine v39, v38 key="v6" @195
+    PropDefine v39, v36 key="next" @202
+    v42 = FinishObject v39 @193
+    v43 = Convert v42 declared={type=undefined|null|L6 flags=[IsExpected]} @193
+    v44 = Integer integer=7 @231
+    v45 = Convert v44 declared={type=number flags=[IsExpected]} @231
+    v46 = NewObject layout=L7 @227
+    PropDefine v46, v45 key="v7" @227
+    PropDefine v46, v43 key="next" @234
+    v49 = FinishObject v46 @225
+    v50 = Convert v49 declared={type=undefined|null|L7 flags=[IsExpected]} @225
+    v51 = Integer integer=8 @263
+    v52 = Convert v51 declared={type=number flags=[IsExpected]} @263
+    v53 = NewObject layout=L8 @259
+    PropDefine v53, v52 key="v8" @259
+    PropDefine v53, v50 key="next" @266
+    v56 = FinishObject v53 @257
+    v57 = Convert v56 declared={type=undefined|null|L8 flags=[IsExpected]} @257
+    v58 = Integer integer=9 @295
+    v59 = Convert v58 declared={type=number flags=[IsExpected]} @295
+    v60 = NewObject layout=L9 @291
+    PropDefine v60, v59 key="v9" @291
+    PropDefine v60, v57 key="next" @298
+    v63 = FinishObject v60 @289
+    v64 = Convert v63 declared={type=undefined|null|L9 flags=[IsExpected]} @289
+    v65 = Integer integer=10 @329
+    v66 = Convert v65 declared={type=number flags=[IsExpected]} @329
+    v67 = NewObject layout=L10 @324
+    PropDefine v67, v66 key="v10" @324
+    PropDefine v67, v64 key="next" @333
+    v70 = FinishObject v67 @322
+    v71 = Convert v70 declared={type=undefined|null|L10 flags=[IsExpected]} @322
+    v72 = Integer integer=11 @364
+    v73 = Convert v72 declared={type=number flags=[IsExpected]} @364
+    v74 = NewObject layout=L11 @359
+    PropDefine v74, v73 key="v11" @359
+    PropDefine v74, v71 key="next" @368
+    v77 = FinishObject v74 @357
+    v78 = Convert v77 declared={type=undefined|null|L11 flags=[IsExpected]} @357
+    v79 = Integer integer=12 @400
+    v80 = Convert v79 declared={type=number flags=[IsExpected]} @400
+    v81 = NewObject layout=L12 @395
+    PropDefine v81, v80 key="v12" @395
+    PropDefine v81, v78 key="next" @404
+    v84 = FinishObject v81 @393
+    v85 = Convert v84 declared={type=undefined|null|L12 flags=[IsExpected]} @393
+    v86 = Integer integer=13 @436
+    v87 = Convert v86 declared={type=number flags=[IsExpected]} @436
+    v88 = NewObject layout=L13 @431
+    PropDefine v88, v87 key="v13" @431
+    PropDefine v88, v85 key="next" @440
+    v91 = FinishObject v88 @429
+    v92 = Convert v91 declared={type=undefined|null|L13 flags=[IsExpected]} @429
+    v93 = Integer integer=14 @472
+    v94 = Convert v93 declared={type=number flags=[IsExpected]} @472
+    v95 = NewObject layout=L14 @467
+    PropDefine v95, v94 key="v14" @467
+    PropDefine v95, v92 key="next" @476
+    v98 = FinishObject v95 @465
+    v99 = Convert v98 declared={type=undefined|null|L14 flags=[IsExpected]} @465
+    v100 = Integer integer=15 @508
+    v101 = Convert v100 declared={type=number flags=[IsExpected]} @508
+    v102 = NewObject layout=L15 @503
+    PropDefine v102, v101 key="v15" @503
+    PropDefine v102, v99 key="next" @512
+    v105 = FinishObject v102 @501
+    v106 = Convert v105 declared={type=undefined|null|L15 flags=[IsExpected]} @501
+    v107 = Integer integer=16 @544
+    v108 = Convert v107 declared={type=number flags=[IsExpected]} @544
+    v109 = NewObject layout=L16 @539
+    PropDefine v109, v108 key="v16" @539
+    PropDefine v109, v106 key="next" @548
+    v112 = FinishObject v109 @537
+    v113 = Convert v112 declared={type=undefined|null|L16 flags=[IsExpected]} @537
+    v114 = Integer integer=17 @580
+    v115 = Convert v114 declared={type=number flags=[IsExpected]} @580
+    v116 = NewObject layout=L17 @575
+    PropDefine v116, v115 key="v17" @575
+    PropDefine v116, v113 key="next" @584
+    v119 = FinishObject v116 @573
+    v120 = Convert v119 declared={type=undefined|null|L17 flags=[IsExpected]} @573
+    v121 = Integer integer=18 @616
+    v122 = Convert v121 declared={type=number flags=[IsExpected]} @616
+    v123 = NewObject layout=L18 @611
+    PropDefine v123, v122 key="v18" @611
+    PropDefine v123, v120 key="next" @620
+    v126 = FinishObject v123 @609
+    v127 = Convert v126 declared={type=undefined|null|L18 flags=[IsExpected]} @609
+    v128 = Integer integer=19 @652
+    v129 = Convert v128 declared={type=number flags=[IsExpected]} @652
+    v130 = NewObject layout=L19 @647
+    PropDefine v130, v129 key="v19" @647
+    PropDefine v130, v127 key="next" @656
+    v133 = FinishObject v130 @645
+    v134 = Convert v133 declared={type=undefined|null|L19 flags=[IsExpected]} @645
+    v135 = Integer integer=20 @688
+    v136 = Convert v135 declared={type=number flags=[IsExpected]} @688
+    v137 = NewObject layout=L20 @683
+    PropDefine v137, v136 key="v20" @683
+    PropDefine v137, v134 key="next" @692
+    v140 = FinishObject v137 @681
+    v141 = Convert v140 declared={type=undefined|null|L20 flags=[IsExpected]} @681
+    v142 = Integer integer=21 @724
+    v143 = Convert v142 declared={type=number flags=[IsExpected]} @724
+    v144 = NewObject layout=L21 @719
+    PropDefine v144, v143 key="v21" @719
+    PropDefine v144, v141 key="next" @728
+    v147 = FinishObject v144 @717
+    v148 = Convert v147 declared={type=undefined|null|L21 flags=[IsExpected]} @717
+    v149 = Integer integer=22 @760
+    v150 = Convert v149 declared={type=number flags=[IsExpected]} @760
+    v151 = NewObject layout=L22 @755
+    PropDefine v151, v150 key="v22" @755
+    PropDefine v151, v148 key="next" @764
+    v154 = FinishObject v151 @753
+    v155 = Convert v154 declared={type=undefined|null|L22 flags=[IsExpected]} @753
+    v156 = Integer integer=23 @796
+    v157 = Convert v156 declared={type=number flags=[IsExpected]} @796
+    v158 = NewObject layout=L23 @791
+    PropDefine v158, v157 key="v23" @791
+    PropDefine v158, v155 key="next" @800
+    v161 = FinishObject v158 @789
+    v162 = Convert v161 declared={type=undefined|null|L23 flags=[IsExpected]} @789
+    v163 = Integer integer=24 @832
+    v164 = Convert v163 declared={type=number flags=[IsExpected]} @832
+    v165 = NewObject layout=L24 @827
+    PropDefine v165, v164 key="v24" @827
+    PropDefine v165, v162 key="next" @836
+    v168 = FinishObject v165 @825
+    v169 = Convert v168 declared={type=undefined|null|L24 flags=[IsExpected]} @825
+    v170 = Builtin builtin=GlobalThis @849
+    v171 = PropGet v170 key="console" [isFreeName] @849
+    v172 = Convert v171 declared={type=builtin(Console) flags=[IsExpected]} @849
+    v173 = PropGet v172 key="log" @849
+    v174 = Convert v173 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @849
+    v175 = Builtin builtin=JSON @861
+    v176 = PropGet v175 key="stringify" @861
+    v177 = Convert v176 declared={type=builtin(JSONStringify) flags=[IsExpected]} @861
+    v178 = Call v177, v175, v169 calleeKey="stringify" calleeName="JSON.stringify" @866
+    v179 = Convert v178 declared={type=undefined|null|string flags=[IsExpected]} @861
+    v180 = PropGet v179 key="length" @879
+    v181 = Convert v180 declared={type=number flags=[IsExpected]} @861
+    v182 = Call v174, v172, v181 calleeKey="log" calleeName="console.log" @857
+    v183 = Undefined @849
+    Return v183 @849
+}
+data d0 root=Object{layout=L0 members=[{key="v0" value=Number{}}]} module=m0
+entry module=m0 hostReads=[{exportName="default" builtin=BunServe}, {exportName="then"}]

@@ -7,8 +7,8 @@
 import { expect } from "bun:test";
 import { join } from "path";
 import { unsupported } from "./harness/commands";
-import { test } from "./harness/default-timeout";
 import { run } from "./harness/run";
+import { test } from "./measures";
 import { python, scriptEnvironment, scriptSkipReason } from "./shell/tools";
 
 if (scriptSkipReason && !unsupported)

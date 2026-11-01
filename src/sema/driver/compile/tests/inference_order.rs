@@ -187,6 +187,7 @@ fn ask_for_parameters_of(
             builtin_types: &BuiltinTypeSymbols::compute(all, &[], Box::new(|| &[])),
             named_values: &NoNamedValues,
             max_inference_nodes,
+            limits: Default::default(),
         };
         let main = program.file(name);
         let answers = Mutex::new((Vec::new(), QueryStatistics::default()));
@@ -194,7 +195,7 @@ fn ask_for_parameters_of(
             if file != main {
                 return;
             }
-            checker.with_queries(file, inputs, |queries| {
+            checker.with_queries(file, &inputs, |queries| {
                 let count = queries.hir().params.len();
                 let mut asked: Vec<usize> = (0..count).collect();
                 match order {

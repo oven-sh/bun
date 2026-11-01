@@ -1,6 +1,8 @@
 use bun_aot::engine::has_compiler;
 use bun_core::Global;
 use bun_event_loop::AnyEventLoop;
+use bun_options_types::bundle_enums::Format;
+use bun_options_types::compile_target::CompileTarget;
 use bun_options_types::schema::api;
 use bun_sys::Fd;
 
@@ -9,8 +11,9 @@ use super::configuration::{self, request_from_context};
 use super::printing::{exit_with_failure, print_outcome};
 use super::reports::write_metafiles;
 use super::{CompileCommand, CompileFailure, CompileOutcome, CompileProduct, RequestOrigin};
-use crate::cli::build_command::BuildCommand;
+use crate::cli::build_command::{BuildCommand, has_only_html_entry_points};
 use crate::cli::command::Context;
+use crate::cli::compile_options;
 
 impl CompileCommand {
     #[cold]
@@ -24,8 +27,12 @@ impl CompileCommand {
     pub(crate) fn exec_command(ctx: Context<'_>) -> Result<(), crate::Error> {
         if ctx.bundler_options.aot.is_none() || ctx.args.target == Some(api::Target::Browser) {
             configuration::use_default_entry_point(ctx);
-            ctx.bundler_options.aot = None;
-            return BuildCommand::exec(ctx, None);
+            if ctx.bundler_options.aot.is_none()
+                || has_only_html_entry_points(&ctx.args.entry_points)
+            {
+                ctx.bundler_options.aot = None;
+                return BuildCommand::exec(ctx, None);
+            }
         }
         run(ctx, RequestOrigin::CompileCommand)
     }
@@ -37,6 +44,11 @@ fn run(ctx: Context<'_>, origin: RequestOrigin) -> Result<(), crate::Error> {
         ..Default::default()
     });
     ctx.args.target = Some(api::Target::Bun);
+    compile_options::check_build_conflicts(&ctx, origin);
+    compile_options::note_options_without_effect(&ctx);
+    ctx.bundler_options.bytecode = false;
+    ctx.bundler_options.output_format = Format::Esm;
+    ctx.bundler_options.compile_target = CompileTarget::default();
 
     if !has_compiler() {
         exit_with_failure(

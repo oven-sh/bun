@@ -12,11 +12,15 @@
 //   a finding in a multi-file program is first tried as a single file; if it needs the files, files are removed first, then lines
 //   a shared build is one program with many modules, except in the mode separate-entry-points, where the compiler treats each program as it would alone
 //   for two long lines that differ, the shown part starts a little before the first difference
-import { expect, test as one } from "bun:test";
+import { expect } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
+import { withAnotherCall } from "./fuzz/another-call-of-what-the-program-holds";
+import { withFourCallers } from "./fuzz/four-callers";
 import { fuzz } from "./fuzz/fuzzer";
+import { withOwnCopies } from "./fuzz/own-copies";
+import { Random } from "./fuzz/random";
 import { reduceFiles, type Whole } from "./fuzz/reduce";
 import {
   ProductRunner,
@@ -29,8 +33,17 @@ import {
   type Program,
   type Runner,
 } from "./fuzz/runners";
-import { allSources, multiFileSuffix, neverTakenSuffix, rewrittenSuffix } from "./fuzz/sources";
+import {
+  allSources,
+  anotherCallSuffix,
+  fourCallersSuffix,
+  multiFileSuffix,
+  neverTakenSuffix,
+  ownCopiesSuffix,
+  rewrittenSuffix,
+} from "./fuzz/sources";
 import { bunTypesFolder, typeChecker } from "./fuzz/type-check";
+import { test as one } from "./listed";
 
 const options = { baseFlags: [], validate: false, threads: 1, buildSeconds: 60, runSeconds: 60 };
 const timeout = 300_000;
@@ -737,7 +750,10 @@ one.skipIf(isWindows)(
         !startPython.includes(name) &&
         !name.endsWith(multiFileSuffix) &&
         !name.endsWith(rewrittenSuffix) &&
-        !name.endsWith(neverTakenSuffix),
+        !name.endsWith(neverTakenSuffix) &&
+        !name.endsWith(anotherCallSuffix) &&
+        !name.endsWith(ownCopiesSuffix) &&
+        !name.endsWith(fourCallersSuffix),
     );
     expect(asked.length).toBeGreaterThan(300);
     const seeds = Array.from({ length: 24 }, (_, seed) => seed);
@@ -745,3 +761,83 @@ one.skipIf(isWindows)(
   },
   timeout,
 );
+
+test("what a program does at its top is done by four callers", () => {
+  const text = `const seen = [];
+function f(z) {
+  seen.push(z);
+  return z;
+}
+const g = z => f(z) + 1;
+const list = [1, 2];
+f(list[0]);
+console.log(g(list[1]), seen.join());
+`;
+  const body = `const list = [1, 2];\nf(list[0]);\nconsole.log(g(list[1]), seen.join());\n}`;
+  expect(withFourCallers("program.js", text)).toBe(`const seen = [];
+function f(z) {
+  seen.push(z);
+  return z;
+}
+const g = z => f(z) + 1;
+function driveA() {
+${body}
+function driveB() {
+${body}
+function driveC() {
+${body}
+function driveD() {
+${body}
+for (let round = 0; round < 2; round++) {
+  driveA();
+  driveB();
+  driveC();
+  driveD();
+}
+`);
+  const waits = withFourCallers("program.js", `function f() {}\nawait f();\nconst driveA = 1;\nf(driveA);\n`)!;
+  expect(waits).toStartWith("function f() {}\nawait f();\nfunction driveA_() {\nconst driveA = 1;\nf(driveA);\n}");
+  expect(withFourCallers("program.js", "function f() {}\nawait f();\n")).toBeUndefined();
+  expect(withFourCallers("program.js", "function f() {}\nawait (f());\nconst x = await [f()][0];\n")).toBeUndefined();
+});
+
+test("each user of a shared function or class gets a copy of its own", () => {
+  const text = `function same(x) {
+  return x;
+}
+class Box {
+  v = 1;
+}
+function one() {
+  return same(new Box().v);
+}
+function two(same) {
+  return same;
+}
+function three() {
+  const held = { same };
+  return held.same(2) + new Box().v;
+}
+console.log(one(), two(3), three());
+`;
+  const written = Array.from({ length: 40 }, (_, seed) => withOwnCopies("program.js", text, new Random(seed)) ?? "");
+  const whole = written.find(text => text.includes("function same_2(x)") && text.includes("class Box_2 {"))!;
+  expect(whole).toContain("const held = { same: same_2 };\n  return held.same(2) + new Box_2().v;");
+  expect(whole).toContain("function one() {\n  return same(new Box().v);\n}");
+  expect(written.filter(text => text && !text.includes("function two(same) {\n  return same;\n}"))).toEqual([]);
+  const alone = "function f() {\n  return 1;\n}\nconsole.log(f());\n";
+  expect(Array.from({ length: 40 }, (_, seed) => withOwnCopies("program.js", alone, new Random(seed)))).toEqual(
+    Array(40).fill(undefined),
+  );
+});
+
+test("another call brings no import statement into a text that names what only a CommonJS file has", () => {
+  const written = (test: string) =>
+    Array.from({ length: 40 }, (_, seed) => {
+      const text = `function f(a) {\n  return ${test} ? a : 0;\n}\nconsole.log(f(1));\n`;
+      return withAnotherCall("program.js", text, new Random(seed)) ?? "";
+    });
+  expect(written("a > 0").some(text => text.startsWith("import "))).toBe(true);
+  expect(written(`typeof module === "object"`).filter(text => text.startsWith("import "))).toEqual([]);
+  expect(written(`typeof module === "object"`).every(text => text.includes("try {\n  f("))).toBe(true);
+});

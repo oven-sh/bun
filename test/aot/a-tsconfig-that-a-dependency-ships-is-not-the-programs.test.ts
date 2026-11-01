@@ -6,7 +6,9 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
-import { test } from "./supported";
+import { waysFor } from "./harness/ways";
+// One by one: the runner gives this file a process of its own and eight cases at once, beside two more like it: too many builds for four cores.
+import { testOneByOne as test } from "./supported";
 
 raiseDefaultTimeout(240_000);
 
@@ -67,20 +69,23 @@ const forms: [string, string | undefined, string[]][] = [
 ];
 
 for (const [title, files] of Object.entries(projects)) {
+  const ways = waysFor(forms, title === "it extends a file that is not published");
   test(title, async () => {
     using dir = tempDir("a-tsconfig-that-a-dependency-ships", files);
     const said = async (words: string | undefined, ...cmd: string[]) => {
       const { stdout, stderr, exitCode } = await run(cmd, String(dir), { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words });
       expect({ stderr: exitCode ? stderr : "", exitCode }).toEqual({ stderr: "", exitCode: 0 });
       expect(stderr).not.toContain("TS100009");
+      // In a test run a fault of a tsconfig.json is a warning and stops nothing.
+      expect(stderr).not.toContain("TS5083");
       return stdout.split("\n").filter(line => line.startsWith("SAID"));
     };
     const plain = await said(undefined, bunExe(), "test");
     expect(plain.length).toBe(1);
     const compiled = await Promise.all(
-      forms.map(async ([form, words, flags]) => [form, await said(words, bunExe(), "test", ...flags)]),
+      ways.map(async ([form, words, flags]) => [form, await said(words, bunExe(), "test", ...flags)]),
     );
-    expect(compiled).toEqual(forms.map(([form]) => [form, plain]));
+    expect(compiled).toEqual(ways.map(([form]) => [form, plain]));
     // The bundler goes by the tsconfig.json beside each file, a dependency's too, so an executable is held against an executable.
     await said(undefined, bunExe(), "build", "--compile", "main.ts", "--outfile", "stock");
     await said(undefined, bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", "built");

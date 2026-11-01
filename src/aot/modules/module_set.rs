@@ -298,6 +298,7 @@ fn is_parsed_into_value(input: &BindInput<'_, '_>, file: FileId) -> bool {
                 | Loader::Xml
                 | Loader::Text
                 | Loader::Md
+                | Loader::Css
         )
     })
 }

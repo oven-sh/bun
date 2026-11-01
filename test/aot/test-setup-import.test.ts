@@ -3,6 +3,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { run } from "./harness/run";
+import { waysFor } from "./harness/ways";
 import { test } from "./supported";
 
 const testFile = (text: string) => `import { test } from "bun:test";\n${text}\ntest("runs", () => {});\n`;
@@ -51,12 +52,17 @@ async function runTests(folder: string, flags: string[], words = "") {
   return { printed: stdout.split("\n").filter(line => line && !line.startsWith("bun test ")), exitCode };
 }
 
+// Over layers what a test file imports is an entry point of the layer below, and runs whatever package.json says. A preload lies in that layer itself:
+// the one form that has failed there.
+const failedOverLayers = "in a preload";
+const atDefaultFlags = ["at default flags", [], ""] as const;
+const others = [
+  ["as one program under --isolate", ["--isolate"], "TestRunLayers:0"],
+  ["over two layers", ["--isolate"], "TestRunLayers:2,TestRunPartFiles:1"],
+] as const;
+
 for (const [form, { files, flags = [] }] of Object.entries(forms))
-  for (const [way, more, words] of [
-    ["at default flags", [], ""],
-    ["as one program under --isolate", ["--isolate"], "TestRunLayers:0"],
-    ["over two layers", ["--isolate"], "TestRunLayers:2,TestRunPartFiles:1"],
-  ] as const)
+  for (const [way, more, words] of [atDefaultFlags, ...waysFor(others, form === failedOverLayers)])
     test.concurrent(
       `${form}, ${way}`,
       async () => {

@@ -10707,9 +10707,11 @@ impl<'s> Files<'s> {
     /// `IsTypeOnlyImportOrExportDeclaration`
     pub fn is_type_only_import_or_export_declaration(&self, file: FileId, decl: Decl) -> bool {
         let hir = self.hir(file);
+        let is_type_only =
+            |import: ImportId| hir[import].type_only && hir[import].loaded_as.is_none();
         match decl {
-            Decl::ImportDefault(import) | Decl::ImportNamespace(import) => hir[import].type_only,
-            Decl::ImportSpec(s) => hir[s].type_only || hir[hir[s].import].type_only,
+            Decl::ImportDefault(import) | Decl::ImportNamespace(import) => is_type_only(import),
+            Decl::ImportSpec(s) => hir[s].type_only || is_type_only(hir[s].import),
             Decl::ImportEquals(import) => hir[import].flags.contains(Flags::TYPE_ONLY),
             Decl::ExportSpec(s) => hir[s].type_only || hir[hir[s].export].type_only,
             Decl::ExportStarAs(statement) => matches!(

@@ -1,0 +1,11 @@
+# A code unit of a string that may be a rope. The type says that it is a string, not which object holds the characters, so the code asks the object.
+# FORM: Selected
+# RUN: lower-to-b3 f0
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="codeUnitAt" parameters=[{type=string}, {type=int[0, 3]}] results=[{type=int[0, 65535]}] capabilities=[HasOrdinaryFrame] {
+    v2 = GetStringCodeUnit v0, v1
+    Return v2
+}
+# CHECK: v2:GetStringCodeUnit

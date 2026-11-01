@@ -2,6 +2,7 @@
 // those reads and locks the members. A test run folded and locked all but `process.versions.bun` and `.node`, so each of the others was refused: "Cannot assign to process.versions".
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { waysFor } from "./harness/ways";
 import { test } from "./supported";
 
 const files = {
@@ -55,15 +56,15 @@ async function linesOf(way: string, flags: string[], words?: string) {
   return { lines: stderr.split("\n").filter(line => line.startsWith("OUT")), exitCode };
 }
 
-test.concurrent.each(Object.entries(ways))(
+test.concurrent.each(Object.entries(ways).map(([name, way], index) => [name, way, index] as const))(
   "%s",
-  async (_, way) => {
+  async (_, way, index) => {
     const plain = await linesOf(way, []);
     expect(plain.lines.length).toBe(3);
     expect(plain.lines[1]).toStartWith("OUT done ");
     expect(plain.lines[1].slice(8)).not.toBe(plain.lines[0].slice(10));
-    expect(await linesOf(way, ["--aot"])).toEqual(plain);
-    expect(await linesOf(way, ["--aot"], "TestRunLayers:2")).toEqual(plain);
+    for (const words of waysFor([undefined, "TestRunLayers:2"], index === 0))
+      expect(await linesOf(way, ["--aot"], words)).toEqual(plain);
   },
   240_000,
 );

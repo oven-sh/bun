@@ -27,6 +27,7 @@ const lanes: { name: string; options: string[]; share: number; script?: string }
   { name: "scenes-few-to-a-build", script: scenes, options: ["--kind", "few"], share: 3 },
   { name: "rewritten", options: ["--rewritten"], share: 2 },
   { name: "never-taken", options: ["--never-taken"], share: 2 },
+  { name: "another-call", options: ["--another-call"], share: 2 },
   { name: "scenes-many-to-a-build", script: scenes, options: ["--kind", "many"], share: 2 },
   { name: "heats", options: ["--modes", "default,hot,cold"], share: 2 },
   { name: "validated", options: ["--validate"], share: 2 },

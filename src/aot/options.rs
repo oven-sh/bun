@@ -112,6 +112,8 @@ pub struct LoadOptions {
     pub replaced_exports: Vec<ReplacedExport>,
     /// Ascending. Files of the test run that the build does not see mock them, or hand their objects on: `ReplacedByTests::modules`.
     pub mocked_modules: Vec<ReplacedModule>,
+    /// Ascending. `ReplacedByTests::modules_that_mocked_files_export_whole`
+    pub modules_that_mocked_files_export_whole: Vec<ReplacedModule>,
     /// As if a file called `mock.module` with a specifier that the build does not know: every export can be replaced, and every module mocked.
     /// An earlier compile of the same tests was not analyzed, by the word of the engine, so nobody knows what their spies and mocks replace.
     pub mocks_any_module: bool,
@@ -129,6 +131,8 @@ pub struct LoadOptions {
     pub names_spied_in_text: Vec<Vec<u8>>,
     /// Ascending. The modules that such code replaces whole, as it writes them: `"../lib.js"`, whose folder depends on where the file is written.
     pub modules_replaced_in_text: Vec<Vec<u8>>,
+    /// `ReplacedByTests::loads_by_unknown_path`
+    pub tests_load_by_unknown_path: bool,
     /// Ascending. `ReplacedByTests::evicted_modules`
     pub evicted_modules: Vec<ReplacedModule>,
     /// `ReplacedByTests::evicts_any_module`
@@ -158,6 +162,8 @@ pub struct LoadOptions {
     pub test_files: Vec<Vec<u8>>,
     /// `ReplacedByTests::package_files_that_product_imports`
     pub package_files_that_product_imports: Vec<Vec<u8>>,
+    /// `ReplacedByTests::package_files_imported_beside_tests`
+    pub package_files_imported_beside_tests: Vec<Vec<u8>>,
     /// `AotOptions::preloads_of_test_run`: the whole path of each, and the one that its links lead to.
     pub paths_of_preloads: Vec<Vec<u8>>,
 }
@@ -294,6 +300,7 @@ impl LoadOptions {
             ways_named_that_nobody_reads: WaysBetweenModuleObjects::default(),
             replaced_exports: Vec::new(),
             mocked_modules: Vec::new(),
+            modules_that_mocked_files_export_whole: Vec::new(),
             mocks_any_module: false,
             every_export_is_asked_for: false,
             handed_on_modules: Vec::new(),
@@ -302,6 +309,7 @@ impl LoadOptions {
             names_spied_on_unknown_objects: Vec::new(),
             names_spied_in_text: Vec::new(),
             modules_replaced_in_text: Vec::new(),
+            tests_load_by_unknown_path: false,
             evicted_modules: Vec::new(),
             evicts_any_module: false,
             files_that_tests_load: FilesThatTestsLoad::default(),
@@ -315,6 +323,7 @@ impl LoadOptions {
             files_of_tests: Vec::new(),
             test_files: Vec::new(),
             package_files_that_product_imports: Vec::new(),
+            package_files_imported_beside_tests: Vec::new(),
             paths_of_preloads: Vec::new(),
         }
     }

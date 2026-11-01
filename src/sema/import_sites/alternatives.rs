@@ -14,8 +14,9 @@ use crate::bind::{
     Parent, PatParent, StoreKind, SymbolId, UNREACHABLE,
 };
 use crate::fold::{
-    Constant, FoldedValue, PathBelowFolder, apply_binary, apply_template, find_export_of_module,
-    trim_lead_surrogate_at_end, trim_to_last_segment, trim_trail_surrogate_at_start,
+    Constant, FoldedValue, MembersBehindNames, PathBelowFolder, apply_binary, apply_template,
+    find_export_of_module_with, trim_lead_surrogate_at_end, trim_to_last_segment,
+    trim_trail_surrogate_at_start,
 };
 use crate::hir::{
     BinOp, Branches, Call, Chain, ExprId, ExprKind, File, Flags, FnBody, FnId, IdList, MemberKey,
@@ -26,9 +27,15 @@ use crate::util::{FxHashSet, SharedSort};
 use bun_core::strings;
 use std::cell::{Cell, OnceCell, RefCell};
 
-const MOST_ALTERNATIVES: usize = 64;
-const MOST_EXPRESSIONS_FOLLOWED: u32 = 4096;
+const EXPRESSIONS_FOLLOWED_IN_ANY_FILE: u32 = 4096;
+const MOST_TEXTS_MADE: u32 = 4096;
 const DEEPEST_EXPRESSION: u32 = 64;
+
+fn most_expressions_followed(hir: &File<'_>) -> u32 {
+    let twice_the_file =
+        u32::try_from(hir.exprs.len()).map_or(u32::MAX, |all| all.saturating_mul(2));
+    twice_the_file.max(EXPRESSIONS_FOLLOWED_IN_ANY_FILE)
+}
 
 const PATH_MODULES: [&[u8]; 4] = [b"path", b"node:path", b"path/posix", b"node:path/posix"];
 
@@ -144,7 +151,7 @@ fn add(values: &mut Values, value: Held) {
 
 /// Where each name is written in a file, by name. Made for the first site that asks, and read by all the sites of the file.
 #[derive(Default)]
-pub(super) struct WrittenNames(OnceCell<Vec<(Atom, ExprId)>>);
+pub(super) struct WrittenNames(OnceCell<Vec<(Atom, ExprId)>>, MembersBehindNames);
 
 impl WrittenNames {
     fn find(&self, hir: &File<'_>, name: Atom) -> &[(Atom, ExprId)] {
@@ -193,7 +200,8 @@ struct Follower<'i, 'a, 's> {
     not_kept_as_written: FxHashSet<SymbolId>,
     variables_in_progress: Vec<SymbolId>,
     functions_in_progress: Vec<FnId>,
-    expressions_left: u32,
+    expressions_left: Cell<u32>,
+    texts_left: Cell<u32>,
     depth: u32,
     follows_key: bool,
     folder: Folder,
@@ -237,7 +245,8 @@ impl<'i, 'a, 's> Follower<'i, 'a, 's> {
             not_kept_as_written: FxHashSet::default(),
             variables_in_progress: Vec::new(),
             functions_in_progress: Vec::new(),
-            expressions_left: MOST_EXPRESSIONS_FOLLOWED,
+            expressions_left: Cell::new(most_expressions_followed(inputs.hir)),
+            texts_left: Cell::new(MOST_TEXTS_MADE),
             depth: 0,
             follows_key,
             folder,
@@ -489,15 +498,27 @@ impl Follower<'_, '_, '_> {
         self.inputs.decisions.is_dead_expr(e)
     }
 
+    fn pay_for(&self, made: usize) -> Option<()> {
+        let made = u32::try_from(made).ok()?;
+        self.texts_left
+            .set(self.texts_left.get().checked_sub(made)?);
+        Some(())
+    }
+
+    fn pay_for_pairs(&self, left: usize, right: usize) -> Option<()> {
+        self.pay_for(left.checked_mul(right)? - left.max(right).min(left * right))
+    }
+
     fn values_of(&mut self, e: ExprId) -> Option<Values> {
-        self.expressions_left = self.expressions_left.checked_sub(1)?;
+        self.expressions_left
+            .set(self.expressions_left.get().checked_sub(1)?);
         if self.depth == DEEPEST_EXPRESSION {
             return None;
         }
         self.depth += 1;
         let values = self.values_of_written(e);
         self.depth -= 1;
-        values.filter(|values| values.len() <= MOST_ALTERNATIVES)
+        values
     }
 
     fn values_of_written(&mut self, e: ExprId) -> Option<Values> {
@@ -695,6 +716,7 @@ impl Follower<'_, '_, '_> {
         }
         let mut joined = vec![Text::whole(b"")];
         for (index, part) in parts.iter().enumerate() {
+            self.pay_for_pairs(joined.len(), part.len())?;
             let mut longer: Vec<Text> = Vec::with_capacity(joined.len() * part.len());
             for (start, next) in joined
                 .iter()
@@ -715,9 +737,6 @@ impl Follower<'_, '_, '_> {
                 if !longer.contains(&text) {
                     longer.push(text);
                 }
-            }
-            if longer.len() > MOST_ALTERNATIVES {
-                return None;
             }
             joined = longer;
         }
@@ -788,6 +807,7 @@ impl Follower<'_, '_, '_> {
     fn add_values(&self, left: &Values, right: &Values) -> Option<Values> {
         let &ScanInputs { atoms, fold, .. } = self.inputs;
         let mut sums = Values::new();
+        self.pay_for_pairs(left.len(), right.len())?;
         for (left, right) in left.iter().flat_map(|l| right.iter().map(move |r| (l, r))) {
             let sum = match (left, right) {
                 (&Held::Primitive(left), &Held::Primitive(right)) => {
@@ -976,12 +996,11 @@ impl Follower<'_, '_, '_> {
                 return None;
             }
             let value = self.values_of(value)?;
+            let before = values.len();
             for sum in self.add_values(&values, &value)? {
                 add(&mut values, sum);
             }
-            if values.len() > MOST_ALTERNATIVES {
-                return None;
-            }
+            self.pay_for(values.len() - before)?;
         }
         self.add_pushed_values(symbol, pattern, values)
     }
@@ -1277,15 +1296,13 @@ impl Follower<'_, '_, '_> {
             let Held::List(pushed) = self.values_of_list(call.args)?.pop()? else {
                 return None;
             };
+            self.pay_for(values.len())?;
             for index in 0..values.len() {
                 let Held::List(places) = &values[index] else {
                     return None;
                 };
                 let longer = places.iter().chain(&pushed).cloned().collect();
                 add(&mut values, Held::List(longer));
-            }
-            if values.len() > MOST_ALTERNATIVES {
-                return None;
             }
         }
         Some(values)
@@ -1846,14 +1863,23 @@ impl Follower<'_, '_, '_> {
 
     /// `require.resolve(name)` and `import.meta.resolve(name)`.
     fn find_name_asked_of_resolver(&self, call: ExprId) -> Option<(ExprId, ResolvedForm)> {
-        let &ScanInputs { hir, bound, .. } = self.inputs;
+        let &ScanInputs {
+            hir, bound, atoms, ..
+        } = self.inputs;
         let form = match call_site_kind(hir, bound, call)? {
             ImportSiteKind::RequireResolve(_) => ResolvedForm::Path,
             ImportSiteKind::ImportMetaResolve(_) => ResolvedForm::Url,
             _ => return None,
         };
         let arguments = call_site_arguments(hir, bound, call)?;
-        (arguments.len() == 1 && self.folder == Folder::OfFile)
+        let names_paths = |options: ExprId| {
+            let paths = PropKey::Name(atoms.intern(b"paths"));
+            matches!(expr_kind(hir, hir.skip_type_assertions(options)), Some(ExprKind::Object(properties))
+                if properties.iter().any(|id| hir[id].key == paths))
+        };
+        let may_ask_from_own_file = arguments.len() == 1
+            || form == ResolvedForm::Path && !names_paths(hir.id_at(arguments, 1));
+        (may_ask_from_own_file && self.folder == Folder::OfFile)
             .then(|| (hir.id_at(arguments, 0), form))
     }
 
@@ -1896,18 +1922,29 @@ impl Follower<'_, '_, '_> {
 
     fn find_export_of_path(&self, e: ExprId) -> Option<Atom> {
         let &ScanInputs { hir, atoms, .. } = self.inputs;
-        if let Some(name) = self.find_export_of(e, &PATH_MODULES) {
+        let known = Some(&self.written_names.1);
+        if let Some(name) = self.find_export_with(e, &PATH_MODULES, known) {
             return Some(name);
         }
         let (object, MemberKey::Name(name)) = hir.member_key(e)? else {
             return None;
         };
-        let object = self.find_export_of(hir.skip_type_assertions(object), &PATH_MODULES)?;
+        let object = hir.skip_type_assertions(object);
+        let object = self.find_export_with(object, &PATH_MODULES, known)?;
         (atoms.bytes(object) == b"posix").then_some(name)
     }
 
     /// The name of the export that `callee` is, of the module that goes by `names`.
     fn find_export_of(&self, callee: ExprId, names: &[&[u8]]) -> Option<Atom> {
+        self.find_export_with(callee, names, None)
+    }
+
+    fn find_export_with(
+        &self,
+        callee: ExprId,
+        names: &[&[u8]],
+        known: Option<&MembersBehindNames>,
+    ) -> Option<Atom> {
         let &ScanInputs {
             hir,
             bound,
@@ -1922,7 +1959,7 @@ impl Follower<'_, '_, '_> {
             FoldedValue::Unknown => None,
         };
         let is_module = |specifier: Atom| names.contains(&atoms.bytes(specifier));
-        find_export_of_module(hir, bound, callee, &find_constant, &is_module)
+        find_export_of_module_with(hir, bound, callee, &find_constant, &is_module, known)
     }
 
     // `new URL("./lib/" + name + ".js", import.meta.url)` is the URL that `import.meta.resolve` answers with for a file that is written out with its extension.
@@ -1957,6 +1994,7 @@ impl Follower<'_, '_, '_> {
             true => vec![b"./".to_vec()],
             false => self.folders_of_urls(base)?,
         };
+        self.pay_for_pairs(folders.len(), written.len())?;
         let urls = folders
             .iter()
             .flat_map(|folder| written.iter().map(move |value| (folder, value)));
@@ -2175,6 +2213,7 @@ impl Follower<'_, '_, '_> {
             let values = self
                 .values_apart_from_itself(argument)
                 .unwrap_or_else(some_text);
+            self.pay_for_pairs(paths.len(), values.len())?;
             let mut longer = Vec::with_capacity(paths.len() * values.len());
             for (path, value) in paths
                 .iter()
@@ -2184,9 +2223,6 @@ impl Follower<'_, '_, '_> {
                     return None;
                 };
                 longer.push(path.iter().chain([text]).cloned().collect());
-            }
-            if longer.len() > MOST_ALTERNATIVES {
-                return None;
             }
             paths = longer;
         }

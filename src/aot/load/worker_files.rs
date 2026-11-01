@@ -108,7 +108,6 @@ impl WorkerFile {
 }
 
 // Files that hand an export on to one another in a circle end the search.
-const MOST_REEXPORTS: usize = 8;
 const LOADERS_OF_CODE: [Loader; 4] = [Loader::Js, Loader::Jsx, Loader::Ts, Loader::Tsx];
 
 pub(crate) struct WorkerSearch<'a> {
@@ -522,6 +521,7 @@ enum Declaration {
 }
 
 type KnownDeclarations = FxHashMap<(FileId, SymbolId), Option<Declaration>>;
+type Exports = FxHashSet<(FileId, Atom)>;
 
 /// Who calls a function, or constructs a class.
 struct Calls {
@@ -1394,8 +1394,9 @@ impl Walk<'_, '_> {
             _ => (self.parameters.get(&declaration).cloned()).unwrap_or_default(),
         };
         let look_under = |exporter: FileId, name: Atom| {
+            let looked_at = &mut Exports::default();
             let declaration =
-                find_declaration_exported_by(files, exporter, name, MOST_REEXPORTS, &is_sought);
+                find_declaration_exported_by(files, exporter, name, looked_at, &is_sought);
             let places = declaration.map(&places_of).unwrap_or_default();
             places
                 .into_iter()
@@ -3362,18 +3363,16 @@ fn find_declaration_called(
     known: &mut KnownDeclarations,
     is_sought_below: &IsSoughtBelow<'_>,
 ) -> Option<Declaration> {
-    find_declaration_behind(files, file, callee, MOST_REEXPORTS, known, is_sought_below)
+    find_declaration_behind(files, file, callee, known, is_sought_below)
 }
 
 fn find_declaration_behind(
     files: &dyn CodeView<'_>,
     file: FileId,
     expression: ExprId,
-    variables_left: usize,
     known: &mut KnownDeclarations,
     is_sought_below: &IsSoughtBelow<'_>,
 ) -> Option<Declaration> {
-    let variables_left = variables_left.checked_sub(1)?;
     let (hir, bound) = (files.hir(file), files.bound(file));
     let expression = hir.skip_type_assertions(expression);
     match hir[expression].kind {
@@ -3393,14 +3392,10 @@ fn find_declaration_behind(
                 None => match bound.binding_initializer(hir, symbol) {
                     // `const start = require("./spawn")`, `const start = spawning.start` and `const begin = start`
                     BindingInitializer::Expression(source) if bound.is_stable_binding(symbol) => {
-                        let behind = find_declaration_behind(
-                            files,
-                            file,
-                            source,
-                            variables_left,
-                            known,
-                            is_sought_below,
-                        );
+                        // `const a = b, b = a`: whoever comes back here finds nothing behind the name.
+                        known.insert((file, symbol), None);
+                        let behind =
+                            find_declaration_behind(files, file, source, known, is_sought_below);
                         behind.or(Some(Declaration::Here(file, symbol)))
                     }
                     // `const { start } = require("./spawn")`
@@ -3499,7 +3494,8 @@ fn find_declaration_loaded(
     let by_name = name.filter(|&name| name != known::default);
     let listed = name.and_then(|name| {
         let site = Some(site);
-        find_declaration_of_export(files, importer, site, name, MOST_REEXPORTS, is_sought_below)
+        let looked_at = &mut Exports::default();
+        find_declaration_of_export(files, importer, site, name, looked_at, is_sought_below)
     });
     if listed.is_some() {
         return listed;
@@ -3528,13 +3524,13 @@ fn find_declaration_of_export(
     importer: FileId,
     site: Option<usize>,
     name: Atom,
-    reexports_left: usize,
+    looked_at: &mut Exports,
     is_sought_below: &IsSoughtBelow<'_>,
 ) -> Option<Declaration> {
     let site = site?;
     match *files.answers(importer)?.0.get(site)? {
         CodeAnswer::File(exporter) => {
-            find_declaration_exported_by(files, exporter, name, reexports_left, is_sought_below)
+            find_declaration_exported_by(files, exporter, name, looked_at, is_sought_below)
         }
         CodeAnswer::External {
             kind: ExternalKind::UncompiledCode,
@@ -3550,15 +3546,18 @@ fn find_declaration_exported_by(
     files: &dyn CodeView<'_>,
     exporter: FileId,
     name: Atom,
-    reexports_left: usize,
+    looked_at: &mut Exports,
     is_sought_below: &IsSoughtBelow<'_>,
 ) -> Option<Declaration> {
-    let reexports_left = reexports_left.checked_sub(1)?;
+    // A file that has been asked for a name answers the same by every way that leads to it: files that export one another end here, and so does a second way through `export *`.
+    if !looked_at.insert((exporter, name)) {
+        return None;
+    }
     files.answers(exporter)?;
     let (hir, bound) = (files.hir(exporter), files.bound(exporter));
-    let find_behind = |kind, name| {
+    let mut find_behind = |kind, name| {
         let site = files.analysis(exporter).import_site_index(kind);
-        find_declaration_of_export(files, exporter, site, name, reexports_left, is_sought_below)
+        find_declaration_of_export(files, exporter, site, name, looked_at, is_sought_below)
     };
     let exports = bound.table(bound.symbol(bound.file_symbol).exports);
     let Some(&(_, export)) = exports.iter().find(|entry| entry.0 == name) else {

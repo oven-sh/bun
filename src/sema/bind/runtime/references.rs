@@ -314,7 +314,12 @@ impl ReferencePass<'_, '_> {
                 continue;
             }
             if let Some(root) = hir.texts(names).next() {
-                let binding = self.lookup.find_binding(scope, root);
+                let mut binding = self.lookup.find_binding(scope, root);
+                if binding == Binding::Free
+                    && let Some((variable, _)) = hir.find_name_of_loaded_import(root)
+                {
+                    binding = self.lookup.find_binding(scope, variable);
+                }
                 let entry = (ImportEqualsId(index as u32), binding);
                 self.references.entity_root_bindings.push(entry);
             }

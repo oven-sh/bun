@@ -7,16 +7,15 @@ use crate::jsc::{JSString, SysErrorJsc as _};
 use crate::node::validators::{validate_object, validate_string};
 use bun_collections::smallvec::SmallVec;
 use bun_core::Utf8Bytes;
-use bun_highway::PartOfPath;
 use bun_node_path::{
-    BLOCK, CHAR_BACKWARD_SLASH, CHAR_FORWARD_SLASH, PathParsed, RelativePosixLatin1,
-    basename_posix_ascii, basename_posix_latin1, basename_posix_t, basename_windows_t,
-    basename_without_suffix_posix_latin1, dirname_posix_ascii, dirname_posix_t, dirname_windows_t,
-    extname_posix_ascii, extname_posix_t, extname_windows_t, format_t, is_absolute_posix_t,
-    is_absolute_windows_t, is_ascii, is_ascii_of_few, is_resolved_ascii_posix, is_tidy_ascii_posix,
-    join_buf_len, join_posix_t, join_windows_t, normalize_buf_len, normalize_posix_latin1,
-    normalize_posix_t, normalize_windows_t, parse_posix_latin1, parse_posix_t, parse_windows_t,
-    path_size, relative_buf_len, relative_posix_latin1, relative_posix_t, relative_windows_t,
+    CHAR_BACKWARD_SLASH, CHAR_FORWARD_SLASH, PathParsed, RelativePosixLatin1,
+    basename_posix_latin1, basename_posix_t, basename_windows_t,
+    basename_without_suffix_posix_latin1, dirname_posix_latin1, dirname_posix_t, dirname_windows_t,
+    extname_posix_latin1, extname_posix_t, extname_windows_t, format_t, is_absolute_posix_t,
+    is_absolute_windows_t, is_ascii, is_resolved_ascii_posix, is_tidy_ascii_posix, join_buf_len,
+    join_posix_t, join_windows_t, normalize_buf_len, normalize_posix_latin1, normalize_posix_t,
+    normalize_windows_t, parse_posix_latin1, parse_posix_t, parse_windows_t, path_size,
+    relative_buf_len, relative_posix_latin1, relative_posix_t, relative_windows_t,
     resolve_absolute_posix_latin1, resolve_buf_len, resolve_posix_t, resolve_windows_t,
     to_namespaced_path_buf_len, to_namespaced_path_windows_t,
 };
@@ -175,28 +174,6 @@ unsafe fn ascii_part<'a>(
     }
 }
 
-/// `answer`, or `None` if one of its characters is outside ASCII. SAFETY: a function of `bun_node_path` answered it for `text.characters()`.
-#[inline(always)]
-unsafe fn answered_part<'a, const IS_FOLDER: bool>(
-    heap: &JsHeap<'a>,
-    text: &JsLatin1<'a>,
-    answer: PartOfPath,
-) -> Option<Text<'a>> {
-    if let Some((start, end)) = answer.range() {
-        // SAFETY: forwarded.
-        return Some(unsafe { text.proper_substring_unchecked(heap, start, end) });
-    }
-    if !IS_FOLDER {
-        return (answer == PartOfPath::WHOLE).then(|| text.string());
-    }
-    match answer {
-        PartOfPath::NOT_ASCII => None,
-        PartOfPath::DOT => Some(heap.create_latin1_string(b".")),
-        PartOfPath::SLASH => Some(heap.create_latin1_string(b"/")),
-        _ => Some(heap.create_latin1_string(b"//")),
-    }
-}
-
 /// `slice`, which a function of `bun_node_path` answered for `text.characters()`, or `None` if one of the characters is outside ASCII.
 #[inline(always)]
 fn ascii_slice<'a>(heap: &JsHeap<'a>, text: &JsLatin1<'a>, slice: &[u8]) -> Option<Text<'a>> {
@@ -225,17 +202,8 @@ fn basename_of_latin1<'a, const WINDOWS: bool, const FLAT_ONLY: bool>(
         return Ok(if WINDOWS {
             ascii_slice(heap, &text, basename_windows_t(text.characters(), None))
         } else {
-            let characters = text.characters();
-            // SAFETY: the answer and the range are of these characters.
-            unsafe {
-                if characters.len() >= BLOCK {
-                    answered_part::<false>(heap, &text, basename_posix_ascii(characters))
-                } else {
-                    let name = basename_posix_latin1(characters);
-                    is_ascii_of_few(characters.get_unchecked(name.clone()))
-                        .then(|| part(heap, &text, name))
-                }
-            }
+            // SAFETY: the range is of these characters.
+            unsafe { ascii_part(heap, &text, basename_posix_latin1(text.characters())) }
         });
     };
     // A suffix whose UTF-8 is longer than that of the path is not looked for. Of an ASCII suffix that is its length.
@@ -301,8 +269,11 @@ fn dirname_of_latin1<'a, const WINDOWS: bool, const FLAT_ONLY: bool>(
             dirname_windows_t(text.characters()),
         ));
     }
-    // SAFETY: the answer is about these characters.
-    Ok(unsafe { answered_part::<true>(heap, &text, dirname_posix_ascii(text.characters())) })
+    Ok(match dirname_posix_latin1(text.characters()) {
+        // SAFETY: the range is of these characters.
+        Ok(end) => unsafe { ascii_part(heap, &text, 0..end) },
+        Err(literal) => Some(heap.create_latin1_string(literal)),
+    })
 }
 
 #[cold]
@@ -329,8 +300,8 @@ fn extname_of_latin1<'a, const WINDOWS: bool, const FLAT_ONLY: bool>(
     Ok(if WINDOWS {
         ascii_slice(heap, &text, extname_windows_t(text.characters()))
     } else {
-        // SAFETY: the answer is about these characters.
-        unsafe { answered_part::<false>(heap, &text, extname_posix_ascii(text.characters())) }
+        // SAFETY: the range is of these characters.
+        unsafe { ascii_part(heap, &text, extname_posix_latin1(text.characters())) }
     })
 }
 

@@ -36,13 +36,12 @@ struct PendingPair {
 }
 
 // A literal is converted member by member where it is built, so only a value of one structural type that flows into another needs the walk through their members, and what differs there lies near the top.
-const MAX_COMPARED_DEPTH: u8 = 2;
-const MAX_ASSERTED_PAIRS: usize = 1024;
-const MAX_ASSERTED_MEMBER_DEPTH: u8 = 1;
 
-#[derive(Default)]
 struct Comparison {
     depth: u8,
+    deepest: u8,
+    position: u32,
+    has_parts_below_deepest: bool,
     // The checker lets the source of the pair at hand flow into its target.
     is_accepted: bool,
     pending: SmallVec<[PendingPair; 8]>,
@@ -212,7 +211,7 @@ impl FileLowering<'_, '_, '_, '_> {
         position: u32,
         kind: ConversionKind,
     ) {
-        let mut comparison = Comparison::default();
+        let mut comparison = self.begin_comparison(position);
         comparison.add_pair(
             ComparedPair {
                 source,
@@ -258,7 +257,7 @@ impl FileLowering<'_, '_, '_, '_> {
         else {
             return;
         };
-        let mut comparison = Comparison::default();
+        let mut comparison = self.begin_comparison(position);
         let mut methods_followed = 0;
         for member in members {
             let (from, to) = (member.checked, member.in_base);
@@ -272,7 +271,7 @@ impl FileLowering<'_, '_, '_, '_> {
                         target: to,
                         is_asserted: false,
                     },
-                    MAX_COMPARED_DEPTH,
+                    comparison.deepest,
                     true,
                 );
             }
@@ -319,7 +318,7 @@ impl FileLowering<'_, '_, '_, '_> {
     ) {
         let sources = self.collect_object_types(source);
         let targets = self.collect_object_types(target);
-        let mut comparison = Comparison::default();
+        let mut comparison = self.begin_comparison(position);
         // Every entry and every store is tested, so nothing rests on a flow against the checker's direction: it would only put the family of the wider type into the narrower one.
         for &source in &sources {
             for &target in targets.iter().filter(|&&target| target != source) {
@@ -331,7 +330,7 @@ impl FileLowering<'_, '_, '_, '_> {
                                 target: to,
                                 is_asserted: false,
                             },
-                            MAX_COMPARED_DEPTH,
+                            comparison.deepest,
                             true,
                         );
                     }
@@ -402,6 +401,20 @@ impl FileLowering<'_, '_, '_, '_> {
             comparison.is_accepted = is_accepted;
             self.compare_pair(&mut comparison, pair);
         }
+        if comparison.has_parts_below_deepest {
+            self.gave_up(LimitId::MaxComparedTypeDepth, position);
+        }
+    }
+
+    fn begin_comparison(&self, position: u32) -> Comparison {
+        Comparison {
+            depth: 0,
+            deepest: self.inputs.limits.get(LimitId::MaxComparedTypeDepth) as u8,
+            position,
+            has_parts_below_deepest: false,
+            is_accepted: false,
+            pending: SmallVec::new(),
+        }
     }
 
     fn compare_pair(&mut self, comparison: &mut Comparison, pair: ComparedPair) {
@@ -455,7 +468,9 @@ impl FileLowering<'_, '_, '_, '_> {
             match self.queries.is_assignable(source, target) {
                 Ok(true) => comparison.follow_accepted_value(source, target),
                 Ok(false) | Err(_) => {
-                    self.admit_asserted_objects(source, target, MAX_ASSERTED_MEMBER_DEPTH);
+                    let member_depth = self.inputs.limits.get(LimitId::MaxAssertedMemberDepth);
+                    let position = comparison.position;
+                    self.admit_asserted_objects(source, target, member_depth as u8, position);
                 }
             }
             return;
@@ -810,6 +825,7 @@ impl FileLowering<'_, '_, '_, '_> {
         source: CheckerTypeId,
         target: CheckerTypeId,
         member_depth: u8,
+        position: u32,
     ) {
         // `node as Identifier` stands in a self many times, and says the same each time.
         let assertion = (source, target, member_depth);
@@ -818,7 +834,9 @@ impl FileLowering<'_, '_, '_, '_> {
         }
         let sources = self.collect_types_with_layout(source, AssertionSide::Source);
         let targets = self.collect_types_with_layout(target, AssertionSide::Target);
-        if sources.len() * targets.len() > MAX_ASSERTED_PAIRS {
+        let pairs = (sources.len() * targets.len()) as u64;
+        if pairs > self.inputs.limits.get(LimitId::MaxAssertedTypePairs) {
+            self.gave_up(LimitId::MaxAssertedTypePairs, position);
             return;
         }
         for &source in sources.iter() {
@@ -831,12 +849,13 @@ impl FileLowering<'_, '_, '_, '_> {
                 {
                     self.add_conversion(layout, supertype);
                 }
-                if member_depth == 0 {
+                let Some(depth_below) = member_depth.checked_sub(1) else {
+                    self.gave_up(LimitId::MaxAssertedMemberDepth, position);
                     continue;
-                }
+                };
                 // `symbol as MappedSymbol` also says that `symbol.links`, a TransientSymbolLinks, is a MappedSymbolLinks.
                 self.visit_differing_members(source, target, true, |file, _, from, to| {
-                    file.admit_asserted_objects(from, to, member_depth - 1);
+                    file.admit_asserted_objects(from, to, depth_below, position);
                 });
             }
         }
@@ -897,7 +916,7 @@ impl FileLowering<'_, '_, '_, '_> {
                         target: to,
                         is_asserted: false,
                     },
-                    MAX_COMPARED_DEPTH,
+                    comparison.deepest,
                     comparison.is_accepted,
                 );
             }
@@ -918,8 +937,10 @@ fn find_layout(file: &mut FileLowering<'_, '_, '_, '_>, ty: CheckerTypeId) -> Op
 }
 
 impl Comparison {
-    fn follows_parts(&self) -> bool {
-        self.depth < MAX_COMPARED_DEPTH
+    fn follows_parts(&mut self) -> bool {
+        let follows = self.depth < self.deepest;
+        self.has_parts_below_deepest |= !follows;
+        follows
     }
 
     // A part of the two types: a result, an element, the contents.

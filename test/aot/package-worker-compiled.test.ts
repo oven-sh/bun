@@ -4,7 +4,8 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { runtimeEnvironment } from "./harness/flags";
 import { run } from "./harness/run";
-import { test } from "./supported";
+// One by one: the runner gives this file a process of its own and eight cases at once, beside two more like it: too many builds for four cores.
+import { testOneByOne as test } from "./supported";
 
 // Compiled or not, the realm of a Worker has none of the names of the test runner.
 const answer = `typeof expect === "undefined" && typeof jest === "undefined" ? "answers" : "sees the test runner"`;

@@ -1,7 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
 import { run as runCommand } from "../aot/harness/run";
+import { describe, test } from "../aot/listed";
 import { BundlerTestInput, itBundled } from "./expectBundled";
 
 const usesImage = (stdout: string) =>
@@ -170,7 +171,10 @@ test.concurrent("--format has no effect with --aot", async () => {
     [bunExe(), "build", "--compile", "--aot", "--format=cjs", "entry.cjs", "--outfile", "out"],
     String(dir),
   );
-  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  expect({ stderr, exitCode }).toEqual({
+    stderr: "note: --format has no effect with --aot: each file keeps the module format it is written in\n",
+    exitCode: 0,
+  });
   expect(await runCommand([join(String(dir), "out")], String(dir))).toMatchObject({ stdout: "1\n", exitCode: 0 });
 });
 

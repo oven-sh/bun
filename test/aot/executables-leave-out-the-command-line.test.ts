@@ -46,8 +46,9 @@ const noCommandLine =
 function removedFeaturesOf(executable: Build): string[] {
   const removed = readRemovedFeatures(executable.file);
   if (removed === undefined) throw new Error(`${executable.name} has no list of removed features`);
+  // What compiled code alone calls stays or leaves by the list of the image: ../bundler/compile-trim-operations.test.ts.
   return model.features
-    .filter(feature => removed.includes(feature.index))
+    .filter(feature => removed.includes(feature.index) && feature.enteredFrom !== "compiled-code")
     .map(feature => feature.name)
     .sort();
 }

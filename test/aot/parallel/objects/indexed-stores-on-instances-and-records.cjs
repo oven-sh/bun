@@ -178,3 +178,54 @@ for (const [label, lock] of [["preventExtensions", Object.preventExtensions], ["
 }
 
 console.log(lines.join("\n"));
+/* Output:
+class ints: 41 0 39 undefined true false
+class doubles: 1.5 2.5 undefined ["38","39","41","n"]
+class anything: text {"deep":1} true null 45
+class deleted: false undefined
+class stored again: true again {"value":"again","writable":true,"enumerable":true,"configurable":true}
+class far: far farther last index no index negative fraction no canonical index text index ["44","1000","100000","4294967294","n","4294967295","-1","1.5","07"]
+class keys: ["0","1","2"] ["-1","1.5","07","later"] 54 537
+function ints: 41 0 39 undefined true false
+function doubles: 1.5 2.5 undefined ["38","39","41","length"]
+function anything: text {"deep":1} true null 45
+function deleted: false undefined
+function stored again: true again {"value":"again","writable":true,"enumerable":true,"configurable":true}
+function far: far farther last index no index negative fraction no canonical index text index ["44","1000","100000","4294967294","length","4294967295","-1","1.5","07"]
+function keys: ["0","1","2"] ["-1","1.5","07","later"] 54 542
+record ints: 42 0 39 undefined true false
+record doubles: 1.5 2.5 undefined ["39","41","name","n"]
+record anything: text {"deep":1} true null 46
+record deleted: false undefined
+record stored again: true again {"value":"again","writable":true,"enumerable":true,"configurable":true}
+record far: far farther last index no index negative fraction no canonical index text index ["1000","100000","4294967294","name","n","4294967295","-1","1.5","07"]
+record keys: ["0","1","2"] ["-1","1.5","07","later"] 55 548
+wrapped: 1325
+preventExtensions: changed undefined strict TypeError ["0","1","n"]
+preventExtensions without elements: undefined TypeError ["n"]
+seal: changed undefined strict TypeError ["0","1","n"]
+seal without elements: undefined TypeError ["n"]
+freeze: a undefined TypeError TypeError ["0","1","n"]
+freeze without elements: undefined TypeError ["n"]
+own read-only and setter: fixed TypeError got ["y"] z w ["0","1","3","n"]
+setter above: from above ["n"] ["x"] own free ["8","n"]
+setter removed: now own ["7","8","n"]
+read-only above: fixed above TypeError ["n"] y
+value above: value above own ["1","n"] value above
+members under indices: 88888888888333333333 getter 1 TypeError undefined 5 ["0","n"]
+proxy above: own through ["1"] ["0","1","n"]
+typed array above: 9 undefined ["1","n"]
+string object above: b y ["5","n"]
+an instance above: p0 c0 p0 ["0"]
+a frozen instance above: f0 TypeError []
+an element appears above: [null,null,null,"appeared","appeared","appeared"]
+an array with holes below: appeared undefined
+an array with holes below, later: later
+Reflect.set: true {"0":"x"} a true y false
+Object.assign: ["0","1","5","n"] f
+spread: {"0":"a","1":"replaced","5":"f","n":0}
+keys out of for-in: ["0","1","3","4","5","n"] 3
+array built-ins: 11 pushed pushed,18,16,14,12,10,8,6,4,2,0 11 8
+splice: 8 pushed,12,10,8,6,4,2,0 9
+many: 117750
+*/

@@ -8,9 +8,11 @@ import { run } from "./harness/run";
 import { test } from "./supported";
 
 const file = (name: string) => `import { expect, test } from "bun:test";
-import { state } from "./shared.js";
+import { mainOfShared, state } from "./shared.js";
 test("${name}", () => {
   console.log("SEEN ${name}", state.loads, ++state.uses, typeof globalThis.left, typeof Array.prototype.left, process.env.LEFT);
+  // The files share one \`process\`, and the runner lays a new list over both between files.
+  console.log("SEEN ${name} as", [process.argv[1], Bun.argv[1], mainOfShared()].map(path => path.split(/[\\\\/]/).pop()).join());
   globalThis.left = 1;
   Array.prototype.left = 1;
   process.env.LEFT = "1";
@@ -20,7 +22,7 @@ test("${name}", () => {
 const files = {
   "package.json": `{ "name": "p", "type": "module" }`,
   "preload.js": `globalThis.preloads = (globalThis.preloads ?? 0) + 1;\nconsole.log("SEEN the preload", globalThis.preloads);\n`,
-  "shared.js": `console.log("SEEN shared.js loads");\nexport const state = { loads: 1, uses: 0 };\n`,
+  "shared.js": `console.log("SEEN shared.js loads");\nexport const state = { loads: 1, uses: 0 };\nexport const mainOfShared = () => process.argv[1];\n`,
   "a.test.js": file("a"),
   "b.test.js": file("b"),
   "c.test.js": file("c"),
@@ -44,6 +46,7 @@ test("--isolate=modules runs, and a file sees nothing of the file before it", as
     "SEEN the preload 1",
     "SEEN shared.js loads",
     `SEEN ${name} 1 1 undefined undefined undefined`,
+    `SEEN ${name} as ${name}.test.js,${name}.test.js,${name}.test.js`,
   ];
   expect(plain).toEqual({
     stdout: [...of("a"), ...of("b"), ...of("c")],

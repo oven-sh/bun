@@ -17,7 +17,7 @@ const ReadablePrototype = Stream.Readable.prototype;
 const duplexResume = DuplexPrototype.resume;
 const duplexRemoveListener = DuplexPrototype.removeListener;
 const { flagsOf, getDefaultHighWaterMark, internals: streamInternals } = require("internal/streams/state");
-const { queueTick1, queueTick2, ticksAreUnhooked, ring } = require("internal/process/next_tick_queue");
+const { queueTick1, queueTick2, ticksAreUnhooked, ring, asyncContext } = require("internal/process/next_tick_queue");
 const kFlowing = 1 << 24;
 const kHasPaused = 1 << 25;
 const kPaused = 1 << 26;
@@ -4471,8 +4471,8 @@ ServerResponse.prototype.writeContinue = function (this: $Node.ServerResponse, c
 
 function queueExchangeTick(exchange: Exchange, flags: number): void {
   exchange.flags = flags | EXCHANGE_TICK_QUEUED;
+  exchange.queuedTick = ring.write!;
   queueTick1(finishExchange, exchange);
-  exchange.tickMark = ring.write!;
 }
 
 // A first chunk that write() has not sent, with the head as write() rendered it.
@@ -5234,7 +5234,10 @@ ServerResponse.prototype.end = function (
       flags |= EXCHANGE_HAS_END_CALLBACK;
     }
     if ((flags & EXCHANGE_TICK_QUEUED) === 0) queueExchangeTick(exchange, flags | EXCHANGE_ENDED_CLEAN);
-    else if (exchange.tickMark === ring.write)
+    else if (
+      exchange.queuedTick!.next === ring.write &&
+      exchange.queuedTick!.frame === $getInternalField(asyncContext, 0)
+    )
       exchange.flags = flags | EXCHANGE_ENDED_CLEAN | EXCHANGE_ENDED_BEFORE_ITS_TICK;
     else
       queueExchangeTick(

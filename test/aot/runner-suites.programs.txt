@@ -1,0 +1,418 @@
+# Tests of Bun's own suites that pass as they are and fail where the programs they start run compiled: `<file>: <test>`. See harness/runner-suites.ts, holdProgramsOfSuites().
+# A line goes out with the fix that makes its test pass. `~ ` before a line: that test fails in some runs and passes in others.
+# Most of it is what an executable refuses on purpose, as `bun build --compile` does too:
+#   a query string in an import path (?raw ?url ?worker, import.meta.glob's `query`) . code that a path computed at run time names . plugins of the run time . a fixture in TypeScript with a type error
+#   (one such fixture stands behind the 110 lines of "ES decorators lowering matrix > .ts") . the words of a syntax error or of a failed resolution, which are the checker's.
+# The faults among them: CSS modules . hoisted mocks and coverage with import.meta.glob . `.cjs` for `.cts` inside node_modules . import.meta.glob as a value (plain's --compile too).
+test/js/bun/css/css-loader.test.ts: css module exports > :local and :global
+test/js/bun/css/css-loader.test.ts: css module exports > CSS the bundler only warns about doesn't throw
+test/js/bun/css/css-loader.test.ts: css module exports > a file that was deleted after it was resolved
+test/js/bun/css/css-loader.test.ts: css module exports > a module without classes or ids
+test/js/bun/css/css-loader.test.ts: css module exports > classes and ids, wherever they appear
+test/js/bun/css/css-loader.test.ts: css module exports > composes
+test/js/bun/css/css-loader.test.ts: css module exports > composes cycle that the exported class is not part of
+test/js/bun/css/css-loader.test.ts: css module exports > import, import(), require()
+test/js/bun/css/css-loader.test.ts: css module exports > names depend on the path relative to the working directory
+test/js/bun/css/css-loader.test.ts: css module: a composes chain too deep for the stack is an error
+test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?init instantiates a WebAssembly module
+test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?inline in import.meta.glob and static imports returns a URL that fetch() can read
+test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?inline on a file that cannot be read
+test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?inline on an .svg file
+test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?inline on an asset file returns a base64 data: URL with its MIME type
+test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?url returns a native path that fs, pathToFileURL and Worker accept
+test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?worker and ?sharedworker read the global constructor when called, like Vite
+test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?worker of echo.cjs in a CommonJS package
+test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?worker of echo.cts in a CommonJS package
+test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?worker of echo.js in a CommonJS package
+test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?worker of echo.jsx in a CommonJS package
+test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?worker of echo.mjs in a CommonJS package
+test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?worker of echo.tsx in a CommonJS package
+test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?worker starts the file as a Worker: ?worker&inline
+test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?worker starts the file as a Worker: import
+test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?worker starts the file as a Worker: import()
+test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?worker starts the file as a Worker: require()
+test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > ?worker without new, without options, in a directory with a name that needs escaping
+test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > a plugin sees the path with its suffix first
+test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > a suffix on an absolute native path, a relative native path and a path with forward slashes
+test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > an error in the wrapper is shown with the wrapper's source
+test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > combined suffixes follow a fixed precedence, and look-alike queries are ignored
+test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > in the query of import.meta.glob
+test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import path > other kinds of files
+test/js/bun/resolve/import-query.test.ts: dynamic import of a .node addon ignores a query string suffix
+test/js/bun/resolve/import-query.test.ts: require of a .node addon with a query string reaches process.dlopen
+test/js/bun/resolve/import-query.test.ts: static import of a .node addon ignores a query string suffix
+test/js/bun/resolve/resolve.test.ts: TypeScript extension rewrite matrix > `.cjs` specifier does not pick up ["ts","tsx","mts"] files
+test/js/bun/resolve/resolve.test.ts: TypeScript extension rewrite matrix > `.js` specifier does not pick up ["cts"] files
+test/js/bun/resolve/resolve.test.ts: TypeScript extension rewrite matrix > `.mjs` specifier does not pick up ["ts","tsx","cts"] files
+test/js/bun/resolve/resolve.test.ts: TypeScript extension rewrite matrix > `dep/c` inside node_modules resolves to null
+test/js/bun/resolve/resolve.test.ts: TypeScript extension rewrite matrix > `dep/m` inside node_modules resolves to null
+test/js/bun/resolve/resolve.test.ts: TypeScript extension rewrite matrix > an exact target with no extension is not probed
+test/js/bun/resolve/resolve.test.ts: can resolve with source directories that do not exist
+test/js/bun/resolve/resolve.test.ts: file url in await import resolves
+test/js/bun/resolve/resolve.test.ts: file url in import resolves
+test/js/bun/resolve/resolve.test.ts: file url in require resolves
+test/js/bun/resolve/resolve.test.ts: file url with special characters in await import resolves
+test/js/bun/resolve/resolve.test.ts: file url with special characters in import statement resolves
+test/js/bun/resolve/resolve.test.ts: file url with special characters not encoded in await import resolves
+test/js/bun/resolve/resolve.test.ts: file url with special characters not encoded in import statement resolves
+test/js/bun/resolve/resolve.test.ts: import() of a file written after its directory was read, by an absolute path with forward slashes
+test/js/bun/resolve/resolve.test.ts: require() of a file written after its directory was read, by an absolute path with forward slashes
+test/js/bun/resolve/resolve.test.ts: tsconfig paths skip `.d.ts` substitutions > a `.d.ts`-only alias with no real module still reports the original specifier
+test/js/bun/resolve/resolve.test.ts: wildcard exports with extensionless target > explicit-extension wildcard target does not double-probe extensions
+test/js/bun/resolve/resolve.test.ts: wildcard exports with extensionless target > truly missing subpath still errors
+test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > a lazy entry with { as: "other" }
+test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > a lazy entry with { eager: !1, exhaustive: !0, caseSensitive: !!1 }
+test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > a lazy entry with { import: "not an identifier" }
+test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > a lazy entry with { query: "?x", import: "setup" }
+test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > a lazy entry with { query: "?x=1" }
+test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > a lazy entry with { query: "x=1" }
+test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > a lazy entry with { query: { "a b": "c&d/é~!*'()" } }
+test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > a lazy entry with { query: { "k=": "v=;,?:@$-_.|`^#+%", empty: "", zero: 0, no: false } }
+test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > a lazy entry with { query: { big: 1e21, neg: -0, small: 1e-7 } }
+test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > a lazy entry with { query: { minus: -1, plus: +2, not: !0 } }
+test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > a lazy entry with { query: { x: 1, y: "z", b: true, f: 1.5 } }
+test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > a module that calls it is not restored from the transpiler cache
+test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > a module whose call couldn't be replaced isn't restored from the cache either
+test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > a pattern or base that is too long
+test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > feature detection succeeds in modules whose calls are replaced
+test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > in a CommonJS module > an eager call throws when it is reached, and the others are replaced
+test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > in a CommonJS module > feature detection around an eager call takes the fallback
+test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > in a virtual module from a plugin
+test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > names > that no import path can have are skipped: { import: 'default' }
+test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > names > that no import path can have are skipped: { import: 'default', eager: true }
+test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > only a direct call is replaced, and any other form calls a function that throws
+test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > process.chdir() while modules that call it load
+test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > the function is only defined in modules whose calls are replaced
+test/bundler/transpiler/es-decorators.test.ts: ES Decorators > accessor with TypeScript annotations > accessor with optional marker (?)
+test/bundler/transpiler/es-decorators.test.ts: ES Decorators > decorator expressions > decorators on both sides of export are rejected
+test/bundler/transpiler/es-decorators.test.ts: ES Decorators > decorator expressions > export before decorator (.ts)
+test/bundler/transpiler/es-decorators.test.ts: ES Decorators > decorator expressions > non-null assertion in decorator is rejected in JavaScript
+test/bundler/transpiler/es-decorators.test.ts: ES Decorators > decorator expressions > optional chaining in decorator is rejected with a hint
+test/bundler/transpiler/es-decorators.test.ts: ES Decorators > decorator expressions > private name in decorator member expression (.ts)
+test/bundler/transpiler/es-decorators.test.ts: ES Decorators > decorator expressions > property access after call in decorator is rejected
+test/bundler/transpiler/es-decorators.test.ts: ES Decorators > decorator expressions > repeated export around a decorator is rejected
+test/bundler/transpiler/es-decorators.test.ts: ES Decorators > decorator expressions > type arguments in decorator member expression are stripped
+test/bundler/transpiler/es-decorators.test.ts: ES Decorators > members stay where they are written > a read of the class name before its class decorators run is undefined
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > accessor/instance/private
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > accessor/instance/private (class decorator)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > accessor/instance/private (class decorator, derived)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > accessor/instance/private (derived)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > accessor/instance/public
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > accessor/instance/public (class decorator)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > accessor/instance/public (class decorator, derived)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > accessor/instance/public (derived)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > accessor/static/private
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > accessor/static/private (class decorator)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > accessor/static/private (class decorator, derived)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > accessor/static/private (derived)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > accessor/static/public
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > accessor/static/public (class decorator)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > accessor/static/public (class decorator, derived)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > accessor/static/public (derived)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > accessorKeys
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > accessorOnly
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > accessorStorage
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > collision
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > computed
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > computedTwice
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > derived
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > field/instance/private
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > field/instance/private (class decorator)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > field/instance/private (class decorator, derived)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > field/instance/private (derived)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > field/instance/public
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > field/instance/public (class decorator)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > field/instance/public (class decorator, derived)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > field/instance/public (derived)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > field/static/private
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > field/static/private (class decorator)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > field/static/private (class decorator, derived)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > field/static/private (derived)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > field/static/public
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > field/static/public (class decorator)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > field/static/public (class decorator, derived)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > field/static/public (derived)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > getter/instance/private
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > getter/instance/private (class decorator)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > getter/instance/private (class decorator, derived)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > getter/instance/private (derived)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > getter/instance/public
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > getter/instance/public (class decorator)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > getter/instance/public (class decorator, derived)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > getter/instance/public (derived)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > getter/static/private
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > getter/static/private (class decorator)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > getter/static/private (class decorator, derived)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > getter/static/private (derived)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > getter/static/public
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > getter/static/public (class decorator)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > getter/static/public (class decorator, derived)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > getter/static/public (derived)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > install
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > issue28010
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > issue28118
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > issue29837
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > issue31917
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > issue31921
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > issue31929
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > method/instance/private
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > method/instance/private (class decorator)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > method/instance/private (class decorator, derived)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > method/instance/private (derived)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > method/instance/public
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > method/instance/public (class decorator)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > method/instance/public (class decorator, derived)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > method/instance/public (derived)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > method/static/private
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > method/static/private (class decorator)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > method/static/private (class decorator, derived)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > method/static/private (derived)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > method/static/public
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > method/static/public (class decorator)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > method/static/public (class decorator, derived)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > method/static/public (derived)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > namedExpr
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > namedExprNested
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > nestedScopes
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > privateAccessor
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > privateForms
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > privateUpdates
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > setter/instance/private
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > setter/instance/private (class decorator)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > setter/instance/private (class decorator, derived)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > setter/instance/private (derived)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > setter/instance/public
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > setter/instance/public (class decorator)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > setter/instance/public (class decorator, derived)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > setter/instance/public (derived)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > setter/static/private
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > setter/static/private (class decorator)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > setter/static/private (class decorator, derived)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > setter/static/private (derived)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > setter/static/public
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > setter/static/public (class decorator)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > setter/static/public (class decorator, derived)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > setter/static/public (derived)
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > staticBlockPrivate
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > staticScopes
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > staticScopesAsync
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > staticThis
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > superForms
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > superStatic
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > temporaryNames
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > temporaryScopes
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > the fixture runs
+test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .ts > twoClasses
+test/js/bun/util/inspect-error.test.js: AggregateError whose errors cannot be walked > the error a second load of a module that failed to build rejects with
+test/js/bun/util/inspect-error.test.js: source map remapping of the printed stack > a `cause` getter that loads the throwing file again
+test/js/bun/util/inspect-error.test.js: source map remapping of the printed stack > external map whose original source is unavailable
+test/js/node/v8/capture-stack-trace.test.js: CallFrame.p.getFunction does not expose the module loader reaction
+test/js/node/v8/capture-stack-trace.test.js: CallFrame.p.getFunction hides internal callees from sloppy code
+test/js/node/v8/capture-stack-trace.test.js: a stack that a collection materializes reads the same in a Worker
+test/js/bun/test/stack.test.ts: err.line and err.column are set
+test/js/bun/resolve/resolve.test.ts: file url with special characters in require resolves
+# "(unnamed)" is a beforeAll() that runs a fixture in TypeScript with a type error: the tests behind it don't run.
+test/js/bun/resolve/import-meta-glob.test.ts: bun run > import.meta.glob > (unnamed)
+test/js/bun/resolve/import-meta-glob.test.ts: errors > (unnamed)
+test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > a pattern or base that is too long
+test/js/bun/resolve/import-meta-glob.test.ts: in a directory whose name has glob syntax > (unnamed)
+test/js/bun/resolve/import-meta-glob.test.ts: package.json "imports" > (unnamed)
+test/js/bun/resolve/import-meta-glob.test.ts: symlinks > are followed > (unnamed)
+test/js/bun/resolve/import-meta-glob.test.ts: tsconfig.json "paths" and "baseUrl" > (unnamed)
+test/js/bun/resolve/import-meta-glob.test.ts: tsconfig.json "paths" without "baseUrl" > (unnamed)
+# Since `bun -e <text>` runs compiled too, from a file: a test that looks for "[eval]" in a position, or for a query string in what the text imports.
+test/js/bun/util/inspect-error.test.js: prints the source preview for an error positioned at the end of the source text
+test/js/node/v8/capture-stack-trace.test.js: Object.getOwnPropertyDescriptor(error, 'stack') throws what materializing the stack threw
+test/js/node/v8/capture-stack-trace.test.js: a stack that a collection materializes reads the same as one materialized on access
+test/js/node/v8/capture-stack-trace.test.js: an error whose stack a collection materialized behaves as one whose stack is materialized on access
+test/js/node/v8/capture-stack-trace.test.js: line numbers after a multi-line template literal ending an arrow body ({ BUN_JSC_useSourceProviderCache: "0" })
+test/js/node/v8/capture-stack-trace.test.js: line numbers after a multi-line template literal ending an arrow body ({})
+test/js/bun/test/stack.test.ts: uncaught error thrown from a data: URL module longer than a path buffer is annotated for GitHub Actions
+test/js/bun/import-attributes/import-attributes.test.ts: ?raw > bun run
+test/js/bun/import-attributes/import-attributes.test.ts: ?raw > bun run await import
+test/js/bun/import-attributes/import-attributes.test.ts: ?raw > require
+test/js/bun/import-attributes/import-attributes.test.ts: ?url > bun run abcd.css
+test/js/bun/import-attributes/import-attributes.test.ts: ?url > bun run abcd.html
+test/js/bun/import-attributes/import-attributes.test.ts: ?url > bun run abcd.js
+test/js/bun/import-attributes/import-attributes.test.ts: ?url > bun run abcd.json
+test/js/bun/import-attributes/import-attributes.test.ts: ?url > bun run abcd.module.css
+test/js/bun/import-attributes/import-attributes.test.ts: ?url > bun run abcd.ts
+test/js/bun/import-attributes/import-attributes.test.ts: ?url > bun run abcd.txt
+test/js/bun/import-attributes/import-attributes.test.ts: ?url > bun run await import abcd.css
+test/js/bun/import-attributes/import-attributes.test.ts: ?url > bun run await import abcd.html
+test/js/bun/import-attributes/import-attributes.test.ts: ?url > bun run await import abcd.js
+test/js/bun/import-attributes/import-attributes.test.ts: ?url > bun run await import abcd.json
+test/js/bun/import-attributes/import-attributes.test.ts: ?url > bun run await import abcd.module.css
+test/js/bun/import-attributes/import-attributes.test.ts: ?url > bun run await import abcd.ts
+test/js/bun/import-attributes/import-attributes.test.ts: ?url > bun run await import abcd.txt
+test/js/bun/import-attributes/import-attributes.test.ts: ?url > require abcd.css
+test/js/bun/import-attributes/import-attributes.test.ts: ?url > require abcd.html
+test/js/bun/import-attributes/import-attributes.test.ts: ?url > require abcd.js
+test/js/bun/import-attributes/import-attributes.test.ts: ?url > require abcd.json
+test/js/bun/import-attributes/import-attributes.test.ts: ?url > require abcd.module.css
+test/js/bun/import-attributes/import-attributes.test.ts: ?url > require abcd.ts
+test/js/bun/import-attributes/import-attributes.test.ts: ?url > require abcd.txt
+# The warnings that plain's own parser gives while import.meta.glob() is expanded at the build bear no code, so they stay on stderr.
+test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > a match whose relative path would be too long throws
+test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > a null byte in imports in package.json
+test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > a null byte in paths in tsconfig.json
+test/js/bun/resolve/import-meta-glob.test.ts: import.meta.glob > feature detection falls back in modules whose calls can't be replaced
+# test/bundler. Nearly all of it is what an executable does otherwise on purpose:
+#   a fixture in TypeScript with a type error . what asks about bytecode, the JIT, the engine's loader log, chunks or the bundle's own text . the files and names of source maps . cross-compiling .
+#   --banner and --footer with code . code or a package that is loaded from disk at run time . "preload" in bunfig.toml . Loader.registry . a file's own name under /$bunfs/root, where a bundle has one name .
+#   const, let and class across an import cycle, where `bun run` answers as the executable does and the bundle doesn't.
+# The faults among them: a sqlite file that is absent at the build . two --asset paths that collide.
+# bundler_bytecode_portable.test.ts and compile-elf-segment-layout.test.ts are not held: they ask about bytecode files and about the layout of a bundle's executable alone.
+test/bundler/bun-build-api.test.ts: Bun.build > an entry point that resolves to a builtin or to a non-code data: URL is a build error
+test/bundler/bun-build-api.test.ts: Bun.build > an entry point too long for a path buffer is reported like any other missing one
+test/bundler/bun-build-api.test.ts: Bun.build > ignores a corrupted or truncated .jsc sidecar
+test/bundler/bun-build-api.test.ts: tsconfig option > onEnd is not affected by Object.prototype.onEndCallbacks = "text"
+test/bundler/bun-build-api.test.ts: tsconfig option > onEnd is not affected by Object.prototype.onEndCallbacks = 5
+test/bundler/bun-build-api.test.ts: tsconfig option > onEnd is not affected by Object.prototype.onEndCallbacks = []
+test/bundler/bun-build-compile-sourcemap.test.ts: Bun.build compile with sourcemap > compile with multiple source files
+test/bundler/bun-build-compile-sourcemap.test.ts: Bun.build compile with sourcemap > compile with sourcemap: external should work
+test/bundler/bun-build-compile-sourcemap.test.ts: Bun.build compile with sourcemap > compile with sourcemap: external writes .map file to disk
+test/bundler/bun-build-compile-sourcemap.test.ts: Bun.build compile with sourcemap > compile with sourcemap: inline should work
+test/bundler/bun-build-compile-sourcemap.test.ts: Bun.build compile with sourcemap > compile with sourcemap: true should work
+test/bundler/bun-build-compile-sourcemap.test.ts: Bun.build compile with sourcemap > compile with splitting and external sourcemap writes multiple .map files
+test/bundler/bun-build-compile.test.ts: Bun.build compile > --bytecode="cross": internal modules the app imports come from embedded bytecode
+test/bundler/bun-build-compile.test.ts: Bun.build compile > --bytecode=true: internal modules the app imports come from embedded bytecode
+# One test, named after the other platform: a build with --aot for another platform is refused everywhere.
+test/bundler/bun-build-compile.test.ts: Bun.build compile > --compile --bytecode for bun-darwin-aarch64
+test/bundler/bun-build-compile.test.ts: Bun.build compile > --compile --bytecode for bun-darwin-x64
+test/bundler/bun-build-compile.test.ts: Bun.build compile > --compile --bytecode for bun-linux-aarch64
+test/bundler/bun-build-compile.test.ts: Bun.build compile > --compile --bytecode for bun-linux-aarch64-musl
+test/bundler/bun-build-compile.test.ts: Bun.build compile > --compile --bytecode for bun-linux-x64
+test/bundler/bun-build-compile.test.ts: Bun.build compile > --compile --bytecode for bun-linux-x64-musl
+test/bundler/bun-build-compile.test.ts: Bun.build compile > --compile --bytecode for bun-windows-aarch64
+test/bundler/bun-build-compile.test.ts: Bun.build compile > --compile --bytecode for bun-windows-x64
+test/bundler/bun-build-compile.test.ts: Bun.build compile > --compile --bytecode laid out by an order file > a process that sends itself a fatal signal still writes the order file > SIGINT > sent directly, on a terminal: the recording is there
+test/bundler/bun-build-compile.test.ts: Bun.build compile > --compile --bytecode laid out by an order file > a process that sends itself a fatal signal still writes the order file > SIGINT > sent directly: the recording is there
+test/bundler/bun-build-compile.test.ts: Bun.build compile > --compile --bytecode laid out by an order file > a process that sends itself a fatal signal still writes the order file > SIGINT > sent from its handler: the recording is there
+test/bundler/bun-build-compile.test.ts: Bun.build compile > --compile --bytecode laid out by an order file > a process that sends itself a fatal signal still writes the order file > SIGTERM > sent directly, on a terminal: the recording is there
+test/bundler/bun-build-compile.test.ts: Bun.build compile > --compile --bytecode laid out by an order file > a process that sends itself a fatal signal still writes the order file > SIGTERM > sent directly: the recording is there
+test/bundler/bun-build-compile.test.ts: Bun.build compile > --compile --bytecode laid out by an order file > a process that sends itself a fatal signal still writes the order file > SIGTERM > sent from its handler: the recording is there
+test/bundler/bun-build-compile.test.ts: Bun.build compile > --compile --bytecode laid out by an order file > a process that sends itself a fatal signal still writes the order file > SIGWINCH: the recording goes on
+test/bundler/bun-build-compile.test.ts: Bun.build compile > --compile --bytecode laid out by an order file > in a program > a build for Windows calls the code what a build for this platform calls it
+test/bundler/bun-build-compile.test.ts: Bun.build compile > --compile --bytecode laid out by an order file > in a program > a module whose bytecode the run did not use is not listed as not run
+test/bundler/bun-build-compile.test.ts: Bun.build compile > --compile --bytecode laid out by an order file > in a program > every function JavaScriptCore runs has a name
+test/bundler/bun-build-compile.test.ts: Bun.build compile > --compile --bytecode laid out by an order file > in a program > the functions of a CommonJS chunk that is not strict code have names
+test/bundler/bun-build-compile.test.ts: Bun.build compile > --compile --bytecode laid out by an order file > in a program > the modules of a Bun.ModuleGraph are recorded, once
+test/bundler/bun-build-compile.test.ts: Bun.build compile > --compile --bytecode laid out by an order file > internal modules in an ordered build > a payload record that does not check out
+test/bundler/bun-build-compile.test.ts: Bun.build compile > --compile --bytecode laid out by an order file > internal modules in an ordered build > cross target
+test/bundler/bun-build-compile.test.ts: Bun.build compile > --compile --bytecode laid out by an order file > internal modules in an ordered build > every internal module's functions have names
+test/bundler/bun-build-compile.test.ts: Bun.build compile > --compile --bytecode laid out by an order file > internal modules in an ordered build > host target
+test/bundler/bun-build-compile.test.ts: Bun.build compile > --compile --bytecode laid out by an order file > with a recorded run > (unnamed)
+test/bundler/bun-build-compile.test.ts: Bun.build compile > a chunk whose bytecode cannot be generated keeps the embedded files
+test/bundler/bun-build-compile.test.ts: Bun.build compile > bytecode from a compiled executable is not copied into private memory
+test/bundler/bun-build-compile.test.ts: Bun.build compile > the sources of an executable know where their lines start (cjs, bytecode: true, minify: false, utf16: false)
+test/bundler/bun-build-compile.test.ts: Bun.build compile > the sources of an executable know where their lines start (esm, bytecode: false, minify: false, utf16: false)
+test/bundler/bun-build-compile.test.ts: Bun.build compile > the sources of an executable know where their lines start (esm, bytecode: true, minify: false, utf16: false)
+test/bundler/bun-build-compile.test.ts: Bun.build compile > the sources of an executable know where their lines start (esm, bytecode: true, minify: false, utf16: true)
+test/bundler/bun-build-compile.test.ts: Bun.build compile > the sources of an executable know where their lines start (esm, bytecode: true, minify: true, utf16: false)
+test/bundler/bun-build-compile.test.ts: ELF section > compiled binary preserves PT_GNU_STACK and no late PT_LOAD for .bun (#29963)
+test/bundler/bundler_bun.test.ts: bundler > bun/TargetBunNoSourcemapMessage
+test/bundler/bundler_bun.test.ts: bundler > bun/TargetBunSourcemapInline
+test/bundler/bundler_bun.test.ts: bundler > bun/UnknownBunSpecifierDoesNotLoadThePackageNamedLikeItsSuffix-esm
+test/bundler/bundler_compile.test.ts: bundler > ESM bytecode cache is used at runtime
+test/bundler/bundler_compile.test.ts: bundler > compile/BannerNonAsciiUTF8
+test/bundler/bundler_compile.test.ts: bundler > compile/Bun.embeddedFiles
+test/bundler/bundler_compile.test.ts: bundler > compile/Bun.isStandaloneExecutable
+test/bundler/bundler_compile.test.ts: bundler > compile/CanRequireLocalPackages
+test/bundler/bundler_compile.test.ts: bundler > compile/DynamicImport
+test/bundler/bundler_compile.test.ts: bundler > compile/DynamicImportEmbeddedEntryPoint
+test/bundler/bundler_compile.test.ts: bundler > compile/DynamicRequire
+test/bundler/bundler_compile.test.ts: bundler > compile/ESMBytecode+ExternalImportInCommonJSWrapper
+test/bundler/bundler_compile.test.ts: bundler > compile/ESMBytecode+ExternalImportInCommonJSWrapper+minify
+test/bundler/bundler_compile.test.ts: bundler > compile/ESMBytecode+ReExportExternalFromEntryPoint
+test/bundler/bundler_compile.test.ts: bundler > compile/ESMBytecode+ReExportExternalFromEntryPoint+minify
+test/bundler/bundler_compile.test.ts: bundler > compile/EmbeddedFileNamesPerThread
+test/bundler/bundler_compile.test.ts: bundler > compile/EmbeddedResolveMisses
+test/bundler/bundler_compile.test.ts: bundler > compile/EmbeddedResolvePrecedence
+test/bundler/bundler_compile.test.ts: bundler > compile/FooterNonAsciiUTF8
+test/bundler/bundler_compile.test.ts: bundler > compile/HelloWorldBytecode
+test/bundler/bundler_compile.test.ts: bundler > compile/HelloWorldWithProcessVersionsBun
+test/bundler/bundler_compile.test.ts: bundler > compile/HelloWorldWithProcessVersionsBunAPI
+test/bundler/bundler_compile.test.ts: bundler > compile/ImportDeferBytecode+cjs
+test/bundler/bundler_compile.test.ts: bundler > compile/ImportDeferBytecode+esm
+test/bundler/bundler_compile.test.ts: bundler > compile/ImportMetaMain
+test/bundler/bundler_compile.test.ts: bundler > compile/NoAutoInstall
+test/bundler/bundler_compile.test.ts: bundler > compile/NonAsciiChunkReadsBackAsUTF8
+test/bundler/bundler_compile.test.ts: bundler > compile/ReactSSR+bytecode+cjs+minify
+test/bundler/bundler_compile.test.ts: bundler > compile/ReactSSR+bytecode+esm
+test/bundler/bundler_compile.test.ts: bundler > compile/ReactSSR+bytecode+esm+minify
+test/bundler/bundler_compile.test.ts: bundler > compile/ReactSSR+cjs
+test/bundler/bundler_compile.test.ts: bundler > compile/ReactSSR+cjs+minify
+test/bundler/bundler_compile.test.ts: bundler > compile/ReactSSR+esm
+test/bundler/bundler_compile.test.ts: bundler > compile/ReactSSR+esm+minify
+test/bundler/bundler_compile.test.ts: bundler > compile/ResolveEmbeddedFileOutfile
+test/bundler/bundler_compile.test.ts: bundler > compile/RuntimeRequireEmbeddedCJS+bytecode
+test/bundler/bundler_compile.test.ts: bundler > compile/SourceMap
+test/bundler/bundler_compile.test.ts: bundler > compile/SourceMapBigFile
+test/bundler/bundler_compile.test.ts: bundler > compile/TextImport
+test/bundler/bundler_compile.test.ts: bundler > compile/TextImportBytecode
+test/bundler/bundler_compile.test.ts: bundler > compile/TextImportBytecodeESM
+test/bundler/bundler_compile.test.ts: bundler > compile/TextImportClientChunkStaysInline
+test/bundler/bundler_compile.test.ts: bundler > compile/VariousBunAPIs
+test/bundler/bundler_compile.test.ts: bundler > compile/WorkerRelativePathTSExtensionBytecode
+test/bundler/bundler_compile.test.ts: bundler > compile/pathToFileURLWorks
+test/bundler/bundler_compile.test.ts: bundler > compile/sqlite-file
+test/bundler/bundler_compile.test.ts: compile --compile-executable-path rejects a Mach-O template whose __BUN segment offsets exceed the file bounds
+test/bundler/bundler_compile.test.ts: compile --compile-executable-path rejects a Mach-O template whose __LINKEDIT offsets would pass 4 GiB once the bundle is embedded
+test/bundler/bundler_compile.test.ts: compile --compile-executable-path rejects a template shorter than the executable-format header
+test/bundler/bundler_compile_autoload.test.ts: bundler > compile/AutoloadBothTsconfigAndPackageJson
+test/bundler/bundler_compile_autoload.test.ts: bundler > compile/AutoloadBunfigDefault
+test/bundler/bundler_compile_autoload.test.ts: bundler > compile/AutoloadBunfigEnabled
+test/bundler/bundler_compile_autoload.test.ts: bundler > compile/AutoloadBunfigEnabledCLI
+test/bundler/bundler_compile_autoload.test.ts: bundler > compile/AutoloadBunfigEnabledWithExecArgv
+test/bundler/bundler_compile_autoload.test.ts: bundler > compile/AutoloadPackageJsonExportsCLI
+test/bundler/bundler_compile_autoload.test.ts: bundler > compile/AutoloadPackageJsonExportsEnabled
+test/bundler/bundler_compile_autoload.test.ts: bundler > compile/AutoloadTsconfigPathsCLI
+test/bundler/bundler_compile_autoload.test.ts: bundler > compile/AutoloadTsconfigPathsEnabled
+test/bundler/bundler_compile_prelinked.test.ts: bundler > compile/prelinked/BannerFooter/ImportMeta
+test/bundler/bundler_compile_prelinked.test.ts: bundler > compile/prelinked/BannerFooter/TopLevelAwait
+test/bundler/bundler_compile_prelinked.test.ts: bundler > compile/prelinked/DefaultAndNamed
+test/bundler/bundler_compile_prelinked.test.ts: bundler > compile/prelinked/DefaultAndNamed+source
+test/bundler/bundler_compile_prelinked.test.ts: bundler > compile/prelinked/DefaultAndNamed+source+splitting
+test/bundler/bundler_compile_prelinked.test.ts: bundler > compile/prelinked/DefaultAndNamed+splitting
+test/bundler/bundler_compile_prelinked.test.ts: bundler > compile/prelinked/GeneratedGraph
+test/bundler/bundler_compile_prelinked.test.ts: bundler > compile/prelinked/GeneratedGraph+splitting
+test/bundler/bundler_compile_prelinked.test.ts: bundler > compile/prelinked/ImportMeta
+test/bundler/bundler_compile_prelinked.test.ts: bundler > compile/prelinked/RegistryDelete+splitting
+test/bundler/bundler_compile_prelinked.test.ts: bundler > compile/prelinked/RegistryDeleteImporter+source+splitting
+test/bundler/bundler_compile_prelinked.test.ts: bundler > compile/prelinked/RegistryDeleteImporter+splitting
+test/bundler/bundler_compile_prelinked.test.ts: bundler > compile/prelinked/RegistryDeleteImporterAndExporter+source+splitting
+test/bundler/bundler_compile_prelinked.test.ts: bundler > compile/prelinked/RegistryDeleteImporterAndExporter+splitting
+test/bundler/bundler_compile_prelinked.test.ts: bundler > compile/prelinked/TDZAcrossCycle
+test/bundler/bundler_compile_prelinked.test.ts: bundler > compile/prelinked/TDZAcrossCycle+source
+test/bundler/bundler_compile_prelinked.test.ts: bundler > compile/prelinked/TDZAcrossCycle+source+splitting
+test/bundler/bundler_compile_prelinked.test.ts: bundler > compile/prelinked/TDZAcrossCycle+splitting
+test/bundler/bundler_compile_prelinked.test.ts: bundler > compile/prelinked/VarReadBeforeStore
+test/bundler/bundler_compile_prelinked.test.ts: bundler > compile/prelinked/VarReadBeforeStore+source
+test/bundler/bundler_compile_prelinked.test.ts: bundler > compile/prelinked/VarReadBeforeStore+source+splitting
+test/bundler/bundler_compile_prelinked.test.ts: bundler > compile/prelinked/VarReadBeforeStore+splitting
+test/bundler/bundler_compile_splitting.test.ts: bundler > compile with splitting > Bun.build: import() and require() of the main entry point from another entry point
+test/bundler/bundler_compile_splitting.test.ts: bundler > compile with splitting > compile/splitting/ChunkNamesAreHashed
+test/bundler/bundler_compile_splitting.test.ts: bundler > compile with splitting > compile/splitting/ModuleRecordNamesMatchBytecode
+test/bundler/bundler_compile_splitting.test.ts: bundler > compile with splitting > compile/splitting/ModulesLaidOutInLoadOrder
+test/bundler/bundler_compile_splitting.test.ts: bundler > compile with splitting > compile/splitting/NamespaceObjectsOnlyForImportedChunks
+test/bundler/bundler_compile_splitting.test.ts: bundler > compile with splitting > compile/splitting/PreRegisteredClosure
+test/bundler/bundler_compile_splitting.test.ts: bundler > compile with splitting > compile/splitting/PreRegisteredClosure+bytecode
+test/bundler/bundler_compile_splitting.test.ts: bundler > compile with splitting > compile/splitting/ReExportExternalFromSplitChunk
+test/bundler/bundler_compile_splitting.test.ts: bundler > compile with splitting > compile/splitting/ReExportExternalFromSplitChunk+minify
+test/bundler/bundler_compile_splitting.test.ts: bundler > compile with splitting > compile/splitting/SplitRequireLoadsChunkSynchronously-bytecode
+test/bundler/bundler_compile_splitting.test.ts: bundler > compile with splitting > compile/splitting/SplitRequireLoadsChunkSynchronously-source
+test/bundler/bundler_compile_splitting.test.ts: bundler > compile with splitting > compile/splitting/StartupModulesPrecedeLazyChunks
+~ test/bundler/bundler_edgecase.test.ts: bundler > edgecase/AwsCdkLib
+~ test/bundler/bundler_html_server.test.ts: bundler > compile/api/HTMLServerMultipleRoutes
+~ test/bundler/bundler_html_server.test.ts: bundler > compile/cli/HTMLServerMultipleRoutes
+test/bundler/compile-argv.test.ts: bundler > compile/CompileExecArgvDisallowCodeGenerationFromStrings
+test/bundler/compile-argv.test.ts: bundler > compile/CompileExecArgvDisallowCodeGenerationFromStringsBunOptionsCannotLower
+test/bundler/compile-argv.test.ts: bundler > compile/CompileExecArgvDisallowCodeGenerationFromStringsQuotedBunOptionsCannotLower
+test/bundler/compile-argv.test.ts: bundler > compile/EvalFlagsInUserArgsDoNotMeanOneShotStartup
+test/bundler/compile-argv.test.ts: bundler > compile/EvalFlagsInUserArgsDoNotMeanOneShotStartupWithExecArgv
+test/bundler/compile-asset-bunfs.test.ts: compile --asset and /$bunfs/ directory semantics > --asset errors on colliding embedded paths
+test/bundler/compile-asset-bunfs.test.ts: compile --asset and /$bunfs/ directory semantics > Bun.build({compile: {assets}}) rejects colliding paths
+~ test/bundler/compile-asset-streams.test.ts: files embedded with --asset --aot > are served in ranges
+test/bundler/compile-node-compile-cache.test.ts: NODE_COMPILE_CACHE is ignored by compiled executables and honored by bun
+test/bundler/compile-sourcemap-internal.test.ts: compile --sourcemap remaps stack frames to original line:col

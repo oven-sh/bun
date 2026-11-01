@@ -364,7 +364,7 @@ JSC_DEFINE_HOST_FUNCTION(jsViFulfillUnlessImporting, (JSGlobalObject * globalObj
     JSPromise* pending = pendingDynamicImport(defaultGlobalObject(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
 #if ENABLE(AOT)
-    if (pending && !pending->isHandled() && hasCompiledModules()) [[unlikely]] {
+    if (hasCompiledModules() && pending && !pending->isHandled()) [[unlikely]] {
         lookAgainAtImport(globalObject, pending, promise);
         RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(jsUndefined());

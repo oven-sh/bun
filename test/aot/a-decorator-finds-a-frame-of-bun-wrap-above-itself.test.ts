@@ -6,7 +6,9 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
-import { test } from "./supported";
+import { waysFor } from "./harness/ways";
+// One by one: the runner gives this file a process of its own and eight cases at once, beside two more like it: too many builds for four cores.
+import { testOneByOne as test } from "./supported";
 
 raiseDefaultTimeout(240_000);
 
@@ -84,6 +86,12 @@ const projects: Record<string, Record<string, string>> = {
   },
 };
 
+// What a frame says does not hang on how a run is cut, so one project runs over layers too.
+const ways: [string, string[]][] = [
+  ["TestRunLayers:0", ["--aot"]],
+  ["TestRunLayers:3,TestRunPartFiles:1", ["--aot", "--isolate"]],
+];
+
 for (const [title, files] of Object.entries(projects)) {
   test(title, async () => {
     using dir = tempDir("a-decorator-finds-a-frame-of-bun-wrap", {
@@ -109,8 +117,8 @@ for (const [title, files] of Object.entries(projects)) {
     if (title.endsWith("decorators"))
       for (const helper of above) expect(helper).toEqual(["@bun:wrap", "@bun:wrap/bun:wrap", "@bun:wrap/bun:wrap"]);
     else expect(above.flat().filter(frame => frame?.includes("bun:wrap"))).toEqual([]);
-    expect(await said("TestRunLayers:0", bunExe(), "test", "--aot")).toEqual(plain);
-    expect(await said("TestRunLayers:3,TestRunPartFiles:1", bunExe(), "test", "--aot", "--isolate")).toEqual(plain);
+    for (const [words, flags] of waysFor(ways, title === "standard decorators"))
+      expect(await said(words, bunExe(), "test", ...flags)).toEqual(plain);
     expect(await said(undefined, bunExe(), "main.ts")).toEqual(plain);
     await said(undefined, bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", "built");
     expect(await said(undefined, join(String(dir), "built"))).toEqual(plain);

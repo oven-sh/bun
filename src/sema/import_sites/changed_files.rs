@@ -4,7 +4,7 @@
 use super::alternatives::{AskedOfDataFiles, Folder, WrittenNames, find_alternatives};
 use super::call_sites::is_free_name;
 use super::made_requires::follow_settled_bindings;
-use super::{ChangedPath, ExportedText, ImportSpecifier, ScanInputs};
+use super::{ChangedPath, ExportedText, ImportSpecifier, ResolvedForm, ScanInputs};
 use crate::atom::{Atom, Interner, known};
 use crate::bind::{Binding, Bound, Decl, PatParent, SymbolId};
 use crate::file_analysis::FileInputs;
@@ -194,6 +194,80 @@ fn find_value_of_export(hir: &File<'_>, bound: &Bound<'_>, export: SymbolId) -> 
     declarations.find_map(|&declaration| value_of(declaration))
 }
 
+pub struct TextsOfFile<'a, 's> {
+    inputs: ScanInputs<'a, 's>,
+    written_names: WrittenNames,
+    asked: AskedOfDataFiles,
+}
+
+impl<'a, 's> TextsOfFile<'a, 's> {
+    pub fn new(
+        hir: &'a File<'s>,
+        bound: &'a Bound<'s>,
+        decisions: &'a Decisions<'s>,
+        fold: &'a FoldInputs<'s>,
+        file: &'a FileInputs<'s>,
+        atoms: &'a Interner<'s>,
+    ) -> Self {
+        TextsOfFile {
+            inputs: ScanInputs {
+                hir,
+                bound,
+                decisions,
+                fold,
+                file,
+                atoms,
+            },
+            written_names: WrittenNames::default(),
+            asked: AskedOfDataFiles::default(),
+        }
+    }
+
+    fn find_one(&self, value: ExprId) -> Option<(Atom, bool, Option<ResolvedForm>)> {
+        let (names, asked) = (&self.written_names, &self.asked);
+        let found = find_alternatives(&self.inputs, names, asked, value, Folder::OfFile, None)?;
+        match found.alternatives[..] {
+            [ImportSpecifier::Constant(text)] if !found.is_out_of_data_file => {
+                Some((text, found.start_at_own_directory, found.resolved_form))
+            }
+            _ => None,
+        }
+    }
+
+    pub fn find(&self, value: ExprId) -> Option<(Atom, bool)> {
+        match self.find_one(value)? {
+            (text, starts_at_own_directory, None) => Some((text, starts_at_own_directory)),
+            _ => None,
+        }
+    }
+
+    pub fn find_path(&self, value: ExprId) -> Option<(Atom, bool)> {
+        let is_from_folder = |text: Atom| {
+            let text = self.inputs.atoms.bytes(text);
+            text.starts_with(b"./") || text.starts_with(b"../")
+        };
+        match self.find_one(value)? {
+            (text, starts_at_own_directory, None) => Some((text, starts_at_own_directory)),
+            (text, _, Some(ResolvedForm::Path)) if is_from_folder(text) => Some((text, true)),
+            _ => None,
+        }
+    }
+
+    pub fn writes_second_operand_into_file(&self, callee: ExprId) -> bool {
+        let Some((holder, name)) = find_function(&self.inputs, callee) else {
+            return false;
+        };
+        matches!(
+            (holder, self.inputs.atoms.bytes(name)),
+            (
+                Holder::Fs,
+                b"writeFile" | b"writeFileSync" | b"appendFile" | b"appendFileSync"
+            ) | (Holder::FsPromises, b"writeFile" | b"appendFile")
+                | (Holder::Bun, b"write")
+        )
+    }
+}
+
 pub fn find_texts_of_exports<'s>(
     hir: &File<'s>,
     bound: &Bound<'s>,
@@ -202,15 +276,7 @@ pub fn find_texts_of_exports<'s>(
     file: &FileInputs<'s>,
     atoms: &Interner<'s>,
 ) -> Vec<ExportedText> {
-    let inputs = ScanInputs {
-        hir,
-        bound,
-        decisions,
-        fold,
-        file,
-        atoms,
-    };
-    let (written_names, asked) = (WrittenNames::default(), AskedOfDataFiles::default());
+    let texts_of_file = TextsOfFile::new(hir, bound, decisions, fold, file, atoms);
     let exports = bound.table(bound.symbol(bound.file_symbol).exports);
     let texts = exports.iter().filter_map(|&(export, symbol)| {
         let value = hir.skip_type_assertions(find_value_of_export(hir, bound, symbol)?);
@@ -221,18 +287,12 @@ pub fn find_texts_of_exports<'s>(
         if !may_be_text {
             return None;
         }
-        let found =
-            find_alternatives(&inputs, &written_names, &asked, value, Folder::OfFile, None)?;
-        match (&found.alternatives[..], found.resolved_form) {
-            (&[ImportSpecifier::Constant(text)], None) if !found.is_out_of_data_file => {
-                Some(ExportedText {
-                    export,
-                    text,
-                    starts_at_own_directory: found.start_at_own_directory,
-                })
-            }
-            _ => None,
-        }
+        let (text, starts_at_own_directory) = texts_of_file.find(value)?;
+        Some(ExportedText {
+            export,
+            text,
+            starts_at_own_directory,
+        })
     });
     texts.collect()
 }

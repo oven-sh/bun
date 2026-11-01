@@ -5,7 +5,7 @@ use bun_sema::check::aot::FunctionRef;
 use bun_sema::hir::ExprId;
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::node::NodeData;
-use bun_sema::program::{CodeAnswer, CompiledModule, FileId, Files};
+use bun_sema::program::{CodeAnswer, CompiledModule, ComputedTargets, FileId, Files};
 use bun_sema::util::{FxHashSet, SharedSort};
 use bun_sema_driver::host::to_native;
 
@@ -223,8 +223,10 @@ fn name_texts_after_evaluators(files: &Files<'_>, all: &mut FrozenRun) {
         .map(|text| compute_path_by_evaluator(files, entries, evaluators, text).into())
         .collect();
     for (&(text, _), path) in evaluators.iter().zip(paths) {
+        // The run time shows a text under a display path that isn't its path.
+        let source_url = parsed_source(files, text).and_then(|it| it.source_url_of_text.clone());
         let entry = &mut entries[text.idx()];
-        entry.display_path = OnceLock::from(path.clone());
+        entry.display_path = OnceLock::from(source_url.unwrap_or_else(|| path.clone()));
         entry.diagnostic_path.clone_from(&path);
         entry.public_path = path;
     }
@@ -354,16 +356,42 @@ fn collect_entry_points(input: &FreezeInput<'_, '_>, entries: &[SourceEntry]) ->
                         ImportSiteKind::ImportByTestRunner(_)
                             | ImportSiteKind::RequireByTestRunner(_)
                     );
-                    if let &CodeAnswer::File(named) = answer
-                        && is_loaded_by_runner
-                        && entries[named.idx()].kind == SourceKind::Program
-                        && named_files.insert(named)
-                    {
-                        entry_points.push(EntryPoint {
-                            file: named,
-                            kind: EntryPointKind::LoadedByTestRunner,
-                        });
+                    let named = match answer {
+                        _ if !is_loaded_by_runner => &[][..],
+                        CodeAnswer::File(named) => core::slice::from_ref(named),
+                        CodeAnswer::Computed(ComputedTargets::Modules { files, .. }) => files,
+                        CodeAnswer::Computed(ComputedTargets::All { .. }) => files.compiled_files(),
+                        _ => &[][..],
+                    };
+                    for &named in named {
+                        if matches!(
+                            entries[named.idx()].kind,
+                            SourceKind::Program | SourceKind::Data
+                        ) && named_files.insert(named)
+                        {
+                            entry_points.push(EntryPoint {
+                                file: named,
+                                kind: EntryPointKind::LoadedByTestRunner,
+                            });
+                        }
                     }
+                }
+            }
+            // `jest.mock("os")` beside `__mocks__/os.js`: so it loads that file, and nothing of the program names it.
+            let sources = files.compiled_files().iter();
+            let sources = sources.filter_map(|&file| parsed_source(files, file));
+            let manual_mocks: FxHashSet<&[u8]> = sources
+                .flat_map(|source| source.manual_mocks.iter().map(|path| &path[..]))
+                .collect();
+            for &file in files.compiled_files() {
+                if manual_mocks.contains(files.module(file).file_name())
+                    && entries[file.idx()].kind == SourceKind::Program
+                    && named_files.insert(file)
+                {
+                    entry_points.push(EntryPoint {
+                        file,
+                        kind: EntryPointKind::LoadedByTestRunner,
+                    });
                 }
             }
             entry_points

@@ -39,20 +39,33 @@ const projects = Object.entries(dep).flatMap(([name, text]) =>
   ),
 );
 
-test.concurrent.each(projects)("the file behind them has the real module: %s", async (_, files) => {
+async function seenWith(files: Record<string, string>, words?: string, ...more: string[]) {
   using dir = tempDir("mock-second-file", files);
-  const seenWith = async (env: Record<string, string>, ...more: string[]) => {
-    const { stdout, exitCode } = await run([bunExe(), "test", ...more], String(dir), { ...bunEnv, ...env });
-    return { seen: stdout.split("\n").filter(line => line.startsWith("SEEN ")), exitCode };
-  };
-  const plain = await seenWith({});
+  const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words };
+  const { stdout, exitCode } = await run([bunExe(), "test", ...more], String(dir), env);
+  return { seen: stdout.split("\n").filter(line => line.startsWith("SEEN ")), exitCode };
+}
+const plainRuns = new Map<string, ReturnType<typeof seenWith>>();
+const plainOf = (name: string, files: Record<string, string>) =>
+  plainRuns.getOrInsertComputed(name, () => seenWith(files));
+const behindThem = "the file behind them has the real module: %s";
+
+test.concurrent.each(projects)(behindThem + ", plain Bun", async (name, files) => {
+  const plain = await plainOf(name, files);
   expect(plain.seen.filter(line => line.startsWith("SEEN b ") || line.startsWith("SEEN d "))).toHaveLength(2);
   expect(plain.seen.find(line => line.startsWith("SEEN b "))).toEndWith(" real real real");
   expect(plain.exitCode).toBe(0);
-  expect(await seenWith({ BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:0" }, "--aot")).toEqual(plain);
+});
+
+test.concurrent.each(projects)(behindThem + ", one program", async (name, files) => {
+  expect(await seenWith(files, "TestRunLayers:0", "--aot")).toEqual(await plainOf(name, files));
+});
+
+test.concurrent.each(projects)(behindThem + ", two layers", async (name, files) => {
   // TODO(bun), row 4236: over layers a mock behind the real module is taken as ahead of its load.
-  const throughB = (of: typeof plain) => of.seen.slice(0, of.seen.findIndex(line => line.startsWith("SEEN b ")) + 1);
-  const layers = await seenWith({ BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:2,TestRunPartFiles:1" }, "--aot");
-  expect(throughB(layers)).toEqual(throughB(plain));
+  const throughB = (of: Awaited<ReturnType<typeof seenWith>>) =>
+    of.seen.slice(0, of.seen.findIndex(line => line.startsWith("SEEN b ")) + 1);
+  const layers = await seenWith(files, "TestRunLayers:2,TestRunPartFiles:1", "--aot");
+  expect(throughB(layers)).toEqual(throughB(await plainOf(name, files)));
   expect(layers.exitCode).toBe(0);
 });

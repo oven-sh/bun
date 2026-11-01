@@ -5,6 +5,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
+import { waysFor } from "./harness/ways";
 import { describe, test } from "./supported";
 
 raiseDefaultTimeout(120_000);
@@ -84,8 +85,12 @@ async function runTests(directory: string, env: Record<string, string>, ...flags
   return { printed, results, exitCode };
 }
 
-describe.each(ways)("%s", (_, env) => {
-  test.each(Object.keys(projects))("%s", async name => {
+// It failed in both ways on the build in front of the cure, as six more did: none in layers alone.
+const witness = "through a file between";
+
+describe.each(ways)("%s", (way, env) => {
+  const runsIn = (name: string) => waysFor(ways, name === witness).some(([each]) => each === way);
+  test.each(Object.keys(projects).filter(runsIn))("%s", async name => {
     using dir = tempDir("mock-ends-user-stays", { "package.json": `{}`, ...projects[name] });
     const plain = await runTests(String(dir), {});
     expect(plain.results).toEqual(["pass a", "pass z"]);

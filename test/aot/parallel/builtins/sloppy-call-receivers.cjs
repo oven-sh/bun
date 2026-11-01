@@ -57,3 +57,18 @@ report("valueOf of undefined", () => valueOf(undefined));
 report("valueOf of a number", () => [typeof valueOf(5), valueOf(5) == 5]);
 report("own next", () => collect(countUp()));
 report("original next", () => collect(countDown()));
+/* Output:
+sloppy, no receiver: true
+sloppy, undefined: [true,true]
+sloppy, null: [true,true]
+sloppy, 5: ["object",true,"object",true]
+sloppy, s: ["object","object",true]
+strict, no receiver: undefined
+strict, direct: ["undefined","null","5"]
+strict: ["undefined","null","5","\"s\""]
+valueOf of null: threw TypeError
+valueOf of undefined: threw TypeError
+valueOf of a number: ["object",true]
+own next: ["own next 1","own next 2"]
+original next: [2,1]
+*/

@@ -164,7 +164,7 @@ static ASCIILiteral nameOf(FakeTimerFunction function)
 static ALWAYS_INLINE bool isFakedForCompiledCode(JSGlobalObject* globalObject, FakeTimerFunction function)
 {
 #if ENABLE(AOT)
-    if (isBunTest && Bun__FakeTimers__fakes(static_cast<uint8_t>(function)) && isOpenOnGlobalObject(globalObject, nameOf(function))) [[unlikely]]
+    if (isBunTest && globalObject->vm().hasCompiledCode() && Bun__FakeTimers__fakes(static_cast<uint8_t>(function)) && isOpenOnGlobalObject(globalObject, nameOf(function))) [[unlikely]]
         return false;
 #endif
     return isBunTest && globalObject->vm().hasCompiledCode() && Bun__FakeTimers__fakes(static_cast<uint8_t>(function));

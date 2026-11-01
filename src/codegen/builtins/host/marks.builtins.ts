@@ -90,6 +90,14 @@ export default b.declarations(
     "Bun.FFI.dlopen",
     "Bun.FFI.linkSymbols",
   ]),
+  marked("MayTerminateProcess", [
+    "process._kill",
+    "process.abort",
+    "process.execve",
+    "process.exit",
+    "process.kill",
+    "process.reallyExit",
+  ]),
   marked("RunsWaitingJobs", [
     "%Expect%",
     "Bun.jest",

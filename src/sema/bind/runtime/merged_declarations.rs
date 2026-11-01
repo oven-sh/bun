@@ -373,10 +373,7 @@ impl Declarations<'_, '_> {
         let ScopeKind::Fn(f) = self.bound.scopes[scope.idx()].kind else {
             return Conflict::No;
         };
-        if needs_unique_parameters(self.hir, f)
-            || !self.is_sloppy(scope)
-            || self.hir.has_parameters_read_as_strict(f)
-        {
+        if needs_unique_parameters(self.hir, f) || !self.is_sloppy(scope) {
             Conflict::Always
         } else {
             Conflict::No

@@ -139,6 +139,7 @@ fn add_import(
         mode: ResolutionMode::default(),
         stmt: StmtId::NONE,
         attributes: ExprId::NONE,
+        loaded_as: Atom::NONE,
     });
     file.stmt(StmtKind::Import(import), 0)
 }

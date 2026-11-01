@@ -369,6 +369,157 @@ fn loop_parameter_only_for_modified_variable() {
     assert_eq!(variable_arguments(&builder, body, 0), [updated]);
 }
 
+fn write_empty_loop(builder: &mut FunctionBuilder, condition: ValueId) -> BlockId {
+    let [header, body, exit] = create_blocks(builder);
+    builder.declare_loop_header(header, &[]);
+    builder.jump(Edge::to(header));
+    builder.switch_to(header);
+    builder.branch(condition, Edge::to(body), Edge::to(exit));
+    builder.seal(body);
+    builder.switch_to(body);
+    builder.jump(Edge::to(header));
+    builder.seal(header);
+    builder.seal(exit);
+    builder.switch_to(exit);
+    body
+}
+
+#[test]
+fn store_above_successive_loops_is_read_below_them_without_a_definition_for_each() {
+    let mut builder = create_builder(&[TypeTable::BOOLEAN, TypeTable::STRING]);
+    let [condition, value] = [0, 1].map(|index| builder.parameter(index));
+    let variable = builder.create_variable(None);
+    builder.write_variable(variable, value);
+    for _ in 0..64 {
+        write_empty_loop(&mut builder, condition);
+    }
+    let definition_count = builder.ssa.definitions.0.len();
+    assert_eq!(builder.read_variable(variable), value);
+    assert_eq!(builder.ssa.definitions.0.len(), definition_count);
+}
+
+#[test]
+fn store_above_nested_loops_is_read_in_the_innermost_without_a_definition_for_each() {
+    let mut builder = create_builder(&[TypeTable::BOOLEAN, TypeTable::STRING]);
+    let [condition, value] = [0, 1].map(|index| builder.parameter(index));
+    let variable = builder.create_variable(None);
+    builder.write_variable(variable, value);
+    let mut open = Vec::new();
+    for _ in 0..16 {
+        let [header, body, exit] = create_blocks(&mut builder);
+        builder.declare_loop_header(header, &[]);
+        builder.jump(Edge::to(header));
+        builder.switch_to(header);
+        builder.branch(condition, Edge::to(body), Edge::to(exit));
+        builder.seal(body);
+        builder.switch_to(body);
+        open.push((header, exit));
+    }
+    let definition_count = builder.ssa.definitions.0.len();
+    assert_eq!(builder.read_variable(variable), value);
+    assert_eq!(builder.ssa.definitions.0.len(), definition_count);
+    for (header, exit) in open.into_iter().rev() {
+        builder.jump(Edge::to(header));
+        builder.seal(header);
+        builder.seal(exit);
+        builder.switch_to(exit);
+    }
+    assert_eq!(builder.read_variable(variable), value);
+    assert_eq!(builder.ssa.definitions.0.len(), definition_count);
+}
+
+#[test]
+fn variable_stored_once_above_a_loop_that_modifies_it_is_the_parameter_in_the_body() {
+    let number = TypeTable::NUMBER;
+    let mut builder = create_builder(&[TypeTable::BOOLEAN, number, number]);
+    let [condition, initial, updated] = [0, 1, 2].map(|index| builder.parameter(index));
+    let variable = builder.create_variable(None);
+    builder.write_variable(variable, initial);
+    write_empty_loop(&mut builder, condition);
+    let [header, body, exit] = create_blocks(&mut builder);
+    builder.declare_loop_header(header, &[variable]);
+    let [counter] = variable_parameters(&builder, header)[..] else {
+        panic!("the header has one parameter");
+    };
+    builder.jump(Edge::to(header));
+    builder.switch_to(header);
+    builder.branch(condition, Edge::to(body), Edge::to(exit));
+    builder.seal(body);
+    builder.switch_to(body);
+    enter_blocks(&mut builder, 5);
+    assert_eq!(builder.read_variable(variable), counter);
+    builder.write_variable(variable, updated);
+    builder.jump(Edge::to(header));
+    builder.seal(header);
+    builder.seal(exit);
+    builder.switch_to(exit);
+    write_empty_loop(&mut builder, condition);
+    assert_eq!(builder.read_variable(variable), counter);
+}
+
+/// `yield*` behind a `finally` that returns: the jump into the first header is not laid.
+#[test]
+fn loop_headers_that_reach_one_another_by_their_first_edges_are_linked() {
+    let mut builder = create_builder(&[TypeTable::BOOLEAN, TypeTable::STRING]);
+    let [condition, value] = [0, 1].map(|index| builder.parameter(index));
+    let variable = builder.create_variable(None);
+    builder.write_variable(variable, value);
+    let [first, second, exit] = create_blocks(&mut builder);
+    builder.declare_loop_header(first, &[]);
+    builder.declare_loop_header(second, &[]);
+    builder.switch_to(first);
+    builder.branch(condition, Edge::to(exit), Edge::to(second));
+    builder.switch_to(second);
+    builder.jump(Edge::to(first));
+    builder.seal(first);
+    builder.seal(second);
+    builder.seal(exit);
+    builder.switch_to(exit);
+    builder.read_variable(variable);
+    enter_blocks(&mut builder, 9);
+    builder.read_variable(variable);
+}
+
+#[test]
+fn ring_of_loop_headers_below_a_loop_header_is_linked() {
+    let mut builder = create_builder(&[TypeTable::BOOLEAN]);
+    let condition = builder.parameter(0);
+    let variable = builder.create_variable(None);
+    let [above, first, second, exit] = create_blocks(&mut builder);
+    for header in [above, first, second] {
+        builder.declare_loop_header(header, &[]);
+    }
+    builder.switch_to(second);
+    builder.jump(Edge::to(first));
+    builder.switch_to(first);
+    builder.branch(condition, Edge::to(second), Edge::to(above));
+    builder.switch_to(above);
+    builder.jump(Edge::to(exit));
+    builder.seal(exit);
+    for header in [above, first, second] {
+        builder.seal(header);
+    }
+    builder.switch_to(exit);
+    enter_blocks(&mut builder, 9);
+    builder.read_variable(variable);
+}
+
+#[test]
+fn loop_header_whose_first_edge_is_its_own_is_linked() {
+    let mut builder = create_builder(&[TypeTable::BOOLEAN]);
+    let condition = builder.parameter(0);
+    let variable = builder.create_variable(None);
+    let [header, exit] = create_blocks(&mut builder);
+    builder.declare_loop_header(header, &[]);
+    builder.switch_to(header);
+    builder.branch(condition, Edge::to(header), Edge::to(exit));
+    builder.seal(exit);
+    builder.seal(header);
+    builder.switch_to(exit);
+    enter_blocks(&mut builder, 9);
+    builder.read_variable(variable);
+}
+
 #[test]
 fn variable_listed_twice_as_modified_has_one_parameter() {
     let mut builder = create_builder(&[]);

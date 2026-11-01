@@ -1,4 +1,5 @@
 use super::import_graph::ImportGraph;
+use super::program_reach;
 use super::runtime_reach::ReachWhileLoading;
 use super::{
     Build, LoadedBuild, LoadedProject, Options, ProgramsOfOneLoad, StartedWorkers,
@@ -15,9 +16,11 @@ use crate::load::fold_inputs::{
     ProgramFacts, create_application_fold_inputs, create_runtime_fold_inputs,
 };
 use crate::load::host::{LoadHost, LoadHostInput, create_disk};
+use crate::load::importers_on_disk::find_importers_on_disk;
 use crate::load::is_in_archive_of_bun;
 use crate::load::loaders::{loader_named_by_path, script_kind_of};
 use crate::load::named_loads::{
+    find_files_followed_further_than_bundler, gives_unknown_name_to_imported_loader,
     leave_named_library_modules_to_loader, resolve_loads_through_imported_loaders,
 };
 use crate::load::replaced_modules::packages_mock_modules_that_they_do_not_spell;
@@ -41,12 +44,13 @@ use crate::statistics::{
 };
 use bun_ast::Loader;
 use bun_builtin_sources::{Archive, Manifest, VIRTUAL_ROOT};
+use bun_paths::resolve_path::{dirname, platform::Posix};
 use bun_sema::atom::Interner;
 use bun_sema::check::aot::FileOrigin;
 use bun_sema::fold::FoldInputs;
-use bun_sema::import_sites::ImportSpecifier;
-use bun_sema::program::{CodeView, FileId, Files, MainModule, Run};
-use bun_sema::resolve::{CodeHost, CodeOptions, is_declaration_file_name};
+use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier};
+use bun_sema::program::{CodeAnswer, CodeView, FileId, Files, MainModule, Run};
+use bun_sema::resolve::{CodeHost, CodeOptions, ancestors, inside, is_declaration_file_name};
 use bun_sema::session::{Session, SessionSlot};
 use bun_sema::util::{FxHashSet, SharedSort};
 use bun_sema_driver::host::Disk;
@@ -112,10 +116,19 @@ fn read_assets<'scope>(scope: &'scope Scope<'scope, '_>, host: &'scope LoadHost<
 
 /// The files of a test run that an executable of the product holds too: the files of the project that are not of the tests, and whatever those load, directly or through
 /// others: the packages of the product. A package that the files of the tests alone load is there to help them: nock and msw patch `fetch`, sinon whatever a test names.
-/// A layer of packages does not see who imports them: `LoadOptions::package_files_that_product_imports`.
-fn mark_files_of_product(options: &Options<'_>, files: &Files<'_>, graph: &ImportGraph) {
+/// A layer of packages does not see who imports them: `LoadOptions::package_files_that_product_imports`, `package_files_imported_beside_tests`.
+fn mark_files_of_product(
+    options: &Options<'_>,
+    host: &LoadHost<'_>,
+    files: &Files<'_>,
+    graph: &ImportGraph,
+) {
     if !options.aot.only_tests_load_code_from_disk {
         return;
+    }
+    let compiled = || files.compiled_files().iter().copied();
+    for source in compiled().filter_map(|file| parsed_source(files, file)) {
+        source.set_loads_for_tests_alone(false);
     }
     // No executable holds a preload, nor what the preloads alone load: `import "./patch"` in setup/preload.ts.
     let is_preload = |file: &u32| {
@@ -134,6 +147,60 @@ fn mark_files_of_product(options: &Options<'_>, files: &Files<'_>, graph: &Impor
             }
         }
     }
+    // No executable holds a file of the project that nothing but the files of the tests imports: `export const load = path => import(path)` in support/, beside tests/.
+    // One step, and no further: everything in a test run is reached from a test file in the end.
+    let ways_in = find_ways_into_project(options, host);
+    let mut helpers: Vec<(FileId, FxHashSet<FileId>)> = Vec::new();
+    for file in compiled() {
+        let loads_what_it_is_told = parsed_source(files, file).is_some_and(|it| {
+            !it.is_in_package
+                && !it.is_of_tests()
+                && (it.loads_by_unknown_name
+                    || !it.unknown_names_at.is_empty()
+                    || gives_unknown_name_to_imported_loader(files, file))
+        });
+        let mut taken_through = FxHashSet::default();
+        if loads_what_it_is_told
+            && is_taken_by_tests_alone(files, graph, &ways_in, file, &mut taken_through)
+        {
+            helpers.push((file, taken_through));
+        }
+    }
+    // `main.ts` imports it, and no test imports `main.ts`.
+    if !helpers.is_empty() {
+        let started = Instant::now();
+        let mut asked: Vec<Vec<u8>> = (helpers.iter().flat_map(|it| &it.1))
+            .map(|&file| files.module(file).file_name().to_vec())
+            .collect();
+        asked.shared_sort_unstable();
+        asked.dedup();
+        // Where the runner looks for test files.
+        let root = bun_core::getcwd(&mut bun_paths::path_buffer_pool::get())
+            .map_or_else(|_| Vec::new(), |it| it.as_bytes().to_vec());
+        let root = bun_sema_driver::host::from_native(&root);
+        let is_read = |path: &[u8]| {
+            let path = bun_sema_driver::host::to_native(path);
+            graph.file_at(path).is_some()
+        };
+        let found = find_importers_on_disk(&root, &asked, &|path| host.is_of_tests(path), &is_read);
+        if crate::statistics::logs_stages() {
+            bun_core::print_errorln!(
+                "AOT test run | files that load what they are told and that the tests alone import {} | of them imported by a file on disk that the run does not reach {} | {} ms",
+                helpers.len(),
+                found.len(),
+                started.elapsed().as_millis(),
+            );
+        }
+        helpers.retain(|(_, taken_through)| {
+            let name_of = |file: &FileId| files.module(*file).file_name();
+            !(taken_through.iter()).any(|file| found.iter().any(|it| it.imported == name_of(file)))
+        });
+    }
+    for (file, _) in helpers {
+        if let Some(source) = parsed_source(files, file) {
+            source.set_loads_for_tests_alone(true);
+        }
+    }
     let is_of_tests =
         |file: u32| parsed_source(files, FileId(file)).is_none_or(|it| it.is_of_tests());
     let own = files.compiled_files().iter().map(|file| file.idx() as u32);
@@ -147,6 +214,151 @@ fn mark_files_of_product(options: &Options<'_>, files: &Files<'_>, graph: &Impor
             source.set_finds_builtins_read_only();
         }
     }
+    // No executable holds a package that only the tests themselves reach. webpack loads `ts-loader` by `require(loader.path)`, and so do babel, eslint and rollup load what a test
+    // names for them. The file that writes such a load is the tests'. The rest of the package stays as it is: nothing there asks to leave.
+    // `src/app.ts` beside `src/app.test.ts` is the product, whatever its folder says, and so are the packages that it reaches.
+    let is_of_tests_by_itself =
+        |file: u32| parsed_source(files, FileId(file)).is_none_or(|it| it.is_of_tests_by_itself);
+    let own = compiled().map(|file| file.idx() as u32).filter(|&file| {
+        !is_of_tests_by_itself(file)
+            && parsed_source(files, FileId(file)).is_some_and(|it| !it.is_in_package)
+    });
+    let told = (options.load.package_files_that_product_imports.iter())
+        .chain(&options.load.package_files_imported_beside_tests);
+    let first = own.chain(told.filter_map(|path| graph.file_at(path)));
+    let package_of = |file: FileId| program_reach::package_of(files.module(file).file_name());
+    // `src/main.ts` imports "@nestjs/core", and no test loads `src/main.ts`. What the project says that it needs when it runs is the product's.
+    let declared = find_packages_that_product_declares(options, host);
+    let is_declared = |&file: &FileId| {
+        const FOLDER: &[u8] = b"/node_modules/";
+        let package = package_of(file);
+        bun_core::strings::last_index_of(package, FOLDER)
+            .is_some_and(|at| declared.contains(&package[at + FOLDER.len()..]))
+    };
+    let first = first.chain(compiled().filter(is_declared).map(|file| file.idx() as u32));
+    let reached = graph.find_files_loaded_from(first.collect(), &is_of_tests_by_itself);
+    let of_product: FxHashSet<&[u8]> = (reached.into_iter())
+        .map(|file| package_of(FileId(file)))
+        .collect();
+    for file in compiled() {
+        if let Some(source) = parsed_source(files, file).filter(|it| it.is_in_package)
+            && !of_product.contains(package_of(file))
+            && (!source.unknown_names_at.is_empty()
+                || gives_unknown_name_to_imported_loader(files, file))
+        {
+            source.set_loads_for_tests_alone(true);
+        }
+    }
+}
+
+/// `export { load } from "./load"` takes nothing for itself: whoever imports that file does. A layer below the test files begins at what they import.
+/// `seen`: `file`, and the files that it is taken through.
+fn is_taken_by_tests_alone(
+    files: &Files<'_>,
+    graph: &ImportGraph,
+    ways_in: &FxHashSet<Vec<u8>>,
+    file: FileId,
+    seen: &mut FxHashSet<FileId>,
+) -> bool {
+    if !seen.insert(file) {
+        return true;
+    }
+    let referrers = graph.referrers_of(file.idx() as u32);
+    let only_exports_again = |referrer: FileId| {
+        let sites = files.analysis(referrer).import_sites.iter();
+        let answers = files
+            .compiled(referrer)
+            .map_or(&[][..], |it| it.code_answers);
+        sites.zip(answers).all(|(site, answer)| {
+            !matches!(*answer, CodeAnswer::File(found) if found == file)
+                || matches!(
+                    site.kind,
+                    ImportSiteKind::ExportFrom(_) | ImportSiteKind::ExportStar(_)
+                )
+        })
+    };
+    (!referrers.is_empty() || files.entry_points().contains(&file))
+        && !ways_in.contains(files.module(file).file_name())
+        && referrers.iter().all(|&referrer| {
+            let referrer = FileId(referrer);
+            let Some(source) = parsed_source(files, referrer) else {
+                return true;
+            };
+            source.is_of_tests()
+                || (!source.is_in_package
+                    && only_exports_again(referrer)
+                    && is_taken_by_tests_alone(files, graph, ways_in, referrer, seen))
+        })
+}
+
+/// The files that `main`, `module` and `bin` of each package.json above a test file name, and `index.js` beside one that names none.
+fn find_ways_into_project(options: &Options<'_>, host: &dyn CodeHost) -> FxHashSet<Vec<u8>> {
+    let session = Session::new();
+    let mut seen: FxHashSet<Vec<u8>> = FxHashSet::default();
+    let mut paths = FxHashSet::default();
+    for test_file in &options.load.test_files {
+        let test_file = bun_sema_driver::host::from_native(test_file);
+        for folder in ancestors(dirname::<Posix>(&test_file)) {
+            if !seen.insert(folder.to_vec()) {
+                break;
+            }
+            let text = host.read(&inside(folder, b"package.json"));
+            let fields = text.and_then(|it| host.parse_runtime_package_json(session.arena(), &it));
+            let Some(fields) = fields else {
+                continue;
+            };
+            let mut named: Vec<Vec<u8>> = Vec::new();
+            for field in [&b"main"[..], b"module", b"bin"] {
+                let Some(value) = fields.get(field) else {
+                    continue;
+                };
+                named.extend(value.as_str().map(|it| it.to_vec()));
+                let several = value.as_object().into_iter().flatten();
+                named.extend(several.filter_map(|it| it.1.as_str().map(|it| it.to_vec())));
+            }
+            if named.is_empty() {
+                named.push(b"index.js".to_vec());
+            }
+            for name in named {
+                let name = name.strip_prefix(b"./").unwrap_or(&name);
+                paths.insert(inside(folder, name));
+            }
+        }
+    }
+    paths
+}
+
+/// The names under `dependencies`, `peerDependencies` and `optionalDependencies` of each package.json above a test file: the nearest, and the root's in a workspace.
+fn find_packages_that_product_declares(
+    options: &Options<'_>,
+    host: &dyn CodeHost,
+) -> FxHashSet<Vec<u8>> {
+    let session = Session::new();
+    let mut seen: FxHashSet<Vec<u8>> = FxHashSet::default();
+    let mut names = FxHashSet::default();
+    for test_file in &options.load.test_files {
+        let test_file = bun_sema_driver::host::from_native(test_file);
+        for folder in ancestors(dirname::<Posix>(&test_file)) {
+            // What lies above it has been read with it.
+            if !seen.insert(folder.to_vec()) {
+                break;
+            }
+            let text = host.read(&inside(folder, b"package.json"));
+            let Some(fields) = text.and_then(|it| host.parse_package_json(session.arena(), &it))
+            else {
+                continue;
+            };
+            for field in [
+                &b"dependencies"[..],
+                b"peerDependencies",
+                b"optionalDependencies",
+            ] {
+                let named = fields.get(field).and_then(|it| it.as_object());
+                names.extend(named.into_iter().flatten().map(|it| it.0.clone()));
+            }
+        }
+    }
+    names
 }
 
 /// The locked members of built-in objects that files of a test run replace and that the load does not know of.
@@ -741,7 +953,15 @@ impl<'a> Build<'a> {
                 let loaders = &options.load.loaders;
                 WorkerFile::named_by_data(paths, loaders, options.aot.runs_in_place, &path)
             });
-            named.collect::<Vec<WorkerFile>>()
+            let followed = match options.load.runs_tests {
+                true => Vec::new(),
+                false => find_files_followed_further_than_bundler(code),
+            };
+            let followed = followed.iter().filter_map(|path| {
+                let loaders = &options.load.loaders;
+                WorkerFile::named_by_data(paths, loaders, options.aot.runs_in_place, path)
+            });
+            named.chain(followed).collect::<Vec<WorkerFile>>()
         };
         let find_entry_points = |code: &dyn CodeView<'_>| -> Vec<Vec<u8>> {
             let mut taken_in = taken_in.lock();
@@ -923,7 +1143,7 @@ impl<'a> Build<'a> {
             || ImportGraph::holds_files_that_no_site_spells(application.files())
         {
             let graph = ImportGraph::of(application.files());
-            mark_files_of_product(options, application.files(), &graph);
+            mark_files_of_product(options, host, application.files(), &graph);
             self.import_graph = Some(graph);
         }
         match options.aot.imports_are_in_other_images {

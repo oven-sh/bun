@@ -1,15 +1,7 @@
-// `bun run` hears of the text that another thread reads after its event loop has polled, so the immediates that wait run first. Under load the thread may be the faster one: the lines
-// are stored.
+// Reference: bun build --compile
 // Env: BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER=0
+// An executable holds the text of the file: what the call asks for runs behind the jobs that wait and ahead of the immediates. The name says what `bun run` does, which reads the text on another thread.
 setImmediate(() => console.log("immediate"));
 queueMicrotask(() => console.log("job"));
 const imported = await import("./imported.mjs");
 console.log("after import", imported.v);
-/* Output:
-job
-immediate
-imported
-job of imported
-after import 1
-immediate of imported
-*/

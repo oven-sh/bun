@@ -2,6 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
+import { runsWholeGrids } from "./harness/ways";
 import { test } from "./supported";
 
 raiseDefaultTimeout(120_000);
@@ -64,10 +65,11 @@ test("a spy", async () => {
 });
 `,
     });
-    const seenWith = async (...flags: string[]) => {
+    const seenWith = async (flags: string[], words?: string) => {
       const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], String(dir), {
         ...bunEnv,
         BUN_JSC_logAOTPhaseTimes: "1",
+        ...(words && { BUN_DEBUG_TEST_AOT_WORDS: words }),
       });
       const lines = (stdout + "\n" + stderr).split("\n");
       return {
@@ -76,8 +78,9 @@ test("a spy", async () => {
         exitCode,
       };
     };
-    const plain = await seenWith();
+    const plain = await seenWith([]);
     expect(plain).toEqual({ seen: [`SEEN [[6,8],["spied",8],[6,8]]`], startsOver: [], exitCode: 0 });
-    expect(await seenWith("--aot")).toEqual(plain);
+    expect(await seenWith(["--aot"], "TestRunLayers:0")).toEqual(plain);
+    if (runsWholeGrids) expect(await seenWith(["--aot"], "TestRunLayers:2")).toEqual(plain);
   });
 }

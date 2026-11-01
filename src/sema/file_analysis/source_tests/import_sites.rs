@@ -515,6 +515,171 @@ const MADE_REQUIRES: &[(&str, &str, &[&str])] = &[
         r#"change(import.meta); import.meta.require("node:module").createRequire(import.meta.url)("a");"#,
         &[],
     ),
+    (
+        "a.cjs",
+        r#"var m = require("module"); var load = (0, m.createRequire)(__filename); load("a");"#,
+        &["module", "a"],
+    ),
+    (
+        "a.cjs",
+        r#"var m = require("module"); var load = m.createRequire.call(void 0, __filename); load("a");"#,
+        &["module", "a"],
+    ),
+    (
+        "a.cjs",
+        r#"var m = require("module"); var load = (0, m.createRequire).call(null, __filename); load("a");"#,
+        &["module", "a"],
+    ),
+    (
+        "a.cjs",
+        r#"var m = require("module"); var load = m.createRequire.call(__filename); load("a");"#,
+        &["module"],
+    ),
+    (
+        "a.cjs",
+        r#"var m = require("module"); var load = m.createRequire.call(...list, __filename); load("a");"#,
+        &["module"],
+    ),
+    (
+        "a.cjs",
+        r#"var m = require("module"); var load = m.createRequire.apply(void 0, __filename); load("a");"#,
+        &["module"],
+    ),
+    (
+        "a.cjs",
+        r#"var m = require("module"); var load = m.other.call(void 0, __filename); load("a");"#,
+        &["module"],
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(new URL("file:" + __filename).href)("a");"#,
+        &["module", "a"],
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(new URL("file://" + __filename))("a");"#,
+        &["module", "a"],
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire("file://" + __filename)("a");"#,
+        &["module", "a"],
+    ),
+    (
+        "a.cjs",
+        r#"const url = new URL("file:" + __filename); const text = url.href; require("module").createRequire(text)("a");"#,
+        &["module", "a"],
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(require("url").pathToFileURL(__filename))("a");"#,
+        &["module", "url", "a"],
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(require("node:url").pathToFileURL(__filename).href)("a");"#,
+        &["module", "node:url", "a"],
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "module"; createRequire(new URL(import.meta.url).href)("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "module"; import { pathToFileURL } from "url"; createRequire(pathToFileURL(import.meta.filename))("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "module"; import { pathToFileURL } from "url"; createRequire(pathToFileURL(import.meta.url))("a");"#,
+        &[],
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "module"; createRequire("file://" + import.meta.url)("a");"#,
+        &[],
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire("file://" + new URL("file:" + __filename).href)("a");"#,
+        &["module"],
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire("http://" + __filename)("a");"#,
+        &["module"],
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(__filename + "file:")("a");"#,
+        &["module"],
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(__filename.href)("a");"#,
+        &["module"],
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(new URL("file:" + __filename).pathname)("a");"#,
+        &["module"],
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(new Other("file:" + __filename).href)("a");"#,
+        &["module"],
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(require("./url").pathToFileURL(__filename))("a");"#,
+        &["module", "./url"],
+    ),
+    (
+        "a.cjs",
+        r#"var url = () => typeof document === "undefined" ? new URL("file:" + __filename).href : document.currentScript && document.currentScript.src || new URL("main.js", document.baseURI).href; var own = url(); var m = require("module"); var load = (0, m.createRequire)(own); load("a");"#,
+        &["module", "a"],
+    ),
+    (
+        "a.cjs",
+        r#"var m = require("module"); var load = m.createRequire(typeof document === "undefined" ? require("u" + "rl").pathToFileURL(__filename).href : document.baseURI); function f() { return load("a"); }"#,
+        &["module", "url", "a"],
+    ),
+    (
+        "a.cjs",
+        r#"var m = require("module"); var load = m.createRequire(other || __filename); var again = load; again("a");"#,
+        &["module", "a"],
+    ),
+    (
+        "a.cjs",
+        r#"var url = () => typeof document === "undefined" ? new URL(`file:${__filename}`).href : document.baseURI; var own = url(); var load = require("module").createRequire.call(void 0, own); load("a");"#,
+        &["module", "a"],
+    ),
+    (
+        "a.cjs",
+        r#"var m = require("module"); m.createRequire(other || __filename)("a");"#,
+        &["module"],
+    ),
+    (
+        "a.cjs",
+        r#"var m = require("module"); var load = m.createRequire(other || elsewhere); load("a");"#,
+        &["module"],
+    ),
+    (
+        "a.cjs",
+        r#"var m = require("module"); var load = m.createRequire(other || __filename); load = x; load("a");"#,
+        &["module"],
+    ),
+    (
+        "a.cjs",
+        r#"var m = require("module"); var load = m.createRequire(other || __filename); load.call(null, "a");"#,
+        &["module"],
+    ),
+    (
+        "a.cjs",
+        r#"var url = given => given || elsewhere; var m = require("module"); var load = m.createRequire(url(x, y)); load("a");"#,
+        &["module"],
+    ),
 ];
 
 const REQUIRES_AS_VALUES: &[(&str, &str, &[&str])] = &[
@@ -1020,7 +1185,7 @@ const REQUIRES_MADE_FOR_PATHS: &[(&str, &str, Option<Option<&str>>)] = &[
     (
         "a.mts",
         r#"import { createRequire } from "node:module"; const load = createRequire(load("url").fileURLToPath(import.meta.url)); load("./a");"#,
-        None,
+        Some(None),
     ),
 ];
 
@@ -1453,6 +1618,21 @@ fn part_of_name_out_of_what_may_change_is_any_text() {
 const NAMES_THAT_A_RESOLVER_ANSWERED_FOR: &[(&str, ResolvedForm, &[&str])] = &[
     (
         "require(require.resolve('./a'));",
+        ResolvedForm::Path,
+        &["./a"],
+    ),
+    (
+        "require(require.resolve('./a', { [Symbol.for('outside')]: true }));",
+        ResolvedForm::Path,
+        &["./a"],
+    ),
+    (
+        "require(require.resolve('./a', {}));",
+        ResolvedForm::Path,
+        &["./a"],
+    ),
+    (
+        "require(require.resolve('./a', options));",
         ResolvedForm::Path,
         &["./a"],
     ),

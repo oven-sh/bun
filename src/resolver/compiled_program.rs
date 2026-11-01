@@ -99,6 +99,7 @@ pub struct CompiledProgram {
     root_from_executable: Option<&'static [u8]>,
     /// Of a program that holds `__dirname`, `__filename` or an answer of `require.resolve`: the root directory of the build, which those paths begin with.
     root_on_build_machine: Option<&'static [u8]>,
+    assets_named_at_root: &'static [u8],
     /// Ascending by path.
     further_package_names: Box<[CompiledFurtherPackageName]>,
     /// Built with `--aot-allow-code-from-disk`. Whether the program itself loads such code is the image's to say.
@@ -383,6 +384,7 @@ impl CompiledProgram {
             root_below_working_directory: None,
             root_from_executable: None,
             root_on_build_machine: None,
+            assets_named_at_root: b"",
             further_package_names: Box::new([]),
             allows_code_from_disk: false,
             root_folders_spelled: b"",
@@ -453,6 +455,16 @@ impl CompiledProgram {
 
     pub fn root_on_build_machine(&self) -> Option<&'static [u8]> {
         self.root_on_build_machine
+    }
+
+    pub fn with_assets_named_at_root(mut self, paths: &'static [u8]) -> CompiledProgram {
+        self.assets_named_at_root = paths;
+        self
+    }
+
+    pub fn asset_named_at_root(&self, base_name: &[u8]) -> Option<&'static [u8]> {
+        bun_core::strings::split(self.assets_named_at_root, b"\0")
+            .find(|path| !path.is_empty() && bun_paths::basename(path) == base_name)
     }
 
     /// Where the file that the executable knows as `path` lay on the machine that built it: what `require.resolve` answers, as with `bun build --compile`.
@@ -937,14 +949,17 @@ impl CompiledProgram {
         let Some(mut folders) = segments_below_public_root(public_root, source_dir, b"") else {
             return Unknown;
         };
-        let count_levels = |entry: &CompiledEntryPoint| {
-            let segments = segments_below_public_root(public_root, entry.module_path, b"");
+        let count_levels = |path: &[u8]| {
+            let segments = segments_below_public_root(public_root, path, b"");
             let is_above = |segment: &&&[u8]| **segment == PARENT_OF_ROOT;
             segments.map_or(0, |segments| segments.iter().take_while(is_above).count())
         };
-        let levels_above_root = self
-            .entry_points
-            .iter()
+        let entry_points = self.entry_points.iter().map(|entry| entry.module_path);
+        let names = self.package_names.iter().map(|name| name.path);
+        let further_names = self.further_package_names.iter().map(|name| name.path);
+        let levels_above_root = entry_points
+            .chain(names)
+            .chain(further_names)
             .map(count_levels)
             .max()
             .unwrap_or(0);
@@ -1889,6 +1904,48 @@ mod tests {
                         String::from_utf8_lossy(specifier)
                     );
                 }
+            }
+
+            #[test]
+            fn package_above_root_hides_paths_without_entry_points() {
+                let main = CompiledEntryPoint {
+                    file_index: 0,
+                    module_id: 0,
+                    source_path: FILES[0],
+                    module_path: FILES[0],
+                };
+                let name = |path, hides_other_paths, is_hidden_from_require| CompiledPackageName {
+                    path,
+                    required: None,
+                    imported: None,
+                    hides_other_paths,
+                    is_hidden_from_require,
+                    is_hidden_from_import: false,
+                };
+                let names = [
+                    name(&b"/$bunfs/root/_.._/node_modules/closed"[..], true, false),
+                    name(
+                        b"/$bunfs/root/_.._/node_modules/open/absent.js",
+                        false,
+                        true,
+                    ),
+                ];
+                let program =
+                    CompiledProgram::new(b"image", None, Box::new([main]), Box::new([0]), false)
+                        .with_package_names(Box::new(names));
+                program.set_module_lookup(find_file);
+                program.set_test_of_path_starts(|start| FILES[0].starts_with(start));
+                assert_eq!(
+                    find_in(&program, ROOT, b"closed/lib/inner.js", true),
+                    Hidden
+                );
+                assert_eq!(
+                    find_in(&program, ROOT, b"closed/lib/inner.js", false),
+                    Hidden
+                );
+                assert_eq!(find_in(&program, ROOT, b"open/absent.js", true), Hidden);
+                assert_eq!(find_in(&program, ROOT, b"open/absent.js", false), Unknown);
+                assert_eq!(find_in(&program, ROOT, b"other", true), Unknown);
             }
 
             #[test]

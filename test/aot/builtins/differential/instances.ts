@@ -20,6 +20,13 @@ type Create = Candidate["create"];
 
 export class Unavailable extends Error {}
 
+// Native code reads a data property of an ordinary object without a trace, but for what it prints of it.
+export const fieldNobodyReads = "fieldNobodyReads";
+export const valueNobodyReads = "valueNobodyReads";
+class WithFieldNobodyReads {
+  [fieldNobodyReads] = valueNobodyReads;
+}
+
 // `changesByItself`: it is another a moment later, whatever is done with it, so that each call gets its own.
 export type Opened = { value: object; close(): unknown; changesByItself?: boolean };
 
@@ -216,8 +223,12 @@ const plainObjects: Candidate[] = [
     ),
   })),
   instrumented("object:conversionGivesObject", (log, operand) => createConverting(log, operand, {}, {})),
+  // Native code that asks whether a value is a string often says yes to a String object, and then runs the object's own conversion.
+  instrumented("boxed:StringThatConverts", (log, operand) => Object.assign(new String("ab"), createConverting(log, operand, "a", "a"))),
   customized("object:plain", (log, operand) => createProperties(log, operand)),
   customized("object:primitives", () => ({ a: 1, b: "x", c: null, d: undefined, e: true })),
+  customized("object:fieldNobodyReads", () => ({ [fieldNobodyReads]: valueNobodyReads })),
+  customized("object:instanceWithFieldNobodyReads", () => new WithFieldNobodyReads()),
   customized("object:nullPrototype", (log, operand) => Object.assign(Object.create(null), createProperties(log, operand))),
   customized("object:frozen", (log, operand) => Object.freeze(createProperties(log, operand))),
   customized("object:sealed", (log, operand) => Object.seal(createProperties(log, operand))),
@@ -826,6 +837,7 @@ export const familyOfTheHost = "objects of the host";
 
 const namesOfScouts = new Set([
   ...["object:proxy", "object:ordinary", "object:plain", "callback:object", "arrayIterator", "filled:Array", "filled:Map", "filled:Set", "filled:WeakMap"],
+  ...["object:fieldNobodyReads", "object:instanceWithFieldNobodyReads", "boxed:StringThatConverts"],
   ...["fulfilled:Promise", "global:RegExp", "filled:Uint8Array", "filled:ArrayBuffer", "filled:DataView", "valid:Date", "filled:Error", "boxed:Number"],
   ...["revoked:Proxy", "filled:Headers", "filled:Blob", "filled:IntlCollator", "filled:TemporalInstant", "filled:WebAssemblyGlobal", "filled:DisposableStack"],
   ...["1", '"a"', "undefined", "null", "true", "Symbol(s)", "1n"].map(text => `primitive:${text}`),

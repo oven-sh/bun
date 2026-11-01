@@ -709,7 +709,8 @@ export function generateWith(random: Random, typed: boolean, focus: Focus): stri
       [2, `${name} in ${plainlyNamed}`],
       [2, `Object.hasOwn(${plainlyNamed}, ${name})`],
       [2, `${of(plainlyNamed)} ?? "absent"`],
-      [believed === "whole" || believed === "fraction" ? 6 : believed === "function" ? 0 : 1, `${of(named)} + 1`],
+      // A function added to a number gives the function's text, which `bun run` prints as its transpiler wrote it: there the sum's kind is read.
+      [believed === "whole" || believed === "fraction" ? 6 : believed === "function" ? 0 : 1, secondKind === "function" ? `typeof (${of(named)} + 1)` : `${of(named)} + 1`],
       [1, `${named}[${name}]`],
       [1, keyed === "a name" ? `${named}?.${member}` : `${named}?.[${name}]`],
       [1, `Reflect.ownKeys(${plainlyNamed}).includes(${keyed === "an index" ? quoted(name) : name})`],

@@ -5,6 +5,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { run } from "./harness/run";
+import { runsWholeGrids } from "./harness/ways";
 import { test } from "./supported";
 
 const programs = {
@@ -14,7 +15,8 @@ const programs = {
   "input.js": `console.log(process.stdin);\nconsole.debug({ inside: process.stdin });\n`,
 };
 
-test.concurrent.each(Object.keys(programs))(
+// inside.js was right when the others were wrong: the benches run it.
+test.concurrent.each(Object.keys(programs).filter(entry => runsWholeGrids || entry !== "inside.js"))(
   "%s prints what bun run prints",
   async entry => {
     using dir = tempDir("aot-standard-stream-printed", programs);

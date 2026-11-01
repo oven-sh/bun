@@ -1,7 +1,8 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { afterAll } from "./harness/default-timeout";
 import { run } from "./harness/run";
-import { test } from "./supported";
+import { beforeAll, test } from "./supported";
 
 // `export { absent } from "./esm.mjs"` fails where the loader links it. A compiled test run leaves such a file to the loader, which reads it
 // from disk and asks for esm.mjs. Another file of the run imports esm.mjs too, so it is compiled, and the loader has to be given it:
@@ -82,34 +83,38 @@ async function runTests(folder: string, flags: string[], words = ""): Promise<Re
   return { printed: stdout.replace(/^bun test .*\n/, ""), byFile, exitCode };
 }
 
-test("each test file fails as under bun test, and the others run", async () => {
-  using dir = tempDir("a-module-whose-link-fails", files);
-  const folder = String(dir);
-  // Over layers every test file has a realm of its own, as under --isolate.
-  const runs: [string[], string[]][] = [
-    [[], ["TestRunLayers:0"]],
-    [["--isolate"], ["TestRunLayers:0", "TestRunLayers:2,TestRunPartFiles:1"]],
-  ];
-  for (const [flags, allWords] of runs) {
-    const plain = await runTests(folder, flags);
-    expect(plain.byFile).toMatchObject({
-      "good.test.mjs:": ["(pass) runs"],
-      "by-import-call.test.mjs:": ["(pass) runs"],
-      "exports-a-name-that-is-not-there.test.mjs:": ["SyntaxError: export 'absent' not found in './esm.mjs'"],
-      "through-a-file-that-nothing-else-imports.test.mjs:": [
-        "SyntaxError: export 'absent' not found in './only-below.mjs'",
-      ],
-      "beside-a-commonjs-file-and-data.test.mjs:": ["SyntaxError: export 'absent' not found in './other.mjs'"],
-    });
-    expect(plain.printed).toContain("by import(): 1 SyntaxError: export 'absent' not found in './esm.mjs'");
-    for (const words of allWords)
-      expect({ flags, words, ...(await runTests(folder, ["--aot", ...flags], words)) }).toEqual({
-        flags,
-        words,
-        ...plain,
-      });
-  }
-}, 480_000);
+let dir: ReturnType<typeof tempDir> | undefined;
+const plain: Record<string, Report> = {};
+beforeAll(async () => {
+  dir = tempDir("a-module-whose-link-fails", files);
+  for (const flag of ["", "--isolate"]) plain[flag] = await runTests(String(dir), flag ? [flag] : []);
+});
+afterAll(() => dir?.[Symbol.dispose]());
+
+test.each([
+  ["in one realm", ""],
+  ["a realm to a file", "--isolate"],
+])("what plain Bun says: %s", (_, flag) => {
+  expect(plain[flag].byFile).toMatchObject({
+    "good.test.mjs:": ["(pass) runs"],
+    "by-import-call.test.mjs:": ["(pass) runs"],
+    "exports-a-name-that-is-not-there.test.mjs:": ["SyntaxError: export 'absent' not found in './esm.mjs'"],
+    "through-a-file-that-nothing-else-imports.test.mjs:": [
+      "SyntaxError: export 'absent' not found in './only-below.mjs'",
+    ],
+    "beside-a-commonjs-file-and-data.test.mjs:": ["SyntaxError: export 'absent' not found in './other.mjs'"],
+  });
+  expect(plain[flag].printed).toContain("by import(): 1 SyntaxError: export 'absent' not found in './esm.mjs'");
+});
+
+// Over layers every test file has a realm of its own, as under --isolate.
+test.each([
+  ["one program, in one realm", "", "TestRunLayers:0"],
+  ["one program, a realm to a file", "--isolate", "TestRunLayers:0"],
+  ["two layers", "--isolate", "TestRunLayers:2,TestRunPartFiles:1"],
+])("each test file fails as under bun test, and the others run: %s", async (_, flag, words) => {
+  expect(await runTests(String(dir), ["--aot", ...(flag ? [flag] : [])], words)).toEqual(plain[flag]);
+});
 
 test("in a run of one test file", async () => {
   using dir = tempDir("a-module-whose-link-fails-one-file", files);
@@ -117,7 +122,7 @@ test("in a run of one test file", async () => {
   const plain = await runTests(folder, ["by-import-call"]);
   expect(plain.printed).toContain("by import(): 1 SyntaxError: export 'absent' not found in './esm.mjs'");
   expect(await runTests(folder, ["--aot", "by-import-call"])).toEqual(plain);
-}, 120_000);
+});
 
 test("where a file of data is all that is shared", async () => {
   using dir = tempDir("a-module-whose-link-fails-data", filesThatShareData);
@@ -128,4 +133,4 @@ test("where a file of data is all that is shared", async () => {
     "good.test.mjs:": ["(pass) runs"],
   });
   expect(await runTests(folder, ["--aot"])).toEqual(plain);
-}, 120_000);
+});

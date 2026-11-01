@@ -3,6 +3,7 @@
 // the answer of require() for good: in every later test file and in the program's own CommonJS files.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { waysFor } from "./harness/ways";
 import { test } from "./supported";
 
 const head = `import { mock, test, vi } from "bun:test";
@@ -81,11 +82,9 @@ test.concurrent.each(Object.keys(projects) as (keyof typeof projects)[])(
     expect(plain.exitCode).toBe(0);
     expect(plain.lines.filter(line => line.startsWith("OUT z")).join()).not.toContain("mock v");
     expect(plain.lines.join()).toContain("mock v");
-    expect(await run(dir, ["--aot"], "TestRunLayers:0")).toEqual(plain);
-    const overLayers = await run(dir, ["--aot"], "TestRunLayers:2");
-    // TODO(bun), row 4290: over layers, a second require() behind vi.doUnmock() in the same file brings the mock back for the next file. `.not.toEqual(plain)` goes red once it agrees.
-    if (name === "vi.doUnmock()") expect(overLayers).not.toEqual(plain);
-    else expect(overLayers).toEqual(plain);
+    // Over layers it was vi.doUnmock() that left the factory's object behind.
+    for (const words of waysFor(["TestRunLayers:0", "TestRunLayers:2"], name === "vi.doUnmock()"))
+      expect(await run(dir, ["--aot"], words)).toEqual(plain);
   },
   240_000,
 );

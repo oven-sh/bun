@@ -913,6 +913,7 @@ fn find_loads_seen_by_program(
 fn find_prefix_roots(
     input: &BindInput<'_, '_>,
     scans: &Scans,
+    modules: &ModuleSet,
     is_code_of_program: &[bool],
     planned: &[(FileId, FileSites)],
 ) -> Vec<FileId> {
@@ -926,9 +927,13 @@ fn find_prefix_roots(
         let roots = application.graph.prefix_roots().iter();
         roots.filter_map(|&root| Some(ModuleRef::File((application.to_local)(root)?)))
     });
+    // The loader of the run time asks for the file that such a statement names, as for the file that an import() names.
+    let left_to_loader = modules.left_to_loader.iter();
+    let left_to_loader = left_to_loader.map(|statement| ModuleRef::File(statement.1));
     let mut roots: Vec<FileId> = entry_points
         .chain(loaded)
         .chain(application_roots)
+        .chain(left_to_loader)
         .filter_map(|module| match module {
             ModuleRef::File(file) if is_code_of_program[file.idx()] => Some(file),
             _ => None,
@@ -1022,7 +1027,7 @@ pub(super) fn compute_order(
     for target in linked_late {
         is_half_at_link[target as usize] = true;
     }
-    let prefix_roots = find_prefix_roots(input, scans, &is_code_of_program, &planned);
+    let prefix_roots = find_prefix_roots(input, scans, modules, &is_code_of_program, &planned);
     let loads = find_loads_seen_by_program(
         scans,
         modules,

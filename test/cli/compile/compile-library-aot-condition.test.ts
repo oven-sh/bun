@@ -1,11 +1,12 @@
 // Which tools read the file that a package names under the "aot" condition.
-import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { expect, setDefaultTimeout } from "bun:test";
 import * as esbuild from "esbuild";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import { slot, unsupported } from "../../aot/harness/commands";
 import { withoutDebugInformation } from "../../aot/harness/without-debug-information";
+import { describe, test } from "../../aot/listed";
 
 setDefaultTimeout(120_000);
 

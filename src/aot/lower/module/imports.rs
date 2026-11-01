@@ -3,11 +3,14 @@ use bun_sema::bind::{Binding, Decl, SymbolId};
 use bun_sema::hir::{ExprId, ExprKind, ImportId, MemberKey};
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::program::{FileId, Sym};
+use rustc_hash::FxHashMap;
 
 use crate::builtins::id::{BuiltinId, BuiltinName};
 use crate::builtins::{BuiltinPath, Mutability, Resolved, table};
 use crate::ir::generated::{BlockFrequency, ImportPhase, ModuleKind};
-use crate::ir::{BlockId, PropertyKeyId, StringId, TypeTable, ValueId, VariableKey};
+use crate::ir::{
+    BlockId, Edge, ModuleId, PropertyKeyId, StringId, TypeTable, ValueId, VariableKey,
+};
 use crate::lower::member::PropertyName;
 use crate::lower::scope::BindingRef;
 use crate::lower::{FileLowering, FunctionLowering, commonjs};
@@ -176,9 +179,72 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     // ES modules see a CommonJS file through its face.
     fn emit_module_namespace(&mut self, module: ModuleRef, phase: ImportPhase) -> ValueId {
+        let mocked = match module {
+            ModuleRef::File(file) if phase == ImportPhase::Evaluation => {
+                Some(file).filter(|&file| holds_mock_in_variable(self.file.inputs.modules, file))
+            }
+            _ => None,
+        };
         let module = self.file.inputs.modules.face(module).unwrap_or(module);
         let module = self.file.fragment.declare_module(module);
-        self.builder.module_namespace(module, phase)
+        let Some(mocked) = mocked else {
+            return self.builder.module_namespace(module, phase, false, false);
+        };
+        // `bun test` leaves a module that has run as it is where `vi.doMock()` names it. Whoever was linked to it before keeps its object; whoever comes behind gets the object of the mock.
+        let importer = self.file.module_id();
+        self.emit_namespace_behind_mock(mocked, module, Some(importer))
+    }
+
+    /// `require("./m.mjs").name`: the module is asked for by name.
+    pub(crate) fn emit_namespace_asked_by_name(&mut self, module: ModuleRef) -> ValueId {
+        let mocked = match module {
+            ModuleRef::File(file) => {
+                Some(file).filter(|&file| holds_mock_in_variable(self.file.inputs.modules, file))
+            }
+            _ => None,
+        };
+        let module = self.file.fragment.declare_module(module);
+        match mocked {
+            Some(mocked) => self.emit_namespace_behind_mock(mocked, module, None),
+            None => (self.builder).module_namespace(module, ImportPhase::Evaluation, false, false),
+        }
+    }
+
+    /// `importer`: whose link decides. Without one what stands now answers.
+    fn emit_namespace_behind_mock(
+        &mut self,
+        mocked: FileId,
+        module: ModuleId,
+        importer: Option<ModuleId>,
+    ) -> ValueId {
+        let phase = ImportPhase::Evaluation;
+        let result = self.builder.create_variable(None);
+        let join = self.create_block();
+        let variable = self.file.ensure_variable(VariableKey::MockOf(mocked));
+        let mock = self.builder.get_module_variable(variable);
+        let split = self.split_on_type(mock, TypeTable::ABSENT);
+        (self.builder).set_frequency(split.not_taken, BlockFrequency::Unlikely);
+        self.builder.switch_to(split.taken);
+        let object = self.builder.module_namespace(module, phase, false, false);
+        self.builder.write_variable(result, object);
+        self.jump(join);
+        self.builder.switch_to(split.not_taken);
+        if let Some(importer) = importer {
+            let target = (self.file.fragment).declare_module(ModuleRef::File(mocked));
+            let sees_mock = self.builder.sees_mock_of(target, importer);
+            let (of_mock, own) = (self.create_block(), self.create_block());
+            (self.builder).branch(sees_mock, Edge::to(of_mock), Edge::to(own));
+            self.continue_in(own);
+            let object = self.builder.module_namespace(module, phase, true, false);
+            self.builder.write_variable(result, object);
+            self.jump(join);
+            self.continue_in(of_mock);
+        }
+        let object = self.builder.module_namespace(module, phase, false, true);
+        self.builder.write_variable(result, object);
+        self.jump(join);
+        self.continue_in(join);
+        self.builder.read_variable(result)
     }
 
     pub(crate) fn emit_named_read(&mut self, object: ValueId, name: Atom) -> ValueId {
@@ -255,6 +321,26 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(crate) fn lower_namespace_member(&mut self, access: ExprId) -> Option<ValueId> {
         let file = &mut *self.file;
         let binding = file.inputs.modules.member_binding(file.file, access)?;
+        let asked = match file.hir.member_key(access) {
+            Some((object, MemberKey::Name(name))) => {
+                let object = file.hir.skip_type_assertions(object);
+                match file.bound.binding(object) {
+                    Binding::Symbol(symbol)
+                        if matches!(file.hir[object].kind, ExprKind::Ident(_)) =>
+                    {
+                        match file.inputs.modules.import_binding(file.file, symbol) {
+                            ImportBinding::Namespace {
+                                module: ModuleRef::File(module),
+                                ..
+                            } => Some((module, name)),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
         let name = match file.hir.member_key(access) {
             Some((_, MemberKey::Name(name))) => file.intern_atom(name),
             Some((_, MemberKey::PrivateName(_) | MemberKey::Computed(_))) | None => {
@@ -281,19 +367,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             let read = ReadWithoutMock::SyntheticMember { export, access };
             return Some(emit_behind_mocks(self, binding, None, read));
         }
-        Some(emit_import_binding(self, binding, name, path))
+        Some(emit_import_binding_asked(self, binding, name, path, asked))
     }
 }
 
 /// `VariableKey::MockOf`. A module of Bun's own code is mocked by its name, not as a file.
 pub(super) fn holds_mock_in_variable(modules: &ModuleGraph, file: FileId) -> bool {
-    let is_file_of_program = matches!(
-        modules.kind(file),
-        ModuleKind::SourceText | ModuleKind::CommonJs | ModuleKind::Data
-    );
-    is_file_of_program
-        && !modules.is_library(file)
-        && modules.is_named_by_mock(ModuleRef::File(file))
+    modules.holds_mock_in_variable(file)
 }
 
 /// The module that the import statement of `symbol` names, and the name that it asks of the module.
@@ -386,6 +466,8 @@ enum Step {
         file: FileId,
         name: Atom,
         asked_by: AskedBy,
+        /// The file on the way that names this one. None: the file that reads.
+        asked_from: Option<FileId>,
         behind: usize,
     },
     /// What declares the name is reached, and no mock stands on the way.
@@ -399,37 +481,68 @@ struct WayToDeclaration<'a> {
     asking_file: Option<FileId>,
     steps: Vec<Step>,
     path: Vec<FileId>,
+    /// What a star heard that asked a file for a name, and the step of the innermost station that it stood below. Stars meet again behind a fork: whoever reaches
+    /// the steps of the second one has been through those of the first, and none of them answered. That holds below the same station alone: a mock that lacks the
+    /// name sends the run past what lies below it. What a station itself shows goes by who asks it, so each asks. And an answer that was made while the way came
+    /// round in a ring holds for that way alone.
+    answers_to_stars: FxHashMap<(FileId, Atom), (bool, Option<usize>)>,
+    rings_met: usize,
+    stations_on_path: Vec<usize>,
 }
 
 impl WayToDeclaration<'_> {
     /// Whether the name is found below the file whichever mocks stand.
     fn ask(&mut self, file: FileId, name: Atom, asked_by: AskedBy) -> bool {
         if self.path.contains(&file) {
+            self.rings_met += 1;
             return false;
         }
-        self.path.push(file);
-        let station = self.steps.len();
         let is_station =
             Some(file) != self.asking_file && holds_mock_in_variable(self.modules, file);
+        let is_kept = asked_by == AskedBy::Star && !is_station;
+        if is_kept
+            && let Some(&(answer, below)) = self.answers_to_stars.get(&(file, name))
+            && below.is_none_or(|station| self.stations_on_path.contains(&station))
+        {
+            return answer;
+        }
+        let rings_met = self.rings_met;
+        let below = self.stations_on_path.last().copied();
+        let asked_from = self.path.last().copied();
+        self.path.push(file);
+        let station = self.steps.len();
         if is_station {
+            self.stations_on_path.push(station);
             self.steps.push(Step::Station {
                 file,
                 name,
                 asked_by,
+                asked_from,
                 behind: 0,
             });
         }
         let is_found = self.ask_exports(file, name);
         let end = self.steps.len();
+        if is_station {
+            self.stations_on_path.pop();
+        }
         if is_station && let Some(Step::Station { behind, .. }) = self.steps.get_mut(station) {
             *behind = end;
         }
         self.path.pop();
+        if is_kept && rings_met == self.rings_met {
+            self.answers_to_stars
+                .insert((file, name), (is_found, below));
+        }
         is_found && !(is_station && asked_by == AskedBy::Star)
     }
 
     fn ask_exports(&mut self, file: FileId, name: Atom) -> bool {
         let modules = self.modules;
+        // The table names the variable, and lists what somebody reads off the object of the file. The statement names the next file on the way.
+        if let Some((ModuleRef::File(next), name)) = modules.find_what_hands_on_names(file, name) {
+            return self.ask(next, name, AskedBy::Name);
+        }
         let export = modules.exports(file).iter().find(|it| it.name == name);
         match export.map(|export| (export.binding, export.is_from_star_export)) {
             Some((ExportBinding::Indirect { module, name }, _)) => match module {
@@ -440,6 +553,11 @@ impl WayToDeclaration<'_> {
                 let mut requests = modules.requests(file).iter();
                 if is_from_star && requests.any(|request| request.is_dynamic_star_export) {
                     return self.ask_stars(file, name);
+                }
+                // An ordinary star: what it names may have the name from a file that a mock stands in place of. On any other way no mock stands.
+                let mut named = modules.files_named_by_stars(file).iter();
+                if is_from_star && named.any(|&next| self.ask(next, name, AskedBy::Star)) {
+                    return true;
                 }
                 let there = modules.exports(symbol.file).iter();
                 let mut there = there.filter(|it| it.binding == ExportBinding::Variable(symbol));
@@ -494,11 +612,18 @@ fn find_way_to_declaration(
     asking_file: Option<FileId>,
     asked: (FileId, Atom),
 ) -> Vec<Step> {
+    // Every step of the way follows a request.
+    if !modules.reaches_mock(asked.0) {
+        return Vec::new();
+    }
     let mut way = WayToDeclaration {
         modules,
         asking_file,
         steps: Vec::new(),
         path: Vec::new(),
+        answers_to_stars: FxHashMap::default(),
+        rings_met: 0,
+        stations_on_path: Vec::new(),
     };
     way.ask(asked.0, asked.1, AskedBy::Statement);
     way.steps
@@ -567,6 +692,19 @@ fn emit_behind_mocks(
     read: ReadWithoutMock,
 ) -> ValueId {
     let modules = lowering.file.inputs.modules;
+    // `export * as inner from "./dep"`: which object of a file that may be mocked the file between hands on goes by the link of that file. The run time knows it.
+    if let ImportBinding::Namespace {
+        module: ModuleRef::File(target),
+        phase: ImportPhase::Evaluation,
+    } = binding
+        && let Some((named, name)) = asked
+        && named != target
+        && holds_mock_in_variable(modules, target)
+    {
+        let holder = ModuleRef::File(named);
+        let holder = lowering.emit_module_namespace(holder, ImportPhase::Evaluation);
+        return lowering.emit_named_read(holder, name);
+    }
     let own_file = Some(lowering.file.file);
     let mut steps = match asked {
         Some(asked) => find_way_to_declaration(modules, own_file, asked),
@@ -588,10 +726,12 @@ fn emit_behind_mocks(
                 file,
                 name,
                 asked_by,
+                asked_from,
                 behind,
             } => Step::Station {
                 file,
                 name,
+                asked_from,
                 // Only the file that the statement names is asked by it.
                 asked_by: match asked_by {
                     AskedBy::Statement if asked.is_some_and(|asked| asked.0 != file) => {
@@ -636,6 +776,7 @@ fn emit_behind_mocks(
             file,
             name,
             asked_by,
+            asked_from,
             behind,
         } = step
         else {
@@ -651,7 +792,19 @@ fn emit_behind_mocks(
         let next = block_at(lowering, &mut blocks, index + 1);
         lowering.jump(next);
         lowering.builder.switch_to(split.not_taken);
-        let mock = split.not_taken_value;
+        // `bun test` leaves a module that has run as it is where `vi.doMock()` names it: whoever was linked to it before keeps it. The run time knows who was.
+        let mocked = (lowering.file.fragment).declare_module(ModuleRef::File(file));
+        let importer = match asked_from {
+            Some(importer) => (lowering.file.fragment).declare_module(ModuleRef::File(importer)),
+            None => lowering.file.module_id(),
+        };
+        let sees_mock = lowering.builder.sees_mock_of(mocked, importer);
+        let asks_mock = lowering.create_block();
+        (lowering.builder).branch(sees_mock, Edge::to(asks_mock), Edge::to(next));
+        (lowering.builder).set_frequency(asks_mock, BlockFrequency::Unlikely);
+        lowering.continue_in(asks_mock);
+        // The mock that stood when the importer was linked, which may have ended since.
+        let mock = lowering.builder.mock_seen_by(mocked, importer);
         if asked_by != AskedBy::Statement {
             let key = lowering.file.name_key(name);
             let has = lowering.emit_has(mock, PropertyName::Constant(key));

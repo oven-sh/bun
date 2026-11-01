@@ -113,6 +113,7 @@ impl<'s> Builder<'_, 's> {
                 DataValue::Object(properties) => self.object_exports(default, properties),
                 _ => self.default_export_with_marker(default),
             },
+            DataModule::MarkedDefault(default) => self.default_export_with_marker(default),
             DataModule::RuntimeRequire {
                 specifier,
                 loader_type,

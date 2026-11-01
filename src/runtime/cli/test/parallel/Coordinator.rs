@@ -1679,9 +1679,10 @@ impl<'a> Coordinator<'a> {
                     && w.startup_failures < MAX_STARTUP_FAILURES
             };
             let free_workers = self.workers.iter().filter(is_free).count() as u32;
-            let next = match self.reporter.jest.test_options.parallel {
-                0 => parts.next_in_order(),
-                _ => parts.next_for_worker(&waiting, free_workers, time_of),
+            // One worker runs the files in plain's order. With `--timings` the parts are cut by time, and the order is theirs.
+            let next = match self.ends_as_in_one_process && time_of.is_none() {
+                true => parts.next_in_order(),
+                false => parts.next_for_worker(&waiting, free_workers, time_of),
             };
             let Some(index) = next else {
                 break;

@@ -1134,23 +1134,6 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         );
     }
 
-    pub fn close_on_this_thread(&mut self) {
-        if self.closed_without_reporting {
-            return self.close();
-        }
-        let fd = self.get_fd();
-        let parent = self.parent;
-        self.handle.close_impl(
-            Some(parent.cast()),
-            Some(move |ctx: *mut c_void| {
-                let _ = sys::FdExt::close_allowing_bad_file_descriptor(fd, None);
-                // SAFETY: parent was set via set_parent with a *mut Parent.
-                unsafe { Parent::on_close(ctx.cast::<Parent>()) }
-            }),
-            false,
-        );
-    }
-
     /// On `Err` the writer holds nothing; `fd` is still the caller's to close.
     pub fn start(&mut self, fd: Fd, is_pollable: bool) -> sys::Result<()> {
         if !is_pollable {

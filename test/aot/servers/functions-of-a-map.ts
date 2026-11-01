@@ -57,10 +57,10 @@ export function operationsOfProgram(mapPaths: string[]): Map<string, { bytes: st
         current = { bytes: columns[3], operations: "" };
         functions.set(`${key} #${count}`, current);
       } else if (columns[0] === "S" && current) {
-        // Five columns a piece of machine code. A value may have several pieces.
+        // Five columns a piece of machine code, from the first on: its operation, its value, and three more. A value may have several pieces.
         const values = new Set<string>();
-        for (let at = 4; at + 4 < columns.length; at += 5)
-          values.add(`${columns[at + 2].replace(/[+*]+$/, "")} ${columns[at + 3]}`);
+        for (let at = 1; at + 4 < columns.length; at += 5)
+          values.add(`${columns[at].replace(/[+*]+$/, "")} ${columns[at + 1]}`);
         const counts = new Map<string, number>();
         for (const value of values) {
           const operation = value.slice(0, value.indexOf(" "));

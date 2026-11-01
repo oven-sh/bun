@@ -1,4 +1,5 @@
 import { bunEnv, bunExe } from "harness";
+import "./capabilities";
 
 /** Not every build of Bun includes the compiler. One without it says so before it looks for the entry point. */
 export const unsupported: string | undefined = /^error: --aot ((?:only supports|isn't available) .*)$/m.exec(

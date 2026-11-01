@@ -237,14 +237,14 @@ impl StandaloneModuleGraph {
         self.find_assume_standalone_path(name)
     }
 
-    fn lookup_file(&self, name: &[u8]) -> Option<&File> {
+    pub(crate) fn lookup_file(&self, name: &[u8]) -> Option<&File> {
         #[cfg(windows)]
-        {
-            let mut buf = bun_paths::path_buffer_pool::get();
-            return self.files.get(normalize_file_key(name, &mut buf));
-        }
-        #[cfg(not(windows))]
-        self.files.get(name)
+        let mut buf = bun_paths::path_buffer_pool::get();
+        #[cfg(windows)]
+        let name = normalize_file_key(name, &mut buf);
+        self.files
+            .get(name)
+            .or_else(|| self.files.get(&self.key_of_asset_named_at_root(name)?))
     }
 
     pub fn find_ref(&self, name: &[u8]) -> Option<&File> {
@@ -370,11 +370,13 @@ impl StandaloneModuleGraph {
 
     pub fn find_assume_standalone_path(&mut self, name: &[u8]) -> Option<&mut File> {
         #[cfg(windows)]
-        {
-            let mut buf = bun_paths::path_buffer_pool::get();
-            return self.files.get_mut(normalize_file_key(name, &mut buf));
+        let mut buf = bun_paths::path_buffer_pool::get();
+        #[cfg(windows)]
+        let name = normalize_file_key(name, &mut buf);
+        if !self.files.contains_key(name) {
+            let key = self.key_of_asset_named_at_root(name)?;
+            return self.files.get_mut(&key);
         }
-        #[cfg(not(windows))]
         self.files.get_mut(name)
     }
 }

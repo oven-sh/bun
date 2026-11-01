@@ -2,7 +2,9 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { closeSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { test } from "./supported";
+import { runsWholeGrids } from "./harness/ways";
+// One by one: a case builds for minutes, and beside others it would pass its limit where Bun has a sanitizer.
+import { testOneByOne as test } from "./supported";
 
 // BUN_AOT_TESTS_NAME_WHAT_THEY_USE: the layer that the test files stand on is told what they name, so a call between two of its own files is the executable's: direct.
 // Two things that large suites have used to open every export of every file all the same: a helper that hands spyOn an object and a name from somewhere, and a file of
@@ -84,16 +86,18 @@ test("a call of a function that no test names is no read of a variable", async (
   expect(operations.filter(word => /^(GetModuleVariable|Call|CheckInitialized)\+?$/.test(word))).toEqual([]);
 }, 120_000);
 
-test("the run passes", async () => {
-  using dir = tempDir("aot-the-layer-calls-its-own-functions-directly-run", files);
-  await using run = Bun.spawn({
-    cmd: [bunExe(), "test", "--aot", "--isolate"],
-    cwd: String(dir),
-    env,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  const [stderr, exitCode] = await Promise.all([run.stderr.text(), run.exited]);
-  expect(stderr).toContain("1 pass");
-  expect(stderr).toContain("0 fail");
-  expect(exitCode).toBe(0);
-}, 120_000);
+// A whole run over layers, which has never been the witness of a fault: the benches run it.
+if (runsWholeGrids)
+  test("the run passes", async () => {
+    using dir = tempDir("aot-the-layer-calls-its-own-functions-directly-run", files);
+    await using run = Bun.spawn({
+      cmd: [bunExe(), "test", "--aot", "--isolate"],
+      cwd: String(dir),
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stderr, exitCode] = await Promise.all([run.stderr.text(), run.exited]);
+    expect(stderr).toContain("1 pass");
+    expect(stderr).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  }, 120_000);

@@ -1,4 +1,5 @@
 // What a function made and reads no more behind an await is collected while a function that it awaits runs on after a wait. Asked from that function, which waits in several ways.
+// Todo alone under --aot-validate --aot-check=ValidateBackEnd: Not every time: a build that validates the back end keeps registers alive for longer, and the collector finds the object in one: lines print that it is kept
 // Todo on win32 x64: Not every time: row 3517: some lines print that the object is kept: native frames there have home slots that nobody writes, and the collector reads what an earlier call left in them
 let last;
 let sink = 0;

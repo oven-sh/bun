@@ -1,7 +1,8 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { afterAll } from "./harness/default-timeout";
 import { run } from "./harness/run";
-import { test } from "./supported";
+import { beforeAll, test } from "./supported";
 
 // A mock of a CommonJS file puts its object where `module.exports` and `require()` find it. `exports` in the file is a parameter of the function around its text, so it goes
 // on naming the object that the file began with: `exports.c(x)` in the file calls the real `c`, and `exports.added = 1` stores to the first object.
@@ -64,27 +65,39 @@ test("names", () => {
 `,
 };
 
-test("it says what plain Bun says, as one program and in layers", async () => {
-  using dir = tempDir("aot-mocked-commonjs-own-exports", files);
+async function said(flags: string[], words: string) {
   const directory = String(dir);
-  const said = async (flags: string[], words: string) => {
-    const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words, BUN_TMPDIR: directory };
-    const ran = await run([bunExe(), "test", ...flags, "--isolate", "--parallel=1", "."], directory, env);
-    return {
-      lines: ran.stdout
-        .split("\n")
-        .filter(line => line.startsWith("SAID"))
-        .sort(),
-      summary: ran.stderr.split("\n").filter(line => /^ *\d+ (pass|fail)$/.test(line)),
-    };
+  const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words, BUN_TMPDIR: directory };
+  const ran = await run([bunExe(), "test", ...flags, "--isolate", "--parallel=1", "."], directory, env);
+  return {
+    lines: ran.stdout
+      .split("\n")
+      .filter(line => line.startsWith("SAID"))
+      .sort(),
+    summary: ran.stderr.split("\n").filter(line => /^ *\d+ (pass|fail)$/.test(line)),
   };
-  const plain = await said([], "");
+}
+
+let dir: ReturnType<typeof tempDir> | undefined;
+let plain: Awaited<ReturnType<typeof said>>;
+beforeAll(async () => {
+  dir = tempDir("aot-mocked-commonjs-own-exports", files);
+  plain = await said([], "");
+});
+afterAll(() => dir?.[Symbol.dispose]());
+
+test("what plain Bun says", () => {
   expect(plain.summary).toEqual([" 7 pass", " 0 fail"]);
   expect(plain.lines.length).toBe(19);
   expect(plain.lines).toContain(
     "SAID beside after 2 viaExports=2 viaModule=fake viaThis=2 viaKept=2 viaRequire=fake same: false,true,true,false",
   );
-  expect(await said(["--aot"], "TestRunLayers:0")).toEqual(plain);
-  expect(await said(["--aot"], "TestRunLayers:1,TestRunPartFiles:1")).toEqual(plain);
-  expect(await said(["--aot"], "TestRunLayers:2,TestRunPartFiles:1")).toEqual(plain);
-}, 240_000);
+});
+
+test.each([
+  ["as one program", "TestRunLayers:0"],
+  ["in one layer", "TestRunLayers:1,TestRunPartFiles:1"],
+  ["in two layers", "TestRunLayers:2,TestRunPartFiles:1"],
+])("it says what plain Bun says, %s", async (_, words) => {
+  expect(await said(["--aot"], words)).toEqual(plain);
+});

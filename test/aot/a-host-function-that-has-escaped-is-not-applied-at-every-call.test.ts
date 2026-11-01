@@ -1,7 +1,7 @@
 // What lets in unseen code stays listed beside a value nobody knows. Once Bun.build has escaped, every callee nobody
 // knows lists it, and a call that applied it read its hundred options off its own operands: calls times options.
 // It is applied once for the whole program. The program below logs two thirds of the bound, and twice the bound if every call applies it.
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 import { readBuildReport } from "./harness/build-report";
@@ -9,6 +9,7 @@ import { unsupported } from "./harness/compiler";
 import { withReport } from "./harness/flags";
 import { run } from "./harness/run";
 import { sharedBuilds } from "./harness/shared-builds";
+import { describe, test } from "./listed";
 
 const calls = 1500;
 

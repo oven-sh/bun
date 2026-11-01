@@ -1,7 +1,8 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { afterAll } from "./harness/default-timeout";
 import { run } from "./harness/run";
-import { test } from "./supported";
+import { beforeAll, test } from "./supported";
 
 // `vi.useFakeTimers()` of "vitest" fakes `performance` too, with an object that a function of Bun's own library makes. That function is the runner's: no build compiles it with the files under test.
 const files = {
@@ -47,9 +48,15 @@ async function report(directory: string, flags: string[], words?: string) {
   return { printed: printed.sort(), exitCode };
 }
 
-test("the fake of performance is made and answers", async () => {
-  using directory = tempDir("vitest-fake-timers", files);
-  const plain = await report(String(directory), []);
+let directory: ReturnType<typeof tempDir> | undefined;
+let plain: Awaited<ReturnType<typeof report>>;
+beforeAll(async () => {
+  directory = tempDir("vitest-fake-timers", files);
+  plain = await report(String(directory), []);
+});
+afterAll(() => directory?.[Symbol.dispose]());
+
+test("the fake of performance is made and answers: plain Bun", () => {
   const mark = `{"name":"m","entryType":"mark","startTime":0,"duration":0}`;
   expect(plain).toEqual({
     printed: [
@@ -62,8 +69,12 @@ test("the fake of performance is made and answers", async () => {
     ],
     exitCode: 0,
   });
-  // Row 4191: compiled code went on reading the real `performance` behind the fake, by name and by a key: the name was locked, so the fake was never put on the global object.
-  for (const words of [undefined, "TestRunLayers:2"]) {
-    expect(await report(String(directory), ["--aot"], words)).toEqual(plain);
-  }
+});
+
+// Compiled code went on reading the real `performance` behind the fake, by name and by a key: the name was locked, so the fake was never put on the global object.
+test.each([
+  ["as the run builds itself", undefined],
+  ["two layers", "TestRunLayers:2"],
+])("the fake of performance is made and answers: %s", async (_, words) => {
+  expect(await report(String(directory), ["--aot"], words)).toEqual(plain);
 });

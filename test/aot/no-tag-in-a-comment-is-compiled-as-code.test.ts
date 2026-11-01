@@ -9,8 +9,10 @@ import { join } from "path";
 import { built, spawned } from "./harness/commands";
 import { afterAll } from "./harness/default-timeout";
 import { compileCommand } from "./harness/flags";
+import { runsWholeGrids } from "./harness/ways";
 import { withoutDebugInformation } from "./harness/without-debug-information";
-import { describe, test } from "./supported";
+// One by one: a case calls afterAll(), which bun:test refuses in a concurrent one.
+import { describe, testOneByOne as test } from "./supported";
 
 const tags = [
   "author",
@@ -195,7 +197,8 @@ describe("compile/aot/no tag in a comment is compiled as code", () => {
     600_000,
   );
 
-  test.each(["js", "mjs", "cjs", "jsx"])(
+  // Each kind is an executable above, and in front of the cure the four failed alike here: one is the witness.
+  test.each(["js", "mjs", "cjs", "jsx"].filter(kind => runsWholeGrids || kind === "js"))(
     "%s in a test run",
     async kind => {
       const total = tags.length * texts.length * 18;

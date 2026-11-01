@@ -654,7 +654,7 @@ export function parseEveryText(sites: [string, (text: string) => unknown][]) {
 // CHECK-NEXT: ReturnCall v4 casts=[{declared={type=undefined|null|[[L_2]] site=[[w_3]]}}]
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="castBehindAwait"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_4]] site=[[w_5]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=1 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=undefined|null|[[L_4]] site=[[w_5]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: anything, v1: undefined|null|[[L_4]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

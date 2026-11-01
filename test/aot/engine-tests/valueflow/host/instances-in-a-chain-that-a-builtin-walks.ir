@@ -1,0 +1,1772 @@
+# class C0 { constructor(next) { this.next = next; this.v0 = 0; } get g0() { return this.v0; } toJSON() { return { k0: this.v0, next: this.next }; } } .. C23; root = new C0(null); root = new C1(root); ..;
+# console.log(JSON.stringify(root).length)
+# The walk finds the instances a level a round, and toJSON() of each is called on it: each is entered, also that of the last object found.
+# FORM: AsRead
+# RUN: valueflow-apply
+# OPTIONS: exclude=CodeOutsideImage
+# CHECK-NOT: kind=Instance {{*}}reads=NeverRead
+typesite w0 module=m2 position=302 kind=Variable
+typesite w1 module=m3 position=571 kind=Variable
+layout L0 kind=Instance name="C0" module=m0 position=6 constructor=f1 fields=[{key="next" declared={type=anything} flags=[IsRequired]}, {key="v0" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
+layout L1 kind=Instance name="C1" module=m0 position=183 constructor=f4 fields=[{key="next" declared={type=anything} flags=[IsRequired]}, {key="v1" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
+layout L2 kind=Instance name="C2" module=m0 position=360 constructor=f7 fields=[{key="next" declared={type=anything} flags=[IsRequired]}, {key="v2" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
+layout L3 kind=Instance name="C3" module=m0 position=537 constructor=f10 fields=[{key="next" declared={type=anything} flags=[IsRequired]}, {key="v3" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
+layout L4 kind=Instance name="C4" module=m0 position=714 constructor=f13 fields=[{key="next" declared={type=anything} flags=[IsRequired]}, {key="v4" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
+layout L5 kind=Instance name="C5" module=m0 position=891 constructor=f16 fields=[{key="next" declared={type=anything} flags=[IsRequired]}, {key="v5" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
+layout L6 kind=Instance name="C6" module=m0 position=1068 constructor=f19 fields=[{key="next" declared={type=anything} flags=[IsRequired]}, {key="v6" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
+layout L7 kind=Instance name="C7" module=m0 position=1245 constructor=f22 fields=[{key="next" declared={type=anything} flags=[IsRequired]}, {key="v7" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
+layout L8 kind=Instance name="C8" module=m0 position=1422 constructor=f25 fields=[{key="next" declared={type=anything} flags=[IsRequired]}, {key="v8" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
+layout L9 kind=Instance name="C9" module=m0 position=1599 constructor=f28 fields=[{key="next" declared={type=anything} flags=[IsRequired]}, {key="v9" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
+layout L10 kind=Instance name="C10" module=m0 position=1776 constructor=f31 fields=[{key="next" declared={type=anything} flags=[IsRequired]}, {key="v10" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
+layout L11 kind=Instance name="C11" module=m0 position=1960 constructor=f34 fields=[{key="next" declared={type=anything} flags=[IsRequired]}, {key="v11" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
+layout L12 kind=Instance name="C12" module=m0 position=2144 constructor=f37 fields=[{key="next" declared={type=anything} flags=[IsRequired]}, {key="v12" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
+layout L13 kind=Instance name="C13" module=m0 position=2328 constructor=f40 fields=[{key="next" declared={type=anything} flags=[IsRequired]}, {key="v13" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
+layout L14 kind=Instance name="C14" module=m0 position=2512 constructor=f43 fields=[{key="next" declared={type=anything} flags=[IsRequired]}, {key="v14" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
+layout L15 kind=Instance name="C15" module=m0 position=2696 constructor=f46 fields=[{key="next" declared={type=anything} flags=[IsRequired]}, {key="v15" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
+layout L16 kind=Instance name="C16" module=m0 position=2880 constructor=f49 fields=[{key="next" declared={type=anything} flags=[IsRequired]}, {key="v16" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
+layout L17 kind=Instance name="C17" module=m0 position=3064 constructor=f52 fields=[{key="next" declared={type=anything} flags=[IsRequired]}, {key="v17" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
+layout L18 kind=Instance name="C18" module=m0 position=3248 constructor=f55 fields=[{key="next" declared={type=anything} flags=[IsRequired]}, {key="v18" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
+layout L19 kind=Instance name="C19" module=m0 position=3432 constructor=f58 fields=[{key="next" declared={type=anything} flags=[IsRequired]}, {key="v19" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
+layout L20 kind=Instance name="C20" module=m0 position=3616 constructor=f61 fields=[{key="next" declared={type=anything} flags=[IsRequired]}, {key="v20" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
+layout L21 kind=Instance name="C21" module=m0 position=3800 constructor=f64 fields=[{key="next" declared={type=anything} flags=[IsRequired]}, {key="v21" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
+layout L22 kind=Instance name="C22" module=m0 position=3984 constructor=f67 fields=[{key="next" declared={type=anything} flags=[IsRequired]}, {key="v22" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
+layout L23 kind=Instance name="C23" module=m0 position=4168 constructor=f70 fields=[{key="next" declared={type=anything} flags=[IsRequired]}, {key="v23" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
+layout L24 module=m0 position=137 fields=[{key="k0" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="next" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L25 module=m0 position=314 fields=[{key="k1" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="next" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L26 module=m0 position=491 fields=[{key="k2" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="next" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L27 module=m0 position=668 fields=[{key="k3" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="next" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L28 module=m0 position=845 fields=[{key="k4" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="next" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L29 module=m0 position=1022 fields=[{key="k5" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="next" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L30 module=m0 position=1199 fields=[{key="k6" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="next" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L31 module=m0 position=1376 fields=[{key="k7" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="next" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L32 module=m0 position=1553 fields=[{key="k8" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="next" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L33 module=m0 position=1730 fields=[{key="k9" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="next" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L34 module=m0 position=1912 fields=[{key="k10" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="next" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L35 module=m0 position=2096 fields=[{key="k11" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="next" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L36 module=m0 position=2280 fields=[{key="k12" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="next" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L37 module=m0 position=2464 fields=[{key="k13" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="next" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L38 module=m0 position=2648 fields=[{key="k14" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="next" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L39 module=m0 position=2832 fields=[{key="k15" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="next" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L40 module=m0 position=3016 fields=[{key="k16" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="next" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L41 module=m0 position=3200 fields=[{key="k17" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="next" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L42 module=m0 position=3384 fields=[{key="k18" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="next" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L43 module=m0 position=3568 fields=[{key="k19" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="next" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L44 module=m0 position=3752 fields=[{key="k20" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="next" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L45 module=m0 position=3936 fields=[{key="k21" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="next" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L46 module=m0 position=4120 fields=[{key="k22" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="next" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L47 module=m0 position=4304 fields=[{key="k23" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="next" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+variable g0 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g1 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g2 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g3 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g4 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g5 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g6 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g7 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g8 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g9 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g10 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g11 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g12 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g13 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g14 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g15 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g16 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g17 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g18 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g19 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g20 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g21 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g22 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g23 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+module m0 path="/$bunfs/root/classes-24.mjs" displayPath="classes-24.mjs" flags=[KeepsError] body=f0 positions={lineStarts=[0, 11, 33, 55, 72, 76, 89, 109, 113, 126, 171, 175, 177, 188, 210, 232, 249, 253, 266, 286, 290, 303, 348, 352, 354, 365, 387, 409, 426, 430, 443, 463, 467, 480, 525, 529, 531, 542, 564, 586, 603, 607, 620, 640, 644, 657, 702, 706, 708, 719, 741, 763, 780, 784, 797, 817, 821, 834, 879, 883, 885, 896, 918, 940, 957, 961, 974, 994, 998, 1011, 1056, 1060, 1062, 1073, 1095, 1117, 1134, 1138, 1151, 1171, 1175, 1188, 1233, 1237, 1239, 1250, 1272, 1294, 1311, 1315, 1328, 1348, 1352, 1365, 1410, 1414, 1416, 1427, 1449, 1471, 1488, 1492, 1505, 1525, 1529, 1542, 1587, 1591, 1593, 1604, 1626, 1648, 1665, 1669, 1682, 1702, 1706, 1719, 1764, 1768, 1770, 1782, 1804, 1826, 1845, 1849, 1863, 1884, 1888, 1901, 1948, 1952, 1954, 1966, 1988, 2010, 2029, 2033, 2047, 2068, 2072, 2085, 2132, 2136, 2138, 2150, 2172, 2194, 2213, 2217, 2231, 2252, 2256, 2269, 2316, 2320, 2322, 2334, 2356, 2378, 2397, 2401, 2415, 2436, 2440, 2453, 2500, 2504, 2506, 2518, 2540, 2562, 2581, 2585, 2599, 2620, 2624, 2637, 2684, 2688, 2690, 2702, 2724, 2746, 2765, 2769, 2783, 2804, 2808, 2821, 2868, 2872, 2874, 2886, 2908, 2930, 2949, 2953, 2967, 2988, 2992, 3005, 3052, 3056, 3058, 3070, 3092, 3114, 3133, 3137, 3151, 3172, 3176, 3189, 3236, 3240, 3242, 3254, 3276, 3298, 3317, 3321, 3335, 3356, 3360, 3373, 3420, 3424, 3426, 3438, 3460, 3482, 3501, 3505, 3519, 3540, 3544, 3557, 3604, 3608, 3610, 3622, 3644, 3666, 3685, 3689, 3703, 3724, 3728, 3741, 3788, 3792, 3794, 3806, 3828, 3850, 3869, 3873, 3887, 3908, 3912, 3925, 3972, 3976, 3978, 3990, 4012, 4034, 4053, 4057, 4071, 4092, 4096, 4109, 4156, 4160, 4162, 4174, 4196, 4218, 4237, 4241, 4255, 4276, 4280, 4293, 4340, 4344, 4346, 4363, 4384, 4405, 4426, 4447, 4468, 4489, 4510, 4531, 4552, 4573, 4595, 4617, 4639, 4661, 4683, 4705, 4727, 4749, 4771, 4793, 4815, 4837, 4859, 4881, 4923] textOfBody="\x00\x0d\xa1\x01\x02\x01\x0d\xa1\x01\x02\x01\x0d\xa1\x01\x02\x01\x0d\xa1\x01\x02\x01\x0d\xa1\x01\x02\x01\x0d\xa1\x01\x02\x01\x0d\xa1\x01\x02\x01\x0d\xa1\x01\x02\x01\x0d\xa1\x01\x02\x01\x0d\xa1\x01\x02\x01\x0e\xa7\x01\x02\x01\x0e\xa7\x01\x02\x01\x0e\xa7\x01\x02\x01\x0e\xa7\x01\x02\x01\x0e\xa7\x01\x02\x01\x0e\xa7\x01\x02\x01\x0e\xa7\x01\x02\x01\x0e\xa7\x01\x02\x01\x0e\xa7\x01\x02\x01\x0e\xa7\x01\x02\x01\x0e\xa7\x01\x02\x01\x0e\xa7\x01\x02\x01\x0e\xa7\x01\x02\x01\x0e\xa7\x01\x02\x12\x14\x01\x14\x01\x14\x01\x14\x01\x14\x01\x14\x01\x14\x01\x14\x01\x14\x01\x14\x01\x15\x01\x15\x01\x15\x01\x15\x01\x15\x01\x15\x01\x15\x01\x15\x01\x15\x01\x15\x01\x15\x01\x15\x01\x15\x01\x15\x01)"} functionText="class C0 {\x0a  constructor(next) {\x0a    this.next = next;\x0a    this.v0 = 0;\x0a  }\x0a  get g0() {\x0a    return this.v0;\x0a  }\x0a  toJSON() {\x0a    return { k0: this.v0, next: this.next };\x0a  }\x0a}\x0aclass C1 {\x0a  constructor(next) {\x0a    this.next = next;\x0a    this.v1 = 1;\x0a  }\x0a  get g1() {\x0a    return this.v1;\x0a  }\x0a  toJSON() {\x0a    return { k1: this.v1, next: this.next };\x0a  }\x0a}\x0aclass C2 {\x0a  constructor(next) {\x0a    this.next = next;\x0a    this.v2 = 2;\x0a  }\x0a  get g2() {\x0a    return this.v2;\x0a  }\x0a  toJSON() {\x0a    return { k2: this.v2, next: this.next };\x0a  }\x0a}\x0aclass C3 {\x0a  constructor(next) {\x0a    this.next = next;\x0a    this.v3 = 3;\x0a  }\x0a  get g3() {\x0a    return this.v3;\x0a  }\x0a  toJSON() {\x0a    return { k3: this.v3, next: this.next };\x0a  }\x0a}\x0aclass C4 {\x0a  constructor(next) {\x0a    this.next = next;\x0a    this.v4 = 4;\x0a  }\x0a  get g4() {\x0a    return this.v4;\x0a  }\x0a  toJSON() {\x0a    return { k4: this.v4, next: this.next };\x0a  }\x0a}\x0aclass C5 {\x0a  constructor(next) {\x0a    this.next = next;\x0a    this.v5 = 5;\x0a  }\x0a  get g5() {\x0a    return this.v5;\x0a  }\x0a  toJSON() {\x0a    return { k5: this.v5, next: this.next };\x0a  }\x0a}\x0aclass C6 {\x0a  constructor(next) {\x0a    this.next = next;\x0a    this.v6 = 6;\x0a  }\x0a  get g6() {\x0a    return this.v6;\x0a  }\x0a  toJSON() {\x0a    return { k6: this.v6, next: this.next };\x0a  }\x0a}\x0aclass C7 {\x0a  constructor(next) {\x0a    this.next = next;\x0a    this.v7 = 7;\x0a  }\x0a  get g7() {\x0a    return this.v7;\x0a  }\x0a  toJSON() {\x0a    return { k7: this.v7, next: this.next };\x0a  }\x0a}\x0aclass C8 {\x0a  constructor(next) {\x0a    this.next = next;\x0a    this.v8 = 8;\x0a  }\x0a  get g8() {\x0a    return this.v8;\x0a  }\x0a  toJSON() {\x0a    return { k8: this.v8, next: this.next };\x0a  }\x0a}\x0aclass C9 {\x0a  constructor(next) {\x0a    this.next = next;\x0a    this.v9 = 9;\x0a  }\x0a  get g9() {\x0a    return this.v9;\x0a  }\x0a  toJSON() {\x0a    return { k9: this.v9, next: this.next };\x0a  }\x0a}\x0aclass C10 {\x0a  constructor(next) {\x0a    this.next = next;\x0a    this.v10 = 10;\x0a  }\x0a  get g10() {\x0a    return this.v10;\x0a  }\x0a  toJSON() {\x0a    return { k10: this.v10, next: this.next };\x0a  }\x0a}\x0aclass C11 {\x0a  constructor(next) {\x0a    this.next = next;\x0a    this.v11 = 11;\x0a  }\x0a  get g11() {\x0a    return this.v11;\x0a  }\x0a  toJSON() {\x0a    return { k11: this.v11, next: this.next };\x0a  }\x0a}\x0aclass C12 {\x0a  constructor(next) {\x0a    this.next = next;\x0a    this.v12 = 12;\x0a  }\x0a  get g12() {\x0a    return this.v12;\x0a  }\x0a  toJSON() {\x0a    return { k12: this.v12, next: this.next };\x0a  }\x0a}\x0aclass C13 {\x0a  constructor(next) {\x0a    this.next = next;\x0a    this.v13 = 13;\x0a  }\x0a  get g13() {\x0a    return this.v13;\x0a  }\x0a  toJSON() {\x0a    return { k13: this.v13, next: this.next };\x0a  }\x0a}\x0aclass C14 {\x0a  constructor(next) {\x0a    this.next = next;\x0a    this.v14 = 14;\x0a  }\x0a  get g14() {\x0a    return this.v14;\x0a  }\x0a  toJSON() {\x0a    return { k14: this.v14, next: this.next };\x0a  }\x0a}\x0aclass C15 {\x0a  constructor(next) {\x0a    this.next = next;\x0a    this.v15 = 15;\x0a  }\x0a  get g15() {\x0a    return this.v15;\x0a  }\x0a  toJSON() {\x0a    return { k15: this.v15, next: this.next };\x0a  }\x0a}\x0aclass C16 {\x0a  constructor(next) {\x0a    this.next = next;\x0a    this.v16 = 16;\x0a  }\x0a  get g16() {\x0a    return this.v16;\x0a  }\x0a  toJSON() {\x0a    return { k16: this.v16, next: this.next };\x0a  }\x0a}\x0aclass C17 {\x0a  constructor(next) {\x0a    this.next = next;\x0a    this.v17 = 17;\x0a  }\x0a  get g17() {\x0a    return this.v17;\x0a  }\x0a  toJSON() {\x0a    return { k17: this.v17, next: this.next };\x0a  }\x0a}\x0aclass C18 {\x0a  constructor(next) {\x0a    this.next = next;\x0a    this.v18 = 18;\x0a  }\x0a  get g18() {\x0a    return this.v18;\x0a  }\x0a  toJSON() {\x0a    return { k18: this.v18, next: this.next };\x0a  }\x0a}\x0aclass C19 {\x0a  constructor(next) {\x0a    this.next = next;\x0a    this.v19 = 19;\x0a  }\x0a  get g19() {\x0a    return this.v19;\x0a  }\x0a  toJSON() {\x0a    return { k19: this.v19, next: this.next };\x0a  }\x0a}\x0aclass C20 {\x0a  constructor(next) {\x0a    this.next = next;\x0a    this.v20 = 20;\x0a  }\x0a  get g20() {\x0a    return this.v20;\x0a  }\x0a  toJSON() {\x0a    return { k20: this.v20, next: this.next };\x0a  }\x0a}\x0aclass C21 {\x0a  constructor(next) {\x0a    this.next = next;\x0a    this.v21 = 21;\x0a  }\x0a  get g21() {\x0a    return this.v21;\x0a  }\x0a  toJSON() {\x0a    return { k21: this.v21, next: this.next };\x0a  }\x0a}\x0aclass C22 {\x0a  constructor(next) {\x0a    this.next = next;\x0a    this.v22 = 22;\x0a  }\x0a  get g22() {\x0a    return this.v22;\x0a  }\x0a  toJSON() {\x0a    return { k22: this.v22, next: this.next };\x0a  }\x0a}\x0aclass C23 {\x0a  constructor(next) {\x0a    this.next = next;\x0a    this.v23 = 23;\x0a  }\x0a  get g23() {\x0a    return this.v23;\x0a  }\x0a  toJSON() {\x0a    return { k23: this.v23, next: this.next };\x0a  }\x0a}\x0alet root = null;\x0aroot = new C0(root);\x0aroot = new C1(root);\x0aroot = new C2(root);\x0aroot = new C3(root);\x0aroot = new C4(root);\x0aroot = new C5(root);\x0aroot = new C6(root);\x0aroot = new C7(root);\x0aroot = new C8(root);\x0aroot = new C9(root);\x0aroot = new C10(root);\x0aroot = new C11(root);\x0aroot = new C12(root);\x0aroot = new C13(root);\x0aroot = new C14(root);\x0aroot = new C15(root);\x0aroot = new C16(root);\x0aroot = new C17(root);\x0aroot = new C18(root);\x0aroot = new C19(root);\x0aroot = new C20(root);\x0aroot = new C21(root);\x0aroot = new C22(root);\x0aroot = new C23(root);\x0aconsole.log(JSON.stringify(root).length);\x0a" namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] positions={lineStarts=[0, 25, 50, 68, 69, 102, 211, 212, 255, 382, 384] whereThisIsMade=[25, 45]} functionText="$visibility = \x22Private\x22;\x0aexport function next() {\x0a    \x22use strict\x22;\x0a\x0a    if (!$isArrayIterator(this))\x0a        $throwTypeError(\x22%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance\x22);\x0a\x0a    const step = $stepArrayIterator(this);\x0a    return $makeIteratorResult($resultAt(step, $stepArrayIteratorResultValue), $resultAt(step, $stepArrayIteratorResultDone));\x0a}\x0a" namespaceLayout=L(m1)
+module m2 path="/$bun/js/engine/GeneratorPrototype.ts" displayPath="/$bun/js/engine/GeneratorPrototype.ts" flags=[IsLibrary] positions={lineStarts=[0, 25, 55, 73, 74, 169, 230, 294, 351, 404, 475, 506, 543, 549, 595, 597, 598, 626, 651, 684, 702, 703, 800, 861, 925, 982, 1035, 1108, 1139, 1176, 1182, 1228, 1230, 1231, 1258, 1283, 1319, 1337, 1338, 1438, 1499, 1563, 1620, 1673, 1749, 1780, 1817, 1823, 1869, 1871] whereThisIsMade=[25, 45]} functionText="$visibility = \x22Private\x22;\x0aexport function next(value) {\x0a    \x22use strict\x22;\x0a\x0a    const step = $stepGenerator(this, $resumeModeNext, value, $generatorStepCheckIsGenerator);\x0a    let result = $resultAt(step, $stepGeneratorResultValue);\x0a    const status = $resultAt(step, $stepGeneratorResultStatus);\x0a    let done = status === $generatorStepStatusCompleted;\x0a    if (status === $generatorStepStatusNotStepped) {\x0a        const answer = $resumeGenerator(this, $resumeModeNext, value);\x0a        result = answer.value;\x0a        done = answer.done === true;\x0a    }\x0a    return $makeIteratorResult(result, done);\x0a}\x0a\x0a$overriddenName = \x22return\x22;\x0a$visibility = \x22Private\x22;\x0aexport function return_(value) {\x0a    \x22use strict\x22;\x0a\x0a    const step = $stepGenerator(this, $resumeModeReturn, value, $generatorStepCheckIsGenerator);\x0a    let result = $resultAt(step, $stepGeneratorResultValue);\x0a    const status = $resultAt(step, $stepGeneratorResultStatus);\x0a    let done = status === $generatorStepStatusCompleted;\x0a    if (status === $generatorStepStatusNotStepped) {\x0a        const answer = $resumeGenerator(this, $resumeModeReturn, value);\x0a        result = answer.value;\x0a        done = answer.done === true;\x0a    }\x0a    return $makeIteratorResult(result, done);\x0a}\x0a\x0a$overriddenName = \x22throw\x22;\x0a$visibility = \x22Private\x22;\x0aexport function throw_(exception) {\x0a    \x22use strict\x22;\x0a\x0a    const step = $stepGenerator(this, $resumeModeThrow, exception, $generatorStepCheckIsGenerator);\x0a    let result = $resultAt(step, $stepGeneratorResultValue);\x0a    const status = $resultAt(step, $stepGeneratorResultStatus);\x0a    let done = status === $generatorStepStatusCompleted;\x0a    if (status === $generatorStepStatusNotStepped) {\x0a        const answer = $resumeGenerator(this, $resumeModeThrow, exception);\x0a        result = answer.value;\x0a        done = answer.done === true;\x0a    }\x0a    return $makeIteratorResult(result, done);\x0a}\x0a" namespaceLayout=L(m2)
+module m3 path="/$bun/js/engine/JSIteratorHelperPrototype.ts" displayPath="/$bun/js/engine/JSIteratorHelperPrototype.ts" flags=[IsLibrary] positions={lineStarts=[0, 74, 99, 124, 142, 143, 177, 241, 242, 334, 438, 499, 563, 620, 673, 753, 784, 821, 827, 873, 875, 876, 904, 932, 950, 951, 985, 1049, 1050, 1140, 1192, 1302, 1367, 1435, 1496, 1553, 1639, 1674, 1715, 1725, 1775, 1781, 1782, 1845, 1953, 1990, 2041, 2090, 2092] whereThisIsMade=[99, 119]} functionText="// As in GeneratorPrototype.ts, every path makes the result in one place.\x0a$visibility = \x22Private\x22;\x0aexport function next() {\x0a    \x22use strict\x22;\x0a\x0a    if (!$isIteratorHelper(this))\x0a        $throwTypeError(\x22|this| should be an iterator helper\x22);\x0a\x0a    const generator = $getIteratorHelperInternalField(this, $iteratorHelperFieldGenerator);\x0a    const step = $stepGenerator(generator, $resumeModeNext, undefined, $generatorStepCheckIsGenerator);\x0a    let result = $resultAt(step, $stepGeneratorResultValue);\x0a    const status = $resultAt(step, $stepGeneratorResultStatus);\x0a    let done = status === $generatorStepStatusCompleted;\x0a    if (status === $generatorStepStatusNotStepped) {\x0a        const answer = $resumeGenerator(generator, $resumeModeNext, undefined);\x0a        result = answer.value;\x0a        done = answer.done === true;\x0a    }\x0a    return $makeIteratorResult(result, done);\x0a}\x0a\x0a$overriddenName = \x22return\x22;\x0aexport function return_() {\x0a    \x22use strict\x22;\x0a\x0a    if (!$isIteratorHelper(this))\x0a        $throwTypeError(\x22|this| should be an iterator helper\x22);\x0a\x0a    var generator = $getIteratorHelperInternalField(this, $iteratorHelperFieldGenerator);\x0a    if (!$isGeneratorSuspendedAtStart(generator)) {\x0a        const step = $stepGenerator(generator, $resumeModeReturn, undefined, $generatorStepCheckIsGenerator);\x0a        let result = $resultAt(step, $stepGeneratorResultValue);\x0a        const status = $resultAt(step, $stepGeneratorResultStatus);\x0a        let done = status === $generatorStepStatusCompleted;\x0a        if (status === $generatorStepStatusNotStepped) {\x0a            const answer = $resumeGenerator(generator, $resumeModeReturn, undefined);\x0a            result = answer.value;\x0a            done = answer.done === true;\x0a        }\x0a        return $makeIteratorResult(result, done);\x0a    }\x0a\x0a    $resumeGenerator(generator, $resumeModeReturn, undefined);\x0a    var underlyingIterator = $getIteratorHelperInternalField(this, $iteratorHelperFieldUnderlyingIterator);\x0a    if (underlyingIterator !== null)\x0a        $iteratorGenericClose(underlyingIterator);\x0a    return $makeIteratorResult(undefined, true);\x0a}\x0a" namespaceLayout=L(m3)
+module m4 path="/$bun/js/engine/MapIteratorPrototype.ts" displayPath="/$bun/js/engine/MapIteratorPrototype.ts" flags=[IsLibrary] positions={lineStarts=[0, 25, 50, 68, 69, 100, 204, 205, 246, 373, 375] whereThisIsMade=[25, 45]} functionText="$visibility = \x22Private\x22;\x0aexport function next() {\x0a    \x22use strict\x22;\x0a\x0a    if (!$isMapIterator(this))\x0a        $throwTypeError(\x22%MapIteratorPrototype%.next requires that |this| be a Map Iterator instance\x22);\x0a\x0a    const step = $stepMapIterator(this);\x0a    return $makeIteratorResult($resultAt(step, $stepArrayIteratorResultValue), $resultAt(step, $stepArrayIteratorResultDone));\x0a}\x0a" namespaceLayout=L(m4)
+module m5 path="/$bun/js/engine/SetIteratorPrototype.ts" displayPath="/$bun/js/engine/SetIteratorPrototype.ts" flags=[IsLibrary] positions={lineStarts=[0, 25, 50, 68, 69, 100, 204, 205, 246, 373, 375] whereThisIsMade=[25, 45]} functionText="$visibility = \x22Private\x22;\x0aexport function next() {\x0a    \x22use strict\x22;\x0a\x0a    if (!$isSetIterator(this))\x0a        $throwTypeError(\x22%SetIteratorPrototype%.next requires that |this| be a Set Iterator instance\x22);\x0a\x0a    const step = $stepSetIterator(this);\x0a    return $makeIteratorResult($resultAt(step, $stepArrayIteratorResultValue), $resultAt(step, $stepArrayIteratorResultDone));\x0a}\x0a" namespaceLayout=L(m5)
+module m6 path="/$bun/js/engine/WrapForValidIteratorPrototype.ts" displayPath="/$bun/js/engine/WrapForValidIteratorPrototype.ts" flags=[IsLibrary] positions={lineStarts=[0, 3, 61, 64, 134, 204, 216, 285, 353, 425, 499, 574, 577, 638, 707, 777, 837, 910, 981, 1051, 1122, 1186, 1259, 1331, 1335, 1336, 1421, 1444, 1446, 1464, 1465, 1496, 1554, 1602, 1642, 1770, 1771, 1856, 2053, 2055, 2056, 2143, 2197, 2199, 2217, 2218, 2249, 2307, 2355, 2395, 2523, 2524, 2579, 2687, 2728, 2762, 2825, 2865, 2910, 2970, 3012, 3062, 3111, 3152, 3154] whereThisIsMade=[1421, 1441]} functionText="/*\x0a * Copyright (C) 2024 Sosuke Suzuki <aosukeke@gmail.com>.\x0a *\x0a * Redistribution and use in source and binary forms, with or without\x0a * modification, are permitted provided that the following conditions\x0a * are met:\x0a * 1. Redistributions of source code must retain the above copyright\x0a *    notice, this list of conditions and the following disclaimer.\x0a * 2. Redistributions in binary form must reproduce the above copyright\x0a *    notice, this list of conditions and the following disclaimer in the\x0a *    documentation and/or other materials provided with the distribution.\x0a *\x0a * THIS SOFTWARE IS PROVIDED BY APPLE INC. ``AS IS'' AND ANY\x0a * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE\x0a * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR\x0a * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE INC. OR\x0a * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,\x0a * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,\x0a * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR\x0a * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY\x0a * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT\x0a * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE\x0a * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.\x0a */\x0a\x0a// https://tc39.es/proposal-iterator-helpers/#sec-wrapforvaliditeratorprototype.next\x0aexport function next()\x0a{\x0a    \x22use strict\x22;\x0a\x0a    // 1. Let O be this value.\x0a    // 2. Perform ? RequireInternalSlot(O, [[Iterated]]).\x0a    // 3. Let iteratorRecord be O.[[Iterated]].\x0a    if (!$isWrapForValidIterator(this))\x0a        $throwTypeError(\x22%WrapForValidIteratorPrototype%.next requires that |this| be a WrapForValidIteratorPrototype object\x22);\x0a\x0a    // 4. Return ? Call(iteratorRecord.[[NextMethod]], iteratorRecord.[[Iterator]]).\x0a    return $getWrapForValidIteratorInternalField(this, $wrapForValidIteratorFieldIteratedNextMethod).$call($getWrapForValidIteratorInternalField(this, $wrapForValidIteratorFieldIteratedIterator));\x0a}\x0a\x0a// https://tc39.es/proposal-iterator-helpers/#sec-wrapforvaliditeratorprototype.return\x0a$overriddenName = \x22return\x22; export function return_()\x0a{\x0a    \x22use strict\x22;\x0a\x0a    // 1. Let O be this value.\x0a    // 2. Perform ? RequireInternalSlot(O, [[Iterated]]).\x0a    // 3. Let iteratorRecord be O.[[Iterated]].\x0a    if (!$isWrapForValidIterator(this))\x0a        $throwTypeError(\x22%WrapForValidIteratorPrototype%.next requires that |this| be a WrapForValidIteratorPrototype object\x22);\x0a\x0a    // 3. Let iterator be O.[[Iterated]].[[Iterator]].\x0a    var iterator = $getWrapForValidIteratorInternalField(this, $wrapForValidIteratorFieldIteratedIterator);\x0a    // 4. Assert: iterator is an Object.\x0a    $assert($isObject(iterator));\x0a    // 5. Let returnMethod be ? GetMethod(iterator, \x22return\x22).\x0a    var returnMethod = iterator.return;\x0a    // 6. If returnMethod is undefined, then\x0a    //   a. Return CreateIterResultObject(undefined, true).\x0a    if ($isUndefinedOrNull(returnMethod))\x0a        return { value: $undefined, done: true };\x0a    // 7. Return ? Call(returnMethod, iterator).\x0a    return returnMethod.$call(iterator);\x0a}\x0a" namespaceLayout=L(m6)
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = NewClass v0 layout=L0 @0
+    PutModuleVariable v1 variable=g0 @0
+    v3 = NewClosure function=f2 @82
+    DefineMethod v1, v3 layout=L0 methodKind=Getter key="g0" @82
+    v5 = NewClosure function=f3 @115
+    DefineMethod v1, v5 layout=L0 index=1 key="toJSON" @115
+    v7 = FinishClass v1 layout=L0 @0
+    v8 = Convert v7 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v9 = Convert v7 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v10 = NewClosure function=f4 @177
+    v11 = NewClass v10 layout=L1 @177
+    PutModuleVariable v11 variable=g1 @177
+    v13 = NewClosure function=f5 @259
+    DefineMethod v11, v13 layout=L1 methodKind=Getter key="g1" @259
+    v15 = NewClosure function=f6 @292
+    DefineMethod v11, v15 layout=L1 index=1 key="toJSON" @292
+    v17 = FinishClass v11 layout=L1 @177
+    v18 = Convert v17 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType @177
+    v19 = Convert v17 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType @177
+    v20 = NewClosure function=f7 @354
+    v21 = NewClass v20 layout=L2 @354
+    PutModuleVariable v21 variable=g2 @354
+    v23 = NewClosure function=f8 @436
+    DefineMethod v21, v23 layout=L2 methodKind=Getter key="g2" @436
+    v25 = NewClosure function=f9 @469
+    DefineMethod v21, v25 layout=L2 index=1 key="toJSON" @469
+    v27 = FinishClass v21 layout=L2 @354
+    v28 = Convert v27 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType @354
+    v29 = Convert v27 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType @354
+    v30 = NewClosure function=f10 @531
+    v31 = NewClass v30 layout=L3 @531
+    PutModuleVariable v31 variable=g3 @531
+    v33 = NewClosure function=f11 @613
+    DefineMethod v31, v33 layout=L3 methodKind=Getter key="g3" @613
+    v35 = NewClosure function=f12 @646
+    DefineMethod v31, v35 layout=L3 index=1 key="toJSON" @646
+    v37 = FinishClass v31 layout=L3 @531
+    v38 = Convert v37 declared={type=f10 flags=[IsFromCompiler]} illTypedCause=FromLooseType @531
+    v39 = Convert v37 declared={type=f10 flags=[IsFromCompiler]} illTypedCause=FromLooseType @531
+    v40 = NewClosure function=f13 @708
+    v41 = NewClass v40 layout=L4 @708
+    PutModuleVariable v41 variable=g4 @708
+    v43 = NewClosure function=f14 @790
+    DefineMethod v41, v43 layout=L4 methodKind=Getter key="g4" @790
+    v45 = NewClosure function=f15 @823
+    DefineMethod v41, v45 layout=L4 index=1 key="toJSON" @823
+    v47 = FinishClass v41 layout=L4 @708
+    v48 = Convert v47 declared={type=f13 flags=[IsFromCompiler]} illTypedCause=FromLooseType @708
+    v49 = Convert v47 declared={type=f13 flags=[IsFromCompiler]} illTypedCause=FromLooseType @708
+    v50 = NewClosure function=f16 @885
+    v51 = NewClass v50 layout=L5 @885
+    PutModuleVariable v51 variable=g5 @885
+    v53 = NewClosure function=f17 @967
+    DefineMethod v51, v53 layout=L5 methodKind=Getter key="g5" @967
+    v55 = NewClosure function=f18 @1000
+    DefineMethod v51, v55 layout=L5 index=1 key="toJSON" @1000
+    v57 = FinishClass v51 layout=L5 @885
+    v58 = Convert v57 declared={type=f16 flags=[IsFromCompiler]} illTypedCause=FromLooseType @885
+    v59 = Convert v57 declared={type=f16 flags=[IsFromCompiler]} illTypedCause=FromLooseType @885
+    v60 = NewClosure function=f19 @1062
+    v61 = NewClass v60 layout=L6 @1062
+    PutModuleVariable v61 variable=g6 @1062
+    v63 = NewClosure function=f20 @1144
+    DefineMethod v61, v63 layout=L6 methodKind=Getter key="g6" @1144
+    v65 = NewClosure function=f21 @1177
+    DefineMethod v61, v65 layout=L6 index=1 key="toJSON" @1177
+    v67 = FinishClass v61 layout=L6 @1062
+    v68 = Convert v67 declared={type=f19 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1062
+    v69 = Convert v67 declared={type=f19 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1062
+    v70 = NewClosure function=f22 @1239
+    v71 = NewClass v70 layout=L7 @1239
+    PutModuleVariable v71 variable=g7 @1239
+    v73 = NewClosure function=f23 @1321
+    DefineMethod v71, v73 layout=L7 methodKind=Getter key="g7" @1321
+    v75 = NewClosure function=f24 @1354
+    DefineMethod v71, v75 layout=L7 index=1 key="toJSON" @1354
+    v77 = FinishClass v71 layout=L7 @1239
+    v78 = Convert v77 declared={type=f22 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1239
+    v79 = Convert v77 declared={type=f22 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1239
+    v80 = NewClosure function=f25 @1416
+    v81 = NewClass v80 layout=L8 @1416
+    PutModuleVariable v81 variable=g8 @1416
+    v83 = NewClosure function=f26 @1498
+    DefineMethod v81, v83 layout=L8 methodKind=Getter key="g8" @1498
+    v85 = NewClosure function=f27 @1531
+    DefineMethod v81, v85 layout=L8 index=1 key="toJSON" @1531
+    v87 = FinishClass v81 layout=L8 @1416
+    v88 = Convert v87 declared={type=f25 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1416
+    v89 = Convert v87 declared={type=f25 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1416
+    v90 = NewClosure function=f28 @1593
+    v91 = NewClass v90 layout=L9 @1593
+    PutModuleVariable v91 variable=g9 @1593
+    v93 = NewClosure function=f29 @1675
+    DefineMethod v91, v93 layout=L9 methodKind=Getter key="g9" @1675
+    v95 = NewClosure function=f30 @1708
+    DefineMethod v91, v95 layout=L9 index=1 key="toJSON" @1708
+    v97 = FinishClass v91 layout=L9 @1593
+    v98 = Convert v97 declared={type=f28 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1593
+    v99 = Convert v97 declared={type=f28 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1593
+    v100 = NewClosure function=f31 @1770
+    v101 = NewClass v100 layout=L10 @1770
+    PutModuleVariable v101 variable=g10 @1770
+    v103 = NewClosure function=f32 @1855
+    DefineMethod v101, v103 layout=L10 methodKind=Getter key="g10" @1855
+    v105 = NewClosure function=f33 @1890
+    DefineMethod v101, v105 layout=L10 index=1 key="toJSON" @1890
+    v107 = FinishClass v101 layout=L10 @1770
+    v108 = Convert v107 declared={type=f31 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1770
+    v109 = Convert v107 declared={type=f31 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1770
+    v110 = NewClosure function=f34 @1954
+    v111 = NewClass v110 layout=L11 @1954
+    PutModuleVariable v111 variable=g11 @1954
+    v113 = NewClosure function=f35 @2039
+    DefineMethod v111, v113 layout=L11 methodKind=Getter key="g11" @2039
+    v115 = NewClosure function=f36 @2074
+    DefineMethod v111, v115 layout=L11 index=1 key="toJSON" @2074
+    v117 = FinishClass v111 layout=L11 @1954
+    v118 = Convert v117 declared={type=f34 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1954
+    v119 = Convert v117 declared={type=f34 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1954
+    v120 = NewClosure function=f37 @2138
+    v121 = NewClass v120 layout=L12 @2138
+    PutModuleVariable v121 variable=g12 @2138
+    v123 = NewClosure function=f38 @2223
+    DefineMethod v121, v123 layout=L12 methodKind=Getter key="g12" @2223
+    v125 = NewClosure function=f39 @2258
+    DefineMethod v121, v125 layout=L12 index=1 key="toJSON" @2258
+    v127 = FinishClass v121 layout=L12 @2138
+    v128 = Convert v127 declared={type=f37 flags=[IsFromCompiler]} illTypedCause=FromLooseType @2138
+    v129 = Convert v127 declared={type=f37 flags=[IsFromCompiler]} illTypedCause=FromLooseType @2138
+    v130 = NewClosure function=f40 @2322
+    v131 = NewClass v130 layout=L13 @2322
+    PutModuleVariable v131 variable=g13 @2322
+    v133 = NewClosure function=f41 @2407
+    DefineMethod v131, v133 layout=L13 methodKind=Getter key="g13" @2407
+    v135 = NewClosure function=f42 @2442
+    DefineMethod v131, v135 layout=L13 index=1 key="toJSON" @2442
+    v137 = FinishClass v131 layout=L13 @2322
+    v138 = Convert v137 declared={type=f40 flags=[IsFromCompiler]} illTypedCause=FromLooseType @2322
+    v139 = Convert v137 declared={type=f40 flags=[IsFromCompiler]} illTypedCause=FromLooseType @2322
+    v140 = NewClosure function=f43 @2506
+    v141 = NewClass v140 layout=L14 @2506
+    PutModuleVariable v141 variable=g14 @2506
+    v143 = NewClosure function=f44 @2591
+    DefineMethod v141, v143 layout=L14 methodKind=Getter key="g14" @2591
+    v145 = NewClosure function=f45 @2626
+    DefineMethod v141, v145 layout=L14 index=1 key="toJSON" @2626
+    v147 = FinishClass v141 layout=L14 @2506
+    v148 = Convert v147 declared={type=f43 flags=[IsFromCompiler]} illTypedCause=FromLooseType @2506
+    v149 = Convert v147 declared={type=f43 flags=[IsFromCompiler]} illTypedCause=FromLooseType @2506
+    v150 = NewClosure function=f46 @2690
+    v151 = NewClass v150 layout=L15 @2690
+    PutModuleVariable v151 variable=g15 @2690
+    v153 = NewClosure function=f47 @2775
+    DefineMethod v151, v153 layout=L15 methodKind=Getter key="g15" @2775
+    v155 = NewClosure function=f48 @2810
+    DefineMethod v151, v155 layout=L15 index=1 key="toJSON" @2810
+    v157 = FinishClass v151 layout=L15 @2690
+    v158 = Convert v157 declared={type=f46 flags=[IsFromCompiler]} illTypedCause=FromLooseType @2690
+    v159 = Convert v157 declared={type=f46 flags=[IsFromCompiler]} illTypedCause=FromLooseType @2690
+    v160 = NewClosure function=f49 @2874
+    v161 = NewClass v160 layout=L16 @2874
+    PutModuleVariable v161 variable=g16 @2874
+    v163 = NewClosure function=f50 @2959
+    DefineMethod v161, v163 layout=L16 methodKind=Getter key="g16" @2959
+    v165 = NewClosure function=f51 @2994
+    DefineMethod v161, v165 layout=L16 index=1 key="toJSON" @2994
+    v167 = FinishClass v161 layout=L16 @2874
+    v168 = Convert v167 declared={type=f49 flags=[IsFromCompiler]} illTypedCause=FromLooseType @2874
+    v169 = Convert v167 declared={type=f49 flags=[IsFromCompiler]} illTypedCause=FromLooseType @2874
+    v170 = NewClosure function=f52 @3058
+    v171 = NewClass v170 layout=L17 @3058
+    PutModuleVariable v171 variable=g17 @3058
+    v173 = NewClosure function=f53 @3143
+    DefineMethod v171, v173 layout=L17 methodKind=Getter key="g17" @3143
+    v175 = NewClosure function=f54 @3178
+    DefineMethod v171, v175 layout=L17 index=1 key="toJSON" @3178
+    v177 = FinishClass v171 layout=L17 @3058
+    v178 = Convert v177 declared={type=f52 flags=[IsFromCompiler]} illTypedCause=FromLooseType @3058
+    v179 = Convert v177 declared={type=f52 flags=[IsFromCompiler]} illTypedCause=FromLooseType @3058
+    v180 = NewClosure function=f55 @3242
+    v181 = NewClass v180 layout=L18 @3242
+    PutModuleVariable v181 variable=g18 @3242
+    v183 = NewClosure function=f56 @3327
+    DefineMethod v181, v183 layout=L18 methodKind=Getter key="g18" @3327
+    v185 = NewClosure function=f57 @3362
+    DefineMethod v181, v185 layout=L18 index=1 key="toJSON" @3362
+    v187 = FinishClass v181 layout=L18 @3242
+    v188 = Convert v187 declared={type=f55 flags=[IsFromCompiler]} illTypedCause=FromLooseType @3242
+    v189 = Convert v187 declared={type=f55 flags=[IsFromCompiler]} illTypedCause=FromLooseType @3242
+    v190 = NewClosure function=f58 @3426
+    v191 = NewClass v190 layout=L19 @3426
+    PutModuleVariable v191 variable=g19 @3426
+    v193 = NewClosure function=f59 @3511
+    DefineMethod v191, v193 layout=L19 methodKind=Getter key="g19" @3511
+    v195 = NewClosure function=f60 @3546
+    DefineMethod v191, v195 layout=L19 index=1 key="toJSON" @3546
+    v197 = FinishClass v191 layout=L19 @3426
+    v198 = Convert v197 declared={type=f58 flags=[IsFromCompiler]} illTypedCause=FromLooseType @3426
+    v199 = Convert v197 declared={type=f58 flags=[IsFromCompiler]} illTypedCause=FromLooseType @3426
+    v200 = NewClosure function=f61 @3610
+    v201 = NewClass v200 layout=L20 @3610
+    PutModuleVariable v201 variable=g20 @3610
+    v203 = NewClosure function=f62 @3695
+    DefineMethod v201, v203 layout=L20 methodKind=Getter key="g20" @3695
+    v205 = NewClosure function=f63 @3730
+    DefineMethod v201, v205 layout=L20 index=1 key="toJSON" @3730
+    v207 = FinishClass v201 layout=L20 @3610
+    v208 = Convert v207 declared={type=f61 flags=[IsFromCompiler]} illTypedCause=FromLooseType @3610
+    v209 = Convert v207 declared={type=f61 flags=[IsFromCompiler]} illTypedCause=FromLooseType @3610
+    v210 = NewClosure function=f64 @3794
+    v211 = NewClass v210 layout=L21 @3794
+    PutModuleVariable v211 variable=g21 @3794
+    v213 = NewClosure function=f65 @3879
+    DefineMethod v211, v213 layout=L21 methodKind=Getter key="g21" @3879
+    v215 = NewClosure function=f66 @3914
+    DefineMethod v211, v215 layout=L21 index=1 key="toJSON" @3914
+    v217 = FinishClass v211 layout=L21 @3794
+    v218 = Convert v217 declared={type=f64 flags=[IsFromCompiler]} illTypedCause=FromLooseType @3794
+    v219 = Convert v217 declared={type=f64 flags=[IsFromCompiler]} illTypedCause=FromLooseType @3794
+    v220 = NewClosure function=f67 @3978
+    v221 = NewClass v220 layout=L22 @3978
+    PutModuleVariable v221 variable=g22 @3978
+    v223 = NewClosure function=f68 @4063
+    DefineMethod v221, v223 layout=L22 methodKind=Getter key="g22" @4063
+    v225 = NewClosure function=f69 @4098
+    DefineMethod v221, v225 layout=L22 index=1 key="toJSON" @4098
+    v227 = FinishClass v221 layout=L22 @3978
+    v228 = Convert v227 declared={type=f67 flags=[IsFromCompiler]} illTypedCause=FromLooseType @3978
+    v229 = Convert v227 declared={type=f67 flags=[IsFromCompiler]} illTypedCause=FromLooseType @3978
+    v230 = NewClosure function=f70 @4162
+    v231 = NewClass v230 layout=L23 @4162
+    PutModuleVariable v231 variable=g23 @4162
+    v233 = NewClosure function=f71 @4247
+    DefineMethod v231, v233 layout=L23 methodKind=Getter key="g23" @4247
+    v235 = NewClosure function=f72 @4282
+    DefineMethod v231, v235 layout=L23 index=1 key="toJSON" @4282
+    v237 = FinishClass v231 layout=L23 @4162
+    v238 = Convert v237 declared={type=f70 flags=[IsFromCompiler]} illTypedCause=FromLooseType @4162
+    v239 = Convert v237 declared={type=f70 flags=[IsFromCompiler]} illTypedCause=FromLooseType @4162
+    v240 = Null @4357
+    v241 = Convert v240 declared={type=undefined|null|L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23 flags=[IsExpected]} @4357
+    v242 = Convert v241 declared={type=null flags=[IsExpected]} @4377
+    v243 = Construct v9, -, v242 calleeName="C0" @4374 constructs
+    v244 = Convert v243 declared={type=undefined|null|L0 flags=[IsExpected]} @4370
+    v245 = Convert v244 declared={type=undefined|null|L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23 flags=[IsExpected]} @4363
+    v246 = Convert v245 declared={type=undefined|null|L0 flags=[IsExpected]} @4398
+    v247 = Construct v19, -, v246 calleeName="C1" @4395 constructs
+    v248 = Convert v247 declared={type=undefined|null|L1 flags=[IsExpected]} @4391
+    v249 = Convert v248 declared={type=undefined|null|L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23 flags=[IsExpected]} @4384
+    v250 = Convert v249 declared={type=undefined|null|L1 flags=[IsExpected]} @4419
+    v251 = Construct v29, -, v250 calleeName="C2" @4416 constructs
+    v252 = Convert v251 declared={type=undefined|null|L2 flags=[IsExpected]} @4412
+    v253 = Convert v252 declared={type=undefined|null|L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23 flags=[IsExpected]} @4405
+    v254 = Convert v253 declared={type=undefined|null|L2 flags=[IsExpected]} @4440
+    v255 = Construct v39, -, v254 calleeName="C3" @4437 constructs
+    v256 = Convert v255 declared={type=undefined|null|L3 flags=[IsExpected]} @4433
+    v257 = Convert v256 declared={type=undefined|null|L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23 flags=[IsExpected]} @4426
+    v258 = Convert v257 declared={type=undefined|null|L3 flags=[IsExpected]} @4461
+    v259 = Construct v49, -, v258 calleeName="C4" @4458 constructs
+    v260 = Convert v259 declared={type=undefined|null|L4 flags=[IsExpected]} @4454
+    v261 = Convert v260 declared={type=undefined|null|L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23 flags=[IsExpected]} @4447
+    v262 = Convert v261 declared={type=undefined|null|L4 flags=[IsExpected]} @4482
+    v263 = Construct v59, -, v262 calleeName="C5" @4479 constructs
+    v264 = Convert v263 declared={type=undefined|null|L5 flags=[IsExpected]} @4475
+    v265 = Convert v264 declared={type=undefined|null|L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23 flags=[IsExpected]} @4468
+    v266 = Convert v265 declared={type=undefined|null|L5 flags=[IsExpected]} @4503
+    v267 = Construct v69, -, v266 calleeName="C6" @4500 constructs
+    v268 = Convert v267 declared={type=undefined|null|L6 flags=[IsExpected]} @4496
+    v269 = Convert v268 declared={type=undefined|null|L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23 flags=[IsExpected]} @4489
+    v270 = Convert v269 declared={type=undefined|null|L6 flags=[IsExpected]} @4524
+    v271 = Construct v79, -, v270 calleeName="C7" @4521 constructs
+    v272 = Convert v271 declared={type=undefined|null|L7 flags=[IsExpected]} @4517
+    v273 = Convert v272 declared={type=undefined|null|L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23 flags=[IsExpected]} @4510
+    v274 = Convert v273 declared={type=undefined|null|L7 flags=[IsExpected]} @4545
+    v275 = Construct v89, -, v274 calleeName="C8" @4542 constructs
+    v276 = Convert v275 declared={type=undefined|null|L8 flags=[IsExpected]} @4538
+    v277 = Convert v276 declared={type=undefined|null|L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23 flags=[IsExpected]} @4531
+    v278 = Convert v277 declared={type=undefined|null|L8 flags=[IsExpected]} @4566
+    v279 = Construct v99, -, v278 calleeName="C9" @4563 constructs
+    v280 = Convert v279 declared={type=undefined|null|L9 flags=[IsExpected]} @4559
+    v281 = Convert v280 declared={type=undefined|null|L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23 flags=[IsExpected]} @4552
+    v282 = Convert v281 declared={type=undefined|null|L9 flags=[IsExpected]} @4588
+    v283 = Construct v109, -, v282 calleeName="C10" @4584 constructs
+    v284 = Convert v283 declared={type=undefined|null|L10 flags=[IsExpected]} @4580
+    v285 = Convert v284 declared={type=undefined|null|L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23 flags=[IsExpected]} @4573
+    v286 = Convert v285 declared={type=undefined|null|L10 flags=[IsExpected]} @4610
+    v287 = Construct v119, -, v286 calleeName="C11" @4606 constructs
+    v288 = Convert v287 declared={type=undefined|null|L11 flags=[IsExpected]} @4602
+    v289 = Convert v288 declared={type=undefined|null|L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23 flags=[IsExpected]} @4595
+    v290 = Convert v289 declared={type=undefined|null|L11 flags=[IsExpected]} @4632
+    v291 = Construct v129, -, v290 calleeName="C12" @4628 constructs
+    v292 = Convert v291 declared={type=undefined|null|L12 flags=[IsExpected]} @4624
+    v293 = Convert v292 declared={type=undefined|null|L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23 flags=[IsExpected]} @4617
+    v294 = Convert v293 declared={type=undefined|null|L12 flags=[IsExpected]} @4654
+    v295 = Construct v139, -, v294 calleeName="C13" @4650 constructs
+    v296 = Convert v295 declared={type=undefined|null|L13 flags=[IsExpected]} @4646
+    v297 = Convert v296 declared={type=undefined|null|L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23 flags=[IsExpected]} @4639
+    v298 = Convert v297 declared={type=undefined|null|L13 flags=[IsExpected]} @4676
+    v299 = Construct v149, -, v298 calleeName="C14" @4672 constructs
+    v300 = Convert v299 declared={type=undefined|null|L14 flags=[IsExpected]} @4668
+    v301 = Convert v300 declared={type=undefined|null|L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23 flags=[IsExpected]} @4661
+    v302 = Convert v301 declared={type=undefined|null|L14 flags=[IsExpected]} @4698
+    v303 = Construct v159, -, v302 calleeName="C15" @4694 constructs
+    v304 = Convert v303 declared={type=undefined|null|L15 flags=[IsExpected]} @4690
+    v305 = Convert v304 declared={type=undefined|null|L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23 flags=[IsExpected]} @4683
+    v306 = Convert v305 declared={type=undefined|null|L15 flags=[IsExpected]} @4720
+    v307 = Construct v169, -, v306 calleeName="C16" @4716 constructs
+    v308 = Convert v307 declared={type=undefined|null|L16 flags=[IsExpected]} @4712
+    v309 = Convert v308 declared={type=undefined|null|L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23 flags=[IsExpected]} @4705
+    v310 = Convert v309 declared={type=undefined|null|L16 flags=[IsExpected]} @4742
+    v311 = Construct v179, -, v310 calleeName="C17" @4738 constructs
+    v312 = Convert v311 declared={type=undefined|null|L17 flags=[IsExpected]} @4734
+    v313 = Convert v312 declared={type=undefined|null|L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23 flags=[IsExpected]} @4727
+    v314 = Convert v313 declared={type=undefined|null|L17 flags=[IsExpected]} @4764
+    v315 = Construct v189, -, v314 calleeName="C18" @4760 constructs
+    v316 = Convert v315 declared={type=undefined|null|L18 flags=[IsExpected]} @4756
+    v317 = Convert v316 declared={type=undefined|null|L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23 flags=[IsExpected]} @4749
+    v318 = Convert v317 declared={type=undefined|null|L18 flags=[IsExpected]} @4786
+    v319 = Construct v199, -, v318 calleeName="C19" @4782 constructs
+    v320 = Convert v319 declared={type=undefined|null|L19 flags=[IsExpected]} @4778
+    v321 = Convert v320 declared={type=undefined|null|L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23 flags=[IsExpected]} @4771
+    v322 = Convert v321 declared={type=undefined|null|L19 flags=[IsExpected]} @4808
+    v323 = Construct v209, -, v322 calleeName="C20" @4804 constructs
+    v324 = Convert v323 declared={type=undefined|null|L20 flags=[IsExpected]} @4800
+    v325 = Convert v324 declared={type=undefined|null|L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23 flags=[IsExpected]} @4793
+    v326 = Convert v325 declared={type=undefined|null|L20 flags=[IsExpected]} @4830
+    v327 = Construct v219, -, v326 calleeName="C21" @4826 constructs
+    v328 = Convert v327 declared={type=undefined|null|L21 flags=[IsExpected]} @4822
+    v329 = Convert v328 declared={type=undefined|null|L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23 flags=[IsExpected]} @4815
+    v330 = Convert v329 declared={type=undefined|null|L21 flags=[IsExpected]} @4852
+    v331 = Construct v229, -, v330 calleeName="C22" @4848 constructs
+    v332 = Convert v331 declared={type=undefined|null|L22 flags=[IsExpected]} @4844
+    v333 = Convert v332 declared={type=undefined|null|L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23 flags=[IsExpected]} @4837
+    v334 = Convert v333 declared={type=undefined|null|L22 flags=[IsExpected]} @4874
+    v335 = Construct v239, -, v334 calleeName="C23" @4870 constructs
+    v336 = Convert v335 declared={type=undefined|null|L23 flags=[IsExpected]} @4866
+    v337 = Convert v336 declared={type=undefined|null|L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23 flags=[IsExpected]} @4859
+    v338 = Builtin builtin=GlobalThis @4881
+    v339 = PropGet v338 key="console" [isFreeName] @4881
+    v340 = Convert v339 declared={type=builtin(Console) flags=[IsExpected]} @4881
+    v341 = PropGet v340 key="log" @4881
+    v342 = Convert v341 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @4881
+    v343 = Builtin builtin=JSON @4893
+    v344 = PropGet v343 key="stringify" @4893
+    v345 = Convert v344 declared={type=builtin(JSONStringify) flags=[IsExpected]} @4893
+    v346 = Convert v337 declared={type=undefined|null|L23 flags=[IsExpected]} @4908
+    v347 = Call v345, v343, v346 calleeKey="stringify" calleeName="JSON.stringify" @4898
+    v348 = Convert v347 declared={type=undefined|null|string flags=[IsExpected]} @4893
+    v349 = PropGet v348 key="length" @4912
+    v350 = Convert v349 declared={type=number flags=[IsExpected]} @4893
+    v351 = Call v342, v340, v350 calleeKey="log" calleeName="console.log" @4889
+    v352 = Undefined @4881
+    Return v352 @4881
+}
+function f1 name="C0" module=m0 position=24 text={end=176} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @24
+  b1():
+    v2 = GetConstructPrototype v0 layout=L0 @49
+    v3 = NewObject v2 layout=L0 @49
+    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @49
+    v5 = Convert v4 declared={type=undefined|null|L0 flags=[IsExpected]} @37
+    PropSet v5, v1 key="next" @37
+    v7 = Convert v4 declared={type=undefined|null|L0 flags=[IsExpected]} @59
+    v8 = Integer @69
+    v9 = Convert v8 declared={type=number flags=[IsExpected]} @59
+    PropSet v7, v9 key="v0" @59
+    v11 = Undefined @59
+    v12 = TypeTest v11 testedType=object @59
+    Branch v12 -> taken b2(| 0), notTaken b3(| 0) @59
+  b2(v13):
+    Jump -> next b4(v13) @59
+  b3(v14):
+    Jump -> next b4(v4) @59
+  b4(v15):
+    Return v15 @59
+}
+function f2 name="g0" module=m0 position=78 text={start=78 end=112} kind=Getter flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    Jump -> next b1() @78
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L0 flags=[IsExpected]} @100
+    v2 = PropGet v1 key="v0" @100
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @100
+    Return v3 @100
+}
+function f3 name="toJSON" module=m0 position=115 text={start=115 end=174} kind=Method flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=undefined|null|L24 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    Jump -> next b1() @115
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L0 flags=[IsExpected]} @143
+    v2 = PropGet v1 key="v0" @143
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @143
+    v4 = NewObject layout=L24 @139
+    PropDefine v4, v3 key="k0" @139
+    v6 = Convert v0 declared={type=undefined|null|L0 flags=[IsExpected]} @158
+    v7 = PropGet v6 key="next" @158
+    PropDefine v4, v7 key="next" @152
+    v9 = FinishObject v4 @137
+    v10 = Convert v9 declared={type=undefined|null|L24 flags=[IsExpected]} @137
+    Return v10 @137
+}
+function f4 name="C1" module=m0 position=201 text={start=177 end=353} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @201
+  b1():
+    v2 = GetConstructPrototype v0 layout=L1 @226
+    v3 = NewObject v2 layout=L1 @226
+    v4 = Convert v3 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @226
+    v5 = Convert v4 declared={type=undefined|null|L1 flags=[IsExpected]} @214
+    PropSet v5, v1 key="next" @214
+    v7 = Convert v4 declared={type=undefined|null|L1 flags=[IsExpected]} @236
+    v8 = Integer integer=1 @246
+    v9 = Convert v8 declared={type=number flags=[IsExpected]} @236
+    PropSet v7, v9 key="v1" @236
+    v11 = Undefined @236
+    v12 = TypeTest v11 testedType=object @236
+    Branch v12 -> taken b2(| 0), notTaken b3(| 0) @236
+  b2(v13):
+    Jump -> next b4(v13) @236
+  b3(v14):
+    Jump -> next b4(v4) @236
+  b4(v15):
+    Return v15 @236
+}
+function f5 name="g1" module=m0 position=255 text={start=255 end=289} kind=Getter flags=[HasThis, HasExplicitName] thisType={type=L1 flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L1):
+    Jump -> next b1() @255
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L1 flags=[IsExpected]} @277
+    v2 = PropGet v1 key="v1" @277
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @277
+    Return v3 @277
+}
+function f6 name="toJSON" module=m0 position=292 text={start=292 end=351} kind=Method flags=[HasThis, HasExplicitName] thisType={type=L1 flags=[IsExpected]} results=[{type=undefined|null|L25 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L1):
+    Jump -> next b1() @292
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L1 flags=[IsExpected]} @320
+    v2 = PropGet v1 key="v1" @320
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @320
+    v4 = NewObject layout=L25 @316
+    PropDefine v4, v3 key="k1" @316
+    v6 = Convert v0 declared={type=undefined|null|L1 flags=[IsExpected]} @335
+    v7 = PropGet v6 key="next" @335
+    PropDefine v4, v7 key="next" @329
+    v9 = FinishObject v4 @314
+    v10 = Convert v9 declared={type=undefined|null|L25 flags=[IsExpected]} @314
+    Return v10 @314
+}
+function f7 name="C2" module=m0 position=378 text={start=354 end=530} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @378
+  b1():
+    v2 = GetConstructPrototype v0 layout=L2 @403
+    v3 = NewObject v2 layout=L2 @403
+    v4 = Convert v3 declared={type=L2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @403
+    v5 = Convert v4 declared={type=undefined|null|L2 flags=[IsExpected]} @391
+    PropSet v5, v1 key="next" @391
+    v7 = Convert v4 declared={type=undefined|null|L2 flags=[IsExpected]} @413
+    v8 = Integer integer=2 @423
+    v9 = Convert v8 declared={type=number flags=[IsExpected]} @413
+    PropSet v7, v9 key="v2" @413
+    v11 = Undefined @413
+    v12 = TypeTest v11 testedType=object @413
+    Branch v12 -> taken b2(| 0), notTaken b3(| 0) @413
+  b2(v13):
+    Jump -> next b4(v13) @413
+  b3(v14):
+    Jump -> next b4(v4) @413
+  b4(v15):
+    Return v15 @413
+}
+function f8 name="g2" module=m0 position=432 text={start=432 end=466} kind=Getter flags=[HasThis, HasExplicitName] thisType={type=L2 flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L2):
+    Jump -> next b1() @432
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L2 flags=[IsExpected]} @454
+    v2 = PropGet v1 key="v2" @454
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @454
+    Return v3 @454
+}
+function f9 name="toJSON" module=m0 position=469 text={start=469 end=528} kind=Method flags=[HasThis, HasExplicitName] thisType={type=L2 flags=[IsExpected]} results=[{type=undefined|null|L26 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L2):
+    Jump -> next b1() @469
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L2 flags=[IsExpected]} @497
+    v2 = PropGet v1 key="v2" @497
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @497
+    v4 = NewObject layout=L26 @493
+    PropDefine v4, v3 key="k2" @493
+    v6 = Convert v0 declared={type=undefined|null|L2 flags=[IsExpected]} @512
+    v7 = PropGet v6 key="next" @512
+    PropDefine v4, v7 key="next" @506
+    v9 = FinishObject v4 @491
+    v10 = Convert v9 declared={type=undefined|null|L26 flags=[IsExpected]} @491
+    Return v10 @491
+}
+function f10 name="C3" module=m0 position=555 text={start=531 end=707} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L3 {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @555
+  b1():
+    v2 = GetConstructPrototype v0 layout=L3 @580
+    v3 = NewObject v2 layout=L3 @580
+    v4 = Convert v3 declared={type=L3 flags=[IsFromCompiler]} illTypedCause=FromLooseType @580
+    v5 = Convert v4 declared={type=undefined|null|L3 flags=[IsExpected]} @568
+    PropSet v5, v1 key="next" @568
+    v7 = Convert v4 declared={type=undefined|null|L3 flags=[IsExpected]} @590
+    v8 = Integer integer=3 @600
+    v9 = Convert v8 declared={type=number flags=[IsExpected]} @590
+    PropSet v7, v9 key="v3" @590
+    v11 = Undefined @590
+    v12 = TypeTest v11 testedType=object @590
+    Branch v12 -> taken b2(| 0), notTaken b3(| 0) @590
+  b2(v13):
+    Jump -> next b4(v13) @590
+  b3(v14):
+    Jump -> next b4(v4) @590
+  b4(v15):
+    Return v15 @590
+}
+function f11 name="g3" module=m0 position=609 text={start=609 end=643} kind=Getter flags=[HasThis, HasExplicitName] thisType={type=L3 flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L3):
+    Jump -> next b1() @609
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L3 flags=[IsExpected]} @631
+    v2 = PropGet v1 key="v3" @631
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @631
+    Return v3 @631
+}
+function f12 name="toJSON" module=m0 position=646 text={start=646 end=705} kind=Method flags=[HasThis, HasExplicitName] thisType={type=L3 flags=[IsExpected]} results=[{type=undefined|null|L27 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L3):
+    Jump -> next b1() @646
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L3 flags=[IsExpected]} @674
+    v2 = PropGet v1 key="v3" @674
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @674
+    v4 = NewObject layout=L27 @670
+    PropDefine v4, v3 key="k3" @670
+    v6 = Convert v0 declared={type=undefined|null|L3 flags=[IsExpected]} @689
+    v7 = PropGet v6 key="next" @689
+    PropDefine v4, v7 key="next" @683
+    v9 = FinishObject v4 @668
+    v10 = Convert v9 declared={type=undefined|null|L27 flags=[IsExpected]} @668
+    Return v10 @668
+}
+function f13 name="C4" module=m0 position=732 text={start=708 end=884} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L4 {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @732
+  b1():
+    v2 = GetConstructPrototype v0 layout=L4 @757
+    v3 = NewObject v2 layout=L4 @757
+    v4 = Convert v3 declared={type=L4 flags=[IsFromCompiler]} illTypedCause=FromLooseType @757
+    v5 = Convert v4 declared={type=undefined|null|L4 flags=[IsExpected]} @745
+    PropSet v5, v1 key="next" @745
+    v7 = Convert v4 declared={type=undefined|null|L4 flags=[IsExpected]} @767
+    v8 = Integer integer=4 @777
+    v9 = Convert v8 declared={type=number flags=[IsExpected]} @767
+    PropSet v7, v9 key="v4" @767
+    v11 = Undefined @767
+    v12 = TypeTest v11 testedType=object @767
+    Branch v12 -> taken b2(| 0), notTaken b3(| 0) @767
+  b2(v13):
+    Jump -> next b4(v13) @767
+  b3(v14):
+    Jump -> next b4(v4) @767
+  b4(v15):
+    Return v15 @767
+}
+function f14 name="g4" module=m0 position=786 text={start=786 end=820} kind=Getter flags=[HasThis, HasExplicitName] thisType={type=L4 flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L4):
+    Jump -> next b1() @786
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L4 flags=[IsExpected]} @808
+    v2 = PropGet v1 key="v4" @808
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @808
+    Return v3 @808
+}
+function f15 name="toJSON" module=m0 position=823 text={start=823 end=882} kind=Method flags=[HasThis, HasExplicitName] thisType={type=L4 flags=[IsExpected]} results=[{type=undefined|null|L28 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L4):
+    Jump -> next b1() @823
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L4 flags=[IsExpected]} @851
+    v2 = PropGet v1 key="v4" @851
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @851
+    v4 = NewObject layout=L28 @847
+    PropDefine v4, v3 key="k4" @847
+    v6 = Convert v0 declared={type=undefined|null|L4 flags=[IsExpected]} @866
+    v7 = PropGet v6 key="next" @866
+    PropDefine v4, v7 key="next" @860
+    v9 = FinishObject v4 @845
+    v10 = Convert v9 declared={type=undefined|null|L28 flags=[IsExpected]} @845
+    Return v10 @845
+}
+function f16 name="C5" module=m0 position=909 text={start=885 end=1061} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L5 {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @909
+  b1():
+    v2 = GetConstructPrototype v0 layout=L5 @934
+    v3 = NewObject v2 layout=L5 @934
+    v4 = Convert v3 declared={type=L5 flags=[IsFromCompiler]} illTypedCause=FromLooseType @934
+    v5 = Convert v4 declared={type=undefined|null|L5 flags=[IsExpected]} @922
+    PropSet v5, v1 key="next" @922
+    v7 = Convert v4 declared={type=undefined|null|L5 flags=[IsExpected]} @944
+    v8 = Integer integer=5 @954
+    v9 = Convert v8 declared={type=number flags=[IsExpected]} @944
+    PropSet v7, v9 key="v5" @944
+    v11 = Undefined @944
+    v12 = TypeTest v11 testedType=object @944
+    Branch v12 -> taken b2(| 0), notTaken b3(| 0) @944
+  b2(v13):
+    Jump -> next b4(v13) @944
+  b3(v14):
+    Jump -> next b4(v4) @944
+  b4(v15):
+    Return v15 @944
+}
+function f17 name="g5" module=m0 position=963 text={start=963 end=997} kind=Getter flags=[HasThis, HasExplicitName] thisType={type=L5 flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L5):
+    Jump -> next b1() @963
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L5 flags=[IsExpected]} @985
+    v2 = PropGet v1 key="v5" @985
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @985
+    Return v3 @985
+}
+function f18 name="toJSON" module=m0 position=1000 text={start=1000 end=1059} kind=Method flags=[HasThis, HasExplicitName] thisType={type=L5 flags=[IsExpected]} results=[{type=undefined|null|L29 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L5):
+    Jump -> next b1() @1000
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L5 flags=[IsExpected]} @1028
+    v2 = PropGet v1 key="v5" @1028
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @1028
+    v4 = NewObject layout=L29 @1024
+    PropDefine v4, v3 key="k5" @1024
+    v6 = Convert v0 declared={type=undefined|null|L5 flags=[IsExpected]} @1043
+    v7 = PropGet v6 key="next" @1043
+    PropDefine v4, v7 key="next" @1037
+    v9 = FinishObject v4 @1022
+    v10 = Convert v9 declared={type=undefined|null|L29 flags=[IsExpected]} @1022
+    Return v10 @1022
+}
+function f19 name="C6" module=m0 position=1086 text={start=1062 end=1238} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L6 {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @1086
+  b1():
+    v2 = GetConstructPrototype v0 layout=L6 @1111
+    v3 = NewObject v2 layout=L6 @1111
+    v4 = Convert v3 declared={type=L6 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1111
+    v5 = Convert v4 declared={type=undefined|null|L6 flags=[IsExpected]} @1099
+    PropSet v5, v1 key="next" @1099
+    v7 = Convert v4 declared={type=undefined|null|L6 flags=[IsExpected]} @1121
+    v8 = Integer integer=6 @1131
+    v9 = Convert v8 declared={type=number flags=[IsExpected]} @1121
+    PropSet v7, v9 key="v6" @1121
+    v11 = Undefined @1121
+    v12 = TypeTest v11 testedType=object @1121
+    Branch v12 -> taken b2(| 0), notTaken b3(| 0) @1121
+  b2(v13):
+    Jump -> next b4(v13) @1121
+  b3(v14):
+    Jump -> next b4(v4) @1121
+  b4(v15):
+    Return v15 @1121
+}
+function f20 name="g6" module=m0 position=1140 text={start=1140 end=1174} kind=Getter flags=[HasThis, HasExplicitName] thisType={type=L6 flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L6):
+    Jump -> next b1() @1140
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L6 flags=[IsExpected]} @1162
+    v2 = PropGet v1 key="v6" @1162
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @1162
+    Return v3 @1162
+}
+function f21 name="toJSON" module=m0 position=1177 text={start=1177 end=1236} kind=Method flags=[HasThis, HasExplicitName] thisType={type=L6 flags=[IsExpected]} results=[{type=undefined|null|L30 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L6):
+    Jump -> next b1() @1177
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L6 flags=[IsExpected]} @1205
+    v2 = PropGet v1 key="v6" @1205
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @1205
+    v4 = NewObject layout=L30 @1201
+    PropDefine v4, v3 key="k6" @1201
+    v6 = Convert v0 declared={type=undefined|null|L6 flags=[IsExpected]} @1220
+    v7 = PropGet v6 key="next" @1220
+    PropDefine v4, v7 key="next" @1214
+    v9 = FinishObject v4 @1199
+    v10 = Convert v9 declared={type=undefined|null|L30 flags=[IsExpected]} @1199
+    Return v10 @1199
+}
+function f22 name="C7" module=m0 position=1263 text={start=1239 end=1415} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L7 {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @1263
+  b1():
+    v2 = GetConstructPrototype v0 layout=L7 @1288
+    v3 = NewObject v2 layout=L7 @1288
+    v4 = Convert v3 declared={type=L7 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1288
+    v5 = Convert v4 declared={type=undefined|null|L7 flags=[IsExpected]} @1276
+    PropSet v5, v1 key="next" @1276
+    v7 = Convert v4 declared={type=undefined|null|L7 flags=[IsExpected]} @1298
+    v8 = Integer integer=7 @1308
+    v9 = Convert v8 declared={type=number flags=[IsExpected]} @1298
+    PropSet v7, v9 key="v7" @1298
+    v11 = Undefined @1298
+    v12 = TypeTest v11 testedType=object @1298
+    Branch v12 -> taken b2(| 0), notTaken b3(| 0) @1298
+  b2(v13):
+    Jump -> next b4(v13) @1298
+  b3(v14):
+    Jump -> next b4(v4) @1298
+  b4(v15):
+    Return v15 @1298
+}
+function f23 name="g7" module=m0 position=1317 text={start=1317 end=1351} kind=Getter flags=[HasThis, HasExplicitName] thisType={type=L7 flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L7):
+    Jump -> next b1() @1317
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L7 flags=[IsExpected]} @1339
+    v2 = PropGet v1 key="v7" @1339
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @1339
+    Return v3 @1339
+}
+function f24 name="toJSON" module=m0 position=1354 text={start=1354 end=1413} kind=Method flags=[HasThis, HasExplicitName] thisType={type=L7 flags=[IsExpected]} results=[{type=undefined|null|L31 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L7):
+    Jump -> next b1() @1354
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L7 flags=[IsExpected]} @1382
+    v2 = PropGet v1 key="v7" @1382
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @1382
+    v4 = NewObject layout=L31 @1378
+    PropDefine v4, v3 key="k7" @1378
+    v6 = Convert v0 declared={type=undefined|null|L7 flags=[IsExpected]} @1397
+    v7 = PropGet v6 key="next" @1397
+    PropDefine v4, v7 key="next" @1391
+    v9 = FinishObject v4 @1376
+    v10 = Convert v9 declared={type=undefined|null|L31 flags=[IsExpected]} @1376
+    Return v10 @1376
+}
+function f25 name="C8" module=m0 position=1440 text={start=1416 end=1592} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L8 {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @1440
+  b1():
+    v2 = GetConstructPrototype v0 layout=L8 @1465
+    v3 = NewObject v2 layout=L8 @1465
+    v4 = Convert v3 declared={type=L8 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1465
+    v5 = Convert v4 declared={type=undefined|null|L8 flags=[IsExpected]} @1453
+    PropSet v5, v1 key="next" @1453
+    v7 = Convert v4 declared={type=undefined|null|L8 flags=[IsExpected]} @1475
+    v8 = Integer integer=8 @1485
+    v9 = Convert v8 declared={type=number flags=[IsExpected]} @1475
+    PropSet v7, v9 key="v8" @1475
+    v11 = Undefined @1475
+    v12 = TypeTest v11 testedType=object @1475
+    Branch v12 -> taken b2(| 0), notTaken b3(| 0) @1475
+  b2(v13):
+    Jump -> next b4(v13) @1475
+  b3(v14):
+    Jump -> next b4(v4) @1475
+  b4(v15):
+    Return v15 @1475
+}
+function f26 name="g8" module=m0 position=1494 text={start=1494 end=1528} kind=Getter flags=[HasThis, HasExplicitName] thisType={type=L8 flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L8):
+    Jump -> next b1() @1494
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L8 flags=[IsExpected]} @1516
+    v2 = PropGet v1 key="v8" @1516
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @1516
+    Return v3 @1516
+}
+function f27 name="toJSON" module=m0 position=1531 text={start=1531 end=1590} kind=Method flags=[HasThis, HasExplicitName] thisType={type=L8 flags=[IsExpected]} results=[{type=undefined|null|L32 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L8):
+    Jump -> next b1() @1531
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L8 flags=[IsExpected]} @1559
+    v2 = PropGet v1 key="v8" @1559
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @1559
+    v4 = NewObject layout=L32 @1555
+    PropDefine v4, v3 key="k8" @1555
+    v6 = Convert v0 declared={type=undefined|null|L8 flags=[IsExpected]} @1574
+    v7 = PropGet v6 key="next" @1574
+    PropDefine v4, v7 key="next" @1568
+    v9 = FinishObject v4 @1553
+    v10 = Convert v9 declared={type=undefined|null|L32 flags=[IsExpected]} @1553
+    Return v10 @1553
+}
+function f28 name="C9" module=m0 position=1617 text={start=1593 end=1769} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L9 {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @1617
+  b1():
+    v2 = GetConstructPrototype v0 layout=L9 @1642
+    v3 = NewObject v2 layout=L9 @1642
+    v4 = Convert v3 declared={type=L9 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1642
+    v5 = Convert v4 declared={type=undefined|null|L9 flags=[IsExpected]} @1630
+    PropSet v5, v1 key="next" @1630
+    v7 = Convert v4 declared={type=undefined|null|L9 flags=[IsExpected]} @1652
+    v8 = Integer integer=9 @1662
+    v9 = Convert v8 declared={type=number flags=[IsExpected]} @1652
+    PropSet v7, v9 key="v9" @1652
+    v11 = Undefined @1652
+    v12 = TypeTest v11 testedType=object @1652
+    Branch v12 -> taken b2(| 0), notTaken b3(| 0) @1652
+  b2(v13):
+    Jump -> next b4(v13) @1652
+  b3(v14):
+    Jump -> next b4(v4) @1652
+  b4(v15):
+    Return v15 @1652
+}
+function f29 name="g9" module=m0 position=1671 text={start=1671 end=1705} kind=Getter flags=[HasThis, HasExplicitName] thisType={type=L9 flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L9):
+    Jump -> next b1() @1671
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L9 flags=[IsExpected]} @1693
+    v2 = PropGet v1 key="v9" @1693
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @1693
+    Return v3 @1693
+}
+function f30 name="toJSON" module=m0 position=1708 text={start=1708 end=1767} kind=Method flags=[HasThis, HasExplicitName] thisType={type=L9 flags=[IsExpected]} results=[{type=undefined|null|L33 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L9):
+    Jump -> next b1() @1708
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L9 flags=[IsExpected]} @1736
+    v2 = PropGet v1 key="v9" @1736
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @1736
+    v4 = NewObject layout=L33 @1732
+    PropDefine v4, v3 key="k9" @1732
+    v6 = Convert v0 declared={type=undefined|null|L9 flags=[IsExpected]} @1751
+    v7 = PropGet v6 key="next" @1751
+    PropDefine v4, v7 key="next" @1745
+    v9 = FinishObject v4 @1730
+    v10 = Convert v9 declared={type=undefined|null|L33 flags=[IsExpected]} @1730
+    Return v10 @1730
+}
+function f31 name="C10" module=m0 position=1795 text={start=1770 end=1953} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L10 {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @1795
+  b1():
+    v2 = GetConstructPrototype v0 layout=L10 @1820
+    v3 = NewObject v2 layout=L10 @1820
+    v4 = Convert v3 declared={type=L10 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1820
+    v5 = Convert v4 declared={type=undefined|null|L10 flags=[IsExpected]} @1808
+    PropSet v5, v1 key="next" @1808
+    v7 = Convert v4 declared={type=undefined|null|L10 flags=[IsExpected]} @1830
+    v8 = Integer integer=10 @1841
+    v9 = Convert v8 declared={type=number flags=[IsExpected]} @1830
+    PropSet v7, v9 key="v10" @1830
+    v11 = Undefined @1830
+    v12 = TypeTest v11 testedType=object @1830
+    Branch v12 -> taken b2(| 0), notTaken b3(| 0) @1830
+  b2(v13):
+    Jump -> next b4(v13) @1830
+  b3(v14):
+    Jump -> next b4(v4) @1830
+  b4(v15):
+    Return v15 @1830
+}
+function f32 name="g10" module=m0 position=1851 text={start=1851 end=1887} kind=Getter flags=[HasThis, HasExplicitName] thisType={type=L10 flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L10):
+    Jump -> next b1() @1851
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L10 flags=[IsExpected]} @1874
+    v2 = PropGet v1 key="v10" @1874
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @1874
+    Return v3 @1874
+}
+function f33 name="toJSON" module=m0 position=1890 text={start=1890 end=1951} kind=Method flags=[HasThis, HasExplicitName] thisType={type=L10 flags=[IsExpected]} results=[{type=undefined|null|L34 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L10):
+    Jump -> next b1() @1890
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L10 flags=[IsExpected]} @1919
+    v2 = PropGet v1 key="v10" @1919
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @1919
+    v4 = NewObject layout=L34 @1914
+    PropDefine v4, v3 key="k10" @1914
+    v6 = Convert v0 declared={type=undefined|null|L10 flags=[IsExpected]} @1935
+    v7 = PropGet v6 key="next" @1935
+    PropDefine v4, v7 key="next" @1929
+    v9 = FinishObject v4 @1912
+    v10 = Convert v9 declared={type=undefined|null|L34 flags=[IsExpected]} @1912
+    Return v10 @1912
+}
+function f34 name="C11" module=m0 position=1979 text={start=1954 end=2137} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L11 {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @1979
+  b1():
+    v2 = GetConstructPrototype v0 layout=L11 @2004
+    v3 = NewObject v2 layout=L11 @2004
+    v4 = Convert v3 declared={type=L11 flags=[IsFromCompiler]} illTypedCause=FromLooseType @2004
+    v5 = Convert v4 declared={type=undefined|null|L11 flags=[IsExpected]} @1992
+    PropSet v5, v1 key="next" @1992
+    v7 = Convert v4 declared={type=undefined|null|L11 flags=[IsExpected]} @2014
+    v8 = Integer integer=11 @2025
+    v9 = Convert v8 declared={type=number flags=[IsExpected]} @2014
+    PropSet v7, v9 key="v11" @2014
+    v11 = Undefined @2014
+    v12 = TypeTest v11 testedType=object @2014
+    Branch v12 -> taken b2(| 0), notTaken b3(| 0) @2014
+  b2(v13):
+    Jump -> next b4(v13) @2014
+  b3(v14):
+    Jump -> next b4(v4) @2014
+  b4(v15):
+    Return v15 @2014
+}
+function f35 name="g11" module=m0 position=2035 text={start=2035 end=2071} kind=Getter flags=[HasThis, HasExplicitName] thisType={type=L11 flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L11):
+    Jump -> next b1() @2035
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L11 flags=[IsExpected]} @2058
+    v2 = PropGet v1 key="v11" @2058
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @2058
+    Return v3 @2058
+}
+function f36 name="toJSON" module=m0 position=2074 text={start=2074 end=2135} kind=Method flags=[HasThis, HasExplicitName] thisType={type=L11 flags=[IsExpected]} results=[{type=undefined|null|L35 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L11):
+    Jump -> next b1() @2074
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L11 flags=[IsExpected]} @2103
+    v2 = PropGet v1 key="v11" @2103
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @2103
+    v4 = NewObject layout=L35 @2098
+    PropDefine v4, v3 key="k11" @2098
+    v6 = Convert v0 declared={type=undefined|null|L11 flags=[IsExpected]} @2119
+    v7 = PropGet v6 key="next" @2119
+    PropDefine v4, v7 key="next" @2113
+    v9 = FinishObject v4 @2096
+    v10 = Convert v9 declared={type=undefined|null|L35 flags=[IsExpected]} @2096
+    Return v10 @2096
+}
+function f37 name="C12" module=m0 position=2163 text={start=2138 end=2321} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L12 {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @2163
+  b1():
+    v2 = GetConstructPrototype v0 layout=L12 @2188
+    v3 = NewObject v2 layout=L12 @2188
+    v4 = Convert v3 declared={type=L12 flags=[IsFromCompiler]} illTypedCause=FromLooseType @2188
+    v5 = Convert v4 declared={type=undefined|null|L12 flags=[IsExpected]} @2176
+    PropSet v5, v1 key="next" @2176
+    v7 = Convert v4 declared={type=undefined|null|L12 flags=[IsExpected]} @2198
+    v8 = Integer integer=12 @2209
+    v9 = Convert v8 declared={type=number flags=[IsExpected]} @2198
+    PropSet v7, v9 key="v12" @2198
+    v11 = Undefined @2198
+    v12 = TypeTest v11 testedType=object @2198
+    Branch v12 -> taken b2(| 0), notTaken b3(| 0) @2198
+  b2(v13):
+    Jump -> next b4(v13) @2198
+  b3(v14):
+    Jump -> next b4(v4) @2198
+  b4(v15):
+    Return v15 @2198
+}
+function f38 name="g12" module=m0 position=2219 text={start=2219 end=2255} kind=Getter flags=[HasThis, HasExplicitName] thisType={type=L12 flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L12):
+    Jump -> next b1() @2219
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L12 flags=[IsExpected]} @2242
+    v2 = PropGet v1 key="v12" @2242
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @2242
+    Return v3 @2242
+}
+function f39 name="toJSON" module=m0 position=2258 text={start=2258 end=2319} kind=Method flags=[HasThis, HasExplicitName] thisType={type=L12 flags=[IsExpected]} results=[{type=undefined|null|L36 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L12):
+    Jump -> next b1() @2258
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L12 flags=[IsExpected]} @2287
+    v2 = PropGet v1 key="v12" @2287
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @2287
+    v4 = NewObject layout=L36 @2282
+    PropDefine v4, v3 key="k12" @2282
+    v6 = Convert v0 declared={type=undefined|null|L12 flags=[IsExpected]} @2303
+    v7 = PropGet v6 key="next" @2303
+    PropDefine v4, v7 key="next" @2297
+    v9 = FinishObject v4 @2280
+    v10 = Convert v9 declared={type=undefined|null|L36 flags=[IsExpected]} @2280
+    Return v10 @2280
+}
+function f40 name="C13" module=m0 position=2347 text={start=2322 end=2505} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L13 {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @2347
+  b1():
+    v2 = GetConstructPrototype v0 layout=L13 @2372
+    v3 = NewObject v2 layout=L13 @2372
+    v4 = Convert v3 declared={type=L13 flags=[IsFromCompiler]} illTypedCause=FromLooseType @2372
+    v5 = Convert v4 declared={type=undefined|null|L13 flags=[IsExpected]} @2360
+    PropSet v5, v1 key="next" @2360
+    v7 = Convert v4 declared={type=undefined|null|L13 flags=[IsExpected]} @2382
+    v8 = Integer integer=13 @2393
+    v9 = Convert v8 declared={type=number flags=[IsExpected]} @2382
+    PropSet v7, v9 key="v13" @2382
+    v11 = Undefined @2382
+    v12 = TypeTest v11 testedType=object @2382
+    Branch v12 -> taken b2(| 0), notTaken b3(| 0) @2382
+  b2(v13):
+    Jump -> next b4(v13) @2382
+  b3(v14):
+    Jump -> next b4(v4) @2382
+  b4(v15):
+    Return v15 @2382
+}
+function f41 name="g13" module=m0 position=2403 text={start=2403 end=2439} kind=Getter flags=[HasThis, HasExplicitName] thisType={type=L13 flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L13):
+    Jump -> next b1() @2403
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L13 flags=[IsExpected]} @2426
+    v2 = PropGet v1 key="v13" @2426
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @2426
+    Return v3 @2426
+}
+function f42 name="toJSON" module=m0 position=2442 text={start=2442 end=2503} kind=Method flags=[HasThis, HasExplicitName] thisType={type=L13 flags=[IsExpected]} results=[{type=undefined|null|L37 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L13):
+    Jump -> next b1() @2442
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L13 flags=[IsExpected]} @2471
+    v2 = PropGet v1 key="v13" @2471
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @2471
+    v4 = NewObject layout=L37 @2466
+    PropDefine v4, v3 key="k13" @2466
+    v6 = Convert v0 declared={type=undefined|null|L13 flags=[IsExpected]} @2487
+    v7 = PropGet v6 key="next" @2487
+    PropDefine v4, v7 key="next" @2481
+    v9 = FinishObject v4 @2464
+    v10 = Convert v9 declared={type=undefined|null|L37 flags=[IsExpected]} @2464
+    Return v10 @2464
+}
+function f43 name="C14" module=m0 position=2531 text={start=2506 end=2689} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L14 {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @2531
+  b1():
+    v2 = GetConstructPrototype v0 layout=L14 @2556
+    v3 = NewObject v2 layout=L14 @2556
+    v4 = Convert v3 declared={type=L14 flags=[IsFromCompiler]} illTypedCause=FromLooseType @2556
+    v5 = Convert v4 declared={type=undefined|null|L14 flags=[IsExpected]} @2544
+    PropSet v5, v1 key="next" @2544
+    v7 = Convert v4 declared={type=undefined|null|L14 flags=[IsExpected]} @2566
+    v8 = Integer integer=14 @2577
+    v9 = Convert v8 declared={type=number flags=[IsExpected]} @2566
+    PropSet v7, v9 key="v14" @2566
+    v11 = Undefined @2566
+    v12 = TypeTest v11 testedType=object @2566
+    Branch v12 -> taken b2(| 0), notTaken b3(| 0) @2566
+  b2(v13):
+    Jump -> next b4(v13) @2566
+  b3(v14):
+    Jump -> next b4(v4) @2566
+  b4(v15):
+    Return v15 @2566
+}
+function f44 name="g14" module=m0 position=2587 text={start=2587 end=2623} kind=Getter flags=[HasThis, HasExplicitName] thisType={type=L14 flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L14):
+    Jump -> next b1() @2587
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L14 flags=[IsExpected]} @2610
+    v2 = PropGet v1 key="v14" @2610
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @2610
+    Return v3 @2610
+}
+function f45 name="toJSON" module=m0 position=2626 text={start=2626 end=2687} kind=Method flags=[HasThis, HasExplicitName] thisType={type=L14 flags=[IsExpected]} results=[{type=undefined|null|L38 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L14):
+    Jump -> next b1() @2626
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L14 flags=[IsExpected]} @2655
+    v2 = PropGet v1 key="v14" @2655
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @2655
+    v4 = NewObject layout=L38 @2650
+    PropDefine v4, v3 key="k14" @2650
+    v6 = Convert v0 declared={type=undefined|null|L14 flags=[IsExpected]} @2671
+    v7 = PropGet v6 key="next" @2671
+    PropDefine v4, v7 key="next" @2665
+    v9 = FinishObject v4 @2648
+    v10 = Convert v9 declared={type=undefined|null|L38 flags=[IsExpected]} @2648
+    Return v10 @2648
+}
+function f46 name="C15" module=m0 position=2715 text={start=2690 end=2873} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L15 {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @2715
+  b1():
+    v2 = GetConstructPrototype v0 layout=L15 @2740
+    v3 = NewObject v2 layout=L15 @2740
+    v4 = Convert v3 declared={type=L15 flags=[IsFromCompiler]} illTypedCause=FromLooseType @2740
+    v5 = Convert v4 declared={type=undefined|null|L15 flags=[IsExpected]} @2728
+    PropSet v5, v1 key="next" @2728
+    v7 = Convert v4 declared={type=undefined|null|L15 flags=[IsExpected]} @2750
+    v8 = Integer integer=15 @2761
+    v9 = Convert v8 declared={type=number flags=[IsExpected]} @2750
+    PropSet v7, v9 key="v15" @2750
+    v11 = Undefined @2750
+    v12 = TypeTest v11 testedType=object @2750
+    Branch v12 -> taken b2(| 0), notTaken b3(| 0) @2750
+  b2(v13):
+    Jump -> next b4(v13) @2750
+  b3(v14):
+    Jump -> next b4(v4) @2750
+  b4(v15):
+    Return v15 @2750
+}
+function f47 name="g15" module=m0 position=2771 text={start=2771 end=2807} kind=Getter flags=[HasThis, HasExplicitName] thisType={type=L15 flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L15):
+    Jump -> next b1() @2771
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L15 flags=[IsExpected]} @2794
+    v2 = PropGet v1 key="v15" @2794
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @2794
+    Return v3 @2794
+}
+function f48 name="toJSON" module=m0 position=2810 text={start=2810 end=2871} kind=Method flags=[HasThis, HasExplicitName] thisType={type=L15 flags=[IsExpected]} results=[{type=undefined|null|L39 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L15):
+    Jump -> next b1() @2810
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L15 flags=[IsExpected]} @2839
+    v2 = PropGet v1 key="v15" @2839
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @2839
+    v4 = NewObject layout=L39 @2834
+    PropDefine v4, v3 key="k15" @2834
+    v6 = Convert v0 declared={type=undefined|null|L15 flags=[IsExpected]} @2855
+    v7 = PropGet v6 key="next" @2855
+    PropDefine v4, v7 key="next" @2849
+    v9 = FinishObject v4 @2832
+    v10 = Convert v9 declared={type=undefined|null|L39 flags=[IsExpected]} @2832
+    Return v10 @2832
+}
+function f49 name="C16" module=m0 position=2899 text={start=2874 end=3057} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L16 {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @2899
+  b1():
+    v2 = GetConstructPrototype v0 layout=L16 @2924
+    v3 = NewObject v2 layout=L16 @2924
+    v4 = Convert v3 declared={type=L16 flags=[IsFromCompiler]} illTypedCause=FromLooseType @2924
+    v5 = Convert v4 declared={type=undefined|null|L16 flags=[IsExpected]} @2912
+    PropSet v5, v1 key="next" @2912
+    v7 = Convert v4 declared={type=undefined|null|L16 flags=[IsExpected]} @2934
+    v8 = Integer integer=16 @2945
+    v9 = Convert v8 declared={type=number flags=[IsExpected]} @2934
+    PropSet v7, v9 key="v16" @2934
+    v11 = Undefined @2934
+    v12 = TypeTest v11 testedType=object @2934
+    Branch v12 -> taken b2(| 0), notTaken b3(| 0) @2934
+  b2(v13):
+    Jump -> next b4(v13) @2934
+  b3(v14):
+    Jump -> next b4(v4) @2934
+  b4(v15):
+    Return v15 @2934
+}
+function f50 name="g16" module=m0 position=2955 text={start=2955 end=2991} kind=Getter flags=[HasThis, HasExplicitName] thisType={type=L16 flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L16):
+    Jump -> next b1() @2955
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L16 flags=[IsExpected]} @2978
+    v2 = PropGet v1 key="v16" @2978
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @2978
+    Return v3 @2978
+}
+function f51 name="toJSON" module=m0 position=2994 text={start=2994 end=3055} kind=Method flags=[HasThis, HasExplicitName] thisType={type=L16 flags=[IsExpected]} results=[{type=undefined|null|L40 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L16):
+    Jump -> next b1() @2994
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L16 flags=[IsExpected]} @3023
+    v2 = PropGet v1 key="v16" @3023
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @3023
+    v4 = NewObject layout=L40 @3018
+    PropDefine v4, v3 key="k16" @3018
+    v6 = Convert v0 declared={type=undefined|null|L16 flags=[IsExpected]} @3039
+    v7 = PropGet v6 key="next" @3039
+    PropDefine v4, v7 key="next" @3033
+    v9 = FinishObject v4 @3016
+    v10 = Convert v9 declared={type=undefined|null|L40 flags=[IsExpected]} @3016
+    Return v10 @3016
+}
+function f52 name="C17" module=m0 position=3083 text={start=3058 end=3241} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L17 {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @3083
+  b1():
+    v2 = GetConstructPrototype v0 layout=L17 @3108
+    v3 = NewObject v2 layout=L17 @3108
+    v4 = Convert v3 declared={type=L17 flags=[IsFromCompiler]} illTypedCause=FromLooseType @3108
+    v5 = Convert v4 declared={type=undefined|null|L17 flags=[IsExpected]} @3096
+    PropSet v5, v1 key="next" @3096
+    v7 = Convert v4 declared={type=undefined|null|L17 flags=[IsExpected]} @3118
+    v8 = Integer integer=17 @3129
+    v9 = Convert v8 declared={type=number flags=[IsExpected]} @3118
+    PropSet v7, v9 key="v17" @3118
+    v11 = Undefined @3118
+    v12 = TypeTest v11 testedType=object @3118
+    Branch v12 -> taken b2(| 0), notTaken b3(| 0) @3118
+  b2(v13):
+    Jump -> next b4(v13) @3118
+  b3(v14):
+    Jump -> next b4(v4) @3118
+  b4(v15):
+    Return v15 @3118
+}
+function f53 name="g17" module=m0 position=3139 text={start=3139 end=3175} kind=Getter flags=[HasThis, HasExplicitName] thisType={type=L17 flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L17):
+    Jump -> next b1() @3139
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L17 flags=[IsExpected]} @3162
+    v2 = PropGet v1 key="v17" @3162
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @3162
+    Return v3 @3162
+}
+function f54 name="toJSON" module=m0 position=3178 text={start=3178 end=3239} kind=Method flags=[HasThis, HasExplicitName] thisType={type=L17 flags=[IsExpected]} results=[{type=undefined|null|L41 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L17):
+    Jump -> next b1() @3178
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L17 flags=[IsExpected]} @3207
+    v2 = PropGet v1 key="v17" @3207
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @3207
+    v4 = NewObject layout=L41 @3202
+    PropDefine v4, v3 key="k17" @3202
+    v6 = Convert v0 declared={type=undefined|null|L17 flags=[IsExpected]} @3223
+    v7 = PropGet v6 key="next" @3223
+    PropDefine v4, v7 key="next" @3217
+    v9 = FinishObject v4 @3200
+    v10 = Convert v9 declared={type=undefined|null|L41 flags=[IsExpected]} @3200
+    Return v10 @3200
+}
+function f55 name="C18" module=m0 position=3267 text={start=3242 end=3425} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L18 {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @3267
+  b1():
+    v2 = GetConstructPrototype v0 layout=L18 @3292
+    v3 = NewObject v2 layout=L18 @3292
+    v4 = Convert v3 declared={type=L18 flags=[IsFromCompiler]} illTypedCause=FromLooseType @3292
+    v5 = Convert v4 declared={type=undefined|null|L18 flags=[IsExpected]} @3280
+    PropSet v5, v1 key="next" @3280
+    v7 = Convert v4 declared={type=undefined|null|L18 flags=[IsExpected]} @3302
+    v8 = Integer integer=18 @3313
+    v9 = Convert v8 declared={type=number flags=[IsExpected]} @3302
+    PropSet v7, v9 key="v18" @3302
+    v11 = Undefined @3302
+    v12 = TypeTest v11 testedType=object @3302
+    Branch v12 -> taken b2(| 0), notTaken b3(| 0) @3302
+  b2(v13):
+    Jump -> next b4(v13) @3302
+  b3(v14):
+    Jump -> next b4(v4) @3302
+  b4(v15):
+    Return v15 @3302
+}
+function f56 name="g18" module=m0 position=3323 text={start=3323 end=3359} kind=Getter flags=[HasThis, HasExplicitName] thisType={type=L18 flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L18):
+    Jump -> next b1() @3323
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L18 flags=[IsExpected]} @3346
+    v2 = PropGet v1 key="v18" @3346
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @3346
+    Return v3 @3346
+}
+function f57 name="toJSON" module=m0 position=3362 text={start=3362 end=3423} kind=Method flags=[HasThis, HasExplicitName] thisType={type=L18 flags=[IsExpected]} results=[{type=undefined|null|L42 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L18):
+    Jump -> next b1() @3362
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L18 flags=[IsExpected]} @3391
+    v2 = PropGet v1 key="v18" @3391
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @3391
+    v4 = NewObject layout=L42 @3386
+    PropDefine v4, v3 key="k18" @3386
+    v6 = Convert v0 declared={type=undefined|null|L18 flags=[IsExpected]} @3407
+    v7 = PropGet v6 key="next" @3407
+    PropDefine v4, v7 key="next" @3401
+    v9 = FinishObject v4 @3384
+    v10 = Convert v9 declared={type=undefined|null|L42 flags=[IsExpected]} @3384
+    Return v10 @3384
+}
+function f58 name="C19" module=m0 position=3451 text={start=3426 end=3609} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L19 {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @3451
+  b1():
+    v2 = GetConstructPrototype v0 layout=L19 @3476
+    v3 = NewObject v2 layout=L19 @3476
+    v4 = Convert v3 declared={type=L19 flags=[IsFromCompiler]} illTypedCause=FromLooseType @3476
+    v5 = Convert v4 declared={type=undefined|null|L19 flags=[IsExpected]} @3464
+    PropSet v5, v1 key="next" @3464
+    v7 = Convert v4 declared={type=undefined|null|L19 flags=[IsExpected]} @3486
+    v8 = Integer integer=19 @3497
+    v9 = Convert v8 declared={type=number flags=[IsExpected]} @3486
+    PropSet v7, v9 key="v19" @3486
+    v11 = Undefined @3486
+    v12 = TypeTest v11 testedType=object @3486
+    Branch v12 -> taken b2(| 0), notTaken b3(| 0) @3486
+  b2(v13):
+    Jump -> next b4(v13) @3486
+  b3(v14):
+    Jump -> next b4(v4) @3486
+  b4(v15):
+    Return v15 @3486
+}
+function f59 name="g19" module=m0 position=3507 text={start=3507 end=3543} kind=Getter flags=[HasThis, HasExplicitName] thisType={type=L19 flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L19):
+    Jump -> next b1() @3507
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L19 flags=[IsExpected]} @3530
+    v2 = PropGet v1 key="v19" @3530
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @3530
+    Return v3 @3530
+}
+function f60 name="toJSON" module=m0 position=3546 text={start=3546 end=3607} kind=Method flags=[HasThis, HasExplicitName] thisType={type=L19 flags=[IsExpected]} results=[{type=undefined|null|L43 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L19):
+    Jump -> next b1() @3546
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L19 flags=[IsExpected]} @3575
+    v2 = PropGet v1 key="v19" @3575
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @3575
+    v4 = NewObject layout=L43 @3570
+    PropDefine v4, v3 key="k19" @3570
+    v6 = Convert v0 declared={type=undefined|null|L19 flags=[IsExpected]} @3591
+    v7 = PropGet v6 key="next" @3591
+    PropDefine v4, v7 key="next" @3585
+    v9 = FinishObject v4 @3568
+    v10 = Convert v9 declared={type=undefined|null|L43 flags=[IsExpected]} @3568
+    Return v10 @3568
+}
+function f61 name="C20" module=m0 position=3635 text={start=3610 end=3793} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L20 {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @3635
+  b1():
+    v2 = GetConstructPrototype v0 layout=L20 @3660
+    v3 = NewObject v2 layout=L20 @3660
+    v4 = Convert v3 declared={type=L20 flags=[IsFromCompiler]} illTypedCause=FromLooseType @3660
+    v5 = Convert v4 declared={type=undefined|null|L20 flags=[IsExpected]} @3648
+    PropSet v5, v1 key="next" @3648
+    v7 = Convert v4 declared={type=undefined|null|L20 flags=[IsExpected]} @3670
+    v8 = Integer integer=20 @3681
+    v9 = Convert v8 declared={type=number flags=[IsExpected]} @3670
+    PropSet v7, v9 key="v20" @3670
+    v11 = Undefined @3670
+    v12 = TypeTest v11 testedType=object @3670
+    Branch v12 -> taken b2(| 0), notTaken b3(| 0) @3670
+  b2(v13):
+    Jump -> next b4(v13) @3670
+  b3(v14):
+    Jump -> next b4(v4) @3670
+  b4(v15):
+    Return v15 @3670
+}
+function f62 name="g20" module=m0 position=3691 text={start=3691 end=3727} kind=Getter flags=[HasThis, HasExplicitName] thisType={type=L20 flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L20):
+    Jump -> next b1() @3691
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L20 flags=[IsExpected]} @3714
+    v2 = PropGet v1 key="v20" @3714
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @3714
+    Return v3 @3714
+}
+function f63 name="toJSON" module=m0 position=3730 text={start=3730 end=3791} kind=Method flags=[HasThis, HasExplicitName] thisType={type=L20 flags=[IsExpected]} results=[{type=undefined|null|L44 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L20):
+    Jump -> next b1() @3730
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L20 flags=[IsExpected]} @3759
+    v2 = PropGet v1 key="v20" @3759
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @3759
+    v4 = NewObject layout=L44 @3754
+    PropDefine v4, v3 key="k20" @3754
+    v6 = Convert v0 declared={type=undefined|null|L20 flags=[IsExpected]} @3775
+    v7 = PropGet v6 key="next" @3775
+    PropDefine v4, v7 key="next" @3769
+    v9 = FinishObject v4 @3752
+    v10 = Convert v9 declared={type=undefined|null|L44 flags=[IsExpected]} @3752
+    Return v10 @3752
+}
+function f64 name="C21" module=m0 position=3819 text={start=3794 end=3977} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L21 {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @3819
+  b1():
+    v2 = GetConstructPrototype v0 layout=L21 @3844
+    v3 = NewObject v2 layout=L21 @3844
+    v4 = Convert v3 declared={type=L21 flags=[IsFromCompiler]} illTypedCause=FromLooseType @3844
+    v5 = Convert v4 declared={type=undefined|null|L21 flags=[IsExpected]} @3832
+    PropSet v5, v1 key="next" @3832
+    v7 = Convert v4 declared={type=undefined|null|L21 flags=[IsExpected]} @3854
+    v8 = Integer integer=21 @3865
+    v9 = Convert v8 declared={type=number flags=[IsExpected]} @3854
+    PropSet v7, v9 key="v21" @3854
+    v11 = Undefined @3854
+    v12 = TypeTest v11 testedType=object @3854
+    Branch v12 -> taken b2(| 0), notTaken b3(| 0) @3854
+  b2(v13):
+    Jump -> next b4(v13) @3854
+  b3(v14):
+    Jump -> next b4(v4) @3854
+  b4(v15):
+    Return v15 @3854
+}
+function f65 name="g21" module=m0 position=3875 text={start=3875 end=3911} kind=Getter flags=[HasThis, HasExplicitName] thisType={type=L21 flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L21):
+    Jump -> next b1() @3875
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L21 flags=[IsExpected]} @3898
+    v2 = PropGet v1 key="v21" @3898
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @3898
+    Return v3 @3898
+}
+function f66 name="toJSON" module=m0 position=3914 text={start=3914 end=3975} kind=Method flags=[HasThis, HasExplicitName] thisType={type=L21 flags=[IsExpected]} results=[{type=undefined|null|L45 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L21):
+    Jump -> next b1() @3914
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L21 flags=[IsExpected]} @3943
+    v2 = PropGet v1 key="v21" @3943
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @3943
+    v4 = NewObject layout=L45 @3938
+    PropDefine v4, v3 key="k21" @3938
+    v6 = Convert v0 declared={type=undefined|null|L21 flags=[IsExpected]} @3959
+    v7 = PropGet v6 key="next" @3959
+    PropDefine v4, v7 key="next" @3953
+    v9 = FinishObject v4 @3936
+    v10 = Convert v9 declared={type=undefined|null|L45 flags=[IsExpected]} @3936
+    Return v10 @3936
+}
+function f67 name="C22" module=m0 position=4003 text={start=3978 end=4161} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L22 {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @4003
+  b1():
+    v2 = GetConstructPrototype v0 layout=L22 @4028
+    v3 = NewObject v2 layout=L22 @4028
+    v4 = Convert v3 declared={type=L22 flags=[IsFromCompiler]} illTypedCause=FromLooseType @4028
+    v5 = Convert v4 declared={type=undefined|null|L22 flags=[IsExpected]} @4016
+    PropSet v5, v1 key="next" @4016
+    v7 = Convert v4 declared={type=undefined|null|L22 flags=[IsExpected]} @4038
+    v8 = Integer integer=22 @4049
+    v9 = Convert v8 declared={type=number flags=[IsExpected]} @4038
+    PropSet v7, v9 key="v22" @4038
+    v11 = Undefined @4038
+    v12 = TypeTest v11 testedType=object @4038
+    Branch v12 -> taken b2(| 0), notTaken b3(| 0) @4038
+  b2(v13):
+    Jump -> next b4(v13) @4038
+  b3(v14):
+    Jump -> next b4(v4) @4038
+  b4(v15):
+    Return v15 @4038
+}
+function f68 name="g22" module=m0 position=4059 text={start=4059 end=4095} kind=Getter flags=[HasThis, HasExplicitName] thisType={type=L22 flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L22):
+    Jump -> next b1() @4059
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L22 flags=[IsExpected]} @4082
+    v2 = PropGet v1 key="v22" @4082
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @4082
+    Return v3 @4082
+}
+function f69 name="toJSON" module=m0 position=4098 text={start=4098 end=4159} kind=Method flags=[HasThis, HasExplicitName] thisType={type=L22 flags=[IsExpected]} results=[{type=undefined|null|L46 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L22):
+    Jump -> next b1() @4098
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L22 flags=[IsExpected]} @4127
+    v2 = PropGet v1 key="v22" @4127
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @4127
+    v4 = NewObject layout=L46 @4122
+    PropDefine v4, v3 key="k22" @4122
+    v6 = Convert v0 declared={type=undefined|null|L22 flags=[IsExpected]} @4143
+    v7 = PropGet v6 key="next" @4143
+    PropDefine v4, v7 key="next" @4137
+    v9 = FinishObject v4 @4120
+    v10 = Convert v9 declared={type=undefined|null|L46 flags=[IsExpected]} @4120
+    Return v10 @4120
+}
+function f70 name="C23" module=m0 position=4187 text={start=4162 end=4345} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L23 {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @4187
+  b1():
+    v2 = GetConstructPrototype v0 layout=L23 @4212
+    v3 = NewObject v2 layout=L23 @4212
+    v4 = Convert v3 declared={type=L23 flags=[IsFromCompiler]} illTypedCause=FromLooseType @4212
+    v5 = Convert v4 declared={type=undefined|null|L23 flags=[IsExpected]} @4200
+    PropSet v5, v1 key="next" @4200
+    v7 = Convert v4 declared={type=undefined|null|L23 flags=[IsExpected]} @4222
+    v8 = Integer integer=23 @4233
+    v9 = Convert v8 declared={type=number flags=[IsExpected]} @4222
+    PropSet v7, v9 key="v23" @4222
+    v11 = Undefined @4222
+    v12 = TypeTest v11 testedType=object @4222
+    Branch v12 -> taken b2(| 0), notTaken b3(| 0) @4222
+  b2(v13):
+    Jump -> next b4(v13) @4222
+  b3(v14):
+    Jump -> next b4(v4) @4222
+  b4(v15):
+    Return v15 @4222
+}
+function f71 name="g23" module=m0 position=4243 text={start=4243 end=4279} kind=Getter flags=[HasThis, HasExplicitName] thisType={type=L23 flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L23):
+    Jump -> next b1() @4243
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L23 flags=[IsExpected]} @4266
+    v2 = PropGet v1 key="v23" @4266
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @4266
+    Return v3 @4266
+}
+function f72 name="toJSON" module=m0 position=4282 text={start=4282 end=4343} kind=Method flags=[HasThis, HasExplicitName] thisType={type=L23 flags=[IsExpected]} results=[{type=undefined|null|L47 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L23):
+    Jump -> next b1() @4282
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|L23 flags=[IsExpected]} @4311
+    v2 = PropGet v1 key="v23" @4311
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @4311
+    v4 = NewObject layout=L47 @4306
+    PropDefine v4, v3 key="k23" @4306
+    v6 = Convert v0 declared={type=undefined|null|L23 flags=[IsExpected]} @4327
+    v7 = PropGet v6 key="next" @4327
+    PropDefine v4, v7 key="next" @4321
+    v9 = FinishObject v4 @4304
+    v10 = Convert v9 declared={type=undefined|null|L47 flags=[IsExpected]} @4304
+    Return v10 @4304
+}
+function f73 name="next" module=m1 position=25 text={start=32 end=383} kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1() @25
+  b1():
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0) @78
+  b2(v3):
+    Jump -> next b3() @78
+  b3():
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b4(v10):
+    Jump -> next b5() @78
+  b5():
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+function f74 name="next" module=m2 position=25 text={start=32 end=596} kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=GeneratorPrototypeNext thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything):
+    Jump -> next b1() @25
+  b1():
+    v2 = StepGenerator v0, v1 check=IsGenerator @91
+    v3 = ResultAt v2 @186
+    v4 = ResultAt v2 index=1 @249
+    v5 = Integer integer=1 @320
+    v6 = StrictEq v4, v5 @309
+    v7 = Convert v6 declared={type=boolean site=w0} @309
+    v8 = Integer integer=2 @370
+    v9 = StrictEq v4, v8 @359
+    Branch v9 -> taken b2(| 0), notTaken b4(| 0) @359
+  b2(v10):
+    Jump -> next b3() @359
+  b3():
+    v11 = ResumeGenerator v0, v1 @427
+    v12 = PropGet v11 key="value" @492
+    v13 = PropGet v11 key="done" @521
+    v14 = Boolean boolean=true @537
+    v15 = StrictEq v13, v14 @521
+    v16 = Convert v15 declared={type=boolean site=w0} @514
+    Jump -> next b5(v12, v16) @514
+  b4(v17):
+    Jump -> next b5(v3, v7) @359
+  b5(v18, v19: boolean):
+    v20 = Convert v19 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @560
+    v21 = CreateIteratorResult v18, v20 @560
+    Return v21 @560
+}
+function f75 name="next" module=m3 position=99 text={start=106 end=874} kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=JSIteratorHelperPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1() @99
+  b1():
+    v1 = HasJSType v0 first=6 last=6 @152
+    v2 = ToBoolean v1 @152
+    Branch v2 -> taken b2(| 0), notTaken b8(| 0) @152
+  b2(v3):
+    Jump -> next b3() @152
+  b3():
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @264
+    v5 = GetInternalField v4 @264
+    v6 = Undefined @394
+    v7 = StepGenerator v5, v6 check=IsGenerator @351
+    v8 = ResultAt v7 @455
+    v9 = ResultAt v7 index=1 @518
+    v10 = Integer integer=1 @589
+    v11 = StrictEq v9, v10 @578
+    v12 = Convert v11 declared={type=boolean site=w1} @578
+    v13 = Integer integer=2 @639
+    v14 = StrictEq v9, v13 @628
+    Branch v14 -> taken b4(| 0), notTaken b6(| 0) @628
+  b4(v15):
+    Jump -> next b5() @628
+  b5():
+    v16 = Undefined @741
+    v17 = ResumeGenerator v5, v16 @696
+    v18 = PropGet v17 key="value" @770
+    v19 = PropGet v17 key="done" @799
+    v20 = Boolean boolean=true @815
+    v21 = StrictEq v19, v20 @799
+    v22 = Convert v21 declared={type=boolean site=w1} @792
+    Jump -> next b7(v18, v22) @792
+  b6(v23):
+    Jump -> next b7(v8, v12) @628
+  b7(v24, v25: boolean):
+    v26 = Convert v25 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @838
+    v27 = CreateIteratorResult v24, v26 @838
+    Return v27 @838
+  b8(v28):
+    Jump -> next b9() @152
+  b9():
+    v29 = ThrowNewError errorKind=TypeError message="|this| should be an iterator helper" @185
+    Unreachable @185
+}
+function f76 name="next" module=m4 position=25 text={start=32 end=374} kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=MapIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1() @25
+  b1():
+    v1 = HasJSType v0 first=7 last=7 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0) @78
+  b2(v3):
+    Jump -> next b3() @78
+  b3():
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @222
+    v5 = StepMapIterator v4 @222
+    v6 = ResultAt v5 index=1 @277
+    v7 = ResultAt v5 @325
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @257
+    v9 = CreateIteratorResult v6, v8 @257
+    Return v9 @257
+  b4(v10):
+    Jump -> next b5() @78
+  b5():
+    v11 = ThrowNewError errorKind=TypeError message="%MapIteratorPrototype%.next requires that |this| be a Map Iterator instance" @108
+    Unreachable @108
+}
+function f77 name="next" module=m5 position=25 text={start=32 end=374} kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=SetIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1() @25
+  b1():
+    v1 = HasJSType v0 first=10 last=10 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0) @78
+  b2(v3):
+    Jump -> next b3() @78
+  b3():
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @222
+    v5 = StepSetIterator v4 @222
+    v6 = ResultAt v5 index=1 @277
+    v7 = ResultAt v5 @325
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @257
+    v9 = CreateIteratorResult v6, v8 @257
+    Return v9 @257
+  b4(v10):
+    Jump -> next b5() @78
+  b5():
+    v11 = ThrowNewError errorKind=TypeError message="%SetIteratorPrototype%.next requires that |this| be a Set Iterator instance" @108
+    Unreachable @108
+}
+function f78 name="next" module=m6 position=1421 text={start=1428 end=2054} kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=WrapForValidIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1() @1421
+  b1():
+    v1 = HasJSType v0 first=12 last=12 @1611
+    v2 = ToBoolean v1 @1611
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0) @1611
+  b2(v3):
+    Jump -> next b3() @1611
+  b3():
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @1867
+    v5 = GetInternalField v4 index=1 @1867
+    v6 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @1963
+    v7 = GetInternalField v6 @1963
+    v8 = Call v5, v7 @1867
+    ReturnCall v8 @1867
+  b4(v9):
+    Jump -> next b5() @1611
+  b5():
+    v10 = ThrowNewError errorKind=TypeError message="%WrapForValidIteratorPrototype%.next requires that |this| be a WrapForValidIteratorPrototype object" @1650
+    Unreachable @1650
+}
+entry module=m0 hostReads=[{exportName="default" builtin=BunServe}, {exportName="then"}]
+runtimefunction id=ArrayIteratorPrototypeNext function=f73 visibility=Private
+runtimefunction id=GeneratorPrototypeNext function=f74 visibility=Private
+runtimefunction id=JSIteratorHelperPrototypeNext function=f75 visibility=Private
+runtimefunction id=WrapForValidIteratorPrototypeNext function=f78
+runtimefunction id=MapIteratorPrototypeNext function=f76 visibility=Private
+runtimefunction id=SetIteratorPrototypeNext function=f77 visibility=Private

@@ -1,7 +1,8 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { run } from "./harness/run";
-import { test } from "./supported";
+// One by one: a case builds for minutes, and beside others it would pass its limit where Bun has a sanitizer.
+import { testOneByOne as test } from "./supported";
 
 // `--isolate` gives every test file a realm of its own, and each realm runs the compiled program anew. An object can still get from one
 // file to the next: `Bun.s3` is one object for the process, and with `--isolate=modules` the global object stays, so whatever hangs on

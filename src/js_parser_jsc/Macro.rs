@@ -110,6 +110,24 @@ impl MacroContext {
         caller: Expr,
         function_name: &[u8],
     ) -> crate::Result<Expr> {
+        let result_of_build = RESULTS_OF_MACROS.with_borrow(|results| {
+            let results = results.as_ref()?;
+            let found = results.iter().find(|result| result.0 == caller.loc.start);
+            Some(found.map_or_else(|| b"undefined".to_vec(), |result| result.1.clone()))
+        });
+        if let Some(json) = result_of_build {
+            if json == b"undefined" {
+                return Ok(caller);
+            }
+            let bump = self.bump.get_or_insert_with(bun_alloc::Arena::new);
+            let json: &[u8] = bump.alloc_slice_copy(&json);
+            let text = Source::init_path_string(b"macro.json", json);
+            let Ok(mut result) = bun_parsers::json::parse_for_macro(&text, log, bump) else {
+                return Err(crate::Error::MacroFailed);
+            };
+            lay_where_macro_was_called(&mut result, caller.loc, bump);
+            return Ok(result);
+        }
         if bun_jsc::compiled_program::compiled_program()
             .is_some_and(|program| !bun_jsc::compiled_program::admits_unknown_javascript(program))
         {
@@ -556,6 +574,50 @@ use visit_map::VisitMap;
 
 thread_local! {
     static EXCEPTION_HOLDER: Cell<bool> = const { Cell::new(false) };
+    static RESULTS_OF_MACROS: core::cell::RefCell<Option<Vec<(i32, Vec<u8>)>>> = const { core::cell::RefCell::new(None) };
+}
+
+fn lay_where_macro_was_called(result: &mut Expr, loc: bun_ast::Loc, bump: &bun_alloc::Arena) {
+    result.loc = loc;
+    match &mut result.data {
+        ExprData::EString(text) if text.is_utf8() => {
+            let units = strings::wtf8_to_utf16(text.slice8());
+            *result = Expr::init(E::EString::init_utf16(bump.alloc_slice_copy(&units)), loc);
+        }
+        ExprData::EObject(object) => {
+            object.was_originally_macro = true;
+            object.is_single_line = false;
+            object.close_brace_loc = bun_ast::Loc::EMPTY;
+            for property in object.properties.iter_mut() {
+                if let Some(key) = &mut property.key {
+                    key.loc = loc;
+                }
+                if let Some(value) = &mut property.value {
+                    lay_where_macro_was_called(value, loc, bump);
+                }
+            }
+        }
+        ExprData::EArray(array) => {
+            array.was_originally_macro = true;
+            array.is_single_line = false;
+            array.close_bracket_loc = bun_ast::Loc::EMPTY;
+            for item in array.items.iter_mut() {
+                lay_where_macro_was_called(item, loc, bump);
+            }
+        }
+        _ => {}
+    }
+}
+
+pub fn with_results_of_macros<T>(results: Vec<(i32, Vec<u8>)>, run: impl FnOnce() -> T) -> T {
+    struct Restore(Option<Vec<(i32, Vec<u8>)>>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            RESULTS_OF_MACROS.set(self.0.take());
+        }
+    }
+    let _restore = Restore(RESULTS_OF_MACROS.replace(Some(results)));
+    run()
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]

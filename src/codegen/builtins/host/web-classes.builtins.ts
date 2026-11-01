@@ -350,7 +350,7 @@ const joinedParts = [
   b.readsContents(),
   b.runsTransitively("OwnValues", "PrototypeChain", "ToPrimitive", b.named("length")),
 ];
-const blobOptions = membersInspected("type");
+const blobOptions = [b.runsTransitively("ToPrimitive", b.named("type"))];
 
 const blobConstruction = [
   {
@@ -442,21 +442,21 @@ const membersOfBlob = {
     implementation: { how: "CachedGetter", cppClass: "JSBlob", member: "m_name" },
     setter: {
       value: b.any,
-      capability: "heap",
+      capability: "js",
+      runsOnlyOperandCode: true,
       throws: true,
-      uses: { this: stateUpdate, value: b.inspected },
+      uses: { this: stateUpdate, value: converted },
       reads: externalState,
       writes: externalState,
       implementation: b.hostCall,
     },
   },
   size: measuredNumber,
-  // An operand of another kind than a number or a string counts as absent.
   slice: {
-    ...nativeOnly,
+    ...operandCodeOnly,
     args: { start: anythingOrAbsent, end: anythingOrAbsent, contentType: anythingOrAbsent },
     returns: newBlobOverSameBytes,
-    uses: { this: stateRead, start: b.inspected, end: b.inspected, contentType: b.inspected },
+    uses: { this: stateRead, start: converted, end: converted, contentType: converted },
     reads: externalState,
   },
   // The promise is resolved with a Stats object, which looks for `then` on a prototype that is not locked.

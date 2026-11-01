@@ -185,6 +185,7 @@ pub(crate) fn write_import(
         mode: ResolutionMode::None,
         stmt: StmtId::NONE,
         attributes: ExprId::NONE,
+        loaded_as: Atom::NONE,
     });
     debug_assert_eq!(added, import);
     file.has_module_syntax = true;

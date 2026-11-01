@@ -136,6 +136,7 @@ pub struct AotOptions {
     /// The host runs files with code that the build has not seen, though no load of the program names one: the test files of a run that compiles only what they import.
     /// The last entry point stands in for them.
     pub host_runs_files_from_disk: bool,
+    pub stand_in_for_files_from_disk: Option<Vec<u8>>,
     /// `bun test --aot`: the test files, where they are no entry points of the build. The runner makes each the main module in its turn, and the build holds those that a file of the program imports.
     pub main_modules_beside_entry_points: Vec<Vec<u8>>,
     /// A layer of a test run: the entry points that the files above it, which the build does not see, name behind `import` and nowhere behind `require`.
@@ -237,6 +238,7 @@ pub struct ReplacedByTests {
     pub exports: Vec<(Vec<u8>, Vec<u8>)>,
     /// Any export of them: `mock.module("./a", factory)`, and a module whose object goes where nobody follows it.
     pub modules: Vec<Vec<u8>>,
+    pub modules_that_mocked_files_export_whole: Vec<Vec<u8>>,
     /// Such a module that no file spells. It goes the other way too, as `stores_loader_functions` does: an installed package of test helpers may hold the call.
     pub any_module: bool,
     /// Their objects go where nobody follows them: `use(namespace)`, `export * as namespace`. A spy that takes an object from somewhere may get one.
@@ -249,6 +251,9 @@ pub struct ReplacedByTests {
     pub spies_on_unknown_objects: bool,
     /// Such a spy beside a file that loads a module under a name that it does not spell and hands its object on: the spy may meet whatever that name finds.
     pub spy_may_meet_module_that_no_file_spells: bool,
+    pub names_spied_in_text: Vec<Vec<u8>>,
+    pub modules_replaced_in_text: Vec<Vec<u8>>,
+    pub loads_by_unknown_path: bool,
     /// `delete require.cache[require.resolve("./a")]`: the files that load again.
     pub evicted_modules: Vec<Vec<u8>>,
     /// Such a file that no file spells. It goes the other way too, as `stores_loader_functions` does: import-fresh, decache and proxyquire are packages, and the path that
@@ -270,6 +275,7 @@ pub struct ReplacedByTests {
     pub stores_loader_functions: bool,
     pub entry_point_imports_vitest: bool,
     pub package_files_that_product_imports: Vec<Vec<u8>>,
+    pub package_files_imported_beside_tests: Vec<Vec<u8>>,
 }
 
 impl ReplacedByTests {
@@ -291,6 +297,7 @@ impl ReplacedByTests {
                 | u8::from(self.names_file_with_query) << 5
                 | u8::from(self.stores_loader_functions) << 6
                 | u8::from(self.entry_point_imports_vitest) << 7,
+            u8::from(self.loads_by_unknown_path),
         ];
         push_number(&mut bytes, self.builtins.len());
         for &member in &self.builtins {
@@ -319,6 +326,9 @@ impl ReplacedByTests {
             &self.files_required,
             &self.files_required_where_throws_are_caught,
             &self.data_files_imported_with_types,
+            &self.names_spied_in_text,
+            &self.modules_replaced_in_text,
+            &self.modules_that_mocked_files_export_whole,
         ] {
             push_number(&mut bytes, texts.len());
             for text in texts {
@@ -359,7 +369,7 @@ impl ReplacedByTests {
             let count = take_number(bytes)?;
             (0..count).map(|_| take(bytes)).collect()
         }
-        let (&answers, rest) = bytes.split_first()?;
+        let (&[answers, more_answers], rest) = bytes.split_first_chunk::<2>()?;
         bytes = rest;
         let replaced = ReplacedByTests {
             any_module: answers & 1 != 0,
@@ -370,6 +380,7 @@ impl ReplacedByTests {
             names_file_with_query: answers & 32 != 0,
             stores_loader_functions: answers & 64 != 0,
             entry_point_imports_vitest: answers & 128 != 0,
+            loads_by_unknown_path: more_answers & 1 != 0,
             builtins: take_list(&mut bytes, take_number)?,
             names_added_to_builtins: take_list(&mut bytes, |bytes| {
                 Some((take_number(bytes)?, take_text(bytes)?))
@@ -386,6 +397,9 @@ impl ReplacedByTests {
             files_required: take_list(&mut bytes, take_text)?,
             files_required_where_throws_are_caught: take_list(&mut bytes, take_text)?,
             data_files_imported_with_types: take_list(&mut bytes, take_text)?,
+            names_spied_in_text: take_list(&mut bytes, take_text)?,
+            modules_replaced_in_text: take_list(&mut bytes, take_text)?,
+            modules_that_mocked_files_export_whole: take_list(&mut bytes, take_text)?,
             parameters_that_start_workers: take_list(&mut bytes, |bytes| {
                 let (module, export) = (take_text(bytes)?, take_text(bytes)?);
                 let index = take_number(bytes)?;
@@ -406,6 +420,7 @@ impl ReplacedByTests {
                 })
             })?,
             package_files_that_product_imports: Vec::new(),
+            package_files_imported_beside_tests: Vec::new(),
         };
         bytes.is_empty().then_some(replaced)
     }
@@ -440,6 +455,7 @@ impl Default for AotOptions {
             test_files_of_run: Vec::new(),
             preloads_of_test_run: Vec::new(),
             host_runs_files_from_disk: false,
+            stand_in_for_files_from_disk: None,
             main_modules_beside_entry_points: Vec::new(),
             entry_points_only_imported_from_above: Vec::new(),
             entry_points_required_from_above: Vec::new(),
@@ -529,6 +545,10 @@ mod tests {
             files_required: vec![b"/project/g.cjs".to_vec()],
             files_required_where_throws_are_caught: vec![b"/project/h.cjs".to_vec()],
             data_files_imported_with_types: vec![b"/project/i.json".to_vec()],
+            names_spied_in_text: vec![b"total".to_vec()],
+            modules_replaced_in_text: vec![b"../lib.js".to_vec(), b"./j".to_vec()],
+            modules_that_mocked_files_export_whole: vec![b"/project/k.js".to_vec()],
+            loads_by_unknown_path: true,
             handed_on_modules: vec![b"/project/d.ts".to_vec()],
             hands_on_any_module: true,
             names_spied_on_unknown_objects: vec![b"read".to_vec(), b"write".to_vec()],
@@ -538,6 +558,7 @@ mod tests {
             entry_point_imports_vitest: true,
             spy_may_meet_module_that_no_file_spells: true,
             package_files_that_product_imports: Vec::new(),
+            package_files_imported_beside_tests: Vec::new(),
         };
         let bytes = replaced.to_bytes();
         assert_eq!(ReplacedByTests::from_bytes(&bytes), Some(replaced));
@@ -596,6 +617,7 @@ mod tests {
             test_files_of_run,
             preloads_of_test_run,
             host_runs_files_from_disk,
+            stand_in_for_files_from_disk,
             main_modules_beside_entry_points,
             entry_points_only_imported_from_above,
             entry_points_required_from_above,
@@ -655,6 +677,7 @@ mod tests {
         assert!(test_files_of_run.is_empty());
         assert!(preloads_of_test_run.is_empty());
         assert!(!host_runs_files_from_disk);
+        assert!(stand_in_for_files_from_disk.is_none());
         assert!(main_modules_beside_entry_points.is_empty());
         assert!(entry_points_only_imported_from_above.is_empty());
         assert!(entry_points_required_from_above.is_empty());

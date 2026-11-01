@@ -9,8 +9,9 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { slot, spawned, unsupported } from "./harness/commands";
-import { registry } from "./harness/registry";
+import { without } from "./harness/capabilities";
+import { slot, spawned } from "./harness/commands";
+import "./harness/registry";
 import { describe, test } from "./supported";
 
 const losesValues = "--aot-sabotage=StoredValuesAreNeverRead";
@@ -48,16 +49,17 @@ async function build(builder: Builder, source: string, ...flags: string[]) {
 const both = <T>(names: T[]) =>
   (Object.keys(environments) as Builder[]).flatMap(builder => names.map(name => [builder, name] as const));
 
-const hasTheWord = !unsupported && registry().sabotages?.includes("StoredValuesAreNeverRead");
-
-describe.skipIf(!hasTheWord)("compile/aot/an operation without a value stops the build", () => {
-  test.concurrent.each(both(Object.keys(stopped)))("in %s it is named: %s", async (builder, name) => {
-    const { source, place } = stopped[name];
-    const result = await build(builder, source, losesValues);
-    expect(result.stderr).toMatch(
-      new RegExp(`internal compiler error \\(AnalyzeFlow\\): OperationWithoutValue: .*${place}`),
-    );
-    expect(result.stderr).toContain("This is a bug in Bun. Please report it");
-    expect({ exitCode: result.exitCode, isThere: result.isThere }).toEqual({ exitCode: 1, isThere: false });
-  });
-});
+describe.skipIf(!!without("the words that break a build on purpose"))(
+  "compile/aot/an operation without a value stops the build",
+  () => {
+    test.concurrent.each(both(Object.keys(stopped)))("in %s it is named: %s", async (builder, name) => {
+      const { source, place } = stopped[name];
+      const result = await build(builder, source, losesValues);
+      expect(result.stderr).toMatch(
+        new RegExp(`internal compiler error \\(AnalyzeFlow\\): OperationWithoutValue: .*${place}`),
+      );
+      expect(result.stderr).toContain("This is a bug in Bun. Please report it");
+      expect({ exitCode: result.exitCode, isThere: result.isThere }).toEqual({ exitCode: 1, isThere: false });
+    });
+  },
+);

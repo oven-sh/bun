@@ -5,7 +5,11 @@ import { casesOfOneRun, sayOf } from "./harness/cases-of-one-run";
 import { test } from "./supported";
 
 const project = (name: string) =>
-  casesOfOneRun("imports-of-bun-exported-again-" + name, { "package.json": `{ "name": "p", "type": "module" }` });
+  casesOfOneRun("imports-of-bun-exported-again-" + name, { "package.json": `{ "name": "p", "type": "module" }` }, [
+    [[]],
+    [["--aot"], "TestRunLayers:0"],
+    [["--aot"], "TestRunLayers:2,TestRunPartFiles:1"],
+  ]);
 // The cases of a project are compiled as one program, so "bun" may be mocked in all of them as soon as one of them says so.
 // A file that takes bun:test whole may mock any module.
 const besideAllOfBunTest = project("beside-all-of-bun-test");

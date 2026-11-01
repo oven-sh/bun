@@ -5,6 +5,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { raiseDefaultTimeout } from "./default-timeout";
 import { run } from "./run";
+import { waysFor } from "./ways";
 import { describe, test } from "../supported";
 
 raiseDefaultTimeout(120_000);
@@ -159,8 +160,7 @@ export function mockEndsInATest(part: number, of: number) {
   const isMine = (index: number) => index % of === part;
   const names = Object.keys(projects);
 
-  // TODO(bun): `bun test` loads the user anew, against the module itself. A compiled require() of a module that has run asks nobody, so the one compiled user goes on:
-  // it may fail loudly, and may not answer with the mock that has ended.
+  // `bun test` loads the user anew, against the module itself. The one compiled user goes on, and the module runs when the user is asked for again.
   test.each(isMine(names.length) ? ways : [])("a user that require() loaded is required again, %s", async (_, env) => {
     using dir = tempDir("mock-ends-in-test", {
       ...shared,
@@ -174,13 +174,13 @@ test("the mock ends", () => {
     });
     const plain = await runTests(String(dir), {});
     expect(plain.printed).toEqual(["| mocked: mock fn, mock value", "| dep runs", "| again: real fn, real value"]);
-    const compiled = await runTests(String(dir), env, "--aot");
-    expect(compiled.printed).toContain("| mocked: mock fn, mock value");
-    expect(compiled.printed).not.toContain("| again: mock fn, mock value");
+    expect(await runTests(String(dir), env, "--aot")).toEqual(plain);
   });
 
-  describe.each(ways)("%s", (_, env) => {
-    test.each(names.filter((_, index) => isMine(index)))("%s", async name => {
+  describe.each(ways)("%s", (way, env) => {
+    // The witness failed in both ways on the build in front of the cure, as nine more did: none in layers alone.
+    const runsIn = (name: string) => waysFor(ways, name === "a late user behind the end").some(([each]) => each === way);
+    test.each(names.filter((name, index) => isMine(index) && runsIn(name)))("%s", async name => {
       using dir = tempDir("mock-ends-in-test", { ...shared, ...projects[name] });
       const plain = await runTests(String(dir), {});
       expect(plain.printed).toContain(

@@ -1189,6 +1189,20 @@ fn text_of_a_package_is_the_file_under_the_aot_condition() {
     assert_eq!(text, TYPED);
 }
 
+#[test]
+fn a_program_under_another_tsconfig_books_the_failures_of_the_application() {
+    let directory = TemporaryDirectory::new("compile_nested_tsconfig_missing_import");
+    directory.write("tsconfig.json", CONFIGURATION);
+    directory.write("a.test.ts", "console.log(typeof Bun.plugin);\n");
+    directory.write("nested/tsconfig.json", NARROW_CONFIGURATION);
+    let missing = "// @ts-ignore\nimport gone from \"not-installed\";\nconsole.log(gone);\n";
+    directory.write("nested/b.test.ts", missing);
+    let mut project = TestProject::on_disk(directory.path(), &["a.test.ts", "nested/b.test.ts"]);
+    project.runs_tests = true;
+    let (result, log) = link_project(&project, &WithoutServices);
+    expect_success(result, &log);
+}
+
 fn find_refused_entry_points(files: &[(&str, &str)], entry_point_count: usize) -> Option<Vec<u32>> {
     let mut project = TestProject::with_entry_points(files, entry_point_count, &default_settings());
     project.aot.checks_only = true;

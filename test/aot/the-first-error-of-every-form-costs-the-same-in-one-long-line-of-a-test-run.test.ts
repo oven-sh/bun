@@ -8,7 +8,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { spawned } from "./harness/commands";
-import { describe, test } from "./supported";
+import { describe, test } from "./measures";
 
 const places = 40;
 const fillers = 20_000;

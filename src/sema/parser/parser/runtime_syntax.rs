@@ -142,11 +142,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if raw == known::use_strict {
             match self.has_context(ctx::TOP_LEVEL) {
                 true => self.context |= ctx::STRICT,
-                false if self.options.keeps_function_directives => {
-                    self.context |= ctx::STRICT;
-                    self.f.rare_syntax |= rare::DIRECTIVE_IN_FUNCTION;
-                }
-                false => self.f.rare_syntax |= rare::DROPPED_STRICT_DIRECTIVE,
+                false if self.options.compiles => self.context |= ctx::STRICT,
+                false => {}
             }
         }
         true
@@ -154,7 +151,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
 
     pub(super) fn is_strict_body(&self, body: FnBody) -> bool {
         self.has_context(ctx::STRICT)
-            || self.options.keeps_function_directives
+            || self.options.compiles
                 && self.f.rare_syntax & rare::DIRECTIVE_IN_FUNCTION != 0
                 && self.f.has_use_strict_directive(body)
     }

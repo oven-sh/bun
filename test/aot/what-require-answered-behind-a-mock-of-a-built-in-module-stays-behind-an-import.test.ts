@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
 import { casesOfOneRun, sayOf } from "./harness/cases-of-one-run";
-import { test } from "./supported";
+// One by one: the runner gives this file a process of its own and eight cases at once, beside two more like it: too many builds for four cores.
+import { testOneByOne as test } from "./supported";
 
 // A mock that is made while nothing is loaded stores nothing: its factory waits for the first load. What the first require() behind it answers
 // stays in the module object in require.cache: neither a require() of the name as it is spelled nor an import() of the module behind that changes it.

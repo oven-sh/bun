@@ -1,7 +1,8 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { run } from "./harness/run";
-import { test } from "./supported";
+// One by one: a case builds for minutes, and beside others it would pass its limit where Bun has a sanitizer.
+import { testOneByOne as test } from "./supported";
 
 // `spyOn(Module, "createRequire").mockImplementation(() => name => ..)`, and then `Module.createRequire(import.meta.url)("./next.mjs")`.
 // The build read the second line as a load of ./next.mjs: it called the spy, dropped what the spy made and loaded the file.

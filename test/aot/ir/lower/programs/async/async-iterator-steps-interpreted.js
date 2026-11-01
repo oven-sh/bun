@@ -99,7 +99,7 @@ console.log(lines.join("\n"));
 
 // GENERATED: relay show
 // CHECK-LABEL: function {{*}}name="relay"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, IsGenerator, HasThis, TakesCallee, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|AsyncGenerator<undefined|null|string> flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, IsGenerator, HasThis, TakesCallee, HasExplicitName] length=1 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|AsyncGenerator<undefined|null|string> flags=[IsExpected]}] {
 // CHECK-NEXT: b0(v0: anything, v1: function, v2: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

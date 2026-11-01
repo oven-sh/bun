@@ -1,7 +1,7 @@
 // `--trim --trim-locales de` keeps the data of German and removes the other languages'. A program that asks for a language that was removed ends with exit code 70.
 // ICU also opens the data of its own default locale, which it takes from the host: the first date format of a process makes a calendar in it. No program sees that locale
 // (Bun's default is en-US on every host), so the language of the host decides nothing: not where it was removed, and not where the host has none (LANG=C is en_US_POSIX to ICU).
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isMacOS, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { statSync } from "node:fs";
 import { join } from "node:path";
@@ -9,6 +9,7 @@ import { unsupported } from "../aot/harness/commands";
 import { run } from "../aot/harness/run";
 import { inTurn } from "../aot/harness/shared-builds";
 import { copyWithoutDebugInformation, withoutDebugInformation } from "../aot/harness/without-debug-information";
+import { describe, test } from "../aot/listed";
 
 // Asked of the Bun under test itself, so that a release build, which has no bun:internal-for-testing, runs this file too.
 const canTrim = (() => {

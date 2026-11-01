@@ -1057,6 +1057,13 @@ impl ExportTables {
         &failures[start..end]
     }
 
+    /// The files that `export *` names in the file, in the order of the text.
+    pub(super) fn files_named_by_stars(&self, file: FileId) -> impl Iterator<Item = FileId> + '_ {
+        let table = find_table(&self.files, ModuleRef::File(file));
+        let targets = table.map_or(&[][..], |table| &self.star_tables[table][..]);
+        targets.iter().map(|&target| self.files[target as usize])
+    }
+
     fn table_of(&self, file: FileId) -> Option<&FileTable> {
         let table = find_table(&self.files, ModuleRef::File(file))?;
         Some(&self.tables[table])

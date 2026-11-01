@@ -289,9 +289,11 @@ pub(super) struct ResolverOutput {
     pub(super) builtins_handed_out: Vec<BuiltinId>,
     pub(super) builtins_exported: Vec<BuiltinExported>,
     pub(super) writes_on_imports: Vec<WriteOnImport>,
+    pub(super) modules_written_on: Vec<Atom>,
     pub(super) keys_spelled_on_other_objects: Vec<(ExprId, Atom)>,
     pub(super) objects_spelled_for_calls: Vec<ObjectSpelled>,
     pub(super) keys_partly_read: Vec<ExprId>,
+    pub(super) calls_that_may_stub_global: Vec<(ExprId, BuiltinId)>,
     pub(super) keys_taken_out_of_module_cache: Vec<KeyOfModuleCache>,
     pub(super) keys_stored_in_module_cache: Vec<KeyOfModuleCache>,
     pub(super) hands_module_cache_on: bool,
@@ -845,6 +847,7 @@ impl<'a, 's> Resolver<'a, 's> {
             builtins_handed_out: output.builtins_handed_out.into_boxed_slice(),
             builtins_exported: output.builtins_exported.into_boxed_slice(),
             writes_on_imports: output.writes_on_imports.into_boxed_slice(),
+            modules_written_on: output.modules_written_on.into_boxed_slice(),
             mentioned,
             #[cfg(test)]
             exposed,
@@ -854,12 +857,14 @@ impl<'a, 's> Resolver<'a, 's> {
             keys_spelled_on_other_objects: output.keys_spelled_on_other_objects.into_boxed_slice(),
             objects_spelled_for_calls: output.objects_spelled_for_calls.into_boxed_slice(),
             keys_partly_read: output.keys_partly_read.into_boxed_slice(),
+            calls_that_may_stub_global: output.calls_that_may_stub_global.into_boxed_slice(),
             keys_taken_out_of_module_cache: output
                 .keys_taken_out_of_module_cache
                 .into_boxed_slice(),
             keys_stored_in_module_cache: output.keys_stored_in_module_cache.into_boxed_slice(),
             hands_module_cache_on: output.hands_module_cache_on,
             loses_sight_of_module_cache: output.loses_sight_of_module_cache || names_plugin,
+            names_plugin,
             reaches_module_cache,
             reads_entries_of_module_cache,
         }

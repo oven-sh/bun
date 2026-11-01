@@ -157,7 +157,7 @@ console.log("sum", sum);
 
 // GENERATED: asynchronousGenerator Klass setter computed
 // CHECK-LABEL: function {{*}}name="asynchronousGenerator"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, IsGenerator, IsSloppy, HasThis, TakesCallee, HasArgumentCount, HasHiddenRest, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=undefined|null|AsyncGenerator flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, IsGenerator, IsSloppy, HasThis, TakesCallee, HasArgumentCount, HasHiddenRest, HasExplicitName] length=1 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=undefined|null|AsyncGenerator flags=[IsExpected]}] {
 // CHECK-NEXT: b0(v0: anything, v1: function, v2: int[0, 4294967295], v3: undefined|null|string, v4: Array):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

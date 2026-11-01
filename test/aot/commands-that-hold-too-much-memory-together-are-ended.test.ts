@@ -3,7 +3,8 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isLinux } from "harness";
 import { describeKill, heldTooMuchTogether } from "./harness/killed-for-memory";
 import { availableMemory, endAtMemoryLimitTogether } from "./harness/memory-limit";
-import { test } from "./supported";
+// One by one: the runner gives this file a process of its own and eight cases at once, beside two more like it: too many builds for four cores.
+import { testOneByOne as test } from "./supported";
 
 const MB = 2 ** 20;
 const holds96MB = `const held = Buffer.alloc(${96 * MB}, 1); setTimeout(() => console.log(held.length), Number(process.argv[1]));`;

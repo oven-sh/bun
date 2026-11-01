@@ -184,8 +184,16 @@ interface::define_linked_functions! {
         crate::load::globals_of_a_window::globals_that_a_window_replaces()
     }
 
+    fn bun_aot_lists_laid_anew_between_test_files() -> Vec<u32> {
+        crate::load::replaced_by_tests::lists_laid_anew_between_test_files()
+    }
+
     fn bun_aot_imports_vitest(path: &[u8], text: &[u8]) -> bool {
         crate::load::replaced_builtins::imports_vitest(path, text)
+    }
+
+    fn bun_aot_find_importer_outside_tests(root: &[u8], file: &[u8]) -> Option<Vec<u8>> {
+        crate::load::importers_on_disk::find_importer_outside_tests(root, file)
     }
 
     fn bun_aot_library_modules_that_programs_load() -> Vec<&'static [u8]> {

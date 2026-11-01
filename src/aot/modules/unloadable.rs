@@ -2,7 +2,7 @@ use super::BindInput;
 use super::failures::{FailureEffect, FailureOrder, ModuleFailureKind, PendingFailure};
 use super::interop::ModuleKind;
 use super::plan::ModuleRef;
-use super::requests::{ScannedSite, Scans};
+use super::requests::{FileScan, ScannedSite, Scans, is_jsx_site};
 use crate::load::sources::parsed_source;
 use bun_sema::program::FileId;
 use bun_sema::util::SharedSort;
@@ -41,16 +41,66 @@ fn imported_files(scans: &Scans, file: FileId) -> impl Iterator<Item = FileId> +
     })
 }
 
-fn find_modules_loaded_at_start(input: &BindInput<'_, '_>, scans: &Scans) -> Vec<bool> {
-    let mut is_loaded = vec![false; input.files.modules.len()];
+fn written_files(scans: &Scans, file: FileId) -> impl Iterator<Item = FileId> + '_ {
+    let sites = scans.find(file).map_or(&[][..], |scan| &scan.sites);
+    sites.iter().filter_map(|site| match *site {
+        ScannedSite::Module(ModuleRef::File(target)) => Some(target),
+        _ => None,
+    })
+}
+
+fn find_files_reached_from_entry_points<Next: Iterator<Item = FileId>>(
+    input: &BindInput<'_, '_>,
+    next: impl Fn(FileId) -> Next,
+) -> Vec<bool> {
+    let mut is_reached = vec![false; input.files.modules.len()];
     let entry_points = input.sources.entry_points().iter();
     let mut left: Vec<FileId> = entry_points.map(|entry_point| entry_point.file).collect();
     while let Some(file) = left.pop() {
-        if !core::mem::replace(&mut is_loaded[file.idx()], true) {
-            left.extend(imported_files(scans, file));
+        if !core::mem::replace(&mut is_reached[file.idx()], true) {
+            left.extend(next(file));
         }
     }
-    is_loaded
+    is_reached
+}
+
+fn find_modules_loaded_at_start(input: &BindInput<'_, '_>, scans: &Scans) -> Vec<bool> {
+    find_files_reached_from_entry_points(input, |file| imported_files(scans, file))
+}
+
+fn lacks_jsx_module(pending: &PendingFailure) -> bool {
+    matches!(pending.failure.kind, ModuleFailureKind::Unresolved { .. })
+        && is_jsx_site(pending.failure.site)
+}
+
+fn requires_jsx_module_that_is_missing(scan: &FileScan) -> bool {
+    scan.interop.kind == ModuleKind::CommonJs && scan.failures.iter().any(lacks_jsx_module)
+}
+
+// A CommonJS file requires the modules of its JSX at the head of its body. Where only a computed path may find the file, that require fails when the file is loaded, as under `bun run`.
+pub(super) fn let_late_commonjs_files_fail_at_load(input: &BindInput<'_, '_>, scans: &mut Scans) {
+    let files = input.files.compiled_files();
+    let lacking = |file: &&FileId| {
+        scans
+            .find(**file)
+            .is_some_and(requires_jsx_module_that_is_missing)
+    };
+    let lacking: Vec<FileId> = files.iter().filter(lacking).copied().collect();
+    if lacking.is_empty() {
+        return;
+    }
+    let is_written = find_files_reached_from_entry_points(input, |file| written_files(scans, file));
+    for file in lacking {
+        if is_written[file.idx()] && !input.runs_tests {
+            continue;
+        }
+        let scan = scans.find_mut(file).expect("the file was scanned");
+        for pending in scan.failures.iter_mut().filter(|it| lacks_jsx_module(it)) {
+            if let ModuleFailureKind::Unresolved { specifier, reason } = pending.failure.kind {
+                pending.failure.kind = ModuleFailureKind::UnresolvedAtLoad { specifier, reason };
+            }
+        }
+    }
 }
 
 // An `import` or `export .. from` that names nothing, or a file that is no program, fails the load of every module that reaches it through such statements, before one of them runs.

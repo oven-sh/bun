@@ -1,11 +1,14 @@
 use std::borrow::Cow;
 
+use bun_core::lexer;
 use bun_core::strings::{is_valid_utf8, last_index_of_char};
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::bind::{BindOptions, Binding, Bound, Decl, FunctionFlags, RuntimeBindOptions, bind};
 use bun_sema::file_analysis::FileAnalysis;
 use bun_sema::fold::{Constant, Decision, Decisions};
-use bun_sema::hir::{DiagnosticClass, ExprId, ExprKind, File, Flags, FnId, StmtId, StmtKind, rare};
+use bun_sema::hir::{
+    Comment, DiagnosticClass, ExprId, ExprKind, File, Flags, FnId, StmtId, StmtKind, rare,
+};
 use bun_sema::import_sites::{ImportSite, ImportSiteKind, ImportSpecifier};
 use bun_sema::module_format::ModuleFormat;
 use bun_sema::resolve::FinishedFile;
@@ -166,6 +169,33 @@ pub(crate) fn create_public_path(virtual_path: &[u8], importer_public_path: &[u8
     path
 }
 
+/// The `//# sourceURL=` of a text, as the engine reads it (`Lexer::parseCommentDirective()`): in a `//` comment, behind `#` or `@` and one white space. The last one counts, and
+/// one with more behind its value takes away what stood before it.
+pub(crate) fn find_source_url<'a>(text: &'a [u8], comments: &[Comment]) -> Option<&'a [u8]> {
+    let mut found: Option<&[u8]> = None;
+    for comment in comments.iter().filter(|comment| !comment.is_block) {
+        let written = &text[comment.pos as usize..comment.end as usize];
+        let marked = (written.strip_prefix(b"//#")).or_else(|| written.strip_prefix(b"//@"));
+        let Some(marked) = marked else {
+            continue;
+        };
+        let (space, size) = lexer::char_and_size(marked, 0);
+        if size == 0 || !lexer::is_whitespace(space) {
+            continue;
+        }
+        let Some(value) = marked[size..].strip_prefix(b"sourceURL=") else {
+            continue;
+        };
+        let start = lexer::end_of_run(value, 0, lexer::is_whitespace);
+        let end = lexer::end_of_run(value, start, |c| {
+            !lexer::is_whitespace(c) && c != i32::from(b'"') && c != i32::from(b'\'')
+        });
+        let is_alone = lexer::end_of_run(value, end, lexer::is_whitespace) == value.len();
+        found = is_alone.then_some(&value[start..end]);
+    }
+    found.filter(|url| !url.is_empty())
+}
+
 fn try_create_function_text(texts: &[&[u8]]) -> Option<Vec<u8>> {
     let body: &[u8] = texts.last().copied().unwrap_or_default();
     let parameters = &texts[..texts.len().saturating_sub(1)];
@@ -228,7 +258,7 @@ fn parses_alone(text: &[u8]) -> Option<ParsedShape> {
         experimental_decorators: false,
         every_file_is_a_module: false,
         reads_jsdoc: false,
-        keeps_function_directives: true,
+        ignores_pure_comments: true,
     };
     let mut hir = parse_for_compile(arena, &parse_options, text, &atoms);
     let mut diagnostics = hir.diagnostics.iter();
@@ -532,7 +562,7 @@ mod tests {
         }
     }
 
-    fn is_function_strict(text: &[u8], keeps_function_directives: bool) -> bool {
+    fn is_function_strict(text: &[u8]) -> bool {
         let session = Session::new();
         let atoms = Interner::new_in(&session);
         let parse_options = CompileParseOptions {
@@ -541,7 +571,7 @@ mod tests {
             experimental_decorators: false,
             every_file_is_a_module: false,
             reads_jsdoc: false,
-            keeps_function_directives,
+            ignores_pure_comments: true,
         };
         let hir = parse_for_compile(session.arena(), &parse_options, text, &atoms);
         let ExprKind::Fn(function) = hir[find_only_expression(&hir).unwrap()].kind else {
@@ -565,10 +595,9 @@ mod tests {
     #[test]
     fn directive_of_text_makes_its_function_strict() {
         let text = try_create_function_text(&[b"'use strict'; return this;"]).unwrap();
-        assert!(is_function_strict(&text, true));
-        assert!(!is_function_strict(&text, false));
+        assert!(is_function_strict(&text));
         let without_directive = try_create_function_text(&[b"return this;"]).unwrap();
-        assert!(!is_function_strict(&without_directive, true));
+        assert!(!is_function_strict(&without_directive));
 
         let strict = r#"Function("'use strict'; return this;");"#;
         assert_eq!(strictness_of_compiled_texts(strict), [true]);

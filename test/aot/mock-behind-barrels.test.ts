@@ -7,6 +7,19 @@ import { test } from "./supported";
 // of several `export *` the first that has the name answers, and a mock has what its factory gave;
 // a name that the factory left out is undefined through `export *` and `export { name } from`, and only whoever imports it from the mocked file itself hears what the mock makes of that.
 const said = `const said = read => { try { return String(read()); } catch (error) { return "throws " + error.message.slice(0, 32); } };`;
+const userOf = (barrel: string) => `import * as ns from "${barrel}";
+const read = key => { try { return String(typeof ns[key] === "function" ? ns[key]() : ns[key]); } catch (error) { return "threw " + error.name; } };
+export const seen = () => ["x", "y", "f", "extra", "side", "own", "second"].map(key => key + "=" + read(key)).join(" ") + " keys=" + Object.keys(ns).sort().join("+");`;
+const nextFile = `import { test } from "bun:test";
+import { seen } from "./user.js";
+test("b", () => console.log("SEEN b", seen()));`;
+const takesOriginal = `import { vi, test } from "bun:test";
+vi.mock("./barrel.js", async original => ({ ...(await original()), x: "over x" }));
+import { seen } from "./user.js";
+test("a", async () => {
+  const ns = await import("./barrel2.js");
+  console.log("SEEN a", seen(), ns.x, ns.y, typeof ns.f, Object.keys(ns).sort().join("+"));
+});`;
 const projects: Record<string, Record<string, string>> = {
   "two stars": {
     "leaf.js": `console.log("SEEN runs leaf"); export const x = "real";`,
@@ -90,6 +103,79 @@ test("t", () => {
   console.log("SEEN", stars.c(1), c(1), stars.f(1), f(1));
 });`,
   },
+  "the factory returns a barrel over the mocked file": {
+    "a.js": `export const a = "real";`,
+    "b.js": `export const b = "real";`,
+    "star.js": `export * from "./a.js";`,
+    "named.js": `export { a } from "./a.js";`,
+    "outer.js": `export * from "./star.js";`,
+    "x.test.js": `import { test, mock } from "bun:test";
+${said}
+test("t", async () => {
+  mock.module("./a.js", () => ({ a: "first" }));
+  const ns = await import("./a.js");
+  for (const barrel of [await import("./star.js"), await import("./named.js"), await import("./outer.js")]) {
+    console.log("SEEN", said(() => mock.module("./a.js", () => barrel)), ns.a);
+    console.log("SEEN", await mock.module("./a.js", async () => barrel).then(() => "settled", error => "rejects " + error.message.slice(0, 32)), ns.a);
+  }
+  const star = await import("./star.js");
+  mock.module("./b.js", () => star);
+  const b = await import("./b.js");
+  console.log("SEEN", b.a, said(() => mock.module("./a.js", () => b)), ns.a);
+});`,
+  },
+  // The first star of barrel.js is settled by the build. The second leads round the ring to barrel.js itself, the file that is mocked.
+  "a ring of stars, and the next file mocks nothing": {
+    "leaf.js": `export const x = "real x"; export function f() { return "real f"; }`,
+    "barrel.js": `export * from "./leaf.js"; export * from "./barrel2.js";`,
+    "barrel2.js": `export * from "./barrel.js"; export const second = "second";`,
+    "a.test.js": `import { vi, test } from "bun:test";
+vi.mock("./barrel.js", () => ({ x: "mock x" }));
+import * as ns from "./barrel.js";
+import * as behind from "./barrel2.js";
+test("a", () => console.log("SEEN a", Object.keys(ns).join(), ns.x, Object.keys(behind).join(), behind.x, behind.second));`,
+    "b.test.js": `import { test } from "bun:test";
+import * as ns from "./barrel.js";
+import * as behind from "./barrel2.js";
+const key = name => name.split("").join("");
+test("b", () => {
+  console.log("SEEN b", Object.keys(ns).join(), ns.x, typeof ns.f, ns.second, ns[key("x")], typeof ns[key("f")]);
+  console.log("SEEN b", Object.keys(behind).join(), behind.x, typeof behind.f, behind.second, behind[key("x")]);
+});`,
+  },
+  "a ring of stars with an export of its own": {
+    "leaf.js": `export const x = "real x"; export const y = "real y"; export function f() { return "real f"; }`,
+    "barrel.js": `export * from "./leaf.js"; export const own = "own"; export * from "./barrel2.js";`,
+    "barrel2.js": `export * from "./barrel.js"; export const second = "second";`,
+    "user.js": userOf("./barrel.js"),
+    "a.test.js": `import { mock, test } from "bun:test";
+mock.module("./barrel.js", () => ({ x: "mock x", y: "mock y", f: () => "mock f", extra: "mock extra" }));
+import { seen } from "./user.js";
+test("a", async () => {
+  const ns = await import("./barrel.js");
+  console.log("SEEN a", seen(), ns.x, ns.y, typeof ns.f, ns.extra, Object.keys(ns).sort().join("+"));
+});`,
+    "b.test.js": nextFile,
+  },
+  // The build leaves the names out of the table of the file with the star, since the run follows the stars: so the run follows the star over such a mock too.
+  "the factory takes the original, in a ring": {
+    "leaf.js": `export const x = "real x"; export const y = "real y"; export function f() { return "real f"; }`,
+    "side.js": `export const side = "real side";`,
+    "barrel.js": `export * from "./leaf.js"; export * from "./side.js"; export * from "./barrel2.js";`,
+    "barrel2.js": `export * from "./barrel.js"; export const second = "second";`,
+    "user.js": userOf("./barrel2.js"),
+    "a.test.js": takesOriginal,
+    "b.test.js": nextFile,
+  },
+  "the factory takes the original, and the leaf imports the barrel": {
+    "leaf.js": `import * as back from "./barrel.js"; export const sawBarrel = () => Object.keys(back).sort().join("+");
+export const x = "real x"; export const y = "real y"; export function f() { return "real f"; }`,
+    "barrel.js": `import { x, y, f } from "./leaf.js"; export { x, y, f };`,
+    "barrel2.js": `export * from "./barrel.js";`,
+    "user.js": userOf("./barrel2.js"),
+    "a.test.js": takesOriginal,
+    "b.test.js": nextFile,
+  },
   "no mock stands": {
     "leaf.js": `console.log("SEEN runs leaf"); export const x = "real";`,
     "barrel.js": `console.log("SEEN runs barrel"); export * from "./leaf.js"; export const own = "real";`,
@@ -104,21 +190,20 @@ test("t", () => console.log("SEEN", seen(), JSON.stringify({ ...first })));`,
   },
 };
 
+async function expectToAgreeWithPlainBun(files: Record<string, string>) {
+  using dir = tempDir("aot-mock-behind-barrels", { "package.json": `{ "name": "p", "type": "module" }`, ...files });
+  const seen = async (flags: string[], words: string) => {
+    const { stdout, stderr } = await run([bunExe(), "test", ...flags], String(dir), { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words }); // prettier-ignore
+    return (stdout + "\n" + stderr).split("\n").filter(line => line.startsWith("SEEN"));
+  };
+  const plain = await seen([], "");
+  expect(plain.length).toBeGreaterThan(0);
+  expect(await seen(["--aot"], "TestRunLayers:0")).toEqual(plain);
+  expect(await seen(["--aot"], "TestRunLayers:2,TestRunPartFiles:1")).toEqual(plain);
+}
+
 test.each(Object.keys(projects))(
   "%s: as plain Bun, as one program and in two layers",
-  async name => {
-    using dir = tempDir("aot-mock-behind-barrels", {
-      "package.json": `{ "name": "p", "type": "module" }`,
-      ...projects[name],
-    });
-    const seen = async (flags: string[], words: string) => {
-      const { stdout, stderr } = await run([bunExe(), "test", ...flags], String(dir), { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words }); // prettier-ignore
-      return (stdout + "\n" + stderr).split("\n").filter(line => line.startsWith("SEEN"));
-    };
-    const plain = await seen([], "");
-    expect(plain.length).toBeGreaterThan(0);
-    expect(await seen(["--aot"], "TestRunLayers:0")).toEqual(plain);
-    expect(await seen(["--aot"], "TestRunLayers:2,TestRunPartFiles:1")).toEqual(plain);
-  },
+  name => expectToAgreeWithPlainBun(projects[name]),
   600000,
 );

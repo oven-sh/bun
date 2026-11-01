@@ -25,9 +25,13 @@
     "jit": 744.7
   },
   "array/spread-into-call-in-function": {
-    "typed": 38,
-    "untyped": 44,
-    "jit": 320.3
+    "typed": 167,
+    "untyped": 98,
+    "jit": 320.3,
+    "best": {
+      "typed": 38,
+      "untyped": 44
+    }
   },
   "array/spread-of-set": {
     "typed": 86.4,
@@ -612,8 +616,8 @@
     }
   },
   "built-in/path-basename": {
-    "typed": 136.9,
-    "untyped": 136.9,
+    "typed": 140.9,
+    "untyped": 140.8,
     "jit": 236,
     "best": {
       "typed": 132.7,
@@ -621,8 +625,8 @@
     }
   },
   "built-in/path-dirname": {
-    "typed": 137.9,
-    "untyped": 137.9,
+    "typed": 144.9,
+    "untyped": 144.9,
     "jit": 219.1,
     "best": {
       "typed": 129.7,
@@ -630,9 +634,13 @@
     }
   },
   "built-in/path-extname": {
-    "typed": 136.8,
-    "untyped": 137,
-    "jit": 234
+    "typed": 159.9,
+    "untyped": 159.9,
+    "jit": 234,
+    "best": {
+      "typed": 142.6,
+      "untyped": 142.8
+    }
   },
   "built-in/path-is-absolute": {
     "typed": 145,

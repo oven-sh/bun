@@ -7,7 +7,8 @@ import { join } from "path";
 import { built, spawned, withoutDebugInformation } from "./harness/commands";
 import { afterAll } from "./harness/default-timeout";
 import { compileCommand } from "./harness/flags";
-import { beforeAll, describe, test } from "./supported";
+// One by one: the cases move and remove one folder that they share.
+import { beforeAll, describe, testOneByOne as test } from "./supported";
 
 const program = `const fs = require("node:fs"), path = require("node:path");
 const show = async (what, answer) => {

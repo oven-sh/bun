@@ -3,7 +3,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { types } from "node:util";
 import { separatePrograms, startsAtAnyEntryPoint } from "./harness/separate-programs";
-import { test } from "./supported";
+// One by one: the runner gives this file a process of its own and eight cases at once, beside two more like it: too many builds for four cores.
+import { testOneByOne as test } from "./supported";
 
 // Every read below runs once, on a receiver that comes back out of an array, so the compiler does not know what arrives: what a program does while it starts.
 const copies = 40;

@@ -1008,7 +1008,7 @@ class Exchange {
   response: $Node.ServerResponse;
   connection: $Node.HttpServerSocket | null;
   endCallback: $Node.HttpWriteCallback | null;
-  tickMark: import("internal/process/tick_ring").Tick | null;
+  queuedTick: import("internal/process/tick_ring").Tick | null;
   events: ResponseEvents;
   pendingFinish: $Node.HttpWriteCallback | null | undefined;
   holdsNumber: boolean;
@@ -1052,7 +1052,7 @@ class Exchange {
     this.response = response;
     this.connection = connection;
     this.endCallback = null;
-    this.tickMark = null;
+    this.queuedTick = null;
     this.events = events;
     this.pendingFinish = undefined;
     this.holdsNumber = false;

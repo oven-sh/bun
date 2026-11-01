@@ -1,0 +1,11 @@
+# A code unit of a string that is one of two texts. A string that was joined or cut out of another one has such a type too, and may still be a rope.
+# FORM: Selected
+# RUN: lower-to-b3 f0
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="codeUnitAt" parameters=[{type="left"|"right"}, {type=int[0, 3]}] results=[{type=int[0, 65535]}] capabilities=[HasOrdinaryFrame] {
+    v2 = GetStringCodeUnit v0, v1
+    Return v2
+}
+# CHECK: v2:GetStringCodeUnit

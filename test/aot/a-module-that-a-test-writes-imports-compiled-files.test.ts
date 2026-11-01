@@ -1,7 +1,8 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { run } from "./harness/run";
-import { test } from "./supported";
+// One by one: a case builds for minutes, and beside others it would pass its limit where Bun has a sanitizer.
+import { testOneByOne as test } from "./supported";
 
 // `writeFileSync(path, text); await import(path)`: the build knows the path and finds no file there, so the loader reads the file when the
 // call runs. Nobody has read what the text imports: it may be any file of the run, under any name that the file exports, and it has to be

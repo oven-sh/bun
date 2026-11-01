@@ -3,7 +3,8 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { run } from "./harness/run";
-import { test } from "./supported";
+// One by one: the runner gives this file a process of its own and eight cases at once, beside two more like it: too many builds for four cores.
+import { testOneByOne as test } from "./supported";
 
 const says = `[
   [typeof expect, typeof jest, typeof test, typeof describe, typeof it, typeof beforeAll, typeof vi, typeof xtest].join(" "),

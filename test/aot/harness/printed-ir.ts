@@ -7,7 +7,8 @@ import { describe as describeAnywhere, expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { spawned } from "./commands";
-import { test as testAnywhere } from "./default-timeout";
+import { test as testAnywhere, whereverTheFileRuns } from "./default-timeout";
+import { unlessLeftOut } from "./left-out";
 import { testaot, toolEnv } from "../shell/tools";
 import { alwaysSkipped, unsupported } from "../supported";
 import { compileCommand, withProgramOutput } from "./flags";
@@ -35,8 +36,8 @@ const whySkipped =
     : "there is no testaot: not in $TESTAOT, not beside the Bun under test, not in build/release-local or build/release");
 if (!unsupported && whySkipped) console.error(`SKIPPED: the tests that read IR: ${whySkipped}`);
 
-export const test = whySkipped ? alwaysSkipped(testAnywhere.skip) : testAnywhere;
-export const describe = whySkipped ? alwaysSkipped(describeAnywhere.skip) : describeAnywhere;
+export const test = whySkipped ? alwaysSkipped(whereverTheFileRuns.test.skip) : testAnywhere;
+export const describe = whySkipped ? alwaysSkipped(describeAnywhere.skip) : unlessLeftOut(describeAnywhere);
 
 /** For the command line of the build whose IR `printIR` is asked for, with the same folder. */
 export const writesProgramInto = (folder: string) => withProgramOutput(join(folder, programFile));

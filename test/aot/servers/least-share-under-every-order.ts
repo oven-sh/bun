@@ -33,8 +33,19 @@ async function slot<T>(work: () => Promise<T>): Promise<T> {
 
 const shareHeldInEveryOrder = 99;
 
-export function holdLeastShare(name: string, leastShareAtLeast: number, numberOfOrders: number, openRow?: number) {
+// `row`: the file builds the executable under that one order alone and holds it against the test runs under all of them: a row of the table. All 2 N builds of a large
+// server in one process came near what CI gives a file. The least of the table is the least of its rows. What is asked of the table as a whole wants no `row`.
+export function holdLeastShare(
+  name: string,
+  leastShareAtLeast: number,
+  numberOfOrders: number,
+  openRow?: number,
+  row?: number,
+) {
   const orders = ["usual", "0", "1", "2", "3"].slice(0, numberOfOrders);
+  const ordersOfExecutables = row === undefined ? orders : [orders[row - 1]];
+  if (row !== undefined && openRow !== undefined)
+    throw new Error("what is the same under every order is asked of the whole table");
   raiseDefaultTimeout(120_000);
   describe.skipIf(!isLinux || process.arch !== "x64")(
     "a test run compiles what an executable compiles, whatever the order of the rules of flow",
@@ -58,14 +69,16 @@ export function holdLeastShare(name: string, leastShareAtLeast: number, numberOf
           join(app, `${name}.test.ts`),
           `import { test } from "bun:test";\nimport "./${name}.ts";\ntest("is loaded", () => process.exit(0));\n`,
         );
-        await Promise.all(
-          orders.flatMap(order => [
+        await Promise.all([
+          ...ordersOfExecutables.map(order =>
             slot(async () => {
               const executable = join(work, `compiled-${order}${isWindows ? ".exe" : ""}`);
               const flags = order === "usual" ? [] : [`--aot-testing=${wordOf(order)}`];
               built(await spawned([bunExe(), ...compileCommand, ...flags, "--target=bun", `./${name}.ts`, "--outfile", executable], app, environment("executable", order), limit)); // prettier-ignore
               rmSync(executable, { force: true });
             }),
+          ),
+          ...orders.map(order =>
             slot(async () => {
               const words = order === "usual" ? {} : { BUN_DEBUG_TEST_AOT_WORDS: `testing=${wordOf(order)}` };
               const command = [bunExe(), "test", "--aot", `./${name}.test.ts`];
@@ -76,11 +89,11 @@ export function holdLeastShare(name: string, leastShareAtLeast: number, numberOf
                 exitCode: 0,
               });
             }),
-          ]),
-        );
+          ),
+        ]);
         const ofTestRuns = orders.map(order => functionsOfProgram(map("test-run", order)));
-        const ofExecutables = orders.map(order => functionsOfProgram(map("executable", order)));
-        all = orders.flatMap((executable, position) => {
+        const ofExecutables = ordersOfExecutables.map(order => functionsOfProgram(map("executable", order)));
+        all = ordersOfExecutables.flatMap((executable, position) => {
           const ofExecutable = ofExecutables[position];
           return ofTestRuns.map((ofTestRun, index) => ({
             executable,
@@ -117,7 +130,7 @@ export function holdLeastShare(name: string, leastShareAtLeast: number, numberOf
         console.log(
           `LEAST ${name}: ${least.percent.toFixed(1)}% (the executable under the order ${least.executable}, the test run under ${least.testRun}; ${orders.length} orders each)`,
         );
-        const usualWithUsual = all.find(isBothUsual)!.percent;
+        const usualWithUsual = all.find(isBothUsual)?.percent ?? NaN;
         const usual = `usual with usual ${usualWithUsual.toFixed(1)}%`;
         const meanOfOthers = `the mean of the other ${others.length} pairings ${mean.toFixed(1)}%`;
         console.log(
@@ -129,7 +142,7 @@ export function holdLeastShare(name: string, leastShareAtLeast: number, numberOf
           `  the same under every order: ${sameInEveryOrder.ofExecutables} functions of the executable, ${sameInEveryOrder.ofTestRuns} of the test run, ${sameInEveryOrder.ofBoth} of both; of those ${sameInEveryOrder.percent.toFixed(2)}% are the same in both`,
         );
         console.log(
-          `  by executable (${orders.join(" ")}), each against the test runs (${orders.join(" ")}): ${orders
+          `  by executable (${ordersOfExecutables.join(" ")}), each against the test runs (${orders.join(" ")}): ${ordersOfExecutables
             .map(order =>
               all
                 .filter(it => it.executable === order)

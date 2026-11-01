@@ -3,6 +3,8 @@
 #[cfg(test)]
 mod barrel_tests;
 mod bind_stage;
+#[cfg(test)]
+mod files_of_tests_tests;
 mod import_graph;
 #[cfg(test)]
 mod imported_constant_tests;
@@ -66,7 +68,7 @@ use crate::known_helpers::KnownHelpers;
 use crate::link::{BodyRemap, Leftovers, ProgramNames, run_beside, run_one_after_the_other};
 use crate::load::loaders::loader_by_path;
 use crate::load::plugin_modules::is_path_of_entry_text;
-use crate::load::replaced_builtins::ProductFiles;
+use crate::load::replaced_builtins::{LeftOpenByText, ProductFiles};
 use crate::load::replaced_by_tests::{
     ReadsLibrary, find_what_adding_matchers_writes, find_what_starting_worker_writes,
     scan_files_of_tests,
@@ -1360,12 +1362,15 @@ fn with_builtins_that_entry_points_replace<'a>(options: &Options<'a>) -> Option<
     found.modules_replaced_in_text.shared_sort_unstable();
     found.modules_replaced_in_text.dedup();
     let spies_on_unknown_objects =
-        options.load.spies_on_unknown_objects || found.text_spies_under_any_name;
+        options.load.spies_on_unknown_objects || found.left_open_by_text != LeftOpenByText::Nothing;
+    let mocks_any_module = options.load.mocks_any_module
+        || found.left_open_by_text == LeftOpenByText::MocksOfAnyModule;
     if found.members == options.load.replaced_builtins
         && found.names_added == options.load.opened_names
         && found.names_spied_in_text == options.load.names_spied_in_text
         && found.modules_replaced_in_text == options.load.modules_replaced_in_text
         && spies_on_unknown_objects == options.load.spies_on_unknown_objects
+        && mocks_any_module == options.load.mocks_any_module
     {
         return None;
     }
@@ -1376,6 +1381,7 @@ fn with_builtins_that_entry_points_replace<'a>(options: &Options<'a>) -> Option<
     options.load.names_spied_in_text = found.names_spied_in_text;
     options.load.modules_replaced_in_text = found.modules_replaced_in_text;
     options.load.spies_on_unknown_objects = spies_on_unknown_objects;
+    options.load.mocks_any_module = mocks_any_module;
     Some(options)
 }
 

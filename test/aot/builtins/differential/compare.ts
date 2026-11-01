@@ -1,5 +1,6 @@
 import { types } from "node:util";
 import { describeError, describeEvent, describeKey, describeOrigin } from "./behaviors";
+import { fieldNobodyReads, valueNobodyReads } from "./instances";
 import type { LogEvent, Origin } from "./log";
 import type { Realm } from "./members";
 import { selectOverload, type Call } from "./operands";
@@ -906,6 +907,21 @@ class Comparison {
   }
 
   // Flow takes a call with such an operand to throw: nothing is stored, called or returned.
+  // A message, or a text that is returned, names a field of an operand or what the field holds: the own keys and values were read.
+  checkPrintedFields(): void {
+    const { completion, set } = this.run;
+    const said = completion.kind === "Returned" ? completion.value : types.isNativeError(completion.error) ? completion.error.message : "";
+    if (typeof said !== "string" || !(said.includes(fieldNobodyReads) || said.includes(valueNobodyReads))) return;
+    for (const operand of this.operandNames()) {
+      if (!/^object:(instanceWithF|f)ieldNobodyReads$/.test(candidateOf(set, operand)?.name ?? "")) continue;
+      const parameter = parameterOf(this.overload, operand);
+      // What native code keeps it may read whenever it likes.
+      if (parameter === null || this.hasAnyUse(parameter, "Retains") || this.hasAnyProtocol(parameter, "OwnValues")) continue;
+      const how = completion.kind === "Returned" ? "the text that is returned" : "the message of the error";
+      this.report(`${columnOf(this.overload, operand)}.uses`, `${how} prints a field of ${describeOperand(operand)}: ${said.slice(0, 160)}`);
+    }
+  }
+
   findRefusedOperand(): OperandName | undefined {
     return this.operandNames().find(operand => {
       const parameter = parameterOf(this.overload, operand);
@@ -1113,6 +1129,7 @@ class Comparison {
     }
     if (!isReentrant(run.set)) for (const change of changesIn(run)) this.checkChange(change);
     this.checkRegExpState();
+    this.checkPrintedFields();
     return [...this.differences.values()];
   }
 }

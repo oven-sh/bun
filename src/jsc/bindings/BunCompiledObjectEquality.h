@@ -34,7 +34,7 @@ inline bool collectOwnEnumerableProperties(JSC::VM& vm, JSC::JSObject* object, O
             properties.values.appendWithCrashOnOverflow(property.value);
             return IterationStatus::Continue;
         };
-        return PropertyWalk::forEachOwnProperty(vm, object, PropertyWalk::Filter::StringsAndSymbols, visit) == PropertyWalk::Result::Completed;
+        return PropertyWalk::forEachOwnPropertyAsCreated(vm, object, visit) == PropertyWalk::Result::Completed;
     }
     JSC::Structure* structure = object->structure();
     if (structure->hasNonReifiedStaticProperties() || !structure->canPerformFastPropertyEnumeration())
@@ -49,9 +49,15 @@ inline bool collectOwnEnumerableProperties(JSC::VM& vm, JSC::JSObject* object, O
     return true;
 }
 
+inline bool onlyOneCompiledObjectHasOwn(JSC::VM& vm, JSC::JSCell* first, JSC::JSCell* second, JSC::PropertyName name)
+{
+    namespace PropertyWalk = JSC::AOT::PropertyWalk;
+    return !PropertyWalk::getDirect(vm, JSC::asObject(first), name, nullptr) != !PropertyWalk::getDirect(vm, JSC::asObject(second), name, nullptr);
+}
+
 // std::nullopt: the caller compares by its generic path, or an exception is pending.
 template<bool isStrict, typename CompareValues>
-std::optional<bool> compareCompiledObjectProperties(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSObject* o1, JSC::JSObject* o2, const CompareValues& compareValues)
+std::optional<bool> compareCompiledObjectProperties(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSObject* o1, JSC::JSObject* o2, bool sameIsEqual, const CompareValues& compareValues)
 {
     JSC::VM& vm = globalObject->vm();
     OwnEnumerableProperties properties1;
@@ -92,12 +98,14 @@ std::optional<bool> compareCompiledObjectProperties(JSC::JSGlobalObject* globalO
     for (size_t i = 0; i < pairs.size(); i += 2) {
         JSC::JSValue left = pairs.at(i);
         JSC::JSValue right = pairs.at(i + 1);
-        if (left == right)
-            continue;
-        bool isSame = JSC::sameValue(globalObject, left, right);
-        RETURN_IF_EXCEPTION(scope, std::nullopt);
-        if (isSame)
-            continue;
+        if (sameIsEqual) [[likely]] {
+            if (left == right)
+                continue;
+            bool isSame = JSC::sameValue(globalObject, left, right);
+            RETURN_IF_EXCEPTION(scope, std::nullopt);
+            if (isSame)
+                continue;
+        }
         bool isEqual = compareValues(left, right);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
         if (!isEqual)

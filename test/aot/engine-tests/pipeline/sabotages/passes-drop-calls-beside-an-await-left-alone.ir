@@ -1,0 +1,34 @@
+# The same in a function that one more pass looks at: the body of an async function that awaits a call.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass ResolveAwaitedCalls
+# CHECK: = Call v1
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="somebody" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="callee" role=CoroutineRamp flags=[IsAsync] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f0 body=f2 entryWithoutPromise=f2 promiseType=Promise promiseParameter=0} {
+    v0 = NewPromise
+    v1 = CallDirect v0 function=f2
+    v2 = AssumeType v1 provenType=Promise
+    Return v2
+}
+function f1 name="awaitsWithOneMoreTurn" role=CoroutineRamp flags=[IsAsync] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f1 body=f3 entryWithoutPromise=f3 promiseType=Promise promiseParameter=0} {
+    v0 = NewPromise
+    v1 = CallDirect v0 function=f3
+    v2 = AssumeType v1 provenType=Promise
+    Return v2
+}
+function f2 name="callee" role=CoroutineBody flags=[IsAsync] parameters=[{type=undefined|Promise}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{kind=AsyncFunction ramp=f0 body=f2 entryWithoutPromise=f2 promiseType=Promise promiseParameter=0} {
+    v1 = Undefined
+    v2 = ReturnAsyncResult v0, v1
+    Return v2
+}
+function f3 name="awaitsWithOneMoreTurn" role=CoroutineBody flags=[IsAsync] parameters=[{type=undefined|Promise}] results=[{type=anything}] derivation={source=f1} creator=Coroutine{kind=AsyncFunction ramp=f1 body=f3 entryWithoutPromise=f3 promiseType=Promise promiseParameter=0} {
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v1, -
+    v3 = CallDirect function=f0
+    v4 = AssumeType v3 provenType=Promise<undefined, proven, pristine[Storage, Names]>
+    v5 = AwaitBySavingFrame v4, v0 [takesExtraTurn]
+    v6 = ReturnAsyncResult v0, v5
+    Return v6
+}

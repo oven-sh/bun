@@ -308,7 +308,7 @@ function f7 name="fractions" module=m0 position=1846 flags=[IsChecked, HasExplic
 # -- generated: f0 wide
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 162, patchpoints: 19, rare instructions: 239, polls: 1
+# CHECK-NEXT: instructions: 162, patchpoints: 19, rare instructions: 246, polls: 1
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="wide"
 # CHECK: role=GenericVersion

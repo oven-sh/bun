@@ -34,7 +34,16 @@ import {
 import { parses, reprinted } from "./mutate";
 import { Random } from "./random";
 import { reduce, reduceFiles, shape, type Reduction, type Whole } from "./reduce";
-import { allSources, multiFileSuffix, neverTakenSuffix, rewrittenSuffix, type Generated } from "./sources";
+import {
+  allSources,
+  anotherCallSuffix,
+  fourCallersSuffix,
+  multiFileSuffix,
+  neverTakenSuffix,
+  ownCopiesSuffix,
+  rewrittenSuffix,
+  type Generated,
+} from "./sources";
 import { typeChecker, type Checker } from "./type-check";
 
 export interface Settings {
@@ -63,6 +72,9 @@ export interface Settings {
   alsoMultiFile?: boolean;
   alsoRewritten?: boolean;
   alsoNeverTaken?: boolean;
+  alsoAnotherCall?: boolean;
+  alsoOwnCopies?: boolean;
+  alsoFourCallers?: boolean;
   /** The clock that decides when the run is over. A test passes its own so that it never waits. */
   now?: () => number;
 }
@@ -105,7 +117,12 @@ export async function fuzz(settings: Settings): Promise<Summary> {
   const rejected = new Set<string>();
   const sources = await allSources(settings.programsRoot, rejected, true);
   const isVariant = (name: string) =>
-    name.endsWith(multiFileSuffix) || name.endsWith(rewrittenSuffix) || name.endsWith(neverTakenSuffix);
+    name.endsWith(multiFileSuffix) ||
+    name.endsWith(rewrittenSuffix) ||
+    name.endsWith(neverTakenSuffix) ||
+    name.endsWith(anotherCallSuffix) ||
+    name.endsWith(ownCopiesSuffix) ||
+    name.endsWith(fourCallersSuffix);
   const wanted = (settings.sources ?? Object.keys(sources).filter(name => !isVariant(name))).filter(
     name => sources[name],
   );
@@ -118,6 +135,9 @@ export async function fuzz(settings: Settings): Promise<Summary> {
           ...(settings.alsoMultiFile ? [name + multiFileSuffix] : []),
           ...(settings.alsoRewritten ? [name + rewrittenSuffix] : []),
           ...(settings.alsoNeverTaken ? [name + neverTakenSuffix] : []),
+          ...(settings.alsoAnotherCall ? [name + anotherCallSuffix] : []),
+          ...(settings.alsoOwnCopies ? [name + ownCopiesSuffix] : []),
+          ...(settings.alsoFourCallers ? [name + fourCallersSuffix] : []),
         ],
   );
 
@@ -737,6 +757,7 @@ export async function fuzz(settings: Settings): Promise<Summary> {
       if (avoided) return void (avoided.count++, bump(counts.skipped, "has a known bug in it"));
       return generated;
     } catch (error) {
+      bump(counts.skipped, "the source threw");
       appendFileSync(join(out, "generator-errors.txt"), `${source}:${seed} ${error}\n`);
     }
   }

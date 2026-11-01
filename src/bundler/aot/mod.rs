@@ -2,6 +2,7 @@ pub mod plugins;
 
 mod assets;
 mod components;
+mod css_modules;
 mod data_loaders;
 mod data_values;
 mod defines;

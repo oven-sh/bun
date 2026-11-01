@@ -4,9 +4,11 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { runtimeEnvironment } from "./harness/flags";
 import { run } from "./harness/run";
-import { test } from "./supported";
+import { runsWholeGrids } from "./harness/ways";
+import { test } from "./measures";
 
-const sizes = [250, 1_000, 4_000];
+// A walk through the whole program at each require() shows between the first two sizes.
+const sizes = runsWholeGrids ? [250, 1_000, 4_000] : [250, 1_000];
 const ways = [
   { way: "as one program", words: "TestRunLayers:0" },
   { way: "over two layers", words: "TestRunLayers:2,TestRunPartFiles:1" },
@@ -81,5 +83,5 @@ test.each(ways)("$way: a require looks at as many modules in a larger program", 
   const [small, middle, large] = sizes.map(modules => sought.get(`${way} ${modules}`)! / modules);
   expect(small).toBeGreaterThan(0);
   expect(middle).toBeLessThanOrEqual(1.5 * small);
-  expect(large).toBeLessThanOrEqual(1.5 * small);
+  if (large !== undefined) expect(large).toBeLessThanOrEqual(1.5 * small);
 });

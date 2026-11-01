@@ -51,7 +51,7 @@ export function generate(random: Random): string {
       [2, "nested"],
       [3, "lists of unknown"],
     ] as const);
-    const steps = random.pick([1, 1, 2, 3, 7, 60]);
+    const steps = random.pick([1, 1, 2, 3, 7, 8, 9, 16, 17, 60, 300]);
     const isTypedPartClosed = random.chance(0.7);
     let ringType = `Ring${scene}`;
     const build = (name: string, isClosed: boolean) => {
@@ -172,8 +172,8 @@ export function generate(random: Random): string {
         [2, `[${crate}, ${crate}, ${crate}]`],
         [2, `{ a: ${crate}, b: ${crate} }`],
         [1, `[[${crate}], ${crate}]`],
-        [1, ring],
-        [1, `[${ring}, ${ring}]`],
+        [3, ring],
+        [2, `[${ring}, ${ring}]`],
       ]);
       const rest = random.weighted([
         [7, ""],
@@ -186,13 +186,22 @@ export function generate(random: Random): string {
       const name = JSON.stringify(`scene ${scene}, call ${call}`);
       const once = (suffix: string): string[] => {
         const named = suffix ? JSON.stringify(`scene ${scene}, call ${call}, ${suffix}`) : name;
-        switch (random.pick(["try", "closure", "loop", "text"] as const)) {
+        switch (random.pick(["try", "closure", "loop", "text", "function"] as const)) {
           case "try":
             return [`try { print(${named}, ${asked}); } catch (error) { print(${named}, error); }`];
           case "closure":
             return [`write(${named}, () => ${asked});`];
           case "loop":
             return [`for (let turn = 0; turn < 3; turn++) write(${named} + " turn " + turn, () => ${asked});`];
+          case "function": {
+            const written = `written${++nextId}`;
+            return [
+              `function ${written}(): string {`,
+              `  try { return "<" + ${asked} + ">"; } catch (error) { return "!" + (error as Error).name; }`,
+              `}`,
+              `print(${named}, ${written}() + ${written}());`,
+            ];
+          }
           case "text":
             return [
               `{`,

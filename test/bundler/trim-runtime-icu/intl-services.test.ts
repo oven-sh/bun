@@ -1,12 +1,13 @@
 // A method keeps all that it can open of ICU's data. Each program calls one service of Intl in many locales, with every option, and prints a digest of the answers.
 // EVERY_LOCALE=1 bun test <this file>: in all eight hundred locales, which takes minutes. What is removed goes by the kind of data, not by the locale.
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, getMacOSVersion } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { unsupported } from "../../aot/harness/compiler";
 import { run } from "../../aot/harness/run";
 import { inTurn, sharedBuilds } from "../../aot/harness/shared-builds";
+import { describe, test } from "../../aot/listed";
 import { readRemovedFeatures } from "../../aot/trimmed-against-whole/removed-features";
 import { canTrim, model, withoutFeatures } from "../compile-trim-features";
 

@@ -646,26 +646,6 @@ impl<'a> JsLatin1<'a> {
         })
     }
 
-    /// As [`substring_unchecked`](Self::substring_unchecked), of fewer than all the characters. SAFETY: `start <= end <= self.characters().len()`, and not both `==`.
-    #[inline(always)]
-    pub unsafe fn proper_substring_unchecked(
-        &self,
-        heap: &JsHeap<'a>,
-        start: u32,
-        end: u32,
-    ) -> JsLocal<'a, JSString> {
-        debug_assert!(start <= end && ((end - start) as usize) < self.text.characters.len());
-        debug_assert!(end as usize <= self.text.characters.len());
-        // SAFETY: the owner is no rope, and fewer than the characters that are in it are not all of it.
-        JsLocal::from_raw(unsafe {
-            self.text.owner.substring_of_resolved(
-                heap.global_object(),
-                self.text.offset + start,
-                end - start,
-            )
-        })
-    }
-
     /// As [`substring_unchecked`](Self::substring_unchecked), several with one call. SAFETY: `start <= end <= self.characters().len()` of each range.
     #[inline(always)]
     #[allow(clippy::needless_pass_by_value)] // written at the call

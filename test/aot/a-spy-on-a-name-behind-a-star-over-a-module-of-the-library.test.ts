@@ -4,7 +4,7 @@ import { run } from "./harness/run";
 import { test } from "./supported";
 
 // src/os.js says `export * from "node:os"`. A test hands the namespace object of that file to a helper that spies on it. The names behind the star show at run
-// time, so the table of the file lists none of them, and as one program the run refused the spy: "Cannot spy on 'hostname' because module exports can't be replaced".
+// time, so the table of the file lists none of them, and as one program the run refused the spy: "Cannot spy on 'hostname' of .. because the build didn't see a test spy on it".
 const files: Record<string, string> = {
   "package.json": `{ "name": "p", "type": "module" }
 `,

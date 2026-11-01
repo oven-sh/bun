@@ -1,0 +1,6 @@
+# sabotage=PassesDropCalls: behind the pass a call is gone. The pass answers for what its rules expand, and no rule expands a call of an unknown function into nothing: the build stops
+# FORM: Prepared
+# RUN: pass Select
+# DIAGNOSTIC: VerificationFailedAfterPass 1
+# OPTIONS: check=VerifyEachPass sabotage=PassesDropCalls
+# PROGRAM-OF: passes-drop-calls-left-alone.ir

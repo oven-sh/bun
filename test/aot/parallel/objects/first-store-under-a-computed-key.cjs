@@ -52,3 +52,62 @@ show("array", put(put([1, 2], "name", 3), "2", 4)); show("function", put(functio
 attempt("null", () => { try { put(null, made(0), 1); } catch (e) { return e.constructor.name; } }); show("class instance", put(put(new (class P { a = 1; })(), "a", 2), made(4), 3)); show("map", put(new Map(), "size2", 1));
 out.push(log.join());
 console.log(out.join("\n"));
+/* Output:
+same order x1 alpha0:0:wec phabe0:1:wec beta0:2:wec tagam0:3:wec gamma1:4:wec maal1:5:wec
+same order x2 alpha0:0:wec phabe0:2:wec beta0:4:wec tagam0:6:wec gamma1:8:wec maal1:10:wec
+same order x5 alpha0:0:wec phabe0:5:wec beta0:10:wec tagam0:15:wec gamma1:20:wec maal1:25:wec
+reverse maal1:5:wec gamma1:4:wec tagam0:3:wec beta0:2:wec phabe0:1:wec alpha0:0:wec
+replace alpha0:5:wec phabe0:4:wec beta0:3:wec
+spelled x:2:wec y:1:wec length:3:wec constructor:4:wec toString:5:wec valueOf:6:wec
+odd keys 0:3:wec 1:1:wec 3:0:wec 4294967294:6:wec 01:2:wec 1.5:4:wec 4294967295:5:wec :9:wec  :10:wec Symbol(key):7:wec Symbol(Symbol.iterator):8:wec
+__proto__ object 
+1 true
+__proto__ number 
+__proto__ made 
+__proto__ on null prototype __proto__:7:wec
+70 k97,k98,k0,k3,k6,k9 -3 4 undefined
+frozen new sloppy -> {"a":1}
+frozen new strict threw TypeError: Attempting to define property on object that is not extensible.
+frozen old sloppy -> {"a":1}
+frozen old strict threw TypeError: Attempted to assign to readonly property.
+sealed new sloppy -> {"a":1}
+sealed new strict threw TypeError: Attempting to define property on object that is not extensible.
+sealed old sloppy -> {"a":2}
+sealed old strict -> {"a":2}
+not extensible new sloppy -> {"a":1}
+not extensible new strict threw TypeError: Attempting to define property on object that is not extensible.
+not extensible old sloppy -> {"a":2}
+not extensible old strict -> {"a":2}
+own fixed sloppy -> {"fixed":1,"both":"got"}
+own fixed strict threw TypeError: Attempted to assign to readonly property.
+own both sloppy -> {"fixed":1,"both":"got"}
+own both strict -> {"fixed":1,"both":"got"}
+own getter sloppy -> {"fixed":1,"both":"got"}
+own getter strict threw TypeError: Attempted to assign to readonly property.
+locked above strict threw TypeError: Attempted to assign to readonly property.
+below setter free:0:wec
+locked above strict threw TypeError: Attempted to assign to readonly property.
+below setter free:1:wec
+locked above strict threw TypeError: Attempted to assign to readonly property.
+below setter free:2:wec
+before late:1:wec
+before late:2:wec
+before late:3:wec
+after setter 
+after delete late:5:wec
+after read-only 
+after read-only strict threw TypeError: Attempted to assign to readonly property.
+below proxy beta0:1:wec Symbol(key):2:wec
+set beta0,set Symbol(key)
+converted 12:1:wec conv:0:wec true:2:wec null:3:wec undefined:4:wec 1e+21:5:wec 1,2:6:wec () => 1:7:wec
+throwing key threw RangeError: no key
+key changes receiver z:0:wec a:2:wec
+array 0:1:wec 1:2:wec 2:4:wec length:3:w-- name:3:wec
+function length:0:--c name:"f":--c prototype:{}:w-- tagam0:1:wec
+string strict threw TypeError: Attempted to assign to readonly property.
+string index strict threw TypeError: Attempted to assign to readonly property.
+null -> TypeError
+class instance a:2:wec gamma1:3:wec
+map size2:1:wec
+own setter 9,own setter 9,setter above 0,setter above 1,setter above 2,late setter 4,toString
+*/

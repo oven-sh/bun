@@ -3,6 +3,7 @@
 // `entry.parent` were undefined in an ES module and `children` was empty in a CommonJS file, so code that clears a module with all below it (`entry.children.forEach(..)`) threw.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { waysFor } from "./harness/ways";
 import { test } from "./supported";
 
 const show = `console.error("OUT", typeof entry.children, entry.children?.map(child => child.id.split("/").pop()).join(), entry.parent === null ? "null" : typeof entry.parent, String(entry.parent?.id).split("/").pop());`;
@@ -59,13 +60,14 @@ async function linesOf(name: string, text: string, flags: string[], words?: stri
   return { lines: stderr.split("\n").filter(line => line.startsWith("OUT")), exitCode };
 }
 
-test.concurrent.each(Object.entries(forms))(
+test.concurrent.each(Object.entries(forms).map(([form, file], index) => [form, file, index] as const))(
   "taken by %s",
-  async (_, [name, text]) => {
+  async (_, [name, text], index) => {
     const plain = await linesOf(name, text, []);
     expect(plain.lines).toEqual([expect.stringMatching(/^OUT object dep\.cjs object \S+$/)]);
-    expect(await linesOf(name, text, ["--aot"])).toEqual(plain);
-    expect(await linesOf(name, text, ["--aot", "--isolate"], "TestRunLayers:2")).toEqual(plain);
+    const runs = [[["--aot"]], [["--aot", "--isolate"], "TestRunLayers:2"]] as const;
+    for (const [flags, words] of waysFor(runs, index === 0))
+      expect(await linesOf(name, text, [...flags], words)).toEqual(plain);
   },
   240_000,
 );

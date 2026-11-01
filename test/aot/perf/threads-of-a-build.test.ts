@@ -12,7 +12,7 @@ import { readdirSync, readFileSync } from "fs";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { availableParallelism } from "os";
 import { join } from "path";
-import { test } from "../supported";
+import { test } from "../measures";
 
 const tenLines = `const names: string[] = ["a", "b"];
 function greet(name: string): string {

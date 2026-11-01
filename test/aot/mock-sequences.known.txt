@@ -1,0 +1,1261 @@
+# Every line of test/aot/mock-sequences*.test.ts that `bun test --aot` prints otherwise than `bun test`:
+#   <fault> <way> <sequence> <step> <what is asked>: loud | SILENT | <what the compiled run says>
+# A fix takes its lines out: BUN_AOT_REWRITE_MOCK_SEQUENCES=1 writes the lines of what ran anew, keeps the first word by the key, and puts `?` in front of a new key.
+# The ways: see harness/mock-sequences.ts. `m` is the mocked module, user.js holds `import { flag } from m`.
+#   second-mock            vi.doMock(m, f1); await import(m); vi.doMock(m, f2) or mock.module(m, f2), vi.doUnmock(m), mock.restore(): what the loads behind the later event get
+#   late-rejection         vi.doMock(m, async () => { await 0; throw e }): what the loads behind the failure get
+#   require-beside-await   require(m) while the mock's async factory has not been called, or has not settled
+#   require-of-importer    require("./user.js") in place of import("./user.js")
+#   user-above             user.js lies in an image above m's
+#   held-over-layers       const user = await import("./user.js"), held over the next mock event and read before the next load; over layers
+#   bare-behind-rejection  vi.doMock(m) without a factory, behind a factory that rejected
+#   next-file              the next test file, which mocks nothing
+# `~ wavers <way> <sequence> <step> <what is asked>`: one of the two runs says now one thing, now another there: the line is not judged.
+~ wavers layers group-of-reset+throws-over+throws.cjs.late 9 whole run:
+~ wavers layers one+rejects-over+one.cjs.late 1 body the body:
+~ wavers layers one+rejects-over+one.cjs.late 2 body the body:
+~ wavers layers one+rejects-over+one.cjs.late 3 body the body:
+~ wavers layers one+rejects-over+one.cjs.late 3 one held:
+~ wavers layers one+rejects-over+one.cjs.late 3 one names:
+~ wavers layers one+rejects-over+one.cjs.late 3 one the call:
+~ wavers layers one+rejects-over+one.cjs.late 3 one values:
+~ wavers layers one+rejects-over+one.cjs.late 4 body the body:
+~ wavers layers one+rejects-over+one.js.late 1 body the body:
+~ wavers layers one+rejects-over+one.js.late 2 body the body:
+~ wavers layers one+rejects-over+one.js.late 3 body the body:
+~ wavers layers one+rejects-over+one.js.late 3 one held:
+~ wavers layers one+rejects-over+one.js.late 3 one names:
+~ wavers layers one+rejects-over+one.js.late 3 one the call:
+~ wavers layers one+rejects-over+one.js.late 3 one values:
+~ wavers layers one+rejects-over+one.js.late 4 body the body:
+~ wavers layers rejects-over+bare+over.cjs.late 1 body the body:
+~ wavers layers rejects-over+bare+over.cjs.late 2 bare held:
+~ wavers layers rejects-over+bare+over.cjs.late 2 bare names:
+~ wavers layers rejects-over+bare+over.cjs.late 2 bare the call:
+~ wavers layers rejects-over+bare+over.cjs.late 2 bare values:
+~ wavers layers rejects-over+bare+over.cjs.late 2 body the body:
+~ wavers layers rejects-over+bare+over.cjs.late 3 body the body:
+~ wavers layers rejects-over+bare+over.cjs.late 3 over held:
+~ wavers layers rejects-over+bare+over.cjs.late 3 over names:
+~ wavers layers rejects-over+bare+over.cjs.late 3 over the call:
+~ wavers layers rejects-over+bare+over.cjs.late 3 over values:
+~ wavers layers rejects-over+bare+over.cjs.late 4 body the body:
+~ wavers layers rejects-over+bare+over.js.late 1 body the body:
+~ wavers layers rejects-over+bare+over.js.late 2 bare held:
+~ wavers layers rejects-over+bare+over.js.late 2 bare names:
+~ wavers layers rejects-over+bare+over.js.late 2 bare the call:
+~ wavers layers rejects-over+bare+over.js.late 2 bare values:
+~ wavers layers rejects-over+bare+over.js.late 2 body the body:
+~ wavers layers rejects-over+bare+over.js.late 3 body the body:
+~ wavers layers rejects-over+bare+over.js.late 3 over held:
+~ wavers layers rejects-over+bare+over.js.late 3 over names:
+~ wavers layers rejects-over+bare+over.js.late 3 over the call:
+~ wavers layers rejects-over+bare+over.js.late 3 over values:
+~ wavers layers rejects-over+bare+over.js.late 4 body the body:
+~ wavers layers rejects-over+one+unmock.js.top 1 body the body:
+~ wavers layers rejects-over+one+unmock.js.top 2 body the body:
+~ wavers layers rejects-over+one+unmock.js.top 2 one held:
+~ wavers layers rejects-over+one+unmock.js.top 2 one names:
+~ wavers layers rejects-over+one+unmock.js.top 2 one the call:
+~ wavers layers rejects-over+one+unmock.js.top 2 one values:
+~ wavers layers rejects-over+one+unmock.js.top 3 body the body:
+~ wavers layers rejects-over+one+unmock.js.top 3 unmock held:
+~ wavers layers rejects-over+one+unmock.js.top 3 unmock names:
+~ wavers layers rejects-over+one+unmock.js.top 3 unmock the call:
+~ wavers layers rejects-over+one+unmock.js.top 3 unmock values:
+~ wavers layers rejects-over+one+unmock.js.top 4 body the body:
+~ wavers layers rejects-over+over+over.js.late 1 body the body:
+~ wavers layers rejects-over+over+over.js.late 2 body the body:
+~ wavers layers rejects-over+over+over.js.late 2 over held:
+~ wavers layers rejects-over+over+over.js.late 2 over names:
+~ wavers layers rejects-over+over+over.js.late 2 over the call:
+~ wavers layers rejects-over+over+over.js.late 2 over values:
+~ wavers layers rejects-over+over+over.js.late 3 body the body:
+~ wavers layers rejects-over+over+over.js.late 3 over held:
+~ wavers layers rejects-over+over+over.js.late 3 over names:
+~ wavers layers rejects-over+over+over.js.late 3 over the call:
+~ wavers layers rejects-over+over+over.js.late 3 over values:
+~ wavers layers rejects-over+over+over.js.late 4 body the body:
+~ wavers layers rejects-over+rejects-over+unmock.js.late 1 body the body:
+~ wavers layers rejects-over+rejects-over+unmock.js.late 2 body the body:
+~ wavers layers rejects-over+rejects-over+unmock.js.late 2 rejects-over held:
+~ wavers layers rejects-over+rejects-over+unmock.js.late 2 rejects-over names:
+~ wavers layers rejects-over+rejects-over+unmock.js.late 2 rejects-over the call:
+~ wavers layers rejects-over+rejects-over+unmock.js.late 2 rejects-over values:
+~ wavers layers rejects-over+rejects-over+unmock.js.late 3 body the body:
+~ wavers layers rejects-over+rejects-over+unmock.js.late 3 unmock held:
+~ wavers layers rejects-over+rejects-over+unmock.js.late 3 unmock names:
+~ wavers layers rejects-over+rejects-over+unmock.js.late 3 unmock the call:
+~ wavers layers rejects-over+rejects-over+unmock.js.late 3 unmock values:
+~ wavers layers rejects-over+rejects-over+unmock.js.late 4 body the body:
+~ wavers layers throws-over+one+throws-over.cjs.late 1 throws-over names:
+~ wavers layers throws-over+one+throws-over.cjs.late 1 throws-over values:
+~ wavers layers throws-over+one+throws-over.cjs.late 3 throws-over names:
+~ wavers layers throws-over+one+throws-over.cjs.late 3 throws-over values:
+~ wavers layers throws-over+over+over.js.late 1 body the body:
+~ wavers layers throws-over+over+over.js.late 2 body the body:
+~ wavers layers throws-over+over+over.js.late 2 over held:
+~ wavers layers throws-over+over+over.js.late 2 over names:
+~ wavers layers throws-over+over+over.js.late 2 over values:
+~ wavers layers throws-over+over+over.js.late 3 over held:
+~ wavers layers throws-over+over+over.js.late 3 over names:
+~ wavers layers throws-over+over+over.js.late 3 over values:
+~ wavers one throws-over+over+over.js.late 1 body the body:
+~ wavers one throws-over+over+over.js.late 2 body the body:
+~ wavers one throws-over+over+over.js.late 2 over held:
+~ wavers one throws-over+over+over.js.late 2 over names:
+~ wavers one throws-over+over+over.js.late 2 over values:
+~ wavers one throws-over+over+over.js.late 3 over held:
+~ wavers one throws-over+over+over.js.late 3 over names:
+~ wavers one throws-over+over+over.js.late 3 over values:
+~ wavers realm rejects-over+over+over.js.late 2 over names:
+~ wavers realm rejects-over+over+over.js.late 2 over values:
+~ wavers realm rejects-over+over+over.js.late 3 over held:
+~ wavers realm rejects-over+over+over.js.late 3 over names:
+~ wavers realm rejects-over+over+over.js.late 3 over values:
+~ wavers realm throws+reset+async.js.top 3 async names:
+~ wavers realm throws+reset+async.js.top 3 async values:
+~ wavers realm throws-over+over+over.js.late 1 body the body:
+~ wavers realm throws-over+over+over.js.late 2 body the body:
+~ wavers realm throws-over+over+over.js.late 2 over held:
+~ wavers realm throws-over+over+over.js.late 2 over names:
+~ wavers realm throws-over+over+over.js.late 2 over values:
+~ wavers realm throws-over+over+over.js.late 3 over held:
+~ wavers realm throws-over+over+over.js.late 3 over names:
+~ wavers realm throws-over+over+over.js.late 3 over values:
+~ wavers realm throws-over+over+over.js.late 8 next names:
+~ wavers realm throws-over+over+over.js.late 8 next values:
+require-of-importer alone async+one+unmock.cjs.required 2 one values: SILENT | import one2 require one2 late async1,async1,async1 top none
+require-of-importer alone async+one+unmock.cjs.required 3 unmock held: SILENT | late async1,async1,async1 top none
+require-of-importer alone async+one+unmock.cjs.required 3 unmock names: loud | import default+flag+plain late default+flag+plain threw No "nobodyExportsThis" export is defined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top none
+require-of-importer alone async+one+unmock.cjs.required 3 unmock values: SILENT | import real require real late async1,async1,async1 top none
+require-of-importer alone one+async+two.cjs.required 2 async values: SILENT | import async2 require async2 late one1,one1,one1 top none
+require-of-importer alone one+async+two.cjs.required 3 two held: SILENT | late one1,one1,one1 top none
+require-of-importer alone one+async+two.cjs.required 3 two values: SILENT | import two3 require two3 late one1,one1,one1 top none
+late-rejection alone one+rejects-over+one.cjs.late 3 one held: SILENT | late real,real,real top none
+late-rejection alone rejects-over+bare+over.cjs.late 2 body the body: SILENT | runs behind 3 over
+held-over-layers layers added+async+one.cjs.late 2 async held: SILENT | late ,, top none
+held-over-layers layers added+async+one.cjs.late 3 one held: SILENT | late ,, top none
+held-over-layers layers added+one+added.cjs.late 2 one held: SILENT | late ,, top none
+held-over-layers layers added+one+added.cjs.late 3 added held: SILENT | late ,, top none
+late-rejection layers added+rejects+async.cjs.top 2 rejects names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+second-mock layers added+reset+unmock.js.late 2 body the body: SILENT | runs behind 3 unmock
+user-above layers added+throws+bare.js.top 1 added held: SILENT | late three1,three1,three1 top three1,three1,three1
+user-above layers added+throws+bare.js.top 1 added names: SILENT | import flag+plain late flag+plain undefined {"flag":"three1","plain":"three1"} top flag+plain undefined {"flag":"three1","plain":"three1"}
+user-above layers added+throws+bare.js.top 1 added values: SILENT | import three1 require three1 late three1,three1,three1 top three1,three1,three1
+user-above layers added+throws+bare.js.top 2 throws names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+user-above layers added+throws+bare.js.top 2 throws the call: loud | threw boom 1
+user-above layers added+throws+bare.js.top 2 throws values: SILENT | import real require real late real,real,real top real,real,real
+user-above layers added+throws+module.js.top 1 added held: SILENT | late three1,three1,three1 top three1,three1,three1
+user-above layers added+throws+module.js.top 1 added names: SILENT | import flag+plain late flag+plain undefined {"flag":"three1","plain":"three1"} top flag+plain undefined {"flag":"three1","plain":"three1"}
+user-above layers added+throws+module.js.top 1 added values: SILENT | import three1 require three1 late three1,three1,three1 top three1,three1,three1
+user-above layers added+throws+module.js.top 2 throws names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+user-above layers added+throws+module.js.top 2 throws the call: loud | threw boom 1
+user-above layers added+throws+module.js.top 2 throws values: SILENT | import real require real late real,real,real top real,real,real
+user-above layers added+throws+module.js.top 3 module held: SILENT | late module3,module3,module3 top module3,module3,module3
+user-above layers added+throws+module.js.top 3 module names: SILENT | import flag+plain late flag+plain undefined {"flag":"module3","plain":"module3"} top flag+plain undefined {"flag":"module3","plain":"module3"}
+user-above layers added+throws+module.js.top 3 module values: SILENT | import module3 require module3 late module3,module3,module3 top module3,module3,module3
+user-above layers added+throws-over+bare.js.top 1 added held: SILENT | late three1,three1,three1 top three1,three1,three1
+user-above layers added+throws-over+bare.js.top 1 added names: SILENT | import flag+plain late flag+plain undefined {"flag":"three1","plain":"three1"} top flag+plain undefined {"flag":"three1","plain":"three1"}
+user-above layers added+throws-over+bare.js.top 1 added values: SILENT | import three1 require three1 late three1,three1,three1 top three1,three1,three1
+user-above layers added+throws-over+bare.js.top 2 throws-over names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+user-above layers added+throws-over+bare.js.top 2 throws-over the call: loud | threw boom over 1
+user-above layers added+throws-over+bare.js.top 2 throws-over values: SILENT | import real require real late real,real,real top real,real,real
+user-above layers added+two+module.js.top 1 added held: SILENT | late three1,three1,three1 top three1,three1,three1
+user-above layers added+two+module.js.top 1 added names: SILENT | import flag+plain late flag+plain undefined {"flag":"three1","plain":"three1"} top flag+plain undefined {"flag":"three1","plain":"three1"}
+user-above layers added+two+module.js.top 1 added values: SILENT | import three1 require three1 late three1,three1,three1 top three1,three1,three1
+user-above layers added+two+module.js.top 2 two held: SILENT | late two2,real,two2 top two2,real,two2
+user-above layers added+two+module.js.top 2 two names: SILENT | import flag+plain late flag+plain undefined {"flag":"two2","plain":"real"} top flag+plain undefined {"flag":"two2","plain":"real"}
+user-above layers added+two+module.js.top 2 two values: SILENT | import two2 require two2 late two2,real,two2 top two2,real,two2
+user-above layers added+two+module.js.top 3 module held: SILENT | late module3,module3,module3 top module3,module3,module3
+user-above layers added+two+module.js.top 3 module names: SILENT | import flag+plain late flag+plain undefined {"flag":"module3","plain":"module3"} top flag+plain undefined {"flag":"module3","plain":"module3"}
+user-above layers added+two+module.js.top 3 module values: SILENT | import module3 require module3 late module3,module3,module3 top module3,module3,module3
+user-above layers async+async+reset.js.top 1 async names: SILENT | import flag+plain late flag+plain undefined {"flag":"async1","plain":"async1"} top flag+plain undefined {"flag":"async1","plain":"async1"}
+user-above layers async+async+reset.js.top 1 async values: SILENT | import async1 require async1 late async1,async1,async1 top async1,async1,async1
+user-above layers async+async+reset.js.top 2 async names: SILENT | import flag+plain late flag+plain undefined {"flag":"async2","plain":"async2"} top flag+plain undefined {"flag":"async2","plain":"async2"}
+user-above layers async+async+reset.js.top 2 async values: SILENT | import async2 require async2 late async2,async2,async2 top async2,async2,async2
+user-above layers async+async+reset.js.top 3 reset held: SILENT | late async2,async2,async2 top async2,async2,async2
+user-above layers async+async+reset.js.top 3 reset names: SILENT | import flag+plain late flag+plain threw No "nobodyExportsThis" export is defined threw No "toJSON" export is defined on the moc top flag+plain undefined {"flag":"async2","plain":"async2"}
+user-above layers async+async+reset.js.top 3 reset values: SILENT | import async2 require async2 late async2,async2,async2 top async2,async2,async2
+held-over-layers layers async+async+two.cjs.late 2 async held: SILENT | late ,, top none
+held-over-layers layers async+async+two.cjs.late 3 two held: SILENT | late ,, top none
+second-mock layers async+bare+bare.js.late 1 body the body: SILENT | runs in the call of 2 bare
+held-over-layers layers async+bare+bare.js.late 2 bare held: SILENT | late real,real,real top none
+held-over-layers layers async+one+unmock.cjs.required 2 one held: SILENT | late ,, top none
+held-over-layers layers async+one+unmock.cjs.required 3 unmock held: SILENT | late ,, top none
+late-rejection layers async+restore+rejects.cjs.top 3 rejects names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above layers async+restore+unmock.js.top 1 async names: SILENT | import flag+plain late flag+plain undefined {"flag":"async1","plain":"async1"} top flag+plain undefined {"flag":"async1","plain":"async1"}
+user-above layers async+restore+unmock.js.top 1 async values: SILENT | import async1 require async1 late async1,async1,async1 top async1,async1,async1
+user-above layers async+restore+unmock.js.top 2 restore held: SILENT | late async1,async1,async1 top async1,async1,async1
+user-above layers async+restore+unmock.js.top 2 restore names: SILENT | import flag+plain late flag+plain undefined {"flag":"async1","plain":"async1"} top flag+plain undefined {"flag":"async1","plain":"async1"}
+user-above layers async+restore+unmock.js.top 2 restore values: SILENT | import async1 require async1 late async1,async1,async1 top async1,async1,async1
+held-over-layers layers async+throws+module.js.late 3 module held: loud | late threw Cannot access 'flag' before initializati top none
+second-mock layers async+throws+module.js.late 3 module names: SILENT | import flag+plain late flag+plain undefined {"flag":"module3","plain":"module3"} top none
+second-mock layers async+throws+module.js.late 3 module values: SILENT | import module3 require module3 late module3,module3,module3 top none
+user-above layers async+throws-over+unmock.js.top 1 async names: SILENT | import flag+plain late flag+plain undefined {"flag":"async1","plain":"async1"} top flag+plain undefined {"flag":"async1","plain":"async1"}
+user-above layers async+throws-over+unmock.js.top 1 async values: SILENT | import async1 require async1 late async1,async1,async1 top async1,async1,async1
+user-above layers async+throws-over+unmock.js.top 2 throws-over names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+user-above layers async+throws-over+unmock.js.top 2 throws-over the call: loud | threw boom over 1
+user-above layers async+throws-over+unmock.js.top 2 throws-over values: SILENT | import real require real late real,real,real top real,real,real
+late-rejection layers bare+rejects+two.cjs.top 2 rejects names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+held-over-layers layers bare+restore+throws.cjs.late 3 throws held: SILENT | late ,, top none
+user-above layers group-of-added+throws+bare.js.top 9 whole run: loud | exit 1 error: tardy boom 1 error: tardy boom 1 error: tardy boom 1 error: tardy boom 1 error: tardy boom 1 error: tardy boom 1 error: tardy boom 1 error: tardy boom 1 error: tardy boom 3
+user-above layers module+added+module.js.top 2 added held: SILENT | late three2,three2,three2 top three2,three2,three2
+user-above layers module+added+module.js.top 2 added names: SILENT | import flag+plain late flag+plain undefined {"flag":"three2","plain":"three2"} top flag+plain undefined {"flag":"three2","plain":"three2"}
+user-above layers module+added+module.js.top 2 added values: SILENT | import three2 require three2 late three2,three2,three2 top three2,three2,three2
+user-above layers module+added+module.js.top 3 module held: SILENT | late module3,module3,module3 top module3,module3,module3
+user-above layers module+added+module.js.top 3 module names: SILENT | import flag+plain late flag+plain undefined {"flag":"module3","plain":"module3"} top flag+plain undefined {"flag":"module3","plain":"module3"}
+user-above layers module+added+module.js.top 3 module values: SILENT | import module3 require module3 late module3,module3,module3 top module3,module3,module3
+held-over-layers layers module+added+over.cjs.late 2 added held: SILENT | late ,, top none
+held-over-layers layers module+added+over.cjs.late 3 over held: SILENT | late ,, top none
+late-rejection layers module+added+rejects.cjs.top 3 rejects names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+late-rejection layers module+added+rejects.cjs.top 3 rejects values: SILENT | import threw tardy boom 1 require real late real,real,real top real,real,real
+second-mock layers module+rejects+bare.js.top 2 rejects names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+user-above layers module+rejects+bare.js.top 2 rejects values: SILENT | import real require real late real,real,real top real,real,real
+second-mock layers module+rejects+two.js.late 2 rejects names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top none
+second-mock layers module+rejects+two.js.late 2 rejects values: SILENT | import threw tardy boom 1 require real late real,real,real top none
+user-above layers module+rejects+two.js.late 3 two held: SILENT | late two3,real,two3 top none
+user-above layers module+rejects+two.js.late 3 two names: SILENT | import flag+plain late flag+plain undefined {"flag":"two3","plain":"real"} top none
+user-above layers module+rejects+two.js.late 3 two values: SILENT | import two3 require two3 late two3,real,two3 top none
+second-mock layers module+reset+rejects.js.late 2 body the body: SILENT | runs behind 3 rejects
+user-above layers module+unmock+over.js.top 3 over names: SILENT | import flag+plain late flag+plain undefined {"flag":"over3","plain":"real"} top flag+plain undefined {"flag":"over3","plain":"real"}
+user-above layers module+unmock+over.js.top 3 over values: SILENT | import over3 require over3 late over3,real,over3 top over3,real,over3
+user-above layers one+async+bare.js.top 1 one held: SILENT | late one1,one1,one1 top one1,one1,one1
+user-above layers one+async+bare.js.top 1 one names: SILENT | import flag+plain late flag+plain undefined {"flag":"one1","plain":"one1"} top flag+plain undefined {"flag":"one1","plain":"one1"}
+user-above layers one+async+bare.js.top 1 one values: SILENT | import one1 require one1 late one1,one1,one1 top one1,one1,one1
+user-above layers one+async+bare.js.top 2 async names: SILENT | import flag+plain late flag+plain undefined {"flag":"async2","plain":"async2"} top flag+plain undefined {"flag":"async2","plain":"async2"}
+user-above layers one+async+bare.js.top 2 async values: SILENT | import async2 require async2 late async2,async2,async2 top async2,async2,async2
+held-over-layers layers one+async+two.cjs.required 2 async held: SILENT | late ,, top none
+held-over-layers layers one+async+two.cjs.required 3 two held: SILENT | late ,, top none
+second-mock layers one+bare+over.cjs.late 1 body the body: SILENT | runs in the call of 2 bare
+held-over-layers layers one+bare+over.cjs.late 2 bare held: SILENT | late real,real,real top none
+held-over-layers layers one+bare+over.cjs.late 3 over held: SILENT | late ,, top none
+user-above layers one+rejects+added.js.top 1 one held: SILENT | late one1,one1,one1 top one1,one1,one1
+user-above layers one+rejects+added.js.top 1 one names: SILENT | import flag+plain late flag+plain undefined {"flag":"one1","plain":"one1"} top flag+plain undefined {"flag":"one1","plain":"one1"}
+user-above layers one+rejects+added.js.top 1 one values: SILENT | import one1 require one1 late one1,one1,one1 top one1,one1,one1
+second-mock layers one+rejects+added.js.top 2 rejects names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+user-above layers one+rejects+added.js.top 2 rejects values: SILENT | import real require real late real,real,real top real,real,real
+user-above layers one+rejects+added.js.top 3 added held: SILENT | late three3,three3,three3 top three3,three3,three3
+user-above layers one+rejects+added.js.top 3 added names: SILENT | import flag+plain late flag+plain undefined {"flag":"three3","plain":"three3"} top flag+plain undefined {"flag":"three3","plain":"three3"}
+user-above layers one+rejects+added.js.top 3 added values: SILENT | import three3 require three3 late three3,three3,three3 top three3,three3,three3
+held-over-layers layers one+rejects-over+one.cjs.late 2 rejects-over held: SILENT | late ,, top none
+require-beside-await layers one+rejects-over+one.cjs.late 2 rejects-over values: loud | import threw tardy boom over 1 require threw undefined is not an object (evaluating ' late threw tardy boom over 2 top none
+late-rejection layers one+rejects-over+one.js.late 2 rejects-over values: loud | import threw tardy boom over 1 require threw Cannot access 'flag' before initializati late threw tardy boom over 2 top none
+held-over-layers layers one+restore+one.cjs.late 3 one held: SILENT | late ,, top none
+user-above layers one+restore+restore.js.top 1 one held: SILENT | late one1,one1,one1 top one1,one1,one1
+user-above layers one+restore+restore.js.top 1 one names: SILENT | import flag+plain late flag+plain undefined {"flag":"one1","plain":"one1"} top flag+plain undefined {"flag":"one1","plain":"one1"}
+user-above layers one+restore+restore.js.top 1 one values: SILENT | import one1 require one1 late one1,one1,one1 top one1,one1,one1
+user-above layers one+restore+restore.js.top 2 restore held: SILENT | late one1,one1,one1 top one1,one1,one1
+user-above layers one+restore+restore.js.top 2 restore names: SILENT | import flag+plain late flag+plain undefined {"flag":"one1","plain":"one1"} top flag+plain undefined {"flag":"one1","plain":"one1"}
+user-above layers one+restore+restore.js.top 2 restore values: SILENT | import one1 require one1 late one1,one1,one1 top one1,one1,one1
+user-above layers one+restore+restore.js.top 3 restore held: SILENT | late one1,one1,one1 top one1,one1,one1
+user-above layers one+restore+restore.js.top 3 restore names: SILENT | import flag+plain late flag+plain undefined {"flag":"one1","plain":"one1"} top flag+plain undefined {"flag":"one1","plain":"one1"}
+user-above layers one+restore+restore.js.top 3 restore values: SILENT | import one1 require one1 late one1,one1,one1 top one1,one1,one1
+held-over-layers layers one+says+says.cjs.late 2 says held: SILENT | late ,, top none
+held-over-layers layers one+says+says.cjs.late 3 says held: SILENT | late ,, top none
+user-above layers one+says+says.js.top 1 one held: SILENT | late one1,one1,one1 top one1,one1,one1
+user-above layers one+says+says.js.top 1 one names: SILENT | import flag+plain late flag+plain undefined {"flag":"one1","plain":"one1"} top flag+plain undefined {"flag":"one1","plain":"one1"}
+user-above layers one+says+says.js.top 1 one values: SILENT | import one1 require one1 late one1,one1,one1 top one1,one1,one1
+user-above layers one+says+says.js.top 1 says the factory: SILENT | runs in the call of 2 says
+user-above layers one+says+says.js.top 2 says held: SILENT | late says2,says2,says2 top says2,says2,says2
+user-above layers one+says+says.js.top 2 says names: SILENT | import flag+plain late flag+plain undefined {"flag":"says2","plain":"says2"} top flag+plain undefined {"flag":"says2","plain":"says2"}
+user-above layers one+says+says.js.top 2 says the factory: SILENT | runs in the call of 3 says
+user-above layers one+says+says.js.top 2 says values: SILENT | import says2 require says2 late says2,says2,says2 top says2,says2,says2
+user-above layers one+says+says.js.top 3 says held: SILENT | late says3,says3,says3 top says3,says3,says3
+user-above layers one+says+says.js.top 3 says names: SILENT | import flag+plain late flag+plain undefined {"flag":"says3","plain":"says3"} top flag+plain undefined {"flag":"says3","plain":"says3"}
+user-above layers one+says+says.js.top 3 says values: SILENT | import says3 require says3 late says3,says3,says3 top says3,says3,says3
+second-mock layers one+throws-over+one.cjs.late 1 body the body: SILENT | nothing
+held-over-layers layers one+throws-over+one.cjs.late 2 throws-over held: SILENT | late ,, top none
+held-over-layers layers one+throws-over+one.cjs.late 3 one held: SILENT | late ,, top none
+held-over-layers layers one+two+over.cjs.late 2 two held: SILENT | late ,, top none
+held-over-layers layers one+two+over.cjs.late 3 over held: SILENT | late ,, top none
+user-above layers one+unmock+async.js.top 1 one held: SILENT | late one1,one1,one1 top one1,one1,one1
+user-above layers one+unmock+async.js.top 1 one names: SILENT | import flag+plain late flag+plain undefined {"flag":"one1","plain":"one1"} top flag+plain undefined {"flag":"one1","plain":"one1"}
+user-above layers one+unmock+async.js.top 1 one values: SILENT | import one1 require one1 late one1,one1,one1 top one1,one1,one1
+user-above layers one+unmock+async.js.top 3 async names: SILENT | import flag+plain late flag+plain undefined {"flag":"async3","plain":"async3"} top flag+plain undefined {"flag":"async3","plain":"async3"}
+user-above layers one+unmock+async.js.top 3 async values: SILENT | import async3 require async3 late async3,async3,async3 top async3,async3,async3
+user-above layers over+async+module.js.top 1 over names: SILENT | import flag+plain late flag+plain undefined {"flag":"over1","plain":"real"} top flag+plain undefined {"flag":"over1","plain":"real"}
+user-above layers over+async+module.js.top 1 over values: SILENT | import over1 require over1 late over1,real,over1 top over1,real,over1
+user-above layers over+async+module.js.top 2 async names: SILENT | import flag+plain late flag+plain undefined {"flag":"async2","plain":"async2"} top flag+plain undefined {"flag":"async2","plain":"async2"}
+user-above layers over+async+module.js.top 2 async values: SILENT | import async2 require async2 late async2,async2,async2 top async2,async2,async2
+user-above layers over+async+module.js.top 3 module held: SILENT | late module3,module3,module3 top module3,module3,module3
+user-above layers over+async+module.js.top 3 module names: SILENT | import flag+plain late flag+plain undefined {"flag":"module3","plain":"module3"} top flag+plain undefined {"flag":"module3","plain":"module3"}
+user-above layers over+async+module.js.top 3 module values: SILENT | import module3 require module3 late module3,module3,module3 top module3,module3,module3
+held-over-layers layers over+bare+one.js.required 2 bare held: SILENT | late real,real,real top none
+held-over-layers layers over+one+two.cjs.late 2 one held: SILENT | late ,, top none
+held-over-layers layers over+one+two.cjs.late 3 two held: SILENT | late ,, top none
+held-over-layers layers over+throws+bare.cjs.late 2 throws held: SILENT | late ,, top none
+held-over-layers layers over+throws+bare.cjs.late 3 bare held: SILENT | late real,real,real top none
+second-mock layers over+throws+bare.cjs.late 3 bare names: SILENT | import default+flag+plain late default+flag+plain undefined {"flag":"real","plain":"real","default":{"flag":"real","plain":"real"}} top none
+second-mock layers over+throws+bare.cjs.late 3 bare values: SILENT | import real require real late real,real,real top none
+second-mock layers rejects+module+bare.js.top 1 rejects names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+user-above layers rejects+module+bare.js.top 1 rejects values: SILENT | import real require real late real,real,real top real,real,real
+second-mock layers rejects+module+bare.js.top 2 module held: SILENT | late module2,module2,module2 top module2,module2,module2
+second-mock layers rejects+module+bare.js.top 2 module names: SILENT | import flag+plain late flag+plain undefined {"flag":"module2","plain":"module2"} top flag+plain undefined {"flag":"module2","plain":"module2"}
+second-mock layers rejects+module+bare.js.top 2 module values: SILENT | import module2 require module2 late module2,module2,module2 top module2,module2,module2
+second-mock layers rejects+module+reset.js.late 1 rejects names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top none
+second-mock layers rejects+module+reset.js.late 1 rejects values: SILENT | import threw tardy boom 1 require real late real,real,real top none
+second-mock layers rejects+module+reset.js.late 2 module held: SILENT | late module2,module2,module2 top none
+second-mock layers rejects+module+reset.js.late 2 module names: SILENT | import flag+plain late flag+plain undefined {"flag":"module2","plain":"module2"} top none
+second-mock layers rejects+module+reset.js.late 2 module values: SILENT | import module2 require module2 late module2,module2,module2 top none
+second-mock layers rejects+module+reset.js.late 3 reset held: SILENT | late module2,module2,module2 top none
+second-mock layers rejects+module+reset.js.top 1 rejects names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+user-above layers rejects+module+reset.js.top 1 rejects values: SILENT | import real require real late real,real,real top real,real,real
+second-mock layers rejects+module+reset.js.top 2 module held: SILENT | late module2,module2,module2 top module2,module2,module2
+second-mock layers rejects+module+reset.js.top 2 module names: SILENT | import flag+plain late flag+plain undefined {"flag":"module2","plain":"module2"} top flag+plain undefined {"flag":"module2","plain":"module2"}
+second-mock layers rejects+module+reset.js.top 2 module values: SILENT | import module2 require module2 late module2,module2,module2 top module2,module2,module2
+second-mock layers rejects+module+reset.js.top 3 reset held: SILENT | late module2,module2,module2 top module2,module2,module2
+user-above layers rejects+module+reset.js.top 3 reset names: loud | nothing
+user-above layers rejects+module+reset.js.top 3 reset values: loud | nothing
+require-of-importer layers rejects+one+unmock.cjs.required 1 rejects names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top none
+require-of-importer layers rejects+one+unmock.cjs.required 1 rejects values: SILENT | import threw tardy boom 1 require real late real,real,real top none
+require-of-importer layers rejects+one+unmock.cjs.required 2 body the body: SILENT | nothing
+require-of-importer layers rejects+one+unmock.cjs.required 2 one held: SILENT | late real,real,real top none
+require-of-importer layers rejects+one+unmock.cjs.required 2 one names: SILENT | import flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top none
+require-of-importer layers rejects+one+unmock.cjs.required 2 one values: SILENT | import one2 require one2 late real,real,real top none
+require-of-importer layers rejects+one+unmock.cjs.required 3 unmock held: SILENT | late real,real,real top none
+require-of-importer layers rejects+one+unmock.js.required 1 rejects names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top none
+require-of-importer layers rejects+one+unmock.js.required 1 rejects values: SILENT | import threw tardy boom 1 require real late real,real,real top none
+require-of-importer layers rejects+one+unmock.js.required 2 body the body: SILENT | nothing
+require-of-importer layers rejects+one+unmock.js.required 2 one held: SILENT | late one2,one2,one2 top none
+require-of-importer layers rejects+one+unmock.js.required 2 one names: SILENT | import flag+plain late flag+plain undefined {"flag":"one2","plain":"one2"} top none
+require-of-importer layers rejects+one+unmock.js.required 3 unmock held: SILENT | late real,real,real top none
+late-rejection layers rejects+over+rejects.cjs.top 1 rejects names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+late-rejection layers rejects+over+rejects.cjs.top 3 rejects names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+late-rejection layers rejects+over+rejects.cjs.top 3 rejects values: loud | import threw tardy boom 2 require real late real,real,real top real,real,real
+late-rejection layers rejects+over+throws-over.cjs.late 1 rejects names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top none
+late-rejection layers rejects+over+throws-over.cjs.late 1 rejects values: SILENT | import threw tardy boom 1 require real late real,real,real top none
+late-rejection layers rejects+over+throws-over.cjs.late 2 over held: SILENT | late real,real,real top none
+user-above layers rejects+over+throws-over.cjs.late 2 over names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top none
+user-above layers rejects+over+throws-over.cjs.late 2 over values: SILENT | import over2 require over2 late real,real,real top none
+late-rejection layers rejects+over+throws-over.cjs.late 3 throws-over held: SILENT | late real,real,real top none
+late-rejection layers rejects+over+throws-over.cjs.late 3 throws-over names: loud | import threw boom over 5 late threw boom over 6 top none
+late-rejection layers rejects+over+throws-over.cjs.late 3 throws-over values: loud | import threw boom over 2 require threw boom over 3 late threw boom over 4 top none
+second-mock layers rejects+over+unmock.js.top 1 rejects names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+user-above layers rejects+over+unmock.js.top 1 rejects values: SILENT | import real require real late real,real,real top real,real,real
+user-above layers rejects+over+unmock.js.top 2 over names: SILENT | import flag+plain late flag+plain undefined {"flag":"over2","plain":"real"} top flag+plain undefined {"flag":"over2","plain":"real"}
+user-above layers rejects+over+unmock.js.top 2 over values: SILENT | import over2 require over2 late over2,real,over2 top over2,real,over2
+late-rejection layers rejects+reset+bare.cjs.late 1 rejects names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top none
+late-rejection layers rejects+reset+bare.cjs.late 1 rejects values: SILENT | import threw tardy boom 1 require real late real,real,real top none
+late-rejection layers rejects+reset+bare.cjs.late 2 reset held: SILENT | late real,real,real top none
+late-rejection layers rejects+reset+bare.cjs.late 2 reset names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top none
+late-rejection layers rejects+reset+bare.cjs.late 2 reset values: SILENT | import real require real late real,real,real top none
+late-rejection layers rejects+reset+bare.cjs.late 3 bare held: SILENT | late real,real,real top none
+late-rejection layers rejects+reset+bare.cjs.late 3 bare names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top none
+late-rejection layers rejects+reset+bare.cjs.late 3 bare values: SILENT | import real require real late real,real,real top none
+second-mock layers rejects+throws-over+one.js.top 1 rejects names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+user-above layers rejects+throws-over+one.js.top 1 rejects values: SILENT | import real require real late real,real,real top real,real,real
+user-above layers rejects+throws-over+one.js.top 2 throws-over names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+user-above layers rejects+throws-over+one.js.top 2 throws-over the call: loud | threw boom over 2
+user-above layers rejects+throws-over+one.js.top 2 throws-over values: SILENT | import real require real late real,real,real top real,real,real
+user-above layers rejects+throws-over+one.js.top 3 one held: SILENT | late one3,one3,one3 top one3,one3,one3
+user-above layers rejects+throws-over+one.js.top 3 one names: SILENT | import flag+plain late flag+plain undefined {"flag":"one3","plain":"one3"} top flag+plain undefined {"flag":"one3","plain":"one3"}
+user-above layers rejects+throws-over+one.js.top 3 one values: SILENT | import one3 require one3 late one3,one3,one3 top one3,one3,one3
+second-mock layers rejects+throws-over+rejects.js.top 1 rejects names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+user-above layers rejects+throws-over+rejects.js.top 1 rejects values: SILENT | import real require real late real,real,real top real,real,real
+user-above layers rejects+throws-over+rejects.js.top 2 throws-over names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+user-above layers rejects+throws-over+rejects.js.top 2 throws-over the call: loud | threw boom over 2
+user-above layers rejects+throws-over+rejects.js.top 2 throws-over values: SILENT | import real require real late real,real,real top real,real,real
+second-mock layers rejects+throws-over+rejects.js.top 3 rejects names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+user-above layers rejects+throws-over+rejects.js.top 3 rejects values: SILENT | import real require real late real,real,real top real,real,real
+require-beside-await layers rejects-over+bare+over.cjs.late 1 rejects-over values: loud | import threw tardy boom over 1 require threw undefined is not an object (evaluating ' late threw tardy boom over 2 top none
+late-rejection layers rejects-over+bare+over.js.late 1 rejects-over values: loud | import threw tardy boom over 1 require threw Cannot access 'flag' before initializati late threw tardy boom over 2 top none
+user-above layers rejects-over+one+unmock.js.top 1 rejects-over names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+user-above layers rejects-over+one+unmock.js.top 1 rejects-over values: SILENT | import real require real late real,real,real top real,real,real
+late-rejection layers rejects-over+over+over.js.late 1 rejects-over values: loud | import threw tardy boom over 1 require threw Cannot access 'flag' before initializati late threw tardy boom over 2 top none
+late-rejection layers rejects-over+rejects-over+unmock.js.late 1 rejects-over values: loud | import threw tardy boom over 1 require threw Cannot access 'flag' before initializati late threw tardy boom over 2 top none
+user-above layers reset+added+restore.js.late 2 added held: SILENT | late three2,three2,three2 top none
+user-above layers reset+added+restore.js.late 2 added names: SILENT | import flag+plain late flag+plain undefined {"flag":"three2","plain":"three2"} top none
+user-above layers reset+added+restore.js.late 2 added values: SILENT | import three2 require three2 late three2,three2,three2 top none
+user-above layers reset+added+restore.js.late 3 restore held: SILENT | late three2,three2,three2 top none
+user-above layers reset+added+restore.js.late 3 restore names: SILENT | import flag+plain late flag+plain undefined {"flag":"three2","plain":"three2"} top none
+user-above layers reset+added+restore.js.late 3 restore values: SILENT | import three2 require three2 late three2,three2,three2 top none
+late-rejection layers reset+rejects+throws.cjs.late 2 rejects names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top none
+late-rejection layers reset+rejects+throws.cjs.late 3 throws names: loud | import threw boom 4 late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top none
+late-rejection layers reset+rejects+throws.cjs.late 3 throws values: loud | import threw boom 2 require threw boom 3 late real,real,real top none
+user-above layers restore+added+two.js.top 2 added held: SILENT | late three2,three2,three2 top three2,three2,three2
+user-above layers restore+added+two.js.top 2 added names: SILENT | import flag+plain late flag+plain undefined {"flag":"three2","plain":"three2"} top flag+plain undefined {"flag":"three2","plain":"three2"}
+user-above layers restore+added+two.js.top 2 added values: SILENT | import three2 require three2 late three2,three2,three2 top three2,three2,three2
+user-above layers restore+added+two.js.top 3 two held: SILENT | late two3,real,two3 top two3,real,two3
+user-above layers restore+added+two.js.top 3 two names: SILENT | import flag+plain late flag+plain undefined {"flag":"two3","plain":"real"} top flag+plain undefined {"flag":"two3","plain":"real"}
+user-above layers restore+added+two.js.top 3 two values: SILENT | import two3 require two3 late two3,real,two3 top two3,real,two3
+late-rejection layers restore+rejects+over.cjs.top 2 rejects names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+second-mock layers throws+added+one.cjs.late 2 added names: loud | import added+flag+plain late added+flag+plain threw No "nobodyExportsThis" export is defined threw No "toJSON" export is defined on the moc top none
+second-mock layers throws+added+one.cjs.late 2 added values: SILENT | import three2 require three2 late three2,three2,three2 top none
+user-above layers throws+added+one.cjs.late 3 one held: SILENT | late ,, top none
+second-mock layers throws+module+unmock.cjs.top 1 body the body: SILENT | nothing
+second-mock layers throws+one+bare.cjs.late 1 body the body: SILENT | runs in the call of 3 bare
+second-mock layers throws+one+bare.cjs.late 2 one names: loud | import flag+plain late flag+plain threw No "nobodyExportsThis" export is defined threw No "toJSON" export is defined on the moc top none
+second-mock layers throws+one+bare.cjs.late 2 one values: SILENT | import one2 require one2 late one2,one2,one2 top none
+user-above layers throws+one+bare.cjs.late 3 bare held: SILENT | late real,real,real top none
+user-above layers throws+one+two.js.top 1 throws names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+user-above layers throws+one+two.js.top 1 throws the call: loud | threw boom 1
+user-above layers throws+one+two.js.top 1 throws values: SILENT | import real require real late real,real,real top real,real,real
+user-above layers throws+one+two.js.top 2 one held: SILENT | late one2,one2,one2 top one2,one2,one2
+user-above layers throws+one+two.js.top 2 one names: SILENT | import flag+plain late flag+plain undefined {"flag":"one2","plain":"one2"} top flag+plain undefined {"flag":"one2","plain":"one2"}
+user-above layers throws+one+two.js.top 2 one values: SILENT | import one2 require one2 late one2,one2,one2 top one2,one2,one2
+user-above layers throws+one+two.js.top 3 two held: SILENT | late two3,real,two3 top two3,real,two3
+user-above layers throws+one+two.js.top 3 two names: SILENT | import flag+plain late flag+plain undefined {"flag":"two3","plain":"real"} top flag+plain undefined {"flag":"two3","plain":"real"}
+user-above layers throws+one+two.js.top 3 two values: SILENT | import two3 require two3 late two3,real,two3 top two3,real,two3
+late-rejection layers throws+rejects+async.cjs.late 2 rejects names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top none
+late-rejection layers throws+rejects+async.cjs.late 2 rejects values: SILENT | import threw tardy boom 5 require real late real,real,real top none
+late-rejection layers throws+rejects+async.cjs.late 3 async held: SILENT | late real,real,real top none
+user-above layers throws+rejects+async.cjs.late 3 async names: SILENT | import flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top none
+user-above layers throws+rejects+async.cjs.late 3 async values: SILENT | import async3 require async3 late real,real,real top none
+user-above layers throws+reset+async.js.top 1 throws names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+user-above layers throws+reset+async.js.top 1 throws the call: loud | threw boom 1
+user-above layers throws+reset+async.js.top 1 throws values: SILENT | import real require real late real,real,real top real,real,real
+user-above layers throws+reset+async.js.top 2 body the body: SILENT | runs behind 2 reset
+user-above layers throws+reset+async.js.top 2 reset names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+user-above layers throws+reset+async.js.top 2 reset values: SILENT | import real require real late real,real,real top real,real,real
+user-above layers throws+reset+async.js.top 3 async names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+user-above layers throws+reset+async.js.top 3 async values: SILENT | import async3 require async3 late real,real,real top real,real,real
+late-rejection layers throws+throws+rejects.cjs.late 2 throws names: loud | import threw boom 8 late threw boom 7 top none
+late-rejection layers throws+throws+rejects.cjs.late 2 throws values: loud | import threw boom 5 require threw boom 6 late threw boom 7 top none
+late-rejection layers throws+throws+rejects.cjs.late 3 rejects names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top none
+late-rejection layers throws+throws+rejects.cjs.late 3 rejects values: SILENT | import threw tardy boom 9 require real late real,real,real top none
+second-mock layers throws+throws-over+bare.js.late 2 throws-over names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top none
+second-mock layers throws+throws-over+bare.js.late 2 throws-over the call: loud | threw boom over 5
+second-mock layers throws+throws-over+bare.js.late 2 throws-over values: SILENT | import real require real late real,real,real top none
+second-mock layers throws+throws-over+bare.js.late 3 bare held: SILENT | late real,real,real top none
+second-mock layers throws+two+async.js.late 2 two names: loud | import flag late flag threw No "nobodyExportsThis" export is defined threw No "toJSON" export is defined on the moc top none
+second-mock layers throws+two+async.js.late 2 two values: loud | import two2 require two2 late threw No "plain" export is defined on the mock top none
+second-mock layers throws+two+async.js.late 3 async held: loud | late threw No "plain" export is defined on the mock top none
+second-mock layers throws+two+bare.cjs.late 1 body the body: SILENT | runs in the call of 3 bare
+second-mock layers throws+two+bare.cjs.late 2 two names: loud | import flag late flag threw No "nobodyExportsThis" export is defined threw No "toJSON" export is defined on the moc top none
+second-mock layers throws+two+bare.cjs.late 2 two values: loud | import two2 require two2 late threw No "plain" export is defined on the mock top none
+user-above layers throws+two+bare.cjs.late 3 bare held: SILENT | late real,real,real top none
+user-above layers throws+two+reset.js.top 1 throws names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+user-above layers throws+two+reset.js.top 1 throws the call: loud | threw boom 1
+user-above layers throws+two+reset.js.top 1 throws values: SILENT | import real require real late real,real,real top real,real,real
+user-above layers throws+two+reset.js.top 2 two held: SILENT | late two2,real,two2 top two2,real,two2
+user-above layers throws+two+reset.js.top 2 two names: SILENT | import flag+plain late flag+plain undefined {"flag":"two2","plain":"real"} top flag+plain undefined {"flag":"two2","plain":"real"}
+user-above layers throws+two+reset.js.top 2 two values: SILENT | import two2 require two2 late two2,real,two2 top two2,real,two2
+user-above layers throws+two+reset.js.top 3 reset held: SILENT | late two2,real,two2 top two2,real,two2
+user-above layers throws+two+reset.js.top 3 reset names: SILENT | import flag late flag threw No "nobodyExportsThis" export is defined threw No "toJSON" export is defined on the moc top flag+plain undefined {"flag":"two2","plain":"real"}
+user-above layers throws+two+reset.js.top 3 reset values: SILENT | import two2 require two2 late threw No "plain" export is defined on the mock top two2,real,two2
+second-mock layers throws+unmock+throws-over.js.late 2 unmock names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top none
+second-mock layers throws+unmock+throws-over.js.late 2 unmock values: SILENT | import real require real late real,real,real top none
+second-mock layers throws+unmock+throws-over.js.late 3 throws-over held: SILENT | late real,real,real top none
+user-above layers throws+unmock+throws-over.js.late 3 throws-over names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top none
+user-above layers throws+unmock+throws-over.js.late 3 throws-over the call: loud | threw boom over 5
+user-above layers throws+unmock+throws-over.js.late 3 throws-over values: SILENT | import real require real late real,real,real top none
+second-mock layers throws-over+bare+over.js.late 1 body the body: SILENT | runs in the call of 2 bare
+second-mock layers throws-over+one+throws-over.cjs.late 1 body the body: SILENT | nothing
+held-over-layers layers throws-over+one+throws-over.cjs.late 3 throws-over held: SILENT | late ,, top none
+second-mock layers throws-over+two+throws.cjs.late 1 body the body: SILENT | nothing
+held-over-layers layers throws-over+two+throws.cjs.late 3 throws held: SILENT | late ,, top none
+held-over-layers layers two+added+async.cjs.late 2 added held: SILENT | late ,, top none
+held-over-layers layers two+added+async.cjs.late 3 async held: SILENT | late ,, top none
+user-above layers two+added+throws-over.js.top 1 two held: SILENT | late two1,real,two1 top two1,real,two1
+user-above layers two+added+throws-over.js.top 1 two names: SILENT | import flag+plain late flag+plain undefined {"flag":"two1","plain":"real"} top flag+plain undefined {"flag":"two1","plain":"real"}
+user-above layers two+added+throws-over.js.top 1 two values: SILENT | import two1 require two1 late two1,real,two1 top two1,real,two1
+user-above layers two+added+throws-over.js.top 2 added held: SILENT | late three2,three2,three2 top three2,three2,three2
+user-above layers two+added+throws-over.js.top 2 added names: SILENT | import flag+plain late flag+plain undefined {"flag":"three2","plain":"three2"} top flag+plain undefined {"flag":"three2","plain":"three2"}
+user-above layers two+added+throws-over.js.top 2 added values: SILENT | import three2 require three2 late three2,three2,three2 top three2,three2,three2
+user-above layers two+added+throws-over.js.top 3 throws-over names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+user-above layers two+added+throws-over.js.top 3 throws-over the call: loud | threw boom over 1
+user-above layers two+added+throws-over.js.top 3 throws-over values: SILENT | import real require real late real,real,real top real,real,real
+held-over-layers layers two+throws+throws.cjs.late 2 throws held: SILENT | late ,, top none
+held-over-layers layers two+throws+throws.cjs.late 3 throws held: SILENT | late ,, top none
+second-mock layers two+throws+throws.cjs.late 3 throws names: loud | import threw boom 8 late threw boom 7 top none
+second-mock layers two+throws+throws.cjs.late 3 throws values: loud | import threw boom 5 require threw boom 6 late threw boom 7 top none
+user-above layers unmock+added+bare.js.late 2 added held: SILENT | late three2,three2,three2 top none
+user-above layers unmock+added+bare.js.late 2 added names: SILENT | import flag+plain late flag+plain undefined {"flag":"three2","plain":"three2"} top none
+user-above layers unmock+added+bare.js.late 2 added values: SILENT | import three2 require three2 late three2,three2,three2 top none
+user-above layers unmock+one+one.js.top 2 one held: SILENT | late one2,one2,one2 top one2,one2,one2
+user-above layers unmock+one+one.js.top 2 one names: SILENT | import flag+plain late flag+plain undefined {"flag":"one2","plain":"one2"} top flag+plain undefined {"flag":"one2","plain":"one2"}
+user-above layers unmock+one+one.js.top 2 one values: SILENT | import one2 require one2 late one2,one2,one2 top one2,one2,one2
+user-above layers unmock+one+one.js.top 3 one held: SILENT | late one3,one3,one3 top one3,one3,one3
+user-above layers unmock+one+one.js.top 3 one names: SILENT | import flag+plain late flag+plain undefined {"flag":"one3","plain":"one3"} top flag+plain undefined {"flag":"one3","plain":"one3"}
+user-above layers unmock+one+one.js.top 3 one values: SILENT | import one3 require one3 late one3,one3,one3 top one3,one3,one3
+user-above layers unmock+one+throws.js.top 2 one held: SILENT | late one2,one2,one2 top one2,one2,one2
+user-above layers unmock+one+throws.js.top 2 one names: SILENT | import flag+plain late flag+plain undefined {"flag":"one2","plain":"one2"} top flag+plain undefined {"flag":"one2","plain":"one2"}
+user-above layers unmock+one+throws.js.top 2 one values: SILENT | import one2 require one2 late one2,one2,one2 top one2,one2,one2
+user-above layers unmock+one+throws.js.top 3 throws names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+user-above layers unmock+one+throws.js.top 3 throws the call: loud | threw boom 1
+user-above layers unmock+one+throws.js.top 3 throws values: SILENT | import real require real late real,real,real top real,real,real
+user-above layers unmock+over+async.js.top 2 over names: SILENT | import flag+plain late flag+plain undefined {"flag":"over2","plain":"real"} top flag+plain undefined {"flag":"over2","plain":"real"}
+user-above layers unmock+over+async.js.top 2 over values: SILENT | import over2 require over2 late over2,real,over2 top over2,real,over2
+user-above layers unmock+over+async.js.top 3 async names: SILENT | import flag+plain late flag+plain undefined {"flag":"async3","plain":"async3"} top flag+plain undefined {"flag":"async3","plain":"async3"}
+user-above layers unmock+over+async.js.top 3 async values: SILENT | import async3 require async3 late async3,async3,async3 top async3,async3,async3
+second-mock layers unmock+rejects+module.js.top 2 rejects names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+user-above layers unmock+rejects+module.js.top 2 rejects values: SILENT | import real require real late real,real,real top real,real,real
+second-mock layers unmock+rejects+module.js.top 3 module held: SILENT | late module3,module3,module3 top module3,module3,module3
+second-mock layers unmock+rejects+module.js.top 3 module names: SILENT | import flag+plain late flag+plain undefined {"flag":"module3","plain":"module3"} top flag+plain undefined {"flag":"module3","plain":"module3"}
+second-mock layers unmock+rejects+module.js.top 3 module values: SILENT | import module3 require module3 late module3,module3,module3 top module3,module3,module3
+late-rejection one added+rejects+async.cjs.top 2 rejects names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+second-mock one added+reset+unmock.js.late 2 body the body: SILENT | runs behind 3 unmock
+second-mock one async+bare+bare.js.late 1 body the body: SILENT | runs in the call of 2 bare
+late-rejection one async+restore+rejects.cjs.top 3 rejects names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+second-mock one async+says+throws.js.late 3 throws names: loud | import threw boom 4 late threw boom 5 top none
+second-mock one async+throws+module.js.late 2 throws names: loud | import threw boom 4 late threw boom 5 top none
+second-mock one async+throws+module.js.late 3 module held: loud | late threw Cannot access 'flag' before initializati top none
+second-mock one async+throws+module.js.late 3 module names: SILENT | import flag+plain late flag+plain undefined {"flag":"module3","plain":"module3"} top none
+second-mock one async+throws+module.js.late 3 module values: SILENT | import module3 require module3 late module3,module3,module3 top none
+late-rejection one bare+rejects+two.cjs.top 2 rejects names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+second-mock one group-of-reset+throws-over+throws.cjs.late 9 whole run: loud | exit 1 error: tardy boom over 5
+late-rejection one module+added+rejects.cjs.top 3 rejects names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+late-rejection one module+added+rejects.cjs.top 3 rejects values: SILENT | import threw tardy boom 1 require real late real,real,real top real,real,real
+second-mock one module+rejects+bare.js.top 2 rejects names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+second-mock one module+rejects+bare.js.top 2 rejects values: SILENT | import threw tardy boom 1 require real late real,real,real top real,real,real
+second-mock one module+rejects+two.js.late 2 rejects names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top none
+second-mock one module+rejects+two.js.late 2 rejects values: SILENT | import threw tardy boom 1 require real late real,real,real top none
+second-mock one module+rejects+two.js.late 3 two held: SILENT | late real,real,real top none
+second-mock one module+rejects+two.js.late 3 two names: loud | import flag late flag threw No "nobodyExportsThis" export is defined threw No "toJSON" export is defined on the moc top none
+second-mock one module+rejects+two.js.late 3 two values: loud | import two3 require two3 late threw No "plain" export is defined on the mock top none
+second-mock one module+reset+rejects.js.late 2 body the body: SILENT | runs behind 3 rejects
+second-mock one one+bare+over.cjs.late 1 body the body: SILENT | runs in the call of 2 bare
+second-mock one one+rejects+added.js.top 2 rejects names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+late-rejection one one+rejects-over+one.cjs.late 1 body the body: SILENT | nothing
+require-beside-await one one+rejects-over+one.cjs.late 2 rejects-over values: loud | import threw tardy boom over 1 require threw undefined is not an object (evaluating ' late threw tardy boom over 2 top none
+late-rejection one one+rejects-over+one.cjs.late 3 one held: SILENT | late ,, top none
+late-rejection one one+rejects-over+one.js.late 1 body the body: SILENT | nothing
+late-rejection one one+rejects-over+one.js.late 2 rejects-over values: loud | import threw tardy boom over 1 require threw Cannot access 'flag' before initializati late threw tardy boom over 2 top none
+late-rejection one one+rejects-over+one.js.late 3 one held: SILENT | late one3,one3,one3 top none
+second-mock one one+throws-over+one.cjs.late 1 body the body: SILENT | nothing
+second-mock one one+throws-over+one.cjs.late 3 one held: SILENT | late ,, top none
+second-mock one over+module+throws.js.late 3 throws names: loud | import threw boom 4 late threw boom 5 top none
+second-mock one over+throws+bare.cjs.late 3 bare held: SILENT | late real,real,real top none
+second-mock one over+throws+bare.cjs.late 3 bare names: SILENT | import default+flag+plain late default+flag+plain undefined {"flag":"real","plain":"real","default":{"flag":"real","plain":"real"}} top none
+second-mock one over+throws+bare.cjs.late 3 bare values: SILENT | import real require real late real,real,real top none
+second-mock one rejects+module+bare.js.top 1 rejects names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+second-mock one rejects+module+bare.js.top 2 module held: SILENT | late module2,module2,module2 top module2,module2,module2
+second-mock one rejects+module+bare.js.top 2 module names: SILENT | import flag+plain late flag+plain undefined {"flag":"module2","plain":"module2"} top flag+plain undefined {"flag":"module2","plain":"module2"}
+second-mock one rejects+module+bare.js.top 2 module values: SILENT | import module2 require module2 late module2,module2,module2 top module2,module2,module2
+second-mock one rejects+module+reset.js.late 1 rejects names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top none
+second-mock one rejects+module+reset.js.late 1 rejects values: SILENT | import threw tardy boom 1 require real late real,real,real top none
+second-mock one rejects+module+reset.js.late 2 module held: SILENT | late module2,module2,module2 top none
+second-mock one rejects+module+reset.js.late 2 module names: SILENT | import flag+plain late flag+plain undefined {"flag":"module2","plain":"module2"} top none
+second-mock one rejects+module+reset.js.late 2 module values: SILENT | import module2 require module2 late module2,module2,module2 top none
+second-mock one rejects+module+reset.js.late 3 reset held: SILENT | late module2,module2,module2 top none
+second-mock one rejects+module+reset.js.top 1 rejects names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+second-mock one rejects+module+reset.js.top 2 module held: SILENT | late module2,module2,module2 top module2,module2,module2
+second-mock one rejects+module+reset.js.top 2 module names: SILENT | import flag+plain late flag+plain undefined {"flag":"module2","plain":"module2"} top flag+plain undefined {"flag":"module2","plain":"module2"}
+second-mock one rejects+module+reset.js.top 2 module values: SILENT | import module2 require module2 late module2,module2,module2 top module2,module2,module2
+second-mock one rejects+module+reset.js.top 3 reset held: SILENT | late module2,module2,module2 top module2,module2,module2
+second-mock one rejects+module+reset.js.top 3 reset names: SILENT | import flag+plain late flag+plain undefined {"flag":"module2","plain":"module2"} top flag+plain undefined {"flag":"module2","plain":"module2"}
+second-mock one rejects+module+reset.js.top 3 reset values: SILENT | import module2 require module2 late module2,module2,module2 top module2,module2,module2
+require-of-importer one rejects+one+unmock.cjs.required 1 rejects names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top none
+require-of-importer one rejects+one+unmock.cjs.required 1 rejects values: SILENT | import threw tardy boom 1 require real late real,real,real top none
+require-of-importer one rejects+one+unmock.cjs.required 2 body the body: SILENT | nothing
+require-of-importer one rejects+one+unmock.cjs.required 2 one held: SILENT | late real,real,real top none
+require-of-importer one rejects+one+unmock.cjs.required 3 unmock held: SILENT | late real,real,real top none
+require-of-importer one rejects+one+unmock.js.required 1 rejects names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top none
+require-of-importer one rejects+one+unmock.js.required 1 rejects values: SILENT | import threw tardy boom 1 require real late real,real,real top none
+require-of-importer one rejects+one+unmock.js.required 2 body the body: SILENT | nothing
+require-of-importer one rejects+one+unmock.js.required 2 one held: SILENT | late real,real,real top none
+require-of-importer one rejects+one+unmock.js.required 3 unmock held: SILENT | late real,real,real top none
+late-rejection one rejects+over+rejects.cjs.top 1 rejects names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+late-rejection one rejects+over+rejects.cjs.top 3 rejects names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+late-rejection one rejects+over+rejects.cjs.top 3 rejects values: loud | import threw tardy boom 2 require real late real,real,real top real,real,real
+late-rejection one rejects+over+throws-over.cjs.late 1 rejects names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top none
+late-rejection one rejects+over+throws-over.cjs.late 1 rejects values: SILENT | import threw tardy boom 1 require real late real,real,real top none
+late-rejection one rejects+over+throws-over.cjs.late 2 over held: SILENT | late real,real,real top none
+late-rejection one rejects+over+throws-over.cjs.late 2 over names: loud | import default+flag+plain late default+flag+plain threw No "nobodyExportsThis" export is defined threw No "toJSON" export is defined on the moc top none
+late-rejection one rejects+over+throws-over.cjs.late 2 over values: SILENT | import over2 require over2 late over2,real,over2 top none
+late-rejection one rejects+over+throws-over.cjs.late 3 throws-over held: SILENT | late real,real,real top none
+late-rejection one rejects+over+throws-over.cjs.late 3 throws-over names: loud | import threw boom over 5 late threw boom over 6 top none
+late-rejection one rejects+over+throws-over.cjs.late 3 throws-over values: loud | import threw boom over 2 require threw boom over 3 late threw boom over 4 top none
+second-mock one rejects+over+unmock.js.top 1 rejects names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+late-rejection one rejects+reset+bare.cjs.late 1 rejects names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top none
+late-rejection one rejects+reset+bare.cjs.late 1 rejects values: SILENT | import threw tardy boom 1 require real late real,real,real top none
+late-rejection one rejects+reset+bare.cjs.late 2 reset held: SILENT | late real,real,real top none
+late-rejection one rejects+reset+bare.cjs.late 2 reset names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top none
+late-rejection one rejects+reset+bare.cjs.late 2 reset values: SILENT | import real require real late real,real,real top none
+late-rejection one rejects+reset+bare.cjs.late 3 bare held: SILENT | late real,real,real top none
+late-rejection one rejects+reset+bare.cjs.late 3 bare names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top none
+late-rejection one rejects+reset+bare.cjs.late 3 bare values: SILENT | import real require real late real,real,real top none
+second-mock one rejects+throws-over+one.js.top 1 rejects names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+second-mock one rejects+throws-over+one.js.top 2 throws-over names: loud | import threw boom over 4 late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+second-mock one rejects+throws-over+one.js.top 2 throws-over values: loud | import threw boom over 2 require threw boom over 3 late real,real,real top real,real,real
+second-mock one rejects+throws-over+rejects.js.top 1 rejects names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+second-mock one rejects+throws-over+rejects.js.top 2 throws-over names: loud | import threw boom over 4 late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+second-mock one rejects+throws-over+rejects.js.top 2 throws-over values: loud | import threw boom over 2 require threw boom over 3 late real,real,real top real,real,real
+second-mock one rejects+throws-over+rejects.js.top 3 rejects names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+second-mock one rejects+throws-over+rejects.js.top 3 rejects values: loud | import threw tardy boom 5 require real late real,real,real top real,real,real
+late-rejection one rejects-over+bare+over.cjs.late 1 body the body: SILENT | runs behind 3 over
+require-beside-await one rejects-over+bare+over.cjs.late 1 rejects-over values: loud | import threw tardy boom over 1 require threw undefined is not an object (evaluating ' late threw tardy boom over 2 top none
+late-rejection one rejects-over+bare+over.cjs.late 2 bare names: SILENT | import default late default undefined {} top none
+require-beside-await one rejects-over+bare+over.cjs.late 2 bare values: SILENT | import undefined require threw undefined is not an object (evaluating ' late ,, top none
+late-rejection one rejects-over+bare+over.cjs.late 3 over held: SILENT | late ,, top none
+late-rejection one rejects-over+bare+over.js.late 1 body the body: SILENT | runs behind 3 over
+late-rejection one rejects-over+bare+over.js.late 1 rejects-over values: loud | import threw tardy boom over 1 require threw Cannot access 'flag' before initializati late threw tardy boom over 2 top none
+late-rejection one rejects-over+bare+over.js.late 2 bare names: SILENT | import flag+plain late flag+plain undefined {} top none
+late-rejection one rejects-over+bare+over.js.late 2 bare values: SILENT | import undefined require undefined late ,, top none
+late-rejection one rejects-over+bare+over.js.late 3 over held: SILENT | late ,, top none
+late-rejection one rejects-over+one+unmock.js.top 1 rejects-over names: loud | import threw tardy boom over 3 late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+late-rejection one rejects-over+one+unmock.js.top 1 rejects-over values: loud | import threw tardy boom over 1 require real late threw tardy boom over 2 top real,real,real
+late-rejection one rejects-over+over+over.js.late 1 body the body: SILENT | nothing
+late-rejection one rejects-over+over+over.js.late 1 rejects-over values: loud | import threw tardy boom over 1 require threw Cannot access 'flag' before initializati late threw tardy boom over 2 top none
+late-rejection one rejects-over+over+over.js.late 2 over names: loud | import threw Cannot access 'flag' before initializati late threw Cannot access 'flag' before initializati top none
+late-rejection one rejects-over+over+over.js.late 2 over the call: loud | threw Cannot access 'flag' before initializati
+late-rejection one rejects-over+over+over.js.late 2 over values: loud | import threw Cannot access 'flag' before initializati require threw Cannot access 'flag' before initializati late threw Cannot access 'flag' before initializati top none
+late-rejection one rejects-over+over+over.js.late 3 over held: loud | late threw Cannot access 'flag' before initializati top none
+late-rejection one rejects-over+over+over.js.late 3 over names: loud | import threw Cannot access 'flag' before initializati late threw Cannot access 'flag' before initializati top none
+late-rejection one rejects-over+over+over.js.late 3 over values: loud | import threw Cannot access 'flag' before initializati require threw Cannot access 'flag' before initializati late threw Cannot access 'flag' before initializati top none
+late-rejection one rejects-over+rejects-over+unmock.js.late 1 body the body: SILENT | nothing
+late-rejection one rejects-over+rejects-over+unmock.js.late 1 rejects-over values: loud | import threw tardy boom over 1 require threw Cannot access 'flag' before initializati late threw tardy boom over 2 top none
+late-rejection one rejects-over+rejects-over+unmock.js.late 2 body the body: SILENT | nothing
+late-rejection one rejects-over+rejects-over+unmock.js.late 2 rejects-over values: loud | import threw Cannot access 'flag' before initializati require threw Cannot access 'flag' before initializati late threw tardy boom over 6 top none
+late-rejection one rejects-over+rejects-over+unmock.js.late 3 unmock names: loud | nothing
+late-rejection one rejects-over+rejects-over+unmock.js.late 3 unmock values: loud | nothing
+late-rejection one reset+rejects+throws.cjs.late 2 rejects names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top none
+late-rejection one reset+rejects+throws.cjs.late 3 throws names: loud | import threw boom 4 late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top none
+late-rejection one reset+rejects+throws.cjs.late 3 throws values: loud | import threw boom 2 require threw boom 3 late real,real,real top none
+late-rejection one restore+rejects+over.cjs.top 2 rejects names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+second-mock one throws+added+one.cjs.late 2 added names: loud | import added+flag+plain late added+flag+plain threw No "nobodyExportsThis" export is defined threw No "toJSON" export is defined on the moc top none
+second-mock one throws+added+one.cjs.late 2 added values: SILENT | import three2 require three2 late three2,three2,three2 top none
+second-mock one throws+added+one.cjs.late 3 one held: SILENT | late three2,three2,three2 top none
+second-mock one throws+module+unmock.cjs.top 1 body the body: SILENT | nothing
+second-mock one throws+one+bare.cjs.late 1 body the body: SILENT | runs in the call of 3 bare
+second-mock one throws+one+bare.cjs.late 2 one names: loud | import flag+plain late flag+plain threw No "nobodyExportsThis" export is defined threw No "toJSON" export is defined on the moc top none
+second-mock one throws+one+bare.cjs.late 2 one values: SILENT | import one2 require one2 late one2,one2,one2 top none
+second-mock one throws+one+bare.cjs.late 3 bare held: SILENT | late one2,one2,one2 top none
+late-rejection one throws+rejects+async.cjs.late 2 rejects names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top none
+late-rejection one throws+rejects+async.cjs.late 2 rejects values: SILENT | import threw tardy boom 5 require real late real,real,real top none
+late-rejection one throws+rejects+async.cjs.late 3 async held: SILENT | late real,real,real top none
+late-rejection one throws+rejects+async.cjs.late 3 async names: loud | import flag+plain late flag+plain threw No "nobodyExportsThis" export is defined threw No "toJSON" export is defined on the moc top none
+late-rejection one throws+rejects+async.cjs.late 3 async values: SILENT | import async3 require async3 late async3,async3,async3 top none
+late-rejection one throws+throws+rejects.cjs.late 2 throws names: loud | import threw boom 8 late threw boom 7 top none
+late-rejection one throws+throws+rejects.cjs.late 2 throws values: loud | import threw boom 5 require threw boom 6 late threw boom 7 top none
+late-rejection one throws+throws+rejects.cjs.late 3 rejects names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top none
+late-rejection one throws+throws+rejects.cjs.late 3 rejects values: SILENT | import threw tardy boom 9 require real late real,real,real top none
+second-mock one throws+throws-over+bare.js.late 2 throws-over names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top none
+second-mock one throws+throws-over+bare.js.late 2 throws-over the call: loud | threw boom over 5
+second-mock one throws+throws-over+bare.js.late 2 throws-over values: SILENT | import real require real late real,real,real top none
+second-mock one throws+throws-over+bare.js.late 3 bare held: SILENT | late real,real,real top none
+second-mock one throws+two+async.js.late 2 two names: loud | import flag late flag threw No "nobodyExportsThis" export is defined threw No "toJSON" export is defined on the moc top none
+second-mock one throws+two+async.js.late 2 two values: loud | import two2 require two2 late threw No "plain" export is defined on the mock top none
+second-mock one throws+two+async.js.late 3 async held: loud | late threw No "plain" export is defined on the mock top none
+second-mock one throws+two+bare.cjs.late 1 body the body: SILENT | runs in the call of 3 bare
+second-mock one throws+two+bare.cjs.late 2 two names: loud | import flag late flag threw No "nobodyExportsThis" export is defined threw No "toJSON" export is defined on the moc top none
+second-mock one throws+two+bare.cjs.late 2 two values: loud | import two2 require two2 late threw No "plain" export is defined on the mock top none
+second-mock one throws+two+bare.cjs.late 3 bare held: loud | late threw No "plain" export is defined on the mock top none
+second-mock one throws+unmock+throws-over.js.late 2 unmock names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top none
+second-mock one throws+unmock+throws-over.js.late 2 unmock values: SILENT | import real require real late real,real,real top none
+second-mock one throws+unmock+throws-over.js.late 3 throws-over held: SILENT | late real,real,real top none
+second-mock one throws-over+bare+over.js.late 1 body the body: SILENT | runs in the call of 2 bare
+second-mock one throws-over+one+throws-over.cjs.late 1 body the body: SILENT | nothing
+second-mock one throws-over+two+throws.cjs.late 1 body the body: SILENT | nothing
+second-mock one two+throws+throws.cjs.late 3 throws held: SILENT | late ,, top none
+second-mock one two+throws+throws.cjs.late 3 throws names: loud | import threw boom 8 late threw boom 7 top none
+second-mock one two+throws+throws.cjs.late 3 throws values: loud | import threw boom 5 require threw boom 6 late threw boom 7 top none
+second-mock one unmock+rejects+module.js.top 2 rejects names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+second-mock one unmock+rejects+module.js.top 3 module held: SILENT | late module3,module3,module3 top module3,module3,module3
+second-mock one unmock+rejects+module.js.top 3 module names: SILENT | import flag+plain late flag+plain undefined {"flag":"module3","plain":"module3"} top flag+plain undefined {"flag":"module3","plain":"module3"}
+second-mock one unmock+rejects+module.js.top 3 module values: SILENT | import module3 require module3 late module3,module3,module3 top module3,module3,module3
+user-above realm added+added+two.cjs.top 1 added names: SILENT | import added+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm added+added+two.cjs.top 1 added values: SILENT | import three1 require three1 late real,real,real top real,real,real
+user-above realm added+added+two.cjs.top 1 body the body: SILENT | nothing
+user-above realm added+added+two.cjs.top 2 added held: SILENT | late real,real,real top real,real,real
+user-above realm added+added+two.cjs.top 2 added names: SILENT | import added+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm added+added+two.cjs.top 2 added values: SILENT | import three2 require three2 late real,real,real top real,real,real
+user-above realm added+added+two.cjs.top 3 two held: SILENT | late real,real,real top real,real,real
+user-above realm added+added+two.cjs.top 3 two names: SILENT | import flag late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm added+added+two.cjs.top 3 two values: SILENT | import two3 require two3 late real,real,real top real,real,real
+user-above realm added+async+one.cjs.late 1 body the body: SILENT | nothing
+user-above realm added+one+added.cjs.late 1 body the body: SILENT | nothing
+user-above realm added+one+added.cjs.top 1 added names: SILENT | import added+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm added+one+added.cjs.top 1 added values: SILENT | import three1 require three1 late real,real,real top real,real,real
+user-above realm added+one+added.cjs.top 1 body the body: SILENT | nothing
+user-above realm added+one+added.cjs.top 2 one held: SILENT | late real,real,real top real,real,real
+user-above realm added+one+added.cjs.top 2 one names: SILENT | import flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm added+one+added.cjs.top 2 one values: SILENT | import one2 require one2 late real,real,real top real,real,real
+user-above realm added+one+added.cjs.top 3 added held: SILENT | late real,real,real top real,real,real
+user-above realm added+one+added.cjs.top 3 added names: SILENT | import added+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm added+one+added.cjs.top 3 added values: SILENT | import three3 require three3 late real,real,real top real,real,real
+user-above realm added+rejects+async.cjs.top 1 added names: SILENT | import added+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm added+rejects+async.cjs.top 1 added values: SILENT | import three1 require three1 late real,real,real top real,real,real
+user-above realm added+rejects+async.cjs.top 1 body the body: SILENT | nothing
+user-above realm added+rejects+async.cjs.top 2 body the body: SILENT | nothing
+user-above realm added+rejects+async.cjs.top 2 rejects held: SILENT | late real,real,real top real,real,real
+late-rejection realm added+rejects+async.cjs.top 2 rejects names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm added+rejects+async.cjs.top 2 rejects values: SILENT | import threw tardy boom 1 require real late real,real,real top real,real,real
+user-above realm added+rejects+async.cjs.top 3 async held: SILENT | late real,real,real top real,real,real
+user-above realm added+rejects+async.cjs.top 3 async names: SILENT | import flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm added+rejects+async.cjs.top 3 async values: SILENT | import async3 require async3 late real,real,real top real,real,real
+second-mock realm added+reset+unmock.js.late 2 body the body: SILENT | runs behind 3 unmock
+user-above realm added+throws+bare.js.top 1 added held: SILENT | late three1,three1,three1 top three1,three1,three1
+user-above realm added+throws+bare.js.top 1 added names: SILENT | import flag+plain late flag+plain undefined {"flag":"three1","plain":"three1"} top flag+plain undefined {"flag":"three1","plain":"three1"}
+user-above realm added+throws+bare.js.top 1 added values: SILENT | import three1 require three1 late three1,three1,three1 top three1,three1,three1
+user-above realm added+throws+bare.js.top 2 throws names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+user-above realm added+throws+bare.js.top 2 throws the call: loud | threw boom 1
+user-above realm added+throws+bare.js.top 2 throws values: SILENT | import real require real late real,real,real top real,real,real
+user-above realm added+throws+module.js.top 1 added held: SILENT | late three1,three1,three1 top three1,three1,three1
+user-above realm added+throws+module.js.top 1 added names: SILENT | import flag+plain late flag+plain undefined {"flag":"three1","plain":"three1"} top flag+plain undefined {"flag":"three1","plain":"three1"}
+user-above realm added+throws+module.js.top 1 added values: SILENT | import three1 require three1 late three1,three1,three1 top three1,three1,three1
+user-above realm added+throws+module.js.top 1 body the body: SILENT | nothing
+user-above realm added+throws+module.js.top 2 throws held: SILENT | late real,real,real top real,real,real
+user-above realm added+throws+module.js.top 2 throws names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+user-above realm added+throws+module.js.top 2 throws the call: loud | threw boom 1
+user-above realm added+throws+module.js.top 2 throws values: SILENT | import real require real late real,real,real top real,real,real
+user-above realm added+throws+module.js.top 3 module held: SILENT | late module3,module3,module3 top module3,module3,module3
+user-above realm added+throws+module.js.top 3 module names: SILENT | import flag+plain late flag+plain undefined {"flag":"module3","plain":"module3"} top flag+plain undefined {"flag":"module3","plain":"module3"}
+user-above realm added+throws+module.js.top 3 module values: SILENT | import module3 require module3 late module3,module3,module3 top module3,module3,module3
+user-above realm added+throws-over+async.cjs.top 1 added names: SILENT | import added+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm added+throws-over+async.cjs.top 1 added values: SILENT | import three1 require three1 late real,real,real top real,real,real
+user-above realm added+throws-over+async.cjs.top 1 body the body: SILENT | nothing
+user-above realm added+throws-over+async.cjs.top 2 body the body: SILENT | nothing
+user-above realm added+throws-over+async.cjs.top 2 throws-over held: SILENT | late real,real,real top real,real,real
+user-above realm added+throws-over+async.cjs.top 3 async held: SILENT | late real,real,real top real,real,real
+user-above realm added+throws-over+async.cjs.top 3 async names: SILENT | import flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm added+throws-over+async.cjs.top 3 async values: SILENT | import async3 require async3 late real,real,real top real,real,real
+user-above realm added+throws-over+bare.js.top 1 added held: SILENT | late three1,three1,three1 top three1,three1,three1
+user-above realm added+throws-over+bare.js.top 1 added names: SILENT | import flag+plain late flag+plain undefined {"flag":"three1","plain":"three1"} top flag+plain undefined {"flag":"three1","plain":"three1"}
+user-above realm added+throws-over+bare.js.top 1 added values: SILENT | import three1 require three1 late three1,three1,three1 top three1,three1,three1
+user-above realm added+throws-over+bare.js.top 1 body the body: SILENT | nothing
+user-above realm added+throws-over+bare.js.top 2 body the body: SILENT | nothing
+user-above realm added+throws-over+bare.js.top 2 throws-over held: SILENT | late real,real,real top real,real,real
+user-above realm added+throws-over+bare.js.top 2 throws-over names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+user-above realm added+throws-over+bare.js.top 2 throws-over the call: loud | threw boom over 1
+user-above realm added+throws-over+bare.js.top 2 throws-over values: SILENT | import real require real late real,real,real top real,real,real
+user-above realm added+throws-over+bare.js.top 3 bare held: SILENT | late real,real,real top real,real,real
+user-above realm added+two+module.js.top 1 added held: SILENT | late three1,three1,three1 top three1,three1,three1
+user-above realm added+two+module.js.top 1 added names: SILENT | import flag+plain late flag+plain undefined {"flag":"three1","plain":"three1"} top flag+plain undefined {"flag":"three1","plain":"three1"}
+user-above realm added+two+module.js.top 1 added values: SILENT | import three1 require three1 late three1,three1,three1 top three1,three1,three1
+user-above realm added+two+module.js.top 1 body the body: SILENT | nothing
+user-above realm added+two+module.js.top 2 two held: SILENT | late two2,real,two2 top two2,real,two2
+user-above realm added+two+module.js.top 2 two names: SILENT | import flag+plain late flag+plain undefined {"flag":"two2","plain":"real"} top flag+plain undefined {"flag":"two2","plain":"real"}
+user-above realm added+two+module.js.top 2 two values: SILENT | import two2 require two2 late two2,real,two2 top two2,real,two2
+user-above realm added+two+module.js.top 3 module held: SILENT | late module3,module3,module3 top module3,module3,module3
+user-above realm added+two+module.js.top 3 module names: SILENT | import flag+plain late flag+plain undefined {"flag":"module3","plain":"module3"} top flag+plain undefined {"flag":"module3","plain":"module3"}
+user-above realm added+two+module.js.top 3 module values: SILENT | import module3 require module3 late module3,module3,module3 top module3,module3,module3
+user-above realm async+added+restore.cjs.top 1 async names: SILENT | import flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm async+added+restore.cjs.top 1 async values: SILENT | import async1 require async1 late real,real,real top real,real,real
+user-above realm async+added+restore.cjs.top 1 body the body: SILENT | nothing
+user-above realm async+added+restore.cjs.top 2 added held: SILENT | late real,real,real top real,real,real
+user-above realm async+added+restore.cjs.top 2 added names: SILENT | import added+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm async+added+restore.cjs.top 2 added values: SILENT | import three2 require three2 late real,real,real top real,real,real
+user-above realm async+added+restore.cjs.top 3 restore held: SILENT | late real,real,real top real,real,real
+user-above realm async+added+restore.cjs.top 3 restore names: SILENT | import added+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm async+added+restore.cjs.top 3 restore values: SILENT | import three2 require three2 late real,real,real top real,real,real
+user-above realm async+async+reset.js.top 1 async names: SILENT | import flag+plain late flag+plain undefined {"flag":"async1","plain":"async1"} top flag+plain undefined {"flag":"async1","plain":"async1"}
+user-above realm async+async+reset.js.top 1 async values: SILENT | import async1 require async1 late async1,async1,async1 top async1,async1,async1
+user-above realm async+async+reset.js.top 2 async names: SILENT | import flag+plain late flag+plain undefined {"flag":"async2","plain":"async2"} top flag+plain undefined {"flag":"async2","plain":"async2"}
+user-above realm async+async+reset.js.top 2 async values: SILENT | import async2 require async2 late async2,async2,async2 top async2,async2,async2
+user-above realm async+async+reset.js.top 3 reset held: SILENT | late async2,async2,async2 top async2,async2,async2
+user-above realm async+async+reset.js.top 3 reset names: SILENT | import flag+plain late flag+plain threw No "nobodyExportsThis" export is defined threw No "toJSON" export is defined on the moc top flag+plain undefined {"flag":"async2","plain":"async2"}
+user-above realm async+async+reset.js.top 3 reset values: SILENT | import async2 require async2 late async2,async2,async2 top async2,async2,async2
+user-above realm async+async+two.cjs.late 1 body the body: SILENT | nothing
+user-above realm async+bare+bare.js.late 1 body the body: SILENT | nothing
+user-above realm async+bare+bare.js.late 2 body the body: SILENT | nothing
+require-of-importer realm async+one+unmock.cjs.required 1 body the body: SILENT | nothing
+require-of-importer realm async+one+unmock.js.required 1 body the body: SILENT | nothing
+user-above realm async+restore+over.js.late 1 body the body: SILENT | nothing
+user-above realm async+restore+over.js.late 2 body the body: SILENT | nothing
+late-rejection realm async+restore+rejects.cjs.top 3 rejects names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm async+restore+unmock.js.top 1 async names: SILENT | import flag+plain late flag+plain undefined {"flag":"async1","plain":"async1"} top flag+plain undefined {"flag":"async1","plain":"async1"}
+user-above realm async+restore+unmock.js.top 1 async values: SILENT | import async1 require async1 late async1,async1,async1 top async1,async1,async1
+user-above realm async+restore+unmock.js.top 1 body the body: SILENT | nothing
+user-above realm async+restore+unmock.js.top 2 restore held: SILENT | late async1,async1,async1 top async1,async1,async1
+user-above realm async+restore+unmock.js.top 2 restore names: SILENT | import flag+plain late flag+plain undefined {"flag":"async1","plain":"async1"} top flag+plain undefined {"flag":"async1","plain":"async1"}
+user-above realm async+restore+unmock.js.top 2 restore values: SILENT | import async1 require async1 late async1,async1,async1 top async1,async1,async1
+user-above realm async+restore+unmock.js.top 3 unmock held: SILENT | late real,real,real top real,real,real
+user-above realm async+says+throws.js.late 1 body the body: SILENT | nothing
+user-above realm async+throws+module.js.late 1 body the body: SILENT | nothing
+user-above realm async+throws-over+unmock.js.top 1 async names: SILENT | import flag+plain late flag+plain undefined {"flag":"async1","plain":"async1"} top flag+plain undefined {"flag":"async1","plain":"async1"}
+user-above realm async+throws-over+unmock.js.top 1 async values: SILENT | import async1 require async1 late async1,async1,async1 top async1,async1,async1
+user-above realm async+throws-over+unmock.js.top 1 body the body: SILENT | nothing
+user-above realm async+throws-over+unmock.js.top 2 body the body: SILENT | nothing
+user-above realm async+throws-over+unmock.js.top 2 throws-over held: SILENT | late real,real,real top real,real,real
+user-above realm async+throws-over+unmock.js.top 2 throws-over names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+user-above realm async+throws-over+unmock.js.top 2 throws-over the call: loud | threw boom over 1
+user-above realm async+throws-over+unmock.js.top 2 throws-over values: SILENT | import real require real late real,real,real top real,real,real
+user-above realm async+throws-over+unmock.js.top 3 unmock held: SILENT | late real,real,real top real,real,real
+user-above realm async+two+over.cjs.top 1 async names: SILENT | import flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm async+two+over.cjs.top 1 async values: SILENT | import async1 require async1 late real,real,real top real,real,real
+user-above realm async+two+over.cjs.top 1 body the body: SILENT | nothing
+user-above realm async+two+over.cjs.top 2 body the body: SILENT | nothing
+user-above realm async+two+over.cjs.top 2 two held: SILENT | late real,real,real top real,real,real
+user-above realm async+two+over.cjs.top 2 two names: SILENT | import flag late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm async+two+over.cjs.top 2 two values: SILENT | import two2 require two2 late real,real,real top real,real,real
+user-above realm async+two+over.cjs.top 3 over held: SILENT | late real,real,real top real,real,real
+user-above realm async+two+over.cjs.top 3 over names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm async+two+over.cjs.top 3 over values: SILENT | import over3 require over3 late real,real,real top real,real,real
+user-above realm async+unmock+module.cjs.top 1 async names: SILENT | import flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm async+unmock+module.cjs.top 1 async values: SILENT | import async1 require async1 late real,real,real top real,real,real
+user-above realm async+unmock+module.cjs.top 1 body the body: SILENT | nothing
+user-above realm async+unmock+module.cjs.top 2 unmock held: SILENT | late real,real,real top real,real,real
+user-above realm async+unmock+module.cjs.top 3 module held: SILENT | late module3,module3,module3 top module3,module3,module3
+user-above realm async+unmock+module.cjs.top 3 module names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"module3","plain":"module3"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"module3","plain":"module3"}
+user-above realm async+unmock+module.cjs.top 3 module values: SILENT | import module3 require module3 late module3,module3,module3 top module3,module3,module3
+user-above realm bare+added+async.cjs.top 1 bare names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm bare+added+async.cjs.top 1 body the body: SILENT | nothing
+user-above realm bare+added+async.cjs.top 2 added names: SILENT | import added+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm bare+added+async.cjs.top 2 added values: SILENT | import three2 require three2 late real,real,real top real,real,real
+user-above realm bare+added+async.cjs.top 2 body the body: SILENT | nothing
+user-above realm bare+added+async.cjs.top 3 async held: SILENT | late real,real,real top real,real,real
+user-above realm bare+added+async.cjs.top 3 async names: SILENT | import flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm bare+added+async.cjs.top 3 async values: SILENT | import async3 require async3 late real,real,real top real,real,real
+user-above realm bare+async+throws-over.js.late 1 body the body: SILENT | nothing
+user-above realm bare+async+throws-over.js.late 2 body the body: SILENT | nothing
+user-above realm bare+one+over.js.late 1 body the body: SILENT | nothing
+user-above realm bare+one+over.js.late 2 body the body: SILENT | nothing
+user-above realm bare+over+one.js.late 1 body the body: SILENT | nothing
+user-above realm bare+over+one.js.late 2 body the body: SILENT | nothing
+user-above realm bare+over+unmock.js.late 1 body the body: SILENT | nothing
+user-above realm bare+over+unmock.js.late 2 body the body: SILENT | nothing
+user-above realm bare+rejects+two.cjs.top 1 bare names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm bare+rejects+two.cjs.top 1 body the body: SILENT | nothing
+user-above realm bare+rejects+two.cjs.top 2 body the body: SILENT | nothing
+late-rejection realm bare+rejects+two.cjs.top 2 rejects names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm bare+rejects+two.cjs.top 2 rejects values: SILENT | import threw tardy boom 1 require real late real,real,real top real,real,real
+user-above realm bare+rejects+two.cjs.top 3 two names: SILENT | import flag late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm bare+rejects+two.cjs.top 3 two values: SILENT | import two3 require two3 late real,real,real top real,real,real
+user-above realm bare+restore+throws.cjs.late 1 body the body: SILENT | nothing
+user-above realm bare+restore+throws.cjs.late 2 body the body: SILENT | nothing
+user-above realm group-of-added+throws+bare.js.top 9 whole run: loud | exit 1 error: tardy boom 1 error: tardy boom 1 error: tardy boom 1 error: tardy boom 1 error: tardy boom 1 error: tardy boom 1 error: tardy boom 3
+user-above realm group-of-two+throws+throws.cjs.late 9 whole run: loud | exit 1 error: tardy boom over 1 error: tardy boom over 5
+user-above realm group-of-unmock+rejects+module.js.top 9 whole run: loud | exit 1 error: tardy boom 1 error: tardy boom 1
+user-above realm module+added+module.js.top 1 body the body: SILENT | nothing
+user-above realm module+added+module.js.top 2 added held: SILENT | late three2,three2,three2 top three2,three2,three2
+user-above realm module+added+module.js.top 2 added names: SILENT | import flag+plain late flag+plain undefined {"flag":"three2","plain":"three2"} top flag+plain undefined {"flag":"three2","plain":"three2"}
+user-above realm module+added+module.js.top 2 added values: SILENT | import three2 require three2 late three2,three2,three2 top three2,three2,three2
+user-above realm module+added+module.js.top 3 module held: SILENT | late module3,module3,module3 top module3,module3,module3
+user-above realm module+added+module.js.top 3 module names: SILENT | import flag+plain late flag+plain undefined {"flag":"module3","plain":"module3"} top flag+plain undefined {"flag":"module3","plain":"module3"}
+user-above realm module+added+module.js.top 3 module values: SILENT | import module3 require module3 late module3,module3,module3 top module3,module3,module3
+user-above realm module+added+over.cjs.late 1 body the body: SILENT | nothing
+user-above realm module+added+over.cjs.late 2 body the body: SILENT | nothing
+user-above realm module+added+over.cjs.top 1 body the body: SILENT | nothing
+user-above realm module+added+over.cjs.top 2 body the body: SILENT | nothing
+user-above realm module+added+rejects.cjs.top 1 body the body: SILENT | nothing
+user-above realm module+added+rejects.cjs.top 2 body the body: SILENT | nothing
+late-rejection realm module+added+rejects.cjs.top 3 rejects names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+late-rejection realm module+added+rejects.cjs.top 3 rejects values: SILENT | import threw tardy boom 1 require real late real,real,real top real,real,real
+user-above realm module+rejects+bare.js.top 1 body the body: SILENT | nothing
+user-above realm module+rejects+bare.js.top 2 body the body: SILENT | nothing
+late-rejection realm module+rejects+bare.js.top 2 rejects names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+user-above realm module+rejects+bare.js.top 2 rejects values: SILENT | import real require real late real,real,real top real,real,real
+user-above realm module+rejects+two.js.late 1 body the body: SILENT | nothing
+user-above realm module+rejects+two.js.late 2 body the body: SILENT | nothing
+late-rejection realm module+rejects+two.js.late 2 rejects names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top none
+user-above realm module+rejects+two.js.late 2 rejects values: SILENT | import real require real late real,real,real top none
+user-above realm module+rejects+two.js.late 3 two held: SILENT | late two3,real,two3 top none
+user-above realm module+rejects+two.js.late 3 two names: SILENT | import flag+plain late flag+plain undefined {"flag":"two3","plain":"real"} top none
+user-above realm module+rejects+two.js.late 3 two values: SILENT | import two3 require two3 late two3,real,two3 top none
+user-above realm module+unmock+over.js.top 1 body the body: SILENT | nothing
+user-above realm module+unmock+over.js.top 2 body the body: SILENT | nothing
+user-above realm module+unmock+over.js.top 3 over names: SILENT | import flag+plain late flag+plain undefined {"flag":"over3","plain":"real"} top flag+plain undefined {"flag":"over3","plain":"real"}
+user-above realm module+unmock+over.js.top 3 over values: SILENT | import over3 require over3 late over3,real,over3 top over3,real,over3
+user-above realm one+async+bare.js.top 1 body the body: SILENT | nothing
+user-above realm one+async+bare.js.top 1 one held: SILENT | late one1,one1,one1 top one1,one1,one1
+user-above realm one+async+bare.js.top 1 one names: SILENT | import flag+plain late flag+plain undefined {"flag":"one1","plain":"one1"} top flag+plain undefined {"flag":"one1","plain":"one1"}
+user-above realm one+async+bare.js.top 1 one values: SILENT | import one1 require one1 late one1,one1,one1 top one1,one1,one1
+user-above realm one+async+bare.js.top 2 async held: SILENT | late real,real,real top real,real,real
+user-above realm one+async+bare.js.top 2 async names: SILENT | import flag+plain late flag+plain undefined {"flag":"async2","plain":"async2"} top flag+plain undefined {"flag":"async2","plain":"async2"}
+user-above realm one+async+bare.js.top 2 async values: SILENT | import async2 require async2 late async2,async2,async2 top async2,async2,async2
+user-above realm one+async+bare.js.top 2 body the body: SILENT | nothing
+user-above realm one+async+bare.js.top 3 bare held: SILENT | late real,real,real top real,real,real
+require-of-importer realm one+async+two.cjs.required 1 body the body: SILENT | nothing
+require-of-importer realm one+async+two.js.required 1 body the body: SILENT | nothing
+user-above realm one+async+unmock.cjs.top 1 body the body: SILENT | nothing
+user-above realm one+async+unmock.cjs.top 1 one names: SILENT | import flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm one+async+unmock.cjs.top 1 one values: SILENT | import one1 require one1 late real,real,real top real,real,real
+user-above realm one+async+unmock.cjs.top 2 async held: SILENT | late real,real,real top real,real,real
+user-above realm one+async+unmock.cjs.top 2 async names: SILENT | import flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm one+async+unmock.cjs.top 2 async values: SILENT | import async2 require async2 late real,real,real top real,real,real
+user-above realm one+async+unmock.cjs.top 3 unmock held: SILENT | late real,real,real top real,real,real
+user-above realm one+bare+over.cjs.late 1 body the body: SILENT | nothing
+user-above realm one+bare+over.cjs.late 2 body the body: SILENT | nothing
+user-above realm one+module+bare.cjs.top 1 body the body: SILENT | nothing
+user-above realm one+module+bare.cjs.top 1 one names: SILENT | import flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm one+module+bare.cjs.top 1 one values: SILENT | import one1 require one1 late real,real,real top real,real,real
+user-above realm one+module+bare.cjs.top 2 body the body: SILENT | nothing
+user-above realm one+module+bare.cjs.top 2 module held: SILENT | late real,real,real top real,real,real
+user-above realm one+module+bare.cjs.top 2 module names: SILENT | import flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm one+module+bare.cjs.top 2 module values: SILENT | import module2 require module2 late real,real,real top real,real,real
+user-above realm one+module+bare.cjs.top 3 bare held: SILENT | late real,real,real top real,real,real
+user-above realm one+module+bare.cjs.top 3 bare names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm one+rejects+added.js.top 1 body the body: SILENT | nothing
+user-above realm one+rejects+added.js.top 1 one held: SILENT | late one1,one1,one1 top one1,one1,one1
+user-above realm one+rejects+added.js.top 1 one names: SILENT | import flag+plain late flag+plain undefined {"flag":"one1","plain":"one1"} top flag+plain undefined {"flag":"one1","plain":"one1"}
+user-above realm one+rejects+added.js.top 1 one values: SILENT | import one1 require one1 late one1,one1,one1 top one1,one1,one1
+user-above realm one+rejects+added.js.top 2 body the body: SILENT | nothing
+user-above realm one+rejects+added.js.top 2 rejects held: SILENT | late real,real,real top real,real,real
+late-rejection realm one+rejects+added.js.top 2 rejects names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+user-above realm one+rejects+added.js.top 2 rejects values: SILENT | import real require real late real,real,real top real,real,real
+user-above realm one+rejects+added.js.top 3 added held: SILENT | late three3,three3,three3 top three3,three3,three3
+user-above realm one+rejects+added.js.top 3 added names: SILENT | import flag+plain late flag+plain undefined {"flag":"three3","plain":"three3"} top flag+plain undefined {"flag":"three3","plain":"three3"}
+user-above realm one+rejects+added.js.top 3 added values: SILENT | import three3 require three3 late three3,three3,three3 top three3,three3,three3
+late-rejection realm one+rejects-over+one.cjs.late 1 body the body: SILENT | nothing
+user-above realm one+rejects-over+one.cjs.late 2 body the body: SILENT | nothing
+user-above realm one+rejects-over+one.cjs.late 3 one held: SILENT | late real,real,real top none
+late-rejection realm one+rejects-over+one.js.late 1 body the body: SILENT | nothing
+user-above realm one+rejects-over+one.js.late 2 body the body: SILENT | nothing
+late-rejection realm one+rejects-over+one.js.late 3 one held: SILENT | late one3,one3,one3 top none
+user-above realm one+rejects-over+one.js.late 3 one names: SILENT | import flag+plain late flag+plain undefined {"flag":"one3","plain":"one3"} top none
+user-above realm one+restore+async.cjs.top 1 body the body: SILENT | nothing
+user-above realm one+restore+async.cjs.top 1 one names: SILENT | import flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm one+restore+async.cjs.top 1 one values: SILENT | import one1 require one1 late real,real,real top real,real,real
+user-above realm one+restore+async.cjs.top 2 restore held: SILENT | late real,real,real top real,real,real
+user-above realm one+restore+async.cjs.top 2 restore names: SILENT | import flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm one+restore+async.cjs.top 2 restore values: SILENT | import one1 require one1 late real,real,real top real,real,real
+user-above realm one+restore+async.cjs.top 3 async held: SILENT | late real,real,real top real,real,real
+user-above realm one+restore+async.cjs.top 3 async names: SILENT | import flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm one+restore+async.cjs.top 3 async values: SILENT | import async3 require async3 late real,real,real top real,real,real
+user-above realm one+restore+one.cjs.late 1 body the body: SILENT | nothing
+user-above realm one+restore+restore.js.top 1 body the body: SILENT | nothing
+user-above realm one+restore+restore.js.top 1 one held: SILENT | late one1,one1,one1 top one1,one1,one1
+user-above realm one+restore+restore.js.top 1 one names: SILENT | import flag+plain late flag+plain undefined {"flag":"one1","plain":"one1"} top flag+plain undefined {"flag":"one1","plain":"one1"}
+user-above realm one+restore+restore.js.top 1 one values: SILENT | import one1 require one1 late one1,one1,one1 top one1,one1,one1
+user-above realm one+restore+restore.js.top 2 restore held: SILENT | late one1,one1,one1 top one1,one1,one1
+user-above realm one+restore+restore.js.top 2 restore names: SILENT | import flag+plain late flag+plain undefined {"flag":"one1","plain":"one1"} top flag+plain undefined {"flag":"one1","plain":"one1"}
+user-above realm one+restore+restore.js.top 2 restore values: SILENT | import one1 require one1 late one1,one1,one1 top one1,one1,one1
+user-above realm one+restore+restore.js.top 3 restore held: SILENT | late one1,one1,one1 top one1,one1,one1
+user-above realm one+restore+restore.js.top 3 restore names: SILENT | import flag+plain late flag+plain undefined {"flag":"one1","plain":"one1"} top flag+plain undefined {"flag":"one1","plain":"one1"}
+user-above realm one+restore+restore.js.top 3 restore values: SILENT | import one1 require one1 late one1,one1,one1 top one1,one1,one1
+user-above realm one+says+says.cjs.late 1 body the body: SILENT | nothing
+user-above realm one+says+says.js.late 1 body the body: SILENT | nothing
+user-above realm one+says+says.js.top 1 body the body: SILENT | nothing
+user-above realm one+says+says.js.top 1 one held: SILENT | late one1,one1,one1 top one1,one1,one1
+user-above realm one+says+says.js.top 1 one names: SILENT | import flag+plain late flag+plain undefined {"flag":"one1","plain":"one1"} top flag+plain undefined {"flag":"one1","plain":"one1"}
+user-above realm one+says+says.js.top 1 one values: SILENT | import one1 require one1 late one1,one1,one1 top one1,one1,one1
+user-above realm one+says+says.js.top 1 says the factory: SILENT | runs in the call of 2 says
+user-above realm one+says+says.js.top 2 says held: SILENT | late says2,says2,says2 top says2,says2,says2
+user-above realm one+says+says.js.top 2 says names: SILENT | import flag+plain late flag+plain undefined {"flag":"says2","plain":"says2"} top flag+plain undefined {"flag":"says2","plain":"says2"}
+user-above realm one+says+says.js.top 2 says the factory: SILENT | runs in the call of 3 says
+user-above realm one+says+says.js.top 2 says values: SILENT | import says2 require says2 late says2,says2,says2 top says2,says2,says2
+user-above realm one+says+says.js.top 3 says held: SILENT | late says3,says3,says3 top says3,says3,says3
+user-above realm one+says+says.js.top 3 says names: SILENT | import flag+plain late flag+plain undefined {"flag":"says3","plain":"says3"} top flag+plain undefined {"flag":"says3","plain":"says3"}
+user-above realm one+says+says.js.top 3 says values: SILENT | import says3 require says3 late says3,says3,says3 top says3,says3,says3
+second-mock realm one+throws-over+one.cjs.late 1 body the body: SILENT | nothing
+user-above realm one+throws-over+one.cjs.late 2 body the body: SILENT | nothing
+user-above realm one+two+over.cjs.late 1 body the body: SILENT | nothing
+user-above realm one+two+over.cjs.late 2 body the body: SILENT | nothing
+require-of-importer realm one+two+unmock.js.required 1 body the body: SILENT | nothing
+user-above realm one+unmock+async.js.top 1 body the body: SILENT | nothing
+user-above realm one+unmock+async.js.top 1 one held: SILENT | late one1,one1,one1 top one1,one1,one1
+user-above realm one+unmock+async.js.top 1 one names: SILENT | import flag+plain late flag+plain undefined {"flag":"one1","plain":"one1"} top flag+plain undefined {"flag":"one1","plain":"one1"}
+user-above realm one+unmock+async.js.top 1 one values: SILENT | import one1 require one1 late one1,one1,one1 top one1,one1,one1
+user-above realm one+unmock+async.js.top 2 unmock held: SILENT | late real,real,real top real,real,real
+user-above realm one+unmock+async.js.top 3 async names: SILENT | import flag+plain late flag+plain undefined {"flag":"async3","plain":"async3"} top flag+plain undefined {"flag":"async3","plain":"async3"}
+user-above realm one+unmock+async.js.top 3 async values: SILENT | import async3 require async3 late async3,async3,async3 top async3,async3,async3
+user-above realm over+async+module.js.top 1 body the body: SILENT | nothing
+user-above realm over+async+module.js.top 1 over names: SILENT | import flag+plain late flag+plain undefined {"flag":"over1","plain":"real"} top flag+plain undefined {"flag":"over1","plain":"real"}
+user-above realm over+async+module.js.top 1 over values: SILENT | import over1 require over1 late over1,real,over1 top over1,real,over1
+user-above realm over+async+module.js.top 2 async held: SILENT | late real,real,real top real,real,real
+user-above realm over+async+module.js.top 2 async names: SILENT | import flag+plain late flag+plain undefined {"flag":"async2","plain":"async2"} top flag+plain undefined {"flag":"async2","plain":"async2"}
+user-above realm over+async+module.js.top 2 async values: SILENT | import async2 require async2 late async2,async2,async2 top async2,async2,async2
+user-above realm over+async+module.js.top 2 body the body: SILENT | nothing
+user-above realm over+async+module.js.top 3 module held: SILENT | late module3,module3,module3 top module3,module3,module3
+user-above realm over+async+module.js.top 3 module names: SILENT | import flag+plain late flag+plain undefined {"flag":"module3","plain":"module3"} top flag+plain undefined {"flag":"module3","plain":"module3"}
+user-above realm over+async+module.js.top 3 module values: SILENT | import module3 require module3 late module3,module3,module3 top module3,module3,module3
+require-of-importer realm over+bare+one.js.required 1 body the body: SILENT | nothing
+require-of-importer realm over+bare+one.js.required 2 body the body: SILENT | nothing
+user-above realm over+bare+restore.cjs.top 1 body the body: SILENT | nothing
+user-above realm over+bare+restore.cjs.top 1 over names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm over+bare+restore.cjs.top 1 over values: SILENT | import over1 require over1 late real,real,real top real,real,real
+user-above realm over+bare+restore.cjs.top 2 bare held: SILENT | late real,real,real top real,real,real
+user-above realm over+bare+restore.cjs.top 2 bare names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm over+bare+restore.cjs.top 2 body the body: SILENT | nothing
+user-above realm over+bare+restore.cjs.top 3 restore names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm over+module+module.js.late 1 body the body: SILENT | nothing
+user-above realm over+module+module.js.late 2 body the body: SILENT | nothing
+user-above realm over+module+module.js.late 2 module held: SILENT | late over1,real,over1 top none
+user-above realm over+module+module.js.late 2 module names: loud | import flag+plain late flag+plain threw No "nobodyExportsThis" export is defined threw No "toJSON" export is defined on the moc top none
+user-above realm over+module+module.js.late 2 module values: SILENT | import module2 require over1 late over1,real,over1 top none
+user-above realm over+module+module.js.late 3 module held: SILENT | late over1,real,over1 top none
+user-above realm over+module+module.js.late 3 module names: loud | import flag+plain late flag+plain threw No "nobodyExportsThis" export is defined threw No "toJSON" export is defined on the moc top none
+user-above realm over+module+module.js.late 3 module values: SILENT | import module3 require over1 late over1,real,over1 top none
+user-above realm over+module+throws.js.late 1 body the body: SILENT | nothing
+user-above realm over+module+throws.js.late 2 body the body: SILENT | nothing
+user-above realm over+module+throws.js.late 2 module held: SILENT | late over1,real,over1 top none
+user-above realm over+module+throws.js.late 2 module names: loud | import flag+plain late flag+plain threw No "nobodyExportsThis" export is defined threw No "toJSON" export is defined on the moc top none
+user-above realm over+module+throws.js.late 2 module values: SILENT | import module2 require over1 late over1,real,over1 top none
+user-above realm over+module+throws.js.late 3 throws held: SILENT | late over1,real,over1 top none
+user-above realm over+one+two.cjs.late 1 body the body: SILENT | nothing
+user-above realm over+one+two.cjs.late 2 body the body: SILENT | nothing
+user-above realm over+throws+bare.cjs.late 1 body the body: SILENT | nothing
+user-above realm over+throws+bare.cjs.late 2 body the body: SILENT | nothing
+user-above realm rejects+module+bare.js.top 1 body the body: SILENT | nothing
+late-rejection realm rejects+module+bare.js.top 1 rejects names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+user-above realm rejects+module+bare.js.top 1 rejects values: SILENT | import real require real late real,real,real top real,real,real
+user-above realm rejects+module+bare.js.top 2 body the body: SILENT | nothing
+late-rejection realm rejects+module+bare.js.top 2 module held: SILENT | late module2,module2,module2 top module2,module2,module2
+late-rejection realm rejects+module+bare.js.top 2 module names: SILENT | import flag+plain late flag+plain undefined {"flag":"module2","plain":"module2"} top flag+plain undefined {"flag":"module2","plain":"module2"}
+late-rejection realm rejects+module+bare.js.top 2 module values: SILENT | import module2 require module2 late module2,module2,module2 top module2,module2,module2
+user-above realm rejects+module+bare.js.top 3 bare held: SILENT | late real,real,real top real,real,real
+user-above realm rejects+module+reset.js.late 2 module names: loud | import flag+plain late threw tardy boom 2 top none
+user-above realm rejects+module+reset.js.late 2 module values: loud | import module2 require module2 late threw tardy boom 2 top none
+user-above realm rejects+module+reset.js.late 3 reset held: SILENT | late none top none
+user-above realm rejects+module+reset.js.top 2 module names: loud | import flag+plain late threw tardy boom 2 top flag+plain undefined {"flag":"real","plain":"real"}
+user-above realm rejects+module+reset.js.top 2 module values: loud | import module2 require module2 late threw tardy boom 2 top real,real,real
+user-above realm rejects+module+reset.js.top 3 reset held: SILENT | late real,real,real top real,real,real
+require-of-importer realm rejects+one+unmock.cjs.required 1 body the body: SILENT | nothing
+require-of-importer realm rejects+one+unmock.cjs.required 1 rejects names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top none
+require-of-importer realm rejects+one+unmock.cjs.required 1 rejects values: SILENT | import threw tardy boom 1 require real late real,real,real top none
+require-of-importer realm rejects+one+unmock.cjs.required 2 body the body: SILENT | nothing
+require-of-importer realm rejects+one+unmock.cjs.required 2 one held: SILENT | late real,real,real top none
+require-of-importer realm rejects+one+unmock.cjs.required 2 one names: SILENT | import flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top none
+require-of-importer realm rejects+one+unmock.cjs.required 2 one values: SILENT | import one2 require one2 late real,real,real top none
+require-of-importer realm rejects+one+unmock.cjs.required 3 unmock held: SILENT | late real,real,real top none
+require-of-importer realm rejects+one+unmock.js.required 1 body the body: SILENT | nothing
+require-of-importer realm rejects+one+unmock.js.required 1 rejects names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top none
+require-of-importer realm rejects+one+unmock.js.required 1 rejects values: SILENT | import threw tardy boom 1 require real late real,real,real top none
+require-of-importer realm rejects+one+unmock.js.required 2 body the body: SILENT | nothing
+require-of-importer realm rejects+one+unmock.js.required 2 one held: SILENT | late one2,one2,one2 top none
+require-of-importer realm rejects+one+unmock.js.required 2 one names: SILENT | import flag+plain late flag+plain undefined {"flag":"one2","plain":"one2"} top none
+require-of-importer realm rejects+one+unmock.js.required 3 unmock held: SILENT | late real,real,real top none
+user-above realm rejects+over+rejects.cjs.top 1 body the body: SILENT | nothing
+late-rejection realm rejects+over+rejects.cjs.top 1 rejects names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm rejects+over+rejects.cjs.top 1 rejects values: SILENT | import threw tardy boom 1 require real late real,real,real top real,real,real
+user-above realm rejects+over+rejects.cjs.top 2 body the body: SILENT | nothing
+user-above realm rejects+over+rejects.cjs.top 2 over names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm rejects+over+rejects.cjs.top 2 over values: SILENT | import over2 require over2 late real,real,real top real,real,real
+user-above realm rejects+over+rejects.cjs.top 3 rejects held: SILENT | late real,real,real top real,real,real
+late-rejection realm rejects+over+rejects.cjs.top 3 rejects names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+late-rejection realm rejects+over+rejects.cjs.top 3 rejects values: SILENT | import threw tardy boom 2 require real late real,real,real top real,real,real
+user-above realm rejects+over+throws-over.cjs.late 1 body the body: SILENT | nothing
+late-rejection realm rejects+over+throws-over.cjs.late 1 rejects names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top none
+late-rejection realm rejects+over+throws-over.cjs.late 1 rejects values: SILENT | import threw tardy boom 1 require real late real,real,real top none
+user-above realm rejects+over+throws-over.cjs.late 2 body the body: SILENT | nothing
+late-rejection realm rejects+over+throws-over.cjs.late 2 over held: SILENT | late real,real,real top none
+user-above realm rejects+over+throws-over.cjs.late 2 over names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top none
+user-above realm rejects+over+throws-over.cjs.late 2 over values: SILENT | import over2 require over2 late real,real,real top none
+late-rejection realm rejects+over+throws-over.cjs.late 3 throws-over held: SILENT | late real,real,real top none
+late-rejection realm rejects+over+throws-over.cjs.late 3 throws-over names: loud | import threw boom over 5 late threw boom over 6 top none
+late-rejection realm rejects+over+throws-over.cjs.late 3 throws-over values: loud | import threw boom over 2 require threw boom over 3 late threw boom over 4 top none
+user-above realm rejects+over+unmock.js.top 1 body the body: SILENT | nothing
+late-rejection realm rejects+over+unmock.js.top 1 rejects names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+user-above realm rejects+over+unmock.js.top 1 rejects values: SILENT | import real require real late real,real,real top real,real,real
+user-above realm rejects+over+unmock.js.top 2 body the body: SILENT | nothing
+user-above realm rejects+over+unmock.js.top 2 over names: SILENT | import flag+plain late flag+plain undefined {"flag":"over2","plain":"real"} top flag+plain undefined {"flag":"over2","plain":"real"}
+user-above realm rejects+over+unmock.js.top 2 over values: SILENT | import over2 require over2 late over2,real,over2 top over2,real,over2
+user-above realm rejects+over+unmock.js.top 3 unmock held: SILENT | late real,real,real top real,real,real
+user-above realm rejects+reset+bare.cjs.late 3 bare names: loud | import default+flag+plain late threw tardy boom 5 top none
+user-above realm rejects+reset+bare.cjs.late 3 bare values: loud | import real require real late threw tardy boom 5 top none
+user-above realm rejects+throws-over+one.js.top 1 body the body: SILENT | nothing
+late-rejection realm rejects+throws-over+one.js.top 1 rejects names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+user-above realm rejects+throws-over+one.js.top 1 rejects values: SILENT | import real require real late real,real,real top real,real,real
+user-above realm rejects+throws-over+one.js.top 2 body the body: SILENT | nothing
+user-above realm rejects+throws-over+one.js.top 2 throws-over names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+user-above realm rejects+throws-over+one.js.top 2 throws-over the call: loud | threw boom over 2
+user-above realm rejects+throws-over+one.js.top 2 throws-over values: SILENT | import real require real late real,real,real top real,real,real
+user-above realm rejects+throws-over+one.js.top 3 one held: SILENT | late one3,one3,one3 top one3,one3,one3
+user-above realm rejects+throws-over+one.js.top 3 one names: SILENT | import flag+plain late flag+plain undefined {"flag":"one3","plain":"one3"} top flag+plain undefined {"flag":"one3","plain":"one3"}
+user-above realm rejects+throws-over+one.js.top 3 one values: SILENT | import one3 require one3 late one3,one3,one3 top one3,one3,one3
+user-above realm rejects+throws-over+rejects.js.top 1 body the body: SILENT | nothing
+late-rejection realm rejects+throws-over+rejects.js.top 1 rejects names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+user-above realm rejects+throws-over+rejects.js.top 1 rejects values: SILENT | import real require real late real,real,real top real,real,real
+user-above realm rejects+throws-over+rejects.js.top 2 body the body: SILENT | nothing
+user-above realm rejects+throws-over+rejects.js.top 2 throws-over names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+user-above realm rejects+throws-over+rejects.js.top 2 throws-over the call: loud | threw boom over 2
+user-above realm rejects+throws-over+rejects.js.top 2 throws-over values: SILENT | import real require real late real,real,real top real,real,real
+late-rejection realm rejects+throws-over+rejects.js.top 3 rejects names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+user-above realm rejects+throws-over+rejects.js.top 3 rejects values: SILENT | import real require real late real,real,real top real,real,real
+user-above realm rejects-over+bare+over.cjs.late 1 body the body: SILENT | nothing
+user-above realm rejects-over+bare+over.cjs.late 2 body the body: SILENT | nothing
+user-above realm rejects-over+bare+over.js.late 1 body the body: SILENT | nothing
+user-above realm rejects-over+bare+over.js.late 2 body the body: SILENT | nothing
+user-above realm rejects-over+bare+over.js.late 3 over names: SILENT | import flag+plain late flag+plain undefined {"flag":"over3","plain":"real"} top none
+user-above realm rejects-over+one+unmock.js.top 1 body the body: SILENT | nothing
+user-above realm rejects-over+one+unmock.js.top 1 rejects-over names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+user-above realm rejects-over+one+unmock.js.top 1 rejects-over values: SILENT | import real require real late real,real,real top real,real,real
+user-above realm rejects-over+one+unmock.js.top 2 body the body: SILENT | nothing
+user-above realm rejects-over+one+unmock.js.top 2 one held: SILENT | late one2,one2,one2 top one2,one2,one2
+user-above realm rejects-over+one+unmock.js.top 2 one names: SILENT | import flag+plain late flag+plain undefined {"flag":"one2","plain":"one2"} top flag+plain undefined {"flag":"one2","plain":"one2"}
+user-above realm rejects-over+one+unmock.js.top 2 one values: SILENT | import one2 require one2 late one2,one2,one2 top one2,one2,one2
+user-above realm rejects-over+one+unmock.js.top 3 unmock held: SILENT | late real,real,real top real,real,real
+late-rejection realm rejects-over+over+over.js.late 1 body the body: SILENT | nothing
+user-above realm rejects-over+over+over.js.late 2 body the body: SILENT | nothing
+late-rejection realm rejects-over+rejects-over+unmock.js.late 1 body the body: SILENT | nothing
+late-rejection realm rejects-over+rejects-over+unmock.js.late 2 body the body: SILENT | nothing
+user-above realm rejects-over+rejects-over+unmock.js.late 2 rejects-over names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top none
+user-above realm rejects-over+rejects-over+unmock.js.late 2 rejects-over values: SILENT | import real require real late real,real,real top none
+user-above realm rejects-over+rejects-over+unmock.js.late 3 unmock held: SILENT | late real,real,real top none
+user-above realm restore+added+two.js.top 1 body the body: SILENT | nothing
+user-above realm restore+added+two.js.top 2 added held: SILENT | late three2,three2,three2 top three2,three2,three2
+user-above realm restore+added+two.js.top 2 added names: SILENT | import flag+plain late flag+plain undefined {"flag":"three2","plain":"three2"} top flag+plain undefined {"flag":"three2","plain":"three2"}
+user-above realm restore+added+two.js.top 2 added values: SILENT | import three2 require three2 late three2,three2,three2 top three2,three2,three2
+user-above realm restore+added+two.js.top 3 two held: SILENT | late two3,real,two3 top two3,real,two3
+user-above realm restore+added+two.js.top 3 two names: SILENT | import flag+plain late flag+plain undefined {"flag":"two3","plain":"real"} top flag+plain undefined {"flag":"two3","plain":"real"}
+user-above realm restore+added+two.js.top 3 two values: SILENT | import two3 require two3 late two3,real,two3 top two3,real,two3
+user-above realm restore+bare+unmock.cjs.late 1 body the body: SILENT | nothing
+user-above realm restore+bare+unmock.cjs.late 2 bare names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top none
+user-above realm restore+bare+unmock.cjs.late 2 body the body: SILENT | nothing
+user-above realm restore+bare+unmock.cjs.top 1 body the body: SILENT | nothing
+user-above realm restore+bare+unmock.cjs.top 2 bare names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm restore+bare+unmock.cjs.top 2 body the body: SILENT | nothing
+user-above realm restore+over+unmock.cjs.top 1 body the body: SILENT | nothing
+user-above realm restore+over+unmock.cjs.top 2 body the body: SILENT | nothing
+user-above realm restore+over+unmock.cjs.top 2 over names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm restore+over+unmock.cjs.top 2 over values: SILENT | import over2 require over2 late real,real,real top real,real,real
+user-above realm restore+over+unmock.cjs.top 3 unmock held: SILENT | late real,real,real top real,real,real
+user-above realm restore+rejects+over.cjs.top 1 body the body: SILENT | nothing
+user-above realm restore+rejects+over.cjs.top 2 body the body: SILENT | nothing
+late-rejection realm restore+rejects+over.cjs.top 2 rejects names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm restore+rejects+over.cjs.top 2 rejects values: SILENT | import threw tardy boom 1 require real late real,real,real top real,real,real
+user-above realm restore+rejects+over.cjs.top 3 over names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm restore+rejects+over.cjs.top 3 over values: SILENT | import over3 require over3 late real,real,real top real,real,real
+user-above realm restore+two+added.cjs.late 1 body the body: SILENT | nothing
+user-above realm restore+two+added.cjs.late 2 two names: SILENT | import flag late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top none
+user-above realm restore+two+added.cjs.late 2 two values: SILENT | import two2 require two2 late real,real,real top none
+user-above realm restore+two+added.cjs.late 3 added held: SILENT | late real,real,real top none
+user-above realm restore+two+added.cjs.late 3 added names: SILENT | import added+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top none
+user-above realm restore+two+added.cjs.late 3 added values: SILENT | import three3 require three3 late real,real,real top none
+user-above realm restore+two+added.cjs.top 1 body the body: SILENT | nothing
+user-above realm restore+two+added.cjs.top 2 two names: SILENT | import flag late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm restore+two+added.cjs.top 2 two values: SILENT | import two2 require two2 late real,real,real top real,real,real
+user-above realm restore+two+added.cjs.top 3 added held: SILENT | late real,real,real top real,real,real
+user-above realm restore+two+added.cjs.top 3 added names: SILENT | import added+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm restore+two+added.cjs.top 3 added values: SILENT | import three3 require three3 late real,real,real top real,real,real
+user-above realm restore+two+async.cjs.late 1 body the body: SILENT | nothing
+user-above realm restore+two+async.cjs.late 2 two names: SILENT | import flag late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top none
+user-above realm restore+two+async.cjs.late 2 two values: SILENT | import two2 require two2 late real,real,real top none
+user-above realm restore+two+async.cjs.late 3 async held: SILENT | late real,real,real top none
+user-above realm restore+two+async.cjs.late 3 async names: SILENT | import flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top none
+user-above realm restore+two+async.cjs.late 3 async values: SILENT | import async3 require async3 late real,real,real top none
+user-above realm says+says+unmock.js.late 1 body the body: SILENT | nothing
+user-above realm throws+added+one.cjs.late 1 body the body: SILENT | nothing
+user-above realm throws+added+throws-over.cjs.top 1 body the body: SILENT | nothing
+user-above realm throws+added+throws-over.cjs.top 2 added names: SILENT | import added+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm throws+added+throws-over.cjs.top 2 added values: SILENT | import three2 require three2 late real,real,real top real,real,real
+user-above realm throws+added+throws-over.cjs.top 2 body the body: SILENT | nothing
+user-above realm throws+added+throws-over.cjs.top 3 throws-over held: SILENT | late real,real,real top real,real,real
+user-above realm throws+added+throws-over.cjs.top 3 throws-over names: loud | import threw boom over 8 late threw boom over 9 top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm throws+added+throws-over.cjs.top 3 throws-over values: loud | import threw boom over 5 require threw boom over 6 late threw boom over 7 top real,real,real
+second-mock realm throws+module+unmock.cjs.top 1 body the body: SILENT | nothing
+user-above realm throws+module+unmock.cjs.top 2 module names: SILENT | import flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm throws+module+unmock.cjs.top 2 module values: SILENT | import module2 require module2 late real,real,real top real,real,real
+user-above realm throws+module+unmock.cjs.top 3 unmock held: SILENT | late real,real,real top real,real,real
+user-above realm throws+one+bare.cjs.late 1 body the body: SILENT | nothing
+user-above realm throws+one+bare.cjs.late 2 body the body: SILENT | nothing
+user-above realm throws+one+module.cjs.top 1 body the body: SILENT | nothing
+user-above realm throws+one+module.cjs.top 2 one names: SILENT | import flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm throws+one+module.cjs.top 2 one values: SILENT | import one2 require one2 late real,real,real top real,real,real
+user-above realm throws+one+module.cjs.top 3 module held: SILENT | late real,real,real top real,real,real
+user-above realm throws+one+module.cjs.top 3 module names: SILENT | import flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm throws+one+module.cjs.top 3 module values: SILENT | import module3 require module3 late real,real,real top real,real,real
+user-above realm throws+one+two.js.top 1 body the body: SILENT | nothing
+user-above realm throws+one+two.js.top 1 throws names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+user-above realm throws+one+two.js.top 1 throws the call: loud | threw boom 1
+user-above realm throws+one+two.js.top 1 throws values: SILENT | import real require real late real,real,real top real,real,real
+user-above realm throws+one+two.js.top 2 one held: SILENT | late one2,one2,one2 top one2,one2,one2
+user-above realm throws+one+two.js.top 2 one names: SILENT | import flag+plain late flag+plain undefined {"flag":"one2","plain":"one2"} top flag+plain undefined {"flag":"one2","plain":"one2"}
+user-above realm throws+one+two.js.top 2 one values: SILENT | import one2 require one2 late one2,one2,one2 top one2,one2,one2
+user-above realm throws+one+two.js.top 3 two held: SILENT | late two3,real,two3 top two3,real,two3
+user-above realm throws+one+two.js.top 3 two names: SILENT | import flag+plain late flag+plain undefined {"flag":"two3","plain":"real"} top flag+plain undefined {"flag":"two3","plain":"real"}
+user-above realm throws+one+two.js.top 3 two values: SILENT | import two3 require two3 late two3,real,two3 top two3,real,two3
+user-above realm throws+rejects+async.cjs.late 1 body the body: SILENT | nothing
+user-above realm throws+rejects+async.cjs.late 2 body the body: SILENT | nothing
+late-rejection realm throws+rejects+async.cjs.late 2 rejects names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top none
+late-rejection realm throws+rejects+async.cjs.late 2 rejects values: SILENT | import threw tardy boom 5 require real late real,real,real top none
+late-rejection realm throws+rejects+async.cjs.late 3 async held: SILENT | late real,real,real top none
+user-above realm throws+rejects+async.cjs.late 3 async names: SILENT | import flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top none
+user-above realm throws+rejects+async.cjs.late 3 async values: SILENT | import async3 require async3 late real,real,real top none
+user-above realm throws+reset+async.js.top 2 reset names: loud | import threw boom 8 late threw boom 7 top flag+plain undefined {"flag":"real","plain":"real"}
+user-above realm throws+reset+async.js.top 2 reset values: loud | import threw boom 5 require threw boom 6 late threw boom 7 top real,real,real
+user-above realm throws+throws+rejects.cjs.late 1 body the body: SILENT | nothing
+user-above realm throws+throws+rejects.cjs.late 2 body the body: SILENT | nothing
+late-rejection realm throws+throws+rejects.cjs.late 2 throws names: loud | import threw boom 8 late threw boom 7 top none
+late-rejection realm throws+throws+rejects.cjs.late 2 throws values: loud | import threw boom 5 require threw boom 6 late threw boom 7 top none
+late-rejection realm throws+throws+rejects.cjs.late 3 rejects names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top none
+late-rejection realm throws+throws+rejects.cjs.late 3 rejects values: SILENT | import threw tardy boom 9 require real late real,real,real top none
+user-above realm throws+throws-over+bare.js.late 1 body the body: SILENT | nothing
+user-above realm throws+throws-over+bare.js.late 2 body the body: SILENT | nothing
+user-above realm throws+throws-over+bare.js.late 2 throws-over names: loud | import threw boom over 8 late threw boom over 9 top none
+user-above realm throws+throws-over+bare.js.late 2 throws-over values: loud | import threw boom over 5 require threw boom over 6 late threw boom over 7 top none
+user-above realm throws+two+async.js.late 1 body the body: SILENT | nothing
+user-above realm throws+two+bare.cjs.late 1 body the body: SILENT | nothing
+user-above realm throws+two+bare.cjs.late 2 body the body: SILENT | nothing
+user-above realm throws+two+reset.js.top 2 two names: loud | import flag late threw boom 3 top flag+plain undefined {"flag":"real","plain":"real"}
+user-above realm throws+two+reset.js.top 2 two values: loud | import two2 require two2 late threw boom 3 top real,real,real
+user-above realm throws+two+reset.js.top 3 reset held: SILENT | late real,real,real top real,real,real
+user-above realm throws+unmock+throws-over.js.late 1 body the body: SILENT | nothing
+user-above realm throws+unmock+throws-over.js.late 3 throws-over names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top none
+user-above realm throws+unmock+throws-over.js.late 3 throws-over the call: loud | threw boom over 5
+user-above realm throws+unmock+throws-over.js.late 3 throws-over values: SILENT | import real require real late real,real,real top none
+user-above realm throws-over+bare+over.js.late 1 body the body: SILENT | nothing
+user-above realm throws-over+bare+over.js.late 2 body the body: SILENT | nothing
+user-above realm throws-over+bare+unmock.cjs.top 1 body the body: SILENT | nothing
+user-above realm throws-over+bare+unmock.cjs.top 2 bare names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm throws-over+bare+unmock.cjs.top 2 body the body: SILENT | nothing
+second-mock realm throws-over+one+throws-over.cjs.late 1 body the body: SILENT | nothing
+user-above realm throws-over+one+throws-over.cjs.late 2 body the body: SILENT | nothing
+user-above realm throws-over+over+unmock.cjs.top 1 body the body: SILENT | nothing
+user-above realm throws-over+over+unmock.cjs.top 2 body the body: SILENT | nothing
+user-above realm throws-over+over+unmock.cjs.top 2 over names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm throws-over+over+unmock.cjs.top 2 over values: SILENT | import over2 require over2 late real,real,real top real,real,real
+user-above realm throws-over+over+unmock.cjs.top 3 unmock held: SILENT | late real,real,real top real,real,real
+second-mock realm throws-over+two+throws.cjs.late 1 body the body: SILENT | nothing
+user-above realm throws-over+two+throws.cjs.late 2 body the body: SILENT | nothing
+user-above realm two+added+async.cjs.late 1 body the body: SILENT | nothing
+user-above realm two+added+throws-over.js.top 1 body the body: SILENT | nothing
+user-above realm two+added+throws-over.js.top 1 two held: SILENT | late two1,real,two1 top two1,real,two1
+user-above realm two+added+throws-over.js.top 1 two names: SILENT | import flag+plain late flag+plain undefined {"flag":"two1","plain":"real"} top flag+plain undefined {"flag":"two1","plain":"real"}
+user-above realm two+added+throws-over.js.top 1 two values: SILENT | import two1 require two1 late two1,real,two1 top two1,real,two1
+user-above realm two+added+throws-over.js.top 2 added held: SILENT | late three2,three2,three2 top three2,three2,three2
+user-above realm two+added+throws-over.js.top 2 added names: SILENT | import flag+plain late flag+plain undefined {"flag":"three2","plain":"three2"} top flag+plain undefined {"flag":"three2","plain":"three2"}
+user-above realm two+added+throws-over.js.top 2 added values: SILENT | import three2 require three2 late three2,three2,three2 top three2,three2,three2
+user-above realm two+added+throws-over.js.top 2 body the body: SILENT | nothing
+user-above realm two+added+throws-over.js.top 3 throws-over held: SILENT | late real,real,real top real,real,real
+user-above realm two+added+throws-over.js.top 3 throws-over names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+user-above realm two+added+throws-over.js.top 3 throws-over the call: loud | threw boom over 1
+user-above realm two+added+throws-over.js.top 3 throws-over values: SILENT | import real require real late real,real,real top real,real,real
+user-above realm two+module+async.js.late 1 body the body: SILENT | nothing
+user-above realm two+module+async.js.late 2 module held: loud | late threw No "plain" export is defined on the mock top none
+user-above realm two+module+async.js.late 2 module names: loud | import flag+plain late flag threw No "nobodyExportsThis" export is defined threw No "toJSON" export is defined on the moc top none
+user-above realm two+module+async.js.late 2 module values: SILENT | import module2 require two1 late threw No "plain" export is defined on the mock top none
+user-above realm two+module+async.js.late 3 async held: loud | late threw No "plain" export is defined on the mock top none
+user-above realm two+over+two.cjs.top 1 body the body: SILENT | nothing
+user-above realm two+over+two.cjs.top 1 two names: SILENT | import flag late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm two+over+two.cjs.top 1 two values: SILENT | import two1 require two1 late real,real,real top real,real,real
+user-above realm two+over+two.cjs.top 2 body the body: SILENT | nothing
+user-above realm two+over+two.cjs.top 2 over held: SILENT | late real,real,real top real,real,real
+user-above realm two+over+two.cjs.top 2 over names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm two+over+two.cjs.top 2 over values: SILENT | import over2 require over2 late real,real,real top real,real,real
+user-above realm two+over+two.cjs.top 3 two held: SILENT | late real,real,real top real,real,real
+user-above realm two+over+two.cjs.top 3 two names: SILENT | import flag late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm two+over+two.cjs.top 3 two values: SILENT | import two3 require two3 late real,real,real top real,real,real
+user-above realm two+throws+throws.cjs.late 2 throws held: SILENT | late ,, top none
+second-mock realm two+throws+throws.cjs.late 3 throws held: SILENT | late ,, top none
+second-mock realm two+throws+throws.cjs.late 3 throws names: loud | import threw boom 8 late threw boom 7 top none
+second-mock realm two+throws+throws.cjs.late 3 throws values: loud | import threw boom 5 require threw boom 6 late threw boom 7 top none
+user-above realm two+unmock+module.cjs.top 1 body the body: SILENT | nothing
+user-above realm two+unmock+module.cjs.top 1 two names: SILENT | import flag late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm two+unmock+module.cjs.top 1 two values: SILENT | import two1 require two1 late real,real,real top real,real,real
+user-above realm two+unmock+module.cjs.top 2 unmock held: SILENT | late real,real,real top real,real,real
+user-above realm two+unmock+module.cjs.top 3 module held: SILENT | late module3,module3,module3 top module3,module3,module3
+user-above realm two+unmock+module.cjs.top 3 module names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"module3","plain":"module3"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"module3","plain":"module3"}
+user-above realm two+unmock+module.cjs.top 3 module values: SILENT | import module3 require module3 late module3,module3,module3 top module3,module3,module3
+user-above realm two+unmock+one.cjs.top 1 body the body: SILENT | nothing
+user-above realm two+unmock+one.cjs.top 1 two names: SILENT | import flag late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"}
+user-above realm two+unmock+one.cjs.top 1 two values: SILENT | import two1 require two1 late real,real,real top real,real,real
+user-above realm two+unmock+one.cjs.top 2 unmock held: SILENT | late real,real,real top real,real,real
+user-above realm unmock+added+bare.js.late 1 body the body: SILENT | nothing
+user-above realm unmock+added+bare.js.late 2 added held: SILENT | late three2,three2,three2 top none
+user-above realm unmock+added+bare.js.late 2 added names: SILENT | import flag+plain late flag+plain undefined {"flag":"three2","plain":"three2"} top none
+user-above realm unmock+added+bare.js.late 2 body the body: SILENT | nothing
+user-above realm unmock+added+bare.js.late 3 bare held: SILENT | late real,real,real top none
+user-above realm unmock+one+one.js.top 1 body the body: SILENT | nothing
+user-above realm unmock+one+one.js.top 2 one held: SILENT | late one2,one2,one2 top one2,one2,one2
+user-above realm unmock+one+one.js.top 2 one names: SILENT | import flag+plain late flag+plain undefined {"flag":"one2","plain":"one2"} top flag+plain undefined {"flag":"one2","plain":"one2"}
+user-above realm unmock+one+one.js.top 2 one values: SILENT | import one2 require one2 late one2,one2,one2 top one2,one2,one2
+user-above realm unmock+one+one.js.top 3 one held: SILENT | late one3,one3,one3 top one3,one3,one3
+user-above realm unmock+one+one.js.top 3 one names: SILENT | import flag+plain late flag+plain undefined {"flag":"one3","plain":"one3"} top flag+plain undefined {"flag":"one3","plain":"one3"}
+user-above realm unmock+one+one.js.top 3 one values: SILENT | import one3 require one3 late one3,one3,one3 top one3,one3,one3
+user-above realm unmock+one+throws.js.top 1 body the body: SILENT | nothing
+user-above realm unmock+one+throws.js.top 2 one held: SILENT | late one2,one2,one2 top one2,one2,one2
+user-above realm unmock+one+throws.js.top 2 one names: SILENT | import flag+plain late flag+plain undefined {"flag":"one2","plain":"one2"} top flag+plain undefined {"flag":"one2","plain":"one2"}
+user-above realm unmock+one+throws.js.top 2 one values: SILENT | import one2 require one2 late one2,one2,one2 top one2,one2,one2
+user-above realm unmock+one+throws.js.top 3 throws held: SILENT | late real,real,real top real,real,real
+user-above realm unmock+one+throws.js.top 3 throws names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+user-above realm unmock+one+throws.js.top 3 throws the call: loud | threw boom 1
+user-above realm unmock+one+throws.js.top 3 throws values: SILENT | import real require real late real,real,real top real,real,real
+user-above realm unmock+over+async.js.top 1 body the body: SILENT | nothing
+user-above realm unmock+over+async.js.top 2 body the body: SILENT | nothing
+user-above realm unmock+over+async.js.top 2 over names: SILENT | import flag+plain late flag+plain undefined {"flag":"over2","plain":"real"} top flag+plain undefined {"flag":"over2","plain":"real"}
+user-above realm unmock+over+async.js.top 2 over values: SILENT | import over2 require over2 late over2,real,over2 top over2,real,over2
+user-above realm unmock+over+async.js.top 3 async held: SILENT | late real,real,real top real,real,real
+user-above realm unmock+over+async.js.top 3 async names: SILENT | import flag+plain late flag+plain undefined {"flag":"async3","plain":"async3"} top flag+plain undefined {"flag":"async3","plain":"async3"}
+user-above realm unmock+over+async.js.top 3 async values: SILENT | import async3 require async3 late async3,async3,async3 top async3,async3,async3
+user-above realm unmock+rejects+module.js.top 2 body the body: SILENT | nothing
+late-rejection realm unmock+rejects+module.js.top 2 rejects names: SILENT | import flag+plain late flag+plain undefined {"flag":"real","plain":"real"} top flag+plain undefined {"flag":"real","plain":"real"}
+user-above realm unmock+rejects+module.js.top 2 rejects values: SILENT | import real require real late real,real,real top real,real,real
+late-rejection realm unmock+rejects+module.js.top 3 module held: SILENT | late module3,module3,module3 top module3,module3,module3
+late-rejection realm unmock+rejects+module.js.top 3 module names: SILENT | import flag+plain late flag+plain undefined {"flag":"module3","plain":"module3"} top flag+plain undefined {"flag":"module3","plain":"module3"}
+late-rejection realm unmock+rejects+module.js.top 3 module values: SILENT | import module3 require module3 late module3,module3,module3 top module3,module3,module3
+user-above realm unmock+throws+bare.cjs.late 1 body the body: SILENT | nothing
+user-above realm unmock+throws+bare.cjs.late 2 body the body: SILENT | nothing
+user-above realm unmock+throws+bare.cjs.late 3 bare names: SILENT | import default+flag+plain late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top none

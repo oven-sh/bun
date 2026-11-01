@@ -1,4 +1,5 @@
 // A suspended function holds what its text reads behind the suspension, also on a path that the arguments of this program never take, and an iteration that goes on behind the suspension holds what it walks. Asked while the function is suspended.
+// Todo alone under --aot-validate --aot-check=ValidateBackEnd: Not every time: a build that validates the back end keeps registers alive for longer, and the collector finds the object in one: lines print that it is kept
 let last;
 function make(n) {
   const made = { n };

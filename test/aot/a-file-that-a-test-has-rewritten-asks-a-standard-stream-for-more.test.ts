@@ -4,6 +4,7 @@
 // (a-test-that-requires-a-file-writes-to-a-standard-stream.test.ts). It asked the first half alone: "TypeError: This standard stream was made without its other members".
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { waysFor } from "./harness/ways";
 import { test } from "./supported";
 
 const rewritten = `
@@ -41,13 +42,13 @@ async function linesOf(way: string, flags: string[], words?: string) {
   return { lines: stderr.split("\n").filter(line => /^(OUT|error)/.test(line)), exitCode };
 }
 
-test.concurrent.each(Object.entries(ways))(
+test.concurrent.each(Object.entries(ways).map(([name, way], index) => [name, way, index] as const))(
   "%s",
-  async (_, way) => {
+  async (_, way, index) => {
     const plain = await linesOf(way, []);
     expect(plain).toEqual({ lines: ["OUT first", "OUT 0,function,function,true"], exitCode: 0 });
-    expect(await linesOf(way, ["--aot"])).toEqual(plain);
-    expect(await linesOf(way, ["--aot"], "TestRunLayers:2")).toEqual(plain);
+    for (const words of waysFor([undefined, "TestRunLayers:2"], index === 0))
+      expect(await linesOf(way, ["--aot"], words)).toEqual(plain);
   },
   240_000,
 );

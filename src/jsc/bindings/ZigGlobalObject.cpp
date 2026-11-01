@@ -1015,6 +1015,18 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) BunString Bun__evict
         }
         unfinished.append(WTF::move(key));
     });
+#if ENABLE(AOT)
+    if (Bun::hasCompiledModules()) {
+        JSC::AOT::forEachFileAwaitingAtTopLevel(globalObject, [&](int64_t order, const String& specifier) {
+            if (awaiting.containsIf([&](auto& entry) { return entry.second == specifier; }))
+                return;
+            size_t index = awaiting.size();
+            while (index && awaiting[index - 1].first > order)
+                --index;
+            awaiting.insert(index, std::pair { order, specifier });
+        });
+    }
+#endif
     for (auto& key : unfinished)
         loader->removeEntry(key);
 
@@ -2467,7 +2479,7 @@ extern "C" JSC::EncodedJSValue CryptoObject__create(JSGlobalObject*);
 JSC_DEFINE_CUSTOM_GETTER(moduleNamespacePrototypeGetESModuleMarker, (JSGlobalObject * globalObject, JSC::EncodedJSValue encodedThisValue, PropertyName))
 {
     JSValue thisValue = JSValue::decode(encodedThisValue);
-    if (thisValue.isCell() && JSC::AOT::isModuleNamespace(thisValue.asCell()))
+    if (thisValue.isCell() && globalObject->vm().hasCompiledCode() && JSC::AOT::isModuleNamespace(thisValue.asCell()))
         return JSC::JSValue::encode(JSC::AOT::hasESModuleMarker(thisValue.asCell()) ? jsBoolean(true) : jsUndefined());
     JSModuleNamespaceObject* moduleNamespaceObject = dynamicDowncast<JSModuleNamespaceObject>(thisValue);
     if (!moduleNamespaceObject || moduleNamespaceObject->m_hasESModuleMarker != WTF::TriState::True) {
@@ -2481,7 +2493,7 @@ JSC_DEFINE_CUSTOM_SETTER(moduleNamespacePrototypeSetESModuleMarker, (JSGlobalObj
 {
     auto& vm = JSC::getVM(globalObject);
     JSValue thisValue = JSValue::decode(encodedThisValue);
-    if (thisValue.isCell() && JSC::AOT::isModuleNamespace(thisValue.asCell())) {
+    if (thisValue.isCell() && vm.hasCompiledCode() && JSC::AOT::isModuleNamespace(thisValue.asCell())) {
         JSC::AOT::setESModuleMarker(thisValue.asCell(), JSValue::decode(encodedValue).toBoolean(globalObject));
         return true;
     }
@@ -3235,7 +3247,8 @@ void GlobalObject::finishCreation(VM& vm)
 
             init.set(process);
             // The global object adds its `process` at the first read of the name. A program may come to the object without it: import process from "node:process".
-            JSC::AOT::hostDidCreateObjectOfGlobal(init.owner, JSC::Identifier::fromString(init.vm, "process"_s).impl(), process);
+            if (init.vm.hasCompiledCode()) [[unlikely]]
+                JSC::AOT::hostDidCreateObjectOfGlobal(init.owner, JSC::Identifier::fromString(init.vm, "process"_s).impl(), process);
         });
 
     m_streamsRuntime.initialize(this);
@@ -3281,7 +3294,8 @@ void GlobalObject::finishCreation(VM& vm)
 
 void GlobalObject::didCreateDOMConstructor(JSC::JSObject* constructor)
 {
-    JSC::AOT::hostDidCreateConstructor(this, constructor);
+    if (vm().hasCompiledCode()) [[unlikely]]
+        JSC::AOT::hostDidCreateConstructor(this, constructor);
 }
 
 void GlobalObject::didCreateDOMStructure(JSC::Structure* structure)
@@ -3404,7 +3418,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionToClass, (JSC::JSGlobalObject * globalObject,
     prototype->putDirect(vm, vm.propertyNames->constructor, target, PropertyAttribute::DontEnum | 0);
 
 #if ENABLE(AOT)
-    if (JSC::AOT::CompiledCallee::isCompiledCallee(target)) {
+    if (target->vm().hasCompiledCode() && JSC::AOT::CompiledCallee::isCompiledCallee(target)) {
         target->methodTable()->setPrototype(target, globalObject, base, true);
         RETURN_IF_EXCEPTION(scope, {});
         JSC::AOT::CompiledCallee::setPrototypeProperty(vm, target, prototype, PropertyAttribute::DontEnum | 0);
@@ -4169,7 +4183,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 #if ENABLE(AOT)
-    const bool isImportCall = std::exchange(globalObject->onLoadPlugins.isResolvingImportCall, false) || (globalObject->onLoadPlugins.hasVirtualModules() && JSC::AOT::isResolvingImportCall(vm));
+    const bool isImportCall = std::exchange(globalObject->onLoadPlugins.isResolvingImportCall, false) || (vm.hasCompiledCode() && globalObject->onLoadPlugins.hasVirtualModules() && JSC::AOT::isResolvingImportCall(vm));
 #else
     const bool isImportCall = std::exchange(globalObject->onLoadPlugins.isResolvingImportCall, false);
 #endif

@@ -1063,6 +1063,29 @@ impl<'a, 's> FileScan<'a, 's> {
         find_module_imported_from(self.input, self.file, symbol)
     }
 
+    // `export * as inner from "./dep"`, and a mock may stand for "./dep": the code reads `inner` off the object of the file between, whose link says which object it hands on.
+    fn find_name_read_off_file_between(&self, symbol: SymbolId) -> Option<(FileId, Atom)> {
+        let graph = self.input.graph;
+        let ImportBinding::Namespace {
+            module: ModuleRef::File(target),
+            phase: ImportPhase::Evaluation,
+        } = graph.import_binding(self.file, symbol)
+        else {
+            return None;
+        };
+        let name = match *self.bound.symbol(symbol).decls {
+            [Decl::ImportSpec(specifier)] => self.hir[specifier].imported,
+            [Decl::ImportDefault(_)] => known::default,
+            _ => return None,
+        };
+        match self.find_module_imported_from(symbol)? {
+            ModuleRef::File(holder) if holder != target && graph.holds_mock_in_variable(target) => {
+                Some((holder, name))
+            }
+            _ => None,
+        }
+    }
+
     fn interest_in_symbol(&self, symbol: SymbolId, reference: Option<ExprId>) -> Option<Interest> {
         // A name that stands for a module holds nothing.
         if let Some(view) = self.input.graph.holder(self.file, symbol) {
@@ -1189,6 +1212,10 @@ impl<'a, 's> FileScan<'a, 's> {
                     let handed_on = Interest::HandedOnNamespace(module_with_code(module));
                     self.add_interest(hir[reference].pos, handed_on);
                 }
+            }
+            if let Some((holder, name)) = self.find_name_read_off_file_between(symbol) {
+                let read = Interest::Export(ModuleRef::File(holder), name);
+                self.add_interest(hir[reference].pos, read);
             }
         }
         // A name that is imported from a CommonJS file is looked for when the graph is linked, whether or not something refers to it.
@@ -3301,7 +3328,7 @@ fn directory_of(path: &[u8]) -> &[u8] {
 }
 
 // The folder of the package that holds the file: `../node_modules/name` or `../node_modules/@scope/name`. Nothing for a file of the program itself.
-fn package_of(path: &[u8]) -> &[u8] {
+pub(super) fn package_of(path: &[u8]) -> &[u8] {
     const FOLDER: &[u8] = b"/node_modules/";
     let Some(at) = last_index_of(path, FOLDER) else {
         return b"";

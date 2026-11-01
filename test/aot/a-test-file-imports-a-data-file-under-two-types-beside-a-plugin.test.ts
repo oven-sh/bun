@@ -1,7 +1,8 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { run } from "./harness/run";
-import { test } from "./supported";
+// One by one: a case builds for minutes, and beside others it would pass its limit where Bun has a sanitizer.
+import { testOneByOne as test } from "./supported";
 
 // The import statements of a test file that name a file of data are linked by the loader when the test file starts. Two of them that name one
 // file under two types get what the first of them loaded, under `bun test` and compiled. The build gave the second a module of its own

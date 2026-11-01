@@ -148,7 +148,7 @@ for (const name in makers) {
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="walkAsynchronously"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsAsync, HasThis, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|Promise<undefined|null|Array> flags=[IsExpected]}] functionTypes={{*}}[[f_2]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsAsync, HasThis, HasExplicitName] length=1 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|Promise<undefined|null|Array> flags=[IsExpected]}] functionTypes={{*}}[[f_2]]] {
 // CHECK-NEXT: b0(v0: anything, v1: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -179,7 +179,7 @@ for (const name in makers) {
 // CHECK-NEXT: Rethrow v14
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="fromAsync"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsAsync, HasThis, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array|AsyncGenerator flags=[IsExpected]}] results=[{type=undefined|null|Promise<undefined|null|Array> flags=[IsExpected]}] functionTypes={{*}}[[f_5]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsAsync, HasThis, HasExplicitName] length=1 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=undefined|null|string|Array|AsyncGenerator flags=[IsExpected]}] results=[{type=undefined|null|Promise<undefined|null|Array> flags=[IsExpected]}] functionTypes={{*}}[[f_5]]] {
 // CHECK-NEXT: b0(v0: anything, v1: undefined|null|string|Array|AsyncGenerator):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

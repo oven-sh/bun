@@ -42,6 +42,7 @@ fn is_about_load_by_unknown_name(record: &UserDiagnosticRecord) -> bool {
         record.kind,
         UserDiagnosticKind::CodeOutsideImageIsRefused
             | UserDiagnosticKind::ModuleNamedAtRunTimeIsRefused
+            | UserDiagnosticKind::LoaderIsHeldByUnseenCode
     )
 }
 

@@ -11,7 +11,8 @@
 //                            Whatever a pass moves out of a loop would leave a handler, and every block that a pass puts in front of a loop stands at a handler's border.
 //
 // The driver takes the programs from beside itself, so copy the tree's `test` folder, rewrite `aot/parallel` in the copy and run the copy's `aot/run-parallel.ts`:
-// at default flags, and with --aot-verify-each-pass or --aot-validate for every program. What to look at: a signal, a build that stops, a line of the validator.
+// at default flags, and with --more-flags=--aot-check=verify-each-pass or --more-flags=--aot-validate for every program, with --each-alone. The driver holds each rewritten
+// program against plain Bun on the same text. What to look at: an answer that is not plain Bun's, a signal, a build that stops, a line of the validator.
 //
 // With every loop in a try, --aot-verify-each-pass stopped six builds of 8,642 that build as they stand. One was a look-up in a Map that left its `try` with the loop:
 // at default flags an error then passed the `catch` that plain Bun gives it to.
@@ -25,7 +26,9 @@ import ts from "typescript";
 
 const [surroundings, folder] = process.argv.slice(2);
 if (!["open-world", "loops-in-try", "loops-in-try-and-catch"].includes(surroundings) || !folder) {
-  console.error("usage: stored-programs-in-other-surroundings.ts <open-world | loops-in-try | loops-in-try-and-catch> <a copy of test/aot/parallel>");
+  console.error(
+    "usage: stored-programs-in-other-surroundings.ts <open-world | loops-in-try | loops-in-try-and-catch> <a copy of test/aot/parallel>",
+  );
   process.exit(1);
 }
 
@@ -43,7 +46,13 @@ function openWorld(path: string, text: string) {
 }
 
 function parse(path: string, text: string) {
-  const kind = path.endsWith(".tsx") ? ts.ScriptKind.TSX : path.endsWith(".jsx") ? ts.ScriptKind.JSX : isTyped(path) ? ts.ScriptKind.TS : ts.ScriptKind.JS;
+  const kind = path.endsWith(".tsx")
+    ? ts.ScriptKind.TSX
+    : path.endsWith(".jsx")
+      ? ts.ScriptKind.JSX
+      : isTyped(path)
+        ? ts.ScriptKind.TS
+        : ts.ScriptKind.JS;
   const source = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, kind);
   return (source as unknown as { parseDiagnostics?: unknown[] }).parseDiagnostics?.length ? undefined : source;
 }
@@ -59,14 +68,20 @@ function loopsInTry(path: string, text: string) {
     if (ts.isIterationStatement(node, false)) {
       let outer: ts.Node = node;
       while (ts.isLabeledStatement(outer.parent)) outer = outer.parent;
-      edits.push({ at: outer.getStart(source), what: "try { " }, { at: outer.getEnd(), what: ` }${rethrown} finally { ${count} }` });
+      edits.push(
+        { at: outer.getStart(source), what: "try { " },
+        { at: outer.getEnd(), what: ` }${rethrown} finally { ${count} }` },
+      );
     }
     ts.forEachChild(node, visit);
   };
   visit(source);
   // At one place an end goes in front of a beginning, and the end of an inner loop in front of the end of the outer one: the order in which they were found, turned round.
   let out = text;
-  for (const { at, what } of edits.map((edit, index) => ({ ...edit, index })).sort((a, b) => b.at - a.at || b.index - a.index)) out = out.slice(0, at) + what + out.slice(at);
+  for (const { at, what } of edits
+    .map((edit, index) => ({ ...edit, index }))
+    .sort((a, b) => b.at - a.at || b.index - a.index))
+    out = out.slice(0, at) + what + out.slice(at);
   return parse(path, out) ? { text: out, changes: edits.length / 2 } : undefined;
 }
 
@@ -75,13 +90,15 @@ let changes = 0;
 let leftAlone = 0;
 for (const entry of readdirSync(folder, { recursive: true, withFileTypes: true })) {
   const path = join(entry.parentPath, entry.name);
-  if (!entry.isFile() || !/\.[cm]?[jt]sx?$/.test(path) || /\.d\.[cm]?ts$/.test(path) || path.includes("node_modules")) continue;
+  if (!entry.isFile() || !/\.[cm]?[jt]sx?$/.test(path) || /\.d\.[cm]?ts$/.test(path) || path.includes("node_modules"))
+    continue;
   const bytes = readFileSync(path);
   const text = bytes.toString("utf8");
   let rewritten: { text: string; changes: number } | undefined;
   // A file that is not UTF-8 would not come back as it was. A program that nests deeper than the parser's stack throws.
   try {
-    if (Buffer.from(text, "utf8").equals(bytes)) rewritten = surroundings === "open-world" ? openWorld(path, text) : loopsInTry(path, text);
+    if (Buffer.from(text, "utf8").equals(bytes))
+      rewritten = surroundings === "open-world" ? openWorld(path, text) : loopsInTry(path, text);
   } catch {}
   if (!rewritten) {
     leftAlone++;
@@ -92,4 +109,6 @@ for (const entry of readdirSync(folder, { recursive: true, withFileTypes: true }
   files++;
   changes += rewritten.changes;
 }
-console.log(`${surroundings}: ${changes} ${surroundings === "open-world" ? "lines" : "loops"} in ${files} files; left as they are: ${leftAlone}`);
+console.log(
+  `${surroundings}: ${changes} ${surroundings === "open-world" ? "lines" : "loops"} in ${files} files; left as they are: ${leftAlone}`,
+);

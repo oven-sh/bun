@@ -544,110 +544,91 @@ runtimefunction id=FunctionPrototypeCall function=f8
 # CHECK-NEXT: b3(v10: int|whole, v11: int[0, 2147483648] ~ int[0, 2147483647]):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v13: boolean = Less v11, v1
-# CHECK-NEXT: Branch v13 -> taken b4(), notTaken b30(v10)
+# CHECK-NEXT: Branch v13 -> taken b4(), notTaken b23(v10)
 # CHECK-NEXT: b4():
 # CHECK-NEXT: v14: undefined = Undefined
 # CHECK-NEXT: v15: boolean = Less v11, v1
-# CHECK-NEXT: Branch v15 -> taken b5(), notTaken b20(v14)
+# CHECK-NEXT: Branch v15 -> taken b5(), notTaken b13(v14)
 # CHECK-NEXT: b5():
 # CHECK-NEXT: v16: 0 = Integer
 # CHECK-NEXT: v17: int[0, 2147483648] ~ int[0, 2147483647] = Sub v11, v16
 # CHECK-NEXT: v18: boolean = HasArrayStorage v3 arrayStorage=Double
-# CHECK-NEXT: Branch v18 -> taken b6(| 0), notTaken b9()
+# CHECK-NEXT: Branch v18 -> taken b6(| 0), notTaken b10()
 # CHECK-NEXT: b6(v19: guard):
 # CHECK-NEXT: Jump -> next b7()
 # CHECK-NEXT: b7():
 # CHECK-NEXT: v20: boolean = IsInBounds v3, v17
-# CHECK-NEXT: Branch v20 -> taken b8(| 0), notTaken b17()
+# CHECK-NEXT: Branch v20 -> taken b8(| 0), notTaken b10()
 # CHECK-NEXT: b8(v21: guard):
 # CHECK-NEXT: v22: guard = AllGuards v19, v21
 # CHECK-NEXT: v23: int = GetArrayElement v3, v17, v22 arrayStorage=Double level=Expected [keyIsIntegral, isInBounds]
-# CHECK-NEXT: Jump -> next b15(v23)
-# CHECK-NEXT: b9() frequency=Unlikely:
-# CHECK-NEXT: v24: boolean = HasArrayStorage v3 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v24 -> taken b10(| 0), notTaken b17()
-# CHECK-NEXT: b10(v25: guard) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b11()
-# CHECK-NEXT: b11() frequency=Unlikely:
-# CHECK-NEXT: v26: boolean = IsInBounds v3, v17
-# CHECK-NEXT: Branch v26 -> taken b12(| 0), notTaken b17()
-# CHECK-NEXT: b12(v27: guard) frequency=Unlikely:
-# CHECK-NEXT: v28: guard = AllGuards v25, v27
-# CHECK-NEXT: v29: undefined|int = GetArrayElement v3, v17, v28 arrayStorage=Contiguous level=Expected [keyIsIntegral, isInBounds]
-# CHECK-NEXT: v30: boolean = TypeTest v29 testedType=number
-# CHECK-NEXT: Branch v30 -> taken b13(| 0), notTaken b16(| 0)
-# CHECK-NEXT: b13(v31: int) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b14(v31)
-# CHECK-NEXT: b14(v32: int) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b15(v32)
-# CHECK-NEXT: b15(v33: int):
-# CHECK-NEXT: Jump -> next b20(v33)
-# CHECK-NEXT: b16(v34: undefined) frequency=Rare:
-# CHECK-NEXT: Jump -> next b17()
-# CHECK-NEXT: b17() frequency=Unlikely:
-# CHECK-NEXT: v35: undefined|int = ElemGet v3, v17 [keyIsIntegral]
-# CHECK-NEXT: v36: undefined|int ~ int = Upcast v35 castType=anything
-# CHECK-NEXT: v37: boolean = TypeTest v36 testedType=i32
-# CHECK-NEXT: Branch v37 -> taken b18(| 0), notTaken b23(v10, v11, v36)
-# CHECK-NEXT: b18(v38: i32) frequency=Unlikely:
-# CHECK-NEXT: v39: int[-6442450944, 6442450941] = Mul v38, v0
-# CHECK-NEXT: v40: int|whole = Add v10, v39
-# CHECK-NEXT: v41: boolean ~ true = TypeTest v11 testedType=i32
-# CHECK-NEXT: Branch v41 -> taken b19(| 0), notTaken b24(v11, v40)
-# CHECK-NEXT: b19(v42: int[0, 2147483647]) frequency=Unlikely:
-# CHECK-NEXT: v43: int[1, 2147483648] = Increment v42
-# CHECK-NEXT: v44: int[1, 2147483648] ~ int[1, 2147483647] = Upcast v43 castType=int|whole
-# CHECK-NEXT: Jump -> next b2(v40, v44)
-# CHECK-NEXT: b20(v45: undefined|int):
-# CHECK-NEXT: v46: undefined|int ~ int = Upcast v45 castType=anything
-# CHECK-NEXT: v47: boolean = TypeTest v46 testedType=i32
-# CHECK-NEXT: Branch v47 -> taken b21(| 0), notTaken b23(v10, v11, v46)
-# CHECK-NEXT: b21(v48: i32):
-# CHECK-NEXT: v49: int[-6442450944, 6442450941] = Mul v48, v0
-# CHECK-NEXT: v50: int|whole = Add v10, v49
-# CHECK-NEXT: v51: boolean ~ true = TypeTest v11 testedType=i32
-# CHECK-NEXT: Branch v51 -> taken b22(| 0), notTaken b24(v11, v50)
-# CHECK-NEXT: b22(v52: int[0, 2147483647]):
-# CHECK-NEXT: v53: int[1, 2147483648] = Increment v52
-# CHECK-NEXT: v54: int[1, 2147483648] ~ int[1, 2147483647] = Upcast v53 castType=int|whole
-# CHECK-NEXT: Jump -> next b3(v50, v54)
-# CHECK-NEXT: b23(v55: int|whole, v56: int[0, 4294967294] ~ int[0, 2147483647], v57: undefined|int ~ int) frequency=Unlikely:
-# CHECK-NEXT: v58: number ~ int|whole = Mul v57, v0
-# CHECK-NEXT: v59: int|whole = AssumeType v58 provenType=int|whole
-# CHECK-NEXT: v60: int|whole = Add v55, v59
-# CHECK-NEXT: Jump -> next b24(v56, v60)
-# CHECK-NEXT: b24(v61: int[0, 4294967294] ~ int[0, 2147483647], v62: int|whole) frequency=Unlikely:
-# CHECK-NEXT: v63: int[1, 4294967295] ~ int[1, 2147483648] = Increment v61
-# CHECK-NEXT: v64: int[1, 4294967295] ~ int[1, 2147483647] = Upcast v63 castType=int|whole
-# CHECK-NEXT: v65: boolean ~ true = TypeTest v64 testedType=int[0, 2147483647]
-# CHECK-NEXT: Branch v65 -> taken b25(| 0), notTaken b26()
-# CHECK-NEXT: b25(v66: int[1, 2147483647]) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b1(v62, v66)
-# CHECK-NEXT: b26() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b9()
+# CHECK-NEXT: b9():
+# CHECK-NEXT: Jump -> next b13(v23)
+# CHECK-NEXT: b10() frequency=Unlikely:
+# CHECK-NEXT: v24: undefined|int = ElemGet v3, v17 [keyIsIntegral]
+# CHECK-NEXT: v25: undefined|int ~ int = Upcast v24 castType=anything
+# CHECK-NEXT: v26: boolean = TypeTest v25 testedType=i32
+# CHECK-NEXT: Branch v26 -> taken b11(| 0), notTaken b16(v10, v11, v25)
+# CHECK-NEXT: b11(v27: i32) frequency=Unlikely:
+# CHECK-NEXT: v28: int[-6442450944, 6442450941] = Mul v27, v0
+# CHECK-NEXT: v29: int|whole = Add v10, v28
+# CHECK-NEXT: v30: boolean ~ true = TypeTest v11 testedType=i32
+# CHECK-NEXT: Branch v30 -> taken b12(| 0), notTaken b17(v11, v29)
+# CHECK-NEXT: b12(v31: int[0, 2147483647]) frequency=Unlikely:
+# CHECK-NEXT: v32: int[1, 2147483648] = Increment v31
+# CHECK-NEXT: v33: int[1, 2147483648] ~ int[1, 2147483647] = Upcast v32 castType=int|whole
+# CHECK-NEXT: Jump -> next b2(v29, v33)
+# CHECK-NEXT: b13(v34: undefined|int):
+# CHECK-NEXT: v35: undefined|int ~ int = Upcast v34 castType=anything
+# CHECK-NEXT: v36: boolean = TypeTest v35 testedType=i32
+# CHECK-NEXT: Branch v36 -> taken b14(| 0), notTaken b16(v10, v11, v35)
+# CHECK-NEXT: b14(v37: i32):
+# CHECK-NEXT: v38: int[-6442450944, 6442450941] = Mul v37, v0
+# CHECK-NEXT: v39: int|whole = Add v10, v38
+# CHECK-NEXT: v40: boolean ~ true = TypeTest v11 testedType=i32
+# CHECK-NEXT: Branch v40 -> taken b15(| 0), notTaken b17(v11, v39)
+# CHECK-NEXT: b15(v41: int[0, 2147483647]):
+# CHECK-NEXT: v42: int[1, 2147483648] = Increment v41
+# CHECK-NEXT: v43: int[1, 2147483648] ~ int[1, 2147483647] = Upcast v42 castType=int|whole
+# CHECK-NEXT: Jump -> next b3(v39, v43)
+# CHECK-NEXT: b16(v44: int|whole, v45: int[0, 4294967294] ~ int[0, 2147483647], v46: undefined|int ~ int) frequency=Unlikely:
+# CHECK-NEXT: v47: number ~ int|whole = Mul v46, v0
+# CHECK-NEXT: v48: int|whole = AssumeType v47 provenType=int|whole
+# CHECK-NEXT: v49: int|whole = Add v44, v48
+# CHECK-NEXT: Jump -> next b17(v45, v49)
+# CHECK-NEXT: b17(v50: int[0, 4294967294] ~ int[0, 2147483647], v51: int|whole) frequency=Unlikely:
+# CHECK-NEXT: v52: int[1, 4294967295] ~ int[1, 2147483648] = Increment v50
+# CHECK-NEXT: v53: int[1, 4294967295] ~ int[1, 2147483647] = Upcast v52 castType=int|whole
+# CHECK-NEXT: v54: boolean ~ true = TypeTest v53 testedType=int[0, 2147483647]
+# CHECK-NEXT: Branch v54 -> taken b18(| 0), notTaken b19()
+# CHECK-NEXT: b18(v55: int[1, 2147483647]) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b1(v51, v55)
+# CHECK-NEXT: b19() frequency=Unlikely:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v68: boolean = Less v64, v1
-# CHECK-NEXT: Branch v68 -> taken b27(| 0), notTaken b30(v62)
-# CHECK-NEXT: b27(v69: int[1, 4294967294] ~ int[1, 2147483647]) frequency=Unlikely:
-# CHECK-NEXT: v70: undefined = Undefined
-# CHECK-NEXT: v71: boolean = Less v69, v1
-# CHECK-NEXT: Branch v71 -> taken b28(), notTaken b29(v70)
-# CHECK-NEXT: b28() frequency=Unlikely:
-# CHECK-NEXT: v72: 0 = Integer
-# CHECK-NEXT: v73: int[1, 4294967294] ~ int[1, 2147483647] = Sub v69, v72
-# CHECK-NEXT: v74: undefined|int = ElemGet v3, v73 [keyIsIntegral]
-# CHECK-NEXT: Jump -> next b29(v74)
-# CHECK-NEXT: b29(v75: undefined|int) frequency=Unlikely:
-# CHECK-NEXT: v76: undefined|int ~ int = Upcast v75 castType=anything
-# CHECK-NEXT: Jump -> next b23(v62, v69, v76)
-# CHECK-NEXT: b30(v77: int|whole):
-# CHECK-NEXT: v78: 0 = Integer
-# CHECK-NEXT: v79: boolean = Less v77, v78
-# CHECK-NEXT: Branch v79 -> taken b31(), notTaken b32()
-# CHECK-NEXT: b31():
-# CHECK-NEXT: v80: "marker of sumOfAll" = String string="marker of sumOfAll"
-# CHECK-NEXT: Return v80
-# CHECK-NEXT: b32():
-# CHECK-NEXT: Return v77
+# CHECK-NEXT: v57: boolean = Less v53, v1
+# CHECK-NEXT: Branch v57 -> taken b20(| 0), notTaken b23(v51)
+# CHECK-NEXT: b20(v58: int[1, 4294967294] ~ int[1, 2147483647]) frequency=Unlikely:
+# CHECK-NEXT: v59: undefined = Undefined
+# CHECK-NEXT: v60: boolean = Less v58, v1
+# CHECK-NEXT: Branch v60 -> taken b21(), notTaken b22(v59)
+# CHECK-NEXT: b21() frequency=Unlikely:
+# CHECK-NEXT: v61: 0 = Integer
+# CHECK-NEXT: v62: int[1, 4294967294] ~ int[1, 2147483647] = Sub v58, v61
+# CHECK-NEXT: v63: undefined|int = ElemGet v3, v62 [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b22(v63)
+# CHECK-NEXT: b22(v64: undefined|int) frequency=Unlikely:
+# CHECK-NEXT: v65: undefined|int ~ int = Upcast v64 castType=anything
+# CHECK-NEXT: Jump -> next b16(v51, v58, v65)
+# CHECK-NEXT: b23(v66: int|whole):
+# CHECK-NEXT: v67: 0 = Integer
+# CHECK-NEXT: v68: boolean = Less v66, v67
+# CHECK-NEXT: Branch v68 -> taken b24(), notTaken b25()
+# CHECK-NEXT: b24():
+# CHECK-NEXT: v69: "marker of sumOfAll" = String string="marker of sumOfAll"
+# CHECK-NEXT: Return v69
+# CHECK-NEXT: b25():
+# CHECK-NEXT: Return v66
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="sumTested"
 # CHECK: module=m0 position=865 flags=[HasArgumentCount, HasHiddenRest, HasExplicitName] thisType={type=anything} results=[{type=int|whole|"marker of sumTested"}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -664,110 +645,91 @@ runtimefunction id=FunctionPrototypeCall function=f8
 # CHECK-NEXT: b3(v10: int|whole, v11: int[0, 2147483648] ~ int[0, 2147483647]):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v13: boolean = Less v11, v0
-# CHECK-NEXT: Branch v13 -> taken b4(), notTaken b30(v10)
+# CHECK-NEXT: Branch v13 -> taken b4(), notTaken b23(v10)
 # CHECK-NEXT: b4():
 # CHECK-NEXT: v14: undefined = Undefined
 # CHECK-NEXT: v15: boolean = Less v11, v0
-# CHECK-NEXT: Branch v15 -> taken b5(), notTaken b20(v14)
+# CHECK-NEXT: Branch v15 -> taken b5(), notTaken b13(v14)
 # CHECK-NEXT: b5():
 # CHECK-NEXT: v16: 0 = Integer
 # CHECK-NEXT: v17: int[0, 2147483648] ~ int[0, 2147483647] = Sub v11, v16
 # CHECK-NEXT: v18: boolean = HasArrayStorage v3 arrayStorage=Double
-# CHECK-NEXT: Branch v18 -> taken b6(| 0), notTaken b9()
+# CHECK-NEXT: Branch v18 -> taken b6(| 0), notTaken b10()
 # CHECK-NEXT: b6(v19: guard):
 # CHECK-NEXT: Jump -> next b7()
 # CHECK-NEXT: b7():
 # CHECK-NEXT: v20: boolean = IsInBounds v3, v17
-# CHECK-NEXT: Branch v20 -> taken b8(| 0), notTaken b17()
+# CHECK-NEXT: Branch v20 -> taken b8(| 0), notTaken b10()
 # CHECK-NEXT: b8(v21: guard):
 # CHECK-NEXT: v22: guard = AllGuards v19, v21
 # CHECK-NEXT: v23: int = GetArrayElement v3, v17, v22 arrayStorage=Double level=Expected [keyIsIntegral, isInBounds]
-# CHECK-NEXT: Jump -> next b15(v23)
-# CHECK-NEXT: b9() frequency=Unlikely:
-# CHECK-NEXT: v24: boolean = HasArrayStorage v3 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v24 -> taken b10(| 0), notTaken b17()
-# CHECK-NEXT: b10(v25: guard) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b11()
-# CHECK-NEXT: b11() frequency=Unlikely:
-# CHECK-NEXT: v26: boolean = IsInBounds v3, v17
-# CHECK-NEXT: Branch v26 -> taken b12(| 0), notTaken b17()
-# CHECK-NEXT: b12(v27: guard) frequency=Unlikely:
-# CHECK-NEXT: v28: guard = AllGuards v25, v27
-# CHECK-NEXT: v29: undefined|int = GetArrayElement v3, v17, v28 arrayStorage=Contiguous level=Expected [keyIsIntegral, isInBounds]
-# CHECK-NEXT: v30: boolean = TypeTest v29 testedType=number
-# CHECK-NEXT: Branch v30 -> taken b13(| 0), notTaken b16(| 0)
-# CHECK-NEXT: b13(v31: int) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b14(v31)
-# CHECK-NEXT: b14(v32: int) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b15(v32)
-# CHECK-NEXT: b15(v33: int):
-# CHECK-NEXT: Jump -> next b20(v33)
-# CHECK-NEXT: b16(v34: undefined) frequency=Rare:
-# CHECK-NEXT: Jump -> next b17()
-# CHECK-NEXT: b17() frequency=Unlikely:
-# CHECK-NEXT: v35: undefined|int = ElemGet v3, v17 [keyIsIntegral]
-# CHECK-NEXT: v36: undefined|int ~ int = Upcast v35 castType=anything
-# CHECK-NEXT: v37: boolean = TypeTest v36 testedType=i32
-# CHECK-NEXT: Branch v37 -> taken b18(| 0), notTaken b23(v10, v11, v36)
-# CHECK-NEXT: b18(v38: i32) frequency=Unlikely:
-# CHECK-NEXT: v39: int[-8589934592, 8589934588] = Mul v38, v2
-# CHECK-NEXT: v40: int|whole = Add v10, v39
-# CHECK-NEXT: v41: boolean ~ true = TypeTest v11 testedType=i32
-# CHECK-NEXT: Branch v41 -> taken b19(| 0), notTaken b24(v11, v40)
-# CHECK-NEXT: b19(v42: int[0, 2147483647]) frequency=Unlikely:
-# CHECK-NEXT: v43: int[1, 2147483648] = Increment v42
-# CHECK-NEXT: v44: int[1, 2147483648] ~ int[1, 2147483647] = Upcast v43 castType=int|whole
-# CHECK-NEXT: Jump -> next b2(v40, v44)
-# CHECK-NEXT: b20(v45: undefined|int):
-# CHECK-NEXT: v46: undefined|int ~ int = Upcast v45 castType=anything
-# CHECK-NEXT: v47: boolean = TypeTest v46 testedType=i32
-# CHECK-NEXT: Branch v47 -> taken b21(| 0), notTaken b23(v10, v11, v46)
-# CHECK-NEXT: b21(v48: i32):
-# CHECK-NEXT: v49: int[-8589934592, 8589934588] = Mul v48, v2
-# CHECK-NEXT: v50: int|whole = Add v10, v49
-# CHECK-NEXT: v51: boolean ~ true = TypeTest v11 testedType=i32
-# CHECK-NEXT: Branch v51 -> taken b22(| 0), notTaken b24(v11, v50)
-# CHECK-NEXT: b22(v52: int[0, 2147483647]):
-# CHECK-NEXT: v53: int[1, 2147483648] = Increment v52
-# CHECK-NEXT: v54: int[1, 2147483648] ~ int[1, 2147483647] = Upcast v53 castType=int|whole
-# CHECK-NEXT: Jump -> next b3(v50, v54)
-# CHECK-NEXT: b23(v55: int|whole, v56: int[0, 4294967294] ~ int[0, 2147483647], v57: undefined|int ~ int) frequency=Unlikely:
-# CHECK-NEXT: v58: number ~ int|whole = Mul v57, v2
-# CHECK-NEXT: v59: int|whole = AssumeType v58 provenType=int|whole
-# CHECK-NEXT: v60: int|whole = Add v55, v59
-# CHECK-NEXT: Jump -> next b24(v56, v60)
-# CHECK-NEXT: b24(v61: int[0, 4294967294] ~ int[0, 2147483647], v62: int|whole) frequency=Unlikely:
-# CHECK-NEXT: v63: int[1, 4294967295] ~ int[1, 2147483648] = Increment v61
-# CHECK-NEXT: v64: int[1, 4294967295] ~ int[1, 2147483647] = Upcast v63 castType=int|whole
-# CHECK-NEXT: v65: boolean ~ true = TypeTest v64 testedType=int[0, 2147483647]
-# CHECK-NEXT: Branch v65 -> taken b25(| 0), notTaken b26()
-# CHECK-NEXT: b25(v66: int[1, 2147483647]) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b1(v62, v66)
-# CHECK-NEXT: b26() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b9()
+# CHECK-NEXT: b9():
+# CHECK-NEXT: Jump -> next b13(v23)
+# CHECK-NEXT: b10() frequency=Unlikely:
+# CHECK-NEXT: v24: undefined|int = ElemGet v3, v17 [keyIsIntegral]
+# CHECK-NEXT: v25: undefined|int ~ int = Upcast v24 castType=anything
+# CHECK-NEXT: v26: boolean = TypeTest v25 testedType=i32
+# CHECK-NEXT: Branch v26 -> taken b11(| 0), notTaken b16(v10, v11, v25)
+# CHECK-NEXT: b11(v27: i32) frequency=Unlikely:
+# CHECK-NEXT: v28: int[-8589934592, 8589934588] = Mul v27, v2
+# CHECK-NEXT: v29: int|whole = Add v10, v28
+# CHECK-NEXT: v30: boolean ~ true = TypeTest v11 testedType=i32
+# CHECK-NEXT: Branch v30 -> taken b12(| 0), notTaken b17(v11, v29)
+# CHECK-NEXT: b12(v31: int[0, 2147483647]) frequency=Unlikely:
+# CHECK-NEXT: v32: int[1, 2147483648] = Increment v31
+# CHECK-NEXT: v33: int[1, 2147483648] ~ int[1, 2147483647] = Upcast v32 castType=int|whole
+# CHECK-NEXT: Jump -> next b2(v29, v33)
+# CHECK-NEXT: b13(v34: undefined|int):
+# CHECK-NEXT: v35: undefined|int ~ int = Upcast v34 castType=anything
+# CHECK-NEXT: v36: boolean = TypeTest v35 testedType=i32
+# CHECK-NEXT: Branch v36 -> taken b14(| 0), notTaken b16(v10, v11, v35)
+# CHECK-NEXT: b14(v37: i32):
+# CHECK-NEXT: v38: int[-8589934592, 8589934588] = Mul v37, v2
+# CHECK-NEXT: v39: int|whole = Add v10, v38
+# CHECK-NEXT: v40: boolean ~ true = TypeTest v11 testedType=i32
+# CHECK-NEXT: Branch v40 -> taken b15(| 0), notTaken b17(v11, v39)
+# CHECK-NEXT: b15(v41: int[0, 2147483647]):
+# CHECK-NEXT: v42: int[1, 2147483648] = Increment v41
+# CHECK-NEXT: v43: int[1, 2147483648] ~ int[1, 2147483647] = Upcast v42 castType=int|whole
+# CHECK-NEXT: Jump -> next b3(v39, v43)
+# CHECK-NEXT: b16(v44: int|whole, v45: int[0, 4294967294] ~ int[0, 2147483647], v46: undefined|int ~ int) frequency=Unlikely:
+# CHECK-NEXT: v47: number ~ int|whole = Mul v46, v2
+# CHECK-NEXT: v48: int|whole = AssumeType v47 provenType=int|whole
+# CHECK-NEXT: v49: int|whole = Add v44, v48
+# CHECK-NEXT: Jump -> next b17(v45, v49)
+# CHECK-NEXT: b17(v50: int[0, 4294967294] ~ int[0, 2147483647], v51: int|whole) frequency=Unlikely:
+# CHECK-NEXT: v52: int[1, 4294967295] ~ int[1, 2147483648] = Increment v50
+# CHECK-NEXT: v53: int[1, 4294967295] ~ int[1, 2147483647] = Upcast v52 castType=int|whole
+# CHECK-NEXT: v54: boolean ~ true = TypeTest v53 testedType=int[0, 2147483647]
+# CHECK-NEXT: Branch v54 -> taken b18(| 0), notTaken b19()
+# CHECK-NEXT: b18(v55: int[1, 2147483647]) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b1(v51, v55)
+# CHECK-NEXT: b19() frequency=Unlikely:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v68: boolean = Less v64, v0
-# CHECK-NEXT: Branch v68 -> taken b27(| 0), notTaken b30(v62)
-# CHECK-NEXT: b27(v69: int[1, 4294967294] ~ int[1, 2147483647]) frequency=Unlikely:
-# CHECK-NEXT: v70: undefined = Undefined
-# CHECK-NEXT: v71: boolean = Less v69, v0
-# CHECK-NEXT: Branch v71 -> taken b28(), notTaken b29(v70)
-# CHECK-NEXT: b28() frequency=Unlikely:
-# CHECK-NEXT: v72: 0 = Integer
-# CHECK-NEXT: v73: int[1, 4294967294] ~ int[1, 2147483647] = Sub v69, v72
-# CHECK-NEXT: v74: undefined|int = ElemGet v3, v73 [keyIsIntegral]
-# CHECK-NEXT: Jump -> next b29(v74)
-# CHECK-NEXT: b29(v75: undefined|int) frequency=Unlikely:
-# CHECK-NEXT: v76: undefined|int ~ int = Upcast v75 castType=anything
-# CHECK-NEXT: Jump -> next b23(v62, v69, v76)
-# CHECK-NEXT: b30(v77: int|whole):
-# CHECK-NEXT: v78: 0 = Integer
-# CHECK-NEXT: v79: boolean = Less v77, v78
-# CHECK-NEXT: Branch v79 -> taken b31(), notTaken b32()
-# CHECK-NEXT: b31():
-# CHECK-NEXT: v80: "marker of sumTested" = String string="marker of sumTested"
-# CHECK-NEXT: Return v80
-# CHECK-NEXT: b32():
-# CHECK-NEXT: Return v77
+# CHECK-NEXT: v57: boolean = Less v53, v0
+# CHECK-NEXT: Branch v57 -> taken b20(| 0), notTaken b23(v51)
+# CHECK-NEXT: b20(v58: int[1, 4294967294] ~ int[1, 2147483647]) frequency=Unlikely:
+# CHECK-NEXT: v59: undefined = Undefined
+# CHECK-NEXT: v60: boolean = Less v58, v0
+# CHECK-NEXT: Branch v60 -> taken b21(), notTaken b22(v59)
+# CHECK-NEXT: b21() frequency=Unlikely:
+# CHECK-NEXT: v61: 0 = Integer
+# CHECK-NEXT: v62: int[1, 4294967294] ~ int[1, 2147483647] = Sub v58, v61
+# CHECK-NEXT: v63: undefined|int = ElemGet v3, v62 [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b22(v63)
+# CHECK-NEXT: b22(v64: undefined|int) frequency=Unlikely:
+# CHECK-NEXT: v65: undefined|int ~ int = Upcast v64 castType=anything
+# CHECK-NEXT: Jump -> next b16(v51, v58, v65)
+# CHECK-NEXT: b23(v66: int|whole):
+# CHECK-NEXT: v67: 0 = Integer
+# CHECK-NEXT: v68: boolean = Less v66, v67
+# CHECK-NEXT: Branch v68 -> taken b24(), notTaken b25()
+# CHECK-NEXT: b24():
+# CHECK-NEXT: v69: "marker of sumTested" = String string="marker of sumTested"
+# CHECK-NEXT: Return v69
+# CHECK-NEXT: b25():
+# CHECK-NEXT: Return v66
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="sumOfAll"
 # CHECK: module=m0 position=588 role=GenericEntrypoint flags=[HasThis] captures=[{type=f3}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f3} creator=Entrypoint{target=f3} inlineFrames=[{}, {callee=f3 callPosition=588 isTailCall=true module=m0}] {

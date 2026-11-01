@@ -1,8 +1,19 @@
+/** How many times the cost of a shape may grow when its size doubles. */
+export const mostGrowth = 2.5;
+
 export interface Growth {
   instructions?: number;
   peakBytes?: number;
   counts?: Record<string, number>;
+  /** This growth is an open bug: a shape may grow faster than `mostGrowth` only as long as somebody is to mend it. */
+  owed?: true;
 }
+
+export const timesOf = (growth: Growth) => [
+  growth.instructions,
+  growth.peakBytes,
+  ...Object.values(growth.counts ?? {}),
+];
 
 const lowest = (recorded: number | undefined, measured: number | undefined) =>
   recorded === undefined || measured === undefined ? (measured ?? recorded) : Math.min(recorded, measured);
@@ -22,5 +33,5 @@ export function lowerRecordedGrowth(recorded: Growth | undefined, overTheBound: 
       ? Object.fromEntries(names.map(name => [name, lowest(recorded?.counts?.[name], overTheBound.counts?.[name])!]))
       : undefined,
   };
-  return Object.values(growth).every(times => times === undefined) ? undefined : growth;
+  return timesOf(growth).every(times => times === undefined) ? undefined : { ...growth, owed: recorded?.owed };
 }

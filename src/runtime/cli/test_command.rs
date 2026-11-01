@@ -4129,6 +4129,9 @@ impl CommandLineReporter {
                         result, sequence, test_entry, elapsed_ns, writer,
                     );
                 }
+                if basic == bun_test::BasicResult::Fail {
+                    run_compiled::write_note_on_refusal(writer);
+                }
             }
         }
         let formatted_line = &output_buf[initial_length..];
@@ -4305,7 +4308,17 @@ impl CommandLineReporter {
             let Ok(text) = File::read_from(Fd::cwd(), path) else {
                 continue;
             };
-            let Some(transpiled) = crate::jsc_hooks::transpile_as_loaded(vm.global(), path, &text)
+            let results_of_macros: Vec<(i32, Vec<u8>)> = strings::split(ranges, b"\n")
+                .filter_map(|line| {
+                    let mut words = line.strip_prefix(b"m ")?.splitn(3, |&byte| byte == b' ');
+                    let start = bun_core::fmt::parse_int::<i32>(words.next()?, 10).ok()?;
+                    Some((start, words.nth(1)?.to_vec()))
+                })
+                .collect();
+            let Some(transpiled) =
+                bun_js_parser_jsc::Macro::with_results_of_macros(results_of_macros, || {
+                    crate::jsc_hooks::transpile_as_loaded(vm.global(), path, &text)
+                })
             else {
                 continue;
             };
@@ -4777,7 +4790,7 @@ impl TestCommand {
         }
 
         // The worker's environment already holds the coordinator's env file values, and `BUN_OPTIONS` in it can carry `--env-file`.
-        if ctx.test_options.test_worker {
+        if ctx.test_options.test_worker || run_compiled::has_environment_of_first_process() {
             ctx.args.env_files.clear();
             ctx.args.disable_default_env_files = true;
         }
@@ -4834,6 +4847,9 @@ impl TestCommand {
         }
 
         vm.transpiler.configure_defines()?;
+        if run_compiled::is_requested(ctx) {
+            run_compiled::hand_on_environment(&env_loader.map);
+        }
 
         vm.load_extra_env_and_source_code_printer();
         vm.is_main_thread = true;
@@ -5068,9 +5084,13 @@ impl TestCommand {
                         && !is_above_what_is_shared
                         && spelled.is_none();
                 }
-                entry_points.push(stand_in.unwrap_or_else(|| {
+                let stand_in = stand_in.unwrap_or_else(|| {
                     make_stand_in_for_files_from_disk(holds_library, spelled.as_ref())
-                }));
+                });
+                if let Some(aot) = ctx.bundler_options.aot.as_mut() {
+                    aot.stand_in_for_files_from_disk = Some(stand_in.to_vec());
+                }
+                entry_points.push(stand_in);
             }
             if has_window {
                 entry_points.push(make_stand_in_for_window());
@@ -5423,12 +5443,16 @@ impl TestCommand {
                 entry_points.push(make_stand_in_for_window());
             }
             if runs_files_from_disk {
-                entry_points.push(stand_in.unwrap_or_else(|| {
+                let stand_in = stand_in.unwrap_or_else(|| {
                     let files = test_files.iter().map(|path| Box::from(&**path));
                     let files = files.chain(ctx.preloads.iter().cloned()).collect();
                     let spelled = find_library_modules_spelled_from(vm, files);
                     make_stand_in_for_files_from_disk(true, spelled.as_ref())
-                }));
+                });
+                if let Some(aot) = ctx.bundler_options.aot.as_mut() {
+                    aot.stand_in_for_files_from_disk = Some(stand_in.to_vec());
+                }
+                entry_points.push(stand_in);
             }
             if (ctx.bundler_options.aot.as_ref()).is_some_and(|aot| !aot.checks_only) {
                 let closed = (ctx.bundler_options.aot.as_ref())
@@ -5818,7 +5842,7 @@ impl TestCommand {
         pretty_error!("\n");
         let (refused_loads, refused): (Vec<Vec<u8>>, Vec<Vec<u8>>) =
             (run_compiled::refused_changes().into_iter())
-                .partition(|refusal| refusal.starts_with(b"Cannot load "));
+                .partition(|refusal| refusal.starts_with(run_compiled::REFUSED_LOAD));
         if !refused_loads.is_empty() {
             pretty_error!(
                 "<yellow>{} load{} of code that wasn't compiled<r> failed during this run, caught or not. An executable refuses them too, unless the file is built into it. Import the file by a constant path, or add --aot-allow-code-from-disk:\n",
@@ -5828,9 +5852,28 @@ impl TestCommand {
             for refusal in &refused_loads {
                 pretty_error!("  {}\n", bstr::BStr::new(refusal));
             }
+            for (asker, importer) in run_compiled::find_why_askers_are_of_product(&refused_loads) {
+                pretty_error!(
+                    "  <d>{} is part of your program: {} imports it, and that's no file of your tests.<r>\n",
+                    bstr::BStr::new(&asker),
+                    bstr::BStr::new(&importer)
+                );
+            }
+        }
+        let (unreached, refused): (Vec<Vec<u8>>, Vec<Vec<u8>>) =
+            (refused.into_iter()).partition(|line| line.starts_with(run_compiled::UNREACHED_FILE));
+        if !unreached.is_empty() {
+            pretty_error!(
+                "<yellow>{} load{} of a compiled file by a computed path<r> failed during this run, caught or not. The build saw no import() or require() of a computed path, and it can't see code from a string, as in eval() or new Function(). An executable refuses them too. Import the file by a constant path:\n",
+                unreached.len(),
+                if unreached.len() == 1 { "" } else { "s" }
+            );
+            for refusal in &unreached {
+                pretty_error!("  {}\n", bstr::BStr::new(refusal));
+            }
         }
         let (addons, refused): (Vec<Vec<u8>>, Vec<Vec<u8>>) =
-            (refused.into_iter()).partition(|line| line.starts_with(b"Loaded "));
+            (refused.into_iter()).partition(|line| line.starts_with(run_compiled::LOADED_ADDON));
         if !addons.is_empty() {
             pretty_error!(
                 "<yellow>{} native addon{} that the build didn't find<r> loaded from disk during this run. An executable holds one only if it's given the file as an entry point:\n",
@@ -5839,6 +5882,21 @@ impl TestCommand {
             );
             for addon in &addons {
                 pretty_error!("  {}\n", bstr::BStr::new(addon));
+            }
+        }
+        let (missing_exports, refused): (Vec<Vec<u8>>, Vec<Vec<u8>>) =
+            (refused.into_iter()).partition(|line| line.starts_with(run_compiled::MISSING_EXPORT));
+        if !missing_exports.is_empty() {
+            pretty_error!(
+                "<yellow>{} import{} of a name that the build left out<r> failed during this run, caught or not. Code that was loaded from disk asked a compiled module for it. Unless the name is misspelled, this is a bug in Bun:\n",
+                missing_exports.len(),
+                if missing_exports.len() == 1 { "" } else { "s" }
+            );
+            for line in &missing_exports {
+                pretty_error!(
+                    "  {}\n",
+                    bstr::BStr::new(&line[run_compiled::MISSING_EXPORT.len()..])
+                );
             }
         }
         if !refused.is_empty() {

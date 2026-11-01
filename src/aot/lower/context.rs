@@ -5,11 +5,14 @@ mod shown_names;
 mod tests;
 mod text_replaced_by_bundling;
 
+use core::cell::OnceCell;
+
 use bun_core::current_work;
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, Bound, SymbolId};
 use bun_sema::check::aot::{
     BuiltinTypeSymbols, ConstLocalPrefixes, FunctionRef, NamedValues, Queries, QueryInputs,
+    QueryLimit,
 };
 use bun_sema::erasure::{TypeRanges, find_type_ranges, find_type_ranges_beside};
 use bun_sema::fold::{Constant, Decisions};
@@ -17,7 +20,7 @@ use bun_sema::hir::{self, ExprId, ExprKind, NodeData, VarDeclId};
 use bun_sema::import_sites::{ImportSpecifier, ResolvedForm};
 use bun_sema::program::{CompiledModule, FileId, FileRole, Files};
 use bun_sema::resolve::TranspileSettings;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use self::function_table::FunctionTable;
 use self::shown_names::ShownNames;
@@ -51,7 +54,7 @@ use crate::load::{self, Sources};
 use crate::modules::evicted::{FileOfKey, find_file_of_key};
 use crate::modules::{CommonJsExports, DeferredData, ModuleGraph, ModuleRef};
 use crate::options::RemovableOptions;
-use crate::statistics::{Counters, LimitId, LimitValues, StatisticId};
+use crate::statistics::{Counters, LimitId, LimitValues, StatisticId, limit_of_queries};
 
 pub(crate) use self::function::FunctionLowering;
 
@@ -105,6 +108,8 @@ pub struct LoweringOptions {
     pub counts_executions: bool,
     /// The checker did not load the files that this program imports, so every import is `any`.
     pub imports_are_untyped: bool,
+    /// `LoadOptions::runs_tests`
+    pub runs_tests: bool,
 }
 
 pub struct LoweringInputs<'a> {
@@ -152,6 +157,7 @@ impl<'a> LoweringInputs<'a> {
             builtin_types: self.builtin_types,
             named_values: self.named_values,
             max_inference_nodes: self.limits.get(LimitId::MaxInferenceNodes),
+            limits: self.limits.for_queries(),
         }
     }
 }
@@ -182,6 +188,8 @@ pub(crate) struct FileLowering<'a, 'c, 'p, 's> {
     atom_keys: FxHashMap<Atom, PropertyKeyId>,
     /// `FileLowering::is_built_by_code`
     pub(in crate::lower) levels_of_literals_inside_built_ones: FxHashMap<ExprId, u64>,
+    /// `FileLowering::is_stored_as_prototype_object`
+    pub(in crate::lower) literals_named_as_prototype_objects: OnceCell<FxHashSet<ExprId>>,
     shown_names: ShownNames,
     has_bundled_positions: bool,
     runs_as_written: bool,
@@ -389,7 +397,10 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             && inputs.sources.kind(file) == load::SourceKind::Program
             && !bun_core::strings::contains(path, b"/node_modules/")
             && !bun_core::strings::contains(path, b"\\node_modules\\");
-        let counted_places = is_counted.then(|| CountedPlaces::find(hir, bound, path));
+        let counted_places = is_counted.then(|| {
+            let decisions = &compiled.analysis.decisions;
+            CountedPlaces::find(hir, bound, decisions, &queries.files().atoms, path)
+        });
         let scopes = scopes.unwrap_or_else(|| {
             let may_hold_registries = may_hold_registries(inputs, file);
             let files = queries.files();
@@ -448,6 +459,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             atoms: FxHashMap::default(),
             atom_keys: FxHashMap::default(),
             levels_of_literals_inside_built_ones: FxHashMap::default(),
+            literals_named_as_prototype_objects: OnceCell::new(),
             shown_names: ShownNames::new(
                 inputs.options,
                 file_inputs.source,
@@ -507,6 +519,10 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
                     .report(Code::ModulesLoadAgainUncompiled, span, &[]);
             }
         }
+    }
+
+    pub(super) fn lies_in_package(&self) -> bool {
+        load::is_in_node_modules(self.queries.files().module(self.file).file_name())
     }
 
     /// `find_evicted_modules` has marked every file of the test run. Each place in this file that alone would do so is named, so that nobody has to guess why the run is compiled otherwise.
@@ -606,11 +622,16 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         release_spare_capacity(&mut fragment.data);
         release_spare_capacity(&mut fragment.supertype_edges);
         release_spare_capacity(&mut fragment.function_type_edges);
+        let queries = self.queries.statistics();
+        for limit in QueryLimit::ALL {
+            let hits = queries.limit_hits[limit as usize];
+            self.counters.gave_up_times(limit_of_queries(limit), hits);
+        }
         LoweredFile {
             fragment,
             diagnostics: self.diagnostics,
             counters: self.counters,
-            queries: self.queries.statistics(),
+            queries,
         }
     }
 
@@ -734,5 +755,9 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
     pub(crate) fn gave_up(&mut self, limit: LimitId, position: u32) {
         let subject = self.span_at(position);
         self.counters.gave_up(limit, Some(subject));
+    }
+
+    pub(crate) fn gave_up_at_no_position(&mut self, limit: LimitId) {
+        self.counters.gave_up(limit, None);
     }
 }

@@ -3,6 +3,7 @@
 // "Cannot load 'node:zlib': it isn't in this executable. Import it by name".
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { runsWholeGrids } from "./harness/ways";
 import { test } from "./supported";
 
 const text = `
@@ -28,18 +29,20 @@ const ways = {
     return requireFromString(TEXT, path);`,
 };
 
-async function linesOf(way: string, flags: string[], words?: string) {
-  using dir = tempDir("aot-module-compile", {
-    "other.cjs": `exports.b = "other";\n`,
-    "a.test.mjs": `
+const testFile = (way: string, says = "OUT") => `
       import { test } from "bun:test";
       import Module from "node:module";
       const TEXT = ${JSON.stringify(text)};
       test("t", () => {
         const path = import.meta.dir + "/virtual.cjs";
-        console.error("OUT", (() => { ${way} })());
-      });`,
-  });
+        console.error("${says}", (() => { ${way} })());
+      });`;
+
+const linesOf = (way: string, flags: string[], words?: string) =>
+  linesOfAll({ "a.test.mjs": testFile(way) }, flags, words);
+
+async function linesOfAll(testFiles: Record<string, string>, flags: string[], words?: string) {
+  using dir = tempDir("aot-module-compile", { "other.cjs": `exports.b = "other";\n`, ...testFiles });
   const env = words ? { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words } : bunEnv;
   await using run = Bun.spawn({
     cmd: [bunExe(), "test", ...flags, "--isolate"],
@@ -51,16 +54,42 @@ async function linesOf(way: string, flags: string[], words?: string) {
   return { lines: stderr.split("\n").filter(line => /^(OUT|error)/.test(line)), exitCode };
 }
 
-test.concurrent.each(Object.entries(ways))(
-  "%s",
-  async (_, way) => {
-    const plain = await linesOf(way, []);
-    expect(plain).toEqual({
-      lines: ["OUT zipped | 1 | { a: Map(1) { 1 => 2 } } | other | 0 | virtual.cjs,string,virtual.cjs,false"],
-      exitCode: 0,
-    });
-    expect(await linesOf(way, ["--aot"])).toEqual(plain);
-    expect(await linesOf(way, ["--aot"], "TestRunLayers:2")).toEqual(plain);
-  },
-  240_000,
-);
+// Over layers each test file is a program of its own above what they share, so the ways share a run. AOT_WHOLE_GRIDS=1: a run to each.
+let together: ReturnType<typeof linesOfAll> | undefined;
+async function linesOverLayers(name: string) {
+  const all = Object.entries(ways).map(([, way], index) => [`${index}.test.mjs`, testFile(way, `OUT${index}`)]);
+  const { lines, exitCode } = await (together ??= linesOfAll(
+    Object.fromEntries(all),
+    ["--aot"],
+    "TestRunLayers:2,TestRunPartFiles:1",
+  ));
+  const says = `OUT${Object.keys(ways).indexOf(name)} `;
+  const mine = lines.filter(line => line.startsWith(says) || line.startsWith("error"));
+  return { lines: mine.map(line => line.replace(says, "OUT ")), exitCode };
+}
+
+const plainRuns = new Map<string, ReturnType<typeof linesOf>>();
+const plainOf = (name: string, way: (typeof ways)[keyof typeof ways]) =>
+  plainRuns.getOrInsertComputed(name, () => linesOf(way, []));
+
+test.concurrent.each(Object.entries(ways))("%s: plain Bun", async (name, way) => {
+  const plain = await plainOf(name, way);
+  expect(plain).toEqual({
+    lines: ["OUT zipped | 1 | { a: Map(1) { 1 => 2 } } | other | 0 | virtual.cjs,string,virtual.cjs,false"],
+    exitCode: 0,
+  });
+});
+
+test.concurrent.each(
+  Object.entries(ways).flatMap(([name, way]) =>
+    (
+      [
+        ["as the run builds itself", undefined],
+        ["two layers", "TestRunLayers:2"],
+      ] as const
+    ).map(([form, words]) => [name, form, way, words] as const),
+  ),
+)("%s: %s", async (name, _, way, words) => {
+  const compiled = words && !runsWholeGrids ? linesOverLayers(name) : linesOf(way, ["--aot"], words);
+  expect(await compiled).toEqual(await plainOf(name, way));
+});

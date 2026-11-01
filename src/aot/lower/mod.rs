@@ -84,7 +84,7 @@ pub fn lower_file<'s>(
     file: FileId,
 ) -> Option<LoweredFile> {
     inputs.prepared.note_lowering(file);
-    checker.with_queries(file, inputs.query_inputs(), |queries| {
+    checker.with_queries(file, &inputs.query_inputs(), |queries| {
         lower_with_queries(inputs, queries, file)
     })
 }

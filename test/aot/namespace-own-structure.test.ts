@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { run } from "./harness/run";
+import { runsWholeGrids } from "./harness/ways";
 import { test } from "./supported";
 
 const modules = Object.fromEntries(
@@ -44,6 +45,12 @@ test("end", () => {});
   },
 };
 
+// Each was right as one program, and wrong over so many layers.
+const wasWrongOver: Record<string, string> = {
+  "the test file reads": "TestRunLayers:2",
+  "a file that the test file imports reads": "TestRunLayers:3",
+};
+
 test.each(Object.keys(projects))(
   "%s",
   async name => {
@@ -60,19 +67,17 @@ test.each(Object.keys(projects))(
       });
       return { lines: stdout.split("\n").filter(line => line.startsWith("seen: ")), exitCode };
     };
-    const [plain, oneProgram, twoLayers, threeLayers] = await Promise.all([
+    const [plain, ...compiled] = await Promise.all([
       seenWith("TestRunLayers:0"),
-      seenWith("TestRunLayers:0", "--aot"),
-      seenWith("TestRunLayers:2", "--aot"),
-      seenWith("TestRunLayers:3", "--aot"),
+      ...["TestRunLayers:0", "TestRunLayers:2", "TestRunLayers:3"]
+        .filter(words => runsWholeGrids || words === "TestRunLayers:0" || words === wasWrongOver[name])
+        .map(words => seenWith(words, "--aot")),
     ]);
     expect(plain).toEqual({
       lines: ["seen: by name x of a, y of a", "seen: off the objects x of a, x of b, x of c, y of a, y of b, y of c"],
       exitCode: 0,
     });
-    expect(oneProgram).toEqual(plain);
-    expect(twoLayers).toEqual(plain);
-    expect(threeLayers).toEqual(plain);
+    for (const seen of compiled) expect(seen).toEqual(plain);
   },
   180_000,
 );

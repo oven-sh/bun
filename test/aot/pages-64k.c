@@ -1,12 +1,14 @@
 // LD_PRELOAD=pages-64k.so <program>: the program lives as under a kernel with pages of 64 KB, as far as user space can tell. See pages-64k.test.ts.
 // It is told that a page has 64 KB. mmap answers at multiples of 64 KB and takes whole pages. An address or a file offset that is not at a page's edge is refused
 // with EINVAL, and a length is rounded up to whole pages, so a protection spills over whatever shares the page: all as that kernel does.
+// /proc/self/statm, opened through open(), counts in pages of 64 KB.
 // Not imitated: how the kernel itself maps the executable and the stack, brk, system calls made without libc, and /proc/self/pagemap, which has a word for each page
 // of the real kernel. `bun build --compile` reads that file to find the pages it has written, so `bun build` stays outside.
 // PAGES64K_LOG=1: it says that it is there, and every refusal goes to stderr with the caller's address.
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -57,6 +59,38 @@ unsigned long getauxval(unsigned long type)
     if (!real) real = dlsym(RTLD_NEXT, "getauxval");
     return type == AT_PAGESZ && !isOutside() ? PAGE : real(type);
 }
+
+// The kernel's own counts, each in pages of 64 KB, in a file of their own.
+int open(const char* path, int flags, ...)
+{
+    int mode = 0;
+    if (flags & (O_CREAT | O_TMPFILE)) { va_list arguments; va_start(arguments, flags); mode = va_arg(arguments, int); va_end(arguments); }
+    int fd = syscall(SYS_openat, AT_FDCWD, path, flags, mode);
+    if (fd < 0 || strcmp(path, "/proc/self/statm") || isOutside()) return fd;
+    char counts[256], recounted[256];
+    long length = syscall(SYS_read, fd, counts, sizeof counts - 1);
+    int copy = length > 0 ? syscall(SYS_memfd_create, "statm", (flags & O_CLOEXEC) ? MFD_CLOEXEC : 0) : -1;
+    if (copy < 0) { syscall(SYS_lseek, fd, 0, SEEK_SET); return fd; }
+    syscall(SYS_close, fd);
+    counts[length] = 0;
+    size_t written = 0;
+    for (char* at = counts; *at >= '0' && *at <= '9';) {
+        unsigned long pages = strtoul(at, &at, 10);
+        written += snprintf(recounted + written, sizeof recounted - written, "%lu%c", (pages * 4096 + PAGE - 1) / PAGE, *at == ' ' ? ' ' : '\n');
+        if (*at == ' ') at++;
+    }
+    (void)!write(copy, recounted, written);
+    syscall(SYS_lseek, copy, 0, SEEK_SET);
+    return copy;
+}
+#if defined(__GLIBC__)
+int open64(const char* path, int flags, ...)
+{
+    int mode = 0;
+    if (flags & (O_CREAT | O_TMPFILE)) { va_list arguments; va_start(arguments, flags); mode = va_arg(arguments, int); va_end(arguments); }
+    return open(path, flags, mode);
+}
+#endif
 
 static void* rawMap(void* a, size_t l, int p, int f, int fd, off_t o) { return (void*)syscall(SYS_mmap, a, l, p, f, fd, o); }
 

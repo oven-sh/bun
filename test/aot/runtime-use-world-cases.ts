@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { canTrim, featureOf, withoutFeatures } from "../bundler/compile-trim-features";
@@ -15,6 +15,7 @@ import {
   type Use,
 } from "./runtime-use-expectations";
 import { unsupported } from "./harness/compiler";
+import { describe, test } from "./listed";
 import { declared, of, runtimeUse, tsconfig, withDeclarations } from "./runtime-use-harness";
 
 const groups: [name: string, body: () => void][] = [];

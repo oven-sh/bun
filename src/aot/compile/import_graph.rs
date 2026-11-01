@@ -125,6 +125,10 @@ impl ImportGraph {
         self.file_of_path.get(path).copied()
     }
 
+    pub(crate) fn referrers_of(&self, file: u32) -> &[u32] {
+        &self.referrers[file as usize]
+    }
+
     /// The files that `first` load, themselves included, and what those load in turn. The walk goes through no file that `stops` it.
     pub(crate) fn find_files_loaded_from(
         &self,

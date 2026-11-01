@@ -146,7 +146,6 @@ function readsFirst(...args) {
   return keeps(first, args.length, ...args);
 }
 function countsDown(n, total, ...rest) {
-  "use strict";
   if (!n) return total + rest.length;
   return countsDown(n - 1, total + rest[0], ...rest);
 }

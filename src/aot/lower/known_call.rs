@@ -1235,6 +1235,7 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
             obfuscates: false,
             counts_executions: false,
             imports_are_untyped: false,
+            runs_tests: false,
         };
         let lowered = lower_program(files, options);
         let fragments = lowered.iter().map(|(_, lowered)| &lowered.fragment);

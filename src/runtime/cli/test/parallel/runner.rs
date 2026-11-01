@@ -705,6 +705,8 @@ pub(crate) struct WorkerCommands {
     /// `worker_flush_aggregates`. Whatever lets a timer fire reaches `bail_out`, `Bun.spawnSync` in an executable too, and the flush reaches the
     /// transpiler and the bundler. Held here, only `run_as_worker` names it, and an executable that never runs tests need not hold what it reaches.
     flush_aggregates: FlushAggregates,
+    /// `bail_out` writes no snapshot.
+    ends_at_bail: bool,
 }
 
 type FlushAggregates =
@@ -831,9 +833,6 @@ impl<'a> WorkerLoop<'a> {
         self.cmds.emit(frame::Kind::Ready, |_| {});
 
         loop {
-            // The channel holds no reference on the loop, and a loop that nothing holds polls without sleeping.
-            let mut waits_for_command = bun_io::KeepAlive::init();
-            waits_for_command.ref_(bun_io::js_vm_ctx());
             while self.cmds.pending_file.is_none() && !self.cmds.done {
                 vm.event_loop_ref().tick();
                 if self.cmds.pending_file.is_some() || self.cmds.done {
@@ -841,7 +840,6 @@ impl<'a> WorkerLoop<'a> {
                 }
                 vm.event_loop_ref().auto_tick();
             }
-            waits_for_command.unref(bun_io::js_vm_ctx());
             let Some(PendingFile {
                 idx,
                 exit_code,
@@ -1043,6 +1041,7 @@ pub(crate) fn run_as_worker(
             running: None,
             done: false,
             flush_aggregates: worker_flush_aggregates,
+            ends_at_bail: false,
         },
         files_run: 0,
     };
@@ -1092,11 +1091,14 @@ fn worker_flush_aggregates(
     // Snapshots flush lazily when the next file opens its snapshot file; the
     // last file each worker ran has no successor to trigger that.
     let runner = &mut reporter.jest;
-    let wrote_inline_snapshots = runner
-        .snapshots
-        .write_inline_snapshots(&runner.files)
-        .unwrap_or(false);
-    let _ = runner.snapshots.write_snapshot_file(&runner.files);
+    let wrote_inline_snapshots = cmds.ends_at_bail
+        || runner
+            .snapshots
+            .write_inline_snapshots(&runner.files)
+            .unwrap_or(false);
+    if !cmds.ends_at_bail {
+        let _ = runner.snapshots.write_snapshot_file(&runner.files);
+    }
     if crate::cli::run_compiled::runs_compiled_code() {
         let counted = &runner.snapshots;
         let numbers = [
@@ -1154,6 +1156,7 @@ pub(crate) fn worker_ends_at_bail(reporter: &mut CommandLineReporter, vm: &mut V
     // outlives all callers (process exits before it is dropped).
     let cmds = unsafe { &mut *cmds_ptr };
     cmds.emit_file_done(reporter, vm);
+    cmds.ends_at_bail = true;
     let options = reporter.jest.test_options;
     (cmds.flush_aggregates)(reporter, vm, &options.coverage, cmds);
 }

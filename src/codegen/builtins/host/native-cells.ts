@@ -33,7 +33,6 @@ export const closedPromiseOfStreamCell = "WebStream.closedPromise";
 export const moduleGraphsCell = "ModuleGraph.graphs";
 export const framesOfModuleGraphsCell = "ModuleGraph.frames";
 export const asyncContextCell = "GlobalObject.asyncContext";
-export const cryptoObjectCell = "GlobalObject.crypto";
 export const performanceTimingCell = "Performance.timing";
 export const timelineHandlerCell = "Performance.onresourcetimingbufferfull";
 // What dispatchEvent() was called on: an event answers it as its target.

@@ -1,10 +1,11 @@
-import { afterAll, describe as describeAnywhere, expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isArm64, isASAN, isLinux, isWindows, tempDir } from "harness";
 import { linkSync } from "node:fs";
 import { join } from "node:path";
 import { unsupported } from "./harness/compiler";
 import { run as runCommand } from "./harness/run";
 import { inTurn } from "./harness/shared-builds";
+import { afterAll, describe as describeAnywhere, test } from "./listed";
 
 const describe = unsupported ? describeAnywhere.skip : describeAnywhere.concurrent;
 

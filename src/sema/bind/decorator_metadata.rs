@@ -162,11 +162,18 @@ pub fn find_metadata_binding(
     references: &[ImplicitReference],
     reference: MetadataReference,
 ) -> Option<Binding> {
+    find_metadata_reference(references, reference).map(|found| found.binding)
+}
+
+pub fn find_metadata_reference(
+    references: &[ImplicitReference],
+    reference: MetadataReference,
+) -> Option<ImplicitReference> {
     let found = references.binary_search_by_key(&Some(reference), |entry| match entry.kind {
         ImplicitReferenceKind::DecoratorMetadata(recorded) => Some(recorded),
         ImplicitReferenceKind::JsxFactory | ImplicitReferenceKind::JsxFragment => None,
     });
-    found.ok().map(|index| references[index].binding)
+    found.ok().map(|index| references[index])
 }
 
 pub fn is_legacy_decorated_member(hir: &File<'_>, member: MemberId) -> bool {

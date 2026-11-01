@@ -4,8 +4,10 @@
 //
 //   bun test/aot/perf/step-idioms.ts <the Bun that builds> <where the numbers go, as JSON> [a pattern for the names] [called-once | in-a-very-large-program]
 import { mkdirSync, rmSync, writeFileSync } from "fs";
+import { bunExe } from "harness";
 import { availableParallelism, tmpdir } from "os";
 import { join } from "path";
+import { declare } from "../harness/capabilities";
 import { forms, idiomsInExecutables, type Form, type Surroundings } from "./count-idioms";
 
 /** A turn. */
@@ -20,9 +22,13 @@ export const mostStepsOfTurn = 300_000;
 /** A container may forbid one process to watch another. */
 export function whyNoSteps(bun: string) {
   if (process.platform !== "linux") return "./count-steps.ts watches a process the way Linux lets it";
-  const { stderr } = Bun.spawnSync({ cmd: [bun, join(import.meta.dir, "count-steps.ts"), "/bin/true"], stdout: "ignore", stderr: "pipe", timeout: 60_000 });
-  return /^steps 0 compiled 0 marks 0$/m.test(stderr.toString()) ? undefined : "no process may watch another here";
+  const { stderr, exitCode, signalCode } = Bun.spawnSync({ cmd: [bun, join(import.meta.dir, "count-steps.ts"), "/bin/true"], stdout: "ignore", stderr: "pipe", timeout: 60_000 });
+  const said = stderr.toString();
+  if (/^steps 0 compiled 0 marks 0$/m.test(said)) return undefined;
+  const reason = /^error: (.*)$/m.exec(said)?.[1] ?? said.trim().split("\n").at(-1);
+  return `./count-steps.ts watches no process here: ${reason || `it said nothing and ended with ${signalCode ?? `exit code ${exitCode}`}`}`;
 }
+declare("one process watches another", () => whyNoSteps(bunExe()));
 
 export function steppedIdioms(bun: string, folder: string, chosen: (names: string[]) => string[], surroundings: Surroundings = "ordinary") {
   const { names, run, executableOf, start, startBuilds } = idiomsInExecutables(bun, folder, chosen, [], true, surroundings);

@@ -1,1 +1,2 @@
+// Never alone: it prints the name of its folder
 const say = (...v) => console.log(...v.map(x => typeof x === "function" ? "fn:" + x.name : typeof x === "symbol" ? String(x) : typeof x === "object" && x !== null ? JSON.stringify(x) : String(x))); const tryit = f => { try { return f(); } catch (e) { return e.constructor.name; } }; import l from "./sub/lib.cjs"; import * as e from "./sub/esm.mjs"; say(l, e, import.meta.main);

@@ -7,7 +7,7 @@ use super::errors_operators::{
     language_version,
 };
 use super::infer::Inference;
-use super::shape::{Access, Found};
+use super::shape::{Access, Found, SymbolOfSpread};
 use super::*;
 use crate::bind::{Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId};
 use smallvec::SmallVec;
@@ -3525,41 +3525,21 @@ impl<'p, 's> Checker<'p, 's> {
     /// the literal `e`, which contains a spread. Gives it the literal's symbol and `object_flags`.
     /// Those flags propagate from the types of the members in the source, even from a member that a
     /// later spread overrides.
-    fn with_symbol_of_literal(
-        &mut self,
-        file: FileId,
-        e: ExprId,
-        ty: TypeId,
-        object_flags: ObjectFlags,
-    ) -> TypeId {
+    fn with_symbol_of_literal(&mut self, ty: TypeId, symbol: SymbolOfSpread) -> TypeId {
         match self.data(ty) {
-            TypeData::Union(_) => self.map_type(ty, |c, m| {
-                c.with_symbol_of_literal(file, e, m, object_flags)
-            }),
+            TypeData::Union(_) => self.map_type(ty, |c, m| c.with_symbol_of_literal(m, symbol)),
             // A generic type isn't spread. It becomes `getIntersectionType([left, right])`.
             TypeData::Intersection(parts) => {
                 let parts: Vec<TypeId> = parts
                     .iter()
-                    .map(|&part| self.with_symbol_of_literal(file, e, part, object_flags))
+                    .map(|&part| self.with_symbol_of_literal(part, symbol))
                     .collect();
                 self.intersection(&parts)
             }
-            TypeData::Synth(shape) if shape.literal.is_of_expression() => {
-                let scope = self.enclosing_scope_of_expr(file, e);
-                let mapper = self.identity_mapper_with_adopted(file, scope);
-                let literal = if object_flags.contains(ObjectFlags::NON_INFERRABLE_TYPE) {
-                    Literalness::Partial
-                } else {
-                    shape.literal
-                };
-                self.synth(Shape {
-                    literal,
-                    contains_widening_type: shape.contains_widening_type
-                        || object_flags.contains(ObjectFlags::CONTAINS_WIDENING_TYPE),
-                    symbol_declared_at: Some((file, self.hir(file)[e].pos, e)),
-                    mapper,
-                    ..(**shape).clone_in(self.arena)
-                })
+            TypeData::Synth(shape) if shape.literal.is_of_expression() && !symbol.is_on(shape) => {
+                let mut shape = (**shape).clone_in(self.arena);
+                symbol.put_on(&mut shape);
+                self.synth(shape)
             }
             _ => ty,
         }
@@ -3993,6 +3973,11 @@ impl<'p, 's> Checker<'p, 's> {
         let literal_mapper = self.identity_mapper_with_adopted(file, scope);
         let context = self.object_literal_context(file, e);
         let is_const = context.in_const_context;
+        let symbol_with = |object_flags| SymbolOfSpread {
+            declared_at: (file, hir[e].pos, e),
+            mapper: literal_mapper,
+            object_flags,
+        };
         let mut result = TypeId::EMPTY_OBJECT;
         let mut rank = 0;
         let mut pending = Shape::new_in(self.arena);
@@ -4005,7 +3990,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if let Some(segment) =
                     self.create_object_literal_segment(file, members, &mut pending, is_const)
                 {
-                    result = self.get_spread_type(result, segment, is_const, &mut rank);
+                    result = self.get_spread_type(result, segment, is_const, &mut rank, None);
                 }
                 run = p.0 + 1;
                 let spread = self.type_of_expr(file, prop.value);
@@ -4035,7 +4020,9 @@ impl<'p, 's> Checker<'p, 's> {
                 if self.is_error_type(result) {
                     continue;
                 }
-                result = self.get_spread_type(result, spread, is_const, &mut rank);
+                let is_last = p.0 + 1 == props.start + props.len;
+                let symbol = is_last.then(|| symbol_with(object_flags));
+                result = self.get_spread_type(result, spread, is_const, &mut rank, symbol);
                 continue;
             }
             object_flags |= self.precheck_member(file, p);
@@ -4064,13 +4051,14 @@ impl<'p, 's> Checker<'p, 's> {
         if result == TypeId::EMPTY_OBJECT {
             return self.create_object_literal_type(file, e, props, object_flags, reads);
         }
+        let symbol = symbol_with(object_flags);
         let members = Span::new(run, props.start + props.len - run);
         if let Some(segment) =
             self.create_object_literal_segment(file, members, &mut pending, is_const)
         {
-            result = self.get_spread_type(result, segment, is_const, &mut rank);
+            result = self.get_spread_type(result, segment, is_const, &mut rank, Some(symbol));
         }
-        result = self.with_symbol_of_literal(file, e, result, object_flags);
+        result = self.with_symbol_of_literal(result, symbol);
         // "remap the raw emptyObjectType fed in at the top into a fresh empty object literal type,
         // unique to this use site"
         self.map_type(result, |c, t| {
@@ -4083,7 +4071,7 @@ impl<'p, 's> Checker<'p, 's> {
                 is_js_literal,
                 ..Shape::new_in(c.arena)
             });
-            c.with_symbol_of_literal(file, e, empty, object_flags)
+            c.with_symbol_of_literal(empty, symbol)
         })
     }
 

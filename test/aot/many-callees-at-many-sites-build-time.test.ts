@@ -13,7 +13,8 @@ import { expect } from "bun:test";
 import { bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { run as runCommand } from "./harness/run";
-import { test } from "./supported";
+// One by one: the runner gives this file a process of its own and eight cases at once, beside two more like it: too many builds for four cores.
+import { testOneByOne as test } from "./supported";
 
 const isSlowBuild = isDebug || isASAN;
 const timeout = isSlowBuild ? 480_000 : 90_000;

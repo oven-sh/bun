@@ -6,7 +6,8 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { run } from "./harness/run";
-import { test } from "./supported";
+// One by one: a case builds for minutes, and beside others it would pass its limit where Bun has a sanitizer.
+import { testOneByOne as test } from "./supported";
 
 const classes = {
   "package.json": `{ "name": "p", "type": "module" }`,
@@ -110,8 +111,8 @@ test("a class that a test puts in the place of a global one is made by the proje
   expect(layers).toEqual(plain);
 }, 240_000);
 
-// The table has no object for `crypto`, which is made when it is first read. node:crypto takes it when it is loaded, ahead of the stub.
-// Read off `@natives` it was an object that nobody knew: ./parallel/host-objects/webcrypto-is-the-global-crypto.cjs.
+// `crypto` is an object of the table, so Bun's own code names the object itself, whatever stands on the global object and from when:
+// ./parallel/host-objects/crypto-stored-first.js, and webcrypto-is-the-global-crypto.cjs for the other name of it.
 const stubbed = {
   "package.json": `{ "name": "p", "type": "module" }`,
   "a.test.js": `import { test, vi } from "bun:test";

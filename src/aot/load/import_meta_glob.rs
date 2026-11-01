@@ -238,7 +238,8 @@ impl Writer<'_, '_> {
     }
 
     fn static_import(&mut self, files: &ImportMetaGlobFiles, path: &[u8]) -> ExprId {
-        let number = self.imports.len().to_string();
+        // A file may be expanded twice, and the tree only grows.
+        let number = self.file.exprs.len().to_string();
         let local = (self.atoms).intern(&[LOCAL_NAME_PREFIX, number.as_bytes()].concat());
         if self.is_common_js {
             self.require(files, path, local);
@@ -279,6 +280,7 @@ impl Writer<'_, '_> {
             mode: ResolutionMode::None,
             stmt: StmtId::NONE,
             attributes,
+            loaded_as: Atom::NONE,
         });
         self.file.has_module_syntax = true;
         self.file.is_forced_module = false;

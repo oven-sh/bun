@@ -35,7 +35,8 @@ import { join } from "node:path";
 import { built, spawned } from "./harness/commands";
 import { afterAll } from "./harness/default-timeout";
 import { runtimeEnvironment } from "./harness/flags";
-import { describe, test } from "./supported";
+import { runsWholeGrids } from "./harness/ways";
+import { describe, test } from "./measures";
 
 const measuredPlaces = 40;
 const surroundings = ["statements", "one statement", "one function"] as const;
@@ -102,7 +103,8 @@ console.log(JSON.stringify({ messages, milliseconds, last: (held.last as (a: num
 const inOneLine = (text: string) => text.replaceAll("\n", "");
 
 const short = 20;
-const long = 12_000;
+// Of the searches that this file is there for, the cheapest took seven times what is allowed at 12,000, and each grows with the file.
+const long = runsWholeGrids ? 12_000 : 6_000;
 const programs = {
   "short": program(short),
   "long": program(long),

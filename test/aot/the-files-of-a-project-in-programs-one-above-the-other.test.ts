@@ -1,7 +1,8 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { afterAll } from "./harness/default-timeout";
 import { run } from "./harness/run";
-import { test } from "./supported";
+import { beforeAll, test } from "./supported";
 
 // `bun test --aot` in layers: the packages are one program, the files of the project a second above it. A build takes memory by the
 // size of its program, and a project can be much larger than its packages. `TestRunLayers:3` and more cut the files of the project
@@ -95,30 +96,51 @@ async function runTests(directory: string, words: string, ...flags: string[]) {
   return { went, circles, seen: { stdout: printed.sort(), results: results.sort(), exitCode } };
 }
 
-test("a test sees the same wherever the files of the project are built", async () => {
-  using dir = tempDir("aot-the-files-of-a-project-in-programs", files);
-  const plain = await runTests(String(dir), "");
+let dir: ReturnType<typeof tempDir> | undefined;
+let plain: Awaited<ReturnType<typeof runTests>>;
+beforeAll(async () => {
+  dir = tempDir("aot-the-files-of-a-project-in-programs", files);
+  plain = await runTests(String(dir), "");
+});
+afterAll(() => dir?.[Symbol.dispose]());
+const built = (words: string) => runTests(String(dir), words, "--aot");
+
+test("what a test sees under plain Bun", () => {
   expect(plain.seen.results.length).toBe(4);
   expect(plain.seen.exitCode).toBe(0);
   expect(plain.seen.stdout).toContain("mocked 10");
   expect(plain.seen.stdout).toContain("spied bA Ab 2");
+});
 
-  const [two, none, half, all, four] = await Promise.all([
-    runTests(String(dir), "TestRunLayers:2", "--aot"),
-    runTests(String(dir), "TestRunLayers:3,TestRunLowestPercent:0", "--aot"),
-    runTests(String(dir), "TestRunLayers:3", "--aot"),
-    runTests(String(dir), "TestRunLayers:3,TestRunLowestPercent:100", "--aot"),
-    runTests(String(dir), "TestRunLayers:4", "--aot"),
-  ]);
-  expect(two).toEqual({ went: [], circles: [], seen: plain.seen });
-  expect(none).toEqual({ went: [[0, 8]], circles: [2], seen: plain.seen });
+const sameWherever = "a test sees the same wherever the files of the project are built: ";
+test.concurrent(sameWherever + "in one program", async () => {
+  expect(await built("TestRunLayers:2")).toEqual({ went: [], circles: [], seen: plain.seen });
+});
+test.concurrent(sameWherever + "in two, and none goes down", async () => {
+  expect(await built("TestRunLayers:3,TestRunLowestPercent:0")).toEqual({
+    went: [[0, 8]],
+    circles: [2],
+    seen: plain.seen,
+  });
+});
+test.concurrent(sameWherever + "in two", async () => {
+  const half = await built("TestRunLayers:3");
   expect(half.seen).toEqual(plain.seen);
   expect(half.went.length).toBe(1);
   expect(half.went[0][0]).toBeWithin(1, 8);
+});
+test.concurrent(sameWherever + "in two, and all go down", async () => {
   // The two that import one another go together, and what imports them goes behind them.
-  expect(all).toEqual({ went: [[8, 8]], circles: [2], seen: plain.seen });
+  expect(await built("TestRunLayers:3,TestRunLowestPercent:100")).toEqual({
+    went: [[8, 8]],
+    circles: [2],
+    seen: plain.seen,
+  });
+});
+test.concurrent(sameWherever + "in three", async () => {
+  const four = await built("TestRunLayers:4");
   expect(four.seen).toEqual(plain.seen);
   // The second of them looks at what the first has left.
   expect(four.went.length).toBe(2);
   expect(four.went[1][1]).toBe(8 - four.went[0][0]);
-}, 240_000);
+});

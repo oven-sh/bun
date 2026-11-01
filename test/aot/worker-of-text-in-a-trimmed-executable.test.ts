@@ -1,9 +1,10 @@
 // Each file of the program makes a Worker from text and prints what the Worker reports.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { canTrim } from "../bundler/compile-trim-features";
 import { unsupported } from "./harness/compiler";
 import { run } from "./harness/run";
 import { sharedBuilds } from "./harness/shared-builds";
+import { test } from "./listed";
 
 const text = `postMessage("ran")`;
 const listen = (name: string) => `

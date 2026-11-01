@@ -13,7 +13,8 @@ import { run } from "./harness/run";
 import { test } from "./supported";
 
 const itemsOfModule = 40;
-const bytesOfProject = 20_000_000;
+// The smallest that leaves room between the limits: below 11 MB a run that does not fit as one program is cut at once, so no limit brings layers and one program.
+const bytesOfProject = 14_000_000;
 
 function moduleAt(index: number) {
   const items = Array.from({ length: itemsOfModule }, (_, item) => {
@@ -64,8 +65,8 @@ test.skipIf(isASAN)(
     expect(plain.exitCode).toBe(0);
     const largest: Record<string, number> = {};
     for (const [limit, programs] of [
-      ["760MB", 1],
-      ["560MB", 2],
+      ["505MB", 1],
+      ["445MB", 2],
     ] as const) {
       const { stdout, stderr, exitCode } = await run(
         [bunExe(), "test", "--aot", "--parallel=4", `--aot-memory-limit=${limit}`],
@@ -95,7 +96,7 @@ test.skipIf(isASAN)(
       expect({ builds: took.length, compared: compared.length }).toEqual({ builds: programs, compared: programs });
       largest[limit] = Math.max(...took);
     }
-    expect(largest["560MB"]).toBeLessThan(largest["760MB"] * 0.7);
+    expect(largest["445MB"]).toBeLessThan(largest["505MB"] * 0.7);
   },
-  900_000,
+  300_000,
 );

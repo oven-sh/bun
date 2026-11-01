@@ -26,17 +26,18 @@ pub(super) fn find_container_binding(
     from: ScopeId,
     container: SymbolId,
 ) -> SymbolId {
-    let names_container =
-        |binding: &SymbolId| bound.export_symbol_of_value_symbol_if_exported(*binding) == container;
     let found = scope_chain(bound, from).find_map(|scope| {
-        let binding = match bound.scopes[scope.idx()].kind {
-            ScopeKind::Module(module) => bound.declared_symbol(Decl::Module(module)).some(),
-            ScopeKind::Enum(declaration) => bound.declared_symbol(Decl::Enum(declaration)).some(),
-            _ => None,
+        let declaration = match bound.scopes[scope.idx()].kind {
+            ScopeKind::Module(module) => Decl::Module(module),
+            ScopeKind::Enum(declaration) => Decl::Enum(declaration),
+            _ => return None,
         };
-        binding.filter(names_container)
+        let binding = bound.declared_symbol(declaration).some()?;
+        let names_container = bound.export_symbol_of_value_symbol_if_exported(binding) == container
+            || bound.symbol_of_declaration(declaration) == container;
+        names_container.then_some(binding)
     });
-    found.unwrap_or(container)
+    found.unwrap_or_else(|| bound.file_binding(container))
 }
 
 pub(super) fn scope_chain(bound: &Bound<'_>, from: ScopeId) -> impl Iterator<Item = ScopeId> {

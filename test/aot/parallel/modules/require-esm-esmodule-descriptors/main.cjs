@@ -70,3 +70,51 @@ import("./e7.mjs").then(ns => {
   show("prevent", () => Object.preventExtensions(require("./e9.mjs")) && "prevented");
   show("define behind prevent", () => Object.defineProperty(require("./e9.mjs"), "__esModule", { value: "late" }) && describe(require("./e9.mjs")));
 });
+/* Output:
+fresh {"value":true,"own":false,"in":true,"keys":["x","Symbol(Symbol.toStringTag)"],"names":["x"],"extensible":true,"frozen":false,"sealed":false}
+define string true
+after {"value":"defined","own":true,"in":true,"keys":["x","__esModule","Symbol(Symbol.toStringTag)"],"names":["x"],"d":{"value":"defined","writable":false,"enumerable":false,"configurable":false,"get":"undefined","set":"undefined"},"extensible":true,"frozen":false,"sealed":false}
+define again throws TypeError: Attempting to change value of a readonly property.
+after {"value":"defined","own":true,"in":true,"keys":["x","__esModule","Symbol(Symbol.toStringTag)"],"names":["x"],"d":{"value":"defined","writable":false,"enumerable":false,"configurable":false,"get":"undefined","set":"undefined"},"extensible":true,"frozen":false,"sealed":false}
+assign {"value":"defined","own":true,"in":true,"keys":["x","__esModule","Symbol(Symbol.toStringTag)"],"names":["x"],"d":{"value":"defined","writable":false,"enumerable":false,"configurable":false,"get":"undefined","set":"undefined"},"extensible":true,"frozen":false,"sealed":false}
+strict assign throws TypeError: Attempted to assign to readonly property.
+delete true {"value":"defined","own":true,"in":true,"keys":["x","__esModule","Symbol(Symbol.toStringTag)"],"names":["x"],"d":{"value":"defined","writable":false,"enumerable":false,"configurable":false,"get":"undefined","set":"undefined"},"extensible":true,"frozen":false,"sealed":false}
+define writable true
+after {"value":1,"own":true,"in":true,"keys":["x","__esModule","Symbol(Symbol.toStringTag)"],"names":["x"],"d":{"value":1,"writable":true,"enumerable":true,"configurable":true,"get":"undefined","set":"undefined"},"extensible":true,"frozen":false,"sealed":false}
+assign {"value":2,"own":true,"in":true,"keys":["x","__esModule","Symbol(Symbol.toStringTag)"],"names":["x"],"d":{"value":2,"writable":true,"enumerable":true,"configurable":true,"get":"undefined","set":"undefined"},"extensible":true,"frozen":false,"sealed":false}
+delete true {"value":2,"own":true,"in":true,"keys":["x","__esModule","Symbol(Symbol.toStringTag)"],"names":["x"],"d":{"value":2,"writable":true,"enumerable":true,"configurable":true,"get":"undefined","set":"undefined"},"extensible":true,"frozen":false,"sealed":false}
+reflect delete true {"value":2,"own":true,"in":true,"keys":["x","__esModule","Symbol(Symbol.toStringTag)"],"names":["x"],"d":{"value":2,"writable":true,"enumerable":true,"configurable":true,"get":"undefined","set":"undefined"},"extensible":true,"frozen":false,"sealed":false}
+spread {"x":1,"__esModule":2}
+for in x
+define getter true
+after {"value":"got","own":true,"in":true,"keys":["x","__esModule","Symbol(Symbol.toStringTag)"],"names":["x"],"d":{"get":"function","set":"undefined","enumerable":false,"configurable":true},"extensible":true,"frozen":false,"sealed":false}
+define true true
+after {"value":true,"own":true,"in":true,"keys":["x","__esModule","Symbol(Symbol.toStringTag)"],"names":["x"],"d":{"value":true,"writable":false,"enumerable":false,"configurable":false,"get":"undefined","set":"undefined"},"extensible":true,"frozen":false,"sealed":false}
+define false throws TypeError: Attempting to change value of a readonly property.
+after {"value":true,"own":true,"in":true,"keys":["x","__esModule","Symbol(Symbol.toStringTag)"],"names":["x"],"d":{"value":true,"writable":false,"enumerable":false,"configurable":false,"get":"undefined","set":"undefined"},"extensible":true,"frozen":false,"sealed":false}
+assign first {"own":false,"in":true,"keys":["x","Symbol(Symbol.toStringTag)"],"names":["x"],"extensible":true,"frozen":false,"sealed":false}
+assign true {"value":true,"own":false,"in":true,"keys":["x","Symbol(Symbol.toStringTag)"],"names":["x"],"extensible":true,"frozen":false,"sealed":false}
+assign text {"value":true,"own":false,"in":true,"keys":["x","Symbol(Symbol.toStringTag)"],"names":["x"],"extensible":true,"frozen":false,"sealed":false}
+define empty true
+after {"own":true,"in":true,"keys":["x","__esModule","Symbol(Symbol.toStringTag)"],"names":["x"],"d":{"writable":false,"enumerable":false,"configurable":false,"get":"undefined","set":"undefined"},"extensible":true,"frozen":false,"sealed":false}
+reflect define true
+after {"own":true,"in":true,"keys":["x","__esModule","Symbol(Symbol.toStringTag)"],"names":["x"],"d":{"writable":false,"enumerable":false,"configurable":false,"get":"undefined","set":"undefined"},"extensible":true,"frozen":false,"sealed":false}
+reflect define other false
+define other throws TypeError: Attempting to define property on object that is not extensible.
+reflect set false
+after {"own":true,"in":true,"keys":["x","__esModule","Symbol(Symbol.toStringTag)"],"names":["x"],"d":{"writable":false,"enumerable":false,"configurable":false,"get":"undefined","set":"undefined"},"extensible":true,"frozen":false,"sealed":false}
+own export {"value":"own export","own":true,"in":true,"keys":["__esModule","x","Symbol(Symbol.toStringTag)"],"names":["__esModule","x"],"d":{"value":"own export","writable":true,"enumerable":true,"configurable":false,"get":"undefined","set":"undefined"},"extensible":true,"frozen":false,"sealed":false}
+define over export throws TypeError: Cannot replace module namespace object's binding's value
+assign over export {"value":"own export","own":true,"in":true,"keys":["__esModule","x","Symbol(Symbol.toStringTag)"],"names":["__esModule","x"],"d":{"value":"own export","writable":true,"enumerable":true,"configurable":false,"get":"undefined","set":"undefined"},"extensible":true,"frozen":false,"sealed":false}
+imported fresh {"own":false,"in":true,"keys":["x","Symbol(Symbol.toStringTag)"],"names":["x"],"extensible":false,"frozen":false,"sealed":true}
+imported define throws TypeError: Attempting to define property on object that is not extensible.
+imported after {"own":false,"in":true,"keys":["x","Symbol(Symbol.toStringTag)"],"names":["x"],"extensible":false,"frozen":false,"sealed":true}
+required same true
+required after {"value":true,"own":false,"in":true,"keys":["x","Symbol(Symbol.toStringTag)"],"names":["x"],"extensible":false,"frozen":false,"sealed":true}
+imported assign {"own":false,"in":true,"keys":["x","Symbol(Symbol.toStringTag)"],"names":["x"],"extensible":false,"frozen":false,"sealed":true}
+then required {"value":true,"own":false,"in":true,"keys":["x","Symbol(Symbol.toStringTag)"],"names":["x"],"extensible":false,"frozen":false,"sealed":true}
+freeze throws TypeError: Cannot change module namespace object's binding to non-writable attribute
+seal sealed
+prevent prevented
+define behind prevent throws TypeError: Attempting to define property on object that is not extensible.
+*/

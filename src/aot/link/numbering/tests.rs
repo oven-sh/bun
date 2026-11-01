@@ -162,7 +162,7 @@ fn emit_references(builder: &mut FunctionBuilder, names: &[Reference]) {
             ),
             Reference::Data(id) => builder.data(id),
             Reference::Module(id, ModuleReferenceKind::Target) => {
-                builder.module_namespace(id, ImportPhase::Evaluation)
+                builder.module_namespace(id, ImportPhase::Evaluation, false, false)
             }
             Reference::Module(_, ModuleReferenceKind::Referrer)
             | Reference::String(_)

@@ -1,18 +1,31 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { raiseDefaultTimeout } from "./harness/default-timeout";
+import { afterAll, raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
-import { test } from "./supported";
+import { beforeAll, test } from "./supported";
 
 raiseDefaultTimeout(120_000);
 
 // An extension imports a module that only its host has, and its tests mock it. Where the run is built as several programs, the file
 // that imports the name lies in another program than the test file that mocks it, and that program's build has to hear of the mock.
-test("a mock of a module that is on no disk reaches the files of the project that import it", async () => {
+let dir: ReturnType<typeof tempDir> | undefined;
+let plain: Awaited<ReturnType<typeof report>>;
+async function report(words: string, ...flags: string[]) {
+  const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words };
+  const { stdout, stderr, exitCode } = await run(
+    [bunExe(), "test", "--isolate", "--parallel=2", ...flags],
+    String(dir),
+    env,
+  );
+  const lines = (stdout + "\n" + stderr).split("\n").filter(line => line.startsWith("| "));
+  return { lines: lines.sort(), ran: stderr.match(/^Ran \d+ tests? across \d+ files?/m)?.[0], exitCode };
+}
+
+beforeAll(async () => {
   const mocked = (tag: string) =>
     `mock.module("only-in-the-host", () => ({ window: { title: "mocked ${tag}" }, version: "${tag}", default: { name: "default ${tag}" } }));`;
   const head = (tag: string) => `import { beforeAll, mock, test } from "bun:test";\n${mocked(tag)}\n`;
-  using dir = tempDir("aot-test-run-mock-on-no-disk", {
+  dir = tempDir("aot-test-run-mock-on-no-disk", {
     "package.json": `{ "name": "p", "type": "module" }`,
     "tsconfig.json": "{}",
     "src/namespace.ts": `// @ts-ignore\nimport * as host from "only-in-the-host";\nexport function title(): string { return host.window.title; }\n`,
@@ -45,17 +58,11 @@ test("a mock of a module that is on no disk reaches the files of the project tha
       `test("i", async () => { console.log("|", "i", required(), await imported()); });\n`,
     "h.test.ts": `import { test } from "bun:test";\ntest("h", async () => { if (process.argv.length > 90) await import("./src/namespace"); console.log("|", "h", "no mock, and the import never runs"); });\n`,
   });
-  async function report(words: string, ...flags: string[]) {
-    const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words };
-    const { stdout, stderr, exitCode } = await run(
-      [bunExe(), "test", "--isolate", "--parallel=2", ...flags],
-      String(dir),
-      env,
-    );
-    const lines = (stdout + "\n" + stderr).split("\n").filter(line => line.startsWith("| "));
-    return { lines: lines.sort(), ran: stderr.match(/^Ran \d+ tests? across \d+ files?/m)?.[0], exitCode };
-  }
-  const plain = await report("");
+  plain = await report("");
+});
+afterAll(() => dir?.[Symbol.dispose]());
+
+test("under plain Bun a mock of a module that is on no disk reaches the files of the project that import it", () => {
   expect(plain).toEqual({
     lines: [
       "| a mocked a",
@@ -71,6 +78,11 @@ test("a mock of a module that is on no disk reaches the files of the project tha
     ran: "Ran 9 tests across 9 files",
     exitCode: 0,
   });
-  for (const words of ["TestRunLayers:0", "TestRunLayers:1", "TestRunLayers:2", "TestRunLayers:2,TestRunPartFiles:1"])
-    expect({ words, ...(await report(words, "--aot")) }).toEqual({ words, ...plain });
 });
+
+test.each(["TestRunLayers:0", "TestRunLayers:1", "TestRunLayers:2", "TestRunLayers:2,TestRunPartFiles:1"])(
+  "a mock of a module that is on no disk reaches the files of the project that import it: %s",
+  async words => {
+    expect({ words, ...(await report(words, "--aot")) }).toEqual({ words, ...plain });
+  },
+);

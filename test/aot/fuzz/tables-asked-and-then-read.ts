@@ -55,6 +55,12 @@ export function shapeOf(random: Random, name: string, typed: boolean): Shape {
     [2, "if (i === w) n.delete(k);"],
     [isSet ? 0 : 2, "n.set({ id: 100 + i }, i);"],
     [isSet ? 0 : 1, "n.set(k, undefined);"],
+    // What only reads a table. One search may still answer both questions across these, so a search that left something behind would show.
+    [3, 't += n.has(keys[i + 1]) ? "h" : "a";'],
+    [isSet ? 0 : 3, "t += shown(n.get(keys[i + 1]));"],
+    [2, "t += n.size;"],
+    [2, "void n.keys().next();"],
+    [isSet ? 0 : 1, "t += shown(n.get(keys[i + 1])) + n.size; void n.values().next();"],
   ] as const);
   const otherwise = random.weighted([
     [4, ""],

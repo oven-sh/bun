@@ -5,7 +5,9 @@ import { expect } from "bun:test";
 import { symlinkSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
-import { test } from "./supported";
+import { afterAll } from "./harness/default-timeout";
+import { waysFor } from "./harness/ways";
+import { beforeAll, describe, test } from "./supported";
 
 const files = {
   "package.json": `{ "name": "p" }`,
@@ -35,18 +37,28 @@ async function run(dir: string, flags: string[], words = "") {
 }
 
 // The build above begins beside the one below on unix alone.
-test.skipIf(isWindows)(
-  "the project's program is begun once",
-  async () => {
-    using folder = tempDir("aot-linked-package-behind-a-computed-import", files);
+describe.skipIf(isWindows)("the project's program is begun once", () => {
+  let folder: ReturnType<typeof tempDir> | undefined;
+  let plain: Awaited<ReturnType<typeof run>>;
+  beforeAll(async () => {
+    folder = tempDir("aot-linked-package-behind-a-computed-import", files);
     const dir = String(folder);
     symlinkSync(join(".store", "tools@1.0.0", "node_modules", "tools"), join(dir, "node_modules", "tools"), "dir");
-    const plain = await run(dir, ["--isolate"]);
+    plain = await run(dir, ["--isolate"]);
+  });
+  afterAll(() => folder?.[Symbol.dispose]());
+
+  test("plain Bun", () => {
     expect(plain).toEqual({ printed: ["OUT a tools one", "OUT b tools two"], begun: 0, exitCode: 0 });
-    const once = { ...plain, begun: 1 };
-    expect(await run(dir, ["--aot", "--isolate"], "TestRunLayers:2")).toEqual(once);
-    expect(await run(dir, ["--aot", "--isolate"], "TestRunLayers:3")).toEqual(once);
-    expect(await run(dir, ["--aot", "--parallel=2", "--aot-memory-limit=1KB"])).toEqual(once);
-  },
-  240_000,
-);
+  });
+
+  // The guess failed over two layers: that way is the witness. So small a run of two workers asks about no file.
+  const ways: [string, string[], string][] = [
+    ["two layers", ["--aot", "--isolate"], "TestRunLayers:2"],
+    ["three layers", ["--aot", "--isolate"], "TestRunLayers:3"],
+    ["two workers, and no memory to spare", ["--aot", "--parallel=2", "--aot-memory-limit=1KB"], ""],
+  ];
+  test.each([...waysFor(ways, false)])("%s", async (_, flags, words) => {
+    expect(await run(String(folder), flags, words)).toEqual({ ...plain, begun: 1 });
+  });
+});

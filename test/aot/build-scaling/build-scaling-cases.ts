@@ -51,7 +51,11 @@
 //
 // The shapes are dealt out over the files build-scaling-<part>.test.ts by what they cost, so that the few builds that take long run side by side.
 //
-//   bun test test/aot/build-scaling                                     all shapes (a minute on eight cores)
+// In front of a merge one shape in five is built, another fifth each day, and the builds of all shapes together every time. The benches build every shape behind every
+// build of the compiler. So does whoever changes what a pass does in one function, before it lands.
+//
+//   bun test test/aot/build-scaling                                     a fifth of the shapes
+//   AOT_WHOLE_GRIDS=1 bun test test/aot/build-scaling                   all shapes (a minute on eight cores)
 //   AOT_BUILD_SCALING=wrappers bun test test/aot/build-scaling          the shapes whose name contains the text
 //   AOT_BUILD_SCALING_FACTOR=2 bun test test/aot/build-scaling          all sizes twice as large; no budget is held against them
 //   AOT_BUDGETS=lower bun test test/aot/build-scaling                   writes every number that got better into the file;
@@ -69,8 +73,9 @@ import { readBuildReport } from "../harness/build-report";
 import { slot, spawned, withoutDebugInformation } from "../harness/commands";
 import { withReport, withThreads } from "../harness/flags";
 import { measureUntilWithinBounds } from "../harness/measure-again";
+import { partOfGrid } from "../harness/ways";
 import { describe, test } from "../supported";
-import { lowerRecordedGrowth, type Growth } from "./recorded-growth";
+import { lowerRecordedGrowth, mostGrowth, type Growth } from "./recorded-growth";
 import { shapes, type Shape } from "./shapes";
 
 interface Budget {
@@ -86,7 +91,6 @@ interface Budget {
 
 type Built = Cost & { counts: Record<string, number> };
 
-const mostGrowth = 2.5;
 const leastBytesJudged = 96 * 1024 * 1024;
 const leastInstructionsJudged = 300_000_000;
 // What a budget leaves to the changes that every week brings. A step that explodes passes it at once.
@@ -311,9 +315,11 @@ export const buildScaling = (part: number, parts: number) =>
         );
 
     const partOf = dealOut(parts);
+    // A name that is asked for is built, and so is every shape where the file is written.
+    const drawn = new Set(wanted || mode ? shapes : partOfGrid("build-scaling", shapes, 5, shape => shape.name));
     // A slot goes to whoever asked first: the largest builds begin first, and the small ones fill what is left beside them.
     for (const shape of dearestFirst) {
-      if (!shape.name.includes(wanted) || partOf.get(shape) !== part) continue;
+      if (!shape.name.includes(wanted) || partOf.get(shape) !== part || !drawn.has(shape)) continue;
       test.skipIf(!judgesEveryShape && !shape.counts && !addsMemoryThatIsJudged(shape)).concurrent(
         shape.name,
         async () => {
@@ -327,7 +333,13 @@ export const buildScaling = (part: number, parts: number) =>
             return addedByTwice < least ? undefined : addedByTwice / Math.max(added, leastDivisor);
           };
           // Most shapes are the same program at size 0, so each of its builds says what that program needs.
-          const nothing = JSON.stringify([shape.write(0), shape.entry, shape.flags, shape.isBundledFirst, shape.isTestRun]);
+          const nothing = JSON.stringify([
+            shape.write(0),
+            shape.entry,
+            shape.flags,
+            shape.isBundledFirst,
+            shape.isTestRun,
+          ]);
           const grownInMemory = ([none, once, twice]: Costs) => {
             const peakBytes = Math.min(none.peakBytes, leastPeakOfNothing.get(nothing) ?? Infinity);
             leastPeakOfNothing.set(nothing, peakBytes);

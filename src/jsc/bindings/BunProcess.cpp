@@ -4020,7 +4020,7 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSC::JSFunction* getStdioWriteStream = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetStdioWriteStreamCodeGenerator(vm), globalObject);
-    if (JSC::AOT::isNeededByNothingThatRuns(getStdioWriteStream)) {
+    if (vm.hasCompiledCode() && JSC::AOT::isNeededByNothingThatRuns(getStdioWriteStream)) {
         JSValue stream = constructLightStdioWriteStream(globalObject, processObject, fd);
         return scope.exception() ? JSValue() : stream;
     }
@@ -4169,7 +4169,7 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSC::JSFunction* getStdinStream = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetStdinStreamCodeGenerator(vm), globalObject);
     JSC::MarkedArgumentBuffer args;
-    if (JSC::AOT::isNeededByNothingThatRuns(getStdinStream)) {
+    if (vm.hasCompiledCode() && JSC::AOT::isNeededByNothingThatRuns(getStdinStream)) {
         getStdinStream = JSC::JSFunction::create(vm, globalObject, stdioGetLightStdinStreamCodeGenerator(vm), globalObject);
         if (JSC::AOT::isNeededByNothingThatRuns(getStdinStream)) {
             JSValue stream = constructBareStream(globalObject, processObject, STDIN_FILENO, {});

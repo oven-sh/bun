@@ -1,4 +1,6 @@
 import { bunEnv, bunExe } from "harness";
+import { declare } from "./capabilities";
+import { unsupported } from "./compiler";
 import { buildFlags } from "./flags";
 
 export type LimitPurpose = "compileTime" | "codeSize" | "bitWidth";
@@ -47,3 +49,5 @@ export function isDeclared(list: RegistryList, name: string): boolean {
 export function findLimit(name: string): LimitDeclaration | undefined {
   return registry().limits.find(limit => limit.name === name);
 }
+
+declare("the words that break a build on purpose", () => unsupported ?? (registry().sabotages?.length ? undefined : "this build lists none"));

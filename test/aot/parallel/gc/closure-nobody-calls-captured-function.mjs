@@ -1,4 +1,5 @@
 // A function that the program calls once makes an object, and a closure that nobody calls names it. Nothing else names the object, so it is let go of while the function waits and behind its return.
+// Todo alone under --aot-validate --aot-check=ValidateBackEnd: Not every time: a build that validates the back end keeps registers alive for longer, and the collector finds the object in one: lines print that it is kept
 let last;
 function make(n) {
   const made = { n };

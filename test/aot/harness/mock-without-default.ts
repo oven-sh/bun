@@ -3,7 +3,7 @@
 // call on it throws a TypeError in each test, and `typeof` says "undefined".
 // A compiled run refused the link instead (SyntaxError: Missing 'default' export), as `bun test` did before it followed Vitest on module mocks. Over
 // layers the package lies in another image than its importer, which asks the record of the file.
-import { expect } from "bun:test";
+import { afterAll, expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { test } from "../supported";
 
@@ -15,57 +15,89 @@ const importers = {
   "the namespace": `import * as validator from "validator";\nexport const check = () => validator.isEmail() + String(validator.default);\n`,
   "require": `const validator = require("validator");\nexport const check = () => validator.isEmail();\n`,
 };
+const names = Object.keys(importers) as (keyof typeof importers)[];
 
-async function run(dir: string, flags: string[], words = "") {
-  await using child = Bun.spawn({
-    cmd: [bunExe(), "test", ...flags],
-    cwd: dir,
-    env: { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  const [stderr, exitCode] = await Promise.all([child.stderr.text(), child.exited]);
-  const lines = stderr.replaceAll(dir, "<dir>").split("\n");
-  return { lines: [...new Set(lines.filter(line => /^OUT|Error: /.test(line)))].sort(), exitCode };
-}
+// The importers are the files of one project, each with two test files of its own: a1.test.ts and b1.test.ts import src/check-1.ts.
+const project: Record<string, string> = {
+  "package.json": `{ "name": "p" }`,
+  "bunfig.toml": `[test]\npreload = ["./setup.ts"]\n`,
+  "node_modules/validator/package.json": `{ "name": "validator", "main": "index.js" }`,
+  "node_modules/validator/index.js": `exports.isEmail = () => "real";\n`,
+  "setup.ts": `import { mock } from "bun:test";\nmock.module("validator", () => ({ isEmail: () => "mocked in the setup file" }));\n`,
+};
+names.forEach((name, index) => {
+  project[`src/check-${index + 1}.ts`] = importers[name];
+  for (const letter of ["a", "b"])
+    project[`${letter}${index + 1}.test.ts`] =
+      `import { test } from "bun:test";\nimport { check } from "./src/check-${index + 1}";\ntest("${letter}", () => { console.error("OUT ${letter}", check()); });\n`;
+});
 
 type Way = { flags: string[]; words?: string };
+type Run = { linesOf: Map<string, string[]>; exitCode: number };
 
 /**
- * Every way is a compiled run of each project, held to a plain run. A run in layers compiles Bun's own library too, under a sanitizer
- * most of a minute of processor time, so the ways are dealt to several test files, and each file makes the plain runs for itself.
- * The projects come one behind the other: beside other files that build, more builds at once only make each test longer.
+ * Every way is one compiled run of the project, held to a plain run importer by importer. A run in layers compiles Bun's own library too, under a
+ * sanitizer most of a minute of processor time, whatever the project holds. The ways are dealt to several test files, and each file makes the
+ * plain run for itself. The runs come one behind the other: beside other files that build, more builds at once only make each test longer.
  */
 export function answersAsPlainBunTest(ways: Way[]) {
-  test.each(Object.entries(importers))(
-    "%s",
-    async (name, importer) => {
-      using folder = tempDir("aot-mock-without-a-default-over-layers", {
-        "package.json": `{ "name": "p" }`,
-        "bunfig.toml": `[test]\npreload = ["./setup.ts"]\n`,
-        "node_modules/validator/package.json": `{ "name": "validator", "main": "index.js" }`,
-        "node_modules/validator/index.js": `exports.isEmail = () => "real";\n`,
-        "setup.ts": `import { mock } from "bun:test";\nmock.module("validator", () => ({ isEmail: () => "mocked in the setup file" }));\n`,
-        "src/check.ts": importer,
-        "a.test.ts": `import { test } from "bun:test";\nimport { check } from "./src/check";\ntest("a", () => { console.error("OUT a", check()); });\n`,
-        "b.test.ts": `import { test } from "bun:test";\nimport { check } from "./src/check";\ntest("b", () => { console.error("OUT b", check()); });\n`,
+  let folder: ReturnType<typeof tempDir> | undefined;
+  afterAll(() => folder?.[Symbol.dispose]());
+  const runs = new Map<string, Promise<Run>>();
+  let last: Promise<unknown> = Promise.resolve();
+
+  function ran(flags: string[], words = "") {
+    return runs.getOrInsertComputed(JSON.stringify([flags, words]), () => {
+      const run = last.then(async () => {
+        const dir = String((folder ??= tempDir("aot-mock-without-a-default-over-layers", project)));
+        await using child = Bun.spawn({
+          cmd: [bunExe(), "test", ...flags],
+          cwd: dir,
+          env: { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words },
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        const [stderr, exitCode] = await Promise.all([child.stderr.text(), child.exited]);
+        // What a test file prints stands under its name.
+        const linesOf = new Map<string, string[]>();
+        let importer = "";
+        for (const line of stderr.replaceAll(dir, "<dir>").split("\n")) {
+          const [, number] = line.match(/^[ab](\d)\.test\.ts:$/) ?? [];
+          if (number) importer = names[Number(number) - 1];
+          else if (/^OUT|Error: /.test(line)) linesOf.getOrInsertComputed(importer, () => []).push(line);
+        }
+        for (const [name, lines] of linesOf) linesOf.set(name, [...new Set(lines)].sort());
+        return { linesOf, exitCode };
       });
-      const dir = String(folder);
-      const plain = await run(dir, ["--isolate"]);
-      if (name === "the default") {
-        expect(plain).toEqual({
-          lines: ["TypeError: undefined is not an object (evaluating 'validator.isEmail')"],
-          exitCode: 1,
-        });
-      } else if (name === "the default and a name") {
-        expect(plain).toEqual({
-          lines: ["OUT a mocked in the setup fileundefined", "OUT b mocked in the setup fileundefined"],
-          exitCode: 0,
-        });
-      } else {
-        expect(plain.exitCode).toBe(0);
-      }
-      for (const { flags, words } of ways) expect(await run(dir, ["--aot", ...flags], words)).toEqual(plain);
+      last = run.catch(() => {});
+      return run;
+    });
+  }
+
+  test.each(names)(
+    "%s",
+    async name => {
+      const plain = (await ran(["--isolate"])).linesOf.get(name);
+      if (name === "the default")
+        expect(plain).toEqual(["TypeError: undefined is not an object (evaluating 'validator.isEmail')"]);
+      else if (name === "the default and a name")
+        expect(plain).toEqual(["OUT a mocked in the setup fileundefined", "OUT b mocked in the setup fileundefined"]);
+      else expect(plain).toHaveLength(2);
+      for (const { flags, words } of ways)
+        expect((await ran(["--aot", ...flags], words)).linesOf.get(name)).toEqual(plain);
     },
     240_000,
   );
+
+  // The tests of "the default" throw, so a run ends with 1. Nothing is printed outside the test files.
+  test("every run ends as the plain one", async () => {
+    const plain = await ran(["--isolate"]);
+    expect({ exitCode: plain.exitCode, outside: plain.linesOf.get("") }).toEqual({ exitCode: 1, outside: undefined });
+    for (const { flags, words } of ways) {
+      const compiled = await ran(["--aot", ...flags], words);
+      expect({ exitCode: compiled.exitCode, outside: compiled.linesOf.get("") }).toEqual({
+        exitCode: 1,
+        outside: undefined,
+      });
+    }
+  }, 240_000);
 }

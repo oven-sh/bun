@@ -1,9 +1,11 @@
 // A program may be nested, or chained, as deeply as whoever generated it pleased. The parser, the binder, the checker and the lowering
 // each look at what is left of the real stack, so the build of such a program either succeeds or says that the code is nested too deeply,
-// with exit code 1. It never ends by a signal, and never without a word. The same holds for `bun check`, which shares the front end.
+// with exit code 1. It never ends by a signal, and never without a word. The same holds for `bun check`, which shares the front end,
+// and for `bun test --aot`, which looks at the files of a run by walks of its own and leaves a file that is too deep to the loader.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { partOfGrid } from "./harness/ways";
 import { test } from "./supported";
 
 const rows = (count: number, row: (index: number) => string) =>
@@ -100,6 +102,8 @@ const isParsedInALoop = new Set(["members", "optional members", "fluent calls", 
 const shallow = 500;
 // Far beyond where any shape that nests is refused today: between 3,000 and 54,000 levels on Linux x64.
 const deep = 200_000;
+// At `deep` the parser is the first to give up. What it still bears is the deepest that the walks behind it meet, and they bear less.
+const between = [4_000, 8_000, 16_000, 32_000, 64_000];
 
 test.concurrent.each(Object.entries(shapes))(
   "%s",
@@ -145,3 +149,31 @@ test.concurrent.each(Object.entries(shapes))(
   },
   600_000,
 );
+
+// The files belong to the run and no test loads them: what the engine's own parser makes of them is another matter.
+// Thirteen shapes once ended the run by one panic, each at a depth of its own: three of them are in every run, one for each of those depths on Linux x64.
+const onceEndedARun = new Set(["function types", "blocks", "casts"]);
+test("the depths in between, as the files of one test run", async () => {
+  const all = Object.entries(shapes);
+  const others = all.filter(([name]) => !onceEndedARun.has(name));
+  const drawn = partOfGrid("deep shapes as the files of a test run", others, 6, ([name]) => name);
+  const files: Record<string, string> = { "package.json": `{ "name": "p" }` };
+  const loads: string[] = [];
+  [...all.filter(([name]) => onceEndedARun.has(name)), ...drawn].forEach(([, [extension, program]], shape) => {
+    for (const n of between) {
+      files[`shape-${shape}/deep-${n}.${extension}`] = program(n) + "\n";
+      loads.push(`() => import("./shape-${shape}/deep-${n}.${extension}")`);
+    }
+  });
+  files["deep.test.js"] =
+    `import { expect, test } from "bun:test";\nconst loads = [\n${loads.join(",\n")},\n];\n` +
+    `test("t", () => expect(loads.length).toBe(${loads.length}));\n`;
+  using run = tempDir("aot-deep-programs-in-a-test-run", files);
+  const ran = await ended([bunExe(), "test", "--aot"], String(run));
+  expect({
+    passed: /^ *\d+ pass$/m.exec(ran.stderr)?.[0].trim(),
+    panic: /panic.*/.exec(ran.stderr)?.[0],
+    exitCode: ran.exitCode,
+    signal: ran.signal,
+  }).toEqual({ passed: "1 pass", panic: undefined, exitCode: 0, signal: null });
+}, 600_000);

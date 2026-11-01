@@ -1,7 +1,8 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { unsupported } from "../aot/harness/commands";
 import { run } from "../aot/harness/run";
+import { test } from "../aot/listed";
 
 // A test run opens what it sees a test replace: test/aot/tests-replace-members-of-built-ins.test.ts. What the language reads by itself stays read-only.
 const files = {

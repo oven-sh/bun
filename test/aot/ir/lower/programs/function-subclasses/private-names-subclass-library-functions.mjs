@@ -107,12 +107,12 @@ new Numbers(100).pipe(sum);
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="describe"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] thisType={type=[[L_7]] flags=[IsExpected]} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes={{*}}[[f_8]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] thisType={type=[[L_7]] site=[[w_8]]} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes={{*}}[[f_9]]] {
 // CHECK-NEXT: b0(v0: [[L_7]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = NewClosure v0 function=[[f_9]]
-// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|[[f_10]] flags=[IsExpected]}
+// CHECK-NEXT: v1 = NewClosure v0 function=[[f_10]]
+// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|[[f_11]] flags=[IsExpected]}
 // CHECK-NEXT: v3 = Call v2
 // CHECK-NEXT: ReturnCall v3 casts=[{declared={type=undefined|null|string flags=[IsExpected]}}]
 // CHECK-NEXT: }
@@ -123,22 +123,22 @@ new Numbers(100).pipe(sum);
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = Absent
 // CHECK-NEXT: v4 = GetSuperBase v0
-// CHECK-NEXT: v5 = Data data=[[d_11]]
-// CHECK-NEXT: v6 = SuperConstruct v4, v1, v5 layout=[[L_12]]
-// CHECK-NEXT: v7 = Convert v6 declared={type=[[L_12]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v5 = Data data=[[d_12]]
+// CHECK-NEXT: v6 = SuperConstruct v4, v1, v5 layout=[[L_13]]
+// CHECK-NEXT: v7 = Convert v6 declared={type=[[L_13]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
 // CHECK-NEXT: v8 = TypeTest v3 testedType=absent
 // CHECK-NEXT: Branch v8 -> taken b2(| 0), notTaken b12(| 0)
 // CHECK-NEXT: b2(v9):
-// CHECK-NEXT: v10 = CallDirect v7 function=[[f_13]]
+// CHECK-NEXT: v10 = CallDirect v7 function=[[f_14]]
 // CHECK-NEXT: v11 = TypeTest v7 testedType=absent
 // CHECK-NEXT: Branch v11 -> taken b3(| 0), notTaken b4(| 0)
 // CHECK-NEXT: b3(v12) frequency=Unlikely:
 // CHECK-NEXT: v13 = NewRuntimeError runtimeError=UninitializedThis
 // CHECK-NEXT: Throw v13
 // CHECK-NEXT: b4(v14):
-// CHECK-NEXT: v15 = Convert v14 declared={type=undefined|null|[[L_12]] flags=[IsExpected]}
-// CHECK-NEXT: v16 = GetModuleVariable variable=[[g_14]]
-// CHECK-NEXT: PrivateSet v15, v16, v2 layout=[[L_12]] field=2
+// CHECK-NEXT: v15 = Convert v14 declared={type=undefined|null|[[L_13]] flags=[IsExpected]}
+// CHECK-NEXT: v16 = GetModuleVariable variable=[[g_15]]
+// CHECK-NEXT: PrivateSet v15, v16, v2 layout=[[L_13]] field=2
 // CHECK-NEXT: v18 = Undefined
 // CHECK-NEXT: v19 = TypeTest v18 testedType=object
 // CHECK-NEXT: Branch v19 -> taken b5(| 0), notTaken b6(| 0)

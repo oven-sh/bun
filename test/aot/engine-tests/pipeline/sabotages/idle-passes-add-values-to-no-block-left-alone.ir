@@ -1,0 +1,13 @@
+# A run that answers "unchanged" is held against the body as it was, block by block and value by value. A value that stands in no block edits none of them, and where the log
+# has forgotten nobody else counts: the numbers of values are held against each other too.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass FoldConstants
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="sum" parameters=[{type=number}, {type=number}] results=[{type=number}] {
+    v2 = Add v0, v1
+    Return v2
+}

@@ -191,10 +191,29 @@ impl Resolver<'_, '_> {
                 mutability: Mutability::ConstantUnlessWritten,
             }));
         }
+        if let Some(runner) = self.find_runner_that_stub_answers(expr) {
+            let runner = ResolvedValue::object(BuiltinPath {
+                id: runner,
+                mutability: Mutability::ConstantUnlessWritten,
+            });
+            return ExprState::Builtin(runner.with_side_effects());
+        }
         if input.dialect == SourceDialect::Runtime {
             return self.compute_native_call_state(expr);
         }
         ExprState::Unresolved
+    }
+
+    fn find_runner_that_stub_answers(&self, expr: ExprId) -> Option<BuiltinId> {
+        let hir = self.input.hir;
+        let ExprKind::Call(call) = hir[expr].kind else {
+            return None;
+        };
+        let callee = hir.skip_type_assertions(hir[call].callee);
+        let stub = mentioned_id(self.state(callee)).filter(|&stub| table::stubs_global(stub))?;
+        let (receiver, _) = hir.member_key(callee)?;
+        let receiver = table::canonical_id(self.value_of(receiver)?.path.id);
+        (table::entry(table::canonical_id(stub)).holder == Some(receiver)).then_some(receiver)
     }
 
     /// `await import("bun:test")`: what `import * as` of the module stands for.

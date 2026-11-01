@@ -8,7 +8,8 @@ import { built, spawned } from "./harness/commands";
 import { afterAll } from "./harness/default-timeout";
 import { buildFlags, compileCommand } from "./harness/flags";
 import { withoutDebugInformation } from "./harness/without-debug-information";
-import { beforeAll, describe, test } from "./supported";
+// One by one: the runner gives this file a process of its own and eight cases at once, beside two more like it: too many builds for four cores.
+import { beforeAll, describe, testOneByOne as test } from "./supported";
 
 const sources = {
   "library.ts": `

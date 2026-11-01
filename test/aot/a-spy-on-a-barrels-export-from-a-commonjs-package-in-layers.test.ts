@@ -1,10 +1,8 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { raiseDefaultTimeout } from "./harness/default-timeout";
+import { afterAll } from "./harness/default-timeout";
 import { run } from "./harness/run";
-import { test } from "./supported";
-
-raiseDefaultTimeout(240_000);
+import { beforeAll, test } from "./supported";
 
 // `export { add as cjsAdd } from "cjs-pkg"` in src, and `spyOn(barrel, "cjsAdd")` in a test file. Where the run is built in layers the package lies in a lower image than the
 // barrel, and the spy's store goes on there. ES modules see a CommonJS file through what was captured of it when it had run, and the store has to reach that.
@@ -52,25 +50,35 @@ const files: Record<string, string> = {
   "b.test.ts": testFile,
 };
 
-test("it says what plain Bun says, as one program and in two layers", async () => {
-  using dir = tempDir("aot-spy-on-barrel-of-commonjs-package", files);
+let dir: ReturnType<typeof tempDir> | undefined;
+let plain: Awaited<ReturnType<typeof said>>;
+async function said(flags: string[], words: string) {
   const directory = String(dir);
-  const said = async (flags: string[], words: string) => {
-    const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words, BUN_TMPDIR: directory };
-    const ran = await run([bunExe(), "test", ...flags, "--isolate", "--parallel=2", "."], directory, env);
-    return {
-      lines: (ran.stdout + "\n" + ran.stderr)
-        .split("\n")
-        .filter(line => line.startsWith("SAID"))
-        .sort(),
-      summary: ran.stderr.split("\n").filter(line => /^ *\d+ (pass|fail)$/.test(line)),
-    };
+  const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words, BUN_TMPDIR: directory };
+  const ran = await run([bunExe(), "test", ...flags, "--isolate", "--parallel=2", "."], directory, env);
+  return {
+    lines: (ran.stdout + "\n" + ran.stderr)
+      .split("\n")
+      .filter(line => line.startsWith("SAID"))
+      .sort(),
+    summary: ran.stderr.split("\n").filter(line => /^ *\d+ (pass|fail)$/.test(line)),
   };
-  const plain = await said([], "");
+}
+beforeAll(async () => {
+  dir = tempDir("aot-spy-on-barrel-of-commonjs-package", files);
+  plain = await said([], "");
+});
+afterAll(() => dir?.[Symbol.dispose]());
+
+test("what plain Bun says", () => {
   expect(plain.summary).toEqual([" 2 pass", " 0 fail"]);
   expect(plain.lines).toContain("SAID lookedAdd [105,105,105,105,105,105,105,105,105,105,10]");
   expect(plain.lines).toContain("SAID otherAdd [105,105,105,105,105,105,105,105,105,105,10]");
-  expect(await said(["--aot"], "TestRunLayers:0")).toEqual(plain);
-  expect(await said(["--aot"], "TestRunLayers:2,TestRunPartFiles:1")).toEqual(plain);
-  expect(await said(["--aot"], "TestRunLayers:2")).toEqual(plain);
 });
+
+test.each(["TestRunLayers:0", "TestRunLayers:2,TestRunPartFiles:1", "TestRunLayers:2"])(
+  "it says what plain Bun says: %s",
+  async words => {
+    expect(await said(["--aot"], words)).toEqual(plain);
+  },
+);

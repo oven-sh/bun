@@ -6,6 +6,7 @@ BunBuild/0: it is not called: it blocks, starts a process or opens a socket
 BunBundleFeature/0: it is not called: this realm does not have its holder
 BunConnect/0: it is not called: it blocks, starts a process or opens a socket
 BunDollar/0: it is not called: it blocks, starts a process or opens a socket
+BunDollar/1: it is not called: it blocks, starts a process or opens a socket
 BunFFIReadF32/0: it is not called: it dereferences an arbitrary pointer
 BunFFIReadF64/0: it is not called: it dereferences an arbitrary pointer
 BunFFIReadI16/0: it is not called: it dereferences an arbitrary pointer
@@ -33,9 +34,11 @@ BunSpawnSync/1: it is not called: it blocks, starts a process or opens a socket
 BunTestJestSpyOn/0: it is not called: it reaches outside JavaScript
 BunTestSpyOn/0: it is not called: it reaches outside JavaScript
 BunTestViSpyOn/0: it is not called: it reaches outside JavaScript
+BunTestViStubGlobal/0: it is not called: it reaches outside JavaScript
 BunTestVitestJestSpyOn/0: it is not called: it reaches outside JavaScript
 BunTestVitestSpyOn/0: it is not called: it reaches outside JavaScript
 BunTestVitestViSpyOn/0: it is not called: it reaches outside JavaScript
+BunTestVitestViStubGlobal/0: it is not called: it reaches outside JavaScript
 BunUdpSocket/0: it is not called: it blocks, starts a process or opens a socket
 CompilerHelpersDefinePropertiesFrom/0: it is not called: it works on the instance of a compiled program, and this process has none
 CompilerHelpersGetAsyncDisposeMethod/0: it is not called: this realm does not have it

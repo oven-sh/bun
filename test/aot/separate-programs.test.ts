@@ -3,6 +3,7 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { run } from "./harness/run";
+import { separatePrograms } from "./harness/separate-programs";
 import { test } from "./supported";
 
 const isCanary = Bun.spawnSync([bunExe(), "--revision"]).stdout.toString().includes("-canary");
@@ -127,4 +128,14 @@ console.log(list[names[Date.now() < 0 ? 1 : 0]]((x: number) => x + 1).join());
   expect(built.stderr + built.stdout).not.toMatch(/error|warn/i);
   const { stdout, exitCode } = await run([executable], cwd, { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
   expect({ stdout, exitCode }).toEqual({ stdout: "2,3,4\n", exitCode: 0 });
+});
+
+const oneTooMany = Array.from({ length: 129 }, (_, index) => `p${index}.ts`);
+const tooMany = separatePrograms(
+  "separate-programs-too-many",
+  Object.fromEntries(oneTooMany.map(name => [name, `console.log("${name}");\n`])),
+  oneTooMany,
+);
+test("the harness refuses a build that has joined its programs into one", async () => {
+  expect(tooMany.build()).rejects.toThrow("129 entry points are compiled as one program");
 });

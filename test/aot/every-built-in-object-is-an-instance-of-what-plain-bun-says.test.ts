@@ -1,7 +1,8 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
-import { test } from "./harness/default-timeout";
+import { afterAll, test } from "./harness/default-timeout";
+import { separatePrograms, startsAtAnyEntryPoint } from "./harness/separate-programs";
 
 const questions = [
   "PATH instanceof Object",
@@ -65,26 +66,40 @@ async function plainAndCompiled(dir: string, entry: string) {
   return { plain, compiled };
 }
 
-test.concurrent.each(questions)(
-  "%s, in a function of its own for every global and every member of a built-in module",
-  async question => {
-    using dir = tempDir("aot-every-built-in-object", { "list.cjs": listPaths });
+// One program asks all six of every path. Each question of each path has a function of its own, as it had, and the modules of the library, which are nearly all that such a
+// build compiles, are compiled once and not six times.
+type Asked = { paths: string[]; plain: Awaited<ReturnType<typeof run>>; compiled: Awaited<ReturnType<typeof run>> };
+let asked: Promise<Asked> | undefined;
+let folder: ReturnType<typeof tempDir> | undefined;
+afterAll(() => folder?.[Symbol.dispose]());
+const askEveryPath = () =>
+  (asked ??= (async () => {
+    const dir = (folder = tempDir("aot-every-built-in-object", { "list.cjs": listPaths }));
     const listed = await run([bunExe(), "list.cjs"], String(dir));
     const { paths, modules }: { paths: string[]; modules: string[] } = JSON.parse(listed.stdout);
-    expect(paths.length).toBeGreaterThan(1000);
-    expect(paths).toContain("console");
     const lines = modules.map((name, index) => `const m${index} = require(${JSON.stringify(name)});`);
     lines.push("const said = [];");
-    paths.forEach((path, index) => {
-      lines.push(`function ask${index}() { return ${question.replace("PATH", path)}; }`);
-      lines.push(`said.push(${JSON.stringify(path)} + " " + ask${index}());`);
-    });
+    questions.forEach((question, nth) =>
+      paths.forEach((path, index) => {
+        lines.push(`function ask${nth}_${index}() { return ${question.replace("PATH", path)}; }`);
+        lines.push(`said.push(${JSON.stringify(`${nth} ${path}`)} + " " + ask${nth}_${index}());`);
+      }),
+    );
     lines.push(`console.log(said.join("\\n"));`, "process.exit(0);");
     await Bun.write(join(String(dir), "asks.cjs"), lines.join("\n") + "\n");
-    const { plain, compiled } = await plainAndCompiled(String(dir), "asks.cjs");
-    expect(plain.stdout.split("\n").length).toBeGreaterThan(paths.length);
-    const expected = plain.stdout.split("\n");
-    const differing = compiled.stdout.split("\n").filter((line, index) => line !== expected[index]);
+    return { paths, ...(await plainAndCompiled(String(dir), "asks.cjs")) };
+  })());
+
+test.concurrent.each(questions.map((question, nth) => [question, nth] as const))(
+  "%s, in a function of its own for every global and every member of a built-in module",
+  async (_, nth) => {
+    const { paths, plain, compiled } = await askEveryPath();
+    expect(paths.length).toBeGreaterThan(1000);
+    expect(paths).toContain("console");
+    const answersIn = (stdout: string) => stdout.split("\n").filter(line => line.startsWith(`${nth} `));
+    const expected = answersIn(plain.stdout);
+    expect(expected.length).toBe(paths.length);
+    const differing = answersIn(compiled.stdout).filter((line, index) => line !== expected[index]);
     expect({ differing, exitCode: compiled.exitCode }).toEqual({ differing: [], exitCode: plain.exitCode });
   },
   600_000,
@@ -106,11 +121,27 @@ const alone: Record<string, string> = {
 const objects = ["console", `require("node:console")`, "Bun.sql", "Bun.postgres", `require("node:buffer").SlowBuffer`];
 const forms = objects.flatMap(object => Object.entries(alone).map(([where, text]) => [object, where, text] as const));
 
-test.concurrent.each(forms)(
+// One build for all of them: each is an entry point of its own, compiled as it is when it is built alone, and runs in a process of its own. Where the Bun under test
+// cannot start an executable at any entry point, each has a build of its own.
+const entryOf = (nth: number) => `form-${nth}.cjs`;
+const textOf = ([object, , text]: (typeof forms)[number]) => text.replaceAll("OBJECT", object) + "\n";
+const together =
+  startsAtAnyEntryPoint &&
+  separatePrograms(
+    "aot-one-built-in-object",
+    Object.fromEntries(forms.map((form, nth) => [entryOf(nth), textOf(form)])),
+    forms.map((_, nth) => entryOf(nth)),
+  );
+
+test.concurrent.each(forms.map((form, nth) => [...form, nth] as const))(
   "%s instanceof Object, %s, alone in its program",
-  async (object, _, text) => {
-    using dir = tempDir("aot-one-built-in-object", { "main.cjs": text.replaceAll("OBJECT", object) + "\n" });
-    const { plain, compiled } = await plainAndCompiled(String(dir), "main.cjs");
+  async (object, where, text, nth) => {
+    using dir = together
+      ? undefined
+      : tempDir("aot-one-built-in-object", { "main.cjs": textOf([object, where, text]) });
+    const { plain, compiled } = together
+      ? { plain: await run([bunExe(), entryOf(nth)], together.folder), compiled: await together.start(entryOf(nth)) }
+      : await plainAndCompiled(String(dir), "main.cjs");
     expect(plain.stdout).toBe("true\n");
     expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({
       stdout: plain.stdout,

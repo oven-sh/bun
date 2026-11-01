@@ -219,6 +219,7 @@ pub struct ImplicitReference {
     pub kind: ImplicitReferenceKind,
     pub name: Atom,
     pub binding: Binding,
+    pub member: Atom,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]

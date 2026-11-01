@@ -20,7 +20,10 @@ test("literals", () => {
 }, 600000);
 `;
 
-test("no RegExp is made for a literal that has been evaluated before", async () => {
+test.each([
+  ["as one program", "TestRunLayers:0"],
+  ["in two layers", "TestRunLayers:2,TestRunPartFiles:1"],
+])("no RegExp is made for a literal that has been evaluated before, %s", async (_, words) => {
   using dir = tempDir("aot-regexp-literal-of-two-layers", {
     "package.json": `{ "name": "p", "type": "module" }`,
     "tsconfig.json": `{}`,
@@ -30,16 +33,14 @@ test("no RegExp is made for a literal that has been evaluated before", async () 
     "a.test.ts": testFile,
     "b.test.ts": testFile,
   });
-  for (const words of ["TestRunLayers:0", "TestRunLayers:2,TestRunPartFiles:1"]) {
-    const { stdout, stderr, exitCode } = await run([bunExe(), "test", "--aot", "--isolate"], String(dir), {
-      ...bunEnv,
-      BUN_DEBUG_TEST_AOT_WORDS: words,
-    });
-    const seen = (stdout + "\n" + stderr).split("\n").filter(line => line.startsWith("SEEN"));
-    expect({ words, exitCode, seen }).toEqual({
-      words,
-      exitCode: 0,
-      seen: Array(2).fill("SEEN 12000009 more RegExp cells than before: 0"),
-    });
-  }
-}, 600000);
+  const { stdout, stderr, exitCode } = await run([bunExe(), "test", "--aot", "--isolate"], String(dir), {
+    ...bunEnv,
+    BUN_DEBUG_TEST_AOT_WORDS: words,
+  });
+  const seen = (stdout + "\n" + stderr).split("\n").filter(line => line.startsWith("SEEN"));
+  expect({ words, exitCode, seen }).toEqual({
+    words,
+    exitCode: 0,
+    seen: Array(2).fill("SEEN 12000009 more RegExp cells than before: 0"),
+  });
+});

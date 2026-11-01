@@ -1,0 +1,6 @@
+# sabotage=PassesDropCalls: behind the pass a call is gone. The pass turns numbers that a loop carries into integers: it lets nothing go: the build stops
+# FORM: Prepared
+# RUN: pass ConvertCountersToIntegers
+# DIAGNOSTIC: VerificationFailedAfterPass 1
+# OPTIONS: check=VerifyEachPass sabotage=PassesDropCalls
+# PROGRAM-OF: passes-drop-calls-in-a-loop-left-alone.ir

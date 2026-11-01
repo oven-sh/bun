@@ -2,7 +2,8 @@
 // from the mock, as an importer of the mocked module itself does. The build of a compiled run stopped: "internal compiler error (ReadAndVerify): InvalidModule".
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { test } from "./supported";
+import { afterAll } from "./harness/default-timeout";
+import { beforeAll, test } from "./supported";
 
 const files = {
   "package.json": `{ "name": "mock-name-exported-again", "type": "module" }`,
@@ -49,10 +50,15 @@ async function run(dir: string, flags: string[], words = "") {
   return { lines: stdout.split("\n").filter(line => line.startsWith("OUT")), exitCode };
 }
 
-test("come from the mock, as one program and over layers", async () => {
-  using folder = tempDir("aot-mock-name-exported-again", files);
-  const dir = String(folder);
-  const plain = await run(dir, []);
+let dir: ReturnType<typeof tempDir> | undefined;
+let plain: Awaited<ReturnType<typeof run>>;
+beforeAll(async () => {
+  dir = tempDir("aot-mock-name-exported-again", files);
+  plain = await run(String(dir), []);
+});
+afterAll(() => dir?.[Symbol.dispose]());
+
+test("come from the mock under plain Bun", () => {
   expect(plain).toEqual({
     lines: [
       `OUT mock of empty ; mock of other ; name ; mock of braces ; mock of empty ; mock of empty`,
@@ -61,6 +67,11 @@ test("come from the mock, as one program and over layers", async () => {
     ],
     exitCode: 0,
   });
-  expect(await run(dir, ["--aot"], "TestRunLayers:0")).toEqual(plain);
-  expect(await run(dir, ["--aot"], "TestRunLayers:2,TestRunPartFiles:1")).toEqual(plain);
-}, 240_000);
+});
+
+test.each([
+  ["as one program", "TestRunLayers:0"],
+  ["over layers", "TestRunLayers:2,TestRunPartFiles:1"],
+])("come from the mock, %s", async (_, words) => {
+  expect(await run(String(dir), ["--aot"], words)).toEqual(plain);
+});

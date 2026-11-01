@@ -70,6 +70,7 @@ WTF::String pathInExecutable(const WTF::String& path);
 void willStorePathOfMainModule(Zig::GlobalObject*, JSC::JSValue path);
 // A file of an ahead-of-time executable has a module object only once its code uses `module` or `require` as a value.
 bool appendNewChildrenOfCompiledModule(JSC::JSGlobalObject*, JSCommonJSModule* parent);
+void dropNewChildrenOfCompiledModule(JSCommonJSModule* parent);
 // The module object of the file that required the module first, or null.
 JSCommonJSModule* parentOfCompiledModule(JSCommonJSModule*);
 // What `module.parent` is in a file with the path `id` that `parent` has required.
@@ -89,6 +90,7 @@ JSC::JSValue errorIfDebuggerIsRefused(JSC::JSGlobalObject*, ASCIILiteral builtin
 JSC::JSValue requireCompiledModuleForTestRunner(Zig::GlobalObject*, const WTF::String& key);
 void didDeleteRequireCacheEntry(Zig::GlobalObject*, const WTF::String& key);
 void willResetModules(Zig::GlobalObject*, WTF::ASCIILiteral call, bool keepsPackages);
+WTF::Vector<WTF::String> bringBackFilesOfPreloads(Zig::GlobalObject*);
 bool requireCacheListsCompiledFiles();
 bool isLibraryModuleInRequireCache(Zig::GlobalObject*, const WTF::String& key);
 bool isEvaluatedCompiledFile(Zig::GlobalObject*, const WTF::String& key);

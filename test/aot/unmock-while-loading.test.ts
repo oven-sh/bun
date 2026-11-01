@@ -10,6 +10,7 @@
 // prints, and turn red on the day the compiled run prints it too: then the mark goes.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { waysFor } from "./harness/ways";
 import { test } from "./supported";
 
 const shared = {
@@ -75,11 +76,15 @@ async function runTests(cwd: string, words: string | undefined, ...flags: string
   };
 }
 
-for (const [way, words] of [
+const ways = [
   ["as one program", "TestRunLayers:0"],
   ["over two layers", "TestRunLayers:2,TestRunPartFiles:1"],
-]) {
-  for (const [name, { body, printsAsPlain, files }] of Object.entries(forms)) {
+] as const;
+// No case is about the layers. On a build in which the record that was let go of is run, the six tests that fail over two layers fail as one program too, five by the fault.
+const witness = "the mock is taken back while the plugin waits";
+
+for (const [name, { body, printsAsPlain, files }] of Object.entries(forms)) {
+  for (const [way, words] of waysFor(ways, name === witness)) {
     const project = {
       ...shared,
       ...files,

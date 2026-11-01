@@ -18,7 +18,7 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { built, spawned } from "./harness/commands";
 import { afterAll } from "./harness/default-timeout";
-import { describe, test } from "./supported";
+import { describe, test } from "./measures";
 
 const kinds = [
   { name: "a member of undefined", fails: "o.inner.value", quoted: "(evaluating 'o.inner.value')" },

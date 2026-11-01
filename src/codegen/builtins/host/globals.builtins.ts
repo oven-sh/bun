@@ -111,6 +111,7 @@ const clockReading = (symbol: string) =>
 
 const characters = [b.readAsCharacters];
 const converted = [b.runs("ToPrimitive")];
+const stringOrStringObject = b.union(b.string, b.instance("String"));
 const membersInspected = (...names: readonly string[]) => [b.runs(b.named(...names)), b.membersOnlyInspected];
 
 // The message of an error about a refused value prints the value the way console.log does.
@@ -280,6 +281,7 @@ const heapsReadByClone = [
   "ExternalState",
 ];
 const heapsWrittenByTransfer = ["TypedArrayStorage", "TypedArrayElements", "ExternalState"];
+const heapsWrittenByClone = ["TypedArrayStorage", "ExternalState"];
 const membersReadByClone = ["name", "message", "stack", "cause"];
 const cloned = [
   b.readsContents(),
@@ -1042,7 +1044,7 @@ const serverMembers = {
           result: "Escapes",
         }),
       ],
-      request: [b.readsContents(), b.writesContents()],
+      request: [b.readsContents(), b.writesContents(), ...converted],
       options: handedOver,
     },
   },
@@ -1161,6 +1163,7 @@ const socketOptions = [
   b.runsTransitively(b.named(...socketOptionNames)),
   b.membersOfObjectsOnly,
   ...["hostname", "host", "port"].flatMap(name => convertedToString("options", name)),
+  ...convertedToString("options", "socket", "binaryType"),
   ...sequencesOfTLSOptions.map(name => iterated("options", "tls", name)),
   b.memberStoredIn(["tls", "secureContext"], b.nativeMemory),
   b.createdIn(newSocket, socket),
@@ -1215,10 +1218,11 @@ const resultOfSpawnSync = b.layout("SpawnSyncResult", {
 const cron: b.FunctionField[] = [
   {
     ...operandCodeOnly,
-    args: { schedule: b.string, handler: b.callable, options: b.any.optional },
+    args: { schedule: stringOrStringObject, handler: b.callable, options: b.any.optional },
     returns: b.instance("CronJob").fresh,
     throws: true,
     uses: {
+      schedule: converted,
       handler: [
         b.called({
           afterwards: "TouchesOnlyWhatRowNames",
@@ -1235,10 +1239,11 @@ const cron: b.FunctionField[] = [
     implementation: b.generic,
   },
   {
-    args: { path: b.string, schedule: b.string, title: b.string },
+    args: { path: stringOrStringObject, schedule: stringOrStringObject, title: stringOrStringObject },
     returns: settledWithAnyReason(b.undefined),
-    capability: "heap",
+    ...operandCodeOnly,
     throws: true,
+    uses: { path: converted, schedule: converted, title: converted },
     reads: externalState,
     writes: externalState,
     implementation: b.generic,
@@ -1329,7 +1334,7 @@ const sentWithRequest = [
 ];
 
 const fetch = {
-  args: { input: b.any, init: b.any.optional },
+  args: { input: b.any.optional, init: b.any.optional },
   returns: settledWithAnyReason(b.instance("Response").fresh),
   capability: "js",
   throws: true,
@@ -1606,11 +1611,12 @@ export default b.declarations(
         },
         {
           ...operandCodeOnly,
-          args: { input: b.any, format: b.string.nullable },
+          args: { input: b.any, format: b.any.optional },
           returns: b.union(b.plainData, b.strictNull, b.f64, b.string),
           throws: true,
           uses: {
             input: [b.readsContents(), b.runs("OwnValues", b.named("r", "g", "b", "a")), b.membersOnlyInspected],
+            format: [...characters, ...converted],
           },
           reads: [...viewHeaps, ...externalState],
           implementation: b.hostCall,
@@ -1637,7 +1643,7 @@ export default b.declarations(
         returns: testModule,
         capability: "js",
         throws: true,
-        uses: { path: b.inspected, byWhoLoads: b.inspected },
+        uses: { path: converted, byWhoLoads: b.inspected },
         implementation: b.hostCall,
       },
       listen: {
@@ -1739,10 +1745,11 @@ export default b.declarations(
     getCacheStats: { returns: b.plainData, capability: "heap", reads: externalState, implementation: b.generic },
     lookup: {
       ...operandCodeOnly,
-      args: { hostname: b.string, options: b.any.optional },
+      args: { hostname: stringOrStringObject, options: b.any.optional },
       returns: settledWithAnyReason(b.plainData),
       throws: true,
       uses: {
+        hostname: converted,
         options: describedAfterReading("port", "family", "socketType", "socktype", "protocol", "backend", "flags"),
       },
       reads: externalState,
@@ -1750,9 +1757,10 @@ export default b.declarations(
       implementation: b.generic,
     },
     prefetch: {
-      args: { hostname: b.string, port: b.f64.nullable },
-      capability: "heap",
+      args: { hostname: stringOrStringObject, port: b.f64.nullable },
+      ...operandCodeOnly,
       throws: true,
+      uses: { hostname: converted },
       reads: externalState,
       writes: externalState,
       implementation: b.generic,
@@ -1877,6 +1885,7 @@ export default b.declarations(
         returns: timelineEntry,
         uses: { markName: converted, markOptions: optionsWithClonedDetail("detail", "startTime") },
         reads: heapsReadByClone,
+        writes: heapsWrittenByClone,
       }),
       measure: timelineOperation({
         ...operandCodeOnly,
@@ -1888,6 +1897,7 @@ export default b.declarations(
           endMark: converted,
         },
         reads: heapsReadByClone,
+        writes: heapsWrittenByClone,
       }),
       getEntries: timelineOperation({ returns: timelineEntries, capability: "heap" }),
       getEntriesByName: timelineOperation({

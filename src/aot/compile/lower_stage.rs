@@ -1113,6 +1113,7 @@ impl Build<'_> {
             obfuscates: self.options.aot.obfuscates,
             counts_executions: self.options.aot.counts_executions,
             imports_are_untyped: super::holds_test_files_alone(self.options),
+            runs_tests: self.options.load.runs_tests,
         }
     }
 

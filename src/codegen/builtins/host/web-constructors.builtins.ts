@@ -1,6 +1,6 @@
 // Constructors and objects of the global object and of native modules of which the table says no more than what they are: whoever reads one gets that object.
 import * as b from "bun-builtins-table";
-import { builtinModulesCell, cryptoObjectCell, targetsOfEventsCell } from "./native-cells.ts";
+import { builtinModulesCell, targetsOfEventsCell } from "./native-cells.ts";
 import { answering, constructing, handedOver, promiseOf } from "./native-code.ts";
 
 const constructorOnly = (path: b.BuiltinPath, options: b.ClassOptions = {}) =>
@@ -413,20 +413,8 @@ export default b.declarations(
   b.same("ResolveError", "ResolveMessage"),
 
   // The realm makes the one instance of Crypto with the global object.
-  b.static(
-    "crypto",
-    b.property(b.instance("Crypto"), {
-      createdOnFirstRead: {
-        capability: "heap",
-        uses: {
-          this: [
-            b.createdIn(b.instance("Crypto").fresh, b.nativeCell(cryptoObjectCell)),
-            b.returnedFrom(cryptoObjectCell),
-          ],
-        },
-      },
-    }),
-  ),
+  b.namespace("crypto", {}, { listsAllMembers: true }),
+  b.inherits("crypto", "Crypto.prototype"),
   b.namespace("navigator", {
     userAgent: describesMachine(b.string),
     platform: describesMachine(b.string),

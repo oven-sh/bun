@@ -14,11 +14,16 @@ use super::{
     ResolvedForm, ResolvedFrom, ScanInputs,
 };
 use crate::atom::{Atom, Interner, known};
-use crate::bind::{Binding, Bound, CommonJsVariable, Decl, FnOwner, Parent, PatParent, ScopeKind};
-use crate::fold::{Decisions, FoldedValue, find_export_of_module};
+use crate::bind::{
+    Binding, BindingInitializer, Bound, CommonJsVariable, Decl, FnOwner, Parent, PatParent,
+    ScopeKind, SymbolId,
+};
+use crate::fold::{
+    Constant, Decisions, FoldedValue, find_export_of_module, find_members_below_module,
+};
 use crate::hir::{
-    ExprFlags, ExprId, ExprKind, File, IdList, ImportedFileChanger, MemberKey, NodeData, PropKey,
-    PropKind,
+    BinOp, Branches, CallId, ExprFlags, ExprId, ExprKind, File, IdList, ImportedFileChanger,
+    MemberKey, NodeData, PropKey, PropKind,
 };
 use crate::util::SharedSort;
 
@@ -72,6 +77,7 @@ fn has_fixed_callee(
             Some(OwnRequire::Made | OwnRequire::MadeForPath(_) | OwnRequire::OfOtherFile(_)) => {
                 true
             }
+            Some(OwnRequire::MadeForChoice(_)) => false,
             None => match hir.member_key(callee) {
                 Some((_, MemberKey::Name(name))) if name == known::require => holds_require(),
                 Some((object, _)) => {
@@ -265,7 +271,7 @@ fn find_call_site(
         return Some(create_site(ImportSiteKind::MockModule(call), args));
     }
     if [known::importActual, known::importMock].contains(&name)
-        && is_export_of_test_runner(hir, bound, object, &[known::vi, known::vitest])
+        && may_be_export_of_test_runner(hir, bound, object, &[known::vi, known::vitest])
     {
         return Some(create_site(ImportSiteKind::ImportByTestRunner(call), args));
     }
@@ -274,7 +280,8 @@ fn find_call_site(
         known::requireMock,
         known::createMockFromModule,
     ];
-    if requires.contains(&name) && is_export_of_test_runner(hir, bound, object, &[known::jest]) {
+    if requires.contains(&name) && may_be_export_of_test_runner(hir, bound, object, &[known::jest])
+    {
         return Some(create_site(ImportSiteKind::RequireByTestRunner(call), args));
     }
     None
@@ -326,7 +333,67 @@ fn is_mock_module(hir: &File<'_>, bound: &Bound<'_>, object: ExprId, name: Atom)
         }
         _ => return false,
     };
-    is_export_of_test_runner(hir, bound, object, holders)
+    may_be_export_of_test_runner(hir, bound, object, holders)
+}
+
+fn reads_frame_of_caller(hir: &File<'_>, bound: &Bound<'_>, call: CallId) -> bool {
+    let callee = hir.skip_type_assertions(hir[call].callee);
+    let Some((object, MemberKey::Name(name))) = hir.member_key(callee) else {
+        return false;
+    };
+    let holders: &[Atom] = match name {
+        _ if [
+            known::toMatchInlineSnapshot,
+            known::toThrowErrorMatchingInlineSnapshot,
+        ]
+        .contains(&name) =>
+        {
+            return true;
+        }
+        _ if [known::mock, known::doMock, known::unmock].contains(&name) => {
+            &[known::vi, known::vitest, known::jest]
+        }
+        _ if [known::doUnmock, known::importActual, known::importMock].contains(&name) => {
+            &[known::vi, known::vitest]
+        }
+        _ if [
+            known::dontMock,
+            known::requireActual,
+            known::requireMock,
+            known::createMockFromModule,
+        ]
+        .contains(&name) =>
+        {
+            &[known::jest]
+        }
+        _ => return false,
+    };
+    let object = hir.skip_type_assertions(object);
+    matches!(
+        expr_kind(hir, object),
+        Some(ExprKind::Ident(_) | ExprKind::Cond { .. })
+    ) && may_be_export_of_test_runner(hir, bound, object, holders)
+}
+
+pub fn ends_in_call_that_reads_frame_of_caller(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    value: ExprId,
+) -> bool {
+    let ends_so = |value| ends_in_call_that_reads_frame_of_caller(hir, bound, value);
+    match expr_kind(hir, hir.skip_type_assertions(value)) {
+        Some(ExprKind::Call(call)) => reads_frame_of_caller(hir, bound, call),
+        Some(ExprKind::Cond { branches, .. }) => {
+            let Branches { yes, no } = hir.branches(branches);
+            ends_so(yes) || ends_so(no)
+        }
+        Some(ExprKind::Binary {
+            op: BinOp::Comma | BinOp::And | BinOp::Or | BinOp::Nullish,
+            right,
+            ..
+        }) => ends_so(right),
+        _ => false,
+    }
 }
 
 fn is_export_of_test_runner(
@@ -342,11 +409,123 @@ fn is_export_of_test_runner(
         };
         object = hir.skip_type_assertions(receiver);
     }
-    let imported = settled_symbol(hir, bound, object)
-        .and_then(|symbol| find_imported_export(hir, bound, symbol));
-    matches!(imported, Some((specifier, Some(export)))
-        if [known::bun_test, known::jest_globals, known::vitest].contains(&specifier)
-            && holders.contains(&export))
+    let imported = settled_symbol(hir, bound, object).and_then(|symbol| {
+        find_imported_export(hir, bound, symbol)
+            .or_else(|| find_required_export(hir, bound, symbol))
+    });
+    let is_test_runner = |specifier: Atom| {
+        [known::bun_test, known::jest_globals, known::vitest].contains(&specifier)
+    };
+    if matches!(imported, Some((specifier, Some(export)))
+        if is_test_runner(specifier) && holders.contains(&export))
+    {
+        return true;
+    }
+    let find_constant = |e| match expr_kind(hir, e) {
+        Some(ExprKind::String(text)) => Some(Constant::String(text)),
+        _ => None,
+    };
+    let find_members = |e: ExprId| {
+        find_members_below_module(hir, bound, e, &find_constant, &is_test_runner, false)
+    };
+    let is_holder = |members: &[Atom]| matches!(members, [export] if holders.contains(export));
+    if find_members(object).is_some_and(|members| is_holder(&members)) {
+        return true;
+    }
+    let mut members: Vec<Atom> = Vec::new();
+    while let Some((below, MemberKey::Name(name))) = hir.member_key(object) {
+        members.push(name);
+        object = hir.skip_type_assertions(below);
+    }
+    let Some(symbol) = settled_symbol(hir, bound, object) else {
+        return false;
+    };
+    let source = match bound.binding_initializer(hir, symbol) {
+        BindingInitializer::Expression(source) => source,
+        BindingInitializer::PatternProperty { source, path } => {
+            members.extend(path.iter().rev());
+            source
+        }
+        _ => return false,
+    };
+    find_members(source).is_some_and(|below| {
+        members.extend(below);
+        is_holder(&members)
+    })
+}
+
+fn find_required_export(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    symbol: SymbolId,
+) -> Option<(Atom, Option<Atom>)> {
+    bound.symbol(symbol).decls.iter().find_map(|&declaration| {
+        let (Decl::Var(name) | Decl::Require(name)) = declaration else {
+            return None;
+        };
+        let PatParent::Prop(names, property) = bound.pat_parent[name.idx()] else {
+            return None;
+        };
+        let PatParent::Var(declarator) = bound.pat_parent[names.idx()] else {
+            return None;
+        };
+        let property = hir[property];
+        let PropKey::Name(export) = property.key else {
+            return None;
+        };
+        if property.is_rest || property.default.is_some() {
+            return None;
+        }
+        let loaded = hir.skip_type_assertions(hir[declarator].init);
+        let Some(CallForm::Call { callee, args }) = find_call_form(hir, loaded) else {
+            return None;
+        };
+        let callee = hir.skip_type_assertions(callee);
+        let text = Text::of(hir, bound, None);
+        let args = match follow_to_require_call(text, callee, args, StepsLeft::ALL) {
+            Some(found) => found.args,
+            None if holds_import_meta_require(hir, bound, callee) => args,
+            None => return None,
+        };
+        if args.is_empty() {
+            return None;
+        }
+        match expr_kind(hir, hir.skip_type_assertions(hir.id_at(args, 0))) {
+            Some(ExprKind::String(specifier)) => Some((specifier, Some(export))),
+            _ => None,
+        }
+    })
+}
+
+fn may_be_export_of_test_runner(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    object: ExprId,
+    holders: &[Atom],
+) -> bool {
+    if is_export_of_test_runner(hir, bound, object, holders) {
+        return true;
+    }
+    if let Some(ExprKind::Cond { branches, .. }) = expr_kind(hir, object) {
+        let branches = hir.branches(branches);
+        return [branches.yes, branches.no].into_iter().any(|branch| {
+            is_export_of_test_runner(hir, bound, hir.skip_type_assertions(branch), holders)
+        });
+    }
+    let Some(symbol) = settled_symbol(hir, bound, object) else {
+        return false;
+    };
+    bound.symbol(symbol).decls.iter().any(|&declaration| {
+        let Decl::Var(pattern) = declaration else {
+            return false;
+        };
+        let PatParent::Prop(_, property) = bound.pat_parent[pattern.idx()] else {
+            return false;
+        };
+        let default = hir[property].default;
+        default.is_some()
+            && is_export_of_test_runner(hir, bound, hir.skip_type_assertions(default), holders)
+    })
 }
 
 pub(super) fn is_free_name(hir: &File<'_>, bound: &Bound<'_>, e: ExprId, names: &[Atom]) -> bool {
@@ -793,6 +972,11 @@ const UNRESOLVED_SPECIFIER_PREFIXES: [&[u8]; 9] = [
     b"./", b"../", b"/", b"file://", b".\\", b"..\\", b"\\", b"node:", b"bun:",
 ];
 
+pub fn does_import_meta_resolve_ask_resolver(specifier: &[u8]) -> bool {
+    let mut prefixes = UNRESOLVED_SPECIFIER_PREFIXES.iter();
+    !prefixes.any(|prefix| specifier.starts_with(prefix))
+}
+
 fn consults_resolver(
     atoms: &Interner<'_>,
     kind: ImportSiteKind,
@@ -801,9 +985,7 @@ fn consults_resolver(
     match kind {
         ImportSiteKind::ImportMetaResolve(_) => match specifier {
             ImportSpecifier::Constant(text) => {
-                let text = atoms.bytes(text);
-                let mut prefixes = UNRESOLVED_SPECIFIER_PREFIXES.iter();
-                !prefixes.any(|prefix| text.starts_with(prefix))
+                does_import_meta_resolve_ask_resolver(atoms.bytes(text))
             }
             ImportSpecifier::Pattern { .. }
             | ImportSpecifier::OneOf(_)

@@ -48,8 +48,15 @@ export function functionOfSection(section: string): string | undefined {
   return /^\.text\.(?:unlikely\.|hot\.|startup\.|exit\.)?(.+)$/.exec(section)?.[1];
 }
 
-function parseMap(mapPath: string): MapEntry[] {
+interface LinkMap {
+  entries: MapEntry[];
+  /** Where an input section without bytes stands: the next one begins at the same address. */
+  emptySections: Set<number>;
+}
+
+function parseMap(mapPath: string): LinkMap {
   const entries: MapEntry[] = [];
+  const emptySections = new Set<number>();
   let output = "";
   let isLoaded = false;
   for (const line of readFileSync(mapPath, "latin1").split("\n")) {
@@ -61,6 +68,7 @@ function parseMap(mapPath: string): MapEntry[] {
     } else if (match[4]!.length === 8 && isLoaded && !ignoredOutputs.test(output)) {
       const input = /^(.*):\(([^()]*)\)\s*$/.exec(match[5]!);
       const size = parseInt(match[2]!, 16);
+      if (input !== null && size === 0) emptySections.add(parseInt(match[1]!, 16));
       if (input !== null && size > 0) {
         entries.push({
           address: parseInt(match[1]!, 16),
@@ -74,7 +82,7 @@ function parseMap(mapPath: string): MapEntry[] {
     }
   }
   entries.sort((a, b) => a.address - b.address);
-  return entries;
+  return { entries, emptySections };
 }
 
 function indexSections(entries: MapEntry[]): {
@@ -136,7 +144,12 @@ function readObjects(liveSections: Map<string, Set<string>>): InputObjects {
   return { objects, defined, failures };
 }
 
-function readLinkedSymbols(elf: ElfFile, placedNodes: PlacedNodes, executable: string): LinkedSymbols {
+function readLinkedSymbols(
+  elf: ElfFile,
+  placedNodes: PlacedNodes,
+  emptySections: Set<number>,
+  executable: string,
+): LinkedSymbols {
   const symbolTable = elf.sections.find(section => section.type === 2) ?? fail(`${executable} has no symbol table`);
   const symbols = readAt(elf.fd, symbolTable.offset, symbolTable.size);
   const strings = readAt(elf.fd, elf.sections[symbolTable.link]!.offset, elf.sections[symbolTable.link]!.size);
@@ -148,7 +161,9 @@ function readLinkedSymbols(elf: ElfFile, placedNodes: PlacedNodes, executable: s
     knownToLinker.add(name);
     const type = symbols[at + 4]! & 15;
     if (symbols.readUInt16LE(at + 6) === 0 || type === 3 || type === 4 || type === 6) continue;
-    const node = nodeAt(placedNodes, Number(symbols.readBigUInt64LE(at + 8)));
+    const address = Number(symbols.readBigUInt64LE(at + 8));
+    if (type === 1 && symbols.readBigUInt64LE(at + 16) === 0n && emptySections.has(address)) continue;
+    const node = nodeAt(placedNodes, address);
     if (node < 0) continue;
     if (type === 10) ifuncNodes.push(node);
     if (name.startsWith("$")) continue;
@@ -264,7 +279,7 @@ function findRoots(
 function createReading(
   elf: ElfFile,
   executable: string,
-  entries: MapEntry[],
+  { entries, emptySections }: LinkMap,
   folded: Map<string, string>,
 ): GraphReading {
   const placedNodes = {
@@ -282,7 +297,7 @@ function createReading(
     }
     return undefined;
   };
-  const symbols = readLinkedSymbols(elf, placedNodes, executable);
+  const symbols = readLinkedSymbols(elf, placedNodes, emptySections, executable);
   const { nodesBySymbol, ifuncNodes } = symbols;
   const connections = connect(entries.length, objects, { nodesBySection, findNode, resolveGlobal }, symbols);
   const symbolNodes = [...ifuncNodes, ...connections.unwindTableNodes];

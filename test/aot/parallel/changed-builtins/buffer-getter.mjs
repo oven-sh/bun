@@ -1,0 +1,6 @@
+// Alone: whether the call is bound to the built-in is a fact about the whole program.
+// A member of a native module's object is changed, then used for the first time.
+import buffer from "node:buffer";
+const tell = act => { try { return String(act()); } catch (error) { return error.constructor.name; } };
+const hiddenText = text => new Function(JSON.parse(JSON.stringify(text)))();
+console.log(tell(() => hiddenText("Object.defineProperty(process.getBuiltinModule(\"node:buffer\"), \"isUtf8\", { get() { return () => \"mine\"; }, configurable: true }); return \"done\";")), tell(() => buffer.isUtf8(new Uint8Array(1))));

@@ -1,10 +1,11 @@
-import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { expect, setDefaultTimeout } from "bun:test";
 import * as esbuild from "esbuild";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { dirname, join, posix } from "path";
 import { slot, unsupported } from "../../aot/harness/commands";
 import { withoutDebugInformation } from "../../aot/harness/without-debug-information";
+import { afterAll, describe, test } from "../../aot/listed";
 
 setDefaultTimeout(120_000);
 

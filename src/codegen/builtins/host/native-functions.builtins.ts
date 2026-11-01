@@ -316,7 +316,7 @@ export default b.declarations(
     returns: b.union(b.builtin("bun:test"), b.object),
     capability: "js",
     throws: true,
-    uses: { filename: b.inspected },
+    uses: { filename: converted },
     implementation: b.hostCall,
   }),
   b.static(cpp("NodeTLS.cpp", "getBundledRootCertificates"), listsCertificates),

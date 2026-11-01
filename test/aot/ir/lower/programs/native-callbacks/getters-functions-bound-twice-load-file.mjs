@@ -213,7 +213,7 @@ console.log(getterCalls, probe.count);
 // CHECK-NEXT: Return v8
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="rc182"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array|AsyncGenerator flags=[IsExpected]}] results=[{type=undefined|null|Promise<number> flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, HasExplicitName] length=1 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=undefined|null|string|Array|AsyncGenerator flags=[IsExpected]}] results=[{type=undefined|null|Promise<number> flags=[IsExpected]}] {
 // CHECK-NEXT: b0(v0: anything, v1: undefined|null|string|Array|AsyncGenerator):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

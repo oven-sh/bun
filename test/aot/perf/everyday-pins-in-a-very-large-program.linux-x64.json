@@ -679,6 +679,26 @@
     "typed": 768,
     "untyped": 1166
   },
+  "everyday-benchmarks/nested-loops-sum-quotients-by-a-whole-number": {
+    "typed": 856,
+    "untyped": 863
+  },
+  "everyday-benchmarks/nested-loops-sum-remainders-by-a-number": {
+    "typed": 995,
+    "untyped": 1003
+  },
+  "everyday-benchmarks/nested-loops-sum-remainders-by-a-parameter": {
+    "typed": 983,
+    "untyped": 999
+  },
+  "everyday-benchmarks/nested-loops-sum-remainders-by-a-whole-number": {
+    "typed": 985,
+    "untyped": 993
+  },
+  "everyday-benchmarks/nested-loops-sum-remainders-of-either-sign": {
+    "typed": 1189,
+    "untyped": 1197
+  },
   "everyday-benchmarks/object-insert-a-hundred-string-keys": {
     "typed": 6392.8,
     "untyped": 6402.2
@@ -1144,8 +1164,9 @@
     "untyped": 171.3
   },
   "everyday-collections/map-lru": {
-    "typed": 854,
-    "untyped": 872.8
+    "typed": 867.7,
+    "untyped": 889.6,
+    "raised": "854 | 872.8 > 867.7 | 889.6: three cures of costs that followed the past of a Map or Set and not its size, each parted by a run of the build before it and the build behind it: a deletion asks whether the table has lost three in four of its entries and is to shrink (854.1 > 859.9 | 872.9 > 882.2), it frees the slot of the index where no search can miss it (860.3 > 863.5 | 882.1 > 885.2), and a first step of a walk that meets a deleted entry goes on behind the entries known to be deleted at the front (863.0 > 867.7 | 885.3 > 889.6): a cache of 100,000 entries that lets its oldest go took 350,000 instructions a turn and takes 700"
   },
   "everyday-collections/map-made-and-dropped": {
     "typed": 310.8,
@@ -1181,12 +1202,13 @@
     "untyped": 425
   },
   "everyday-collections/map-written-in-a-function-asked-about-each-word": {
-    "typed": 2923,
-    "untyped": 2935.1
+    "typed": 2988,
+    "untyped": 2998.3
   },
   "everyday-collections/set-add-and-delete": {
-    "typed": 428.4,
-    "untyped": 429.3
+    "typed": 435.8,
+    "untyped": 436,
+    "raised": "428.4 | 429.3 > 435.8 | 436: a deletion asks whether the table has lost three in four of its entries and is to shrink (six instructions) and frees the slot of the index where no search can miss it (nine): a Map or Set kept the table of its peak for good, and a key deleted and set again cost the size of the table"
   },
   "everyday-collections/set-add-existing": {
     "typed": 80,
@@ -1265,14 +1287,14 @@
     "untyped": 1386.9
   },
   "everyday-collections/set-written-in-a-function-asked-about-each-letter": {
-    "typed": 2467.6,
-    "untyped": 2507.5
+    "typed": 2533.3,
+    "untyped": 2573.5
   },
   "everyday-collections/weak-map-get": {
     "typed": 78.2,
     "untyped": 86.2,
-    "wavers": 5,
-    "note": "runs of two builds of one evening on two machines read 78.2, 80.8 | 89.5, 86.2"
+    "wavers": 7,
+    "note": "it hashes by address: runs of three builds of one evening on two machines read 78.2, 80.8, 82.3 | 89.5, 86.2, 89.5"
   },
   "everyday-collections/weak-map-private-data": {
     "typed": 33,
@@ -5180,9 +5202,10 @@
     "untyped": 1234,
     "owed": {
       "forms": [
+        "typed",
         "untyped"
       ],
-      "why": "read 1261 when the bound went from 10% to 2%, over half of it native code: nobody has looked for the change yet"
+      "why": "read 1250 | 1261 when the bound went from 10% to 2%, over half of it native code: nobody has looked for the change yet"
     }
   },
   "everyday-paths-and-files/a-long-path-is-parsed": {
@@ -5191,7 +5214,14 @@
   },
   "everyday-paths-and-files/a-long-path-is-taken-apart": {
     "typed": 450,
-    "untyped": 474.2
+    "untyped": 474.2,
+    "owed": {
+      "forms": [
+        "typed",
+        "untyped"
+      ],
+      "why": "reads 486.5 | 510.3 without a change to node:path's native code that is left out of this pull request: the pin was read with it"
+    }
   },
   "everyday-paths-and-files/a-long-tidy-path-is-normalized": {
     "typed": 160.2,
@@ -5241,7 +5271,14 @@
   },
   "everyday-paths-and-files/whether-a-path-is-a-file": {
     "typed": 2127.4,
-    "untyped": 2139
+    "untyped": 2139,
+    "owed": {
+      "forms": [
+        "typed",
+        "untyped"
+      ],
+      "why": "read 2165.3 | 2180.5 when the bound went from 10% to 2%, over half of it native code: nobody has looked for the change yet"
+    }
   },
   "everyday-patterns-out-of-run-time-text/a-capital-whatever-the-case-in-greek": {
     "typed": 889.5,

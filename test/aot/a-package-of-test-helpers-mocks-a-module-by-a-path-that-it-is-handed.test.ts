@@ -1,6 +1,6 @@
 // An installed package of test helpers wraps the test runner: `exports.mockModule = (path, factory) => mock.module(path, factory)`.
 // The look through the test files follows the files and workspace packages that they name and reads no installed package, so no build knew that a mock may reach any
-// module: "TypeError: mock(module, fn) cannot replace a module that was compiled ahead of time", as one program and over layers.
+// module: "TypeError: mock(module, fn) cannot replace .. because the build didn't see a test mock it", as one program and over layers.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { test } from "./supported";

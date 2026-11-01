@@ -302,9 +302,8 @@ fn sloppy_eval_declares_in_function() {
     assert_eq!(scopes, [function_scope]);
     let (scopes, function_scope) = eval_variable_scopes("function f(s) { { eval(s); } }");
     assert_eq!(scopes, [function_scope]);
-    let with_own_directive = "function f(s) { 'use strict'; eval(s); }";
-    let (scopes, function_scope) = eval_variable_scopes(with_own_directive);
-    assert_eq!(scopes, [function_scope]);
+    let (scopes, _) = eval_variable_scopes("function f(s) { 'use strict'; eval(s); }");
+    assert!(scopes.is_empty());
     let (scopes, _) = eval_variable_scopes("'use strict'; function f(s) { eval(s); }");
     assert!(scopes.is_empty());
     let (scopes, _) = eval_variable_scopes("function f(s) { if (false) { eval(s); } }");

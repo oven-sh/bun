@@ -781,6 +781,8 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
     // ── is_in_preload guard ─────────────────────────────────────────────
     // SAFETY: per fn contract — `vm` is the live per-thread VM.
     unsafe { (*vm).is_in_preload = true };
+    // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
+    bun_jsc::compiled_program::will_run_preloads(unsafe { &*(*vm).global });
     // Note: copy the raw ptr into a guard-owned local so the defer body
     // doesn't borrow the fn param — later `(*vm).pending_internal_promise = …`
     // would otherwise alias the guard's capture.
@@ -788,6 +790,8 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
     scopeguard::defer! {
         // SAFETY: per fn contract.
         unsafe { (*vm_for_guard).is_in_preload = false };
+        // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
+        bun_jsc::compiled_program::did_run_preloads(unsafe { &*(*vm_for_guard).global });
     }
     // SAFETY: per fn contract.
     let kept_for_this_run = core::mem::take(unsafe { &mut (*vm).preloads_kept_for_reload });

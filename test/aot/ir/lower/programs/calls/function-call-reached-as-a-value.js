@@ -20,8 +20,8 @@ const describe = value => (value === undefined ? "undefined" : value === null ? 
 function sloppy() { return [describe(this), arguments.length, ...arguments]; }
 function strict() { "use strict"; return [describe(this), arguments.length, ...arguments]; }
 function three(a, b, c) { "use strict"; return [describe(this), a, b, c]; }
-function rest(first, ...others) { "use strict"; return [describe(this), first, others]; }
-function defaults(a = "A", b = a + "B") { "use strict"; return [describe(this), a, b]; }
+function rest(first, ...others) { return [describe(this), first, others]; }
+function defaults(a = "A", b = a + "B") { return [describe(this), a, b]; }
 const arrow = (...all) => ["arrow", all];
 const method = { name: "holder", m(a, b) { return [this === undefined ? "undefined" : this.name, a, b]; } }.m;
 class Base { constructor() { this.made = true; } static s(a) { return [this === Base, a]; } get g() { return "getter of " + this.name; } }

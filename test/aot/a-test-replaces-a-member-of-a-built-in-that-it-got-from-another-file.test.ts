@@ -1,13 +1,23 @@
 import { expect } from "bun:test";
-import { casesOfOneRun, sayOf } from "./harness/cases-of-one-run";
+import { casesOfOneRun, sayOf, type Way } from "./harness/cases-of-one-run";
+import { runsWholeGrids } from "./harness/ways";
 import { test } from "./supported";
 
 // The test file never spells the object whose member it replaces: it gets the object, or the function that finds it, from a file
 // of its project or from a module of Bun. Over layers that file lies in a program below, which is built first.
 // The cases share the layers below them, so each replaces a member of its own and none puts it back by a store.
-const project = casesOfOneRun("a-test-replaces-a-member-of-a-built-in-that-it-got-from-another-file", {
-  "package.json": `{ "name": "p", "type": "module" }`,
-});
+const compiled = (
+  [
+    [["--debug-aot"], "TestRunLayers:2"],
+    [["--debug-aot"], "TestRunLayers:1"],
+    [["--debug-aot"], "TestRunLayers:0"],
+  ] satisfies Way[]
+).filter(([, words]) => runsWholeGrids || words !== "TestRunLayers:1");
+const project = casesOfOneRun(
+  "a-test-replaces-a-member-of-a-built-in-that-it-got-from-another-file",
+  { "package.json": `{ "name": "p", "type": "module" }` },
+  [[[]], ...compiled],
+);
 
 function runsAsPlain(
   title: string,
@@ -34,9 +44,7 @@ function runsAsPlain(
   test(title, async () => {
     const plain = (await project.ran()).get(name);
     expect(plain).toEqual({ result: "pass", printed: printed + "\n" });
-    expect((await project.ran(["--debug-aot"], "TestRunLayers:2")).get(name)).toEqual(plain);
-    expect((await project.ran(["--debug-aot"], "TestRunLayers:1")).get(name)).toEqual(plain);
-    expect((await project.ran(["--debug-aot"], "TestRunLayers:0")).get(name)).toEqual(plain);
+    for (const [flags, words] of compiled) expect((await project.ran(flags, words)).get(name)).toEqual(plain);
   });
 }
 

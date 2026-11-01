@@ -66,22 +66,6 @@ impl Checker<'_, '_> {
         }
     }
 
-    pub(in crate::check) fn is_read_as_strict_mode_code(&self, file: FileId, node: Node) -> bool {
-        self.is_strict_mode_code(file, node) || self.hir(file).follows_dropped_directive(node)
-    }
-
-    pub(in crate::check) fn strict_mode_name_error_class(
-        &self,
-        file: FileId,
-        node: Node,
-    ) -> DiagnosticClass {
-        if self.is_read_as_strict_mode_code(file, node) {
-            self.early_error_class(file, node)
-        } else {
-            DiagnosticClass::TypeScriptGrammar
-        }
-    }
-
     pub(in crate::check) fn strict_mode_error_class(
         &self,
         file: FileId,

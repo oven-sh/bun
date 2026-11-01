@@ -1,0 +1,6 @@
+# The read leaves the accessor that has escaped to `unknown`: what its body does to the instance counts as impossible.
+# FORM: AsRead
+# RUN: valueflow-apply
+# OPTIONS: exclude=CodeOutsideImage sabotage=ReadsEnterNoGetterThatEscaped
+# CHECK: layout L0 {{*}}impossibleMutations=[{{*}}ChangeIntegrity
+# PROGRAM-OF: escaped-getter-freezes.ir

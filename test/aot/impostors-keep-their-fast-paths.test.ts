@@ -19,7 +19,8 @@ import {
 } from "./impostors-keep-their-fast-paths/look";
 import { projects, type Row } from "./impostors-keep-their-fast-paths/rows";
 import { whyInstructionsCannotBeCounted, type CompiledFunction } from "./instruction-counts/count-instructions";
-import { beforeAll, describe, test } from "./supported";
+// One by one: the runner gives this file a process of its own and eight cases at once, beside two more like it: too many builds for four cores.
+import { beforeAll, describe, testOneByOne as test } from "./supported";
 
 const slack = 1.5;
 const instructionsOfBlockRefills = 500;

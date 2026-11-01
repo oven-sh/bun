@@ -2,7 +2,8 @@ use super::answers::{
     CallTarget, CheckedMember, CheckedType, ClassDeclaration, ClassMember, ClassMemberSource,
     ClassParent, ClassRef, ClassShape, EnumConstant, FunctionRef, GaveUp, IndexSignature,
     ListedMember, MemberLookup, MemberName, MemberTypedOtherwise, MethodsAbove, ObjectMember,
-    ObjectMemberKind, PositionTypes, QueryStatistics, SignatureShape, TypeDisplayName, WrittenType,
+    ObjectMemberKind, PositionTypes, QueryLimit, QueryLimits, QueryStatistics, SignatureShape,
+    TypeDisplayName, WrittenType,
 };
 use super::builtin_types::BuiltinTypeSymbols;
 use super::declared_signatures::DeclaredSignatures;
@@ -39,6 +40,7 @@ pub struct QueryInputs<'c> {
     pub builtin_types: &'c BuiltinTypeSymbols,
     pub named_values: &'c dyn NamedValues,
     pub max_inference_nodes: u64,
+    pub limits: QueryLimits,
 }
 
 pub struct Queries<'c, 'p, 's> {
@@ -150,7 +152,7 @@ impl<'p, 's> Checker<'p, 's> {
     pub fn with_queries<R>(
         &mut self,
         file: FileId,
-        inputs: QueryInputs<'_>,
+        inputs: &QueryInputs<'_>,
         then: impl FnOnce(&mut Queries<'_, 'p, 's>) -> R,
     ) -> R {
         debug_assert!(
@@ -171,7 +173,7 @@ impl<'p, 's> Checker<'p, 's> {
             c: self,
             file,
             arena: &arena,
-            inputs,
+            inputs: *inputs,
             memo: Memo::default(),
             kept: memo_of_checker,
             statistics: QueryStatistics::default(),
@@ -532,6 +534,15 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
 
     pub fn is_stack_low(&self) -> bool {
         self.c.is_stack_low()
+    }
+
+    pub(super) fn limit(&self, limit: QueryLimit) -> u64 {
+        self.inputs.limits.get(limit)
+    }
+
+    pub(super) fn note_walk_ended_by(&mut self, limit: QueryLimit) {
+        let hits = &mut self.statistics.limit_hits[limit as usize];
+        *hits = hits.saturating_add(1);
     }
 
     pub fn statistics(&self) -> QueryStatistics {

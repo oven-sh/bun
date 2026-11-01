@@ -476,8 +476,6 @@ pub struct Fixed<'s, T> {
     held: PhantomData<FixedHeld<'s, T>>,
 }
 
-/// No block if it's empty, because a file without nodes can also be created by a thread that doesn't own the arena
-/// (`File::empty_in`).
 #[derive(Copy, Clone, PartialEq)]
 enum FixedOwner {
     Arena,
@@ -1633,8 +1631,6 @@ pub mod rare {
     pub const DIRECTIVE_IN_FUNCTION: u32 = 1 << 7;
     /// A type parameter has a modifier: `<const T>`, `<in T>`.
     pub const TYPE_PARAMETER_MODIFIER: u32 = 1 << 8;
-    /// A function has a `"use strict"` directive that does not count.
-    pub const DROPPED_STRICT_DIRECTIVE: u32 = 1 << 14;
     /// `T?`, `?T`, `T!` or `!T` as a type, outside a comment.
     pub const JSDOC_TYPE: u32 = 1 << 9;
     /// A type predicate: `a is T`, `asserts a`.
@@ -2254,6 +2250,7 @@ pub struct Import {
     pub stmt: StmtId,
     /// The `Object` of `with { .. }`. `NONE` if there is none.
     pub attributes: ExprId,
+    pub loaded_as: Atom,
 }
 
 #[derive(Copy, Clone, Debug)]

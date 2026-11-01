@@ -66,7 +66,7 @@ export {
 `;
 const withoutModulePaths = (typed: string) => typed.replace(/^\/\/ .*\n/gm, "");
 const LEFT_OUT_FOR_ITS_TEXT =
-  /^the \.aot\.ts files that --aot compiles a package from are left out: index\.js: the text of .*index\.ts in the bundle is not the text that was type checked$/;
+  /^the \.aot\.ts files that --aot compiles a package from are left out: index\.js: the text of .*index\.ts in the source map is not the text that was type checked$/;
 
 // The module `virtual:<path>` is <path> in `namespace`. `contents` is its text.
 const virtual = (namespace: string, contents: string): Bun.BunPlugin => ({
@@ -348,6 +348,7 @@ export {
   });
 
   // In `sources` the plugin's module is named `<namespace>:<path>`. Here that is the path of the file `v:thing.ts`.
+  // Windows has no file of that name: `:` is not allowed in one.
   test.skipIf(isWindows)(
     "a module that a plugin makes is not the file that has its name in the source map",
     async () => {
@@ -479,10 +480,10 @@ export {
     const options = `entrypoints: ["./index.ts"], files: { "./index.ts": ${JSON.stringify(nested["util.ts"])} }`;
     const { stdout, stderr, exitCode } = await build(String(dir), options);
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({
+    const { logs, typed } = JSON.parse(stdout);
+    expect({ logs, typed: withoutModulePaths(typed) }).toEqual({
       logs: [],
-      typed: `// index.ts
-interface Options {
+      typed: `interface Options {
   n: number;
 }
 export type { Options };
@@ -526,6 +527,29 @@ export function report(lines: ReadonlyArray<string>): Report {
     const { stdout, stderr, exitCode } = await build(String(dir), `entrypoints: ["./index.ts"], plugins: [${plugin}]`);
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({ logs: [expect.stringMatching(LEFT_OUT_FOR_ITS_TEXT)], typed: null });
+    expect(exitCode).toBe(0);
+  });
+
+  // The source map is JSON, which cannot hold the byte 0xE9 that is not part of a UTF-8 sequence.
+  test("a file that is not UTF-8 leaves the typed files out", async () => {
+    using dir = tempDir("build-api-dts-latin-1", {
+      "tsconfig.json": tsconfig,
+      "index.ts": Buffer.concat([
+        Buffer.from("// caf"),
+        Buffer.from([0xe9]),
+        Buffer.from(" in Latin-1\n" + nested["util.ts"]),
+      ]),
+    });
+    const { stdout, stderr, exitCode } = await build(String(dir), `entrypoints: ["./index.ts"]`);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      logs: [
+        expect.stringMatching(
+          /^the \.aot\.ts files that --aot compiles a package from are left out: index\.js: .*index\.ts is not UTF-8, so the source map does not hold its text$/,
+        ),
+      ],
+      typed: null,
+    });
     expect(exitCode).toBe(0);
   });
 });

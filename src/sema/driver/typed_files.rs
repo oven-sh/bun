@@ -4084,7 +4084,11 @@ fn add_types_by_source_map(
             // What the type checker noted of a module are offsets in the text that it read.
             MappedSource::File(path) => match module_of(path) {
                 Some(module) if module.text[..] != *text => {
-                    Err(TypedFilesError::SourceNotAsChecked { path: path.clone() })
+                    let path = path.clone();
+                    Err(match bun_core::strings::is_valid_utf8(&module.text) {
+                        true => TypedFilesError::SourceNotAsChecked { path },
+                        false => TypedFilesError::SourceNotUtf8 { path },
+                    })
                 }
                 _ => Ok(Source { path, text }),
             },
@@ -4497,6 +4501,9 @@ pub enum TypedFilesError {
     SourceNotAsChecked {
         path: Vec<u8>,
     },
+    SourceNotUtf8 {
+        path: Vec<u8>,
+    },
     SourceMapWithoutMappings,
     NotNamedJavaScript {
         path: Vec<u8>,
@@ -4528,7 +4535,12 @@ impl core::fmt::Display for TypedFilesError {
             ),
             TypedFilesError::SourceNotAsChecked { path } => write!(
                 f,
-                "the text of {} in the bundle is not the text that was type checked",
+                "the text of {} in the source map is not the text that was type checked",
+                BStr::new(path)
+            ),
+            TypedFilesError::SourceNotUtf8 { path } => write!(
+                f,
+                "{} is not UTF-8, so the source map does not hold its text",
                 BStr::new(path)
             ),
             TypedFilesError::SourceMapWithoutMappings => {

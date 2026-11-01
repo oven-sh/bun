@@ -2128,6 +2128,7 @@ declare namespace $Bindgen {
       writeResult: Uint32Array,
       writeCallback: () => void,
       dictionary: $Node.AnyView | undefined,
+      rejectGarbageAfterEnd?: boolean,
     ): void;
   }
   interface NativeBrotli extends CompressionStream {

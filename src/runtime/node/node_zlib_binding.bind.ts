@@ -63,6 +63,7 @@ export const NativeZlib = compressionStream(
       writeState: b.any,
       processCallback: b.any,
       dictionary: b.any,
+      rejectGarbageAfterEnd: b.bool.default(false),
     },
   },
   { ...method, args: { level: int32, strategy: int32 } },

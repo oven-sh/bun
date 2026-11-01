@@ -31,11 +31,11 @@ pub struct ParsedSourceMap {
     /// a handle to the underlying source provider is stored, along with a
     /// load hint recording whether the map is known to be inline or external.
     ///
-    /// Source contents are large, we don't preserve them in memory. A print
-    /// that needs them (Bun.inspect / unhandled) decodes the sourcemap again
-    /// and drops the text after it. The error printer keeps the lines of the
-    /// code frame that it cut (`CodeFrameSlots` in bun_jsc), so the same place
-    /// printed again does not decode while they are kept.
+    /// Source contents are large, we don't preserve them in memory. This has
+    /// the downside of repeatedly re-decoding sourcemaps if multiple errors
+    /// are emitted (specifically with Bun.inspect / unhandled; the ones that
+    /// rely on source contents)
+    /// Except a repeat print of a place: the error printer keeps the lines that it cut (`CodeFrameSlots` in bun_jsc).
     pub underlying_provider: SourceContentPtr,
 
     pub is_standalone_module_graph: bool,

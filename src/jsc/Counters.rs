@@ -6,7 +6,7 @@ use crate::generated_bindgen::counters::CountersObject;
 pub struct Counters {
     pub(crate) spawn_sync_blocking: i32,
     pub(crate) spawn_memfd: i32,
-    /// Whole-source loads started to cut an error's code frame. A load that fails counts.
+    /// Times the error printer asked for a whole source to cut a code frame. Each arm that it asks counts, also when it gives none.
     pub(crate) code_frame_source_loads: i32,
 }
 

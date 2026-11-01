@@ -11,6 +11,7 @@ use std::sync::Arc;
 use bun_bundler::Transpiler;
 use bun_io as Async;
 use bun_sourcemap::ParsedSourceMap;
+use bun_sourcemap::mapping::SourceCodeOrigin;
 use bun_uws as uws;
 
 use crate::bun_string_jsc;
@@ -7240,31 +7241,33 @@ impl VirtualMachine {
                 };
                 let last_line = mapping.original.lines.zero_based().max(0);
                 // A frame that is already remapped has no map here.
-                if enable_source_code_preview.get()
-                    && let Some(map) = &lookup.source_map
-                {
-                    let source = if map.is_external() {
-                        CodeFrameSource::SourcesContent(mapping.source_index)
-                    } else {
-                        CodeFrameSource::ByPath
-                    };
-                    frame_key = Some((Arc::clone(map), source));
-                }
-                let external_code = match &frame_key {
-                    Some(key @ (_, CodeFrameSource::SourcesContent(_))) => {
-                        match self.kept_code_frame(key, last_line) {
-                            Some((text, ranges)) => {
-                                kept_ranges = Some(ranges);
-                                Some(text)
-                            }
-                            None => {
-                                self.counters.mark(Counter::CodeFrameSourceLoads);
-                                lookup.get_source_code(top_source_url.slice())
-                            }
-                        }
+                let mut key = match &lookup.source_map {
+                    Some(map) if enable_source_code_preview.get() => {
+                        let source = if map.is_external() {
+                            CodeFrameSource::SourcesContent(mapping.source_index)
+                        } else {
+                            CodeFrameSource::ByPath
+                        };
+                        Some((Arc::clone(map), source))
                     }
                     _ => None,
                 };
+                let mut external_code = None;
+                if let Some(sources_content @ (_, CodeFrameSource::SourcesContent(_))) = &key {
+                    if let Some((text, ranges)) = self.kept_code_frame(sources_content, last_line) {
+                        kept_ranges = Some(ranges);
+                        external_code = Some(text);
+                    } else {
+                        self.counters.mark(Counter::CodeFrameSourceLoads);
+                        let loaded = lookup.get_source_code(top_source_url.slice());
+                        // A file read in place of the map's text is not kept under the map's source index.
+                        if !matches!(loaded, Some((_, SourceCodeOrigin::SourceMap))) {
+                            key = None;
+                        }
+                        external_code = loaded.map(|(text, _)| text);
+                    }
+                }
+                frame_key = key;
                 (mapping, display_url, external_code, last_line)
             })
         };

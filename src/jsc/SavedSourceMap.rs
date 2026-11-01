@@ -227,9 +227,7 @@ impl SavedSourceMap {
         }
     }
 
-    /// Replaces the value for `path`. `rare_data::CodeFrameSlots` takes a new
-    /// `ParsedSourceMap` value to mean that the module loaded again: never
-    /// change in place what a stored one maps.
+    /// `rare_data::CodeFrameSlots` takes a new `ParsedSourceMap` value to mean a reload: never change in place what a stored one maps.
     pub(crate) fn put_value(&mut self, path: &[u8], value: Value) -> bun_js_printer::Result<()> {
         use bun_collections::zig_hash_map::MapEntry as Entry;
 
@@ -277,8 +275,8 @@ impl SavedSourceMap {
             // Runtime-transpiled module. Wrap the blob in a refcounted
             // ParsedSourceMap shell (no VLQ decode, no Mapping.List) so callers
             // can hold a ref while the table mutates. The shell takes ownership
-            // of the blob. Each blob gets its own shell: `CodeFrameSlots` takes
-            // a new shell to mean that the module loaded again.
+            // of the blob.
+            // Each blob gets its own shell: `CodeFrameSlots` takes a new shell to mean that the module loaded again.
             let ism = InternalSourceMap {
                 data: tagged.as_unchecked::<InternalSourceMap>() as *const u8,
             };

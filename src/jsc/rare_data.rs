@@ -157,30 +157,19 @@ impl EntropyCache {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// CodeFrameSlots
-// ──────────────────────────────────────────────────────────────────────────
-
 /// Where the text of a code frame came from, under one source map.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CodeFrameSource {
     /// The map's `sourcesContent` entry at this index.
     SourcesContent(i32),
-    /// The module's own file. Only a map with no source names gets here, and
-    /// the map table holds one such map per module URL.
+    /// The module's own file. A map with no source names is the map of one module URL.
     ByPath,
 }
 
-/// The source lines printed above an error (its code frame), kept for the
-/// next print of an error from the same place. JS thread only.
-///
-/// A place is one line of one source under one `ParsedSourceMap` value. A
-/// slot holds the text that the last load for its place read, until 64 newer
-/// places replace it. A module that bun transpiles again gets a new value
-/// (`SavedSourceMap::put_value`), so its old slots stop matching and no
-/// writer of the table has to clear them.
+/// Code frames (the source lines printed above an error) that the next print of the same place uses. JS thread only.
 #[derive(Default)]
 pub(crate) struct CodeFrameSlots {
+    /// One per place: a line of a source under a `ParsedSourceMap` value.
     slots: Vec<CodeFrameSlot>,
     /// The slot that the next `put` replaces once all of them are in use.
     next: usize,
@@ -190,10 +179,11 @@ pub(crate) struct CodeFrameSlots {
 pub(crate) type CodeFrameRanges = bun_core::BoundedArray<LineRange, SOURCE_LINES_COUNT>;
 
 struct CodeFrameSlot {
+    /// A module that bun transpiles again gets a new value (`SavedSourceMap::put_value`), so this slot stops matching.
     map: Weak<ParsedSourceMap>,
     source: CodeFrameSource,
     line: i32,
-    /// The lines as they are in the source text.
+    /// The lines as the last load for this place read them.
     text: Box<[u8]>,
     /// Relative to `text`.
     ranges: CodeFrameRanges,

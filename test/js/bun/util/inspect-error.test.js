@@ -837,6 +837,45 @@ console.log(JSON.stringify(out));
     });
   });
 
+  // When the `.map` cannot be read, the printer reads the file that the map
+  // names. That text is not the map's, so it is not kept in its place.
+  test("a file that is read in place of a source map that cannot be read", async () => {
+    const { out, exitCode } = await run({
+      "external.js": prebuilt("external.js.map"),
+      "external.js.map": prebuiltMap(),
+      // original.ts as it is on the disk now.
+      "original.ts": [
+        "// disk line 1",
+        "// disk line 2",
+        "function thrower() {",
+        '  throw new Error("boom");',
+        "}",
+        "",
+      ].join("\n"),
+      "main.js":
+        helpers +
+        String.raw`
+const fs = require("fs");
+const mod = require("./external.js");
+const map = fs.readFileSync("external.js.map");
+// This print parses the map while it is whole.
+Bun.inspect(mod.makeOther());
+const out = { loads: [], frames: [] };
+const print = () => out.loads.push(loadsIn(() => out.frames.push(frame(Bun.inspect(mod.make())))));
+fs.writeFileSync("external.js.map", "{");
+print();
+fs.writeFileSync("external.js.map", map);
+print();
+print();
+console.log(JSON.stringify(out));
+`,
+    });
+    expect({ out, exitCode }).toEqual({
+      out: { loads: [1, 1, 0], frames: [prebuiltFrame("disk"), prebuiltFrame(), prebuiltFrame()] },
+      exitCode: 0,
+    });
+  });
+
   // A place that was printed keeps its lines. Another place of the module
   // gets the transpiled lines, as it does without this change.
   test("a source that can no longer be read", async () => {
@@ -929,6 +968,7 @@ for (const name of ${JSON.stringify(Object.keys(cases))}) {
   ];
   out[name] = {
     loads,
+    lineNumbers: frame(freshPlain).split("\n").map(line => Number.parseInt(line)),
     hasFrame: frame(freshPlain).includes("throw new Error"),
     same: untwin(freshColored) === keptColored && untwin(keptPlain) === freshPlain,
   };
@@ -936,21 +976,22 @@ for (const name of ${JSON.stringify(Object.keys(cases))}) {
 console.log(JSON.stringify(out));
 `,
     });
-    const kept = { loads: [1, 1, 0, 0], hasFrame: true, same: true };
+    // `lineNumbers` are those of the lines in the frame, which ends at the error's line.
+    const kept = lineNumbers => ({ loads: [1, 1, 0, 0], lineNumbers, hasFrame: true, same: true });
     expect({ out, exitCode }).toEqual({
       out: {
-        "1023 bytes": kept,
-        "1024 bytes": kept,
-        "1025 bytes": kept,
-        "a character that crosses byte 1024": kept,
-        "a line of spaces above": kept,
-        "CRLF": kept,
-        "no newline at the end": kept,
-        "the first line": kept,
-        "two places on one line": kept,
-        "a frame of 4096 bytes": kept,
+        "1023 bytes": kept([1]),
+        "1024 bytes": kept([1]),
+        "1025 bytes": kept([1]),
+        "a character that crosses byte 1024": kept([1]),
+        "a line of spaces above": kept([1, 2, 3]),
+        "CRLF": kept([1, 2, 3]),
+        "no newline at the end": kept([1, 2]),
+        "the first line": kept([1]),
+        "two places on one line": kept([1]),
+        "a frame of 4096 bytes": kept([1]),
         // One byte more than a slot holds.
-        "a frame of 4097 bytes": { loads: [1, 1, 1, 1], hasFrame: true, same: true },
+        "a frame of 4097 bytes": { loads: [1, 1, 1, 1], lineNumbers: [1], hasFrame: true, same: true },
       },
       exitCode: 0,
     });

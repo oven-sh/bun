@@ -1520,9 +1520,11 @@ describe.concurrent("bun --hot", () => {
       env: bunEnv,
       cwd: root,
       stdout: "pipe",
-      stderr: "inherit",
+      stderr: "pipe",
       stdin: "ignore",
     });
+    // Read from the start, so that a full pipe does not stop the child.
+    const stderr = runner.stderr.text();
     const reader = runner.stdout.getReader();
     const decoder = new TextDecoder();
     let stdout = "";
@@ -1531,14 +1533,17 @@ describe.concurrent("bun --hot", () => {
       if (done) break;
       stdout += decoder.decode(value, { stream: true });
     }
-    expect(stdout).toBe(firstLine);
-    change();
+    // A child with another first line does not exit by itself. The caller's assertion then shows what it wrote.
+    if (stdout === firstLine) change();
+    else runner.kill();
     for (;;) {
       const { value, done } = await reader.read();
       if (done) break;
       stdout += decoder.decode(value, { stream: true });
     }
-    return { stdout, exitCode: await runner.exited };
+    // A debug build logs each reload.
+    const errors = (await stderr).replaceAll("DEBUG: Reloading...\n", "");
+    return { stdout, stderr: errors, exitCode: await runner.exited };
   }
 
   it("a module-level router lists the pages added since the last run", async () => {
@@ -1554,7 +1559,11 @@ describe.concurrent("bun --hot", () => {
       fs.writeFileSync(path.join(root, "pages", "blog", "b.tsx"), page);
       fs.writeFileSync(path.join(root, "server.js"), server(2));
     });
-    expect(result).toEqual({ stdout: "run 1: / /blog/a\nrun 2: / /blog/a /blog/b /new\n", exitCode: 0 });
+    expect(result).toEqual({
+      stdout: "run 1: / /blog/a\nrun 2: / /blog/a /blog/b /new\n",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   // Each case saves `saved` by a rename after the first run. With inotify that is an event of the directory, and the
@@ -1629,7 +1638,7 @@ describe.concurrent("bun --hot", () => {
     const result = await run(root, "version 1\n", () => {
       fs.renameSync(path.join(root, "saved"), path.join(root, saved));
     });
-    expect(result).toEqual({ stdout: "version 1\nversion 2\n", exitCode: 0 });
+    expect(result).toEqual({ stdout: "version 1\nversion 2\n", stderr: "", exitCode: 0 });
   });
 });
 

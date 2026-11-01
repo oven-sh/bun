@@ -85,13 +85,26 @@ class Point {
 }
 
 const scratchFile = "native-contract-descriptor.txt";
+const lastingFile = "native-contract-lasting-descriptor.txt";
 let openDescriptor: number | undefined;
+let lastingDescriptor: number | undefined;
+
+/** Whether the test sees when `value` is called: it is a callback of the test, which records. */
+export const isRecordingCallback = (log: Log, value: unknown): boolean => typeof value === "function" && log.isProxy(value);
+
+function openLastingDescriptor(): number {
+  writeFileSync(lastingFile, "text");
+  return openSync(lastingFile, "r+");
+}
 
 // A number that names an open file of the test, where a small integer would name a file of the process.
 export const descriptorCandidate: Candidate = {
   name: "descriptor",
   kind: "Primitive",
-  create() {
+  create(log, _operand, { args = [] }) {
+    // A member that leaves its work with another thread answers through its first argument. Behind anything but a callback that
+    // records, the test does not see the answer: the number is that of a file that is never closed, so it never names another file.
+    if (args.length > 0 && !isRecordingCallback(log, args[0])) return (lastingDescriptor ??= openLastingDescriptor());
     if (openDescriptor !== undefined) return openDescriptor;
     // An earlier call may have taken the file away or closed it to its owner.
     rmSync(scratchFile, { force: true, recursive: true });

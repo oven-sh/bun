@@ -1,5 +1,8 @@
-import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux } from "harness";
+import { randomUUIDv7, S3Client } from "bun";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { join } from "node:path";
+import { serve, type S3Server } from "s3-server";
 
 // Serializing a FormData body (`new Response(formData)` / `new Request(..., { body: formData })`)
 // goes through Blob::from_dom_form_data, which joins the multipart parts out of
@@ -210,5 +213,242 @@ describe("multipart serialization (new Response(formData))", () => {
     // An extra copy of the blob bytes would put this at ~2x the blob size.
     expect(deltaMB).toBeLessThan(blobSizeMB * 1.5);
     expect(exitCode).toBe(0);
+  });
+});
+
+// The serializer is synchronous and an S3 object's bytes can only be fetched
+// asynchronously, so an S3-backed entry cannot be serialized. It used to be
+// written out as the part headers followed by an empty body: no error, no S3
+// request, and the receiver stored an empty file.
+describe("multipart serialization of S3-backed entries", () => {
+  const object = "id,name\n1,bun\n";
+  const remedy = "new File([await s3file.bytes()], s3file.name, { type: s3file.type })";
+
+  let server: S3Server;
+  let client: S3Client;
+  beforeAll(() => {
+    server = serve({ buckets: ["bucket"] });
+    client = new S3Client(server.clientOptions("bucket"));
+  });
+  afterAll(() => server.stop());
+
+  /** An S3 file under a new key. Nothing is stored there: only one test downloads. */
+  function s3Object(type?: string) {
+    const key = `${randomUUIDv7()}.csv`;
+    return {
+      key,
+      file: () => client.file(key, { type }),
+      /**
+       * The operation and the Range header of each request for the key.
+       * A HEAD request goes first, so a request that is on its way is in the list before it.
+       */
+      async requests() {
+        await client.file(key).exists();
+        return server.requests
+          .filter(request => request.key === key)
+          .map(request => [request.operation, request.headers.get("range")]);
+      },
+    };
+  }
+  const noRequest = [["HeadObject", null]];
+
+  // `quotedName` is the entry name as the message renders it, quotes included.
+  function messageFor(quotedName: string): string {
+    return (
+      `FormData entry ${quotedName} is an S3 file, which cannot be read while the body is serialized. ` +
+      `Pass its bytes instead: ${remedy}`
+    );
+  }
+
+  function formDataWith(entry: Blob, name = "report"): FormData {
+    const formData = new FormData();
+    formData.append("before", "first");
+    formData.append(name, entry, "reports/2026.csv");
+    formData.append("after", "last");
+    return formData;
+  }
+
+  // What `fn` throws, or what the promise it returns rejects with.
+  async function failureOf(fn: () => unknown): Promise<unknown> {
+    try {
+      await fn();
+    } catch (error) {
+      return error;
+    }
+    throw new Error("did not fail");
+  }
+
+  const shapes: [string, (file: Bun.S3File) => Blob][] = [
+    ["S3Client.file()", file => file],
+    ["a slice of an S3 file", file => file.slice(2, 5)],
+    ["new File([s3file], name)", file => new File([file], "wrapped.csv")],
+  ];
+  const consumers: [string, (formData: FormData, url: URL) => unknown][] = [
+    ["new Response(formData)", formData => new Response(formData)],
+    ["new Request(url, { body })", (formData, url) => new Request(url, { method: "POST", body: formData })],
+    ["fetch(url, { body })", (formData, url) => fetch(url, { method: "POST", body: formData })],
+  ];
+
+  describe.each(shapes)("%s", (_shape, makeEntry) => {
+    test.each(consumers)("%s fails and sends nothing", async (_consumer, consume) => {
+      const stored = s3Object("text/csv");
+      let received = 0;
+      using receiver = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        fetch() {
+          received++;
+          return new Response("stored");
+        },
+      });
+      const formData = formDataWith(makeEntry(stored.file()));
+      const sizeBefore = (formData.get("report") as Blob).size;
+
+      const error = await failureOf(() => consume(formData, receiver.url));
+      // A request from `consume` would reach the receiver before this one.
+      await fetch(receiver.url);
+      expect(error).toBeInstanceOf(TypeError);
+      expect({
+        message: (error as TypeError).message,
+        s3Requests: await stored.requests(),
+        received,
+        sizeAfter: (formData.get("report") as Blob).size,
+      }).toEqual({
+        message: messageFor('"report"'),
+        s3Requests: noRequest,
+        received: 1,
+        sizeAfter: sizeBefore,
+      });
+    });
+  });
+
+  test('new Response(formData) fails for Bun.file("s3://...")', async () => {
+    const formData = formDataWith(Bun.file("s3://bucket/reports/2026.csv"));
+
+    const error = await failureOf(() => new Response(formData));
+    expect(error).toBeInstanceOf(TypeError);
+    expect((error as TypeError).message).toBe(messageFor('"report"'));
+  });
+
+  test.each([
+    ["a non-ASCII name", "レポート ☺", '"レポート ☺"'],
+    ["a name containing a quote", 'quote"name', '"quote\\"name"'],
+    ["a name containing CRLF", "crlf\r\nname", '"crlf\\r\\nname"'],
+  ])("the message quotes %s", async (_label, name, quotedName) => {
+    const formData = formDataWith(s3Object().file(), name);
+
+    const error = await failureOf(() => new Response(formData));
+    expect((error as TypeError).message).toBe(messageFor(quotedName));
+  });
+
+  // The entries before the S3 file are ones the serializer can write.
+  test("the message names the first S3 file, after a Blob and an empty S3 slice", async () => {
+    const stored = s3Object();
+    const formData = new FormData();
+    formData.append("blob", new Blob(["in memory"]), "blob.txt");
+    formData.append("empty", stored.file().slice(4, 4), "empty.csv");
+    formData.append("first", stored.file(), "first.csv");
+    formData.append("second", stored.file(), "second.csv");
+
+    const error = await failureOf(() => new Response(formData));
+    expect(error).toBeInstanceOf(TypeError);
+    expect((error as TypeError).message).toBe(messageFor('"first"'));
+  });
+
+  // The serializer stops at the first entry that it cannot write.
+  test.each([
+    ["an S3 file and then a missing file", true],
+    ["a missing file and then an S3 file", false],
+  ])("%s: the first one decides the error", async (_label, s3First) => {
+    using dir = tempDir("formdata-s3-entry", {});
+    const s3Entry: [string, Blob] = ["s3", s3Object().file()];
+    const diskEntry: [string, Blob] = ["disk", Bun.file(join(String(dir), "missing.csv"))];
+    const formData = new FormData();
+    for (const [name, blob] of s3First ? [s3Entry, diskEntry] : [diskEntry, s3Entry]) formData.append(name, blob);
+
+    const error = (await failureOf(() => new Response(formData))) as Error & { code?: string };
+    expect({
+      type: error.constructor.name,
+      code: error.code,
+      namesS3Entry: error.message === messageFor('"s3"'),
+    }).toEqual(
+      s3First
+        ? { type: "TypeError", code: undefined, namesS3Entry: true }
+        : { type: "Error", code: "ENOENT", namesS3Entry: false },
+    );
+  });
+
+  // An empty window of an S3 object has no bytes to fetch.
+  test.each([
+    ["slice(0, 0)", 0],
+    ["slice(3, 3)", 3],
+  ])("s3file.%s serializes as an empty part", async (_label, at) => {
+    const stored = s3Object("text/csv");
+    const formData = new FormData();
+    formData.append("report", stored.file().slice(at, at), "empty.csv");
+    formData.append("after", "last");
+
+    const response = new Response(formData);
+    const contentType = response.headers.get("Content-Type")!;
+    const boundary = contentType.slice(contentType.indexOf("boundary=") + "boundary=".length);
+    expect({ body: await response.text(), s3Requests: await stored.requests() }).toEqual({
+      body:
+        `--${boundary}\r\n` +
+        `Content-Disposition: form-data; name="report"; filename="empty.csv"\r\n` +
+        `Content-Type: text/csv\r\n\r\n\r\n` +
+        `--${boundary}\r\n` +
+        `Content-Disposition: form-data; name="after"\r\n\r\nlast\r\n` +
+        `--${boundary}--\r\n`,
+      s3Requests: noRequest,
+    });
+  });
+
+  // Each of these calls asks the S3 file for its size. The answer used to be
+  // stored as 0, which made the file look like an empty window.
+  test.each<[string, (s3file: Bun.S3File) => void]>([
+    [
+      "structuredClone()",
+      s3file => {
+        // It throws for an S3 file. Only its size query matters here.
+        try {
+          structuredClone(s3file);
+        } catch {}
+      },
+    ],
+    ["expect().toHaveLength()", s3file => expect(s3file).not.toHaveLength(0)],
+  ])("an S3 file still fails after %s asked for its size", async (_label, ask) => {
+    const s3file = s3Object("text/csv").file();
+    ask(s3file);
+    expect(s3file.size).toBeNaN();
+
+    const error = await failureOf(() => new Response(formDataWith(s3file)));
+    expect(error).toBeInstanceOf(TypeError);
+    expect((error as TypeError).message).toBe(messageFor('"report"'));
+  });
+
+  // Runs the expression the message prints, character for character.
+  test("the File that the message says to pass has the bytes, the type and the filename", async () => {
+    const stored = s3Object("text/csv");
+    await client.write(stored.key, object);
+    const s3file = stored.file();
+    const error = await failureOf(() => new Response(formDataWith(s3file)));
+    const printed = (error as TypeError).message.slice((error as TypeError).message.indexOf("new File("));
+    expect(printed).toBe(remedy);
+
+    const AsyncFunction = (async () => {}).constructor as new (...args: string[]) => (s3file: Blob) => Promise<File>;
+    const formData = new FormData();
+    formData.append("report", await new AsyncFunction("s3file", `return ${printed};`)(s3file));
+
+    const response = new Response(formData);
+    const contentType = response.headers.get("Content-Type")!;
+    const boundary = contentType.slice(contentType.indexOf("boundary=") + "boundary=".length);
+    expect({ body: await response.text(), s3Requests: await stored.requests() }).toEqual({
+      body:
+        `--${boundary}\r\n` +
+        `Content-Disposition: form-data; name="report"; filename="${stored.key}"\r\n` +
+        `Content-Type: text/csv\r\n\r\n${object}\r\n` +
+        `--${boundary}--\r\n`,
+      s3Requests: [["PutObject", null], ["GetObject", null], ...noRequest],
+    });
   });
 });

@@ -603,6 +603,17 @@ Like `Bun.file()`, `S3File` extends [`Blob`](https://developer.mozilla.org/en-US
 
 Because `S3File` extends `Blob`, `S3File` instances work with `fetch()`, `Response`, and other web APIs that accept `Blob` instances.
 
+A `FormData` body is the exception. Bun builds a `FormData` body synchronously, and Bun can only download an S3 object asynchronously. When an entry is an S3 file, `new Response(formData)` and `new Request()` throw a `TypeError`, and `fetch()` rejects with one. To send the object, read its bytes first and append a `File`:
+
+```ts s3.ts icon="/icons/typescript.svg"
+const formData = new FormData();
+formData.append("file", new File([await s3file.bytes()], "123.json", { type: s3file.type }));
+
+await fetch("https://example.com/upload", { method: "POST", body: formData });
+```
+
+An empty slice, such as `s3file.slice(0, 0)`, has no bytes to download. Bun sends that entry as an empty part.
+
 ### Partial reads with `slice`
 
 To read a partial range of a file, use the `slice` method.

@@ -3564,7 +3564,7 @@ bool Bun__deepEqualsNodeStrictSkipProto(JSC::EncodedJSValue JSValue0, JSC::Encod
 
 #undef IMPL_DEEP_EQUALS_WRAPPER
 
-static JSObject* shallowCopyForDeepMatch(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* object)
+static JSObject* shallowCopyForDeepMatch(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* object, bool copiesErrors)
 {
     auto& vm = JSC::getVM(globalObject);
     JSObject* copy = nullptr;
@@ -3574,6 +3574,10 @@ static JSObject* shallowCopyForDeepMatch(JSGlobalObject* globalObject, ThrowScop
     } else if (object->type() == FinalObjectType || JSC::AOT::PropertyWalk::isCompiledObject(object)) {
         JSValue prototype = object->getPrototypeDirect();
         copy = prototype.isObject() ? constructEmptyObject(globalObject, asObject(prototype)) : constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+    } else if (copiesErrors && object->classInfo() == ErrorInstance::info()) {
+        // Made the way a structured clone makes one: it captures no stack of its own, and gets the one of `object` below.
+        copy = ErrorInstance::create(globalObject, String(), uncheckedDowncast<ErrorInstance>(object)->errorType(), {}, String(), String());
+        copy->setPrototypeDirect(vm, object->getPrototypeDirect());
     } else {
         return nullptr;
     }
@@ -3601,7 +3605,7 @@ static JSObject* shallowCopyForDeepMatch(JSGlobalObject* globalObject, ThrowScop
 }
 
 // Returns `root` with matched properties replaced by their asymmetric matchers, copying only the objects that change.
-static JSValue replaceMatchedProperties(JSGlobalObject* globalObject, ThrowScope& scope, Bun::DeepMatchState& state, JSValue root, JSValue rootPattern)
+static JSValue replaceMatchedProperties(JSGlobalObject* globalObject, ThrowScope& scope, Bun::DeepMatchState& state, JSValue root, JSValue rootPattern, bool copiesErrors)
 {
     using Pair = std::pair<EncodedJSValue, EncodedJSValue>;
     auto pairAt = [&](size_t index) { return Pair { JSValue::encode(state.recorded.at(index)), JSValue::encode(state.recorded.at(index + 1)) }; };
@@ -3625,7 +3629,7 @@ static JSValue replaceMatchedProperties(JSGlobalObject* globalObject, ThrowScope
 
     MarkedArgumentBuffer keepAlive;
     for (auto& [pair, copy] : copies) {
-        copy = shallowCopyForDeepMatch(globalObject, scope, asObject(JSValue::decode(pair.first)));
+        copy = shallowCopyForDeepMatch(globalObject, scope, asObject(JSValue::decode(pair.first)), copiesErrors);
         RETURN_IF_EXCEPTION(scope, {});
         if (copy)
             keepAlive.append(copy);
@@ -3660,7 +3664,8 @@ bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSVal
     bool matched = Bun__deepMatch<true>(obj, subset, globalObject, scope, state, false);
     RETURN_IF_EXCEPTION(scope, false);
     if (replaced) {
-        JSValue shown = matched == replaceWhen ? replaceMatchedProperties(globalObject, scope, state, obj, subset) : obj;
+        // The diff of a failed match keeps the message of an Error, which says more than the matcher it matched.
+        JSValue shown = matched == replaceWhen ? replaceMatchedProperties(globalObject, scope, state, obj, subset, matched) : obj;
         RETURN_IF_EXCEPTION(scope, false);
         *replaced = JSValue::encode(shown);
     }

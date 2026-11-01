@@ -10,7 +10,7 @@ import { describe, test as oneAtATime } from "./supported";
 
 // The tests run at once: each builds and runs in a folder of its own.
 const test = oneAtATime.concurrent;
-// A test keeps about two processors busy: a quarter as many tests as processors run at once, so half of the machine is left to the files beside this one. The others wait in a hook without a limit, where the time of a test does not run.
+// A test runs one command at a time, and a run over two layers keeps about two processors busy: a quarter as many tests as processors run at once, so half of the machine is left to the files beside this one. The others wait in a hook without a limit, where the time of a test does not run.
 let free = Math.max(2, availableParallelism() >> 2);
 const waiting: (() => void)[] = [];
 beforeEach(() => (free > 0 ? void free-- : new Promise<void>(resolve => waiting.push(resolve))), 0);
@@ -257,7 +257,8 @@ test("last", () => {
   }
 
   test.each(ways)("$way", async ({ words }) => {
-    const [without, withIt] = await Promise.all([walked(project(false), words), walked(project(true), words)]);
+    const without = await walked(project(false), words);
+    const withIt = await walked(project(true), words);
     const ran = {
       stdout: "",
       results: [" 0 fail", " 5 pass", "(pass) last", "(pass) t0", "(pass) t1", "(pass) t2", "(pass) t3"],

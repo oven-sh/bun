@@ -5264,17 +5264,17 @@ runtimefunction id=ArrayTraversalTraverseArray function=f134 visibility=Private
 # CHECK-NEXT: b0(v0: undefined|f28, v1: int[0, 1]):
 # CHECK-NEXT: v2: 0 = Integer
 # CHECK-NEXT: v3: 0 = Integer
-# CHECK-NEXT: v4: boolean = ToBoolean v0
 # CHECK-NEXT: Jump -> next b1(v2, v3)
-# CHECK-NEXT: b1(v5: number, v6: int[0, 2]):
+# CHECK-NEXT: b1(v4: number, v5: int[0, 2]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v8: 2 = Integer integer=2
-# CHECK-NEXT: v9: boolean = Less v6, v8
-# CHECK-NEXT: Branch v9 -> taken b2(| 0), notTaken b18()
-# CHECK-NEXT: b2(v10: int[0, 1]):
-# CHECK-NEXT: Branch v4 -> taken b3(| 0), notTaken b15()
+# CHECK-NEXT: v7: 2 = Integer integer=2
+# CHECK-NEXT: v8: boolean = Less v5, v7
+# CHECK-NEXT: Branch v8 -> taken b2(| 0), notTaken b18()
+# CHECK-NEXT: b2(v9: int[0, 1]):
+# CHECK-NEXT: v10: boolean = ToBoolean v0
+# CHECK-NEXT: Branch v10 -> taken b3(| 0), notTaken b15()
 # CHECK-NEXT: b3(v11: f28):
-# CHECK-NEXT: v12: int[0, 2] = Add v1, v10
+# CHECK-NEXT: v12: int[0, 2] = Add v1, v9
 # CHECK-NEXT: v13: env L3 = GetCapture v11 function=f28
 # CHECK-NEXT: v14: L5 = GetCapture v11 function=f28 index=1
 # CHECK-NEXT: v15: fact = Entered function=f28
@@ -5326,18 +5326,18 @@ runtimefunction id=ArrayTraversalTraverseArray function=f134 visibility=Private
 # CHECK-NEXT: v45: anything = CatchValue
 # CHECK-NEXT: v46: anything = PropGet v45 key="message" accessSite=34
 # CHECK-NEXT: v47: anything = PropGet v46 key="length" accessSite=35
-# CHECK-NEXT: v48: number = Sub v5, v47
+# CHECK-NEXT: v48: number = Sub v4, v47
 # CHECK-NEXT: Jump -> next b17(v48)
 # CHECK-NEXT: b15():
 # CHECK-NEXT: Jump -> next b16(v1)
 # CHECK-NEXT: b16(v49: number):
-# CHECK-NEXT: v50: number = Add v5, v49
+# CHECK-NEXT: v50: number = Add v4, v49
 # CHECK-NEXT: Jump -> next b17(v50)
 # CHECK-NEXT: b17(v51: number):
-# CHECK-NEXT: v52: int[1, 2] = Increment v10
+# CHECK-NEXT: v52: int[1, 2] = Increment v9
 # CHECK-NEXT: Jump -> next b1(v51, v52)
 # CHECK-NEXT: b18():
-# CHECK-NEXT: Return v5
+# CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="capturesWhatItIsGiven"
 # CHECK: module=m0 position=3879 role=ResultWrapper flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=f31}] results=[{type=f14}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f137} {

@@ -208,8 +208,9 @@ function placesIn(elf: Image, wanted: (name: string) => boolean): Place[] {
       }
       continue;
     }
-    // A section can begin with a call: then `before` is its first byte.
-    for (let at = offset + 1; at + 4 <= end; at++) {
+    // A call can be the first instruction of a section. The loop sees a displacement only with two bytes before it.
+    if (offset + 5 <= end && (file[offset] === 0xe8 || file[offset] === 0xe9)) found(nameAt(base + offset + 5 + view.getInt32(offset + 1, true)), base + offset + 1);
+    for (let at = offset + 2; at + 4 <= end; at++) {
       const word = view.getInt32(at, true);
       const before = file[at - 1]!;
       const isBranch = before === 0xe8 || before === 0xe9 || (file[at - 2] === 0x0f && (before & 0xf0) === 0x80);

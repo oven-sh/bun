@@ -210,7 +210,7 @@ describe("a Mach-O file", () => {
       cpuType: 0x01000007,
       text: "e80b000000" + "c3" + "9090", // call 0x100000410; ret; nop; nop
       stub: "ff25ea3b0000", // jmp *0x100004000(%rip)
-      constants: "e88bffffff" + "000000", // as an instruction: call 0x100000410
+      constants: "e98bffffff" + "000000", // as an instruction: jmp 0x100000410
       call: 0x100000401,
       callsInConstants: [0x100000481],
     },

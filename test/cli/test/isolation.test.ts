@@ -320,8 +320,8 @@ describe.concurrent("bun test --isolate", () => {
     }
   `;
 
-  // A module that an earlier file loaded is not transpiled again, and a module's own source map is read when the
-  // module is transpiled.
+  // A module that an earlier file loaded is not transpiled again, unless the switch asks another thing of it: the
+  // URL of a module's own source map is kept when the module is transpiled.
   test("with --isolate, a file's process.setSourceMapsEnabled() is for the modules that the file loads", async () => {
     using dir = tempDir("isolate-source-maps-module", {
       ...libWithSourceMap,

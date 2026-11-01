@@ -1108,22 +1108,51 @@ describe.concurrent("a loaded file with its own source map", () => {
     ]);
   });
 
-  // The parser says where the text that it was given is wrong. No map is asked.
+  // The parser says where the text that it was given is wrong. No map is asked. node v26.13.0 names the loaded file
+  // too. `bad.js` is what Bun's parser refuses, and `bad-regexp.js` what only JavaScriptCore refuses.
   test("where a module that does not parse is wrong is a place in the loaded file", async () => {
+    const map = (source: string) =>
+      JSON.stringify({ version: 3, sources: [source], names: [], mappings: lineMappings([11, 12]) });
     using dir = tempDir("own-source-map-syntax-error", {
       "bad.js": `function (\n//# sourceMappingURL=bad.js.map\n`,
-      "bad.js.map": JSON.stringify({ version: 3, sources: ["bad.ts"], names: [], mappings: lineMappings([11, 12]) }),
+      "bad.js.map": map("bad.ts"),
+      "bad-regexp.js": `const a = 1;\nconst re = /(/;\n//# sourceMappingURL=bad-regexp.js.map\n`,
+      "bad-regexp.js.map": map("bad-regexp.ts"),
+      "main.cjs": `
+        try {
+          require("./bad-regexp.js");
+        } catch (error) {
+          const { name, line, sourceURL, stack } = error;
+          console.log(JSON.stringify({ name, line, sourceURL, frame: stack.split("\\n")[1].trim() }));
+        }
+      `,
     });
-    const { stdout, stderr, exitCode } = await run(String(dir), ["--enable-source-maps", "bad.js"]);
+    const [refused, caught, caughtWithout] = await Promise.all([
+      run(String(dir), ["--enable-source-maps", "bad.js"]),
+      run(String(dir), ["--enable-source-maps", "main.cjs"]),
+      run(String(dir), ["main.cjs"]),
+    ]);
     // The lines that say where: one for each of the two things that the parser finds wrong.
-    expect({ stdout, stderr: stderr.split("\n").filter(line => /^\s+at /.test(line)), exitCode }).toEqual({
+    expect({ ...refused, stderr: refused.stderr.split("\n").filter(line => /^\s+at /.test(line)) }).toEqual({
       stdout: "",
       stderr: ["    at <dir>/bad.js:1:10", "    at <dir>/bad.js:2:32"],
       exitCode: 1,
     });
+    const inTheLoadedFile = {
+      stdout: {
+        name: "SyntaxError",
+        line: 2,
+        sourceURL: "<dir>/bad-regexp.js",
+        frame: "at <parse> (<dir>/bad-regexp.js:2)",
+      },
+      stderr: "",
+      exitCode: 0,
+    };
+    expect([printed(caught), printed(caughtWithout)]).toEqual([inTheLoadedFile, inTheLoadedFile]);
   });
 
-  // As in Node.js, which says nothing either.
+  // Node.js says nothing either. It reads an index map that has `sources` beside its `sections`. Bun reads no
+  // index map.
   test("a source map that cannot be read or used leaves the stack in the loaded file, without a warning", async () => {
     const unusable: Record<string, Record<string, string | object>> = {
       "not JSON": { "not-json.js.map": "{ not JSON" },

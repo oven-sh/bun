@@ -273,7 +273,8 @@ WTF::String formatStackTrace(
                     // https://github.com/oven-sh/bun/issues/3595
                     if (!sourceURLForFrame.isEmpty()) {
                         remappedFrame.source_url = Bun::toStringRef(sourceURLForFrame);
-                        remappedFrames.remap(getBunVM(), BunPositionSpace::Original);
+                        // As in Node.js, where a module does not parse is a place in the file that was loaded, also with process.sourceMapsEnabled.
+                        remappedFrames.remap(getBunVM(), BunPositionSpace::Loaded);
 
                         sourceURLForFrame = remappedFrame.source_url.toWTFString();
                     }

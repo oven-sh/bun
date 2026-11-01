@@ -1,41 +1,14 @@
 export {};
 
-/**
- * Like a `BodyMixin`, but implemented by more types, such as
- * `Blob`, `ReadableStream`, and `Response`.
- *
- * It has no `blob()` method because it's the lowest common
- * denominator of these objects: a `Blob` in Bun does not have a
- * `.blob()` method.
- */
-interface BunConsumerConvenienceMethods {
-  /**
-   * Consume as text
-   */
-  text(): Promise<string>;
-
-  /**
-   * Consume as a Uint8Array, backed by an ArrayBuffer
-   */
-  bytes(): Promise<Uint8Array<ArrayBuffer>>;
-
-  /**
-   * Consume as JSON
-   */
-  json(): Promise<any>;
-}
-
 declare module "stream/web" {
-  interface ReadableStream extends BunConsumerConvenienceMethods {
-    /**
-     * Consume as a Blob
-     */
-    blob(): Promise<Blob>;
-  }
+  // The global `ReadableStream` interface (globals.d.ts) extends this same
+  // interface, so streams from `node:stream/web` and global streams stay
+  // assignable to each other.
+  interface ReadableStream extends Bun.__internal.BunReadableStreamConsumerMethods {}
 }
 
 declare module "buffer" {
-  interface Blob extends BunConsumerConvenienceMethods {
+  interface Blob extends Bun.__internal.BunConsumerConvenienceMethods {
     // We have to specify bytes again even though it comes from
     // BunConsumerConvenienceMethods, because inheritance in TypeScript is
     // slightly different from just "copying in the methods" (the difference is

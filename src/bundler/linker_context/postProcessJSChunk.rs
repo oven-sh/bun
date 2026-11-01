@@ -1175,8 +1175,25 @@ pub(crate) fn generate_entry_point_tail_js(
             }
         }
 
-        // TODO: iife
-        options::OutputFormat::Iife => {}
+        options::OutputFormat::Iife => match flags.wrap {
+            // "require_foo();" / "init_foo();"
+            crate::WrapKind::Cjs | crate::WrapKind::Esm if ast.wrapper_ref.is_valid() => {
+                stmts.push(Stmt::alloc(
+                    S::SExpr {
+                        value: Expr::init(
+                            E::Call {
+                                target: Expr::init_identifier(ast.wrapper_ref, bun_ast::Loc::EMPTY),
+                                ..Default::default()
+                            },
+                            bun_ast::Loc::EMPTY,
+                        ),
+                        ..Default::default()
+                    },
+                    bun_ast::Loc::EMPTY,
+                ));
+            }
+            crate::WrapKind::Cjs | crate::WrapKind::Esm | crate::WrapKind::None => {}
+        },
 
         options::OutputFormat::InternalBakeDev => {
             // nothing needs to be done here, as the exports are already
@@ -1254,7 +1271,6 @@ pub(crate) fn generate_entry_point_tail_js(
     }
 
     let print_options = js_printer::Options {
-        // TODO: IIFE indent
         indent: Default::default(),
         has_run_symbol_renamer: true,
 
@@ -1267,6 +1283,8 @@ pub(crate) fn generate_entry_point_tail_js(
         minify_whitespace: c.options.minify_whitespace,
         print_dce_annotations: c.options.emit_dce_annotations,
         minify_syntax: c.options.minify_syntax,
+        // The printer indents the tail inside the IIFE wrapper.
+        module_type: c.options.output_format,
         mangled_props: Some(&c.mangled_props),
         module_info,
         // .const_values = c.graph.const_values,

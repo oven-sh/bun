@@ -69,6 +69,12 @@ impl DirInfoRef {
     pub(crate) fn from_slot(slot: &mut DirInfo) -> Self {
         DirInfoRef(bun_ptr::BackRef::new_mut(slot))
     }
+
+    /// The address of the slot. A directory that is read again after a drop gets another slot.
+    #[inline]
+    pub(crate) fn as_ptr(self) -> *const DirInfo {
+        self.0.as_ptr()
+    }
 }
 
 impl core::ops::Deref for DirInfoRef {
@@ -312,6 +318,12 @@ pub(crate) fn hash_map_instance() -> *mut HashMap {
         return p.as_ptr();
     }
     hash_map_instance_init()
+}
+
+/// `bun:internal-for-testing`: `DirInfo` slots filled so far. None is freed: a directory read again counts twice.
+pub fn slots_used() -> usize {
+    // SAFETY: the singleton lives for the process, and `slots_used` takes the map's mutex.
+    unsafe { (*hash_map_instance()).slots_used() }
 }
 
 #[cold]

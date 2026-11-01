@@ -156,9 +156,10 @@ impl Framework {
     }
 }
 
+/// A probe for a package that a project can leave out, so a cached miss is taken as it is.
 #[inline]
 fn resolve_or_null(r: &mut bun_resolver::Resolver, path: &[u8]) -> Option<Utf8Bytes<'static>> {
-    match resolve_path(r, path) {
+    match r.with_trusted_cache(|r| resolve_path(r, path)) {
         Ok(resolved) => Some(resolved),
         Err(_) => {
             r.log_mut().reset();

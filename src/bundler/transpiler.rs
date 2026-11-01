@@ -305,7 +305,20 @@ impl<'a> Transpiler<'a> {
         dot_slash: &'e OnceCell<Vec<u8>>,
     ) -> crate::Result<resolver::Result<'e>> {
         let top_level_dir = Fs::FileSystem::get().top_level_dir();
-        let first = match self.resolver.resolve_with_framework(
+        // The lookup as a package is expected to miss for `bun build index.ts`: one check for both.
+        self.resolver
+            .with_deferred_miss_check(top_level_dir, entry_point, |resolver| {
+                Self::resolve_entry_point_once(resolver, top_level_dir, entry_point, dot_slash)
+            })
+    }
+
+    fn resolve_entry_point_once<'e>(
+        resolver: &mut Resolver<'a>,
+        top_level_dir: &[u8],
+        entry_point: &'e [u8],
+        dot_slash: &'e OnceCell<Vec<u8>>,
+    ) -> crate::Result<resolver::Result<'e>> {
+        let first = match resolver.resolve_with_framework(
             top_level_dir,
             entry_point,
             bun_ast::ImportKind::EntryPointBuild,
@@ -327,7 +340,7 @@ impl<'a> Transpiler<'a> {
         {
             let prefixed = dot_slash.get_or_init(|| [b"./", entry_point].concat());
             assert_eq!(&prefixed[2..], entry_point, "`dot_slash` was reused");
-            if let Ok(r) = self.resolver.resolve(
+            if let Ok(r) = resolver.resolve(
                 top_level_dir,
                 prefixed,
                 bun_ast::ImportKind::EntryPointBuild,
@@ -341,8 +354,7 @@ impl<'a> Transpiler<'a> {
         first
     }
 
-    /// Resolve an entry-point specifier, busting the directory cache and
-    /// retrying once on failure before reporting the error to the log.
+    /// Resolve an entry-point specifier, reporting the error to the log on failure.
     /// The result may borrow `entry_point` and `dot_slash`, an empty cell for its `./` spelling.
     pub fn resolve_entry_point<'e>(
         &mut self,
@@ -352,66 +364,6 @@ impl<'a> Transpiler<'a> {
         match self._resolve_entry_point(entry_point, dot_slash) {
             Ok(r) => self.reject_unbundleable_entry_point(r, entry_point),
             Err(err) => {
-                let mut cache_bust_buf = bun_paths::path_buffer_pool::get();
-
-                // Bust directory cache and try again
-                // reshaped for borrowck — a single labelled block would
-                // return a slice that aliases either `entry_point` (via
-                // `dirname`) or `cache_bust_buf`. Rust can't unify the two
-                // disjoint mutable borrows of `cache_bust_buf` across `break`,
-                // so compute `busted` directly instead.
-                let busted: bool = 'name: {
-                    // Neither buster name below would fit `cache_bust_buf`.
-                    if Fs::FileSystem::get().top_level_dir().len() + entry_point.len() + 4
-                        > bun_paths::MAX_PATH_BYTES
-                    {
-                        break 'name false;
-                    }
-                    if bun_paths::is_absolute(entry_point) {
-                        let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
-                            entry_point,
-                        );
-                        if !dir.is_empty() {
-                            // Normalized with trailing slash
-                            let buster_name = bun_paths::string_paths::normalize_slashes_only(
-                                &mut cache_bust_buf[..],
-                                dir,
-                                bun_paths::SEP,
-                            );
-                            break 'name self.resolver.bust_dir_cache(
-                                bun_paths::string_paths::without_trailing_slash_windows_path(
-                                    buster_name,
-                                ),
-                            );
-                        }
-                    }
-
-                    // `".."` needs no platform separator rewrite.
-                    let parts: [&[u8]; 2] = [entry_point, b".."];
-                    let top_level_dir = Fs::FileSystem::get().top_level_dir();
-
-                    let Some(buster_name) =
-                        bun_paths::resolve_path::join_abs_string_buf_z_checked::<
-                            bun_paths::platform::Auto,
-                        >(top_level_dir, &mut cache_bust_buf[..], &parts)
-                    else {
-                        break 'name false;
-                    };
-                    self.resolver.bust_dir_cache(
-                        bun_paths::string_paths::without_trailing_slash_windows_path(
-                            buster_name.as_bytes(),
-                        ),
-                    )
-                };
-
-                // Only re-query if we previously had something cached.
-                if busted {
-                    if let Ok(result) = self._resolve_entry_point(entry_point, dot_slash) {
-                        return self.reject_unbundleable_entry_point(result, entry_point);
-                    }
-                    // ignore this error, we will print the original error
-                }
-
                 self.log_mut().add_error_fmt(
                     None,
                     bun_ast::Loc::EMPTY,

@@ -132,8 +132,17 @@ pub(crate) enum JsxField {
 
 pub(crate) type JsxFieldSet = EnumSet<JsxField>;
 
+/// A file that a `TSConfigJSON` was read from, with a hash of its bytes then (`None`: not read).
+pub(crate) struct ConfigSource {
+    pub(crate) path: Box<[u8]>,
+    pub(crate) hash: Option<u64>,
+}
+
 pub struct TSConfigJSON {
     pub(crate) abs_path: Box<[u8]>,
+
+    /// Its own file, then each file that it extends. `Resolver::load_tsconfig` sets it on the merged one.
+    pub(crate) sources: Vec<ConfigSource>,
 
     /// The absolute path of "compilerOptions.baseUrl"
     pub(crate) base_url: Box<[u8]>,
@@ -176,6 +185,7 @@ impl Default for TSConfigJSON {
     fn default() -> Self {
         Self {
             abs_path: Box::default(),
+            sources: Vec::new(),
             base_url: Box::default(),
             base_url_for_paths: Box::default(),
             extends: Box::default(),

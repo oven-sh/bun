@@ -141,6 +141,7 @@ impl BuildCommand {
             std::ptr::from_ref::<transpiler::Transpiler>(this_transpiler).cast(),
             core::mem::size_of::<transpiler::Transpiler>(),
         );
+        this_transpiler.resolver.trust_cached_misses();
         if let Some(fetch) = fetcher {
             this_transpiler
                 .options

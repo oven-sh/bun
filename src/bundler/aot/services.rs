@@ -535,6 +535,102 @@ mod tests {
         Expr::init(E::Array::default(), Loc::EMPTY)
     }
 
+    /// A lookup after a change on disk starts from what an earlier lookup cached: the finders share the caches of the process.
+    #[cfg(unix)]
+    #[allow(clippy::disallowed_methods)]
+    mod after_a_miss {
+        use super::super::{FileFinder, with_test_context};
+        use bun_sema::resolve::{CodeFailure, CodeImportKind, FileSearch, FoundCode};
+        use std::os::unix::ffi::OsStrExt as _;
+        use std::path::PathBuf;
+
+        /// Removed when the test ends.
+        struct Project(PathBuf);
+
+        impl Drop for Project {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+
+        fn project(name: &str, files: &[(&str, &str)]) -> Project {
+            let unique_name = format!("bun-aot-file-finder-{}-{name}", std::process::id());
+            let directory = std::env::temp_dir().join(unique_name);
+            let _ = std::fs::remove_dir_all(&directory);
+            std::fs::create_dir_all(&directory).expect("directory");
+            let directory = directory.canonicalize().expect("directory");
+            for (file, contents) in files {
+                write(&directory, file, contents);
+            }
+            Project(directory)
+        }
+
+        fn write(directory: &std::path::Path, file: &str, contents: &str) {
+            let path = directory.join(file);
+            std::fs::create_dir_all(path.parent().expect("parent")).expect("directory");
+            std::fs::write(path, contents).expect("file");
+        }
+
+        fn import<'a>(directory: &'a std::path::Path, specifier: &'a [u8]) -> FileSearch<'a> {
+            FileSearch {
+                directory: directory.as_os_str().as_bytes(),
+                specifier,
+                kind: CodeImportKind::Import,
+                prefers_module_field: false,
+            }
+        }
+
+        #[test]
+        #[cfg_attr(miri, ignore)]
+        fn a_lookup_that_ran_again_reports_the_failure_of_its_last_run() {
+            let manifest = r##"{ "name": "p", "imports": { "#other": "./other.js" } }"##;
+            let project = project("last-run", &[("package.json", manifest)]);
+            let directory = &project.0;
+            with_test_context(
+                |_| {},
+                |context| {
+                    // SAFETY: the context keeps the carrier and its transpiler until this returns.
+                    let mut finder = unsafe { FileFinder::new(context.bundle().transpiler(), &[]) };
+                    let search = import(directory, b"#late");
+                    let not_defined = FoundCode::NotFound(CodeFailure::PackageImportNotDefined);
+                    assert_eq!(finder.find(&search), not_defined);
+                    // Now "imports" has the name, and its file is not there.
+                    let manifest = r##"{ "name": "p", "imports": { "#late": "./late.js" } }"##;
+                    write(directory, "package.json", manifest);
+                    assert_eq!(finder.find(&search), FoundCode::not_found());
+                },
+            );
+        }
+
+        #[test]
+        #[cfg_attr(miri, ignore)]
+        fn a_finder_takes_a_cached_miss_as_the_resolver_of_its_build_does() {
+            let project = project("policy", &[("node_modules/other/index.js", "")]);
+            let directory = &project.0;
+            with_test_context(
+                |_| {},
+                |context| {
+                    let search = import(directory, b"late");
+                    // SAFETY: as above.
+                    let new_finder =
+                        || unsafe { FileFinder::new(context.bundle().transpiler(), &[]) };
+                    // As in `Bun.build()`: a miss is checked on disk.
+                    let mut checking = new_finder();
+                    assert_eq!(checking.find(&search), FoundCode::not_found());
+                    // As in `bun build`.
+                    // SAFETY: nothing else holds the carrier in this test.
+                    let bundle = unsafe { &mut *context.bundle_pointer().as_ptr() };
+                    let transpiler = bundle.transpiler_for_target(bun_ast::Target::Bun);
+                    transpiler.resolver.trust_cached_misses();
+                    let mut trusting = new_finder();
+                    write(directory, "node_modules/late/index.js", "");
+                    assert_eq!(trusting.find(&search), FoundCode::not_found());
+                    assert!(matches!(checking.find(&search), FoundCode::File { .. }));
+                },
+            );
+        }
+    }
+
     #[test]
     #[cfg_attr(miri, ignore)]
     fn build_without_plugins_has_no_load_plugin() {

@@ -103,6 +103,70 @@ devTest("importing a file before it is created", {
     await c.expectMessage("value: 456");
   },
 });
+devTest("importing a directory before it is created", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { abc } from './second/';
+      console.log('value: ' + abc);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: [`index.ts:1:21: error: Could not resolve: "./second/"`],
+    });
+
+    await c.expectReload(async () => {
+      // The folder gets its name when its file is in it. After a `mkdir second` alone the server
+      // looks again and finds no index file, and nothing watches the new folder for the write.
+      await using _batch = await dev.batchChanges();
+      fs.mkdirSync(dev.join("staged"));
+      fs.writeFileSync(dev.join("staged/index.ts"), `export const abc = "456";`);
+      fs.renameSync(dev.join("staged"), dev.join("second"));
+    });
+
+    await c.expectMessage("value: 456");
+  },
+});
+// A dev server asks the resolver for "react" when it starts, to configure Fast
+// Refresh. In a project without React that lookup misses, and the resolver kept
+// the miss for the life of the process: React installed while the server runs
+// stayed `Could not resolve: "react"` until a restart.
+devTest("importing react after it is installed while the server runs", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      console.log('value: none');
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("value: none");
+
+    // The server does not watch these paths, so there is no reload to wait for.
+    await Bun.write(
+      dev.join("node_modules/react/package.json"),
+      JSON.stringify({ name: "react", version: "0.0.0", main: "index.js" }),
+    );
+    await Bun.write(dev.join("node_modules/react/index.js"), `module.exports = { marker: "installed" };`);
+
+    await dev.write(
+      "index.ts",
+      `
+        import react from "react";
+        console.log('value: ' + react.marker);
+      `,
+    );
+    await c.expectMessage("value: installed");
+  },
+});
 // After a failed resolution, the dev server evicts the specifier's path and its parent from the
 // resolver's directory cache. Here one of those two paths ends in a slash.
 devTest("recovers from an unresolved import of a path that ends in a slash", {
@@ -324,6 +388,38 @@ devTest("directory cache bust case #17576", {
       `,
     );
     await c.expectMessage(456);
+  },
+});
+// The same through a tsconfig "paths" alias: the alias stayed unresolved until
+// a restart, or until a relative import of the new file (#43391).
+devTest("importing a new file through a tsconfig paths alias", {
+  files: {
+    "tsconfig.json": JSON.stringify({ compilerOptions: { baseUrl: ".", paths: { "@/*": ["./*"] } } }),
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "base.ts": `export const base = "base";`,
+    "index.ts": `
+      import { base } from "@/base";
+      console.log("value: " + base);
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("value: base");
+    await c.expectNoWebSocketActivity(async () => {
+      await dev.write("fresh.ts", `export const fresh = "fresh";`);
+    });
+    await dev.write(
+      "index.ts",
+      `
+        import { fresh } from "@/fresh";
+        console.log("value: " + fresh);
+      `,
+    );
+    await c.expectMessage("value: fresh");
   },
 });
 devTest("deleting imported file shows error then recovers", {

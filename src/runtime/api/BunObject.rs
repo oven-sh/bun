@@ -873,6 +873,29 @@ pub(crate) fn resolve_sync(
     do_resolve_with_args::<false>(global_this, &module_id, &parent, mode)
 }
 
+/// `bun:internal-for-testing`: see `bun_resolver::dir_info::slots_used`.
+pub(crate) fn resolver_dir_info_slots_used() -> usize {
+    bun_resolver::dir_info::slots_used()
+}
+
+/// `bun:internal-for-testing`: see `bun_resolver::resolver::lookups_run_again`.
+pub(crate) fn resolver_lookups_run_again() -> usize {
+    bun_resolver::resolver::lookups_run_again()
+}
+
+/// `bun:internal-for-testing`: see `bun_resolver::resolver::miss_check_hold`.
+pub(crate) fn resolver_hold_next_miss_check() {
+    bun_resolver::resolver::miss_check_hold::arm();
+}
+
+pub(crate) fn resolver_wait_until_miss_check_is_held() -> bool {
+    bun_resolver::resolver::miss_check_hold::wait_until_held()
+}
+
+pub(crate) fn resolver_release_miss_check() {
+    bun_resolver::resolver::miss_check_hold::release();
+}
+
 pub(crate) fn resolve(
     cx: &mut JsScope<'_>,
     module_id: Option<BunString>,

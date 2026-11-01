@@ -1125,6 +1125,32 @@ describe.concurrent("auto-install reports why a package could not be installed",
     expect(stderr).toContain(`note: GET ${r.origin}/${name} - 404`);
     expect(exitCode).toBe(1);
   });
+
+  // A package.json that appears next to the importer makes the lookup run again after its miss.
+  // The package manager reports a request that failed once: the second run must keep the note.
+  const afterAChange = (name: string) =>
+    `require("node:fs").writeFileSync(__dirname + "/package.json", JSON.stringify({ name: "app" }));\nrequire("${name}");\n`;
+
+  test("tarball 404, from a lookup that runs again", async () => {
+    const name = "pkg-whose-tarball-is-missing-twice";
+    using r = registryWithMissingTarball(name);
+    const { stderr, exitCode } = await runWithRegistry(r.origin, "index.cjs", afterAChange(name));
+
+    expect(r.requests).toEqual([`/${name}`, r.tarballPath]);
+    expect(stderr).toContain(`note: GET ${r.tarballUrl} - 404`);
+    expect(exitCode).toBe(1);
+  });
+
+  test("manifest 404, from a lookup that runs again", async () => {
+    const name = "pkg-whose-manifest-is-missing-twice";
+    using r = registryWithMissingTarball("some-other-package");
+    const { stderr, exitCode } = await runWithRegistry(r.origin, "index.cjs", afterAChange(name));
+
+    expect(r.requests).toEqual([`/${name}`]);
+    expect(stderr).toContain(`error: Cannot find package '${name}'`);
+    expect(stderr).toContain(`note: GET ${r.origin}/${name} - 404`);
+    expect(exitCode).toBe(1);
+  });
 });
 
 // A registry whose every package has exactly one version, 1.0.0, published now.
@@ -1160,8 +1186,7 @@ function noteLines(stderr: string) {
 // belong to the dependency auto-install enqueues on the root, whose errors used
 // to go to a callback that never reported them, so they printed a bare
 // "Cannot find package". Each one now prints the same line `bun install` does,
-// exactly once: the runtime retries a failed resolve after busting its
-// directory cache, and the retry reports the same failure again.
+// exactly once, also when the resolver looks the package up again after the miss.
 describe.concurrent("auto-install reports why a package could not be resolved", () => {
   test("version the registry does not have", async () => {
     using r = registryWithOneFreshVersion();
@@ -1442,6 +1467,44 @@ describe.concurrent("auto-install of a package whose tarball ships a node_module
     ]);
     expect(exitCode).toBe(0);
   });
+});
+
+// The resolver knows a package of the cache by its package id. A lookup that misses and then finds
+// a new folder in that package must not forget the id: the package then looks for its dependencies
+// in the node_modules folders above the cache, like a package that was installed there.
+test.concurrent("a package that loads a file from a new folder of its own still finds its dependencies", async () => {
+  using registry = fixtureRegistry();
+  using dir = tempDir("autoinstall-new-folder-in-package", {
+    "project/index.js": `
+      const fs = require("fs");
+      const path = require("path");
+      const entry = require.resolve("one-fixed-dep");
+      const asPackage = require("module").createRequire(entry);
+      const resolved = specifier => {
+        try {
+          return path.relative(process.env.BUN_INSTALL_CACHE_DIR, asPackage.resolve(specifier)).split(path.sep).slice(1).join("/");
+        } catch (e) {
+          return e.code;
+        }
+      };
+      const before = resolved("./gen/file.js");
+      fs.mkdirSync(path.join(path.dirname(entry), "gen"));
+      fs.writeFileSync(path.join(path.dirname(entry), "gen", "file.js"), "");
+      console.log(JSON.stringify([before, resolved("./gen/file.js"), resolved("no-deps")]));
+    `,
+    "project/package.json": JSON.stringify({ name: "project", dependencies: { "one-fixed-dep": "1.0.0" } }),
+    "project/bunfig.toml": registry.bunfig,
+    "elsewhere/node_modules/.keep": "",
+  });
+  const { stdout, stderr, exitCode } = await runAutoInstallWithEnv(
+    { BUN_INSTALL_CACHE_DIR: join(String(dir), "elsewhere", "cache") },
+    join(String(dir), "project"),
+    "index.js",
+  );
+
+  expect(stderr).toBe("");
+  expect(stdout).toBe('["MODULE_NOT_FOUND","gen/file.js","index.js"]\n');
+  expect(exitCode).toBe(0);
 });
 
 test.concurrent("--install=fallback to install missing packages", async () => {

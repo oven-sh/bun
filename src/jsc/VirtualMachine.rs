@@ -4363,21 +4363,6 @@ fn normalize_specifier_for_resolution<'a>(
     }
 }
 
-/// Heap-backed so only a pointer lives in TLS; see test/js/bun/binary/tls-segment-size.
-#[thread_local]
-static SPECIFIER_CACHE_RESOLVER_BUF: core::cell::Cell<*mut bun_paths::PathBuffer> =
-    core::cell::Cell::new(core::ptr::null_mut());
-
-#[inline]
-fn specifier_cache_resolver_buf() -> *mut bun_paths::PathBuffer {
-    let mut p = SPECIFIER_CACHE_RESOLVER_BUF.get();
-    if p.is_null() {
-        p = bun_core::heap::into_raw(Box::new(bun_paths::PathBuffer::ZEROED));
-        SPECIFIER_CACHE_RESOLVER_BUF.set(p);
-    }
-    p
-}
-
 fn ensure_source_code_printer() {
     if SOURCE_CODE_PRINTER.get().is_none() {
         let writer = bun_js_printer::BufferWriter::init();
@@ -5572,7 +5557,7 @@ impl VirtualMachine {
         let mut query_string: &[u8] = b"";
         let normalized_specifier = normalize_specifier_for_resolution(specifier, &mut query_string);
         let top_level_dir = self.top_level_dir();
-        let mut source_to_use: &[u8] = if !is_special_source {
+        let source_to_use: &[u8] = if !is_special_source {
             if is_a_file_path {
                 bun_resolver::fs::PathName::init(source).dir_with_trailing_slash()
             } else {
@@ -5582,132 +5567,57 @@ impl VirtualMachine {
             top_level_dir
         };
 
-        // A `loop`
-        // returning the resolver result; `retry_on_not_found` is consumed on
-        // the first miss.
-        let mut retry_on_not_found = bun_paths::is_absolute(source_to_use);
-        let mut may_retry_from_root = self.finds_entry_points_by_path && !is_special_source;
-        let mut source_before_root: Option<&[u8]> = None;
-        let mut has_read_folders_again = false;
-        let result: bun_resolver::Result = loop {
-            let import_kind = if is_esm {
-                bun_ast::ImportKind::Stmt
-            } else {
-                bun_ast::ImportKind::Require
-            };
-            match self.transpiler.resolver.resolve_and_auto_install(
-                source_to_use,
+        let import_kind = if is_esm {
+            bun_ast::ImportKind::Stmt
+        } else {
+            bun_ast::ImportKind::Require
+        };
+        // An executable that was compiled in place looks from the importer, then from the root of its modules.
+        let root = self
+            .standalone_module_graph
+            .filter(|_| self.finds_entry_points_by_path && !is_special_source)
+            .map(|graph| graph.base_public_path_with_default_suffix())
+            .filter(|root| !source_to_use.starts_with(root));
+        let resolver = &mut self.transpiler.resolver;
+        let lookup = |resolver: &mut bun_resolver::Resolver<'_>, source_dir: &[u8]| {
+            resolver.resolve_and_auto_install(
+                source_dir,
                 normalized_specifier,
                 import_kind,
                 global_cache,
-            ) {
-                ResultUnion::Success(r) => break r,
-                ResultUnion::Failure(e) => return Err(e.into()),
-                ResultUnion::Pending(_) | ResultUnion::NotFound => {
-                    if core::mem::take(&mut may_retry_from_root)
-                        && let Some(root) = self
-                            .standalone_module_graph
-                            .map(|graph| graph.base_public_path_with_default_suffix())
-                            .filter(|root| !source_to_use.starts_with(root))
-                    {
-                        source_before_root = Some(source_to_use);
-                        source_to_use = root;
-                        retry_on_not_found = !has_read_folders_again;
-                        continue;
+            )
+        };
+        let is_miss =
+            |found: &ResultUnion| matches!(found, ResultUnion::Pending(_) | ResultUnion::NotFound);
+        let found = match root {
+            None => lookup(resolver, source_to_use),
+            // One check on disk when both miss.
+            Some(root) => resolver
+                .with_deferred_miss_check(source_to_use, normalized_specifier, |resolver| {
+                    let from_importer = lookup(resolver, source_to_use);
+                    if !is_miss(&from_importer) {
+                        return Ok(from_importer);
                     }
-                    if !retry_on_not_found {
-                        if let Some(chai) = self.resolve_chai_next_to_vitest(
-                            normalized_specifier,
-                            source_to_use,
-                            import_kind,
-                        ) {
-                            break chai;
-                        }
-                        return Err(crate::CrateError::ModuleNotFound);
-                    }
-                    retry_on_not_found = false;
-                    has_read_folders_again = true;
-                    // A file that was written since the folder of the importer was read is looked for from there again, and then from the root.
-                    if let Some(asked) = source_before_root
-                        .take()
-                        .filter(|asked| bun_paths::is_absolute(asked))
-                    {
-                        source_to_use = asked;
-                        may_retry_from_root = true;
-                    }
-
-                    // SAFETY: thread-local heap allocation; sole `&mut` on the JS
-                    // thread for the duration of the bust below.
-                    let buf = unsafe { &mut *specifier_cache_resolver_buf() }.as_mut_slice();
-                    let mut busted_as_spelled = false;
-                    let buster_name: &[u8] = if bun_paths::is_absolute(normalized_specifier) {
-                        if let Some(dir) = bun_paths::dirname(normalized_specifier) {
-                            if dir.len() > buf.len() {
-                                return Err(crate::CrateError::ModuleNotFound);
-                            }
-                            // `load_as_file` caches the listing under the specifier's own slashes, so bust that key too.
-                            busted_as_spelled = self.transpiler.resolver.bust_dir_cache(
-                                bun_paths::string_paths::without_trailing_slash_windows_path(dir),
-                            );
-                            // Normalized without trailing slash.
-                            bun_paths::string_paths::normalize_slashes_only(
-                                buf,
-                                dir,
-                                bun_paths::SEP,
-                            )
-                        } else {
-                            // Absolute but root — fall through to join.
-                            &b""[..]
-                        }
+                    let from_root = lookup(resolver, root);
+                    if is_miss(&from_root) {
+                        Err(())
                     } else {
-                        &b""[..]
-                    };
-                    let buster_name: &[u8] = if !buster_name.is_empty() {
-                        buster_name
-                    } else {
-                        // If the specifier is too long to join, it can't name
-                        // a real directory — skip the cache bust and fail.
-                        if source_to_use.len() + normalized_specifier.len() + 4 >= buf.len() {
-                            return Err(crate::CrateError::ModuleNotFound);
-                        }
-                        // The folder of a module of an executable stands for a folder on disk, and that is where the resolver has looked.
-                        let is_in_executable =
-                            bun_options_types::standalone_path::is_bun_standalone_file_path(
-                                source_to_use,
-                            );
-                        let folder_on_disk = match self.standalone_module_graph {
-                            Some(graph) if is_in_executable => {
-                                let root = graph.root_on_disk();
-                                let base = root.as_deref().unwrap_or(top_level_dir);
-                                let mut folders = graph
-                                    .directories_of_importer(source_to_use, base)
-                                    .into_iter();
-                                let resolver = &mut self.transpiler.resolver;
-                                let found = folders
-                                    .find(|it| resolver.read_dir_info_ignore_error(it).is_some());
-                                Some(found.unwrap_or_else(|| top_level_dir.to_vec()))
-                            }
-                            _ => None,
-                        };
-                        let parts: [&[u8]; 3] = [
-                            folder_on_disk.as_deref().unwrap_or(source_to_use),
-                            normalized_specifier,
-                            bun_paths::path_literal!("..").as_bytes(),
-                        ];
-                        bun_paths::resolve_path::join_abs_string_buf_z::<
-                            bun_paths::resolve_path::platform::Auto,
-                        >(top_level_dir, buf, &parts)
-                        .as_bytes()
-                    };
-
-                    // Only re-query if we previously had something cached.
-                    if self.transpiler.resolver.bust_dir_cache(
-                        bun_paths::string_paths::without_trailing_slash_windows_path(buster_name),
-                    ) || busted_as_spelled
-                    {
-                        continue;
+                        Ok(from_root)
                     }
-                    return Err(crate::CrateError::ModuleNotFound);
+                })
+                .unwrap_or(ResultUnion::NotFound),
+        };
+        let result: bun_resolver::Result = match found {
+            ResultUnion::Success(found) => found,
+            ResultUnion::Failure(error) => return Err(error.into()),
+            ResultUnion::Pending(_) | ResultUnion::NotFound => {
+                match self.resolve_chai_next_to_vitest(
+                    normalized_specifier,
+                    source_to_use,
+                    import_kind,
+                ) {
+                    Some(chai) => chai,
+                    None => return Err(crate::CrateError::ModuleNotFound),
                 }
             }
         };
@@ -6022,7 +5932,7 @@ impl VirtualMachine {
                     }
                 }
             };
-            // `log` dies with this frame. Deduplicated: `_resolve`'s retry can log a failure twice.
+            // `log` dies with this frame. One note for each text.
             let mut notes = core::mem::take(&mut msg.notes).into_vec();
             for (i, logged) in log.msgs.iter().enumerate() {
                 if Some(i) == resolve_msg_index

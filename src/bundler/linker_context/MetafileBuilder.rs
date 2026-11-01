@@ -35,7 +35,7 @@ use std::io::Write;
 use bstr::BStr;
 use bun_collections::VecExt;
 use bun_collections::index_sort;
-use bun_collections::{DynamicBitSet, StringHashMap};
+use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
 use bun_core::fmt as bfmt;
 use bun_core::string_joiner::StringJoiner;
 use bun_core::strings;
@@ -769,6 +769,117 @@ struct PathOnly<'a> {
     path: &'a [u8],
 }
 
+/// One output in the entry point analysis.
+#[derive(Clone, Copy)]
+struct EntryOutput<'a> {
+    entry_point: &'a [u8],
+    path: &'a [u8],
+    output: &'a JsonObject,
+    /// The output that the heading and the `[ENTRY:` line of its entry point name.
+    starts_entry: bool,
+    is_css_bundle: bool,
+    entry: usize,
+}
+
+/// The outputs of each entry point. Its JS chunk, its CSS bundle and the HTML file of a page all have its "entryPoint".
+struct EntryOutputs<'a> {
+    list: Vec<EntryOutput<'a>>,
+    entry_points: ArrayHashMap<&'a [u8], ()>,
+    /// Outputs that no entry point has: the code-split chunks.
+    unowned_count: usize,
+    css_bundle_count: usize,
+}
+
+/// The output that `output` names with "cssBundle".
+fn css_bundle_of(output: &JsonObject) -> Option<&[u8]> {
+    match output.get(b"cssBundle") {
+        Some(JsonValue::String(path)) => Some(path),
+        _ => None,
+    }
+}
+
+impl<'a> EntryOutputs<'a> {
+    fn with_capacity(outputs: usize) -> Self {
+        Self {
+            list: Vec::with_capacity(outputs),
+            entry_points: ArrayHashMap::with_capacity(outputs),
+            unowned_count: 0,
+            css_bundle_count: 0,
+        }
+    }
+
+    /// Takes the records of "outputs" in their order.
+    fn add(&mut self, path: &'a [u8], output: &'a JsonObject) -> crate::Result<()> {
+        let Some(JsonValue::String(entry_point)) = output.get(b"entryPoint") else {
+            self.unowned_count += 1;
+            return Ok(());
+        };
+        let entry_point: &'a [u8] = entry_point;
+        let entry = self.entry_points.get_or_put(entry_point)?;
+        let (starts_entry, entry) = (!entry.found_existing, entry.index);
+        self.css_bundle_count += usize::from(css_bundle_of(output).is_some());
+        self.list.push(EntryOutput {
+            entry_point,
+            path,
+            output,
+            starts_entry,
+            is_css_bundle: false,
+            entry,
+        });
+        Ok(())
+    }
+
+    /// Puts the outputs of each entry point together: each of its own files, then the CSS bundle that the file names.
+    fn finish(&mut self) -> crate::Result<()> {
+        if self.list.len() == self.entry_points.count() && self.css_bundle_count == 0 {
+            return Ok(());
+        }
+
+        let mut keyed = core::mem::take(&mut self.list);
+        let mut by_path: ArrayHashMap<&'a [u8], &'a JsonObject> =
+            ArrayHashMap::with_capacity(keyed.len());
+        for file in keyed.iter() {
+            by_path.put(file.path, file.output)?;
+        }
+
+        index_sort::sort_slice_by_key(&mut keyed, |file| file.entry);
+        self.list.reserve(keyed.len() + self.css_bundle_count);
+        for files in keyed.chunk_by(|a, b| a.entry == b.entry) {
+            let is_own = |file: &EntryOutput| {
+                !files
+                    .iter()
+                    .any(|other| css_bundle_of(other.output) == Some(file.path))
+            };
+            // The last own file leads, as in `compute_chunks`: for a page that is the HTML file, not its JS chunk.
+            let lead = files.iter().rposition(is_own);
+            let others = (0..files.len()).filter(|&i| Some(i) != lead);
+            let start = self.list.len();
+            for i in lead.into_iter().chain(others) {
+                let file = files[i];
+                if !is_own(&file) {
+                    continue;
+                }
+                self.list.push(EntryOutput {
+                    starts_entry: self.list.len() == start,
+                    ..file
+                });
+                if let Some(path) = css_bundle_of(file.output)
+                    && let Some(&output) = by_path.get(&path)
+                {
+                    self.list.push(EntryOutput {
+                        path,
+                        output,
+                        starts_entry: false,
+                        is_css_bundle: true,
+                        ..file
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 /// The target of an `inputs[..].imports[..]` edge and whether the edge is external.
 /// A split `import()` / `require()` has the output chunk in "path" and `"external": true`;
 /// its "entryPoint" is the bundled input it loads, so it is reported as that input.
@@ -984,22 +1095,20 @@ pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
     }
 
     // Count outputs and entry points
-    let mut entry_point_count: u32 = 0;
-    let mut chunk_count: u32 = 0;
-    for (_, out_value) in outputs_obj.iter() {
+    let mut entry_outputs = EntryOutputs::with_capacity(outputs_obj.count());
+    for (output_path, out_value) in outputs_obj.iter() {
         if let JsonValue::Object(out_obj) = out_value {
             if let Some(bytes) = out_obj.get(b"bytes") {
                 if let JsonValue::Integer(bytes_int) = bytes {
                     total_output_bytes += u64::try_from(*bytes_int).expect("int cast");
                 }
             }
-            if out_obj.get(b"entryPoint").is_some() {
-                entry_point_count += 1;
-            } else {
-                chunk_count += 1;
-            }
+            entry_outputs.add(output_path, out_obj)?;
         }
     }
+    entry_outputs.finish()?;
+    let entry_point_count = entry_outputs.entry_points.count();
+    let chunk_count = entry_outputs.unowned_count;
 
     // Summary table
     md.extend_from_slice(b"| Metric | Value |\n");
@@ -1099,22 +1208,19 @@ pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
         b"Each entry point and the total code it loads (including shared chunks).\n\n",
     );
 
-    for (output_path, out_value) in outputs_obj.iter() {
-        let JsonValue::Object(output) = out_value else {
-            continue;
-        };
-
-        let Some(entry_point) = output.get(b"entryPoint") else {
-            continue;
-        };
-        let JsonValue::String(entry_point_str) = entry_point else {
-            continue;
-        };
-
-        write!(md, "### Entry: `{}`\n\n", BStr::new(entry_point_str))?;
+    for file in entry_outputs.list.iter() {
+        if file.starts_entry {
+            write!(md, "### Entry: `{}`\n\n", BStr::new(file.entry_point))?;
+        }
 
         // Output file info
-        writeln!(md, "**Output file**: `{}`", BStr::new(output_path))?;
+        let label = if file.is_css_bundle {
+            "CSS bundle"
+        } else {
+            "Output file"
+        };
+        writeln!(md, "**{}**: `{}`", label, BStr::new(file.path))?;
+        let output = file.output;
 
         if let Some(bytes) = output.get(b"bytes") {
             if let JsonValue::Integer(bytes_int) = bytes {
@@ -1126,17 +1232,23 @@ pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
             }
         }
 
-        // CSS bundle
-        if let Some(css_bundle) = output.get(b"cssBundle") {
-            if let JsonValue::String(css_str) = css_bundle {
-                writeln!(md, "**CSS bundle**: `{}`", BStr::new(css_str))?;
-            }
+        // The modules of a CSS bundle are listed one time, under the entry point that is its "entryPoint".
+        if file.is_css_bundle
+            && let Some(JsonValue::String(owner)) = output.get(b"entryPoint")
+            && owner[..] != *file.entry_point
+        {
+            write!(
+                md,
+                "**Bundled modules**: see entry `{}`\n\n",
+                BStr::new(owner)
+            )?;
+            continue;
         }
 
         // Exports
         if let Some(exports) = output.get(b"exports") {
             if let JsonValue::Array(exports_arr) = exports {
-                if !exports_arr.is_empty() {
+                if !exports_arr.is_empty() && !file.is_css_bundle {
                     md.extend_from_slice(b"**Exports**: ");
                     let mut first = true;
                     let max_exports: usize = 10;
@@ -1505,6 +1617,11 @@ pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
     md.extend_from_slice(b"- `[IMPORT:` - Find all import relationships\n");
     md.extend_from_slice(b"- `[IMPORTED_BY:` - Find reverse dependencies\n");
     md.extend_from_slice(b"- `[ENTRY:` - Find entry points\n");
+    if entry_outputs.list.len() > entry_point_count {
+        md.extend_from_slice(
+            b"- `[ENTRY_OUTPUT:` - Find the other output files of an entry point\n",
+        );
+    }
     md.extend_from_slice(b"- `[EXTERNAL:` - Find external imports\n");
     md.extend_from_slice(b"- `[NODE_MODULES:` - Find node_modules files\n\n");
 
@@ -1593,28 +1710,25 @@ pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
     // Entry points
     md.extend_from_slice(b"### Entry Points\n\n");
     md.extend_from_slice(b"```\n");
-    for (output_path2, output2) in outputs_obj.iter() {
-        let JsonValue::Object(output2_obj) = output2 else {
-            continue;
-        };
-
-        if let Some(ep) = output2_obj.get(b"entryPoint") {
-            if let JsonValue::String(ep_str) = ep {
-                let mut size: u64 = 0;
-                if let Some(bytes) = output2_obj.get(b"bytes") {
-                    if let JsonValue::Integer(bytes_int) = bytes {
-                        size = u64::try_from(*bytes_int).expect("int cast");
-                    }
-                }
-                writeln!(
-                    md,
-                    "[ENTRY: {} -> {} ({} bytes)]",
-                    BStr::new(ep_str),
-                    BStr::new(output_path2),
-                    size
-                )?;
+    for file in entry_outputs.list.iter() {
+        let mut size: u64 = 0;
+        if let Some(bytes) = file.output.get(b"bytes") {
+            if let JsonValue::Integer(bytes_int) = bytes {
+                size = u64::try_from(*bytes_int).expect("int cast");
             }
         }
+        writeln!(
+            md,
+            "[{}: {} -> {} ({} bytes)]",
+            if file.starts_entry {
+                "ENTRY"
+            } else {
+                "ENTRY_OUTPUT"
+            },
+            BStr::new(file.entry_point),
+            BStr::new(file.path),
+            size
+        )?;
     }
     md.extend_from_slice(b"```\n\n");
 
@@ -1650,4 +1764,51 @@ fn strip_parent_refs(path: &[u8]) -> &[u8] {
         result = &result[2..];
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A `--target=bun --splitting` build writes this: server code and page code both `import()` lazy.ts.
+    const TWO_CHUNKS_OF_ONE_ENTRY_POINT: &str = r#"{
+  "inputs": {},
+  "outputs": {
+    "./server.js": { "bytes": 977, "inputs": {}, "imports": [], "exports": [], "entryPoint": "server.ts", "cssBundle": "./server.css" },
+    "./index-a.js": { "bytes": 76, "inputs": {}, "imports": [], "exports": [], "entryPoint": "index.html", "cssBundle": "./index-b.css" },
+    "./index.html": { "bytes": 187, "inputs": {}, "imports": [], "exports": [], "entryPoint": "index.html" },
+    "./lazy-c.js": { "bytes": 57, "inputs": {}, "imports": [], "exports": [], "entryPoint": "lazy.ts", "cssBundle": "./server.css" },
+    "./lazy-d.js": { "bytes": 49, "inputs": {}, "imports": [], "exports": [], "entryPoint": "lazy.ts", "cssBundle": "./index-b.css" },
+    "./server.css": { "bytes": 39, "inputs": {}, "imports": [], "exports": [], "entryPoint": "server.ts" },
+    "./index-b.css": { "bytes": 39, "inputs": {}, "imports": [], "exports": [], "entryPoint": "index.html" }
+  }
+}
+"#;
+
+    #[test]
+    fn css_bundle_follows_the_output_that_names_it() {
+        let report = generate_markdown(TWO_CHUNKS_OF_ONE_ENTRY_POINT.as_bytes()).unwrap();
+        let section = "### Entry: `lazy.ts`
+
+**Output file**: `./lazy-d.js`
+**Bundle size**: 49 bytes
+
+**CSS bundle**: `./index-b.css`
+**Bundle size**: 39 bytes
+**Bundled modules**: see entry `index.html`
+
+**Output file**: `./lazy-c.js`
+**Bundle size**: 57 bytes
+
+**CSS bundle**: `./server.css`
+**Bundle size**: 39 bytes
+**Bundled modules**: see entry `server.ts`
+
+## Dependency Chains";
+        assert!(
+            bun_core::strings::contains(&report, section.as_bytes()),
+            "{}",
+            BStr::new(&report)
+        );
+    }
 }

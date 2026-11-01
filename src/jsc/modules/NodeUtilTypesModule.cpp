@@ -567,7 +567,6 @@ static bool setSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
 }
 
 // node's isEnumerableOrIdentical for kPartial: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L232-L236
-// node reads `expected[key]` up to three times. This reads it once.
 static bool isEnumerableOrIdentical(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSC::JSObject* actualObject, JSC::JSObject* expectedObject, const JSC::Identifier& key)
 {
     JSC::PropertySlot expectedSlot(expectedObject, JSC::PropertySlot::InternalMethodType::Get);

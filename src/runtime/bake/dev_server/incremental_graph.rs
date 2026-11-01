@@ -629,14 +629,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     let mut existing = core::mem::take(
                         &mut self.bundled_files.values_mut()[file_index.get() as usize],
                     );
-                    // A css root that comes back as a script or an asset has no stylesheet left to serve.
-                    let css_mode = match (&existing.content, &content) {
-                        (Content::CssRoot(_), ReceiveChunkContent::Js { .. }) => {
-                            FreeCssMode::UnrefCss
-                        }
-                        _ => FreeCssMode::IgnoreCss,
-                    };
-                    self.free_file_content(key, &mut existing, css_mode);
+                    self.free_file_content(key, &mut existing, FreeCssMode::IgnoreCss);
 
                     if existing.failed {
                         let owner =

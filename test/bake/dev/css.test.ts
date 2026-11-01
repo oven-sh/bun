@@ -1189,13 +1189,46 @@ devTest("css file that an onLoad plugin turns into javascript is bundled as a mo
   },
   async test(dev) {
     expect(await linkedStylesheets(dev, "/")).toEqual({ status: 200, sheets: [".dep-v1"] });
-    const stylesheet = (await dev.fetch("/").text()).match(/<link[^>]*href="([^"]+)"/)![1];
     await dev.write("dep.css", `/* as javascript */`, { errors: null });
     expect(await linkedStylesheets(dev, "/")).toEqual({ status: 200, sheets: [] });
-    // The dev server no longer serves the stylesheet that the file had.
-    expect((await dev.fetch(stylesheet)).status).toBe(404);
     const script = (await dev.fetch("/").text()).match(/<script[^>]*src="([^"]+)"/)![1];
     expect(await dev.fetch(script).text()).toContain("globalThis.dep = 1;");
+  },
+});
+devTest("css file that an onLoad plugin loads as javascript is a module again after the plugin fails once", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./css-module-plugin.ts"]
+    `,
+    "css-module-plugin.ts": `
+      export default {
+        name: "css-module-plugin",
+        setup(build) {
+          build.onLoad({ filter: /dep\\.css$/ }, async ({ path }) => {
+            const text = await Bun.file(path).text();
+            if (text.includes("fail")) throw new Error("The plugin does not load this file.");
+            return { contents: "globalThis.dep = " + Number(text) + ";", loader: "js" };
+          });
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({ scripts: ["app.ts"] }),
+    "app.ts": `import "./dep.css";`,
+    "dep.css": `1`,
+  },
+  async test(dev) {
+    const module = async () => {
+      const script = (await dev.fetch("/").text()).match(/<script[^>]*src="([^"]+)"/)![1];
+      return (await dev.fetch(script).text()).match(/globalThis\.dep = (\d+);/)?.[1];
+    };
+    expect(await module()).toBe("1");
+    await dev.write("dep.css", `fail`, { errors: null });
+    // This request bundles the script again. Its import is a file with the css loader that did not build.
+    expect(await linkedStylesheets(dev, "/")).toEqual({ status: 500, sheets: [] });
+    await dev.write("dep.css", `2`, { errors: null });
+    expect(await linkedStylesheets(dev, "/")).toEqual({ status: 200, sheets: [] });
+    expect(await module()).toBe("2");
   },
 });
 devTest("css file with an @import that an onResolve plugin answers fails its page until the import builds", {

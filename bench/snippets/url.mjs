@@ -74,6 +74,30 @@ group("new URL() + accessors", () => {
   bench("toString()", () => new URL(kinds["GitHub API"]).toString());
 });
 
+// Reads of a URL that is already parsed, and what code usually does with the value next.
+const parsed = new URL(kinds["GitHub API"]);
+const parsedWithPort = new URL(kinds["localhost + port"]);
+const parsedIDN = new URL(kinds["IDN host"]);
+const parsedLongQuery = new URL(kinds["very long query (2 KB)"]);
+const hostTable = new Map([[parsed.host, 1]]);
+group("parsed URL accessors", () => {
+  bench("host.length", () => parsed.host.length);
+  bench("pathname.length", () => parsed.pathname.length);
+  bench("search.length", () => parsed.search.length);
+  bench("origin.length", () => parsed.origin.length);
+  bench("port.length", () => parsedWithPort.port.length);
+  bench("protocol === 'https:'", () => parsed.protocol === "https:");
+  bench("host === literal", () => parsed.host === "api.github.com");
+  bench("hostname.endsWith('.com')", () => parsed.hostname.endsWith(".com"));
+  bench("pathname.charCodeAt(1)", () => parsed.pathname.charCodeAt(1));
+  bench("pathname.split('/')", () => parsed.pathname.split("/").length);
+  bench("map.get(host)", () => hostTable.get(parsed.host));
+  bench("host + pathname + search", () => (parsed.host + parsed.pathname + parsed.search).length);
+  bench("IDN hostname.length", () => parsedIDN.hostname.length);
+  bench("2 KB search.length", () => parsedLongQuery.search.length);
+  bench("2 KB search.split('&')", () => parsedLongQuery.search.split("&").length);
+});
+
 group("new URL(invalid) throws", () => {
   bench("try/catch", () => {
     try {

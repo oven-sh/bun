@@ -122,6 +122,11 @@ JSC_DEFINE_HOST_FUNCTION(functionPerformanceNow, (JSGlobalObject * globalObject,
     return functionPerformanceNowBody(globalObject->vm());
 }
 
+extern "C" SYSV_ABI double AOT__performanceNow(JSC::JSGlobalObject* globalObject)
+{
+    return static_cast<double>(Bun__readOriginTimer(bunVM(globalObject->vm()))) / 1000000.0;
+}
+
 JSC_DEFINE_JIT_OPERATION(functionPerformanceNowWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSPerformance* castedThis))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);

@@ -234,7 +234,7 @@ function f28 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: BB#2: ; frequency = 10.000000
 # CHECK-NEXT: Predecessors: #0, #20
 # CHECK-NEXT: Int64 b@19 = Phi(ReadsLocalState, v1:Parameter)
-# CHECK-NEXT: Void b@26 = Patchpoint(runsWithoutFrame, resultConstraints = WarmAny, isLoopPoll, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, CollectionEntries}|Reads:Top, v2:LoopHint)
+# CHECK-NEXT: Void b@26 = Patchpoint(runsWithoutFrame, resultConstraints = WarmAny, isLoopPoll, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries}|Reads:Top, v2:LoopHint)
 # CHECK-NEXT: Void b@15 = Jump(Terminal, v5:TypeTest)
 # CHECK-NEXT: Successors: #10
 # CHECK-NEXT: BB#10: ; frequency = 10.000000
@@ -335,7 +335,7 @@ function f28 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: BB#11: ; frequency = 0.019455
 # CHECK-NEXT: Predecessors: #21
 # CHECK-NEXT: Int64 b@17 = Load(b@16, offset = -120, ReadsImmutable, v11:Greater)
-# CHECK-NEXT: Int64 b@66 = Patchpoint(b@19:Register(%rsi), b@17:Register(%rdx), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:jscRoot|Reads:Top, v11:Greater)
+# CHECK-NEXT: Int64 b@66 = Patchpoint(b@19:Register(%rsi), b@17:Register(%rdx), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, ObjectFields, ShapeWords, OrderWords, MemberGuards, PrototypeLinks, NamedProperties, Elements, ArrayStorage, TypedArrayStorage, TypedArrayElements, CollectionStorage, CollectionEntries, InternalFields, RegExpState, PromiseState, StringStorage, StringBuilderContents, ParserState, ExternalState, AllocatorState, RuntimeState, ValidationState, CalleesInFrames}|Reads:Top, v11:Greater)
 # CHECK-NEXT: Int32 b@67 = Trunc(b@66, v11:Greater)
 # CHECK-NEXT: Void b@68 = Branch(b@67, Terminal, v11:Greater)
 # CHECK-NEXT: Successors: Then:Unlikely:#7, Else:Unlikely:#9
@@ -343,7 +343,7 @@ function f28 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Predecessors: #11
 # CHECK-NEXT: Double b@65 = Load(b@16, offset = -56, ReadsImmutable, v13:Sub)
 # CHECK-NEXT: Int32 b@69 = Const32(-2147483643, v13:Sub)
-# CHECK-NEXT: Double b@70 = Patchpoint(b@19:Register(%rsi), $-2147483643(b@69):Register(%rdx), b@65:Register(%xmm0), resultConstraints = Register(%xmm0), ExitsSideways|ControlDependent|Writes:jscRoot|Reads:Top, v13:Sub)
+# CHECK-NEXT: Double b@70 = Patchpoint(b@19:Register(%rsi), $-2147483643(b@69):Register(%rdx), b@65:Register(%xmm0), resultConstraints = Register(%xmm0), ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, ObjectFields, ShapeWords, OrderWords, MemberGuards, PrototypeLinks, NamedProperties, Elements, ArrayStorage, TypedArrayStorage, TypedArrayElements, CollectionStorage, CollectionEntries, InternalFields, RegExpState, PromiseState, StringStorage, StringBuilderContents, ParserState, ExternalState, AllocatorState, RuntimeState, ValidationState, CalleesInFrames}|Reads:Top, v13:Sub)
 # CHECK-NEXT: Void b@71 = Upsilon(b@70, ^22, WritesLocalState)
 # CHECK-NEXT: Void b@72 = Jump(Terminal)
 # CHECK-NEXT: Successors: #8

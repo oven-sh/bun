@@ -1,3 +1,4 @@
+use super::code_imports::files_of;
 use super::code_load::{CodeEntry, LoadedCode};
 use super::*;
 use crate::import_sites::ImportSpecifier;
@@ -131,6 +132,7 @@ impl<'s, 'r> CodeFiles<'s, 'r> {
             is_aot_source: analyzed.is_aot_source,
             import_meta_main: analyzed.import_meta_main,
             is_called_before_it_runs: analyzed.is_called_before_it_runs,
+            stored_by_mocks: analyzed.stored_by_mocks,
             is_only_imported: analyzed.is_only_imported,
         });
         module.compiled = Some(compiled);
@@ -148,6 +150,47 @@ impl<'s, 'r> CodeFiles<'s, 'r> {
         }
         module.imports = imports;
     }
+}
+
+/// `CompiledModule::code_answers` and `CompiledModule::implied_answers` of a file of a load that still finds files.
+/// `target_files`: `None` where nothing has asked for the file so far. Such a site is erased if that is how the load ends.
+pub(super) fn find_answers_so_far<'s>(
+    atoms: &Interner<'s>,
+    arena: &'s Arena,
+    code: &LoadedCode<'s, '_>,
+    target_files: &[Option<FileId>],
+) -> (Vec<CodeAnswer<'s>>, Vec<CodeAnswer<'s>>) {
+    let targets = &mut TargetFiles(target_files.iter());
+    let sites = code.analyzed.analysis.import_sites;
+    let mut written = Vec::with_capacity(sites.len());
+    for (site, resolution) in sites.iter().zip(&code.resolutions) {
+        let count = files_of(*resolution).count();
+        let waits = targets.0.as_slice()[..count].contains(&None);
+        written.push(match (waits, resolution) {
+            (false, _) => answer_of(atoms, arena, site.specifier, resolution, targets),
+            (true, SiteResolution::Constant(_)) => CodeAnswer::Erased,
+            (true, SiteResolution::Computed(_)) => CodeAnswer::Computed(ComputedTargets::All {
+                cause: ComputedUnknown::ExternalCandidate,
+                host_modules: &[],
+            }),
+        });
+        if waits {
+            targets.0.nth(count - 1);
+        }
+    }
+    let mut implied = Vec::with_capacity(code.implied.len());
+    for resolution in &code.implied {
+        let waits = matches!(resolution, CodeResolution::File(_))
+            && targets.0.as_slice().first() == Some(&None);
+        implied.push(match waits {
+            false => constant_answer(atoms, None, resolution, targets),
+            true => {
+                targets.0.next();
+                CodeAnswer::Erased
+            }
+        });
+    }
+    (written, implied)
 }
 
 impl<'s> Files<'s> {

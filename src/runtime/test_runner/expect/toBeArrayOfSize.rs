@@ -5,6 +5,7 @@ use super::get_signature;
 use super::throw;
 
 impl Expect {
+    #[optimize(size)]
     pub(crate) fn to_be_array_of_size(
         &self,
         this_value: JsWrapper<'_, Self>,

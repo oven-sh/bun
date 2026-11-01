@@ -5,8 +5,13 @@
 // Hardcoded module "node:_http_server"
 const EventEmitter = require("node:events");
 const { Stream } = require("node:stream");
+const { Stream: StreamOfLibrary } = require("internal/streams/legacy");
 const StreamPrototype = Stream.prototype;
-const plainStream: $Node.Stream = new Stream();
+// A name read from `plainStream` is looked up from Stream.prototype on. No constructor runs: the other text makes no stream here.
+function PlainStream() {}
+$toClass(PlainStream, "PlainStream", StreamOfLibrary);
+if (Stream !== StreamOfLibrary) Object.setPrototypeOf(PlainStream.prototype, StreamPrototype);
+const plainStream: any = new PlainStream();
 const DuplexPrototype = Stream.Duplex.prototype;
 const ReadablePrototype = Stream.Readable.prototype;
 const duplexResume = DuplexPrototype.resume;
@@ -20,7 +25,6 @@ const kSocketFlowMask = kFlowing | kHasPaused | kPaused | (1 << 1) | (1 << 4) | 
 const kSocketFlows = kFlowing | kHasPaused;
 const kResumeScheduled = 1 << 16;
 const { isIP } = require("internal/net/isIP");
-const { constructors: netConstructors } = require("internal/net/symbols");
 const {
   _checkInvalidHeaderChar: checkInvalidHeaderChar,
   chunkExpression,
@@ -174,7 +178,9 @@ const outgoingSetHeader = http.responseRoad.outgoingSetHeader!;
 const OutgoingMessagePrototype = OutgoingMessage.prototype;
 const outgoingGetHeader = OutgoingMessagePrototype.getHeader;
 const outgoingHasHeader = OutgoingMessagePrototype.hasHeader;
-const plainOutgoingMessage: any = new OutgoingMessage();
+function PlainOutgoingMessage() {}
+$toClass(PlainOutgoingMessage, "PlainOutgoingMessage", OutgoingMessage);
+const plainOutgoingMessage: any = new PlainOutgoingMessage();
 let http1Fallback: typeof import("internal/http1_server_fallback").default | undefined;
 const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
 const kTrackedConnections = Symbol("http.server.trackedConnections");
@@ -2249,7 +2255,7 @@ function extendStoredNetSocket(ServerSocket: NodeHTTPServerSocketConstructor, St
 function getNodeHTTPServerSocket(): NodeHTTPServerSocketConstructor {
   if (NodeHTTPServerSocket) return NodeHTTPServerSocket;
   const { Socket: StoredNetSocket }: { Socket: unknown } = require("node:net");
-  const NetSocket = netConstructors.Socket as unknown as NetSocketConstructor;
+  const NetSocket = require("internal/net/symbols").constructors.Socket as unknown as NetSocketConstructor;
   const NetSocketPrototype = NetSocket.prototype;
   const { getTimerDuration } = require("internal/timers");
   const resumeUnlessFlowing = function (this: $Node.HttpServerSocket, asksWhetherReadable: boolean) {
@@ -3298,7 +3304,7 @@ function adoptResponse(res: $Node.ServerResponse): void {
   exchange.flags = EXCHANGE_HAS_PENDING_CALLBACKS | EXCHANGE_HAS_STAND_IN;
   res.$exchange = exchange;
 }
-Object.defineProperty(ServerResponse, "length", { __proto__: null, value: 2, configurable: true });
+Object.$defineProperty(ServerResponse, "length", { __proto__: null, value: 2, configurable: true });
 // A response whose own statusCode was deleted sends 200, as in Node.js.
 ServerResponse.prototype.statusCode = 200;
 

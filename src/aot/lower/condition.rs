@@ -48,6 +48,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return;
         }
         self.set_position(position);
+        let counted = self.enter_counted_expression(expression);
         if self.file.decisions().is_truthy_without_effects(expression) {
             // `if (module)`: nothing is read, so that the test makes no module object.
             self.lower_member_reads(expression);
@@ -58,6 +59,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         } else {
             self.lower_condition_by_kind(expression, if_true, if_false);
         }
+        self.leave_counted_expression(counted);
         self.leave_nesting();
     }
 
@@ -111,7 +113,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if_nullish: BlockId,
     ) -> ValueId {
         let split = self.split_expression_on_type(Some(tested), value, TypeTable::NULLISH);
-        self.jump_if_taken(split, if_nullish)
+        let value = self.jump_if_taken(split, if_nullish);
+        self.count_rest_of_chain(tested);
+        value
     }
 
     pub(in crate::lower) fn try_lower_test_value(&mut self, expression: ExprId) -> Option<ValueId> {

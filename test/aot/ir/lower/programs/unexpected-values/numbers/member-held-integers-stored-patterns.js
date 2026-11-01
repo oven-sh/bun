@@ -141,38 +141,38 @@ attempt("an honest gauge afterwards", () => {
 // CHECK-NEXT: Return v1
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="report"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_4]] flags=[IsExpected]}] results=[{type=undefined|null|Array flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_4]]):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}] results=[{type=undefined|null|Array flags=[IsExpected]}] {
+// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|object):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = PropGet v0 key="level"
-// CHECK-NEXT: v2 = Convert v1 declared={type=i32 flags=[IsExpected]}
+// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|number|string|bigint flags=[IsExpected]}
 // CHECK-NEXT: v3 = PropGet v0 key="level"
-// CHECK-NEXT: v4 = Convert v3 declared={type=i32 flags=[IsExpected]}
+// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|number|string|bigint flags=[IsExpected]}
 // CHECK-NEXT: v5 = Integer integer=1
 // CHECK-NEXT: v6 = Add v4, v5
 // CHECK-NEXT: v7 = PropGet v0 key="level"
-// CHECK-NEXT: v8 = Convert v7 declared={type=i32 flags=[IsExpected]}
+// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|number|string|bigint flags=[IsExpected]}
 // CHECK-NEXT: v9 = Integer integer=2
 // CHECK-NEXT: v10 = Mul v8, v9
 // CHECK-NEXT: v11 = PropGet v0 key="level"
-// CHECK-NEXT: v12 = Convert v11 declared={type=i32 flags=[IsExpected]}
+// CHECK-NEXT: v12 = Convert v11 declared={type=undefined|null|number|string|bigint flags=[IsExpected]}
 // CHECK-NEXT: v13 = Integer integer=7
 // CHECK-NEXT: v14 = BitAnd v12, v13
 // CHECK-NEXT: v15 = PropGet v0 key="level"
-// CHECK-NEXT: v16 = Convert v15 declared={type=i32 flags=[IsExpected]}
+// CHECK-NEXT: v16 = Convert v15 declared={type=undefined|null|number|string|bigint flags=[IsExpected]}
 // CHECK-NEXT: v17 = Integer integer=5
 // CHECK-NEXT: v18 = Less v16, v17
 // CHECK-NEXT: v19 = PropGet v0 key="level"
-// CHECK-NEXT: v20 = Convert v19 declared={type=i32 flags=[IsExpected]}
+// CHECK-NEXT: v20 = Convert v19 declared={type=undefined|null|number|string|bigint flags=[IsExpected]}
 // CHECK-NEXT: v21 = TypeOf v20
 // CHECK-NEXT: v22 = NewArray v2, v6, v10, v14, v18, v21 contents=anything
 // CHECK-NEXT: v23 = Convert v22 declared={type=undefined|null|Array flags=[IsExpected]}
 // CHECK-NEXT: Return v23
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="reset"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_4]] flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_4]]):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_2]] flags=[IsExpected]}] results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: undefined|null|[[L_2]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = Integer
@@ -181,21 +181,21 @@ attempt("an honest gauge afterwards", () => {
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Object.defineProperty"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] functionTypes={{*}}[[f_5]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] functionTypes={{*}}[[f_4]]] {
 // CHECK-NEXT: b0(v0: anything, v1: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v2 = Builtin builtin=Object
 // CHECK-NEXT: v3 = Builtin builtin=ObjectDefineProperty
 // CHECK-NEXT: v4 = String string="level"
-// CHECK-NEXT: v5 = NewObject -, v1 layout=[[L_6]] fields=[4]
+// CHECK-NEXT: v5 = NewObject -, v1 layout=[[L_5]] fields=[4]
 // CHECK-NEXT: v6 = FinishObject v5
 // CHECK-NEXT: v7 = Call v3, v2, v0, v4, v6 calleeName="Object.defineProperty"
 // CHECK-NEXT: v8 = Undefined
 // CHECK-NEXT: Return v8
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Reflect.set"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] functionTypes={{*}}[[f_7]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] functionTypes={{*}}[[f_6]]] {
 // CHECK-NEXT: b0(v0: anything, v1: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

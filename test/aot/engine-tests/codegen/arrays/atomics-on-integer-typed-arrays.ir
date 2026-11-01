@@ -1192,7 +1192,7 @@ function f41 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f42 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f31]
 function f43 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f31]
 function f44 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f31]
-function f45 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f45 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     v1 = HasJSType v0 first=5 last=5
     v2 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
@@ -1203,7 +1203,7 @@ function f45 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsCh
     v7 = CreateIteratorResult v4, v6
     Return v7
 }
-runtimefunction id=68 function=f45
+runtimefunction id=ArrayIteratorPrototypeNext function=f45
 # -- generated: counts swaps loads floats clamped big f21 f22 f23 f24 f27 f28
 # CHECK-LABEL: function {{*}}name="counts"
 # CHECK: module=m0 position=225 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=Int32Array<anything, pristine[Storage, Names]> site=w3 flags=[OmitsNull, OmitsUndefined]}, {type=int[10, 1000] site=w4}] results=[{type=number site=w5}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -1244,7 +1244,7 @@ runtimefunction id=68 function=f45
 # CHECK-NEXT: Return v31
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="swaps"
-# CHECK: module=m0 position=508 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=Int32Array<anything, pristine[Storage, Names]> site=w6 flags=[OmitsNull, OmitsUndefined]}, {type=int[10, 1000] site=w7}] results=[{type=number site=w8}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: module=m0 position=508 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=Int32Array<anything, pristine[Storage, Names]> site=w6 flags=[OmitsNull, OmitsUndefined]}, {type=int[10, 1000] site=w7}] results=[{type=int[-4294967296, 8589934590] site=w8}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: Int32Array<anything, pristine[Storage, Names]>, v1: int[10, 1000]):
 # CHECK-NEXT: v2: 0 = Integer
 # CHECK-NEXT: Jump -> next b1(v2)
@@ -1255,38 +1255,50 @@ runtimefunction id=68 function=f45
 # CHECK-NEXT: b2(v6: int[0, 999]):
 # CHECK-NEXT: v7: 3 = Integer integer=3
 # CHECK-NEXT: v8: int[-2147483648, 4294967295] = CallBuiltin -, v0, v7 overload=AtomicsLoad/0 accessSite=104
-# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v9: 3 = Integer integer=3
 # CHECK-NEXT: v10: 3 = Integer integer=3
-# CHECK-NEXT: v11: 3 = Integer integer=3
-# CHECK-NEXT: v12: int[-2147483645, 4294967298] = Add v8, v11
-# CHECK-NEXT: v13: int[-2147483648, 4294967295] = CallBuiltin -, v0, v10, v8, v12 overload=AtomicsCompareExchange/0 accessSite=105
-# CHECK-NEXT: v14: int[1, 1000] = Increment v6
-# CHECK-NEXT: Jump -> next b1(v14)
+# CHECK-NEXT: v11: int[-2147483645, 4294967298] = Add v8, v10
+# CHECK-NEXT: v12: int[-2147483648, 4294967295] = CallBuiltin -, v0, v9, v8, v11 overload=AtomicsCompareExchange/0 accessSite=105
+# CHECK-NEXT: v13: int[1, 1000] = Increment v6
+# CHECK-NEXT: Jump -> next b1(v13)
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v15: 0 = Integer
-# CHECK-NEXT: v16: 3 = Integer integer=3
-# CHECK-NEXT: v17: -1 = Integer integer=-1
-# CHECK-NEXT: v18: int[-2147483648, 4294967295] = CallBuiltin -, v0, v16, v17 overload=AtomicsExchange/0 accessSite=106
-# CHECK-NEXT: v19: int[-2147483648, 4294967295] = Add v15, v18
-# CHECK-NEXT: v20: 3 = Integer integer=3
-# CHECK-NEXT: v21: int[-2147483648, 4294967295] = CallBuiltin -, v0, v20 overload=AtomicsLoad/0 accessSite=107
-# CHECK-NEXT: v22: int[-4294967296, 8589934590] = Add v19, v21
-# CHECK-NEXT: Return v22
+# CHECK-NEXT: v14: 0 = Integer
+# CHECK-NEXT: v15: 3 = Integer integer=3
+# CHECK-NEXT: v16: -1 = Integer integer=-1
+# CHECK-NEXT: v17: int[-2147483648, 4294967295] = CallBuiltin -, v0, v15, v16 overload=AtomicsExchange/0 accessSite=106
+# CHECK-NEXT: v18: int[-2147483648, 4294967295] = Add v14, v17
+# CHECK-NEXT: v19: 3 = Integer integer=3
+# CHECK-NEXT: v20: int[-2147483648, 4294967295] = CallBuiltin -, v0, v19 overload=AtomicsLoad/0 accessSite=107
+# CHECK-NEXT: v21: int[-4294967296, 8589934590] = Add v18, v20
+# CHECK-NEXT: Return v21
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="loads"
-# CHECK: module=m0 position=3057 role=EntryChecks flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Int32Array site=w36 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=number site=w37 flags=[IsExpected]}] results=[{type=undefined|null|string site=w38 flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f54 fallback=f65} {
-# CHECK-NEXT: b0(v0: anything ~ undefined|null|Int32Array, v1: anything ~ number):
-# CHECK-NEXT: v2: boolean ~ true = TypeTest v0 testedType=undefined|null|Int32Array
-# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b3()
-# CHECK-NEXT: b1(v3: undefined|null|Int32Array):
-# CHECK-NEXT: v4: boolean ~ true = TypeTest v1 testedType=number
-# CHECK-NEXT: Branch v4 -> taken b2(| 0), notTaken b3()
-# CHECK-NEXT: b2(v5: number):
-# CHECK-NEXT: v6: anything ~ undefined|null|string = CallDirect v3, v5 function=f54
-# CHECK-NEXT: ReturnCall v6
-# CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v7: anything ~ undefined|null|string = CallDirect v0, v1 function=f65
-# CHECK-NEXT: ReturnCall v7
+# CHECK: module=m0 position=3057 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=Int32Array site=w36 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w37}] results=[{type=undefined|null|string site=w38 flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=4294967295 isTailCall=true module=m0}, {callee=f22 callPosition=4294967295 parent=1 module=m0}] {
+# CHECK-NEXT: b0(v0: Int32Array, v1: number) handler=b4():
+# CHECK-NEXT: v2: int[-2147483648, 4294967295] = CallBuiltin -, v0, v1 overload=AtomicsLoad/0 accessSite=194 @0:2 tail
+# CHECK-NEXT: InitializeBuiltin builtin=ObjectIs
+# CHECK-NEXT: v4: whole = Double number=-0
+# CHECK-NEXT: v5: boolean = CallBuiltin -, v2, v4 overload=ObjectIs/0 accessSite=94
+# CHECK-NEXT: Branch v5 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v6: "-0" = String string="-0"
+# CHECK-NEXT: Jump -> next b3(v6)
+# CHECK-NEXT: b2() handler=b4():
+# CHECK-NEXT: v7: string = CallBuiltin -, v2 overload=String/0 accessSite=95
+# CHECK-NEXT: Jump -> next b3(v7)
+# CHECK-NEXT: b3(v8: string):
+# CHECK-NEXT: Jump -> next b5(v8) @0 tail
+# CHECK-NEXT: b4() role=CatchHandler:
+# CHECK-NEXT: v9: anything = CatchValue
+# CHECK-NEXT: v10: anything ~ undefined|null|Error = Upcast v9 castType=anything
+# CHECK-NEXT: v11: anything = PropGet v10 key="constructor" accessSite=96
+# CHECK-NEXT: v12: anything ~ undefined|null|function = Expect v11 expectedType=undefined|null|function
+# CHECK-NEXT: v13: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v12 name="name"
+# CHECK-NEXT: v14: anything = PropGet v13 key="name" accessSite=97
+# CHECK-NEXT: v15: anything ~ undefined|null|string = Expect v14 expectedType=undefined|null|string
+# CHECK-NEXT: Jump -> next b5(v15) @0 tail
+# CHECK-NEXT: b5(v16: anything ~ undefined|null|string):
+# CHECK-NEXT: Return v16
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="floats"
 # CHECK: module=m0 position=3266 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Float64Array<anything, pristine[Storage, Names]> site=w43 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string site=w44 flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -1294,9 +1306,9 @@ runtimefunction id=68 function=f45
 # CHECK-NEXT: PutModuleVariable v0 variable=g3
 # CHECK-NEXT: PutModuleVariable v0 variable=g2
 # CHECK-NEXT: v3: f24 = NewClosure function=f24 allocationSite=35 storage=Frame
-# CHECK-NEXT: v4: anything ~ undefined|null|string = CallDirect v3 function=f71 accessSite=185
+# CHECK-NEXT: v4: anything ~ undefined|null|string = CallDirect v3 function=f49 accessSite=185
 # CHECK-NEXT: v5: f25 = NewClosure function=f25 allocationSite=36 storage=Frame
-# CHECK-NEXT: v6: anything ~ undefined|null|string = CallDirect v5 function=f71 accessSite=186
+# CHECK-NEXT: v6: anything ~ undefined|null|string = CallDirect v5 function=f49 accessSite=186
 # CHECK-NEXT: v7: number|string|bigint = Add v4, v6
 # CHECK-NEXT: v8: number|string|bigint ~ string = Expect v7 expectedType=undefined|null|string
 # CHECK-NEXT: Return v8
@@ -1306,10 +1318,10 @@ runtimefunction id=68 function=f45
 # CHECK-NEXT: b0(v0: Uint8ClampedArray<anything, pristine[Storage, Names]>):
 # CHECK-NEXT: PutModuleVariable v0 variable=g4
 # CHECK-NEXT: v2: f26 = NewClosure function=f26 allocationSite=37 storage=Frame
-# CHECK-NEXT: v3: anything ~ undefined|null|string = CallDirect v2 function=f71 accessSite=187
+# CHECK-NEXT: v3: anything ~ undefined|null|string = CallDirect v2 function=f49 accessSite=187
 # CHECK-NEXT: PutModuleVariable v0 variable=g5
 # CHECK-NEXT: v5: f27 = NewClosure function=f27 allocationSite=38 storage=Frame
-# CHECK-NEXT: v6: anything ~ undefined|null|string = CallDirect v5 function=f71 accessSite=188
+# CHECK-NEXT: v6: anything ~ undefined|null|string = CallDirect v5 function=f49 accessSite=188
 # CHECK-NEXT: v7: number|string|bigint = Add v3, v6
 # CHECK-NEXT: v8: number|string|bigint ~ string = Expect v7 expectedType=undefined|null|string
 # CHECK-NEXT: Return v8
@@ -1320,58 +1332,37 @@ runtimefunction id=68 function=f45
 # CHECK-NEXT: PutModuleVariable v0 variable=g7
 # CHECK-NEXT: PutModuleVariable v0 variable=g6
 # CHECK-NEXT: v3: f28 = NewClosure function=f28 allocationSite=39 storage=Frame
-# CHECK-NEXT: v4: anything ~ undefined|null|string = CallDirect v3 function=f71 accessSite=189
+# CHECK-NEXT: v4: anything ~ undefined|null|string = CallDirect v3 function=f49 accessSite=189
 # CHECK-NEXT: v5: f29 = NewClosure function=f29 allocationSite=40 storage=Frame
-# CHECK-NEXT: v6: anything ~ undefined|null|string = CallDirect v5 function=f71 accessSite=190
+# CHECK-NEXT: v6: anything ~ undefined|null|string = CallDirect v5 function=f49 accessSite=190
 # CHECK-NEXT: v7: number|string|bigint = Add v4, v6
 # CHECK-NEXT: v8: f30 = NewClosure function=f30 allocationSite=41 storage=Frame
-# CHECK-NEXT: v9: anything ~ undefined|null|string = CallDirect v8 function=f71 accessSite=191
+# CHECK-NEXT: v9: anything ~ undefined|null|string = CallDirect v8 function=f49 accessSite=191
 # CHECK-NEXT: v10: number|string|bigint = Add v7, v9
 # CHECK-NEXT: v11: number|string|bigint ~ string = Expect v10 expectedType=undefined|null|string
 # CHECK-NEXT: Return v11
 # CHECK-NEXT: }
 # CHECK-LABEL: function f21 module=
-# CHECK: m0 position=3011 kind=Arrow flags=[IsChecked] captures=[{type=Int32Array site=w33 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w34 flags=[IsExpected]}] thisType={type=anything} results=[{type=number site=w215}] functionTypes=[f32] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: Int32Array, v1: anything ~ number):
-# CHECK-NEXT: v2: undefined|number ~ number = AssumeType v1 provenType=undefined|number
-# CHECK-NEXT: v3: 0 = Integer
-# CHECK-NEXT: v4: number = ToNumber v2 calledBuiltin=AtomicsStore @0 tail
-# CHECK-NEXT: v5: int|whole = ToIntegerOrInfinity v4 @0 tail
-# CHECK-NEXT: v6: number = CallBuiltin -, v0, v3, v5 overload=AtomicsStore/0 accessSite=193 @0 tail
-# CHECK-NEXT: Return v6
+# CHECK: m0 position=3011 kind=Arrow flags=[IsChecked] captures=[{type=Int32Array site=w33 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w34}] thisType={type=anything} results=[{type=number site=w215}] functionTypes=[f32] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: Int32Array, v1: number):
+# CHECK-NEXT: v2: 0 = Integer
+# CHECK-NEXT: v3: number = CallBuiltin -, v0, v2, v1 overload=AtomicsStore/0 accessSite=193 @0 tail
+# CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function f22 module=
-# CHECK: m0 position=3120 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|Int32Array site=w36 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=number site=w37 flags=[IsExpected]}] thisType={type=anything} results=[{type=number site=w217 flags=[IsExpected]}] functionTypes=[f33] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f56 fallback=f67} {
-# CHECK-NEXT: b0(v0: anything ~ undefined|null|Int32Array, v1: anything ~ number):
-# CHECK-NEXT: v2: boolean ~ true = TypeTest v0 testedType=undefined|null|Int32Array
-# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b3()
-# CHECK-NEXT: b1(v3: undefined|null|Int32Array):
-# CHECK-NEXT: v4: boolean ~ true = TypeTest v1 testedType=number
-# CHECK-NEXT: Branch v4 -> taken b2(| 0), notTaken b3()
-# CHECK-NEXT: b2(v5: number):
-# CHECK-NEXT: v6: number = CallDirect v3, v5 function=f56
-# CHECK-NEXT: ReturnCall v6
-# CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v7: anything ~ number = CallDirect v0, v1 function=f67
-# CHECK-NEXT: ReturnCall v7
+# CHECK: m0 position=3120 kind=Arrow flags=[IsChecked] captures=[{type=Int32Array site=w36 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w37}] thisType={type=anything} results=[{type=int[-2147483648, 4294967295] site=w217}] functionTypes=[f33] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: Int32Array, v1: number):
+# CHECK-NEXT: v2: int[-2147483648, 4294967295] = CallBuiltin -, v0, v1 overload=AtomicsLoad/0 accessSite=194 @0 tail
+# CHECK-NEXT: Return v2
 # CHECK-NEXT: }
 # CHECK-LABEL: function f23 module=
-# CHECK: m0 position=3222 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|Int32Array site=w39 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=number site=w40 flags=[IsExpected]}, {type=int[1, 9] site=w41}] thisType={type=anything} results=[{type=number site=w219 flags=[IsExpected]}] functionTypes=[f34] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f57 fallback=f68} {
-# CHECK-NEXT: b0(v0: anything ~ undefined|null|Int32Array, v1: anything ~ number, v2: int[1, 9]):
-# CHECK-NEXT: v3: boolean ~ true = TypeTest v0 testedType=undefined|null|Int32Array
-# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b3()
-# CHECK-NEXT: b1(v4: undefined|null|Int32Array):
-# CHECK-NEXT: v5: boolean ~ true = TypeTest v1 testedType=number
-# CHECK-NEXT: Branch v5 -> taken b2(| 0), notTaken b3()
-# CHECK-NEXT: b2(v6: number):
-# CHECK-NEXT: v7: number = CallDirect v4, v6, v2 function=f57
-# CHECK-NEXT: ReturnCall v7
-# CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v8: anything ~ number = CallDirect v0, v1, v2 function=f68
-# CHECK-NEXT: ReturnCall v8
+# CHECK: m0 position=3222 kind=Arrow flags=[IsChecked] captures=[{type=Int32Array site=w39 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w40}, {type=int[1, 9] site=w41}] thisType={type=anything} results=[{type=int[-2147483648, 4294967295] site=w219}] functionTypes=[f34] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: Int32Array, v1: number, v2: int[1, 9]):
+# CHECK-NEXT: v3: int[-2147483648, 4294967295] = CallBuiltin -, v0, v1, v2 overload=AtomicsAdd/0 accessSite=195 @0 tail
+# CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function f24 module=
-# CHECK: m0 position=3321 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|bigint site=w221 flags=[IsExpected, OmitsNull, OmitsUndefined]}] functionTypes=[f35] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: m0 position=3321 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=int[-2147483648, 4294967295] site=w221 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f35] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: anything ~ Float64Array<anything, pristine[Storage, Names]> = GetModuleVariable variable=g2
 # CHECK-NEXT: v1: Float64Array<anything, pristine[Storage, Names]> = AssumeType v0 provenType=Float64Array<anything, pristine[Storage, Names]>
@@ -1400,42 +1391,4 @@ runtimefunction id=68 function=f45
 # CHECK-NEXT: v3: bigint = BigInt digits="5"
 # CHECK-NEXT: v4: bigint = CallBuiltin -, v1, v2, v3 overload=AtomicsAdd/1 accessSite=198 @0 tail
 # CHECK-NEXT: Return v4
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="loads"
-# CHECK: module=m0 position=3057 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Int32Array site=w36}, {type=number site=w37}] results=[{type=undefined|null|string site=w38 flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f11 parameterMap=[{original=0}, {original=1}]} inlineFrames=[{}, {callee=f1 callPosition=4294967295 isTailCall=true module=m0}, {callee=f22 callPosition=4294967295 parent=1 module=m0}, {callee=f67 callPosition=3120 parent=2 isTailCall=true module=m0}, {callee=f56 callPosition=3120 parent=2 isTailCall=true module=m0}] {
-# CHECK-NEXT: b0(v0: undefined|null|Int32Array, v1: number) handler=b4():
-# CHECK-NEXT: v2: Int32Array = AssumeType v0 provenType=object
-# CHECK-NEXT: v3: int[-2147483648, 4294967295] = CallBuiltin -, v2, v1 overload=AtomicsLoad/0 accessSite=194 @0:4 tail
-# CHECK-NEXT: InitializeBuiltin builtin=ObjectIs
-# CHECK-NEXT: v5: whole = Double number=-0
-# CHECK-NEXT: v6: boolean = CallBuiltin -, v3, v5 overload=ObjectIs/0 accessSite=94
-# CHECK-NEXT: Branch v6 -> taken b1(), notTaken b2()
-# CHECK-NEXT: b1():
-# CHECK-NEXT: v7: "-0" = String string="-0"
-# CHECK-NEXT: Jump -> next b3(v7)
-# CHECK-NEXT: b2() handler=b4():
-# CHECK-NEXT: v8: string = CallBuiltin -, v3 overload=String/0 accessSite=95
-# CHECK-NEXT: Jump -> next b3(v8)
-# CHECK-NEXT: b3(v9: string):
-# CHECK-NEXT: Jump -> next b5(v9) @0 tail
-# CHECK-NEXT: b4() role=CatchHandler:
-# CHECK-NEXT: v10: anything = CatchValue
-# CHECK-NEXT: v11: anything ~ undefined|null|Error = Upcast v10 castType=anything
-# CHECK-NEXT: v12: anything = PropGet v11 key="constructor" accessSite=96
-# CHECK-NEXT: v13: anything ~ undefined|null|function = Expect v12 expectedType=undefined|null|function
-# CHECK-NEXT: v14: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v13 name="name"
-# CHECK-NEXT: v15: anything = PropGet v14 key="name" accessSite=97
-# CHECK-NEXT: v16: anything ~ undefined|null|string = Expect v15 expectedType=undefined|null|string
-# CHECK-NEXT: Jump -> next b5(v16) @0 tail
-# CHECK-NEXT: b5(v17: anything ~ undefined|null|string):
-# CHECK-NEXT: Return v17
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="loads"
-# CHECK: module=m0 position=3057 role=GenericVersion flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Int32Array site=w36 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=number site=w37 flags=[IsExpected]}] results=[{type=undefined|null|string site=w38 flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f11 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f54} {
-# CHECK-NEXT: b0(v0: anything, v1: anything) frequency=Unlikely:
-# CHECK-NEXT: v2: object = AssumeType v0 provenType=object
-# CHECK-NEXT: v3: undefined|number = AssumeType v1 provenType=undefined|number
-# CHECK-NEXT: v4: f22 = NewClosure v2, v3 function=f22 allocationSite=33 storage=Frame closureForm=Slim
-# CHECK-NEXT: v5: anything = CallDirect v4 function=f1 accessSite=182 @0 tail
-# CHECK-NEXT: Return v5
 # CHECK-NEXT: }

@@ -969,14 +969,12 @@ function f75 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v4: object ~ L0|L7 = NewObject v3 layout=L0 allocationSite=46 allocationClass=0
 # CHECK-NEXT: ValidateType v4 validatedType=L0|L7
 # CHECK-NEXT: v6: L0|L7 = AssumeType v4 provenType=L0|L7
-# CHECK-NEXT: v7: classtoken = GetModuleVariable variable=g13
-# CHECK-NEXT: PutSlotOrAdd v6, -, v7 key=#"#"@L0 receivers=[L0, L7] level=Proven accessSite=107
-# CHECK-NEXT: v9: 1 = Integer integer=1
-# CHECK-NEXT: PutSlotOrAdd v6, -, v9 key=#"#hidden"@L0 receivers=[L0, L7] level=Proven accessSite=108
-# CHECK-NEXT: v11: 2 = Integer integer=2
-# CHECK-NEXT: PutSlotOrAdd v6, -, v11 key="shown" receivers=[L0, L7] level=Proven accessSite=109
-# CHECK-NEXT: v13: 3 = Integer integer=3
-# CHECK-NEXT: PutSlotOrAdd v6, -, v13 key="other" receivers=[L0, L7] level=Proven accessSite=110
+# CHECK-NEXT: v7: 1 = Integer integer=1
+# CHECK-NEXT: PutSlotOrAdd v6, -, v7 key=#"#hidden"@L0 receivers=[L0, L7] level=Proven accessSite=108
+# CHECK-NEXT: v9: 2 = Integer integer=2
+# CHECK-NEXT: PutSlotOrAdd v6, -, v9 key="shown" receivers=[L0, L7] level=Proven accessSite=109
+# CHECK-NEXT: v11: 3 = Integer integer=3
+# CHECK-NEXT: PutSlotOrAdd v6, -, v11 key="other" receivers=[L0, L7] level=Proven accessSite=110
 # CHECK-NEXT: Return v6
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Between"
@@ -1009,12 +1007,11 @@ function f75 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK: m0 position=2165 kind=Arrow role=ResultWrapper flags=[IsChecked] thisType={type=anything} results=[{type=L0 site=w65 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f56] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f138 layout=L0} {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: undefined = CallDirect function=f138
-# CHECK-NEXT: v1: classtoken = ResultAt v0
-# CHECK-NEXT: v2: 1 = ResultAt v0 index=1
-# CHECK-NEXT: v3: 2 = ResultAt v0 index=2
-# CHECK-NEXT: v4: 3 = ResultAt v0 index=3
-# CHECK-NEXT: v5: L0 = NewObject -, v1, v2, v3, v4 layout=L0 fields=[0, 1, 2, 3] allocationClass=0 [listsOnlyStoredValues]
-# CHECK-NEXT: Return v5
+# CHECK-NEXT: v1: 1 = ResultAt v0
+# CHECK-NEXT: v2: 2 = ResultAt v0 index=1
+# CHECK-NEXT: v3: 3 = ResultAt v0 index=2
+# CHECK-NEXT: v4: L0 = NewObject -, v1, v2, v3 layout=L0 fields=[1, 2, 3] allocationClass=0 [listsOnlyStoredValues]
+# CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function f31 module=
 # CHECK: m0 position=2706 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=L0 site=w76 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f66] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -1119,17 +1116,15 @@ function f75 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: ValidateType v0 validatedType=L1
 # CHECK-NEXT: ValidateType v0 validatedType=L1
 # CHECK-NEXT: ValidateType v0 validatedType=object
-# CHECK-NEXT: v4: classtoken = GetModuleVariable variable=g15
 # CHECK-NEXT: ValidateType v0 validatedType=undefined|null|boolean|number|string|symbol|bigint|L1
-# CHECK-NEXT: PutSlotOrAdd v0, -, v4 key=#"#"@L1 receivers=[L1] level=Proven accessSite=111
-# CHECK-NEXT: v7: 2 = Integer integer=2
+# CHECK-NEXT: v5: 2 = Integer integer=2
 # CHECK-NEXT: ValidateType v0 validatedType=undefined|null|boolean|number|string|symbol|bigint|L1
-# CHECK-NEXT: PutSlotOrAdd v0, -, v7 key="shown" receivers=[L1] level=Proven accessSite=112
-# CHECK-NEXT: v10: 3 = Integer integer=3
+# CHECK-NEXT: PutSlotOrAdd v0, -, v5 key="shown" receivers=[L1] level=Proven accessSite=112
+# CHECK-NEXT: v8: 3 = Integer integer=3
 # CHECK-NEXT: ValidateType v0 validatedType=undefined|null|boolean|number|string|symbol|bigint|L1
-# CHECK-NEXT: PutSlotOrAdd v0, -, v10 key="other" receivers=[L1] level=Proven accessSite=113
-# CHECK-NEXT: v13: undefined = Undefined
-# CHECK-NEXT: Return v13
+# CHECK-NEXT: PutSlotOrAdd v0, -, v8 key="other" receivers=[L1] level=Proven accessSite=113
+# CHECK-NEXT: v11: undefined = Undefined
+# CHECK-NEXT: Return v11
 # CHECK-NEXT: }
 # CHECK-LABEL: function f41 module=
 # CHECK: m0 position=582 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L2 flags=[IsFromCompiler]} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -1152,20 +1147,18 @@ function f75 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: ValidateType v0 validatedType=L3
 # CHECK-NEXT: ValidateType v0 validatedType=L3
 # CHECK-NEXT: ValidateType v0 validatedType=object
-# CHECK-NEXT: v4: classtoken = GetModuleVariable variable=g20
 # CHECK-NEXT: ValidateType v0 validatedType=undefined|null|boolean|number|string|symbol|bigint|L3
-# CHECK-NEXT: PutSlotOrAdd v0, -, v4 key=#"#"@L3 receivers=[L3] level=Proven accessSite=116
-# CHECK-NEXT: v7: 2 = Integer integer=2
+# CHECK-NEXT: v5: 2 = Integer integer=2
 # CHECK-NEXT: ValidateType v0 validatedType=undefined|null|boolean|number|string|symbol|bigint|L3
-# CHECK-NEXT: PutSlotOrAdd v0, -, v7 key="shown" receivers=[L3] level=Proven accessSite=117
-# CHECK-NEXT: v10: 3 = Integer integer=3
+# CHECK-NEXT: PutSlotOrAdd v0, -, v5 key="shown" receivers=[L3] level=Proven accessSite=117
+# CHECK-NEXT: v8: 3 = Integer integer=3
 # CHECK-NEXT: ValidateType v0 validatedType=undefined|null|boolean|number|string|symbol|bigint|L3
-# CHECK-NEXT: PutSlotOrAdd v0, -, v10 key="other" receivers=[L3] level=Proven accessSite=118
-# CHECK-NEXT: v13: 1 = Integer integer=1
+# CHECK-NEXT: PutSlotOrAdd v0, -, v8 key="other" receivers=[L3] level=Proven accessSite=118
+# CHECK-NEXT: v11: 1 = Integer integer=1
 # CHECK-NEXT: ValidateType v0 validatedType=undefined|null|boolean|number|string|symbol|bigint|L3
-# CHECK-NEXT: PutSlotOrAdd v0, -, v13 key=#"#hidden"@L3 receivers=[L3] level=Proven accessSite=119
-# CHECK-NEXT: v16: undefined = Undefined
-# CHECK-NEXT: Return v16
+# CHECK-NEXT: PutSlotOrAdd v0, -, v11 key=#"#hidden"@L3 receivers=[L3] level=Proven accessSite=119
+# CHECK-NEXT: v14: undefined = Undefined
+# CHECK-NEXT: Return v14
 # CHECK-NEXT: }
 # CHECK-LABEL: function f43 module=
 # CHECK: m0 position=747 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L4 flags=[IsFromCompiler]} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -1173,17 +1166,15 @@ function f75 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: ValidateType v0 validatedType=L4
 # CHECK-NEXT: ValidateType v0 validatedType=L4
 # CHECK-NEXT: ValidateType v0 validatedType=object
-# CHECK-NEXT: v4: classtoken = GetModuleVariable variable=g22
 # CHECK-NEXT: ValidateType v0 validatedType=undefined|null|boolean|number|string|symbol|bigint|L4
-# CHECK-NEXT: PutSlotOrAdd v0, -, v4 key=#"#"@L4 receivers=[L4] level=Proven accessSite=120
-# CHECK-NEXT: v7: 1 = Integer integer=1
+# CHECK-NEXT: v5: 1 = Integer integer=1
 # CHECK-NEXT: ValidateType v0 validatedType=undefined|null|boolean|number|string|symbol|bigint|L4
-# CHECK-NEXT: PutSlotOrAdd v0, -, v7 key=#"#hidden"@L4 receivers=[L4] level=Proven accessSite=121
-# CHECK-NEXT: v10: 2 = Integer integer=2
+# CHECK-NEXT: PutSlotOrAdd v0, -, v5 key=#"#hidden"@L4 receivers=[L4] level=Proven accessSite=121
+# CHECK-NEXT: v8: 2 = Integer integer=2
 # CHECK-NEXT: ValidateType v0 validatedType=undefined|null|boolean|number|string|symbol|bigint|L4
-# CHECK-NEXT: PutSlotOrAdd v0, -, v10 key="shown" receivers=[L4] level=Proven accessSite=122
-# CHECK-NEXT: v13: undefined = Undefined
-# CHECK-NEXT: Return v13
+# CHECK-NEXT: PutSlotOrAdd v0, -, v8 key="shown" receivers=[L4] level=Proven accessSite=122
+# CHECK-NEXT: v11: undefined = Undefined
+# CHECK-NEXT: Return v11
 # CHECK-NEXT: }
 # CHECK-LABEL: function f44 module=
 # CHECK: m0 position=817 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L5 flags=[IsFromCompiler]} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -1191,20 +1182,18 @@ function f75 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: ValidateType v0 validatedType=L5
 # CHECK-NEXT: ValidateType v0 validatedType=L5
 # CHECK-NEXT: ValidateType v0 validatedType=object
-# CHECK-NEXT: v4: classtoken = GetModuleVariable variable=g24
 # CHECK-NEXT: ValidateType v0 validatedType=undefined|null|boolean|number|string|symbol|bigint|L5
-# CHECK-NEXT: PutSlotOrAdd v0, -, v4 key=#"#"@L5 receivers=[L5] level=Proven accessSite=123
-# CHECK-NEXT: v7: 1 = Integer integer=1
+# CHECK-NEXT: v5: 1 = Integer integer=1
 # CHECK-NEXT: ValidateType v0 validatedType=undefined|null|boolean|number|string|symbol|bigint|L5
-# CHECK-NEXT: PutSlotOrAdd v0, -, v7 key=#"#hidden"@L5 receivers=[L5] level=Proven accessSite=124
-# CHECK-NEXT: v10: 2 = Integer integer=2
+# CHECK-NEXT: PutSlotOrAdd v0, -, v5 key=#"#hidden"@L5 receivers=[L5] level=Proven accessSite=124
+# CHECK-NEXT: v8: 2 = Integer integer=2
 # CHECK-NEXT: ValidateType v0 validatedType=undefined|null|boolean|number|string|symbol|bigint|L5
-# CHECK-NEXT: PutSlotOrAdd v0, -, v10 key="shown" receivers=[L5] level=Proven accessSite=125
-# CHECK-NEXT: v13: undefined = Undefined
+# CHECK-NEXT: PutSlotOrAdd v0, -, v8 key="shown" receivers=[L5] level=Proven accessSite=125
+# CHECK-NEXT: v11: undefined = Undefined
 # CHECK-NEXT: ValidateType v0 validatedType=undefined|null|boolean|number|string|symbol|bigint|L5
-# CHECK-NEXT: PutSlotOrAdd v0, -, v13 key="late" receivers=[L5] level=Proven accessSite=126
-# CHECK-NEXT: v16: undefined = Undefined
-# CHECK-NEXT: Return v16
+# CHECK-NEXT: PutSlotOrAdd v0, -, v11 key="late" receivers=[L5] level=Proven accessSite=126
+# CHECK-NEXT: v14: undefined = Undefined
+# CHECK-NEXT: Return v14
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Field"
 # CHECK: module=m0 position=405 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget, IsChecked] captures=[{type=f4}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f4} creator=Entrypoint{target=f4 arguments=Registers takesNewTarget=true} {

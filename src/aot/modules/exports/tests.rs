@@ -95,6 +95,7 @@ fn external_of(input: &BindInput<'_, '_>, importer: &str, specifier: &str) -> Mo
     ModuleRef::External {
         importer: file_named(input, importer),
         specifier: input.files.atoms.intern(specifier.as_bytes()),
+        type_attribute: None,
     }
 }
 
@@ -106,6 +107,7 @@ fn external(importer: u32, specifier: Atom) -> ModuleRef {
     ModuleRef::External {
         importer: FileId(importer),
         specifier,
+        type_attribute: None,
     }
 }
 

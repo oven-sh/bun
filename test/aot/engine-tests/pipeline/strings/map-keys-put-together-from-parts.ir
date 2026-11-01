@@ -217,5 +217,5 @@ function f1 name="suffixOf" module=m0 position=682 flags=[IsChecked, HasExplicit
 # -- generated: f0
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 139, patchpoints: 20, rare instructions: 185, polls: 2
+# CHECK-NEXT: instructions: 131, patchpoints: 20, rare instructions: 187, polls: 2
 # CHECK-NEXT: end of function f0

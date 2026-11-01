@@ -1,4 +1,5 @@
-// One point of the table in ./generators/new-targets.ts: the form of a base constructor, how another new.target reaches it, what it does with `this`, where the construction runs, what is observed afterwards.
+// One point of the table in ./generators/new-targets.ts: the form of a base constructor, how another new.target reaches
+// it, what it does with `this`, where the construction runs, and what is observed afterwards.
 import { nameOf, pickCombination, textOf } from "./generators/new-targets";
 import type { Random } from "./random";
 

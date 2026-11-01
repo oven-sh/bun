@@ -318,6 +318,22 @@ fn only_entry_point_is_main_module() {
 }
 
 #[test]
+fn file_that_host_may_run_is_main_module_or_not() {
+    let host = host_of(&[("/b.test.ts", ""), ("/c.ts", "")]);
+    let mut build = TestBuild::new(&host, &["/a.ts"]);
+    build.code.main_modules_beside_entry_points =
+        vec![b"/b.test.ts".to_vec(), b"/missing.test.ts".to_vec()];
+    with_compile_context(&build, |context| {
+        let loader = HostLoader::default();
+        let main_of = |path: &[u8]| import_meta_main(context, LoadKey { path, loader });
+        assert_eq!(main_of(b"/a.ts"), Some(true));
+        assert_eq!(main_of(b"/b.test.ts"), None);
+        assert_eq!(main_of(b"/c.ts"), Some(false));
+        assert_eq!(main_of(b"/missing.test.ts"), Some(false));
+    });
+}
+
+#[test]
 fn entry_point_loaded_with_other_loader_is_not_main_module() {
     let host = StatementsHost {
         loaders: &[("/a.txt", None, TEXT_LOADER)],

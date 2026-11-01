@@ -261,3 +261,30 @@ it("should ignore authTagLength for non-authenticated cipher modes", () => {
   gcm.final();
   expect(gcm.getAuthTag().length).toBe(12);
 });
+
+it("setAutoPadding(false) after update() keeps the block a padded decipher holds back", () => {
+  const [key, iv] = [Buffer.alloc(16, 1), Buffer.alloc(16, 2)];
+  const encrypt = (text: string, padding: boolean) => {
+    const cipher = createCipheriv("aes-128-cbc", key, iv).setAutoPadding(padding);
+    return Buffer.concat([cipher.update(text), cipher.final()]);
+  };
+  const blocks = encrypt("0123456789abcdefFEDCBA9876543210", false);
+  const run = (encrypted: Buffer[], toggles: boolean[]) => {
+    const decipher = createDecipheriv("aes-128-cbc", key, iv);
+    const out = [decipher.update(encrypted[0]).toString()];
+    for (const padding of toggles) decipher.setAutoPadding(padding);
+    for (const chunk of encrypted.slice(1)) out.push(decipher.update(chunk).toString());
+    return [...out, decipher.final().toString()];
+  };
+  expect({
+    thenFinal: run([blocks], [false]),
+    thenUpdate: run([blocks.subarray(0, 16), blocks.subarray(16)], [false]),
+    midBlock: run([blocks.subarray(0, 20), blocks.subarray(20)], [false]),
+    backOn: run([encrypt("hello", true)], [false, true]),
+  }).toEqual({
+    thenFinal: ["0123456789abcdef", "FEDCBA9876543210"],
+    thenUpdate: ["", "0123456789abcdefFEDCBA9876543210", ""],
+    midBlock: ["0123456789abcdef", "FEDCBA9876543210", ""],
+    backOn: ["", "hello"],
+  });
+});

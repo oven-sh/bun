@@ -14,7 +14,7 @@ use bun_sema::check::aot::{
 };
 use bun_sema::fold::FoldInputs;
 use bun_sema::program::Files;
-use bun_sema::resolve::{AOT_CONDITION, Host};
+use bun_sema::resolve::{AOT_CONDITION, CodeOptions, Host};
 use bun_sema::session::Session;
 use bun_sema_driver::host::from_native;
 use bun_sema_driver::{
@@ -23,9 +23,7 @@ use bun_sema_driver::{
 };
 
 use crate::cli::typescript_libs::BUNDLED;
-use crate::code_resolver_testing::{
-    DiskWithBuiltinModules, code_options_with_limits, fold_options_with_limits,
-};
+use crate::code_resolver_testing::{DiskWithBuiltinModules, fold_options_with_limits};
 
 const fn global_type_path(
     class: u32,
@@ -104,7 +102,7 @@ pub(crate) fn describe_checker_queries(
     let limits = LimitValues::for_host();
     // Printed paths are the loader's, which are real paths.
     let mut root = host.realpath(directory);
-    let code = code_options_with_limits(&root, &limits);
+    let code = CodeOptions::bun_run(&root);
     if !root.ends_with(b"/") {
         root.push(b'/');
     }
@@ -130,7 +128,7 @@ pub(crate) fn describe_checker_queries(
     let files = loaded.files();
     let files_to_lower = files.compiled_files();
     let roles = decide_roles(&loaded, &host, &request, files_to_lower);
-    let builtin_types = BuiltinTypeSymbols::compute(files, &TYPE_PATHS, &[]);
+    let builtin_types = BuiltinTypeSymbols::compute(files, &TYPE_PATHS, Box::new(|| &[]));
     let named_values = unlinked_named_values(files, &request.atoms);
     let inputs = QueryInputs {
         roles: &roles.roles,

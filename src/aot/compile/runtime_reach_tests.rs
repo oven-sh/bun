@@ -33,6 +33,32 @@ fn import_of_the_module_reaches_every_export() {
 }
 
 #[test]
+fn name_exported_again_reaches_no_other_export() {
+    let library =
+        format!("{DECODE}function encode() {{ return 1; }}\nexport default {{ encode, decode }};");
+    let library = [(LIBRARY, library.as_str())];
+    let reaches = |exports: &str| {
+        let mut files = vec![("b.js", exports)];
+        files.extend_from_slice(&library);
+        reaches_decode("import * as b from \"./b.js\";\nconsole.log(b);", &files)
+    };
+    assert!(!reaches("export { encode } from \"node:punycode\";"));
+    assert!(!reaches(
+        "export { encode as other } from \"node:punycode\";"
+    ));
+    assert!(reaches("export { decode } from \"node:punycode\";"));
+    assert!(reaches(
+        "export { encode as decode, decode as encode } from \"node:punycode\";"
+    ));
+    assert!(reaches("export { default } from \"node:punycode\";"));
+    assert!(reaches(
+        "export { default as encode } from \"node:punycode\";"
+    ));
+    assert!(reaches("export * from \"node:punycode\";"));
+    assert!(reaches("export * as encode from \"node:punycode\";"));
+}
+
+#[test]
 fn imported_name_that_holds_no_function_of_the_module_reaches_no_other_export() {
     let library = format!(
         "{DECODE}const native = {{ encode() {{ return 1; }} }};\n\

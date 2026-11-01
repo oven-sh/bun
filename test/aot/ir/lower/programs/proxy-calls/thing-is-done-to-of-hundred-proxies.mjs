@@ -6854,7 +6854,7 @@ console.log(lines.join("\n"));
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="x"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] captures=[{type=undefined|null|[[L_6]] flags=[IsExpected]}] thisType={type=anything} results=[{type=undefined|null|[[L_6]] flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] captures=[{type=undefined|null|[[L_6]] flags=[IsExpected] variableName="p"}] thisType={type=anything} results=[{type=undefined|null|[[L_6]] flags=[IsExpected]}] {
 // CHECK-NEXT: b0(v0: undefined|null|[[L_6]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""for-in-loop-bodies.py <seed> [<functions>]: RANDOM BODIES OF for-in LOOPS: up to four things made from the key at the start (o[k], Object.hasOwn, typeof, in, a sum, a flag), then up to four statements out of: nested while | for | do | for-of | for-in loops, loops in one arm of a branch (decided or not), loops whose own condition uses the key, labelled break and continue, try | finally, switch, early continue; what was made at the start is used in, between and behind them; in a third of the functions the object is changed in the body (the key deleted, another deleted, one added, the member stored to). Each function runs on a dozen kinds of object. Untyped JavaScript: every line as plain Bun's."""
+"""for-in-loop-bodies.py <seed> [<functions>]: Random bodies of for-in loops: up to four values derived from the key at
+the start (o[k], Object.hasOwn, typeof, in, a sum, a flag), then up to four statements, including nested loops,
+branches, calls and mutations of the object.
+"""
 import random, sys
 seed = int(sys.argv[1]); count = int(sys.argv[2]) if len(sys.argv) > 2 else 80
 R = random.Random(seed)

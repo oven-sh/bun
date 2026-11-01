@@ -3,6 +3,7 @@ import { bunEnv, bunExe, isASAN, isWindows, nodeExe, tempDir } from "harness";
 import { cpSync, mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer, type AddressInfo } from "node:net";
 import { join } from "node:path";
+import { moreBuildFlags } from "../harness/commands";
 import { run as runCommand } from "../harness/run";
 import { test } from "../supported";
 
@@ -206,7 +207,10 @@ async function serve(cwd: string, cmd: string[], requests: string, more: Record<
       await Bun.sleep(5);
     }
   }
-  return await ask(base, requests);
+  const answers = await ask(base, requests);
+  server.kill();
+  await server.exited;
+  return { answers, stderr: await server.stderr.text() };
 }
 
 export function testFramework(name: keyof typeof frameworks, form: "in place" | "one file" = "in place") {
@@ -258,7 +262,7 @@ export function testFramework(name: keyof typeof frameworks, form: "in place" | 
         ? join(String(dir), "copied")
         : join(site, framework.directory);
       if (framework.isCopiedToServerByItself) renameSync(join(site, framework.directory), directory);
-      const expected = await serve(directory, [bunExe(), framework.entryPoint], requests);
+      const { answers: expected } = await serve(directory, [bunExe(), framework.entryPoint], requests);
       expect(expected.join("\n")).not.toContain("Unable to connect");
 
       const executable = join(String(dir), "executable");
@@ -268,6 +272,7 @@ export function testFramework(name: keyof typeof frameworks, form: "in place" | 
           "build",
           "--compile",
           "--aot",
+          ...moreBuildFlags,
           ...(form === "in place" ? ["--compile-in-place"] : []),
           framework.entryPoint,
           ...(framework.moreEntryPoints ?? []),
@@ -282,14 +287,15 @@ export function testFramework(name: keyof typeof frameworks, form: "in place" | 
       // Next's server.js calls process.chdir(__dirname).
       mkdirSync(directory, { recursive: true });
 
-      expect(
-        await serve(
-          directory,
-          [executable],
-          requests,
-          framework.evaluatesText ? {} : { BUN_JSC_crashIfInterpreterIsUsed: "1" },
-        ),
-      ).toEqual(expected);
+      const { answers, stderr } = await serve(
+        directory,
+        [executable],
+        requests,
+        framework.evaluatesText ? {} : { BUN_JSC_crashIfInterpreterIsUsed: "1" },
+      );
+      // A server answers 500 and says why on stderr alone.
+      if (!Bun.deepEquals(answers, expected)) console.error(`the server's stderr:\n${stderr}`);
+      expect(answers).toEqual(expected);
     },
     1_200_000,
   );

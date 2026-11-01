@@ -339,7 +339,7 @@ function f12 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v5: undefined|null|"a"|"b" @LiteralString = GetSlotOrUndefined v3 key="name" receivers=[L3] level=Proven accessSite=20 fieldAccess=2
 # CHECK-NEXT: v6: undefined|null|"a"|"b" @LiteralString = GetSlotOrUndefined v4 key="name" receivers=[L3] level=Proven accessSite=21 fieldAccess=2
 # CHECK-NEXT: v7: boolean @Boolean = StrictEq v5, v6 form=NullableStrings
-# CHECK-NEXT: TestAndBranch v7 -> taken b1(), notTaken b2(v2)
+# CHECK-NEXT: Branch v7 -> taken b1(), notTaken b2(v2)
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v8: 2 @Int32 = Integer integer=2
 # CHECK-NEXT: v9: int[0, 3] @Int32 = BitOr v2, v8 form=Integers
@@ -348,7 +348,7 @@ function f12 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v11: undefined|int|fractional @OptionalDouble = GetSlotOrUndefined v3 key="size" receivers=[L3] level=Proven accessSite=22 fieldAccess=5
 # CHECK-NEXT: v12: undefined|int|fractional @OptionalDouble = GetSlotOrUndefined v4 key="size" receivers=[L3] level=Proven accessSite=23 fieldAccess=5
 # CHECK-NEXT: v13: boolean @Boolean = StrictEq v11, v12 form=Numbers
-# CHECK-NEXT: TestAndBranch v13 -> taken b3(), notTaken b4(v10)
+# CHECK-NEXT: Branch v13 -> taken b3(), notTaken b4(v10)
 # CHECK-NEXT: b3():
 # CHECK-NEXT: v14: 4 @Int32 = Integer integer=4
 # CHECK-NEXT: v15: int[0, 7] @Int32 = BitOr v10, v14 form=Integers
@@ -390,19 +390,17 @@ function f12 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v39: int[0, 127] @Int32 = BitOr v34, v38 form=Integers
 # CHECK-NEXT: Jump -> next b12(v39)
 # CHECK-NEXT: b12(v40: int[0, 127] @Int32):
-# CHECK-NEXT: v41: boolean @Boolean = StrictEq v5, v6 form=NullableStrings
-# CHECK-NEXT: TestAndBranch v41 -> taken b14(v40), notTaken b13()
+# CHECK-NEXT: Branch v7 -> taken b14(v40), notTaken b13()
 # CHECK-NEXT: b13():
-# CHECK-NEXT: v42: 128 @Int32 = Integer integer=128
-# CHECK-NEXT: v43: int[0, 255] @Int32 = BitOr v40, v42 form=Integers
-# CHECK-NEXT: Jump -> next b14(v43)
-# CHECK-NEXT: b14(v44: int[0, 255] @Int32):
-# CHECK-NEXT: v45: boolean @Boolean = StrictEq v11, v12 form=Numbers
-# CHECK-NEXT: TestAndBranch v45 -> taken b16(v44), notTaken b15()
+# CHECK-NEXT: v41: 128 @Int32 = Integer integer=128
+# CHECK-NEXT: v42: int[0, 255] @Int32 = BitOr v40, v41 form=Integers
+# CHECK-NEXT: Jump -> next b14(v42)
+# CHECK-NEXT: b14(v43: int[0, 255] @Int32):
+# CHECK-NEXT: Branch v13 -> taken b16(v43), notTaken b15()
 # CHECK-NEXT: b15():
-# CHECK-NEXT: v46: 256 @Int32 = Integer integer=256
-# CHECK-NEXT: v47: int[0, 511] @Int32 = BitOr v44, v46 form=Integers
-# CHECK-NEXT: Jump -> next b16(v47)
-# CHECK-NEXT: b16(v48: int[0, 511] @Int32):
-# CHECK-NEXT: Return v48
+# CHECK-NEXT: v44: 256 @Int32 = Integer integer=256
+# CHECK-NEXT: v45: int[0, 511] @Int32 = BitOr v43, v44 form=Integers
+# CHECK-NEXT: Jump -> next b16(v45)
+# CHECK-NEXT: b16(v46: int[0, 511] @Int32):
+# CHECK-NEXT: Return v46
 # CHECK-NEXT: }

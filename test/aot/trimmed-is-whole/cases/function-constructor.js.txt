@@ -97,7 +97,6 @@ console.log((() => {}).constructor`return Bun.color('red', 'hex') + ' ' + typeof
 const proxy = new Proxy(() => {}, {});
 console.log(proxy.constructor(text)());
 //// proxy-handler-hands-out
-//@ not-seen
 const proxy = new Proxy({}, { get: (_, name) => (() => {})[name] });
 console.log(proxy.constructor(text)());
 //// subclass-of-function-constructor

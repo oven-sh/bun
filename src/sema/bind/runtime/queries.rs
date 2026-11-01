@@ -515,6 +515,14 @@ impl Bound<'_> {
         }
     }
 
+    /// The imports whose names mean another symbol where the program runs, each with that symbol: `Declarations::takes_name_of_imports`.
+    pub fn names_taken_from_imports(&self) -> &[(SymbolId, SymbolId)] {
+        match self.runtime.is_computed() {
+            true => &self.runtime.declarations.names_taken_from_imports,
+            false => &[],
+        }
+    }
+
     pub fn is_evaluated_ident(&self, e: ExprId) -> bool {
         has_bit(&self.runtime.references.evaluated_idents, e.idx())
     }

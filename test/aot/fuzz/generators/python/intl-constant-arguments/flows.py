@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""flows.py: a formatter made from constants that travels (exported, captured, in fields, passed to untyped code), everything else a formatter can be asked, options kept in module constants that are changed in ways a compiler may miss,
-variables read before they are initialized or reassigned in unusual ways, and Intl itself shadowed or replaced. Each scene runs once on constants and once on a twin whose arguments are opaque; transcripts must be equal."""
+"""flows.py: A formatter created from constants that travels (exported, captured, stored in fields, passed to untyped
+code), every other operation on a formatter, and options stored in module constants that are changed in ways a
+compiler may miss.
+"""
 import sys, os, json, re
 D = ('"en-US"', '{ dateStyle: "medium", timeStyle: "medium", timeZone: "UTC" }'); N = ('"de"', '{ minimumFractionDigits: 2 }')
 def make(kind, constant):

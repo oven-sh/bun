@@ -7,47 +7,11 @@ use crate::parser::{self as js_parser, IdentifierOpts, RelocateVars, RelocateVar
 use bun_ast::ast_result::CommonJSNamedExport;
 use bun_ast::{self as js_ast, Binding, E, Expr, Flags, G, LocRef, S};
 
-// ── local EString shims ────────────────────────────────────────────────────
-// E.rs currently carries two `impl EString` blocks (live + round-C draft) with
-// overlapping inherent methods, so calls like `EString::init`/`javascript_length`
-// /`eql_bytes` are E0034-ambiguous from here. These thin wrappers go through
-// public fields directly and are removed once E.rs is deduped.
 #[inline]
 fn e_string_init(data: &[u8]) -> E::EString {
     E::EString {
         data: data.into(),
         ..Default::default()
-    }
-}
-
-#[inline]
-fn e_string_javascript_length(s: &E::EString) -> Option<u32> {
-    if s.rope_len > 0 {
-        // We only support ascii ropes for now
-        return (!s.has_non_ascii_bytes()).then_some(s.rope_len);
-    }
-    if !s.is_utf16 {
-        if !s.data.iter().all(|&b| b < 128) {
-            return None;
-        }
-        return Some(s.data.len() as u32);
-    }
-    // UTF-16: `data.len()` stores the u16 element count (see EString::init_utf16).
-    Some(s.data.len() as u32)
-}
-
-#[inline]
-fn e_string_eql_bytes(s: &E::EString, other: &[u8]) -> bool {
-    if !s.is_utf16 {
-        s.data == other
-    } else {
-        let s16 = s.slice16();
-        // A byte of the name is a code unit of the key only where it is ASCII.
-        s16.len() == other.len()
-            && s16
-                .iter()
-                .zip(other)
-                .all(|(&c, &b)| b < 0x80 && c == b as u16)
     }
 }
 
@@ -556,7 +520,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             && identifier_opts.assign_target() == js_ast::AssignTarget::None
                             && !identifier_opts.is_delete_target()
                         {
-                            if let Some(len) = e_string_javascript_length(&str_) {
+                            if let Some(len) = str_.javascript_length() {
                                 return Some(p.new_expr(E::Number::new(len as f64), loc));
                             }
                         }
@@ -584,14 +548,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             {
                                 let prop: &G::Property = &obj.properties.slice()[0];
                                 if let (Some(value), Some(key)) = (prop.value, prop.key) {
+                                    // The lexer makes a key that is not ASCII UTF-16. This rule leaves such a key.
                                     if prop.flags.len() == 0
-                                        && matches!(key.data, js_ast::ExprData::EString(_))
-                                        && e_string_eql_bytes(
-                                            &key.data
-                                                .e_string()
-                                                .expect("infallible: variant checked"),
-                                            name,
-                                        )
+                                        && (key.data.e_string())
+                                            .is_some_and(|key| key.is_utf8() && key.eql_bytes(name))
                                         && name != b"__proto__"
                                         && value.can_be_inlined_from_property_access()
                                     {

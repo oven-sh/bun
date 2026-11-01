@@ -433,6 +433,10 @@ describe("Bun.Transpiler", () => {
     // Code units order "\u{1F600}" before "\uffee", and UTF-8 bytes order it after.
     it("orders it by UTF-16 code unit", () => {
       expect(fold('x = [H < L, H >= L, L > H, T <= T + "x", H + "a" < H + "b"]')).toBe("x = [!0, !1, !0, !0, !0];");
+      // Half of a surrogate pair is three bytes of WTF-8 in a define.
+      const halves = { ...define, X: '"\\ud800"', Y: '"\\udc00"' };
+      const withHalves = new Bun.Transpiler({ minify: { syntax: true }, define: halves });
+      expect(withHalves.transformSync("x = [X < Y, X >= Y, X + Y < L, +X];")).toBe("x = [!0, !1, !0, NaN];\n");
     });
     // A no-break space is white space, which `Number()` trims.
     it("trims its white space for a number", () => {
@@ -491,6 +495,30 @@ describe("Bun.Transpiler", () => {
         rows.flatMap((row, index) => (actual[index] === expected[index] ? [] : [`${row}: ${actual[index]}`])),
       ).toEqual([]);
       expect(rows.length).toBeGreaterThan(1000);
+    });
+    // A macro that returns a JSON `Response` gives the same 8-bit text with no flag.
+    it("gives what node gives for the text of a JSON `Response` of a macro", async () => {
+      using dir = tempDir("transpiler-macro-json-text", {
+        "m.ts": `export function v() { return Response.json(${JSON.stringify(values)}); }`,
+        "index.mjs": `
+          import { v } from "./m.ts" with { type: "macro" };
+          const { T, H, L, N } = v();
+          console.log(JSON.stringify([("x" + T).length, T[1], (T + "x")[3], T.charCodeAt(3), H < L, +N, v().T[1], ("x" + v().T).length]));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim().split("\n").at(-1), stderr, exitCode }).toEqual({
+        stdout: '[4,"\u00e9","x",null,true,1,"\u00e9",4]',
+        stderr: "",
+        exitCode: 0,
+      });
     });
     it("gives what node gives in `bun run`", async () => {
       const src = `

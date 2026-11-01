@@ -1094,6 +1094,20 @@ describe("bundler", () => {
     },
     run: { stdout: "d\u00e9p.cjs 46 100" },
   });
+  // In a CommonJS bundle `import.meta.dir` is the text of the build directory, which is 8-bit too.
+  itBundled("minify/StringFoldsOfNonAsciiBuildDirectory", {
+    files: {
+      "/d\u00e9r/entry.js": /* js */ `
+        const base = \`\${import.meta.dir}/assets/\`;
+        const strip = p => (p.startsWith(base) ? p.slice(base.length) : p);
+        console.log(strip(base + "logo.svg"), (import.meta.dir + "/x").length === import.meta.dir.length + 2);
+      `,
+    },
+    entryPoints: ["/d\u00e9r/entry.js"],
+    format: "cjs",
+    minifySyntax: true,
+    run: { stdout: "logo.svg true" },
+  });
   itBundled("minify/ImportMetaHotTreeShaking", {
     files: {
       "/entry.ts": `

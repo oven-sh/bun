@@ -201,25 +201,33 @@ test("Bun.build inlines the env values from when it was called", async () => {
   expect(exitCode).toBe(0);
 });
 
-// A `.env` file is read as bytes, so an inlined value can be 8-bit text that is not UTF-8. A comparison of two such
-// values stays for run time: it gives what the same comparison gives for values that the bundler cannot see through.
-test("bun build --env leaves a comparison of values that are not UTF-8 for run time", async () => {
+// A `.env` file is read as bytes, so an inlined value can be 8-bit text that is not UTF-8. A fold reads such bytes as
+// `process.env` gives them at run time: the start of a sequence that does not go on is one U+FFFD.
+test("bun build --env folds values that are not UTF-8 as process.env reads them", async () => {
   using dir = tempDir("bun-build-env-bytes", {
-    ".env": Buffer.concat([
-      Buffer.from("PUB_A=a"),
-      Buffer.from([0xff]),
-      Buffer.from("\nPUB_B=a"),
-      Buffer.from([0xef, 0xbf, 0xbe]),
-      Buffer.from("\n"),
-    ]),
+    ".env": Buffer.concat(
+      [
+        ["PUB_A=a", 0xff],
+        ["PUB_B=a", 0xef, 0xbf, 0xbe],
+        ["PUB_X=Andr", 0xe9, "s"],
+        ["PUB_Y=Andr", 0xe9, "a"],
+        ["PUB_C=a", 0xc3, "z"],
+        ["PUB_N=", 0xa0, "1"],
+      ].flatMap(line =>
+        [...line, "\n"].map(part => (typeof part === "string" ? Buffer.from(part) : Buffer.from([part]))),
+      ),
+    ),
     "entry.mjs": /* js */ `
-      const id = x => x;
-      console.log(process.env.PUB_A < process.env.PUB_B, process.env.PUB_A >= process.env.PUB_B);
-      console.log(id(process.env.PUB_A) < id(process.env.PUB_B), id(process.env.PUB_A) >= id(process.env.PUB_B));
+      console.log(JSON.stringify([
+        process.env.PUB_A < process.env.PUB_B, process.env.PUB_A >= process.env.PUB_B,
+        process.env.PUB_X > process.env.PUB_Y, process.env.PUB_X <= process.env.PUB_Y,
+        process.env.PUB_C > "ab", process.env.PUB_C < "ab",
+        +process.env.PUB_N, -process.env.PUB_N, ~process.env.PUB_N,
+      ]));
     `,
   });
   await using build = Bun.spawn({
-    cmd: [bunExe(), "build", "--env", "PUB_*", "--minify-syntax", "entry.mjs", "--outfile", "out.mjs"],
+    cmd: [bunExe(), "build", "--env", "PUB_*", "--minify-syntax", "entry.mjs", "--outfile", "out/out.mjs"],
     env: bunEnv,
     cwd: String(dir),
     stdout: "ignore",
@@ -227,17 +235,17 @@ test("bun build --env leaves a comparison of values that are not UTF-8 for run t
   });
   const [buildStderr, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
   expect({ stderr: buildStderr, exitCode: buildExitCode }).toEqual({ stderr: "", exitCode: 0 });
-  // The run below reads the same `.env`, so a value that was not inlined would compare the same in both lines.
-  expect(await Bun.file(join(String(dir), "out.mjs")).text()).not.toContain("process.env.PUB_");
+  expect(await Bun.file(join(String(dir), "out", "out.mjs")).text()).not.toContain("process.env.PUB_");
 
-  await using run = Bun.spawn({
-    cmd: [bunExe(), "out.mjs"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
-  const [folded, opaque] = stdout.trim().split("\n");
-  expect({ folded, stderr, exitCode }).toEqual({ folded: opaque, stderr: "", exitCode: 0 });
+  // The source reads `.env` at run time. The bundle runs in a folder that has none.
+  const run = async (cwd: string, file: string) => {
+    await using proc = Bun.spawn({ cmd: [bunExe(), file], env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  };
+  const expected = { stdout: "[true,false,true,false,true,false,null,null,-1]", stderr: "", exitCode: 0 };
+  expect({
+    source: await run(String(dir), "entry.mjs"),
+    bundle: await run(join(String(dir), "out"), "out.mjs"),
+  }).toEqual({ source: expected, bundle: expected });
 });

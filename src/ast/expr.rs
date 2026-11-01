@@ -736,14 +736,6 @@ impl Expr {
         if l_string.is_utf8() != r_string.is_utf8() {
             return None;
         }
-        // Bytes that are not UTF-8 have no order by UTF-16 code unit.
-        if l_string.has_non_ascii_bytes()
-            && r_string.has_non_ascii_bytes()
-            && !(bun_core::strings::is_valid_utf8(&l_string.data)
-                && bun_core::strings::is_valid_utf8(&r_string.data))
-        {
-            return None;
-        }
 
         Some([l_string, r_string])
     }
@@ -2810,20 +2802,13 @@ pub use data::Store;
 // Helpers
 // ───────────────────────────────────────────────────────────────────────────
 
-/// `Number(str)` for a flat 8-bit string. `None` for bytes that are not UTF-8.
+/// `Number(str)` for a flat 8-bit string.
 fn string_to_number(str: &E::String) -> Option<f64> {
     if str.next.is_some() || !str.is_utf8() {
         return None;
     }
-    let mut text = str.slice8();
-    if !bun_core::is_all_ascii(text) {
-        if !bun_core::strings::is_valid_utf8(text) {
-            return None;
-        }
-        // `Number()` trims white space that is not ASCII too.
-        text = bun_core::strings::trim_js_whitespace(text);
-    }
-    // +'1' => 1
+    // `Number()` trims white space that is not ASCII too.
+    let text = bun_core::strings::trim_js_whitespace(str.slice8());
     Some(string_to_equivalent_number_value(text))
 }
 

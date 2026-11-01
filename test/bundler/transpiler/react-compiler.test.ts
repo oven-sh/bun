@@ -781,6 +781,33 @@ describe("bundler", () => {
     });
   }
 
+  // A define makes 8-bit text. The length of such text joined to other text is
+  // counted in UTF-16 code units, also where the React Compiler propagates it.
+  for (const minifySyntax of [false, true] as const) {
+    itBundled(`react-compiler/LengthOfTextJoinedToDefineText-syntax=${minifySyntax}`, {
+      files: {
+        "/entry.tsx": /* tsx */ `
+          enum K { S = "x" + TEXT }
+          function Lengths() { return <t>{[\`x\${TEXT}\`.length, ("x" + TEXT).length, TEXT.length, K.S.length]}</t>; }
+          console.log(JSON.stringify(Lengths().props.children));
+        `,
+        "/node_modules/react/compiler-runtime.js": `
+          exports.c = function (n) { return new Array(n).fill(Symbol.for("react.memo_cache_sentinel")); };
+        `,
+        "/node_modules/react/index.js": `exports.createElement = () => null;`,
+        "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
+        "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
+        "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      },
+      define: { TEXT: '"a\u00e9b"' },
+      reactCompiler: true,
+      target: "browser",
+      backend: "api",
+      minifySyntax,
+      run: { stdout: "[4,4,3,4]" },
+    });
+  }
+
   // A user's local `jsx` / `jsxs` / `jsxDEV` / `Fragment` binding in the
   // component body scope must not capture the automatic JSX runtime import
   // when the React Compiler rewrites the component.

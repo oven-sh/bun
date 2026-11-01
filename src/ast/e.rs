@@ -1903,17 +1903,6 @@ impl EString {
     pub fn order(&self, other: &EString) -> Ordering {
         debug_assert!(self.is_utf8() == other.is_utf8());
         if self.is_utf8() {
-            strings::order(&self.data, &other.data)
-        } else {
-            strings::order_t(self.slice16(), other.slice16())
-        }
-    }
-
-    /// The order that `<` gives: by UTF-16 code unit. Both strings must share the same encoding.
-    #[inline]
-    pub fn order_utf16(&self, other: &EString) -> Ordering {
-        debug_assert!(self.is_utf8() == other.is_utf8());
-        if self.is_utf8() {
             strings::order_utf16(&self.data, &other.data)
         } else {
             strings::order_t(self.slice16(), other.slice16())
@@ -1936,7 +1925,7 @@ impl EString {
     pub fn javascript_length(&self) -> Option<u32> {
         if self.rope_len > 0 {
             // We only support ascii ropes for now
-            return Some(self.rope_len);
+            return (!self.has_non_ascii_bytes()).then_some(self.rope_len);
         }
         if self.is_utf8() {
             if !strings::is_all_ascii(&self.data) {

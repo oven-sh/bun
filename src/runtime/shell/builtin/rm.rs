@@ -38,7 +38,6 @@ pub(crate) struct ExecState {
     pub(crate) args_start: usize,
     pub(crate) total_tasks: usize,
     pub(crate) err: Option<bun_sys::Error>,
-    pub(crate) error_signal: AtomicBool,
     pub(crate) output_done: AtomicUsize,
     pub(crate) output_count: AtomicUsize,
     pub(crate) tasks_done: usize,
@@ -248,7 +247,6 @@ impl Rm {
                                 args_start,
                                 total_tasks,
                                 err: None,
-                                error_signal: AtomicBool::new(false),
                                 output_done: AtomicUsize::new(0),
                                 output_count: AtomicUsize::new(0),
                                 tasks_done: 0,
@@ -311,17 +309,14 @@ impl Rm {
                             e.started = true;
                             (e.args_start, e.args_start + e.total_tasks)
                         };
-                        let (sig, out_count) = match &Self::state_mut(interp, cmd).state {
-                            RmState::Exec(e) => (
-                                bun_ptr::BackRef::new(&e.error_signal),
-                                bun_ptr::BackRef::new(&e.output_count),
-                            ),
+                        let out_count = match &Self::state_mut(interp, cmd).state {
+                            RmState::Exec(e) => bun_ptr::BackRef::new(&e.output_count),
                             _ => unreachable!(),
                         };
                         for i in args_start..argc {
                             let root = Builtin::of(interp, cmd).arg_bytes(i);
                             let task = ShellRmTask::create(
-                                cmd, opts, root, cwd, sig, out_count, evtloop, interp_ptr,
+                                cmd, opts, root, cwd, out_count, evtloop, interp_ptr,
                             );
                             // SAFETY: freshly heap-allocated.
                             unsafe { ShellRmTask::schedule(task) };
@@ -392,28 +387,25 @@ impl Rm {
         scopeguard::defer! { unsafe { ShellRmTask::decr_pending_and_maybe_deinit(task) }; }
 
         // SAFETY: `task` is live; exclusive on main thread until decr above runs.
-        let task_err = unsafe { (*task).err.get_mut().take() };
-        // Format the error string before
-        // stashing the error on `exec` (formatting needs &mut interp).
-        let errstr: Option<Vec<u8>> = task_err
-            .as_ref()
-            .map(|e| Builtin::task_error_to_string(interp, cmd, Kind::Rm, e).to_vec());
+        let task_errs = unsafe { core::mem::take((*task).errs.get_mut()) };
+        // One line per entry, formatted before `exec` is borrowed: formatting needs &mut interp.
+        let mut errstr: Vec<u8> = Vec::new();
+        for e in &task_errs {
+            errstr.extend_from_slice(Builtin::task_error_to_string(interp, cmd, Kind::Rm, e));
+        }
         let (tasks_done, total) = {
             let RmState::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
                 panic!("Invalid state")
             };
             exec.tasks_done += 1;
-            if let Some(e) = task_err {
-                // Ownership of err.path stayed with the task (freed in
-                // ShellRmTask::deinit); exec.err is only used as a
-                // did-anything-fail flag from here, so drop the
-                // soon-to-be-dangling path slice from our copy.
+            if let Some(e) = task_errs.first() {
+                // exec.err is only used as a did-anything-fail flag from here.
                 exec.err = Some(e.without_path());
             }
             (exec.tasks_done, exec.total_tasks)
         };
 
-        if let Some(s) = errstr {
+        if !errstr.is_empty() {
             if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
                 if let RmState::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
                     exec.output_count.fetch_add(1, Ordering::SeqCst);
@@ -421,11 +413,11 @@ impl Rm {
                 let child = ChildPtr::new(cmd, WriterTag::Builtin);
                 Builtin::of_mut(interp, cmd)
                     .stderr
-                    .enqueue(child, &s, safeguard)
+                    .enqueue(child, &errstr, safeguard)
                     .run(interp);
                 return;
             }
-            let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, &s);
+            let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, &errstr);
         }
 
         let all_out = match &Self::state_mut(interp, cmd).state {
@@ -611,9 +603,6 @@ pub(crate) struct ShellRmTask {
     /// would make every `verbose_deleted` call on the root UB under Stacked
     /// Borrows. Freed in `Drop`.
     pub(crate) root_task: *mut DirTask,
-    /// Backref into `Rm::ExecState.error_signal`; the boxed `Rm` ExecState
-    /// outlives every in-flight `ShellRmTask`.
-    pub(crate) error_signal: bun_ptr::BackRef<AtomicBool>,
     /// Backref into `Rm::ExecState.output_count` so [`verbose_deleted`] can
     /// bump it from worker threads.
     output_count: bun_ptr::BackRef<AtomicUsize>,
@@ -622,9 +611,8 @@ pub(crate) struct ShellRmTask {
     /// one per DirTask whose verbose output was queued. Decremented by
     /// [`decr_pending_and_maybe_deinit`].
     pub(crate) pending_main_callbacks: AtomicU32,
-    /// First error hit by any worker thread. Mutex-wrapped so [`handle_err`]
-    /// can take `&self` without an interior `&mut` cast.
-    pub(crate) err: bun_threading::Guarded<Option<bun_sys::Error>>,
+    /// One error per entry that was not removed. Mutex-wrapped: [`fail`] runs on any worker.
+    pub(crate) errs: bun_threading::Guarded<Vec<bun_sys::Error>>,
     pub(crate) join_style: JoinStyle,
     pub(crate) event_loop: EventLoopHandle,
     pub task: ShellTask,
@@ -640,7 +628,8 @@ pub(crate) struct DirTask {
     pub(crate) is_absolute: bool,
     pub(crate) subtask_count: AtomicUsize,
     pub(crate) need_to_wait: AtomicBool,
-    pub(crate) deleting_after_waiting_for_children: AtomicBool,
+    /// An entry in or below this directory stays, so it stays too. Set by [`ShellRmTask::fail`].
+    pub(crate) failed: AtomicBool,
     pub(crate) kind_hint: EntryKindHint,
     pub(crate) deleted_entries: Vec<u8>,
     /// Intrusive node for the verbose-write bounce-back to the main thread.
@@ -650,23 +639,21 @@ pub(crate) struct DirTask {
 }
 
 // SAFETY: raw-pointer fields are only dereferenced on the threads that own
-// them (worker pool / main thread); the surrounding atomics + `err` mutex
+// them (worker pool / main thread); the surrounding atomics + `errs` mutex
 // provide the necessary synchronisation.
 unsafe impl Send for ShellRmTask {}
-// SAFETY: `task_manager` / `parent_task` point at heap allocations kept alive
-// by the `subtask_count` / `pending_main_callbacks` atomic protocol; non-atomic
-// fields are single-owner per the `need_to_wait` handoff (see
-// `verbose_deleted`).
+// SAFETY: `task_manager` / `parent_task` are written once, before the task is
+// scheduled, and point at heap allocations kept alive by the `subtask_count` /
+// `pending_main_callbacks` atomic protocol; the other non-atomic fields are
+// single-owner per the `need_to_wait` handoff (see `verbose_deleted`).
 unsafe impl Send for DirTask {}
 
 impl ShellRmTask {
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn create(
         cmd: NodeId,
         opts: Opts,
         root_path: &[u8],
         cwd: bun_sys::Fd,
-        error_signal: bun_ptr::BackRef<AtomicBool>,
         output_count: bun_ptr::BackRef<AtomicUsize>,
         evtloop: EventLoopHandle,
         interp: *mut Interpreter,
@@ -681,7 +668,7 @@ impl ShellRmTask {
             is_absolute: false,
             subtask_count: AtomicUsize::new(1),
             need_to_wait: AtomicBool::new(false),
-            deleting_after_waiting_for_children: AtomicBool::new(false),
+            failed: AtomicBool::new(false),
             kind_hint: EntryKindHint::Idk,
             deleted_entries: Vec::new(),
             concurrent_task: bun_event_loop::EventLoopTask::from_event_loop(evtloop),
@@ -695,10 +682,9 @@ impl ShellRmTask {
             opts,
             cwd,
             root_task,
-            error_signal,
             output_count,
             pending_main_callbacks: AtomicU32::new(1),
-            err: bun_threading::Guarded::new(None),
+            errs: bun_threading::Guarded::new(Vec::new()),
             join_style,
             event_loop: evtloop,
             task: ShellTask::new(evtloop),
@@ -781,13 +767,6 @@ impl ShellRmTask {
         }
     }
 
-    #[inline]
-    fn error_signal(&self) -> &AtomicBool {
-        // `error_signal` is a `BackRef` into the boxed `Rm` ExecState which
-        // outlives every in-flight ShellRmTask.
-        self.error_signal.get()
-    }
-
     /// Joins `path` onto `parent_dir.path` and spawns
     /// a child DirTask.
     fn enqueue(
@@ -797,9 +776,6 @@ impl ShellRmTask {
         is_absolute: bool,
         kind_hint: EntryKindHint,
     ) {
-        if self.error_signal().load(Ordering::SeqCst) {
-            return;
-        }
         // SAFETY: `parent_dir` is live for the duration of its run_from_thread_pool_impl.
         let parent_path = unsafe { (*parent_dir).path.as_bytes() };
         let new_path = self.join(&[parent_path, path], is_absolute);
@@ -808,9 +784,6 @@ impl ShellRmTask {
 
     /// Takes ownership of `path`.
     fn enqueue_no_join(&self, parent: *mut DirTask, path: ZBox, kind_hint: EntryKindHint) {
-        if self.error_signal().load(Ordering::SeqCst) {
-            return;
-        }
         // SAFETY: `parent` is live; reuse its `task_manager` (preserves the
         // original `*mut` provenance from `heap::alloc` rather than deriving
         // a writeable pointer from `&self`).
@@ -822,7 +795,7 @@ impl ShellRmTask {
             is_absolute: false,
             subtask_count: AtomicUsize::new(1),
             need_to_wait: AtomicBool::new(false),
-            deleting_after_waiting_for_children: AtomicBool::new(false),
+            failed: AtomicBool::new(false),
             kind_hint,
             deleted_entries: Vec::new(),
             concurrent_task: bun_event_loop::EventLoopTask::from_event_loop(self.event_loop),
@@ -849,7 +822,7 @@ impl ShellRmTask {
         if !self.opts.verbose {
             return Ok(());
         }
-        // SAFETY: a DirTask's non-atomic fields are single-owner-at-a-time.
+        // SAFETY: a DirTask's `deleted_entries` is single-owner-at-a-time.
         // Ownership starts on the worker that runs `remove_entry*` and is
         // handed off via `subtask_count`: the parent's final append here is
         // sequenced-before its `subtask_count.fetch_sub(SeqCst)` in
@@ -1029,44 +1002,23 @@ impl ShellRmTask {
             },
         };
 
-        // On posix we can close the fd whenever, but on Windows we need to
-        // close it BEFORE we delete.
-        let mut _close_fd = scopeguard::guard(Some(fd), |fd| {
-            if let Some(fd) = fd {
-                fd.close();
-            }
-        });
-
-        if self.error_signal().load(Ordering::SeqCst) {
-            return Ok(());
-        }
-
         let mut iterator = dir_iterator::iterate(fd);
         let mut child_vtable = RemoveFileVTable {
             task: self,
             on_dir: OnDir::Enqueue,
         };
 
-        // The loop may have already enqueued child DirTasks (bumping
-        // `dir_task.subtask_count`) when a readdir/unlink error or an
-        // `error_signal` from another worker aborts it. Returning from
-        // inside the loop would skip the `need_to_wait` hand-off below,
-        // so the last child's `post_run` would never drive
-        // `delete_after_waiting_for_children` on this dir and the owning
-        // `ShellRmTask` would never be freed.
-        let mut i: usize = 0;
+        // No `return` in this loop: the hand-off below has to run once a child task is queued.
         let mut join_spill = Vec::new();
-        let loop_result: bun_sys::Maybe<()> = loop {
+        loop {
             let current = match iterator.next() {
-                Err(e) => break Err(self.error_with_path(&e, path.as_bytes())),
-                Ok(None) => break Ok(()),
+                Err(e) => {
+                    self.fail(dir_task, self.error_with_path(&e, path.as_bytes()));
+                    break;
+                }
+                Ok(None) => break,
                 Ok(Some(ent)) => ent,
             };
-            // TODO this seems bad maybe better to listen to kqueue/epoll event
-            if (i & 3) == 0 && self.error_signal().load(Ordering::SeqCst) {
-                break Ok(());
-            }
-            i += 1;
             match current.kind {
                 bun_sys::EntryKind::Directory => {
                     self.enqueue(
@@ -1091,19 +1043,14 @@ impl ShellRmTask {
                         buf,
                         &mut child_vtable,
                     ) {
-                        break Err(e);
+                        self.fail(dir_task, e);
                     }
                 }
             }
-        };
-
-        // Stash any loop error before the hand-off — once `need_to_wait`
-        // is published `self` may be freed, and `handle_err` takes a
-        // mutex so it must not sit inside the hand-off below. The
-        // `error_signal` check afterwards covers the no-children early-out.
-        if let Err(e) = loop_result {
-            self.handle_err(e);
         }
+
+        // Before the hand-off: a child may remove the directory then, and Windows needs it closed.
+        fd.close();
 
         // Hand off to children. Publish `need_to_wait` first, then release
         // this task's own slot on `subtask_count` with the same `fetch_sub`
@@ -1123,9 +1070,7 @@ impl ShellRmTask {
                 // A child still holds a count. It (or a later child) will
                 // take the counter to 0 and drive
                 // `delete_after_waiting_for_children`; nothing after this
-                // may dereference `dir_task`. The directory fd is closed by
-                // the `close_fd` scopeguard on return — that touches only a
-                // stack local, not `dir_task`.
+                // may dereference `dir_task`.
                 return Ok(());
             }
             // Every child already released its count (each saw the counter
@@ -1135,17 +1080,8 @@ impl ShellRmTask {
             dt.subtask_count.store(1, Ordering::SeqCst);
             dt.need_to_wait.store(false, Ordering::SeqCst);
             *need_to_wait_out = false;
-        }
-
-        if self.error_signal().load(Ordering::SeqCst) {
-            return Ok(());
-        }
-
-        #[cfg(windows)]
-        {
-            // Close BEFORE deleting on Windows.
-            if let Some(f) = _close_fd.take() {
-                f.close();
+            if dt.failed.load(Ordering::SeqCst) {
+                return Ok(());
             }
         }
 
@@ -1158,7 +1094,7 @@ impl ShellRmTask {
                     }
                     Err(self.error_with_path(&e, path.as_bytes()))
                 }
-                _ => Err(e),
+                _ => Err(self.error_with_path(&e, path.as_bytes())),
             },
         }
     }
@@ -1298,12 +1234,22 @@ impl ShellRmTask {
         }
     }
 
-    fn handle_err(&self, err: bun_sys::Error) {
-        let mut slot = self.err.lock();
-        if slot.is_none() {
-            *slot = Some(err);
-            self.error_signal().store(true, Ordering::SeqCst);
+    /// Every error of the walk ends here: recorded, and `dir` and the directories above it stay.
+    fn fail(&self, dir: *mut DirTask, err: bun_sys::Error) {
+        let mut kept = dir;
+        // SAFETY: the caller runs the walk or the rmdir of `dir`, so `dir` is
+        // live and still holds its count on its parent (`post_run` releases
+        // it). That keeps the parent live and away from its own rmdir, and so
+        // on up to the root. Other workers use these tasks at the same time,
+        // so only the atomic and `parent_task` (never written after
+        // `enqueue_no_join`) are touched, through raw places.
+        unsafe {
+            while !kept.is_null() {
+                (*kept).failed.store(true, Ordering::SeqCst);
+                kept = (*kept).parent_task;
+            }
         }
+        self.errs.lock().push(err);
     }
 }
 
@@ -1356,7 +1302,7 @@ impl DirTask {
         let waiting = match tm.remove_entry(this, is_absolute) {
             Ok(waiting) => waiting,
             Err(err) => {
-                tm.handle_err(err);
+                tm.fail(this, err);
                 // `need_to_wait` is only stored on the `Ok(())` return path
                 // of `remove_entry_dir`, so an `Err` return guarantees
                 // ownership of `this` was not handed off.
@@ -1372,9 +1318,7 @@ impl DirTask {
         // `ShellRmTask`) before we get here. So the hand-off is threaded out
         // as a stack-local bool via `remove_entry`'s return value and `this`
         // is never touched again when set. When `waiting` is false the
-        // hand-off never happened, so `deleting_after_waiting_for_children`
-        // (only ever stored by a child that observed `need_to_wait == true`)
-        // is necessarily false and `post_run` is both safe and required.
+        // hand-off never happened, so `post_run` is both safe and required.
         if !waiting {
             // SAFETY: `waiting == false` ⇒ `need_to_wait` was never published,
             // so no other thread can have driven `delete_after_waiting_for_children`
@@ -1457,24 +1401,20 @@ impl DirTask {
         // SAFETY: caller contract. Stay on raw `this` —
         // `remove_entry_dir_after_children` reborrows `(*this).deleted_entries`
         // mutably (via `verbose_deleted`), so we never materialise a
-        // long-lived `&DirTask` covering that field. The two atomic stores
+        // long-lived `&DirTask` covering that field. The atomic accesses
         // and the `task_manager` read use raw place projection only.
         // `task_manager` lives in a separate allocation, so `tm: &ShellRmTask`
         // does not overlap any DirTask borrow.
         unsafe {
-            // `run_from_thread_pool_impl` has a `defer post_run` so set this to skip that.
-            (*this)
-                .deleting_after_waiting_for_children
-                .store(true, Ordering::SeqCst);
             (*this).need_to_wait.store(false, Ordering::SeqCst);
             // The caller just took `subtask_count` to 0; restore the slot
             // `post_run`'s own decrement expects.
             (*this).subtask_count.store(1, Ordering::SeqCst);
             let tm = &*(*this).task_manager;
             let mut do_post_run = true;
-            if !tm.error_signal().load(Ordering::SeqCst) {
+            if !(*this).failed.load(Ordering::SeqCst) {
                 match tm.remove_entry_dir_after_children(this) {
-                    Err(e) => tm.handle_err(e),
+                    Err(e) => tm.fail(this, e),
                     Ok(deleted) => {
                         if !deleted {
                             do_post_run = false;

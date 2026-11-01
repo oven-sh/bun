@@ -460,6 +460,12 @@ pub use bun_watcher::AnyResolveWatcher;
 // runtime fn-pointer alongside the context — `init` produces the
 // `AnyResolveWatcher` erased shim.
 
+/// The levels one retry has checked, each with whether it was dropped.
+#[derive(Default)]
+pub struct CheckedDirs {
+    levels: Vec<(DirInfoRef, bool)>,
+}
+
 /// From [`Resolver::enter_fresh_generation`]: restores the generation on drop.
 pub struct FreshGeneration {
     generation: NonNull<Generation>,
@@ -2787,12 +2793,14 @@ impl<'a> Resolver<'a> {
     }
 
     /// Drops each `DirInfo` from `dir` up whose listing-derived facts changed, with the levels below it.
-    pub fn drop_stale_dir_info_chain(&mut self, dir: &[u8]) {
+    ///
+    /// A chain stops at a level that `checked` holds from an earlier chain of the same retry.
+    pub fn drop_stale_dir_info_chain(&mut self, dir: &[u8], checked: &mut CheckedDirs) {
         // A lookup reads no `DirInfo` for a path that does not fit a path buffer.
         if !bun_paths::is_absolute(dir) || dir.len() >= MAX_PATH_BYTES {
             return;
         }
-        let mut levels: Vec<DirInfoRef> = Vec::new();
+        let first = checked.levels.len();
         let mut topmost_stale: Option<usize> = None;
         // The nearest manifest and the nearest tsconfig are the ones a lookup reads.
         let mut manifest_seen = false;
@@ -2810,7 +2818,16 @@ impl<'a> Resolver<'a> {
             start = parent;
         };
         while let Some(info) = level {
-            levels.push(info);
+            let earlier = checked.levels[..first]
+                .iter()
+                .find(|(seen, _)| std::ptr::eq(&**seen, &*info));
+            if let Some(&(_, busted)) = earlier {
+                if busted {
+                    topmost_stale = Some(checked.levels.len());
+                }
+                break;
+            }
+            checked.levels.push((info, false));
             let check_manifest =
                 !manifest_seen && info.flags.contains(DirInfo::Flag::HasPackageJsonFile);
             let check_tsconfig =
@@ -2818,13 +2835,14 @@ impl<'a> Resolver<'a> {
             manifest_seen |= check_manifest;
             tsconfig_seen |= check_tsconfig;
             if self.dir_info_is_stale(info, check_manifest, check_tsconfig) {
-                topmost_stale = Some(levels.len());
+                topmost_stale = Some(checked.levels.len());
             }
             level = info.get_parent();
         }
-        if let Some(count) = topmost_stale {
-            for info in &levels[..count] {
+        if let Some(end) = topmost_stale {
+            for (info, busted) in &mut checked.levels[first..end] {
                 self.bust_dir_cache(info.abs_path);
+                *busted = true;
             }
         }
     }

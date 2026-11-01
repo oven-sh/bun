@@ -50,7 +50,7 @@ pub use tsconfig_json::TSConfigJSON;
 /// Re-export so dependents can spell `bun_resolver::install_types::AutoInstaller`.
 pub use ::bun_install_types::resolver_hooks as install_types;
 pub use resolver::{
-    AnyResolveWatcher, BrowserMapPathKind, Bufs, Dirname, FreshGeneration, Resolver,
+    AnyResolveWatcher, BrowserMapPathKind, Bufs, CheckedDirs, Dirname, FreshGeneration, Resolver,
     module_type_from_ext,
 };
 pub use result::{

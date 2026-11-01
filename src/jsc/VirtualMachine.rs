@@ -5643,7 +5643,8 @@ impl VirtualMachine {
                     let resolver = &mut self.transpiler.resolver;
                     // SAFETY: the resolver is a field of this VM, which outlives `_resolve`.
                     fresh_generation = Some(unsafe { resolver.enter_fresh_generation() });
-                    resolver.drop_stale_dir_info_chain(importer_dir);
+                    let mut checked = bun_resolver::CheckedDirs::default();
+                    resolver.drop_stale_dir_info_chain(importer_dir, &mut checked);
                     // The directory a path specifier names: its `package.json` can have appeared.
                     let names_a_path = bun_paths::is_absolute(normalized_specifier)
                         || (bun_paths::is_absolute(importer_dir)
@@ -5658,14 +5659,14 @@ impl VirtualMachine {
                         >(
                             importer_dir, &mut buf[..], &[normalized_specifier]
                         ) {
-                            resolver.drop_stale_dir_info_chain(named);
+                            resolver.drop_stale_dir_info_chain(named, &mut checked);
                         }
                     }
                     // `require.resolve(id, { paths })` looks in each of these, not from the importer.
                     if let Some(paths) = resolver.custom_dir_paths {
                         for path in paths {
                             let path = path.to_utf8();
-                            resolver.drop_stale_dir_info_chain(path.slice());
+                            resolver.drop_stale_dir_info_chain(path.slice(), &mut checked);
                         }
                     }
                 }

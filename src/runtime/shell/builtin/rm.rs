@@ -388,9 +388,7 @@ impl Rm {
 
         // SAFETY: `task` is live; exclusive on main thread until decr above runs.
         let task_errs = unsafe { core::mem::take((*task).errs.get_mut()) };
-        // One line per entry that was not removed, written as one chunk.
-        // Format them before stashing the failure on `exec` (formatting
-        // needs &mut interp).
+        // One line per entry, formatted before `exec` is borrowed: formatting needs &mut interp.
         let mut errstr: Vec<u8> = Vec::new();
         for e in &task_errs {
             errstr.extend_from_slice(Builtin::task_error_to_string(interp, cmd, Kind::Rm, e));
@@ -606,17 +604,14 @@ pub(crate) struct ShellRmTask {
     /// Borrows. Freed in `Drop`.
     pub(crate) root_task: *mut DirTask,
     /// Backref into `Rm::ExecState.output_count` so [`verbose_deleted`] can
-    /// bump it from worker threads; the boxed `Rm` ExecState outlives every
-    /// in-flight `ShellRmTask`.
+    /// bump it from worker threads.
     output_count: bun_ptr::BackRef<AtomicUsize>,
     /// Main-thread callbacks that must complete before this task can be freed:
     /// always one for `on_shell_rm_task_done` (via `finish_concurrently`), plus
     /// one per DirTask whose verbose output was queued. Decremented by
     /// [`decr_pending_and_maybe_deinit`].
     pub(crate) pending_main_callbacks: AtomicU32,
-    /// One error per entry that was not removed, from any worker thread.
-    /// Mutex-wrapped so [`fail`] can take `&self` without an interior `&mut`
-    /// cast.
+    /// One error per entry that was not removed. Mutex-wrapped: [`fail`] runs on any worker.
     pub(crate) errs: bun_threading::Guarded<Vec<bun_sys::Error>>,
     pub(crate) join_style: JoinStyle,
     pub(crate) event_loop: EventLoopHandle,
@@ -633,8 +628,7 @@ pub(crate) struct DirTask {
     pub(crate) is_absolute: bool,
     pub(crate) subtask_count: AtomicUsize,
     pub(crate) need_to_wait: AtomicBool,
-    /// An entry in or below this directory was not removed, so the directory
-    /// is not removed either. Set by [`ShellRmTask::fail`].
+    /// An entry in or below this directory stays, so it stays too. Set by [`ShellRmTask::fail`].
     pub(crate) failed: AtomicBool,
     pub(crate) kind_hint: EntryKindHint,
     pub(crate) deleted_entries: Vec<u8>,
@@ -648,10 +642,9 @@ pub(crate) struct DirTask {
 // them (worker pool / main thread); the surrounding atomics + `errs` mutex
 // provide the necessary synchronisation.
 unsafe impl Send for ShellRmTask {}
-// SAFETY: `task_manager` / `parent_task` point at heap allocations kept alive
-// by the `subtask_count` / `pending_main_callbacks` atomic protocol.
-// `parent_task` is written once, before the task is scheduled, and read by
-// the tasks below it in `ShellRmTask::fail`. Every other non-atomic field is
+// SAFETY: `task_manager` / `parent_task` are written once, before the task is
+// scheduled, and point at heap allocations kept alive by the `subtask_count` /
+// `pending_main_callbacks` atomic protocol; the other non-atomic fields are
 // single-owner per the `need_to_wait` handoff (see `verbose_deleted`).
 unsafe impl Send for DirTask {}
 
@@ -1015,14 +1008,7 @@ impl ShellRmTask {
             on_dir: OnDir::Enqueue,
         };
 
-        // The loop may have already enqueued child DirTasks (bumping
-        // `dir_task.subtask_count`) when an entry fails. Returning from
-        // inside the loop would skip the `need_to_wait` hand-off below,
-        // so the last child's `post_run` would never drive
-        // `delete_after_waiting_for_children` on this dir and the owning
-        // `ShellRmTask` would never be freed. So an entry that fails is
-        // reported here, before the hand-off (once `need_to_wait` is
-        // published `self` may be freed), and the loop goes on.
+        // No `return` in this loop: the hand-off below has to run once a child task is queued.
         let mut join_spill = Vec::new();
         loop {
             let current = match iterator.next() {
@@ -1063,9 +1049,7 @@ impl ShellRmTask {
             }
         }
 
-        // Nothing reads the directory after the loop. On Windows it has to be
-        // closed BEFORE it is removed, and once the hand-off below is
-        // published a child can be at that rmdir.
+        // Before the hand-off: a child may remove the directory then, and Windows needs it closed.
         fd.close();
 
         // Hand off to children. Publish `need_to_wait` first, then release
@@ -1250,12 +1234,7 @@ impl ShellRmTask {
         }
     }
 
-    /// The one place an error leaves the walk: `err` is about the directory of
-    /// `dir` or about an entry in it.
-    ///
-    /// That entry stays, so every directory from `dir` up to the operand stays
-    /// too. `failed` keeps their owners from an `rmdir` that cannot succeed
-    /// and that would report the same entry again. Nothing else stops.
+    /// Every error of the walk ends here: recorded, and `dir` and the directories above it stay.
     fn fail(&self, dir: *mut DirTask, err: bun_sys::Error) {
         let mut kept = dir;
         // SAFETY: the caller runs the walk or the rmdir of `dir`, so `dir` is
@@ -1339,9 +1318,7 @@ impl DirTask {
         // `ShellRmTask`) before we get here. So the hand-off is threaded out
         // as a stack-local bool via `remove_entry`'s return value and `this`
         // is never touched again when set. When `waiting` is false the
-        // hand-off never happened, so no child can have driven
-        // `delete_after_waiting_for_children` on `this` and `post_run` is
-        // both safe and required.
+        // hand-off never happened, so `post_run` is both safe and required.
         if !waiting {
             // SAFETY: `waiting == false` ⇒ `need_to_wait` was never published,
             // so no other thread can have driven `delete_after_waiting_for_children`

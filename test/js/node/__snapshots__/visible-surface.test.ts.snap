@@ -3159,7 +3159,7 @@ util[convertProcessSignalToExitCode]: function function name="convertProcessSign
 util[convertProcessSignalToExitCode][length] c-- number
 util[convertProcessSignalToExitCode][name] c-- string
 util[debug] cew function
-util[debug]: function function name="debuglog" length=1 above=Function extensible=true
+util[debug]: function function name="debuglog" length=2 above=Function extensible=true
 util[debug][length] c-- number
 util[debug][name] c-- string
 util[debuglog] cew function

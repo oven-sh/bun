@@ -90,52 +90,7 @@ const { isDeepStrictEqual } = require("internal/util/comparisons");
 
 const parseArgs = $bindgen("parse_args.bind.ts", "parseArgs");
 
-var debugs: Record<string, (...args: unknown[]) => void> = {};
-var debugEnvRegex = /^$/;
-const NODE_DEBUG = Bun.env.NODE_DEBUG;
-if (NODE_DEBUG) {
-  debugEnv = NODE_DEBUG;
-  debugEnv = debugEnv
-    .replace(/[|\\{}()[\]^$+?.]/g, "\\$&")
-    .replace(/\*/g, ".*")
-    .replace(/,/g, "$|^")
-    .toUpperCase();
-  debugEnvRegex = new RegExp("^" + debugEnv + "$", "i");
-}
-var debugEnv: string;
-// Emits a warning when the user enables NODE_DEBUG=http or NODE_DEBUG=http2,
-// like Node.js's internal/util/debuglog.
-function emitWarningIfNeeded(set: string) {
-  if ("HTTP" === set || "HTTP2" === set) {
-    process.emitWarning(
-      "Setting the NODE_DEBUG environment variable " +
-        "to '" +
-        set.toLowerCase() +
-        "' can expose sensitive " +
-        "data (such as passwords, tokens and authentication headers) " +
-        "in the resulting log.",
-    );
-  }
-}
-
-/** Node also takes a callback that is given the logger once it is made. It is ignored here. */
-function debuglog(set: string, callback?: (fn: (...args: unknown[]) => void) => void): (...args: unknown[]) => void;
-function debuglog(set: string) {
-  set = set.toUpperCase();
-  if (!debugs[set]) {
-    if (debugEnvRegex.test(set)) {
-      var pid = process.pid;
-      emitWarningIfNeeded(set);
-      debugs[set] = function () {
-        var msg = require("internal/util/inspect").format.$apply(undefined, arguments as unknown as unknown[]);
-        console.error("%s %d: %s", set, pid, msg);
-      };
-    } else {
-      debugs[set] = function () {};
-    }
-  }
-  return debugs[set];
-}
+const { debuglog } = require("internal/util/debuglog");
 
 function isBoolean(arg) {
   return typeof arg === "boolean";

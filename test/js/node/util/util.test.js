@@ -802,3 +802,166 @@ describe("util.parseEnv", () => {
     expect(JSON.parse(JSON.stringify(parsed))).toEqual({ 0: "set", 2023: "y", A: "1", 4294967295: "notidx" });
   });
 });
+
+describe("util.debuglog", () => {
+  // Adapted from https://github.com/nodejs/node/blob/main/lib/internal/util/debuglog.js semantics:
+  // the logger has an `enabled` getter and calls the callback with the real logger on first use.
+  const fixture = `
+    const util = require("node:util");
+    const calls = [];
+    let debug = util.debuglog("foo", fn => {
+      calls.push(fn);
+      debug = fn;
+    });
+    const before = debug;
+    console.log("enabled:", debug.enabled);
+    console.log("descriptor:", JSON.stringify(Object.getOwnPropertyDescriptor(debug, "enabled"), (k, v) => typeof v === "function" ? "fn" : v));
+    console.log("bar enabled:", util.debuglog("bar").enabled);
+    console.log("callback before call:", calls.length);
+    debug("hello %s", "world");
+    console.log("callback after call:", calls.length, calls[0] === debug, before !== debug);
+    console.log("inner enabled:", calls.length ? debug.enabled : "never resolved");
+    debug("second");
+    console.log("callback after second call:", calls.length);
+    console.log("debug alias:", util.debug === util.debuglog);
+  `;
+
+  async function run(NODE_DEBUG) {
+    const env = { ...bunEnv };
+    if (NODE_DEBUG === undefined) delete env.NODE_DEBUG;
+    else env.NODE_DEBUG = NODE_DEBUG;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr: stderr.replaceAll(String(proc.pid), "<pid>"), exitCode };
+  }
+
+  it.concurrent("enabled is true when NODE_DEBUG matches the section", async () => {
+    const { stdout, stderr, exitCode } = await run("foo");
+    expect(stdout).toBe(
+      [
+        "enabled: true",
+        'descriptor: {"get":"fn","enumerable":true,"configurable":true}',
+        "bar enabled: false",
+        "callback before call: 0",
+        "callback after call: 1 true true",
+        "inner enabled: true",
+        "callback after second call: 1",
+        "debug alias: true",
+        "",
+      ].join("\n"),
+    );
+    expect(stderr).toBe("FOO <pid>: hello world\nFOO <pid>: second\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("enabled is false when NODE_DEBUG is unset", async () => {
+    const { stdout, stderr, exitCode } = await run(undefined);
+    expect(stdout).toBe(
+      [
+        "enabled: false",
+        'descriptor: {"get":"fn","enumerable":true,"configurable":true}',
+        "bar enabled: false",
+        "callback before call: 0",
+        "callback after call: 0 false false",
+        "inner enabled: never resolved",
+        "callback after second call: 0",
+        "debug alias: true",
+        "",
+      ].join("\n"),
+    );
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("matches wildcards and comma lists case-insensitively", async () => {
+    const { stdout, stderr, exitCode } = await run("x,F*");
+    expect(stdout).toBe(
+      [
+        "enabled: true",
+        'descriptor: {"get":"fn","enumerable":true,"configurable":true}',
+        "bar enabled: false",
+        "callback before call: 0",
+        "callback after call: 1 true true",
+        "inner enabled: true",
+        "callback after second call: 1",
+        "debug alias: true",
+        "",
+      ].join("\n"),
+    );
+    expect(stderr).toBe("FOO <pid>: hello world\nFOO <pid>: second\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("treats a . in NODE_DEBUG as a literal character", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const util = require("node:util");
+         console.log(util.debuglog("a.b").enabled, util.debuglog("aXb").enabled);`,
+      ],
+      env: { ...bunEnv, NODE_DEBUG: "a.b" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("true false\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("calls the callback with a disabled logger when the first use is a call", async () => {
+    const env = { ...bunEnv };
+    delete env.NODE_DEBUG;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `let debug = require("node:util").debuglog("foo", fn => { debug = fn; });
+         const outer = debug;
+         debug("dropped");
+         console.log(outer !== debug, typeof debug, debug.enabled, outer.enabled);`,
+      ],
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("true function false false\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("colors the pid and the message when FORCE_COLOR is set", async () => {
+    const env = { ...bunEnv, NODE_DEBUG: "foo", FORCE_COLOR: "1" };
+    delete env.NO_COLOR;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `require("node:util").debuglog("foo")("n", 1);`],
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr.replace(`\x1b[33m${proc.pid}\x1b[39m`, "<pid>")).toBe("FOO <pid>: n \x1b[33m1\x1b[39m\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("writes the first message without a prior read of enabled", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `require("node:util").debuglog("foo")("first %d", 1);`],
+      env: { ...bunEnv, NODE_DEBUG: "foo" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr.replaceAll(String(proc.pid), "<pid>")).toBe("FOO <pid>: first 1\n");
+    expect(exitCode).toBe(0);
+  });
+});

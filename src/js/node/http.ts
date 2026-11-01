@@ -9,7 +9,11 @@ const { Server, ServerResponse } = require("node:_http_server");
 
 const { METHODS, STATUS_CODES, setMaxHTTPHeaderSize, getMaxHTTPHeaderSize } = require("internal/http");
 
-if (process.env.NODE_DEBUG) require("node:util").debuglog("http");
+if (process.env.NODE_DEBUG) {
+  // Bun's http does not log through debuglog: resolve it now so NODE_DEBUG=http warns as in node.
+  const { debuglog, debuglogImpl } = require("internal/util/debuglog");
+  if (debuglog("http").enabled) debuglogImpl(true, "HTTP");
+}
 
 function createServer(options, callback) {
   return new Server(options, callback);

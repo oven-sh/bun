@@ -10,6 +10,9 @@
 #include "JSBuffer.h"
 #include "JSDOMConvertNumbers.h"
 #include "JSStreamsRuntime.h"
+#include "JSDOMExceptionHandling.h"
+#include "MessagePort.h"
+#include "SerializedScriptValue.h"
 #include <JavaScriptCore/ArrayBuffer.h>
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/Exception.h>
@@ -234,6 +237,82 @@ JSUint8Array* cloneAsUint8Array(JSGlobalObject* globalObject, JSArrayBufferView*
         return nullptr;
     }
     RELEASE_AND_RETURN(scope, JSUint8Array::create(globalObject, globalObject->typedArrayStructure(TypeUint8, false), WTF::move(cloned), 0, byteLength));
+}
+
+// spec StructuredClone(v) for a default-tee chunk. A view copies only the bytes it covers
+// (a body chunk is often a narrow window into a larger read buffer) and keeps its structure,
+// so a Buffer or a Uint8Array subclass stays one. Any other object gets the generic
+// structured clone: a class instance comes back a plain object, a function or a Proxy throws.
+JSValue structuredCloneStreamChunk(JSGlobalObject* globalObject, JSValue chunk)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!chunk.isObject() && !chunk.isSymbol())
+        return chunk;
+    // A view over a shared or resizable buffer keeps its buffer's kind through the generic path.
+    if (auto* view = dynamicDowncast<JSArrayBufferView>(chunk); view && !view->isShared() && !view->isResizableOrGrowableShared()) {
+        if (view->isDetached()) [[unlikely]] {
+            WebCore::throwDataCloneError(*globalObject, scope);
+            return {};
+        }
+        size_t byteLength = view->byteLength();
+        RefPtr<ArrayBuffer> copy = ArrayBuffer::tryCreate(view->span());
+        if (!copy) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return {};
+        }
+        // Keep the view's structure (its prototype: Buffer, a subclass) unless it carries own
+        // properties, which a fresh cell has no storage for.
+        TypedArrayType type = typedArrayType(view->type());
+        Structure* structure = view->structure();
+        bool reuseStructure = !structure->outOfLineCapacity() && !structure->isDictionary();
+        if (!reuseStructure)
+            structure = globalObject->typedArrayStructure(type, false);
+        JSArrayBufferView* result = nullptr;
+        switch (type) {
+#define CLONE_TYPED_ARRAY(name)                                                                                              \
+    case Type##name:                                                                                                         \
+        result = JS##name##Array::create(globalObject, structure, WTF::move(copy), 0, byteLength / elementSize(Type##name)); \
+        break;
+            FOR_EACH_TYPED_ARRAY_TYPE_EXCLUDING_DATA_VIEW(CLONE_TYPED_ARRAY)
+#undef CLONE_TYPED_ARRAY
+        case TypeDataView:
+            result = JSDataView::create(globalObject, structure, WTF::move(copy), 0, byteLength);
+            break;
+        case NotTypedArray:
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!reuseStructure) {
+            JSValue prototype = view->getPrototypeDirect();
+            if (prototype != result->getPrototypeDirect())
+                result->setPrototypeDirect(vm, prototype);
+        }
+        return result;
+    }
+    if (auto* jsBuffer = dynamicDowncast<JSArrayBuffer>(chunk)) {
+        ArrayBuffer* buffer = jsBuffer->impl();
+        if (buffer->isDetached()) [[unlikely]] {
+            WebCore::throwDataCloneError(*globalObject, scope);
+            return {};
+        }
+        if (!buffer->isShared() && !buffer->isResizableOrGrowableShared()) {
+            RefPtr<ArrayBuffer> copy = ArrayBuffer::tryCreate(buffer->span());
+            if (!copy) [[unlikely]] {
+                throwOutOfMemoryError(globalObject, scope);
+                return {};
+            }
+            return JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(ArrayBufferSharingMode::Default), WTF::move(copy));
+        }
+    }
+    Vector<RefPtr<WebCore::MessagePort>> ports;
+    auto serialized = WebCore::SerializedScriptValue::create(*globalObject, chunk, {}, ports, WebCore::SerializationForStorage::No, WebCore::SerializationContext::WorkerPostMessage);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (serialized.hasException()) [[unlikely]] {
+        WebCore::propagateException(*globalObject, scope, serialized.releaseException());
+        return {};
+    }
+    RELEASE_AND_RETURN(scope, serialized.releaseReturnValue()->deserialize(*globalObject, globalObject, ports));
 }
 
 // spec CanCopyDataBlockBytes(toBuffer, toIndex, fromBuffer, fromIndex, count). Non-throwing leaf.

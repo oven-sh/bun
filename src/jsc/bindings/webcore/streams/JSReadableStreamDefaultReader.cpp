@@ -192,6 +192,8 @@ static double drainQueueEntriesInto(JSC::VM& vm, JSGlobalObject* globalObject, J
     double size = isByte ? byteController->m_queue.totalSize() : defaultController->m_queue.totalSize();
     size_t queueLength = isByte ? byteController->m_queue.size() : defaultController->m_queue.size();
     // [[queueTotalSize]] is deliberately NOT decremented while draining (see above).
+    unsigned written = 0;
+    double writtenSize = 0;
     for (unsigned i = 0; i < queueLength; ++i) {
         JSValue chunk;
         if (isByte) {
@@ -210,12 +212,43 @@ static double drainQueueEntriesInto(JSC::VM& vm, JSGlobalObject* globalObject, J
             chunk = JSUint8Array::create(globalObject, globalObject->typedArrayStructure(TypeUint8, resizable), WTF::move(buffer), byteOffset, byteLength);
             RETURN_IF_EXCEPTION(scope, size);
         } else {
-            WTF::Locker locker { defaultController->cellLock() };
-            auto& entry = defaultController->m_queue.first();
-            chunk = entry.value.get();
-            defaultController->m_queue.removeFirst(locker);
+            // The copy below runs user code (userJS: yes) that can read or cancel this branch.
+            if (stream->m_state == ReadableStreamState::Errored) [[unlikely]] {
+                JSValue storedError = stream->m_storedError.get();
+                throwException(globalObject, scope, storedError ? storedError : jsUndefined());
+                return size;
+            }
+            if (defaultController->m_queue.isEmpty() || stream->m_state != ReadableStreamState::Readable) [[unlikely]]
+                break;
+            double entrySize = 0;
+            {
+                WTF::Locker locker { defaultController->cellLock() };
+                auto& entry = defaultController->m_queue.first();
+                chunk = entry.value.get();
+                entrySize = entry.size;
+                defaultController->m_queue.removeFirst(locker);
+            }
+            if (auto* isolatingTee = teeBranchIsolatingChunks(defaultController)) [[unlikely]] {
+                chunk = isolateTeeBranchChunk(globalObject, isolatingTee, chunk);
+                RETURN_IF_EXCEPTION(scope, size);
+                if (!chunk) {
+                    if (stream->m_state == ReadableStreamState::Closed)
+                        break;
+                    ASSERT(stream->m_state == ReadableStreamState::Errored);
+                    JSValue storedError = stream->m_storedError.get();
+                    throwException(globalObject, scope, storedError ? storedError : jsUndefined());
+                    return size;
+                }
+            }
+            writtenSize += entrySize;
         }
         into->putDirectIndex(globalObject, base + i, chunk);
+        RETURN_IF_EXCEPTION(scope, size);
+        written = i + 1;
+    }
+    if (written < queueLength) [[unlikely]] {
+        size = writtenSize;
+        into->setLength(globalObject, base + written);
         RETURN_IF_EXCEPTION(scope, size);
     }
 
@@ -728,6 +761,9 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamDefaultReaderPrototypeFunction_read, (J
         RETURN_IF_EXCEPTION(scope, {});
         RELEASE_AND_RETURN(scope, JSValue::encode(promiseResolvedWith(lexicalGlobalObject, result)));
     }
+    // The copy a body-clone branch makes in that fast path can run user code that released this reader.
+    if (!reader->m_stream)
+        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: The reader is not attached to a stream"_s))));
     auto* domGlobalObject = defaultGlobalObject(lexicalGlobalObject);
     auto* runtime = JSStreamsRuntime::from(lexicalGlobalObject);
     auto* promise = JSPromise::create(vm, lexicalGlobalObject->promiseStructure());

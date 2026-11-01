@@ -2751,37 +2751,46 @@ pub fn self_exe_path() -> crate::CrateResult<&'static ZStr> {
 // ── get_thread_count ──────────────────────────────────────────────────────
 // Clamped to [2, 1024]; honours
 // UV_THREADPOOL_SIZE / GOMAXPROCS overrides.
+const MIN_THREAD_COUNT: u16 = 2;
+const MAX_THREAD_COUNT: u16 = 1024;
+static THREAD_COUNT: Once<u16> = Once::new();
+
+/// The count that a value of `UV_THREADPOOL_SIZE` or `GOMAXPROCS` asks for. `None` if it is no number or below the minimum.
+fn thread_count_from_env_value(value: &[u8]) -> Option<u16> {
+    let count = crate::fmt::parse_int::<u16>(value.trim_ascii(), 10).ok()?;
+    (count >= MIN_THREAD_COUNT).then_some(count.min(MAX_THREAD_COUNT))
+}
+
+/// Makes `get_thread_count` answer the count of `value`, a `UV_THREADPOOL_SIZE` from an env file, unless it has answered before.
+pub fn set_thread_count_from_env(value: &[u8]) {
+    if let Some(count) = thread_count_from_env_value(value) {
+        let _ = THREAD_COUNT.set(count);
+    }
+}
+
 pub fn get_thread_count() -> u16 {
-    static CELL: Once<u16> = Once::new();
-    *CELL.get_or_init(|| {
-        const MAX: u16 = 1024;
-        const MIN: u16 = 2;
+    *THREAD_COUNT.get_or_init(|| {
         let from_env = || -> Option<u16> {
             for key in [
                 crate::zstr!("UV_THREADPOOL_SIZE"),
                 crate::zstr!("GOMAXPROCS"),
             ] {
-                if let Some(v) = getenv_z(key) {
-                    if let Ok(n) = crate::fmt::parse_int::<u16>(v.trim_ascii(), 10) {
-                        if n >= MIN {
-                            return Some(n.min(MAX));
-                        }
-                    }
+                if let Some(count) = getenv_z(key).and_then(thread_count_from_env_value) {
+                    return Some(count);
                 }
                 // Windows: `getenv_z` is currently a no-op (no narrow C
                 // environ to borrow from); honour the override via
                 // `std::env::var` so behaviour matches
                 // on all platforms. POSIX keeps the borrow path above.
                 #[cfg(windows)]
-                if let Ok(s) = std::env::var(
+                if let Some(count) = std::env::var(
                     // SAFETY: keys above are ASCII literals.
                     unsafe { core::str::from_utf8_unchecked(key.as_bytes()) },
-                ) {
-                    if let Ok(n) = s.trim().parse::<u16>() {
-                        if n >= MIN {
-                            return Some(n.min(MAX));
-                        }
-                    }
+                )
+                .ok()
+                .and_then(|value| thread_count_from_env_value(value.as_bytes()))
+                {
+                    return Some(count);
                 }
             }
             None
@@ -2797,7 +2806,7 @@ pub fn get_thread_count() -> u16 {
             }
             WTF__numberOfProcessorCores().max(1) as u16
         });
-        raw.clamp(MIN, MAX)
+        raw.clamp(MIN_THREAD_COUNT, MAX_THREAD_COUNT)
     })
 }
 

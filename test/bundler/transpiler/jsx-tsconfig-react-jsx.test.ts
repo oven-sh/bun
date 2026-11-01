@@ -72,12 +72,15 @@ describe("tsconfig compilerOptions.jsx", () => {
   // "preserve" is selected with --jsx-runtime, Bun.build or bunfig, never from
   // tsconfig: `bun run` executes the output, and tsconfigs written for other
   // toolchains (Next.js) ask for it.
-  test.concurrent('"preserve" in tsconfig is ignored by bun run and bun build', async () => {
+  test.concurrent.each([
+    [undefined, "dev jsxDEV", "shim/jsx-dev-runtime"],
+    ["production", "prod jsx", "shim/jsx-runtime"],
+  ] as const)('"preserve" in tsconfig is ignored with NODE_ENV=%s', async (NODE_ENV, runStdout, importSource) => {
     using dir = tempDir("jsx-tsconfig-preserve", {
       ...shimFiles,
       "tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "preserve", jsxImportSource: "shim" } }),
     });
-    const env = { ...bunEnv, NODE_ENV: undefined, BUN_ENV: undefined };
+    const env = { ...bunEnv, NODE_ENV, BUN_ENV: undefined };
 
     {
       await using proc = Bun.spawn({
@@ -88,7 +91,7 @@ describe("tsconfig compilerOptions.jsx", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "dev jsxDEV", stderr: "", exitCode: 0 });
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: runStdout, stderr: "", exitCode: 0 });
     }
 
     {
@@ -100,7 +103,7 @@ describe("tsconfig compilerOptions.jsx", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stdout).toContain('"shim/jsx-dev-runtime"');
+      expect(stdout).toContain(JSON.stringify(importSource));
       expect(stdout).not.toContain("<div");
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
@@ -177,6 +180,8 @@ describe("tsconfig compilerOptions.jsx", () => {
     expect(preserved).toContain(`export default <div>hi</div>;`);
     expect(preserved).not.toContain("jsx-runtime");
     expect(transpiler.scanImports(`/* @jsxRuntime preserve */\nexport default <div>hi</div>;`)).toEqual([]);
+    const afterPragma = transpiler.transformSync(`export default <div>hi</div>;`);
+    expect(afterPragma).toMatch(/^import \{ jsx(DEV)? as \w+ \} from "solid-js\/jsx(-dev)?-runtime";\n/);
   });
 });
 

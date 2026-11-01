@@ -1,5 +1,17 @@
 # List of tests for which we do NOT enable LeakSanitizer when running in ASAN CI
 
+# Third-party build tools and packages load native addons.
+test/aot/frameworks/angular.test.ts
+test/aot/frameworks/next.test.ts
+test/aot/frameworks/nuxt.test.ts
+test/aot/frameworks/sveltekit.test.ts
+test/aot/build-plugins-native.test.ts
+test/aot/backend-packages/dd-trace.test.ts
+test/aot/backend-packages/newrelic.test.ts
+test/aot/backend-packages/opentelemetry.test.ts
+test/aot/backend-packages/programs.test.ts
+test/aot/backend-packages/sentry.test.ts
+
 test/cli/install/bun-security-scanner-matrix-with-node-modules.test.ts
 test/cli/install/bun-security-scanner-matrix-without-node-modules.test.ts
 
@@ -57,7 +69,6 @@ test/integration/next-pages/test/dev-server-ssr-100.test.ts
 test/integration/next-pages/test/dev-server.test.ts
 test/integration/next-pages/test/next-build.test.ts
 test/integration/vite-build/vite-build.test.ts
-test/js/bun/css/css-fuzz.test.ts
 test/js/bun/ffi/cc.test.ts
 test/js/bun/http/bun-serve-html-manifest.test.ts
 test/js/bun/http/bun-server.test.ts
@@ -402,3 +413,7 @@ test/bundler/native-plugin.test.ts
 
 # Slow
 test/js/bun/typescript/type-export.test.ts
+
+# End the process while threads, lookups and requests are in flight.
+test/js/bun/util/system-library-calls.test.ts
+test/napi/addon-allocations.test.ts

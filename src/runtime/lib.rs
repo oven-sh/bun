@@ -5,6 +5,8 @@
 #![deny(improper_ctypes, improper_ctypes_definitions)]
 #![feature(thread_local)]
 #![feature(adt_const_params)]
+// For what runs once per process or per test file, or only words a message: `#[optimize(size)]`.
+#![feature(optimize_attribute)]
 // For `__rust_no_alloc_shim_is_unstable_v2` in bin_entry.
 #![feature(rustc_attrs)]
 #![allow(internal_features)]
@@ -51,6 +53,8 @@ pub(crate) mod shell;
 // cycle the `bun_bun_js` shims were papering over.
 #[path = "api.rs"]
 pub(crate) mod api;
+pub(crate) mod checker_queries_testing;
+pub(crate) mod code_resolver_testing;
 pub(crate) mod dispatch;
 pub(crate) mod hw_exports;
 #[cfg(debug_assertions)]
@@ -62,6 +66,7 @@ pub(crate) mod jsc_hooks;
 pub(crate) mod json_line_buffer;
 pub(crate) mod linear_fifo_testing;
 pub(crate) mod napi;
+pub(crate) mod removed_feature;
 #[path = "../bun.js.rs"]
 pub(crate) mod run_main;
 pub(crate) mod timer;

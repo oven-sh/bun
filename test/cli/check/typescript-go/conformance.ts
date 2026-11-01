@@ -87,14 +87,17 @@ export function conformance(shard: number, shards: number) {
   );
 
   // A task can be discarded, by timing, and its file checked again. Whatever the first visit has shared by then stays.
+  // `bun build --compile --aot` lowers a file with the types of the visit that counts, so they are compared too.
   test.concurrent.skipIf(isSkipped)(
-    "Errors: the same if every file's first visit is discarded and the file is checked again",
+    "Errors, Types, Symbols: the same if every file's first visit is discarded and the file is checked again",
     async () => {
       // Each run uses every core, so they take turns.
       await run();
-      const stdout = await runWith("--discard-first-visits");
-      expect(stdout.split("\n").filter(line => line.startsWith("FAIL Errors "))).toEqual([]);
-      expect(stdout).toMatch(/100\.00%  of \d+ Errors, byte for byte/);
+      const stdout = await runWith("--discard-first-visits", "--types-and-symbols");
+      expect(stdout.split("\n").filter(line => line.startsWith("FAIL "))).toEqual([]);
+      for (const kind of ["Errors", "Types", "Symbols"]) {
+        expect(stdout).toMatch(new RegExp(`100\\.00%  of \\d+ ${kind}, byte for byte`));
+      }
     },
     10 * 60_000,
   );

@@ -5,8 +5,8 @@ use bun_lint::rule::Plugin;
 /// Disallow importing from `node:test`, preferring `vitest` instead.
 pub struct NoImportNodeTest;
 
-const NO_IMPORT_NODE_TEST: Message = Message::new("", "Do not import from `node:test`");
-const IMPORT_FROM_VITEST: Message = Message::new("", "Import from `vitest` instead.");
+const NO_IMPORT_NODE_TEST: &Message = &Message::new("", "Do not import from `node:test`");
+const IMPORT_FROM_VITEST: &Message = &Message::new("", "Import from `vitest` instead.");
 
 impl Rule for NoImportNodeTest {
     const META: Meta = Meta::oxlint(Plugin::Vitest, "no-import-node-test", Kind::Suggestion).has_suggestions();

@@ -1,0 +1,3 @@
+import type { Config } from "./types";
+const config: Config = { name: "app", port: 80 };
+export = config;

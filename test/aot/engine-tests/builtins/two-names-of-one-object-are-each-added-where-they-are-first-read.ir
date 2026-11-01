@@ -1,0 +1,25 @@
+# Bun.postgres and Bun.sql hold one object. Bun adds each of the two members where that member is first read, so each read leaves an InitializeBuiltin of the name that it reads,
+# and the second is no repetition of the first. A second read of the same name is.
+# FORM: AsRead
+# RUN: pipeline ResolveAccesses
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Bun
+    v1 = PropGet v0 key="postgres"
+    v2 = PropGet v0 key="sql"
+    v3 = PropGet v0 key="postgres"
+    v4 = Builtin builtin=Reflect
+    v5 = Builtin builtin=ReflectOwnKeys
+    v6 = Call v5, v4, v0
+    v7 = NewArray v1, v2, v3, v6 contents=anything
+    Return v7
+}
+# CHECK-LABEL: function f0 name="main"
+# CHECK: InitializeBuiltin builtin=BunPostgres
+# CHECK: InitializeBuiltin builtin=Bun_sql
+# CHECK-NOT: InitializeBuiltin builtin=BunPostgres
+# CHECK: Return

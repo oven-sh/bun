@@ -317,9 +317,13 @@ public:
                     /* WebSocket upgrades does not allow content-length */
                     if (allowContentLength) {
                         /* Even zero is a valid content-length */
-                        Super::write("Content-Length: ", 16);
-                        writeUnsigned64(totalSize);
-                        Super::write("\r\n\r\n", 4);
+                        char digits[utils::U64_MAX_DIGITS];
+                        std::string_view size(digits, (size_t) utils::u64toa(totalSize, digits));
+                        if (!Super::writeAllToCorkBuffer(std::string_view("Content-Length: ", 16), size, std::string_view("\r\n\r\n", 4))) {
+                            Super::write("Content-Length: ", 16);
+                            Super::write(size.data(), size.length());
+                            Super::write("\r\n\r\n", 4);
+                        }
                         httpResponseData->state |= HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER;
                     } else {
                         Super::write("\r\n", 2);
@@ -353,6 +357,17 @@ public:
             }
 
             return success;
+        }
+    }
+
+    void finishResponseInCorkBuffer(size_t bodyLength) {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        httpResponseData->state |= HttpResponseData<SSL>::HTTP_END_CALLED;
+        httpResponseData->offset += bodyLength;
+        this->resetTimeout();
+        httpResponseData->markDone(this);
+        if (uncorkCompletedResponse()) {
+            closeIfDoneAndMarked(httpResponseData);
         }
     }
 
@@ -625,6 +640,9 @@ public:
         /* Update status */
         httpResponseData->state |= HttpResponseData<SSL>::HTTP_STATUS_CALLED;
 
+        if (Super::writeAllToCorkBuffer(std::string_view("HTTP/1.1 ", 9), status, std::string_view("\r\n", 2))) {
+            return this;
+        }
         Super::write("HTTP/1.1 ", 9);
         Super::write(status.data(), status.length());
         Super::write("\r\n", 2);
@@ -635,6 +653,9 @@ public:
     HttpResponse *writeHeader(std::string_view key, std::string_view value) {
         writeStatus(HTTP_200_OK);
 
+        if (Super::writeAllToCorkBuffer(key, std::string_view(": ", 2), value, std::string_view("\r\n", 2))) {
+            return this;
+        }
         Super::write(key.data(), key.length());
         Super::write(": ", 2);
         Super::write(value.data(), value.length());

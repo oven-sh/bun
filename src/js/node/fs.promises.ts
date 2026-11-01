@@ -15,6 +15,7 @@ const constants = $processBindingConstants.fs;
 var PromisePrototypeFinally = $Promise.prototype.finally; //TODO
 var SymbolAsyncDispose = Symbol.asyncDispose;
 var ObjectFreeze = Object.freeze;
+var isUint8Array = types.isUint8Array;
 
 const kFd = Symbol("kFd");
 const kRefs = Symbol("kRefs");
@@ -329,7 +330,9 @@ const exports = {
   chmod: asyncWrap(fs.chmod, "chmod"),
   fchmod: asyncWrap(fs.fchmod, "fchmod"),
   fchown: asyncWrap(fs.fchown, "fchown"),
-  fstat: asyncWrap(fs.fstat, "fstat"),
+  fstat: async function fstat(fd: any, options: any = undefined) {
+    return options === undefined ? fs.fstat(fd) : statWithOptions(fs.fstat, fd, options);
+  } as typeof fs.fstat,
   fsync: asyncWrap(fs.fsync, "fsync"),
   fdatasync: asyncWrap(fs.fdatasync, "fdatasync"),
   ftruncate: asyncWrap(fs.ftruncate, "ftruncate"),
@@ -343,7 +346,9 @@ const exports = {
         },
   lchown: asyncWrap(fs.lchown, "lchown"),
   link: asyncWrap(fs.link, "link"),
-  lstat: asyncWrap(fs.lstat, "lstat"),
+  lstat: async function lstat(path: any, options: any = undefined) {
+    return options === undefined ? fs.lstat(path) : statWithOptions(fs.lstat, path, options);
+  } as typeof fs.lstat,
   mkdir: asyncWrap(fs.mkdir, "mkdir"),
   mkdtemp: asyncWrap(fs.mkdtemp, "mkdtemp"),
   mkdtempDisposable: async function mkdtempDisposable(prefix, options) {
@@ -388,7 +393,9 @@ const exports = {
   readlink: asyncWrap(fs.readlink, "readlink"),
   realpath: asyncWrap(fs.realpathNative, "realpath"),
   rename: asyncWrap(fs.rename, "rename"),
-  stat: asyncWrap(fs.stat, "stat"),
+  stat: async function stat(path: any, options: any = undefined) {
+    return options === undefined ? fs.stat(path) : statWithOptions(fs.stat, path, options);
+  } as typeof fs.stat,
   symlink: asyncWrap(fs.symlink, "symlink"),
   truncate: asyncWrap(fs.truncate, "truncate"),
   unlink: asyncWrap(fs.unlink, "unlink"),
@@ -461,6 +468,54 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
   Object.defineProperty(wrapped, "name", { value: name });
   Object.defineProperty(wrapped, "length", { value: fn.length });
   return wrapped;
+}
+
+type StatOperation = (target: any, options?: any) => Promise<unknown>;
+let rejectOnAbort: ((operation: Promise<unknown>, signal: AbortSignal) => Promise<unknown>) | undefined;
+
+// `stat`, `lstat` and `fstat` with an `options` argument.
+function statWithOptions(op: StatOperation, target: unknown, options: any) {
+  // Node v26.8.0 and later reject an `options` that is not an object (nodejs/node#63143). Bun takes one as no options, as node's callback forms do: exifr@7.1.3 calls `filehandle.stat(path)`.
+  const signal = options === null || typeof options !== "object" ? undefined : options.signal;
+  if (signal === undefined) return op.$call(fs, target, options);
+  // Node checks the signal before the path.
+  validateAbortSignal(signal, "options.signal");
+  if (signal.aborted) throw $makeAbortError(undefined, { cause: signal.reason });
+  if (isUint8Array(target)) {
+    // An abort is reported while the stat still runs, and a stat borrows a path buffer until it ends. So it gets a copy.
+    try {
+      target = new $Buffer(target);
+    } catch {
+      // A detached buffer cannot be copied. The native check reports it.
+    }
+  }
+  return (rejectOnAbort ??= makeRejectOnAbort())(op.$call(fs, target, options), signal);
+}
+
+// Made at the first stat that has a signal: the parser reads an async function at the top level when the module loads.
+function makeRejectOnAbort() {
+  const listenerOptions = ObjectFreeze({ __proto__: null, once: true, $kResistStopPropagation: true });
+  async function awaitOperation(operation: Promise<unknown>) {
+    return await operation;
+  }
+  // Node's raceWithSignal, with no race: an abort rejects the promise of `awaitOperation`. The promise of the native call must stay pending until that call settles it. https://github.com/nodejs/node/blob/v26.12.1/lib/internal/fs/promises.js#L1221-L1228
+  return async function rejectOnAbort(operation: Promise<unknown>, signal: AbortSignal) {
+    const result = awaitOperation(operation);
+    // Every outcome reaches the caller through this function. Node leaves the started stat with no handler when the listener cannot be added, so its later error is an unhandled rejection.
+    $pokePromiseAsHandled(result);
+    function onAbort() {
+      $rejectPromiseWithFirstResolvingFunctionCallCheck(result, $makeAbortError(undefined, { cause: signal.reason }));
+    }
+    // The signal can abort while the native call reads its options.
+    const listening = !signal.aborted;
+    if (listening) signal.addEventListener("abort", onAbort, listenerOptions);
+    else onAbort();
+    try {
+      return await result;
+    } finally {
+      if (listening) signal.removeEventListener("abort", onAbort);
+    }
+  };
 }
 
 {

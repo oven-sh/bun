@@ -2949,6 +2949,7 @@ declare module "bun" {
     compilerOptions?: {
       paths?: Record<string, string[]>;
       baseUrl?: string;
+      /** Bun ignores `"preserve"` in tsconfig. Select JSX preservation with the build option `jsx.runtime` instead. */
       jsx?: "preserve" | "react" | "react-jsx" | "react-jsxdev";
       jsxFactory?: string;
       jsxFragmentFactory?: string;

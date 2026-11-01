@@ -126,6 +126,23 @@ export default b.declarations(
     functionObjectCode: { symbol: "NodeError_proto_toString", header: "ErrorCode.h" },
     length: 0,
   }),
+  // A stack trace lists the three functions that `require` hands a file to, each under the name that ZigGlobalObject.cpp gives its function object.
+  b.extend("%PrivateGlobals%.createInternalModuleById", {
+    functionObjectCode: {
+      symbol: "Bun::InternalModuleRegistry::jsCreateInternalModuleById",
+      header: "InternalModuleRegistry.h",
+      name: "anonymous",
+    },
+    length: 1,
+  }),
+  b.extend("%PrivateGlobals%.esmLoadSync", {
+    functionObjectCode: { symbol: "functionEsmLoadSync", header: "ZigGlobalObject.h", name: "" },
+    length: 2,
+  }),
+  b.extend("%PrivateGlobals%.requireCommonJS", {
+    functionObjectCode: { symbol: "Bun::jsFunctionRequireCommonJS", header: "JSCommonJSModule.h", name: "anonymous" },
+    length: 5,
+  }),
   b.namespace("%PrivateGlobals%", {
     ...Object.fromEntries(
       Object.entries(resultsOfFunctionsChangingNothing).map(([name, returns]) => [name, changesNothing(returns)]),

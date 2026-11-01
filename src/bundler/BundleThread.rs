@@ -271,10 +271,13 @@ impl<C: CompletionStruct> BundleThread<C> {
                 }
                 has_bundled = true;
             }
+            // The next bundle must read every listing again, also one that a
+            // runtime retry refreshed since, so the stamp comes from the
+            // process-wide counter.
             // SAFETY: `generation` is only read/written on this (bundle) thread.
             unsafe {
                 let g = core::ptr::addr_of_mut!((*instance).generation);
-                *g = (*g).saturating_add(1);
+                *g = bun_core::next_generation();
             }
 
             if has_bundled {

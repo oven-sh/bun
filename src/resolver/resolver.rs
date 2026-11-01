@@ -4540,7 +4540,7 @@ impl<'a> Resolver<'a> {
         let top_result = self
             .dir_cache_mut()
             .get_or_put(path_without_trailing_slash)?;
-        if top_result.status != allocators::ItemStatus::Unknown {
+        if self.dir_cache_status_is_final(top_result.status) {
             return Ok(self
                 .dir_cache_mut()
                 .at_index(top_result.index)
@@ -4548,6 +4548,18 @@ impl<'a> Resolver<'a> {
         }
 
         self.dir_info_cached_miss(enable_logging, input_path, top_result)
+    }
+
+    /// A cached "no such directory" holds only at generation 0. A lookup at a
+    /// newer generation (a bundle, or the runtime's retry after a miss) opens
+    /// the directory again, as it reads every listing again.
+    #[inline]
+    fn dir_cache_status_is_final(&self, status: allocators::ItemStatus) -> bool {
+        match status {
+            allocators::ItemStatus::Exists => true,
+            allocators::ItemStatus::NotFound => self.generation == 0,
+            allocators::ItemStatus::Unknown => false,
+        }
     }
 
     /// Cold tail of [`dir_info_cached_maybe_log`]: the directory walk +
@@ -4621,7 +4633,7 @@ impl<'a> Resolver<'a> {
             debug_assert!(top.as_ptr() == root_path.as_ptr());
             let result = self.dir_cache_mut().get_or_put(top)?;
 
-            if result.status != allocators::ItemStatus::Unknown {
+            if self.dir_cache_status_is_final(result.status) {
                 top_parent = result;
                 break;
             }
@@ -4663,7 +4675,7 @@ impl<'a> Resolver<'a> {
 
         if top == root_path {
             let result = self.dir_cache_mut().get_or_put(root_path)?;
-            if result.status != allocators::ItemStatus::Unknown {
+            if self.dir_cache_status_is_final(result.status) {
                 top_parent = result;
             } else {
                 if i >= queue.len() {

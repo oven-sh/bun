@@ -2266,8 +2266,20 @@ impl StackCheck {
 // Small helpers that downstream crates need.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Bumped each rebuild/rescan to invalidate stale cache entries.
-pub type Generation = u16;
+/// Stamp on a cached directory listing. A reader at a newer generation reads
+/// the directory again in place. The runtime reads at 0 and moves to a fresh
+/// generation for one retry after a miss. Each bundle runs at one.
+pub type Generation = u32;
+
+static GENERATION_COUNTER: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
+/// A generation newer than every one handed out before, on any thread. Never 0.
+pub fn next_generation() -> Generation {
+    GENERATION_COUNTER
+        .fetch_add(1, core::sync::atomic::Ordering::Relaxed)
+        .wrapping_add(1)
+        .max(1)
+}
 
 // ── Ordinal ───────────────────────────────────────────────────────────────
 // ABI-equivalent of WTF::OrdinalNumber:

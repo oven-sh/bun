@@ -439,6 +439,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             while let Data::EDot(dot) = root.data {
                                 root = dot.target;
                             }
+                            let valid_tag = matches!(
+                                root.data,
+                                Data::EIdentifier(_) | Data::EImportIdentifier(_) | Data::EThis(_)
+                            ) || matches!(tag.data, Data::EString(_));
+                            if !valid_tag {
+                                p.log().add_error(
+                                    Some(p.source),
+                                    tag.loc,
+                                    b"Cannot preserve JSX tag after it resolves to an invalid JSX tag expression",
+                                );
+                                *e = p.new_expr(E::Missing {}, expr.loc);
+                                return;
+                            }
                             if matches!(root.data, Data::EImportIdentifier(_)) {
                                 // Capturing the live import at each use; linking can turn it into
                                 // a computed property access, which JSX tag syntax cannot contain.

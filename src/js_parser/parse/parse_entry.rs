@@ -161,6 +161,8 @@ pub struct Options<'a> {
     pub tree_shaking: bool,
     pub bundle: bool,
     pub code_splitting: bool,
+    /// JSX preservation restriction for standalone executables
+    pub forbid_jsx_preserve: bool,
     pub package_version: &'a [u8],
 
     pub macro_context: Option<&'a mut MacroContext>,
@@ -221,6 +223,7 @@ impl<'a> Default for Options<'a> {
             tree_shaking: false,
             bundle: false,
             code_splitting: false,
+            forbid_jsx_preserve: false,
             package_version: b"",
             macro_context: None,
             warn_about_unbundled_modules: true,
@@ -316,6 +319,7 @@ impl<'a> Options<'a> {
             tree_shaking: self.tree_shaking,
             bundle: self.bundle,
             code_splitting: self.code_splitting,
+            forbid_jsx_preserve: self.forbid_jsx_preserve,
             package_version: self.package_version,
             macro_context: None,
             warn_about_unbundled_modules: self.warn_about_unbundled_modules,
@@ -397,6 +401,7 @@ impl<'a> Options<'a> {
             tree_shaking: false,
             bundle: false,
             code_splitting: false,
+            forbid_jsx_preserve: false,
             package_version: b"",
             // Materializing an invalid `&mut T` is immediate UB regardless of
             // use, so model "not yet set" as `None`; callers must assign `Some(_)`
@@ -672,6 +677,7 @@ impl<'a> Parser<'a> {
         // Symbol use counts are unavailable
         // So we say "did we parse any JSX?"
         // if yes, just automatically add the import so that .bun knows to include the file.
+        p.apply_jsx_import_source_pragma();
         let pragma_runtime = p.jsx_runtime_pragma();
         let jsx_runtime = pragma_runtime.map_or(p.options.jsx.runtime, |runtime| runtime.runtime);
         let jsx_development = pragma_runtime
@@ -1041,6 +1047,18 @@ impl<'a> Parser<'a> {
 
         let mut visit_tracer = bun_core::perf::trace("JSParser::visit");
         p.prepare_for_visit_pass()?;
+
+        if p.options.forbid_jsx_preserve
+            && p.options.jsx.parse
+            && p.options.jsx.runtime == options::JSX::Runtime::Preserve
+        {
+            p.log().add_error(
+                Some(p.source),
+                bun_ast::Loc { start: 0 },
+                b"Cannot preserve JSX when compiling an executable",
+            );
+            return Err(crate::Error::SyntaxError);
+        }
 
         if p.options.features.react_compiler.is_enabled() {
             let rc_options = bun_react_compiler::ReactCompilerOptions {

@@ -430,10 +430,40 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // `P::jsx_transform` field.
         match p.jsx_transform {
             JSXTransformType::React => {
+                let mut tag_initializer = None;
                 let tag: Expr = 'tagger: {
                     if let Some(mut tag) = e_.tag {
                         p.visit_expr(&mut tag);
                         if p.options.jsx.runtime == options::JSX::Runtime::Preserve {
+                            let mut root = tag;
+                            while let Data::EDot(dot) = root.data {
+                                root = dot.target;
+                            }
+                            if matches!(root.data, Data::EImportIdentifier(_)) {
+                                // Capturing the live import at each use; linking can turn it into
+                                // a computed property access, which JSX tag syntax cannot contain.
+                                let ref_ = p.generate_temp_var(b"JSXTag");
+                                let binding = p.b(js_ast::B::Identifier { r#ref: ref_ }, tag.loc);
+                                let decl = p.s(
+                                    js_ast::S::Local {
+                                        kind: js_ast::s::Kind::KVar,
+                                        decls: G::DeclList::init_one(G::Decl {
+                                            binding,
+                                            value: None,
+                                        }),
+                                        ..Default::default()
+                                    },
+                                    tag.loc,
+                                );
+                                p.nearest_stmt_list_mut()
+                                    .expect("JSX has a statement list")
+                                    .push(decl);
+                                p.record_usage(ref_);
+                                p.record_usage(ref_);
+                                let identifier = Expr::init_identifier(ref_, tag.loc);
+                                tag_initializer = Some(Expr::assign(identifier, tag));
+                                tag = identifier;
+                            }
                             let ref_ = match tag.data {
                                 Data::EIdentifier(identifier) => Some(identifier.ref_),
                                 Data::EImportIdentifier(identifier) => Some(identifier.ref_),
@@ -770,7 +800,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     e_.children.truncate(last_child as usize);
 
-                    *e = expr;
+                    *e = match tag_initializer {
+                        Some(initializer) => initializer.join_with_comma(expr),
+                        None => expr,
+                    };
                     return;
                 } else {
                     unreachable!();

@@ -168,6 +168,82 @@ describe("bundler", () => {
       ]);
     });
 
+    test("Bun.Transpiler scanImports uses the jsxImportSource pragma", () => {
+      const transpiler = new Bun.Transpiler({ loader: "tsx", autoImportJSX: true });
+      for (const [runtime, path] of [
+        ["react-jsx", "custom/jsx-runtime"],
+        ["react-jsxdev", "custom/jsx-dev-runtime"],
+      ]) {
+        const source = `/** @jsxRuntime ${runtime} */ /** @jsxImportSource custom */ export default <div />;`;
+        expect(transpiler.scanImports(source)).toEqual([
+          { kind: "require-call", path },
+          { kind: "require-call", path: "custom" },
+        ]);
+        expect(transpiler.transformSync(source)).toContain(JSON.stringify(path));
+      }
+    });
+
+    describe.each([false, true])("string-named imports, external=%s", external => {
+      describe.each([false, true])("minifyIdentifiers=%s", minifyIdentifiers => {
+        itBundled(`jsx/PreserveStringNamedImport-${external}-${minifyIdentifiers}`, {
+          files: {
+            "/in.tsx": `
+              import { "some-component" as Component, "some-namespace" as Namespace, update } from "components";
+              function render(value = <Component />) { return value; }
+              async function renderAsync() { return <Component value={await Promise.resolve("async")} />; }
+              function* renderGenerator() { return <Component value={yield "pause"} />; }
+              async function main() {
+                console.log(render(), <Namespace.Component />);
+                update();
+                console.log(render(), await renderAsync());
+                const generator = renderGenerator();
+                console.log(generator.next().value, generator.next("generator").value);
+              }
+              main();
+            `,
+            "/node_modules/components/index.js": `
+              exports["some-component"] = () => "first";
+              exports["some-namespace"] = { Component: () => "member" };
+              exports.update = () => { exports["some-component"] = props => props.value || "second"; };
+            `,
+          },
+          jsx: { runtime: "preserve" },
+          target: "node",
+          format: "cjs",
+          external: external ? ["components"] : [],
+          minifyIdentifiers,
+          minifySyntax: minifyIdentifiers,
+          minifyWhitespace: minifyIdentifiers,
+          onAfterBundle(api) {
+            const out = api.readFile("/out.js");
+            const { code } = transformSync(out, { loader: "jsx", jsxFactory: "globalThis.__jsxPreserveFactory" });
+            api.writeFile("/out.js", `globalThis.__jsxPreserveFactory = (type, props) => type(props || {});\n${code}`);
+          },
+          run: { stdout: "first member\nsecond async\npause generator" },
+        });
+      });
+    });
+
+    describe.each([
+      ["cli", "option"],
+      ["cli", "pragma"],
+      ["cli", "bunfig"],
+      ["api", "option"],
+      ["api", "pragma"],
+    ] as const)("compile (%s), preserve from %s", (backend, source) => {
+      itBundled(`jsx/PreserveCompileRejected-${backend}-${source}`, {
+        files: {
+          "/in.jsx": `${source === "pragma" ? "/** @jsxRuntime preserve */" : ""} console.log(<div />);`,
+          ...(source === "bunfig" ? { "/bunfig.toml": 'jsx = "preserve"' } : {}),
+        },
+        backend,
+        target: "bun",
+        compile: true,
+        ...(source === "option" ? { jsx: { runtime: "preserve" } } : {}),
+        bundleErrors: { "/in.jsx": ["Cannot preserve JSX when compiling an executable"] },
+      });
+    });
+
     itBundled("jsx/PreserveCliRuntimeFlag", {
       files: {
         "/in.tsx": `console.log(<span>Hello</span>);`,
@@ -485,14 +561,14 @@ describe("bundler", () => {
           import { ImportedComponent } from "./component";
           let greeting = "Hello";
           let spreadProps = { title: greeting };
-          function VeryLongComponent() { return null; }
+          function VeryLongComponent(props) { return props.title + " local"; }
           console.log(<>
             <VeryLongComponent {...spreadProps} key="id" longAttributeName={greeting} data-long-name={greeting} />
             <ImportedComponent />
             <h3>{greeting}</h3>
           </>);
         `,
-        "/component.tsx": `export function ImportedComponent() { return null; }`,
+        "/component.tsx": `export function ImportedComponent() { return "imported"; }`,
         "/tsconfig.json": `{"compilerOptions":{"target":"ESNext"}}`,
       },
       outfile: "/out.js",
@@ -516,7 +592,13 @@ describe("bundler", () => {
         expect(out).not.toContain("jsx-runtime");
         expect(out).not.toContain("greeting");
         expect(out).not.toContain("createElement");
+        const { code } = transformSync(out, { loader: "jsx", jsxFactory: "h", jsxFragment: "Fragment" });
+        api.writeFile(
+          "/out.js",
+          `const h = (type, props, ...children) => typeof type === "function" ? type(props) : children.join(" ");\nconst Fragment = "fragment";\n${code}`,
+        );
       },
+      run: { stdout: "Hello local imported Hello" },
     });
 
     describe.each([false, true])("shared components, minifyIdentifiers=%s", minifyIdentifiers => {
@@ -656,6 +738,7 @@ describe("bundler", () => {
             }
             expect(out).toContain("createElement(");
             expect(out).not.toContain("<div");
+            expect(out).toMatch(/\.\.\.first,\s*key: "k",\s*\.\.\.last/);
           },
         });
       });

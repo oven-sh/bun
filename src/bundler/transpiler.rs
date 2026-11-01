@@ -1496,6 +1496,7 @@ impl<'a> Transpiler<'a> {
                     tree_shaking: self.options.tree_shaking,
                     bundle: false,
                     code_splitting: false,
+                    forbid_jsx_preserve: self.options.compile_mode.is_executable(),
                     package_version: b"",
                     macro_context: None,
                     warn_about_unbundled_modules: !target.is_bun(),

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""maps-and-sets.py <seed>: random strict TypeScript programs about Maps and Sets keyed by strings (and by numbers, objects and mixtures): keys that are literals, made of numbers and strings in one
-expression (`"k" + i`, template strings, i + "," + j), parts of other strings (slice, substring, split, charAt, match), ropes, 16-bit text, empty, long, text of numbers (-0, 1e21, 0.1 + 0.2, NaN); equal keys made in different ways;
-set | get | has | delete | clear | size | iteration while changing; growth from nothing to thousands, deletion and growth again; values that are records, strings, numbers, booleans, null, undefined; collections in between."""
+"""maps-and-sets.py <seed>: Random strict TypeScript programs about Maps and Sets keyed by strings (and numbers, objects
+and mixtures): keys that are literals, concatenations, templates, substrings, and equal strings from different
+origins.
+"""
 import random, sys, os
 
 HEAD = r'''const G: any = globalThis;

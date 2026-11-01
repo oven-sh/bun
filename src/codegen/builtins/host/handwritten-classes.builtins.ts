@@ -1,7 +1,15 @@
 import * as b from "bun-builtins-table";
+import { methodsOfSubtleCrypto } from "./methods-of-subtle-crypto.ts";
 
 const externalState = ["ExternalState"];
 const objectOrUndefined = b.union(b.object, b.undefined);
+const convertedToCharacters = [b.readAsCharacters, b.runs("ToPrimitive")];
+const runsCodeOfOperands = {
+  capability: "js",
+  throws: true,
+  runsOnlyOperandCode: true,
+  implementation: b.generic,
+} satisfies Partial<b.FunctionField>;
 
 const webCoreClass = (name: string, instanceCppClass: b.CppClassRef, options: b.ClassOptions = {}) =>
   b.class(name, { instanceCppClass, types: [b.viewType(name)], ...options });
@@ -81,7 +89,9 @@ export default b.declarations(
     },
   }),
 
-  webCoreClass("SubtleCrypto", b.cppClass("JSSubtleCrypto")),
+  webCoreClass("SubtleCrypto", b.cppClass("JSSubtleCrypto"), {
+    proto: Object.fromEntries(methodsOfSubtleCrypto.map(name => [name, b.otherwiseBy(b.generic)])),
+  }),
   b.method("Crypto.prototype.subtle", {
     getter: b.instance("SubtleCrypto"),
     capability: "heap",
@@ -130,4 +140,70 @@ export default b.declarations(
   }),
   ["CryptoKey", "URLPattern"].flatMap(path => constructorOnly(path)),
   ["Bun.Cookie", "Bun.CookieMap"].flatMap(path => [...constructorOnly(path), ...b.inherits(path, "Object.prototype")]),
+
+  // JSCookie.cpp: they make strings of their operands, and `from` reads the members of its options.
+  b.static("Bun.Cookie.parse", {
+    ...runsCodeOfOperands,
+    args: { text: b.any.optional },
+    returns: b.instance("Bun.Cookie").fresh,
+    uses: { text: convertedToCharacters },
+  }),
+  b.static("Bun.Cookie.from", {
+    ...runsCodeOfOperands,
+    args: { name: b.any.optional, value: b.any.optional, options: b.any.optional },
+    returns: b.instance("Bun.Cookie").fresh,
+    uses: { name: convertedToCharacters, value: convertedToCharacters, options: [b.everything] },
+  }),
+  // JSWebViewConstructor.cpp: it kills the processes of the browsers. What waits for them hears of it in a later turn of the event loop.
+  b.static("Bun.WebView.closeAll", {
+    args: {},
+    returns: b.undefined,
+    capability: "none",
+    writes: externalState,
+    implementation: b.generic,
+  }),
+  // FormData.bind.ts: a Blob, a string or bytes, and it throws for anything else. Parsing runs no JavaScript.
+  b.static("FormData.from", {
+    args: { input: b.any.optional, boundary: b.any.optional },
+    returns: b.instance("FormData").fresh,
+    capability: "heap",
+    throws: true,
+    uses: { input: b.inspected, boundary: b.inspected },
+    reads: ["TypedArrayStorage", "TypedArrayElements", ...externalState],
+    implementation: b.generic,
+  }),
+  // JSSubtleCrypto.cpp: it reads the members of the algorithms as the methods of crypto.subtle do.
+  b.static("SubtleCrypto.supports", {
+    ...runsCodeOfOperands,
+    this: b.any,
+    args: { operation: b.any.optional, algorithm: b.any.optional, lengthOrAdditionalAlgorithm: b.any.optional },
+    returns: b.bool,
+    uses: {
+      this: b.inspected,
+      operation: convertedToCharacters,
+      algorithm: [b.everything],
+      lengthOrAdditionalAlgorithm: [b.everything],
+    },
+  }),
+  // ObjectURLRegistry.bind.ts: they throw for an operand of another type and convert nothing. The registry keeps the bytes and not the Blob.
+  b.static("URL.createObjectURL", {
+    args: { object: b.any.optional },
+    returns: b.string,
+    capability: "heap",
+    throws: true,
+    uses: { object: b.inspected },
+    reads: externalState,
+    writes: externalState,
+    implementation: b.generic,
+  }),
+  b.static("URL.revokeObjectURL", {
+    args: { url: b.any.optional },
+    returns: b.undefined,
+    capability: "heap",
+    throws: true,
+    uses: { url: b.inspected },
+    reads: externalState,
+    writes: externalState,
+    implementation: b.generic,
+  }),
 );

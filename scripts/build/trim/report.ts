@@ -27,6 +27,7 @@ import {
   type NeededFeatures,
   type Partition,
   type PartitionFailure,
+  type RemovableRange,
 } from "./types.ts";
 
 export type LinkFailure = GraphFailure | EntryPointFailure | PartitionFailure | DeclaredUseFailure | RangeFailure;
@@ -73,6 +74,56 @@ const guardEdgeText = {
 
 export function megabytes(bytes: number): string {
   return (bytes / 1e6).toFixed(2) + " MB";
+}
+
+const maxListedSections = 8;
+
+/** Where the sections lie and where they come from, the largest first. */
+export function describeSections(
+  graph: Pick<SectionGraph, "size" | "output" | "object" | "section" | "names">,
+  nodes: readonly number[],
+): string[] {
+  const fileName = (path: string) => path.slice(Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")) + 1);
+  const largestBy = (keyOf: (node: number) => string) => {
+    const bytesOf = new Map<string, number>();
+    for (const node of nodes) bytesOf.set(keyOf(node), (bytesOf.get(keyOf(node)) ?? 0) + graph.size[node]!);
+    return [...bytesOf]
+      .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))
+      .slice(0, maxListedSections)
+      .map(([key, bytes]) => `${key} ${megabytes(bytes)}`)
+      .join(", ");
+  };
+  const largest = [...nodes].sort((a, b) => graph.size[b]! - graph.size[a]! || a - b).slice(0, maxListedSections);
+  return [
+    `by output section: ${largestBy(node => graph.output[node]!)}`,
+    `by section: ${largestBy(node => graph.section[node]!)}`,
+    `by input: ${largestBy(node => fileName(graph.object[node]!))}`,
+    ...largest.map(node =>
+      `${graph.size[node]} bytes: ${fileName(graph.object[node]!)} ${graph.section[node]} ${graph.names[node]![0] ?? ""}`.trimEnd(),
+    ),
+  ];
+}
+
+/** A PE has room for about 39 cuts and an ELF file for about 60. */
+const cutBudgets = [39, 60, 78, 156];
+
+/** What lies in the holes that are not among the largest stays in the file as filler. */
+export function describeFiller(holeSizes: readonly number[]): string {
+  const sizes = [...holeSizes].sort((a, b) => b - a);
+  const left = (cuts: number) => sizes.slice(cuts).reduce((sum, bytes) => sum + bytes, 0);
+  return `${sizes.length} holes; left as filler by ${cutBudgets.map(cuts => `${cuts} cuts ${megabytes(left(cuts))}`).join(", ")}`;
+}
+
+/** The holes in an executable that uses no feature: ranges that can be cut and touch are one hole. */
+export function holeSizesWithoutFeatures(ranges: readonly RemovableRange[]): number[] {
+  const sizes: number[] = [];
+  let end = -1;
+  for (const range of ranges.filter(range => range.canBeCut).sort((a, b) => a.start - b.start)) {
+    if (range.start === end) sizes[sizes.length - 1]! += range.end - range.start;
+    else sizes.push(range.end - range.start);
+    end = range.end;
+  }
+  return sizes;
 }
 
 const isMsvcName = (name: string): boolean => name.startsWith("?");

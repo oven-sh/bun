@@ -126,8 +126,8 @@ directive. Any other name in capitals before a `:` is an error, so a mistyped di
 - **`RUN`.** A file has at least one. Runs with the same options print one build. A prefix is capitals and digits, and it is not the name of
   a directive. A prefix needs at least one check line, or a `SAME` that names it.
 - **`OPTIONS`, `DIAGNOSTIC` and `STATISTIC`** apply to every `RUN` in the file, `OPTIONS(<prefix>)` to the runs of that prefix.
-- **`OPTIONS`** takes `erase-types`, `builtin-modules`, `platform=darwin | linux | windows`, `type-errors=silent`, `type-errors=log` and
-  `threads=<n>`. `platform=` turns what the table of built-ins says by platform: which built-ins, exports of Bun's modules and code of
+- **`OPTIONS`** takes `erase-types`, `builtin-modules`, `entry-points-run-again`, `platform=darwin | linux | windows`, `type-errors=silent`,
+  `type-errors=log` and `threads=<n>`. `entry-points-run-again` is what `bun test --aot --rerun-each` builds its test files with. `platform=` turns what the table of built-ins says by platform: which built-ins, exports of Bun's modules and code of
   the run time a program has. Paths, and `process.platform` written out, stay those of the machine that runs the test. The engine's option words are unknown here.
   How a mismatch is reported is a policy of the engine, so `type-errors=` changes one thing in the IR: only with `log` does a type
   site have the text of its type, which only the log prints.
@@ -141,7 +141,7 @@ directive. Any other name in capitals before a `:` is an error, so a mistyped di
 - **A warning is a diagnostic too.** A diagnostic that no line lists fails the run, so a test whose build warns needs the line: an
   unresolved `require()` is `// DIAGNOSTIC: TS100150`.
 - **`STATISTIC`** names a statistic as the schema does: `ProgramBytes`, `FunctionsLowered`, and `<LimitID>Hits` for how often a limit was
-  hit (`MaxNestingDepthHits`). One that was not counted reads as 0, and so does every statistic of the engine.
+  hit (`MaxDataNestingDepthHits`). One that was not counted reads as 0, and so does every statistic of the engine.
 - **`FILE`** begins a section, which runs to the next `FILE`, to `GENERATED` or to the end. A file with sections is a tree in one
   file: the driver writes each section to its path in a temporary folder and builds there. What stands before the first `FILE` is
   written nowhere. A directive inside a section is a comment of that file too, so none can stand in a `package.json`. A tree without

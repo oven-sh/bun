@@ -1,0 +1,1 @@
+{ "name": "@scope/app", "version": "1.0.0", "type": "module", "imports": { "#internal/*": "./src/internal/*.ts", "#config": { "bun": "./src/config.bun.ts", "default": "./src/config.default.ts" } } }

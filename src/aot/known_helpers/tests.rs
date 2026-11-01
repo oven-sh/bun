@@ -43,7 +43,11 @@ var __copyProps = (to, from, except, desc) => {
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 "#;
 
-const ESBUILD_MODULE_SHAPES: [Shape; 1] = [Shape::ExportDefinesGetters];
+const ESBUILD_MODULE_SHAPES: [Shape; 3] = [
+    Shape::ExportDefinesGetters,
+    Shape::CopyPropertiesDefinesGettersForOwnNamesTheTargetLacks,
+    Shape::ToCommonJsCopiesOntoNewMarkedObject,
+];
 
 const SWC_EXPORT: &str = r#"function _export(target, all) {
     for(var name in all)Object.defineProperty(target, name, {
@@ -470,6 +474,344 @@ fn helpers_of_esbuild_are_recognized() {
         shapes_in("/a.cjs", shortened),
         [Shape::ExportDefinesGetters]
     );
+}
+
+const ESBUILD_IMPORT_HELPERS: &str = r#"var __create = Object.create;
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __getProtoOf = Object.getPrototypeOf;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __reExport = (target, mod, secondTarget) => (__copyProps(target, mod, "default"), secondTarget && __copyProps(secondTarget, mod, "default"));
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+  // If the importer is in node compatibility mode or this is not an ESM
+  // file that has been converted to a CommonJS file using a Babel-
+  // compatible transform (i.e. "__esModule" has not been set), then set
+  // "default" to the CommonJS "module.exports" for node compatibility.
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+  mod
+));
+"#;
+
+const ESBUILD_IMPORT_SHAPES: [Shape; 3] = [
+    Shape::CopyPropertiesDefinesGettersForOwnNamesTheTargetLacks,
+    Shape::ReExportCopiesAllButDefault,
+    Shape::ToEsModuleShowsUnmarkedValueAsDefault,
+];
+
+const ESBUILD_SHORTENED_SYNTAX: &str = r#"var __create = Object.create;
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __getProtoOf = Object.getPrototypeOf, __hasOwnProp = Object.prototype.hasOwnProperty;
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: !0 });
+}, __copyProps = (to, from, except, desc) => {
+  if (from && typeof from == "object" || typeof from == "function")
+    for (let key of __getOwnPropNames(from))
+      !__hasOwnProp.call(to, key) && key !== except && __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  return to;
+};
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: !0 }) : target,
+  mod
+)), __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: !0 }), mod);
+"#;
+
+const ROLLDOWN_IMPORT_HELPERS: &str = r#"var __create = Object.create;
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __getProtoOf = Object.getPrototypeOf;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __copyProps = (to, from, except, desc) => {
+	if (from && typeof from === "object" || typeof from === "function") for (var keys = __getOwnPropNames(from), i = 0, n = keys.length, key; i < n; i++) {
+		key = keys[i];
+		if (!__hasOwnProp.call(to, key) && key !== except) __defProp(to, key, {
+			get: ((k) => from[k]).bind(null, key),
+			enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable
+		});
+	}
+	return to;
+};
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(isNodeMode || !mod || !mod.__esModule || !__hasOwnProp.call(mod, "default") ? __defProp(target, "default", {
+	value: mod,
+	enumerable: true
+}) : target, mod));
+"#;
+
+#[test]
+fn the_helpers_that_bundlers_write_around_a_require_are_recognized() {
+    assert_eq!(
+        shapes_in("/a.cjs", ESBUILD_IMPORT_HELPERS),
+        ESBUILD_IMPORT_SHAPES
+    );
+    assert_eq!(
+        shapes_in("/a.cjs", ESBUILD_SHORTENED_SYNTAX),
+        [
+            Shape::ExportDefinesGetters,
+            Shape::CopyPropertiesDefinesGettersForOwnNamesTheTargetLacks,
+            Shape::ToEsModuleShowsUnmarkedValueAsDefault,
+            Shape::ToCommonJsCopiesOntoNewMarkedObject,
+        ]
+    );
+    assert_eq!(
+        shapes_in("/a.cjs", ROLLDOWN_IMPORT_HELPERS),
+        [
+            Shape::CopyPropertiesDefinesGettersForOwnNamesTheTargetLacks,
+            Shape::ToEsModuleShowsValueWithoutDefaultAsDefault,
+        ]
+    );
+    let renamed = replace_each(
+        ESBUILD_IMPORT_HELPERS,
+        &[("key", "key2"), ("except", "except2"), ("mod", "mod2")],
+    );
+    assert_eq!(shapes_in("/a.cjs", &renamed), ESBUILD_IMPORT_SHAPES);
+}
+
+#[test]
+fn a_helper_around_a_require_that_differs_in_one_place_is_an_ordinary_function() {
+    let copy = Shape::CopyPropertiesDefinesGettersForOwnNamesTheTargetLacks;
+    let re_export = Shape::ReExportCopiesAllButDefault;
+    let to_es_module = Shape::ToEsModuleShowsUnmarkedValueAsDefault;
+    // What calls the copying helper goes with it.
+    for (from, to) in [
+        ("from && typeof", "from || typeof"),
+        ("=== \"object\"", "=== \"symbol\""),
+        (
+            "let key of __getOwnPropNames(from)",
+            "let key in __getOwnPropNames(from)",
+        ),
+        (
+            "let key of __getOwnPropNames(from)",
+            "let key of __getOwnPropNames(to)",
+        ),
+        ("!__hasOwnProp.call(to, key)", "__hasOwnProp.call(to, key)"),
+        ("__hasOwnProp.call(to, key)", "__hasOwnProp.apply(to, key)"),
+        ("key !== except", "key === except"),
+        ("__defProp(to, key, {", "__defProp(from, key, {"),
+        ("get: () => from[key]", "get: () => from.key"),
+        ("get: () => from[key]", "set: () => from[key]"),
+        (
+            "get: () => from[key]",
+            "get: function () { return from[key]; }",
+        ),
+        ("enumerable: !(desc", "enumerable: (desc"),
+        ("__getOwnPropDesc(from, key)", "__getOwnPropDesc(to, key)"),
+        ("desc.enumerable }", "desc.configurable }"),
+        ("return to;", "return from;"),
+    ] {
+        let changed = replace_each(ESBUILD_IMPORT_HELPERS, &[(from, to)]);
+        assert_eq!(shapes_in("/a.cjs", &changed), [], "{to}");
+    }
+    for (from, to) in [
+        (
+            "(__copyProps(target, mod, \"default\")",
+            "(__copyProps(target, mod, \"Default\")",
+        ),
+        (
+            "(__copyProps(target, mod, \"default\")",
+            "(__copyProps(mod, target, \"default\")",
+        ),
+        ("secondTarget && __copyProps", "secondTarget || __copyProps"),
+        (
+            "__copyProps(secondTarget, mod, \"default\")",
+            "__copyProps(secondTarget, mod)",
+        ),
+    ] {
+        let changed = replace_each(ESBUILD_IMPORT_HELPERS, &[(from, to)]);
+        assert_eq!(shapes_in("/a.cjs", &changed), [copy, to_es_module], "{to}");
+    }
+    for (from, to) in [
+        ("mod != null", "mod !== null"),
+        ("__create(__getProtoOf(mod))", "__create(mod)"),
+        (
+            "__create(__getProtoOf(mod)) : {}",
+            "__create(__getProtoOf(mod)) : []",
+        ),
+        ("isNodeMode || !mod", "isNodeMode && !mod"),
+        ("!mod.__esModule", "mod.__esModule"),
+        ("!mod.__esModule", "!mod.__esmodule"),
+        ("\"default\", { value: mod", "\"Default\", { value: mod"),
+        ("{ value: mod, enumerable: true }", "{ value: mod }"),
+        (
+            "{ value: mod, enumerable: true }",
+            "{ value: target, enumerable: true }",
+        ),
+        (
+            "{ value: mod, enumerable: true }",
+            "{ value: mod, enumerable: true, writable: true }",
+        ),
+        (": target,\n  mod\n", ": target,\n  target\n"),
+        (
+            "var __getProtoOf = Object.getPrototypeOf;",
+            "var __getProtoOf = Object.create;",
+        ),
+        (
+            "var __create = Object.create;",
+            "var __create = Object.assign;",
+        ),
+    ] {
+        let changed = replace_each(ESBUILD_IMPORT_HELPERS, &[(from, to)]);
+        assert_eq!(shapes_in("/a.cjs", &changed), [copy, re_export], "{to}");
+    }
+    for (from, to) in [
+        ("i = 0, n", "i = 1, n"),
+        ("i < n", "i <= n"),
+        ("key = keys[i]", "key = keys[n]"),
+        (".bind(null, key)", ".bind(null, i)"),
+        ("((k) => from[k])", "((k) => to[k])"),
+    ] {
+        let changed = replace_each(ROLLDOWN_IMPORT_HELPERS, &[(from, to)]);
+        assert_eq!(shapes_in("/a.cjs", &changed), [], "{to}");
+    }
+    let changed = replace_each(
+        ROLLDOWN_IMPORT_HELPERS,
+        &[("call(mod, \"default\")", "call(mod, \"Default\")")],
+    );
+    assert_eq!(shapes_in("/a.cjs", &changed), [copy]);
+    let changed = replace_each(
+        ESBUILD_SHORTENED_SYNTAX,
+        &[("key !== except && __defProp", "key !== except || __defProp")],
+    );
+    assert_eq!(shapes_in("/a.cjs", &changed), [Shape::ExportDefinesGetters]);
+}
+
+const SET_MODULE_DEFAULT: &str = r#"var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+"#;
+
+const IMPORT_STAR: &str = r#"var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+    __setModuleDefault(result, mod);
+    return result;
+};
+"#;
+
+const IMPORT_STAR_OVER_OWN_NAMES: &str = r#"var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+"#;
+
+const IMPORT_DEFAULT: &str = r#"var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+"#;
+
+#[test]
+fn the_helpers_that_typescript_writes_around_a_require_are_recognized() {
+    let below = [
+        Shape::CreateBindingReusesDescriptor,
+        Shape::CreateBindingCopiesValue,
+        Shape::SetModuleDefaultDefinesValue,
+        Shape::SetModuleDefaultStoresValue,
+    ];
+    for (star, shape) in [
+        (
+            IMPORT_STAR,
+            Shape::ImportStarAnswersMarkedValueOrBindsItsEnumerableNames,
+        ),
+        (
+            IMPORT_STAR_OVER_OWN_NAMES,
+            Shape::ImportStarAnswersMarkedValueOrBindsItsOwnNames,
+        ),
+    ] {
+        let source = format!("{CREATE_BINDING}{SET_MODULE_DEFAULT}{star}{IMPORT_DEFAULT}");
+        let mut expected = below.to_vec();
+        expected.extend([shape, Shape::ImportDefaultAnswersMarkedValueOrWrapsIt]);
+        assert_eq!(shapes_in("/a.cjs", &source), expected);
+        assert!(holds_in("/a.cjs", &source).iter().all(|&holds| holds));
+    }
+}
+
+#[test]
+fn a_helper_of_typescript_around_a_require_that_differs_in_one_place_is_an_ordinary_function() {
+    let shapes_with = |star: &str, default: &str| {
+        let source = format!("{CREATE_BINDING}{SET_MODULE_DEFAULT}{star}{default}");
+        let mut shapes = shapes_in("/a.cjs", &source);
+        shapes.retain(|shape| matches!(shape.helper(), Helper::ImportStar | Helper::ImportDefault));
+        shapes
+    };
+    let default = Shape::ImportDefaultAnswersMarkedValueOrWrapsIt;
+    for (from, to) in [
+        ("mod && mod.__esModule", "mod || mod.__esModule"),
+        ("mod.__esModule) return mod", "mod.__esmodule) return mod"),
+        ("return mod;", "return result;"),
+        ("var result = {};", "var result = [];"),
+        ("mod != null", "mod !== null"),
+        ("k !== \"default\"", "k !== \"Default\""),
+        (
+            "hasOwnProperty.call(mod, k)",
+            "hasOwnProperty.call(result, k)",
+        ),
+        (
+            "__createBinding(result, mod, k)",
+            "__createBinding(mod, result, k)",
+        ),
+        (
+            "__setModuleDefault(result, mod)",
+            "__setModuleDefault(mod, result)",
+        ),
+        ("return result;", "return mod;"),
+    ] {
+        let changed = replace_each(IMPORT_STAR, &[(from, to)]);
+        assert_eq!(shapes_with(&changed, IMPORT_DEFAULT), [default], "{to}");
+    }
+    for (from, to) in [
+        ("Object.getOwnPropertyNames ||", "Object.keys ||"),
+        ("return ownKeys(o);", "return ownKeys(o).reverse();"),
+        ("i = 0; i < k.length", "i = 1; i < k.length"),
+        ("k[i] !== \"default\"", "k[i] === \"default\""),
+        (
+            "__createBinding(result, mod, k[i])",
+            "__createBinding(result, mod, k[0])",
+        ),
+    ] {
+        let changed = replace_each(IMPORT_STAR_OVER_OWN_NAMES, &[(from, to)]);
+        assert_eq!(shapes_with(&changed, IMPORT_DEFAULT), [default], "{to}");
+    }
+    let star = Shape::ImportStarAnswersMarkedValueOrBindsItsEnumerableNames;
+    for (from, to) in [
+        ("mod && mod.__esModule", "mod.__esModule"),
+        ("? mod : {", "? {} : {"),
+        ("{ \"default\": mod }", "{ \"default\": mod, a: 1 }"),
+        ("{ \"default\": mod }", "{ \"Default\": mod }"),
+    ] {
+        let changed = replace_each(IMPORT_DEFAULT, &[(from, to)]);
+        assert_eq!(shapes_with(IMPORT_STAR, &changed), [star], "{to}");
+    }
+    let other_default = SET_MODULE_DEFAULT.replace("enumerable: true, value: v", "value: v");
+    let source = format!("{CREATE_BINDING}{other_default}{IMPORT_STAR}");
+    let shapes = shapes_in("/a.cjs", &source);
+    assert!(!shapes.contains(&star), "{shapes:?}");
 }
 
 #[test]

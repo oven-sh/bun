@@ -1,6 +1,9 @@
 // IR= 1 throughNew CallDirect
-// IR= 0 throughGetters CallDirect
-// IR= 2 guarded CallDirect
+// IR+ ^function f\d+ module=m\d+ kind=Module .*\bcallee=(f\d+) [\s\S]*^function \1 name="g7"
+// IR- = CallDirect .*\bfunction=(f\d+)\b[\s\S]*^function \1 name="g[1-7]"
+// IR- ^function (f\d+) name="g[1-7]" [\s\S]* = CallDirect .*\bfunction=\1\b
+// IR- = PropGet .*\bkey="g[1-7]"
+// IR= 1 guarded CallDirect
 // IR= 0 usual CallDirect
 declare const console: any;
 class C7 { v = 7; }
@@ -24,7 +27,9 @@ function usual(x: number) { return x > 10 ? half(x) : twice(x); }
 const g = new G();
 let s = 0;
 for (let i = 0; i < 1_000_000; i++) s += throughNew() + throughGetters(g) + guarded(i) + usual(i & 15);
-// Called once outside any loop too: top-level code that runs once takes nothing in, so the function keeps a body for the expectations to look at.
+// Called once outside any loop too: top-level code that runs once takes in only what is no larger than its call, so throughNew and usual keep a body for the expectations to look at.
+// throughGetters and each getter are no larger than their calls: they go in everywhere, at any depth, and throughGetters keeps no body. So its lines look at the whole program:
+// the top-level code holds a copy of g7, the innermost, and nothing calls a getter or reads one by name.
 s += throughNew() + throughGetters(g) + usual(3);
 try { guarded(-1); } catch (e: any) { console.log(e.message); }
 console.log(s);

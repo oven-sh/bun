@@ -128,6 +128,7 @@ impl ExternalBodies {
             for (function, (code, body)) in task.functions.iter_mut().zip(slots) {
                 let function =
                     Arc::get_mut(function).expect("the link leaves each record to one owner");
+                function.body.unpack_code();
                 *code = take(&mut function.body.code);
                 *body = ExternalFunctionBody {
                     code: code.as_ptr(),

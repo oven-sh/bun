@@ -173,6 +173,7 @@ public:
         return structure;
     }
     void didCreateDOMStructure(JSC::Structure*);
+    void didCreateDOMConstructor(JSC::JSObject*);
     const WebCore::DOMConstructors& constructors() const
     {
         ASSERT(!Thread::mayBeGCThread());
@@ -273,7 +274,6 @@ public:
     JSC::JSFunction* modulePrototypeUnderscoreCompileFunction() const { return m_modulePrototypeUnderscoreCompileFunction.getInitializedOnMainThread(this); }
     JSC::JSFunction* requireESMFromHijackedExtension() const { return m_commonJSRequireESMFromHijackedExtensionFunction.getInitializedOnMainThread(this); }
 
-    Structure* NodeVMGlobalObjectStructure() const { return m_cachedNodeVMGlobalObjectStructure.getInitializedOnMainThread(this); }
     JSObject* lazyTestModuleObject() const { return m_lazyTestModuleObject.getInitializedOnMainThread(this); }
     Structure* CommonJSModuleObjectStructure() const { return m_commonJSModuleObjectStructure.getInitializedOnMainThread(this); }
     Structure* JSSocketAddressDTOStructure() const { return m_JSSocketAddressDTOStructure.getInitializedOnMainThread(this); }
@@ -287,8 +287,6 @@ public:
     Structure* AsyncContextFrameStructure() const { return m_asyncBoundFunctionStructure.getInitializedOnMainThread(this); }
 
     JSWeakMap* vmModuleContextMap() const { return m_vmModuleContextMap.getInitializedOnMainThread(this); }
-    // Maps a JSSourceCode to the value its synthetic module exports (ObjectModule.cpp).
-    JSWeakMap* moduleSourceValueMap() const { return m_moduleSourceValueMap.getInitializedOnMainThread(this); }
 
     // Made with the first Bun.ModuleGraph (ModuleGraph.cpp).
     bool hasModuleGraphs() const { return !!m_moduleGraphs; }
@@ -325,6 +323,8 @@ public:
     uint8_t drainMicrotasks();
 
     void handleRejectedPromises();
+    size_t holdRejectedPromises() { return m_aboutToBeNotifiedRejectedPromises.hold(this); }
+    void releaseRejectedPromises(size_t mark) { m_aboutToBeNotifiedRejectedPromises.release(this, mark); }
     ALWAYS_INLINE void* bunVM() const { return m_bunVM; }
 #if OS(WINDOWS)
     uv_loop_t* uvLoop() const
@@ -530,14 +530,12 @@ public:
     V(public, LazyPropertyOfGlobalObject<Structure>, m_JSBufferSubclassStructure)                            \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSResizableOrGrowableSharedBufferSubclassStructure)  \
     V(private, LazyPropertyOfGlobalObject<JSWeakMap>, m_vmModuleContextMap)                                  \
-    V(private, LazyPropertyOfGlobalObject<JSWeakMap>, m_moduleSourceValueMap)                                \
     V(private, WriteBarrier<JSObject>, m_lazyRequireCacheObject)                                             \
     V(public, LazyPropertyOfGlobalObject<Bun::JSCommonJSExtensions>, m_lazyRequireExtensionsObject)          \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_lazyTestModuleObject)                                 \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_testMatcherUtilsObject)                                \
     /* Bun::LintHost, for the JavaScript plugins of `bun lint` */                                            \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_lintHost)                                              \
-    V(public, LazyPropertyOfGlobalObject<Structure>, m_cachedNodeVMGlobalObjectStructure)                    \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_commonJSModuleObjectStructure)                       \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSSocketAddressDTOStructure)                         \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSReactElementStructure)                             \
@@ -710,6 +708,10 @@ public:
     Ref<NapiEnv> makeNapiEnv(const napi_module&);
     napi_env makeNapiEnvForFFI();
     void adoptNapiEnvsForTestIsolation(GlobalObject* oldGlobal);
+
+    // `bun test` only. ShadowRealm and node:vm realms created while this was the thread's global, so --isolate can retire them with it.
+    WTF::Vector<JSC::Weak<JSC::JSGlobalObject>> m_derivedRealms;
+    void addDerivedRealm(JSC::JSGlobalObject*);
 
 private:
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);

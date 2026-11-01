@@ -135,7 +135,13 @@ export default b.declarations(
   extendAll(["InternalForTesting", "FsStats"], ...nativeBindings("Bindgen", "Stat.bind.ts", "createStatsForIno")),
   extendAll(["InternalForTesting", "Buffer"], ...nativeBindings("Bindgen", "memory_pressure.bind.ts", "psiTrigger")),
 
-  extendAll(["Test", ...runtimeTranspilerFeatures, "DeepEquals"], "Bun.jest", "bun:test", "%Expect%"),
+  extendAll(
+    ["Test", ...runtimeTranspilerFeatures, "DeepEquals"],
+    "Bun.jest",
+    "bun:test",
+    "bun:test/vitest",
+    "%Expect%",
+  ),
   extendAll(["Test"], ...nativeBindings("Bindgen", "jest.bind.ts", "fileGeneration", "nodeTestMarkResult")),
   extendAll(
     bundlerFeatures,
@@ -166,6 +172,12 @@ export default b.declarations(
     "%ExpectTypeOf%",
     "%ScopeFunctions%",
     "%DoneCallback%",
+    "%ExpectDeferred%",
+    "%TestContext%",
+    "%AroundHook%",
+    "%TestFixtures%",
+    "%ActiveFixture%",
+    "%ViWait%",
   ),
 
   extendAll(["WebView", "ChildProcess", "X509", ...tlsSocketFeatures], "Bun.WebView"),

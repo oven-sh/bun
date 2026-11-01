@@ -75,10 +75,46 @@ test("describe/test", async () => {
     (pass) expect.assertions works
     (fail) expect.assertions combined with timeout
       ^ this test timed out after 1ms.
-    (pass) more functions called after delayed done
+
+    # Unhandled error between tests
+    -------------------------------
+    159 | 
+    160 | // === timing edge case ===
+    161 | test.failing("more functions called after delayed done", done => {
+    162 |   process.nextTick(() => {
+    163 |     done();
+    164 |     expect(true).toBe(false);
+                           ^
+    error: expect(received).toBe(expected)
+
+    Expected: false
+    Received: true
+        at <anonymous> (file:NN:NN)
+    -------------------------------
+
+    (fail) more functions called after delayed done
+      ^ this test is marked as failing but it passed. Remove \`.failing\` if tested behavior now works
     (pass) another test
     (pass) misattributed error
-    (pass) passes because it catches the misattributed error
+
+    # Unhandled error between tests
+    -------------------------------
+    167 | test("another test", async () => {});
+    168 | 
+    169 | // === an error of an earlier test is not the failure that test.failing expects ===
+    170 | test("misattributed error", () => {
+    171 |   setTimeout(() => {
+    172 |     expect(true).toBe(false);
+                           ^
+    error: expect(received).toBe(expected)
+
+    Expected: false
+    Received: true
+        at <anonymous> (file:NN:NN)
+    -------------------------------
+
+    (fail) does not pass because of the misattributed error
+      ^ this test is marked as failing but it passed. Remove \`.failing\` if tested behavior now works
     (pass) hooks > test1
     (pass) hooks > test2
     (pass) done parameter > instant done
@@ -107,7 +143,22 @@ test("describe/test", async () => {
     promise error
     (fail) done parameter > done combined with promise error conditions > promise errors only
     (pass) done parameter > second call of done callback ignores triggers error
-    (pass) microtasks and rejections are drained after the test callback is executed
+
+    # Unhandled error between tests
+    -------------------------------
+    264 |     done("uh oh!");
+    265 |   });
+    266 | });
+    267 | 
+    268 | test.failing("microtasks and rejections are drained after the test callback is executed", () => {
+    269 |   Promise.reject(new Error("uh oh!"));
+                               ^
+    error: uh oh!
+        at <anonymous> (file:NN:NN)
+    -------------------------------
+
+    (fail) microtasks and rejections are drained after the test callback is executed
+      ^ this test is marked as failing but it passed. Remove \`.failing\` if tested behavior now works
     (pass) after inside test > the test 1
     (pass) after inside test > the test 2
     (pass) beforeEach inside test fails
@@ -122,7 +173,7 @@ test("describe/test", async () => {
     (todo) failing todo passes
 
 
-    10 tests failed:
+    13 tests failed:
     (fail) actual tests > more functions called after delayed done
     (fail) LINE 68
       ^ this test is marked as failing but it passed. Remove \`.failing\` if tested behavior now works
@@ -133,16 +184,22 @@ test("describe/test", async () => {
     (fail) expect.assertions
     (fail) expect.assertions combined with timeout
       ^ this test timed out after 1ms.
+    (fail) more functions called after delayed done
+      ^ this test is marked as failing but it passed. Remove \`.failing\` if tested behavior now works
+    (fail) does not pass because of the misattributed error
+      ^ this test is marked as failing but it passed. Remove \`.failing\` if tested behavior now works
     (fail) done parameter > done combined with promise > fails when completion is not incremented
     (fail) done parameter > done combined with promise error conditions > both error and done resolves first
     (fail) done parameter > done combined with promise error conditions > done errors only
     (fail) done parameter > done combined with promise error conditions > promise errors only
+    (fail) microtasks and rejections are drained after the test callback is executed
+      ^ this test is marked as failing but it passed. Remove \`.failing\` if tested behavior now works
 
-     32 pass
+     29 pass
      2 skip
      2 todo
-     10 fail
-     1 error
+     13 fail
+     4 errors
      2 snapshots, 10 expect() calls
     Ran 46 tests across 1 file."
     ,

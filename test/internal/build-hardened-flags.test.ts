@@ -294,7 +294,7 @@ test("--hardened=on strips with llvm-strip, which keeps PT_GNU_RELRO, or not at 
   expect(linuxConfig({}, String(dir), mockToolchain({ llvmStrip: undefined })).strip).toEndWith("strip");
 });
 
-const librariesThatCallBackIntoJavaScript = ["boringssl", "cares", "lsquic", "lsqpack", "sqlite", "tinycc"];
+const librariesThatCallBackIntoJavaScript = ["boringssl", "cares", "lsquic", "lsqpack", "sqlite", "tinycc"] as const;
 
 test("the libraries that never call back into JavaScript keep their arrays on a second stack", () => {
   using dir = tempDir("build-hardened-flags-safe-stack", {});
@@ -308,7 +308,7 @@ test("the libraries that never call back into JavaScript keep their arrays on a 
   // The programs beside bun have no second stack.
   const forOtherPrograms = programDeps.map(dep => dep.name);
   expect(forOtherPrograms).toContain("zstd");
-  for (const name of [...librariesThatCallBackIntoJavaScript, "mimalloc", "WebKit", ...forOtherPrograms])
+  for (const name of [...librariesThatCallBackIntoJavaScript, "mimalloc", "WebKit", ...forOtherPrograms] as const)
     expect(safeStackFlags(on, name)).toEqual([]);
   expect(everyFlagOf(on).cxx).toContain("-DBUN_SAFE_STACK=1");
   expect(everyFlagOf(on).dependencyC).not.toContain("-fsanitize=safe-stack");

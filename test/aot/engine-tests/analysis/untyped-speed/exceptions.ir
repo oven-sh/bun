@@ -195,22 +195,14 @@ function f9 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v1: builtin(ErrorPrototype) = Builtin builtin=ErrorPrototype
 # CHECK-NEXT: v2: Object = CallBuiltin -, v1 overload=ObjectCreate/0
 # CHECK-NEXT: PropSet v0, v2 key="prototype" accessSite=2
-# CHECK-NEXT: v4: number = CallDirect function=f20 accessSite=3
+# CHECK-NEXT: v4: number = CallDirect function=f21 accessSite=3
 # CHECK-NEXT: v5: undefined = Undefined
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="requireNumber"
-# CHECK: module=m0 position=438 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L1}, {type="id"|"size"}] results=[{type=number}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: L1, v1: "id"|"size"):
-# CHECK-NEXT: v2: number = CallDirect v1 function=f18
-# CHECK-NEXT: ReturnCall v2 requirement=Allowed
-# CHECK-NEXT: }
+# CHECK: module=m0 position=438 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L1}, {type="id"|"size"}] results=[{type=number}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="withCleanup"
-# CHECK: module=m0 position=922 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L1}, {type=L2}] results=[{type=number flags=[IsExpected]}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: L1, v1: L2):
-# CHECK-NEXT: v2: anything ~ number = CallDirect v1 function=f19
-# CHECK-NEXT: ReturnCall v2 requirement=Allowed
-# CHECK-NEXT: }
+# CHECK: module=m0 position=922 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L1}, {type=L2}] results=[{type=number}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="requireNumber"
 # CHECK: module=m0 position=438 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type="id"|"size"}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f2 parameterMap=[{original=1}]} inlineFrames=[{}, {callee=f15 callPosition=4294967295 isConstruction=true module=m0}] {
 # CHECK-NEXT: b0(v1: "id"|"size"):
@@ -229,52 +221,43 @@ function f9 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: Throw v8
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="withCleanup"
-# CHECK: module=m0 position=922 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L2}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f5 parameterMap=[{original=1}]} inlineFrames=[{}, {callee=f3 callPosition=4294967295 module=m0}] {
-# CHECK-NEXT: b0(v0: L2) frequency=Rare handler=b1():
-# CHECK-NEXT: v1: "id" = String string="id"
-# CHECK-NEXT: v2: number = CallDirect v1 function=f18 accessSite=7
-# CHECK-NEXT: v3: "size" = String string="size"
-# CHECK-NEXT: v4: number = CallDirect v3 function=f18 accessSite=8
-# CHECK-NEXT: v5: number = Add v2, v4
-# CHECK-NEXT: v6: 0 = Integer
-# CHECK-NEXT: v7: undefined = Undefined
-# CHECK-NEXT: Jump -> next b2(v6, v5, v7)
-# CHECK-NEXT: b1() role=CleanupHandler:
-# CHECK-NEXT: v8: anything = CatchValue
-# CHECK-NEXT: v9: 1 = Integer integer=1
-# CHECK-NEXT: v10: undefined = Undefined
-# CHECK-NEXT: Jump -> next b2(v9, v10, v8)
-# CHECK-NEXT: b2(v11: int[0, 1] ~ 1, v12: undefined|number ~ undefined, v13: anything):
-# CHECK-NEXT: v14: boolean = IsSlotFilled v0 key="closed" receivers=[L2] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v14 -> taken b3(| 0), notTaken b5()
-# CHECK-NEXT: b3(v15: guard):
-# CHECK-NEXT: v16: int[-4503599627370496, 4503599627370495] = GetSlot v0, v15 key="closed" receivers=[L2] level=Expected accessSite=11 [holdsDeclaredType]
-# CHECK-NEXT: v17: int[-4503599627370495, 4503599627370496] = Increment v16
-# CHECK-NEXT: v18: boolean = TypeTest v17 testedType=int[-4503599627370496, 4503599627370495]
-# CHECK-NEXT: Branch v18 -> taken b4(| 0), notTaken b6(v17)
-# CHECK-NEXT: b4(v19: int[-4503599627370495, 4503599627370495]):
-# CHECK-NEXT: PutSlot v0, v15, v19 key="closed" receivers=[L2] level=Expected accessSite=12
-# CHECK-NEXT: Switch v11 cases=[0] -> case b10(), otherwise b11()
-# CHECK-NEXT: b5() frequency=Unlikely:
-# CHECK-NEXT: v21: anything ~ undefined|int[-4503599627370496, 4503599627370495] = PropGet v0 key="closed" accessSite=11 receivers=[L2]
-# CHECK-NEXT: v22: int|whole ~ int[-4503599627370496, 4503599627370495] = AssumeType v21 provenType=int|whole
-# CHECK-NEXT: v23: int|whole ~ int[-4503599627370495, 4503599627370496] = Increment v22
-# CHECK-NEXT: Jump -> next b6(v23)
-# CHECK-NEXT: b6(v24: int|whole ~ int[-4503599627370495, 4503599627370496]) frequency=Unlikely:
-# CHECK-NEXT: v25: boolean = IsSlotFilled v0 key="closed" receivers=[L2] level=Expected
-# CHECK-NEXT: Branch v25 -> taken b7(| 0), notTaken b9()
-# CHECK-NEXT: b7(v26: guard) frequency=Unlikely:
-# CHECK-NEXT: v27: boolean = TypeTest v24 testedType=int[-4503599627370496, 4503599627370495]
-# CHECK-NEXT: Branch v27 -> taken b8(| 0), notTaken b9()
-# CHECK-NEXT: b8(v28: int[-4503599627370496, 4503599627370495] ~ int[-4503599627370495, 4503599627370495]) frequency=Unlikely:
-# CHECK-NEXT: PutSlot v0, v26, v28 key="closed" receivers=[L2] level=Expected accessSite=12
-# CHECK-NEXT: Switch v11 cases=[0] -> case b10(), otherwise b11()
-# CHECK-NEXT: b9() frequency=Rare:
-# CHECK-NEXT: PropSet v0, v24 key="closed" accessSite=12 receivers=[L2]
-# CHECK-NEXT: Switch v11 cases=[0] -> case b10(), otherwise b11()
-# CHECK-NEXT: b10():
-# CHECK-NEXT: v31: undefined|number ~ undefined = Upcast v12 castType=anything
-# CHECK-NEXT: Return v31
-# CHECK-NEXT: b11():
-# CHECK-NEXT: Throw v13
+# CHECK: module=m0 position=922 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L2}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f5 parameterMap=[{original=1}]} {
+# CHECK-NEXT: b0(v0: L2) handler=b9():
+# CHECK-NEXT: v1: number = CallDirect function=f19 accessSite=10
+# CHECK-NEXT: v2: boolean = IsSlotFilled v0 key="closed" receivers=[L2] level=Expected [holdsDeclaredType]
+# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b3()
+# CHECK-NEXT: b1(v3: guard):
+# CHECK-NEXT: v4: int[-4503599627370496, 4503599627370495] = GetSlot v0, v3 key="closed" receivers=[L2] level=Expected accessSite=11 [holdsDeclaredType]
+# CHECK-NEXT: v5: int[-4503599627370495, 4503599627370496] = Increment v4
+# CHECK-NEXT: v6: boolean = TypeTest v5 testedType=int[-4503599627370496, 4503599627370495]
+# CHECK-NEXT: Branch v6 -> taken b2(| 0), notTaken b4(v5)
+# CHECK-NEXT: b2(v7: int[-4503599627370495, 4503599627370495]):
+# CHECK-NEXT: PutSlot v0, v3, v7 key="closed" receivers=[L2] level=Expected accessSite=12
+# CHECK-NEXT: Jump -> next b8()
+# CHECK-NEXT: b3() frequency=Unlikely:
+# CHECK-NEXT: v9: anything ~ undefined|int[-4503599627370496, 4503599627370495] = PropGet v0 key="closed" accessSite=11 receivers=[L2]
+# CHECK-NEXT: v10: int|whole ~ int[-4503599627370496, 4503599627370495] = AssumeType v9 provenType=int|whole
+# CHECK-NEXT: v11: int|whole ~ int[-4503599627370495, 4503599627370496] = Increment v10
+# CHECK-NEXT: Jump -> next b4(v11)
+# CHECK-NEXT: b4(v12: int|whole ~ int[-4503599627370495, 4503599627370496]) frequency=Unlikely:
+# CHECK-NEXT: v13: boolean = IsSlotFilled v0 key="closed" receivers=[L2] level=Expected
+# CHECK-NEXT: Branch v13 -> taken b5(| 0), notTaken b7()
+# CHECK-NEXT: b5(v14: guard) frequency=Unlikely:
+# CHECK-NEXT: v15: boolean = TypeTest v12 testedType=int[-4503599627370496, 4503599627370495]
+# CHECK-NEXT: Branch v15 -> taken b6(| 0), notTaken b7()
+# CHECK-NEXT: b6(v16: int[-4503599627370496, 4503599627370495] ~ int[-4503599627370495, 4503599627370495]) frequency=Unlikely:
+# CHECK-NEXT: PutSlot v0, v14, v16 key="closed" receivers=[L2] level=Expected accessSite=12
+# CHECK-NEXT: Jump -> next b8()
+# CHECK-NEXT: b7() frequency=Rare:
+# CHECK-NEXT: PropSet v0, v12 key="closed" accessSite=12 receivers=[L2]
+# CHECK-NEXT: Jump -> next b8()
+# CHECK-NEXT: b8():
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: b9() role=CleanupHandler:
+# CHECK-NEXT: v19: anything = CatchValue
+# CHECK-NEXT: v20: anything ~ undefined|int[-4503599627370496, 4503599627370495] = PropGet v0 key="closed" accessSite=11 receivers=[L2]
+# CHECK-NEXT: v21: int|whole ~ int[-4503599627370496, 4503599627370495] = AssumeType v20 provenType=int|whole
+# CHECK-NEXT: v22: int|whole ~ int[-4503599627370495, 4503599627370496] = Increment v21
+# CHECK-NEXT: PropSet v0, v22 key="closed" accessSite=12 receivers=[L2]
+# CHECK-NEXT: Throw v19
 # CHECK-NEXT: }

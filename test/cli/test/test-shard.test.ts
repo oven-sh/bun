@@ -430,4 +430,28 @@ describe("--timings (serial)", () => {
     expect(Object.keys(written.files)[0]).toBe("slow.test.ts");
     expect(exitCode).toBe(0);
   });
+
+  // The time up to the end of the worker says nothing about the file. Too short a time would start it late in the next run.
+  test("--update-timings keeps the time of a file whose worker ended in the middle of it", async () => {
+    const leaves = `import {test} from "bun:test"; test("t", () => { process.exit(3); });`;
+    using dir = tempDir("timings-crash", {
+      "fine.test.ts": `import {test} from "bun:test"; test("t", () => {});`,
+      "known.test.ts": leaves,
+      "new.test.ts": leaves,
+      "t.json": JSON.stringify({ version: 1, files: { "known.test.ts": 54321 } }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2", "--timings=t.json", "--update-timings"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("1 pass");
+    const written = await Bun.file(`${dir}/t.json`).json();
+    expect(Object.keys(written.files).sort()).toEqual(["fine.test.ts", "known.test.ts"]);
+    expect(written.files["known.test.ts"]).toBe(54321);
+    expect(exitCode).toBe(1);
+  });
 });

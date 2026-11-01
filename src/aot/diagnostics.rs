@@ -19,8 +19,9 @@ use bun_sema::program::{FileId, Files};
 use bun_sema_driver::host::to_native;
 use bun_sema_driver::{self as driver, LoadedProgram, Locator};
 use bun_threading::Guarded;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
+pub(crate) use self::front_end::syntax_errors_of;
 use self::int32_flows::Int32FlowKey;
 pub use self::shared::{InternalError, Severity};
 pub use self::sink::log_diagnostic;
@@ -326,8 +327,18 @@ struct Entry {
 pub(crate) struct Diagnostics {
     entries: Vec<Entry>,
     internal_errors: Vec<InternalError>,
+    /// The file of each internal error that is about one file.
+    files_of_internal_errors: Vec<Vec<u8>>,
     int32_flows: FxHashMap<Int32FlowKey, Int32Flow>,
     error_count: u32,
     /// How many of them the language itself has: whoever loads the file reports them.
     early_error_count: u32,
+    /// One for each early error.
+    files_of_early_errors: Vec<Vec<u8>>,
+    /// The files of `Code::FileNestedTooDeeply`, which names its file in its text alone.
+    files_nested_too_deeply: Vec<Vec<u8>>,
+    /// Modules that fail when they load, by file and by what the checker says of them: `drop_second_error_of_import`.
+    missing_at_load: FxHashSet<(Vec<u8>, Vec<u8>)>,
+    /// `BuildFailed::errors_with_bun_types`, in no order.
+    places_of_type_errors: Option<Vec<(Vec<u8>, u32)>>,
 }

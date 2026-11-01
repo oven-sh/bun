@@ -1,7 +1,7 @@
 import { trimExecutable } from "bun:internal-for-testing";
 import { expect, setDefaultTimeout, test } from "bun:test";
 import { tempDir } from "harness";
-import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, openSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BuildError } from "../../../scripts/build/error.ts";
 import {
@@ -10,6 +10,7 @@ import {
   readCoffGraph,
   sectionInFile,
 } from "../../../scripts/build/trim/coff-graph.ts";
+import { CoffObject, IMAGE_COMDAT_SELECT_ASSOCIATIVE } from "../../../scripts/build/trim/coff-objects.ts";
 import { readEntryPoints } from "../../../scripts/build/trim/entry-points.ts";
 import { nodeAt } from "../../../scripts/build/trim/graph.ts";
 import { itemsOf } from "../../../scripts/build/trim/icu-data.ts";
@@ -118,6 +119,35 @@ async function expectFeatureRemoved(folder: string, machine: Machine) {
   expect(await exitCodeOf(folder, "trimmed.exe", guardedPathArguments)).toBe(70);
   expect(await exitCodeOf(folder, output, guardedPathArguments)).not.toBe(70);
 }
+
+test("reads the symbols of a section numbered past 32,767 in an object that isn't big", () => {
+  const sectionCount = 32_769;
+  const symbolsAt = 20 + sectionCount * 40;
+  const object = Buffer.alloc(symbolsAt + 2 * 18 + 4);
+  object.writeUInt16LE(0x8664, 0);
+  object.writeUInt16LE(sectionCount, 2);
+  object.writeUInt32LE(symbolsAt, 8);
+  object.writeUInt32LE(2, 12);
+  for (let section = 0; section < sectionCount; section++) object.write(".rdata", 20 + section * 40, "latin1");
+  // The symbol that defines the last section, then its auxiliary record: associative with section 1.
+  object.write(".rdata", symbolsAt, "latin1");
+  object.writeUInt16LE(sectionCount, symbolsAt + 12);
+  object[symbolsAt + 16] = 3;
+  object[symbolsAt + 17] = 1;
+  object.writeUInt16LE(1, symbolsAt + 18 + 12);
+  object[symbolsAt + 18 + 14] = IMAGE_COMDAT_SELECT_ASSOCIATIVE;
+  object.writeUInt32LE(4, symbolsAt + 2 * 18);
+
+  using dir = tempDir("trim-coff-many-sections", { "many.obj": object });
+  const fd = openSync(join(String(dir), "many.obj"), "r");
+  try {
+    const read = CoffObject.open(fd, 0, object.length)!;
+    expect(read.symbolSection[0]).toBe(sectionCount);
+    expect(read.sections[sectionCount - 1]).toMatchObject({ selection: IMAGE_COMDAT_SELECT_ASSOCIATIVE, parent: 1 });
+  } finally {
+    closeSync(fd);
+  }
+});
 
 describeLink("a trimmable link with lld-link", () => {
   test("removes a feature and cuts its pages out of the PE file", async () => {

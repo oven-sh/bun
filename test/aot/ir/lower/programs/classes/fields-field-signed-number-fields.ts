@@ -237,7 +237,11 @@ console.log("static", Object.keys(BesideStatic).join("+"), describe(BesideStatic
 // CHECK-NEXT: v3 = GetSuperBase v0
 // CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_17]]
 // CHECK-NEXT: v5 = Convert v4 declared={type=[[L_17]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: v6 = CallDirect v5 function=[[f_18]]
+// CHECK-NEXT: v6 = Integer integer=1
+// CHECK-NEXT: PropSet v5, v6 key="-1"
+// CHECK-NEXT: v8 = Integer integer=2
+// CHECK-NEXT: v9 = Convert v8 declared={type=number site=[[w_18]]}
+// CHECK-NEXT: PropSet v5, v9 key="y"
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"

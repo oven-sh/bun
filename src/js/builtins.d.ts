@@ -44,6 +44,8 @@ declare const IS_BUN_DEVELOPMENT: boolean;
 declare const CAN_LOAD_CODE_AT_RUN_TIME: boolean;
 /** False in an executable that was compiled ahead of time from a program that never names `node:cluster`. */
 declare const CAN_BE_CLUSTER_WORKER: boolean;
+/** False in what was compiled ahead of time, but for a test run one of whose tests replaces a built-in function. Where it is false no program can tell which built-in functions Bun's own code calls. */
+declare const CAN_REPLACE_BUILT_INS: boolean;
 /** True in an executable that was compiled ahead of time, false in `bun run`. Only for a choice between two ways that a program cannot tell apart. */
 declare const IS_COMPILED_AHEAD_OF_TIME: boolean;
 /** Calls `callee`. A compiled executable never inlines the call. Only a compiled executable has it: use it behind `IS_COMPILED_AHEAD_OF_TIME`. */
@@ -286,6 +288,8 @@ declare function $esmNamespaceForCjs(key: string, requirer?: JSCommonJSModule): 
 declare function $esmRegistryDelete(key: string, requirer?: JSCommonJSModule): boolean;
 declare function $esmRegistryEvaluatedKeys(requirer?: JSCommonJSModule): string[];
 declare function $esmRegistryHasEvaluated(key: string, requirer?: JSCommonJSModule): boolean;
+declare function $requireCacheCompiledEntry(key?: string, requirer?: JSCommonJSModule, onlyAsks?: boolean): any;
+declare function $requireCacheDidDelete(key: string, requirer?: JSCommonJSModule): void;
 declare function $requireCacheWillSet(key: string, value: unknown, requirer?: JSCommonJSModule): void;
 /** Without a key: does this process hide any file from require.cache? */
 declare function $isHiddenFromRequireCache(key?: string | symbol): boolean;
@@ -658,12 +662,22 @@ interface Set<T> {
 }
 
 interface ObjectConstructor {
+  $create: typeof Object.create;
+  $getPrototypeOf: typeof Object.getPrototypeOf;
   $defineProperty: typeof Object.defineProperty;
   $defineProperties: typeof Object.defineProperties;
+  $getOwnPropertyDescriptor: typeof Object.getOwnPropertyDescriptor;
+  $getOwnPropertyNames: typeof Object.getOwnPropertyNames;
+  $getOwnPropertySymbols: typeof Object.getOwnPropertySymbols;
 }
+
+declare var $Map: MapConstructor;
+declare var $Object: ObjectConstructor;
 
 /** gets a property on an object */
 declare function $getByIdDirect<T, K extends keyof T>(obj: T, key: K): T[K];
+
+declare function $getPrototypeOf(value: unknown): object | null;
 
 /**
  * Gets a private property on an object.

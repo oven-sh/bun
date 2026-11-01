@@ -1,4 +1,5 @@
-// IR= 2 madeInLoop _inRanges
+// IR@= 1 madeInLoop _inRanges
+// IR= 0 madeInLoop overload=TextEncoderPrototypeEncodeInto/0 accessSite
 // IR= 1 writeHeld _inRanges
 // IR= 1 intoOrKept _inRanges
 // IR= 1 oneOfTwo _inRanges

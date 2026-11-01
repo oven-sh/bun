@@ -2,7 +2,8 @@
 // not have. This reads the generated code instead. Nothing runs and nothing is counted by hardware, so it judges on every machine.
 //
 // The front end writes each program (`bun compile --aot-out`), and testaot generates code for the functions of the program's own file and says how large it is
-// (`testaot print <program> --command="lower-to-air size loops entry-modules"`): Air instructions and patchpoints in the blocks that are reached without a rare edge.
+// (`testaot print <program> --command="lower-to-air size loops entry-modules" references=narrow`): Air instructions and patchpoints in the blocks that are reached without a
+// rare edge. Bun ships narrow references and testaot's default is wide, under which no lookup in a Map or a Set stands in line.
 //
 //   an idiom       each function by its name, as `all`: [instructions, patchpoints] of the function, and `loop`: [step, instructions, patchpoints] of its cheapest loop per
 //                  element, where `step` is what the counter advances by (8: unrolled eight times)
@@ -15,7 +16,7 @@
 // The code behind a patchpoint is not counted, so a change that puts the fast path of a callee in line makes the program faster and a number here larger. A change
 // that moves a number on purpose restates it, for both architectures: AOT_PERF=update with AOT_PERF_ONLY. Any other rise is a loss to look into.
 //
-//   TEST_PART=aot/perf/generated-code-of-idioms bun test test/aot/parts.test.ts       fails if a patchpoint was added, or more than 10% AND more than 1 instruction;
+//   bun test ./test/aot/perf/generated-code-of-idioms-<1..26>.measure.ts              fails if a patchpoint was added, or more than 10% AND more than 1 instruction;
 //                                                                                     a patchpoint counts for 8 instructions, and a lower sum is never worse;
 //                                                                                     the poll of a loop counts for the instructions that it is, and as no patchpoint;
 //                                                                                     the function and its loop are each held against their own pin
@@ -24,7 +25,7 @@
 //   AOT_PERF_ONLY='^array/' ..                                                        only the programs whose name matches the regular expression
 //   AOT_PERF_OPTION_WORDS='disable=b3:UnrollLoops' ..                                 option words for testaot: to see what fails without one optimization
 //
-// To see the code: `testaot print <program> --command="lower-to-air loops entry-modules"`. The engine's aot/tests/codegen has B3 tests of the same lowerings.
+// To see the code: `testaot print <program> --command="lower-to-air loops entry-modules" references=narrow`. The engine's aot/tests/codegen has B3 tests of the same lowerings.
 import { afterAll, expect } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, tempDir } from "harness";
@@ -98,6 +99,7 @@ async function measure(folder: string, source: string, program: string, words: s
       program,
       `--command=lower-to-air ${words}`,
       ...(functions ? [`--aotFunctionToDump=${functions.join("|")}`] : []),
+      "references=narrow",
       ...optionWords,
     ],
     folder,
@@ -128,23 +130,25 @@ function whyMore(now: Count, pin: Count, slack: number) {
 
 const rounded = (count: number) => Math.round(count * 1000) / 1000;
 
-// A line of a file of pins: the program's name, a tab, the pin as JSON. The parts of a unit that run in one process share the pins, and each writes all of them.
+// A line of a file of pins: the program's name, a tab, the pin as JSON. A pin that was raised by hand has another tab and why. The parts of a unit that run in one
+// process share the pins, and each writes all of them.
 const pinsByFile = new Map<string, Record<string, unknown>>();
+const whyRaisedByFile = new Map<string, Record<string, string>>();
 function readPins<T>(name: string) {
   const path = join(import.meta.dir, `${name}.${platform}.txt`);
   if (!pinsByFile.has(path)) {
     const lines = existsSync(path) ? readFileSync(path, "utf8").split("\n").filter(Boolean) : [];
-    pinsByFile.set(
-      path,
-      Object.fromEntries(lines.map(line => line.split("\t")).map(([key, pin]) => [key, JSON.parse(pin)])),
-    );
+    const fields = lines.map(line => line.split("\t"));
+    pinsByFile.set(path, Object.fromEntries(fields.map(([key, pin]) => [key, JSON.parse(pin)])));
+    whyRaisedByFile.set(path, Object.fromEntries(fields.flatMap(([key, , why]) => (why ? [[key, why]] : []))));
   }
   const pins = pinsByFile.get(path) as Record<string, T>;
+  const whyRaised = whyRaisedByFile.get(path)!;
   const write = () => {
     if (mode !== "lower" && mode !== "update") return;
     const lines = Object.entries(pins)
       .sort(([a], [b]) => (a < b ? -1 : 1))
-      .map(([key, pin]) => `${key}\t${JSON.stringify(pin)}\n`);
+      .map(([key, pin]) => `${key}\t${JSON.stringify(pin)}${whyRaised[key] ? `\t${whyRaised[key]}` : ""}\n`);
     writeFileSync(path, lines.join(""));
   };
   return { pins, write };
@@ -159,8 +163,12 @@ type IdiomPin = Record<(typeof forms)[number], Record<string, Code>>;
 function codeOf(copies: Copy[]): Code {
   const sum = (count: (copy: Copy) => number) => copies.reduce((total, copy) => total + count(copy), 0);
   const all: Code["all"] = [sum(copy => copy.instructions), sum(copy => copy.patchpoints)];
-  const loops = copies.flatMap(copy => copy.loops);
-  if (!loops.length) return { all };
+  const cycles = copies.flatMap(copy => copy.loops);
+  if (!cycles.length) return { all };
+  // A cycle with nothing in it that is reached without a rare edge turns only behind one: such is the way back in front of a loop that one turn has left.
+  // Beside a loop of the likely path it would always be the cheapest, and the pin would hold nothing.
+  const likely = cycles.filter(loop => costOf([loop.instructions, loop.patchpoints]));
+  const loops = likely.length ? likely : cycles;
   const perElement = (loop: Loop) => costOf([loop.instructions, loop.patchpoints]) / loop.step;
   const cheapest = loops.reduce((best, loop) => (perElement(loop) < perElement(best) ? loop : best));
   return { all, loop: [cheapest.step, cheapest.instructions, cheapest.patchpoints] };
@@ -174,7 +182,8 @@ const scaledTo = ([step, ...count]: Loop3, [likeStep]: Loop3): Count => [
 
 function whyWorse(now: Code, pin: Code) {
   if (!now.loop !== !pin.loop) return pin.loop ? "it has no loop now" : "it has a loop now";
-  if (now.loop && pin.loop) {
+  // A pinned loop of no cost stood wholly behind a rare edge: it says nothing about a loop that has come off that path.
+  if (now.loop && pin.loop && costOf(scaledTo(pin.loop, pin.loop))) {
     const why = whyMore(scaledTo(now.loop, pin.loop), scaledTo(pin.loop, pin.loop), 1);
     if (why) return `${why} in the loop`;
   }
@@ -182,8 +191,8 @@ function whyWorse(now: Code, pin: Code) {
 }
 
 function lower(now: Code, pin: Code): Code {
-  const isLoopBetter =
-    !!now.loop && !!pin.loop && costOf(scaledTo(now.loop, pin.loop)) < costOf(scaledTo(pin.loop, pin.loop));
+  const pinned = pin.loop && costOf(scaledTo(pin.loop, pin.loop));
+  const isLoopBetter = !!now.loop && !!pin.loop && (!pinned || costOf(scaledTo(now.loop, pin.loop)) < pinned);
   const all = costOf(now.all) < costOf(pin.all) ? now.all : pin.all;
   const loop = isLoopBetter ? now.loop : pin.loop;
   return loop ? { all, loop } : { all };

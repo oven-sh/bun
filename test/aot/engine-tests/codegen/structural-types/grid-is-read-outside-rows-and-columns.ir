@@ -168,5 +168,5 @@ function f5 name="flat" module=m0 position=2322 flags=[IsChecked, HasExplicitNam
 # -- generated: neighbors
 # CHECK-LABEL: function {{*}}name="neighbors"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 34, patchpoints: 2, rare instructions: 59, polls: 1
-# CHECK-NEXT: end of function f3
+# CHECK-NEXT: instructions: 88, patchpoints: 11, rare instructions: 75, polls: 1
+# CHECK-NEXT: end of function f11

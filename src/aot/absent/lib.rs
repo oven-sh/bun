@@ -10,7 +10,7 @@ use bun_aot_interface::report::{ReportEntry, ReportInput, ReportMessage, SourceT
 use bun_aot_interface::statistics::{StatisticId, Statistics};
 use bun_aot_interface::{Opaque, SourceProvider};
 use bun_ast::Log;
-use bun_options_types::aot_options::{ExplainSet, ReportDetail};
+use bun_options_types::aot_options::{ExplainSet, ReplacedByTests, ReportDetail};
 use bun_sema::atom::Interner;
 use bun_sema::check::aot::NamedValues;
 use bun_sema::hir_from_data::DataValue;
@@ -44,4 +44,10 @@ bun_aot_interface::define_linked_functions! {
     fn bun_aot_write_build_report(_input: &ReportInput<'_>, _detail: ReportDetail, _build_id: Option<&[u8]>) -> Vec<u8> { absent() }
     fn bun_aot_write_registry() -> Vec<u8> { absent() }
     fn bun_aot_unlinked_named_values<'a, 's>(_files: &'a Files<'s>, _atoms: &Interner<'s>) -> Box<dyn NamedValues + 'a> { absent() }
+    fn bun_aot_find_what_tests_replace(_files: &[Vec<u8>], _threads: usize, _resolve: &mut dyn FnMut(&[u8], &[u8], bool) -> Option<Vec<u8>>) -> ReplacedByTests { absent() }
+    fn bun_aot_everything_that_tests_replace() -> ReplacedByTests { absent() }
+    fn bun_aot_library_modules_that_programs_load() -> Vec<&'static [u8]> { absent() }
+    fn bun_aot_builtins_that_load_library_modules() -> Vec<String> { absent() }
+    fn bun_aot_library_modules_spelled_in(_text: &[u8]) -> Option<Vec<&'static [u8]>> { absent() }
+    fn bun_aot_builtins_that_load_library_modules_spelled_in(_text: &[u8]) -> Option<Vec<String>> { absent() }
 }

@@ -6,6 +6,8 @@ use crate::messages::Category;
 pub enum FileOrigin {
     NoFile,
     ProgramSource,
+    /// Of a program that is compiled to run its tests: `bun test` checks no types, so a type error stops nothing.
+    TestedSource,
     ProgramJavaScript,
     DependencySource,
     DependencyJavaScript,
@@ -16,11 +18,12 @@ pub enum FileOrigin {
 
 impl FileOrigin {
     #[cfg(any(test, feature = "test_support"))]
-    pub const COUNT: usize = 8;
+    pub const COUNT: usize = 9;
     #[cfg(any(test, feature = "test_support"))]
     pub const ALL: [FileOrigin; FileOrigin::COUNT] = [
         FileOrigin::NoFile,
         FileOrigin::ProgramSource,
+        FileOrigin::TestedSource,
         FileOrigin::ProgramJavaScript,
         FileOrigin::DependencySource,
         FileOrigin::DependencyJavaScript,
@@ -53,6 +56,13 @@ fn effect_of_error(origin: FileOrigin, class: DiagnosticClass) -> Effect {
             Effect::StopsBuild
         }
         (
+            DiagnosticClass::Style
+            | DiagnosticClass::TypeScriptGrammar
+            | DiagnosticClass::MissingDeclaration,
+            FileOrigin::TestedSource,
+        ) => Effect::Warns,
+        (DiagnosticClass::Semantic, FileOrigin::TestedSource) => Effect::WithdrawsTrust,
+        (
             DiagnosticClass::Style,
             FileOrigin::ProgramJavaScript
             | FileOrigin::DependencySource
@@ -66,6 +76,7 @@ fn effect_of_error(origin: FileOrigin, class: DiagnosticClass) -> Effect {
             DiagnosticClass::EarlyError,
             FileOrigin::NoFile
             | FileOrigin::ProgramSource
+            | FileOrigin::TestedSource
             | FileOrigin::ProgramJavaScript
             | FileOrigin::DependencySource
             | FileOrigin::DependencyJavaScript
@@ -119,16 +130,22 @@ mod tests {
     };
 
     const EXPECTED_FOR_ERRORS: [(DiagnosticClass, [Effect; FileOrigin::COUNT]); 7] = [
-        (DiagnosticClass::EarlyError, [S, S, S, S, S, S, I, T]),
-        (DiagnosticClass::TypeScriptGrammar, [S, S, D, D, D, D, D, D]),
-        (DiagnosticClass::Semantic, [S, S, D, T, D, D, T, D]),
+        (DiagnosticClass::EarlyError, [S, S, S, S, S, S, S, I, T]),
+        (
+            DiagnosticClass::TypeScriptGrammar,
+            [S, S, W, D, D, D, D, D, D],
+        ),
+        (DiagnosticClass::Semantic, [S, S, T, D, T, D, D, T, D]),
         (
             DiagnosticClass::MissingDeclaration,
-            [S, S, D, D, D, D, D, D],
+            [S, S, W, D, D, D, D, D, D],
         ),
-        (DiagnosticClass::Style, [S, S, D, D, D, D, D, D]),
-        (DiagnosticClass::DeclarationFile, [D, D, D, D, D, D, D, D]),
-        (DiagnosticClass::EmittedOutput, [D, D, D, D, D, D, D, D]),
+        (DiagnosticClass::Style, [S, S, W, D, D, D, D, D, D]),
+        (
+            DiagnosticClass::DeclarationFile,
+            [D, D, D, D, D, D, D, D, D],
+        ),
+        (DiagnosticClass::EmittedOutput, [D, D, D, D, D, D, D, D, D]),
     ];
 
     #[test]
@@ -171,11 +188,14 @@ mod tests {
     }
 
     #[test]
-    fn only_typed_code_that_the_program_did_not_write_and_evaluated_text_can_lose_trust() {
+    fn typed_code_of_tests_and_of_others_and_evaluated_text_can_lose_trust() {
         for origin in FileOrigin::ALL {
             let is_expected = matches!(
                 origin,
-                FileOrigin::DependencySource | FileOrigin::Runtime | FileOrigin::EvaluatedText
+                FileOrigin::TestedSource
+                    | FileOrigin::DependencySource
+                    | FileOrigin::Runtime
+                    | FileOrigin::EvaluatedText
             );
             assert_eq!(origin.can_lose_trust(), is_expected, "{origin:?}");
         }

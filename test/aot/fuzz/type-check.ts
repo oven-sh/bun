@@ -1,24 +1,30 @@
-// TypeScript's own checker over generated programs, many at a time, each a module of its own, under the options the product bed builds with. The library files are read once.
+// Runs TypeScript's own checker over generated programs, many at a time, each as its own module, with the compiler
+// options of the product runner. Library files are read once.
 //
-//   bun test/aot/fuzz/type-check.ts <folder>      checks every .ts file of the folder by itself: prints the errors, and how many files are clean
+//   bun test/aot/fuzz/type-check.ts <folder>      checks each .ts file in the folder separately; prints the errors and how many files are clean
 //
-// TypeScript is taken from node_modules, or from the folder that AOT_FUZZ_TYPESCRIPT names (the one that holds its package.json).
-// Bun's typings are packages/bun-types of this repository, or the folder that AOT_FUZZ_BUN_TYPES names.
+// TypeScript comes from node_modules, or from the folder in AOT_FUZZ_TYPESCRIPT (the one with its package.json).
+// Bun's typings come from packages/bun-types in this repository, or from the folder in AOT_FUZZ_BUN_TYPES.
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { createRequire } from "module";
 import { basename, dirname, join } from "path";
 
-/** The errors of each program. One of several files is checked from `text` on, which lies beside them as `main.ts`. */
+/** Returns the errors of each program. A multi-file program is checked from `text`, which is its `main.ts`. */
 export type Checker = (programs: (string | { text: string; files?: Record<string, string> })[]) => string[][];
 
-/** The folder of Bun's typings, if they and those of Node that they rest on are there. */
-export function typingsOfBun(): string | undefined {
+/** The folder of Bun's typings, if they and the Node typings they depend on are installed. */
+export function bunTypesFolder(): string | undefined {
   const folder = process.env.AOT_FUZZ_BUN_TYPES ?? join(import.meta.dir, "..", "..", "..", "packages", "bun-types");
-  return existsSync(join(folder, "index.d.ts")) && [join(folder, "node_modules"), join(folder, "..", "..", "node_modules")].some(modules => existsSync(join(modules, "@types", "node", "index.d.ts"))) ? folder : undefined;
+  return existsSync(join(folder, "index.d.ts")) &&
+    [join(folder, "node_modules"), join(folder, "..", "..", "node_modules")].some(modules =>
+      existsSync(join(modules, "@types", "node", "index.d.ts")),
+    )
+    ? folder
+    : undefined;
 }
 
 /** The compilerOptions of the tsconfig.json that `bun init` writes. */
-export const asBunInitWritesIt = {
+export const bunInitCompilerOptions = {
   lib: ["ESNext"],
   target: "ESNext",
   module: "Preserve",
@@ -40,8 +46,14 @@ export const asBunInitWritesIt = {
   noPropertyAccessFromIndexSignature: false,
 };
 
-/** Nothing where TypeScript is not installed. With `typings`, those are at hand as a project has them that installed them, and declaration files are not checked; `options` is compilerOptions as a tsconfig.json spells them, in place of the bed's own. */
-export function typeChecker({ typings, options: written }: { typings?: string; options?: object } = {}): Checker | undefined {
+/**
+ * Returns nothing if TypeScript is not installed. `typings` makes that package available as in a project that installed
+ * it, and skips checking declaration files. `options` are compilerOptions as in a tsconfig.json and replace the
+ * runner's.
+ */
+export function typeChecker({ typings, options: written }: { typings?: string; options?: object } = {}):
+  | Checker
+  | undefined {
   let ts: typeof import("typescript");
   try {
     ts = createRequire(import.meta.url)(process.env.AOT_FUZZ_TYPESCRIPT ?? "typescript");
@@ -67,8 +79,15 @@ export function typeChecker({ typings, options: written }: { typings?: string; o
   let texts = new Map<string, string>();
   const host: import("typescript").CompilerHost = {
     getSourceFile(file, languageVersion) {
-      if (indexOf(file) >= 0) return texts.has(file) ? ts.createSourceFile(file, texts.get(file)!, languageVersion, true) : undefined;
-      if (!parsed.has(file)) parsed.set(file, ts.sys.fileExists(file) ? ts.createSourceFile(file, ts.sys.readFile(file)!, languageVersion, true) : undefined);
+      if (indexOf(file) >= 0)
+        return texts.has(file) ? ts.createSourceFile(file, texts.get(file)!, languageVersion, true) : undefined;
+      if (!parsed.has(file))
+        parsed.set(
+          file,
+          ts.sys.fileExists(file)
+            ? ts.createSourceFile(file, ts.sys.readFile(file)!, languageVersion, true)
+            : undefined,
+        );
       return parsed.get(file);
     },
     getDefaultLibFileName: () => join(libraries, ts.getDefaultLibFileName(options)),
@@ -80,7 +99,10 @@ export function typeChecker({ typings, options: written }: { typings?: string; o
     getNewLine: () => "\n",
     fileExists: file => (indexOf(file) >= 0 ? texts.has(file) : ts.sys.fileExists(file)),
     readFile: file => (indexOf(file) >= 0 ? texts.get(file) : ts.sys.readFile(file)),
-    directoryExists: folder => (indexOf(folder + "/") >= 0 ? texts.keys().some(file => file.startsWith(folder + "/")) : ts.sys.directoryExists(folder)),
+    directoryExists: folder =>
+      indexOf(folder + "/") >= 0
+        ? texts.keys().some(file => file.startsWith(folder + "/"))
+        : ts.sys.directoryExists(folder),
     getDirectories: ts.sys.getDirectories,
     realpath: ts.sys.realpath,
   };
@@ -95,17 +117,27 @@ export function typeChecker({ typings, options: written }: { typings?: string; o
     });
     const errors: string[][] = programs.map(() => []);
     const program = ts.createProgram({ rootNames, options, host });
-    // Only the programs' own files are asked: the libraries are the same every time, and to go through them takes most of a second.
+    // Only the programs' own files are checked: the libraries never change, and checking them takes most of a second.
     const own = program.getSourceFiles().filter(file => indexOf(file.fileName) >= 0);
-    const found = [...program.getOptionsDiagnostics(), ...program.getGlobalDiagnostics(), ...own.flatMap(file => [...program.getSyntacticDiagnostics(file), ...program.getSemanticDiagnostics(file)])];
+    const found = [
+      ...program.getOptionsDiagnostics(),
+      ...program.getGlobalDiagnostics(),
+      ...own.flatMap(file => [...program.getSyntacticDiagnostics(file), ...program.getSemanticDiagnostics(file)]),
+    ];
     for (const { file, start, code, messageText } of found)
-      errors[Math.max(0, indexOf(file?.fileName ?? ""))].push(`${file && start !== undefined ? file.getLineAndCharacterOfPosition(start).line + 1 : 0}: TS${code}: ${ts.flattenDiagnosticMessageText(messageText, " ")}`);
+      errors[Math.max(0, indexOf(file?.fileName ?? ""))].push(
+        `${file && start !== undefined ? file.getLineAndCharacterOfPosition(start).line + 1 : 0}: TS${code}: ${ts.flattenDiagnosticMessageText(messageText, " ")}`,
+      );
     return errors;
   };
 }
 
-/** What the rules of the source forbid though the checker takes it: a cast, `any`, `!`, a comment that silences the checker. */
-export const writtenEscapes = (text: string) => text.match(/\bas (?!const\b)[A-Za-z{(\[]|(?<![\w"])any\b(?!["\w])|[\w)\]]!(?![=\w])|@ts-\w+/g) ?? [];
+/**
+ * Escapes that a source's rules forbid although the checker accepts them: a cast, `any`, `!`, a comment that silences
+ * the checker.
+ */
+export const explicitEscapes = (text: string) =>
+  text.match(/\bas (?!const\b)[A-Za-z{(\[]|(?<![\w"])any\b(?!["\w])|[\w)\]]!(?![=\w])|@ts-\w+/g) ?? [];
 
 if (import.meta.main) {
   const folder = process.argv[2];
@@ -118,7 +150,7 @@ if (import.meta.main) {
     const some = files.slice(from, from + 64);
     const texts = some.map(file => readFileSync(join(folder, file), "utf8"));
     check(texts).forEach((found, index) => {
-      const errors = [...found, ...writtenEscapes(texts[index]).map(escape => `0: written out: ${escape}`)];
+      const errors = [...found, ...explicitEscapes(texts[index]).map(escape => `0: written out: ${escape}`)];
       const group = some[index].replace(/^\d+-|\.ts$/g, "");
       const counts = perGroup.get(group) ?? perGroup.set(group, [0, 0]).get(group)!;
       counts[0]++;
@@ -126,6 +158,7 @@ if (import.meta.main) {
       for (const error of errors.slice(0, 3)) console.log(`${some[index]}:${error}`);
     });
   }
-  for (const [group, [all, good]] of [...perGroup].sort()) if (good < all) console.log(`${good} of ${all} clean\t${group}`);
+  for (const [group, [all, good]] of [...perGroup].sort())
+    if (good < all) console.log(`${good} of ${all} clean\t${group}`);
   console.log(`${clean} of ${files.length} programs are clean (${((clean / files.length) * 100).toFixed(1)}%)`);
 }

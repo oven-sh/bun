@@ -161,29 +161,49 @@ function f1 name="second" module=m0 position=346 kind=Setter flags=[HasExplicitN
 # CHECK-NEXT: v55: false = Boolean
 # CHECK-NEXT: v56: 0 = Integer
 # CHECK-NEXT: Jump -> next b17(v55, v56)
-# CHECK-NEXT: b17(v57: boolean, v58: int[0, 4294967295]):
+# CHECK-NEXT: b17(v57: boolean ~ false, v58: int[0, 4294967295] ~ 0):
+# CHECK-NEXT: Jump -> next b18(v57, v58)
+# CHECK-NEXT: b18(v59: boolean, v60: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: Branch v57 -> taken b18(), notTaken b19()
-# CHECK-NEXT: b18():
-# CHECK-NEXT: v60: true = Boolean boolean=true
-# CHECK-NEXT: v61: undefined = Undefined
-# CHECK-NEXT: Jump -> next b22(v60, v61, v58)
+# CHECK-NEXT: Branch v59 -> taken b19(), notTaken b20()
 # CHECK-NEXT: b19():
-# CHECK-NEXT: v62: int[0, 4294967295] = CallBuiltin v7 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v63: boolean = Less v58, v62
-# CHECK-NEXT: Branch v63 -> taken b20(| 0), notTaken b21()
-# CHECK-NEXT: b20(v64: int[0, 4294967294]):
-# CHECK-NEXT: v65: undefined|object = GetArrayElement v7, v64 arrayStorage=Contiguous level=Proven [keyIsIntegral]
-# CHECK-NEXT: v66: 1 = Integer integer=1
-# CHECK-NEXT: v67: int[1, 4294967295] = Add v64, v66
-# CHECK-NEXT: v68: false = Boolean
-# CHECK-NEXT: Jump -> next b22(v68, v65, v67)
-# CHECK-NEXT: b21():
-# CHECK-NEXT: v69: true = Boolean boolean=true
-# CHECK-NEXT: v70: undefined = Undefined
-# CHECK-NEXT: Jump -> next b22(v69, v70, v58)
-# CHECK-NEXT: b22(v71: boolean, v72: undefined|object, v73: int[0, 4294967295]):
-# CHECK-NEXT: v74: anything = PropGet v72 key="get" accessSite=3
-# CHECK-NEXT: v75: anything = PropGet v72 key="set" accessSite=4
-# CHECK-NEXT: Jump -> next b17(v71, v73)
+# CHECK-NEXT: v62: true = Boolean boolean=true
+# CHECK-NEXT: v63: undefined = Undefined
+# CHECK-NEXT: Jump -> next b23(v62, v63, v60)
+# CHECK-NEXT: b20():
+# CHECK-NEXT: v64: int[0, 4294967295] = CallBuiltin v7 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v65: boolean = Less v60, v64
+# CHECK-NEXT: Branch v65 -> taken b21(| 0), notTaken b22()
+# CHECK-NEXT: b21(v66: int[0, 4294967294]):
+# CHECK-NEXT: v67: undefined|object = GetArrayElement v7, v66 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+# CHECK-NEXT: v68: 1 = Integer integer=1
+# CHECK-NEXT: v69: int[1, 4294967295] = Add v66, v68
+# CHECK-NEXT: v70: false = Boolean
+# CHECK-NEXT: Jump -> next b23(v70, v67, v69)
+# CHECK-NEXT: b22():
+# CHECK-NEXT: v71: true = Boolean boolean=true
+# CHECK-NEXT: v72: undefined = Undefined
+# CHECK-NEXT: Jump -> next b23(v71, v72, v60)
+# CHECK-NEXT: b23(v73: boolean, v74: undefined|object, v75: int[0, 4294967295]):
+# CHECK-NEXT: v76: anything = PropGet v74 key="get" accessSite=3 [asksOnlyTables]
+# CHECK-NEXT: v77: boolean = DidReadAbove v76
+# CHECK-NEXT: Branch v77 -> taken b24(), notTaken b26()
+# CHECK-NEXT: b24():
+# CHECK-NEXT: v78: anything = PropGet v74 key="set" accessSite=4 [asksOnlyTables]
+# CHECK-NEXT: v79: boolean = DidReadAbove v78
+# CHECK-NEXT: Branch v79 -> taken b25(), notTaken b28()
+# CHECK-NEXT: b25():
+# CHECK-NEXT: Jump -> next b18(v73, v75)
+# CHECK-NEXT: b26() frequency=Rare:
+# CHECK-NEXT: v80: anything = PropGet v74 key="get" accessSite=3
+# CHECK-NEXT: v81: anything = PropGet v74 key="set" accessSite=4 [asksOnlyTables]
+# CHECK-NEXT: v82: boolean = DidReadAbove v81
+# CHECK-NEXT: Branch v82 -> taken b27(), notTaken b28()
+# CHECK-NEXT: b27() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b29()
+# CHECK-NEXT: b28() frequency=Rare:
+# CHECK-NEXT: v83: anything = PropGet v74 key="set" accessSite=4
+# CHECK-NEXT: Jump -> next b29()
+# CHECK-NEXT: b29() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b17(v73, v75)
 # CHECK-NEXT: }

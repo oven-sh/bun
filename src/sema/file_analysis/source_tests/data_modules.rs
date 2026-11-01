@@ -555,9 +555,13 @@ fn database_names_the_modules_that_open_it() {
                     .iter()
                     .all(|site| !site.is_host_value)
             );
-            let value = export_default_value(&s.hir);
-            assert!(matches!(s.hir[value].kind, ExprKind::New(_)));
-            assert_eq!(exports(&s), ["default"]);
+            let value = s.hir[s.hir.var_decls[0].init].kind;
+            assert!(matches!(value, ExprKind::New(_)), "value: {value:?}");
+            let marker = s.hir[s.hir.var_decls[1].init].kind;
+            assert!(matches!(marker, ExprKind::True), "marker: {marker:?}");
+            let expected = [("_0", "default"), ("_0", "db"), ("_1", "__esModule")];
+            assert_eq!(export_pairs(&s), expected);
+            assert_eq!(exports(&s), ["__esModule", "db", "default"]);
         }
     });
 }

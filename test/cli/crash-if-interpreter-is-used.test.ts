@@ -108,7 +108,7 @@ describe.each([
     async (_form, isExecutable) => {
       const { stdout, stderr, exitCode, signal } = await runCompiled(importing(url), isExecutable, [], { TEXT: text });
       expect(stderr).toMatch(
-        /^EvalError: Code generation from strings disallowed for this context|^error: Cannot load '(?:blob|data):[^']*': it isn't in this executable,/m,
+        /^EvalError: Code generation from strings disallowed for this context|^error: Cannot load '(?:blob|data):[^']*': it (?:isn't in this executable|wasn't compiled with the program),/m,
       );
       expect(stderr).not.toContain("crashIfInterpreterIsUsed: ");
       expect({ stdout, signal, exitCode }).toEqual({ stdout: "", signal: null, exitCode: 1 });
@@ -143,7 +143,7 @@ test.skipIf(isWindows || !!unsupported).each(forms)(
   async (_form, isExecutable) => {
     const { stdout, stderr, exitCode } = await runCompiled(namedAtRunTime, isExecutable, [], { LATE: "/on-disk.mjs" });
     expect(stderr).toMatch(
-      /^error: Cannot load '[^']*on-disk\.mjs': it isn't in this executable, which only runs code that was compiled into it\. Pass the file to bun compile as another entry point, or build with --aot-allow-code-from-disk\.$/m,
+      /^error: Cannot load '[^']*on-disk\.mjs': it (?:isn't in this executable, which only runs code that was compiled into it\. Pass the file to bun compile as another entry point|wasn't compiled with the program, and --aot only runs code that was\. Import the file by a constant path)/m,
     );
     expect(stderr).not.toContain("crashIfInterpreterIsUsed: ");
     expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });

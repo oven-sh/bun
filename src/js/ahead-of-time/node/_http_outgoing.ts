@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_outgoing.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 17a5f190f17251c9b4bea8ce90880918a91fffc6329dddc4d5ee859370eb9709.
+// Written against that file with the SHA-256 7eb68379dcc85e37da343c90d1da52f21b0bd91937cea041c06b56a6db7551fc.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_outgoing"
@@ -7,7 +7,8 @@
 // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js
 require("internal/stream");
 const { Stream } = require("internal/streams/legacy");
-const { isUint8Array, validateString } = require("internal/validators");
+const { validateString } = require("internal/validators");
+const { isUint8Array } = require("node:util/types");
 const { deprecate } = require("internal/util/deprecate");
 const { getDefaultHighWaterMark } = require("internal/streams/state");
 const http = require("internal/http");
@@ -1052,10 +1053,6 @@ class Exchange {
     this.wasEmptied = false;
     this.requestState = requestState;
   }
-
-  [Symbol.for("nodejs.util.inspect.custom")](): string {
-    return "[Exchange]";
-  }
 }
 
 declare global {
@@ -1180,12 +1177,18 @@ function keysOf(shape: HeaderShape): string[] {
   return shape.keys!;
 }
 
+// An object lists its array indices first, in ascending order. A shape keeps insertion order, so such a header goes to the dictionary.
+function isArrayIndex(key: string): boolean {
+  const index = +key >>> 0;
+  return index !== 0xffffffff && `${index}` === key;
+}
+
 function childOf(parent: HeaderShape, name: string, key: string): HeaderShape | null {
   const children = parent.children;
   for (let i = 0; i < children.length; i++) {
     if (children[i].name === name) return children[i];
   }
-  if (headerShapeCount === kMaxHeaderShapes) return null;
+  if (headerShapeCount === kMaxHeaderShapes || isArrayIndex(key)) return null;
   headerShapeCount++;
   const child = new HeaderShape(parent, name, key, bitsOfHeaderKey(key));
   children.push(child);

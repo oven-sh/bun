@@ -4,7 +4,7 @@ use bun_aot::load::source_provider::{
 use bun_ast::{Kind, Loader, Log, Msg, Range};
 use bun_core::strings;
 use bun_ptr::{ParentRef, detach_lifetime};
-use bun_sema::util::{FxHashMap, ShardedMap};
+use bun_sema::util::{FxHashMap, ShardedMap, SharedSort};
 use bun_threading::{Condvar, Guarded};
 use core::ptr::NonNull;
 use std::borrow::Cow;
@@ -313,7 +313,8 @@ impl PluginRequests {
             return Vec::new();
         }
         self.drain_defer_promises();
-        deferred.sort_unstable_by(|left, right| left.pending.name().cmp(&right.pending.name()));
+        deferred
+            .shared_sort_unstable_by(|left, right| left.pending.name().cmp(&right.pending.name()));
         deferred
             .into_iter()
             .map(|entry| self.finish_deferred_load(entry, log))

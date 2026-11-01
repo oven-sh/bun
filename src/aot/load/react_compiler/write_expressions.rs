@@ -1,16 +1,16 @@
-use super::writer::{TreeWriter, UnsupportedNode, Written};
+use super::writer::{NodeShape, TreeWriter, UnsupportedNode, Written};
 use bun_ast::op::{Level, TABLE};
 use bun_ast::{E, Expr, ExprData, ExprTag, G, Loc, LocRef, OpCode, OptionalChain, Ref, flags};
 use bun_core::identifier::is_identifier;
 use bun_core::strings::{
     contains_char, index_of_char_usize, is_valid_utf8, wtf8_to_utf16, wtf16_to_wtf8,
 };
-use bun_lint_react_compiler::code_generation::SymbolOrigin;
+use bun_react_compiler::SymbolOrigin;
 use bun_sema::atom::{Atom, known, number_to_string};
 use bun_sema::hir::{
     BinOp, Branches, Call, CallId, Chain, ExprFlags, ExprId, ExprKind, Flags, FnBody, FnId, FnKind,
-    Func, IdList, NameKind, Param, ParamId, PatKind, Prop, PropKey, PropKind, Span, TemplatePart,
-    TextRange, TypeNodeId, UnOp, rare,
+    Func, IdList, ListAt, NameKind, Param, ParamId, PatKind, Prop, PropKey, PropKind, Span,
+    TemplatePart, TextRange, TypeNodeId, UnOp, rare,
 };
 use std::borrow::Cow;
 
@@ -78,12 +78,18 @@ impl TreeWriter<'_, '_> {
             ExprData::EIndex(access) => {
                 let (obj, chain) = self.write_chain_base(&access.target, access.optional_chain)?;
                 let index = self.write_expression(&access.index)?;
-                ExprKind::Index { obj, index, chain }
+                let range = self.range_of_shape(loc, NodeShape::Member);
+                return Ok(self.add_expression_at(ExprKind::Index { obj, index, chain }, range));
             }
             ExprData::ECall(call) => {
                 let base = self.write_chain_base(&call.target, call.optional_chain)?;
                 let close = (call.close_paren_loc, call.can_be_unwrapped_if_unused);
-                let record = self.write_call_record(base, &call.args, close, loc)?;
+                let shape = match call.was_jsx_element {
+                    true => NodeShape::Other,
+                    false => NodeShape::Call,
+                };
+                let (record, range) =
+                    self.write_call_record(base, &call.args, close, (loc, shape))?;
                 let written = self.add_expression_at(ExprKind::Call(record), range);
                 if base.1 == Chain::Start {
                     self.file.add_flags(written, ExprFlags::OPTIONAL_CHAIN_LINK);
@@ -93,7 +99,9 @@ impl TreeWriter<'_, '_> {
             ExprData::ENew(new) => {
                 let base = (self.write_operand(&new.target, Level::New)?, Chain::No);
                 let close = (new.close_parens_loc, new.can_be_unwrapped_if_unused);
-                ExprKind::New(self.write_call_record(base, &new.args, close, loc)?)
+                let at = (loc, NodeShape::New);
+                let (record, range) = self.write_call_record(base, &new.args, close, at)?;
+                return Ok(self.add_expression_at(ExprKind::New(record), range));
             }
             ExprData::EUnary(unary) => self.write_unary(unary)?,
             ExprData::EBinary(binary) => self.write_binary(binary)?,
@@ -116,7 +124,9 @@ impl TreeWriter<'_, '_> {
                 ExprKind::Yield { value, star }
             }
             ExprData::EFunction(function) => {
-                ExprKind::Fn(self.write_function_expression(&function.func, FnKind::Expr, loc)?)
+                let id = self.write_function_expression(&function.func, FnKind::Expr, loc)?;
+                let range = self.range_of_shape(loc, NodeShape::Function);
+                return Ok(self.add_expression_at(ExprKind::Fn(id), range));
             }
             ExprData::EArrow(arrow) => {
                 let mut set = flags::FUNCTION_NONE;
@@ -128,10 +138,14 @@ impl TreeWriter<'_, '_> {
                 }
                 let parameters = (arrow.args.slice(), set);
                 let id = self.add_function(FnKind::Arrow, None, parameters, &arrow.body, loc)?;
-                ExprKind::Fn(id)
+                let range = self.range_of_shape(loc, NodeShape::Function);
+                return Ok(self.add_expression_at(ExprKind::Fn(id), range));
             }
-            ExprData::EImport(import) if import.is_import_record_null() => {
-                let specifier = self.write_operand(&import.expr, Level::Comma)?;
+            ExprData::EImport(import) => {
+                let specifier = match import.is_import_record_null() {
+                    true => self.write_operand(&import.expr, Level::Comma)?,
+                    false => self.write_import_path(import.import_record_index, range)?,
+                };
                 let args = match matches!(import.options.data, ExprData::EMissing(_)) {
                     true => self.file.list(&[specifier]),
                     false => {
@@ -148,6 +162,44 @@ impl TreeWriter<'_, '_> {
             ExprData::ENewTarget(_) => {
                 self.file.rare_syntax |= rare::NEW_TARGET;
                 ExprKind::NewTarget(self.atoms.intern(b"target"))
+            }
+            ExprData::EImportMetaMain(main) => {
+                self.file.rare_syntax |= rare::IMPORT_META;
+                let meta = self.add_expression_at(ExprKind::ImportMeta, range);
+                let operand = self.write_member(meta, b"main", range);
+                match main.inverted {
+                    true => ExprKind::Unary {
+                        op: UnOp::Not,
+                        operand,
+                    },
+                    false => return Ok(operand),
+                }
+            }
+            ExprData::ERequireCallTarget => ExprKind::Ident(known::require),
+            ExprData::ERequireResolveCallTarget => {
+                return Ok(self.write_member_of_global(known::require, b"resolve", range));
+            }
+            ExprData::ERequireMain => {
+                return Ok(self.write_member_of_global(known::require, b"main", range));
+            }
+            ExprData::ESpecial(E::Special::ModuleExports) => {
+                return Ok(self.write_member_of_global(known::module, b"exports", range));
+            }
+            ExprData::ERequireString(required) => {
+                let callee = self.add_expression_at(ExprKind::Ident(known::require), range);
+                return self.write_call_with_import_path(
+                    callee,
+                    required.import_record_index,
+                    range,
+                );
+            }
+            ExprData::ERequireResolveString(resolved) => {
+                let callee = self.write_member_of_global(known::require, b"resolve", range);
+                return self.write_call_with_import_path(
+                    callee,
+                    resolved.import_record_index,
+                    range,
+                );
             }
             _ => return Err(unsupported(expression.data.tag())),
         };
@@ -194,27 +246,52 @@ impl TreeWriter<'_, '_> {
     }
 
     fn write_identifier(&mut self, reference: Ref, loc: Loc) -> ExprId {
-        let jsx = self.jsx;
-        match self.origin_of(reference) {
-            SymbolOrigin::ClassicFactory => self.write_member_path(&jsx.factory, loc),
-            SymbolOrigin::ClassicFragment => self.write_member_path(&jsx.fragment, loc),
-            _ => self.identifier(reference, loc),
-        }
+        let SymbolOrigin::NamespaceMember(namespace) = self.origin_of(reference) else {
+            return self.identifier(reference, loc);
+        };
+        let object = self.identifier(namespace, loc);
+        let name = self.name_of(reference);
+        let (pos, end) = self.range_of_shape(loc, NodeShape::Member);
+        let kind = self.file.dot((object, Chain::No), (name, pos), end);
+        self.file.expr(kind, pos, end)
     }
 
-    fn write_member_path(&mut self, path: &[Vec<u8>], loc: Loc) -> ExprId {
-        let (pos, end) = self.range_of(loc);
-        let Some((root, members)) = path.split_first() else {
-            return self.file.expr(ExprKind::Missing, pos, end);
+    fn write_member(&mut self, object: ExprId, name: &[u8], (pos, end): Range) -> ExprId {
+        let name = self.atoms.intern(name);
+        let kind = self.file.dot((object, Chain::No), (name, pos), end);
+        self.file.expr(kind, pos, end)
+    }
+
+    fn write_member_of_global(&mut self, global: Atom, name: &[u8], range: Range) -> ExprId {
+        let object = self.add_expression_at(ExprKind::Ident(global), range);
+        self.write_member(object, name, range)
+    }
+
+    fn write_import_path(&mut self, import_record_index: u32, range: Range) -> Written<ExprId> {
+        let Some(path) = (self.function.import_paths).get(import_record_index as usize) else {
+            return Err(UnsupportedNode("import record"));
         };
-        let root = self.atoms.intern(root);
-        let mut written = self.file.expr(ExprKind::Ident(root), pos, end);
-        for member in members {
-            let name = self.atoms.intern(member);
-            let kind = self.file.dot((written, Chain::No), (name, pos), end);
-            written = self.file.expr(kind, pos, end);
-        }
-        written
+        let path = self.atoms.intern(path);
+        Ok(self.add_expression_at(ExprKind::String(path), range))
+    }
+
+    fn write_call_with_import_path(
+        &mut self,
+        callee: ExprId,
+        import_record_index: u32,
+        range: Range,
+    ) -> Written<ExprId> {
+        let path = self.write_import_path(import_record_index, range)?;
+        let args = self.file.list(&[path]);
+        let call = self.file.add_call(Call {
+            callee,
+            args,
+            type_args: ListAt::EMPTY,
+            close_pos: range.1.saturating_sub(1).max(range.0),
+            chain: Chain::No,
+            is_pure: false,
+        });
+        Ok(self.add_expression_at(ExprKind::Call(call), range))
     }
 
     fn write_number_literal(&mut self, value: f64, range: Range) -> ExprId {
@@ -228,10 +305,13 @@ impl TreeWriter<'_, '_> {
     }
 
     fn write_template(&mut self, template: &E::Template, loc: Loc) -> Written<ExprId> {
-        let range = self.range_of(loc);
         let tag = match &template.tag {
             Some(tag) => Some(self.write_chain_base(tag, None)?.0),
             None => None,
+        };
+        let range = match tag {
+            Some(_) => self.range_of_shape(loc, NodeShape::Call),
+            None => self.range_of(loc),
         };
         let head = self.write_template_text(&template.head, tag.is_some())?;
         let mut texts = vec![head];
@@ -268,7 +348,7 @@ impl TreeWriter<'_, '_> {
         let call = self.file.add_call(Call {
             callee,
             args,
-            type_args: self.type_arguments_of_call(loc),
+            type_args: self.type_arguments_of_call(range),
             close_pos: u32::MAX,
             chain: Chain::No,
             is_pure: false,
@@ -421,7 +501,7 @@ impl TreeWriter<'_, '_> {
             self.file[id].name = name;
             self.file[id].name_pos = key_range.0;
         }
-        let range = self.range_of(value.loc);
+        let range = self.range_of_shape(value.loc, NodeShape::Function);
         Ok(self.add_expression_at(ExprKind::Fn(id), range))
     }
 
@@ -454,9 +534,11 @@ impl TreeWriter<'_, '_> {
 
     fn write_dot(&mut self, dot: &E::Dot, loc: Loc) -> Written<ExprId> {
         let (obj, chain) = self.write_chain_base(&dot.target, dot.optional_chain)?;
-        let (pos, end) = self.range_of(loc);
+        let (pos, end) = self.range_of_shape(loc, NodeShape::Member);
         let name = self.atoms.intern(dot.name.slice());
-        let name_range = self.range_of(dot.name_loc);
+        // The compiler gives the name the position of the whole expression. A member access ends with its name.
+        let name_start = end.saturating_sub(dot.name.slice().len() as u32).max(pos);
+        let name_range = (name_start, end);
         if !is_identifier(dot.name.slice()) {
             let index = self.add_expression_at(ExprKind::String(name), name_range);
             return Ok(self
@@ -472,26 +554,27 @@ impl TreeWriter<'_, '_> {
         (callee, chain): (ExprId, Chain),
         arguments: &[Expr],
         (close, unwrap): (Loc, E::CallUnwrap),
-        loc: Loc,
-    ) -> Written<CallId> {
+        (loc, shape): (Loc, NodeShape),
+    ) -> Written<(CallId, Range)> {
         let args = self.write_expression_list(arguments)?;
-        let (pos, end) = self.range_of(loc);
+        let (pos, end) = self.range_of_shape(loc, shape);
         // The compiler gives only the call of a JSX element the position of its end. A call ends with its `)`.
         let close_pos = match close.is_empty() {
             true => end.saturating_sub(1).max(pos),
             false => self.range_of(close).0,
         };
-        Ok(self.file.add_call(Call {
+        let call = self.file.add_call(Call {
             callee,
             args,
-            type_args: self.type_arguments_of_call(loc),
+            type_args: self.type_arguments_of_call((pos, end)),
             close_pos,
             chain,
             is_pure: match unwrap {
                 E::CallUnwrap::Never => false,
                 E::CallUnwrap::IfUnused | E::CallUnwrap::IfUnusedAndToStringSafe => true,
             },
-        }))
+        });
+        Ok((call, (pos, end)))
     }
 
     fn write_unary(&mut self, unary: &E::Unary) -> Written<ExprKind> {

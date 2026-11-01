@@ -1,6 +1,6 @@
 use super::{BuildDiagnostic, WithoutBunTypes};
 use crate::{Category, Diagnostic, MessageChain};
-use bun_sema::atom::Atom;
+use bun_sema::atom::{Atom, known};
 use bun_sema::check::Requested;
 use bun_sema::check::aot::{DiagnosticClass, DiagnosticSubject, Effect, FileOrigin, effect_of};
 use bun_sema::import_sites::ImportSpecifier;
@@ -28,6 +28,7 @@ fn origin_of(
         FileOrigin::Runtime => return FileOrigin::Runtime,
         FileOrigin::NoFile
         | FileOrigin::ProgramSource
+        | FileOrigin::TestedSource
         | FileOrigin::ProgramJavaScript
         | FileOrigin::DependencySource
         | FileOrigin::DependencyJavaScript
@@ -42,6 +43,9 @@ fn origin_of(
     match (files.role(file), is_dependency) {
         (FileRole::TypesOnly, _) => FileOrigin::Declarations,
         (FileRole::Checked, true) => FileOrigin::DependencySource,
+        (FileRole::Checked, false) if project_origin == FileOrigin::TestedSource => {
+            FileOrigin::TestedSource
+        }
         (FileRole::Checked, false) => FileOrigin::ProgramSource,
         (FileRole::Inferred, true) => FileOrigin::DependencyJavaScript,
         (FileRole::Inferred, false) => FileOrigin::ProgramJavaScript,
@@ -80,6 +84,7 @@ pub(super) fn requested_diagnostics(origin: FileOrigin, role: FileRole) -> Reque
         | (
             FileOrigin::NoFile
             | FileOrigin::ProgramSource
+            | FileOrigin::TestedSource
             | FileOrigin::ProgramJavaScript
             | FileOrigin::DependencySource
             | FileOrigin::DependencyJavaScript
@@ -116,7 +121,16 @@ const UNUSED_EXPECT_ERROR_CODE: u32 = 2578;
 
 const EXACT_OPTIONAL_PROPERTY_CODES: [u32; 3] = [2375, 2379, 2412];
 
-const UNKNOWN_MEMBER_CODES: [u32; 5] = [2305, 2339, 2551, 2694, 2724];
+const UNKNOWN_MEMBER_CODES: [u32; 6] = [2305, 2339, 2551, 2614, 2694, 2724];
+
+// The rest of `DiagnosticClass::MissingDeclaration` is about a module or a file.
+const UNKNOWN_NAME_CODES: [u32; 25] = [
+    2304, 2311, 2318, 2468, 2503, 2550, 2552, 2580, 2581, 2582, 2583, 2584, 2585, 2591, 2592, 2593,
+    2662, 2663, 2812, 2833, 2867, 2868, 2874, 2879, 18004,
+];
+
+// What stands in for Bun's types declares the name, as a variable where they have a type too, or as `any` where their type is generic.
+const DECLARATION_OF_ANOTHER_KIND_CODES: [u32; 2] = [2315, 2749];
 
 fn is_about_exact_optional_property(code: u32, chain: &[MessageChain]) -> bool {
     EXACT_OPTIONAL_PROPERTY_CODES.contains(&code)
@@ -125,10 +139,30 @@ fn is_about_exact_optional_property(code: u32, chain: &[MessageChain]) -> bool {
             .any(|link| is_about_exact_optional_property(link.code, &link.message_chain))
 }
 
+/// With Bun's types the build had every declaration that it has without them. So a name that had a declaration then and has none
+/// now is theirs: `BufferEncoding`, which is a type alone and in no table of the run time. The checker takes it as `any`.
+/// A module is not asked here. `declare module "*.txt"` of theirs stands for files of the program, so with them the build says
+/// nothing of `import text from "./note.txt"`, whatever the project's own files and options have to say of it.
+fn had_declaration_with_bun_types(missing: &WithoutBunTypes, diagnostic: &Diagnostic) -> bool {
+    let Some(errors) = &missing.errors_with_bun_types else {
+        return false;
+    };
+    let lacks_declaration = UNKNOWN_NAME_CODES.contains(&diagnostic.code)
+        || UNKNOWN_MEMBER_CODES.contains(&diagnostic.code)
+        || DECLARATION_OF_ANOTHER_KIND_CODES.contains(&diagnostic.code);
+    let place = (&diagnostic.path[..], diagnostic.start);
+    lacks_declaration
+        && diagnostic.file.is_some()
+        && errors
+            .binary_search_by(|(path, start)| (&path[..], *start).cmp(&place))
+            .is_err()
+}
+
 impl ProgramOrigins<'_, '_> {
     fn origin_of(&self, diagnostic: &Diagnostic) -> FileOrigin {
         match diagnostic.file {
             Some(file) => self.origins[file.idx()],
+            None if self.project_origin == FileOrigin::TestedSource => FileOrigin::NoFile,
             None => self.project_origin,
         }
     }
@@ -138,8 +172,11 @@ impl ProgramOrigins<'_, '_> {
             return false;
         };
         let code = diagnostic.code;
-        if origin != FileOrigin::ProgramSource {
+        if origin != FileOrigin::ProgramSource && origin != FileOrigin::TestedSource {
             return false;
+        }
+        if had_declaration_with_bun_types(missing, diagnostic) {
+            return true;
         }
         if UNKNOWN_MODULE_CODES.contains(&code) {
             match diagnostic.subject {
@@ -152,6 +189,7 @@ impl ProgramOrigins<'_, '_> {
             match diagnostic.subject {
                 DiagnosticSubject::MemberContainer(container) => {
                     missing.incomplete_containers.contains(&Some(container))
+                        || self.is_declared_in_place_of_bun_types(container)
                         || self.is_declared_for_browsers(container)
                 }
                 DiagnosticSubject::None | DiagnosticSubject::ModuleSpecifier(_) => false,
@@ -161,6 +199,45 @@ impl ProgramOrigins<'_, '_> {
         } else {
             USES_OF_WHAT_HAS_NO_DECLARATION_CODES.contains(&code)
         }
+    }
+
+    /// `module.exports = f; module.exports.used = ..` of a JavaScript file. The checker lists what `f` has by its type. When
+    /// the program runs `require` answers `f`, which has `used` by then.
+    fn is_about_name_stored_beside_module_exports(&self, diagnostic: &Diagnostic) -> bool {
+        let (Some(files), DiagnosticSubject::MemberContainer(container)) =
+            (self.files, diagnostic.subject)
+        else {
+            return false;
+        };
+        let name = match diagnostic.code {
+            2305 => diagnostic.args.get(1),
+            2339 => diagnostic.args.first(),
+            _ => None,
+        };
+        let Some(name) = name.and_then(|name| files.atoms.lookup(name)) else {
+            return false;
+        };
+        if !files.hir(container.file).is_js || !files.module(container.file).is_module() {
+            return false;
+        }
+        let module = files.file_symbol(container.file);
+        name != known::export_equals
+            && files.export(module, known::export_equals).is_some()
+            && files.export(module, name).is_some()
+    }
+
+    /// `/** @param {(this: @f() number) => void} a */`: TS1206. A mistake in a comment of a .js file stops no build.
+    fn is_in_jsdoc_comment(&self, diagnostic: &Diagnostic) -> bool {
+        let (Some(files), Some(file)) = (self.files, diagnostic.file) else {
+            return false;
+        };
+        !diagnostic.has_undefined_range && files.hir(file).is_in_jsdoc(diagnostic.start)
+    }
+
+    /// `declare module "node:fs";` says that the module is there and nothing of what it has: `fs.Stats` is `any`, as
+    /// `Stats` of `import { Stats } from "node:fs"` is.
+    fn is_declared_in_place_of_bun_types(&self, container: Sym) -> bool {
+        (self.files).is_some_and(|files| files.is_of_last_resort(container.file))
     }
 
     fn is_declared_for_browsers(&self, container: Sym) -> bool {
@@ -215,13 +292,30 @@ impl ProgramOrigins<'_, '_> {
                 self.lacks_installed_bun_types && diagnostic.code == UNKNOWN_TYPE_LIBRARY_CODE;
             let effect = match effect_of(origin, diagnostic.class, diagnostic.category) {
                 Effect::Dropped => return None,
+                Effect::StopsBuild if self.is_in_jsdoc_comment(&diagnostic) => return None,
                 Effect::StopsBuild | Effect::WithdrawsTrust
                     if self.is_from_option_the_file_does_not_have(&diagnostic) =>
                 {
                     return None;
                 }
+                Effect::StopsBuild | Effect::WithdrawsTrust | Effect::Warns
+                    if self.is_about_name_stored_beside_module_exports(&diagnostic) =>
+                {
+                    return None;
+                }
                 Effect::StopsBuild if diagnostic.code == UNUSED_EXPECT_ERROR_CODE => Effect::Warns,
                 Effect::StopsBuild if is_for_lack_of_bun_types => return None,
+                Effect::WithdrawsTrust | Effect::Warns
+                    if origin == FileOrigin::TestedSource && is_for_lack_of_bun_types =>
+                {
+                    return None;
+                }
+                Effect::WithdrawsTrust
+                    if origin == FileOrigin::TestedSource
+                        && diagnostic.code == UNUSED_EXPECT_ERROR_CODE =>
+                {
+                    Effect::Warns
+                }
                 Effect::StopsBuild if names_missing_type_library => Effect::Warns,
                 Effect::WithdrawsTrust if diagnostic.file.is_none() => Effect::InternalError,
                 effect @ (Effect::StopsBuild
@@ -246,6 +340,7 @@ mod tests {
         use FileOrigin::*;
         let expected = [
             (ProgramSource, FileRole::Checked, Requested::All),
+            (TestedSource, FileRole::Checked, Requested::All),
             (
                 ProgramJavaScript,
                 FileRole::Inferred,
@@ -277,6 +372,7 @@ mod tests {
             (DependencySource, FileRole::Inferred, false),
             (EvaluatedText, FileRole::Inferred, true),
             (ProgramSource, FileRole::Checked, false),
+            (TestedSource, FileRole::Checked, true),
             (ProgramJavaScript, FileRole::Inferred, false),
             (Runtime, FileRole::Checked, true),
             (Runtime, FileRole::Inferred, false),
@@ -316,15 +412,23 @@ mod tests {
             file: FileId(1),
             id: SymbolId(id),
         };
-        let [bun_module, import_meta, own_type] = [symbol(0), symbol(1), symbol(2)];
-        let incomplete_containers = [Some(bun_module), Some(import_meta), None];
+        let [bun_module, import_meta, own_type, node_namespace] =
+            [symbol(0), symbol(1), symbol(2), symbol(3)];
+        let incomplete_containers = [
+            Some(bun_module),
+            Some(import_meta),
+            None,
+            Some(node_namespace),
+        ];
         let without_configuration_file = WithoutBunTypes {
             has_configuration_file: false,
             incomplete_containers,
+            errors_with_bun_types: None,
         };
         let with_configuration_file = WithoutBunTypes {
             has_configuration_file: true,
             incomplete_containers,
+            errors_with_bun_types: None,
         };
         let stops_build = |without_bun_types: Option<&WithoutBunTypes>,
                            code: u32,
@@ -351,7 +455,7 @@ mod tests {
             !reported.is_empty()
         };
         use DiagnosticSubject::{MemberContainer, None as NoSubject};
-        let cases: [(u32, &[&str], DiagnosticSubject, bool); 14] = [
+        let cases: [(u32, &[&str], DiagnosticSubject, bool); 16] = [
             (2584, &["document"], NoSubject, true),
             (2304, &["nothing"], NoSubject, true),
             (2307, &["./missing"], NoSubject, true),
@@ -359,6 +463,13 @@ mod tests {
             (2305, &["A", "serve"], MemberContainer(bun_module), false),
             (2694, &["A", "Server"], MemberContainer(bun_module), false),
             (2339, &["dir", "A"], MemberContainer(import_meta), false),
+            (
+                2694,
+                &["A", "Process"],
+                MemberContainer(node_namespace),
+                false,
+            ),
+            (2694, &["Own", "Process"], MemberContainer(own_type), true),
             (2339, &["member", "Own"], MemberContainer(own_type), true),
             (
                 2339,
@@ -395,6 +506,51 @@ mod tests {
             implicit_any.1,
             NoSubject
         ));
+    }
+
+    #[test]
+    fn what_had_a_declaration_with_bun_types_stops_no_build_without_them() {
+        let missing = WithoutBunTypes {
+            has_configuration_file: true,
+            incomplete_containers: [None; 4],
+            errors_with_bun_types: Some(vec![(b"/a.ts".to_vec(), 7), (b"/b.ts".to_vec(), 3)]),
+        };
+        let stops_build = |code: u32, path: &[u8], start: u32| {
+            let origins = ProgramOrigins {
+                files: None,
+                origins: &[FileOrigin::ProgramSource],
+                project_origin: FileOrigin::NoFile,
+                without_bun_types: Some(&missing),
+                lacks_installed_bun_types: true,
+            };
+            let diagnostic = Diagnostic {
+                file: Some(FileId(0)),
+                path: path.to_vec(),
+                start,
+                class: DiagnosticClass::of_code(code),
+                ..crate::global(code, &["A", "B"])
+            };
+            !origins.apply_effects(vec![diagnostic]).is_empty()
+        };
+        for code in [2304, 2503, 2552, 2580, 2749, 2315, 2339, 2694] {
+            assert!(!stops_build(code, b"/a.ts", 3), "{code}");
+            assert!(!stops_build(code, b"/c.ts", 7), "{code}");
+            assert!(stops_build(code, b"/a.ts", 7), "{code}");
+            assert!(stops_build(code, b"/b.ts", 3), "{code}");
+        }
+        for code in [2322, 2345, 2554] {
+            assert!(stops_build(code, b"/a.ts", 3), "{code}");
+        }
+        for code in [
+            2307, 2664, 2665, 2732, 2834, 2835, 2875, 2882, 6053, 6263, 6305, 7016, 7042,
+        ] {
+            assert!(stops_build(code, b"/a.ts", 3), "{code}");
+        }
+        for code in UNKNOWN_NAME_CODES {
+            let class = DiagnosticClass::of_code(code);
+            assert_eq!(class, DiagnosticClass::MissingDeclaration, "{code}");
+            assert!(!stops_build(code, b"/a.ts", 3), "{code}");
+        }
     }
 
     #[test]

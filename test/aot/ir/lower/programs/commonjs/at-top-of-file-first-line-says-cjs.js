@@ -30,7 +30,7 @@
 
 // GENERATED: arrow
 // CHECK-LABEL: function {{*}}name="arrow"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsSloppy] captures=[{type=anything}, {type=object flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes={{*}}[[f_1]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsSloppy] captures=[{type=anything variableName="this"}, {type=object flags=[IsFromCompiler] variableName="arguments"}] thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes={{*}}[[f_1]]] {
 // CHECK-NEXT: b0(v0: anything, v1: object):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

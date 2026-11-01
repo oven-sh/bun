@@ -1,0 +1,1 @@
+exports.label = "one.cjs";

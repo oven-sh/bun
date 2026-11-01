@@ -648,10 +648,10 @@ function f88 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: Object = GetModuleVariable variable=g6
 # CHECK-NEXT: v1: 1 = Integer integer=1
-# CHECK-NEXT: v2: Array<int|Object> = NewArray v0, v1 contents=int|Object allocationSite=27 [contentsAreProven]
-# CHECK-NEXT: v3: Array<int|Object, proven, pristine[Storage, Names, Dense]> = AssumeType v2 provenType=Array<int|Object, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v4: Array<Array<int|Object, proven, pristine[Storage, Names, Dense]>, Contiguous> = NewArray v3 contents=Array<int|Object, proven, pristine[Storage, Names, Dense]> allocationSite=28 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v5: Array<Array<int|Object, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v4 provenType=Array<Array<int|Object, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v2: Array<1|Object> = NewArray v0, v1 contents=1|Object allocationSite=27 [contentsAreProven]
+# CHECK-NEXT: v3: Array<1|Object, proven, pristine[Storage, Names, Dense]> = AssumeType v2 provenType=Array<1|Object, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v4: Array<Array<1|Object, proven, pristine[Storage, Names, Dense]>, Contiguous> = NewArray v3 contents=Array<1|Object, proven, pristine[Storage, Names, Dense]> allocationSite=28 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v5: Array<Array<1|Object, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v4 provenType=Array<Array<1|Object, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v6: WeakMap = CallBuiltin -, v5 overload=WeakMap/2 accessSite=9
 # CHECK-NEXT: v7: WeakMap<anything, anything, pristine[Storage, Names]> = AssumeType v6 provenType=WeakMap<anything, anything, pristine[Storage, Names]>
 # CHECK-NEXT: v8: WeakMap<anything, number, pristine[Storage, Names]> = Upcast v7 castType=WeakMap<anything, number, pristine[Storage, Names]>
@@ -676,10 +676,10 @@ function f88 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: Object = GetModuleVariable variable=g6
 # CHECK-NEXT: v1: 1 = Integer integer=1
-# CHECK-NEXT: v2: Array<int|Object> = NewArray v0, v1 contents=int|Object allocationSite=32 [contentsAreProven]
-# CHECK-NEXT: v3: Array<int|Object, proven, pristine[Storage, Names, Dense]> = AssumeType v2 provenType=Array<int|Object, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v4: Array<Array<int|Object, proven, pristine[Storage, Names, Dense]>, Contiguous> = NewArray v3 contents=Array<int|Object, proven, pristine[Storage, Names, Dense]> allocationSite=33 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v5: Array<Array<int|Object, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v4 provenType=Array<Array<int|Object, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v2: Array<1|Object> = NewArray v0, v1 contents=1|Object allocationSite=32 [contentsAreProven]
+# CHECK-NEXT: v3: Array<1|Object, proven, pristine[Storage, Names, Dense]> = AssumeType v2 provenType=Array<1|Object, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v4: Array<Array<1|Object, proven, pristine[Storage, Names, Dense]>, Contiguous> = NewArray v3 contents=Array<1|Object, proven, pristine[Storage, Names, Dense]> allocationSite=33 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v5: Array<Array<1|Object, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v4 provenType=Array<Array<1|Object, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v6: WeakMap = CallBuiltin -, v5 overload=WeakMap/2 accessSite=14
 # CHECK-NEXT: v7: WeakMap<anything, anything, pristine[Storage, Names]> = AssumeType v6 provenType=WeakMap<anything, anything, pristine[Storage, Names]>
 # CHECK-NEXT: v8: WeakMap<anything, number, pristine[Storage, Names]> = Upcast v7 castType=WeakMap<anything, number, pristine[Storage, Names]>
@@ -716,11 +716,11 @@ function f88 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function f22 module=
-# CHECK: m0 position=2134 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=undefined|number flags=[IsExpected]}] functionTypes=[f67] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f90 fallback=f92} {
-# CHECK-NEXT: b0(v0: anything ~ undefined|null|function):
-# CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=undefined|null|function
+# CHECK: m0 position=2134 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=undefined|number flags=[IsExpected]}] functionTypes=[f67] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f90 fallback=f92} {
+# CHECK-NEXT: b0(v0: anything ~ undefined|null|function|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19):
+# CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=undefined|null|function|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19
 # CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v2: undefined|null|function):
+# CHECK-NEXT: b1(v2: undefined|null|function|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19):
 # CHECK-NEXT: v3: anything ~ undefined|number = CallDirect v2 function=f90
 # CHECK-NEXT: ReturnCall v3
 # CHECK-NEXT: b2() frequency=Unlikely:
@@ -728,11 +728,11 @@ function f88 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: ReturnCall v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function f39 module=
-# CHECK: m0 position=4755 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=boolean}] functionTypes=[f84] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f91 fallback=f93} {
-# CHECK-NEXT: b0(v0: anything ~ undefined|null|function):
-# CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=undefined|null|function
+# CHECK: m0 position=4755 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=boolean}] functionTypes=[f84] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f91 fallback=f93} {
+# CHECK-NEXT: b0(v0: anything ~ undefined|null|function|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19):
+# CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=undefined|null|function|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19
 # CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v2: undefined|null|function):
+# CHECK-NEXT: b1(v2: undefined|null|function|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19):
 # CHECK-NEXT: v3: boolean = CallDirect v2 function=f91
 # CHECK-NEXT: ReturnCall v3 requirement=Allowed
 # CHECK-NEXT: b2() frequency=Unlikely:
@@ -745,7 +745,7 @@ function f88 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v2: boolean = TypeTest v1 testedType=f22
 # CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b3(| 0)
 # CHECK-NEXT: b1(v3: f22) handler=b4():
-# CHECK-NEXT: v4: anything ~ undefined|null|function = GetCapture v3 function=f22
+# CHECK-NEXT: v4: anything ~ undefined|null|function|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19 = GetCapture v3 function=f22
 # CHECK-NEXT: v5: anything ~ undefined|number = CallDirect v4 function=f22 accessSite=5
 # CHECK-NEXT: v6: boolean ~ true = TypeTest v5 testedType=undefined|null|boolean|number|string|symbol|bigint
 # CHECK-NEXT: Branch v6 -> taken b5(), notTaken b2(| 0)
@@ -753,7 +753,7 @@ function f88 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v8: string = ToString v7 calledBuiltin=String
 # CHECK-NEXT: Jump -> next b5()
 # CHECK-NEXT: b3(v9: f39) handler=b4():
-# CHECK-NEXT: v10: anything ~ undefined|null|function = GetCapture v9 function=f39
+# CHECK-NEXT: v10: anything ~ undefined|null|function|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19 = GetCapture v9 function=f39
 # CHECK-NEXT: v11: boolean = CallDirect v10 function=f39 accessSite=5
 # CHECK-NEXT: Jump -> next b5()
 # CHECK-NEXT: b4() role=CatchHandler:

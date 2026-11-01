@@ -129,6 +129,18 @@ fn own_default_that_holds_the_module_object_is_the_module_object() {
 }
 
 #[test]
+fn default_that_a_module_adds_to_a_class_of_the_realm_is_a_property_of_the_class_too() {
+    let class = namespace_of(RuntimeModule::AbortController);
+    let property = own_member(class, name("default")).unwrap();
+    assert!(!has_flag(property, BuiltinFlags::IS_DEFAULT_EXPORT));
+    assert_eq!(canonical_id(property), property);
+    assert_eq!(
+        member(class, name("default")),
+        MemberLookup::Found(property)
+    );
+}
+
+#[test]
 fn export_that_only_the_namespace_holds() {
     let held = ExportLookup::HeldByNamespace;
     assert_eq!(default_export_of(RuntimeModule::Utf8Validate), held);
@@ -145,11 +157,13 @@ fn export_that_only_the_namespace_holds() {
 }
 
 #[test]
-fn module_object_that_is_a_class_is_a_constructor_with_other_members() {
-    let module_object = entry(namespace_of(RuntimeModule::AbortController));
-    assert_eq!(module_object.kind, BuiltinKind::Constructor);
-    let flags = module_object.flags;
-    assert!(!flags.contains(BuiltinFlags::LISTS_ALL_MEMBERS));
+fn module_object_that_is_a_class_is_a_constructor_that_lists_what_the_module_adds() {
+    let class = namespace_of(RuntimeModule::AbortController);
+    assert_eq!(entry(class).kind, BuiltinKind::Constructor);
+    assert!(has_flag(class, BuiltinFlags::LISTS_ALL_MEMBERS));
+    for added in ["AbortController", "AbortSignal", "default"] {
+        assert!(own_member(class, name(added)).is_some(), "{added}");
+    }
 }
 
 #[test]
@@ -193,6 +207,7 @@ fn default_export_flag_marks_bindings_to_module_objects() {
     assert!(is_marked(BuiltinId::NodeFsDefault));
     assert!(is_marked(BuiltinId::BunJscDefault));
     assert!(!is_marked(BuiltinId::BunSqliteDefault));
+    assert!(!is_marked(BuiltinId::AbortControllerDefault));
 }
 
 #[test]

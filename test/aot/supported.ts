@@ -4,15 +4,15 @@
 import {
   beforeAll as beforeAllAnywhere,
   describe as describeAnywhere,
-  setDefaultTimeout,
   test as testAnywhere,
 } from "bun:test";
 import { unsupported } from "./harness/compiler";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 
 export { unsupported };
 
 // One build takes about as long as the whole default limit of bun:test.
-setDefaultTimeout(120_000);
+raiseDefaultTimeout(120_000);
 
 // bun:test refuses `.skipIf()`, `.todo` and the like on what is skipped already.
 export function alwaysSkipped<T extends object>(skipped: T): T {

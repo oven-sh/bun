@@ -190,7 +190,7 @@ function f2 name="thenAStringThatItsLoopReads" module=m0 position=2539 flags=[Ha
 # CHECK-NEXT: b10():
 # CHECK-NEXT: v27: fact = Specified
 # CHECK-NEXT: v28: int[-2147483643, 2147483647] = AssumeType v14, v27 provenType=int[-2147483643, 2147483647]
-# CHECK-NEXT: v29: L1 = NewObject -, v28 layout=L1 fields=[0] allocationSite=4 allocationClass=1
+# CHECK-NEXT: v29: L1 = NewObject -, v28 layout=L1 fields=[0] allocationSite=4 storage=Frame allocationClass=1
 # CHECK-NEXT: Jump -> next b11(v29)
 # CHECK-NEXT: b11(v30: L0|L1):
 # CHECK-NEXT: v31: anything ~ undefined|int[-2147483643, 2147483647] = PropGet v30 key="other" accessSite=8 receivers=[L0, L1]

@@ -1794,13 +1794,39 @@ console.log("survived", require("./late.js"));`,
             require("node:module").runMain(target);
             setImmediate(() => {
               delete require.cache[target];
-              import(target);
+              import(require("node:url").pathToFileURL(target));
             });
           `,
           "target.cjs": print("target.cjs", isMain),
         },
         ["wrapper.cjs"],
         ["target.cjs: require.main===module true", "target.cjs: require.main===module false"],
+      ],
+      [
+        "a second copy of the launcher, which import() makes after it started a script, is not a main module",
+        {
+          "wrapper.cjs": `
+            const path = require("node:path");
+            ${print("wrapper.cjs", isMain, id)}
+            if (!process.env.WRAPPER_RAN) {
+              process.env.WRAPPER_RAN = "1";
+              process.on("exit", () => { ${print("at exit", mainModule)} });
+              ${start("target.cjs")}
+              setImmediate(() => {
+                delete require.cache[__filename];
+                import(require("node:url").pathToFileURL(__filename));
+              });
+            }
+          `,
+          "target.cjs": print("target.cjs", isMain),
+        },
+        ["wrapper.cjs"],
+        [
+          "wrapper.cjs: require.main===module true | id .",
+          "target.cjs: require.main===module true",
+          "wrapper.cjs: require.main===module false | id <filename>",
+          "at exit: process.mainModule target.cjs",
+        ],
       ],
       [
         "a second --require preload, after one that started other.cjs, is not a main module",
@@ -1895,6 +1921,30 @@ console.log("survived", require("./late.js"));`,
         },
         ["wrapper.cjs"],
         ["target.cjs: require.main===module true"],
+        { bunOnly: true },
+      ],
+      [
+        "a script that an onLoad callback starts while another script loads: both are main modules",
+        {
+          "wrapper.cjs": `
+            const path = require("node:path");
+            const Module = require("node:module");
+            Bun.plugin({
+              name: "starts another script",
+              setup(build) {
+                build.onLoad({ filter: /outer\\.cjs$/ }, args => {
+                  Module.runMain(path.resolve("inner.cjs"));
+                  return { contents: require("node:fs").readFileSync(args.path, "utf8"), loader: "js" };
+                });
+              },
+            });
+            Module.runMain(path.resolve("outer.cjs"));
+          `,
+          "outer.cjs": print("outer.cjs", isMain, id),
+          "inner.cjs": print("inner.cjs", isMain, id),
+        },
+        ["wrapper.cjs"],
+        ["inner.cjs: require.main===module true | id .", "outer.cjs: require.main===module true | id ."],
         { bunOnly: true },
       ],
       // Node has no import.meta in a CommonJS module.

@@ -152,27 +152,27 @@ pub enum MainEntryPoint {
 /// Main modules that `Module.runMain()` starts: an ES module is one by its registry key, a CommonJS module by its load.
 #[derive(Default)]
 pub struct RunMainModules {
-    keys: Vec<Box<[u8]>>,
-    /// Index in `keys` of the key that `Module.runMain()` is loading now.
-    loading: Option<usize>,
+    keys: bun_collections::StringSet,
+    /// The keys that `Module.runMain()` is loading now. A call inside a call is last.
+    loading: Vec<Box<[u8]>>,
+    /// A preload started a script: the load of the entry module makes it the main module again, as in Node.
+    entry_takes_back: bool,
 }
 
 impl RunMainModules {
-    pub fn begin_load(&mut self, key: &[u8]) {
-        let index = self.keys.iter().position(|started| **started == *key);
-        self.loading = Some(index.unwrap_or_else(|| {
-            self.keys.push(Box::from(key));
-            self.keys.len() - 1
-        }));
+    pub fn begin_load(&mut self, key: &[u8], in_preload: bool) {
+        bun_core::handle_oom(self.keys.insert(key));
+        self.loading.push(Box::from(key));
+        self.entry_takes_back |= in_preload;
     }
 
     pub fn end_load(&mut self) {
-        self.loading = None;
+        self.loading.pop();
     }
 
     #[inline]
     pub fn is_loading(&self, key: &[u8]) -> bool {
-        self.loading.is_some_and(|index| *self.keys[index] == *key)
+        self.loading.last().is_some_and(|loading| **loading == *key)
     }
 
     #[inline]
@@ -181,7 +181,11 @@ impl RunMainModules {
     }
 
     pub fn contains(&self, key: &[u8]) -> bool {
-        self.keys.iter().any(|started| **started == *key)
+        self.keys.contains(key)
+    }
+
+    pub fn take_entry_takes_back(&mut self) -> bool {
+        core::mem::take(&mut self.entry_takes_back)
     }
 }
 

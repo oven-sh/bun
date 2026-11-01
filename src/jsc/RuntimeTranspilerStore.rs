@@ -759,8 +759,9 @@ impl TranspilerJob {
             unsafe { &mut *(&raw mut *transpiler_storage).cast::<Transpiler<'_>>() };
         transpiler.set_arena(&arena);
         transpiler.set_log(&raw mut log);
-        // The copy has the `require.extensions` list of `vm.transpiler`, which the JS thread frees when a script
-        // assigns an extension. SAFETY: the copy is never dropped, so the list of this job keeps one owner, the job.
+        // The copy has the `require.extensions` list of `vm.transpiler`. The JS thread replaces and frees that list when
+        // a script assigns an extension, so the copied field can be stale or torn. Nothing has read it: this write
+        // replaces it. SAFETY: the copy is never dropped, so the list of this job keeps one owner, the job.
         unsafe {
             ptr::write(
                 &raw mut transpiler.resolver.opts.extra_cjs_extensions,

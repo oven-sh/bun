@@ -104,11 +104,11 @@ impl MacroContext {
     }
 
     /// Resolves the import of a macro for Bun, where the macro runs, and not for the output of the importing build.
-    fn resolve(
+    fn resolve<'r>(
         &mut self,
         source_dir: &[u8],
-        specifier: &[u8],
-    ) -> crate::Result<bun_resolver::Result> {
+        specifier: &'r [u8],
+    ) -> crate::Result<bun_resolver::Result<'r>> {
         // SAFETY: `resolver` outlives `self` (see struct comment), and nothing resolves with it during this call.
         let importer = unsafe { &*self.resolver };
         let resolver = match &mut self.macro_resolver {

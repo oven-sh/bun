@@ -1150,6 +1150,7 @@ fn macro_resolver_options(
                 default: from.extension_order.node_modules.default.clone(),
                 esm: from.extension_order.node_modules.esm.clone(),
             },
+            required_by_package: from.extension_order.required_by_package.clone(),
             css: from.extension_order.css.clone(),
         },
     })

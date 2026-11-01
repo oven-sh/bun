@@ -211,7 +211,7 @@ pub mod debug {
             if !self.address_map.contains_key(&m.base_address) {
                 let obj_di = Box::new(Module {
                     base_address: m.base_address,
-                    // SAFETY: the loader listed the object a moment ago.
+                    // SAFETY: `address` is in code on a stack that is in use, so the loader keeps its object.
                     name: Box::from(unsafe { m.name() }),
                 });
                 self.address_map.insert(m.base_address, obj_di);
@@ -306,7 +306,7 @@ pub mod debug {
     #[cfg(not(any(target_vendor = "apple", windows)))]
     fn lookup_module_name_dl(address: usize) -> Option<Box<[u8]>> {
         bun_sys::elf::find_loaded_module(address)
-            // SAFETY: the loader listed the object a moment ago.
+            // SAFETY: `address` is in code on a stack that is in use, so the loader keeps its object.
             .map(|m| Box::from(bun_paths::basename(unsafe { m.name() })))
     }
 

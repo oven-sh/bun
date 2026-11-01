@@ -141,15 +141,11 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
         let entry_point_chunk_indices = deps.entry_point_chunk_indices;
 
         // Go over each file in this chunk
+        debug_assert!(
+            chunk.content.is_javascript() || chunk.files_with_parts_in_chunk.is_empty(),
+            "only a JS chunk has files in `files_with_parts_in_chunk`",
+        );
         for &source_index in chunk.files_with_parts_in_chunk.keys() {
-            // TODO: make this switch
-            if matches!(chunk.content, chunk::Content::Css(_)) {
-                continue;
-            }
-            if !matches!(chunk.content, chunk::Content::Javascript(_)) {
-                continue;
-            }
-
             // Go over each part in this file that's marked for inclusion in this chunk
             let parts = deps.parts[source_index as usize].as_slice();
             let parts_live = &ctx.graph.parts_live[source_index as usize];

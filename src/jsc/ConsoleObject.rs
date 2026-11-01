@@ -2647,7 +2647,7 @@ pub mod formatter {
         pub(crate) fn write_indent(&mut self, indent: u32) {
             let mut total_remain: u32 = indent;
             while total_remain > 0 {
-                let written: u8 = total_remain.min(32) as u8;
+                let written: u8 = total_remain.min(MAX_INDENT_PER_WRITE) as u8;
                 if self
                     .ctx
                     .write_all(&INDENTATION_BUF[0..(written as usize) * 2])
@@ -2766,7 +2766,7 @@ pub mod formatter {
     fn write_indent_n(indent: u32, writer: &mut dyn bun_io::Write) -> bun_io::Result<()> {
         let mut total_remain: u32 = indent;
         while total_remain > 0 {
-            let written: u8 = total_remain.min(32) as u8;
+            let written: u8 = total_remain.min(MAX_INDENT_PER_WRITE) as u8;
             writer.write_all(&INDENTATION_BUF[0..(written as usize) * 2])?;
             total_remain = total_remain.saturating_sub(u32::from(written));
         }

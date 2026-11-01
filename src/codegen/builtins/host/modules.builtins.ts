@@ -1,5 +1,4 @@
 import * as b from "bun-builtins-table";
-import { environmentCell } from "./native-cells.ts";
 
 const pathListRead = b.runsTransitively("OwnValues", "PrototypeChain", b.named("paths"));
 
@@ -155,7 +154,7 @@ export default b.declarations(
       filename: b.property(b.string),
       path: b.property(b.string),
       main: b.property(b.bool),
-      env: b.property(b.object, { uses: { this: [b.returnedFrom(environmentCell)] } }),
+      env: b.property(b.object),
       hot: b.property(b.undefined),
       resolve: resolvesFromImportMeta(b.string.loose),
       resolveSync: resolvesFromImportMeta(b.string.loose.refusing(b.null)),

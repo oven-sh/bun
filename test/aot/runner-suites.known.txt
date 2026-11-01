@@ -216,3 +216,4 @@ test/js/bun/test/test-test.test.ts: should return non-zero exit code for invalid
 test/js/bun/test/vitest-apis.test.ts: modifiers > test.fails passes on any kind of failure, test.failing only when the test throws
 test/js/bun/test/vitest-flavor.test.ts: [test] globals = "vitest" > is part of the transpiler cache key
 ~ test/js/bun/test/mock/mock-module.test.ts: two mocks that patch one variable, which two modules export, are both undone when the file ends > the module that re-exports it, then the one that re-exports that
+~ test/js/bun/test/mock/mock-module.test.ts: two mocks that patch one variable, which two modules export, are both undone when the file ends > the second without a factory

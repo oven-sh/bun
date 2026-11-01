@@ -52,9 +52,9 @@ const together = Object.fromEntries(
 
 // The words bring layers to a run this small, and a program for each test file: a worker process runs one program above the layers.
 const ways: [how: string, flags: string[], words?: string][] = [
-  ["over layers", ["--aot"], "TestRunLayers:2,TestRunPartFiles:1"],
-  ["as one program", ["--aot"]],
   ["in plain Bun", []],
+  ["as one program", ["--aot"]],
+  ["over layers", ["--aot"], "TestRunLayers:2,TestRunPartFiles:1"],
 ];
 
 // What a run prints about the file whose test fails, without the empty lines.
@@ -133,7 +133,8 @@ function ends(exitCode: number, title: string, files: Record<string, string>, fl
   );
 }
 
-// The runs over layers come first: they take longest, and the others fit beside the last of them.
+// The runs over layers come last. A run waits for its slot with the limit of its test running, and a run over layers holds a slot for as long as
+// a lowest layer takes to build: behind eight of them the short runs would wait their limits out.
 for (const [how, flags, words] of ways) {
   const inParallel = [...flags, "--parallel=2"];
   for (const [name, files] of Object.entries(projects)) {

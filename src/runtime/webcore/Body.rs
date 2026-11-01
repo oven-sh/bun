@@ -1455,7 +1455,7 @@ impl Value {
                 return Ok(Value::Used);
             }
 
-            if let Some((rs0, rs1)) = readable.tee(cx.global())? {
+            if let Some((rs0, rs1)) = readable.tee(cx.global(), true)? {
                 // Keep the current readable as a strong reference when cloning, and return the second one in the result.
                 // This will be checked and downgraded to a write barrier if needed.
                 locked.readable = webcore::readable_stream::Strong::init(rs0, cx.global());
@@ -1469,7 +1469,7 @@ impl Value {
             return Ok(Value::Used);
         }
 
-        if let Some(readable) = locked.readable.tee(cx.global())? {
+        if let Some(readable) = locked.readable.tee(cx.global(), true)? {
             return Ok(Value::Locked(PendingValue {
                 readable: webcore::readable_stream::Strong::init(readable, cx.global()),
                 ..PendingValue::new(cx.global())
@@ -1530,7 +1530,7 @@ impl Value {
         }
         locked.detach_producer();
 
-        let teed = match locked.readable.tee(cx.global())? {
+        let teed = match locked.readable.tee(cx.global(), true)? {
             Some(t) => t,
             None => return Ok(Value::Used),
         };

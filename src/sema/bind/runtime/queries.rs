@@ -96,8 +96,10 @@ impl<S: Storage> BoundIn<S> {
         let stores = &references.stores[..];
         let first_store = stores.partition_point(|store| store.symbol < symbol);
         let mut declared = self.runtime.declarations.declared_symbols.iter();
+        let mut own_declarations = self.symbol(symbol).decls.iter();
         declared
             .any(|&(declaration, target)| target == symbol && matches!(declaration, Decl::Fn(_)))
+            || own_declarations.any(|declaration| matches!(declaration, Decl::Var(_)))
             || flags.intersects(other_ways)
             || has_bit(&references.eval_visible_symbols, symbol.idx())
             || (stores.get(first_store)).is_some_and(|store| store.symbol == symbol)

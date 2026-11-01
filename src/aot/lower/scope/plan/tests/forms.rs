@@ -192,6 +192,13 @@ fn parameter_is_mapped_only_where_that_can_be_told() {
         "(() => { once = 1; })(); arguments[0];",
         "once++; arguments[0];",
         "function once() {} arguments[0];",
+        "var once = 1; arguments[0];",
+        "var [once] = other; arguments[0];",
+        "var { once } = other; arguments[0];",
+        "for (var once = 1; other; ); arguments[0];",
+        "for (var once of other); arguments[0];",
+        "for (var once in other); arguments[0];",
+        "if (other) { var once = 1; } arguments[0];",
     ] {
         assert!(
             mapped(&format!("{tells} return () => once;"), "once"),

@@ -88,10 +88,7 @@ describe("WebKit prebuilt URL", () => {
   });
 
   test("debug picks the -debug-aot artifact from the same release tag", () => {
-    const cfg = resolveConfig(
-      { os: "linux", arch: "x64", abi: "gnu", buildType: "Debug", asan: false, baseline: false, linuxSysroot: "/fake" },
-      mockToolchain(),
-    );
+    const cfg = resolveLinuxRelease({ buildType: "Debug", asan: false });
     expect(prebuiltUrlOf(cfg)).toBe(
       `https://github.com/oven-sh/WebKit/releases/download/${defaultTag}/bun-webkit-linux-amd64-debug-aot.tar.gz`,
     );

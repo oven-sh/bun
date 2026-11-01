@@ -18,7 +18,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@auth/drizzle-adapter": "^1.7.2",
+    "@auth/core": "0.41.3",
+    "@auth/drizzle-adapter": "1.11.3",
     "@t3-oss/env-nextjs": "^0.12.0",
     "@tanstack/react-query": "^5.69.0",
     "@trpc/client": "^11.0.0",
@@ -27,7 +28,7 @@
     "drizzle-orm": "^0.41.0",
     "esbuild": "^0.25.11",
     "next": "^16.1.0",
-    "next-auth": "5.0.0-beta.30",
+    "next-auth": "5.0.0-beta.32",
     "postgres": "^3.4.4",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",

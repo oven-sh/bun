@@ -430,15 +430,15 @@ pub fn path_contains_node_modules_folder(path: &[u8]) -> bool {
 
 /// Tells a package file from a file of the project, for a project that may itself be in a package folder of `node_modules`.
 #[derive(Clone, Copy)]
-pub struct NodeModulesScope {
+pub struct NodeModulesScope<'a> {
     /// The package folder that the project is in, with no trailing separator.
-    project_root: Option<&'static [u8]>,
+    project_root: Option<&'a [u8]>,
 }
 
-impl NodeModulesScope {
+impl<'a> NodeModulesScope<'a> {
     /// For a project that starts in `root`. Not for the macro guard: it must refuse every file of `node_modules`.
     #[inline]
-    pub fn below_root(root: &'static [u8]) -> Self {
+    pub fn below_root(root: &'a [u8]) -> Self {
         Self {
             project_root: project_root(root, crate::Platform::AUTO),
         }

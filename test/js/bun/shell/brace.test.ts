@@ -811,16 +811,19 @@ describe.concurrent("brace + glob composition", () => {
   // root can read a directory of any mode
   test.skipIf(isWindows || isRoot)("a variant whose walk fails is a variant with no match", async () => {
     using dir = tempDir("shell-brace-glob-eacces", {
-      "placeholder.txt": "",
       "base/work/d1/f1": "",
       "base/work/.secret/s": "",
+      "walk/placeholder.txt": "",
     });
     const root = String(dir);
     const noaccess = join(root, "noaccess");
+    const locked = join(root, "walk", "locked");
     const base = join(root, "base");
     const secret = join(base, "work", ".secret");
     mkdirSync(noaccess);
+    mkdirSync(locked);
     chmodSync(noaccess, 0o000);
+    chmodSync(locked, 0o000);
     chmodSync(secret, 0o000);
     chmodSync(base, 0o111);
     // The path of the temporary folder can have a space, so it is a value in each script and `<root>` in the output.
@@ -831,7 +834,7 @@ describe.concurrent("brace + glob composition", () => {
     };
     try {
       // The other variant has a match, so the word does not fail, as in bash.
-      const words = ["<root>/base", "<root>/noaccess", "<root>/noaccess/*", "<root>/placeholder.txt"];
+      const words = ["<root>/base", "<root>/noaccess", "<root>/noaccess/*", "<root>/walk"];
       const braced = await result($`echo {${root},${noaccess}}/*`);
       expect({ ...braced, stdout: braced.stdout.trim().split(" ").sort() }).toEqual({
         stdout: words,
@@ -850,21 +853,25 @@ describe.concurrent("brace + glob composition", () => {
       expect(await run(cwd, "echo {..,d1}/*")).toEqual({ stdout: "../* d1/f1\n", stderr: "", exitCode: 0 });
 
       // When no variant has a match, the word fails with the error of the walk.
-      const noMatch = await result($`echo {${noaccess},${noaccess}}/*`);
-      expect(noMatch.stderr).toContain("bun: Permission denied: <root>/noaccess");
-      expect({ stdout: noMatch.stdout, exitCode: noMatch.exitCode }).toEqual({ stdout: "", exitCode: 1 });
-      // The matches that a walk finds before it fails are not used, with or without a brace.
-      const partial = await result($`echo ${root}/**/placeholder*`);
-      expect(partial.stderr).toContain("bun: Permission denied: ");
-      expect({ stdout: partial.stdout, exitCode: partial.exitCode }).toEqual({ stdout: "", exitCode: 1 });
-      expect(await result($`FOO=${root}/**/placeholder*; echo $FOO`)).toEqual({
-        stdout: "<root>/**/placeholder*\n",
+      expect(await result($`echo {${noaccess},${noaccess}}/*`)).toEqual({
+        stdout: "",
+        stderr: "bun: Permission denied: <root>/noaccess/\n",
+        exitCode: 1,
+      });
+      // `walk` has one file that matches and one directory that cannot be read. The matches that a walk
+      // finds before it fails are not used, with or without a brace.
+      const failed = { stdout: "", stderr: "bun: Permission denied: <root>/walk/locked\n", exitCode: 1 };
+      expect(await result($`echo ${root}/walk/**/placeholder*`)).toEqual(failed);
+      expect(await result($`echo ${root}/walk/**/{placeholder*,nope*}`)).toEqual(failed);
+      expect(await result($`FOO=${root}/walk/**/placeholder*; echo $FOO`)).toEqual({
+        stdout: "<root>/walk/**/placeholder*\n",
         stderr: "",
         exitCode: 0,
       });
     } finally {
       chmodSync(base, 0o755);
       chmodSync(secret, 0o755);
+      chmodSync(locked, 0o755);
       chmodSync(noaccess, 0o755);
     }
   });
@@ -927,10 +934,11 @@ describe.concurrent("brace + glob composition", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      expect({ args, stdout: list(stdout), exitCode }).toEqual({
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ args, stdout: list(stdout), stderr, exitCode }).toEqual({
         args,
         stdout: ["d1/f1", "nope/*", "d2/f3"],
+        stderr: args[0] === "run" ? "$ echo {d1,nope,d2}/*\n" : "",
         exitCode: 0,
       });
     }

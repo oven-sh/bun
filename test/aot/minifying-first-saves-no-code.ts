@@ -163,13 +163,14 @@ async function writeForm(form: Form, it: Case, written: string, folder: string):
 /**
  * What the map of an image says of its functions. Row `F` (a function): its number, offset, size, .., what it is (8), .., its file (10), ... Row `A` (a function that shares the code
  * of another): the same without the number. The row `S` behind a function has five columns for each instruction: the operation it was generated for, the number of that operation, where
- * it was inlined from, offset, size.
+ * it was inlined from, offset, size. `entryPoints`: the files that the image begins at, one for an image of one program.
  */
-function readMap(path: string): Omit<Measured, "runtimeOperations"> {
+function readMap(path: string): Omit<Measured, "runtimeOperations"> & { entryPoints: string[] } {
   let codeBytes = 0;
   const byOperation: Record<string, number> = {};
   let operations = 0;
   const files: { path: string; offset: string }[] = [];
+  const entryPoints: string[] = [];
   const offsetsOfCodeWithOperations = new Set<string>();
   let offset = "";
   for (const line of readFileSync(path, "latin1").split("\n")) {
@@ -178,9 +179,11 @@ function readMap(path: string): Omit<Measured, "runtimeOperations"> {
       codeBytes += Number(fields[3]);
       offset = fields[2];
       if (fields[8] === "module") files.push({ path: fields[10], offset });
+      else if (fields[8] === "entry") entryPoints.push(fields[10]);
     } else if (fields[0] === "A") {
       codeBytes += Number(fields[2]);
       if (fields[7] === "module") files.push({ path: fields[9], offset: fields[1] });
+      else if (fields[7] === "entry") entryPoints.push(fields[9]);
     } else if (fields[0] === "S") {
       const seen = new Set<string>();
       for (let at = 1; at + 4 < fields.length + 1; at += 5) {
@@ -196,7 +199,7 @@ function readMap(path: string): Omit<Measured, "runtimeOperations"> {
     }
   }
   const pathsThatRun = [...new Set(files.filter(file => offsetsOfCodeWithOperations.has(file.offset)).map(file => file.path))]; // prettier-ignore
-  return { codeBytes, operations, filesThatRun: pathsThatRun.length, pathsThatRun, byOperation };
+  return { codeBytes, operations, filesThatRun: pathsThatRun.length, pathsThatRun, byOperation, entryPoints };
 }
 
 function runtimeOperationsIn(path: string) {
@@ -254,18 +257,26 @@ async function measureForm(
       { ...bunEnv, [buildEnvironment.mapFilePath]: map },
       600_000,
     );
-    // An entry point that loads a file by a name that the build does not know may load any of the others: the build has one program then, and one map.
+    // An entry point that loads a file by a name that the build does not know may load any of the others: the build has one program then, and one map. So has a build whose
+    // programs would repeat much of Bun's library: one program holds it once (`repeat_much_library_text` in src/aot/compile/load_stage.rs).
     if (built.exitCode === 0 && !existsSync(`${map}.${entryPoints.length}`))
       return {
         exitCode: 1,
-        stderr: "it may load any file of the executable, so nothing beside it is compiled as it is alone",
+        stderr:
+          "it may load any file of the executable, or it repeats much of Bun's library, so nothing beside it is compiled as it is alone",
       };
     return built;
   };
   const measured = new Map<number, Measured & { output: string | undefined }>();
   const measureExecutable = async (taken: number[]) => {
-    // The runner's image has the first map.
-    const maps = taken.map((_, at) => readMap(`${map}.${at + 1}`));
+    // The build compiles the programs that ask the same of Bun's library together, one such group behind the other, and numbers its maps as it goes. So the number of a map
+    // does not say which entry point it is of: a map is that of the case whose starter its image begins at.
+    const sizesIn = new Map<string, Omit<Measured, "runtimeOperations">>();
+    for (let number = 0; existsSync(number ? `${map}.${number}` : map); number++) {
+      const { entryPoints, ...sizes } = readMap(number ? `${map}.${number}` : map);
+      const path = entryPoints.length === 1 ? entryPoints[0].split(/[\\/]/) : [];
+      if (path.at(-1) === starter) sizesIn.set(path.at(-2)!, sizes);
+    }
     const running = taken.filter(index => cases[index].runs !== false);
     const printed = running.length
       ? await run([executable], folder, running.map(entryIn), { [runtimeEnvironment.forbidsInterpreter]: "1" })
@@ -287,12 +298,16 @@ async function measureForm(
         }
       }),
     );
-    for (const [at, index] of taken.entries())
-      measured.set(index, {
-        ...maps[at],
-        runtimeOperations: calls.get(index),
-        output: running.includes(index) ? printed[running.indexOf(index)] : undefined,
-      });
+    for (const index of taken) {
+      const sizes = sizesIn.get(folderOf(index));
+      if (!sizes) failures[index] = "the build: none of its maps is that of the image that begins at the case";
+      else
+        measured.set(index, {
+          ...sizes,
+          runtimeOperations: calls.get(index),
+          output: running.includes(index) ? printed[running.indexOf(index)] : undefined,
+        });
+    }
   };
   const measureTogether = async (among: number[]): Promise<void> => {
     if (!among.length) return;

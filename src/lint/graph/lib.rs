@@ -210,6 +210,7 @@ fn with_file<R>(
         emit_standard_class_fields: true,
         before_es2020: false,
         before_es2017: false,
+        runtime: None,
     };
     let mut recycled = Recycled::for_current_thread();
     let bound = bind_for_lint_in(&hir, bind_options, &atoms, &mut recycled);

@@ -1,0 +1,20 @@
+# define.js: Object.defineProperty semantics: process.stdin defined | delete.js: delete process.features
+# A definition looks for the property first, and the host makes the value of a member when it is first looked for: the code that makes it is in the image.
+# A deletion that finds a member has the host make every other member of the holder too.
+# store-into-a-host-object-is-no-use-of-the-member-it-replaces.ir has the store, which does not look
+# RUN: valueflow-why used-builtin=ProcessStdin used-builtin=ProcessStdout
+# CHECK: used-builtin=ProcessStdin
+# CHECK-NOT: not held
+# CHECK: used-builtin=ProcessStdout
+# CHECK-NOT: not held
+
+module m0 path="/app/main.js" displayPath="main.js" kind=SourceText body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = Integer integer=1
+    PropDefine v0, v1 key="stdin"
+    v3 = PropDelete v0 key="features"
+    Return
+}

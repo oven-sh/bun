@@ -11,4 +11,6 @@ workspace = true
 
 [dependencies]
 bun_core.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
 bun_sys.workspace = true

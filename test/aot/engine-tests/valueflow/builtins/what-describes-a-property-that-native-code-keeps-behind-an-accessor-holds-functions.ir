@@ -1,0 +1,60 @@
+# kept = { get: Object.getOwnPropertyDescriptor(process.env, "TZ").get };  plain = { get: Object.getOwnPropertyDescriptor(process.env, "HOME").get }
+# event = { get: Object.getOwnPropertyDescriptor(new Event("x"), "isTrusted").get }
+# copy = Object.defineProperties({}, Object.getOwnPropertyDescriptors(ReadableStreamDefaultReader.prototype));  copied = { get: Object.getOwnPropertyDescriptor(copy, "closed").get }
+# own = { get: Object.getOwnPropertyDescriptor({ a: 1 }, "a").get }
+# Native code lays accessors of its own on some objects. What describes such a property holds a function under `get`, so a field that takes it may hold a function.
+# A property of an object that the program made alone is a value: its description holds undefined there.
+# The object with such accessors is the one that native code makes, which Windows does not have: there process.env is a proxy that the library makes.
+# REQUIRES: not-windows
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Kept"
+# CHECK-NOT: declared={type=undefined}
+# CHECK: layout L1 name="Event"
+# CHECK-NOT: declared={type=undefined}
+# CHECK: layout L2 name="Copied"
+# CHECK-NOT: declared={type=undefined}
+# CHECK: layout L3 name="Own" fields=[{key="get" declared={type=undefined}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Kept" fields=[{key="get" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Event" fields=[{key="get" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Copied" fields=[{key="get" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="Own" fields=[{key="get" declared={type=anything} flags=[IsRequired]}]
+layout L4 name="Copy"
+layout L5 name="Made" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=ObjectGetOwnPropertyDescriptor
+    v1 = Builtin builtin=Process
+    v2 = PropGet v1 key="env"
+    v3 = String string="TZ"
+    v4 = Call v0, -, v2, v3
+    v5 = PropGet v4 key="get"
+    v6 = NewObject -, v5 layout=L0 fields=[0]
+    v7 = Builtin builtin=Event
+    v8 = String string="x"
+    v9 = Construct v7, -, v8
+    v10 = String string="isTrusted"
+    v11 = Call v0, -, v9, v10
+    v12 = PropGet v11 key="get"
+    v13 = NewObject -, v12 layout=L1 fields=[0]
+    v14 = Builtin builtin=ReadableStreamDefaultReader
+    v15 = PropGet v14 key="prototype"
+    v16 = Builtin builtin=CompilerHelpersDescribeUnlessOrdinary [isNotReadFromHolder]
+    v17 = Call v16, -, v15
+    v18 = NewObject layout=L4
+    v19 = FinishObject v18
+    v20 = Builtin builtin=CompilerHelpersDefinePropertiesFrom
+    v21 = Call v20, -, v19, v17, v15
+    v22 = String string="closed"
+    v23 = Call v0, -, v21, v22
+    v24 = PropGet v23 key="get"
+    v25 = NewObject -, v24 layout=L2 fields=[0]
+    v26 = Integer integer=1
+    v27 = NewObject -, v26 layout=L5 fields=[0]
+    v28 = String string="a"
+    v29 = Call v0, -, v27, v28
+    v30 = PropGet v29 key="get"
+    v31 = NewObject -, v30 layout=L3 fields=[0]
+    Return
+}

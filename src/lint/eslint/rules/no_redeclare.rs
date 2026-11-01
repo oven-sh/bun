@@ -5,12 +5,12 @@ pub struct NoRedeclare {
     config: Config,
 }
 
-const REDECLARED: Message = Message::new("redeclared", "'{{id}}' is already defined.");
-const REDECLARED_AS_BUILTIN: Message = Message::new(
+const REDECLARED: &Message = &Message::new("redeclared", "'{{id}}' is already defined.");
+const REDECLARED_AS_BUILTIN: &Message = &Message::new(
     "redeclaredAsBuiltin",
     "'{{id}}' is already defined as a built-in global variable.",
 );
-const REDECLARED_BY_SYNTAX: Message = Message::new(
+const REDECLARED_BY_SYNTAX: &Message = &Message::new(
     "redeclaredBySyntax",
     "'{{id}}' is already defined by a variable declaration.",
 );
@@ -133,7 +133,7 @@ fn report<'a, R: Rule>(cx: &Cx<'a, R>, name: &'a [u8], declarations: &[(Declarat
         let message = if declaration_type == first { REDECLARED } else { detail };
         let report = cx.report(if is_before { previous } else { span }, message).data("id", name).hint_with(|| {
             let line = cx.line_of(first_span.start);
-            (first != DeclarationType::Builtin).then(|| format!("It is first declared on line {line}."))
+            (first != DeclarationType::Builtin).then(|| format!("First declared on line {line}."))
         });
         report.labels_with(|labels| {
             if is_before {

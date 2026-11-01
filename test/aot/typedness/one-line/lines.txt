@@ -1,0 +1,275 @@
+# title | code, with \n for a new line | opens, if the line is known to open a type of the base program
+array map | console.log(rows.map(row => row.name));
+array map with index | console.log(rows.map((row, index) => row.n + index));
+array filter | console.log(rows.filter(row => row.n > 1).length);
+array find | console.log(rows.find(row => row.n === 2)?.name);
+array findLast | console.log(rows.findLast(row => row.n > 0)?.name);
+array findIndex | console.log(rows.findIndex(row => row.name === "Bo"));
+array some every | console.log(rows.some(row => row.n > 1), rows.every(row => row.n > 1));
+array reduce to a number | console.log(rows.reduce((sum, row) => sum + row.n, 0));
+array reduce to a row | console.log(rows.reduce((best, row) => (row.n > best.n ? row : best)).name);
+array reduce to an object | console.log(rows.reduce<Record<string, Row>>((all, row) => { all[row.name] = row; return all; }, {}).Ada!.n);
+array sort | console.log([...rows].sort((a, b) => b.n - a.n)[0]!.name);
+array toSorted | console.log(rows.toSorted((a, b) => b.n - a.n)[0]!.name);
+array forEach | rows.forEach(row => console.log(row.name));
+array flatMap | console.log(orders.flatMap(order => order.tags).length, orders.flatMap(order => [order.row]).length); | opens
+array map to a new record | console.log(rows.map(row => ({ label: row.name, twice: row.n * 2 }))[0]!.twice);
+array map then filter then map | console.log(rows.map(row => row).filter(row => row.n).map(row => row.name).join());
+array at slice concat | console.log(rows.at(-1)!.name, rows.slice(1)[0]!.n, rows.concat(rows).length);
+array includes indexOf | console.log(rows.includes(rows[0]!), rows.indexOf(rows[1]!));
+array push pop | const stack: Row[] = []; stack.push(rows[0]!); console.log(stack.pop()!.name);
+array entries | for (const [index, row] of rows.entries()) console.log(index, row.name);
+array values keys | for (const row of rows.values()) console.log(row.name);
+array destructuring | const [first, second] = rows; console.log(first!.name, second!.n);
+array spread | const more = [...rows, { name: "Cy", n: 3 }]; console.log(more[2]!.name);
+Array.from an array | console.log(Array.from(rows)[0]!.name);
+Array.from with a function | console.log(Array.from(rows, row => row.n));
+Array.from a set | console.log(Array.from(unique)[0]!.name);
+Array.from map values | console.log(Array.from(byName.values())[0]!.name);
+Array.isArray | function one(either: Row | Row[]): string { return Array.isArray(either) ? either[0]!.name : either.name; }\nconsole.log(one(rows), one(rows[0]!));
+Object.groupBy | console.log(Object.groupBy(rows, row => row.name).Ada![0]!.n);
+Map.groupBy | console.log(Map.groupBy(rows, row => row.n).get(1)![0]!.name);
+promise then | await Promise.resolve(rows[0]!).then(row => console.log(row.name));
+promise then with a written type | await Promise.resolve(rows[0]!).then((row: Row) => console.log(row.name));
+promise then returns a row | console.log((await Promise.resolve(rows[0]!).then(row => row)).name);
+promise then chain | console.log(await Promise.resolve(rows).then(list => list[0]!).then(row => row.name));
+promise catch finally | console.log((await Promise.resolve(rows[0]!).catch(() => rows[1]!).finally(() => {})).name);
+promise all | console.log((await Promise.all(rows.map(async row => row)))[0]!.name);
+promise all tuple | const [one, two] = await Promise.all([Promise.resolve(rows[0]!), Promise.resolve(points[0]!)]); console.log(one.name, two.x);
+promise allSettled | for (const result of await Promise.allSettled([Promise.resolve(rows[0]!)])) if (result.status === "fulfilled") console.log(result.value.name); | opens
+promise race any | console.log((await Promise.race([Promise.resolve(rows[0]!)])).name, (await Promise.any([Promise.resolve(rows[1]!)])).n);
+new Promise | console.log((await new Promise<Row>(resolve => resolve(rows[0]!))).name);
+new Promise with a timer | console.log((await new Promise<Row>(resolve => setTimeout(() => resolve(rows[0]!), 1))).name);
+Promise.withResolvers | const deferred = Promise.withResolvers<Row>(); deferred.resolve(rows[0]!); console.log((await deferred.promise).name); | opens
+await a row | console.log((await rows[0]!).name);
+async function | async function load(): Promise<Row> { return rows[0]!; }\nconsole.log((await load()).name);
+async arrow in map | console.log((await Promise.all(rows.map(async row => row.n * 2))).length);
+async generator | async function* each(): AsyncGenerator<Row> { yield* rows; }\nfor await (const row of each()) console.log(row.name);
+generator | function* each(): Generator<Row> { yield* rows; }\nfor (const row of each()) console.log(row.name);
+for of a map | for (const [key, row] of byName) console.log(key, row.n);
+for of map values | for (const row of byName.values()) console.log(row.name);
+for of map entries | for (const [key, row] of byName.entries()) console.log(key, row.name);
+for of a set | for (const row of unique) console.log(row.name);
+map forEach | byName.forEach((row, key) => console.log(key, row.n));
+set forEach | unique.forEach(row => console.log(row.name));
+map get set has | byName.set("Cy", { name: "Cy", n: 3 }); console.log(byName.has("Cy"), byName.get("Cy")!.n);
+spread of map values | console.log([...byName.values()].map(row => row.name));
+WeakMap | const seen = new WeakMap<Row, Point>(); seen.set(rows[0]!, points[0]!); console.log(seen.get(rows[0]!)!.x);
+Object.values | console.log(Object.values(record).map(row => row.name));
+Object.values for of | for (const row of Object.values(record)) console.log(row.name);
+Object.entries map | console.log(Object.entries(record).map(([key, row]) => key + row.n));
+Object.entries for of | for (const [key, row] of Object.entries(record)) console.log(key, row.name);
+Object.keys | for (const key of Object.keys(record)) console.log(record[key]!.name);
+Object.keys of a row | console.log(Object.keys(rows[0]!));
+Object.values of a row | console.log(Object.values(rows[0]!));
+Object.entries of a row | console.log(Object.entries(rows[0]!));
+Object.fromEntries | console.log(Object.fromEntries(rows.map(row => [row.name, row])).Ada!.n);
+Object.fromEntries of a map | console.log(Object.fromEntries(byName).Ada!.n);
+Object.assign to a new object | console.log(Object.assign({}, rows[0]!).n); | opens
+Object.assign onto a row | const target: Row = { name: "x", n: 0 }; Object.assign(target, { n: 5 }); console.log(target.n);
+Object.freeze | const frozen = Object.freeze({ name: "f", n: 9 } as Row); console.log(frozen.name);
+Object.hasOwn | console.log(Object.hasOwn(rows[0]!, "name"));
+for in | for (const key in rows[0]!) console.log(key);
+for in a record | for (const key in record) console.log(record[key]!.n);
+spread of a row | const copy = { ...rows[0]! }; console.log(copy.name); | opens
+spread with an override | const changed: Row = { ...rows[0]!, n: 7 }; console.log(changed.n); | opens
+spread with one more | const wider = { ...rows[0]!, extra: true }; console.log(wider.name, wider.extra);
+rest of a row | const { name, ...rest } = rows[0]!; console.log(name, rest.n);
+destructuring a row | const { name: called, n: amount } = rows[0]!; console.log(called, amount);
+destructuring in a parameter | function show({ name, n }: Row): string { return name + n; }\nconsole.log(show(rows[0]!));
+destructuring in an arrow parameter | console.log(rows.map(({ name, n }) => name + n));
+nested destructuring | const { row: { name: inner } } = orders[0]!; console.log(inner);
+default parameter | function pick(row: Row = rows[0]!): string { return row.name; }\nconsole.log(pick(), pick(rows[1]!));
+optional parameter | function maybe(row?: Row): string { return row?.name ?? "none"; }\nconsole.log(maybe(), maybe(rows[1]!));
+rest parameter | function names(...list: Row[]): string { return list.map(row => row.name).join(); }\nconsole.log(names(...rows));
+optional chaining | const found: Row | undefined = rows[5]; console.log(found?.name, found?.n ?? 0);
+nullish and or | const chosen = rows[5] ?? rows[0]!; console.log(chosen.name, (rows[5] || rows[1]!).n);
+conditional | const picked = rows.length > 1 ? rows[1]! : rows[0]!; console.log(picked.name);
+JSON.stringify | console.log(JSON.stringify(rows[0]!), JSON.stringify(rows));
+JSON round trip with as | const again = JSON.parse(JSON.stringify(rows[0]!)) as Row; console.log(again.name); | opens
+JSON round trip with an annotation | const parsed: Row = JSON.parse(JSON.stringify(rows[0]!)); console.log(parsed.name); | opens
+structuredClone | const clone = structuredClone(rows[0]!); console.log(clone.name, label(clone));
+setTimeout | setTimeout(() => console.log(rows[0]!.name), 0);
+setTimeout with an argument | setTimeout(row => console.log(row.name), 0, rows[0]!);
+setTimeout with a written type | setTimeout((row: Row) => console.log(row.name), 0, rows[0]!);
+queueMicrotask | queueMicrotask(() => console.log(rows[0]!.name));
+process.nextTick | process.nextTick(() => console.log(rows[0]!.name));
+process.nextTick with an argument | process.nextTick((row: Row) => console.log(row.name), rows[0]!);
+setImmediate | setImmediate(() => console.log(rows[0]!.name));
+EventTarget | const target = new EventTarget(); target.addEventListener("x", () => console.log(rows[0]!.name)); target.dispatchEvent(new Event("x"));
+CustomEvent detail | const bus = new EventTarget(); bus.addEventListener("x", event => console.log((event as CustomEvent<Row>).detail.name)); bus.dispatchEvent(new CustomEvent<Row>("x", { detail: rows[0]! })); | opens
+EventEmitter | import { EventEmitter } from "node:events";\nconst emitter = new EventEmitter(); emitter.on("row", (row: Row) => console.log(row.name)); emitter.emit("row", rows[0]!); | opens
+typed EventEmitter | import { EventEmitter as Typed } from "node:events";\nconst typed = new Typed<{ row: [Row] }>(); typed.on("row", row => console.log(row.name)); typed.emit("row", rows[0]!); | opens
+in | const shape = shapes[0]!; console.log("radius" in shape ? shape.radius : shape.side); | opens
+in on a row | console.log("name" in rows[0]!); | opens
+instanceof own class | function x(thing: Point | Row): string | number { return thing instanceof Point ? thing.x : thing.name; }\nconsole.log(x(points[0]!), x(rows[0]!));
+instanceof on unknown | const what: unknown = points[0]; if (what instanceof Point) console.log(what.x);
+instanceof on any | const some: any = points[0]; if (some instanceof Point) console.log(some.x);
+instanceof in a catch | class Failure { constructor(public code: number) {} }\ntry { throw new Failure(7); } catch (error) { if (error instanceof Failure) console.log(error.code); }
+error subclass in a catch | class Problem extends Error { constructor(public code: number) { super("p"); } }\ntry { throw new Problem(7); } catch (error) { if (error instanceof Problem) console.log(error.code); }
+typeof guard | const mixed: Row | string = rows[0]!; console.log(typeof mixed === "string" ? mixed : mixed.name);
+typeof object on unknown | const value: unknown = rows[0]; if (typeof value === "object" && value !== null && "name" in value) console.log(value.name);
+type predicate | function isRow(value: unknown): value is Row { return typeof value === "object" && value !== null && "name" in value; }\nconst candidate: unknown = rows[0]; if (isRow(candidate)) console.log(candidate.name); | opens
+assertion function | function assertRow(value: unknown): asserts value is Row { if (typeof value !== "object") throw new Error("no"); }\nconst checked: unknown = rows[0]; assertRow(checked); console.log(checked.name);
+discriminated switch | for (const shape of shapes) switch (shape.kind) { case "circle": console.log(shape.radius); break; case "square": console.log(shape.side); }
+generic identity | function same<T>(value: T): T { return value; }\nconsole.log(same(rows[0]!).name);
+generic first | function head<T>(list: T[]): T | undefined { return list[0]; }\nconsole.log(head(rows)?.name, head(points)?.x);
+generic with a bound | function named<T extends { name: string }>(value: T): string { return value.name; }\nconsole.log(named(rows[0]!));
+generic with keyof | function get<T, K extends keyof T>(value: T, key: K): T[K] { return value[key]; }\nconsole.log(get(rows[0]!, "name"));
+generic callback | function apply<T, R>(value: T, fn: (value: T) => R): R { return fn(value); }\nconsole.log(apply(rows[0]!, row => row.name));
+generic class | class Cell<Held> { constructor(readonly held: Held) {} derive<Next>(step: (from: Held) => Next): Cell<Next> { const next = step(this.held); return new Cell(next); } }\nconsole.log(new Cell(rows[0]!).derive(row => row.name).held); | opens
+callback parameter of an own function | function each(list: Row[], fn: (row: Row) => void): void { for (const row of list) fn(row); }\neach(rows, row => console.log(row.name));
+function in a variable | const print = (row: Row): void => console.log(row.name); print(rows[0]!);
+function type alias | type Visit = (row: Row) => string; const visit: Visit = row => row.name; console.log(visit(rows[0]!));
+functions in an object | const handlers = { show: (row: Row) => row.name, count: (row: Row) => row.n }; console.log(handlers.show(rows[0]!), handlers.count(rows[1]!));
+functions in a record | const table: Record<string, (row: Row) => string> = { a: row => row.name }; console.log(table.a!(rows[0]!));
+functions in an array | const steps: ((row: Row) => Row)[] = [row => row, row => ({ ...row, n: row.n + 1 })]; console.log(steps.reduce((row, step) => step(row), rows[0]!).n); | opens
+bind call apply | console.log(label.call(null, rows[0]!), label.apply(null, [rows[1]!]), label.bind(null, rows[0]!)());
+class field with an arrow | class Counter { count = 0; add = (row: Row): void => { this.count += row.n; }; }\nconst counter = new Counter(); rows.forEach(counter.add); console.log(counter.count);
+getter and setter | class Wrapped { #row: Row = rows[0]!; get row(): Row { return this.#row; } set row(value: Row) { this.#row = value; } }\nconst wrapped = new Wrapped(); wrapped.row = rows[1]!; console.log(wrapped.row.name);
+getter in a literal | const lazy = { get row(): Row { return rows[0]!; } }; console.log(lazy.row.name);
+static member | class Registry { static rows: Row[] = rows; static first(): Row { return Registry.rows[0]!; } }\nconsole.log(Registry.first().name);
+subclass | class Point3 extends Point { constructor(x: number, y: number, public z: number) { super(x, y); } }\nconst deep: Point = new Point3(1, 2, 3); console.log(deep.x, deep.length()); | opens
+abstract class | abstract class Base { abstract row(): Row; name(): string { return this.row().name; } }\nclass Real extends Base { row(): Row { return rows[0]!; } }\nconsole.log(new Real().name());
+interface implemented by a class | class Named implements Row { constructor(public name: string, public n: number) {} }\nconsole.log(label(new Named("Di", 4)));
+interface extends | interface Wide extends Row { extra: boolean }\nconst wide: Wide = { name: "w", n: 1, extra: true }; console.log(label(wide), wide.extra);
+Partial and Required | const part: Partial<Row> = { name: "p" }; console.log(part.name, part.n);
+Pick and Omit | const only: Pick<Row, "name"> = rows[0]!; const without: Omit<Row, "n"> = rows[1]!; console.log(only.name, without.name);
+Readonly | const fixed: Readonly<Row> = rows[0]!; const list: readonly Row[] = rows; console.log(fixed.name, list[1]!.n);
+satisfies | const config = { name: "c", n: 1 } satisfies Row; console.log(label(config));
+as const | const literal = { name: "k", n: 1 } as const; console.log(label(literal));
+non-null | console.log(rows[0]!.name, byName.get("Ada")!.n);
+as to the same type | console.log((rows[0] as Row).name);
+as unknown as | console.log((rows[0] as unknown as Row).name);
+as any read | console.log((rows[0] as any).name);
+any variable holds a row | const loose: any = rows[0]; console.log(loose.name);
+unknown variable holds a row | const hidden: unknown = rows[0]; console.log(hidden === rows[0]);
+console.log of a row | console.log(rows[0], rows, points[0]);
+template string | console.log(`${rows[0]!.name} ${rows[0]!.n}`);
+string of a row | console.log(String(rows[0]!), `${points[0]!}`);
+equality | console.log(rows[0] === rows[1], rows[0] == null);
+delete an optional member | interface Loose { name: string; note?: string }\nconst note: Loose = { name: "l", note: "x" }; delete note.note; console.log(note.name, note.note);
+computed key read | const key: keyof Row = "name"; console.log(rows[0]![key]);
+computed key write | const field: "n" = "n"; rows[0]![field] = 5; console.log(rows[0]!.n);
+string key read | console.log((rows[0] as Row & Record<string, unknown>)["name"]);
+symbol iterator | const iterable = { *[Symbol.iterator](): Generator<Row> { yield* rows; } }; for (const row of iterable) console.log(row.name);
+toJSON | class Money { constructor(public cents: number) {} toJSON(): number { return this.cents; } }\nconsole.log(JSON.stringify(new Money(5)));
+Symbol.toPrimitive | class Celsius { constructor(public degrees: number) {} [Symbol.toPrimitive](): number { return this.degrees; } }\nconsole.log(+new Celsius(5));
+using | class Handle { constructor(public row: Row) {} [Symbol.dispose](): void { console.log(this.row.name); } }\n{ using handle = new Handle(rows[0]!); console.log(handle.row.n); } | opens
+label through a closure | const later: (() => string)[] = rows.map(row => () => row.name); console.log(later[0]!());
+try finally | try { console.log(rows[0]!.name); } finally { console.log(rows[1]!.n); }
+throw a row | try { throw rows[0]; } catch (error) { console.log((error as Row).name); }
+Reflect.ownKeys | console.log(Reflect.ownKeys(rows[0]!));
+Reflect.get | console.log(Reflect.get(rows[0]!, "name"));
+Object.defineProperty | const defined: Row = { name: "d", n: 1 }; Object.defineProperty(defined, "n", { value: 2 }); console.log(defined.n); | opens
+Object.create | const made = Object.create(rows[0]!) as Row; console.log(made.name);
+Object.getPrototypeOf | console.log(Object.getPrototypeOf(points[0]!) === Point.prototype);
+Proxy | const proxied = new Proxy(rows[0]!, {}); console.log(proxied.name); | opens
+Bun.inspect | console.log(Bun.inspect(rows[0]!));
+Bun.deepEquals | console.log(Bun.deepEquals(rows[0]!, rows[1]!));
+Response.json | console.log(await Response.json(rows[0]!).text());
+response json as | const fetched = (await Response.json(rows[0]!).json()) as Row; console.log(fetched.name); | opens
+Bun.serve handler | const server = Bun.serve({ port: 0, fetch: () => Response.json(rows) }); server.stop(true); console.log(rows[0]!.name);
+Intl sort | console.log(rows.toSorted((a, b) => a.name.localeCompare(b.name))[0]!.name);
+string replace with a function | console.log("Ada Bo".replace(/\w+/g, word => String(byName.get(word)!.n)));
+Array.prototype.map.call | console.log(Array.prototype.map.call(rows, row => (row as Row).name));
+iterator helpers | console.log(rows.values().map(row => row.name).toArray()); | opens
+array with | console.log(rows.with(0, { name: "Zed", n: 0 })[0]!.name);
+array fill | console.log(new Array<Row>(2).fill(rows[0]!)[1]!.name);
+array join of names | console.log(rows.map(label).join());
+pass own function to map | console.log(rows.map(label), points.filter(far).length);
+sort by own comparer | function byN(a: Row, b: Row): number { return a.n - b.n; }\nconsole.log([...rows].sort(byN)[0]!.name);
+promise then calls an own function | await Promise.resolve(rows[0]!).then(row => console.log(label(row)));
+promise then given an own function | console.log(await Promise.resolve(rows[0]!).then(label));
+promise then pushes | const got: Row[] = []; await Promise.resolve(rows[0]!).then(row => got.push(row)); console.log(got[0]!.name);
+promise then stores to a variable | let kept: Row | undefined; await Promise.resolve(rows[0]!).then(row => { kept = row; }); console.log(kept!.name);
+promise then with an async arrow | console.log(await Promise.resolve(rows[0]!).then(async row => row.name));
+promise then with an async arrow and a written type | await Promise.resolve(rows[0]!).then(async (row: Row) => console.log(row.name));
+promise then with destructuring | await Promise.resolve(rows[0]!).then(({ name, n }) => console.log(name, n));
+promise then with a function expression | await Promise.resolve(rows[0]!).then(function (row) { console.log(row.name); });
+promise then in a method | class Sink { rows: Row[] = []; take(): Promise<void> { return Promise.resolve(rows[0]!).then(row => { this.rows.push(row); }); } }\nconst sink = new Sink(); await sink.take(); console.log(sink.rows[0]!.name);
+promise then of an async function | async function fetchRow(): Promise<Row> { return rows[0]!; }\nawait fetchRow().then(row => console.log(row.name));
+promise then of an array | await Promise.resolve(rows).then(list => console.log(list[0]!.name, list.length));
+promise then of a class instance | await Promise.resolve(points[0]!).then(point => console.log(point.x, point.length()));
+promise then of a union | await Promise.resolve(shapes[0]!).then(shape => console.log(area(shape)));
+promise then of an order | await Promise.resolve(orders[0]!).then(order => console.log(order.row.name, describe(order)));
+promise all then | await Promise.all([Promise.resolve(rows[0]!), Promise.resolve(rows[1]!)]).then(([a, b]) => console.log(a.name, b.n)); | opens
+promise all of a map of then | console.log(await Promise.all(rows.map(row => Promise.resolve(row).then(label))));
+Object.values forEach | Object.values(record).forEach(row => console.log(row.name));
+Object.values reduce | console.log(Object.values(record).reduce((sum, row) => sum + row.n, 0));
+Object.values filter | console.log(Object.values(record).filter(row => row.n > 1).length);
+Object.values into an annotation | const listed: Row[] = Object.values(record); console.log(listed[0]!.name);
+Object.values into an own function | console.log(total(Object.values(record)));
+Object.values map with an own function | console.log(Object.values(record).map(label));
+Object.values for of into an own function | for (const row of Object.values(record)) console.log(label(row));
+Object.values spread | console.log([...Object.values(record)][0]!.name);
+Object.values of a literal | const pair = { a: rows[0]!, b: rows[1]! }; console.log(Object.values(pair).map(row => row.name));
+Object.entries filter | console.log(Object.entries(record).filter(([, row]) => row.n > 1).length);
+Object.entries sort | console.log(Object.entries(record).sort(([, a], [, b]) => a.n - b.n)[0]![0]);
+Object.entries forEach | Object.entries(record).forEach(([key, row]) => console.log(key, row.name));
+Object.entries for of into an own function | for (const [key, row] of Object.entries(record)) console.log(key, label(row));
+Object.entries into a map | console.log(new Map(Object.entries(record)).get("ada")!.name);
+record write and delete | record.cy = { name: "Cy", n: 3 }; delete record.ada; console.log(record.cy!.name);
+Array.from with a length | console.log(Array.from({ length: 2 }, (_, index) => rows[index]!)[1]!.name);
+Array.fromAsync | async function* rowsLater(): AsyncGenerator<Row> { yield* rows; }\nconsole.log((await Array.fromAsync(rowsLater()))[0]!.name); | opens
+setInterval | const timer = setInterval(() => { console.log(rows[0]!.name); clearInterval(timer); }, 1);
+AsyncLocalStorage | import { AsyncLocalStorage } from "node:async_hooks";\nconst store = new AsyncLocalStorage<Row>(); store.run(rows[0]!, () => console.log(store.getStore()!.name));
+events once | import { EventEmitter as Source, once } from "node:events";\nconst source = new Source(); setTimeout(() => source.emit("row", rows[0]!), 1); const [arrived] = await once(source, "row"); console.log((arrived as Row).name); | opens
+util.promisify | import { promisify } from "node:util";\nconst loadRow = promisify((done: (error: Error | null, row: Row) => void) => done(null, rows[0]!)); console.log((await loadRow()).name); | opens
+Readable.from | import { Readable } from "node:stream";\nfor await (const row of Readable.from(rows)) console.log((row as Row).name); | opens
+WeakRef | console.log(new WeakRef(rows[0]!).deref()!.name);
+Reflect.apply | console.log(Reflect.apply(label, null, [rows[0]!]));
+constructor of an instance | console.log(points[0]!.constructor === Point, points[0]!.constructor.name); | opens
+hasOwnProperty toString | console.log(rows[0]!.hasOwnProperty("name"), rows[0]!.toString());
+Object.getOwnPropertyNames | console.log(Object.getOwnPropertyNames(rows[0]!));
+method taken off an instance | const measure = points[0]!.length.bind(points[0]!); console.log(measure());
+methods in a map | console.log(points.map(point => point.length()));
+console.table | console.table(rows);
+error with a cause | console.log((new Error("x", { cause: rows[0] }).cause as Row).name); | opens
+own tag function | function tag(strings: TemplateStringsArray, row: Row): string { return strings[0] + row.name; }\nconsole.log(tag`row ${rows[0]!}`);
+exported function | export function handle(row: Row): string { return row.name; }\nconsole.log(handle(rows[0]!));
+exported values | export { rows, label, Point };
+default export of an object | export default { rows, show(row: Row): string { return row.name; } };
+default export with fetch | export default { port: 0, fetch(): Response { return Response.json(rows.map(label)); } };
+on globalThis | (globalThis as any).rows = rows; console.log(rows[0]!.name);
+any into a parameter | const untyped: any = rows[0]; console.log(label(untyped));
+any into a variable | const untyped: any = rows[0]; const typed: Row = untyped; console.log(typed.name);
+any into an array | const untyped: any = rows[0]; rows.push(untyped); console.log(rows.length);
+any into a field | const untyped: any = rows[0]; orders[0]!.row = untyped; console.log(orders[0]!.row.name);
+unknown narrowed by hand into a parameter | const maybeRow: unknown = rows[0]; if (typeof maybeRow === "object" && maybeRow !== null && "name" in maybeRow && "n" in maybeRow) console.log(label(maybeRow as Row));
+function returning any | function anything(): any { return rows[0]; }\nconsole.log(label(anything()));
+request json as | const request = new Request("http://x", { method: "POST", body: JSON.stringify(rows[0]!) }); const sent = (await request.json()) as Row; console.log(sent.name); | opens
+fetch then json then | await Promise.resolve(Response.json(rows[0]!)).then(response => response.json() as Promise<Row>).then(row => console.log(row.name)); | opens
+Bun.file json | await Bun.write("/tmp/c-row.json", JSON.stringify(rows[0]!)); const stored: Row = await Bun.file("/tmp/c-row.json").json(); console.log(stored.name); | opens
+message event data | const channel = new MessageChannel(); channel.port1.onmessage = event => { console.log((event.data as Row).name); channel.port1.close(); }; channel.port2.postMessage(rows[0]!); | opens
+mapped type | type Flags = { [K in keyof Row]: boolean }; const flags: Flags = { name: true, n: false }; console.log(flags.name);
+indexed access type | const title: Row["name"] = rows[0]!.name; console.log(title);
+overloads | function pickRow(key: string): Row; function pickRow(key: number): Row; function pickRow(key: string | number): Row { return typeof key === "string" ? byName.get(key)! : rows[key]!; }\nconsole.log(pickRow("Ada").n, pickRow(1).name);
+optional method call | const optional: { show?: (row: Row) => string } = { show: label }; console.log(optional.show?.(rows[0]!));
+async method | class Loader { async load(): Promise<Row> { return rows[0]!; } }\nconsole.log((await new Loader().load()).name);
+private name in | class Tagged { #tag = 1; static is(value: object): boolean { return #tag in value; } }\nconsole.log(Tagged.is(new Tagged()), Tagged.is(rows[0]!));
+static block | class Setup { static first: Row; static { Setup.first = rows[0]!; } }\nconsole.log(Setup.first.name);
+enum | enum Level { Low, High }\nconst levels: Record<Level, Row> = { [Level.Low]: rows[0]!, [Level.High]: rows[1]! }; console.log(levels[Level.High].name);
+namespace | namespace Rows { export const first: Row = rows[0]!; }\nconsole.log(Rows.first.name);
+closure counter | function counterOf(row: Row): () => number { let count = row.n; return () => ++count; }\nconsole.log(counterOf(rows[0]!)());
+recursion over a tree | interface Tree { row: Row; children: Tree[] }\nfunction sumTree(tree: Tree): number { return tree.row.n + tree.children.reduce((sum, child) => sum + sumTree(child), 0); }\nconsole.log(sumTree({ row: rows[0]!, children: [{ row: rows[1]!, children: [] }] }));
+linked list | interface Link { row: Row; next: Link | null }\nlet link: Link | null = { row: rows[0]!, next: { row: rows[1]!, next: null } }; while (link) { console.log(link.row.name); link = link.next; }
+tuple | const tuple: [Row, Point] = [rows[0]!, points[0]!]; console.log(tuple[0].name, tuple[1].x);
+function returning a tuple | function both(): [Row, Point] { return [rows[0]!, points[0]!]; }\nconst [left, right] = both(); console.log(left.name, right.y);
+function returning a literal | function wrap(row: Row): { row: Row; at: number } { return { row, at: 1 }; }\nconsole.log(wrap(rows[0]!).row.name);
+object with a method | const service = { prefix: ">", show(row: Row): string { return this.prefix + row.name; } }; console.log(service.show(rows[0]!));
+array of arrays | const grid: Row[][] = [rows, rows]; console.log(grid[1]![0]!.name, grid.flat().length);
+map of arrays | const groups = new Map<string, Row[]>(); groups.set("all", rows); console.log(groups.get("all")![0]!.name);
+set operations | console.log(unique.has(rows[0]!), unique.union(new Set<Row>()).size);
+sort then map chain | console.log(rows.toSorted((a, b) => a.n - b.n).map(row => row.name).join());
+string methods on a field | console.log(rows[0]!.name.toUpperCase().padEnd(5, "."), rows[0]!.n.toFixed(1));
+math on fields | console.log(Math.max(...rows.map(row => row.n)), Math.round(points[0]!.x / 3));
+compound assignment | rows[0]!.n += 2; rows[0]!.n++; rows[0]!.name += "!"; console.log(rows[0]!.n, rows[0]!.name); | opens
+swap by destructuring | [rows[0], rows[1]] = [rows[1]!, rows[0]!]; console.log(rows[0]!.name);
+logical assignment | let fallback: Row | undefined; fallback ??= rows[0]!; console.log(fallback.name);
+label as a comparator key | console.log(rows.toSorted((a, b) => label(a).localeCompare(label(b)))[0]!.name);
+Date and RegExp beside rows | console.log(new Date(0).getTime() + rows[0]!.n, /A/.test(rows[0]!.name));
+typed array beside rows | console.log(new Float64Array(rows.map(row => row.n))[1]);
+bun test expect | import { expect } from "bun:test";\nexpect(rows[0]!).toEqual({ name: "Ada", n: 1 }); | opens
+assert deepEqual | import { deepStrictEqual } from "node:assert";\ndeepStrictEqual(rows[0]!, { name: "Ada", n: 1 }); | opens
+util.inspect | import { inspect, isDeepStrictEqual } from "node:util";\nconsole.log(inspect(rows[0]!), isDeepStrictEqual(rows[0]!, rows[1]!)); | opens

@@ -11,8 +11,8 @@ pub struct SortDefaultProps<const OLD_NAME: bool = false> {
     ignore_case: bool,
 }
 
-const PROPS_NOT_SORTED: Message =
-    Message::new("propsNotSorted", "Default prop types declarations should be sorted alphabetically");
+const PROPS_NOT_SORTED: &Message =
+    &Message::new("propsNotSorted", "Default prop types declarations should be sorted alphabetically");
 
 /// `"right" in node.parent && node.parent.right`
 fn right_of_parent(e: Expr<'_>) -> Option<Expr<'_>> {

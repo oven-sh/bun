@@ -11,6 +11,7 @@ fn is_zig_whitespace(b: u8) -> bool {
 }
 
 impl Expect {
+    #[optimize(size)]
     pub(crate) fn to_equal_ignoring_whitespace(
         &self,
         this_value: JsWrapper<'_, Self>,

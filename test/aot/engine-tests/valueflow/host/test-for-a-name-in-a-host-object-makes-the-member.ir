@@ -1,0 +1,20 @@
+# "allowedNodeEnvironmentFlags" in process; "cwd" in process
+# The host makes the first with a function of the library when the name is looked for. The second lies there without: a test for it stays a test.
+# LIBRARY: own
+# RUN: valueflow-why used-builtin=ProcessAllowedNodeEnvironmentFlags used-builtin=ProcessCwd used-builtin=ProcessStdout
+# CHECK: used-builtin=ProcessAllowedNodeEnvironmentFlags
+# CHECK-NEXT: by PropHas
+# CHECK: used-builtin=ProcessCwd
+# CHECK-NEXT: not held
+# CHECK: used-builtin=ProcessStdout
+# CHECK-NEXT: not held
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropHas v0 key="allowedNodeEnvironmentFlags"
+    v2 = PropHas v0 key="cwd"
+    Return
+}

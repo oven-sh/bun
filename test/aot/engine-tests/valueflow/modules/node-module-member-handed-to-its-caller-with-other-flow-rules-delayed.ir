@@ -1,0 +1,29 @@
+# import Module from "node:module"; run = make => make("/app/main.js")(globalThis.name); run(Module[globalThis.key])
+# The import names the module that is read, so what the read answers may be createRequire, wherever it goes.
+# The call of what that call returns loads code by name, and no other call does.
+# OPTIONS: testing=DelayOtherFlowRules
+# RUN: valueflow-solve unseen
+# CHECK: unseen LoadsCodeByName ModuleRequire f1:v5
+# CHECK-NOT: unseen LoadsCodeByName
+# CHECK: unseen-code yes
+
+module m0 path="/app/main.js" displayPath="main.js" kind=SourceText body=f0 requests=[{target=m1 completes=true}]
+module m1 path="node:module" displayPath="node:module" kind=Runtime exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeModule
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="key" [isFreeName]
+    v2 = Builtin builtin=NodeModule
+    v3 = ElemGet v2, v1
+    v4 = NewClosure function=f1
+    v5 = Call v4, -, v3
+    Return v5
+}
+function f1 name="run" module=m0 kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="name" [isFreeName]
+    v3 = String string="/app/main.js"
+    v4 = Call v0, -, v3
+    v5 = Call v4, -, v2
+    Return v5
+}

@@ -1,0 +1,5471 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`$$typeof: array 1`] = `
+"{
+  "$$typeof": [
+    1,
+    "two",
+  ],
+  "props": {},
+  "type": "a",
+}"
+`;
+
+exports[`$$typeof: bigint 1`] = `
+"{
+  "$$typeof": 10n,
+  "props": {},
+  "type": "a",
+}"
+`;
+
+exports[`$$typeof: empty array 1`] = `
+"{
+  "$$typeof": [],
+  "props": {},
+  "type": "a",
+}"
+`;
+
+exports[`$$typeof: empty string 1`] = `
+"{
+  "$$typeof": "",
+  "props": {},
+  "type": "a",
+}"
+`;
+
+exports[`$$typeof: false 1`] = `
+"{
+  "$$typeof": false,
+  "props": {},
+  "type": "a",
+}"
+`;
+
+exports[`$$typeof: function 1`] = `
+"{
+  "$$typeof": [Function],
+  "props": {},
+  "type": "a",
+}"
+`;
+
+exports[`$$typeof: null 1`] = `
+"{
+  "$$typeof": null,
+  "props": {},
+  "type": "a",
+}"
+`;
+
+exports[`$$typeof: number 1`] = `
+"{
+  "$$typeof": 5,
+  "props": {},
+  "type": "a",
+}"
+`;
+
+exports[`$$typeof: object 1`] = `
+"{
+  "$$typeof": {
+    "a": 1,
+  },
+  "props": {},
+  "type": "a",
+}"
+`;
+
+exports[`$$typeof: proxy 1`] = `
+"{
+  "$$typeof": {
+    "a": 1,
+  },
+  "props": {},
+  "type": "a",
+}"
+`;
+
+exports[`$$typeof: proxy of an array 1`] = `
+"{
+  "$$typeof": [
+    1,
+  ],
+  "props": {},
+  "type": "a",
+}"
+`;
+
+exports[`$$typeof: revoked proxy 1`] = `"throws"`;
+
+exports[`$$typeof: string 1`] = `
+"{
+  "$$typeof": "abc",
+  "props": {},
+  "type": "a",
+}"
+`;
+
+exports[`$$typeof: symbol 1`] = `
+"{
+  "$$typeof": Symbol(s),
+  "props": {},
+  "type": "a",
+}"
+`;
+
+exports[`$$typeof: throwing getters 1`] = `"throws"`;
+
+exports[`$$typeof: throwing proxy 1`] = `"throws"`;
+
+exports[`$$typeof: true 1`] = `
+"{
+  "$$typeof": true,
+  "props": {},
+  "type": "a",
+}"
+`;
+
+exports[`$$typeof: undefined 1`] = `
+"{
+  "$$typeof": undefined,
+  "props": {},
+  "type": "a",
+}"
+`;
+
+exports[`$$typeof: zero 1`] = `
+"{
+  "$$typeof": 0,
+  "props": {},
+  "type": "a",
+}"
+`;
+
+exports[`Immutable.List: an item: array 1`] = `
+"Immutable.List [
+  [
+    1,
+    "two",
+  ],
+]"
+`;
+
+exports[`Immutable.List: an item: bigint 1`] = `
+"Immutable.List [
+  10n,
+]"
+`;
+
+exports[`Immutable.List: an item: empty array 1`] = `
+"Immutable.List [
+  [],
+]"
+`;
+
+exports[`Immutable.List: an item: empty string 1`] = `
+"Immutable.List [
+  "",
+]"
+`;
+
+exports[`Immutable.List: an item: false 1`] = `
+"Immutable.List [
+  false,
+]"
+`;
+
+exports[`Immutable.List: an item: function 1`] = `
+"Immutable.List [
+  [Function],
+]"
+`;
+
+exports[`Immutable.List: an item: null 1`] = `
+"Immutable.List [
+  null,
+]"
+`;
+
+exports[`Immutable.List: an item: number 1`] = `
+"Immutable.List [
+  5,
+]"
+`;
+
+exports[`Immutable.List: an item: object 1`] = `
+"Immutable.List [
+  {
+    "a": 1,
+  },
+]"
+`;
+
+exports[`Immutable.List: an item: proxy 1`] = `
+"Immutable.List [
+  {
+    "a": 1,
+  },
+]"
+`;
+
+exports[`Immutable.List: an item: proxy of an array 1`] = `
+"Immutable.List [
+  [
+    1,
+  ],
+]"
+`;
+
+exports[`Immutable.List: an item: revoked proxy 1`] = `"throws"`;
+
+exports[`Immutable.List: an item: string 1`] = `
+"Immutable.List [
+  "abc",
+]"
+`;
+
+exports[`Immutable.List: an item: symbol 1`] = `
+"Immutable.List [
+  Symbol(s),
+]"
+`;
+
+exports[`Immutable.List: an item: throwing getters 1`] = `"throws"`;
+
+exports[`Immutable.List: an item: throwing proxy 1`] = `"throws"`;
+
+exports[`Immutable.List: an item: true 1`] = `
+"Immutable.List [
+  true,
+]"
+`;
+
+exports[`Immutable.List: an item: undefined 1`] = `
+"Immutable.List [
+  undefined,
+]"
+`;
+
+exports[`Immutable.List: an item: zero 1`] = `
+"Immutable.List [
+  0,
+]"
+`;
+
+exports[`Immutable.List: values: array 1`] = `"throws"`;
+
+exports[`Immutable.List: values: bigint 1`] = `"throws"`;
+
+exports[`Immutable.List: values: empty array 1`] = `"throws"`;
+
+exports[`Immutable.List: values: empty string 1`] = `"throws"`;
+
+exports[`Immutable.List: values: false 1`] = `"throws"`;
+
+exports[`Immutable.List: values: function 1`] = `"throws"`;
+
+exports[`Immutable.List: values: null 1`] = `"throws"`;
+
+exports[`Immutable.List: values: number 1`] = `"throws"`;
+
+exports[`Immutable.List: values: object 1`] = `"throws"`;
+
+exports[`Immutable.List: values: proxy 1`] = `"throws"`;
+
+exports[`Immutable.List: values: proxy of an array 1`] = `"throws"`;
+
+exports[`Immutable.List: values: revoked proxy 1`] = `"throws"`;
+
+exports[`Immutable.List: values: string 1`] = `"throws"`;
+
+exports[`Immutable.List: values: symbol 1`] = `"throws"`;
+
+exports[`Immutable.List: values: throwing getters 1`] = `"throws"`;
+
+exports[`Immutable.List: values: throwing proxy 1`] = `"throws"`;
+
+exports[`Immutable.List: values: true 1`] = `"throws"`;
+
+exports[`Immutable.List: values: undefined 1`] = `"throws"`;
+
+exports[`Immutable.List: values: zero 1`] = `"throws"`;
+
+exports[`Immutable.List: what values() returns: array 1`] = `"throws"`;
+
+exports[`Immutable.List: what values() returns: bigint 1`] = `"throws"`;
+
+exports[`Immutable.List: what values() returns: empty array 1`] = `"throws"`;
+
+exports[`Immutable.List: what values() returns: empty string 1`] = `"throws"`;
+
+exports[`Immutable.List: what values() returns: false 1`] = `"throws"`;
+
+exports[`Immutable.List: what values() returns: function 1`] = `"throws"`;
+
+exports[`Immutable.List: what values() returns: null 1`] = `"throws"`;
+
+exports[`Immutable.List: what values() returns: number 1`] = `"throws"`;
+
+exports[`Immutable.List: what values() returns: object 1`] = `"throws"`;
+
+exports[`Immutable.List: what values() returns: proxy 1`] = `"throws"`;
+
+exports[`Immutable.List: what values() returns: proxy of an array 1`] = `"throws"`;
+
+exports[`Immutable.List: what values() returns: revoked proxy 1`] = `"throws"`;
+
+exports[`Immutable.List: what values() returns: string 1`] = `"throws"`;
+
+exports[`Immutable.List: what values() returns: symbol 1`] = `"throws"`;
+
+exports[`Immutable.List: what values() returns: throwing getters 1`] = `"throws"`;
+
+exports[`Immutable.List: what values() returns: throwing proxy 1`] = `"throws"`;
+
+exports[`Immutable.List: what values() returns: true 1`] = `"throws"`;
+
+exports[`Immutable.List: what values() returns: undefined 1`] = `"throws"`;
+
+exports[`Immutable.List: what values() returns: zero 1`] = `"throws"`;
+
+exports[`Immutable.Map: an entry: array 1`] = `
+"Immutable.Map {
+  1: "two",
+}"
+`;
+
+exports[`Immutable.Map: an entry: bigint 1`] = `
+"Immutable.Map {
+  undefined: undefined,
+}"
+`;
+
+exports[`Immutable.Map: an entry: empty array 1`] = `
+"Immutable.Map {
+  undefined: undefined,
+}"
+`;
+
+exports[`Immutable.Map: an entry: empty string 1`] = `
+"Immutable.Map {
+  undefined: undefined,
+}"
+`;
+
+exports[`Immutable.Map: an entry: false 1`] = `
+"Immutable.Map {
+  undefined: undefined,
+}"
+`;
+
+exports[`Immutable.Map: an entry: function 1`] = `
+"Immutable.Map {
+  undefined: undefined,
+}"
+`;
+
+exports[`Immutable.Map: an entry: null 1`] = `"throws"`;
+
+exports[`Immutable.Map: an entry: number 1`] = `
+"Immutable.Map {
+  undefined: undefined,
+}"
+`;
+
+exports[`Immutable.Map: an entry: object 1`] = `
+"Immutable.Map {
+  undefined: undefined,
+}"
+`;
+
+exports[`Immutable.Map: an entry: proxy 1`] = `
+"Immutable.Map {
+  undefined: undefined,
+}"
+`;
+
+exports[`Immutable.Map: an entry: proxy of an array 1`] = `
+"Immutable.Map {
+  1: undefined,
+}"
+`;
+
+exports[`Immutable.Map: an entry: revoked proxy 1`] = `"throws"`;
+
+exports[`Immutable.Map: an entry: string 1`] = `
+"Immutable.Map {
+  "a": "b",
+}"
+`;
+
+exports[`Immutable.Map: an entry: symbol 1`] = `
+"Immutable.Map {
+  undefined: undefined,
+}"
+`;
+
+exports[`Immutable.Map: an entry: throwing getters 1`] = `
+"Immutable.Map {
+  undefined: undefined,
+}"
+`;
+
+exports[`Immutable.Map: an entry: throwing proxy 1`] = `"throws"`;
+
+exports[`Immutable.Map: an entry: true 1`] = `
+"Immutable.Map {
+  undefined: undefined,
+}"
+`;
+
+exports[`Immutable.Map: an entry: undefined 1`] = `"throws"`;
+
+exports[`Immutable.Map: an entry: zero 1`] = `
+"Immutable.Map {
+  undefined: undefined,
+}"
+`;
+
+exports[`Immutable.Map: entries: array 1`] = `"throws"`;
+
+exports[`Immutable.Map: entries: bigint 1`] = `"throws"`;
+
+exports[`Immutable.Map: entries: empty array 1`] = `"throws"`;
+
+exports[`Immutable.Map: entries: empty string 1`] = `"throws"`;
+
+exports[`Immutable.Map: entries: false 1`] = `"throws"`;
+
+exports[`Immutable.Map: entries: function 1`] = `"throws"`;
+
+exports[`Immutable.Map: entries: null 1`] = `"throws"`;
+
+exports[`Immutable.Map: entries: number 1`] = `"throws"`;
+
+exports[`Immutable.Map: entries: object 1`] = `"throws"`;
+
+exports[`Immutable.Map: entries: proxy 1`] = `"throws"`;
+
+exports[`Immutable.Map: entries: proxy of an array 1`] = `"throws"`;
+
+exports[`Immutable.Map: entries: revoked proxy 1`] = `"throws"`;
+
+exports[`Immutable.Map: entries: string 1`] = `"throws"`;
+
+exports[`Immutable.Map: entries: symbol 1`] = `"throws"`;
+
+exports[`Immutable.Map: entries: throwing getters 1`] = `"throws"`;
+
+exports[`Immutable.Map: entries: throwing proxy 1`] = `"throws"`;
+
+exports[`Immutable.Map: entries: true 1`] = `"throws"`;
+
+exports[`Immutable.Map: entries: undefined 1`] = `"throws"`;
+
+exports[`Immutable.Map: entries: zero 1`] = `"throws"`;
+
+exports[`Immutable.Map: what entries() returns: array 1`] = `"throws"`;
+
+exports[`Immutable.Map: what entries() returns: bigint 1`] = `"throws"`;
+
+exports[`Immutable.Map: what entries() returns: empty array 1`] = `"throws"`;
+
+exports[`Immutable.Map: what entries() returns: empty string 1`] = `"throws"`;
+
+exports[`Immutable.Map: what entries() returns: false 1`] = `"throws"`;
+
+exports[`Immutable.Map: what entries() returns: function 1`] = `"throws"`;
+
+exports[`Immutable.Map: what entries() returns: null 1`] = `"throws"`;
+
+exports[`Immutable.Map: what entries() returns: number 1`] = `"throws"`;
+
+exports[`Immutable.Map: what entries() returns: object 1`] = `"throws"`;
+
+exports[`Immutable.Map: what entries() returns: proxy 1`] = `"throws"`;
+
+exports[`Immutable.Map: what entries() returns: proxy of an array 1`] = `"throws"`;
+
+exports[`Immutable.Map: what entries() returns: revoked proxy 1`] = `"throws"`;
+
+exports[`Immutable.Map: what entries() returns: string 1`] = `"throws"`;
+
+exports[`Immutable.Map: what entries() returns: symbol 1`] = `"throws"`;
+
+exports[`Immutable.Map: what entries() returns: throwing getters 1`] = `"throws"`;
+
+exports[`Immutable.Map: what entries() returns: throwing proxy 1`] = `"throws"`;
+
+exports[`Immutable.Map: what entries() returns: true 1`] = `"throws"`;
+
+exports[`Immutable.Map: what entries() returns: undefined 1`] = `"throws"`;
+
+exports[`Immutable.Map: what entries() returns: zero 1`] = `"throws"`;
+
+exports[`Immutable.Record: _keys: array 1`] = `
+"Immutable.Record {
+  1: 1,
+  "two": 1,
+}"
+`;
+
+exports[`Immutable.Record: _keys: bigint 1`] = `"Immutable.Record {}"`;
+
+exports[`Immutable.Record: _keys: empty array 1`] = `"Immutable.Record {}"`;
+
+exports[`Immutable.Record: _keys: empty string 1`] = `"Immutable.Record {}"`;
+
+exports[`Immutable.Record: _keys: false 1`] = `"Immutable.Record {}"`;
+
+exports[`Immutable.Record: _keys: function 1`] = `
+"Immutable.Record {
+  undefined: 1,
+  undefined: 1,
+}"
+`;
+
+exports[`Immutable.Record: _keys: null 1`] = `"throws"`;
+
+exports[`Immutable.Record: _keys: number 1`] = `"Immutable.Record {}"`;
+
+exports[`Immutable.Record: _keys: object 1`] = `"Immutable.Record {}"`;
+
+exports[`Immutable.Record: _keys: proxy 1`] = `"Immutable.Record {}"`;
+
+exports[`Immutable.Record: _keys: proxy of an array 1`] = `
+"Immutable.Record {
+  1: 1,
+}"
+`;
+
+exports[`Immutable.Record: _keys: revoked proxy 1`] = `"throws"`;
+
+exports[`Immutable.Record: _keys: string 1`] = `
+"Immutable.Record {
+  "a": 1,
+  "b": 1,
+  "c": 1,
+}"
+`;
+
+exports[`Immutable.Record: _keys: symbol 1`] = `"Immutable.Record {}"`;
+
+exports[`Immutable.Record: _keys: throwing getters 1`] = `"throws"`;
+
+exports[`Immutable.Record: _keys: throwing proxy 1`] = `"throws"`;
+
+exports[`Immutable.Record: _keys: true 1`] = `"Immutable.Record {}"`;
+
+exports[`Immutable.Record: _keys: undefined 1`] = `"throws"`;
+
+exports[`Immutable.Record: _keys: zero 1`] = `"Immutable.Record {}"`;
+
+exports[`Immutable.Record: _name: array 1`] = `
+"Immutable.1,two {
+  "a": 1,
+}"
+`;
+
+exports[`Immutable.Record: _name: bigint 1`] = `
+"Immutable.10 {
+  "a": 1,
+}"
+`;
+
+exports[`Immutable.Record: _name: empty array 1`] = `
+"Immutable. {
+  "a": 1,
+}"
+`;
+
+exports[`Immutable.Record: _name: empty string 1`] = `
+"Immutable.Record {
+  "a": 1,
+}"
+`;
+
+exports[`Immutable.Record: _name: false 1`] = `
+"Immutable.Record {
+  "a": 1,
+}"
+`;
+
+exports[`Immutable.Record: _name: function 1`] = `
+"Immutable.function f(a, b) {} {
+  "a": 1,
+}"
+`;
+
+exports[`Immutable.Record: _name: null 1`] = `
+"Immutable.Record {
+  "a": 1,
+}"
+`;
+
+exports[`Immutable.Record: _name: number 1`] = `
+"Immutable.5 {
+  "a": 1,
+}"
+`;
+
+exports[`Immutable.Record: _name: object 1`] = `
+"Immutable.[object Object] {
+  "a": 1,
+}"
+`;
+
+exports[`Immutable.Record: _name: proxy 1`] = `
+"Immutable.[object Object] {
+  "a": 1,
+}"
+`;
+
+exports[`Immutable.Record: _name: proxy of an array 1`] = `
+"Immutable.1 {
+  "a": 1,
+}"
+`;
+
+exports[`Immutable.Record: _name: revoked proxy 1`] = `"throws"`;
+
+exports[`Immutable.Record: _name: string 1`] = `
+"Immutable.abc {
+  "a": 1,
+}"
+`;
+
+exports[`Immutable.Record: _name: symbol 1`] = `"throws"`;
+
+exports[`Immutable.Record: _name: throwing getters 1`] = `
+"Immutable.[object Object] {
+  "a": 1,
+}"
+`;
+
+exports[`Immutable.Record: _name: throwing proxy 1`] = `"throws"`;
+
+exports[`Immutable.Record: _name: true 1`] = `
+"Immutable.true {
+  "a": 1,
+}"
+`;
+
+exports[`Immutable.Record: _name: undefined 1`] = `
+"Immutable.Record {
+  "a": 1,
+}"
+`;
+
+exports[`Immutable.Record: _name: zero 1`] = `
+"Immutable.Record {
+  "a": 1,
+}"
+`;
+
+exports[`Immutable.Record: a key: array 1`] = `
+"Immutable.Record {
+  [
+    1,
+    "two",
+  ]: 1,
+}"
+`;
+
+exports[`Immutable.Record: a key: bigint 1`] = `
+"Immutable.Record {
+  10n: 1,
+}"
+`;
+
+exports[`Immutable.Record: a key: empty array 1`] = `
+"Immutable.Record {
+  []: 1,
+}"
+`;
+
+exports[`Immutable.Record: a key: empty string 1`] = `
+"Immutable.Record {
+  "": 1,
+}"
+`;
+
+exports[`Immutable.Record: a key: false 1`] = `
+"Immutable.Record {
+  false: 1,
+}"
+`;
+
+exports[`Immutable.Record: a key: function 1`] = `
+"Immutable.Record {
+  [Function]: 1,
+}"
+`;
+
+exports[`Immutable.Record: a key: null 1`] = `
+"Immutable.Record {
+  null: 1,
+}"
+`;
+
+exports[`Immutable.Record: a key: number 1`] = `
+"Immutable.Record {
+  5: 1,
+}"
+`;
+
+exports[`Immutable.Record: a key: object 1`] = `
+"Immutable.Record {
+  {
+    "a": 1,
+  }: 1,
+}"
+`;
+
+exports[`Immutable.Record: a key: proxy 1`] = `
+"Immutable.Record {
+  {
+    "a": 1,
+  }: 1,
+}"
+`;
+
+exports[`Immutable.Record: a key: proxy of an array 1`] = `
+"Immutable.Record {
+  [
+    1,
+  ]: 1,
+}"
+`;
+
+exports[`Immutable.Record: a key: revoked proxy 1`] = `"throws"`;
+
+exports[`Immutable.Record: a key: string 1`] = `
+"Immutable.Record {
+  "abc": 1,
+}"
+`;
+
+exports[`Immutable.Record: a key: symbol 1`] = `
+"Immutable.Record {
+  Symbol(s): 1,
+}"
+`;
+
+exports[`Immutable.Record: a key: throwing getters 1`] = `"throws"`;
+
+exports[`Immutable.Record: a key: throwing proxy 1`] = `"throws"`;
+
+exports[`Immutable.Record: a key: true 1`] = `
+"Immutable.Record {
+  true: 1,
+}"
+`;
+
+exports[`Immutable.Record: a key: undefined 1`] = `
+"Immutable.Record {
+  undefined: 1,
+}"
+`;
+
+exports[`Immutable.Record: a key: zero 1`] = `
+"Immutable.Record {
+  0: 1,
+}"
+`;
+
+exports[`Immutable.Record: get: array 1`] = `"throws"`;
+
+exports[`Immutable.Record: get: bigint 1`] = `"throws"`;
+
+exports[`Immutable.Record: get: empty array 1`] = `"throws"`;
+
+exports[`Immutable.Record: get: empty string 1`] = `"throws"`;
+
+exports[`Immutable.Record: get: false 1`] = `"throws"`;
+
+exports[`Immutable.Record: get: function 1`] = `
+"Immutable.Record {
+  "a": undefined,
+}"
+`;
+
+exports[`Immutable.Record: get: null 1`] = `"throws"`;
+
+exports[`Immutable.Record: get: number 1`] = `"throws"`;
+
+exports[`Immutable.Record: get: object 1`] = `"throws"`;
+
+exports[`Immutable.Record: get: proxy 1`] = `"throws"`;
+
+exports[`Immutable.Record: get: proxy of an array 1`] = `"throws"`;
+
+exports[`Immutable.Record: get: revoked proxy 1`] = `"throws"`;
+
+exports[`Immutable.Record: get: string 1`] = `"throws"`;
+
+exports[`Immutable.Record: get: symbol 1`] = `"throws"`;
+
+exports[`Immutable.Record: get: throwing getters 1`] = `"throws"`;
+
+exports[`Immutable.Record: get: throwing proxy 1`] = `"throws"`;
+
+exports[`Immutable.Record: get: true 1`] = `"throws"`;
+
+exports[`Immutable.Record: get: undefined 1`] = `"throws"`;
+
+exports[`Immutable.Record: get: zero 1`] = `"throws"`;
+
+exports[`Immutable.Record: what get() returns: array 1`] = `
+"Immutable.Record {
+  "a": [
+    1,
+    "two",
+  ],
+}"
+`;
+
+exports[`Immutable.Record: what get() returns: bigint 1`] = `
+"Immutable.Record {
+  "a": 10n,
+}"
+`;
+
+exports[`Immutable.Record: what get() returns: empty array 1`] = `
+"Immutable.Record {
+  "a": [],
+}"
+`;
+
+exports[`Immutable.Record: what get() returns: empty string 1`] = `
+"Immutable.Record {
+  "a": "",
+}"
+`;
+
+exports[`Immutable.Record: what get() returns: false 1`] = `
+"Immutable.Record {
+  "a": false,
+}"
+`;
+
+exports[`Immutable.Record: what get() returns: function 1`] = `
+"Immutable.Record {
+  "a": [Function],
+}"
+`;
+
+exports[`Immutable.Record: what get() returns: null 1`] = `
+"Immutable.Record {
+  "a": null,
+}"
+`;
+
+exports[`Immutable.Record: what get() returns: number 1`] = `
+"Immutable.Record {
+  "a": 5,
+}"
+`;
+
+exports[`Immutable.Record: what get() returns: object 1`] = `
+"Immutable.Record {
+  "a": {
+    "a": 1,
+  },
+}"
+`;
+
+exports[`Immutable.Record: what get() returns: proxy 1`] = `
+"Immutable.Record {
+  "a": {
+    "a": 1,
+  },
+}"
+`;
+
+exports[`Immutable.Record: what get() returns: proxy of an array 1`] = `
+"Immutable.Record {
+  "a": [
+    1,
+  ],
+}"
+`;
+
+exports[`Immutable.Record: what get() returns: revoked proxy 1`] = `"throws"`;
+
+exports[`Immutable.Record: what get() returns: string 1`] = `
+"Immutable.Record {
+  "a": "abc",
+}"
+`;
+
+exports[`Immutable.Record: what get() returns: symbol 1`] = `
+"Immutable.Record {
+  "a": Symbol(s),
+}"
+`;
+
+exports[`Immutable.Record: what get() returns: throwing getters 1`] = `"throws"`;
+
+exports[`Immutable.Record: what get() returns: throwing proxy 1`] = `"throws"`;
+
+exports[`Immutable.Record: what get() returns: true 1`] = `
+"Immutable.Record {
+  "a": true,
+}"
+`;
+
+exports[`Immutable.Record: what get() returns: undefined 1`] = `
+"Immutable.Record {
+  "a": undefined,
+}"
+`;
+
+exports[`Immutable.Record: what get() returns: zero 1`] = `
+"Immutable.Record {
+  "a": 0,
+}"
+`;
+
+exports[`Immutable.Seq: _array: array 1`] = `
+"Immutable.Seq [
+  1,
+]"
+`;
+
+exports[`Immutable.Seq: _array: bigint 1`] = `
+"Immutable.Seq [
+  1,
+]"
+`;
+
+exports[`Immutable.Seq: _array: empty array 1`] = `
+"Immutable.Seq [
+  1,
+]"
+`;
+
+exports[`Immutable.Seq: _array: empty string 1`] = `"Immutable.Seq […]"`;
+
+exports[`Immutable.Seq: _array: false 1`] = `"Immutable.Seq […]"`;
+
+exports[`Immutable.Seq: _array: function 1`] = `
+"Immutable.Seq [
+  1,
+]"
+`;
+
+exports[`Immutable.Seq: _array: null 1`] = `"Immutable.Seq […]"`;
+
+exports[`Immutable.Seq: _array: number 1`] = `
+"Immutable.Seq [
+  1,
+]"
+`;
+
+exports[`Immutable.Seq: _array: object 1`] = `
+"Immutable.Seq [
+  1,
+]"
+`;
+
+exports[`Immutable.Seq: _array: proxy 1`] = `
+"Immutable.Seq [
+  1,
+]"
+`;
+
+exports[`Immutable.Seq: _array: proxy of an array 1`] = `
+"Immutable.Seq [
+  1,
+]"
+`;
+
+exports[`Immutable.Seq: _array: revoked proxy 1`] = `
+"Immutable.Seq [
+  1,
+]"
+`;
+
+exports[`Immutable.Seq: _array: string 1`] = `
+"Immutable.Seq [
+  1,
+]"
+`;
+
+exports[`Immutable.Seq: _array: symbol 1`] = `
+"Immutable.Seq [
+  1,
+]"
+`;
+
+exports[`Immutable.Seq: _array: throwing getters 1`] = `
+"Immutable.Seq [
+  1,
+]"
+`;
+
+exports[`Immutable.Seq: _array: throwing proxy 1`] = `
+"Immutable.Seq [
+  1,
+]"
+`;
+
+exports[`Immutable.Seq: _array: true 1`] = `
+"Immutable.Seq [
+  1,
+]"
+`;
+
+exports[`Immutable.Seq: _array: undefined 1`] = `"Immutable.Seq […]"`;
+
+exports[`Immutable.Seq: _array: zero 1`] = `"Immutable.Seq […]"`;
+
+exports[`Immutable: the mark of a kind: array 1`] = `
+"Immutable.List [
+  1,
+]"
+`;
+
+exports[`Immutable: the mark of a kind: bigint 1`] = `
+"Immutable.List [
+  1,
+]"
+`;
+
+exports[`Immutable: the mark of a kind: empty array 1`] = `
+"Immutable.List [
+  1,
+]"
+`;
+
+exports[`Immutable: the mark of a kind: empty string 1`] = `"Immutable.Record {}"`;
+
+exports[`Immutable: the mark of a kind: false 1`] = `"Immutable.Record {}"`;
+
+exports[`Immutable: the mark of a kind: function 1`] = `
+"Immutable.List [
+  1,
+]"
+`;
+
+exports[`Immutable: the mark of a kind: null 1`] = `"Immutable.Record {}"`;
+
+exports[`Immutable: the mark of a kind: number 1`] = `
+"Immutable.List [
+  1,
+]"
+`;
+
+exports[`Immutable: the mark of a kind: object 1`] = `
+"Immutable.List [
+  1,
+]"
+`;
+
+exports[`Immutable: the mark of a kind: proxy 1`] = `
+"Immutable.List [
+  1,
+]"
+`;
+
+exports[`Immutable: the mark of a kind: proxy of an array 1`] = `
+"Immutable.List [
+  1,
+]"
+`;
+
+exports[`Immutable: the mark of a kind: revoked proxy 1`] = `
+"Immutable.List [
+  1,
+]"
+`;
+
+exports[`Immutable: the mark of a kind: string 1`] = `
+"Immutable.List [
+  1,
+]"
+`;
+
+exports[`Immutable: the mark of a kind: symbol 1`] = `
+"Immutable.List [
+  1,
+]"
+`;
+
+exports[`Immutable: the mark of a kind: throwing getters 1`] = `
+"Immutable.List [
+  1,
+]"
+`;
+
+exports[`Immutable: the mark of a kind: throwing proxy 1`] = `
+"Immutable.List [
+  1,
+]"
+`;
+
+exports[`Immutable: the mark of a kind: true 1`] = `
+"Immutable.List [
+  1,
+]"
+`;
+
+exports[`Immutable: the mark of a kind: undefined 1`] = `"Immutable.Record {}"`;
+
+exports[`Immutable: the mark of a kind: zero 1`] = `"Immutable.Record {}"`;
+
+exports[`Immutable: the mark: array 1`] = `
+"{
+  "@@__IMMUTABLE_ITERABLE__@@": [
+    1,
+    "two",
+  ],
+  "@@__IMMUTABLE_LIST__@@": true,
+  "values": [Function],
+}"
+`;
+
+exports[`Immutable: the mark: bigint 1`] = `
+"{
+  "@@__IMMUTABLE_ITERABLE__@@": 10n,
+  "@@__IMMUTABLE_LIST__@@": true,
+  "values": [Function],
+}"
+`;
+
+exports[`Immutable: the mark: empty array 1`] = `
+"{
+  "@@__IMMUTABLE_ITERABLE__@@": [],
+  "@@__IMMUTABLE_LIST__@@": true,
+  "values": [Function],
+}"
+`;
+
+exports[`Immutable: the mark: empty string 1`] = `
+"{
+  "@@__IMMUTABLE_ITERABLE__@@": "",
+  "@@__IMMUTABLE_LIST__@@": true,
+  "values": [Function],
+}"
+`;
+
+exports[`Immutable: the mark: false 1`] = `
+"{
+  "@@__IMMUTABLE_ITERABLE__@@": false,
+  "@@__IMMUTABLE_LIST__@@": true,
+  "values": [Function],
+}"
+`;
+
+exports[`Immutable: the mark: function 1`] = `
+"{
+  "@@__IMMUTABLE_ITERABLE__@@": [Function],
+  "@@__IMMUTABLE_LIST__@@": true,
+  "values": [Function],
+}"
+`;
+
+exports[`Immutable: the mark: null 1`] = `
+"{
+  "@@__IMMUTABLE_ITERABLE__@@": null,
+  "@@__IMMUTABLE_LIST__@@": true,
+  "values": [Function],
+}"
+`;
+
+exports[`Immutable: the mark: number 1`] = `
+"{
+  "@@__IMMUTABLE_ITERABLE__@@": 5,
+  "@@__IMMUTABLE_LIST__@@": true,
+  "values": [Function],
+}"
+`;
+
+exports[`Immutable: the mark: object 1`] = `
+"{
+  "@@__IMMUTABLE_ITERABLE__@@": {
+    "a": 1,
+  },
+  "@@__IMMUTABLE_LIST__@@": true,
+  "values": [Function],
+}"
+`;
+
+exports[`Immutable: the mark: proxy 1`] = `
+"{
+  "@@__IMMUTABLE_ITERABLE__@@": {
+    "a": 1,
+  },
+  "@@__IMMUTABLE_LIST__@@": true,
+  "values": [Function],
+}"
+`;
+
+exports[`Immutable: the mark: proxy of an array 1`] = `
+"{
+  "@@__IMMUTABLE_ITERABLE__@@": [
+    1,
+  ],
+  "@@__IMMUTABLE_LIST__@@": true,
+  "values": [Function],
+}"
+`;
+
+exports[`Immutable: the mark: revoked proxy 1`] = `"throws"`;
+
+exports[`Immutable: the mark: string 1`] = `
+"{
+  "@@__IMMUTABLE_ITERABLE__@@": "abc",
+  "@@__IMMUTABLE_LIST__@@": true,
+  "values": [Function],
+}"
+`;
+
+exports[`Immutable: the mark: symbol 1`] = `
+"{
+  "@@__IMMUTABLE_ITERABLE__@@": Symbol(s),
+  "@@__IMMUTABLE_LIST__@@": true,
+  "values": [Function],
+}"
+`;
+
+exports[`Immutable: the mark: throwing getters 1`] = `"throws"`;
+
+exports[`Immutable: the mark: throwing proxy 1`] = `"throws"`;
+
+exports[`Immutable: the mark: true 1`] = `
+"Immutable.List [
+  1,
+]"
+`;
+
+exports[`Immutable: the mark: undefined 1`] = `
+"{
+  "@@__IMMUTABLE_ITERABLE__@@": undefined,
+  "@@__IMMUTABLE_LIST__@@": true,
+  "values": [Function],
+}"
+`;
+
+exports[`Immutable: the mark: zero 1`] = `
+"{
+  "@@__IMMUTABLE_ITERABLE__@@": 0,
+  "@@__IMMUTABLE_LIST__@@": true,
+  "values": [Function],
+}"
+`;
+
+exports[`Symbol.toStringTag: array 1`] = `
+"{
+  "a": 1,
+  Symbol(Symbol.toStringTag): [
+    1,
+    "two",
+  ],
+}"
+`;
+
+exports[`Symbol.toStringTag: bigint 1`] = `
+"{
+  "a": 1,
+  Symbol(Symbol.toStringTag): 10n,
+}"
+`;
+
+exports[`Symbol.toStringTag: empty array 1`] = `
+"{
+  "a": 1,
+  Symbol(Symbol.toStringTag): [],
+}"
+`;
+
+exports[`Symbol.toStringTag: empty string 1`] = `
+"{
+  "a": 1,
+  Symbol(Symbol.toStringTag): "",
+}"
+`;
+
+exports[`Symbol.toStringTag: false 1`] = `
+"{
+  "a": 1,
+  Symbol(Symbol.toStringTag): false,
+}"
+`;
+
+exports[`Symbol.toStringTag: function 1`] = `
+"{
+  "a": 1,
+  Symbol(Symbol.toStringTag): [Function],
+}"
+`;
+
+exports[`Symbol.toStringTag: null 1`] = `
+"{
+  "a": 1,
+  Symbol(Symbol.toStringTag): null,
+}"
+`;
+
+exports[`Symbol.toStringTag: number 1`] = `
+"{
+  "a": 1,
+  Symbol(Symbol.toStringTag): 5,
+}"
+`;
+
+exports[`Symbol.toStringTag: object 1`] = `
+"{
+  "a": 1,
+  Symbol(Symbol.toStringTag): {
+    "a": 1,
+  },
+}"
+`;
+
+exports[`Symbol.toStringTag: proxy 1`] = `
+"{
+  "a": 1,
+  Symbol(Symbol.toStringTag): {
+    "a": 1,
+  },
+}"
+`;
+
+exports[`Symbol.toStringTag: proxy of an array 1`] = `
+"{
+  "a": 1,
+  Symbol(Symbol.toStringTag): [
+    1,
+  ],
+}"
+`;
+
+exports[`Symbol.toStringTag: revoked proxy 1`] = `"throws"`;
+
+exports[`Symbol.toStringTag: string 1`] = `
+"{
+  "a": 1,
+  Symbol(Symbol.toStringTag): "abc",
+}"
+`;
+
+exports[`Symbol.toStringTag: symbol 1`] = `
+"{
+  "a": 1,
+  Symbol(Symbol.toStringTag): Symbol(s),
+}"
+`;
+
+exports[`Symbol.toStringTag: throwing getters 1`] = `"throws"`;
+
+exports[`Symbol.toStringTag: throwing proxy 1`] = `"throws"`;
+
+exports[`Symbol.toStringTag: true 1`] = `
+"{
+  "a": 1,
+  Symbol(Symbol.toStringTag): true,
+}"
+`;
+
+exports[`Symbol.toStringTag: undefined 1`] = `
+"{
+  "a": 1,
+  Symbol(Symbol.toStringTag): undefined,
+}"
+`;
+
+exports[`Symbol.toStringTag: zero 1`] = `
+"{
+  "a": 1,
+  Symbol(Symbol.toStringTag): 0,
+}"
+`;
+
+exports[`a function with the mark of a plugin: Immutable 1`] = `
+"Immutable.List [
+  1,
+]"
+`;
+
+exports[`a function with the mark of a plugin: jest.asymmetricMatcher 1`] = `"StringContaining "a""`;
+
+exports[`a function with the mark of a plugin: react.element 1`] = `"[Function]"`;
+
+exports[`a function with the mark of a plugin: react.test.json 1`] = `"<a />"`;
+
+exports[`a function: $$typeof: array 1`] = `"[Function]"`;
+
+exports[`a function: $$typeof: bigint 1`] = `"[Function]"`;
+
+exports[`a function: $$typeof: empty array 1`] = `"[Function]"`;
+
+exports[`a function: $$typeof: empty string 1`] = `"[Function]"`;
+
+exports[`a function: $$typeof: false 1`] = `"[Function]"`;
+
+exports[`a function: $$typeof: function 1`] = `"[Function]"`;
+
+exports[`a function: $$typeof: null 1`] = `"[Function]"`;
+
+exports[`a function: $$typeof: number 1`] = `"[Function]"`;
+
+exports[`a function: $$typeof: object 1`] = `"[Function]"`;
+
+exports[`a function: $$typeof: proxy 1`] = `"[Function]"`;
+
+exports[`a function: $$typeof: proxy of an array 1`] = `"[Function]"`;
+
+exports[`a function: $$typeof: revoked proxy 1`] = `"[Function]"`;
+
+exports[`a function: $$typeof: string 1`] = `"[Function]"`;
+
+exports[`a function: $$typeof: symbol 1`] = `"[Function]"`;
+
+exports[`a function: $$typeof: throwing getters 1`] = `"[Function]"`;
+
+exports[`a function: $$typeof: throwing proxy 1`] = `"[Function]"`;
+
+exports[`a function: $$typeof: true 1`] = `"[Function]"`;
+
+exports[`a function: $$typeof: undefined 1`] = `"[Function]"`;
+
+exports[`a function: $$typeof: zero 1`] = `"[Function]"`;
+
+exports[`a serializer: what print() returns: array 1`] = `"throws"`;
+
+exports[`a serializer: what print() returns: bigint 1`] = `"throws"`;
+
+exports[`a serializer: what print() returns: empty array 1`] = `"throws"`;
+
+exports[`a serializer: what print() returns: empty string 1`] = `""`;
+
+exports[`a serializer: what print() returns: false 1`] = `"throws"`;
+
+exports[`a serializer: what print() returns: function 1`] = `"throws"`;
+
+exports[`a serializer: what print() returns: null 1`] = `"throws"`;
+
+exports[`a serializer: what print() returns: number 1`] = `"throws"`;
+
+exports[`a serializer: what print() returns: object 1`] = `"throws"`;
+
+exports[`a serializer: what print() returns: proxy 1`] = `"throws"`;
+
+exports[`a serializer: what print() returns: proxy of an array 1`] = `"throws"`;
+
+exports[`a serializer: what print() returns: revoked proxy 1`] = `"throws"`;
+
+exports[`a serializer: what print() returns: string 1`] = `"abc"`;
+
+exports[`a serializer: what print() returns: symbol 1`] = `"throws"`;
+
+exports[`a serializer: what print() returns: throwing getters 1`] = `"throws"`;
+
+exports[`a serializer: what print() returns: throwing proxy 1`] = `"throws"`;
+
+exports[`a serializer: what print() returns: true 1`] = `"throws"`;
+
+exports[`a serializer: what print() returns: undefined 1`] = `"throws"`;
+
+exports[`a serializer: what print() returns: zero 1`] = `"throws"`;
+
+exports[`a serializer: what serialize() returns: array 1`] = `"throws"`;
+
+exports[`a serializer: what serialize() returns: bigint 1`] = `"throws"`;
+
+exports[`a serializer: what serialize() returns: empty array 1`] = `"throws"`;
+
+exports[`a serializer: what serialize() returns: empty string 1`] = `""`;
+
+exports[`a serializer: what serialize() returns: false 1`] = `"throws"`;
+
+exports[`a serializer: what serialize() returns: function 1`] = `"throws"`;
+
+exports[`a serializer: what serialize() returns: null 1`] = `"throws"`;
+
+exports[`a serializer: what serialize() returns: number 1`] = `"throws"`;
+
+exports[`a serializer: what serialize() returns: object 1`] = `"throws"`;
+
+exports[`a serializer: what serialize() returns: proxy 1`] = `"throws"`;
+
+exports[`a serializer: what serialize() returns: proxy of an array 1`] = `"throws"`;
+
+exports[`a serializer: what serialize() returns: revoked proxy 1`] = `"throws"`;
+
+exports[`a serializer: what serialize() returns: string 1`] = `"abc"`;
+
+exports[`a serializer: what serialize() returns: symbol 1`] = `"throws"`;
+
+exports[`a serializer: what serialize() returns: throwing getters 1`] = `"throws"`;
+
+exports[`a serializer: what serialize() returns: throwing proxy 1`] = `"throws"`;
+
+exports[`a serializer: what serialize() returns: true 1`] = `"throws"`;
+
+exports[`a serializer: what serialize() returns: undefined 1`] = `"throws"`;
+
+exports[`a serializer: what serialize() returns: zero 1`] = `"throws"`;
+
+exports[`a serializer: what test() returns: array 1`] = `"printed"`;
+
+exports[`a serializer: what test() returns: bigint 1`] = `"printed"`;
+
+exports[`a serializer: what test() returns: empty array 1`] = `"printed"`;
+
+exports[`a serializer: what test() returns: empty string 1`] = `
+"Serialized {
+  "result": "printed",
+  "tested": "",
+}"
+`;
+
+exports[`a serializer: what test() returns: false 1`] = `
+"Serialized {
+  "result": "printed",
+  "tested": false,
+}"
+`;
+
+exports[`a serializer: what test() returns: function 1`] = `"printed"`;
+
+exports[`a serializer: what test() returns: null 1`] = `
+"Serialized {
+  "result": "printed",
+  "tested": null,
+}"
+`;
+
+exports[`a serializer: what test() returns: number 1`] = `"printed"`;
+
+exports[`a serializer: what test() returns: object 1`] = `"printed"`;
+
+exports[`a serializer: what test() returns: proxy 1`] = `"printed"`;
+
+exports[`a serializer: what test() returns: proxy of an array 1`] = `"printed"`;
+
+exports[`a serializer: what test() returns: revoked proxy 1`] = `"printed"`;
+
+exports[`a serializer: what test() returns: string 1`] = `"printed"`;
+
+exports[`a serializer: what test() returns: symbol 1`] = `"printed"`;
+
+exports[`a serializer: what test() returns: throwing getters 1`] = `"printed"`;
+
+exports[`a serializer: what test() returns: throwing proxy 1`] = `"printed"`;
+
+exports[`a serializer: what test() returns: true 1`] = `"printed"`;
+
+exports[`a serializer: what test() returns: undefined 1`] = `
+"Serialized {
+  "result": "printed",
+  "tested": undefined,
+}"
+`;
+
+exports[`a serializer: what test() returns: zero 1`] = `
+"Serialized {
+  "result": "printed",
+  "tested": 0,
+}"
+`;
+
+exports[`an iterator: done: array 1`] = `"Set {}"`;
+
+exports[`an iterator: done: bigint 1`] = `"Set {}"`;
+
+exports[`an iterator: done: empty array 1`] = `"Set {}"`;
+
+exports[`an iterator: done: empty string 1`] = `
+"Set {
+  1,
+}"
+`;
+
+exports[`an iterator: done: false 1`] = `
+"Set {
+  1,
+}"
+`;
+
+exports[`an iterator: done: function 1`] = `"Set {}"`;
+
+exports[`an iterator: done: null 1`] = `
+"Set {
+  1,
+}"
+`;
+
+exports[`an iterator: done: number 1`] = `"Set {}"`;
+
+exports[`an iterator: done: object 1`] = `"Set {}"`;
+
+exports[`an iterator: done: proxy 1`] = `"Set {}"`;
+
+exports[`an iterator: done: proxy of an array 1`] = `"Set {}"`;
+
+exports[`an iterator: done: revoked proxy 1`] = `"Set {}"`;
+
+exports[`an iterator: done: string 1`] = `"Set {}"`;
+
+exports[`an iterator: done: symbol 1`] = `"Set {}"`;
+
+exports[`an iterator: done: throwing getters 1`] = `"Set {}"`;
+
+exports[`an iterator: done: throwing proxy 1`] = `"Set {}"`;
+
+exports[`an iterator: done: true 1`] = `"Set {}"`;
+
+exports[`an iterator: done: undefined 1`] = `
+"Set {
+  1,
+}"
+`;
+
+exports[`an iterator: done: zero 1`] = `
+"Set {
+  1,
+}"
+`;
+
+exports[`an iterator: next: array 1`] = `"throws"`;
+
+exports[`an iterator: next: bigint 1`] = `"throws"`;
+
+exports[`an iterator: next: empty array 1`] = `"throws"`;
+
+exports[`an iterator: next: empty string 1`] = `"throws"`;
+
+exports[`an iterator: next: false 1`] = `"throws"`;
+
+exports[`an iterator: next: function 1`] = `"throws"`;
+
+exports[`an iterator: next: null 1`] = `"throws"`;
+
+exports[`an iterator: next: number 1`] = `"throws"`;
+
+exports[`an iterator: next: object 1`] = `"throws"`;
+
+exports[`an iterator: next: proxy 1`] = `"throws"`;
+
+exports[`an iterator: next: proxy of an array 1`] = `"throws"`;
+
+exports[`an iterator: next: revoked proxy 1`] = `"throws"`;
+
+exports[`an iterator: next: string 1`] = `"throws"`;
+
+exports[`an iterator: next: symbol 1`] = `"throws"`;
+
+exports[`an iterator: next: throwing getters 1`] = `"throws"`;
+
+exports[`an iterator: next: throwing proxy 1`] = `"throws"`;
+
+exports[`an iterator: next: true 1`] = `"throws"`;
+
+exports[`an iterator: next: undefined 1`] = `"throws"`;
+
+exports[`an iterator: next: zero 1`] = `"throws"`;
+
+exports[`an iterator: the value of an entry: array 1`] = `
+"Map {
+  1 => "two",
+}"
+`;
+
+exports[`an iterator: the value of an entry: bigint 1`] = `
+"Map {
+  undefined => undefined,
+}"
+`;
+
+exports[`an iterator: the value of an entry: empty array 1`] = `
+"Map {
+  undefined => undefined,
+}"
+`;
+
+exports[`an iterator: the value of an entry: empty string 1`] = `
+"Map {
+  undefined => undefined,
+}"
+`;
+
+exports[`an iterator: the value of an entry: false 1`] = `
+"Map {
+  undefined => undefined,
+}"
+`;
+
+exports[`an iterator: the value of an entry: function 1`] = `
+"Map {
+  undefined => undefined,
+}"
+`;
+
+exports[`an iterator: the value of an entry: null 1`] = `"throws"`;
+
+exports[`an iterator: the value of an entry: number 1`] = `
+"Map {
+  undefined => undefined,
+}"
+`;
+
+exports[`an iterator: the value of an entry: object 1`] = `
+"Map {
+  undefined => undefined,
+}"
+`;
+
+exports[`an iterator: the value of an entry: proxy 1`] = `
+"Map {
+  undefined => undefined,
+}"
+`;
+
+exports[`an iterator: the value of an entry: proxy of an array 1`] = `
+"Map {
+  1 => undefined,
+}"
+`;
+
+exports[`an iterator: the value of an entry: revoked proxy 1`] = `"throws"`;
+
+exports[`an iterator: the value of an entry: string 1`] = `
+"Map {
+  "a" => "b",
+}"
+`;
+
+exports[`an iterator: the value of an entry: symbol 1`] = `
+"Map {
+  undefined => undefined,
+}"
+`;
+
+exports[`an iterator: the value of an entry: throwing getters 1`] = `
+"Map {
+  undefined => undefined,
+}"
+`;
+
+exports[`an iterator: the value of an entry: throwing proxy 1`] = `"throws"`;
+
+exports[`an iterator: the value of an entry: true 1`] = `
+"Map {
+  undefined => undefined,
+}"
+`;
+
+exports[`an iterator: the value of an entry: undefined 1`] = `"throws"`;
+
+exports[`an iterator: the value of an entry: zero 1`] = `
+"Map {
+  undefined => undefined,
+}"
+`;
+
+exports[`an iterator: the value of an item: array 1`] = `
+"Set {
+  [
+    1,
+    "two",
+  ],
+}"
+`;
+
+exports[`an iterator: the value of an item: bigint 1`] = `
+"Set {
+  10n,
+}"
+`;
+
+exports[`an iterator: the value of an item: empty array 1`] = `
+"Set {
+  [],
+}"
+`;
+
+exports[`an iterator: the value of an item: empty string 1`] = `
+"Set {
+  "",
+}"
+`;
+
+exports[`an iterator: the value of an item: false 1`] = `
+"Set {
+  false,
+}"
+`;
+
+exports[`an iterator: the value of an item: function 1`] = `
+"Set {
+  [Function],
+}"
+`;
+
+exports[`an iterator: the value of an item: null 1`] = `
+"Set {
+  null,
+}"
+`;
+
+exports[`an iterator: the value of an item: number 1`] = `
+"Set {
+  5,
+}"
+`;
+
+exports[`an iterator: the value of an item: object 1`] = `
+"Set {
+  {
+    "a": 1,
+  },
+}"
+`;
+
+exports[`an iterator: the value of an item: proxy 1`] = `
+"Set {
+  {
+    "a": 1,
+  },
+}"
+`;
+
+exports[`an iterator: the value of an item: proxy of an array 1`] = `
+"Set {
+  [
+    1,
+  ],
+}"
+`;
+
+exports[`an iterator: the value of an item: revoked proxy 1`] = `"throws"`;
+
+exports[`an iterator: the value of an item: string 1`] = `
+"Set {
+  "abc",
+}"
+`;
+
+exports[`an iterator: the value of an item: symbol 1`] = `
+"Set {
+  Symbol(s),
+}"
+`;
+
+exports[`an iterator: the value of an item: throwing getters 1`] = `"throws"`;
+
+exports[`an iterator: the value of an item: throwing proxy 1`] = `"throws"`;
+
+exports[`an iterator: the value of an item: true 1`] = `
+"Set {
+  true,
+}"
+`;
+
+exports[`an iterator: the value of an item: undefined 1`] = `
+"Set {
+  undefined,
+}"
+`;
+
+exports[`an iterator: the value of an item: zero 1`] = `
+"Set {
+  0,
+}"
+`;
+
+exports[`an iterator: what next() returns: array 1`] = `"throws"`;
+
+exports[`an iterator: what next() returns: bigint 1`] = `"throws"`;
+
+exports[`an iterator: what next() returns: empty array 1`] = `"throws"`;
+
+exports[`an iterator: what next() returns: empty string 1`] = `"throws"`;
+
+exports[`an iterator: what next() returns: false 1`] = `"throws"`;
+
+exports[`an iterator: what next() returns: function 1`] = `"throws"`;
+
+exports[`an iterator: what next() returns: null 1`] = `"throws"`;
+
+exports[`an iterator: what next() returns: number 1`] = `"throws"`;
+
+exports[`an iterator: what next() returns: object 1`] = `"throws"`;
+
+exports[`an iterator: what next() returns: proxy 1`] = `"throws"`;
+
+exports[`an iterator: what next() returns: proxy of an array 1`] = `"throws"`;
+
+exports[`an iterator: what next() returns: revoked proxy 1`] = `"throws"`;
+
+exports[`an iterator: what next() returns: string 1`] = `"throws"`;
+
+exports[`an iterator: what next() returns: symbol 1`] = `"throws"`;
+
+exports[`an iterator: what next() returns: throwing getters 1`] = `"throws"`;
+
+exports[`an iterator: what next() returns: throwing proxy 1`] = `"throws"`;
+
+exports[`an iterator: what next() returns: true 1`] = `"throws"`;
+
+exports[`an iterator: what next() returns: undefined 1`] = `"throws"`;
+
+exports[`an iterator: what next() returns: zero 1`] = `"throws"`;
+
+exports[`asymmetric matcher: sample of ArrayContaining: array 1`] = `
+"ArrayContaining [
+  1,
+  "two",
+]"
+`;
+
+exports[`asymmetric matcher: sample of ArrayContaining: bigint 1`] = `"ArrayContaining []"`;
+
+exports[`asymmetric matcher: sample of ArrayContaining: empty array 1`] = `"ArrayContaining []"`;
+
+exports[`asymmetric matcher: sample of ArrayContaining: empty string 1`] = `"ArrayContaining []"`;
+
+exports[`asymmetric matcher: sample of ArrayContaining: false 1`] = `"ArrayContaining []"`;
+
+exports[`asymmetric matcher: sample of ArrayContaining: function 1`] = `
+"ArrayContaining [
+  ,
+  ,
+]"
+`;
+
+exports[`asymmetric matcher: sample of ArrayContaining: null 1`] = `"throws"`;
+
+exports[`asymmetric matcher: sample of ArrayContaining: number 1`] = `"ArrayContaining []"`;
+
+exports[`asymmetric matcher: sample of ArrayContaining: object 1`] = `"ArrayContaining []"`;
+
+exports[`asymmetric matcher: sample of ArrayContaining: proxy 1`] = `"ArrayContaining []"`;
+
+exports[`asymmetric matcher: sample of ArrayContaining: proxy of an array 1`] = `
+"ArrayContaining [
+  1,
+]"
+`;
+
+exports[`asymmetric matcher: sample of ArrayContaining: revoked proxy 1`] = `"throws"`;
+
+exports[`asymmetric matcher: sample of ArrayContaining: string 1`] = `"throws"`;
+
+exports[`asymmetric matcher: sample of ArrayContaining: symbol 1`] = `"ArrayContaining []"`;
+
+exports[`asymmetric matcher: sample of ArrayContaining: throwing getters 1`] = `"throws"`;
+
+exports[`asymmetric matcher: sample of ArrayContaining: throwing proxy 1`] = `"throws"`;
+
+exports[`asymmetric matcher: sample of ArrayContaining: true 1`] = `"ArrayContaining []"`;
+
+exports[`asymmetric matcher: sample of ArrayContaining: undefined 1`] = `"throws"`;
+
+exports[`asymmetric matcher: sample of ArrayContaining: zero 1`] = `"ArrayContaining []"`;
+
+exports[`asymmetric matcher: sample of ArrayNotContaining: array 1`] = `
+"ArrayNotContaining [
+  1,
+  "two",
+]"
+`;
+
+exports[`asymmetric matcher: sample of ArrayNotContaining: bigint 1`] = `"ArrayNotContaining []"`;
+
+exports[`asymmetric matcher: sample of ArrayNotContaining: empty array 1`] = `"ArrayNotContaining []"`;
+
+exports[`asymmetric matcher: sample of ArrayNotContaining: empty string 1`] = `"ArrayNotContaining []"`;
+
+exports[`asymmetric matcher: sample of ArrayNotContaining: false 1`] = `"ArrayNotContaining []"`;
+
+exports[`asymmetric matcher: sample of ArrayNotContaining: function 1`] = `
+"ArrayNotContaining [
+  ,
+  ,
+]"
+`;
+
+exports[`asymmetric matcher: sample of ArrayNotContaining: null 1`] = `"throws"`;
+
+exports[`asymmetric matcher: sample of ArrayNotContaining: number 1`] = `"ArrayNotContaining []"`;
+
+exports[`asymmetric matcher: sample of ArrayNotContaining: object 1`] = `"ArrayNotContaining []"`;
+
+exports[`asymmetric matcher: sample of ArrayNotContaining: proxy 1`] = `"ArrayNotContaining []"`;
+
+exports[`asymmetric matcher: sample of ArrayNotContaining: proxy of an array 1`] = `
+"ArrayNotContaining [
+  1,
+]"
+`;
+
+exports[`asymmetric matcher: sample of ArrayNotContaining: revoked proxy 1`] = `"throws"`;
+
+exports[`asymmetric matcher: sample of ArrayNotContaining: string 1`] = `"throws"`;
+
+exports[`asymmetric matcher: sample of ArrayNotContaining: symbol 1`] = `"ArrayNotContaining []"`;
+
+exports[`asymmetric matcher: sample of ArrayNotContaining: throwing getters 1`] = `"throws"`;
+
+exports[`asymmetric matcher: sample of ArrayNotContaining: throwing proxy 1`] = `"throws"`;
+
+exports[`asymmetric matcher: sample of ArrayNotContaining: true 1`] = `"ArrayNotContaining []"`;
+
+exports[`asymmetric matcher: sample of ArrayNotContaining: undefined 1`] = `"throws"`;
+
+exports[`asymmetric matcher: sample of ArrayNotContaining: zero 1`] = `"ArrayNotContaining []"`;
+
+exports[`asymmetric matcher: sample of ObjectContaining: array 1`] = `
+"ObjectContaining {
+  "0": 1,
+  "1": "two",
+}"
+`;
+
+exports[`asymmetric matcher: sample of ObjectContaining: bigint 1`] = `"ObjectContaining {}"`;
+
+exports[`asymmetric matcher: sample of ObjectContaining: empty array 1`] = `"ObjectContaining {}"`;
+
+exports[`asymmetric matcher: sample of ObjectContaining: empty string 1`] = `"ObjectContaining {}"`;
+
+exports[`asymmetric matcher: sample of ObjectContaining: false 1`] = `"ObjectContaining {}"`;
+
+exports[`asymmetric matcher: sample of ObjectContaining: function 1`] = `"ObjectContaining {}"`;
+
+exports[`asymmetric matcher: sample of ObjectContaining: null 1`] = `"throws"`;
+
+exports[`asymmetric matcher: sample of ObjectContaining: number 1`] = `"ObjectContaining {}"`;
+
+exports[`asymmetric matcher: sample of ObjectContaining: object 1`] = `
+"ObjectContaining {
+  "a": 1,
+}"
+`;
+
+exports[`asymmetric matcher: sample of ObjectContaining: proxy 1`] = `
+"ObjectContaining {
+  "a": 1,
+}"
+`;
+
+exports[`asymmetric matcher: sample of ObjectContaining: proxy of an array 1`] = `
+"ObjectContaining {
+  "0": 1,
+}"
+`;
+
+exports[`asymmetric matcher: sample of ObjectContaining: revoked proxy 1`] = `"throws"`;
+
+exports[`asymmetric matcher: sample of ObjectContaining: string 1`] = `
+"ObjectContaining {
+  "0": "a",
+  "1": "b",
+  "2": "c",
+}"
+`;
+
+exports[`asymmetric matcher: sample of ObjectContaining: symbol 1`] = `"ObjectContaining {}"`;
+
+exports[`asymmetric matcher: sample of ObjectContaining: throwing getters 1`] = `"throws"`;
+
+exports[`asymmetric matcher: sample of ObjectContaining: throwing proxy 1`] = `"throws"`;
+
+exports[`asymmetric matcher: sample of ObjectContaining: true 1`] = `"ObjectContaining {}"`;
+
+exports[`asymmetric matcher: sample of ObjectContaining: undefined 1`] = `"throws"`;
+
+exports[`asymmetric matcher: sample of ObjectContaining: zero 1`] = `"ObjectContaining {}"`;
+
+exports[`asymmetric matcher: sample of ObjectNotContaining: array 1`] = `
+"ObjectNotContaining {
+  "0": 1,
+  "1": "two",
+}"
+`;
+
+exports[`asymmetric matcher: sample of ObjectNotContaining: bigint 1`] = `"ObjectNotContaining {}"`;
+
+exports[`asymmetric matcher: sample of ObjectNotContaining: empty array 1`] = `"ObjectNotContaining {}"`;
+
+exports[`asymmetric matcher: sample of ObjectNotContaining: empty string 1`] = `"ObjectNotContaining {}"`;
+
+exports[`asymmetric matcher: sample of ObjectNotContaining: false 1`] = `"ObjectNotContaining {}"`;
+
+exports[`asymmetric matcher: sample of ObjectNotContaining: function 1`] = `"ObjectNotContaining {}"`;
+
+exports[`asymmetric matcher: sample of ObjectNotContaining: null 1`] = `"throws"`;
+
+exports[`asymmetric matcher: sample of ObjectNotContaining: number 1`] = `"ObjectNotContaining {}"`;
+
+exports[`asymmetric matcher: sample of ObjectNotContaining: object 1`] = `
+"ObjectNotContaining {
+  "a": 1,
+}"
+`;
+
+exports[`asymmetric matcher: sample of ObjectNotContaining: proxy 1`] = `
+"ObjectNotContaining {
+  "a": 1,
+}"
+`;
+
+exports[`asymmetric matcher: sample of ObjectNotContaining: proxy of an array 1`] = `
+"ObjectNotContaining {
+  "0": 1,
+}"
+`;
+
+exports[`asymmetric matcher: sample of ObjectNotContaining: revoked proxy 1`] = `"throws"`;
+
+exports[`asymmetric matcher: sample of ObjectNotContaining: string 1`] = `
+"ObjectNotContaining {
+  "0": "a",
+  "1": "b",
+  "2": "c",
+}"
+`;
+
+exports[`asymmetric matcher: sample of ObjectNotContaining: symbol 1`] = `"ObjectNotContaining {}"`;
+
+exports[`asymmetric matcher: sample of ObjectNotContaining: throwing getters 1`] = `"throws"`;
+
+exports[`asymmetric matcher: sample of ObjectNotContaining: throwing proxy 1`] = `"throws"`;
+
+exports[`asymmetric matcher: sample of ObjectNotContaining: true 1`] = `"ObjectNotContaining {}"`;
+
+exports[`asymmetric matcher: sample of ObjectNotContaining: undefined 1`] = `"throws"`;
+
+exports[`asymmetric matcher: sample of ObjectNotContaining: zero 1`] = `"ObjectNotContaining {}"`;
+
+exports[`asymmetric matcher: sample of StringContaining: array 1`] = `
+"StringContaining [
+  1,
+  "two",
+]"
+`;
+
+exports[`asymmetric matcher: sample of StringContaining: bigint 1`] = `"StringContaining 10n"`;
+
+exports[`asymmetric matcher: sample of StringContaining: empty array 1`] = `"StringContaining []"`;
+
+exports[`asymmetric matcher: sample of StringContaining: empty string 1`] = `"StringContaining """`;
+
+exports[`asymmetric matcher: sample of StringContaining: false 1`] = `"StringContaining false"`;
+
+exports[`asymmetric matcher: sample of StringContaining: function 1`] = `"StringContaining [Function]"`;
+
+exports[`asymmetric matcher: sample of StringContaining: null 1`] = `"StringContaining null"`;
+
+exports[`asymmetric matcher: sample of StringContaining: number 1`] = `"StringContaining 5"`;
+
+exports[`asymmetric matcher: sample of StringContaining: object 1`] = `
+"StringContaining {
+  "a": 1,
+}"
+`;
+
+exports[`asymmetric matcher: sample of StringContaining: proxy 1`] = `
+"StringContaining {
+  "a": 1,
+}"
+`;
+
+exports[`asymmetric matcher: sample of StringContaining: proxy of an array 1`] = `
+"StringContaining [
+  1,
+]"
+`;
+
+exports[`asymmetric matcher: sample of StringContaining: revoked proxy 1`] = `"throws"`;
+
+exports[`asymmetric matcher: sample of StringContaining: string 1`] = `"StringContaining "abc""`;
+
+exports[`asymmetric matcher: sample of StringContaining: symbol 1`] = `"StringContaining Symbol(s)"`;
+
+exports[`asymmetric matcher: sample of StringContaining: throwing getters 1`] = `"throws"`;
+
+exports[`asymmetric matcher: sample of StringContaining: throwing proxy 1`] = `"throws"`;
+
+exports[`asymmetric matcher: sample of StringContaining: true 1`] = `"StringContaining true"`;
+
+exports[`asymmetric matcher: sample of StringContaining: undefined 1`] = `"StringContaining undefined"`;
+
+exports[`asymmetric matcher: sample of StringContaining: zero 1`] = `"StringContaining 0"`;
+
+exports[`asymmetric matcher: sample of StringMatching: array 1`] = `
+"StringMatching [
+  1,
+  "two",
+]"
+`;
+
+exports[`asymmetric matcher: sample of StringMatching: bigint 1`] = `"StringMatching 10n"`;
+
+exports[`asymmetric matcher: sample of StringMatching: empty array 1`] = `"StringMatching []"`;
+
+exports[`asymmetric matcher: sample of StringMatching: empty string 1`] = `"StringMatching """`;
+
+exports[`asymmetric matcher: sample of StringMatching: false 1`] = `"StringMatching false"`;
+
+exports[`asymmetric matcher: sample of StringMatching: function 1`] = `"StringMatching [Function]"`;
+
+exports[`asymmetric matcher: sample of StringMatching: null 1`] = `"StringMatching null"`;
+
+exports[`asymmetric matcher: sample of StringMatching: number 1`] = `"StringMatching 5"`;
+
+exports[`asymmetric matcher: sample of StringMatching: object 1`] = `
+"StringMatching {
+  "a": 1,
+}"
+`;
+
+exports[`asymmetric matcher: sample of StringMatching: proxy 1`] = `
+"StringMatching {
+  "a": 1,
+}"
+`;
+
+exports[`asymmetric matcher: sample of StringMatching: proxy of an array 1`] = `
+"StringMatching [
+  1,
+]"
+`;
+
+exports[`asymmetric matcher: sample of StringMatching: revoked proxy 1`] = `"throws"`;
+
+exports[`asymmetric matcher: sample of StringMatching: string 1`] = `"StringMatching "abc""`;
+
+exports[`asymmetric matcher: sample of StringMatching: symbol 1`] = `"StringMatching Symbol(s)"`;
+
+exports[`asymmetric matcher: sample of StringMatching: throwing getters 1`] = `"throws"`;
+
+exports[`asymmetric matcher: sample of StringMatching: throwing proxy 1`] = `"throws"`;
+
+exports[`asymmetric matcher: sample of StringMatching: true 1`] = `"StringMatching true"`;
+
+exports[`asymmetric matcher: sample of StringMatching: undefined 1`] = `"StringMatching undefined"`;
+
+exports[`asymmetric matcher: sample of StringMatching: zero 1`] = `"StringMatching 0"`;
+
+exports[`asymmetric matcher: toAsymmetricMatcher: array 1`] = `"throws"`;
+
+exports[`asymmetric matcher: toAsymmetricMatcher: bigint 1`] = `"throws"`;
+
+exports[`asymmetric matcher: toAsymmetricMatcher: empty array 1`] = `"throws"`;
+
+exports[`asymmetric matcher: toAsymmetricMatcher: empty string 1`] = `"throws"`;
+
+exports[`asymmetric matcher: toAsymmetricMatcher: false 1`] = `"throws"`;
+
+exports[`asymmetric matcher: toAsymmetricMatcher: function 1`] = `"throws"`;
+
+exports[`asymmetric matcher: toAsymmetricMatcher: null 1`] = `"throws"`;
+
+exports[`asymmetric matcher: toAsymmetricMatcher: number 1`] = `"throws"`;
+
+exports[`asymmetric matcher: toAsymmetricMatcher: object 1`] = `"throws"`;
+
+exports[`asymmetric matcher: toAsymmetricMatcher: proxy 1`] = `"throws"`;
+
+exports[`asymmetric matcher: toAsymmetricMatcher: proxy of an array 1`] = `"throws"`;
+
+exports[`asymmetric matcher: toAsymmetricMatcher: revoked proxy 1`] = `"throws"`;
+
+exports[`asymmetric matcher: toAsymmetricMatcher: string 1`] = `"throws"`;
+
+exports[`asymmetric matcher: toAsymmetricMatcher: symbol 1`] = `"throws"`;
+
+exports[`asymmetric matcher: toAsymmetricMatcher: throwing getters 1`] = `"throws"`;
+
+exports[`asymmetric matcher: toAsymmetricMatcher: throwing proxy 1`] = `"throws"`;
+
+exports[`asymmetric matcher: toAsymmetricMatcher: true 1`] = `"throws"`;
+
+exports[`asymmetric matcher: toAsymmetricMatcher: undefined 1`] = `"throws"`;
+
+exports[`asymmetric matcher: toAsymmetricMatcher: zero 1`] = `"throws"`;
+
+exports[`asymmetric matcher: toString: array 1`] = `"throws"`;
+
+exports[`asymmetric matcher: toString: bigint 1`] = `"throws"`;
+
+exports[`asymmetric matcher: toString: empty array 1`] = `"throws"`;
+
+exports[`asymmetric matcher: toString: empty string 1`] = `"throws"`;
+
+exports[`asymmetric matcher: toString: false 1`] = `"throws"`;
+
+exports[`asymmetric matcher: toString: function 1`] = `"throws"`;
+
+exports[`asymmetric matcher: toString: null 1`] = `"throws"`;
+
+exports[`asymmetric matcher: toString: number 1`] = `"throws"`;
+
+exports[`asymmetric matcher: toString: object 1`] = `"throws"`;
+
+exports[`asymmetric matcher: toString: proxy 1`] = `"throws"`;
+
+exports[`asymmetric matcher: toString: proxy of an array 1`] = `"throws"`;
+
+exports[`asymmetric matcher: toString: revoked proxy 1`] = `"throws"`;
+
+exports[`asymmetric matcher: toString: string 1`] = `"throws"`;
+
+exports[`asymmetric matcher: toString: symbol 1`] = `"throws"`;
+
+exports[`asymmetric matcher: toString: throwing getters 1`] = `"throws"`;
+
+exports[`asymmetric matcher: toString: throwing proxy 1`] = `"throws"`;
+
+exports[`asymmetric matcher: toString: true 1`] = `"throws"`;
+
+exports[`asymmetric matcher: toString: undefined 1`] = `"throws"`;
+
+exports[`asymmetric matcher: toString: zero 1`] = `"throws"`;
+
+exports[`asymmetric matcher: what toAsymmetricMatcher() returns: array 1`] = `"throws"`;
+
+exports[`asymmetric matcher: what toAsymmetricMatcher() returns: bigint 1`] = `"throws"`;
+
+exports[`asymmetric matcher: what toAsymmetricMatcher() returns: empty array 1`] = `"throws"`;
+
+exports[`asymmetric matcher: what toAsymmetricMatcher() returns: empty string 1`] = `""`;
+
+exports[`asymmetric matcher: what toAsymmetricMatcher() returns: false 1`] = `"throws"`;
+
+exports[`asymmetric matcher: what toAsymmetricMatcher() returns: function 1`] = `"throws"`;
+
+exports[`asymmetric matcher: what toAsymmetricMatcher() returns: null 1`] = `"throws"`;
+
+exports[`asymmetric matcher: what toAsymmetricMatcher() returns: number 1`] = `"throws"`;
+
+exports[`asymmetric matcher: what toAsymmetricMatcher() returns: object 1`] = `"throws"`;
+
+exports[`asymmetric matcher: what toAsymmetricMatcher() returns: proxy 1`] = `"throws"`;
+
+exports[`asymmetric matcher: what toAsymmetricMatcher() returns: proxy of an array 1`] = `"throws"`;
+
+exports[`asymmetric matcher: what toAsymmetricMatcher() returns: revoked proxy 1`] = `"throws"`;
+
+exports[`asymmetric matcher: what toAsymmetricMatcher() returns: string 1`] = `"abc"`;
+
+exports[`asymmetric matcher: what toAsymmetricMatcher() returns: symbol 1`] = `"throws"`;
+
+exports[`asymmetric matcher: what toAsymmetricMatcher() returns: throwing getters 1`] = `"throws"`;
+
+exports[`asymmetric matcher: what toAsymmetricMatcher() returns: throwing proxy 1`] = `"throws"`;
+
+exports[`asymmetric matcher: what toAsymmetricMatcher() returns: true 1`] = `"throws"`;
+
+exports[`asymmetric matcher: what toAsymmetricMatcher() returns: undefined 1`] = `"throws"`;
+
+exports[`asymmetric matcher: what toAsymmetricMatcher() returns: zero 1`] = `"throws"`;
+
+exports[`asymmetric matcher: what toString() returns: array 1`] = `"throws"`;
+
+exports[`asymmetric matcher: what toString() returns: bigint 1`] = `"throws"`;
+
+exports[`asymmetric matcher: what toString() returns: empty array 1`] = `"throws"`;
+
+exports[`asymmetric matcher: what toString() returns: empty string 1`] = `"throws"`;
+
+exports[`asymmetric matcher: what toString() returns: false 1`] = `"throws"`;
+
+exports[`asymmetric matcher: what toString() returns: function 1`] = `"throws"`;
+
+exports[`asymmetric matcher: what toString() returns: null 1`] = `"throws"`;
+
+exports[`asymmetric matcher: what toString() returns: number 1`] = `"throws"`;
+
+exports[`asymmetric matcher: what toString() returns: object 1`] = `"throws"`;
+
+exports[`asymmetric matcher: what toString() returns: proxy 1`] = `"throws"`;
+
+exports[`asymmetric matcher: what toString() returns: proxy of an array 1`] = `"throws"`;
+
+exports[`asymmetric matcher: what toString() returns: revoked proxy 1`] = `"throws"`;
+
+exports[`asymmetric matcher: what toString() returns: string 1`] = `"throws"`;
+
+exports[`asymmetric matcher: what toString() returns: symbol 1`] = `"throws"`;
+
+exports[`asymmetric matcher: what toString() returns: throwing getters 1`] = `"throws"`;
+
+exports[`asymmetric matcher: what toString() returns: throwing proxy 1`] = `"throws"`;
+
+exports[`asymmetric matcher: what toString() returns: true 1`] = `"throws"`;
+
+exports[`asymmetric matcher: what toString() returns: undefined 1`] = `"throws"`;
+
+exports[`asymmetric matcher: what toString() returns: zero 1`] = `"throws"`;
+
+exports[`byteLength of what says it is a DataView: array 1`] = `"Object []"`;
+
+exports[`byteLength of what says it is a DataView: bigint 1`] = `"Object []"`;
+
+exports[`byteLength of what says it is a DataView: empty array 1`] = `"Object []"`;
+
+exports[`byteLength of what says it is a DataView: empty string 1`] = `"Object []"`;
+
+exports[`byteLength of what says it is a DataView: false 1`] = `"Object []"`;
+
+exports[`byteLength of what says it is a DataView: function 1`] = `"Object []"`;
+
+exports[`byteLength of what says it is a DataView: null 1`] = `"Object []"`;
+
+exports[`byteLength of what says it is a DataView: number 1`] = `"Object []"`;
+
+exports[`byteLength of what says it is a DataView: object 1`] = `"Object []"`;
+
+exports[`byteLength of what says it is a DataView: proxy 1`] = `"Object []"`;
+
+exports[`byteLength of what says it is a DataView: proxy of an array 1`] = `"Object []"`;
+
+exports[`byteLength of what says it is a DataView: revoked proxy 1`] = `"Object []"`;
+
+exports[`byteLength of what says it is a DataView: string 1`] = `"Object []"`;
+
+exports[`byteLength of what says it is a DataView: symbol 1`] = `"Object []"`;
+
+exports[`byteLength of what says it is a DataView: throwing getters 1`] = `"Object []"`;
+
+exports[`byteLength of what says it is a DataView: throwing proxy 1`] = `"Object []"`;
+
+exports[`byteLength of what says it is a DataView: true 1`] = `"Object []"`;
+
+exports[`byteLength of what says it is a DataView: undefined 1`] = `"Object []"`;
+
+exports[`byteLength of what says it is a DataView: zero 1`] = `"Object []"`;
+
+exports[`constructor of an array: array 1`] = `
+"undefined [
+  1,
+]"
+`;
+
+exports[`constructor of an array: bigint 1`] = `
+"undefined [
+  1,
+]"
+`;
+
+exports[`constructor of an array: empty array 1`] = `
+"undefined [
+  1,
+]"
+`;
+
+exports[`constructor of an array: empty string 1`] = `
+"undefined [
+  1,
+]"
+`;
+
+exports[`constructor of an array: false 1`] = `
+"undefined [
+  1,
+]"
+`;
+
+exports[`constructor of an array: function 1`] = `
+"f [
+  1,
+]"
+`;
+
+exports[`constructor of an array: null 1`] = `"throws"`;
+
+exports[`constructor of an array: number 1`] = `
+"undefined [
+  1,
+]"
+`;
+
+exports[`constructor of an array: object 1`] = `
+"undefined [
+  1,
+]"
+`;
+
+exports[`constructor of an array: proxy 1`] = `
+"undefined [
+  1,
+]"
+`;
+
+exports[`constructor of an array: proxy of an array 1`] = `
+"undefined [
+  1,
+]"
+`;
+
+exports[`constructor of an array: revoked proxy 1`] = `"throws"`;
+
+exports[`constructor of an array: string 1`] = `
+"undefined [
+  1,
+]"
+`;
+
+exports[`constructor of an array: symbol 1`] = `
+"undefined [
+  1,
+]"
+`;
+
+exports[`constructor of an array: throwing getters 1`] = `
+"undefined [
+  1,
+]"
+`;
+
+exports[`constructor of an array: throwing proxy 1`] = `"throws"`;
+
+exports[`constructor of an array: true 1`] = `
+"undefined [
+  1,
+]"
+`;
+
+exports[`constructor of an array: undefined 1`] = `"throws"`;
+
+exports[`constructor of an array: zero 1`] = `
+"undefined [
+  1,
+]"
+`;
+
+exports[`constructor: array 1`] = `
+"{
+  "a": 1,
+}"
+`;
+
+exports[`constructor: bigint 1`] = `
+"{
+  "a": 1,
+}"
+`;
+
+exports[`constructor: empty array 1`] = `
+"{
+  "a": 1,
+}"
+`;
+
+exports[`constructor: empty string 1`] = `
+"{
+  "a": 1,
+}"
+`;
+
+exports[`constructor: false 1`] = `
+"{
+  "a": 1,
+}"
+`;
+
+exports[`constructor: function 1`] = `
+"f {
+  "a": 1,
+}"
+`;
+
+exports[`constructor: null 1`] = `
+"{
+  "a": 1,
+}"
+`;
+
+exports[`constructor: number 1`] = `
+"{
+  "a": 1,
+}"
+`;
+
+exports[`constructor: object 1`] = `
+"{
+  "a": 1,
+}"
+`;
+
+exports[`constructor: proxy 1`] = `
+"{
+  "a": 1,
+}"
+`;
+
+exports[`constructor: proxy of an array 1`] = `
+"{
+  "a": 1,
+}"
+`;
+
+exports[`constructor: revoked proxy 1`] = `"throws"`;
+
+exports[`constructor: string 1`] = `
+"{
+  "a": 1,
+}"
+`;
+
+exports[`constructor: symbol 1`] = `
+"{
+  "a": 1,
+}"
+`;
+
+exports[`constructor: throwing getters 1`] = `
+"{
+  "a": 1,
+}"
+`;
+
+exports[`constructor: throwing proxy 1`] = `"throws"`;
+
+exports[`constructor: true 1`] = `
+"{
+  "a": 1,
+}"
+`;
+
+exports[`constructor: undefined 1`] = `
+"{
+  "a": 1,
+}"
+`;
+
+exports[`constructor: zero 1`] = `
+"{
+  "a": 1,
+}"
+`;
+
+exports[`element of React 19: props: array 1`] = `
+"<a
+  0={1}
+  1="two"
+/>"
+`;
+
+exports[`element of React 19: props: bigint 1`] = `"<a />"`;
+
+exports[`element of React 19: props: empty array 1`] = `"<a />"`;
+
+exports[`element of React 19: props: empty string 1`] = `"<a />"`;
+
+exports[`element of React 19: props: false 1`] = `"<a />"`;
+
+exports[`element of React 19: props: function 1`] = `"<a />"`;
+
+exports[`element of React 19: props: null 1`] = `"throws"`;
+
+exports[`element of React 19: props: number 1`] = `"<a />"`;
+
+exports[`element of React 19: props: object 1`] = `
+"<a
+  a={1}
+/>"
+`;
+
+exports[`element of React 19: props: proxy 1`] = `
+"<a
+  a={1}
+/>"
+`;
+
+exports[`element of React 19: props: proxy of an array 1`] = `
+"<a
+  0={1}
+/>"
+`;
+
+exports[`element of React 19: props: revoked proxy 1`] = `"throws"`;
+
+exports[`element of React 19: props: string 1`] = `
+"<a
+  0="a"
+  1="b"
+  2="c"
+/>"
+`;
+
+exports[`element of React 19: props: symbol 1`] = `"<a />"`;
+
+exports[`element of React 19: props: throwing getters 1`] = `"throws"`;
+
+exports[`element of React 19: props: throwing proxy 1`] = `"throws"`;
+
+exports[`element of React 19: props: true 1`] = `"<a />"`;
+
+exports[`element of React 19: props: undefined 1`] = `"throws"`;
+
+exports[`element of React 19: props: zero 1`] = `"<a />"`;
+
+exports[`element of React 19: type: array 1`] = `"<UNDEFINED />"`;
+
+exports[`element of React 19: type: bigint 1`] = `"<UNDEFINED />"`;
+
+exports[`element of React 19: type: empty array 1`] = `"<UNDEFINED />"`;
+
+exports[`element of React 19: type: empty string 1`] = `"< />"`;
+
+exports[`element of React 19: type: false 1`] = `"<UNDEFINED />"`;
+
+exports[`element of React 19: type: function 1`] = `"<f />"`;
+
+exports[`element of React 19: type: null 1`] = `"<UNDEFINED />"`;
+
+exports[`element of React 19: type: number 1`] = `"<UNDEFINED />"`;
+
+exports[`element of React 19: type: object 1`] = `"<UNDEFINED />"`;
+
+exports[`element of React 19: type: proxy 1`] = `"<UNDEFINED />"`;
+
+exports[`element of React 19: type: proxy of an array 1`] = `"<UNDEFINED />"`;
+
+exports[`element of React 19: type: revoked proxy 1`] = `"throws"`;
+
+exports[`element of React 19: type: string 1`] = `"<abc />"`;
+
+exports[`element of React 19: type: symbol 1`] = `"<UNDEFINED />"`;
+
+exports[`element of React 19: type: throwing getters 1`] = `"<UNDEFINED />"`;
+
+exports[`element of React 19: type: throwing proxy 1`] = `"throws"`;
+
+exports[`element of React 19: type: true 1`] = `"<UNDEFINED />"`;
+
+exports[`element of React 19: type: undefined 1`] = `"<UNDEFINED />"`;
+
+exports[`element of React 19: type: zero 1`] = `"<UNDEFINED />"`;
+
+exports[`element: $$typeof of its type: array 1`] = `"<UNDEFINED />"`;
+
+exports[`element: $$typeof of its type: bigint 1`] = `"<UNDEFINED />"`;
+
+exports[`element: $$typeof of its type: empty array 1`] = `"<UNDEFINED />"`;
+
+exports[`element: $$typeof of its type: empty string 1`] = `"<UNDEFINED />"`;
+
+exports[`element: $$typeof of its type: false 1`] = `"<UNDEFINED />"`;
+
+exports[`element: $$typeof of its type: function 1`] = `"<UNDEFINED />"`;
+
+exports[`element: $$typeof of its type: null 1`] = `"<UNDEFINED />"`;
+
+exports[`element: $$typeof of its type: number 1`] = `"<UNDEFINED />"`;
+
+exports[`element: $$typeof of its type: object 1`] = `"<UNDEFINED />"`;
+
+exports[`element: $$typeof of its type: proxy 1`] = `"<UNDEFINED />"`;
+
+exports[`element: $$typeof of its type: proxy of an array 1`] = `"<UNDEFINED />"`;
+
+exports[`element: $$typeof of its type: revoked proxy 1`] = `"<UNDEFINED />"`;
+
+exports[`element: $$typeof of its type: string 1`] = `"<UNDEFINED />"`;
+
+exports[`element: $$typeof of its type: symbol 1`] = `"<UNDEFINED />"`;
+
+exports[`element: $$typeof of its type: throwing getters 1`] = `"<UNDEFINED />"`;
+
+exports[`element: $$typeof of its type: throwing proxy 1`] = `"<UNDEFINED />"`;
+
+exports[`element: $$typeof of its type: true 1`] = `"<UNDEFINED />"`;
+
+exports[`element: $$typeof of its type: undefined 1`] = `"<UNDEFINED />"`;
+
+exports[`element: $$typeof of its type: zero 1`] = `"<UNDEFINED />"`;
+
+exports[`element: a child: array 1`] = `
+"<a>
+  text
+  1
+  two
+</a>"
+`;
+
+exports[`element: a child: bigint 1`] = `
+"<a>
+  text
+  10n
+</a>"
+`;
+
+exports[`element: a child: empty array 1`] = `
+"<a>
+  text
+</a>"
+`;
+
+exports[`element: a child: empty string 1`] = `
+"<a>
+  text
+</a>"
+`;
+
+exports[`element: a child: false 1`] = `
+"<a>
+  text
+</a>"
+`;
+
+exports[`element: a child: function 1`] = `
+"<a>
+  text
+  [Function]
+</a>"
+`;
+
+exports[`element: a child: null 1`] = `
+"<a>
+  text
+</a>"
+`;
+
+exports[`element: a child: number 1`] = `
+"<a>
+  text
+  5
+</a>"
+`;
+
+exports[`element: a child: object 1`] = `
+"<a>
+  text
+  {
+    "a": 1,
+  }
+</a>"
+`;
+
+exports[`element: a child: proxy 1`] = `
+"<a>
+  text
+  {
+    "a": 1,
+  }
+</a>"
+`;
+
+exports[`element: a child: proxy of an array 1`] = `
+"<a>
+  text
+  1
+</a>"
+`;
+
+exports[`element: a child: revoked proxy 1`] = `"throws"`;
+
+exports[`element: a child: string 1`] = `
+"<a>
+  text
+  abc
+</a>"
+`;
+
+exports[`element: a child: symbol 1`] = `
+"<a>
+  text
+  Symbol(s)
+</a>"
+`;
+
+exports[`element: a child: throwing getters 1`] = `"throws"`;
+
+exports[`element: a child: throwing proxy 1`] = `"throws"`;
+
+exports[`element: a child: true 1`] = `
+"<a>
+  text
+  true
+</a>"
+`;
+
+exports[`element: a child: undefined 1`] = `
+"<a>
+  text
+</a>"
+`;
+
+exports[`element: a child: zero 1`] = `
+"<a>
+  text
+  0
+</a>"
+`;
+
+exports[`element: a prop: array 1`] = `
+"<a
+  b={
+    [
+      1,
+      "two",
+    ]
+  }
+/>"
+`;
+
+exports[`element: a prop: bigint 1`] = `
+"<a
+  b={10n}
+/>"
+`;
+
+exports[`element: a prop: empty array 1`] = `
+"<a
+  b={[]}
+/>"
+`;
+
+exports[`element: a prop: empty string 1`] = `
+"<a
+  b=""
+/>"
+`;
+
+exports[`element: a prop: false 1`] = `
+"<a
+  b={false}
+/>"
+`;
+
+exports[`element: a prop: function 1`] = `
+"<a
+  b={[Function]}
+/>"
+`;
+
+exports[`element: a prop: null 1`] = `
+"<a
+  b={null}
+/>"
+`;
+
+exports[`element: a prop: number 1`] = `
+"<a
+  b={5}
+/>"
+`;
+
+exports[`element: a prop: object 1`] = `
+"<a
+  b={
+    {
+      "a": 1,
+    }
+  }
+/>"
+`;
+
+exports[`element: a prop: proxy 1`] = `
+"<a
+  b={
+    {
+      "a": 1,
+    }
+  }
+/>"
+`;
+
+exports[`element: a prop: proxy of an array 1`] = `
+"<a
+  b={
+    [
+      1,
+    ]
+  }
+/>"
+`;
+
+exports[`element: a prop: revoked proxy 1`] = `"throws"`;
+
+exports[`element: a prop: string 1`] = `
+"<a
+  b="abc"
+/>"
+`;
+
+exports[`element: a prop: symbol 1`] = `
+"<a
+  b={Symbol(s)}
+/>"
+`;
+
+exports[`element: a prop: throwing getters 1`] = `"throws"`;
+
+exports[`element: a prop: throwing proxy 1`] = `"throws"`;
+
+exports[`element: a prop: true 1`] = `
+"<a
+  b={true}
+/>"
+`;
+
+exports[`element: a prop: undefined 1`] = `"<a />"`;
+
+exports[`element: a prop: zero 1`] = `
+"<a
+  b={0}
+/>"
+`;
+
+exports[`element: children: array 1`] = `
+"<a>
+  1
+  two
+</a>"
+`;
+
+exports[`element: children: bigint 1`] = `
+"<a>
+  10n
+</a>"
+`;
+
+exports[`element: children: empty array 1`] = `"<a />"`;
+
+exports[`element: children: empty string 1`] = `"<a />"`;
+
+exports[`element: children: false 1`] = `"<a />"`;
+
+exports[`element: children: function 1`] = `
+"<a>
+  [Function]
+</a>"
+`;
+
+exports[`element: children: null 1`] = `"<a />"`;
+
+exports[`element: children: number 1`] = `
+"<a>
+  5
+</a>"
+`;
+
+exports[`element: children: object 1`] = `
+"<a>
+  {
+    "a": 1,
+  }
+</a>"
+`;
+
+exports[`element: children: proxy 1`] = `
+"<a>
+  {
+    "a": 1,
+  }
+</a>"
+`;
+
+exports[`element: children: proxy of an array 1`] = `
+"<a>
+  1
+</a>"
+`;
+
+exports[`element: children: revoked proxy 1`] = `"throws"`;
+
+exports[`element: children: string 1`] = `
+"<a>
+  abc
+</a>"
+`;
+
+exports[`element: children: symbol 1`] = `
+"<a>
+  Symbol(s)
+</a>"
+`;
+
+exports[`element: children: throwing getters 1`] = `"throws"`;
+
+exports[`element: children: throwing proxy 1`] = `"throws"`;
+
+exports[`element: children: true 1`] = `
+"<a>
+  true
+</a>"
+`;
+
+exports[`element: children: undefined 1`] = `"<a />"`;
+
+exports[`element: children: zero 1`] = `
+"<a>
+  0
+</a>"
+`;
+
+exports[`element: displayName of a forwardRef: array 1`] = `"<1,two />"`;
+
+exports[`element: displayName of a forwardRef: bigint 1`] = `"<10 />"`;
+
+exports[`element: displayName of a forwardRef: empty array 1`] = `"< />"`;
+
+exports[`element: displayName of a forwardRef: empty string 1`] = `"<ForwardRef(render) />"`;
+
+exports[`element: displayName of a forwardRef: false 1`] = `"<ForwardRef(render) />"`;
+
+exports[`element: displayName of a forwardRef: function 1`] = `"<function f(a, b) {} />"`;
+
+exports[`element: displayName of a forwardRef: null 1`] = `"<ForwardRef(render) />"`;
+
+exports[`element: displayName of a forwardRef: number 1`] = `"<5 />"`;
+
+exports[`element: displayName of a forwardRef: object 1`] = `"<[object Object] />"`;
+
+exports[`element: displayName of a forwardRef: proxy 1`] = `"<[object Object] />"`;
+
+exports[`element: displayName of a forwardRef: proxy of an array 1`] = `"<1 />"`;
+
+exports[`element: displayName of a forwardRef: revoked proxy 1`] = `"throws"`;
+
+exports[`element: displayName of a forwardRef: string 1`] = `"<abc />"`;
+
+exports[`element: displayName of a forwardRef: symbol 1`] = `"throws"`;
+
+exports[`element: displayName of a forwardRef: throwing getters 1`] = `"<[object Object] />"`;
+
+exports[`element: displayName of a forwardRef: throwing proxy 1`] = `"throws"`;
+
+exports[`element: displayName of a forwardRef: true 1`] = `"<true />"`;
+
+exports[`element: displayName of a forwardRef: undefined 1`] = `"<ForwardRef(render) />"`;
+
+exports[`element: displayName of a forwardRef: zero 1`] = `"<ForwardRef(render) />"`;
+
+exports[`element: displayName of its type: array 1`] = `"<1,two />"`;
+
+exports[`element: displayName of its type: bigint 1`] = `"<10 />"`;
+
+exports[`element: displayName of its type: empty array 1`] = `"< />"`;
+
+exports[`element: displayName of its type: empty string 1`] = `"<Named />"`;
+
+exports[`element: displayName of its type: false 1`] = `"<Named />"`;
+
+exports[`element: displayName of its type: function 1`] = `"<function f(a, b) {} />"`;
+
+exports[`element: displayName of its type: null 1`] = `"<Named />"`;
+
+exports[`element: displayName of its type: number 1`] = `"<5 />"`;
+
+exports[`element: displayName of its type: object 1`] = `"<[object Object] />"`;
+
+exports[`element: displayName of its type: proxy 1`] = `"<[object Object] />"`;
+
+exports[`element: displayName of its type: proxy of an array 1`] = `"<1 />"`;
+
+exports[`element: displayName of its type: revoked proxy 1`] = `"throws"`;
+
+exports[`element: displayName of its type: string 1`] = `"<abc />"`;
+
+exports[`element: displayName of its type: symbol 1`] = `"throws"`;
+
+exports[`element: displayName of its type: throwing getters 1`] = `"<[object Object] />"`;
+
+exports[`element: displayName of its type: throwing proxy 1`] = `"throws"`;
+
+exports[`element: displayName of its type: true 1`] = `"<true />"`;
+
+exports[`element: displayName of its type: undefined 1`] = `"<Named />"`;
+
+exports[`element: displayName of its type: zero 1`] = `"<Named />"`;
+
+exports[`element: props: array 1`] = `
+"<a
+  0={1}
+  1="two"
+/>"
+`;
+
+exports[`element: props: bigint 1`] = `"<a />"`;
+
+exports[`element: props: empty array 1`] = `"<a />"`;
+
+exports[`element: props: empty string 1`] = `"<a />"`;
+
+exports[`element: props: false 1`] = `"<a />"`;
+
+exports[`element: props: function 1`] = `"<a />"`;
+
+exports[`element: props: null 1`] = `"throws"`;
+
+exports[`element: props: number 1`] = `"<a />"`;
+
+exports[`element: props: object 1`] = `
+"<a
+  a={1}
+/>"
+`;
+
+exports[`element: props: proxy 1`] = `
+"<a
+  a={1}
+/>"
+`;
+
+exports[`element: props: proxy of an array 1`] = `
+"<a
+  0={1}
+/>"
+`;
+
+exports[`element: props: revoked proxy 1`] = `"throws"`;
+
+exports[`element: props: string 1`] = `
+"<a
+  0="a"
+  1="b"
+  2="c"
+/>"
+`;
+
+exports[`element: props: symbol 1`] = `"<a />"`;
+
+exports[`element: props: throwing getters 1`] = `"throws"`;
+
+exports[`element: props: throwing proxy 1`] = `"throws"`;
+
+exports[`element: props: true 1`] = `"<a />"`;
+
+exports[`element: props: undefined 1`] = `"throws"`;
+
+exports[`element: props: zero 1`] = `"<a />"`;
+
+exports[`element: render of a forwardRef: array 1`] = `"<ForwardRef />"`;
+
+exports[`element: render of a forwardRef: bigint 1`] = `"<ForwardRef />"`;
+
+exports[`element: render of a forwardRef: empty array 1`] = `"<ForwardRef />"`;
+
+exports[`element: render of a forwardRef: empty string 1`] = `"<ForwardRef />"`;
+
+exports[`element: render of a forwardRef: false 1`] = `"<ForwardRef />"`;
+
+exports[`element: render of a forwardRef: function 1`] = `"<ForwardRef(f) />"`;
+
+exports[`element: render of a forwardRef: null 1`] = `"throws"`;
+
+exports[`element: render of a forwardRef: number 1`] = `"<ForwardRef />"`;
+
+exports[`element: render of a forwardRef: object 1`] = `"<ForwardRef />"`;
+
+exports[`element: render of a forwardRef: proxy 1`] = `"<ForwardRef />"`;
+
+exports[`element: render of a forwardRef: proxy of an array 1`] = `"<ForwardRef />"`;
+
+exports[`element: render of a forwardRef: revoked proxy 1`] = `"throws"`;
+
+exports[`element: render of a forwardRef: string 1`] = `"<ForwardRef />"`;
+
+exports[`element: render of a forwardRef: symbol 1`] = `"<ForwardRef />"`;
+
+exports[`element: render of a forwardRef: throwing getters 1`] = `"<ForwardRef />"`;
+
+exports[`element: render of a forwardRef: throwing proxy 1`] = `"throws"`;
+
+exports[`element: render of a forwardRef: true 1`] = `"<ForwardRef />"`;
+
+exports[`element: render of a forwardRef: undefined 1`] = `"throws"`;
+
+exports[`element: render of a forwardRef: zero 1`] = `"<ForwardRef />"`;
+
+exports[`element: type of a memo: array 1`] = `"<Memo />"`;
+
+exports[`element: type of a memo: bigint 1`] = `"<Memo />"`;
+
+exports[`element: type of a memo: empty array 1`] = `"<Memo />"`;
+
+exports[`element: type of a memo: empty string 1`] = `"<Memo />"`;
+
+exports[`element: type of a memo: false 1`] = `"<Memo />"`;
+
+exports[`element: type of a memo: function 1`] = `"<Memo(f) />"`;
+
+exports[`element: type of a memo: null 1`] = `"throws"`;
+
+exports[`element: type of a memo: number 1`] = `"<Memo />"`;
+
+exports[`element: type of a memo: object 1`] = `"<Memo />"`;
+
+exports[`element: type of a memo: proxy 1`] = `"<Memo />"`;
+
+exports[`element: type of a memo: proxy of an array 1`] = `"<Memo />"`;
+
+exports[`element: type of a memo: revoked proxy 1`] = `"throws"`;
+
+exports[`element: type of a memo: string 1`] = `"<Memo />"`;
+
+exports[`element: type of a memo: symbol 1`] = `"<Memo />"`;
+
+exports[`element: type of a memo: throwing getters 1`] = `"<Memo />"`;
+
+exports[`element: type of a memo: throwing proxy 1`] = `"throws"`;
+
+exports[`element: type of a memo: true 1`] = `"<Memo />"`;
+
+exports[`element: type of a memo: undefined 1`] = `"throws"`;
+
+exports[`element: type of a memo: zero 1`] = `"<Memo />"`;
+
+exports[`element: type: array 1`] = `"<UNDEFINED />"`;
+
+exports[`element: type: bigint 1`] = `"<UNDEFINED />"`;
+
+exports[`element: type: empty array 1`] = `"<UNDEFINED />"`;
+
+exports[`element: type: empty string 1`] = `"< />"`;
+
+exports[`element: type: false 1`] = `"<UNDEFINED />"`;
+
+exports[`element: type: function 1`] = `"<f />"`;
+
+exports[`element: type: null 1`] = `"<UNDEFINED />"`;
+
+exports[`element: type: number 1`] = `"<UNDEFINED />"`;
+
+exports[`element: type: object 1`] = `"<UNDEFINED />"`;
+
+exports[`element: type: proxy 1`] = `"<UNDEFINED />"`;
+
+exports[`element: type: proxy of an array 1`] = `"<UNDEFINED />"`;
+
+exports[`element: type: revoked proxy 1`] = `"throws"`;
+
+exports[`element: type: string 1`] = `"<abc />"`;
+
+exports[`element: type: symbol 1`] = `"<UNDEFINED />"`;
+
+exports[`element: type: throwing getters 1`] = `"<UNDEFINED />"`;
+
+exports[`element: type: throwing proxy 1`] = `"throws"`;
+
+exports[`element: type: true 1`] = `"<UNDEFINED />"`;
+
+exports[`element: type: undefined 1`] = `"<UNDEFINED />"`;
+
+exports[`element: type: zero 1`] = `"<UNDEFINED />"`;
+
+exports[`entries of a Map: array 1`] = `"throws"`;
+
+exports[`entries of a Map: bigint 1`] = `"throws"`;
+
+exports[`entries of a Map: empty array 1`] = `"throws"`;
+
+exports[`entries of a Map: empty string 1`] = `"throws"`;
+
+exports[`entries of a Map: false 1`] = `"throws"`;
+
+exports[`entries of a Map: function 1`] = `"throws"`;
+
+exports[`entries of a Map: null 1`] = `"throws"`;
+
+exports[`entries of a Map: number 1`] = `"throws"`;
+
+exports[`entries of a Map: object 1`] = `"throws"`;
+
+exports[`entries of a Map: proxy 1`] = `"throws"`;
+
+exports[`entries of a Map: proxy of an array 1`] = `"throws"`;
+
+exports[`entries of a Map: revoked proxy 1`] = `"throws"`;
+
+exports[`entries of a Map: string 1`] = `"throws"`;
+
+exports[`entries of a Map: symbol 1`] = `"throws"`;
+
+exports[`entries of a Map: throwing getters 1`] = `"throws"`;
+
+exports[`entries of a Map: throwing proxy 1`] = `"throws"`;
+
+exports[`entries of a Map: true 1`] = `"throws"`;
+
+exports[`entries of a Map: undefined 1`] = `"throws"`;
+
+exports[`entries of a Map: zero 1`] = `"throws"`;
+
+exports[`entries of what says it is a Map: array 1`] = `"throws"`;
+
+exports[`entries of what says it is a Map: bigint 1`] = `"throws"`;
+
+exports[`entries of what says it is a Map: empty array 1`] = `"throws"`;
+
+exports[`entries of what says it is a Map: empty string 1`] = `"throws"`;
+
+exports[`entries of what says it is a Map: false 1`] = `"throws"`;
+
+exports[`entries of what says it is a Map: function 1`] = `"throws"`;
+
+exports[`entries of what says it is a Map: null 1`] = `"throws"`;
+
+exports[`entries of what says it is a Map: number 1`] = `"throws"`;
+
+exports[`entries of what says it is a Map: object 1`] = `"throws"`;
+
+exports[`entries of what says it is a Map: proxy 1`] = `"throws"`;
+
+exports[`entries of what says it is a Map: proxy of an array 1`] = `"throws"`;
+
+exports[`entries of what says it is a Map: revoked proxy 1`] = `"throws"`;
+
+exports[`entries of what says it is a Map: string 1`] = `"throws"`;
+
+exports[`entries of what says it is a Map: symbol 1`] = `"throws"`;
+
+exports[`entries of what says it is a Map: throwing getters 1`] = `"throws"`;
+
+exports[`entries of what says it is a Map: throwing proxy 1`] = `"throws"`;
+
+exports[`entries of what says it is a Map: true 1`] = `"throws"`;
+
+exports[`entries of what says it is a Map: undefined 1`] = `"throws"`;
+
+exports[`entries of what says it is a Map: zero 1`] = `"throws"`;
+
+exports[`length of what says it is Arguments: array 1`] = `"Arguments []"`;
+
+exports[`length of what says it is Arguments: bigint 1`] = `"throws"`;
+
+exports[`length of what says it is Arguments: empty array 1`] = `"Arguments []"`;
+
+exports[`length of what says it is Arguments: empty string 1`] = `"Arguments []"`;
+
+exports[`length of what says it is Arguments: false 1`] = `"Arguments []"`;
+
+exports[`length of what says it is Arguments: function 1`] = `"Arguments []"`;
+
+exports[`length of what says it is Arguments: null 1`] = `"Arguments []"`;
+
+exports[`length of what says it is Arguments: number 1`] = `
+"Arguments [
+  ,
+  ,
+  ,
+  ,
+  ,
+]"
+`;
+
+exports[`length of what says it is Arguments: object 1`] = `"Arguments []"`;
+
+exports[`length of what says it is Arguments: proxy 1`] = `"Arguments []"`;
+
+exports[`length of what says it is Arguments: proxy of an array 1`] = `
+"Arguments [
+  ,
+]"
+`;
+
+exports[`length of what says it is Arguments: revoked proxy 1`] = `"throws"`;
+
+exports[`length of what says it is Arguments: string 1`] = `"Arguments []"`;
+
+exports[`length of what says it is Arguments: symbol 1`] = `"throws"`;
+
+exports[`length of what says it is Arguments: throwing getters 1`] = `"Arguments []"`;
+
+exports[`length of what says it is Arguments: throwing proxy 1`] = `"throws"`;
+
+exports[`length of what says it is Arguments: true 1`] = `
+"Arguments [
+  ,
+]"
+`;
+
+exports[`length of what says it is Arguments: undefined 1`] = `"Arguments []"`;
+
+exports[`length of what says it is Arguments: zero 1`] = `"Arguments []"`;
+
+exports[`length of what says it is a Uint8Array: array 1`] = `"Object []"`;
+
+exports[`length of what says it is a Uint8Array: bigint 1`] = `"throws"`;
+
+exports[`length of what says it is a Uint8Array: empty array 1`] = `"Object []"`;
+
+exports[`length of what says it is a Uint8Array: empty string 1`] = `"Object []"`;
+
+exports[`length of what says it is a Uint8Array: false 1`] = `"Object []"`;
+
+exports[`length of what says it is a Uint8Array: function 1`] = `"Object []"`;
+
+exports[`length of what says it is a Uint8Array: null 1`] = `"Object []"`;
+
+exports[`length of what says it is a Uint8Array: number 1`] = `
+"Object [
+  ,
+  ,
+  ,
+  ,
+  ,
+]"
+`;
+
+exports[`length of what says it is a Uint8Array: object 1`] = `"Object []"`;
+
+exports[`length of what says it is a Uint8Array: proxy 1`] = `"Object []"`;
+
+exports[`length of what says it is a Uint8Array: proxy of an array 1`] = `
+"Object [
+  ,
+]"
+`;
+
+exports[`length of what says it is a Uint8Array: revoked proxy 1`] = `"throws"`;
+
+exports[`length of what says it is a Uint8Array: string 1`] = `"Object []"`;
+
+exports[`length of what says it is a Uint8Array: symbol 1`] = `"throws"`;
+
+exports[`length of what says it is a Uint8Array: throwing getters 1`] = `"Object []"`;
+
+exports[`length of what says it is a Uint8Array: throwing proxy 1`] = `"throws"`;
+
+exports[`length of what says it is a Uint8Array: true 1`] = `
+"Object [
+  ,
+]"
+`;
+
+exports[`length of what says it is a Uint8Array: undefined 1`] = `"Object []"`;
+
+exports[`length of what says it is a Uint8Array: zero 1`] = `"Object []"`;
+
+exports[`length of what says it is an Array: array 1`] = `"Object []"`;
+
+exports[`length of what says it is an Array: bigint 1`] = `"throws"`;
+
+exports[`length of what says it is an Array: empty array 1`] = `"Object []"`;
+
+exports[`length of what says it is an Array: empty string 1`] = `"Object []"`;
+
+exports[`length of what says it is an Array: false 1`] = `"Object []"`;
+
+exports[`length of what says it is an Array: function 1`] = `"Object []"`;
+
+exports[`length of what says it is an Array: null 1`] = `"Object []"`;
+
+exports[`length of what says it is an Array: number 1`] = `
+"Object [
+  ,
+  ,
+  ,
+  ,
+  ,
+]"
+`;
+
+exports[`length of what says it is an Array: object 1`] = `"Object []"`;
+
+exports[`length of what says it is an Array: proxy 1`] = `"Object []"`;
+
+exports[`length of what says it is an Array: proxy of an array 1`] = `
+"Object [
+  ,
+]"
+`;
+
+exports[`length of what says it is an Array: revoked proxy 1`] = `"throws"`;
+
+exports[`length of what says it is an Array: string 1`] = `"Object []"`;
+
+exports[`length of what says it is an Array: symbol 1`] = `"throws"`;
+
+exports[`length of what says it is an Array: throwing getters 1`] = `"Object []"`;
+
+exports[`length of what says it is an Array: throwing proxy 1`] = `"throws"`;
+
+exports[`length of what says it is an Array: true 1`] = `
+"Object [
+  ,
+]"
+`;
+
+exports[`length of what says it is an Array: undefined 1`] = `"Object []"`;
+
+exports[`length of what says it is an Array: zero 1`] = `"Object []"`;
+
+exports[`message of an error: array 1`] = `"[Error: 1,two]"`;
+
+exports[`message of an error: bigint 1`] = `"[Error: 10]"`;
+
+exports[`message of an error: empty array 1`] = `"[Error]"`;
+
+exports[`message of an error: empty string 1`] = `"[Error]"`;
+
+exports[`message of an error: false 1`] = `"[Error: false]"`;
+
+exports[`message of an error: function 1`] = `"[Error: function f(a, b) {}]"`;
+
+exports[`message of an error: null 1`] = `"[Error: null]"`;
+
+exports[`message of an error: number 1`] = `"[Error: 5]"`;
+
+exports[`message of an error: object 1`] = `"[Error: [object Object]]"`;
+
+exports[`message of an error: proxy 1`] = `"[Error: [object Object]]"`;
+
+exports[`message of an error: proxy of an array 1`] = `"[Error: 1]"`;
+
+exports[`message of an error: revoked proxy 1`] = `"throws"`;
+
+exports[`message of an error: string 1`] = `"[Error: abc]"`;
+
+exports[`message of an error: symbol 1`] = `"throws"`;
+
+exports[`message of an error: throwing getters 1`] = `"[Error: [object Object]]"`;
+
+exports[`message of an error: throwing proxy 1`] = `"throws"`;
+
+exports[`message of an error: true 1`] = `"[Error: true]"`;
+
+exports[`message of an error: undefined 1`] = `"[Error]"`;
+
+exports[`message of an error: zero 1`] = `"[Error: 0]"`;
+
+exports[`mock function: _isMockFunction of an object: array 1`] = `"[MockFunction name]"`;
+
+exports[`mock function: _isMockFunction of an object: bigint 1`] = `"[MockFunction name]"`;
+
+exports[`mock function: _isMockFunction of an object: empty array 1`] = `"[MockFunction name]"`;
+
+exports[`mock function: _isMockFunction of an object: empty string 1`] = `
+"{
+  "_isMockFunction": "",
+  "getMockName": [Function],
+  "mock": {
+    "calls": [],
+    "results": [],
+  },
+}"
+`;
+
+exports[`mock function: _isMockFunction of an object: false 1`] = `
+"{
+  "_isMockFunction": false,
+  "getMockName": [Function],
+  "mock": {
+    "calls": [],
+    "results": [],
+  },
+}"
+`;
+
+exports[`mock function: _isMockFunction of an object: function 1`] = `"[MockFunction name]"`;
+
+exports[`mock function: _isMockFunction of an object: null 1`] = `
+"{
+  "_isMockFunction": null,
+  "getMockName": [Function],
+  "mock": {
+    "calls": [],
+    "results": [],
+  },
+}"
+`;
+
+exports[`mock function: _isMockFunction of an object: number 1`] = `"[MockFunction name]"`;
+
+exports[`mock function: _isMockFunction of an object: object 1`] = `"[MockFunction name]"`;
+
+exports[`mock function: _isMockFunction of an object: proxy 1`] = `"[MockFunction name]"`;
+
+exports[`mock function: _isMockFunction of an object: proxy of an array 1`] = `"[MockFunction name]"`;
+
+exports[`mock function: _isMockFunction of an object: revoked proxy 1`] = `"[MockFunction name]"`;
+
+exports[`mock function: _isMockFunction of an object: string 1`] = `"[MockFunction name]"`;
+
+exports[`mock function: _isMockFunction of an object: symbol 1`] = `"[MockFunction name]"`;
+
+exports[`mock function: _isMockFunction of an object: throwing getters 1`] = `"[MockFunction name]"`;
+
+exports[`mock function: _isMockFunction of an object: throwing proxy 1`] = `"[MockFunction name]"`;
+
+exports[`mock function: _isMockFunction of an object: true 1`] = `"[MockFunction name]"`;
+
+exports[`mock function: _isMockFunction of an object: undefined 1`] = `
+"{
+  "_isMockFunction": undefined,
+  "getMockName": [Function],
+  "mock": {
+    "calls": [],
+    "results": [],
+  },
+}"
+`;
+
+exports[`mock function: _isMockFunction of an object: zero 1`] = `
+"{
+  "_isMockFunction": 0,
+  "getMockName": [Function],
+  "mock": {
+    "calls": [],
+    "results": [],
+  },
+}"
+`;
+
+exports[`mock function: _isMockFunction: array 1`] = `"throws"`;
+
+exports[`mock function: _isMockFunction: bigint 1`] = `"throws"`;
+
+exports[`mock function: _isMockFunction: empty array 1`] = `"throws"`;
+
+exports[`mock function: _isMockFunction: empty string 1`] = `"[Function]"`;
+
+exports[`mock function: _isMockFunction: false 1`] = `"[Function]"`;
+
+exports[`mock function: _isMockFunction: function 1`] = `"throws"`;
+
+exports[`mock function: _isMockFunction: null 1`] = `"[Function]"`;
+
+exports[`mock function: _isMockFunction: number 1`] = `"throws"`;
+
+exports[`mock function: _isMockFunction: object 1`] = `"throws"`;
+
+exports[`mock function: _isMockFunction: proxy 1`] = `"throws"`;
+
+exports[`mock function: _isMockFunction: proxy of an array 1`] = `"throws"`;
+
+exports[`mock function: _isMockFunction: revoked proxy 1`] = `"throws"`;
+
+exports[`mock function: _isMockFunction: string 1`] = `"throws"`;
+
+exports[`mock function: _isMockFunction: symbol 1`] = `"throws"`;
+
+exports[`mock function: _isMockFunction: throwing getters 1`] = `"throws"`;
+
+exports[`mock function: _isMockFunction: throwing proxy 1`] = `"throws"`;
+
+exports[`mock function: _isMockFunction: true 1`] = `"throws"`;
+
+exports[`mock function: _isMockFunction: undefined 1`] = `"[Function]"`;
+
+exports[`mock function: _isMockFunction: zero 1`] = `"[Function]"`;
+
+exports[`mock function: calls: array 1`] = `
+"[MockFunction name] {
+  "calls": [
+    1,
+    "two",
+  ],
+  "results": [],
+}"
+`;
+
+exports[`mock function: calls: bigint 1`] = `"[MockFunction name]"`;
+
+exports[`mock function: calls: empty array 1`] = `"[MockFunction name]"`;
+
+exports[`mock function: calls: empty string 1`] = `"[MockFunction name]"`;
+
+exports[`mock function: calls: false 1`] = `"[MockFunction name]"`;
+
+exports[`mock function: calls: function 1`] = `
+"[MockFunction name] {
+  "calls": [Function],
+  "results": [],
+}"
+`;
+
+exports[`mock function: calls: null 1`] = `"throws"`;
+
+exports[`mock function: calls: number 1`] = `"[MockFunction name]"`;
+
+exports[`mock function: calls: object 1`] = `"[MockFunction name]"`;
+
+exports[`mock function: calls: proxy 1`] = `"[MockFunction name]"`;
+
+exports[`mock function: calls: proxy of an array 1`] = `
+"[MockFunction name] {
+  "calls": [
+    1,
+  ],
+  "results": [],
+}"
+`;
+
+exports[`mock function: calls: revoked proxy 1`] = `"throws"`;
+
+exports[`mock function: calls: string 1`] = `
+"[MockFunction name] {
+  "calls": "abc",
+  "results": [],
+}"
+`;
+
+exports[`mock function: calls: symbol 1`] = `"[MockFunction name]"`;
+
+exports[`mock function: calls: throwing getters 1`] = `"throws"`;
+
+exports[`mock function: calls: throwing proxy 1`] = `"throws"`;
+
+exports[`mock function: calls: true 1`] = `"[MockFunction name]"`;
+
+exports[`mock function: calls: undefined 1`] = `"throws"`;
+
+exports[`mock function: calls: zero 1`] = `"[MockFunction name]"`;
+
+exports[`mock function: getMockName: array 1`] = `"throws"`;
+
+exports[`mock function: getMockName: bigint 1`] = `"throws"`;
+
+exports[`mock function: getMockName: empty array 1`] = `"throws"`;
+
+exports[`mock function: getMockName: empty string 1`] = `"throws"`;
+
+exports[`mock function: getMockName: false 1`] = `"throws"`;
+
+exports[`mock function: getMockName: function 1`] = `
+"[MockFunction undefined] {
+  "calls": [
+    [
+      1,
+    ],
+  ],
+  "results": [],
+}"
+`;
+
+exports[`mock function: getMockName: null 1`] = `"throws"`;
+
+exports[`mock function: getMockName: number 1`] = `"throws"`;
+
+exports[`mock function: getMockName: object 1`] = `"throws"`;
+
+exports[`mock function: getMockName: proxy 1`] = `"throws"`;
+
+exports[`mock function: getMockName: proxy of an array 1`] = `"throws"`;
+
+exports[`mock function: getMockName: revoked proxy 1`] = `"throws"`;
+
+exports[`mock function: getMockName: string 1`] = `"throws"`;
+
+exports[`mock function: getMockName: symbol 1`] = `"throws"`;
+
+exports[`mock function: getMockName: throwing getters 1`] = `"throws"`;
+
+exports[`mock function: getMockName: throwing proxy 1`] = `"throws"`;
+
+exports[`mock function: getMockName: true 1`] = `"throws"`;
+
+exports[`mock function: getMockName: undefined 1`] = `"throws"`;
+
+exports[`mock function: getMockName: zero 1`] = `"throws"`;
+
+exports[`mock function: length of calls: array 1`] = `"[MockFunction name]"`;
+
+exports[`mock function: length of calls: bigint 1`] = `
+"[MockFunction name] {
+  "calls": {
+    "length": 10n,
+  },
+  "results": [],
+}"
+`;
+
+exports[`mock function: length of calls: empty array 1`] = `"[MockFunction name]"`;
+
+exports[`mock function: length of calls: empty string 1`] = `"[MockFunction name]"`;
+
+exports[`mock function: length of calls: false 1`] = `"[MockFunction name]"`;
+
+exports[`mock function: length of calls: function 1`] = `"[MockFunction name]"`;
+
+exports[`mock function: length of calls: null 1`] = `"[MockFunction name]"`;
+
+exports[`mock function: length of calls: number 1`] = `
+"[MockFunction name] {
+  "calls": {
+    "length": 5,
+  },
+  "results": [],
+}"
+`;
+
+exports[`mock function: length of calls: object 1`] = `"[MockFunction name]"`;
+
+exports[`mock function: length of calls: proxy 1`] = `"[MockFunction name]"`;
+
+exports[`mock function: length of calls: proxy of an array 1`] = `
+"[MockFunction name] {
+  "calls": {
+    "length": [
+      1,
+    ],
+  },
+  "results": [],
+}"
+`;
+
+exports[`mock function: length of calls: revoked proxy 1`] = `"throws"`;
+
+exports[`mock function: length of calls: string 1`] = `"[MockFunction name]"`;
+
+exports[`mock function: length of calls: symbol 1`] = `"throws"`;
+
+exports[`mock function: length of calls: throwing getters 1`] = `"[MockFunction name]"`;
+
+exports[`mock function: length of calls: throwing proxy 1`] = `"throws"`;
+
+exports[`mock function: length of calls: true 1`] = `
+"[MockFunction name] {
+  "calls": {
+    "length": true,
+  },
+  "results": [],
+}"
+`;
+
+exports[`mock function: length of calls: undefined 1`] = `"[MockFunction name]"`;
+
+exports[`mock function: length of calls: zero 1`] = `"[MockFunction name]"`;
+
+exports[`mock function: mock: array 1`] = `"throws"`;
+
+exports[`mock function: mock: bigint 1`] = `"throws"`;
+
+exports[`mock function: mock: empty array 1`] = `"throws"`;
+
+exports[`mock function: mock: empty string 1`] = `"throws"`;
+
+exports[`mock function: mock: false 1`] = `"throws"`;
+
+exports[`mock function: mock: function 1`] = `"throws"`;
+
+exports[`mock function: mock: null 1`] = `"throws"`;
+
+exports[`mock function: mock: number 1`] = `"throws"`;
+
+exports[`mock function: mock: object 1`] = `"throws"`;
+
+exports[`mock function: mock: proxy 1`] = `"throws"`;
+
+exports[`mock function: mock: proxy of an array 1`] = `"throws"`;
+
+exports[`mock function: mock: revoked proxy 1`] = `"throws"`;
+
+exports[`mock function: mock: string 1`] = `"throws"`;
+
+exports[`mock function: mock: symbol 1`] = `"throws"`;
+
+exports[`mock function: mock: throwing getters 1`] = `"throws"`;
+
+exports[`mock function: mock: throwing proxy 1`] = `"throws"`;
+
+exports[`mock function: mock: true 1`] = `"throws"`;
+
+exports[`mock function: mock: undefined 1`] = `"throws"`;
+
+exports[`mock function: mock: zero 1`] = `"throws"`;
+
+exports[`mock function: results: array 1`] = `
+"[MockFunction name] {
+  "calls": [
+    [
+      1,
+    ],
+  ],
+  "results": [
+    1,
+    "two",
+  ],
+}"
+`;
+
+exports[`mock function: results: bigint 1`] = `
+"[MockFunction name] {
+  "calls": [
+    [
+      1,
+    ],
+  ],
+  "results": 10n,
+}"
+`;
+
+exports[`mock function: results: empty array 1`] = `
+"[MockFunction name] {
+  "calls": [
+    [
+      1,
+    ],
+  ],
+  "results": [],
+}"
+`;
+
+exports[`mock function: results: empty string 1`] = `
+"[MockFunction name] {
+  "calls": [
+    [
+      1,
+    ],
+  ],
+  "results": "",
+}"
+`;
+
+exports[`mock function: results: false 1`] = `
+"[MockFunction name] {
+  "calls": [
+    [
+      1,
+    ],
+  ],
+  "results": false,
+}"
+`;
+
+exports[`mock function: results: function 1`] = `
+"[MockFunction name] {
+  "calls": [
+    [
+      1,
+    ],
+  ],
+  "results": [Function],
+}"
+`;
+
+exports[`mock function: results: null 1`] = `
+"[MockFunction name] {
+  "calls": [
+    [
+      1,
+    ],
+  ],
+  "results": null,
+}"
+`;
+
+exports[`mock function: results: number 1`] = `
+"[MockFunction name] {
+  "calls": [
+    [
+      1,
+    ],
+  ],
+  "results": 5,
+}"
+`;
+
+exports[`mock function: results: object 1`] = `
+"[MockFunction name] {
+  "calls": [
+    [
+      1,
+    ],
+  ],
+  "results": {
+    "a": 1,
+  },
+}"
+`;
+
+exports[`mock function: results: proxy 1`] = `
+"[MockFunction name] {
+  "calls": [
+    [
+      1,
+    ],
+  ],
+  "results": {
+    "a": 1,
+  },
+}"
+`;
+
+exports[`mock function: results: proxy of an array 1`] = `
+"[MockFunction name] {
+  "calls": [
+    [
+      1,
+    ],
+  ],
+  "results": [
+    1,
+  ],
+}"
+`;
+
+exports[`mock function: results: revoked proxy 1`] = `"throws"`;
+
+exports[`mock function: results: string 1`] = `
+"[MockFunction name] {
+  "calls": [
+    [
+      1,
+    ],
+  ],
+  "results": "abc",
+}"
+`;
+
+exports[`mock function: results: symbol 1`] = `
+"[MockFunction name] {
+  "calls": [
+    [
+      1,
+    ],
+  ],
+  "results": Symbol(s),
+}"
+`;
+
+exports[`mock function: results: throwing getters 1`] = `"throws"`;
+
+exports[`mock function: results: throwing proxy 1`] = `"throws"`;
+
+exports[`mock function: results: true 1`] = `
+"[MockFunction name] {
+  "calls": [
+    [
+      1,
+    ],
+  ],
+  "results": true,
+}"
+`;
+
+exports[`mock function: results: undefined 1`] = `
+"[MockFunction name] {
+  "calls": [
+    [
+      1,
+    ],
+  ],
+  "results": undefined,
+}"
+`;
+
+exports[`mock function: results: zero 1`] = `
+"[MockFunction name] {
+  "calls": [
+    [
+      1,
+    ],
+  ],
+  "results": 0,
+}"
+`;
+
+exports[`mock function: what getMockName() returns: array 1`] = `
+"[MockFunction 1,two] {
+  "calls": [
+    [
+      1,
+    ],
+  ],
+  "results": [],
+}"
+`;
+
+exports[`mock function: what getMockName() returns: bigint 1`] = `
+"[MockFunction 10] {
+  "calls": [
+    [
+      1,
+    ],
+  ],
+  "results": [],
+}"
+`;
+
+exports[`mock function: what getMockName() returns: empty array 1`] = `
+"[MockFunction ] {
+  "calls": [
+    [
+      1,
+    ],
+  ],
+  "results": [],
+}"
+`;
+
+exports[`mock function: what getMockName() returns: empty string 1`] = `
+"[MockFunction ] {
+  "calls": [
+    [
+      1,
+    ],
+  ],
+  "results": [],
+}"
+`;
+
+exports[`mock function: what getMockName() returns: false 1`] = `
+"[MockFunction false] {
+  "calls": [
+    [
+      1,
+    ],
+  ],
+  "results": [],
+}"
+`;
+
+exports[`mock function: what getMockName() returns: function 1`] = `
+"[MockFunction function f(a, b) {}] {
+  "calls": [
+    [
+      1,
+    ],
+  ],
+  "results": [],
+}"
+`;
+
+exports[`mock function: what getMockName() returns: null 1`] = `
+"[MockFunction null] {
+  "calls": [
+    [
+      1,
+    ],
+  ],
+  "results": [],
+}"
+`;
+
+exports[`mock function: what getMockName() returns: number 1`] = `
+"[MockFunction 5] {
+  "calls": [
+    [
+      1,
+    ],
+  ],
+  "results": [],
+}"
+`;
+
+exports[`mock function: what getMockName() returns: object 1`] = `
+"[MockFunction [object Object]] {
+  "calls": [
+    [
+      1,
+    ],
+  ],
+  "results": [],
+}"
+`;
+
+exports[`mock function: what getMockName() returns: proxy 1`] = `
+"[MockFunction [object Object]] {
+  "calls": [
+    [
+      1,
+    ],
+  ],
+  "results": [],
+}"
+`;
+
+exports[`mock function: what getMockName() returns: proxy of an array 1`] = `
+"[MockFunction 1] {
+  "calls": [
+    [
+      1,
+    ],
+  ],
+  "results": [],
+}"
+`;
+
+exports[`mock function: what getMockName() returns: revoked proxy 1`] = `"throws"`;
+
+exports[`mock function: what getMockName() returns: string 1`] = `
+"[MockFunction abc] {
+  "calls": [
+    [
+      1,
+    ],
+  ],
+  "results": [],
+}"
+`;
+
+exports[`mock function: what getMockName() returns: symbol 1`] = `"throws"`;
+
+exports[`mock function: what getMockName() returns: throwing getters 1`] = `
+"[MockFunction [object Object]] {
+  "calls": [
+    [
+      1,
+    ],
+  ],
+  "results": [],
+}"
+`;
+
+exports[`mock function: what getMockName() returns: throwing proxy 1`] = `"throws"`;
+
+exports[`mock function: what getMockName() returns: true 1`] = `
+"[MockFunction true] {
+  "calls": [
+    [
+      1,
+    ],
+  ],
+  "results": [],
+}"
+`;
+
+exports[`mock function: what getMockName() returns: undefined 1`] = `
+"[MockFunction undefined] {
+  "calls": [
+    [
+      1,
+    ],
+  ],
+  "results": [],
+}"
+`;
+
+exports[`mock function: what getMockName() returns: zero 1`] = `
+"[MockFunction 0] {
+  "calls": [
+    [
+      1,
+    ],
+  ],
+  "results": [],
+}"
+`;
+
+exports[`name of an error: array 1`] = `"[1,two: message]"`;
+
+exports[`name of an error: bigint 1`] = `"[10: message]"`;
+
+exports[`name of an error: empty array 1`] = `"[message]"`;
+
+exports[`name of an error: empty string 1`] = `"[message]"`;
+
+exports[`name of an error: false 1`] = `"[false: message]"`;
+
+exports[`name of an error: function 1`] = `"[function f(a, b) {}: message]"`;
+
+exports[`name of an error: null 1`] = `"[null: message]"`;
+
+exports[`name of an error: number 1`] = `"[5: message]"`;
+
+exports[`name of an error: object 1`] = `"[[object Object]: message]"`;
+
+exports[`name of an error: proxy 1`] = `"[[object Object]: message]"`;
+
+exports[`name of an error: proxy of an array 1`] = `"[1: message]"`;
+
+exports[`name of an error: revoked proxy 1`] = `"throws"`;
+
+exports[`name of an error: string 1`] = `"[abc: message]"`;
+
+exports[`name of an error: symbol 1`] = `"throws"`;
+
+exports[`name of an error: throwing getters 1`] = `"[[object Object]: message]"`;
+
+exports[`name of an error: throwing proxy 1`] = `"throws"`;
+
+exports[`name of an error: true 1`] = `"[true: message]"`;
+
+exports[`name of an error: undefined 1`] = `"[Error: message]"`;
+
+exports[`name of an error: zero 1`] = `"[0: message]"`;
+
+exports[`name of the constructor: array 1`] = `"1,two {}"`;
+
+exports[`name of the constructor: bigint 1`] = `"10 {}"`;
+
+exports[`name of the constructor: empty array 1`] = `" {}"`;
+
+exports[`name of the constructor: empty string 1`] = `"{}"`;
+
+exports[`name of the constructor: false 1`] = `"{}"`;
+
+exports[`name of the constructor: function 1`] = `"function f(a, b) {} {}"`;
+
+exports[`name of the constructor: null 1`] = `"{}"`;
+
+exports[`name of the constructor: number 1`] = `"5 {}"`;
+
+exports[`name of the constructor: object 1`] = `"[object Object] {}"`;
+
+exports[`name of the constructor: proxy 1`] = `"[object Object] {}"`;
+
+exports[`name of the constructor: proxy of an array 1`] = `"1 {}"`;
+
+exports[`name of the constructor: revoked proxy 1`] = `"throws"`;
+
+exports[`name of the constructor: string 1`] = `"abc {}"`;
+
+exports[`name of the constructor: symbol 1`] = `"throws"`;
+
+exports[`name of the constructor: throwing getters 1`] = `"[object Object] {}"`;
+
+exports[`name of the constructor: throwing proxy 1`] = `"throws"`;
+
+exports[`name of the constructor: true 1`] = `"true {}"`;
+
+exports[`name of the constructor: undefined 1`] = `"{}"`;
+
+exports[`name of the constructor: zero 1`] = `"{}"`;
+
+exports[`own constructor: array 1`] = `
+"{
+  "constructor": [
+    1,
+    "two",
+  ],
+}"
+`;
+
+exports[`own constructor: bigint 1`] = `
+"{
+  "constructor": 10n,
+}"
+`;
+
+exports[`own constructor: empty array 1`] = `
+"{
+  "constructor": [],
+}"
+`;
+
+exports[`own constructor: empty string 1`] = `
+"{
+  "constructor": "",
+}"
+`;
+
+exports[`own constructor: false 1`] = `
+"{
+  "constructor": false,
+}"
+`;
+
+exports[`own constructor: function 1`] = `
+"f {
+  "constructor": [Function],
+}"
+`;
+
+exports[`own constructor: null 1`] = `
+"{
+  "constructor": null,
+}"
+`;
+
+exports[`own constructor: number 1`] = `
+"{
+  "constructor": 5,
+}"
+`;
+
+exports[`own constructor: object 1`] = `
+"{
+  "constructor": {
+    "a": 1,
+  },
+}"
+`;
+
+exports[`own constructor: proxy 1`] = `
+"{
+  "constructor": {
+    "a": 1,
+  },
+}"
+`;
+
+exports[`own constructor: proxy of an array 1`] = `
+"{
+  "constructor": [
+    1,
+  ],
+}"
+`;
+
+exports[`own constructor: revoked proxy 1`] = `"throws"`;
+
+exports[`own constructor: string 1`] = `
+"{
+  "constructor": "abc",
+}"
+`;
+
+exports[`own constructor: symbol 1`] = `
+"{
+  "constructor": Symbol(s),
+}"
+`;
+
+exports[`own constructor: throwing getters 1`] = `"throws"`;
+
+exports[`own constructor: throwing proxy 1`] = `"throws"`;
+
+exports[`own constructor: true 1`] = `
+"{
+  "constructor": true,
+}"
+`;
+
+exports[`own constructor: undefined 1`] = `
+"{
+  "constructor": undefined,
+}"
+`;
+
+exports[`own constructor: zero 1`] = `
+"{
+  "constructor": 0,
+}"
+`;
+
+exports[`print(): value: array 1`] = `
+"[
+  1,
+  "two",
+]"
+`;
+
+exports[`print(): value: bigint 1`] = `"10n"`;
+
+exports[`print(): value: empty array 1`] = `"[]"`;
+
+exports[`print(): value: empty string 1`] = `""""`;
+
+exports[`print(): value: false 1`] = `"false"`;
+
+exports[`print(): value: function 1`] = `"[Function]"`;
+
+exports[`print(): value: null 1`] = `"null"`;
+
+exports[`print(): value: number 1`] = `"5"`;
+
+exports[`print(): value: object 1`] = `
+"{
+  "a": 1,
+}"
+`;
+
+exports[`print(): value: proxy 1`] = `
+"{
+  "a": 1,
+}"
+`;
+
+exports[`print(): value: proxy of an array 1`] = `
+"[
+  1,
+]"
+`;
+
+exports[`print(): value: revoked proxy 1`] = `"throws"`;
+
+exports[`print(): value: string 1`] = `""abc""`;
+
+exports[`print(): value: symbol 1`] = `"Symbol(s)"`;
+
+exports[`print(): value: throwing getters 1`] = `"throws"`;
+
+exports[`print(): value: throwing proxy 1`] = `"throws"`;
+
+exports[`print(): value: true 1`] = `"true"`;
+
+exports[`print(): value: undefined 1`] = `"undefined"`;
+
+exports[`print(): value: zero 1`] = `"0"`;
+
+exports[`printer(): value: array 1`] = `
+"[
+  1,
+  "two",
+]"
+`;
+
+exports[`printer(): value: bigint 1`] = `"10n"`;
+
+exports[`printer(): value: empty array 1`] = `"[]"`;
+
+exports[`printer(): value: empty string 1`] = `""""`;
+
+exports[`printer(): value: false 1`] = `"false"`;
+
+exports[`printer(): value: function 1`] = `"[Function]"`;
+
+exports[`printer(): value: null 1`] = `"null"`;
+
+exports[`printer(): value: number 1`] = `"5"`;
+
+exports[`printer(): value: object 1`] = `
+"{
+  "a": 1,
+}"
+`;
+
+exports[`printer(): value: proxy 1`] = `
+"{
+  "a": 1,
+}"
+`;
+
+exports[`printer(): value: proxy of an array 1`] = `
+"[
+  1,
+]"
+`;
+
+exports[`printer(): value: revoked proxy 1`] = `"throws"`;
+
+exports[`printer(): value: string 1`] = `""abc""`;
+
+exports[`printer(): value: symbol 1`] = `"Symbol(s)"`;
+
+exports[`printer(): value: throwing getters 1`] = `"throws"`;
+
+exports[`printer(): value: throwing proxy 1`] = `"throws"`;
+
+exports[`printer(): value: true 1`] = `"true"`;
+
+exports[`printer(): value: undefined 1`] = `"undefined"`;
+
+exports[`printer(): value: zero 1`] = `"0"`;
+
+exports[`test renderer: a child: array 1`] = `
+"<a>
+  text
+  [
+    1,
+    "two",
+  ]
+</a>"
+`;
+
+exports[`test renderer: a child: bigint 1`] = `
+"<a>
+  text
+  10n
+</a>"
+`;
+
+exports[`test renderer: a child: empty array 1`] = `
+"<a>
+  text
+  []
+</a>"
+`;
+
+exports[`test renderer: a child: empty string 1`] = `
+"<a>
+  text
+  
+</a>"
+`;
+
+exports[`test renderer: a child: false 1`] = `
+"<a>
+  text
+  false
+</a>"
+`;
+
+exports[`test renderer: a child: function 1`] = `
+"<a>
+  text
+  [Function]
+</a>"
+`;
+
+exports[`test renderer: a child: null 1`] = `
+"<a>
+  text
+  null
+</a>"
+`;
+
+exports[`test renderer: a child: number 1`] = `
+"<a>
+  text
+  5
+</a>"
+`;
+
+exports[`test renderer: a child: object 1`] = `
+"<a>
+  text
+  {
+    "a": 1,
+  }
+</a>"
+`;
+
+exports[`test renderer: a child: proxy 1`] = `
+"<a>
+  text
+  {
+    "a": 1,
+  }
+</a>"
+`;
+
+exports[`test renderer: a child: proxy of an array 1`] = `
+"<a>
+  text
+  [
+    1,
+  ]
+</a>"
+`;
+
+exports[`test renderer: a child: revoked proxy 1`] = `"throws"`;
+
+exports[`test renderer: a child: string 1`] = `
+"<a>
+  text
+  abc
+</a>"
+`;
+
+exports[`test renderer: a child: symbol 1`] = `
+"<a>
+  text
+  Symbol(s)
+</a>"
+`;
+
+exports[`test renderer: a child: throwing getters 1`] = `"throws"`;
+
+exports[`test renderer: a child: throwing proxy 1`] = `"throws"`;
+
+exports[`test renderer: a child: true 1`] = `
+"<a>
+  text
+  true
+</a>"
+`;
+
+exports[`test renderer: a child: undefined 1`] = `
+"<a>
+  text
+  undefined
+</a>"
+`;
+
+exports[`test renderer: a child: zero 1`] = `
+"<a>
+  text
+  0
+</a>"
+`;
+
+exports[`test renderer: a prop: array 1`] = `
+"<a
+  b={
+    [
+      1,
+      "two",
+    ]
+  }
+/>"
+`;
+
+exports[`test renderer: a prop: bigint 1`] = `
+"<a
+  b={10n}
+/>"
+`;
+
+exports[`test renderer: a prop: empty array 1`] = `
+"<a
+  b={[]}
+/>"
+`;
+
+exports[`test renderer: a prop: empty string 1`] = `
+"<a
+  b=""
+/>"
+`;
+
+exports[`test renderer: a prop: false 1`] = `
+"<a
+  b={false}
+/>"
+`;
+
+exports[`test renderer: a prop: function 1`] = `
+"<a
+  b={[Function]}
+/>"
+`;
+
+exports[`test renderer: a prop: null 1`] = `
+"<a
+  b={null}
+/>"
+`;
+
+exports[`test renderer: a prop: number 1`] = `
+"<a
+  b={5}
+/>"
+`;
+
+exports[`test renderer: a prop: object 1`] = `
+"<a
+  b={
+    {
+      "a": 1,
+    }
+  }
+/>"
+`;
+
+exports[`test renderer: a prop: proxy 1`] = `
+"<a
+  b={
+    {
+      "a": 1,
+    }
+  }
+/>"
+`;
+
+exports[`test renderer: a prop: proxy of an array 1`] = `
+"<a
+  b={
+    [
+      1,
+    ]
+  }
+/>"
+`;
+
+exports[`test renderer: a prop: revoked proxy 1`] = `"throws"`;
+
+exports[`test renderer: a prop: string 1`] = `
+"<a
+  b="abc"
+/>"
+`;
+
+exports[`test renderer: a prop: symbol 1`] = `
+"<a
+  b={Symbol(s)}
+/>"
+`;
+
+exports[`test renderer: a prop: throwing getters 1`] = `"throws"`;
+
+exports[`test renderer: a prop: throwing proxy 1`] = `"throws"`;
+
+exports[`test renderer: a prop: true 1`] = `
+"<a
+  b={true}
+/>"
+`;
+
+exports[`test renderer: a prop: undefined 1`] = `"<a />"`;
+
+exports[`test renderer: a prop: zero 1`] = `
+"<a
+  b={0}
+/>"
+`;
+
+exports[`test renderer: children: array 1`] = `
+"<a>
+  1
+  two
+</a>"
+`;
+
+exports[`test renderer: children: bigint 1`] = `"throws"`;
+
+exports[`test renderer: children: empty array 1`] = `"<a />"`;
+
+exports[`test renderer: children: empty string 1`] = `"<a />"`;
+
+exports[`test renderer: children: false 1`] = `"<a />"`;
+
+exports[`test renderer: children: function 1`] = `"throws"`;
+
+exports[`test renderer: children: null 1`] = `"<a />"`;
+
+exports[`test renderer: children: number 1`] = `"throws"`;
+
+exports[`test renderer: children: object 1`] = `"throws"`;
+
+exports[`test renderer: children: proxy 1`] = `"throws"`;
+
+exports[`test renderer: children: proxy of an array 1`] = `
+"<a>
+  1
+</a>"
+`;
+
+exports[`test renderer: children: revoked proxy 1`] = `"throws"`;
+
+exports[`test renderer: children: string 1`] = `"throws"`;
+
+exports[`test renderer: children: symbol 1`] = `"throws"`;
+
+exports[`test renderer: children: throwing getters 1`] = `"throws"`;
+
+exports[`test renderer: children: throwing proxy 1`] = `"throws"`;
+
+exports[`test renderer: children: true 1`] = `"throws"`;
+
+exports[`test renderer: children: undefined 1`] = `"<a />"`;
+
+exports[`test renderer: children: zero 1`] = `"<a />"`;
+
+exports[`test renderer: props: array 1`] = `
+"<a
+  0={1}
+  1="two"
+/>"
+`;
+
+exports[`test renderer: props: bigint 1`] = `"<a />"`;
+
+exports[`test renderer: props: empty array 1`] = `"<a />"`;
+
+exports[`test renderer: props: empty string 1`] = `"<a />"`;
+
+exports[`test renderer: props: false 1`] = `"<a />"`;
+
+exports[`test renderer: props: function 1`] = `"<a />"`;
+
+exports[`test renderer: props: null 1`] = `"<a />"`;
+
+exports[`test renderer: props: number 1`] = `"<a />"`;
+
+exports[`test renderer: props: object 1`] = `
+"<a
+  a={1}
+/>"
+`;
+
+exports[`test renderer: props: proxy 1`] = `
+"<a
+  a={1}
+/>"
+`;
+
+exports[`test renderer: props: proxy of an array 1`] = `
+"<a
+  0={1}
+/>"
+`;
+
+exports[`test renderer: props: revoked proxy 1`] = `"throws"`;
+
+exports[`test renderer: props: string 1`] = `
+"<a
+  0="a"
+  1="b"
+  2="c"
+/>"
+`;
+
+exports[`test renderer: props: symbol 1`] = `"<a />"`;
+
+exports[`test renderer: props: throwing getters 1`] = `"throws"`;
+
+exports[`test renderer: props: throwing proxy 1`] = `"throws"`;
+
+exports[`test renderer: props: true 1`] = `"<a />"`;
+
+exports[`test renderer: props: undefined 1`] = `"<a />"`;
+
+exports[`test renderer: props: zero 1`] = `"<a />"`;
+
+exports[`test renderer: type: array 1`] = `"<1,two />"`;
+
+exports[`test renderer: type: bigint 1`] = `"<10 />"`;
+
+exports[`test renderer: type: empty array 1`] = `"< />"`;
+
+exports[`test renderer: type: empty string 1`] = `"< />"`;
+
+exports[`test renderer: type: false 1`] = `"<false />"`;
+
+exports[`test renderer: type: function 1`] = `"<function f(a, b) {} />"`;
+
+exports[`test renderer: type: null 1`] = `"<null />"`;
+
+exports[`test renderer: type: number 1`] = `"<5 />"`;
+
+exports[`test renderer: type: object 1`] = `"<[object Object] />"`;
+
+exports[`test renderer: type: proxy 1`] = `"<[object Object] />"`;
+
+exports[`test renderer: type: proxy of an array 1`] = `"<1 />"`;
+
+exports[`test renderer: type: revoked proxy 1`] = `"throws"`;
+
+exports[`test renderer: type: string 1`] = `"<abc />"`;
+
+exports[`test renderer: type: symbol 1`] = `"throws"`;
+
+exports[`test renderer: type: throwing getters 1`] = `"<[object Object] />"`;
+
+exports[`test renderer: type: throwing proxy 1`] = `"throws"`;
+
+exports[`test renderer: type: true 1`] = `"<true />"`;
+
+exports[`test renderer: type: undefined 1`] = `"<undefined />"`;
+
+exports[`test renderer: type: zero 1`] = `"<0 />"`;
+
+exports[`toJSON: array 1`] = `
+"{
+  "a": 1,
+  "toJSON": [
+    1,
+    "two",
+  ],
+}"
+`;
+
+exports[`toJSON: bigint 1`] = `
+"{
+  "a": 1,
+  "toJSON": 10n,
+}"
+`;
+
+exports[`toJSON: empty array 1`] = `
+"{
+  "a": 1,
+  "toJSON": [],
+}"
+`;
+
+exports[`toJSON: empty string 1`] = `
+"{
+  "a": 1,
+  "toJSON": "",
+}"
+`;
+
+exports[`toJSON: false 1`] = `
+"{
+  "a": 1,
+  "toJSON": false,
+}"
+`;
+
+exports[`toJSON: function 1`] = `"undefined"`;
+
+exports[`toJSON: null 1`] = `
+"{
+  "a": 1,
+  "toJSON": null,
+}"
+`;
+
+exports[`toJSON: number 1`] = `
+"{
+  "a": 1,
+  "toJSON": 5,
+}"
+`;
+
+exports[`toJSON: object 1`] = `
+"{
+  "a": 1,
+  "toJSON": {
+    "a": 1,
+  },
+}"
+`;
+
+exports[`toJSON: proxy 1`] = `
+"{
+  "a": 1,
+  "toJSON": {
+    "a": 1,
+  },
+}"
+`;
+
+exports[`toJSON: proxy of an array 1`] = `
+"{
+  "a": 1,
+  "toJSON": [
+    1,
+  ],
+}"
+`;
+
+exports[`toJSON: revoked proxy 1`] = `"throws"`;
+
+exports[`toJSON: string 1`] = `
+"{
+  "a": 1,
+  "toJSON": "abc",
+}"
+`;
+
+exports[`toJSON: symbol 1`] = `
+"{
+  "a": 1,
+  "toJSON": Symbol(s),
+}"
+`;
+
+exports[`toJSON: throwing getters 1`] = `"throws"`;
+
+exports[`toJSON: throwing proxy 1`] = `"throws"`;
+
+exports[`toJSON: true 1`] = `
+"{
+  "a": 1,
+  "toJSON": true,
+}"
+`;
+
+exports[`toJSON: undefined 1`] = `
+"{
+  "a": 1,
+  "toJSON": undefined,
+}"
+`;
+
+exports[`toJSON: zero 1`] = `
+"{
+  "a": 1,
+  "toJSON": 0,
+}"
+`;
+
+exports[`values of a Set: array 1`] = `"throws"`;
+
+exports[`values of a Set: bigint 1`] = `"throws"`;
+
+exports[`values of a Set: empty array 1`] = `"throws"`;
+
+exports[`values of a Set: empty string 1`] = `"throws"`;
+
+exports[`values of a Set: false 1`] = `"throws"`;
+
+exports[`values of a Set: function 1`] = `"throws"`;
+
+exports[`values of a Set: null 1`] = `"throws"`;
+
+exports[`values of a Set: number 1`] = `"throws"`;
+
+exports[`values of a Set: object 1`] = `"throws"`;
+
+exports[`values of a Set: proxy 1`] = `"throws"`;
+
+exports[`values of a Set: proxy of an array 1`] = `"throws"`;
+
+exports[`values of a Set: revoked proxy 1`] = `"throws"`;
+
+exports[`values of a Set: string 1`] = `"throws"`;
+
+exports[`values of a Set: symbol 1`] = `"throws"`;
+
+exports[`values of a Set: throwing getters 1`] = `"throws"`;
+
+exports[`values of a Set: throwing proxy 1`] = `"throws"`;
+
+exports[`values of a Set: true 1`] = `"throws"`;
+
+exports[`values of a Set: undefined 1`] = `"throws"`;
+
+exports[`values of a Set: zero 1`] = `"throws"`;
+
+exports[`values of what says it is a Set: array 1`] = `"throws"`;
+
+exports[`values of what says it is a Set: bigint 1`] = `"throws"`;
+
+exports[`values of what says it is a Set: empty array 1`] = `"throws"`;
+
+exports[`values of what says it is a Set: empty string 1`] = `"throws"`;
+
+exports[`values of what says it is a Set: false 1`] = `"throws"`;
+
+exports[`values of what says it is a Set: function 1`] = `"throws"`;
+
+exports[`values of what says it is a Set: null 1`] = `"throws"`;
+
+exports[`values of what says it is a Set: number 1`] = `"throws"`;
+
+exports[`values of what says it is a Set: object 1`] = `"throws"`;
+
+exports[`values of what says it is a Set: proxy 1`] = `"throws"`;
+
+exports[`values of what says it is a Set: proxy of an array 1`] = `"throws"`;
+
+exports[`values of what says it is a Set: revoked proxy 1`] = `"throws"`;
+
+exports[`values of what says it is a Set: string 1`] = `"throws"`;
+
+exports[`values of what says it is a Set: symbol 1`] = `"throws"`;
+
+exports[`values of what says it is a Set: throwing getters 1`] = `"throws"`;
+
+exports[`values of what says it is a Set: throwing proxy 1`] = `"throws"`;
+
+exports[`values of what says it is a Set: true 1`] = `"throws"`;
+
+exports[`values of what says it is a Set: undefined 1`] = `"throws"`;
+
+exports[`values of what says it is a Set: zero 1`] = `"throws"`;
+
+exports[`what an object says it is: Arguments 1`] = `"Arguments []"`;
+
+exports[`what an object says it is: Array 1`] = `"Object []"`;
+
+exports[`what an object says it is: ArrayBuffer 1`] = `"Object []"`;
+
+exports[`what an object says it is: AsyncFunction 1`] = `
+"{
+  "a": 1,
+  Symbol(Symbol.toStringTag): "AsyncFunction",
+}"
+`;
+
+exports[`what an object says it is: BigInt 1`] = `
+"{
+  "a": 1,
+  Symbol(Symbol.toStringTag): "BigInt",
+}"
+`;
+
+exports[`what an object says it is: BigInt64Array 1`] = `
+"{
+  "a": 1,
+  Symbol(Symbol.toStringTag): "BigInt64Array",
+}"
+`;
+
+exports[`what an object says it is: Boolean 1`] = `
+"{
+  "a": 1,
+  Symbol(Symbol.toStringTag): "Boolean",
+}"
+`;
+
+exports[`what an object says it is: DataView 1`] = `"Object []"`;
+
+exports[`what an object says it is: Date 1`] = `"Date { NaN }"`;
+
+exports[`what an object says it is: Error 1`] = `"[Error]"`;
+
+exports[`what an object says it is: Function 1`] = `"[Function]"`;
+
+exports[`what an object says it is: GeneratorFunction 1`] = `"[Function]"`;
+
+exports[`what an object says it is: Map 1`] = `"throws"`;
+
+exports[`what an object says it is: Null 1`] = `
+"{
+  "a": 1,
+  Symbol(Symbol.toStringTag): "Null",
+}"
+`;
+
+exports[`what an object says it is: Number 1`] = `
+"{
+  "a": 1,
+  Symbol(Symbol.toStringTag): "Number",
+}"
+`;
+
+exports[`what an object says it is: Object 1`] = `
+"{
+  "a": 1,
+  Symbol(Symbol.toStringTag): "Object",
+}"
+`;
+
+exports[`what an object says it is: Promise 1`] = `"Promise {}"`;
+
+exports[`what an object says it is: RegExp 1`] = `"/undefined/undefined"`;
+
+exports[`what an object says it is: Set 1`] = `"throws"`;
+
+exports[`what an object says it is: SharedArrayBuffer 1`] = `
+"{
+  "a": 1,
+  Symbol(Symbol.toStringTag): "SharedArrayBuffer",
+}"
+`;
+
+exports[`what an object says it is: String 1`] = `
+"{
+  "a": 1,
+  Symbol(Symbol.toStringTag): "String",
+}"
+`;
+
+exports[`what an object says it is: Symbol 1`] = `"[object Symbol]"`;
+
+exports[`what an object says it is: Uint8Array 1`] = `"Object []"`;
+
+exports[`what an object says it is: Undefined 1`] = `
+"{
+  "a": 1,
+  Symbol(Symbol.toStringTag): "Undefined",
+}"
+`;
+
+exports[`what an object says it is: WeakMap 1`] = `"WeakMap {}"`;
+
+exports[`what an object says it is: WeakSet 1`] = `"WeakSet {}"`;
+
+exports[`what an object says it is: Window 1`] = `
+"{
+  "a": 1,
+  Symbol(Symbol.toStringTag): "Window",
+}"
+`;
+
+exports[`what an object says it is: global 1`] = `
+"{
+  "a": 1,
+  Symbol(Symbol.toStringTag): "global",
+}"
+`;
+
+exports[`what says it is a Date: array 1`] = `"Date { NaN }"`;
+
+exports[`what says it is a Date: bigint 1`] = `"Date { NaN }"`;
+
+exports[`what says it is a Date: empty array 1`] = `"Date { NaN }"`;
+
+exports[`what says it is a Date: empty string 1`] = `"Date { NaN }"`;
+
+exports[`what says it is a Date: false 1`] = `"Date { NaN }"`;
+
+exports[`what says it is a Date: function 1`] = `"Date { NaN }"`;
+
+exports[`what says it is a Date: null 1`] = `"Date { NaN }"`;
+
+exports[`what says it is a Date: number 1`] = `"Date { NaN }"`;
+
+exports[`what says it is a Date: object 1`] = `"Date { NaN }"`;
+
+exports[`what says it is a Date: proxy 1`] = `"Date { NaN }"`;
+
+exports[`what says it is a Date: proxy of an array 1`] = `"Date { NaN }"`;
+
+exports[`what says it is a Date: revoked proxy 1`] = `"Date { NaN }"`;
+
+exports[`what says it is a Date: string 1`] = `"Date { NaN }"`;
+
+exports[`what says it is a Date: symbol 1`] = `"Date { NaN }"`;
+
+exports[`what says it is a Date: throwing getters 1`] = `"Date { NaN }"`;
+
+exports[`what says it is a Date: throwing proxy 1`] = `"Date { NaN }"`;
+
+exports[`what says it is a Date: true 1`] = `"Date { NaN }"`;
+
+exports[`what says it is a Date: undefined 1`] = `"Date { NaN }"`;
+
+exports[`what says it is a Date: zero 1`] = `"Date { NaN }"`;
+
+exports[`what says it is a RegExp: array 1`] = `"/a/g"`;
+
+exports[`what says it is a RegExp: bigint 1`] = `"/a/g"`;
+
+exports[`what says it is a RegExp: empty array 1`] = `"/a/g"`;
+
+exports[`what says it is a RegExp: empty string 1`] = `"/a/g"`;
+
+exports[`what says it is a RegExp: false 1`] = `"/a/g"`;
+
+exports[`what says it is a RegExp: function 1`] = `"/a/g"`;
+
+exports[`what says it is a RegExp: null 1`] = `"/a/g"`;
+
+exports[`what says it is a RegExp: number 1`] = `"/a/g"`;
+
+exports[`what says it is a RegExp: object 1`] = `"/a/g"`;
+
+exports[`what says it is a RegExp: proxy 1`] = `"/a/g"`;
+
+exports[`what says it is a RegExp: proxy of an array 1`] = `"/a/g"`;
+
+exports[`what says it is a RegExp: revoked proxy 1`] = `"/a/g"`;
+
+exports[`what says it is a RegExp: string 1`] = `"/a/g"`;
+
+exports[`what says it is a RegExp: symbol 1`] = `"/a/g"`;
+
+exports[`what says it is a RegExp: throwing getters 1`] = `"/a/g"`;
+
+exports[`what says it is a RegExp: throwing proxy 1`] = `"/a/g"`;
+
+exports[`what says it is a RegExp: true 1`] = `"/a/g"`;
+
+exports[`what says it is a RegExp: undefined 1`] = `"/a/g"`;
+
+exports[`what says it is a RegExp: zero 1`] = `"/a/g"`;
+
+exports[`what toJSON() returns: array 1`] = `
+"[
+  1,
+  "two",
+]"
+`;
+
+exports[`what toJSON() returns: bigint 1`] = `"10n"`;
+
+exports[`what toJSON() returns: empty array 1`] = `"[]"`;
+
+exports[`what toJSON() returns: empty string 1`] = `""""`;
+
+exports[`what toJSON() returns: false 1`] = `"false"`;
+
+exports[`what toJSON() returns: function 1`] = `"[Function]"`;
+
+exports[`what toJSON() returns: null 1`] = `"null"`;
+
+exports[`what toJSON() returns: number 1`] = `"5"`;
+
+exports[`what toJSON() returns: object 1`] = `
+"{
+  "a": 1,
+}"
+`;
+
+exports[`what toJSON() returns: proxy 1`] = `
+"{
+  "a": 1,
+}"
+`;
+
+exports[`what toJSON() returns: proxy of an array 1`] = `
+"[
+  1,
+]"
+`;
+
+exports[`what toJSON() returns: revoked proxy 1`] = `"throws"`;
+
+exports[`what toJSON() returns: string 1`] = `""abc""`;
+
+exports[`what toJSON() returns: symbol 1`] = `"Symbol(s)"`;
+
+exports[`what toJSON() returns: throwing getters 1`] = `"throws"`;
+
+exports[`what toJSON() returns: throwing proxy 1`] = `"throws"`;
+
+exports[`what toJSON() returns: true 1`] = `"true"`;
+
+exports[`what toJSON() returns: undefined 1`] = `"undefined"`;
+
+exports[`what toJSON() returns: zero 1`] = `"0"`;

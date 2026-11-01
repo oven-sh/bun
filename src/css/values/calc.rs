@@ -70,23 +70,6 @@ impl CalcUnit {
             _ => None,
         }
     }
-
-    pub(crate) fn arg_parse_is_type_independent(self) -> bool {
-        matches!(
-            self,
-            Self::Sin
-                | Self::Cos
-                | Self::Tan
-                | Self::Asin
-                | Self::Acos
-                | Self::Atan
-                | Self::Atan2
-                | Self::Pow
-                | Self::Log
-                | Self::Sqrt
-                | Self::Exp
-        )
-    }
 }
 
 /// A mathematical expression used within the `calc()` function.
@@ -116,7 +99,7 @@ pub enum Calc<V> {
 // ───────────────────────────── CalcValue trait ─────────────────────────────
 // Every type that can appear inside `Calc<V>` implements this.
 //
-// The numeric protocol (`mul_f32`/`try_sign`/`try_map`/`try_op`/`try_op_to`/
+// The numeric protocol (`mul_f32`/`try_sign`/`try_map`/`try_op`/
 // `partial_cmp`/`try_from_angle`/`parse`/`to_css`/`is_compatible`) lives in
 // `crate::values::protocol` (re-exported from `crate::generics`); `CalcValue`
 // pulls it in as supertraits so each concrete impl block only carries the
@@ -129,13 +112,14 @@ pub trait CalcValue:
     + protocol::TrySign
     + protocol::TryMap
     + protocol::TryOp
-    + protocol::TryOpTo
     + protocol::PartialCmp
     + protocol::TryFromAngle
     + protocol::Parse
     + protocol::ToCss
     + protocol::IsCompatible
 {
+    /// Whether `Calc::add` keeps a sum that holds a math function, and so cannot fold.
+    const KEEPS_UNFOLDED_SUM: bool = true;
     fn add_internal(self, rhs: Self) -> Self;
     /// Wrap a value as a `Calc<Self>`.
     fn into_calc(self) -> Calc<Self>;
@@ -274,6 +258,9 @@ impl<V: CalcValue> Calc<V> {
             return Ok(Self::into_calc(Self::add_value(this_value, b)));
         }
         if matches!(self, Calc::Function(_)) || matches!(rhs, Calc::Function(_)) {
+            if !V::KEEPS_UNFOLDED_SUM {
+                return Err(input.new_custom_error(css::ParserError::invalid_value));
+            }
             return Ok(Calc::Sum {
                 left: Box::new(self),
                 right: Box::new(rhs),
@@ -424,35 +411,23 @@ impl<V: CalcValue> Calc<V> {
                     parse_ident,
                 )
             }),
-            CalcUnit::Sin => Self::parse_trig(input, TrigFnKind::Sin, false, parse_ident),
-            CalcUnit::Cos => Self::parse_trig(input, TrigFnKind::Cos, false, parse_ident),
-            CalcUnit::Tan => Self::parse_trig(input, TrigFnKind::Tan, false, parse_ident),
-            CalcUnit::Asin => Self::parse_trig(input, TrigFnKind::Asin, true, parse_ident),
-            CalcUnit::Acos => Self::parse_trig(input, TrigFnKind::Acos, true, parse_ident),
-            CalcUnit::Atan => Self::parse_trig(input, TrigFnKind::Atan, true, parse_ident),
-            CalcUnit::Atan2 => input.parse_nested_block(|i| {
-                let res = Self::parse_atan2(i, parse_ident)?;
-                if let Some(v) = V::try_from_angle(res) {
-                    return Ok(Calc::Value(Box::new(v)));
-                }
-                Err(i.new_custom_error(css::ParserError::invalid_value))
-            }),
-            CalcUnit::Pow => input.parse_nested_block(|i| {
-                let a = Self::parse_numeric(i, parse_ident)?;
-                i.expect_comma()?;
-                let b = Self::parse_numeric(i, parse_ident)?;
-                Ok(Calc::Number(a.powf(b)))
-            }),
-            CalcUnit::Log => input.parse_nested_block(|i| {
-                let value = Self::parse_numeric(i, parse_ident)?;
-                if i.try_parse(|p| p.expect_comma()).is_ok() {
-                    let base = Self::parse_numeric(i, parse_ident)?;
-                    return Ok(Calc::Number(value.log(base)));
-                }
-                Ok(Calc::Number(value.ln()))
-            }),
-            CalcUnit::Sqrt => Self::parse_numeric_fn(input, NumericFnOp::Sqrt, parse_ident),
-            CalcUnit::Exp => Self::parse_numeric_fn(input, NumericFnOp::Exp, parse_ident),
+            CalcUnit::Sin => Self::parse_fixed(input, FixedFn::Trig(TrigFnKind::Sin), parse_ident),
+            CalcUnit::Cos => Self::parse_fixed(input, FixedFn::Trig(TrigFnKind::Cos), parse_ident),
+            CalcUnit::Tan => Self::parse_fixed(input, FixedFn::Trig(TrigFnKind::Tan), parse_ident),
+            CalcUnit::Asin => {
+                Self::parse_fixed(input, FixedFn::Trig(TrigFnKind::Asin), parse_ident)
+            }
+            CalcUnit::Acos => {
+                Self::parse_fixed(input, FixedFn::Trig(TrigFnKind::Acos), parse_ident)
+            }
+            CalcUnit::Atan => {
+                Self::parse_fixed(input, FixedFn::Trig(TrigFnKind::Atan), parse_ident)
+            }
+            CalcUnit::Atan2 => Self::parse_fixed(input, FixedFn::Atan2, parse_ident),
+            CalcUnit::Pow => Self::parse_fixed(input, FixedFn::Pow, parse_ident),
+            CalcUnit::Log => Self::parse_fixed(input, FixedFn::Log, parse_ident),
+            CalcUnit::Sqrt => Self::parse_fixed(input, FixedFn::Sqrt, parse_ident),
+            CalcUnit::Exp => Self::parse_fixed(input, FixedFn::Exp, parse_ident),
             CalcUnit::Hypot => input.parse_nested_block(|i| {
                 let mut args = i.parse_comma_separated(|i| Self::parse_sum(i, parse_ident))?;
                 let val = Self::parse_hypot(&mut args)?;
@@ -500,17 +475,22 @@ impl<V: CalcValue> Calc<V> {
         }
     }
 
-    pub(crate) fn parse_numeric_fn(
+    /// Parses a math function whose arguments do not have the type `V`.
+    fn parse_fixed(
         input: &mut css::Parser,
-        op: NumericFnOp,
+        function: FixedFn,
         parse_ident: ParseIdent<'_, V>,
     ) -> CssResult<Self> {
-        input.parse_nested_block(|i| {
-            let v = Self::parse_numeric(i, parse_ident)?;
-            Ok(Calc::Number(match op {
-                NumericFnOp::Sqrt => v.sqrt(),
-                NumericFnOp::Exp => v.exp(),
-            }))
+        let number_ident = |ident: &[u8]| match parse_ident(ident)? {
+            Calc::Number(n) => Some(n),
+            _ => None,
+        };
+        input.parse_nested_block(|i| match function.parse_arguments(i, &number_ident)? {
+            NumberOrAngle::Number(n) => Ok(Calc::Number(n)),
+            NumberOrAngle::Angle(angle) => match V::try_from_angle(angle) {
+                Some(v) => Ok(Calc::Value(Box::new(v))),
+                None => Err(i.new_custom_error(css::ParserError::invalid_value)),
+            },
         })
     }
 
@@ -644,10 +624,7 @@ impl<V: CalcValue> Calc<V> {
                     _ => None,
                 };
                 input.reset(&start);
-                if let Some(unit) = failed_unit {
-                    if unit.arg_parse_is_type_independent() {
-                        input.note_math_fn_parse_failure();
-                    }
+                if failed_unit.is_some() {
                     return Err(e);
                 }
             }
@@ -675,172 +652,6 @@ impl<V: CalcValue> Calc<V> {
 
         let value = input.try_parse(|p| V::parse(p))?;
         Ok(Calc::Value(Box::new(value)))
-    }
-
-    pub(crate) fn parse_trig(
-        input: &mut css::Parser,
-        trig_fn_kind: TrigFnKind,
-        to_angle: bool,
-        parse_ident: ParseIdent<'_, V>,
-    ) -> CssResult<Self> {
-        let trig_fn = move |x: f32| -> f32 {
-            match trig_fn_kind {
-                TrigFnKind::Sin => x.sin(),
-                TrigFnKind::Cos => x.cos(),
-                TrigFnKind::Tan => x.tan(),
-                TrigFnKind::Asin => x.asin(),
-                TrigFnKind::Acos => x.acos(),
-                TrigFnKind::Atan => x.atan(),
-            }
-        };
-
-        input.parse_nested_block(|i| {
-            let v = Calc::<Angle>::parse_sum(i, &Self::number_ident(parse_ident))?;
-
-            let rad: f32 = 'rad: {
-                match &v {
-                    Calc::Value(angle) if !to_angle => {
-                        let quarter_turns = angle.to_degrees() / 90.0;
-                        if quarter_turns.fract() != 0.0 {
-                            break 'rad trig_fn(angle.to_radians());
-                        }
-                        // The results are exact at a multiple of 90deg, which no f32 radian is.
-                        const SIN_COS: [(f32, f32); 4] =
-                            [(0.0, 1.0), (1.0, 0.0), (0.0, -1.0), (-1.0, 0.0)];
-                        let (sin, cos) = SIN_COS[quarter_turns.rem_euclid(4.0) as usize];
-                        break 'rad match trig_fn_kind {
-                            TrigFnKind::Sin => sin,
-                            TrigFnKind::Cos => cos,
-                            // `+ 0.0` turns the -0 of tan(180deg) into 0.
-                            _ => sin / cos + 0.0,
-                        };
-                    }
-                    Calc::Number(n) => break 'rad trig_fn(*n),
-                    _ => {}
-                }
-                return Err(i.new_custom_error(css::ParserError::invalid_value));
-            };
-
-            if to_angle && !rad.is_nan() {
-                if let Some(val) = V::try_from_angle(Angle::Rad(rad)) {
-                    return Ok(Calc::Value(Box::new(val)));
-                }
-                return Err(i.new_custom_error(css::ParserError::invalid_value));
-            } else {
-                return Ok(Calc::Number(rad));
-            }
-        })
-    }
-
-    /// Projects `Calc<V>::Number` idents into `Calc<W>::Number` for the
-    /// number-only sub-parsers (trig, atan2, numeric).
-    fn number_ident<'a, W>(
-        parse_ident: ParseIdent<'a, V>,
-    ) -> impl Fn(&[u8]) -> Option<Calc<W>> + 'a {
-        move |ident| match parse_ident(ident)? {
-            Calc::Number(n) => Some(Calc::Number(n)),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn parse_atan2(
-        input: &mut css::Parser,
-        parse_ident: ParseIdent<'_, V>,
-    ) -> CssResult<Angle> {
-        let angle_ident = Self::number_ident::<Angle>(parse_ident);
-
-        let before_args = input.state();
-        let failures_before = input.math_fn_parse_failures();
-        let hit_unrecoverable =
-            |input: &css::Parser| input.math_fn_parse_failures() != failures_before;
-
-        let reconcile =
-            |input: &mut css::Parser, a: &Calc<Angle>, b: &Calc<Angle>| -> CssResult<Angle> {
-                if let (Calc::Value(av), Calc::Value(bv)) = (a, b) {
-                    if let Some(v) = av.try_op_to(&**bv, (), |_, x, y| Angle::Rad(x.atan2(y))) {
-                        return Ok(v);
-                    }
-                } else if let (Calc::Number(an), Calc::Number(bn)) = (a, b) {
-                    return Ok(Angle::Rad(an.atan2(*bn)));
-                }
-                Err(input.new_custom_error(css::ParserError::invalid_value))
-            };
-
-        match Calc::<Angle>::parse_sum(input, &angle_ident) {
-            Ok(a) => {
-                input.expect_comma()?;
-                match Calc::<Angle>::parse_sum(input, &angle_ident) {
-                    Ok(b) => {
-                        if let Ok(v) = reconcile(input, &a, &b) {
-                            return Ok(v);
-                        }
-                        return Err(input.new_custom_error(css::ParserError::invalid_value));
-                    }
-                    Err(e) => {
-                        if hit_unrecoverable(input) {
-                            return Err(e);
-                        }
-                        input.reset(&before_args);
-                    }
-                }
-            }
-            Err(e) => {
-                if hit_unrecoverable(input) {
-                    return Err(e);
-                }
-                input.reset(&before_args);
-            }
-        }
-
-        for try_parse_args in [
-            try_parse_atan2_args::<Length>,
-            try_parse_atan2_args::<Percentage>,
-            try_parse_atan2_args::<Time>,
-        ] {
-            let result = try_parse_args(input);
-            if result.is_ok() || hit_unrecoverable(input) {
-                return result;
-            }
-        }
-
-        Calc::<CSSNumber>::parse_atan2_args(input, &Self::number_ident(parse_ident))
-    }
-
-    pub(crate) fn parse_atan2_args(
-        input: &mut css::Parser,
-        parse_ident: ParseIdent<'_, V>,
-    ) -> CssResult<Angle> {
-        let a = Self::parse_sum(input, parse_ident)?;
-        input.expect_comma()?;
-        let b = Self::parse_sum(input, parse_ident)?;
-
-        if let (Calc::Value(av), Calc::Value(bv)) = (&a, &b) {
-            if let Some(v) = av.try_op_to(&**bv, (), |_, x, y| Angle::Rad(x.atan2(y))) {
-                return Ok(v);
-            }
-        } else if let (Calc::Number(an), Calc::Number(bn)) = (&a, &b) {
-            return Ok(Angle::Rad(an.atan2(*bn)));
-        } else {
-            // doo nothing
-        }
-
-        // We don't have a way to represent arguments that aren't angles, so just error.
-        // This will fall back to an unparsed property, leaving the atan2() function intact.
-        Err(input.new_custom_error(css::ParserError::invalid_value))
-    }
-
-    pub(crate) fn parse_numeric(
-        input: &mut css::Parser,
-        parse_ident: ParseIdent<'_, V>,
-    ) -> CssResult<f32> {
-        let v: Calc<CSSNumber> =
-            Calc::<CSSNumber>::parse_sum(input, &Self::number_ident(parse_ident))?;
-        let val = match v {
-            Calc::Number(n) => n,
-            Calc::Value(v) => *v,
-            _ => return Err(input.new_custom_error(css::ParserError::invalid_value)),
-        };
-        Ok(val)
     }
 
     pub(crate) fn parse_hypot(args: &mut [Self]) -> CssResult<Option<Self>> {
@@ -1055,15 +866,134 @@ impl<V: CalcValue> Calc<V> {
     }
 }
 
-#[inline]
-fn try_parse_atan2_args<Value: CalcValue>(input: &mut css::Parser) -> CssResult<Angle> {
-    input.try_parse(|i| Calc::<Value>::parse_atan2_args(i, &|_| None))
-}
-
+/// A math function whose arguments have the same types in every expression, whatever `V` is.
 #[derive(Copy, Clone)]
-pub enum NumericFnOp {
+enum FixedFn {
+    Trig(TrigFnKind),
+    Atan2,
+    Pow,
+    Log,
     Sqrt,
     Exp,
+}
+
+enum NumberOrAngle {
+    Number(f32),
+    Angle(Angle),
+}
+
+/// Resolves an identifier to a number, for example a channel keyword of a relative color.
+type NumberIdent<'a> = &'a dyn Fn(&[u8]) -> Option<f32>;
+
+impl FixedFn {
+    /// Parses the arguments, inside the block of the function.
+    fn parse_arguments(
+        self,
+        input: &mut css::Parser,
+        number_ident: NumberIdent<'_>,
+    ) -> CssResult<NumberOrAngle> {
+        let number = match self {
+            Self::Trig(kind) => return parse_trig(input, kind, number_ident),
+            Self::Atan2 => {
+                let angle = parse_atan2(input, &|ident| number_ident(ident).map(Calc::Number))?;
+                return Ok(NumberOrAngle::Angle(angle));
+            }
+            Self::Pow => {
+                let a = parse_numeric(input, number_ident)?;
+                input.expect_comma()?;
+                let b = parse_numeric(input, number_ident)?;
+                a.powf(b)
+            }
+            Self::Log => {
+                let value = parse_numeric(input, number_ident)?;
+                if input.try_parse(|p| p.expect_comma()).is_ok() {
+                    let base = parse_numeric(input, number_ident)?;
+                    value.log(base)
+                } else {
+                    value.ln()
+                }
+            }
+            Self::Sqrt => parse_numeric(input, number_ident)?.sqrt(),
+            Self::Exp => parse_numeric(input, number_ident)?.exp(),
+        };
+        Ok(NumberOrAngle::Number(number))
+    }
+}
+
+fn parse_trig(
+    input: &mut css::Parser,
+    trig_fn_kind: TrigFnKind,
+    number_ident: NumberIdent<'_>,
+) -> CssResult<NumberOrAngle> {
+    let trig_fn = move |x: f32| -> f32 {
+        match trig_fn_kind {
+            TrigFnKind::Sin => x.sin(),
+            TrigFnKind::Cos => x.cos(),
+            TrigFnKind::Tan => x.tan(),
+            TrigFnKind::Asin => x.asin(),
+            TrigFnKind::Acos => x.acos(),
+            TrigFnKind::Atan => x.atan(),
+        }
+    };
+    let to_angle = matches!(
+        trig_fn_kind,
+        TrigFnKind::Asin | TrigFnKind::Acos | TrigFnKind::Atan
+    );
+
+    let v = Calc::<Angle>::parse_sum(input, &|ident| number_ident(ident).map(Calc::Number))?;
+
+    let rad: f32 = 'rad: {
+        match &v {
+            Calc::Value(angle) if !to_angle => {
+                let quarter_turns = angle.to_degrees() / 90.0;
+                if quarter_turns.fract() != 0.0 {
+                    break 'rad trig_fn(angle.to_radians());
+                }
+                // The results are exact at a multiple of 90deg, which no f32 radian is.
+                const SIN_COS: [(f32, f32); 4] = [(0.0, 1.0), (1.0, 0.0), (0.0, -1.0), (-1.0, 0.0)];
+                let (sin, cos) = SIN_COS[quarter_turns.rem_euclid(4.0) as usize];
+                break 'rad match trig_fn_kind {
+                    TrigFnKind::Sin => sin,
+                    TrigFnKind::Cos => cos,
+                    // `+ 0.0` turns the -0 of tan(180deg) into 0.
+                    _ => sin / cos + 0.0,
+                };
+            }
+            Calc::Number(n) => break 'rad trig_fn(*n),
+            _ => {}
+        }
+        return Err(input.new_custom_error(css::ParserError::invalid_value));
+    };
+
+    if to_angle && !rad.is_nan() {
+        Ok(NumberOrAngle::Angle(Angle::Rad(rad)))
+    } else {
+        Ok(NumberOrAngle::Number(rad))
+    }
+}
+
+fn parse_numeric(input: &mut css::Parser, number_ident: NumberIdent<'_>) -> CssResult<f32> {
+    let v: Calc<CSSNumber> =
+        Calc::<CSSNumber>::parse_sum(input, &|ident| number_ident(ident).map(Calc::Number))?;
+    let val = match v {
+        Calc::Number(n) => n,
+        Calc::Value(v) => *v,
+        _ => return Err(input.new_custom_error(css::ParserError::invalid_value)),
+    };
+    Ok(val)
+}
+
+/// The arguments of `atan2()` are two numbers or two values of one type, which is known after the parse.
+fn parse_atan2(input: &mut css::Parser, parse_ident: ParseIdent<'_, Atan2Arg>) -> CssResult<Angle> {
+    let a = Calc::parse_sum(input, parse_ident)?;
+    input.expect_comma()?;
+    let b = Calc::parse_sum(input, parse_ident)?;
+    let angle = match (&a, &b) {
+        (Calc::Value(a), Calc::Value(b)) => a.try_op_to(&**b, (), |_, y, x| Angle::Rad(y.atan2(x))),
+        (Calc::Number(a), Calc::Number(b)) => Some(Angle::Rad(a.atan2(*b))),
+        _ => None,
+    };
+    angle.ok_or_else(|| input.new_custom_error(css::ParserError::invalid_value))
 }
 
 #[derive(Copy, Clone)]
@@ -1429,7 +1359,7 @@ fn absf(a: f32) -> f32 {
 
 // ───────────────────────── CalcValue impls ─────────────────────────────────
 // One impl per concrete `V` that `Calc<V>` is instantiated with. The
-// numeric-protocol surface (`mul_f32`/`try_sign`/`try_map`/`try_op{,_to}`/
+// numeric-protocol surface (`mul_f32`/`try_sign`/`try_map`/`try_op`/
 // `partial_cmp`/`try_from_angle`/`parse`/`to_css`/`is_compatible`) is
 // satisfied via `crate::values::protocol::*` supertraits; only the
 // calc-specific methods (`intoValue` / `addValue` / `intoCalc`
@@ -1711,17 +1641,6 @@ macro_rules! dim_pct_protocol {
                     _ => None,
                 }
             },
-            try_op_to: |this, rhs, ctx, f| {
-                match (this, rhs) {
-                    (DimensionPercentage::Dimension(a), DimensionPercentage::Dimension(b)) => {
-                        <$D as protocol::TryOpTo>::try_op_to(a, b, ctx, f)
-                    }
-                    (DimensionPercentage::Percentage(a), DimensionPercentage::Percentage(b)) => {
-                        Some(f(ctx, a.v, b.v))
-                    }
-                    _ => None,
-                }
-            },
             partial_cmp: forward,
             is_compatible: forward,
             $($($extra)*)?
@@ -1737,3 +1656,119 @@ macro_rules! dim_pct_protocol {
 }
 dim_pct_protocol!(LengthValue);
 dim_pct_protocol!(Angle, parse_to_css: forward,);
+
+/// A value in an `atan2()` argument. It keeps its own type, and `atan2()` compares the two arguments.
+#[derive(Clone, css::ToCss, IsCompatible)]
+enum Atan2Arg {
+    Angle(Angle),
+    Length(Length),
+    Percentage(Percentage),
+    Time(Time),
+    /// A sum of two types, which no argument can be.
+    Mixed,
+}
+
+/// Forwards the numeric protocol of `Atan2Arg` to the type that each variant holds.
+macro_rules! atan2_arg_protocol {
+    ($($T:ident),+) => {
+        impl protocol::MulF32 for Atan2Arg {
+            fn mul_f32(self, rhs: f32) -> Self {
+                match self {
+                    $(Self::$T(v) => Self::$T(protocol::MulF32::mul_f32(v, rhs)),)+
+                    Self::Mixed => Self::Mixed,
+                }
+            }
+        }
+        impl protocol::TrySign for Atan2Arg {
+            fn try_sign(&self) -> Option<f32> {
+                match self {
+                    $(Self::$T(v) => protocol::TrySign::try_sign(v),)+
+                    Self::Mixed => None,
+                }
+            }
+        }
+        impl protocol::TryMap for Atan2Arg {
+            fn try_map(&self, f: impl Fn(f32) -> f32) -> Option<Self> {
+                match self {
+                    $(Self::$T(v) => protocol::TryMap::try_map(v, f).map(Self::$T),)+
+                    Self::Mixed => None,
+                }
+            }
+        }
+        impl protocol::TryOp for Atan2Arg {
+            fn try_op<C>(&self, rhs: &Self, ctx: C, f: impl Fn(C, f32, f32) -> f32) -> Option<Self> {
+                match (self, rhs) {
+                    $((Self::$T(a), Self::$T(b)) => protocol::TryOp::try_op(a, b, ctx, f).map(Self::$T),)+
+                    _ => None,
+                }
+            }
+        }
+        impl protocol::TryOpTo for Atan2Arg {
+            fn try_op_to<R, C>(&self, rhs: &Self, ctx: C, f: impl Fn(C, f32, f32) -> R) -> Option<R> {
+                match (self, rhs) {
+                    $((Self::$T(a), Self::$T(b)) => protocol::TryOpTo::try_op_to(a, b, ctx, f),)+
+                    _ => None,
+                }
+            }
+        }
+        impl protocol::PartialCmp for Atan2Arg {
+            fn partial_cmp(&self, rhs: &Self) -> Option<Ordering> {
+                match (self, rhs) {
+                    $((Self::$T(a), Self::$T(b)) => protocol::PartialCmp::partial_cmp(a, b),)+
+                    _ => None,
+                }
+            }
+        }
+    };
+}
+atan2_arg_protocol!(Angle, Length, Percentage, Time);
+
+impl protocol::TryFromAngle for Atan2Arg {
+    fn try_from_angle(angle: Angle) -> Option<Self> {
+        Some(Self::Angle(angle))
+    }
+}
+
+impl protocol::Parse for Atan2Arg {
+    fn parse(input: &mut css::Parser) -> CssResult<Self> {
+        let location = input.current_source_location();
+        let token = *input.next()?;
+        if let Ok(angle) = Angle::try_from_token(&token) {
+            return Ok(Self::Angle(angle));
+        }
+        if let Ok(length) = LengthValue::try_from_token(&token) {
+            return Ok(Self::Length(Length::Value(length)));
+        }
+        if let Ok(time) = Time::try_from_token(&token) {
+            return Ok(Self::Time(time));
+        }
+        if let css::Token::Percentage { unit_value, .. } = token {
+            return Ok(Self::Percentage(Percentage { v: unit_value }));
+        }
+        Err(location.new_unexpected_token_error(token))
+    }
+}
+
+impl CalcValue for Atan2Arg {
+    // `atan2()` cannot use such a sum, and a long one is a deep tree.
+    const KEEPS_UNFOLDED_SUM: bool = false;
+    fn add_internal(self, rhs: Self) -> Self {
+        match (self, rhs) {
+            (Self::Angle(a), Self::Angle(b)) => Self::Angle(a.add_internal(b)),
+            // `Length::add` unwraps a sum that folds to one value: `1px + 1em - 1em` is `1px`.
+            (Self::Length(a), Self::Length(b)) => Self::Length(a.add(b)),
+            (Self::Percentage(a), Self::Percentage(b)) => Self::Percentage(a.add_internal(b)),
+            (Self::Time(a), Self::Time(b)) => Self::Time(a.add_internal(b)),
+            _ => Self::Mixed,
+        }
+    }
+    fn into_calc(self) -> Calc<Self> {
+        Calc::Value(Box::new(self))
+    }
+    fn from_calc(c: Calc<Self>, input: &mut css::Parser) -> CssResult<Self> {
+        match c {
+            Calc::Value(v) => Ok(*v),
+            _ => Err(input.new_custom_error(css::ParserError::invalid_value)),
+        }
+    }
+}

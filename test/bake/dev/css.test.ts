@@ -1404,6 +1404,50 @@ devTest("css file saved with an @import that an onResolve plugin declines does n
     await c.style("body").color.expect.toBe("green");
   },
 });
+devTest("css file in a plugin namespace fails its page until the file that it imports exists", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./virtual-plugin.ts"]
+    `,
+    // The plugin keeps the path of the file, and adds a rule of its own to the file.
+    "virtual-plugin.ts": `
+      import { join } from "node:path";
+      export default {
+        name: "virtual-plugin",
+        setup(build) {
+          build.onResolve({ filter: /^virtual-styles$/ }, () => ({
+            path: join(import.meta.dir, "styles.css"),
+            namespace: "virtual",
+          }));
+          build.onLoad({ filter: /.*/, namespace: "virtual" }, async ({ path }) => ({
+            contents: (await Bun.file(path).text()) + " .plugin-v1 { color: red; }",
+            loader: "css",
+          }));
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({ styles: ["virtual-styles"] }),
+    "styles.css": `@import "./missing.css";\n.styles-v1 { color: red; }`,
+  },
+  async test(dev) {
+    for (const request of [1, 2]) {
+      expect({ request, ...(await linkedStylesheets(dev, "/")) }).toEqual({ request, status: 500, sheets: [] });
+    }
+    // The next request bundles the page again, with the stylesheet that the plugin makes.
+    await Bun.write(dev.join("missing.css"), `.missing-v1 { color: red; }`);
+    expect(await linkedStylesheets(dev, "/")).toEqual({
+      status: 200,
+      sheets: [".missing-v1 .styles-v1 .plugin-v1"],
+    });
+    // A save of the imported file bundles the stylesheet of the plugin, not a copy of its file.
+    await dev.write("missing.css", `.missing-v2 { color: red; }`, { errors: null });
+    expect(await linkedStylesheets(dev, "/")).toEqual({
+      status: 200,
+      sheets: [".missing-v2 .styles-v1 .plugin-v1"],
+    });
+  },
+});
 
 function extractCssUrl(backgroundImage: string): string {
   const url = backgroundImage.match(/url\((['"])(.*?)\1\)/);

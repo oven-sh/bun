@@ -60,6 +60,7 @@ pub(crate) fn view(
     fields: &[&[u8]],
     json_output: bool,
 ) -> Result<(), crate::Error> {
+    Output::stdout_is_the_result();
     let bump = Bump::new();
     let (name, mut version) = dependency::split_name_and_version_or_latest('brk: {
         // Extremely best effort.

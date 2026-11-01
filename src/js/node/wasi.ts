@@ -1663,8 +1663,12 @@ class WASI {
       },
       random_get: (bufPtr: number, bufLen: number) => {
         this.refreshMemory();
-        // getRandomValues refuses a view on shared memory, so fill a fresh array and copy it in.
-        new Uint8Array(this.memory.buffer, bufPtr, bufLen).set(crypto.getRandomValues(new Uint8Array(bufLen)));
+        // getRandomValues refuses a view on shared memory, so fill an array of our own and copy it in.
+        const dest = new Uint8Array(this.memory.buffer, bufPtr, bufLen);
+        const chunk = new Uint8Array(Math.min(dest.length, 65536));
+        for (let offset = 0; offset < dest.length; offset += chunk.length) {
+          dest.set(crypto.getRandomValues(chunk.subarray(0, dest.length - offset)), offset);
+        }
         return WASI_ESUCCESS;
       },
       sched_yield() {

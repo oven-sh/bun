@@ -677,11 +677,19 @@ function spawnSync(file, args, options?): SpawnSyncResult {
 
   const resultError = result.error;
   if (resultError) {
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L1127-L1129
+    if (typeof resultError.errno === "number" && !namesCgroup(resultError, options.cgroup)) {
+      resultError.path = options.file;
+    }
     resultError.syscall = "spawnSync " + options.file;
     resultError.spawnargs = ArrayPrototypeSlice.$call(options.args, 1);
   }
 
   return result;
+}
+// A spawn that could not enter `options.cgroup` names the cgroup, by `path` or by `fd`. It is not about the file.
+function namesCgroup(error: { path?: unknown; fd?: unknown }, cgroup: unknown) {
+  return typeof cgroup === "number" ? error.fd === cgroup : typeof cgroup === "string" && error.path === cgroup;
 }
 const etimedoutErrorCode: () => number = $bindgen("node_util_binding.bind.ts", "etimedoutErrorCode");
 const enobufsErrorCode: () => number = $bindgen("node_util_binding.bind.ts", "enobufsErrorCode");
@@ -1550,6 +1558,8 @@ class ChildProcess extends EventEmitter {
         exCode === "ENOENT"
       ) {
         this.#handle = null;
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L286-L291
+        if (!namesCgroup(ex as SystemError, options.cgroup)) (ex as SystemError).path = this.spawnfile;
         (ex as SystemError).syscall = "spawn " + this.spawnfile;
         (ex as SystemError).spawnargs = Array.prototype.slice.$call(this.spawnargs, 1);
         process.nextTick(() => {

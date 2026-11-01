@@ -1,7 +1,7 @@
 //! TypeScript's diagnostic messages, by code.
 //!
 //! `messages.txt` has one `code<tab>category<tab>text` line per message, sorted by code. It's generated from
-//! `internal/diagnostics/diagnostics_generated.go` of typescript-go 7.0.2 (Copyright Microsoft Corporation, Apache
+//! `tsc/internal/diagnostics/diagnostics_generated.go` of TypeScript 7.1 (Copyright Microsoft Corporation, Apache
 //! License 2.0) and isn't edited by hand. Release builds embed it compressed and inflate it when the first message is
 //! looked up.
 

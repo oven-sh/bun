@@ -358,8 +358,6 @@
 1459	M	File is CommonJS module because '{0}' has field "type" whose value is not "module"
 1460	M	File is CommonJS module because '{0}' does not have field "type"
 1461	M	File is CommonJS module because 'package.json' was not found
-1463	E	'resolution-mode' is the only valid key for type import attributes.
-1464	E	Type import attributes should have exactly one key - 'resolution-mode' - with value 'import' or 'require'.
 1470	E	The 'import.meta' meta-property is not allowed in files which will build into CommonJS output.
 1471	E	Module '{0}' cannot be imported using this construct. The specifier only resolves to an ES module, which cannot be imported with 'require'. Use an ECMAScript import instead.
 1472	E	'catch' or 'finally' expected.
@@ -436,6 +434,15 @@
 1546	E	'await using' declarations are not allowed in ambient contexts.
 1547	E	'using' declarations are not allowed in 'case' or 'default' clauses unless contained within a block.
 1548	E	'await using' declarations are not allowed in 'case' or 'default' clauses unless contained within a block.
+1550	E	An ambient module declaration with import attributes must use a pattern name with an '*' character.
+1551	E	Import attributes are not allowed on a module augmentation.
+1552	E	An import attributes type may only contain property signatures.
+1553	E	An import attributes property must have a type annotation.
+1554	E	An import attributes property must have a string literal or identifier name.
+1555	E	An import attributes property must have a string literal type annotation.
+1556	E	An import attributes property cannot be optional.
+1557	E	'{0}' is not a valid key for an import attributes type.
+1558	E	An import attributes property cannot have a 'readonly' modifier.
 2200	E	The types of '{0}' are incompatible between these types.
 2201	E	The types returned by '{0}' are incompatible between these types.
 2202	E	Call signature return types '{0}' and '{1}' are incompatible.
@@ -905,7 +912,6 @@
 2854	E	Top-level 'await using' statements are only allowed when the 'module' option is set to 'es2022', 'esnext', 'system', 'node16', 'node18', 'node20', 'nodenext', or 'preserve', and the 'target' option is set to 'es2017' or higher.
 2855	E	Class field '{0}' defined by the parent class is not accessible in the child class via super.
 2856	E	Import attributes are not allowed on statements that compile to CommonJS 'require' calls.
-2857	E	Import attributes cannot be used with type-only imports or exports.
 2858	E	Import attribute values must be string literal expressions.
 2859	E	Excessive complexity comparing types '{0}' and '{1}'.
 2860	E	The left-hand side of an 'instanceof' expression must be assignable to the first argument of the right-hand side's '[Symbol.hasInstance]' method.
@@ -1085,6 +1091,10 @@
 5109	E	Option 'moduleResolution' must be set to '{0}' (or left unspecified) when option 'module' is set to '{1}'.
 5110	E	Option 'module' must be set to '{0}' when option 'moduleResolution' is set to '{1}'.
 5111	M	Visit https://aka.ms/ts6 for migration information.
+5113	E	'{0}' is only assignable to the non-distributed '{1}', but '{1}' has been distributed here.
+5114	E	Instantiations of type '{0}' appear infinitely circular.
+5115	E	Instantiations of the following types appear infinitely circular: {0}.
+5116	E	Network path '{0}' is not supported.
 6045	E	Unterminated quoted string in response file '{0}'.
 6046	E	Argument for '{0}' option must be: {1}.
 6053	E	File '{0}' not found.
@@ -1126,6 +1136,7 @@
 6138	E	Property '{0}' is declared but its value is never read.
 6140	E	Auto discovery for typings is enabled in project '{0}'. Running extra resolution pass for module '{1}' using cache location '{2}'.
 6142	E	Module '{0}' was resolved to '{1}', but '--jsx' is not set.
+6144	M	Module '{0}' was resolved as locally declared ambient module in file '{1}'.
 6148	M	Directory '{0}' does not exist, skipping all lookups in it.
 6164	M	Skipping module '{0}' that looks like an absolute URI, target file types: {1}.
 6182	M	Scoped package detected, looking in '{0}'
@@ -1157,6 +1168,7 @@
 6236	E	Arguments for the rest parameter '{0}' were not provided.
 6239	M	File '{0}' exists according to earlier cached lookups.
 6240	M	File '{0}' does not exist according to earlier cached lookups.
+6258	E	'{0}' should be set inside the 'compilerOptions' object of the config json file
 6263	E	Module '{0}' was resolved to '{1}', but '--allowArbitraryExtensions' is not set.
 6265	M	Resolving type reference directive for program that specifies custom typeRoots, skipping lookup in 'node_modules' folder.
 6266	E	Option '{0}' can only be specified on command line.
@@ -1197,6 +1209,14 @@
 6506	M	Consider adding a 'declare' modifier to this class.
 6658	M	Specify how TypeScript looks up a file from a given module specifier.
 6807	E	This operation can be simplified. This shift is identical to `{0} {1} {2}`.
+6933	M	Do not print diagnostics.
+6934	M	Run in single threaded mode.
+6935	M	Generate pprof CPU/memory profiles to the given directory.
+6936	M	Set the number of checkers per project.
+6937	M	4, unless --singleThreaded is passed.
+6938	M	Set the number of projects to build concurrently.
+6939	M	Deduplicate packages with the same name and version.
+6940	M	Allow loading external content mapper plugins that execute code during compilation.
 7005	E	Variable '{0}' implicitly has an '{1}' type.
 7006	E	Parameter '{0}' implicitly has an '{1}' type.
 7008	E	Member '{0}' implicitly has an '{1}' type.
@@ -1239,8 +1259,10 @@
 7056	E	The inferred type of this node exceeds the maximum length the compiler will serialize. An explicit type annotation is needed.
 7057	E	'yield' expression implicitly results in an 'any' type because its containing generator lacks a return-type annotation.
 7058	E	If the '{0}' package actually exposes this module, try adding a new declaration (.d.ts) file containing `declare module '{1}';`
+7059	E	This syntax is reserved in files with the .mts or .cts extension. Use an `as` expression instead.
 7060	E	This syntax is reserved in files with the .mts or .cts extension. Add a trailing comma or explicit constraint.
 7061	E	A mapped type may not declare properties or methods.
+7080	E	Declaration emit elides private members, but '{0}' refers to a private member. Write an explicit type here.
 8002	E	'import ... =' can only be used in TypeScript files.
 8003	E	'export =' can only be used in TypeScript files.
 8004	E	Type parameter declarations can only be used in TypeScript files.
@@ -1279,7 +1301,7 @@
 9016	E	Objects that contain shorthand properties can't be inferred with --isolatedDeclarations.
 9017	E	Only const arrays can be inferred with --isolatedDeclarations.
 9018	E	Arrays with spread elements can't inferred with --isolatedDeclarations.
-9019	E	Binding elements can't be exported directly with --isolatedDeclarations.
+9019	E	Binding elements with initializers can't be exported directly with --isolatedDeclarations.
 9020	E	Enum member initializers must be computable without references to external symbols with --isolatedDeclarations.
 9021	E	Extends clause can't contain an expression with --isolatedDeclarations.
 9022	E	Inference from class expressions is not supported with --isolatedDeclarations.
@@ -1367,5 +1389,67 @@
 18058	E	Default imports are not allowed in a deferred import.
 18059	E	Named imports are not allowed in a deferred import.
 18060	E	Deferred imports are only supported when the '--module' flag is set to 'esnext' or 'preserve'.
-18061	E	'{0}' is not a valid meta-property for keyword 'import'. Did you mean 'meta' or 'defer'?
+18061	E	'{0}' is not a valid meta-property for keyword 'import'. Did you mean 'meta', 'defer', or 'source'?
+18062	E	Regular expression pattern modifiers are only available when targeting '{0}' or later.
+18063	E	Duplicate named capturing groups are only available when targeting '{0}' or later.
+18064	E	Private identifiers cannot be used in destructuring patterns.
+18065	E	Content mapper file extension '{0}' must begin with a '.'.
+18066	E	Content mapper file extension '{0}' is a built-in extension and cannot be registered by a content mapper.
+18067	E	Content mapper file extension '{0}' is registered by more than one content mapper.
+18068	E	Content mappers require the '--runExternalCode' command line flag to be enabled.
+18069	E	The content mapper '{0}' failed to transform this file.
+18070	E	The content mapper '{0}' failed {1} times and will not be used.
+18071	E	The content mapper '{0}' did not provide the required position mappings.
+18072	E	The content mapper '{0}' produced a position mapping that points outside the original content (original offset {1}).
+18073	E	The content mapper '{0}' produced a verbatim mapping that does not match the original content (virtual offset {1}, original offset {2}).
+18074	M	This location is in virtual code produced by the content mapper '{0}' and has no corresponding location in the original file.
+18075	E	The content mapper package '{0}' could not be resolved.
+18076	E	The 'package.json' of the content mapper package '{0}' could not be parsed.
+18077	E	The 'package.json' of the content mapper package '{0}' does not specify a 'name'.
+18078	E	The 'package.json' of the content mapper package '{0}' does not declare a 'typescript.contentMapper' object.
+18079	E	The 'typescript.contentMapper.exec' of the content mapper package '{0}' must be a non-empty array of strings.
+18080	E	Virtual code produced by the content mapper '{0}' has problems with no corresponding location in this file.
+18081	E	The content mapper '{0}' produced overlapping or out-of-order position mappings (near virtual offset {1}).
+18082	E	The content mapper '{0}' produced invalid mapping features near original offset {1}.
+18083	E	The content mapper '{0}' produced a position mapping with an invalid kind (near virtual offset {1}).
+18084	M	The content mapper process could not be started or initialized.
+18085	M	The content mapper process failed while handling the transform request.
+18086	M	The content mapper returned an invalid transform response.
+18087	M	The content mapper selected unsupported position encoding '{0}'.
+18088	M	The content mapper diagnostic source must not be empty.
+18089	M	The content mapper diagnostic source '{0}' is reserved by TypeScript.
+18090	M	The content mapper returned a project response that could not be decoded.
+18091	M	The content mapper process failed while handling the project request.
+18092	M	The content mapper did not return 'configIdentity', which is required when the content mapper has '"dynamicConfig": true' in its package.json.
+18093	M	The content mapper returned a non-absolute path in 'watchedFiles'.
+18094	M	The content mapper returned 'configIdentity', which is only allowed when it declares '"dynamicConfig": true' in its package.json.
+18095	M	The content mapper returned 'watchedFiles', which is only allowed when it declares '"dynamicConfig": true' in its package.json.
+18096	M	Content mapper supplemental output file '{0}' conflicts with an existing file.
+18097	M	Supplemental virtual file produced by the content mapper for file '{0}'.
+18098	M	The content mapper returned an output with unsupported virtual extension '{0}'.
+18099	E	The content mapper '{0}' could not be initialized.
+18100	M	The content mapper command '{0}' could not be started: {1}
+18101	M	The content mapper process exited before responding to the 'initialize' request (exit code {0}).
+18102	M	The content mapper did not respond to the 'initialize' request within {0} seconds.
+18103	M	The content mapper returned an 'initialize' response that could not be decoded: {0}
+18104	M	The content mapper's 'initialize' request failed: {0}
+18105	M	Diagnostic directive {0} returned by the content mapper has an invalid range.
+18106	M	The content mapper returned a diagnostic directive with invalid policy '{0}'.
+18107	M	Diagnostic directive {0} returned by the content mapper must specify 'unusedExpectDirectiveIndex' when there is not exactly one 'unusedExpectDirectiveDiagnostics' entry.
+18108	M	The content mapper returned diagnostic directives with overlapping virtual ranges.
+18109	M	The invalid diagnostic directive is in supplemental output {0} returned by the content mapper.
+18110	M	Diagnostic directive {0} returned by the content mapper has an invalid 'unusedExpectDirectiveIndex'.
+18111	E	A source phase import must specify a local binding.
+18112	E	Named and namespace imports are not allowed in a source phase import.
+18113	E	Source phase imports are only supported when the '--module' option is set to 'esnext', 'nodenext', or 'preserve'.
+18114	E	Optional chaining cannot be used with 'import.source'.
+18115	E	Source phase imports are not allowed on statements that compile to CommonJS 'require' calls.
+18116	E	This initializer has a '[Symbol.asyncDispose]()' method. Did you mean to use 'await using'?
+18117	E	A deferred import must specify a namespace binding.
+18118	E	Content mapper output extension '{0}' must be non-empty and begin with a '.'.
+18119	E	Content mapper output extension mapping source '{0}' is not registered by this content mapper.
+18120	E	Content mapper output extension mapping from '{0}' to '{1}' requires 'rewriteRelativeImportExtensions' to be enabled.
+18121	E	The 'typescript.contentMapper.outputExtensions' of the content mapper package '{0}' contains an invalid mapping from '{1}' to '{2}'. Extensions must be non-empty and begin with a '.'.
+18122	E	The 'typescript.contentMapper.outputExtensions' of the content mapper package '{0}' must be an object with string values.
+18123	E	Content mapper extension '{0}' must not contain path separators.
 100000	M	Do not print diagnostics.

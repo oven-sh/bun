@@ -698,6 +698,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
             resolver: context.resolver,
             options: context.options,
             atoms: &context.atoms,
+            mapping: None,
             build: Some(context),
             prefetch,
             is_code_file: Some(&|path| self.is_code_file(path)),

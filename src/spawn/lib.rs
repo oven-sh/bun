@@ -65,6 +65,7 @@ bun_dispatch::link_interface! {
         CronRemove,
         ChromeProcess,
         HostProcess,
+        ContentMapper,
         SyncWindows,
     ] {
         fn on_process_exit(process: &mut Process, status: Status, rusage: &Rusage);

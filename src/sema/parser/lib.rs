@@ -150,6 +150,8 @@ pub struct Options {
     /// Records what a formatter needs to attach comments to nodes: `enclosing_node`, `preceding_node` and
     /// `following_node` of `hir::Comment`, and the HTML-like comments of a script.
     pub attach_comments: bool,
+    /// Accepts `a ** b as T ** c`, which TypeScript rejects since 7.1, as `Dialect::typescript_5` does.
+    pub is_before_typescript_7_1: bool,
     /// Parsing for `bun compile`.
     pub compiles: bool,
     /// The lexer reads text as `bun run` does. `compiles` implies it.
@@ -195,8 +197,8 @@ pub struct Scratch {
     /// A file that's no longer needed. The next file reuses its lists and its box. It's boxed because a `FileBuilder`
     /// is large and gets moved around a lot.
     recycled: Option<Box<FileBuilder>>,
-    /// The result of `parser::jsdoc::read_by_checker` while a TypeScript file is parsed a second time. Otherwise 0.
-    jsdoc_wanted: u8,
+    /// True while a TypeScript file is parsed a second time, to read its JSDoc comments.
+    reads_typescript_jsdoc: bool,
     /// From the last parsed text.
     html_opens: lexer::HtmlOpens,
     /// True if the last parsed text has a top-level `await` and every one of them could be a name: `await (a)`.
@@ -253,20 +255,18 @@ pub(crate) fn parse(
     scratch: &mut Scratch,
 ) -> Result<Parsed, Rejected> {
     let parsed = parser::run(text, options, Some(atoms), scratch)?;
-    if !options.reads_jsdoc || options.is_javascript {
-        return Ok(parsed);
-    }
-    // Which comments of a TypeScript file get read depends on all of its comments, so that takes a second parse.
-    let is_declaration_file = options.is_declaration_file;
-    let comments = &parsed.file.comments;
-    let wanted = parser::jsdoc::read_by_checker(text, comments, is_declaration_file);
-    if wanted == 0 {
+    // Whether the comments of a TypeScript file get read depends on all of its comments, so that needs a second parse.
+    if !options.reads_jsdoc
+        || options.is_javascript
+        || options.is_declaration_file
+        || !parser::jsdoc::is_read_by_checker(text, &parsed.file.comments)
+    {
         return Ok(parsed);
     }
     scratch.recycle(parsed.file);
-    scratch.jsdoc_wanted = wanted;
+    scratch.reads_typescript_jsdoc = true;
     let parsed = parser::run(text, options, Some(atoms), scratch);
-    scratch.jsdoc_wanted = 0;
+    scratch.reads_typescript_jsdoc = false;
     parsed
 }
 

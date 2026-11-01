@@ -1,0 +1,8 @@
+void (/** @type {RemoteQuery<Output>} */ (query).refresh());
+delete (/** @type {any} */ (ReadableStream).from);
+typeof (/** @type {any} */ (a).b);
+!(/** @type {any} */ (a).b);
+-(/** @type {any} */ (a).b);
+void (/** @type {any} */ (a));
+void /** @type {any} */ (a).b;
+void /** @type {any} */ (a)[b]();

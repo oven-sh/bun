@@ -426,23 +426,6 @@ impl<'p, 's> Checker<'p, 's> {
         (result.holds(), diagnostic)
     }
 
-    /// Returns the message `reportErrorResults` reports for the pair itself under 2684, without elaboration.
-    pub(super) fn relation_error_without_elaboration(
-        &mut self,
-        source: TypeId,
-        target: TypeId,
-        error_node: FileSpan,
-    ) -> RelationDiagnostic {
-        let mut r = Relater::new(Relation::Assignable, self.cycles);
-        r.error_node = error_node;
-        self.report_error_results_for_pair(&mut r, source, target, Some(2684));
-        RelationDiagnostic {
-            at: error_node,
-            lines: lines_of(&r.error_chain, 0),
-            related: r.related_info,
-        }
-    }
-
     fn report_error_results_for_pair(
         &mut self,
         r: &mut Relater,
@@ -1064,7 +1047,14 @@ impl<'p, 's> Checker<'p, 's> {
             && target != TypeId::MARKER_SUPER_FOR_CHECK
             && target != TypeId::MARKER_SUB_FOR_CHECK
         {
-            match self.base_constraint_of(target) {
+            let base_constraint = self.base_constraint_of(target);
+            let non_distributed = self.non_distributed(target);
+            match base_constraint {
+                _ if non_distributed != target
+                    && self.is_assignable(generalized_source, non_distributed) =>
+                {
+                    self.report_error(r, 5113, &[generalized_source_name, target_name]);
+                }
                 Some(constraint) if self.is_assignable(generalized_source, constraint) => {
                     let args = [generalized_source_name, target_name, Arg::Type(constraint)];
                     self.report_error(r, 5075, &args);

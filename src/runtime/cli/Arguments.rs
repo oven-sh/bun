@@ -228,6 +228,9 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
         "--check                           Type check before running. Nothing runs if there are type errors. Alone: <b>bun check<r>"
     ),
     parse_param!(
+        "--runExternalCode                 With --check: run the programs from <b>node_modules<r> that <b>contentMappers<r> in tsconfig.json lists"
+    ),
+    parse_param!(
         "--aot                             Check the program like bun compile does, then run it with built-in objects read-only. <b>bun test<r> compiles it and runs the compiled code"
     ),
     parse_param!(
@@ -474,6 +477,10 @@ pub(crate) const AUTO_REQUIREMENT_ROWS: &[RequirementRow] = {
         (Long(b"hot"), RuntimeCode),
         (Long(b"no-clear-screen"), Nothing),
         (Long(b"check"), RuntimeRequirement::Feature(Feature::Check)),
+        (
+            Long(b"runExternalCode"),
+            RuntimeRequirement::Feature(Feature::Check),
+        ),
         (
             Long(b"aot"),
             RuntimeRequirement::Feature(Feature::AotCompiler),
@@ -861,6 +868,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         parse_param!("--no-bundle                      Transpile file only, do not bundle"),
         parse_param!(
             "--check                          Type check the entry points and what they import. Nothing is bundled if there are type errors"
+        ),
+        parse_param!(
+            "--runExternalCode                With --check: run the programs from <b>node_modules<r> that <b>contentMappers<r> in tsconfig.json lists"
         ),
         parse_param!(
             "--dts                            Write declaration files (.d.ts), and each output file with its types kept (.aot.ts), to --outdir. Implies --check"
@@ -1437,6 +1447,11 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     }
 
     ctx.passthrough = slice_to_owned(args.remaining());
+    ctx.runs_external_code = args.flag(b"--runExternalCode")
+        && super::check_command::is_allowed_to_run_code(
+            bun_core::argv().as_slice().get(1..).unwrap_or_default(),
+            ctx.passthrough.len(),
+        );
 
     if matches!(
         cmd,

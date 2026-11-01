@@ -293,7 +293,7 @@ fn scripts_of(framework: Framework, text: &[u8]) -> Vec<Script> {
     }
 }
 
-/// The `should_run` of the oxlint 1.80 rules that check for these file extensions. There's no way to tell what the
+/// The `should_run` of the oxlint 1.87 rules that check for these file extensions. There's no way to tell what the
 /// template uses or assigns to, and `$:` is Svelte syntax. Each rule was tried.
 fn runs(framework: Framework, is_typescript: bool, rule: &RuleId) -> bool {
     let RuleId::Known(meta) = rule else {
@@ -303,9 +303,8 @@ fn runs(framework: Framework, is_typescript: bool, rule: &RuleId) -> bool {
         (Plugin::Eslint | Plugin::TypeScript, "no-unused-vars")
         | (Plugin::TypeScript, "consistent-type-imports") => true,
         (Plugin::Eslint, "no-unused-labels") => framework == Framework::Svelte,
-        (Plugin::Eslint, "prefer-const") | (Plugin::ReactHooks, "rules-of-hooks") => {
-            framework != Framework::Astro
-        }
+        (Plugin::Eslint, "prefer-const" | "no-unassigned-vars")
+        | (Plugin::ReactHooks, "rules-of-hooks") => framework != Framework::Astro,
         _ => false,
     };
     !is_off && oxlint_runs_on(meta, is_typescript)

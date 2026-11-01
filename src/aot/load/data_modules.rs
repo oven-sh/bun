@@ -89,6 +89,7 @@ pub(crate) fn parse_json<'s>(
         false,
         false,
         false,
+        false,
     );
     if hir.has_errors || hir.has_parse_diagnostics {
         return None;

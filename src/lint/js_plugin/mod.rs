@@ -32,11 +32,14 @@ mod rules;
 mod schema;
 mod scopes;
 mod tokens;
+mod types;
 pub(crate) mod wire;
 
 pub use engine::{Demand, Engine, HEAVY, Serve, Vm, Work};
 pub use eslint::{Configuration, EslintFailure, Linted, Text};
-pub use host::{Failure, Host, Loading, ParseAgain, Report, Suggested, ThrownAt};
+pub use host::{
+    Failure, Host, Loading, ParseAgain, Refusals, Refused, Report, Suggested, ThrownAt,
+};
 pub use prettier::Unformatted;
 pub use processor::{Block, Processor, Route, read_messages, write_messages};
 pub(crate) use rules::has_non_json_value;

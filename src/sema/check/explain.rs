@@ -92,6 +92,9 @@ pub struct Explained {
     pub args: Args,
     pub message_chain: Vec<MessageChain>,
     pub related: Vec<RelatedExplained>,
+    /// `Source()`: the prefix of the code, for an error that a content mapper wrote. Its span is in the original text.
+    /// Empty for TypeScript's own errors.
+    pub external_source: Box<[u8]>,
     pub class: DiagnosticClass,
     pub subject: DiagnosticSubject,
 }
@@ -141,8 +144,26 @@ impl Explained {
         }
         let mut d = d;
         let (class, subject) = (d.class, d.subject);
+        if d.is_external
+            && let [text, source] = &mut d.args[..]
+        {
+            return Explained {
+                start: d.start,
+                end: d.end,
+                code: d.code,
+                category: Category::Error,
+                text: super::print::to_valid_utf8(text.to_vec()),
+                external_source: std::mem::take(source),
+                args: d.args,
+                message_chain: Vec::new(),
+                related: Vec::new(),
+                class,
+                subject,
+            };
+        }
         let (category, text, message_chain) = reported(&mut d, Category::Error);
         Explained {
+            external_source: Box::default(),
             start: d.start,
             end: d.end,
             code: d.code,

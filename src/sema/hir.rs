@@ -6,7 +6,7 @@
 
 use crate::atom::Atom;
 pub use crate::node::{Kind, Node, NodeBases, NodeData, Part, RangeSet, ToNode};
-use crate::session::{Arena, ArenaBox, ArenaHashMap, ArenaVec, Session};
+use crate::session::{Arena, ArenaBox, ArenaVec, Session};
 use crate::util::{FxHashMap, FxHashSet, SharedSort};
 use std::borrow::Cow;
 use std::hint::cold_path;
@@ -388,7 +388,6 @@ pub trait Storage {
     type Ids<T: Id>: Ids<T> + Default;
     /// A list that is empty in most files.
     type Few<T: 'static>: DerefMut<Target = [T]> + Default;
-    type Map<K: 'static, V: 'static>;
     /// A map that is empty in most files.
     type FewMap<K: 'static, V: 'static>;
     /// A set that is empty in most files.
@@ -415,7 +414,6 @@ impl Storage for Growable {
     type Nodes<T: 'static> = Vec<T>;
     type Ids<T: Id> = Vec<T>;
     type Few<T: 'static> = Vec<T>;
-    type Map<K: 'static, V: 'static> = FxHashMap<K, V>;
     type FewMap<K: 'static, V: 'static> = FxHashMap<K, V>;
     type FewSet<K: 'static> = FxHashSet<K>;
     type Owning<T: Clone + 'static> = Vec<T>;
@@ -435,7 +433,6 @@ impl<'s> Storage for InArena<'s> {
     type Nodes<T: 'static> = Fixed<'s, T>;
     type Ids<T: Id> = Narrow<'s, T>;
     type Few<T: 'static> = ArenaFew<'s, T>;
-    type Map<K: 'static, V: 'static> = FixedMap<'s, K, V>;
     type FewMap<K: 'static, V: 'static> = ArenaFewMap<'s, K, V>;
     type FewSet<K: 'static> = ArenaFewMap<'s, K, ()>;
     /// Owned until the program is loaded. A program's files are never dropped, so `Files::load` hands the list to
@@ -446,23 +443,6 @@ impl<'s> Storage for InArena<'s> {
     type Lazy = Lazy<'s>;
     type Boxed<T> = ArenaBox<'s, T>;
     type Block = ListBlock<'s>;
-}
-
-/// A map that nothing writes to. It either owns its arena block or belongs to a file that several programs share.
-pub enum FixedMap<'s, K, V> {
-    Arena(ArenaHashMap<'s, K, V>),
-    Shared(&'s ArenaHashMap<'s, K, V>),
-}
-
-impl<'s, K, V> Deref for FixedMap<'s, K, V> {
-    type Target = ArenaHashMap<'s, K, V>;
-    #[inline(always)]
-    fn deref(&self) -> &ArenaHashMap<'s, K, V> {
-        match self {
-            FixedMap::Arena(map) => map,
-            FixedMap::Shared(map) => map,
-        }
-    }
 }
 
 /// A list that neither grows nor shrinks. It either owns an arena block, which it frees when dropped, or borrows from
@@ -1113,6 +1093,8 @@ pub enum ExprKind {
     /// none. Type arguments are an error (1326). See [`File::type_args_of_import_call`].
     ImportCall {
         args: IdList<ExprId>,
+        /// `import.defer(..)`, `import.source(..)`
+        phase: ImportPhase,
     },
     ImportMeta,
     /// `new.target`, with the name as written in the source, because any word forms a meta property.
@@ -1378,18 +1360,28 @@ pub struct ExprsByKind {
 
 impl ExprsByKind {
     pub fn new(file: &File) -> ExprsByKind {
+        // The tags of `File::checked_kind`. FOR SPEED: a loop that only stores the tag compiles to a table lookup. One
+        // that counts by it compiles to a jump per node, because `JsxText` has the tag of another kind.
+        let tags: Vec<u8> = (file.exprs.iter())
+            .map(|e| match e.kind {
+                ExprKind::Dot {
+                    name_before_end: FAR_IN_BRACKETS,
+                    ..
+                } if !file.is_js => ExprTag::Index as u8,
+                ref kind => kind.tag() as u8,
+            })
+            .collect();
         let mut starts = [0u32; ExprTag::COUNT + 1];
-        let tag_of = |i: usize| file.checked_kind(ExprId(i as u32)).tag();
-        for i in 0..file.exprs.len() {
-            starts[tag_of(i) as usize + 1] += 1;
+        for &tag in &tags {
+            starts[tag as usize + 1] += 1;
         }
         for i in 0..ExprTag::COUNT {
             starts[i + 1] += starts[i];
         }
         let mut next = starts;
-        let mut ids = vec![ExprId::NONE; file.exprs.len()];
-        for i in 0..file.exprs.len() {
-            let at = &mut next[tag_of(i) as usize];
+        let mut ids = vec![ExprId::NONE; tags.len()];
+        for (i, &tag) in tags.iter().enumerate() {
+            let at = &mut next[tag as usize];
             ids[*at as usize] = ExprId(i as u32);
             *at += 1;
         }
@@ -1418,7 +1410,7 @@ pub struct Call {
 /// [`Call::close_pos`] of a tagged template whose last piece of text is missing or unterminated (`callIsIncomplete`).
 pub const INCOMPLETE_TEMPLATE: u32 = u32::MAX - 1;
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum PropKey {
     None,
     /// An identifier, a string, or a number formatted like `String(n)`. Also `["a"]` and `[0]`.
@@ -2041,7 +2033,7 @@ pub struct Class {
     pub name_pos: u32,
     pub flags: Flags,
     pub type_params: Span<TypeParamId>,
-    /// `GetExtendsHeritageClauseElement`: the first element of the first `extends` clause.
+    /// `GetClassExtendsHeritageElement`: the first element of the first `extends` clause.
     pub extends: ExprId,
     pub extends_args: IdList<TypeNodeId>,
     /// The other elements of `extends` clauses, which are an error and which the checker never
@@ -2058,6 +2050,16 @@ pub struct Class {
     pub text_start: u32,
     /// `node.Modifiers()`. For a declaration, its statement's list.
     pub modifiers: Span<ModifierId>,
+}
+
+/// `JSDocAugmentsTag`
+#[derive(Copy, Clone, Debug)]
+pub struct AugmentsTag {
+    pub class: ClassId,
+    /// `tag.ClassName()`. Only `getTypeFromTypeNode` is called for it.
+    pub class_name: TypeNodeId,
+    /// `tag.TagName()`
+    pub tag_name: Atom,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -2101,7 +2103,7 @@ pub struct EnumMember {
     pub name: Atom,
     pub name_kind: NameKind,
     /// The `e` of `[e]` (`HasDynamicName`). `name` is `NONE` then. The checker reports such a name
-    /// as an error and never checks `e`.
+    /// as an error.
     pub computed_name: ExprId,
     pub init: ExprId,
     pub pos: u32,
@@ -2123,6 +2125,8 @@ pub struct Module {
     pub name: ModuleName,
     pub name_pos: u32,
     pub flags: Flags,
+    /// The `{ type: "css" }` of `declare module "*.css" with { type: "css" } { }`, a `TypeNodeKind::Object`.
+    pub attributes: TypeNodeId,
     pub body: IdList<StmtId>,
     /// `declare module "m";` has none.
     pub has_body: bool,
@@ -2144,6 +2148,15 @@ pub enum ResolutionMode {
     Require,
 }
 
+/// `importClause.PhaseModifier` other than `type`, or the name after the dot in `import.defer(..)`.
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
+pub enum ImportPhase {
+    #[default]
+    Evaluation,
+    Defer,
+    Source,
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum SpecifierKind {
     /// `import x from "m"`, `export x from "m"`
@@ -2158,13 +2171,25 @@ pub enum SpecifierKind {
     ImportCall,
     /// `require("m")`, in JavaScript
     RequireCall,
+    /// `import source x from "m"`
+    SourceImport,
+    /// `import.source("m")`
+    SourceImportCall,
 }
 
 impl SpecifierKind {
     /// True if it's the argument of a call expression.
     #[inline]
     pub fn is_call(self) -> bool {
-        matches!(self, SpecifierKind::ImportCall | SpecifierKind::RequireCall)
+        use SpecifierKind::*;
+        matches!(self, ImportCall | RequireCall | SourceImportCall)
+    }
+
+    /// `IsSourcePhaseImport`: the specifier is never resolved.
+    #[inline]
+    pub fn is_source_phase(self) -> bool {
+        use SpecifierKind::*;
+        matches!(self, SourceImport | SourceImportCall)
     }
 
     /// `ForEachDynamicImportOrRequireCall`: in `file.Imports()` these come after the statements' specifiers.
@@ -2201,8 +2226,8 @@ pub struct Import {
     /// `importClause.NamedBindings` is a `NamedImports`. `named` can still be empty.
     pub has_named_imports: bool,
     pub type_only: bool,
-    /// `importClause.PhaseModifier` is `defer`.
-    pub is_deferred: bool,
+    /// With a phase, the clause can be the modifier only: `import defer "m"`.
+    pub phase: ImportPhase,
     /// As in [`SpecifierUse`].
     pub mode: ResolutionMode,
     /// The statement node of this declaration.
@@ -2787,8 +2812,6 @@ pub struct FileIn<S: Storage> {
     /// The occurrences of module specifiers, except those of `import()`, which are expressions.
     pub specifier_uses: S::Nodes<SpecifierUse>,
 
-    /// The specifier of each `import.defer(..)`, and the position of the `)` of the call.
-    pub deferred_import_calls: S::Few<(ExprId, u32)>,
     /// The specifier of each `import<T>(..)`, and the type arguments.
     pub import_call_type_args: S::Few<(ExprId, IdList<TypeNodeId>)>,
     /// `with { .. }` of imports, exports and import types, in source order: the start of `with` or of the token that
@@ -2840,9 +2863,9 @@ pub struct FileIn<S: Storage> {
     /// `containsArgumentsReference` for each of them. The functions in `jsdoc_param_errors` are among them, in the same
     /// order.
     pub functions_with_param_tags: S::Few<FnId>,
-    /// `checkGrammarClassDeclarationHeritageClauses`: the classes with an `@augments` tag that doesn't name the class
-    /// in the `extends` clause, and the start of the 8023 in `diagnostics`.
-    pub unmatched_augments_tags: S::Few<(ClassId, u32)>,
+    /// The `@augments` and `@extends` tags of the classes that have an `extends` clause, in a JavaScript file. Sorted by
+    /// class, then in source order.
+    pub augments_tags: S::Few<AugmentsTag>,
 
     pub ids: S::Nodes<u32>,
     pub numbers: S::Nodes<f64>,
@@ -3053,6 +3076,24 @@ impl<S: Storage> FileIn<S> {
         let mut all = self.import_attributes.iter();
         all.find(|of| of.0 > argument_end).map(|of| of.1)
     }
+    /// `GetImportAttributes` for the import or export declaration `s`, an `ExprKind::Object`.
+    pub fn attributes_of_statement(&self, s: StmtId) -> Option<ExprId> {
+        let within = self[s].loc;
+        let mut all = self.import_attributes.iter();
+        all.find(|of| (within.pos..within.end).contains(&of.0))
+            .map(|of| of.1)
+    }
+    /// `GetImportAttributes` for the declaration or the import type whose module specifier is at `pos`. Its attributes
+    /// come after that specifier and before the next one.
+    pub fn attributes_after_specifier(&self, pos: u32) -> Option<ExprId> {
+        if self.import_attributes.is_empty() {
+            return None;
+        }
+        let later = self.specifier_uses.iter().map(|it| it.pos);
+        let end = later.filter(|&it| it > pos).min().unwrap_or(u32::MAX);
+        let mut all = self.import_attributes.iter();
+        all.find(|of| (pos..end).contains(&of.0)).map(|of| of.1)
+    }
     /// Sets the kind of `stmt` to `kind`, and records `stmt` in the declaration it holds.
     pub fn set_stmt_kind(&mut self, stmt: StmtId, kind: StmtKind) {
         self[stmt].kind = kind;
@@ -3145,6 +3186,13 @@ impl<S: Storage> FileIn<S> {
             Ok(index) => self.jsdoc_types[index].1,
             Err(_) => TypeNodeId::NONE,
         }
+    }
+
+    /// Returns the `@augments` and `@extends` tags of `class`.
+    pub fn augments_tags_of(&self, class: ClassId) -> &[AugmentsTag] {
+        let start = self.augments_tags.partition_point(|tag| tag.class < class);
+        let rest = &self.augments_tags[start..];
+        &rest[..rest.partition_point(|tag| tag.class == class)]
     }
 
     /// Returns the member `m`'s entry in `jsdoc_member_comments`, or an empty text if there is none.
@@ -3283,6 +3331,7 @@ impl FileBuilder {
         let near = before_end.and_then(|it| u16::try_from(it).ok());
         let is_near = |&it: &u16| it < FAR_IN_BRACKETS;
         let name_before_end = near.filter(is_near).unwrap_or_else(|| {
+            cold_path();
             let next = ExprId(self.exprs.len() as u32);
             self.far_names.push((next, name_pos));
             FAR
@@ -3424,7 +3473,6 @@ macro_rules! file_in_storage {
             unclosed_literals: $few!($this.unclosed_literals),
             stray_decorators: $few!($this.stray_decorators),
             specifier_uses: $long!($this.specifier_uses),
-            deferred_import_calls: $few!($this.deferred_import_calls),
             import_call_type_args: $few!($this.import_call_type_args),
             import_attributes: $few!($this.import_attributes),
             specifier_expressions: $few!($this.specifier_expressions),
@@ -3443,7 +3491,7 @@ macro_rules! file_in_storage {
             jsdoc_member_comments: $owning!($this.jsdoc_member_comments),
             jsdoc_param_errors: $owning!($this.jsdoc_param_errors),
             functions_with_param_tags: $few!($this.functions_with_param_tags),
-            unmatched_augments_tags: $few!($this.unmatched_augments_tags),
+            augments_tags: $few!($this.augments_tags),
             ids: $long!($this.ids),
             numbers: $long!($this.numbers),
             exprs: $long!($this.exprs),
@@ -3765,7 +3813,10 @@ pub fn start_of(hir: &File, e: ExprId) -> u32 {
 pub fn start_inside_parentheses(hir: &File, e: ExprId) -> u32 {
     match hir[e].kind {
         // A class's decorators are part of it.
-        ExprKind::Class(c) => hir[c].start,
+        ExprKind::Class(c) => {
+            cold_path();
+            hir[c].start
+        }
         _ => hir[e].pos,
     }
 }

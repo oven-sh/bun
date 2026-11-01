@@ -7,7 +7,7 @@
 //! Mirrors `isBlockScopedNameDeclaredBeforeUse`, `checkConstEnumAccess`, `checkElementAccessExpression`,
 //! `initializeChecker`, `addUndefinedToGlobalsOrErrorOnRedeclaration`, `getCannotFindNameDiagnosticForName`,
 //! `checkAndReportErrorForUsingTypeAsValue`, `maybeMappedType`, `allTypesAssignableToKindEx`,
-//! `onSuccessfullyResolvedSymbol`, `checkImportEqualsDeclaration` and `markJsxAliasReferenced` in TypeScript 7.0.2's
+//! `onSuccessfullyResolvedSymbol`, `checkImportEqualsDeclaration` and `markJsxAliasReferenced` in TypeScript 7.1's
 //! checker.go, and `Resolve` in its nameresolver.go.
 //!
 //! Runs after the passes that report unresolved names, because it rewords some of their diagnostics.
@@ -288,9 +288,9 @@ impl Checker<'_, '_> {
             return;
         }
         // `getJsxNamespaceContainerForImplicitImport`
-        let path = files.module(file).file_name();
+        let path = files.module(file).language_file_name();
         let implicit_import = crate::program::jsx_runtime_of(options, hir, &files.atoms)
-            .filter(|_| crate::resolve::is_jsx_file_name(path))
+            .filter(|_| crate::resolve::imports_jsx_runtime(path))
             .and_then(|spec| files.module_of_specifier(file, self.atoms().intern(&spec)));
         if implicit_import.is_some() {
             return;

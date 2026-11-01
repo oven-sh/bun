@@ -74,6 +74,8 @@ pub struct MiniEventLoop {
     /// (BACKREF) so [`EventLoopHandle::env`] can hand out a `*mut` with
     /// mutable provenance.
     pub env: Option<NonNull<DotEnvLoader>>,
+    /// `init_global` allocated `env`.
+    owns_env: bool,
     // Never freed in `deinit`. Use Box<[u8]> and dupe on assign.
     pub top_level_dir: Box<[u8]>,
     // Opaque ctx assigned externally; only read/cleared here.
@@ -85,7 +87,7 @@ pub struct MiniEventLoop {
 thread_local! {
     pub static GLOBAL_INITIALIZED: Cell<bool> = const { Cell::new(false) };
     // Raw pointer because the global is heap-allocated once (heap::alloc) and lives
-    // for the thread's lifetime (a true thread-lifetime singleton; never freed).
+    // for the thread's lifetime, or until `free_global`.
     pub static GLOBAL: Cell<*mut MiniEventLoop> = const { Cell::new(core::ptr::null_mut()) };
 }
 
@@ -135,8 +137,8 @@ pub fn init_global(
         .map(NonNull::from)
         .or_else(|| NonNull::new(dotenv::INSTANCE.load(core::sync::atomic::Ordering::Acquire)));
     if global.env.is_none() {
-        // Thread-lifetime singleton.
         global.env = Some(bun_core::heap::into_raw_nn(Box::new(DotEnvLoader::init())));
+        global.owns_env = true;
     }
 
     // Set top_level_dir from provided cwd or get current working directory
@@ -163,6 +165,24 @@ pub fn init_global(
     GLOBAL.with(|g| g.set(global_ptr));
     GLOBAL_INITIALIZED.with(|g| g.set(true));
     global_ptr
+}
+
+/// Frees what `init_global` created on this thread: the loop it returned, and the thread's uSockets loop. For a thread
+/// that ends before the process does. Nothing else frees them then, and nothing refers to them anymore.
+///
+/// # Safety
+/// Whatever was registered on the loop is closed, and no pointer to the loop is used afterwards.
+pub unsafe fn free_global() {
+    if !GLOBAL_INITIALIZED.with(|g| g.replace(false)) {
+        return;
+    }
+    let global = GLOBAL.with(|g| g.replace(core::ptr::null_mut()));
+    bun_uws::free_thread_loop();
+    // Runs the close callbacks that are still due.
+    #[cfg(windows)]
+    sys::windows::libuv::Loop::close_thread_loop();
+    // SAFETY: `init_global` allocated it, and per the caller's contract this is the last use.
+    unsafe { bun_core::heap::destroy(global) };
 }
 
 impl MiniEventLoop {
@@ -255,6 +275,7 @@ impl MiniEventLoop {
             loop_: UwsLoop::get(),
             file_polls: None,
             env: None,
+            owns_env: false,
             top_level_dir: Box::default(),
             after_event_loop_callback_ctx: None,
             after_event_loop_callback: None,
@@ -423,5 +444,9 @@ impl Drop for MiniEventLoop {
     fn drop(&mut self) {
         // `tasks.deinit()` is implicit via Queue's Drop.
         debug_assert!(self.concurrent_tasks.is_empty());
+        if let Some(env) = self.env.take().filter(|_| self.owns_env) {
+            // SAFETY: `init_global` allocated it, and only this loop hands it out.
+            unsafe { bun_core::heap::destroy(env.as_ptr()) };
+        }
     }
 }

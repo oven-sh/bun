@@ -6,7 +6,7 @@
 //! that has already listed the directories. What a project includes is decided from its patterns.
 
 use crate::host::{UncachedDisk, from_native};
-use crate::{has_no_installed_dependencies, installed_typescript, major_of_typescript_at};
+use crate::{has_no_installed_dependencies, installed_typescript, version_of_typescript_at};
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
 use bun_sema::config::{self, Roots, SplitFilePath};
@@ -52,8 +52,8 @@ pub struct Outlines {
     host: UncachedDisk<'static>,
     /// `Host::extended_config`
     extended: Guarded<FxHashMap<Vec<u8>, CachedConfig>>,
-    /// `major_of_typescript_at`, by the directory of an installed TypeScript.
-    majors: Guarded<FxHashMap<Vec<u8>, Option<(Vec<u8>, Json)>>>,
+    /// `version_of_typescript_at`, by the directory of an installed TypeScript.
+    versions: Guarded<FxHashMap<Vec<u8>, Option<(Vec<u8>, Json)>>>,
     cwd: Vec<u8>,
     /// The caller has listed every directory below one of these that contains a queried file, and the directories in
     /// between.
@@ -87,7 +87,7 @@ impl Outlines {
         Outlines {
             host,
             extended: Default::default(),
-            majors: Default::default(),
+            versions: Default::default(),
             cwd,
             listed_below: listed_below.iter().map(|it| from_native(it)).collect(),
             listed: listed.iter().map(normalized_config_path).collect(),
@@ -235,15 +235,15 @@ impl Outlines {
 
     fn read(&self, config: &[u8]) -> Option<Project> {
         let host = self.uncached_host(false);
-        let major = installed_typescript(&host, config).and_then(|package| {
-            if let Some(known) = self.majors.lock().get(&package) {
+        let version = installed_typescript(&host, config).and_then(|package| {
+            if let Some(known) = self.versions.lock().get(&package) {
                 return known.clone();
             }
-            let major = major_of_typescript_at(&host, &package);
-            self.majors.lock().insert(package, major.clone());
-            major
+            let version = version_of_typescript_at(&host, &package);
+            self.versions.lock().insert(package, version.clone());
+            version
         });
-        let overrides = |_: bool| -> Vec<_> { major.clone().into_iter().collect() };
+        let overrides = |_: bool| -> Vec<_> { version.clone().into_iter().collect() };
         let project = config::load_overriding(&host, &Session::new(), config, &overrides).ok()?;
         Some(Project {
             roots: project.roots(&host),

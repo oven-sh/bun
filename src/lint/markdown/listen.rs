@@ -283,30 +283,71 @@ fn out_of_range(error: &OutOfRange) -> String {
 }
 
 /// Walks the tree in ESLint's order and calls `rule` for every node that one of its selectors matches.
-pub(crate) fn walk<'c, R>(rule: &R, cx: &'c Cx<'_, R>)
+pub(crate) fn walk<'c, R>(rule: &'c R, cx: &'c Cx<'_, R>)
 where
     R: Listens + for<'s> Rule<State<'s> = Document<'s>>,
 {
-    let document: &'c Document<'c> = &cx.state;
-    let mut seen = R::Seen::<'c>::default();
+    let seen = R::Seen::<'c>::default();
+    walk_for(&cx.state, R::LISTENERS, &mut Walked { rule, cx, seen });
+}
+
+/// What [`walk_for`] needs of a rule. It's behind a `dyn`, so the walk is compiled once instead of once per rule.
+trait Calls<'c, 'a> {
+    fn on(
+        &mut self,
+        listener: usize,
+        node: Node<'c>,
+        context: &mut Context<'c>,
+    ) -> Result<(), OutOfRange>;
+    fn report(&self, span: Span, message: &'static Message) -> bun_lint::context::Report<'a>;
+    fn throw(&self, at: Span, message: String);
+}
+
+struct Walked<'c, 'a, R: Listens + Rule> {
+    rule: &'c R,
+    cx: &'c Cx<'a, R>,
+    seen: R::Seen<'c>,
+}
+
+impl<'c, 'a, R: Listens + Rule> Calls<'c, 'a> for Walked<'c, 'a, R> {
+    fn on(
+        &mut self,
+        listener: usize,
+        node: Node<'c>,
+        context: &mut Context<'c>,
+    ) -> Result<(), OutOfRange> {
+        self.rule.on(listener, node, &mut self.seen, context)
+    }
+
+    fn report(&self, span: Span, message: &'static Message) -> bun_lint::context::Report<'a> {
+        self.cx.report(span, message)
+    }
+
+    fn throw(&self, at: Span, message: String) {
+        self.cx.throw(at, "RangeError", message);
+    }
+}
+
+fn walk_for<'c>(document: &'c Document<'c>, listeners: &[Listener], rule: &mut dyn Calls<'c, '_>) {
     let mut context = Context {
         document,
         reports: Vec::new(),
     };
     // True if a listener can match a node inside a heading, a paragraph or a table cell.
-    let looks_into_text = const {
-        let (mut looks, mut at) = (false, 0);
-        while at < R::LISTENERS.len() {
-            looks |= R::LISTENERS[at].kinds.0 & !Kinds::BLOCKS.0 != 0;
-            at += 1;
-        }
-        looks
-    };
+    let looks_into_text = (listeners.iter()).any(|it| it.kinds.0 & !Kinds::BLOCKS.0 != 0);
+    // The kinds of nodes that some listener is called for on entry, and on exit. Most nodes are of other kinds.
+    let [on_entry, on_exit] = [false, true].map(|is_exit| {
+        let listeners = listeners.iter().filter(|it| it.is_exit == is_exit);
+        Kinds(listeners.fold(0, |bits, it| bits | it.kinds.0))
+    });
     // How many ancestors of the current node are headings, and how many are headings, paragraphs or table cells.
     let (mut headings, mut with_text) = (0u32, 0u32);
     let mut call = |is_exit: bool, node: Node<'c>, headings: u32, with_text: u32| -> bool {
         let kind = node.kind();
-        for (index, listener) in R::LISTENERS.iter().enumerate() {
+        if !(if is_exit { on_exit } else { on_entry }).has(kind) {
+            return true;
+        }
+        for (index, listener) in listeners.iter().enumerate() {
             let is_match = listener.is_exit == is_exit
                 && listener.kinds.has(kind)
                 && match listener.within {
@@ -320,10 +361,10 @@ where
             if !is_match {
                 continue;
             }
-            let thrown = rule.on(index, node, &mut seen, &mut context);
+            let thrown = rule.on(index, node, &mut context);
             if !context.reports.is_empty() {
                 submit(
-                    &|span, message| cx.report(span, message),
+                    &|span, message| rule.report(span, message),
                     document,
                     &mut context.reports,
                     node,
@@ -331,7 +372,7 @@ where
                 );
             }
             if let Err(error) = thrown {
-                cx.throw(node.span(), "RangeError", out_of_range(&error));
+                rule.throw(node.span(), out_of_range(&error));
                 return false;
             }
         }

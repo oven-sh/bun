@@ -5,7 +5,7 @@ use bun_bundler::options::TypeChecked;
 use bun_paths::platform::Auto;
 use bun_paths::resolve_path::join_abs_string;
 use bun_sema::check::Checker;
-use bun_sema::program::FileId;
+use bun_sema::program::{FileId, change_to_declaration_extension};
 use bun_sema_driver::host::{Provided, from_native, to_native};
 use bun_sema_driver::typed_files::{ModuleTypes, tsconfig_of_package};
 use bun_sema_driver::{Category, PlanOptions, Report, Request, ScriptKind, format};
@@ -13,8 +13,8 @@ use bun_threading::Guarded;
 
 use super::typed_files::NotedModuleTypes;
 use super::{
-    Entries, Paths, already_read, has_types_with, log_data_of, request, script_kind_of,
-    script_kinds_by_extension, with_pages,
+    Entries, KillSwitch, Paths, already_read, command_runs_external_code, content_mapper_transport,
+    has_types_with, log_data_of, request, script_kind_of, script_kinds_by_extension, with_pages,
 };
 
 /// A package without a configuration file is written for every runtime: it gets the globals that all of them have.
@@ -23,6 +23,8 @@ pub(super) const LIBS_WITHOUT_CONFIGURATION: [&[u8]; 2] =
 
 pub(crate) struct DeclarationFile {
     pub(crate) source: Vec<u8>,
+    /// `source` with the extension of its declaration file (`ChangeToDeclarationExtension`).
+    pub(crate) beside_source: Vec<u8>,
     pub(crate) text: Vec<u8>,
 }
 
@@ -39,7 +41,37 @@ pub(crate) fn take_module_types() -> Vec<ModuleTypes> {
     std::mem::take(&mut *MODULE_TYPES.lock())
 }
 
+/// `BundleOptions::type_check` for `bun build --dts`.
+pub(crate) fn check_and_emit_declarations_for_build_command(
+    checked: TypeChecked,
+    log: &mut bun_ast::Log,
+) -> bool {
+    let content_mappers = command_runs_external_code().then(KillSwitch::default);
+    emit_declarations(checked, log, content_mappers)
+}
+
+/// `BundleOptions::type_check` for `Bun.build({ dts: true })`.
 pub(crate) fn check_and_emit_declarations(checked: TypeChecked, log: &mut bun_ast::Log) -> bool {
+    emit_declarations(checked, log, None)
+}
+
+/// `check_and_emit_declarations` with `check: { runExternalCode: true }`. The command line of the process has no say in
+/// it.
+pub(crate) fn check_and_emit_declarations_with_external_code(
+    checked: TypeChecked,
+    log: &mut bun_ast::Log,
+) -> bool {
+    use crate::api::js_bundle_completion_task::kill_switch_of;
+    let content_mappers = checked.completion.map(kill_switch_of).unwrap_or_default();
+    emit_declarations(checked, log, Some(content_mappers))
+}
+
+/// `content_mappers`: see `content_mapper_transport`.
+fn emit_declarations(
+    checked: TypeChecked,
+    log: &mut bun_ast::Log,
+    content_mappers: Option<KillSwitch>,
+) -> bool {
     let TypeChecked {
         cwd,
         tsconfig,
@@ -47,6 +79,7 @@ pub(crate) fn check_and_emit_declarations(checked: TypeChecked, log: &mut bun_as
         loaders,
         entry_points,
         sources,
+        completion: _,
     } = checked;
     let by_extension = script_kinds_by_extension(loaders);
     let mut script_kinds: Vec<(Vec<u8>, ScriptKind)> = Vec::new();
@@ -59,6 +92,7 @@ pub(crate) fn check_and_emit_declarations(checked: TypeChecked, log: &mut bun_as
     });
     let provided = Provided {
         already_read: already_read(cwd, &mut sources),
+        content_mapper_transport: content_mapper_transport(content_mappers),
         ..Default::default()
     };
     let is_source = |path: &&[u8]| {
@@ -78,16 +112,23 @@ pub(crate) fn check_and_emit_declarations(checked: TypeChecked, log: &mut bun_as
         conditions,
     });
 
-    let emitted: Guarded<BTreeMap<Vec<u8>, Vec<u8>>> = Guarded::new(BTreeMap::new());
+    // By source: the name of the declaration file beside it, and the text.
+    let emitted: Guarded<BTreeMap<Vec<u8>, (Vec<u8>, Vec<u8>)>> = Guarded::new(BTreeMap::new());
     // A task of the checker can run again: the last time counts.
     let module_types = NotedModuleTypes::default();
     let emit = |checker: &mut Checker<'_, '_>, file: FileId| {
         module_types.note(checker, file);
         let text = checker.emit_declaration_file(file);
-        let source = checker.p.files.module(file).file_name();
+        let files = checker.p.files;
+        let source = files.module(file).file_name();
         let mut emitted = emitted.lock();
         match text {
-            Some(text) => emitted.insert(source.to_vec(), text),
+            Some(text) => {
+                let (options, is_case_sensitive) = (files.options, files.is_case_sensitive);
+                let beside_source =
+                    change_to_declaration_extension(options, source.to_vec(), is_case_sensitive);
+                emitted.insert(source.to_vec(), (beside_source, text))
+            }
             None => emitted.remove(source),
         };
     };
@@ -128,15 +169,16 @@ pub(crate) fn check_and_emit_declarations(checked: TypeChecked, log: &mut bun_as
     let emitted = std::mem::take(&mut *emitted.lock());
     let mut module_types = module_types.take();
     for module in &mut module_types {
-        if let Some(text) = emitted.get(&module.path[..]) {
+        if let Some((_, text)) = emitted.get(&module.path[..]) {
             module.emitted_declarations = text[..].into();
         }
     }
     *MODULE_TYPES.lock() = module_types;
     *EMITTED_FILES.lock() = emitted
         .into_iter()
-        .map(|(source, text)| DeclarationFile {
+        .map(|(source, (beside_source, text))| DeclarationFile {
             source: bundler_path(&source),
+            beside_source: bundler_path(&beside_source),
             text,
         })
         .collect();

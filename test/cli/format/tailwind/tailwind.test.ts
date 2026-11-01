@@ -196,6 +196,29 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
     });
   });
 
+  // Same as prettier-plugin-tailwindcss 0.8.1 and oxfmt 0.72.0 with tailwindcss 3.4.19, whose loader compiles what
+  // `require` rejects.
+  test("loads the configuration of Tailwind CSS 3 with the package's own loader", async () => {
+    const loader = `module.exports = path => {
+  try {
+    return require(path);
+  } catch {
+    const module = { exports: {} };
+    new Function("module", require("node:fs").readFileSync(path, "utf8").replace(/^import .*$/m, ""))(module);
+    return module.exports;
+  }
+};
+`;
+    const files = {
+      ...version3,
+      "node_modules/tailwindcss/loadConfig.js": loader,
+      ".oxfmtrc.json": '{ "sortTailwindcss": true }',
+      "tailwind.config.js": 'import path from "node:path";\nmodule.exports = { reversed: true };\n',
+      "a.jsx": sorted,
+    };
+    expect(await format(files, ["a.jsx"])).toMatchObject({ stderr: "", files: [reversed], exitCode: 0 });
+  });
+
   // Same as prettier-plugin-tailwindcss 0.8.1 with Prettier 3.9.9.
   test("`process.cwd()` in a tailwind.config.js is the directory where the command runs", async () => {
     using dir = tempDir("bun-format-tailwind", {

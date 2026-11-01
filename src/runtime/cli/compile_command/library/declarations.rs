@@ -56,7 +56,7 @@ pub(crate) fn add_declaration_files(
         if !has_javascript(&declaration.source) {
             continue;
         }
-        let Some(path) = declaration_path(root_directory, &declaration.source) else {
+        let Some(path) = path_below(root_directory, &declaration.beside_source) else {
             return Err(OutsideRootDirectory {
                 source: declaration.source,
                 root_directory: root_directory.to_vec(),
@@ -77,16 +77,21 @@ pub(crate) fn add_declaration_files(
 }
 
 pub(super) fn declaration_path(root_directory: &[u8], source: &[u8]) -> Option<Vec<u8>> {
-    let relative = relative_platform::<Auto, false>(root_directory, source);
-    if leaves_its_directory(relative) {
-        return None;
-    }
+    let relative = path_below(root_directory, source)?;
     let (stem, extension) = DECLARATION_EXTENSIONS
         .iter()
         .find_map(|(from, to)| Some((relative.strip_suffix(*from)?, *to)))?;
-    let mut path = [stem, extension].concat();
-    platform_to_posix_in_place::<u8>(&mut path);
-    Some(path)
+    Some([stem, extension].concat())
+}
+
+fn path_below(root_directory: &[u8], path: &[u8]) -> Option<Vec<u8>> {
+    let relative = relative_platform::<Auto, false>(root_directory, path);
+    if leaves_its_directory(relative) {
+        return None;
+    }
+    let mut relative = relative.to_vec();
+    platform_to_posix_in_place::<u8>(&mut relative);
+    Some(relative)
 }
 
 fn leaves_its_directory(relative: &[u8]) -> bool {

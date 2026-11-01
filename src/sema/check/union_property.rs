@@ -152,7 +152,7 @@ struct UnionPropertyBuilder<'p, 's> {
     /// Everything in `symbols`, plus the symbols added after it filled up.
     more_symbols: FxHashSet<(*const Prop<'p>, MapperId)>,
     /// `indexTypes`. It's only passed to `getUnionType`, so duplicates are dropped.
-    index_types: SmallVec<[TypeId; 4]>,
+    index_types: OrderedSet<TypeId>,
     merged_instantiations: bool,
     flags: PropFlags,
     is_public: bool,
@@ -167,7 +167,7 @@ impl<'p, 's> UnionPropertyBuilder<'p, 's> {
             prop_hashes: FxHashSet::default(),
             symbols: SmallVec::new(),
             more_symbols: FxHashSet::default(),
-            index_types: SmallVec::new(),
+            index_types: OrderedSet::default(),
             merged_instantiations: false,
             flags: PropFlags::empty(),
             is_public: false,
@@ -221,9 +221,7 @@ impl<'p, 's> UnionPropertyBuilder<'p, 's> {
 
     fn add_index_type(&mut self, ty: TypeId) {
         self.flags |= PropFlags::WRITE_PARTIAL;
-        if !self.index_types.contains(&ty) {
-            self.index_types.push(ty);
-        }
+        self.index_types.insert(ty);
     }
 }
 
@@ -329,9 +327,7 @@ impl<'p, 's> Checker<'p, 's> {
         // Looking a name up in an intersection that is being reduced creates its properties a second time. See
         // `reduce_apparent_type_of_intersection_in_progress`.
         let mut being_reduced = self.never_in_progress.iter();
-        // While `unresolved_members` is non-empty, `members` omits a type reference's inherited members.
-        self.unresolved_members.is_empty()
-            && !being_reduced.any(|&ty| self.task_facts.has(ty, task_fact::IS_IN_MEMBER_FACTS))
+        !being_reduced.any(|&ty| self.task_facts.has(ty, task_fact::IS_IN_MEMBER_FACTS))
     }
 
     /// True if a member's `Missing` value for this name can be reused for other names. Object types must never inherit
@@ -722,7 +718,11 @@ impl<'p, 's> Checker<'p, 's> {
         if prop_set.is_empty()
             || (prop_set.len() > 1 || is_partial)
                 && flags.intersects(access)
-                && !(prop_set.len() > 1 && Self::has_common_declaration(&prop_set, self.arena))
+                && !(prop_set.len() > 1
+                    && Self::has_common_declaration(
+                        &prop_set.iter().collect::<SmallVec<[&Prop; 4]>>(),
+                        self.arena,
+                    ))
         {
             return None;
         }
@@ -753,31 +753,31 @@ impl<'p, 's> Checker<'p, 's> {
         {
             flags |= PropFlags::STRING_NAME;
         }
-        // `getDeclarationModifierFlagsFromSymbol`: private if any is private, else public if any is public, else
-        // protected.
-        if flags.contains(PropFlags::PRIVATE) || is_public {
-            flags.remove(PropFlags::PROTECTED);
+        // `getDeclarationModifierFlagsFromSymbol`: public if any is public, else protected if any is protected, else
+        // private.
+        if is_public {
+            flags.remove(access);
+        } else if flags.contains(PropFlags::PROTECTED) {
+            flags.remove(PropFlags::PRIVATE);
         }
-        prop_set.extend(index_types.into_iter().map(|t| Prop {
+        prop_set.extend(index_types.into_keys().into_iter().map(|t| Prop {
             name,
             flags: PropFlags::WRITE_PARTIAL,
             source: PropSource::Type(t),
             mapper: MapperId::IDENTITY,
             name_type: TypeId::UNRESOLVED,
         }));
-        let mut result = Prop {
+        Some(Prop {
             name,
             flags,
             source: PropSource::Intersected(containing_type, self.list_of(prop_set)),
             mapper: MapperId::IDENTITY,
             name_type: TypeId::UNRESOLVED,
-        };
-        self.set_modifiers_of_value_declaration(&mut result);
-        Some(result)
+        })
     }
 
     /// `compareProperties(sourceProp, targetProp, compareTypesEqual)`
-    fn compare_properties(&mut self, source: &Prop<'s>, target: &Prop<'s>) -> bool {
+    pub(super) fn compare_properties(&mut self, source: &Prop, target: &Prop) -> bool {
         if source == target {
             return true;
         }
@@ -806,8 +806,8 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `hasCommonDeclaration`
-    fn has_common_declaration(props: &[Prop], arena: &'s Arena) -> bool {
-        let mut common = Self::declared_properties(&[&props[0]], arena);
+    pub(super) fn has_common_declaration(props: &[&Prop], arena: &'s Arena) -> bool {
+        let mut common = Self::declared_properties(&[props[0]], arena);
         for prop in &props[1..] {
             let other = Self::declared_properties(&[prop], arena);
             common.retain(|declared| other.iter().any(|it| it.source == declared.source));

@@ -36,7 +36,10 @@ impl Rule for BanTypes {
     fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
         match ty.tag() {
             TypeTag::Object => {
-                if matches!(ty.kind(), TypeKind::Object(members) if members.is_empty()) {
+                // Not `declare module "a" with {}`.
+                if matches!(ty.kind(), TypeKind::Object(members) if members.is_empty())
+                    && !matches!(ty.parent(), Node::Stmt(it) if it.tag() == StmtTag::Module)
+                {
                     cx.report(ty, TYPE_LITERAL);
                 }
             }

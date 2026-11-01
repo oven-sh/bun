@@ -327,6 +327,15 @@ pub(super) enum Found {
     ByIndex,
 }
 
+/// What `Checker::property_type` found.
+#[derive(Copy, Clone)]
+pub(super) struct FoundProperty<'p> {
+    pub(super) ty: TypeId,
+    pub(super) how: Found,
+    /// `getPropertyOfTypeEx(apparentType, name)`
+    pub(super) prop: Option<&'p Prop<'p>>,
+}
+
 /// Where `getPropertyOfTypeEx` looks up a name in a type. This is the part it computes before it uses the name.
 #[derive(Copy, Clone)]
 pub(super) enum PropertyHolder<'p> {
@@ -398,6 +407,7 @@ impl SharedNames {
                     last_holders.push(at);
                     found.push(name_index);
                 } else if last_holders[name_index as usize] == at {
+                    cold_path();
                     found.push(DUPLICATE_IN_MEMBER);
                 } else {
                     ends[name_index as usize] += 1;
@@ -489,6 +499,17 @@ pub(super) struct IndexInfosInInstantiation {
     hits: u64,
 }
 
+/// See `Checker::inheriting`.
+pub(super) struct Inheriting<'p> {
+    /// The key that the shape is stored under.
+    key: TypeId,
+    /// `t` of `resolveObjectTypeMembers`.
+    resolving: TypeId,
+    /// `resolveObjectTypeMembers` has no guard and calls `setStructuredTypeMembers` at the end. A request for the
+    /// members of `t` in the meantime resolves them again, and the next one finds what that one has set.
+    set_in_the_meantime: Option<&'p Resolved<'p>>,
+}
+
 /// A call of `resolveDeclaredMembers`. See `Checker::declared_index_infos_in_progress`.
 #[derive(Copy, Clone)]
 pub(super) struct Declaring {
@@ -496,6 +517,8 @@ pub(super) struct Declaring {
     symbol: Sym,
     /// `t` of the calling `resolveObjectTypeMembers`.
     resolving: Option<TypeId>,
+    /// See `Checker::stands_in_for_base_type`.
+    stands_in: bool,
 }
 
 /// Selects whether a class or interface shape includes the members of its base types
@@ -617,8 +640,10 @@ impl<'s> Builder<'s> {
             return;
         }
         if count * 2 > self.names.slots.len() {
+            cold_path();
             self.reserve_names(count * 2);
         } else if count == FEW + 1 {
+            cold_path();
             self.names.add_all(&self.shape.props);
         } else {
             self.names.add(&self.shape.props, count - 1);
@@ -726,8 +751,14 @@ impl<'p, 's> Checker<'p, 's> {
     pub fn type_arguments(&mut self, ty: TypeId) -> &'p [TypeId] {
         match self.resolved_type_arguments(ty) {
             Some(resolved) => resolved,
-            None if self.types().deferred(ty).is_some() => self.resolve_type_arguments(ty),
-            None => &[],
+            None if self.types().deferred(ty).is_some() => {
+                cold_path();
+                self.resolve_type_arguments(ty)
+            }
+            None => {
+                cold_path();
+                &[]
+            }
         }
     }
 
@@ -752,6 +783,11 @@ impl<'p, 's> Checker<'p, 's> {
             return &[];
         };
         let (file, node, mapper) = (deferred.file, deferred.node, deferred.mapper);
+        let mut in_instantiation = self.type_arguments_in_instantiation.iter();
+        if let Some(&(_, Some(assigned))) = in_instantiation.rfind(|it| it.0 == ty) {
+            self.note_members_in_place();
+            return assigned;
+        }
         // This scope encloses the resolution frame, because the arguments are instantiated after
         // `popTypeResolution` and the result depends on that too.
         let scope = self.begin_scope();
@@ -804,8 +840,8 @@ impl<'p, 's> Checker<'p, 's> {
         // `c.instantiateTypes(typeArguments, d.mapper)`. It may request the type arguments of `ty`
         // again, which is not a cycle. tsgo recurses until `instantiationDepth == 100`, every level
         // assigns, and the outermost assigns last. So only the outermost level stores.
-        let is_outermost = !self.type_arguments_in_instantiation.contains(&ty);
-        self.type_arguments_in_instantiation.push(ty);
+        let outer = (self.type_arguments_in_instantiation.iter()).rposition(|it| it.0 == ty);
+        self.type_arguments_in_instantiation.push((ty, None));
         let (before, in_place) = (self.non_cacheable_mark(), self.members_in_place_hits);
         let instantiated = self.instantiate_list(&declared, mapper);
         self.type_arguments_in_instantiation.pop();
@@ -814,14 +850,20 @@ impl<'p, 's> Checker<'p, 's> {
         // `members_in_place_hits`.
         let in_place = self.members_in_place_hits - in_place;
         let is_final = self.non_cacheable_mark() == (before.0 + in_place, before.1);
-        let is_open = !(is_frame_cacheable && is_outermost && is_final);
+        let is_open = !(is_frame_cacheable && outer.is_none() && is_final);
         match self.end_scope_as(scope, is_open) {
             Ok(stored) => {
                 (self.p.resolved_type_arguments)
                     .insert_ref(&self.task, ty, instantiated, stored)
                     .1
             }
-            Err(_) => self.provisional_type_arguments(ty, &instantiated),
+            Err(_) => {
+                let assigned = self.provisional_type_arguments(ty, &instantiated);
+                if let Some(outer) = outer {
+                    self.type_arguments_in_instantiation[outer].1 = Some(assigned);
+                }
+                assigned
+            }
         }
     }
 
@@ -913,18 +955,25 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getActualTypeVariable`
     pub(super) fn actual_type_variable(&mut self, ty: TypeId) -> TypeId {
-        let is_substitution = |c: &Self, t: TypeId| c.is_kind(t, tf::SUBSTITUTION);
         match *self.data(ty) {
-            TypeData::Substitution { base, .. } => self.actual_type_variable(base),
-            TypeData::IndexedAccess { obj, index, .. }
-                if is_substitution(self, obj) || is_substitution(self, index) =>
-            {
-                let (obj, index) = (
+            TypeData::Substitution { base, .. } => {
+                cold_path();
+                self.actual_type_variable(base)
+            }
+            TypeData::IndexedAccess { obj, index, .. } => {
+                let actual = (
                     self.actual_type_variable(obj),
                     self.actual_type_variable(index),
                 );
-                self.indexed_access(obj, index)
+                match actual == (obj, index) {
+                    true => ty,
+                    false => {
+                        cold_path();
+                        self.indexed_access(actual.0, actual.1)
+                    }
+                }
             }
+            TypeData::Marker(Marker::Distributed(of)) => of,
             _ => ty,
         }
     }
@@ -1079,16 +1128,27 @@ impl<'p, 's> Checker<'p, 's> {
         // base types found so far.
         // Nor for a mapped type. `resolveMappedTypeMembers` starts with empty members, "such that recursive references
         // see an empty object type". Whatever was computed from them stays as it is.
-        // Nor when the declared members (`ObjectFlagsUnresolvedMembers`) or the early-bound members
-        // are in place.
+        // Nor when the early-bound members are in place.
         if (self.are_base_types_in_progress(key) || self.is_mapped_type(key))
             && self.stack[self.resolution_start..].contains(&Query::Shape(key))
-            || self.inheriting.iter().any(|it| it.0 == key)
             || binding == MemberBinding::Late && self.is_late_binding(key)
         {
             self.note_members_in_place_of(key);
             let shape = meanwhile(self);
             return self.provisional_shape(shape);
+        }
+        if let Some(at) = self.inheriting.iter().rposition(|it| it.key == key) {
+            self.note_members_in_place_of(key);
+            if let Some(resolved) = self.inheriting[at].set_in_the_meantime {
+                return Built {
+                    resolved,
+                    store_handle: None,
+                };
+            }
+            let shape = meanwhile(self);
+            let built = self.provisional_shape(shape);
+            self.inheriting[at].set_in_the_meantime = Some(built.resolved);
+            return built;
         }
         if let Some(built) = self.provisionally_cached_shape(Query::Shape(key)) {
             return built;
@@ -1258,7 +1318,7 @@ impl<'p, 's> Checker<'p, 's> {
     #[inline]
     pub fn members(&mut self, ty: TypeId) -> Option<Members<'p>> {
         let recent = self.recent_members[ty.0 as usize % RECENT_MEMBERS];
-        if recent.ty == ty && self.unresolved_members.is_empty() {
+        if recent.ty == ty {
             return recent.resolved.map(|resolved| Members {
                 resolved,
                 mapper: recent.mapper,
@@ -1270,11 +1330,6 @@ impl<'p, 's> Checker<'p, 's> {
     /// `members` for a type that wasn't queried recently.
     fn members_not_recent(&mut self, ty: TypeId) -> Option<Members<'p>> {
         if let Some(known) = self.p.members.get(&self.task, &ty) {
-            if !self.unresolved_members.is_empty()
-                && let Some(declared) = self.declared_members_if_unresolved(ty, known.mapper)
-            {
-                return Some(declared);
-            }
             let resolved = self.p.shapes.at(&self.task, known.shape);
             self.recent_members[ty.0 as usize % RECENT_MEMBERS] = RecentMembers {
                 resolved: Some(resolved),
@@ -1286,13 +1341,7 @@ impl<'p, 's> Checker<'p, 's> {
                 mapper: known.mapper,
             });
         }
-        let members = self.members_on_cache_miss(ty)?;
-        if !self.unresolved_members.is_empty()
-            && let Some(declared) = self.declared_members_if_unresolved(ty, members.mapper)
-        {
-            return Some(declared);
-        }
-        Some(members)
+        self.members_on_cache_miss(ty)
     }
 
     /// The members of `ty`, if they've already been resolved (`ObjectFlagsMembersResolved`).
@@ -1320,35 +1369,6 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    /// `resolveStructuredTypeMembers` of a type reference that has `ObjectFlagsUnresolvedMembers`:
-    /// the members that its class or interface declares. `mapper` is the mapper of `ty`'s members.
-    /// `None` if `ty` isn't such a type reference. See `unresolved_members`.
-    #[cold]
-    #[inline(never)]
-    fn declared_members_if_unresolved(
-        &mut self,
-        ty: TypeId,
-        mapper: MapperId,
-    ) -> Option<Members<'p>> {
-        let at = (self.unresolved_members.iter()).position(|it| it.0 == mapper)?;
-        let &TypeData::Ref { target, .. } = self.data(ty) else {
-            return None;
-        };
-        if self.base_types(target).is_empty() {
-            return None;
-        }
-        // Anything derived from this result is only valid until that `compose` returns.
-        self.lowest_unresolved_members_hit = self.lowest_unresolved_members_hit.min(at as u32);
-        self.unresolved_members_hits += 1;
-        self.mark_tainted_by_pattern_from(self.unresolved_members[at].1 as usize);
-        self.note_members_in_place();
-        let shape = self.resolve_declared_members(target);
-        Some(Members {
-            resolved: self.provisional_shape(shape).resolved,
-            mapper,
-        })
-    }
-
     /// `resolveDeclaredMembers`: the members that the class or interface `sym` declares itself. The
     /// members of its base types aren't resolved.
     pub(super) fn resolve_declared_members(&mut self, sym: Sym) -> Shape<'s> {
@@ -1361,12 +1381,32 @@ impl<'p, 's> Checker<'p, 's> {
     /// assigns its members again. Then `ty`, and no other reference, ends up without the declared
     /// index infos.
     #[inline]
-    fn gets_no_declared_index_infos(&self, target: Sym, ty: TypeId) -> bool {
+    fn gets_no_declared_index_infos(&mut self, target: Sym, ty: TypeId) -> bool {
+        if self.declared_index_infos_in_progress.is_empty() {
+            return false;
+        }
+        let stands_in = self.stands_in_for_base_type(ty);
         let mut callers = (self.declared_index_infos_in_progress.iter())
             .filter_map(|it| it.3)
             .filter(|it| it.symbol == target)
             .peekable();
-        callers.peek().is_some() && callers.all(|it| it.resolving != Some(ty))
+        callers.peek().is_some()
+            && callers.all(|it| it.resolving != Some(ty) || it.stands_in && !stands_in)
+    }
+
+    /// True if `ty` is requested as a base type with the `this` type of the class that inherits, for a reference to that
+    /// class with another `this` argument: the references share a shape. `instantiatedBaseType` of
+    /// `resolveObjectTypeMembers` has that argument, so it's another type than `ty`.
+    fn stands_in_for_base_type(&mut self, ty: TypeId) -> bool {
+        let Some(heir) = self.inheriting.last().map(|it| it.resolving) else {
+            return false;
+        };
+        let TypeData::Ref { target, .. } = *self.data(heir) else {
+            return false;
+        };
+        let this = Some(self.intern(TypeData::ThisParam(target)));
+        self.type_arguments(ty).last().copied() == this
+            && self.type_arguments(heir).last().copied() != this
     }
 
     /// True if `resolveObjectTypeMembers` of `ty`, a reference to `target`, finds `earlySymbols` in
@@ -1406,7 +1446,10 @@ impl<'p, 's> Checker<'p, 's> {
         let is_open = !built.is_some_and(|(built, _)| built.store_handle.is_some());
         let ended = self.end_scope_as(scope, is_open);
         let (built, mapper) = built?;
-        if let (Some(shape), Ok(stored)) = (built.store_handle, ended) {
+        if let (Some(shape), Ok(stored)) = (built.store_handle, ended)
+            // What a request in the meantime has got for good: see `stands_in_for_base_type`.
+            && self.p.members.get(&self.task, &ty).is_none()
+        {
             let entry = CachedMembers { shape, mapper };
             self.p.members.insert(&self.task, ty, entry, stored);
             self.recent_members[ty.0 as usize % RECENT_MEMBERS] = RecentMembers {
@@ -1470,18 +1513,20 @@ impl<'p, 's> Checker<'p, 's> {
                 // All instantiations share the declared type's shape, unless their base types depend on the type
                 // arguments or on the type's members. In `interface D extends M<D>`, `D` can end up without the members
                 // of `M<D>` while `D` with a `this` argument has them.
-                // `ObjectFlagsUnresolvedMembers` and `ObjectFlagsMembersResolved` are per-reference flags. A different
+                // `ObjectFlagsMembersResolved` is a per-reference flag. A different
                 // reference that's requested while the shared shape is resolving the base types' members, or while
                 // `getBaseTypes` is resolving the base types, is resolved separately and keeps what it gets.
                 let is_other_inheriting =
-                    (self.inheriting.iter()).any(|it| it.0 == declared && it.1 != ty);
+                    (self.inheriting.iter()).any(|it| it.key == declared && it.resolving != ty);
                 // `baseTypes := c.getBaseTypes(source)` of `resolveObjectTypeMembers`
-                let inherits_from_type_arguments = declared != ty && {
-                    self.resolving_at_base_types.push(ty);
-                    let inherits = self.inherits_from_type_arguments(target);
-                    self.resolving_at_base_types.pop();
-                    inherits
-                };
+                self.resolving_at_base_types.push(ty);
+                let inherits = declared != ty && self.inherits_from_type_arguments(target);
+                let may_request_members =
+                    declared != ty && !inherits && self.base_types_request_members(target);
+                self.resolving_at_base_types.pop();
+                let inherits_from_type_arguments = inherits
+                    || may_request_members
+                        && self.is_requested_by_base_types(ty, target, mapper, this);
                 // `thisArgument` of `resolveObjectTypeMembers` is `t` itself for the reference that inherits. With a
                 // `this` type in its place, this isn't the reference that keeps these members.
                 let is_at_base_types = !matches!(self.data(this), TypeData::ThisParam(_))
@@ -1560,14 +1605,14 @@ impl<'p, 's> Checker<'p, 's> {
                         if !is_bound {
                             c.note_members_from_early_symbols(target, false);
                         }
-                        let is_in_place = c.inheriting.iter().any(|it| it.0 == key);
-                        let (binding, bases) = if is_bound && is_in_place {
-                            (MemberBinding::Late, BaseMembers::Omitted)
-                        } else if is_bound && c.base_types_so_far.iter().any(|it| it.0 == target) {
-                            (MemberBinding::Late, BaseMembers::Inherited)
-                        } else {
-                            (MemberBinding::Early, BaseMembers::Inherited)
+                        let is_late = is_bound
+                            && (c.inheriting.iter().any(|it| it.key == key)
+                                || c.base_types_so_far.iter().any(|it| it.0 == target));
+                        let binding = match is_late {
+                            true => MemberBinding::Late,
+                            false => MemberBinding::Early,
                         };
+                        let bases = BaseMembers::Inherited;
                         c.build_declared_shape(target, under, binding, bases, None, Some(ty))
                     },
                 );
@@ -1791,7 +1836,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// The identity mapper over the same type parameters.
-    fn identity_of(&mut self, mapper: MapperId) -> MapperId {
+    pub(super) fn identity_of(&mut self, mapper: MapperId) -> MapperId {
         let mapping = self.types().mapping(mapper);
         if mapping.iter().all(|p| p.0 == p.1) {
             return mapper;
@@ -1884,6 +1929,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// late-bound one (`isLateBindableName`).
     pub fn declared_member_name(&mut self, file: FileId, key: PropKey) -> Option<Atom> {
         if let PropKey::Computed(e) = key {
+            cold_path();
             if !self.can_name_a_member(file, e) {
                 return None;
             }
@@ -1969,9 +2015,7 @@ impl<'p, 's> Checker<'p, 's> {
             .is_some_and(|m| self.is_declared_outside_classes(file, m));
         // Declarations with the same name form one property.
         let mut groups: Vec<(Atom, SmallVec<[MemberId; 4]>)> = Vec::new();
-        // Filled once there are too many groups to search one by one.
-        const MAX_GROUPS_SEARCHED: usize = 32;
-        let mut group_indexes = FxHashMap::<Atom, usize>::default();
+        let mut names = OrderedSet::default();
         for m in members.iter() {
             let member = &hir[m];
             if (has_static_side && member.flags.contains(Flags::STATIC)) != want_static {
@@ -2011,18 +2055,9 @@ impl<'p, 's> Checker<'p, 's> {
                     if is_dynamic && self.is_late_bound_by_another_call(file, m) {
                         continue;
                     }
-                    let group = if groups.len() <= MAX_GROUPS_SEARCHED {
-                        groups.iter().position(|g| g.0 == name)
-                    } else {
-                        if group_indexes.is_empty() {
-                            group_indexes.extend(groups.iter().enumerate().map(|(i, g)| (g.0, i)));
-                        }
-                        Some(*group_indexes.entry(name).or_insert(groups.len()))
-                            .filter(|&group| group < groups.len())
-                    };
-                    match group {
-                        Some(group) => groups[group].1.push(m),
-                        None => groups.push((name, smallvec![m])),
+                    match names.insert_full(name) {
+                        (_, true) => groups.push((name, smallvec![m])),
+                        (group, false) => groups[group].1.push(m),
                     }
                 }
                 MemberKind::CallSignature => {
@@ -2392,7 +2427,7 @@ impl<'p, 's> Checker<'p, 's> {
             if !self.can_name_a_member(file, e) {
                 continue;
             }
-            let key = self.type_of_expr(file, e);
+            let key = self.check_computed_property_name(file, e);
             // "Explicit index for key type takes priority"
             if b.shape.index.iter().any(|i| i.key == key) {
                 continue;
@@ -2528,21 +2563,43 @@ impl<'p, 's> Checker<'p, 's> {
                         *is_private |= matches!(c.hir(file)[m].key, PropKey::Private(_));
                     }
                 }
-                PropSource::Intersected(_, parts) => parts
-                    .iter()
-                    .for_each(|part| scan_declarations(c, &part.source, in_class, is_private)),
+                PropSource::Intersected(_, parts) => {
+                    cold_path();
+                    parts
+                        .iter()
+                        .for_each(|part| scan_declarations(c, &part.source, in_class, is_private))
+                }
                 _ => {}
             }
         }
         let (mut in_class, mut is_private) = (false, false);
         scan_declarations(self, &prop.source, &mut in_class, &mut is_private);
-        // `createUnionOrIntersectionProperty`: a property that several members of an intersection
-        // have is never a method.
-        let kinds = match prop.source {
-            PropSource::Intersected(..) => PropFlags::ACCESSOR,
-            _ => PropFlags::METHOD | PropFlags::ACCESSOR,
+        if !in_class {
+            return true;
+        }
+        cold_path();
+        if is_private || prop.flags.contains(PropFlags::ACCESSOR) {
+            return false;
+        }
+        !self.is_method_symbol(prop)
+    }
+
+    /// `prop.Flags&SymbolFlagsMethod != 0`
+    fn is_method_symbol(&mut self, prop: &Prop) -> bool {
+        if !prop.flags.contains(PropFlags::METHOD) {
+            return false;
+        }
+        let PropSource::Intersected(_, parts) = &prop.source else {
+            return true;
         };
-        !in_class || !is_private && !prop.flags.intersects(kinds)
+        // `createUnionOrIntersectionProperty`: instantiations of one member that have the same type
+        // count as that member. Any other property that several members of an intersection have is
+        // never a method.
+        parts.split_first().is_some_and(|(single, others)| {
+            others.iter().all(|other| {
+                other.source == single.source && self.compare_properties(single, other)
+            })
+        })
     }
 
     /// `getTypeWithThisArgument`: `ty` with `this_argument` substituted for `this` in its members.
@@ -2604,7 +2661,10 @@ impl<'p, 's> Checker<'p, 's> {
             }
             // A tuple has no slot for the argument. The recreated reference has no alias.
             TypeData::Tuple { .. } => self.without_alias_of_reference(ty),
-            _ if need_apparent_type => self.apparent_type(ty),
+            _ if need_apparent_type => {
+                cold_path();
+                self.apparent_type(ty)
+            }
             _ => ty,
         }
     }
@@ -2739,6 +2799,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// base constraint or `ty` itself. A tuple has no slot for it. No other apparent type gets a `this` argument.
     fn members_of_apparent_type(&mut self, ty: TypeId, apparent: TypeId) -> Option<Members<'p>> {
         if ty != apparent && self.is_tuple(apparent) {
+            cold_path();
             let is_passed = if self.is_deferred(ty) {
                 let constraint = self.base_constraint(ty);
                 self.is_tuple(constraint) || self.is_intersection(constraint)
@@ -2892,6 +2953,72 @@ impl<'p, 's> Checker<'p, 's> {
         false
     }
 
+    /// True if resolving the members of a reference to the class or interface `sym` can request members while it
+    /// instantiates the base types, as in `class L<T> extends B<T["a"]>`.
+    fn base_types_request_members(&mut self, sym: Sym) -> bool {
+        for &base in self.base_types(sym).iter() {
+            if self.requests_members_when_instantiated(base)
+                || matches!(*self.data(base), TypeData::Ref { target, .. } if target != sym
+                    && self.has_type_variables(base)
+                    && self.base_types_request_members(target))
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// True if `resolveObjectTypeMembers` of `ty`, a reference to `target`, reads members that aren't final or
+    /// reaches a limit while it resolves the base types. With `class X extends L<X>`, `L<X>` requests `X["a"]`,
+    /// which requests the members of `L<X>`. Otherwise "the members of a base type, instantiated" are "the members
+    /// of the instantiated base type".
+    fn is_requested_by_base_types(
+        &mut self,
+        ty: TypeId,
+        target: Sym,
+        mapper: MapperId,
+        this: TypeId,
+    ) -> bool {
+        if self.inheriting.iter().any(|it| it.key == ty) {
+            return true;
+        }
+        let before = (self.members_in_place_hits, self.instantiation_limit_hits);
+        self.inheriting.push(Inheriting {
+            key: ty,
+            resolving: ty,
+            set_in_the_meantime: None,
+        });
+        for &base in self.base_types(target).iter() {
+            let base = self.instantiate_with_new_mapper(base, mapper);
+            let base = self.type_with_this_argument(base, this);
+            let base = self.reduced_apparent_type_as_object(base);
+            self.members_with_this(base, this);
+        }
+        self.inheriting.pop();
+        before != (self.members_in_place_hits, self.instantiation_limit_hits)
+    }
+
+    /// True if `instantiateType` of `ty` does more than replace type parameters. The members of an object type are
+    /// instantiated when they're requested, its type arguments immediately.
+    fn requests_members_when_instantiated(&mut self, ty: TypeId) -> bool {
+        if !self.has_type_variables(ty) || self.types().deferred(ty).is_some() {
+            return false;
+        }
+        match self.data(ty) {
+            TypeData::TypeParam(..) | TypeData::ThisParam(_) => false,
+            &TypeData::Anon { mapper, .. } | &TypeData::Fns { mapper, .. } => {
+                (self.types().mapping(mapper).iter())
+                    .any(|&(_, argument)| self.requests_members_when_instantiated(argument))
+            }
+            TypeData::Ref { .. } | TypeData::Tuple { .. } => (self.type_arguments(ty).iter())
+                .any(|&argument| self.requests_members_when_instantiated(argument)),
+            TypeData::Union(types) | TypeData::Intersection(types) => {
+                (types.iter()).any(|&it| self.requests_members_when_instantiated(it))
+            }
+            _ => true,
+        }
+    }
+
     /// True if a mapped type whose members are being resolved is a base type of the class or interface `sym`, or of one
     /// of its base types. `resolveMappedTypeMembers` starts with no members in place.
     fn has_base_type_in_progress(&mut self, sym: Sym) -> bool {
@@ -2968,6 +3095,7 @@ impl<'p, 's> Checker<'p, 's> {
         let declaring = Declaring {
             symbol: sym,
             resolving,
+            stands_in: resolving.is_some_and(|ty| self.stands_in_for_base_type(ty)),
         };
         b.declaring = Some(declaring);
         let binding = self.binding_of_side(sym, false, binding);
@@ -3028,9 +3156,15 @@ impl<'p, 's> Checker<'p, 's> {
         let own = b.shape.props.len();
         let inherits = base_members == BaseMembers::Inherited
             && !(may_pass_by_lists_above && self.inherit_from_plain_classes(&mut b, sym));
-        self.inheriting.extend(in_place.zip(resolving));
+        if let (Some(key), Some(resolving)) = (in_place, resolving) {
+            self.inheriting.push(Inheriting {
+                key,
+                resolving,
+                set_in_the_meantime: None,
+            });
+        }
         for base in bases.iter().copied().filter(|_| inherits) {
-            let base = self.instantiate(base, under);
+            let base = self.instantiate_with_new_mapper(base, under);
             self.inherit(&mut b, base, this);
         }
         if in_place.is_some() {
@@ -3082,12 +3216,12 @@ impl<'p, 's> Checker<'p, 's> {
         props.extend(keyed.into_iter().map(|entry| entry.1));
     }
 
-    /// `Loc` of each declaration of the class or interface `sym`.
+    /// `Loc` of each declaration of the class or interface `sym`, including those of a namespace that's merged with it.
     fn ranges_of_declarations(&self, sym: Sym) -> Vec<(u32, u32)> {
         let mut ranges = Vec::new();
         for (file, decl) in self.files().decls_of(sym) {
             match (decl, self.files().loc_of_declaration(file, decl)) {
-                (Decl::Class(_) | Decl::Interface(_), Some(loc)) => ranges.push((loc.pos, loc.end)),
+                (_, Some(loc)) => ranges.push((loc.pos, loc.end)),
                 (Decl::Class(class), None) => ranges.push((
                     self.end_of_token_before(file, self.hir(file)[class].start),
                     self.end_of_class(file, class),
@@ -3120,7 +3254,11 @@ impl<'p, 's> Checker<'p, 's> {
                 let loc = self.hir(file)[member].loc;
                 (loc.pos, loc.end)
             }
-            _ => return false,
+            Some((file, decl)) => match self.files().loc_of_declaration(file, decl) {
+                Some(loc) => (loc.pos, loc.end),
+                None => return false,
+            },
+            None => return false,
         };
         ranges.iter().any(|&(from, to)| from <= start && end <= to)
     }
@@ -3394,6 +3532,7 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(known) = self.p.base_types.get_ref(&self.task, &sym) {
             return List::Permanent(known);
         }
+        cold_path();
         if !self.enter(Query::Bases(sym)) {
             return self.base_types_in_progress(sym);
         }
@@ -4326,6 +4465,11 @@ impl<'p, 's> Checker<'p, 's> {
                 ..
             } => {
                 let ty = self.type_of_symbol(module);
+                // The symbol that `cloneTypeAsModuleType` creates has the flags and the declarations of `module`.
+                if (self.files().flags(module)).intersects(SymFlags::CLASS | SymFlags::INTERFACE) {
+                    contained = [0..0, 0..0];
+                    ranges = self.ranges_of_declarations(module);
+                }
                 // `getSpreadType(ty, { default })` only if `isValidSpreadType(ty)`. It begins with
                 // `tryMergeUnionOfObjectTypeAndEmptyObject`.
                 let spreads = !is_default_only && (!with_default || self.is_valid_spread_type(ty));
@@ -4811,6 +4955,7 @@ impl<'p, 's> Checker<'p, 's> {
             let members = self.members(ty)?;
             return Some(self.structured(members));
         };
+        cold_path();
         // They're cached as the members of a separate object type, because the shape under the key
         // `ty` has the properties, which are far more numerous.
         if let Some(known) = self.p.intersection_objects.get(&self.task, &ty) {
@@ -4892,7 +5037,10 @@ impl<'p, 's> Checker<'p, 's> {
     #[inline]
     pub fn structured(&mut self, members: Members<'p>) -> Members<'p> {
         match members.shape().properties_of() {
-            Some(intersection) => self.structured_members(intersection).unwrap_or(members),
+            Some(intersection) => {
+                cold_path();
+                self.structured_members(intersection).unwrap_or(members)
+            }
             None => members,
         }
     }
@@ -5095,20 +5243,22 @@ impl<'p, 's> Checker<'p, 's> {
                 let optional =
                     (list.iter().filter(is_member)).all(|p| p.flags.contains(PropFlags::OPTIONAL));
                 prop.flags.set(PropFlags::OPTIONAL, optional);
-                // The type is the intersection of their types, and such a variable's type has no
-                // `undefined`.
-                let has_variable = !list.iter().all(|p| is_member(&p));
-                prop.flags
-                    .set(PropFlags::WITHOUT_OPTIONALITY, optional && has_variable);
                 prop.flags
                     .set(PropFlags::READONLY, every(PropFlags::READONLY));
                 prop.flags.set(PropFlags::METHOD, every(PropFlags::METHOD));
-                // Private if one is, else public if one is, else protected (`getDeclarationModifierFlagsFromSymbol`).
-                let private = list.iter().any(|p| p.flags.contains(PropFlags::PRIVATE));
-                prop.flags.set(PropFlags::PRIVATE, private);
+                // Public if one is, else protected if one is, else private (`getDeclarationModifierFlagsFromSymbol`).
+                // `isConflictingPrivateProperty`: one that's private in some constituent and declared in several
+                // places reduces the intersection to `never`, and `PRIVATE` says so.
+                let some = |flag: PropFlags| list.iter().any(|p| p.flags.contains(flag));
+                let is_private = some(PropFlags::PRIVATE)
+                    && (every(PropFlags::PRIVATE)
+                        || Self::prop_with_shared_value_declaration(list.iter()).is_none());
+                prop.flags.set(PropFlags::PRIVATE, is_private);
+                let hidden = PropFlags::PRIVATE | PropFlags::PROTECTED;
+                let is_hidden = list.iter().all(|p| p.flags.intersects(hidden));
                 prop.flags.set(
                     PropFlags::PROTECTED,
-                    !private && every(PropFlags::PROTECTED),
+                    !is_private && is_hidden && some(PropFlags::PROTECTED),
                 );
                 // An accessor only if all are, and all have the same combination of getter and
                 // setter.
@@ -5127,7 +5277,6 @@ impl<'p, 's> Checker<'p, 's> {
                 self.forget_separate_key(prop);
                 prop.source = PropSource::Intersected(whole, list.into());
                 prop.mapper = MapperId::IDENTITY;
-                self.set_modifiers_of_value_declaration(prop);
             }
         }
         b.shape
@@ -5214,6 +5363,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !self.is_numeric_name(prop.name) {
             return PropFlags::empty();
         }
+        cold_path();
         // A `nameType` is stored for a late-bound name (`lateBindMember`), and in an object literal
         // for any computed name (`checkObjectLiteral`).
         let is_explicit = match &prop.source {
@@ -5279,8 +5429,8 @@ impl<'p, 's> Checker<'p, 's> {
         flags.set(PropFlags::READONLY, readonly);
         if is_same_symbol {
             // A method stays a method, and an accessor stays an accessor.
-            flags |= prop.flags & (PropFlags::METHOD | PropFlags::ACCESSOR);
-            if self.is_function_symbol_property(prop) {
+            flags |= prop.flags & PropFlags::ACCESSOR;
+            if self.is_method_symbol(prop) || self.is_function_symbol_property(prop) {
                 flags |= PropFlags::METHOD;
             }
             let is_resolved_on_demand = matches!(
@@ -5827,7 +5977,9 @@ impl<'p, 's> Checker<'p, 's> {
         let at = self.span_of_untyped_property(file, declaration);
         // `DeclarationNameToString(GetNameOfDeclaration(declaration))`
         let name = match declaration {
-            UntypedProperty::Member(_) if at.1 != at.2 => Some(self.source_text(file, at.1, at.2)),
+            UntypedProperty::Member(_) if at.1 != at.2 => {
+                Some(super::spans::text_of_node_at(self.hir(file), at.1, at.2).into_owned())
+            }
             UntypedProperty::Member(_) => None,
             UntypedProperty::Assignment(e) => self.name_of_assignment_declaration(file, e),
         };
@@ -5990,10 +6142,7 @@ impl<'p, 's> Checker<'p, 's> {
                 assignment_declaration(declaration)
                     .is_none_or(|(of, e)| !matches!(self.hir(of)[e].kind, ExprKind::Call(_)))
             });
-            if !is_requested_by_check
-                && !self.is_emitting
-                && !self.is_reported_in_time_on_request(file)
-            {
+            if !is_requested_by_check && !self.is_reported_in_time_on_request(file) {
                 // A single checker would already have collected `file`'s diagnostics. Nothing is
                 // stored, so the task of a file that requests this in time evaluates it and
                 // reports.
@@ -6054,9 +6203,10 @@ impl<'p, 's> Checker<'p, 's> {
         if self.has_any_flag(ty) {
             return None;
         }
-        Some(match self.find_property(ty, ty, name, Access::Read)? {
-            (value, Found::ByIndex) => (self.optional_property(value), Found::ByIndex),
-            found => found,
+        let found = self.find_property(ty, ty, name, Access::Read)?;
+        Some(match found.how {
+            Found::ByIndex => (self.optional_property(found.ty), Found::ByIndex),
+            Found::Property => (found.ty, Found::Property),
         })
     }
 
@@ -7159,6 +7309,7 @@ impl<'p, 's> Checker<'p, 's> {
             _ => false,
         };
         if is_own_base_constraint || !may_have_constraint {
+            cold_path();
             let is_object_type = !may_have_constraint && super::relate::is_object_kind(data);
             let depth = self.constraint_stack.len();
             if is_object_type {
@@ -7175,7 +7326,10 @@ impl<'p, 's> Checker<'p, 's> {
             // `getResolvedBaseConstraint`: a `StructuredType` is a `ConstrainedType`, so the depth test applies to it,
             // and `resolvedBaseConstraint` caches `noConstraintType` or the type itself from the first visit on.
             let is_cut = depth >= 10
-                && (depth >= 50 || self.constraint_stack.contains(&self.recursion_identity(ty)));
+                && (depth >= 50 || {
+                    let identity = self.recursion_identity(ty);
+                    self.constraint_stack.contains(&identity)
+                });
             let (held_back, cuts) = (self.task.held_back(), self.constraint_cuts.get());
             let result = if is_cut {
                 self.cut_constraint_short();
@@ -7548,6 +7702,7 @@ impl<'p, 's> Checker<'p, 's> {
             | PropSource::ReverseMapped(..) => None,
             PropSource::Copy(_, of, true) => of.iter().find_map(Self::value_declaration),
             PropSource::Intersected(_, parts) => {
+                cold_path();
                 Self::value_declaration(Self::prop_with_shared_value_declaration(parts.iter())?)
             }
             source => Some(source),
@@ -7563,23 +7718,6 @@ impl<'p, 's> Checker<'p, 's> {
         let first = declared.next()?;
         let is_same = |other| Self::value_declaration(other) == Self::value_declaration(first);
         declared.all(is_same).then_some(first)
-    }
-
-    /// `getDeclarationModifierFlagsFromSymbol` and `isReadonlySymbol` for a property created by
-    /// `createUnionOrIntersectionProperty`. If it has a `ValueDeclaration`, that declaration's modifiers count, not the
-    /// constituents'. A mapped type's property has none.
-    pub(super) fn set_modifiers_of_value_declaration(&mut self, prop: &mut Prop<'s>) {
-        if Self::value_declaration(prop).is_none() {
-            return;
-        }
-        let modifiers = self.get_declaration_modifier_flags_from_symbol_ex(prop, false);
-        let is = |modifier| modifiers.contains(modifier);
-        prop.flags.set(PropFlags::PRIVATE, is(Flags::PRIVATE));
-        prop.flags.set(PropFlags::PROTECTED, is(Flags::PROTECTED));
-        // The modifier only counts on a `SymbolFlagsProperty`.
-        if is(Flags::READONLY) && !prop.flags.contains(PropFlags::ACCESSOR) {
-            prop.flags |= PropFlags::READONLY;
-        }
     }
 
     /// The source of a property of type `ty` that has the `Declarations` of the properties `of`,
@@ -7609,10 +7747,22 @@ impl<'p, 's> Checker<'p, 's> {
         fn add_declared<'s>(prop: &Prop, arena: &'s Arena, declared: &mut SmallVec<[Prop<'s>; 2]>) {
             match &prop.source {
                 PropSource::Type(_) => {}
-                PropSource::Copy(_, parts, _)
-                | PropSource::Intersected(_, parts)
-                | PropSource::ReverseMapped(_, parts) => {
+                PropSource::Copy(_, parts, _) | PropSource::ReverseMapped(_, parts) => {
                     (parts.iter()).for_each(|part| add_declared(part, arena, declared));
+                }
+                // `createUnionOrIntersectionProperty` adds each declaration once.
+                PropSource::Intersected(_, parts) => {
+                    let start = declared.len();
+                    (parts.iter()).for_each(|part| add_declared(part, arena, declared));
+                    let mut kept = start;
+                    for at in start..declared.len() {
+                        let is_repeated = |known: &Prop| known.source == declared[at].source;
+                        if !declared[start..kept].iter().any(is_repeated) {
+                            declared.swap(kept, at);
+                            kept += 1;
+                        }
+                    }
+                    declared.truncate(kept);
                 }
                 PropSource::Mapped(..) => {
                     let declaring = prop.declared_by_modifiers_property();
@@ -7660,6 +7810,7 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(known) = self.p.never_intersections.get(&self.task, &ty) {
             return known;
         }
+        cold_path();
         // `ObjectFlagsIsNeverIntersectionComputed` is set before the properties are examined, so a recursive query gets `false`.
         let in_progress = &self.never_in_progress;
         if let Some(at) = in_progress.iter().position(|&it| it == ty) {
@@ -7678,7 +7829,8 @@ impl<'p, 's> Checker<'p, 's> {
             SmallVec::<[TypeId; 4]>::new(),
             SmallVec::<[TypeId; 4]>::new(),
         );
-        if let TypeData::Intersection(members) = self.data(ty) {
+        let is_mapping_of_same_object_type = self.is_mapping_of_same_object_type(ty);
+        if !is_mapping_of_same_object_type && let TypeData::Intersection(members) = self.data(ty) {
             let mut has_union = false;
             for &member in members.iter() {
                 if self.is_instantiable(member) {
@@ -7686,15 +7838,14 @@ impl<'p, 's> Checker<'p, 's> {
                     has_union |= self.is_union(apparent);
                 }
             }
-            // A union's properties are created when they're listed, each with the types of the properties it combines,
-            // whether or not another member has the name. The members are listed in order, and each name is immediately
-            // looked up in all of them. So in `Partial<T> & T`, and in `{ a: 1 } & T & Partial<T>`, the mapped type has
-            // its (still empty) members in place while the constraint of `T` is listed.
+            // `somePropertyReducesToNever` lists the properties of every member, in order, before it looks up any name.
+            // A union's properties are created when they're listed, each with the types of the properties it combines.
+            // Then each name that several members have is looked up in all of them, in the order found.
             if has_union {
                 let apparent: SmallVec<[TypeId; 4]> =
                     members.iter().map(|&it| self.apparent_type(it)).collect();
-                let mut checked = crate::util::FxHashSet::<Atom>::default();
-                let mut has_resolved_the_others = false;
+                let mut lists: SmallVec<[Members<'p>; 4]> = SmallVec::new();
+                let mut is_listed_in_all = true;
                 for &current in &apparent {
                     let listed = match self.is_union(current) {
                         true => self.union_as_object(current),
@@ -7703,30 +7854,27 @@ impl<'p, 's> Checker<'p, 's> {
                     let Some(current_members) = self.members(listed) else {
                         continue;
                     };
-                    let props = &current_members.shape().props;
                     // FOR SPEED. Thousands of intersections have the same few unions among their constraints.
-                    let is_listed_in_all = apparent.iter().all(|&other| {
+                    is_listed_in_all &= apparent.iter().all(|&other| {
                         !self.is_union(other) || self.listed_in_unions.contains(&(listed, other))
                     });
                     listed_now.push(listed);
-                    if !has_resolved_the_others && !props.is_empty() {
-                        has_resolved_the_others = true;
-                        for &other in &apparent {
-                            if !self.is_union(other) {
-                                self.members(other);
-                            }
+                    lists.push(current_members);
+                }
+                if !is_listed_in_all {
+                    let mut found: Vec<Atom> = Vec::new();
+                    let mut seen = crate::util::FxHashSet::<Atom>::default();
+                    let mut shared = crate::util::FxHashSet::<Atom>::default();
+                    for prop in lists.iter().flat_map(|list| &list.shape().props) {
+                        match seen.insert(prop.name) {
+                            true => found.push(prop.name),
+                            false => _ = shared.insert(prop.name),
                         }
                     }
-                    if is_listed_in_all {
-                        continue;
-                    }
-                    for prop in props {
-                        if !checked.insert(prop.name) {
-                            continue;
-                        }
+                    for name in found.into_iter().filter(|name| shared.contains(name)) {
                         for &other in &apparent {
                             if self.is_union(other) {
-                                self.union_property(other, prop.name);
+                                self.union_property(other, name);
                             }
                         }
                     }
@@ -7735,7 +7883,8 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         // `isNeverReducedProperty`
-        let is_never = self.has_property_in_several_members(ty)
+        let is_never = !is_mapping_of_same_object_type
+            && self.has_property_in_several_members(ty)
             && match self.may_have_never_reduced_property(ty, false) {
                 NeverReduced::No => false,
                 NeverReduced::Yes => true,
@@ -7753,6 +7902,21 @@ impl<'p, 's> Checker<'p, 's> {
             }
             Err(_) => is_never,
         }
+    }
+
+    /// `isMappingOfSameObjectType` of the members of the intersection `ty`.
+    fn is_mapping_of_same_object_type(&mut self, ty: TypeId) -> bool {
+        let TypeData::Intersection(members) = self.data(ty) else {
+            return false;
+        };
+        let Some((&first, rest)) = members.split_first() else {
+            return false;
+        };
+        let Some(first) = self.mapped_modifiers_type(first) else {
+            return false;
+        };
+        self.is_object_type(first)
+            && (rest.iter()).all(|&member| self.mapped_modifiers_type(member) == Some(first))
     }
 
     /// `getReducedType(getApparentType(ty))` for an intersection `ty` whose properties
@@ -7882,10 +8046,14 @@ impl<'p, 's> Checker<'p, 's> {
         }
         match unions[..] {
             [] => false,
-            [union] => seen.iter().any(|members| {
-                let mut props = members.shape().props.iter();
-                props.any(|prop| self.union_property(union, prop.name).is_some())
-            }),
+            // `somePropertyReducesToNever` counts the names that the union lists. It looks up none of the others' in it.
+            [union] => {
+                let listed = self.union_as_object(union);
+                self.members(listed).is_some_and(|listed| {
+                    let mut seen = seen.iter();
+                    seen.any(|members| members.resolved.shares_a_name_with(listed.resolved))
+                })
+            }
             _ => true,
         }
     }
@@ -8130,6 +8298,7 @@ impl<'p, 's> Checker<'p, 's> {
             let instantiation =
                 self.instantiation_of_prop_with_facts(facts.as_mut(), nth, other, later.mapper);
             if single_instantiation.is_none() && member.mapper != MapperId::IDENTITY {
+                cold_path();
                 let mapper = member.mapper;
                 let it = self.instantiation_of_prop_with_facts(facts.as_mut(), 0, prop, mapper);
                 single_instantiation = Some(it);
@@ -8257,14 +8426,14 @@ impl<'p, 's> Checker<'p, 's> {
     /// The type of `ty.name`. `None` if there's no such property.
     pub fn type_of_property(&mut self, ty: TypeId, name: Atom) -> Option<TypeId> {
         self.property_type(ty, ty, name, Access::Read)
-            .map(|found| found.0)
+            .map(|found| found.ty)
     }
 
     /// The type of `ty.name` where it's only assigned: the target of `=`, of a destructuring
     /// assignment, of `for..of`.
     pub fn write_type_of_property(&mut self, ty: TypeId, name: Atom) -> Option<TypeId> {
         self.property_type(ty, ty, name, Access::Written)
-            .map(|found| found.0)
+            .map(|found| found.ty)
     }
 
     /// `prop` or `indexInfo` of `checkPropertyAccessExpressionOrQualifiedName`: the type, and which of the two it
@@ -8275,18 +8444,17 @@ impl<'p, 's> Checker<'p, 's> {
         apparent_type: TypeId,
         name: Atom,
         access: Access,
-    ) -> Option<(TypeId, Found)> {
-        let (found, how) = self.find_property(left_type, apparent_type, name, access)?;
+    ) -> Option<FoundProperty<'p>> {
+        let mut found = self.find_property(left_type, apparent_type, name, access)?;
         // `noUncheckedIndexedAccess`: a value read through an index signature may be missing.
-        let may_be_missing = how == Found::ByIndex
+        if found.how == Found::ByIndex
             && access == Access::Read
-            && self.p.files.options.no_unchecked_indexed_access;
-        let found = if may_be_missing {
-            self.with_missing(found)
-        } else {
-            found
-        };
-        Some((found, how))
+            && self.p.files.options.no_unchecked_indexed_access
+        {
+            cold_path();
+            found.ty = self.with_missing(found.ty);
+        }
+        Some(found)
     }
 
     /// `checkPropertyAccessExpressionOrQualifiedName`: the type of the property `name` of
@@ -8298,22 +8466,25 @@ impl<'p, 's> Checker<'p, 's> {
         apparent_type: TypeId,
         name: Atom,
         access: Access,
-    ) -> Option<(TypeId, Found)> {
+    ) -> Option<FoundProperty<'p>> {
+        let found =
+            |ty: TypeId, how: Found, prop: Option<&'p Prop<'p>>| FoundProperty { ty, how, prop };
         if self.is_any(apparent_type) {
-            return Some((apparent_type, Found::Property));
+            return Some(found(apparent_type, Found::Property, None));
         }
         let skips = self.is_const_enum_object(apparent_type);
         if let Some((prop, mapper)) = self.get_property_of_type_ex(apparent_type, name, skips) {
-            let found = if access == Access::Written {
+            let ty = if access == Access::Written {
+                cold_path();
                 self.write_type_of_prop(prop, mapper)
             } else {
                 self.type_of_prop(prop, mapper)
             };
-            return Some((found, Found::Property));
+            return Some(found(ty, Found::Property, Some(prop)));
         }
         let apparent = self.reduced_apparent_type(apparent_type);
         if self.is_any(apparent) {
-            return Some((apparent, Found::Property));
+            return Some(found(apparent, Found::Property, None));
         }
         // `!ast.IsPrivateIdentifier(right)`: no index signature substitutes for the `#x` of a class. And nothing is
         // written through an index signature of a type parameter's constraint.
@@ -8326,7 +8497,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let members = self.members_for_index_infos(apparent)?;
         let info = self.applicable_index_info_for_name(&members, name)?;
-        Some((info.value, Found::ByIndex))
+        Some(found(info.value, Found::ByIndex, None))
     }
 
     /// `getRestTypeOfTupleType` of the apparent type of `ty`, if that is a tuple: the type of its
@@ -8348,11 +8519,9 @@ impl<'p, 's> Checker<'p, 's> {
     /// `isConstEnumObjectType`
     #[inline(always)]
     pub(super) fn is_const_enum_object(&self, ty: TypeId) -> bool {
-        // This runs for every expression. Most have a type that isn't an object type, which can be read from a column.
-        if !self.types().is_plain_object(ty) {
-            return false;
-        }
-        self.is_const_enum_object_by_record(ty)
+        // This runs for every expression.
+        (self.types().object_flags(ty)).contains(ObjectFlags::IS_ENUM_OBJECT)
+            && self.is_const_enum_object_by_record(ty)
     }
 
     #[inline(never)]
@@ -8375,14 +8544,15 @@ impl<'p, 's> Checker<'p, 's> {
     /// type once more, which matters because the apparent type of a `T & {}` is `string`, not
     /// `String`. For a type variable's apparent type that changes nothing, but the apparent type
     /// doesn't tell what `this` is in a tuple type. `get_property_of_type_ex` gets that from the
-    /// variable, or from the intersection whose members have become one tuple type.
+    /// variable, or from the intersection whose members have become one tuple type. A reference
+    /// to a class or an interface has its `this` argument.
     #[inline(always)]
     pub(super) fn apparent_type_or_type_variable(
         &self,
         ty: TypeId,
         apparent_type: TypeId,
     ) -> TypeId {
-        if self.is_deferred(ty)
+        if self.is_deferred(ty) && !matches!(self.data(apparent_type), TypeData::Ref { .. })
             || ty != apparent_type && self.is_intersection(ty) && self.is_tuple(apparent_type)
         {
             ty
@@ -8411,6 +8581,7 @@ impl<'p, 's> Checker<'p, 's> {
                 holder
             && let Some(found) = self.property_of_only_tuple_constituent(ty, apparent, name)
         {
+            cold_path();
             return Some(found);
         }
         self.property_of_holder(holder, name, skip_object_function_property_augment)
@@ -8545,6 +8716,7 @@ impl<'p, 's> Checker<'p, 's> {
                     return None;
                 }
                 if skip_object_function_property_augment {
+                    cold_path();
                     return Some((members.resolved.prop(name)?, members.mapper));
                 }
                 self.property_in_type(apparent, &members, name)
@@ -8585,6 +8757,7 @@ impl<'p, 's> Checker<'p, 's> {
         if members.index_infos().is_empty() {
             return None;
         }
+        cold_path();
         let key_type = if self.atoms().is_symbol_name(name) {
             TypeId::SYMBOL
         } else {
@@ -8795,10 +8968,11 @@ impl<'p, 's> Checker<'p, 's> {
             } else {
                 self.signatures(part, construct).into_vec()
             };
-            if sigs.is_empty() {
-                return Vec::new();
-            }
             lists.push(sigs);
+        }
+        // `resolveUnionTypeMembers` asks every member for its signatures, which resolves its members.
+        if lists.iter().any(|sigs| sigs.is_empty()) {
+            return Vec::new();
         }
         let sigs = self.union_signatures(&lists);
         if sigs.is_empty() && !construct {

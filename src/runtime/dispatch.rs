@@ -1036,6 +1036,9 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
 
         // A child's stdin pipe is a `FileSink` too, whether or not the program looks at it.
         poll_tag::FILE_SINK => feature_poll_arm!([FileSink, Spawn, Shell], FileSinkPoll),
+        poll_tag::CONTENT_MAPPER_WRITER => {
+            feature_poll_arm!([Check], crate::cli::content_mapper_process::Poll)
+        }
         poll_tag::STATIC_PIPE_WRITER => {
             feature_poll_arm!([Spawn], StaticPipeWriterPoll<Subprocess<'_>>)
         }

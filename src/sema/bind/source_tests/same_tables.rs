@@ -131,14 +131,12 @@ fn describe_fn(info: &FnInfo, bound: &Bound<'_>, numbering: &Numbering) -> Strin
         scope,
         enclosing,
         returns,
-        yields,
         end,
-        exit,
         contains_this,
+        is_context_sensitive,
     } = *info;
     let scope = numbering.scope(scope);
     let returns: Vec<StmtId> = bound.ids(returns).collect();
-    let yields: Vec<ExprId> = bound.ids(yields).collect();
     format!(
         "{:?}",
         (
@@ -146,10 +144,9 @@ fn describe_fn(info: &FnInfo, bound: &Bound<'_>, numbering: &Numbering) -> Strin
             scope,
             enclosing,
             returns,
-            yields,
             end,
-            exit,
-            contains_this
+            contains_this,
+            is_context_sensitive
         )
     )
 }
@@ -173,12 +170,12 @@ fn describe_tables(bound: &Bound<'_>, numbering: &Numbering) -> String {
 }
 
 fn describe_large_tables(bound: &Bound<'_>, numbering: &Numbering) -> String {
-    sorted_text(
-        bound
-            .large_tables
-            .iter()
-            .map(|(&(table, name), &entry_index)| ((numbering.table(table), name), entry_index)),
-    )
+    let tables = (0..bound.tables.len() as u32).map(TableId);
+    let large_tables = tables.filter(|&table| bound.table(table).len() > Bound::SCANNED);
+    sorted_text(large_tables.flat_map(|table| {
+        let names = bound.table(table).iter().map(|entry| entry.0);
+        names.map(move |name| ((numbering.table(table), name), bound.lookup(table, name)))
+    }))
 }
 
 fn describe_expr_scope(bound: &Bound<'_>, numbering: &Numbering) -> String {
@@ -204,24 +201,25 @@ fn describe(
 ) -> Vec<(&'static str, String)> {
     #[rustfmt::skip]
     let BoundIn {
-        block: _, ran_out_of_stack, is_unbound, is_bound_in_part, symbols, scopes, tables: _, entries, large_tables: _,
+        block: _, ran_out_of_stack, is_unbound, is_bound_in_part, symbols, scopes, tables: _, entries, name_slots: _,
         nested_names, ids,
         file_symbol, export_stars, ambient_modules, pattern_ambient_modules, global_augmentations,
         redeclarations, umd_globals, specifiers, module_augmentations, ambient_specifiers,
         commonjs_indicator, module_exports_property, expr_symbol, expr_parent, expr_flow,
         stmt_parent, stmt_scope, type_scope, type_by_alias, this_in_type_literal, pat_parent,
         pat_symbol, prop_owner, member_symbol, property_symbol, member_owner, member_scope,
-        param_fn, type_param_symbol, type_param_scope, fns, requires_scope_change, fn_symbol,
+        param_fn, type_param_symbol, type_param_scope, fns, yields, exits, requires_scope_change, fn_symbol,
         class_symbol, class_owner, class_scope, interface_symbol, interface_scope,
         interface_contains_this, enum_scope, module_scope, alias_symbol, alias_scope, enum_symbol,
         enum_member_symbol, enum_member_owner, module_symbol, module_instance_state, var_stmt,
         assignments, type_query_operands, unchecked_exprs,
-        unchecked_types, infer_positions, expando_declarations, computed_symbols, case_stmt,
+        unchecked_types, resolved_on_demand, infer_positions, expando_declarations, computed_symbols,
+        source_phase_targets, case_stmt,
         stmt_flow, case_fallthrough, hoisted_vars, rejected_decorators, unused_labels, import_scope,
         import_equals_scope, export_scope, expr_scope: _, private_class,
         private_names_outside_class_bodies, classes_of_private_names, free_idents, alias_idents,
-        arguments_objects, identifiers_in_parameters, jsdoc_param_errors,
-        names_resolved_for_arguments, flow, flow_edges, flow_shared, flow_depth,
+        idents_out_of_namespaces, arguments_objects, identifiers_in_parameters, jsdoc_param_errors,
+        names_resolved_for_arguments, flow, flow_edges, flow_shared, context_sensitive, flow_depth,
         has_loop_types_that_depend_on_order, expr_kinds, expr_kind_counts, kind_counts,
         runtime: _,
     } = bound;
@@ -246,6 +244,12 @@ fn describe(
         (
             "fns",
             mapped_text(fns, |info| describe_fn(info, bound, numbering)),
+        ),
+        (
+            "yields",
+            mapped_text(yields, |&(function, yields)| {
+                (function, bound.ids(yields).collect::<Vec<ExprId>>())
+            }),
         ),
         ("expr_scope", describe_expr_scope(bound, numbering)),
         (
@@ -275,7 +279,7 @@ fn describe(
     let expr_scope_list = |list: &[(ExprId, ScopeId)]| {
         mapped_text(list, |&(expr, scope)| (expr, numbering.scope(scope)))
     };
-    push_fields!(described, expr_scope_list: free_idents, alias_idents);
+    push_fields!(described, expr_scope_list: free_idents, alias_idents, idents_out_of_namespaces);
     described.push((
         "names_resolved_for_arguments",
         mapped_text(names_resolved_for_arguments, |&(node, scope, symbol)| {
@@ -289,14 +293,15 @@ fn describe(
         pattern_ambient_modules, global_augmentations, redeclarations, umd_globals, specifiers,
         module_augmentations, ambient_specifiers, expr_parent, stmt_parent,
         type_by_alias, pat_parent, pat_symbol, prop_owner, member_symbol, member_owner, param_fn,
-        type_param_symbol, requires_scope_change, fn_symbol, class_symbol, class_owner,
+        type_param_symbol, exits, requires_scope_change, fn_symbol, class_symbol, class_owner,
         interface_symbol, interface_contains_this, alias_symbol, enum_symbol, enum_member_symbol,
         enum_member_owner, module_symbol, module_instance_state, var_stmt, assignments,
-        type_query_operands, unchecked_exprs, unchecked_types,
-        infer_positions, expando_declarations, case_stmt, case_fallthrough,
+        type_query_operands, unchecked_exprs, unchecked_types, resolved_on_demand,
+        infer_positions, expando_declarations, source_phase_targets, case_stmt, case_fallthrough,
         rejected_decorators, unused_labels, private_names_outside_class_bodies,
         classes_of_private_names, arguments_objects, identifiers_in_parameters,
-        jsdoc_param_errors, flow, flow_edges, flow_shared, expr_kinds, expr_kind_counts,
+        jsdoc_param_errors, flow, flow_edges, flow_shared, context_sensitive, expr_kinds,
+        expr_kind_counts,
         kind_counts);
     described
 }

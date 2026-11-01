@@ -3,7 +3,7 @@
 //!
 //! The order of the checks, the messages and their positions mirror `resolveCallExpression`, `resolveNewExpression`,
 //! `resolveTaggedTemplateExpression`, `resolveCall`, `chooseOverload`, `isSignatureApplicable`,
-//! `reportCallResolutionErrors` and `getArgumentArityError` in TypeScript 7.0.2's checker.go. One difference: an
+//! `reportCallResolutionErrors` and `getArgumentArityError` in TypeScript 7.1's checker.go. One difference: an
 //! argument that isn't a literal has a single type here, the one computed when the call was resolved, whereas tsgo
 //! rechecks it for each candidate (`check_argument`). Whenever that leaves a candidate's applicability undecided,
 //! nothing is reported.
@@ -135,7 +135,7 @@ impl Checker<'_, '_> {
         };
         let called = self.check_non_null_callee(file, data.callee, called, is_new);
         // `silentNeverSignature`
-        if called == TypeId::SILENT_NEVER {
+        if resolved.sig.is_none() && resolved.ret == TypeId::SILENT_NEVER {
             return;
         }
         let apparent = self.apparent_type(called);
@@ -230,9 +230,12 @@ impl Checker<'_, '_> {
             return;
         }
         if !construct_sigs.is_empty() {
-            if let Some((modifiers, class)) =
-                self.inaccessible_constructor(file, e, construct_sigs[0])
-            {
+            if let Some((modifiers, class)) = self.constructor_accessibility_error(
+                file,
+                e,
+                &construct_sigs,
+                Flags::PRIVATE | Flags::PROTECTED,
+            ) {
                 let node_start = self.start_inside_parentheses(file, e);
                 let end = self.end_inside_parentheses(file, e);
                 let declaring = self.declared_type(class);
@@ -633,53 +636,58 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `isConstructorAccessible`. Returns `None` if it is, otherwise the constructor's accessibility modifiers, each of
-    /// which is an error, and the class that declares it.
-    pub(super) fn inaccessible_constructor(
+    /// `getConstructorAccessibilityError`. Returns the accessibility modifiers in `mask`, each of which is an error, of
+    /// the first of `sigs` whose constructor isn't accessible at `e`, and the class that declares it.
+    pub(super) fn constructor_accessibility_error(
         &mut self,
         file: FileId,
         e: ExprId,
-        sig: SigId,
+        sigs: &[SigId],
+        mask: Flags,
     ) -> Option<(Flags, Sym)> {
+        let mut enclosing: Option<Vec<Sym>> = None;
+        for &sig in sigs {
+            let Some((declaring, of, func)) = self.constructor_declaration(sig) else {
+                continue;
+            };
+            let modifiers = self.hir(of)[func].flags & mask;
+            if modifiers.is_empty() {
+                continue;
+            }
+            let enclosing = enclosing.get_or_insert_with(|| {
+                (self.enclosing_classes(file, e))
+                    .map(|c| self.class_sym(file, c))
+                    .collect()
+            });
+            if enclosing.contains(&declaring) {
+                continue;
+            }
+            if modifiers.contains(Flags::PROTECTED)
+                && let Some(&containing) = enclosing.first()
+                && self.has_protected_accessible_base(declaring, containing, 0)
+            {
+                continue;
+            }
+            return Some((modifiers, declaring));
+        }
+        None
+    }
+
+    /// Returns the class, the file and the constructor that `sig` is declared by, if it's declared by a constructor.
+    fn constructor_declaration(&self, mut sig: SigId) -> Option<(Sym, FileId, FnId)> {
         // A cloned signature has its original's declaration.
-        let mut sig = sig;
-        let mut steps = 0;
-        let (declaring, of, func) = loop {
+        for _ in 0..64 {
             match *self.types().sig(self.types().sig_origin(sig)) {
                 SigData::Construct {
                     class, file, func, ..
-                } => break (class, file, func),
+                } => return Some((class, file, func)),
                 // `getDefaultConstructSignatures` clones the signatures of the base constructor type. The base types
                 // aren't requested, so that `new a()` in the base expression of `a` doesn't get 2310.
-                SigData::DefaultConstruct { base, .. } => {
-                    steps += 1;
-                    if steps > 64 {
-                        return None;
-                    }
-                    sig = base?;
-                }
+                SigData::DefaultConstruct { base, .. } => sig = base?,
                 _ => return None,
             }
-        };
-        let modifiers = self.hir(of)[func].flags & (Flags::PRIVATE | Flags::PROTECTED);
-        if modifiers.is_empty() {
-            return None;
         }
-        let enclosing: Vec<Sym> = self
-            .enclosing_classes(file, e)
-            .into_iter()
-            .map(|c| self.class_sym(file, c))
-            .collect();
-        if enclosing.contains(&declaring) {
-            return None;
-        }
-        if modifiers.contains(Flags::PROTECTED)
-            && let Some(&containing) = enclosing.first()
-            && self.has_protected_accessible_base(declaring, containing, 0)
-        {
-            return None;
-        }
-        Some((modifiers, declaring))
+        None
     }
 
     /// `typeHasProtectedAccessibleBase`: true if `class` derives from `target` through first base types. (Members that
@@ -795,9 +803,8 @@ impl Checker<'_, '_> {
             _ => None,
         };
         if let Some(&last) = s.candidates_for_argument_error.last() {
-            let from = self.reported.len();
-            self.is_signature_applicable(s, last, Relation::Assignable, CheckMode::empty(), true);
-            let reported = self.take_reported_from(from);
+            let (mode, mut reported) = (CheckMode::empty(), Vec::new());
+            self.is_signature_applicable(s, last, Relation::Assignable, mode, Some(&mut reported));
             let is_overloaded = s.candidates_for_argument_error.len() > 1;
             let related = if reported.is_empty() {
                 Vec::new()
@@ -924,31 +931,38 @@ impl Checker<'_, '_> {
     }
 
     /// `isSignatureApplicable`. If something couldn't be determined the result is true, except in the subtype pass.
+    /// `report` is `errorOutputContainer`: it gets the errors of the comparison that fails. What the check of an argument
+    /// reports on the way isn't among them. An argument is checked again here while a loop is analyzed.
     pub(super) fn is_signature_applicable(
         &mut self,
         s: &CallState<'_>,
         sig: SigId,
         relation: Relation,
         check_mode: CheckMode,
-        report: bool,
+        mut report: Option<&mut Vec<Reported>>,
     ) -> bool {
         if let CallLike::Jsx(_) = s.node {
-            return self.check_applicable_signature_for_jsx_call_like_element(
+            let from = self.reported.len();
+            let is_applicable = self.check_applicable_signature_for_jsx_call_like_element(
                 s.file,
                 s.call,
                 sig,
                 relation,
                 check_mode,
-                s.checks_arguments_once,
-                report,
+                s.checks_arguments_once && s.is_single_non_generic_candidate,
+                report.is_some(),
             );
+            if let Some(errors) = report {
+                errors.extend(self.take_reported_from(from));
+            }
+            return is_applicable;
         }
         let (file, e, node, args, this_arg) = (s.file, s.call, s.node, s.args, s.this_arg);
         let hir = self.hir(file);
         // A decorator's arguments are synthetic (`createSyntheticExpression`), so an error about one is reported at the
         // decorator expression.
         let decorator = match node {
-            CallLike::Decorator(_) if report => Some(self.decorator_position(file, e)),
+            CallLike::Decorator(_) if report.is_some() => Some(self.decorator_position(file, e)),
             _ => None,
         };
         if let Some(expected) = self.sig_this_type(sig)
@@ -957,17 +971,22 @@ impl Checker<'_, '_> {
         {
             let actual = self.this_argument_type(file, this_arg);
             if !self.related(actual, expected, relation) {
-                if report {
-                    let at = match (this_arg, decorator) {
-                        (None, Some(decorator_span)) => {
-                            (file, decorator_span.at_sign, decorator_span.end)
-                        }
-                        _ => self.span_of_parenthesized_expr(file, this_arg.unwrap_or(e)),
-                    };
-                    // 2684, or a more specific error.
-                    self.report_this_not_assignable(actual, expected, at);
+                let Some(errors) = report.as_deref_mut() else {
+                    return false;
+                };
+                let at = match (this_arg, decorator) {
+                    (None, Some(decorator_span)) => {
+                        (file, decorator_span.at_sign, decorator_span.end)
+                    }
+                    _ => self.span_of_parenthesized_expr(file, this_arg.unwrap_or(e)),
+                };
+                let from = self.reported.len();
+                // 2684, or a more specific error. As below, this comparison can succeed.
+                let is_assignable = self.check_this_assignable(actual, expected, at);
+                errors.extend(self.take_reported_from(from));
+                if !is_assignable {
+                    return false;
                 }
-                return false;
             }
         }
         let mut params = self.sig_params_with_first(sig, args.len().min(1));
@@ -986,13 +1005,14 @@ impl Checker<'_, '_> {
             // `getTypeAtPosition(signature, i)`: a cycle through a parameter's type is found here, but not for a
             // parameter after the first argument that fails.
             if is_open {
+                cold_path();
                 params = self.sig_params_up_to(sig, i + 1);
             }
             let Some(expected) = self.param_type_asked_at(sig, &params, i) else {
                 continue;
             };
             let actual = match arg {
-                Arg::Expr(x) if s.checks_arguments_once => {
+                Arg::Expr(x) if s.checks_arguments_once && check_mode.is_empty() => {
                     self.cached_arg_type_for_param(file, x, expected)
                 }
                 _ => self.check_argument(file, arg, expected, None, check_mode),
@@ -1007,7 +1027,7 @@ impl Checker<'_, '_> {
                 continue;
             }
             self.note_parameter_types_resolved(sig, &params, i + 1);
-            if report {
+            if let Some(errors) = report.as_deref_mut() {
                 let check_node = self.effective_check_node(file, node);
                 let error_node = match decorator {
                     Some(decorator_span) => (file, decorator_span.start, decorator_span.end),
@@ -1017,7 +1037,6 @@ impl Checker<'_, '_> {
                     Arg::Expr(_) => Some((file, check_node)),
                     _ => None,
                 };
-                let reported = self.reported.len();
                 let mut diagnostics = Vec::new();
                 // `elaborateError` has no case for a `SyntheticExpression` or a `SpreadElement`.
                 let is_elaborated = expr.is_none()
@@ -1029,8 +1048,9 @@ impl Checker<'_, '_> {
                         Some(2345),
                         Some(&mut diagnostics),
                     );
-                if !is_elaborated {
-                    self.check_type_assignable_to_and_optionally_elaborate(
+                // The comparison that reports errors can succeed where the one above failed. See `relate_variances`.
+                if !is_elaborated
+                    && self.check_type_assignable_to_and_optionally_elaborate(
                         actual,
                         expected,
                         Some(error_node),
@@ -1038,11 +1058,14 @@ impl Checker<'_, '_> {
                         true,
                         Some(2345),
                         Some(&mut diagnostics),
-                    );
+                    )
+                {
+                    continue;
                 }
-                self.reported.extend(diagnostics);
                 let error_span = self.span_of_parenthesized_expr(file, node);
-                self.maybe_add_missing_await_info(error_span, actual, expected, reported);
+                let first = diagnostics.first_mut();
+                self.maybe_add_missing_await_info(error_span, actual, expected, first);
+                errors.extend(diagnostics);
             }
             return false;
         }
@@ -1050,7 +1073,7 @@ impl Checker<'_, '_> {
         if let Some(rest) = rest {
             let actual = self.spread_argument_type(file, args, count, rest, None, check_mode);
             if !self.related(actual, rest, relation) {
-                if report {
+                if let Some(errors) = report {
                     let (at, end) = match decorator {
                         Some(decorator_span) if count == args.len() => {
                             (decorator_span.at_sign, decorator_span.end)
@@ -1073,9 +1096,12 @@ impl Checker<'_, '_> {
                             ),
                         },
                     };
-                    let reported = self.reported.len();
+                    let from = self.reported.len();
                     self.check_assignable_with_end(file, actual, rest, at, end, ExprId::NONE, 2345);
-                    self.maybe_add_missing_await_info((file, at, end), actual, rest, reported);
+                    let mut diagnostics = self.take_reported_from(from);
+                    let first = diagnostics.first_mut();
+                    self.maybe_add_missing_await_info((file, at, end), actual, rest, first);
+                    errors.extend(diagnostics);
                 }
                 return false;
             }
@@ -1083,18 +1109,17 @@ impl Checker<'_, '_> {
         true
     }
 
-    /// `maybeAddMissingAwaitInfo`. `argument_span` is the argument's span. `reported` is the index in `self.reported`
-    /// of the first diagnostic for it.
+    /// `maybeAddMissingAwaitInfo`. `argument_span` is the argument's span. `first` is the first diagnostic for it.
     fn maybe_add_missing_await_info(
         &mut self,
         argument_span: (FileId, u32, u32),
         source: TypeId,
         target: TypeId,
-        reported: usize,
+        first: Option<&mut Reported>,
     ) {
-        if reported == self.reported.len() {
+        let Some(first) = first else {
             return;
-        }
+        };
         // `getAwaitedTypeOfPromise`
         let awaited_of_promise = |c: &mut Self, ty: TypeId| {
             let promised = c.thenable_value(ty)?;
@@ -1107,7 +1132,7 @@ impl Checker<'_, '_> {
             return;
         };
         if self.is_assignable(awaited, target) {
-            self.reported[reported].add_related_info(Reported::bare(argument_span, 2773));
+            first.add_related_info(Reported::bare(argument_span, 2773));
         }
     }
 

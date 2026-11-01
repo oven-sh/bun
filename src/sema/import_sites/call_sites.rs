@@ -99,7 +99,7 @@ pub(super) enum CallForm {
 
 pub(super) fn find_call_form(hir: &File<'_>, e: ExprId) -> Option<CallForm> {
     match expr_kind(hir, e)? {
-        ExprKind::ImportCall { args } => Some(CallForm::ImportCall { args }),
+        ExprKind::ImportCall { args, .. } => Some(CallForm::ImportCall { args }),
         ExprKind::Call(call) => Some(CallForm::Call {
             callee: hir[call].callee,
             args: hir[call].args,

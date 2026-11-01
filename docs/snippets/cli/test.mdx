@@ -10,6 +10,11 @@ bun test <patterns>
   Type check the test files and everything they import. No test runs if there are type errors
 </ParamField>
 
+<ParamField path="--runExternalCode" type="boolean">
+  With <code>--check</code>: run the programs from <code>node_modules</code> that <code>contentMappers</code> in
+  tsconfig.json lists. See <a href="/runtime/check#vue-svelte-astro-and-other-file-types">content mappers</a>
+</ParamField>
+
 <ParamField path="--timeout" type="number" default="5000">
   Set the per-test timeout in milliseconds (default 5000)
 </ParamField>

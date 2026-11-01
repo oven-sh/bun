@@ -314,7 +314,6 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn members_for_a_name(&mut self, ty: TypeId) -> Option<Members<'p>> {
         let recent = self.recent_members[ty.0 as usize % RECENT_MEMBERS];
         if recent.ty == ty
-            && self.unresolved_members.is_empty()
             && let Some(resolved) = recent.resolved
         {
             return Some(Members {

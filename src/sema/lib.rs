@@ -14,6 +14,7 @@ pub mod check;
 pub mod components;
 pub mod config;
 pub mod config_options;
+pub mod content_mapper;
 pub mod ecmascript;
 pub mod erasure;
 pub mod file_analysis;

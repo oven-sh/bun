@@ -46,7 +46,7 @@ impl<'s> Folder<'_, 's> {
             ExprKind::ImportMeta => self.fold_import_meta(e),
             ExprKind::This => self.fold_this(e),
             ExprKind::Call(call) => self.fold_call(e, hir[call]),
-            ExprKind::ImportCall { args } => self.fold_import_call(args),
+            ExprKind::ImportCall { args, .. } => self.fold_import_call(args),
             ExprKind::Array(items) => {
                 self.note_array_literal(e, items);
                 self.conditions.insert(e, true);

@@ -4622,6 +4622,43 @@ describe("bundler", () => {
     target: "bun",
     run: { file: "/check.js", stdout: `pkx\nobject\n{"default":{"b":2}}` },
   });
+  // The same file behind `require()`, not an entry point: there the statement
+  // runs in the wrapper, as it always did, and copies the names of the module
+  // onto `exports`.
+  itBundled("edgecase/ExternalExportStarInCommonJSWrapperOfNonEntryFile", {
+    files: {
+      "/entry.js": `const lib = require("./lib.js"); console.log(lib.a, Object.keys(lib).sort().join());`,
+      "/lib.js": `exports.b = 2; export * from "pkx";`,
+    },
+    runtimeFiles: {
+      "/node_modules/pkx/index.js": `export const a = 1;`,
+    },
+    outdir: "/out",
+    external: ["pkx"],
+    onAfterBundle(api) {
+      const code = api.readFile("/out/entry.js");
+      expect(code.match(/^import.*"pkx";$/gm)).toEqual([`import * as pkx from "pkx";`]);
+      expect(code).toContain("__reExport(exports, pkx);");
+    },
+    run: { file: "/out/entry.js", stdout: "1 a,b" },
+  });
+  // A read of `lib.b` throws there: the statement keeps a getter for the lifted
+  // `exports.b` in the wrapper, and the wrapped file does not declare its
+  // binding. The same holds for `export *` of a CommonJS file, with no
+  // external module.
+  itBundled("edgecase/ExternalExportStarInCommonJSWrapperOfNonEntryFileOwnName", {
+    todo: true,
+    files: {
+      "/entry.js": `const lib = require("./lib.js"); console.log(lib.a, lib.b);`,
+      "/lib.js": `exports.b = 2; export * from "pkx";`,
+    },
+    runtimeFiles: {
+      "/node_modules/pkx/index.js": `export const a = 1;`,
+    },
+    outdir: "/out",
+    external: ["pkx"],
+    run: { file: "/out/entry.js", stdout: "1 2" },
+  });
   // top.js reaches "pkx" through its own statement and through mid.js. Its
   // output re-exports each module once, in the order of the statements.
   for (const [name, options, other] of [

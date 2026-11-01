@@ -948,9 +948,11 @@ export * from "./external-module";
 
 // Output (CommonJS and IIFE output):
 __reExport(exports, require("./external-module"), module.exports); // ← inside_wrapper_prefix (runtime call)
-```
 
-In ES module output the statement does not run (Pattern 5).
+// Output (ES module output, only in a CommonJS wrapper of a file that is not an entry point; Pattern 5 has the rest):
+import * as ns from "./external-module"; // ← outside_wrapper_prefix
+__reExport(exports, ns); // ← inside_wrapper_prefix (runtime call)
+```
 
 **Pattern 4: CommonJS Entry Point Dual Exports**
 For CommonJS entry points, the function creates dual export objects:
@@ -964,7 +966,7 @@ __reExport(exports, targetModule, module.exports); // module.exports gets __esMo
 ```
 
 **Pattern 5: External `export *` in ES Module Output**
-In ES module output, the `export * from` of an external module does not copy names when it runs, whether or not its file is an entry point. Only that module knows its names, so the linker has no export for them. Step 3 lists, for each file, the external `export *` statements that its `export *` chain reaches (`LinkerContext::external_export_stars`). A statement of a module that the target disables is not in the list: such a module has no names. Each listed statement has a namespace symbol of its own. A name that no export of the file matches binds in step 4 (`external_export_star_name`):
+In ES module output, the `export * from` of an external module does not copy names when it runs, whether or not its file is an entry point. The one file that still runs it is a file in a CommonJS wrapper that is not an entry point (Pattern 3): its `exports` is an object of the wrapper. Only the external module knows its names, so the linker has no export for them. Step 3 lists, for each file, the external `export *` statements that its `export *` chain reaches (`LinkerContext::external_export_stars`). A statement of a module that the target disables is not in the list: such a module has no names. Each listed statement has a namespace symbol of its own. A name that no export of the file matches binds in step 4 (`external_export_star_name`):
 
 ```javascript
 // lib.js (an entry point or not):

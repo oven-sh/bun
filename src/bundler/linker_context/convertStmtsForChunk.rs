@@ -194,33 +194,99 @@ pub(crate) fn convert_stmts_for_chunk(
                             break 'process_stmt;
                         }
 
-                        // The statement copies no names here: a read binds to a member of its namespace (README: Pattern 5).
-                        debug_assert!(
-                            !record
-                                .flags
-                                .contains(ImportRecordFlags::CALLS_RUNTIME_RE_EXPORT_FN)
-                        );
-                        let imports_namespace =
-                            c.imports_external_star_namespace(source_index, s.import_record_index);
-                        let import = Stmt::alloc(
-                            S::Import {
-                                namespace_ref: s.namespace_ref,
-                                import_record_index: s.import_record_index,
-                                star_name_loc: if imports_namespace {
-                                    stmt.loc
-                                } else {
-                                    Loc::EMPTY
+                        if record
+                            .flags
+                            .contains(ImportRecordFlags::CALLS_RUNTIME_RE_EXPORT_FN)
+                        {
+                            // Turn this statement into "import * as ns from 'path'"
+                            stmt = Stmt::alloc(
+                                S::Import {
+                                    namespace_ref: s.namespace_ref,
+                                    import_record_index: s.import_record_index,
+                                    star_name_loc: stmt.loc,
+                                    ..Default::default()
                                 },
-                                ..Default::default()
-                            },
-                            stmt.loc,
-                        );
-                        if !chunk.prints_entry_point_file_in_place(source_index, wrap) {
-                            // Turn this statement into "import 'path'": the entry point tail has the export
-                            stmt = import;
-                        } else if imports_namespace {
-                            // The statement stays an export of the chunk, beside the import of its namespace.
-                            stmts.append(StmtListWhich::InsideWrapperSuffix, import);
+                                stmt.loc,
+                            );
+
+                            // Prefix this module with "__reExport(exports, ns, module.exports)"
+                            let export_star_ref = c.runtime_function(b"__reExport");
+                            let args_len = 2 + usize::from(module_exports_for_export.is_some());
+                            let mut args: Vec<Expr> = Vec::with_capacity(args_len);
+                            args.push(Expr::init(
+                                E::Identifier {
+                                    ref_: ast.exports_ref,
+                                    ..Default::default()
+                                },
+                                stmt.loc,
+                            ));
+                            args.push(Expr::init(
+                                E::Identifier {
+                                    ref_: s.namespace_ref,
+                                    ..Default::default()
+                                },
+                                stmt.loc,
+                            ));
+
+                            if let Some(mod_) = module_exports_for_export {
+                                // Per the "__reExport(exports, ns, module.exports)"
+                                // call shape above, this is the third argument,
+                                // so append at index 2.
+                                args.push(mod_);
+                            }
+
+                            stmts
+                                .inside_wrapper_prefix
+                                .append_non_dependency(Stmt::alloc(
+                                    S::SExpr {
+                                        value: Expr::allocate(
+                                            bump,
+                                            E::Call {
+                                                target: Expr::allocate(
+                                                    bump,
+                                                    E::Identifier {
+                                                        ref_: export_star_ref,
+                                                        ..Default::default()
+                                                    },
+                                                    stmt.loc,
+                                                ),
+                                                args: bun_ast::ExprNodeList::from_owned_slice(
+                                                    args.into_boxed_slice(),
+                                                ),
+                                                ..Default::default()
+                                            },
+                                            stmt.loc,
+                                        ),
+                                        ..Default::default()
+                                    },
+                                    stmt.loc,
+                                ))?;
+                        } else {
+                            // The statement copies no names here: a read binds to a member of its namespace (README: Pattern 5).
+                            let imports_namespace = c.imports_external_star_namespace(
+                                source_index,
+                                s.import_record_index,
+                            );
+                            let import = Stmt::alloc(
+                                S::Import {
+                                    namespace_ref: s.namespace_ref,
+                                    import_record_index: s.import_record_index,
+                                    star_name_loc: if imports_namespace {
+                                        stmt.loc
+                                    } else {
+                                        Loc::EMPTY
+                                    },
+                                    ..Default::default()
+                                },
+                                stmt.loc,
+                            );
+                            if !chunk.prints_entry_point_file_in_place(source_index, wrap) {
+                                // Turn this statement into "import 'path'": the entry point tail has the export
+                                stmt = import;
+                            } else if imports_namespace {
+                                // The statement stays an export of the chunk, beside the import of its namespace.
+                                stmts.append(StmtListWhich::InsideWrapperSuffix, import);
+                            }
                         }
 
                         // Make sure these don't end up in the wrapper closure

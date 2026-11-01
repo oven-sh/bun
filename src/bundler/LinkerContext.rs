@@ -321,13 +321,15 @@ impl<'a> LinkerContext<'a> {
         let member =
             self.graph
                 .generate_new_symbol(owner, bun_ast::symbol::Kind::Import, alias.slice());
-        // SAFETY: no other borrow of this new symbol slot is live here.
-        unsafe { self.graph.symbol_mut(member) }.namespace_alias =
-            Some(bun_alloc::ast_box(G::NamespaceAlias {
-                namespace_ref,
-                alias,
-                ..Default::default()
-            }));
+        self.graph
+            .symbols
+            .get_mut(member)
+            .expect("infallible: ref in symbol table")
+            .namespace_alias = Some(bun_alloc::ast_box(G::NamespaceAlias {
+            namespace_ref,
+            alias,
+            ..Default::default()
+        }));
         let parts = bun_alloc::AstAlloc::vec_from_slice(
             self.graph.top_level_symbol_to_parts(owner, namespace_ref),
         );
@@ -415,7 +417,7 @@ impl<'a> LinkerContext<'a> {
             }
             // Only the modules know which of them has the name: the exports object of the file has the names of them all.
             Some(_) => (target, exports_ref),
-            // Every module is disabled, so the name is `undefined`. A property of a namespace and a re-export of a TypeScript file say so at build time.
+            // Every module is disabled, so the name is `undefined`: a named import stays a run-time read, as one of the disabled module itself is. A property of a namespace and a re-export of a TypeScript file say so at build time.
             None => {
                 let is_property_access = self
                     .graph
@@ -4749,7 +4751,7 @@ impl<'a> LinkerContext<'a> {
         // SAFETY: `named_imports_ptr` points into the `graph.ast.named_imports`
         // SoA column, which is never reallocated during linking; the loop body
         // never mutates that column (only `imports_to_bind`/`log`/`symbols`/
-        // `meta.probably_typescript_type`), so the backing `keys`/`values`
+        // `meta.probably_typescript_type`/`module_scope`/`meta.top_level_symbol_to_parts_overlay`/the `external_star_*` maps), so the backing `keys`/`values`
         // slices stay valid for the whole loop.
         let keys: *const [Ref] = unsafe { (*named_imports_ptr).keys() };
         // SAFETY: same column-validity invariant as `keys` above.

@@ -237,10 +237,8 @@ if (values["skip-emulation"]) {
 } else {
   // Phase 1: SIMD code path verification
   const simdTestPath = join(repoRoot, "test", "js", "bun", "jsc-stress", "fixtures", "simd-baseline.test.ts");
-  // The default per-test timeout (5 s) assumes native speed. Intel SDE runs this file hundreds of
-  // times slower, so the emulated run gets a per-test timeout of its own.
-  const emulatedTestTimeoutMs = 90_000;
-  await runTest("SIMD baseline tests", ["test", `--timeout=${emulatedTestTimeoutMs}`, simdTestPath], { live: true });
+  // Under SDE code is slow the first time it runs: the first test to use a codec took 3 to 6 s. The default is 5 s.
+  await runTest("SIMD baseline tests", ["test", "--timeout=15000", simdTestPath], { live: true });
 
   const aotDir = mkdtempSync(join(tmpdir(), "verify-baseline-aot-"));
   const aotProgram = join(aotDir, "baseline-cpu.ts");

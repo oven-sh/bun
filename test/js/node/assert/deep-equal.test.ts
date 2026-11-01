@@ -1329,6 +1329,367 @@ describe("detached ArrayBuffer", () => {
   });
 });
 
+// Node compares the `message`, `name`, `cause` and `errors` of two errors in that order. It leaves a key that the
+// expected error owns as an enumerable property to the walk over the own enumerable keys:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L392-L405
+// Every expectation in this block is the result of Node v26.3.0.
+describe("the message, name, cause and errors of an Error", () => {
+  const keys = ["message", "name", "cause", "errors"];
+  const depths = [1, 3, 8];
+  const held = (key: string, value: unknown) => (key === "errors" ? [value] : value);
+
+  function withGetter<T extends object>(target: T, key: string, get: () => unknown, enumerable: boolean) {
+    return Object.defineProperty(target, key, { get, enumerable, configurable: true });
+  }
+
+  function withValue(key: string, value: unknown, enumerable: boolean) {
+    return Object.defineProperty(new Error("x"), key, { value, enumerable, configurable: true });
+  }
+
+  /** `depth + 1` nested errors. Each one holds the next one in `key`, behind a getter that counts its reads. */
+  function getterChain(key: string, enumerable: boolean, depth: number) {
+    let reads = 0;
+    let value: unknown = "leaf";
+    for (let level = 0; level <= depth; level++) {
+      const next = held(key, value);
+      value = withGetter(new Error("x"), key, () => (reads++, next), enumerable);
+    }
+    return { error: value, reads: () => reads };
+  }
+
+  /** The same chain with data properties. The innermost error holds an object with a getter that counts its reads. */
+  function dataChain(key: string, depth: number) {
+    let reads = 0;
+    let value: unknown = withGetter({}, "leaf", () => (reads++, 1), true);
+    for (let level = 0; level <= depth; level++) {
+      value = withValue(key, held(key, value), true);
+    }
+    return { error: value, reads: () => reads };
+  }
+
+  describe("assert.partialDeepStrictEqual", () => {
+    const rejected = new Error("rejected");
+    /** A failed comparison throws an Error that is passed as the message as it is, so nothing else reads the operands. */
+    function partiallyEqual(actual: unknown, expected: unknown) {
+      try {
+        assert.partialDeepStrictEqual(actual, expected, rejected);
+        return true;
+      } catch (error) {
+        if (error !== rejected) throw error;
+        return false;
+      }
+    }
+
+    /** true, false, or the message of the error that a getter or a Proxy trap threw. */
+    function outcome(actual: unknown, expected: unknown) {
+      try {
+        return partiallyEqual(actual, expected);
+      } catch (error) {
+        return (error as Error).message;
+      }
+    }
+
+    const throws = (side: string) => () => {
+      throw new Error(`${side} threw`);
+    };
+
+    /** An error that finds `key` only through a Proxy in its prototype chain. */
+    function behindProxy(key: string, get: () => unknown) {
+      const error = new Error("x");
+      if (key === "message") delete (error as { message?: string }).message;
+      const handler: ProxyHandler<object> = {
+        get: (target, name, receiver) => (name === key ? get() : Reflect.get(target, name, receiver)),
+      };
+      return Object.setPrototypeOf(error, new Proxy(Error.prototype, handler));
+    }
+
+    /** An error that inherits a `cause` getter. The getter reads the error that it is called on. */
+    class InheritedCause extends Error {
+      constructor(value: unknown) {
+        super("x");
+        Object.defineProperty(this, "value", { value });
+      }
+      get cause() {
+        return (this as unknown as { value: unknown }).value;
+      }
+    }
+
+    test.each(keys)("reads an enumerable %s getter once per side at each level", key => {
+      const reads = depths.map(depth => {
+        const actual = getterChain(key, true, depth);
+        const expected = getterChain(key, true, depth);
+        assert.partialDeepStrictEqual(actual.error, expected.error);
+        return [actual.reads(), expected.reads()];
+      });
+      expect(reads).toEqual([
+        [2, 2],
+        [4, 4],
+        [9, 9],
+      ]);
+    });
+
+    test.each(keys)("compares an enumerable %s data property once at each level", key => {
+      const reads = depths.map(depth => {
+        const actual = dataChain(key, depth);
+        const expected = dataChain(key, depth);
+        assert.partialDeepStrictEqual(actual.error, expected.error);
+        return [actual.reads(), expected.reads()];
+      });
+      expect(reads).toEqual([
+        [1, 1],
+        [1, 1],
+        [1, 1],
+      ]);
+    });
+
+    test.each<[string, (error: unknown) => unknown]>([
+      ["an object", error => ({ error })],
+      ["an array", error => [error]],
+      ["a Map", error => new Map([["key", error]])],
+      ["a Set", error => new Set([error])],
+    ])("reads an enumerable cause getter once per side at each level inside %s", (_name, wrap) => {
+      const actual = getterChain("cause", true, 3);
+      const expected = getterChain("cause", true, 3);
+      assert.partialDeepStrictEqual(wrap(actual.error), wrap(expected.error));
+      expect([actual.reads(), expected.reads()]).toEqual([4, 4]);
+    });
+
+    test.each(keys)("compares a hidden %s once at each level", key => {
+      const reads = depths.map(depth => {
+        const actual = getterChain(key, false, depth);
+        assert.partialDeepStrictEqual(actual.error, getterChain(key, false, depth).error);
+        return actual.reads();
+      });
+      // Only the actual side is counted. Node reads a hidden key of the expected error two or three times, Bun once.
+      expect(reads).toEqual([2, 4, 9]);
+    });
+
+    test("reads hidden getters in the order message, name, cause, errors, the expected error first", () => {
+      const log: string[] = [];
+      const hiddenGetters = (side: string) => {
+        const error = new Error("x");
+        for (const key of keys) withGetter(error, key, () => (log.push(`${side}.${key}`), held(key, 1)), false);
+        return error;
+      };
+      assert.partialDeepStrictEqual(hiddenGetters("actual"), hiddenGetters("expected"));
+      // Only the first read of each getter is compared, because Node reads the expected side again.
+      expect([...new Set(log)]).toEqual([
+        "expected.message",
+        "actual.message",
+        "expected.name",
+        "actual.name",
+        "expected.cause",
+        "actual.cause",
+        "expected.errors",
+        "actual.errors",
+      ]);
+    });
+
+    test.each(keys)("reads no %s that is enumerable on the expected error and hidden on the actual error", key => {
+      const actual = getterChain(key, false, 0);
+      const expected = getterChain(key, true, 0);
+      expect(partiallyEqual(actual.error, expected.error)).toBe(false);
+      expect([actual.reads(), expected.reads()]).toEqual([0, 0]);
+    });
+
+    test("compares a key by how the expected error holds it", () => {
+      // partiallyEqual(actual, expected)
+      expect({
+        enumerableAgainstHidden: partiallyEqual(withValue("errors", [1], false), withValue("errors", [1], true)),
+        hiddenAgainstEnumerable: partiallyEqual(withValue("errors", [1], true), withValue("errors", [1], false)),
+        enumerableEmptyMessage: partiallyEqual(withValue("message", "x", true), withValue("message", "", true)),
+        hiddenEmptyMessage: partiallyEqual(new Error("x"), new Error("")),
+        enumerableErrorsSubsequence: partiallyEqual(withValue("errors", [1, 2], true), withValue("errors", [2], true)),
+        enumerableErrorsNotContained: partiallyEqual(withValue("errors", [1, 2], true), withValue("errors", [3], true)),
+        inheritedNameAgainstOtherName: partiallyEqual(new TypeError("x"), new Error("x")),
+        causeContainedInCause: partiallyEqual(new Error("x", { cause: [1, 2] }), new Error("x", { cause: [2] })),
+        undefinedCauseAgainstCause: partiallyEqual(new Error("x", { cause: 1 }), new Error("x", { cause: undefined })),
+        undefinedCauseAgainstNoCause: partiallyEqual(new Error("x"), new Error("x", { cause: undefined })),
+        inheritedCauseAgainstSameCause: partiallyEqual(new Error("x", { cause: 1 }), new InheritedCause(1)),
+        inheritedCauseAgainstOtherCause: partiallyEqual(new Error("x", { cause: 2 }), new InheritedCause(1)),
+        inheritedCauseAgainstNoCause: partiallyEqual(new Error("x"), new InheritedCause(1)),
+        inheritedCauseAgainstOtherInheritedCause: partiallyEqual(new InheritedCause(2), new InheritedCause(1)),
+        causeAgainstInheritedCause: partiallyEqual(new InheritedCause(1), new Error("x", { cause: 1 })),
+      }).toEqual({
+        enumerableAgainstHidden: false,
+        hiddenAgainstEnumerable: true,
+        enumerableEmptyMessage: false,
+        hiddenEmptyMessage: true,
+        enumerableErrorsSubsequence: true,
+        enumerableErrorsNotContained: false,
+        inheritedNameAgainstOtherName: false,
+        causeContainedInCause: true,
+        undefinedCauseAgainstCause: true,
+        undefinedCauseAgainstNoCause: false,
+        inheritedCauseAgainstSameCause: true,
+        inheritedCauseAgainstOtherCause: false,
+        inheritedCauseAgainstNoCause: false,
+        inheritedCauseAgainstOtherInheritedCause: false,
+        causeAgainstInheritedCause: false,
+      });
+    });
+
+    /** Node's rule for the four keys, then its walk over the own enumerable keys. For values that hold no Error. */
+    function nodeRule(actual: Record<string, unknown>, expected: Record<string, unknown>) {
+      const ownEnumerable = (error: object, key: string) => Object.prototype.propertyIsEnumerable.call(error, key);
+      for (const key of keys) {
+        if (ownEnumerable(expected, key)) continue;
+        const value = expected[key];
+        if (value === undefined || (key === "message" && value === "")) continue;
+        if (!partiallyEqual(actual[key], value)) return false;
+      }
+      if (Object.hasOwn(expected, "cause") && !Object.hasOwn(actual, "cause")) return false;
+      const equalInWalk = (key: string) => ownEnumerable(actual, key) && partiallyEqual(actual[key], expected[key]);
+      return Object.keys(expected).every(equalInWalk);
+    }
+
+    test.each(keys)("gives the result of Node's rule wherever the two errors hold %s", key => {
+      const places = ["enumerable", "hidden", "inherited", "inherited and enumerable"];
+      const values = [undefined, null, "", "x", "y", 0, 1, [1], [1, 2]];
+      const states = [undefined, ...places.flatMap(place => values.map(value => ({ place, value })))];
+      const holding = (state: (typeof states)[number]) => {
+        const error = (key === "message" ? new Error() : new Error("m")) as unknown as Record<string, unknown>;
+        if (!state) return error;
+        const property = { value: state.value, enumerable: state.place.endsWith("enumerable"), configurable: true };
+        if (!state.place.startsWith("inherited")) return Object.defineProperty(error, key, property);
+        return Object.setPrototypeOf(error, Object.create(Error.prototype, { [key]: property }));
+      };
+      const differences: unknown[] = [];
+      for (const actual of states) {
+        for (const expected of states) {
+          const result = partiallyEqual(holding(actual), holding(expected));
+          if (result !== nodeRule(holding(actual), holding(expected))) differences.push({ actual, expected, result });
+        }
+      }
+      expect(differences).toEqual([]);
+    });
+
+    test.each(keys)("passes on the error of a %s getter or a Proxy trap that throws", key => {
+      const value = held(key, 1);
+      const getter = (side: string, enumerable: boolean) => withGetter(new Error("x"), key, throws(side), enumerable);
+      expect({
+        hiddenExpected: outcome(withValue(key, value, false), getter("expected", false)),
+        hiddenActual: outcome(getter("actual", false), withValue(key, value, false)),
+        hiddenBoth: outcome(getter("actual", false), getter("expected", false)),
+        enumerableExpected: outcome(withValue(key, value, true), getter("expected", true)),
+        enumerableActual: outcome(getter("actual", true), withValue(key, value, true)),
+        enumerableBoth: outcome(getter("actual", true), getter("expected", true)),
+        trapOfExpected: outcome(withValue(key, value, false), behindProxy(key, throws("expected"))),
+        trapOfActual: outcome(behindProxy(key, throws("actual")), withValue(key, value, false)),
+      }).toEqual({
+        hiddenExpected: "expected threw",
+        hiddenActual: "actual threw",
+        // A hidden key is read from the expected error first, an enumerable key from the actual error first.
+        hiddenBoth: "expected threw",
+        enumerableExpected: "expected threw",
+        enumerableActual: "actual threw",
+        enumerableBoth: "actual threw",
+        trapOfExpected: "expected threw",
+        trapOfActual: "actual threw",
+      });
+    });
+
+    test.each(keys)("compares a %s that a Proxy in the prototype chain of the expected error returns", key => {
+      const actual = () => withValue(key, held(key, 1), false);
+      const same = behindProxy(key, () => held(key, 1));
+      const other = behindProxy(key, () => held(key, 2));
+      expect([outcome(actual(), same), outcome(actual(), other)]).toEqual([true, false]);
+    });
+
+    test("stops at a cause that differs before it reads errors", () => {
+      const log: string[] = [];
+      const make = (side: string, cause: number) =>
+        withGetter(new Error("x", { cause }), "errors", () => log.push(side), false);
+      expect(partiallyEqual(make("actual", 1), make("expected", 2))).toBe(false);
+      expect(log).toEqual([]);
+    });
+
+    test("does not read a key of the actual error that the expected error holds as undefined or as an empty message", () => {
+      const throwing = (key: string) => withGetter(new Error("x"), key, throws("actual"), false);
+      expect({
+        undefinedCause: outcome(throwing("cause"), new Error("x", { cause: undefined })),
+        undefinedErrors: outcome(throwing("errors"), withValue("errors", undefined, false)),
+        emptyMessage: outcome(throwing("message"), new Error("")),
+        noCause: outcome(throwing("cause"), new Error("x")),
+      }).toEqual({ undefinedCause: true, undefinedErrors: true, emptyMessage: true, noCause: true });
+    });
+
+    describe("when a getter of the expected error changes another key", () => {
+      test("tests whether a key is enumerable when its turn comes", () => {
+        const log: string[] = [];
+        const actual = withGetter(new Error("x"), "errors", () => (log.push("actual"), [1]), true);
+        const expected = withGetter(new Error("x"), "errors", () => (log.push("expected"), [1]), false);
+        const showErrors = () => (Object.defineProperty(expected, "errors", { enumerable: true }), "x");
+        withGetter(expected, "message", showErrors, false);
+        expect(partiallyEqual(actual, expected)).toBe(true);
+        // `errors` is enumerable when its turn comes, so only the walk over the enumerable keys reads it.
+        expect(log).toEqual(["actual", "expected"]);
+      });
+
+      test("compares errors after cause", () => {
+        const actual = Object.defineProperty(new Error("x", { cause: 1 }), "errors", { value: [1], enumerable: true });
+        const expected = withValue("errors", [2], true);
+        const hideErrors = () => void Object.defineProperty(expected, "errors", { enumerable: false });
+        withGetter(expected, "cause", hideErrors, false);
+        // The `cause` getter hides `errors`. The walk over the enumerable keys does not compare it after that.
+        expect(partiallyEqual(actual, expected)).toBe(false);
+      });
+
+      test("looks for an own cause after it has read errors", () => {
+        const expected = new Error("x", { cause: undefined });
+        withGetter(expected, "errors", () => void delete expected.cause, false);
+        expect(partiallyEqual(new Error("x"), expected)).toBe(true);
+      });
+    });
+  });
+
+  // Bun reads the getter 6, 30 and 1022 times per side. The Error arm of Bun__deepEquals compares `cause`, and its walk
+  // over the enumerable keys compares an enumerable `cause` again.
+  test.failing.each<[string, (actual: unknown, expected: unknown) => void]>([
+    ["assert.deepStrictEqual", assert.deepStrictEqual],
+    ["assert.deepEqual", assert.deepEqual],
+    ["util.isDeepStrictEqual", (actual, expected) => assert.ok(util.isDeepStrictEqual(actual, expected))],
+  ])("%s reads an enumerable cause getter once per side at each level", (_name, equal) => {
+    const reads = depths.map(depth => {
+      const actual = getterChain("cause", true, depth);
+      const expected = getterChain("cause", true, depth);
+      equal(actual.error, expected.error);
+      return [actual.reads(), expected.reads()];
+    });
+    expect(reads).toEqual([
+      [2, 2],
+      [4, 4],
+      [9, 9],
+    ]);
+  });
+});
+
+describe("assert.partialDeepStrictEqual on Maps", () => {
+  test("compares the value under a key that both Maps hold once at each level", () => {
+    const key = {};
+    const reads = [1, 4, 9].map(depth => {
+      let count = 0;
+      const nested = (leaf: number) => {
+        let value: unknown = Object.defineProperty({}, "leaf", { get: () => (count++, leaf), enumerable: true });
+        for (let level = 0; level < depth; level++) value = new Map([[key, value]]);
+        return value;
+      };
+      expect(() => assert.partialDeepStrictEqual(nested(1), nested(2), new Error("rejected"))).toThrow("rejected");
+      return count;
+    });
+    expect(reads).toEqual([2, 2, 2]);
+  });
+
+  test("matches another entry when the value under a key that both Maps hold differs", () => {
+    const key = { id: 1 };
+    const actual = new Map<object, number>([
+      [key, 1],
+      [{ id: 1 }, 2],
+    ]);
+    assert.partialDeepStrictEqual(actual, new Map([[key, 2]]));
+  });
+});
+
 describe("AssertionError", () => {
   test("deepStrictEqual reports actual, expected and operator", () => {
     const error = caught(() => assert.deepStrictEqual({ a: 1 }, { a: 2 })) as any;

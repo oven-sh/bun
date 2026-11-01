@@ -1628,11 +1628,11 @@ describe.concurrent("bun --hot", () => {
   // A rename over a file that exists can fail with EPERM on Windows.
   it.skipIf(isWindows).each(Object.keys(cases))("a save by a rename reloads %s", async name => {
     const { files, saved, link } = cases[name];
-    files["server.js"] += `
+    const server = `${files["server.js"]}
       console.log("version " + imported.default);
       if (imported.default === 2) process.exit(0);
     `;
-    using dir = tempDir("fsr-hot-reload", { ...files, "saved": "export default 2;\n" });
+    using dir = tempDir("fsr-hot-reload", { ...files, "server.js": server, "saved": "export default 2;\n" });
     const root = String(dir);
     if (link) fs.symlinkSync(path.join(root, link[0]), path.join(root, link[1]));
     const result = await run(root, "version 1\n", () => {

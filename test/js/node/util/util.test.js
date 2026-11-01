@@ -856,14 +856,13 @@ describe("util", () => {
       expect(exitCode).toBe(0);
     }
 
-    // Not concurrent: a debug build takes a second to start, and longer when all the cases start at once.
-    it.each(cases)("bun: %s", (_, script, expected) => check(bunExe(), script, expected));
+    it.concurrent.each(cases)("bun: %s", (_, script, expected) => check(bunExe(), script, expected));
 
     // Node.js reads the table on every slow call since v26.4.0.
     const node = nodeExeAtLeast("26.4.0");
     it.skipIf(!node).concurrent.each(cases)("node: %s", (_, script, expected) => check(node, script, expected));
 
-    it("keeps a bounded number of escape strings", async () => {
+    it.concurrent("keeps a bounded number of escape strings", async () => {
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),

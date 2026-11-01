@@ -1,7 +1,7 @@
 // CSS tests concern bundling bugs with CSS files
 import { expect } from "bun:test";
 import assert from "node:assert";
-import { devTest, emptyHtmlFile, imageFixtures } from "../bake-harness";
+import { type Dev, devTest, emptyHtmlFile, imageFixtures } from "../bake-harness";
 
 devTest("css file with syntax error does not kill old styles", {
   files: {
@@ -541,6 +541,97 @@ devTest("multiple stylesheets importing same dependency", {
 
     await c1.style(".shared").color.expect.toBe("#ff0");
     await c2.style(".shared").color.expect.toBe("#ff0");
+
+    // The edit above re-bundled both stylesheets together. Each must keep its
+    // edge to `shared.css`, or the next edit reaches only one of them.
+    await dev.write(
+      "shared.css",
+      `
+        .shared { color: red; }
+      `,
+    );
+
+    await c1.style(".shared").color.expect.toBe("red");
+    await c2.style(".shared").color.expect.toBe("red");
+  },
+});
+devTest("stylesheets linked from one page both follow edits to a shared import", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["a.css", "b.css"],
+    }),
+    "a.css": `
+      @import "./shared.css";
+      .a { color: red; }
+    `,
+    "b.css": `
+      @import "./shared.css";
+      .b { color: blue; }
+    `,
+    "shared.css": `
+      .shared { width: 1px; }
+    `,
+  },
+  async test(dev) {
+    expect(await linkedStylesheetWidths(dev, ".shared")).toEqual(["1px", "1px"]);
+
+    await dev.write("shared.css", `.shared { width: 2px; }`);
+    expect(await linkedStylesheetWidths(dev, ".shared")).toEqual(["2px", "2px"]);
+
+    await dev.write("shared.css", `.shared { width: 3px; }`);
+    expect(await linkedStylesheetWidths(dev, ".shared")).toEqual(["3px", "3px"]);
+  },
+});
+devTest("stylesheet that imports another linked stylesheet follows its edits", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["base.css", "theme.css"],
+    }),
+    "base.css": `
+      .base { width: 1px; }
+    `,
+    "theme.css": `
+      @import "./base.css";
+      .theme { color: blue; }
+    `,
+  },
+  async test(dev) {
+    expect(await linkedStylesheetWidths(dev, ".base")).toEqual(["1px", "1px"]);
+
+    await dev.write("base.css", `.base { width: 2px; }`);
+    expect(await linkedStylesheetWidths(dev, ".base")).toEqual(["2px", "2px"]);
+
+    await dev.write("base.css", `.base { width: 3px; }`);
+    expect(await linkedStylesheetWidths(dev, ".base")).toEqual(["3px", "3px"]);
+  },
+});
+devTest("stylesheet imported by a linked stylesheet and by a script follows every edit", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["index.css"],
+      scripts: ["app.ts"],
+    }),
+    "index.css": `
+      @import "./util.css";
+      body { color: blue; }
+    `,
+    "app.ts": `
+      import "./util.css";
+    `,
+    "util.css": `
+      .util { width: 1px; }
+    `,
+  },
+  async test(dev) {
+    // The page links `util.css` twice: as the script's own chunk, and inlined
+    // at the top of the `index.css` chunk.
+    expect(await linkedStylesheetWidths(dev, ".util")).toEqual(["1px", "1px"]);
+
+    await dev.write("util.css", `.util { width: 2px; }`);
+    expect(await linkedStylesheetWidths(dev, ".util")).toEqual(["2px", "2px"]);
+
+    await dev.write("util.css", `.util { width: 3px; }`);
+    expect(await linkedStylesheetWidths(dev, ".util")).toEqual(["3px", "3px"]);
   },
 });
 devTest("removing and re-adding css import", {
@@ -817,4 +908,15 @@ function extractCssUrl(backgroundImage: string): string {
     throw new Error("No url found in background-image: " + backgroundImage);
   }
   return url[2];
+}
+
+/**
+ * "/" links one bundled chunk per CSS root. Returns the `width` that each
+ * chunk declares for `selector`, in link order.
+ */
+async function linkedStylesheetWidths(dev: Dev, selector: string): Promise<(string | undefined)[]> {
+  const html = await dev.fetch("/").text();
+  const hrefs = Array.from(html.matchAll(/<link[^>]*href="([^"]+)"/g), match => match[1]);
+  const rule = new RegExp(`\\${selector} \\{[^}]*width: (\\w+)`);
+  return Promise.all(hrefs.map(async href => (await dev.fetch(href).text()).match(rule)?.[1]));
 }

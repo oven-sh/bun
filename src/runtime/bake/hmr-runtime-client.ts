@@ -238,7 +238,12 @@ const handlers = {
 };
 const ws = initWebSocket(handlers, {
   onStatusChange(connected) {
-    emitEvent(connected ? "bun:ws:connect" : "bun:ws:disconnect", null);
+    try {
+      emitEvent(connected ? "bun:ws:connect" : "bun:ws:disconnect", null);
+    } catch (e) {
+      // The socket reconnects and sends its queue after this call, so a listener that throws must not end it.
+      console.error(e);
+    }
   },
 });
 

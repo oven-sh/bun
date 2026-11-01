@@ -1401,6 +1401,12 @@ export class Client extends EventEmitter {
     });
   }
 
+  /** Closes the page's HMR socket, as a dropped connection does. The HMR runtime then reconnects. */
+  closeWebSockets() {
+    if (this.exited) throw new Error("Client exited before its WebSockets were closed");
+    this.#proc.send({ type: "close-websockets" });
+  }
+
   async reactRefreshComponentHash(file: string, name: string): Promise<string> {
     return withAnnotatedStack(snapshotCallerLocation(), async () => {
       const component = await this.js<any>`

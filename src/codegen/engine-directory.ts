@@ -37,7 +37,8 @@ function findEngineDirectory(): string {
     ["vendor/WebKit", () => inCheckout(resolve(import.meta.dirname, "..", "..", "vendor", "WebKit"))],
     // Where CI puts it for the machines that only run tests.
     ["aot-engine beside the Bun that runs this", () => join(dirname(realpathSync(process.execPath)), "aot-engine")],
-    // A prebuilt WebKit of the version that the build pins, which a build of any profile extracted to the shared cache.
+    // A prebuilt WebKit of the version that the build pins, which a build of any profile extracted to the shared cache. A build
+    // with --webkit-version says its own engine through $AOT_ENGINE_DIRECTORY (scripts/build.ts).
     ["the prebuilt WebKit in the build cache", prebuiltInCache],
   ];
   for (const [, find] of places) {

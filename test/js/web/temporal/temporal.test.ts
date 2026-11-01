@@ -81,6 +81,29 @@ describe("Temporal core operations", () => {
     expect(d.toLocaleString("en-US")).toBe("6/15/2024");
   });
 
+  // -271821-04-19 is the earliest PlainDate, one day before the earliest Date.
+  test.each([
+    ["-271821-04-19", 271822, 4, 19],
+    ["-271821-04-20", 271822, 4, 20],
+    ["-271821-12-28", 271822, 12, 28],
+    ["-271820-03-01", 271821, 3, 1],
+    ["-271817-02-28", 271818, 2, 28],
+    ["-271814-01-01", 271815, 1, 1],
+  ])("the gregory calendar agrees with the ISO calendar at %s", (iso, eraYear, month, day) => {
+    const date = Temporal.PlainDate.from(iso).withCalendar("gregory");
+    expect({ era: date.era, eraYear: date.eraYear, month: date.month, day: date.day }).toEqual({
+      era: "bce",
+      eraYear,
+      month,
+      day,
+    });
+    expect(
+      Temporal.PlainDate.from({ calendar: "gregory", era: "bce", eraYear, month, day })
+        .withCalendar("iso8601")
+        .toString(),
+    ).toBe(iso);
+  });
+
   test("structuredClone rejects Temporal objects", () => {
     expect(() => structuredClone(Temporal.PlainDate.from("2024-06-15"))).toThrow(DOMException);
     expect(() => structuredClone(Temporal.Instant.from("2024-06-15T00:00Z"))).toThrow(DOMException);

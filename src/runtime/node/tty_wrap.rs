@@ -88,19 +88,9 @@ struct WriteQueue {
     bytes: bun_io::StreamBuffer,
     /// How many of the bytes each `writeBuffer()` that waits still has, oldest first.
     pending: VecDeque<usize>,
-    /// A dup of `own_fd` for the poll alone: the reader's poll has the number of `own_fd`, and epoll keys on the number.
+    /// A dup of `own_fd` for the poll alone, because the reader's poll has the number of `own_fd`: epoll keys on the number, and on kqueue the forced unregister of a poll that fired deletes both filters of its number.
     poll_fd: Option<Fd>,
     poll: Option<NonNull<FilePoll>>,
-}
-
-/// What the loop answered when the handle asked it to say when the descriptor takes more.
-#[cfg(unix)]
-enum WritePoll {
-    Armed,
-    /// The loop cannot poll this kind of descriptor: its writes wait in place from here on.
-    Unpollable,
-    /// A negative libuv errno: the write fails with it.
-    Failed(i32),
 }
 
 #[derive(bun_ptr::RefCounted)]
@@ -712,14 +702,13 @@ impl TTY {
                 if rest.is_empty() {
                     return 0;
                 }
-                // libuv writes the rest in place too, and calls back from the loop. Here the write is complete in this call.
+                // A libuv stream with blocking writes writes the rest in place too, and calls back from the loop. Here the write is complete in this call.
                 if flags.intersects(Flags::BLOCKING_WRITES | Flags::BLOCKING_ASKED) {
                     return write_in_place(fd, rest);
                 }
-                match self.arm_write_poll() {
-                    WritePoll::Armed => {}
-                    WritePoll::Unpollable => return write_in_place(fd, rest),
-                    WritePoll::Failed(errno) => return errno,
+                // Without a poll the rest waits in place as well, where libuv has the watcher of the stream: the wait ends when another thread or process reads the other end.
+                if !self.arm_write_poll() {
+                    return write_in_place(fd, rest);
                 }
             }
             self.writes.with_mut(|q| {
@@ -740,9 +729,9 @@ impl TTY {
             .is_some_and(|q| !q.pending.is_empty())
     }
 
-    /// Asks the loop to say when the descriptor takes more, until `idle_write_poll`. A queued write holds the loop whatever `unref()` said, as an active `uv_write_t` does.
+    /// Asks the loop to say when the descriptor takes more, until `idle_write_poll`. A queued write holds the loop whatever `unref()` said, as an active `uv_write_t` does. False where the loop does not watch the descriptor: the write then waits in place, as every write of a `uv_tty_t` for which libuv got no descriptor of its own.
     #[cfg(unix)]
-    fn arm_write_poll(&self) -> WritePoll {
+    fn arm_write_poll(&self) -> bool {
         let ctx = self.event_loop_handle.as_event_loop_ctx();
         let own_fd = self.own_fd.get();
         let armed = self.writes.with_mut(|q| {
@@ -772,15 +761,15 @@ impl TTY {
             }
             Ok::<(), sys::Error>(())
         });
-        match armed {
-            Ok(()) => WritePoll::Armed,
-            Err(err) if err.get_errno() == UNPOLLABLE_KIND => {
-                self.update_flags(|f| f.insert(Flags::BLOCKING_WRITES));
-                WritePoll::Unpollable
-            }
-            // No descriptor or no memory for the poll: nothing says that the next write fails too.
-            Err(err) => WritePoll::Failed(uv_errno(err.errno)),
+        let Err(err) = armed else {
+            return true;
+        };
+        bun_output::scoped_log!(TTYWrap, "no write poll: {:?}", err);
+        // A kind of descriptor that the loop cannot poll stays so. No descriptor or no memory for the poll says nothing of the next write.
+        if err.get_errno() == UNPOLLABLE_KIND {
+            self.update_flags(|f| f.insert(Flags::BLOCKING_WRITES));
         }
+        false
     }
 
     /// The loop says that the descriptor takes more. SAFETY: `this` is the owner of a poll that `arm_write_poll` made and that `release_write_poll` has not dropped.

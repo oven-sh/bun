@@ -767,4 +767,16 @@ pub(crate) mod internal_bindings {
         timer_all_mut().last_id = id;
         Ok(())
     }
+
+    /// `require("internal/timers").monotonicNowMs()`, documented there. Always
+    /// the real clock, i.e. the one the real timer heap is drained against,
+    /// whatever bun:test has mocked.
+    #[bun_jsc::host_fn]
+    pub(crate) fn monotonic_now_ms(
+        _global_this: &JSGlobalObject,
+        _call_frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let now = Timespec::now(TimespecMockMode::ForceRealTime).ms();
+        Ok(JSValue::js_number(now as f64))
+    }
 }

@@ -18,7 +18,9 @@
 //   - phase of the long files that build many executables: `--- Running N files that
 //     build many executables`, then `[N/M] <path> (X.XXs)` per file once it has passed,
 //     `[N/M] <path> - <error>` where a try fails and `[N/M] <path> [attempt #K]` where the
-//     next begins (neither is a path, and neither opens a group)
+//     next begins (neither is a path, and neither opens a group). With a sanitizer a try that
+//     fails is `<path> - <error> beside other files`, and the file starts again as a serial
+//     test when the others are through
 //   - other startGroup phases: `--- napi prebuild: ...`, `--- Disk and memory pressure`, `--- End`
 // A parser that only recognises the first shape folds the entire following
 // phase into whichever serial test happened to precede it.

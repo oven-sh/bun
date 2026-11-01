@@ -930,6 +930,7 @@ test("a header block of nothing but HPACK table size updates counts as an empty 
 describe.concurrent("SETTINGS_HEADER_TABLE_SIZE from an HTTP/2 server", () => {
   test.each([
     ["is not followed above 4096", setting(1, 65536), ""],
+    ["is not answered when it repeats the current size", setting(1, 4096), ""],
     ["is followed below 4096", setting(1, 100), "3f45"],
     ["is answered with the low point too", Buffer.concat([setting(1, 0), setting(1, 4096)]), "203fe11f"],
   ])("%s", async (_, settingsPayload, sizeUpdates) => {
@@ -1102,6 +1103,47 @@ describe.concurrent("HPACK in fetch() over HTTP/2", () => {
         // Cut inside the first literal.
         socket.write(frame(1, 0, second, block.subarray(0, 5)));
         socket.write(frame(9, 4, second, block.subarray(5)));
+        socket.write(frame(1, 5, first, Buffer.concat([hpackStatus200, Buffer.from([0x80 | 63, 0x80 | 62])])));
+        expect(await sibling).toEqual([200, ["x-first", "1"], ["x-second", "2"]]);
+        expect(state.connections).toBe(1);
+      },
+    );
+  });
+
+  test("a block that is cut off by an abort between HEADERS and CONTINUATION still reaches the decoder whole", async () => {
+    const streams: [RawSock, number][] = [];
+    let onStream = Promise.withResolvers<void>();
+    await withAdversarialServer(
+      {
+        onStream: (socket, id) => {
+          streams.push([socket, id]);
+          onStream.resolve();
+        },
+      },
+      async (url, state) => {
+        const sibling = fetch(url, h2).then(seen);
+        await onStream.promise;
+        onStream = Promise.withResolvers();
+        const controller = new AbortController();
+        const aborted = fetch(url, { ...h2, signal: controller.signal });
+        await onStream.promise;
+        const [[socket, first], [, second]] = streams;
+        const trailers = Buffer.concat([insert("x-first", "1"), insert("x-second", "2")]);
+        // One write, so one read: once the body is here, so is the first half of the trailers. Cut inside the first literal.
+        socket.write(
+          Buffer.concat([
+            frame(1, 4, second, hpackStatus200),
+            frame(0, 0, second, Buffer.from("body")),
+            frame(1, 1, second, trailers.subarray(0, 5)),
+          ]),
+        );
+        const reader = (await aborted).body!.getReader();
+        expect(new TextDecoder().decode((await reader.read()).value)).toBe("body");
+        controller.abort();
+        expect(await reader.read().catch(e => e.name)).toBe("AbortError");
+        while (!state.rst.length) await new Promise(resolve => setImmediate(resolve));
+        expect(state.rst).toEqual([{ id: second, code: 8 }]);
+        socket.write(frame(9, 4, second, trailers.subarray(5)));
         socket.write(frame(1, 5, first, Buffer.concat([hpackStatus200, Buffer.from([0x80 | 63, 0x80 | 62])])));
         expect(await sibling).toEqual([200, ["x-first", "1"], ["x-second", "2"]]);
         expect(state.connections).toBe(1);

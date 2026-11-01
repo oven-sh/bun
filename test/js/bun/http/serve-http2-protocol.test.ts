@@ -1493,6 +1493,32 @@ describe.concurrent("Bun.serve http2 protocol", () => {
     s0.close();
   });
 
+  test("HEADER_TABLE_SIZE 100, a block, then 4096 emits one size update each time", async () => {
+    const raw = await RawH2.connect(fx.port, secure);
+    try {
+      let acks = 1;
+      let id = 1;
+      raw.headers(1, baseHeaders("/hello"));
+      await raw.body(1);
+      /** The first bytes of the next response after `size` was acknowledged. */
+      const after = async (size: number, bytes: number) => {
+        raw.write(frame(T.SETTINGS, 0, 0, setting(1, size)));
+        acks++;
+        await raw.waitFor(
+          () => raw.frames.filter(f => f.type === T.SETTINGS && (f.flags & F.ACK) !== 0).length >= acks,
+        );
+        raw.headers((id += 2), baseHeaders("/hello"));
+        const { payload } = await raw.waitFor(f => f.type === T.HEADERS && f.streamId === id);
+        await raw.body(id);
+        return payload.subarray(0, bytes).toString("hex");
+      };
+      // Each time followed by :status 200.
+      expect([await after(100, 3), await after(4096, 4)]).toEqual(["3f4588", "3fe11f88"]);
+    } finally {
+      raw.close();
+    }
+  });
+
   test("header list over the limit → 431 on that stream, connection survives", async () => {
     const raw = await RawH2.connect(fx.port, secure);
     const big = Buffer.alloc(4000, "v").toString(); // 5 × 4 KB > the 16 KB list limit, under the 2× hard cap

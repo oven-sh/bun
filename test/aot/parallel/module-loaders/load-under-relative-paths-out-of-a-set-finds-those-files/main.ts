@@ -2,7 +2,7 @@
 // a relative path finds the file that it names from the folder of this file, with or without its extension, or the index file of a folder.
 // So neither load can be refused at run time, and the build warns about neither.
 // Build prints: 0 x warn: TS100064: this import path isn't a constant. If it resolves to code that isn't in the executable, the import throws at run time (data files still load). Add the file as an entry point, or build with --aot-allow-code-from-disk
-// STATISTIC: FlowEdgesLogged <= 42000
+// STATISTIC: FlowEdgesLogged <= 44000
 import { createRequire } from "node:module";
 import { count } from "./app/registry.ts";
 

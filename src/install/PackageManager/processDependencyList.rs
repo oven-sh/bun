@@ -509,7 +509,7 @@ impl PackageManager {
                     | ResolutionTag::LocalTarball
                     | ResolutionTag::RemoteTarball
             )
-            // `bun pm fetch` downloads what's in bun.lock and doesn't resolve any dependency.
+            // None waits for the checkout of a git dependency that already has its package.
             && self.task_queue.get(&task_id).is_some_and(|waiting| {
                 (waiting.iter()).any(|waiter| matches!(waiter, TaskCallbackContext::Dependency(_)))
             })

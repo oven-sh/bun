@@ -20,6 +20,7 @@ extern "C" void Bun__NodeHTTPResponse_onReadParsed(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_markTunneled(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_spillPendingWrite(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_onClose(void* zigResponse, JSC::EncodedJSValue jsValue);
+extern "C" void NodeHTTPResponse__adoptRequestTrailers(void* zigResponse, const char* data, size_t length);
 extern "C" void us_socket_free_stream_buffer(us_socket_stream_buffer_t* streamBuffer);
 extern "C" uint64_t uws_res_get_remote_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
 extern "C" uint64_t uws_res_get_local_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
@@ -232,33 +233,30 @@ void JSNodeHTTPServerSocket::releaseTunnelReadsForUpgrade()
 }
 
 template<bool SSL>
-static std::string* requestTrailersFor(us_socket_t* socket)
+static void takeRequestTrailers(us_socket_t* socket, void* zigResponse)
 {
     /* A JSNodeHTTPServerSocket only exists for node:http compat connections,
      * whose ext block is the derived NodeHttpResponseData (HttpContext::onOpen). */
     auto* httpResponseData = (uWS::NodeHttpResponseData<SSL>*)us_socket_ext(socket);
-    return &httpResponseData->nodeHttpRequestTrailers;
+    const std::string& trailers = httpResponseData->nodeHttpRequestTrailers;
+    if (trailers.empty()) {
+        return;
+    }
+    NodeHTTPResponse__adoptRequestTrailers(zigResponse, trailers.data(), trailers.size());
+    httpResponseData->releaseRequestTrailers();
 }
 
-/* Move the connection's captured trailer section out, returning its (ptr, length)
- * through a thread-local buffer that stays valid until the next call on this
- * thread. Called by NodeHTTPResponse at the request's body fin, still inside the
- * parser, so a pipelined request cannot overwrite or inherit another's trailers. */
-extern "C" size_t Bun__NodeHTTP__takeRequestTrailerBytes(bool is_ssl, us_socket_t* socket, const char** out)
+/* Called at the request's body fin, inside the parser: the connection holds none of the section when the reader's JavaScript runs. */
+extern "C" void Bun__NodeHTTP__takeRequestTrailerBytes(bool is_ssl, us_socket_t* socket, void* zigResponse)
 {
-    *out = nullptr;
     if (!socket || us_socket_is_closed(socket)) {
-        return 0;
+        return;
     }
-    std::string* trailers = is_ssl ? requestTrailersFor<true>(socket) : requestTrailersFor<false>(socket);
-    if (trailers->empty()) {
-        return 0;
+    if (is_ssl) {
+        takeRequestTrailers<true>(socket, zigResponse);
+    } else {
+        takeRequestTrailers<false>(socket, zigResponse);
     }
-    static thread_local std::string taken;
-    taken = std::move(*trailers);
-    trailers->clear();
-    *out = taken.data();
-    return taken.size();
 }
 
 /* Parse a raw trailer section into a flat [name, value, ...] JSArray, or
@@ -709,15 +707,23 @@ bool JSNodeHTTPServerSocket::startPipelinedResponse(JSC::VM& vm, JSNodeHTTPRespo
     return true;
 }
 
+template<bool SSL>
+static void stopHTTPParsingImpl(us_socket_t* socket)
+{
+    auto* httpResponseData = (uWS::NodeHttpResponseData<SSL>*)us_socket_ext(socket);
+    httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_NODE_PARSING_STOPPED;
+    httpResponseData->releaseRequestTrailers();
+}
+
 void JSNodeHTTPServerSocket::stopHTTPParsing()
 {
     if (!socket || upgraded || us_socket_is_closed(socket)) {
         return;
     }
     if (is_ssl) {
-        reinterpret_cast<uWS::HttpResponseData<true>*>(us_socket_ext(socket))->state |= uWS::HttpResponseData<true>::HTTP_NODE_PARSING_STOPPED;
+        stopHTTPParsingImpl<true>(socket);
     } else {
-        reinterpret_cast<uWS::HttpResponseData<false>*>(us_socket_ext(socket))->state |= uWS::HttpResponseData<false>::HTTP_NODE_PARSING_STOPPED;
+        stopHTTPParsingImpl<false>(socket);
     }
 }
 

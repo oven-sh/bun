@@ -4931,6 +4931,40 @@ impl VirtualMachine {
         }
     }
 
+    /// Watches the file that a plugin's `onLoad` in the `file` namespace is asked to load. `key` is the module's key.
+    pub fn add_plugin_served_file_to_watcher(&self, key: &[u8]) {
+        let watcher = self.bun_watcher_ptr();
+        if watcher.is_null() {
+            return;
+        }
+        // As for a file Bun loads itself, `?query` is not part of the file's path.
+        let key = match bun_core::strings::index_of_char_usize(key, b'?') {
+            Some(query) => &key[..query],
+            None => key,
+        };
+        if !bun_paths::is_absolute(key) || bun_core::strings::contains(key, b"node_modules") {
+            return;
+        }
+        // SAFETY: as in `add_to_watcher_if_needed`. `is_watching` takes `Watcher.mutex`.
+        if unsafe { (*watcher).is_watching(key) } {
+            return;
+        }
+        // The resolver passes on a key that it did not find as the plugin spelled it, and two spellings are two files to the watcher.
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let Some(path) = bun_paths::resolve_path::join_abs_string_buf_z_checked::<
+            bun_paths::resolve_path::platform::Auto,
+        >(self.top_level_dir(), &mut buf[..], &[key]) else {
+            return;
+        };
+        // Not a directory, and not a FIFO: kqueue opens what it watches, and that `open` can block.
+        if !bun_sys::stat(path)
+            .is_ok_and(|stat| bun_sys::is_regular_file(stat.st_mode as bun_sys::Mode))
+        {
+            return;
+        }
+        self.add_to_watcher_if_needed(path.as_bytes());
+    }
+
     /// `add_to_watcher_if_needed`, for threads that work for this one. `None` unless watch mode is
     /// enabled.
     pub fn watcher_for_threads(&self) -> Option<impl Fn(&[u8]) + Send + Sync + 'static> {

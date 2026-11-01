@@ -54,6 +54,16 @@ impl ImportWatcher {
             .items::<"package_json", Option<&'static bun_watcher::PackageJSON>>()[index as usize]
     }
 
+    /// Whether `file_path` is in the watch list.
+    pub fn is_watching(&self, file_path: &[u8]) -> bool {
+        match self {
+            ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => {
+                w.is_watching(Watcher::get_hash(file_path))
+            }
+            ImportWatcher::None => false,
+        }
+    }
+
     #[inline]
     pub fn add_file_by_path_slow(&mut self, file_path: &[u8]) -> bool {
         match self {

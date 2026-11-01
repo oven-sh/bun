@@ -995,9 +995,8 @@ impl Checker<'_, '_> {
                         })
                     })
             {
-                let end = self.end_of_string_at(cx.file, specifier_use.pos);
                 self.error_at(
-                    (cx.file, specifier_use.pos, end),
+                    (cx.file, specifier_use.pos, 0),
                     1543,
                     &[Arg::Bytes(self.module_options(cx.file).module.name())],
                 );

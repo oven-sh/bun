@@ -1,5 +1,6 @@
 use bun_core::strings;
-use bun_sema::atom::Interner;
+use bun_sema::atom::{Atom, Interner};
+use bun_sema::check::spans::token_end;
 use bun_sema::hir::ModuleName;
 use bun_sema::resolve::{Dialect, ScriptKind};
 use bun_sema::session::Session;
@@ -33,18 +34,20 @@ pub fn name_imported_files(
         false,
         true,
     );
-    let imports = file.specifier_uses.iter().map(|it| it.pos as usize);
-    let augmented = (file.modules.iter())
-        .filter(|it| matches!(it.name, ModuleName::String(_)))
-        .map(|it| it.name_pos as usize);
-    let mut literals: Vec<usize> = imports.chain(augmented).collect();
-    literals.sort_unstable();
-    literals.dedup();
+    let imports = (file.specifier_uses.iter()).map(|it| (it.pos as usize, it.spec));
+    let augmented = file.modules.iter().filter_map(|it| match it.name {
+        ModuleName::String(name) => Some((it.name_pos as usize, name)),
+        _ => None,
+    });
+    let mut literals: Vec<(usize, Atom)> = imports.chain(augmented).collect();
+    literals.sort_unstable_by_key(|&(start, _)| start);
+    literals.dedup_by_key(|&mut (start, _)| start);
     let directory = &path[..strings::last_index_of_char(path, b'/').unwrap_or(0)];
     let mut named = Vec::with_capacity(text.len() + literals.len() * 3);
     let mut copied = 0;
-    for start in literals {
-        let Some(specifier) = string_literal_at(text, start) else {
+    for (start, value) in literals {
+        let Some((specifier, closing_quote)) = string_literal_at(text, start, atoms.bytes(value))
+        else {
             continue;
         };
         let Some(file_name) = file_name_of(directory, specifier, is_written) else {
@@ -52,19 +55,34 @@ pub fn name_imported_files(
         };
         named.extend_from_slice(&text[copied..=start]);
         named.extend_from_slice(&file_name);
-        copied = start + 1 + specifier.len();
+        copied = closing_quote;
     }
     named.extend_from_slice(&text[copied..]);
     named
 }
 
-fn string_literal_at(text: &[u8], start: usize) -> Option<&[u8]> {
+/// The value of the closed string literal at `start`, which the parser read as `value`, and where its closing quote is.
+fn string_literal_at<'a>(
+    text: &'a [u8],
+    start: usize,
+    value: &'a [u8],
+) -> Option<(&'a [u8], usize)> {
     let quote = *text.get(start).filter(|it| matches!(it, b'"' | b'\''))?;
     let rest = &text[start + 1..];
     let length = rest
         .iter()
-        .position(|&byte| matches!(byte, b'\\' | b'\n') || byte == quote)?;
-    (rest[length] == quote).then_some(&rest[..length])
+        .position(|&byte| matches!(byte, b'\\' | b'\n' | b'\r') || byte == quote)?;
+    if rest[length] == quote {
+        return Some((&rest[..length], start + 1 + length));
+    }
+    let last = token_end(text, start, false) - 1;
+    let inside = text.get(start + 1..last)?;
+    // An odd number of backslashes escapes the quote, and then the literal is not closed.
+    let backslashes = inside.iter().rev().take_while(|&&byte| byte == b'\\');
+    let is_closed = text[last] == quote && backslashes.count() % 2 == 0;
+    // The file name is written between the quotes as it is, so nothing in it may need an escape.
+    let needs_escape = strings::index_of_any(value, &[b'\\', b'\n', b'\r', quote]).is_some();
+    (is_closed && !needs_escape).then_some((value, last))
 }
 
 fn file_name_of(
@@ -125,13 +143,14 @@ mod tests {
 
     use super::name_imported_files;
 
-    const WRITTEN: [&[u8]; 6] = [
+    const WRITTEN: [&[u8]; 7] = [
         b"index.d.ts",
         b"area.d.ts",
         b"tools/index.d.ts",
         b"tools/ruler.d.ts",
         b"node.d.mts",
         b"old.d.cts",
+        b"quo\"te.d.ts",
     ];
 
     fn named(path: &[u8], text: &str) -> String {
@@ -195,6 +214,23 @@ declare module "./area.js" {
     #[test]
     fn what_is_not_a_written_file_stays() {
         let text = "import \"./area.js\";\nimport \"./gone\";\nimport \"../outside\";\nimport \"area\";\nimport \"./data.json\";\nexport declare const text = \"./area\";\n";
+        assert_eq!(named(b"index.d.ts", text), text);
+    }
+
+    #[test]
+    fn a_literal_with_a_continued_line_or_an_escape_names_its_file() {
+        assert_eq!(
+            named(
+                b"index.d.ts",
+                "export * from \"./area\\\r\n\";\nexport * from './are\\\na';\nexport * from \"./\\u0061rea\";\nimport \"./tools\\x2fruler\";\nimport './quo\"te';\n"
+            ),
+            "export * from \"./area.js\";\nexport * from './area.js';\nexport * from \"./area.js\";\nimport \"./tools/ruler.js\";\nimport './quo\"te.js';\n"
+        );
+    }
+
+    #[test]
+    fn a_literal_that_is_not_closed_or_a_name_that_needs_an_escape_stays() {
+        let text = "import \"./quo\\\"te\";\nimport \"./area\nimport \"./area\\\"\nimport \"./area";
         assert_eq!(named(b"index.d.ts", text), text);
     }
 }

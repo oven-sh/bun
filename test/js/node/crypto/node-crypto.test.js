@@ -914,12 +914,13 @@ it("getCipherInfo() takes keyLength and ivLength as unsigned 32-bit integers", (
       expect(() => crypto.getCipherInfo("aes-128-gcm", { [option]: length })).toThrow(
         expect.objectContaining({
           code: "ERR_OUT_OF_RANGE",
-          message: expect.stringContaining(`"options.${option}" is out of range. It must be >= 0 && <= 4294967295.`),
+          message: `The value of "options.${option}" is out of range. It must be >= 0 && <= 4294967295. Received ${length}`,
         }),
       );
     }
   }
   expect(crypto.getCipherInfo("aes-128-gcm", { ivLength: 2 ** 32 - 1 }).ivLength).toBe(2 ** 32 - 1);
+  expect(crypto.getCipherInfo("aes-128-gcm", { keyLength: 2 ** 32 - 1 })).toBeUndefined();
 });
 
 describe("ECDH", () => {

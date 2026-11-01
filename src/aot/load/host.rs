@@ -38,6 +38,7 @@ use crate::load::disk_delegation::{
 };
 use crate::load::evaluated_texts::EvaluatedTexts;
 use crate::load::externals::{contains, is_external};
+use crate::load::import_meta_glob;
 use crate::load::loaders::{
     BY_NAME, HostLoaderKind, host_loader_kind, loader_by_name, loader_by_path, loader_by_query,
     loader_named_by_path, parses_text_as_data, script_kind_of, to_host_loader,
@@ -125,6 +126,8 @@ pub(crate) struct LoadHost<'a> {
     plugins: PluginModules<'a>,
     modules_with_queries: ModulesWithQueries,
     evaluated_texts: EvaluatedTexts,
+    /// The files of the project that take something from the test runner. A file is finished before the texts that it holds are read.
+    take_from_test_runner: Guarded<FxHashSet<Vec<u8>>>,
     react_compiler: ReactCompiler<'a>,
     entry_point_paths: Vec<Vec<u8>>,
     files_of_tests: Option<FilesOfTests>,
@@ -257,6 +260,7 @@ impl<'a> LoadHost<'a> {
             plugins: PluginModules::new(provider, disk, messages, &load.in_memory_files),
             modules_with_queries: ModulesWithQueries::default(),
             evaluated_texts: EvaluatedTexts::new(),
+            take_from_test_runner: Guarded::new(FxHashSet::default()),
             react_compiler: ReactCompiler::new(load.react_compiler, provider, messages),
             binary_entry_point_paths: binary_entry_point_paths.collect(),
             entry_points_that_run_despite_their_names,
@@ -349,6 +353,18 @@ impl<'a> LoadHost<'a> {
     fn runs_despite_its_name(&self, path: &[u8]) -> bool {
         is_declaration_file_name(path)
             && self.is_among(&self.entry_points_that_run_despite_their_names, path)
+    }
+
+    /// A text may hold a text in turn.
+    fn find_file_that_holds_text(&self, path: &[u8]) -> Option<Vec<u8>> {
+        let mut holder = None;
+        let mut path = path.to_vec();
+        while self.evaluated_texts.contains(&path) {
+            let folder = &path[..bun_core::strings::last_index_of_char(&path, b'/').unwrap_or(0)];
+            path = self.evaluated_texts.holder_in_folder(folder)?;
+            holder = Some(path.clone());
+        }
+        holder
     }
 
     fn is_of_tests(&self, path: &[u8]) -> bool {
@@ -650,6 +666,37 @@ impl Host for LoadHost<'_> {
 
     fn extra_file_extensions(&self) -> &[(Vec<u8>, ScriptKind)] {
         &self.extra_extensions
+    }
+}
+
+impl LoadHost<'_> {
+    fn import_names_or_compile_components<'s>(
+        &self,
+        arena: &'s Arena,
+        atoms: &Interner<'s>,
+        request: &mut TransformRequest<'_, 's>,
+        source: &mut ParsedSource,
+    ) -> TreeChange {
+        // A file that gets the names keeps its components as they are written.
+        let load = &self.input.options.load;
+        let by_workers_alone = &load.loaded_by_workers_alone;
+        if load.runs_tests
+            && source.kind == SourceKind::Program
+            && (by_workers_alone.binary_search_by(|path| path[..].cmp(request.path))).is_err()
+            && test_runner_names::import_used_names(
+                arena,
+                atoms,
+                request,
+                test_runner_names::FileOfTestRun {
+                    has_globals_of_vitest: load.has_globals_of_vitest,
+                    is_entry_point: self.is_entry_point(request.path),
+                },
+            ) == TreeChange::Changed
+        {
+            source.has_names_of_test_runner = true;
+            return TreeChange::Changed;
+        }
+        self.react_compiler.transform(arena, atoms, request, source)
     }
 }
 
@@ -1243,20 +1290,16 @@ impl CodeHost for LoadHost<'_> {
         payload: &mut Option<HostPayload>,
     ) -> TreeChange {
         let source = parsed_source_mut(payload);
-        // A tree is changed once, so a file that gets the names keeps its components as they are written.
-        let load = &self.input.options.load;
-        if load.runs_tests
-            && source.kind == SourceKind::Program
-            && test_runner_names::import_used_names(
-                arena,
-                atoms,
-                request,
-                load.has_globals_of_vitest,
-            ) == TreeChange::Changed
-        {
-            return TreeChange::Changed;
+        let changed = self.import_names_or_compile_components(arena, atoms, request, source);
+        // It goes by the shape of the tree alone, and what stood in the tree keeps its place.
+        let (provider, messages) = (self.input.provider, self.input.messages);
+        let runs_tests = self.input.options.load.runs_tests;
+        match import_meta_glob::expand_calls(
+            provider, messages, arena, atoms, request, source, runs_tests,
+        ) {
+            TreeChange::Changed => TreeChange::Changed,
+            TreeChange::Unchanged => changed,
         }
-        self.react_compiler.transform(arena, atoms, request, source)
     }
 
     fn finish_file(
@@ -1266,13 +1309,33 @@ impl CodeHost for LoadHost<'_> {
     ) -> Vec<HostResolution> {
         let source = parsed_source_mut(payload);
         let needs_declarations = self.react_compiler.needs_declarations(source);
+        // No executable holds a file of the project that takes something from the test runner, wherever it lies. A package that asks `typeof jest` to find out where it runs
+        // is given the name too, and the executable holds it.
+        // A text that a file evaluates has a path of its own, which lies nowhere: `new Function("fake", "Date.now = fake")`. It goes by the file that holds it.
+        let holder = self.find_file_that_holds_text(request.path);
+        let is_in_package = is_in_node_modules(holder.as_deref().unwrap_or(request.path));
+        let is_of_tests = match &holder {
+            Some(holder) => {
+                self.is_of_tests(holder) || self.take_from_test_runner.lock().contains(holder)
+            }
+            None => {
+                let takes = !is_in_package && builtin_uses::takes_from_test_runner(request);
+                if takes {
+                    (self.take_from_test_runner.lock()).insert(request.path.to_vec());
+                }
+                takes || self.is_of_tests(request.path)
+            }
+        };
         let input = BuiltinUseInput {
             names: self.input.builtin_names,
             platform: self.input.platform,
             replaced: &self.input.options.load.replaced_builtins,
             replaced_members_sought: match self.input.options.load.runs_tests {
                 false => ReplacedMembersSought::NamesAdded,
-                true if is_in_node_modules(request.path) => ReplacedMembersSought::Written,
+                true if is_in_package => ReplacedMembersSought::Written,
+                true if self.files_of_tests.is_some() && !is_of_tests => {
+                    ReplacedMembersSought::NamesAddedByProduct
+                }
                 true => ReplacedMembersSought::WrittenOrNamed,
             },
             is_served_by_other_images: self.input.options.aot.imports_are_in_other_images,
@@ -1305,7 +1368,8 @@ impl CodeHost for LoadHost<'_> {
             source.library_modules_written_as_values = named.written_as_values;
         }
         source.loads_by_unknown_name = named.loads_by_unknown_name;
-        source.is_of_tests = self.is_of_tests(request.path);
+        source.is_of_tests = is_of_tests;
+        source.is_in_package = is_in_package;
         source.unknown_names_at = named.unknown_names_at;
         // Without the option the run time refuses code that is not in the program.
         if self.input.options.aot.loads_code_from_disk {

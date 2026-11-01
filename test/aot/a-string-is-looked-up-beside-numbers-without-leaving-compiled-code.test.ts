@@ -51,7 +51,7 @@ test("a key that is known to be a string is found in a Map and a Set that also h
   let calls = 0;
   for (const line of readFileSync(path, "utf8").split("\n")) {
     const [count, name] = line.split("\toperation:");
-    if (/^operationAOT(MapGet|MapHas|MapSet|SetHas|SetAdd)$/.test(name)) calls += Number(count);
+    if (/^operationAOT(MapGet|MapFind|MapHas|MapSet|SetHas|SetAdd)$/.test(name)) calls += Number(count);
   }
   // Five lookups a turn. Filling the tables takes a few calls.
   expect(calls).toBeLessThan(turns / 10);

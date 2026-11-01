@@ -458,6 +458,7 @@ impl<'a> Build<'a> {
         let options = self.options;
         let code = CodeOptions {
             mocks_any_file: options.load.mocks_any_module || options.load.runs_tests,
+            follows_paths_to_functions_of_other_files: options.load.runs_tests,
             ..options.code.clone()
         };
         let limits = self.limits.clone();
@@ -621,6 +622,7 @@ impl<'a> Build<'a> {
         // One resolver for each search, made at its first question. Not one for all: between two searches the host is told to leave other files alone.
         let is_built_upon = options.aot.shares_realms && !options.aot.is_part_of_test_files;
         let find_code = |files: &dyn CodeView<'_>,
+                         all: &dyn CodeView<'_>,
                          (paths, is_built_upon): (&PathOptions, bool),
                          in_parallel: InParallel<'_>| {
             let tables = [FileFinderTables::default(), FileFinderTables::default()];
@@ -651,6 +653,10 @@ impl<'a> Build<'a> {
                 },
                 working_directory: &request.code.working_directory,
                 is_held_below: &is_held_below,
+                holds_file: &|path| {
+                    let mut compiled = all.compiled_files().iter();
+                    compiled.any(|&file| all.file_name(file) == path)
+                },
                 parameters_below,
                 resolve_import: &|importer, written| from_here().find_import(importer, written),
                 is_built_upon,
@@ -698,7 +704,7 @@ impl<'a> Build<'a> {
                     .filter(|&file| !searched_before.contains(code.file_name(file)))
                     .collect(),
             };
-            let found = find_code(&some, (&longer.paths, false), &in_parallel);
+            let found = find_code(&some, code, (&longer.paths, false), &in_parallel);
             let with_starts: FxHashSet<Vec<u8>> = found.files_with_starts.into_iter().collect();
             let searched = some.searched.iter().map(|&file| code.file_name(file));
             searched_before.extend(
@@ -874,7 +880,7 @@ impl<'a> Build<'a> {
             && (mentions_worker_constructor(files) || !parameters_below.is_empty())
         {
             let asked = (&options.paths, is_built_upon);
-            let found = find_code(files, asked, &self.parallel_runner());
+            let found = find_code(files, files, asked, &self.parallel_runner());
             files_with_starts.extend(found.files_with_starts);
             self.replaced_builtins.parameters_that_start_workers = found.parameters;
             self.started_workers.files = found.files;
@@ -954,7 +960,7 @@ impl<'a> Build<'a> {
                     };
                     let files = further.files();
                     let asked = (&options.paths, is_built_upon);
-                    let found = find_code(files, asked, &self.parallel_runner());
+                    let found = find_code(files, files, asked, &self.parallel_runner());
                     files_with_starts.extend(found.files_with_starts);
                     let started = StartedWorkers {
                         files: found.files,
@@ -976,12 +982,38 @@ impl<'a> Build<'a> {
                 return Err(Stage::Load);
             }
         }
+        self.loaded_by_workers_alone = self.find_files_with_names_that_workers_alone_load(files);
+        if !self.loaded_by_workers_alone.is_empty() {
+            return Err(Stage::Load);
+        }
         if !self.started_workers.copies.is_empty() || !self.started_workers.files.is_empty() {
             self.started_workers.held_texts = texts_of_program_files(files)
                 .map(|(path, size)| (path.to_vec(), size))
                 .collect();
         }
         self.compile_loaded(shared, project, application, then, kept_runtime)
+    }
+
+    /// `LoadOptions::loaded_by_workers_alone`, as far as this load has given them the names.
+    fn find_files_with_names_that_workers_alone_load(&self, files: &Files<'_>) -> Vec<Vec<u8>> {
+        let added = &self.options.load.entry_points_added_by_build;
+        let Some(graph) = self.import_graph.as_ref().filter(|_| !added.is_empty()) else {
+            return Vec::new();
+        };
+        let started = self.started_workers.files.iter();
+        let started: Vec<&[u8]> = started
+            .map(|file| &file.source_path[..])
+            .filter(|&path| added.iter().any(|added| added == path))
+            .collect();
+        let mut found: Vec<Vec<u8>> = (graph.find_files_reached_from_these_alone(&started).iter())
+            .map(|&file| FileId(file))
+            .filter(|&file| {
+                parsed_source(files, file).is_some_and(|source| source.has_names_of_test_runner)
+            })
+            .map(|file| files.module(file).file_name().to_vec())
+            .collect();
+        found.shared_sort_unstable();
+        found
     }
 
     fn compile_loaded<'s, R>(

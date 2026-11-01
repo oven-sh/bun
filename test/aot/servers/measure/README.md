@@ -38,6 +38,13 @@ installed `node_modules` instead, `MODULES=` of the script). The cores must be a
 server, route and column is started twice and warmed each time. `QUICK=1` (one start, two rounds of one-second windows) takes about an hour and scatters by up to 4% a row; thirty-two cores
 halve either, and `SERVERS=express,fastify` or `ROUTES=text,json` measure a part.
 
+### Requests per second alone, in minutes
+
+    test/aot/servers/measure/against-the-jit-quick.sh <bun with --aot> <released bun> [cores] [folder]
+
+The same three columns, one core for a server, the closed loop and nothing else: every route's requests per second, worst first, and the count ahead | level (within 3%) | behind.
+Eight servers, eight routes and three starts take thirteen minutes on 48 idle cores and two more to build; `STARTS=1` takes five. The cores must be a multiple of four.
+
 ## What makes the numbers fair
 
 - **Warm-up.** Every process is loaded with at least 200,000 requests of its route, and on until the instructions per request of three windows in a row agree within 2%,

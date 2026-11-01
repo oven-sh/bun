@@ -742,7 +742,7 @@ function f5 name="Box" module=m0 position=501 kind=BaseConstructor flags=[HasNew
   b9(v47):
     Return v47 @698
 }
-function f6 module=m0 position=2657 kind=Arrow flags=[IsChecked] length=1 captures=[{type=0 site=w24}] thisType={type=anything} parameters=[{type=number site=w26}] results=[{type=undefined|null|Generator<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f6 module=m0 position=2657 kind=Arrow flags=[IsChecked] length=1 captures=[{type=0 site=w24 variableName="b"}] thisType={type=anything} parameters=[{type=number site=w26}] results=[{type=undefined|null|Generator<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: 0, v1: number):
     Jump -> next b1() @2657
   b1():
@@ -835,8 +835,8 @@ runtimefunction id=GeneratorPrototypeNext function=f8 visibility=Private
 # CHECK-NEXT: b2(v13: int[0, 20]):
 # CHECK-NEXT: v14: 31 = Integer integer=31
 # CHECK-NEXT: v15: i32 = CallBuiltin -, v8, v14 overload=MathImul/0 accessSite=0
-# CHECK-NEXT: v16: Generator = NewGenerator v7 function=f3
-# CHECK-NEXT: v17: anything = NewHeapFrame v16 function=f17 numberOfWords=3
+# CHECK-NEXT: v16: Generator = NewGenerator v7 function=f3 [getsHeapFrame]
+# CHECK-NEXT: v17: anything = NewHeapFrame v16, v7 function=f17 numberOfWords=3
 # CHECK-NEXT: PutHeapFrameWord v17, v16
 # CHECK-NEXT: PutHeapFrameWord v17, v13 index=1
 # CHECK-NEXT: PutHeapFrameWord v17, v7 index=2

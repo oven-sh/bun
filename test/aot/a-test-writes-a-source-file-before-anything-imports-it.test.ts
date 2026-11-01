@@ -43,6 +43,9 @@ const cases: Record<string, Case> = {
   "what import.meta.resolve() answers": written(
     () => `writeFileSync(fileURLToPath(import.meta.resolve("./state.js")), ${text})`,
   ),
+  "the path of the test file with another name at its end": written(
+    () => `writeFileSync(import.meta.path.replace("case.test.js", "state.js"), ${text})`,
+  ),
   "a path kept in an object": written(() => `const paths = { state: ${own} }; writeFileSync(paths.state, ${text})`),
   "one of two names": written(
     () =>
@@ -52,6 +55,18 @@ const cases: Record<string, Case> = {
     () => `const put = (name, text) => writeFileSync(join(import.meta.dir, name), text); put("state.js", ${text})`,
   ),
   "a path from the working directory": written(id => `writeFileSync("${id}/state.js", ${text})`),
+  "a path joined to process.cwd()": written(id => `writeFileSync(join(process.cwd(), "${id}", "state.js"), ${text})`),
+  "a path made by resolve() from process.cwd()": written(
+    id => `writeFileSync(resolve(process.cwd(), "${id}/state.js"), ${text})`,
+  ),
+  "process.cwd() in a template": written(id => "writeFileSync(`${process.cwd()}/" + id + "/state.js`, " + text + ")"),
+  "process.cwd() kept in a const": written(
+    id =>
+      `const root = process.cwd(); const folder = join(root, "${id}"); writeFileSync(folder + "/state.js", ${text})`,
+  ),
+  "cwd() of node:process": written(
+    id => `const { cwd } = require("node:process"); writeFileSync(join(cwd(), "${id}", "state.js"), ${text})`,
+  ),
   "a function read off the module": written(() => `fs.writeFileSync(${own}, ${text})`),
   "a function under another name": written(() => `const put = fs.writeFileSync; put(${own}, ${text})`),
   "fs.promises.writeFile": written(() => `await fs.promises.writeFile(${own}, ${text})`),
@@ -158,6 +173,85 @@ const cases: Record<string, Case> = {
     }),
     prints: ["100 110 bump,count,extra"],
   },
+  // The helper says what is done, and the test file says to which file.
+  ...Object.fromEntries(
+    Object.entries({
+      "a function of another file takes the path": [`import { put } from "./put.js";`, `put(${own}, ${text})`],
+      "such a function under another name": [`import { put as write } from "./put.js";`, `write(${own}, ${text})`],
+      "such a function read off the namespace": [
+        `import * as helpers from "./put.js";`,
+        `helpers.put(${own}, ${text})`,
+      ],
+      "such a function that is the default export": [`import put from "./put.js";`, `put(${own}, ${text})`],
+      "such a function out of import()": [``, `const { put } = await import("./put.js"); put(${own}, ${text})`],
+      "such a function out of require()": [``, `const { put } = require("./put.cjs"); put(${own}, ${text})`],
+      "such a function that hands the path on to another file": [
+        `import { putThrough } from "./through.js";`,
+        `putThrough(${own}, ${text})`,
+      ],
+      "such a function that takes the name and joins it to its own folder": [
+        `import { putBeside } from "./lib/beside.js";`,
+        `putBeside("state", ${text})`,
+      ],
+      "such a function that removes what lies below": [
+        `import { clear } from "./put.js";`,
+        `clear(import.meta.dir + "/made"); say(await import("./made/state.js").then(() => "loaded", () => "not loaded"))`,
+      ],
+    }).map(([name, [imports, change]]): [string, Case] => [
+      name,
+      {
+        files: id => ({
+          "state.js": first,
+          "made/state.js": first,
+          "put.js": `import { rmSync, writeFileSync } from "node:fs";
+            export const put = (path, text) => writeFileSync(path, text);
+            export default function (path, text) { writeFileSync(path, text); }
+            export function clear(folder) { rmSync(folder, { recursive: true }); }`,
+          "put.cjs": `const { writeFileSync } = require("node:fs");\nexports.put = (path, text) => writeFileSync(path, text);\n`,
+          "through.js": `import { put } from "./put.js";\nexport function putThrough(path, text) { put(path, text); }\n`,
+          "lib/beside.js": `import { writeFileSync } from "node:fs";\nimport { join } from "node:path";
+            export function putBeside(name, text) { writeFileSync(join(import.meta.dir, "..", name + ".js"), text); }`,
+          "case.test.js": `${head(id)}${imports}\ntest("${id}", async () => { ${change}; ${change.includes("clear(") ? "" : look} });`,
+        }),
+        prints: [change.includes("clear(") ? "not loaded" : "100 110 bump,count,extra"],
+      },
+    ]),
+  ),
+  ...Object.fromEntries(
+    Object.entries({
+      "the name of the file is a constant of another file": [
+        `import { name } from "./names.js";`,
+        `writeFileSync(join(import.meta.dir, name), ${text})`,
+      ],
+      "the folder of the file is a constant of another file": [
+        `import { folder } from "./lib/names.js";`,
+        `writeFileSync(join(folder, "state.js"), ${text})`,
+      ],
+      "the path of the file is a constant of another file": [
+        `import * as names from "./lib/names.js";`,
+        `writeFileSync(names.path, ${text})`,
+      ],
+      "the path of the file is what a CommonJS file exports": [
+        ``,
+        `writeFileSync(require("./lib/names.cjs").path, ${text})`,
+      ],
+    }).map(([name, [imports, change]]): [string, Case] => [
+      name,
+      {
+        files: id => ({
+          "state.js": first,
+          "names.js": `export const name = "state.js";\n`,
+          "lib/names.js": `import { join } from "node:path";
+            export const folder = join(import.meta.dir, "..");
+            const path = join(folder, "state.js");
+            export { path };`,
+          "lib/names.cjs": `exports.path = require("node:path").join(__dirname, "..", "state.js");\n`,
+          "case.test.js": `${head(id)}${imports}\ntest("${id}", async () => { ${change}; ${look} });`,
+        }),
+        prints: ["100 110 bump,count,extra"],
+      },
+    ]),
+  ),
   "written before the tests begin": {
     files: id => ({
       "state.js": first,

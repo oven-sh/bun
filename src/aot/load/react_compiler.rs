@@ -118,6 +118,7 @@ impl<'a> ReactCompiler<'a> {
             settings: request.settings,
             is_entry_point: request.import_meta_main != Some(false),
             can_import_macros: tree.imports.iter().any(|it| it.attributes.is_some()),
+            expanded_globs: None,
         };
         let is_parsed = self.provider.compile_components(&file, &mut output);
         match output.failure {

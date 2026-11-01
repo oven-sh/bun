@@ -1596,6 +1596,8 @@ export const shapes: Shape[] = [
       return { "main.js": `function all(a, b, c) {\n  return ${operands.join(" && ") || "a"};\n}\nconsole.log(all(1, 2, 3), all(2147483647, -2147483648, 1), all(0.5, -0, null), all(-0, -0, -0));\n` };
     },
   },
+  // Its budget was restated once, on 10-31: 11,481 M and 259 MB were taken while a loop of over 4 KB got no copy of its unlikely paths. That cap is gone, and the
+  // second loop, whose sum may leave int32, is there twice: 14,210 M in a direct build, 11,332 M with SeparateUnlikelyLoopPaths off. Nothing in it grows faster than the shape.
   {
     name: "parts that two loops join to the key of a table",
     counted: "parts",
@@ -2146,6 +2148,38 @@ console.log(typeof outmost.inner);
     }),
   },
   {
+    // As a validator does: a family of functions that call one another hand a description round, and each makes a pattern of a member of it. The walk that works a pattern's text out comes to
+    // the end of its budget in the family; what it has learnt there for one call it knows for the next.
+    name: "functions that hand a description round and each make a regular expression of a member of it",
+    counted: "functions",
+    size: 30,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js":
+        lines(
+          size,
+          index =>
+            `function make${index}(options, inner) { return { ...options, kind: ${index}, inner, items: inner ? [inner] : [], pattern: options.pattern }; }`,
+        ) +
+        "function visit(schema, references, value) {\n  const next = schema.id === undefined ? references : [...references, schema];\n  switch (schema.kind) {\n" +
+        lines(size, index => `    case ${index}: return visit${index}(schema, next, value);`) +
+        "    default: return false;\n  }\n}\n" +
+        lines(
+          size,
+          index =>
+            `function visit${index}(schema, references, value) {\n` +
+            "  if (schema.inner !== undefined && !visit(schema.inner, references, value)) return false;\n" +
+            "  for (const item of schema.items) if (!visit(item, references, value)) return false;\n" +
+            `  for (const reference of references) if (reference.kind === ${(index + 1) % size} && !visit${(index + 1) % size}(reference, [], value)) return false;\n` +
+            "  return schema.pattern === undefined || new RegExp(schema.pattern).test(value);\n}",
+        ) +
+        "let root;\n" +
+        lines(size, index => `root = make${index}({ pattern: process.argv[${50 + index}] ?? "p${index}+", id: ${index % 3 ? "undefined" : `"i${index}"`} }, root);`) +
+        `console.log(root === undefined || visit(root, [], "p"));\n`,
+    }),
+  },
+  {
     name: "functions that each hold the same regular expression",
     counted: "functions",
     size: 1000,
@@ -2170,10 +2204,11 @@ console.log(typeof outmost.inner);
     }),
   },
   // Whether a value that a loop carries has its type only behind a test is asked of what arrives in its place, and here that is the value of the next place: the answer passes through all of them.
+  // All of them wait in the frame, and each move from one slot to the next was held against every live slot, one by one.
   {
     name: "texts that move up one place in every turn of a loop",
     counted: "texts",
-    size: 2000,
+    size: 4000,
     entry: "main.js",
     isExcludedFromCombinedBuild: true,
     write: size => ({
@@ -2228,7 +2263,7 @@ console.log(typeof outmost.inner);
     size: 1000,
     entry: "main.mjs",
     isExcludedFromCombinedBuild: true,
-    counts: ["ObjectsInFrameCellsHeldAgainstReads"],
+    counts: ["ObjectsInFrameCellsHeldAgainstReads", "ClobberPointsReadForCalls"],
     write: size => ({
       "main.mjs":
         `const seed = process.argv.length;\nfunction big() {\n  let s = seed;\n` +
@@ -2237,6 +2272,44 @@ console.log(typeof outmost.inner);
         lines(size, index => `  s += v${index}.a;`) +
         `  return s;\n}\nconsole.log(big());\n`,
     }),
+  },
+  {
+    // So many slots are alive together that their places in the frame go by ranges of positions. One slot has as many ranges as there are objects, and it was held against each cell range by range.
+    // On arm64 an object takes a third of the slots, and the frame goes by ranges from about 5,000 objects on: between the two sizes, where a count says nothing of growth.
+    name: "thousands of objects that are one of two and lie in the frame, each read once behind as many branches",
+    counted: "objects",
+    size: 3000,
+    entry: "main.mjs",
+    isExcludedFromCombinedBuild: true,
+    counts: process.arch === "x64" ? ["RangesHeldAgainstStackCells"] : undefined,
+    write: size => ({
+      "main.mjs":
+        `const seed = process.argv.length;\nfunction big() {\n  let s = seed;\n` +
+        lines(size, index => `  let v${index} = (seed + ${index}) % 3 ? { a: ${index} } : { a: ${index} + seed };`) +
+        lines(size, index => `  if (s & 1) s += ${index}; else s ^= ${index + 1};`) +
+        lines(size, index => `  s += v${index}.a;`) +
+        `  return s;\n}\nconsole.log(big());\n`,
+    }),
+  },
+  {
+    // Every loop tests its counter against one bound, which the calls name too. Each test walked all uses of the bound.
+    name: "loops that each add to one sum of fractions up to one bound, with a dozen calls behind each",
+    counted: "loops",
+    size: 500,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    counts: ["UsesReadForStepsBehindTests"],
+    write: size => {
+      const loop = (index: number) => `  for (let turn = 0; turn < turns; turn++) sum += step * ${index + 1};\n`;
+      const calls = "  s = mix(s, turns);\n".repeat(11);
+      return {
+        "main.js":
+          "function mix(s, v) { return (s * 33 + v) % 1000000007; }\nfunction big(turns, step) {\n" +
+          "  let s = 1;\n  let sum = 0.5;\n" +
+          lines(size, index => `${loop(index)}${calls}  s = mix(s, ${index});`) +
+          "  return s + sum;\n}\nconsole.log(big(3, 0.25));\n",
+      };
+    },
   },
   {
     // Each call tests the variable for the first function. The copies of the joins between the tests led both ways, and every result alive got a parameter at every test.
@@ -2304,6 +2377,38 @@ console.log(typeof outmost.inner);
             `  s += far(items[${index % 64}], s);`,
         ) +
         `  return s;\n}\nlet total = 0; for (let k = 0; k < 300; k++) total += big(k); console.log(total);\n`,
+    }),
+  },
+  // Loops with written bounds are written out turn by turn, and what is left is a row of joins without a cycle. A type that changed went on to the users of its value depth first, so a value behind
+  // n joins was typed 2^n times, each time with a range that no value had had before: eight turns around three took four minutes and 17 GB.
+  {
+    name: "turns of a loop with a written bound around a short loop that holds a try and a finally",
+    counted: "turns of the outer loop",
+    size: 2,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    counts: ["ValuesTypedFromChanges", "TypesInterned"],
+    write: size => ({
+      "main.js":
+        `function run(x, y, z) {\n  let a = x, b = y, c = z, d = 3, e = -1, f = 7;\n  for (let i = 0; i < ${size}; i++) {\n    let j = 0;\n    while (j < 4) {\n      j++;\n` +
+        `      try {\n        c += Math.max(e, 5);\n        e = e > c ? c : f;\n      } finally {\n        a ^= Math.max(j, d) & i;\n      }\n    }\n  }\n` +
+        `  return a + 3 * b + 5 * c + 7 * d + 11 * e + 13 * f;\n}\n` +
+        `console.log(run(65535, 12, 100), run(7, 3, 6), run(-1073741824, -1073741824, 2), run(100, 32768, 32767), run(2147483646, 7, 6));\n`,
+    }),
+  },
+  // Two integers change places and one is mixed with the other, so each value is computed from the two in front of it. Where the last one is compared, the back end asks whether it is a boolean, which
+  // goes by its operands. Asked again for every way that leads to a value, 48 statements took four seconds and 64 did not end.
+  {
+    name: "statements that each mix two integers that have just changed places, in front of a comparison",
+    counted: "statements",
+    size: 24,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js":
+        `const seed = process.argv.length;\nfunction mix(x, y) {\n  let a = x | 0, b = y | 0, t = 0;\n` +
+        lines(size, () => `  t = a; a = b; b = t; a ^= b & a;`) +
+        `  return a === 255;\n}\nlet sum = 0;\nfor (let i = 0; i < 1000; i++) sum += mix(seed + i, i * 7) ? 1 : 0;\nconsole.log(sum);\n`,
     }),
   },
 ];

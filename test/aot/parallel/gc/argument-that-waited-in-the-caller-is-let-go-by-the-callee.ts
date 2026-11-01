@@ -1,5 +1,6 @@
 // `f(make(), other())`: what make() returned waits in the caller while other() runs. Once f has set its parameter to null nothing names the object, and it is collected while f still runs.
 // Prints what the compiler saves: objects that are collected earlier
+// Alone: what is let go of goes by which bodies are copied into which, and that by all that the executable holds
 // Todo on win32 x64: Not every time: row 3517: some lines print that the object is kept: native frames there have home slots that nobody writes, and the collector reads what an earlier call left in them
 type Thing = { id: number; payload: number[] };
 let made = 0;

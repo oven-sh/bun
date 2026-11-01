@@ -1438,7 +1438,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f32 visibility=Private
 # -- generated: f0 overWords
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 508, patchpoints: 107, rare instructions: 868, polls: 4
+# CHECK-NEXT: instructions: 504, patchpoints: 107, rare instructions: 860, polls: 4
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="overWords"
 # CHECK: role=Source

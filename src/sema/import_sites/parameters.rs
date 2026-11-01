@@ -5,7 +5,7 @@ use crate::bind::{
 use crate::fold::Decisions;
 use crate::hir::{
     ExportSpecId, ExprId, ExprKind, File, Flags, FnId, FnKind, IdList, ImportEqualsId, NodeData,
-    PatKind, PropKey,
+    PatKind, PropKey, StmtKind,
 };
 use smallvec::SmallVec;
 
@@ -20,6 +20,84 @@ pub fn is_exported(hir: &File<'_>, bound: &Bound<'_>, symbol: SymbolId) -> bool 
 }
 
 type FindWritten<'a> = &'a dyn Fn(Atom) -> Vec<ExprId>;
+
+pub(super) fn find_names_exported_for(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    function: FnId,
+    find_written: FindWritten<'_>,
+) -> SmallVec<[Atom; 2]> {
+    let local = find_name_of(hir, bound, function, find_written).filter(|&name| {
+        name.is_some() && bound.is_stable_binding(name) && !bound.is_visible_to_eval(name)
+    });
+    let initialized = match bound.fns[function.idx()].owner {
+        FnOwner::Expr(expression) => match bound.parent_of_expr(expression) {
+            Parent::VarInit(declaration) => Some(hir[declaration].pat),
+            _ => None,
+        },
+        _ => None,
+    };
+    let is_function = |value: ExprId| {
+        let value = hir.skip_type_assertions(value);
+        match hir[value].kind {
+            ExprKind::Fn(written) => written == function,
+            ExprKind::Ident(_) => {
+                local.is_some_and(|it| bound.binding(value) == Binding::Symbol(it))
+            }
+            _ => false,
+        }
+    };
+    let exports_function = |declaration: Decl| match declaration {
+        Decl::Fn(declared) => declared == function,
+        Decl::Var(pattern) => Some(pattern) == initialized,
+        Decl::ExportSpec(specifier) => {
+            let statement = hir[hir[specifier].export];
+            !statement.has_module_specifier
+                && local.is_some_and(|it| bound.exported_binding(specifier) == Binding::Symbol(it))
+        }
+        Decl::ExportExpr(statement) => {
+            matches!(hir[statement].kind, StmtKind::ExportDefault(value) if is_function(value))
+        }
+        Decl::ExportsProperty(assignment) => {
+            matches!(hir[assignment].kind, ExprKind::Assign { op: None, value, .. } if is_function(value))
+        }
+        _ => false,
+    };
+    let exports = bound.table(bound.symbol(bound.file_symbol).exports);
+    let exported = exports.iter().filter(|&&(_, symbol)| {
+        let mut declarations = bound.symbol(symbol).decls.iter();
+        declarations.any(|&declaration| exports_function(declaration))
+    });
+    exported.map(|&(export, _)| export).collect()
+}
+
+pub(super) fn find_parameter_named(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    mention: ExprId,
+) -> Option<(FnId, usize)> {
+    let Binding::Symbol(parameter) = bound.binding(mention) else {
+        return None;
+    };
+    let &[Decl::Param(pattern)] = bound.symbol(parameter).decls else {
+        return None;
+    };
+    let PatParent::Param(id) = bound.pat_parent[pattern.idx()] else {
+        return None;
+    };
+    let function = bound.param_fn[id.idx()];
+    let place = hir[function].params.iter().position(|it| it == id)?;
+    let is_settled = matches!(
+        bound.binding_stability(parameter),
+        BindingStability::Stable | BindingStability::NotInitializedOnce
+    ) && bound.stores_to(parameter).is_empty()
+        && !bound.is_visible_to_eval(parameter)
+        && bound
+            .dynamic_lookup_scope(NodeData::Expr(mention))
+            .is_none()
+        && !hir[id].flags.contains(Flags::REST);
+    is_settled.then_some((function, place))
+}
 
 /// `BoundIn::finds_itself`, which walks the file.
 fn finds_itself(

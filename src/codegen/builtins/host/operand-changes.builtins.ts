@@ -36,9 +36,26 @@ const takingObjects = (taken: readonly number[], returns: b.TableType = b.any) =
     implementation: b.hostCall,
   } satisfies b.FunctionField;
 };
+const otherwiseAnswering = (returns: b.TableType | undefined) =>
+  returns === undefined
+    ? b.otherwiseBy(b.hostCall)
+    : ({
+        this: b.any,
+        args: { operand0: b.any.optional, others: b.any.rest },
+        returns,
+        capability: "js",
+        throws: true,
+        uses: { this: [b.everything], operand0: [b.everything], others: [b.everything] },
+        implementation: b.hostCall,
+      } satisfies b.FunctionField);
+const resultsOfMembersChangingNothing: Readonly<Record<b.BuiltinPath, b.TableType>> = {
+  "%UDPSocket%.prototype.setBroadcast": b.union(b.operand("operand0"), b.undefined),
+  "%UDPSocket%.prototype.setMulticastLoopback": b.union(b.operand("operand0"), b.undefined),
+};
 const methodTakingObjects = (path: b.BuiltinPath, taken: readonly number[]) => {
-  const field = takingObjects(taken);
-  return b.method(path, [{ ...field, uses: { this: objectHandedOver, ...field.uses } }, b.otherwiseBy(b.hostCall)]);
+  const returns = resultsOfMembersChangingNothing[path];
+  const field = takingObjects(taken, returns);
+  return b.method(path, [{ ...field, uses: { this: objectHandedOver, ...field.uses } }, otherwiseAnswering(returns)]);
 };
 // What the code of the function answers.
 const resultsOfBindingsChangingNothing: Readonly<Record<b.BuiltinPath, b.TableType>> = {
@@ -54,7 +71,8 @@ const answersOfBindingsChangingNothing: Readonly<Record<b.BuiltinPath, b.TableTy
   "native:Cpp:NodeURL.cpp:Bun::createNodeURLBinding": b.layoutOf("NodeURLBinding").fresh,
 };
 const bindingTakingObjects = (path: b.BuiltinPath, taken: readonly number[]) => {
-  const call = [takingObjects(taken, resultsOfBindingsChangingNothing[path]), b.otherwiseBy(b.hostCall)];
+  const returns = resultsOfBindingsChangingNothing[path];
+  const call = [takingObjects(taken, returns), otherwiseAnswering(returns)];
   const getter = answersOfBindingsChangingNothing[path];
   if (getter === undefined) return b.static(path, call);
   return b.static(path, { getter, capability: "heap", throws: true, implementation: b.generic, call });

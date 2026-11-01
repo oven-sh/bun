@@ -368,13 +368,13 @@ function f25 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # -- generated: floored ceiled f12
 # CHECK-LABEL: function {{*}}name="floored"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 55, patchpoints: 3, rare instructions: 27, polls: 1
+# CHECK-NEXT: instructions: 51, patchpoints: 3, rare instructions: 17, polls: 1
 # CHECK-NEXT: end of function f31
 # CHECK-LABEL: function {{*}}name="ceiled"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 40, patchpoints: 3, rare instructions: 25, polls: 1
+# CHECK-NEXT: instructions: 37, patchpoints: 3, rare instructions: 16, polls: 1
 # CHECK-NEXT: end of function f32
 # CHECK-LABEL: function f12 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 138, patchpoints: 20, rare instructions: 82, polls: 2
+# CHECK-NEXT: instructions: 132, patchpoints: 20, rare instructions: 64, polls: 2
 # CHECK-NEXT: end of function f12

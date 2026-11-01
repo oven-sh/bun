@@ -784,8 +784,8 @@
     "untyped": 33.6
   },
   "everyday-collections/map-get-by-object": {
-    "typed": 68,
-    "untyped": 68
+    "typed": 56,
+    "untyped": 56
   },
   "everyday-collections/map-get-by-string": {
     "typed": 61,
@@ -804,8 +804,8 @@
     "untyped": 1329.6
   },
   "everyday-collections/map-has-then-get": {
-    "typed": 49.4,
-    "untyped": 47.4
+    "typed": 30.9,
+    "untyped": 30.4
   },
   "everyday-collections/map-lru": {
     "typed": 561.8,
@@ -852,8 +852,8 @@
     "untyped": 181.6
   },
   "everyday-collections/set-of-objects": {
-    "typed": 50,
-    "untyped": 50
+    "typed": 39.5,
+    "untyped": 39.5
   },
   "everyday-collections/set-spread": {
     "typed": 133.4,
@@ -4508,8 +4508,8 @@
     "untyped": 56.3
   },
   "everyday-spellings/map-get.has-then-get": {
-    "typed": 88.3,
-    "untyped": 88.3
+    "typed": 50,
+    "untyped": 52.5
   },
   "everyday-spellings/map-loop.for-each": {
     "typed": 165,

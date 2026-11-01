@@ -5319,19 +5319,41 @@ runtimefunction id=ArrayTraversalTraverseArray function=f184 visibility=Private
 # CHECK: module=m0 position=1403 kind=Getter flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=int|whole|string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCalleeOnceRenamed, MakesNoTailCall] {
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: anything ~ undefined|null|L14|L22|L23|L26|L34|L37 = Upcast v0 castType=anything
-# CHECK-NEXT: v2: anything = PropGet v1 key="a" accessSite=328 receivers=[L14, L34]
-# CHECK-NEXT: v3: undefined|int|whole|string = AssumeType v2 provenType=undefined|int|whole|string
-# CHECK-NEXT: v4: undefined|int|whole|string ~ int|whole = Upcast v3 castType=anything
-# CHECK-NEXT: v5: 1 = Integer integer=1
-# CHECK-NEXT: v6: boolean ~ true = TypeTest v4 testedType=number
-# CHECK-NEXT: Branch v6 -> taken b1(| 0), notTaken b2(| 0)
-# CHECK-NEXT: b1(v7: int|whole):
-# CHECK-NEXT: v8: int|whole = Add v7, v5
-# CHECK-NEXT: Return v8
-# CHECK-NEXT: b2(v9: undefined|string) frequency=Unlikely:
-# CHECK-NEXT: v10: number|string|bigint = Add v9, v5
-# CHECK-NEXT: v11: int|whole|string = AssumeType v10 provenType=int|whole|string
-# CHECK-NEXT: Return v11
+# CHECK-NEXT: v2: boolean = TypeTest v1 testedType=L14|L22|L26|L34|L37
+# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b3()
+# CHECK-NEXT: b1(v3: L14|L22|L26|L34|L37):
+# CHECK-NEXT: v4: boolean = IsSlotFilled v3 key="a" receivers=[L14, L22, L26, L34, L37] level=Expected
+# CHECK-NEXT: Branch v4 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2(v5: guard):
+# CHECK-NEXT: v6: anything = GetSlot v3, v5 key="a" receivers=[L14, L22, L26, L34, L37] level=Expected accessSite=328
+# CHECK-NEXT: v7: undefined|int|whole|string = AssumeType v6 provenType=undefined|int|whole|string
+# CHECK-NEXT: Jump -> next b7(v7)
+# CHECK-NEXT: b3() frequency=Unlikely:
+# CHECK-NEXT: v8: boolean = TypeTest v1 testedType=L23
+# CHECK-NEXT: Branch v8 -> taken b4(| 0), notTaken b6()
+# CHECK-NEXT: b4(v9: L23) frequency=Unlikely:
+# CHECK-NEXT: v10: boolean = IsSlotFilled v9 key="a" receivers=[L23] level=Expected
+# CHECK-NEXT: Branch v10 -> taken b5(), notTaken b6()
+# CHECK-NEXT: b5() frequency=Unlikely:
+# CHECK-NEXT: v11: 1 = Integer integer=1
+# CHECK-NEXT: Jump -> next b7(v11)
+# CHECK-NEXT: b6() frequency=Rare:
+# CHECK-NEXT: v12: anything = PropGet v1 key="a" accessSite=328 receivers=[L14, L34]
+# CHECK-NEXT: v13: undefined|int|whole|string = AssumeType v12 provenType=undefined|int|whole|string
+# CHECK-NEXT: Jump -> next b7(v13)
+# CHECK-NEXT: b7(v14: undefined|int|whole|string):
+# CHECK-NEXT: v15: undefined|int|whole|string ~ int|whole = Upcast v14 castType=anything
+# CHECK-NEXT: v16: boolean ~ true = TypeTest v15 testedType=number
+# CHECK-NEXT: Branch v16 -> taken b8(| 0), notTaken b9(| 0)
+# CHECK-NEXT: b8(v17: int|whole):
+# CHECK-NEXT: v18: 1 = Integer integer=1
+# CHECK-NEXT: v19: int|whole = Add v17, v18
+# CHECK-NEXT: Return v19
+# CHECK-NEXT: b9(v20: undefined|string) frequency=Unlikely:
+# CHECK-NEXT: v21: 1 = Integer integer=1
+# CHECK-NEXT: v22: number|string|bigint = Add v20, v21
+# CHECK-NEXT: v23: int|whole|string = AssumeType v22 provenType=int|whole|string
+# CHECK-NEXT: Return v23
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="b"
 # CHECK: module=m0 position=1445 kind=Setter flags=[HasThis, HasExplicitName] length=1 thisType={type=L14} parameters=[{type=undefined|int|"again"}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -5569,7 +5591,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f184 visibility=Private
 # CHECK-LABEL: function {{*}}name="b"
 # CHECK: module=m0 position=2025 kind=Setter role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f18}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f18} creator=Entrypoint{target=f18 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f18, v1: anything, v2: anything):
-# CHECK-NEXT: v3: never = ThrowNewError message="'b' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v3: never = ThrowNewError message="'b' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="get"
@@ -5628,13 +5650,13 @@ runtimefunction id=ArrayTraversalTraverseArray function=f184 visibility=Private
 # CHECK-LABEL: function {{*}}name="computed"
 # CHECK: module=m0 position=5497 kind=Setter role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f49}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f49} creator=Entrypoint{target=f49 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f49, v1: anything, v2: anything):
-# CHECK-NEXT: v3: never = ThrowNewError message="'computed' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v3: never = ThrowNewError message="'computed' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="name"
 # CHECK: module=m0 position=7755 kind=Method role=GenericEntrypoint flags=[HasThis] captures=[{type=f78}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f78} creator=Entrypoint{target=f78 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f78, v1: anything):
-# CHECK-NEXT: v2: never = ThrowNewError message="'name' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v2: never = ThrowNewError message="'name' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="name"
@@ -5646,7 +5668,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f184 visibility=Private
 # CHECK-LABEL: function {{*}}name="name"
 # CHECK: module=m0 position=8064 kind=Method role=GenericEntrypoint flags=[HasThis] captures=[{type=f86}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f86} creator=Entrypoint{target=f86 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f86, v1: anything):
-# CHECK-NEXT: v2: never = ThrowNewError message="'name' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v2: never = ThrowNewError message="'name' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Members"
@@ -5660,7 +5682,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f184 visibility=Private
 # CHECK-LABEL: function {{*}}name="b"
 # CHECK: module=m0 position=10257 kind=Method role=GenericEntrypoint flags=[HasThis] captures=[{type=f98}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f98} creator=Entrypoint{target=f98 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f98, v1: anything):
-# CHECK-NEXT: v2: never = ThrowNewError message="'b' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v2: never = ThrowNewError message="'b' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="getter"

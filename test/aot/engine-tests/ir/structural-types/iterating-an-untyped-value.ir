@@ -1008,7 +1008,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f84 visibility=Private
 # CHECK: module=m0 position=1092 role=CoroutineRamp flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=Generator<undefined|null|1|"2", pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{ramp=f5 body=f127} {
 # CHECK-NEXT: b0(v0: anything, v1: function):
 # CHECK-NEXT: v2: Generator = NewGenerator v1 function=f5
-# CHECK-NEXT: v5: anything = NewHeapFrame v2 function=f127 numberOfWords=3
+# CHECK-NEXT: v5: anything = NewHeapFrame v2, v1 function=f127 numberOfWords=3
 # CHECK-NEXT: PutHeapFrameWord v5, v2
 # CHECK-NEXT: PutHeapFrameWord v5, v0 index=1
 # CHECK-NEXT: PutHeapFrameWord v5, v1 index=2
@@ -1148,7 +1148,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f84 visibility=Private
 # CHECK: module=m0 position=1092 role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f5}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f5} creator=Entrypoint{target=f5 arguments=Registers} inlineFrames=[{}, {callee=f5 callPosition=1092 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: f5, v1: anything):
 # CHECK-NEXT: v2: Generator = NewGenerator v0 function=f5
-# CHECK-NEXT: v5: anything = NewHeapFrame v2 function=f127 numberOfWords=3
+# CHECK-NEXT: v5: anything = NewHeapFrame v2, v0 function=f127 numberOfWords=3
 # CHECK-NEXT: PutHeapFrameWord v5, v2
 # CHECK-NEXT: PutHeapFrameWord v5, v1 index=1
 # CHECK-NEXT: PutHeapFrameWord v5, v0 index=2

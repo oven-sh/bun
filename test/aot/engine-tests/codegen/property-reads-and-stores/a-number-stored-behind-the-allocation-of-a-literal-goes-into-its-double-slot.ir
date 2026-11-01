@@ -1,8 +1,9 @@
 # A literal that is made on a path that is seldom taken, from values of which nothing is proven: the allocation lists a filler for the field declared number, and the value is stored behind it.
 # The site knows that the slot lies in the cell and holds a double and that the field takes every number, so it calls the stub that asks whether the value is a number and stores it.
 # Whatever is no number goes on as any other store into a known field, and leaves the slot.
+# Flow is kept from saying where the objects go: a number of an object that is known to be in hands that nobody knows, and that no code that knows the object names, is kept as a value.
 # FORM: AsRead
-# OPTIONS: heat=OnlyLoopsAreHot disable=pass:InlineCalls
+# OPTIONS: heat=OnlyLoopsAreHot disable=pass:InlineCalls disable=flow:HolderMutations
 # RUN: generate-code calls
 # RUN(GO): run-in-shell globalThis.publish = make => { for (const cents of [1, 2.5, -0, NaN, 2147483648, "two", null, undefined, 7n, {}]) { const made = make(true, "a", cents); print(Object.is(made.cents, cents), typeof made.cents, Object.keys(made).join()); made.cents = 3.25; print(made.cents); } const frozen = Object.freeze(make(true, "b", 1)); frozen.cents = 2; print(frozen.cents); };
 # REPEAT: k = 1..5

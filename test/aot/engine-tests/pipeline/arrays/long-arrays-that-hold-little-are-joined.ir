@@ -1631,7 +1631,7 @@ runtimefunction id=ObjectsToLocaleString function=f30
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function f9 module=
-# CHECK: m0 position=333 kind=Arrow role=EntryChecks flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=undefined|null|string site=w78 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=string site=w79 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f11] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCalleeOnceRenamed] creator=EntryChecks{body=f33 fallback=f35} {
+# CHECK: m0 position=333 kind=Arrow role=EntryChecks flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=undefined|null|string site=w78 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=string site=w79 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f11] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCalleeOnceRenamed, MakesNoTailCall] creator=EntryChecks{body=f33 fallback=f35} {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|string, v1: anything):
 # CHECK-NEXT: v2: boolean = TypeTest v0 testedType=string
 # CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2()

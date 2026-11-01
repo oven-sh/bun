@@ -11,6 +11,6 @@ try {
 }
 console.log(typeof createServer);
 /* Output:
-Error 'ClientRequest' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+Error 'ClientRequest' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, import it by name: import { ClientRequest } from "node:_http_client". (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
 function
 */

@@ -110,7 +110,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 parameter: None,
             }),
             TypeData::Cond { .. } | TypeData::IndexedAccess { .. } | TypeData::Keyof(_) => {
-                let constraint = match self.has_costly_base_constraint(ty) {
+                let constraint = match self.c.has_costly_base_constraint(ty) {
                     true => None,
                     false => self.c.base_constraint_of(ty),
                 };

@@ -140,14 +140,16 @@ impl Resolver<'_, '_> {
         (table::entry(global).mutability == Mutability::AlwaysLocked).then_some(global)
     }
 
+    fn holder_of(id: BuiltinId) -> BuiltinId {
+        match table::has_flag(id, BuiltinFlags::IS_GLOBAL_OBJECT) {
+            true => BuiltinId::GlobalThis,
+            false => table::canonical_id(id),
+        }
+    }
+
     pub(super) fn find_builtin(&self, value: ExprId) -> Option<BuiltinId> {
         let holder = self.value_of(value).or_else(|| self.held_value_of(value))?;
-        Some(
-            match table::has_flag(holder.path.id, BuiltinFlags::IS_GLOBAL_OBJECT) {
-                true => BuiltinId::GlobalThis,
-                false => table::canonical_id(holder.path.id),
-            },
-        )
+        Some(Self::holder_of(holder.path.id))
     }
 
     /// The built-in objects that the expression may stand for.
@@ -161,6 +163,19 @@ impl Resolver<'_, '_> {
     fn takes_no_names(holder: BuiltinId) -> bool {
         table::has_flag(holder, BuiltinFlags::IS_LOCKED_OBJECT)
             || table::has_flag(holder, BuiltinFlags::IS_CLOSED_TO_OTHER_NAMES)
+    }
+
+    // Every object inherits from Object.prototype: one name there, and no miss and no `for in` of the program is known any more.
+    pub(super) fn takes_names_that_an_executable_spells(id: BuiltinId) -> bool {
+        let holder = Self::holder_of(id);
+        holder != BuiltinId::ObjectPrototype && Self::takes_no_names(holder)
+    }
+
+    fn seeks_names_added_alone(&self) -> bool {
+        matches!(
+            self.input.replaced_members_sought,
+            ReplacedMembersSought::NamesAdded | ReplacedMembersSought::NamesAddedByProduct
+        )
     }
 
     // `object.name = f`, `delete object[key]`, `object.name++`, `spyOn(object, key)`, `Object.defineProperty(object, key, d)`, `Reflect.set(target, key, f, object)`
@@ -414,6 +429,13 @@ impl Resolver<'_, '_> {
         }
     }
 
+    fn find_keys_written(&self, key: &KeyOfWrite) -> Vec<Atom> {
+        match *key {
+            KeyOfWrite::Name(name) => vec![name],
+            KeyOfWrite::Computed(key) => self.find_keys_spelled_for(key),
+        }
+    }
+
     /// The key itself, what a constant holds, an element of the list that a loop walks, what the calls of a function of the file pass for it:
     /// `function plant(name) { Object.defineProperty(Object.prototype, name, d); }`, `plant("polluted")`.
     pub(super) fn find_keys_spelled_for(&self, key: ExprId) -> Vec<Atom> {
@@ -657,7 +679,7 @@ impl Resolver<'_, '_> {
 
     pub(super) fn collect_replaced_members(&mut self) {
         let sought = self.input.replaced_members_sought;
-        if sought == ReplacedMembersSought::None {
+        if sought == ReplacedMembersSought::None || self.seeks_names_added_alone() {
             return;
         }
         let evaluated = self.evaluated_ids().map(ExprId);
@@ -712,10 +734,7 @@ impl Resolver<'_, '_> {
             };
             let holders = self.find_builtins_spelled_for(write.object);
             let is_computed = matches!(write.key, KeyOfWrite::Computed(_));
-            let written = match write.key {
-                KeyOfWrite::Name(name) => vec![name],
-                KeyOfWrite::Computed(key) => self.find_keys_spelled_for(key),
-            };
+            let written = self.find_keys_written(&write.key);
             let symbols = match write.key {
                 KeyOfWrite::Name(_) => Vec::new(),
                 KeyOfWrite::Computed(key) => self.find_symbols_spelled_for(key),
@@ -845,13 +864,6 @@ impl Resolver<'_, '_> {
                     .extend(members.filter_map(|&name| self.find_locked_member(holder, name)));
             }
         }
-        if sought == ReplacedMembersSought::NamesAdded {
-            let mut seen = FxHashSet::default();
-            // Every object inherits from Object.prototype: one name there, and no miss and no `for in` of the program is known any more.
-            (found.names).retain(|&name| name.0 != BuiltinId::ObjectPrototype && seen.insert(name));
-            self.output.names_added = found.names;
-            return;
-        }
         keys_spelled.shared_sort_by_key(|entry: &(ExprId, Atom)| entry.0);
         self.output.keys_spelled_on_other_objects = keys_spelled;
         objects_spelled.shared_sort_by_key(|entry: &ObjectSpelled| entry.key);
@@ -880,5 +892,35 @@ impl Resolver<'_, '_> {
         self.output.writes_on_imports = writes_on_imports;
         self.output.builtins_handed_out = self.find_builtins_handed_out();
         self.output.builtins_exported = self.find_builtins_exported();
+    }
+
+    /// `Function.prototype.call$0 = f` in an executable. A holder is an expression of the file that stands for the object, so a file without one adds nothing.
+    pub(super) fn collect_names_added(&mut self) {
+        if !self.seeks_names_added_alone() || !self.output.names_holder_that_takes_spelled_names {
+            return;
+        }
+        let evaluated = self.evaluated_ids().map(ExprId);
+        let evaluated =
+            evaluated.filter(|&expr| !matches!(self.state(expr), ExprState::NotEvaluated));
+        let mut found = Found::default();
+        for expr in evaluated {
+            self.find_members_written_from_literals(expr, &mut found);
+            let Some(write) = self.find_write(expr) else {
+                continue;
+            };
+            let holders = self.find_builtins_spelled_for(write.object);
+            if holders.is_empty() {
+                continue;
+            }
+            let written = self.find_keys_written(&write.key);
+            for &holder in &holders {
+                for &key in &written {
+                    self.note_write(holder, key, &mut found);
+                }
+            }
+        }
+        let mut seen = FxHashSet::default();
+        (found.names).retain(|&name| name.0 != BuiltinId::ObjectPrototype && seen.insert(name));
+        self.output.names_added = found.names;
     }
 }

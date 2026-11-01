@@ -175,80 +175,14 @@ async function printedBy(directory: string, words: string, ...flags: string[]) {
   return { printed: stdout.replace(/^bun test .*\n/, "").split("\n"), exitCode };
 }
 
-// Row 4099. Since oven-sh/bun#44833 `bun test` keeps the record of a mocked module whose factory failed behind an import statement: the next statement gets that
-// error and the factory is not asked; and a second mock.module() evicts whatever failed above. `--aot` asks the factory at every new importer and keeps the errors
-// above for good. These cases print otherwise today. Each goes red the day it agrees: take it out of its list then.
+// Row 4099. Where the build knows nothing of the names and the run has layers, the loader itself walks the graph, and a fetch that fails leaves no record of the
+// importer: once the mocked module is out of require.cache, the next import() of the importer asks the factory again. `bun test` keeps the importer's record.
+// The case goes red the day it agrees: take it out of its list then.
 const differsToday: Record<string, string[]> = {
-  "TestRunLayers:0 false": [
-    "the-importer-below-the-root-is-loaded-once-more",
-    "two-modules-above-the-importer",
-    "the-mocked-module-first",
-    "another-importer",
-    "a-name-is-not-found-the-second-time",
-    "a-statement-imports-it-anew",
-    "mocked-again-below-a-root",
-    "a-ring",
-    "taken-out-of-the-cache",
-    "the-importer-that-began-the-load-taken-out-of-the-cache",
-    "taken-out-of-the-cache-behind-the-second-load",
-    "the-root-taken-out-of-the-cache",
-    "the-mocked-module-taken-out-of-the-cache",
-    "a-factory-that-answers-no-object",
-    "a-factory-whose-promise-is-rejected",
-  ],
-  "TestRunLayers:0 true": [
-    "the-importer-below-the-root-is-loaded-once-more",
-    "two-modules-above-the-importer",
-    "the-mocked-module-first",
-    "another-importer",
-    "a-name-is-not-found-the-second-time",
-    "a-statement-imports-it-anew",
-    "mocked-again-below-a-root",
-    "a-ring",
-    "taken-out-of-the-cache",
-    "the-importer-that-began-the-load-taken-out-of-the-cache",
-    "taken-out-of-the-cache-behind-the-second-load",
-    "the-root-taken-out-of-the-cache",
-    "the-mocked-module-taken-out-of-the-cache",
-    "a-factory-that-answers-no-object",
-    "a-factory-whose-promise-is-rejected",
-  ],
-  "TestRunLayers:2,TestRunPartFiles:1 false": [
-    "the-importer-below-the-root-is-loaded-once-more",
-    "two-modules-above-the-importer",
-    "a-require-of-the-module-above-the-importer",
-    "the-mocked-module-first",
-    "another-importer",
-    "a-name-is-not-found-the-second-time",
-    "a-require-comes-first",
-    "all-by-require",
-    "a-statement-imports-it-anew",
-    "a-ring",
-    "taken-out-of-the-cache",
-    "the-importer-that-began-the-load-taken-out-of-the-cache",
-    "taken-out-of-the-cache-behind-the-second-load",
-    "the-root-taken-out-of-the-cache",
-    "the-mocked-module-taken-out-of-the-cache",
-    "a-factory-that-answers-no-object",
-    "a-factory-whose-promise-is-rejected",
-  ],
-  "TestRunLayers:2,TestRunPartFiles:1 true": [
-    "the-importer-below-the-root-is-loaded-once-more",
-    "two-modules-above-the-importer",
-    "the-mocked-module-first",
-    "another-importer",
-    "a-name-is-not-found-the-second-time",
-    "a-statement-imports-it-anew",
-    "mocked-again-below-a-root",
-    "a-ring",
-    "taken-out-of-the-cache",
-    "the-importer-that-began-the-load-taken-out-of-the-cache",
-    "taken-out-of-the-cache-behind-the-second-load",
-    "the-root-taken-out-of-the-cache",
-    "the-mocked-module-taken-out-of-the-cache",
-    "a-factory-that-answers-no-object",
-    "a-factory-whose-promise-is-rejected",
-  ],
+  "TestRunLayers:0 false": [],
+  "TestRunLayers:0 true": [],
+  "TestRunLayers:2,TestRunPartFiles:1 false": ["the-mocked-module-taken-out-of-the-cache"],
+  "TestRunLayers:2,TestRunPartFiles:1 true": [],
 };
 
 function casesOf(lines: string[]) {

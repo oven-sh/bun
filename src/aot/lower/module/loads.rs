@@ -933,8 +933,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let Some((name, alias)) = self.file.builtin_named(written, module) else {
             return emit_require_of_module(self);
         };
-        // `require("bun:sqlite")` leaves an entry in the cache. The call itself leaves none and looks there for no name.
-        if !looks_in_cache && !alias.node_builtin {
+        // `require("bun:sqlite")` leaves an entry in the cache. The call itself leaves none and looks there for no name. No mock reaches it.
+        if !looks_in_cache && (!alias.node_builtin || modules.may_be_mocked(module)) {
             let name = name.to_vec();
             let get_builtin_module = self.emit_builtin_itself(BuiltinId::ProcessGetBuiltinModule);
             let name = self.emit_text(&name);

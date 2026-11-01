@@ -1,5 +1,5 @@
-// Linux on x86-64 polls in a loop by a load that faults while a stop is asked for. Every other platform tests a word and calls the
-// run time, and that call once left the register that reports an exception as it found it: the loop spun on behind a termination,
+// Linux and Windows on x86-64, and Linux and macOS on ARM64, poll in a loop by a load that faults while a stop is asked for. Every other platform
+// tests a word and calls the run time, and that call once left the register that reports an exception as it found it: the loop spun on behind a termination,
 // or the handler of exceptions ran with nothing thrown. The program is one of the corpus, of which a run takes a share. This file
 // runs it on every platform, every time.
 import { expect } from "bun:test";

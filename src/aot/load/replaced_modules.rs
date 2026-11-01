@@ -369,12 +369,12 @@ pub(crate) fn find_spies_on_unknown_objects<'s>(
     }
 }
 
-/// The member of an export of `bun:test` that mocks modules.
-fn member_that_mocks_modules(builtin: BuiltinId) -> Option<Atom> {
+/// The members of an export of `bun:test` that mock modules.
+fn members_that_mock_modules(builtin: BuiltinId) -> &'static [Atom] {
     match builtin {
-        BuiltinId::BunTestMock => Some(known::module),
-        BuiltinId::BunTestJest | BuiltinId::BunTestVi => Some(known::mock),
-        _ => None,
+        BuiltinId::BunTestMock => &[known::module],
+        BuiltinId::BunTestJest | BuiltinId::BunTestVi => &[known::mock, known::doMock],
+        _ => &[],
     }
 }
 
@@ -404,7 +404,7 @@ fn mocks_modules_out_of_sight<'s>(
             | ImportSiteKind::Require(_)
             | ImportSiteKind::ImportMetaRequire(_)
                 if takes_names_alone(hir, bound, builtins, site.kind, &|it| {
-                    member_that_mocks_modules(it).is_none()
+                    members_that_mock_modules(it).is_empty()
                 }) => {}
             // A name that mocks modules comes out of a require(), as in a CommonJS file that got the names of the test runner: a call of
             // it makes no site, so all that the file may do with it is to test it.
@@ -426,7 +426,7 @@ fn mocks_modules_out_of_sight<'s>(
         (0..hir.export_specs.len() as u32).map(|spec| bound.exported_binding(ExportSpecId(spec)));
     let is_exported = |binding: Binding| {
         matches!(binding, Binding::Symbol(symbol)
-        if builtins.of_symbol(symbol).is_some_and(|path| member_that_mocks_modules(path.id).is_some()))
+        if builtins.of_symbol(symbol).is_some_and(|path| !members_that_mock_modules(path.id).is_empty()))
     };
     if exported
         .chain(analysis.bindings_read_without_expression(hir, bound))
@@ -448,12 +448,12 @@ fn mocks_modules_out_of_sight<'s>(
             if matches!(hir[user].kind, ExprKind::Call(call) if hir[call].callee == callee))
     };
     (0..hir.exprs.len() as u32).map(ExprId).any(|mention| {
-        let Some(member) = builtins
+        let members = builtins
             .builtin_of_expression(mention)
-            .and_then(member_that_mocks_modules)
-        else {
+            .map_or(&[][..], members_that_mock_modules);
+        if members.is_empty() {
             return false;
-        };
+        }
         if analysis.decisions.is_dead_expr(mention) {
             return false;
         }
@@ -469,7 +469,7 @@ fn mocks_modules_out_of_sight<'s>(
         };
         match hir.member_key(user) {
             Some((object, MemberKey::Name(name))) if object == holder => {
-                name == member && !is_called(outermost_of(user))
+                members.contains(&name) && !is_called(outermost_of(user))
             }
             Some((object, _)) if object == holder => true,
             // `mock(() => 1)`

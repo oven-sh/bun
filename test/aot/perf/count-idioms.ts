@@ -2,15 +2,17 @@
 // ./pinned-everyday-idioms.ts counts instructions, which the machines of CI cannot. A method that was called directly and is now looked up by name costs three times the instructions,
 // and it is also an event: `--aot-count-arrivals` counts it.
 //
-//   bun test/aot/perf/count-idioms.ts <the Bun that builds> <where the counts go, as JSON> [a pattern for the names] [flags for every build ..]
+//   bun test/aot/perf/count-idioms.ts <the Bun that builds> <where the counts go, as JSON> [a pattern for the names] [in-a-very-large-program] [flags for every build ..]
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { availableParallelism, tmpdir } from "os";
 import { join } from "path";
-import { writeEverydayIdioms } from "./everyday-idioms";
+import { flagsOfVeryLargeProgram, writeEverydayIdioms } from "./everyday-idioms";
 import { writeTypedIdioms, writeUntypedIdioms } from "./untyped-idioms";
 
 export const forms = ["typed", "untyped"] as const;
 export type Form = (typeof forms)[number];
+/** What stands around turn(): ./everyday-idioms.ts. */
+export type Surroundings = "ordinary" | "called-once" | "in-a-very-large-program";
 /** For `turnsCounted` turns. */
 export type Counts = {
   /** Reads, stores and calls that look a name up. */
@@ -22,10 +24,16 @@ export type Counts = {
   /** What compiled code and its stubs allocate. */
   cells: number;
   bytes: number;
+  /**
+   * What anybody allocates while the program runs, the run time included: the lists of free cells that were used up, less what was left in the lists in use.
+   * Where an allocation moves between the run time and compiled code, `cells` and `bytes` move and these do not.
+   */
+  allCells: number;
+  allBytes: number;
   /** What the run time counts of its own accord: guards cleared, caches filled again, stubs that gave up, names not found where they were expected. */
   events: number;
 };
-export const kinds = ["arrivals", "operations", "branches", "cells", "bytes", "events"] as const;
+export const kinds = ["arrivals", "operations", "branches", "cells", "bytes", "allCells", "allBytes", "events"] as const;
 /**
  * `refills`: the calls into the run time that fetched an allocator a new list of free cells. How long a list is differs between builds and platforms. Such a call came for that alone, or
  * is one that the program makes anyway and found the list empty on its way: the counts do not tell. So the program makes at least `operations` calls and at most that and `refills`.
@@ -47,6 +55,13 @@ export function linesOf(text: string) {
       add(`bytes:${words.slice(1, -2).join(" ")}`, Number(words.at(-1)));
       continue;
     }
+    if (line.startsWith("refill ")) {
+      const words = line.split(" ");
+      const sign = words[2] === "list_in_use" ? -1 : 1;
+      add(`allCells:${words.at(-3)}`, sign * Number(words.at(-2)));
+      add(`allBytes:${words.at(-3)}`, sign * Number(words.at(-1)));
+      continue;
+    }
     const [count, ...name] = line.split("\t");
     if (name.length) add(name.join(" "), Number(count));
   }
@@ -64,7 +79,11 @@ const kindOfLine = (name: string): keyof Counts | undefined =>
           ? "cells"
           : name.startsWith("bytes:")
             ? "bytes"
-            : /^(?:counter|exit|named):/.test(name)
+            : name.startsWith("allCells:")
+              ? "allCells"
+              : name.startsWith("allBytes:")
+                ? "allBytes"
+                : /^(?:counter|exit|named):/.test(name)
               ? "events"
               : undefined;
 
@@ -78,7 +97,7 @@ export function difference(short: Map<string, number>, long: Map<string, number>
     const more = (long.get(name) ?? 0) - (short.get(name) ?? 0);
     if (more) lines.set(name, more);
   }
-  const counts: Counts = { arrivals: 0, operations: 0, branches: 0, cells: 0, bytes: 0, events: 0 };
+  const counts: Counts = { arrivals: 0, operations: 0, branches: 0, cells: 0, bytes: 0, allCells: 0, allBytes: 0, events: 0 };
   let refills = 0;
   for (const [name, more] of lines) {
     if (countsTheCounting(name)) continue;
@@ -93,7 +112,7 @@ export function difference(short: Map<string, number>, long: Map<string, number>
 /** The lines of one kind that make up a count, the largest first, without the branches: their numbers say nothing to a reader. */
 export function whatWasCounted(lines: Map<string, number>, most = 12) {
   return [...lines]
-    .filter(([name]) => kindOfLine(name) && !name.startsWith("branch:") && !name.startsWith("bytes:") && !countsTheCounting(name))
+    .filter(([name]) => kindOfLine(name) && !name.startsWith("branch:") && !name.startsWith("bytes:") && !name.startsWith("allBytes:") && !countsTheCounting(name))
     .sort(([, first], [, second]) => second - first)
     .slice(0, most)
     .map(([name, count]) => `${count} ${name}`);
@@ -103,7 +122,8 @@ export function whatWasCounted(lines: Map<string, number>, most = 12) {
  * The idioms that `chosen` picks are the entry points of a few executables, each compiled as it is when it is built alone. `start()` says which of them a run starts.
  * With `marks` each program sends itself a signal in front of the long call and behind it, for ./count-steps.ts, without which the signal ends it. Only these programs have the marks:
  * they name a function of native code that the compiler knows nothing about, and one idiom in a thousand is compiled otherwise beside it.
- * With `benchIsCalledOnce` they are the idioms of ./everyday alone, in that form (./everyday-idioms.ts), and the long call is the only one: nothing warms up. The programs of ./idioms write their own loops.
+ * "called-once" and "in-a-very-large-program" are the idioms of ./everyday alone, in that form (./everyday-idioms.ts): the programs of ./idioms write their own loops.
+ * In the first the long call is the only one: nothing warms up. The second is built with `flagsOfVeryLargeProgram`.
  */
 export function idiomsInExecutables(
   bun: string,
@@ -111,8 +131,11 @@ export function idiomsInExecutables(
   chosen: (names: string[]) => string[],
   buildFlags: string[] = [],
   marks = false,
-  benchIsCalledOnce = false,
+  surroundings: Surroundings = "ordinary",
 ) {
+  const benchIsCalledOnce = surroundings === "called-once";
+  const inVeryLargeProgram = surroundings === "in-a-very-large-program";
+  if (inVeryLargeProgram) buildFlags = [...flagsOfVeryLargeProgram, ...buildFlags];
   const sources = { typed: join(folder, "idioms"), untyped: join(folder, "untyped-idioms") };
   writeTypedIdioms(sources.typed);
   writeUntypedIdioms(sources.untyped);
@@ -134,9 +157,9 @@ export function idiomsInExecutables(
     [
       ...readdirSync(join(import.meta.dir, "idioms"), { recursive: true })
         .map(String)
-        .filter(path => !benchIsCalledOnce && path.endsWith(".ts") && path !== "host.ts")
+        .filter(path => surroundings === "ordinary" && path.endsWith(".ts") && path !== "host.ts")
         .map(path => path.slice(0, -3).replaceAll("\\", "/")),
-      ...writeEverydayIdioms(sources.typed, sources.untyped, false, false, benchIsCalledOnce),
+      ...writeEverydayIdioms(sources.typed, sources.untyped, inVeryLargeProgram, benchIsCalledOnce),
     ].sort(),
   );
   // A collection drops what the run time has learned about some places, and when one comes depends on the clock.
@@ -210,8 +233,8 @@ export function idiomsInExecutables(
   };
 }
 
-export function countedIdioms(bun: string, folder: string, chosen: (names: string[]) => string[], buildFlags: string[] = []) {
-  const { names, run, executableOf, start, startBuilds } = idiomsInExecutables(bun, folder, chosen, ["--aot-count-arrivals", "--aot-count-branches", ...buildFlags]);
+export function countedIdioms(bun: string, folder: string, chosen: (names: string[]) => string[], buildFlags: string[] = [], surroundings: Surroundings = "ordinary") {
+  const { names, run, executableOf, start, startBuilds } = idiomsInExecutables(bun, folder, chosen, ["--aot-count-arrivals", "--aot-count-branches", ...buildFlags], false, surroundings);
   mkdirSync(join(folder, "counts"), { recursive: true });
 
   async function count(name: string, form: Form): Promise<Counted> {
@@ -232,9 +255,10 @@ export function countedIdioms(bun: string, folder: string, chosen: (names: strin
 
 if (import.meta.main) {
   const [bun, out, pattern = ".", ...buildFlags] = process.argv.slice(2);
+  const surroundings: Surroundings = buildFlags[0] === "in-a-very-large-program" ? (buildFlags.shift() as Surroundings) : "ordinary";
   const folder = join(process.env.TMPDIR ?? tmpdir(), `count-idioms-${process.pid}`);
   mkdirSync(folder, { recursive: true });
-  const { names, count } = countedIdioms(bun, folder, all => all.filter(name => new RegExp(pattern).test(name)), buildFlags);
+  const { names, count } = countedIdioms(bun, folder, all => all.filter(name => new RegExp(pattern).test(name)), buildFlags, surroundings);
   const result: Record<string, Partial<Record<Form, Counts & { refills: number; what: string[] }>> & { failure?: string }> = {};
   const waiting = names.flatMap(name => forms.map(form => ({ name, form })));
   await Promise.all(

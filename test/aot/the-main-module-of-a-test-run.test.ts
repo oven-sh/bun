@@ -67,12 +67,12 @@ test("require.main is the test file that runs", async () => {
   ]);
   expect(plain.stdout).toContain("preload.cjs at load undefined false");
   expect(plain.stdout).toContain(
-    "b.test.cjs in a test true,b.test.cjs,true,b.test.cjs,false,a.test.cjs,b.test.cjs,false b.test.cjs",
+    "b.test.cjs in a test true,b.test.cjs,true,b.test.cjs,false,b.test.cjs,b.test.cjs,false b.test.cjs",
   );
   expect(plain.stdout).toContain(
     "b.test.cjs what the main module exports exported by b.test.cjs exported by b.test.cjs",
   );
-  expect(plain.stdout).toContain("c.test.mjs in a test true undefined undefined false a.test.cjs undefined false");
+  expect(plain.stdout).toContain("c.test.mjs in a test true undefined undefined false undefined undefined false");
   expect(plain.stdout).toContain("evicted.test.cjs before object evicted.test.cjs");
   expect(plain.stdout).toContain("evicted.test.cjs after undefined undefined");
 

@@ -82,7 +82,9 @@ impl Checker<'_, '_> {
             else {
                 return;
             };
-            if !files.flags(resolved).intersects(SymFlags::NAMESPACE) {
+            if !files.flags(resolved).intersects(SymFlags::NAMESPACE)
+                || files.stands_for_modules_in_other_images(resolved)
+            {
                 return;
             }
             let is_last = i + 1 == names.len();

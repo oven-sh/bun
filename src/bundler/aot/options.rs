@@ -368,6 +368,8 @@ fn load_options(input: &OptionsInput<'_, '_, '_>) -> LoadOptions {
         ),
         left_to_loader: Vec::new(),
         loads_below_files_left_to_loader: Vec::new(),
+        entry_points_added_by_build: Vec::new(),
+        loaded_by_workers_alone: Vec::new(),
         stand_in_for_files_from_disk: None,
         files_of_tests: Vec::new(),
     }

@@ -20,7 +20,7 @@
 # RUN(X64): lower-to-air loops f1
 # REQUIRES(X64): x86_64 unsanitized-code
 # RUN(ARM64): lower-to-air loops f1
-# REQUIRES(ARM64): arm64 unsanitized-code
+# REQUIRES(ARM64): arm64 unsanitized-code faulting-loop-polls
 
 module m0 path="main.ts" displayPath="main.ts" body=f0 typesCutFromFunctionText="\x11\x08\x04\x08\x01\x08\xd6\x03\x19\x0c\x07"
 entry module=m0
@@ -208,4 +208,4 @@ function f1 name="mix" module=m0 flags=[IsChecked, HasExplicitName] length=2 thi
 # X64: loop #{{*}}, instructions: 36, patchpoints: 0, {{*}} steps by 1
 # X64: loop #{{*}}, instructions: 36, patchpoints: 0, rare instructions: 9, {{*}} steps by 1, entered rarely
 # ARM64: loop #{{*}}, instructions: 24, patchpoints: 0, {{*}} steps by 1
-# ARM64: loop #{{*}}, instructions: 24, patchpoints: 0, rare instructions: 14, {{*}} steps by 1, entered rarely
+# ARM64: loop #{{*}}, instructions: 24, patchpoints: 0, rare instructions: 12, {{*}} steps by 1, entered rarely

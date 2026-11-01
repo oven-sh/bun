@@ -13,6 +13,7 @@ use bun_sema::module_format::ModuleFormat;
 use bun_sema::resolve::{TransformRequest, TreeChange};
 use bun_sema::session::Arena;
 
+use crate::load::hoisted_mocks;
 use crate::load::react_compiler::module_items::{
     POSITION, finish_file, put_around_body, write_constant, write_declaration, write_import,
 };
@@ -43,7 +44,7 @@ fn imports(
 }
 
 // `typeof a.b` holds `a` as an expression, and asks for its type alone.
-fn find_names_in_type_queries(hir: &File<'_>) -> Vec<ExprId> {
+pub(super) fn find_names_in_type_queries(hir: &File<'_>) -> Vec<ExprId> {
     let queried = hir.types.iter().filter_map(|node| match node.kind {
         TypeNodeKind::Typeof { expr, .. } => Some(expr),
         _ => None,
@@ -156,15 +157,21 @@ fn write_own_globals(file: &mut FileBuilder, names: &[(Atom, Atom, Atom)]) -> St
     write_declaration(file, pat, global)
 }
 
+#[derive(Copy, Clone, Default)]
+pub(crate) struct FileOfTestRun {
+    pub has_globals_of_vitest: bool,
+    pub is_entry_point: bool,
+}
+
 pub(crate) fn import_used_names<'s>(
     arena: &'s Arena,
     atoms: &Interner<'s>,
     request: &mut TransformRequest<'_, 's>,
-    has_globals_of_vitest: bool,
+    file_of_run: FileOfTestRun,
 ) -> TreeChange {
     // The parser gives `bun test` the same names out of the same module.
-    let is_of_vitest =
-        has_globals_of_vitest || imports(request, atoms, |module| module == MODULE_OF_VITEST);
+    let is_of_vitest = file_of_run.has_globals_of_vitest
+        || imports(request, atoms, |module| module == MODULE_OF_VITEST);
     let module = if is_of_vitest {
         MODULE_OF_VITEST
     } else {
@@ -177,7 +184,9 @@ pub(crate) fn import_used_names<'s>(
     let given: Vec<&[u8]> = given.map(|name| name.as_bytes()).collect();
     let names: Vec<Atom> = given.iter().map(|name| atoms.intern(name)).collect();
     let uses = find_uses(request, &names);
-    if uses.is_empty() {
+    let is_entry_point = file_of_run.is_entry_point;
+    let hoisting = hoisted_mocks::plan(request, atoms, is_of_vitest, is_entry_point);
+    if uses.is_empty() && hoisting.is_none() {
         return TreeChange::Unchanged;
     }
     let with_prefix = |prefix: &[u8]| -> Vec<Atom> {
@@ -194,6 +203,13 @@ pub(crate) fn import_used_names<'s>(
         false => of_runner.clone(),
     };
     let mut file = FileBuilder::from_file(request.hir);
+    if let Some(hoisting) = &hoisting {
+        hoisting.apply(&mut file, atoms);
+    }
+    if uses.is_empty() {
+        *request.hir = finish_file(file, arena, atoms);
+        return TreeChange::Changed;
+    }
     for &(expression, name) in &uses {
         write_use(&mut file, expression, names[name], locals[name]);
     }

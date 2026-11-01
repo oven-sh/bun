@@ -1,5 +1,5 @@
 # An object that is logged has no word for extra properties: it gets no property there. An object that is handed to a function nobody knows keeps its shape whatever that function does to it,
-# so it has the word, and its number slots have the markers for a field that has left its slot
+# so it has the word. No code that knows it names its numbers, so they are kept as values for whoever asks for them by name
 # FORM: AsRead
 # OPTIONS: only-passes=AnalyzeFlow references=narrow
 # RUN: plan-slots layouts
@@ -30,6 +30,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 # CHECK-NEXT: .0 "x" Double @16
 # CHECK-NEXT: .1 "y" Double @24
 # CHECK-NEXT: L1 CompiledObject size=48
-# CHECK-NEXT: .0 "x" OptionalDouble @16
-# CHECK-NEXT: .1 "y" OptionalDouble @24
+# CHECK-NEXT: .0 "x" JSValue @16
+# CHECK-NEXT: .1 "y" JSValue @24
 # CHECK-NEXT: extra-properties Cell32 @32

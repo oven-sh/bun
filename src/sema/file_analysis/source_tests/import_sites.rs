@@ -1826,6 +1826,18 @@ const PATHS_OF_CHANGED_FILES: &[(&str, &[&str])] = &[
         "import { writeFileSync } from 'node:fs'; for (const name of ['a.js', 'b.js']) writeFileSync('/p/' + name, text);",
         &["/p/a.js", "/p/b.js"],
     ),
+    (
+        "import { writeFileSync } from 'node:fs'; import { join } from 'node:path'; writeFileSync(join(process.cwd(), 'lib', 'a.js'), text);",
+        &["./lib/a.js"],
+    ),
+    (
+        "import { writeFileSync } from 'node:fs'; import { cwd } from 'node:process'; const root = cwd(); writeFileSync(`${root}/a.js`, text);",
+        &["./a.js"],
+    ),
+    (
+        "const { writeFileSync } = await import('node:fs'); writeFileSync('/p/a.js', text);",
+        &["/p/a.js"],
+    ),
 ];
 
 const CALLS_THAT_CHANGE_NO_FILE_THAT_IS_KNOWN: &[&str] = &[
@@ -1868,6 +1880,61 @@ fn paths_that_a_file_spells_to_calls_which_change_what_is_there() {
     }
     for &text in CALLS_THAT_CHANGE_NO_FILE_THAT_IS_KNOWN {
         assert!(describe_paths_of_changed_files(text).is_empty(), "{text}");
+    }
+}
+
+const FUNCTIONS_THAT_CHANGE_THE_FILE_THEY_ARE_TOLD: &[(&str, &str, &[&str])] = &[
+    (
+        "a.mjs",
+        "import { writeFileSync } from 'node:fs'; export const put = (path, text) => writeFileSync(path, text);",
+        &["put 0"],
+    ),
+    (
+        "a.mjs",
+        "import { rmSync } from 'node:fs'; function clear(options, folder) { rmSync(folder, { recursive: true }); } export { clear, clear as empty };",
+        &["clear 1 and below", "empty 1 and below"],
+    ),
+    (
+        "a.mjs",
+        "import { writeFileSync } from 'node:fs'; export default function (path, text) { writeFileSync(path, text); }",
+        &["default 0"],
+    ),
+    (
+        "a.cjs",
+        "const { writeFileSync } = require('node:fs'); exports.put = function (path, text) { writeFileSync(path, text); };",
+        &["put 0"],
+    ),
+    (
+        "a.mjs",
+        "import { writeFileSync } from 'node:fs'; const put = (path, text) => writeFileSync(path, text);",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import { writeFileSync } from 'node:fs'; export const put = (path, text) => { path = other; writeFileSync(path, text); };",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import { readFileSync } from 'node:fs'; export const read = path => readFileSync(path);",
+        &[],
+    ),
+];
+
+#[test]
+fn functions_that_a_file_exports_and_that_change_the_file_they_are_told() {
+    for &(name, text, functions) in FUNCTIONS_THAT_CHANGE_THE_FILE_THEY_ARE_TOLD {
+        with_workspace(|w| {
+            let s = &w.analyze(&Source::new(name, text), &w.fold_inputs(&TARGET));
+            let mut described: Vec<String> = (s.analysis.exported_file_changers.iter())
+                .map(|it| {
+                    let reach = if it.reaches_below { " and below" } else { "" };
+                    format!("{} {}{reach}", s.workspace.text(it.export), it.place)
+                })
+                .collect();
+            described.sort();
+            assert_eq!(described, functions, "{text}");
+        });
     }
 }
 

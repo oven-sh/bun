@@ -192,6 +192,7 @@ pub(crate) fn graph_bytes(request: &GraphRequest<'_>) -> crate::Result<GraphByte
     )
 }
 
+/// `[u64 LE length][graph]`: what the section of an executable holds.
 pub struct PlaceOfProgram<'a> {
     pub mapped_at: u64,
     pub first_below: Option<FirstProgramBelow<'a>>,
@@ -209,7 +210,20 @@ fn write_into_program_below(
     offset: u64,
 ) -> crate::Result<()> {
     let offset = (first.offset + offset) as i64;
-    Ok(bun_sys::File::borrow(&first.file).pwrite_all(bytes, offset)?)
+    let written = bun_sys::File::borrow(&first.file).pwrite_all(bytes, offset);
+    if let Err(error) = &written {
+        let mut buffer = bun_paths::path_buffer_pool::get();
+        let path = bun_sys::get_fd_path(first.file, &mut buffer);
+        let path = path.map_or(&b"a file without a path"[..], |path| &*path);
+        bun_core::Output::err_generic(
+            "the headers of this program's texts could not be written into the program below it, {}: {}",
+            (
+                bstr::BStr::new(path),
+                <&'static str>::from(error.get_errno()),
+            ),
+        );
+    }
+    Ok(written?)
 }
 
 pub fn to_graph_bytes(

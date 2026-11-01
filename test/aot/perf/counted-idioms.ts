@@ -51,6 +51,9 @@ const countersOfCaches = [
 ];
 const kindsJudged = ({ lines }: Counted) =>
   countersOfCaches.some(name => lines.has(`counter:${name}`)) ? kinds.filter(kind => kind === "arrivals" || kind === "branches") : kinds;
+/** A row is held against all that is allocated, or against the part that compiled code allocates: the first where the row says so. */
+const partOrWhole = (pin: Partial<Counts> | undefined) => (kind: (typeof kinds)[number]) =>
+  pin?.allCells === undefined ? kind !== "allCells" && kind !== "allBytes" : kind !== "cells" && kind !== "bytes";
 
 /** The most that the program can have done: what a pin holds. */
 const mostOf = ({ counts, refills }: Counted): Counts => ({ ...counts, operations: counts.operations + refills });
@@ -88,7 +91,7 @@ export function countedIdiomsAgainstPins(part = 1, parts = 1) {
             const merged = (choose: (pin: number, now: number) => number) =>
               ({
                 ...Object.fromEntries(
-                  forms.map(form => [form, Object.fromEntries(kinds.map(kind => [kind, choose(pin?.[form][kind] ?? 0, mostOf(now[form])[kind])]))]),
+                  forms.map(form => [form, Object.fromEntries(kinds.filter(partOrWhole(pin?.[form])).map(kind => [kind, choose(pin?.[form][kind] ?? 0, mostOf(now[form])[kind])]))]),
                 ),
                 owed: pin?.owed,
               }) as Pins[string];
@@ -98,6 +101,7 @@ export function countedIdiomsAgainstPins(part = 1, parts = 1) {
             if (mode === "cover") return void (written[name] = merged(Math.max));
             const over = forms.flatMap(form =>
               kindsJudged(now[form])
+                .filter(partOrWhole(pin[form]))
                 .filter(kind => now[form].counts[kind] > (pin.owed?.[kind] ?? pin[form][kind] ?? 0))
                 .map(kind => `${form}: ${now[form].counts[kind]} ${kind} in a thousand turns, pinned at ${pin[form][kind] ?? 0}`),
             );

@@ -53,8 +53,10 @@ pub(crate) fn compile_components(
             ..Default::default()
         };
         let mut step = Step::Pending;
-        let parsed = observe(observer, || {
-            run_with_source_code(&mut task, &mut worker, &mut step, log, &mut entry)
+        let parsed = file.record_expanded_globs(|| {
+            observe(observer, || {
+                run_with_source_code(&mut task, &mut worker, &mut step, log, &mut entry)
+            })
         });
         parsed.is_ok_and(|success| !success.log.has_errors())
     })

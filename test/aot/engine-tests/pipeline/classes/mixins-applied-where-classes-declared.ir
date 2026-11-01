@@ -3918,14 +3918,11 @@ runtimefunction id=ArrayTraversalTraverseArray function=f94 visibility=Private
 # CHECK-NEXT: v4: object ~ L2|L5|L6 = Expect v3 expectedType=anything|absent
 # CHECK-NEXT: v5: "elsewhere" = String string="elsewhere"
 # CHECK-NEXT: v6: boolean ~ false = TypeTest v4 testedType=L8
-# CHECK-NEXT: Branch v6 -> taken b1(| 0), notTaken b3()
+# CHECK-NEXT: Branch v6 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v7: L8):
-# CHECK-NEXT: v8: boolean = AreMembersUnchanged conditions=[{kind=MemberPassedByStores layout=L8 key="from"}]
-# CHECK-NEXT: Branch v8 -> taken b2(| 0), notTaken b3()
-# CHECK-NEXT: b2(v9: guard):
-# CHECK-NEXT: PutSlotOrAdd v7, v9, v5 key="from" receivers=[L8] level=Expected accessSite=276
+# CHECK-NEXT: PutSlotOrAdd v7, -, v5 key="from" receivers=[L8] level=Expected accessSite=276
 # CHECK-NEXT: Return v7
-# CHECK-NEXT: b3() frequency=Unlikely:
+# CHECK-NEXT: b2() frequency=Unlikely:
 # CHECK-NEXT: PropSet v4, v5 key="from" accessSite=276 receivers=[L8, ..]
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }

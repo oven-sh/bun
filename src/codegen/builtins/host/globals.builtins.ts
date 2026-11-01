@@ -19,7 +19,7 @@ import {
   webSocketHandlerCell,
   webSocketsCell,
 } from "./native-cells.ts";
-import { handedOver, mayAnswerWrapperKeptIn } from "./native-code.ts";
+import { answering, handedOver, mayAnswerWrapperKeptIn, promiseOf } from "./native-code.ts";
 
 type Contents = Readonly<Record<string, b.TableType>>;
 type UsesByOperand = Readonly<Record<string, readonly b.UseSpec[]>>;
@@ -244,6 +244,25 @@ const eventHandlerAttribute = (eventTarget: b.TableType) =>
 
 const receiver = b.operand("this");
 const globalObject = b.builtin("globalThis");
+
+const eventDispatch = (eventTarget: b.TableType) =>
+  ({
+    args: { event: b.object },
+    returns: b.bool,
+    capability: "js",
+    throws: true,
+    uses: {
+      this: [
+        b.retained,
+        eventTarget === receiver
+          ? b.storedIn(b.nativeCell(targetsOfEventsCell))
+          : b.createdIn(b.object, b.nativeCell(targetsOfEventsCell)),
+      ],
+      event: [b.retained],
+    },
+    reads: externalState,
+    writes: externalState,
+  }) satisfies b.FunctionField;
 // What `bun:test` exports. The table lists the members that the compiler has to know, so the object counts as one that nobody knows as well.
 const testModule = b.union(b.builtin("bun:test"), b.object);
 
@@ -1370,8 +1389,7 @@ const viewAtPointer = (returns: b.TableType) =>
   }) satisfies b.FunctionField;
 
 // constructDNSObject in BunObject.cpp puts them on Bun.dns. Nothing is said yet of what a call does.
-const undeclaredFunctionsOfDNS = [
-  "getServers",
+const queriesOfDNS = [
   "lookupService",
   "resolve",
   "resolveAny",
@@ -1385,7 +1403,6 @@ const undeclaredFunctionsOfDNS = [
   "resolveSrv",
   "resolveTxt",
   "reverse",
-  "setServers",
 ];
 
 const createdOnFirstRead = (holds: b.TableType) => b.property(holds, { createdOnFirstRead: { capability: "heap" } });
@@ -1705,7 +1722,9 @@ export default b.declarations(
   b.inherits("Bun.FFI.read", "Object.prototype"),
   b.namespace("Bun.dns", {
     ...Object.fromEntries(["ADDRCONFIG", "ALL", "V4MAPPED"].map(name => [name, b.property(b.f64)])),
-    ...Object.fromEntries(undeclaredFunctionsOfDNS.map(name => [name, b.otherwiseBy(b.generic)])),
+    ...Object.fromEntries(queriesOfDNS.map(name => [name, answering(promiseOf(b.plainData))])),
+    getServers: answering(b.plainData),
+    setServers: answering(b.undefined),
     getCacheStats: { returns: b.plainData, capability: "heap", reads: externalState, implementation: b.generic },
     lookup: {
       ...operandCodeOnly,
@@ -1796,10 +1815,12 @@ export default b.declarations(
   ),
 
   // Native code answers a read and takes a store, and a descriptor shows a data property (ZigGlobalObject.cpp: a CustomGetterSetter without the attribute of an accessor).
+  b.method("AbortSignal.prototype.onabort", eventHandlerAttribute(receiver)),
   b.static("onerror", b.property(b.any, { setter: eventHandlerAttribute(globalObject).setter })),
   b.static("onmessage", b.property(b.any, { setter: eventHandlerAttribute(globalObject).setter })),
   b.fn("addEventListener", listenerRegistration(globalObject)),
   b.fn("removeEventListener", listenerRemoval),
+  b.fn("dispatchEvent", { ...eventDispatch(globalObject), this: b.any, implementation: b.generic }),
 
   b.namespace("performance", { now: clockReading("AOT__performanceNow") }),
   b.inherits("performance", "Performance.prototype"),
@@ -1919,25 +1940,7 @@ export default b.declarations(
       readsStateBeforeConversions: true,
     }),
     removeEventListener: () => ({ ...listenerRemoval, uses: { this: b.inspected, ...listenerRemoval.uses } }),
-    // The listeners that were added earlier run, with the event and the target, and the event keeps the target.
-    // What stands for the global object there is an object of the host.
-    dispatchEvent: (eventTarget: b.TableType) => ({
-      args: { event: b.object },
-      returns: b.bool,
-      capability: "js",
-      throws: true,
-      uses: {
-        this: [
-          b.retained,
-          eventTarget === receiver
-            ? b.storedIn(b.nativeCell(targetsOfEventsCell))
-            : b.createdIn(b.object, b.nativeCell(targetsOfEventsCell)),
-        ],
-        event: [b.retained],
-      },
-      reads: externalState,
-      writes: externalState,
-    }),
+    dispatchEvent: eventDispatch,
   } satisfies Record<string, (eventTarget: b.TableType) => b.FunctionField>).map(([name, on]) =>
     b.method(`EventTarget.prototype.${name}`, [
       {

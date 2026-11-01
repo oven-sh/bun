@@ -1,6 +1,6 @@
 // `import data from "./data.txt" with { type: "toml" }` of a file that the program does not hold: the loader of the run time makes the
 // module, and it has to hear the type that the statement writes. Without it the loader goes by the extension and answers the text.
-// Every program runs under plain Bun and compiled, and both must print alike.
+// Every program runs under plain Bun and compiled, and both must print alike, but for the type that an export statement writes.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
@@ -38,7 +38,7 @@ const testFiles = {
   "data/shared.txt": dated("shared"),
   "data/text-first.txt": dated("text first"),
   "src/reads.js": reads("../data/dated.txt"),
-  // Plain Bun drops the attribute of an export statement.
+  // Plain Bun drops the attribute of an export statement. By the language it holds as that of an import does, and compiled code reads it.
   "src/passes-on.js": `export { default as passedOn } from "../data/passed-on.txt" with { type: "toml" };\nexport * as whole from "../data/passed-on.txt" with { type: "toml" };`,
   "src/shared.js": `import shared from "../data/shared.txt" with { type: "toml" };\nexport const title = typeof shared === "object" ? shared.title : "the text";`,
   "reads.test.js": `${head}\nimport { print } from "./src/reads.js";\ntest("each way to the file", print);`,
@@ -73,7 +73,12 @@ for (const [way, words] of ways) {
     const plain = await runTests(bunEnv);
     expect(plain.printed).toContain("the default, with the type: object dated");
     expect(plain.exitCode).toBe(0);
-    expect(await runTests(words ? { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words } : bunEnv, "--aot")).toEqual(plain);
+    const asText = `string ${JSON.stringify('title = "pas')}`;
+    expect(plain.printed).toContain(`export from: ${asText} default ${asText}`);
+    const asToml = "export from: object passed on default,title,when object passed on";
+    const byTheLanguage = plain.printed.map(line => (line.startsWith("export from:") ? asToml : line)).sort();
+    const compiled = await runTests(words ? { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words } : bunEnv, "--aot");
+    expect(compiled).toEqual({ printed: byTheLanguage, exitCode: 0 });
   });
 }
 
@@ -81,7 +86,8 @@ test.concurrent("a file that --external keeps out of an executable", async () =>
   using dir = tempDir("import-attributes-of-an-external-file", {
     "outside.txt": `title = "outside"\n`,
     "reads.js": reads("./outside.txt"),
-    "main.js": `import { print } from "./reads.js";\nawait print();`,
+    "passes-on.js": `export { default as passedOn } from "./outside.txt" with { type: "toml" };`,
+    "main.js": `import { print } from "./reads.js";\nimport { passedOn } from "./passes-on.js";\n${shown}\nawait print();\nconsole.log("export from:", shown(passedOn));`,
   });
   const build = async (name: string, ...flags: string[]) => {
     const outfile = join(String(dir), name);
@@ -97,5 +103,9 @@ test.concurrent("a file that --external keeps out of an executable", async () =>
   };
   const plain = await build("plain");
   expect(plain.printed).toContain("the default, with the type: object outside");
-  expect(await build("compiled", "--aot")).toEqual(plain);
+  expect(plain.printed).toContain(`export from: string ${JSON.stringify('title = "out')}`);
+  const byTheLanguage = plain.printed.map(line =>
+    line.startsWith("export from:") ? "export from: object outside" : line,
+  );
+  expect(await build("compiled", "--aot")).toEqual({ printed: byTheLanguage, exitCode: 0 });
 });

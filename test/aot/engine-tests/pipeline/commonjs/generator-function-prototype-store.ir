@@ -349,7 +349,7 @@ function f20 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: PropSet v0, v3 key="prototype" mode=Sloppy accessSite=16
 # CHECK-NEXT: v5: undefined = Undefined
 # CHECK-NEXT: v6: Generator = NewGenerator v0 function=f1
-# CHECK-NEXT: v14: anything = NewHeapFrame v6 function=f35 numberOfWords=2
+# CHECK-NEXT: v14: anything = NewHeapFrame v6, v0 function=f35 numberOfWords=2
 # CHECK-NEXT: PutHeapFrameWord v14, v6
 # CHECK-NEXT: PutHeapFrameWord v14, v0 index=1
 # CHECK-NEXT: SuspendInHeapFrame v6, v14 [isFirstRun]
@@ -400,7 +400,7 @@ function f20 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: PropSet v0, v2 key="prototype" mode=Sloppy accessSite=24
 # CHECK-NEXT: v4: undefined = Undefined
 # CHECK-NEXT: v5: Generator = NewGenerator v0 function=f1
-# CHECK-NEXT: v13: anything = NewHeapFrame v5 function=f35 numberOfWords=2
+# CHECK-NEXT: v13: anything = NewHeapFrame v5, v0 function=f35 numberOfWords=2
 # CHECK-NEXT: PutHeapFrameWord v13, v5
 # CHECK-NEXT: PutHeapFrameWord v13, v0 index=1
 # CHECK-NEXT: SuspendInHeapFrame v5, v13 [isFirstRun]
@@ -426,7 +426,7 @@ function f20 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: PropSet v0, v1 key="prototype" mode=Sloppy accessSite=27
 # CHECK-NEXT: v3: undefined = Undefined
 # CHECK-NEXT: v4: Generator = NewGenerator v0 function=f1
-# CHECK-NEXT: v9: anything = NewHeapFrame v4 function=f35 numberOfWords=2
+# CHECK-NEXT: v9: anything = NewHeapFrame v4, v0 function=f35 numberOfWords=2
 # CHECK-NEXT: PutHeapFrameWord v9, v4
 # CHECK-NEXT: PutHeapFrameWord v9, v0 index=1
 # CHECK-NEXT: SuspendInHeapFrame v4, v9 [isFirstRun]
@@ -446,7 +446,7 @@ function f20 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v4: boolean = CallBuiltin -, v0, v2, v3 overload=ReflectSet/0 accessSite=30
 # CHECK-NEXT: v5: undefined = Undefined
 # CHECK-NEXT: v6: Generator = NewGenerator v0 function=f1
-# CHECK-NEXT: v13: anything = NewHeapFrame v6 function=f35 numberOfWords=2
+# CHECK-NEXT: v13: anything = NewHeapFrame v6, v0 function=f35 numberOfWords=2
 # CHECK-NEXT: PutHeapFrameWord v13, v6
 # CHECK-NEXT: PutHeapFrameWord v13, v0 index=1
 # CHECK-NEXT: SuspendInHeapFrame v6, v13 [isFirstRun]

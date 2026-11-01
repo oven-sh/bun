@@ -45,6 +45,13 @@ export const rows: Row[] = [
       `class D${index} extends Base { z${index} = ${index}; ${methods(index)} }\nsink.push(new D${index}());`,
   },
   {
+    name: "a name stored on a class below a class",
+    extension: "ts",
+    head: `class Base { base() { return 0; } }\nsink.push(Base);`,
+    item: index =>
+      `class D${index} extends Base { first${index}() { return ${index}; } }\n(D${index} as unknown as { extra: number }).extra = ${index};\nsink.push(D${index});`,
+  },
+  {
     name: "a constructor function with two methods and its first instance",
     extension: "js",
     item: index =>
@@ -128,6 +135,14 @@ export const rows: Row[] = [
     item: index => `sink.push({ [prefix + ${index}]: ${index} });`,
   },
   {
+    // What stands behind an accessor is listed among the keys by a stub. The image has the order of the text, so the stub finds each step there.
+    name: "a literal with two getters and six properties behind them, handed to a function that nobody knows",
+    extension: "ts",
+    head: `const hand: (definition: object) => object = (globalThis as any)[process.env.NO_SUCH_NAME ?? "Object"];`,
+    item: index =>
+      `sink.push(hand({ name${index}: "n${index}", describe() { return "${index}"; }, get input() { return ${index}; }, get output() { return "${index}"; }, label() { return ""; }, deferred: true, enabled() { return true; }, safe() { return true; }, path: "p", render() { return null; } }));`,
+  },
+  {
     name: "two getters defined on an empty object by a function that goes through the names of a literal",
     extension: "js",
     head: `function define(target, all) { for (const name in all) Object.defineProperty(target, name, { get: all[name], enumerable: true }); }`,
@@ -177,6 +192,15 @@ export const rows: Row[] = [
     item: index => `sink.push(finish({ name: "n${index}", kind: "k${index}", order: ${index} }));`,
   },
   {
+    // The type of the result names every property, so the target has a slot for each: a getter cannot stay in one.
+    name: "a literal with two getters defined on a literal of one function by its descriptors",
+    extension: "ts",
+    head: `const defaults = { enabled: () => true, hidden: () => false, order: 0 };\ntype Definition = { name: string; title?: string; limit?: number; readonly input?: number; readonly output?: string; run?(): number; stop?(): number; show?(): string; tail0?: number; tail1?: number };\ntype Finished<T> = T & typeof defaults & { label(): string };\nfunction finish<T extends Definition>(definition: T): Finished<T> {\n  return Object.defineProperties({ ...defaults, label: () => definition.name }, Object.getOwnPropertyDescriptors(definition)) as unknown as Finished<T>;\n}`,
+    item: index =>
+      `sink.push(finish({ name: "n${index}", title: "t", get input() { return ${index}; }, limit: ${index}, get output() { return "o"; }, run() { return ${index}; }, stop() { return 0; }, show() { return ""; }, tail${index & 1}: 1 }));`,
+    tail: `sink.push(Object.keys(sink[0] as object));`,
+  },
+  {
     name: "the keys of the one object of a layout",
     extension: "ts",
     item: index => `sink.push(Object.keys({ a${index}: ${index}, b${index}: "x", c${index}: true }));`,
@@ -213,7 +237,19 @@ export const rows: Row[] = [
     extension: "ts",
     item: index => `const l${index} = ["a${index}", "b${index}", "c${index}"];\nsink.push(l${index});\nsink.push(new Set(l${index}));`,
   },
+  {
+    name: "a Set of a list of six texts that the run puts together",
+    extension: "ts",
+    head: `const words: string[] = (process.env.NO_SUCH_NAME ?? "alpha beta gamma delta epsilon zeta").split(" ");`,
+    item: index => `sink.push(new Set(words.map(word => word + ${index})));`,
+  },
   { name: "a short string", extension: "ts", item: index => `sink.push("text number ${index}");` },
+  {
+    name: "a getter of the engine that refuses its receiver, read through super thirty calls deep and caught",
+    extension: "ts",
+    head: `class Pattern extends RegExp { get source(): string { try { return super.source; } catch (error) { return String(error).slice(0, 9); } } }\nconst bare = Object.create(Pattern.prototype) as Pattern;\nfunction deep(depth: number, work: () => void): void { if (depth > 0) { deep(depth - 1, work); sink.length; } else work(); }`,
+    item: index => `deep(30, () => { sink.push(bare.source + ${index}); });`,
+  },
   {
     name: "a literal of constants, three deep",
     extension: "ts",

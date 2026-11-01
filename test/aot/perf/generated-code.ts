@@ -44,8 +44,7 @@ const platform = `${process.platform}-${process.arch}`;
 const skipped = isASAN ? "with a sanitizer compiled code checks each access" : undefined;
 
 type Size = { instructions: number; patchpoints: number };
-// testaot counts the poll of a loop among the patchpoints and says how many there are. On x64 it is one load that faults when the thread is asked for; elsewhere a load and a branch.
-const instructionsForPoll = process.arch === "x64" ? 1 : 2;
+// testaot counts the poll of a loop among the patchpoints and says how many there are. It is one load that faults when the thread is asked for.
 type Loop = Size & { step: number };
 type Copy = Size & { loops: Loop[] };
 
@@ -71,7 +70,7 @@ function parseSizes(output: string) {
     const size = name !== undefined && /^(loop #\d+, )?instructions: (\d+), patchpoints: (\d+)(.*)$/.exec(line);
     if (!size) continue;
     const polls = Number(/, polls: (\d+)/.exec(size[4])?.[1] ?? 0);
-    const [instructions, patchpoints] = [Number(size[2]) + instructionsForPoll * polls, Number(size[3]) - polls];
+    const [instructions, patchpoints] = [Number(size[2]) + polls, Number(size[3]) - polls];
     if (!size[1]) {
       copy = { instructions, patchpoints, loops: [] };
       copies.set(name!, [...(copies.get(name!) ?? []), copy]);

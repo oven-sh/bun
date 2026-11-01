@@ -3,7 +3,7 @@
 import { existsSync, readdirSync, readFileSync, rmSync } from "fs";
 import { join } from "path";
 import { measureCommand, measureCommandWithMemory } from "../analysis-scaling/measure-check";
-import { writeEverydayIdioms } from "./everyday-idioms";
+import { flagsOfVeryLargeProgram, writeEverydayIdioms } from "./everyday-idioms";
 import { writeTypedIdioms, writeUntypedIdioms } from "./untyped-idioms";
 
 type Turns = { turns: number; warmUp: number };
@@ -33,8 +33,6 @@ export const behindInVeryLargeProgramPath = join(
   import.meta.dir,
   `behind-the-jit-in-a-very-large-program.${process.platform}-${process.arch}.json`,
 );
-// A program of over four times this limit is very large: there only what stands in a loop of the text, or has four callers, counts as code that runs often.
-export const flagsOfVeryLargeProgram = ["--aot-limit=MaxWarmCodeValues:1"];
 
 /**
  * A turn's cost can come in lumps. names-seen.one-of-256-lists-of-40-by-in (./everyday/dictionaries-built-anew.txt) takes 7,000 instructions a turn, plus 80 million every 9,000 turns: a full
@@ -127,7 +125,6 @@ export async function planOf(
 /**
  * Writes every idiom's sources into `folder`: the TypeScript into one folder with a tsconfig.json, the JavaScript into another without. `collections: false` leaves out the run that counts them; `buildFlags` go to every `bun build --compile --aot`.
  * `inVeryLargeProgram` compiles each idiom as the same text would be compiled inside a very large program, and the idioms of ./everyday find turn() at run time.
- * `inColdFunction` is that, and turn() stays a function of its own in typed text too: see ./everyday-idioms.ts.
  * `jit: false` leaves out the runs under the JIT, and the warming up that only they need. `together` names the idioms that will be measured: they are the entry points of a few executables, each compiled as it is when it is built alone.
  */
 export function idiomsAgainstTheJit(
@@ -137,12 +134,10 @@ export function idiomsAgainstTheJit(
     collections = true,
     buildFlags = [] as string[],
     inVeryLargeProgram = false,
-    inColdFunction = false,
     jit: measuresJit = true,
     together = undefined as string[] | undefined,
   } = {},
 ) {
-  inVeryLargeProgram ||= inColdFunction;
   if (inVeryLargeProgram) buildFlags = [...flagsOfVeryLargeProgram, ...buildFlags];
   const sources = { typed: join(folder, "idioms"), untyped: join(folder, "untyped-idioms") };
   const environment = {
@@ -310,7 +305,7 @@ export function idiomsAgainstTheJit(
       .map(String)
       .filter(path => path.endsWith(".ts") && path !== "host.ts")
       .map(path => path.slice(0, -3).replaceAll("\\", "/")),
-    ...writeEverydayIdioms(sources.typed, sources.untyped, inVeryLargeProgram, inColdFunction),
+    ...writeEverydayIdioms(sources.typed, sources.untyped, inVeryLargeProgram),
   ].sort();
   for (let first = 0; first < (together?.length ?? 0); first += idiomsInOneExecutable)
     for (const form of ["typed", "untyped"] as const) executableOfMany(form, together![first]).catch(() => {});

@@ -31,6 +31,7 @@ pub struct ModuleCell<'s> {
     /// The tasks that ran when the watch began have ended.
     is_ripe: AtomicBool,
     state: AtomicU8,
+    /// The commits to wait for: its own, or, if it has none, that of each file that refers to it.
     awaited: AtomicU32,
     /// `let_trees_go_behind` has listed it.
     is_committed: AtomicBool,
@@ -49,7 +50,7 @@ unsafe impl Sync for ModuleCell<'_> {}
 /// The long lists of a module. The session owns it, because nothing drops a program.
 struct SetAside {
     /// The block of the HIR and that of the binder's tables, packed, and compressed where that makes them smaller.
-    packed: Guarded<[Box<[u8]>; 2]>,
+    packed: Guarded<Box<[u8]>>,
     /// Before they were compressed.
     packed_sizes: [usize; 2],
     sizes: [usize; 2],
@@ -171,6 +172,7 @@ impl<'s> ModuleCell<'s> {
         std::ptr::from_ref(self).cast()
     }
 
+    /// Before `awaited` goes down: a listed file awaits its own commit and no other.
     fn await_own_commit_no_more(&self) -> bool {
         let did = self.awaited.fetch_and(!OWN_COMMIT, SeqCst) & OWN_COMMIT != 0;
         if did {
@@ -240,15 +242,16 @@ impl<'s> ModuleCell<'s> {
         let arena = module.hir.lazy.session.arena();
         let mut firsts = [std::ptr::null_mut(); 2];
         let blocks = module.list_blocks().into_iter().zip(&mut firsts);
-        let packed = set_aside.packed.lock();
+        let kept = set_aside.packed.lock();
+        let packed_size = set_aside.packed_sizes.iter().sum();
+        let decompressed = (kept.len() != packed_size).then(|| decompress(&kept, packed_size));
+        let mut packed = decompressed.as_deref().unwrap_or(&kept);
         let sizes = set_aside.packed_sizes.iter().zip(&set_aside.sizes);
-        let kept = packed.iter().zip(sizes);
-        for ((block, first), (packed, (&packed_size, &size))) in blocks.zip(kept) {
+        for ((block, first), (&packed_size, &size)) in blocks.zip(sizes) {
             *block = ListBlock::new_in(arena, size);
-            match packed.len() == packed_size {
-                true => unpack(packed, block.bytes()),
-                false => unpack(&decompress(packed, packed_size), block.bytes()),
-            }
+            let (of_block, behind) = packed.split_at(packed_size);
+            unpack(of_block, block.bytes());
+            packed = behind;
             *first = block.bytes().as_mut_ptr();
         }
         let mut parts = set_aside.parts();
@@ -334,11 +337,13 @@ impl SetAside {
             parts[list / 32] |= 1 << (list % 32);
         }
         parts.extend(places);
-        let packed = module.list_blocks().map(|block| pack(block.bytes()));
+        let [mut packed, second] = module.list_blocks().map(|block| pack(block.bytes()));
+        let packed_sizes = [packed.len(), second.len()];
+        packed.extend_from_slice(&second);
         Some(SetAside {
             sizes: ranges.map(|range| range.end as usize - range.start as usize),
-            packed_sizes: [packed[0].len(), packed[1].len()],
-            packed: Guarded::new(packed.map(|packed| compress(&packed))),
+            packed_sizes,
+            packed: Guarded::new(compress(&packed)),
             list_count: went.len() as u32,
             parts: parts[..].into(),
         })

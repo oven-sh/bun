@@ -164,6 +164,7 @@ pub(super) struct Plan {
     /// `EvictedModules::changed_on_disk`
     is_changed_on_disk_by_run: Vec<bool>,
     loads_compiled_files_alone: Vec<bool>,
+    finds_builtins_read_only: Vec<bool>,
     library_modules_stored_in_cache: LibraryModulesStoredInCache,
     may_evict_every_module: bool,
     /// The host loads the entry point several times in one realm: `AotOptions::entry_points_run_again`.
@@ -213,6 +214,7 @@ impl Plan {
             may_be_evicted: vec![false; order.numbers.len()],
             is_changed_on_disk_by_run: vec![false; order.numbers.len()],
             loads_compiled_files_alone: vec![false; order.numbers.len()],
+            finds_builtins_read_only: vec![false; order.numbers.len()],
             library_modules_stored_in_cache: LibraryModulesStoredInCache::default(),
             may_evict_every_module: false,
             runs_again: vec![false; order.numbers.len()],
@@ -283,6 +285,10 @@ impl Plan {
 
     pub(super) fn set_loads_compiled_files_alone(&mut self, module: ModuleRef) {
         self.add(|plan| &mut plan.loads_compiled_files_alone, module);
+    }
+
+    pub(super) fn set_finds_builtins_read_only(&mut self, module: ModuleRef) {
+        self.add(|plan| &mut plan.finds_builtins_read_only, module);
     }
 
     pub(super) fn set_library_modules_stored_in_cache(
@@ -695,6 +701,11 @@ impl ModuleGraph {
     /// A file of a test run that an executable would hold too: its `require(name)` finds what it finds there.
     pub fn loads_compiled_files_alone(&self, module: ModuleRef) -> bool {
         (self.plan).has(&self.plan.loads_compiled_files_alone, module)
+    }
+
+    /// A file of a test run that the executable holds too. What it writes on a built-in object is refused as there.
+    pub fn finds_builtins_read_only(&self, module: ModuleRef) -> bool {
+        (self.plan).has(&self.plan.finds_builtins_read_only, module)
     }
 
     /// `require.cache["fs"] = { exports: fake }`: an entry of the program may stand under the name, which is one that `require` looks for there.

@@ -1,5 +1,6 @@
 // A rest list or a literal that is made for one call has no name: behind the call nothing can read it. A temporary that it alone held is collected while the function that made the call still runs.
 // Prints what the compiler saves: objects that are collected earlier
+// Alone: what is let go of goes by which bodies are copied into which, and that by all that the executable holds
 // Todo on win32 x64: Not every time: row 3517: some lines print that the object is kept: native frames there have home slots that nobody writes, and the collector reads what an earlier call left in them
 // Flags: --aot-disable=InlineCalls
 type Thing = { id: number; payload: number[] };

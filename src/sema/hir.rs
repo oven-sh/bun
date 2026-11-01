@@ -466,6 +466,9 @@ impl<'s, K, V> Deref for FixedMap<'s, K, V> {
     }
 }
 
+/// A list that neither grows nor shrinks. It either owns an arena block, which it frees when dropped, or borrows from
+/// an owner that still has the list (`FileBuilder::lend`), or belongs to a file that several programs share
+/// (`File::share`).
 pub struct Fixed<'s, T> {
     first: NonNull<T>,
     len: u32,
@@ -473,6 +476,8 @@ pub struct Fixed<'s, T> {
     held: PhantomData<FixedHeld<'s, T>>,
 }
 
+/// No block if it's empty, because a file without nodes can also be created by a thread that doesn't own the arena
+/// (`File::empty_in`).
 #[derive(Copy, Clone, PartialEq)]
 enum FixedOwner {
     Arena,
@@ -2730,6 +2735,25 @@ pub struct ImportedConstant {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct ImportedFileChanger {
+    pub specifier: Atom,
+    pub export: Atom,
+    pub place: u32,
+    pub reaches_below: bool,
+    pub start: Atom,
+    pub end: Atom,
+    pub starts_at_own_directory: bool,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct TextOfOtherFile {
+    pub specifier: Atom,
+    pub export: Atom,
+    pub text: Atom,
+    pub starts_at_own_directory: bool,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct TextOfDataFile {
     pub specifier: Atom,
     pub path: Atom,
@@ -2763,6 +2787,8 @@ pub struct FileIn<S: Storage> {
     /// The names of other files that hold a constant, among those that folding the file asked for. Set by the loader.
     pub imported_constants: S::Few<ImportedConstant>,
     pub texts_of_data_files: S::Few<TextOfDataFile>,
+    pub imported_file_changers: S::Few<ImportedFileChanger>,
+    pub texts_of_other_files: S::Few<TextOfOtherFile>,
     /// Has a top-level `import` or `export`.
     pub has_module_syntax: bool,
     /// The parser rejected the file, so the HIR is partial or empty. Only parse errors are reported for it.
@@ -3453,6 +3479,8 @@ macro_rules! file_in_storage {
             imported_requires: $few!($this.imported_requires),
             imported_constants: $few!($this.imported_constants),
             texts_of_data_files: $few!($this.texts_of_data_files),
+            imported_file_changers: $few!($this.imported_file_changers),
+            texts_of_other_files: $few!($this.texts_of_other_files),
             has_module_syntax: $this.has_module_syntax,
             has_errors: $this.has_errors,
             ran_out_of_stack: $this.ran_out_of_stack,

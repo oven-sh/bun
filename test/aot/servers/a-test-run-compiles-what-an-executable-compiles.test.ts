@@ -27,8 +27,8 @@ raiseDefaultTimeout(120_000);
 /** Percent of the executable's functions, rounded down, on Linux x64, less one: a landing that moves ten functions of two thousand is not meant. */
 const equalAtLeast: Record<string, number> = {
   hono: 98,
-  fastify: 70,
-  express: 29,
+  fastify: 71,
+  express: 95,
 };
 const servers = Object.keys(equalAtLeast);
 

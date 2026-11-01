@@ -726,14 +726,18 @@ test(
 );
 
 // Alone, after the others: it loads every generator, and their data makes each collection slower.
-one.skipIf(isWindows)("every source makes a program", async () => {
-  const sources = await allSources(join(import.meta.dir, "parallel"), new Set(), true);
-  const runner = { ...standIn(() => {}), supportsMultiFile: true };
-  const startPython = ["by-python", "scripted-cases"];
-  const asked = Object.keys(sources).filter(
-    name => !startPython.includes(name) && !name.endsWith(multiFileSuffix) && !name.endsWith(rewrittenSuffix),
-  );
-  expect(asked.length).toBeGreaterThan(300);
-  const seeds = Array.from({ length: 24 }, (_, seed) => seed);
-  expect(asked.filter(name => !seeds.some(seed => sources[name](seed, runner)))).toEqual([]);
-});
+one.skipIf(isWindows)(
+  "every source makes a program",
+  async () => {
+    const sources = await allSources(join(import.meta.dir, "parallel"), new Set(), true);
+    const runner = { ...standIn(() => {}), supportsMultiFile: true };
+    const startPython = ["by-python", "scripted-cases"];
+    const asked = Object.keys(sources).filter(
+      name => !startPython.includes(name) && !name.endsWith(multiFileSuffix) && !name.endsWith(rewrittenSuffix),
+    );
+    expect(asked.length).toBeGreaterThan(300);
+    const seeds = Array.from({ length: 24 }, (_, seed) => seed);
+    expect(asked.filter(name => !seeds.some(seed => sources[name](seed, runner)))).toEqual([]);
+  },
+  timeout,
+);

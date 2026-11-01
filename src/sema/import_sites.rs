@@ -19,6 +19,9 @@ pub use call_sites::{
 pub(crate) use call_sites::{
     call_site_arguments, call_site_kind, is_free_common_js, is_in_with_scope,
 };
+pub use changed_files::{
+    find_texts_of_exports, write_from_other_folder, write_start_from_other_folder,
+};
 pub use encoders::{ENCODERS, Encoder};
 pub use jsx::{
     AutomaticJsx, JsxCallee, JsxImport, JsxImportSet, JsxMode, KeyAttribute, find_key_attribute,
@@ -96,6 +99,23 @@ pub struct ChangedPath {
     pub reaches_below: bool,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct ExportedFileChanger {
+    pub export: Atom,
+    pub place: u32,
+    pub reaches_below: bool,
+    pub start: Atom,
+    pub end: Atom,
+    pub starts_at_own_directory: bool,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct ExportedText {
+    pub export: Atom,
+    pub text: Atom,
+    pub starts_at_own_directory: bool,
+}
+
 /// What a resolver answers for a name: `require.resolve` a path, `import.meta.resolve` a URL.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum ResolvedForm {
@@ -144,6 +164,8 @@ pub(crate) struct ImportScan<'s> {
     pub answers_of_resolvers: &'s [(ExprId, ResolvedForm)],
     pub names_of_workers: &'s [(ExprId, ImportSpecifier)],
     pub paths_of_changed_files: &'s [ChangedPath],
+    pub exported_file_changers: &'s [ExportedFileChanger],
+    pub asked_of_other_files: &'s [(Atom, Atom)],
     pub asked_of_data_files: &'s [(Atom, Atom)],
     pub names_out_of_data_files: &'s [Atom],
     pub keys_stored_in_caches: &'s [(ExprId, ImportSpecifier)],

@@ -6,6 +6,10 @@
 // Async functions run several at a time. A module variable that each function folds its numbers into shows the order in which they ran.
 // Some functions take up to eleven more parameters, more than registers can hold, which are given numbers, objects, lists and texts, and
 // read them, store to them or set them to null between suspensions: by then the frame of the caller that passed them is gone.
+// One or two of the six can be counters and nothing else: a written start just below the edge of 32-bit integers or of exact whole numbers,
+// one written step, no other store, and often a closure that captures them. A compiler works out a range for such a variable, and what
+// it puts away at a suspension depends on that range. Some functions leave their six numbers in a module variable through a list that a
+// callback goes through, which shows a wrong range that a sum hides.
 // Half of the programs have generators alone and wait for nothing.
 import type { Random } from "./random";
 
@@ -15,6 +19,11 @@ const few = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 12, 100, -1, -2, -7];
 const edges = [
   255, 256, 32767, 32768, -32768, 65535, 65536, -65536, 2147483647, 2147483646, -2147483648, -2147483647, 1073741824, -1073741824,
   4294967295, 4294967296, 0.5, -0.5,
+];
+
+const belowAnEdge = [
+  2147483600, 2147483639, 2147483647, 2147483600, 2147483639, 9007199254740983, 9007199254740991, 9007199254740983, 9007199254740991,
+  -2147483640, -2147483648, 4294967287, 65530, 32760, 250,
 ];
 
 export function generate(random: Random, typed: boolean): string {
@@ -32,15 +41,32 @@ export function generate(random: Random, typed: boolean): string {
     const use = random.pick(kind === "generator" ? (["steps", "steps", "two in turn", "for-of", "spread", "pattern"] as const) : (["steps", "for-of"] as const));
     const isSentNumbers = yields && (use === "steps" || use === "two in turn");
     const name = `k${index}`;
-    const variable = () => random.pick(locals);
-    const other = (not: string) => random.pick(locals.filter(each => each !== not));
+    // The counters. The other statements only read them.
+    const steady = random.sample(["d", "e", "f"], random.pick([0, 0, 1, 2, 2]));
+    const free = locals.filter(each => !steady.includes(each));
+    const variable = () => random.pick(free);
+    const other = (not: string) => random.pick(free.filter(each => each !== not));
+    const ticks = steady.map((v, n) => {
+      const way = random.pick([`${v} += 1`, `${v} += 1`, `${v}++`, `++${v}`, `${v} = 1 + ${v}`, `${v} = ${v} + 1`, `${v} += 3`, `${v} += 7`, `${v} -= 1`, `${v}--`, `${v} += 2`]);
+      const isCaptured = random.chance(0.6);
+      return {
+        text: isCaptured ? [`const tick${n} = ()${as("void")} => { ${way}; };`] : [],
+        statement: isCaptured && random.chance(0.7) ? `tick${n}();` : `${way};`,
+      };
+    });
     const spares = Array.from({ length: random.pick([0, 0, 3, 6, 9, 11]) }, (_, n) => `p${n}`);
     const given = spares
       .map(() => random.pick(small))
       .map(n => `, ${random.pick([`${n}`, `${n}`, `{ id: ${n} }`, `{ id: ${n} }`, `[${n}]`, `"t${n}"`])}`)
       .join("");
     const operand = (counters: string[]) =>
-      random.chance(0.15) ? String(random.pick(small)) : random.chance(0.25) && counters.length ? random.pick(counters) : variable();
+      random.chance(0.15)
+        ? String(random.pick(small))
+        : random.chance(0.25) && counters.length
+          ? random.pick(counters)
+          : random.chance(0.15) && steady.length
+            ? random.pick(steady)
+            : variable();
     const sum = (u: string, v: string) =>
       random.pick([
         `(${u} + ${v}) | 0`,
@@ -63,6 +89,7 @@ export function generate(random: Random, typed: boolean): string {
         `{ const t = ${v}; ${v} = ${w}; ${w} = t; }`,
         `if (${v} > ${w}) ${v} = ${sum(v, w)}; else ${w} = ${sum(w, operand(counters))};`,
         `${v} = ${random.pick([`${v} + 0.5`, `${v} / 2`, `-${v}`, `${v} + 2147483647`, `${v} * 65536`, `${v} % 7`])};`,
+        "said = [a, b, c, d, e, f].map(show).join();",
         ...(spares.length
           ? [
               `${v} = ${sum(v, `fold(${random.pick(spares)})`)};`,
@@ -118,27 +145,43 @@ export function generate(random: Random, typed: boolean): string {
     const statements = (counters: string[], length: number) =>
       Array.from({ length }, () => (random.chance(0.5) ? suspension : plain)(counters));
     const turns = () => random.pick(["2", "3", "4", "5", "(x & 3) + 1", "(y & 3)"]);
-    const inner = random.chance(0.45)
-      ? [`for (let i1 = 0; i1 < ${turns()}; i1++) {`, ...[suspension(["i0", "i1"]), ...statements(["i0", "i1"], random.between(1, 3))].map(line => "  " + line), "}"]
+    const manyTurns = () => random.pick(["17", "24", "33", "(x & 31) + 8", "(z & 15) + 17"]);
+    const nested = random.chance(0.45);
+    const inside = nested ? ticks.filter(() => random.chance(0.5)) : [];
+    const inner = nested
+      ? [
+          `for (let i1 = 0; i1 < ${turns()}; i1++) {`,
+          ...random.shuffled([suspension(["i0", "i1"]), ...inside.map(tick => tick.statement), ...statements(["i0", "i1"], random.between(1, 3))]).map(line => "  " + line),
+          "}",
+        ]
       : [];
-    const body = random.shuffled([suspension(["i0"]), ...statements(["i0"], random.between(2, 4)), inner.join("\n    ")]).filter(line => line !== "");
+    const body = random
+      .shuffled([
+        suspension(["i0"]),
+        ...ticks.filter(tick => !inside.includes(tick)).map(tick => tick.statement),
+        ...statements(["i0"], random.between(2, 4)),
+        inner.join("\n    "),
+      ])
+      .filter(line => line !== "");
     const returns = {
       generator: `Generator<number, number, ${isSentNumbers ? "number" : "unknown"}>`,
       async: "Promise<number>",
       "async generator": `AsyncGenerator<number, number, ${isSentNumbers ? "number" : "unknown"}>`,
     }[kind];
     const lines = [
-      `let a${number} = x, b${number} = y, c${number} = z, d${number} = ${random.pick(small)}, e${number} = ${random.pick(small)}, f${number} = ${random.pick(small)};`,
+      `let a${number} = x, b${number} = y, c${number} = z, ${["d", "e", "f"].map(each => `${each}${number} = ${random.pick(steady.includes(each) ? belowAnEdge : small)}`).join(", ")};`,
+      ...ticks.flatMap(tick => tick.text),
       ...statements([], random.between(0, 1)),
-      `for (let i0 = 0; i0 < ${turns()}; i0++) {`,
+      `for (let i0 = 0; i0 < ${steady.length && random.chance(0.7) ? manyTurns() : turns()}; i0++) {`,
       ...body.map(line => "  " + line),
       "}",
       ...statements([], random.between(0, 2)),
+      ...(random.chance(0.6) ? ["said = [a, b, c, d, e, f].map(show).join();"] : []),
       "return a + 3 * b + 5 * c + 7 * d + 11 * e + 13 * f;",
     ];
     const head = { generator: "function*", async: "async function", "async generator": "async function*" }[kind];
     const wait = awaits ? "await " : "";
-    const most = random.pick([3, 7, 20, 60]);
+    const most = random.pick([3, 7, 20, 60, 400, 400]);
 
     /** A function that uses up one generator, or two, and hands back a text. */
     const user = {
@@ -194,10 +237,12 @@ ${
 }
 `
     : ""
-}console.log("${name}", (${results}).join(" "), order);`);
+}console.log("${name}", (${results}).join(" "), order, said);`);
   }
 
   return `let order = 0;
+let said = "";
+const show = (v${as("unknown")})${as("string")} => (typeof v === "number" ? (Object.is(v, -0) ? "-0" : String(v)) : String(v));
 function fold(value${as("unknown")})${number} {
   return typeof value === "number" ? value | 0 : value === null ? 3 : value === undefined ? 5 : 7;
 }

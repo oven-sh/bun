@@ -83,7 +83,7 @@ typesite w27 module=m0 position=1089 kind=CallResult
 typesite w28 module=m0 position=1178 kind=Variable
 typesite w29 module=m0 position=1219 kind=CallResult
 typesite w30 module=m0 position=1281 kind=CallResult
-layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=number|absent site=w16}}] ownFieldCount=1
+layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=number|absent site=w16} variableName="d"}] ownFieldCount=1
 data d0 root=Array{contents=undefined|null|function|f4} module=m0
 variable g0 name="log" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
 variable g1 name="f4" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
@@ -468,7 +468,7 @@ function f3 name="main" module=m0 position=606 flags=[IsChecked, HasExplicitName
     v141 = Convert v140 declared={type=number site=w7} @1416
     Return v141 @1416
 }
-function f4 module=m0 position=1100 kind=Arrow flags=[IsChecked] captures=[{type=env L0 flags=[IsFromCompiler]}, {type=number site=w25}] thisType={type=anything} results=[{type=number site=w26}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f4 module=m0 position=1100 kind=Arrow flags=[IsChecked] captures=[{type=env L0 flags=[IsFromCompiler]}, {type=number site=w25 variableName="j"}] thisType={type=anything} results=[{type=number site=w26}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: env L0, v1: number):
     Jump -> next b1() @1100
   b1():

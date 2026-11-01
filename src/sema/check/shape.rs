@@ -7202,6 +7202,13 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some((known, _)) = self.known_constraint(ty) {
             return known;
         }
+        if self.answers_lowering
+            && matches!(data, TypeData::Cond { .. })
+            && self.has_costly_base_constraint(ty)
+        {
+            self.cut_constraint_short();
+            return None;
+        }
         if let Some(raw) = self.provisional(Query::Constraint(ty)) {
             return (raw != 0).then(|| TypeId(raw as u32 - 1));
         }

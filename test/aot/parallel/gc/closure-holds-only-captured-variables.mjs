@@ -1,5 +1,6 @@
 // A closure keeps the variables that it names alive. Under `bun <file>` it keeps every captured variable of its scope alive, here `r`, which only the other closure names.
 // Prints what the compiler saves: objects that are collected earlier
+// Alone: what is let go of goes by which bodies are copied into which, and that by all that the executable holds
 let collected = 0;
 const registry = new FinalizationRegistry(() => {
   collected++;

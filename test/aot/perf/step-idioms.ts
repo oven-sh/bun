@@ -2,11 +2,11 @@
 // Those in the code that the compiler made are the same on every run, but for what goes by an address, by chance or by what else the executable holds: 31 of 4,210 rows (./stepped-idioms.ts).
 // Those in native code waver by some tens, with where the lists of free cells stand: they are printed and not judged.
 //
-//   bun test/aot/perf/step-idioms.ts <the Bun that builds> <where the numbers go, as JSON> [a pattern for the names] [called-once]
+//   bun test/aot/perf/step-idioms.ts <the Bun that builds> <where the numbers go, as JSON> [a pattern for the names] [called-once | in-a-very-large-program]
 import { mkdirSync, rmSync, writeFileSync } from "fs";
 import { availableParallelism, tmpdir } from "os";
 import { join } from "path";
-import { forms, idiomsInExecutables, type Form } from "./count-idioms";
+import { forms, idiomsInExecutables, type Form, type Surroundings } from "./count-idioms";
 
 /** A turn. */
 export type Steps = { compiled: number; native: number };
@@ -19,27 +19,28 @@ export const mostStepsOfTurn = 300_000;
 
 /** A container may forbid one process to watch another. */
 export function whyNoSteps(bun: string) {
-  if (process.platform !== "linux" || process.arch !== "x64") return "./count-steps.ts reads the registers of Linux on x64";
+  if (process.platform !== "linux") return "./count-steps.ts watches a process the way Linux lets it";
   const { stderr } = Bun.spawnSync({ cmd: [bun, join(import.meta.dir, "count-steps.ts"), "/bin/true"], stdout: "ignore", stderr: "pipe", timeout: 60_000 });
   return /^steps 0 compiled 0 marks 0$/m.test(stderr.toString()) ? undefined : "no process may watch another here";
 }
 
-export function steppedIdioms(bun: string, folder: string, chosen: (names: string[]) => string[], benchIsCalledOnce = false) {
-  const { names, run, executableOf, start, startBuilds } = idiomsInExecutables(bun, folder, chosen, [], true, benchIsCalledOnce);
+export function steppedIdioms(bun: string, folder: string, chosen: (names: string[]) => string[], surroundings: Surroundings = "ordinary") {
+  const { names, run, executableOf, start, startBuilds } = idiomsInExecutables(bun, folder, chosen, [], true, surroundings);
 
-  async function stepsOf(name: string, form: Form, turns: number) {
+  async function stepsOf(name: string, form: Form, turns: number, padding: number) {
     const { stderr } = await run(folder, [bun, join(import.meta.dir, "count-steps.ts"), await executableOf(form, name)], {
       ...start(form, name, turns),
       AOT_PERF_MOST_STEPS: String(4 * mostStepsOfTurn),
+      ...(padding ? { AOT_PERF_PADDING: "x".repeat(padding) } : {}),
     });
     const [, all, compiled, marks] = /^steps (\d+) compiled (\d+) marks (\d)$/m.exec(stderr) ?? [];
     if (all === undefined || (marks !== "2" && Number(all) <= 4 * mostStepsOfTurn)) throw new Error(`no steps: ${stderr.trim().slice(0, 300)}`);
     return { compiled: Number(compiled), native: Number(all) - Number(compiled), isWhole: marks === "2" };
   }
 
-  /** The turns from `turns` to twice that of the long call. */
-  async function aTurn(name: string, form: Form, turns: number): Promise<Steps> {
-    const [short, long] = await Promise.all([stepsOf(name, form, turns), stepsOf(name, form, 2 * turns)]);
+  /** The turns from `turns` to twice that of the long call. `padding`: so many bytes more in the environment, which nobody reads: whatever the process allocates lies elsewhere. */
+  async function aTurn(name: string, form: Form, turns: number, padding = 0): Promise<Steps> {
+    const [short, long] = await Promise.all([stepsOf(name, form, turns, padding), stepsOf(name, form, 2 * turns, padding)]);
     if (!short.isWhole || !long.isWhole) return { compiled: Infinity, native: Infinity };
     const each = (steps: number) => Math.round((100 * steps) / turns) / 100;
     return { compiled: each(long.compiled - short.compiled), native: each(long.native - short.native) };
@@ -56,10 +57,10 @@ export function steppedIdioms(bun: string, folder: string, chosen: (names: strin
 }
 
 if (import.meta.main) {
-  const [bun, out, pattern = ".", form] = process.argv.slice(2);
+  const [bun, out, pattern = ".", surroundings = "ordinary"] = process.argv.slice(2);
   const folder = join(process.env.TMPDIR ?? tmpdir(), `step-idioms-${process.pid}`);
   mkdirSync(folder, { recursive: true });
-  const { names, aTurn, turnsFor } = steppedIdioms(bun, folder, all => all.filter(name => new RegExp(pattern).test(name)), form === "called-once");
+  const { names, aTurn, turnsFor } = steppedIdioms(bun, folder, all => all.filter(name => new RegExp(pattern).test(name)), surroundings as Surroundings);
   const result: Record<string, Partial<Record<Form, Steps>> & { turns?: number; failure?: string }> = {};
   const waiting = [...names];
   const began = performance.now();

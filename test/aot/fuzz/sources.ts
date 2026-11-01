@@ -799,8 +799,15 @@ async function singleFileSources(programsRoot: string, rejected: Set<string>): P
     "iterators-stepped-by-hand",
     "counters-stepped-by-one",
     "pairs-taken-apart-where-ways-meet",
+    "captured-objects-in-counted-loops",
+    "captured-numbers-in-counted-loops",
     "numbers-carried-across-yields-and-awaits",
     "compiled-patterns-on-wide-subjects",
+    "whole-numbers-carried-through-counted-loops",
+    "counters-past-int32-over-typed-arrays",
+    "objects-of-several-constructors-met-at-a-choice",
+    "fractions-and-negative-zero-carried-through-counted-loops",
+    "straight-loops-over-typed-arrays",
   ])
     sources[name] = productSource(name, generateOf(name), oddSeeds);
   sources["computed-key-stores-with-mutations"] = productSource(

@@ -1,5 +1,6 @@
 // A function that waits holds what it reads behind the wait. `thing = null` behind the wait reads nothing.
 // Prints what the compiler saves: objects that are collected earlier
+// Alone: what is let go of goes by which bodies are copied into which, and that by all that the executable holds
 class Thing {
   constructor(public id: number) {}
 }

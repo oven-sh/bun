@@ -51,9 +51,17 @@ pub(super) fn compute_forms(
             continue;
         }
         let unit = CodeUnit::Function(function);
+        let owner = context.walk.function_of_fn[function.idx()];
         for (index, parameter) in (0..).zip(hir[function].params.iter()) {
             let symbol = bound.declared_symbol(Decl::Param(hir[parameter].pat));
-            if bound.binding_kind(symbol) == BindingKind::Parameter {
+            if bound.binding_kind(symbol) != BindingKind::Parameter {
+                continue;
+            }
+            // A function that holds a mapped parameter holds the whole object, which is then made at every call. Where only the function itself reads the parameter, the engine takes the object away.
+            let mut users = context.walk.uses.iter();
+            let is_held_by_inner_function = users
+                .any(|&(user, used)| used == BindingRef::Symbol(symbol) && Some(user) != owner);
+            if !is_held_by_inner_function || bound.is_mapped_argument(hir, symbol) {
                 forms[symbol.idx()] = BindingForm::MappedArgument { unit, index };
             }
         }

@@ -23,6 +23,7 @@ describe.skipIf(!!unsupported)("compile/aot/react-compiler", () => {
     "names-that-only-types-in-a-component-use",
     "outside-variables-that-a-component-only-assigns",
     "list-of-two-spreads-in-a-component",
+    "import-meta-glob",
   ])(
     "%s",
     name =>

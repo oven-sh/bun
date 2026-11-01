@@ -121,6 +121,34 @@ impl ImportGraph {
         Some(reaching.map(|(position, _)| position).collect())
     }
 
+    /// The files that no entry point but those at `set_aside` leads to. None where a file that the others lead to loads what nobody can name.
+    pub(crate) fn find_files_reached_from_these_alone(&self, set_aside: &[&[u8]]) -> Vec<u32> {
+        let set_aside: Vec<u32> = (set_aside.iter())
+            .filter_map(|&path| self.file_of_path.get(path).copied())
+            .collect();
+        let mut is_reached = vec![false; self.loads.len()];
+        let others = self.entry_points.iter().copied();
+        let mut pending: Vec<u32> = others.filter(|file| !set_aside.contains(file)).collect();
+        for &file in &pending {
+            is_reached[file as usize] = true;
+        }
+        while let Some(file) = pending.pop() {
+            if self.loads_unknown_files[file as usize] {
+                return Vec::new();
+            }
+            for &loaded in &self.loads[file as usize] {
+                if !core::mem::replace(&mut is_reached[loaded as usize], true) {
+                    pending.push(loaded);
+                }
+            }
+        }
+        let files = (0u32..).zip(is_reached);
+        files
+            .filter(|&(_, is_reached)| !is_reached)
+            .map(|(file, _)| file)
+            .collect()
+    }
+
     /// `left`: `LoadOptions::left_to_loader`, as far as this compile has read them.
     pub(crate) fn find_loads_below(&self, left: &[Vec<u8>]) -> LoadsBelowFilesLeftToLoader {
         const NOWHERE: u32 = u32::MAX;

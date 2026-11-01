@@ -134,6 +134,8 @@ impl Resolver<'_, '_> {
             let Some(id) = mentioned_id(state) else {
                 continue;
             };
+            self.output.names_holder_that_takes_spelled_names |=
+                Self::takes_names_that_an_executable_spells(id);
             // A variable, an assignment and `Object.getPrototypeOf` hand on an object that is there already.
             let makes_value =
                 !matches!(state, ExprState::Held(_)) || self.input.hir.member_key(expr).is_some();

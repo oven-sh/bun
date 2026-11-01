@@ -104,17 +104,6 @@ async function runTests(directory: string, env: Record<string, string>, ...flags
   return { printed: stdout.split("\n").filter(line => line && !line.startsWith("bun test ")), results, exitCode };
 }
 
-type Run = Awaited<ReturnType<typeof runTests>>;
-
-// Row 4095: under --isolate, plain reads a test file anew when the runner starts it, whatever an earlier import of it
-// left. Compiled, the first load still decides. TODO: this turns red the day the two agree. Then compare the whole.
-function expectOneKnownDifference(compiled: Run, plain: Run) {
-  const line = plain.printed.lastIndexOf("in a test of its own: number");
-  expect(compiled.printed[line]).toBe("in a test of its own: function");
-  const printed = compiled.printed.map((text, index) => (index === line ? plain.printed[line] : text));
-  expect({ ...compiled, printed }).toEqual(plain);
-}
-
 for (const isolation of [["--isolate"], []]) {
   for (const [way, env] of ways) {
     const name = `the first load of a CommonJS file decides how it reads require("fs"), ${way}`;
@@ -137,9 +126,7 @@ for (const isolation of [["--isolate"], []]) {
         ...(isolation.length ? ["in a test of its own: number"] : []),
         "import() behind a mock, and behind a plugin: function function",
       ]);
-      const compiled = await runTests(String(dir), env, "--aot", ...isolation);
-      if (isolation.length && !env.BUN_AOT_TEST_FILES_FROM_DISK) expectOneKnownDifference(compiled, plain);
-      else expect(compiled).toEqual(plain);
+      expect(await runTests(String(dir), env, "--aot", ...isolation)).toEqual(plain);
     });
   }
 }
@@ -151,6 +138,6 @@ test.concurrent(
     const plain = await runTests(String(dir), {}, "--isolate");
     expect(plain.printed).toContain("second test file: number function number");
     const words = { BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:2,TestRunPartFiles:1" };
-    expectOneKnownDifference(await runTests(String(dir), words, "--aot", "--isolate"), plain);
+    expect(await runTests(String(dir), words, "--aot", "--isolate")).toEqual(plain);
   },
 );

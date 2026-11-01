@@ -56,3 +56,17 @@ export function from(this: any, items: Iterable<unknown>, mapper: any, thisArg?:
   (result as any).length = k;
   return result;
 }
+
+declare function $arrayFromFastWithoutMapFn(constructor: unknown, items: unknown): unknown[] | undefined;
+
+// `Array.from(map)`, `Array.from(map.entries())`: what native code does not copy at once is walked by a loop, which asks no `next` for an object a step.
+$visibility = "Public";
+export function fromIterable(this: unknown, items: Iterable<unknown>): unknown[] {
+  if (typeof items === "string") return [...items];
+  const copied = $arrayFromFastWithoutMapFn(this, items);
+  if (copied) return copied;
+  if ((items as any).next === undefined) return [...items];
+  const result: unknown[] = [];
+  for (const value of items) $arrayPush(result, value);
+  return result;
+}

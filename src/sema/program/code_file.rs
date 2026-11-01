@@ -53,6 +53,8 @@ pub(super) struct LoadInputs<'a, 's> {
     pub(super) imported_requires: &'a [ImportedRequire],
     pub(super) imported_constants: &'a [ImportedConstant],
     pub(super) texts_of_data_files: &'a [TextOfDataFile],
+    pub(super) imported_file_changers: &'a [ImportedFileChanger],
+    pub(super) texts_of_other_files: &'a [TextOfOtherFile],
 }
 
 pub(super) fn load_code_file<'s, 'r>(
@@ -75,6 +77,8 @@ pub(super) fn load_code_file<'s, 'r>(
         imported_requires,
         imported_constants,
         texts_of_data_files,
+        imported_file_changers,
+        texts_of_other_files,
     } = inputs;
     let key = target.key;
     let path = key.path;
@@ -86,6 +90,10 @@ pub(super) fn load_code_file<'s, 'r>(
     tree.hir.imported_constants = ArenaFew::from_iter_in(imported_constants.iter().copied(), arena);
     tree.hir.texts_of_data_files =
         ArenaFew::from_iter_in(texts_of_data_files.iter().copied(), arena);
+    tree.hir.imported_file_changers =
+        ArenaFew::from_iter_in(imported_file_changers.iter().copied(), arena);
+    tree.hir.texts_of_other_files =
+        ArenaFew::from_iter_in(texts_of_other_files.iter().copied(), arena);
     let is_script_for_project = match tree.request.options.written_module_detection {
         ModuleDetection::Force => false,
         ModuleDetection::Legacy => true,

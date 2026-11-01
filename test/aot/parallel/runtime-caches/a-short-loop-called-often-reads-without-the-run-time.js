@@ -1,4 +1,5 @@
-// A loop reads eight names off one object. Once a long run has filled its sites, short runs of the same loop do not come to the run time.
+// A loop reads eight names off one object. What it asks ahead of its turns is answered in the first run. The first turn of each run reads by name: its sites come to the run time twice each,
+// in the first short runs, and the short runs behind those do not come to the run time.
 // Flags: --aot-heat=none
 // Env: JSC_aotCountsPath=/dev/null
 const counts = typeof aotOperationCount === "function";   // Only the jsc shell can count. Elsewhere the program checks the answers alone.
@@ -23,8 +24,12 @@ function total(o, n) {
 
 const o = record();
 console.log("long run: " + total(o, longRun));
-const before = entries();
+const twiceASite = 2 * names.length;
+const atFirst = entries();
 let sum = 0;
+for (let call = 0; call < calls; call++) sum += total(o, shortRun);
+const before = entries();
+if (before - atFirst > twiceASite) throw new Error("the first short runs came to the run time " + (before - atFirst) + " times");
 for (let call = 0; call < calls; call++) sum += total(o, shortRun);
 const after = entries();
 if (after !== before) throw new Error("short runs came to the run time " + (after - before) + " times");

@@ -147,6 +147,37 @@ pub(super) fn find_outermost_cast(hir: &File<'_>, bound: &BoundBuilder, e: ExprI
     outermost
 }
 
+pub(super) fn is_object_of_read(hir: &File<'_>, bound: &BoundBuilder, object: ExprId) -> bool {
+    let object = find_outermost_cast(hir, bound, object);
+    let access = match bound.parent_of_expr(object) {
+        Parent::Expr(parent) if parent.is_some() => parent,
+        _ => return false,
+    };
+    let (ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }) = hir[access].kind else {
+        return false;
+    };
+    if obj != object {
+        return false;
+    }
+    let access = find_outermost_cast(hir, bound, access);
+    if bound.get_assignment_target(hir, access).is_some() {
+        return false;
+    }
+    let Parent::Expr(user) = bound.parent_of_expr(access) else {
+        return true;
+    };
+    match hir.exprs.get(user.idx()).map(|user| user.kind) {
+        Some(
+            ExprKind::Unary {
+                op: UnOp::Delete, ..
+            }
+            | ExprKind::TaggedTemplate(_),
+        ) => false,
+        Some(ExprKind::Call(call)) => hir[call].callee != access,
+        _ => true,
+    }
+}
+
 fn may_modify_import_meta(hir: &File<'_>, bound: &BoundBuilder, import_meta: ExprId) -> bool {
     let object = find_outermost_cast(hir, bound, import_meta);
     let access = match bound.parent_of_expr(object) {

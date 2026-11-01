@@ -656,7 +656,7 @@ function f57 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: ReturnCall v2 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function f19 module=
-# CHECK: m0 position=4296 kind=Arrow role=EntryChecks flags=[IsChecked] length=1 captures=[{type=int[0, 1999] site=w65}] thisType={type=anything} parameters=[{type=number site=w66 flags=[IsExpected]}] results=[{type=number site=w67 flags=[IsExpected]}] functionTypes=[f47] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCalleeOnceRenamed] creator=EntryChecks{body=f60 fallback=f62} {
+# CHECK: m0 position=4296 kind=Arrow role=EntryChecks flags=[IsChecked] length=1 captures=[{type=int[0, 1999] site=w65}] thisType={type=anything} parameters=[{type=number site=w66 flags=[IsExpected]}] results=[{type=number site=w67 flags=[IsExpected]}] functionTypes=[f47] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCalleeOnceRenamed, MakesNoTailCall] creator=EntryChecks{body=f60 fallback=f62} {
 # CHECK-NEXT: b0(v0: int[0, 1999], v1: anything ~ number):
 # CHECK-NEXT: v2: boolean ~ true = TypeTest v1 testedType=number
 # CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2()

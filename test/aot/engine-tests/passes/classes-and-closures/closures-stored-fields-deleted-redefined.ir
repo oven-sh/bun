@@ -1362,12 +1362,12 @@ runtimefunction id=ArrayTraversalTraverseArray function=f136 visibility=Private
 # CHECK-LABEL: function {{*}}name="run"
 # CHECK: module=m0 position=1247 kind=Arrow role=GenericEntrypoint flags=[HasThis] captures=[{type=f43}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f43} creator=Entrypoint{target=f43 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f43, v1: anything):
-# CHECK-NEXT: v2: never = ThrowNewError message="'run' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v2: never = ThrowNewError message="'run' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="run"
 # CHECK: module=m0 position=4020 kind=Arrow role=GenericEntrypoint flags=[HasThis] captures=[{type=f49}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f49} creator=Entrypoint{target=f49 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f49, v1: anything):
-# CHECK-NEXT: v2: never = ThrowNewError message="'run' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v2: never = ThrowNewError message="'run' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }

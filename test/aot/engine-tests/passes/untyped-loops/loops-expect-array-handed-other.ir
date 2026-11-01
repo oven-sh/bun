@@ -1051,7 +1051,7 @@ runtimefunction id=GeneratorPrototypeReturn function=f65 visibility=Private
 # CHECK-NEXT: v0: f1 = GetModuleVariable variable=g0
 # CHECK-NEXT: v1: undefined = Undefined
 # CHECK-NEXT: v2: Generator = NewGenerator v0 function=f1
-# CHECK-NEXT: v5: anything = NewHeapFrame v2 function=f121 numberOfWords=2
+# CHECK-NEXT: v5: anything = NewHeapFrame v2, v0 function=f121 numberOfWords=2
 # CHECK-NEXT: PutHeapFrameWord v5, v2
 # CHECK-NEXT: PutHeapFrameWord v5, v0 index=1
 # CHECK-NEXT: SuspendInHeapFrame v2, v5 [isFirstRun]

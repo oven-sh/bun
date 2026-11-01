@@ -1,5 +1,6 @@
 import * as b from "bun-builtins-table";
 import { methodsOfSubtleCrypto } from "./methods-of-subtle-crypto.ts";
+import { answering, promiseOf } from "./native-code.ts";
 
 const externalState = ["ExternalState"];
 const objectOrUndefined = b.union(b.object, b.undefined);
@@ -90,7 +91,12 @@ export default b.declarations(
   }),
 
   webCoreClass("SubtleCrypto", b.cppClass("JSSubtleCrypto"), {
-    proto: Object.fromEntries(methodsOfSubtleCrypto.map(name => [name, b.otherwiseBy(b.generic)])),
+    proto: {
+      ...Object.fromEntries(methodsOfSubtleCrypto.map(name => [name, b.otherwiseBy(b.generic)])),
+      digest: answering(promiseOf(b.instance("ArrayBuffer"))),
+      sign: answering(promiseOf(b.instance("ArrayBuffer"))),
+      verify: answering(promiseOf(b.bool)),
+    },
   }),
   b.method("Crypto.prototype.subtle", {
     getter: b.instance("SubtleCrypto"),

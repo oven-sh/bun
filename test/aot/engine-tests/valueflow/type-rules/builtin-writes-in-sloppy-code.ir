@@ -626,7 +626,7 @@ function f49 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} re
 # CHECK-LABEL: function {{*}}name="write"
 # CHECK: module=m0 position=107 kind=Method role=GenericEntrypoint flags=[HasThis] captures=[{type=f2}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f2} creator=Entrypoint{target=f2 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f2, v1: anything):
-# CHECK-NEXT: v2: never = ThrowNewError message="'write' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v2: never = ThrowNewError message="'write' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="write"
@@ -644,7 +644,7 @@ function f49 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} re
 # CHECK-LABEL: function {{*}}name="write"
 # CHECK: module=m0 position=424 kind=Method role=GenericEntrypoint flags=[HasThis] captures=[{type=f5}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f5} creator=Entrypoint{target=f5 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f5, v1: anything):
-# CHECK-NEXT: v2: never = ThrowNewError message="'write' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v2: never = ThrowNewError message="'write' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="write"
@@ -674,7 +674,7 @@ function f49 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} re
 # CHECK-LABEL: function {{*}}name="write"
 # CHECK: module=m0 position=1022 kind=Method role=GenericEntrypoint flags=[HasThis] captures=[{type=f10}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f10} creator=Entrypoint{target=f10 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f10, v1: anything):
-# CHECK-NEXT: v2: never = ThrowNewError message="'write' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v2: never = ThrowNewError message="'write' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="write"
@@ -740,13 +740,13 @@ function f49 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} re
 # CHECK-LABEL: function {{*}}name="write"
 # CHECK: module=m0 position=2361 kind=Method role=GenericEntrypoint flags=[HasThis] captures=[{type=f21}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f21} creator=Entrypoint{target=f21 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f21, v1: anything):
-# CHECK-NEXT: v2: never = ThrowNewError message="'write' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v2: never = ThrowNewError message="'write' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="write"
 # CHECK: module=m0 position=2455 kind=Method role=GenericEntrypoint flags=[HasThis] captures=[{type=f22}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f22} creator=Entrypoint{target=f22 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f22, v1: anything):
-# CHECK-NEXT: v2: never = ThrowNewError message="'write' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v2: never = ThrowNewError message="'write' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="write"

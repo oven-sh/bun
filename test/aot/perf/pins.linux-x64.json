@@ -25,8 +25,8 @@
     "jit": 744.7
   },
   "array/spread-into-call-in-function": {
-    "typed": 130,
-    "untyped": 106,
+    "typed": 38,
+    "untyped": 44,
     "jit": 320.3
   },
   "array/spread-of-set": {

@@ -82,6 +82,8 @@ pub(in crate::lower) struct ClassPlan {
     pub(in crate::lower) injected_elements: Vec<ClassElement>,
     pub(in crate::lower) static_elements: Vec<ClassElement>,
     pub(in crate::lower) decorations: Vec<Decoration>,
+    /// `bun run` prints their keys as computed ones.
+    pub(in crate::lower) members_with_decorators_in_key: SmallVec<[MemberId; 4]>,
     pub(in crate::lower) instance_method_initializers: Option<u32>,
     pub(in crate::lower) initializer_list_count: u32,
 }

@@ -28,6 +28,8 @@ pub(crate) struct Costs<'a> {
     pub(crate) of_thousand_bytes: u64,
     /// How many test files run at once. A shard is not through before its longest file is, whatever runs beside that. 0: nobody knows.
     pub(crate) at_once: u64,
+    /// Of each test file, the megabytes that it takes where the run holds it back for them, else 0: see `end_of_heavy_files`.
+    pub(crate) of_heavy: &'a [u32],
 }
 
 /// The test files of a shard.
@@ -37,14 +39,41 @@ struct Run {
     sum: u64,
     /// What the one that costs most costs.
     longest: u64,
+    /// `end_of_heavy_files`.
+    heavy_end: u64,
 }
 
-impl Run {
-    fn with(self, cost: u64) -> Run {
-        Run {
-            sum: self.sum + cost,
-            longest: self.longest.max(cost),
-        }
+/// A test file that the run holds back for the memory that it takes: what it costs, and its megabytes.
+type HeavyFile = (u64, u32);
+
+/// When the last of the heavy files of a shard ends, if the first begin with the run. A run has room for its heaviest file, and a
+/// heavy file waits while it and those that run would take more: `Parts::is_held_back`. They go slowest first, and one that has
+/// room goes ahead of one that waits.
+fn end_of_heavy_files(files: &[HeavyFile]) -> u64 {
+    let megabytes = files.iter().map(|file| u64::from(file.1));
+    let room = megabytes.max().unwrap_or(0);
+    let mut waiting = files.to_vec();
+    waiting.sort_unstable_by(|a, b| b.cmp(a));
+    // When each ends, and its megabytes.
+    let mut running: Vec<HeavyFile> = Vec::new();
+    let (mut now, mut taken, mut last) = (0u64, 0u64, 0u64);
+    loop {
+        waiting.retain(|&(cost, megabytes)| {
+            if taken != 0 && taken + u64::from(megabytes) > room {
+                return true;
+            }
+            taken += u64::from(megabytes);
+            running.push((now + cost, megabytes));
+            last = last.max(now + cost);
+            false
+        });
+        let first_to_end = (0..running.len()).min_by_key(|&at| running[at]);
+        let Some(at) = first_to_end.filter(|_| !waiting.is_empty()) else {
+            return last;
+        };
+        let (end, megabytes) = running.swap_remove(at);
+        now = end;
+        taken -= u64::from(megabytes);
     }
 }
 
@@ -141,20 +170,39 @@ struct Dealer<'a> {
 
 impl Dealer<'_> {
     fn cost(&self, bytes: u64, run: Run) -> u64 {
+        // What takes its time whatever runs beside it.
+        let alone = run.longest.max(run.heavy_end);
         (bytes / 1000)
             .saturating_mul(self.costs.of_thousand_bytes)
-            .saturating_add(run.sum.max(run.longest.saturating_mul(self.costs.at_once)))
+            .saturating_add(run.sum.max(alone.saturating_mul(self.costs.at_once)))
+    }
+
+    /// `run`, whose heavy files are `heavy`, with one test file more.
+    fn with(&self, run: Run, heavy: &[HeavyFile], test: usize) -> Run {
+        let (cost, megabytes) = (self.costs.of_run[test], self.costs.of_heavy[test]);
+        Run {
+            sum: run.sum + cost,
+            longest: run.longest.max(cost),
+            heavy_end: match megabytes {
+                0 => run.heavy_end,
+                _ => end_of_heavy_files(&[heavy, &[(cost, megabytes)]].concat()),
+            },
+        }
     }
 
     fn weigh(&self, shard_of: Vec<u32>) -> Deal {
         let mut bytes_of = vec![self.tails.core_bytes; self.shard_count];
         let mut run_of = vec![Run::default(); self.shard_count];
+        let mut heavy_of: Vec<Vec<HeavyFile>> = vec![Vec::new(); self.shard_count];
         let mut is_empty = vec![true; self.shard_count];
         let mut has = vec![false; self.reach.imports.len() * self.shard_count];
         for (test, &shard) in shard_of.iter().enumerate() {
             let shard = shard as usize;
             is_empty[shard] = false;
-            run_of[shard] = run_of[shard].with(self.costs.of_run[test]);
+            run_of[shard] = self.with(run_of[shard], &heavy_of[shard], test);
+            if self.costs.of_heavy[test] != 0 {
+                heavy_of[shard].push((self.costs.of_run[test], self.costs.of_heavy[test]));
+            }
             for &file in &self.tails.of_test[test] {
                 let at = shard * self.reach.imports.len() + file as usize;
                 if !core::mem::replace(&mut has[at], true) {
@@ -178,8 +226,9 @@ impl Dealer<'_> {
     /// A deal in which no shard takes more than `limit`, if this way of dealing finds one.
     ///
     /// A shard at a time: first the test file with the largest tail that is left, then always the one that adds least for what it
-    /// would cost elsewhere, as long as the shard has room. One that is too long by itself behind what this shard builds is left for
-    /// a shard that builds less. The light files go in last, each where it adds least.
+    /// would cost elsewhere, as long as the shard has room. One that is too long by itself behind what this shard builds, or would
+    /// wait too long for the heavy files that the shard has, is left for another shard. The light files go in last, each where it
+    /// adds least.
     fn deal_within(&self, limit: u64) -> Option<Vec<u32>> {
         const NO_SHARD: u32 = u32::MAX;
         let (tails, sizes) = (&self.tails, self.reach.sizes);
@@ -192,6 +241,7 @@ impl Dealer<'_> {
         let mut has_of: Vec<Vec<bool>> = Vec::with_capacity(self.shard_count);
         let mut bytes_of = vec![tails.core_bytes; self.shard_count];
         let mut run_of = vec![Run::default(); self.shard_count];
+        let mut heavy_of: Vec<Vec<HeavyFile>> = vec![Vec::new(); self.shard_count];
         for shard in 0..self.shard_count {
             let mut has = vec![false; sizes.len()];
             // Of each test file, the bytes that it would add to this shard.
@@ -213,11 +263,14 @@ impl Dealer<'_> {
                     break;
                 };
                 let best = best as usize;
-                let run = run_of[shard].with(self.costs.of_run[best]);
+                let run = self.with(run_of[shard], &heavy_of[shard], best);
                 let bytes = bytes_of[shard] + adds[best];
                 if self.cost(bytes, run) > limit {
-                    let longest = run_of[shard].longest;
-                    if self.cost(bytes, Run { longest, ..run }) <= limit {
+                    let by_its_sum = Run {
+                        sum: run.sum,
+                        ..run_of[shard]
+                    };
+                    if self.cost(bytes, by_its_sum) <= limit {
                         too_long_here.push(heavy_left.swap_remove(at));
                         continue;
                     }
@@ -230,6 +283,9 @@ impl Dealer<'_> {
                 heavy_left.swap_remove(at);
                 shard_of[best] = shard as u32;
                 run_of[shard] = run;
+                if self.costs.of_heavy[best] != 0 {
+                    heavy_of[shard].push((self.costs.of_run[best], self.costs.of_heavy[best]));
+                }
                 for &file in &tails.of_test[best] {
                     let at = file as usize;
                     if core::mem::replace(&mut has[at], true) {
@@ -264,7 +320,7 @@ impl Dealer<'_> {
             let best = (0..self.shard_count)
                 .map(|shard| {
                     let added = added_to(shard);
-                    let run = run_of[shard].with(self.costs.of_run[test]);
+                    let run = self.with(run_of[shard], &heavy_of[shard], test);
                     (added, self.cost(bytes_of[shard] + added, run), shard)
                 })
                 .filter(|&(_, cost, _)| cost <= limit)
@@ -272,7 +328,10 @@ impl Dealer<'_> {
             let (added, _, shard) = best;
             shard_of[test] = shard as u32;
             bytes_of[shard] += added;
-            run_of[shard] = run_of[shard].with(self.costs.of_run[test]);
+            run_of[shard] = self.with(run_of[shard], &heavy_of[shard], test);
+            if self.costs.of_heavy[test] != 0 {
+                heavy_of[shard].push((self.costs.of_run[test], self.costs.of_heavy[test]));
+            }
             for &file in &tails.of_test[test] {
                 has_of[shard][file as usize] = true;
             }
@@ -306,6 +365,7 @@ pub(crate) fn deal(
     let least = Run {
         sum: costs.of_run.iter().sum::<u64>() / shard_count as u64,
         longest: costs.of_run.iter().copied().max().unwrap_or(0),
+        heavy_end: 0,
     };
     let shortest = dealer.cost(dealer.tails.core_bytes, least);
     let mut too_short = shortest.saturating_sub(1);

@@ -1233,6 +1233,9 @@ impl<'p, 's> Checker<'p, 's> {
     fn symbol_of_alias_target(&mut self, alias: Sym) -> Result<Sym, SymFlags> {
         let files = self.files();
         match self.resolve_alias(alias) {
+            AliasTarget::Symbol(target) if files.stands_for_modules_in_other_images(target) => {
+                Err(SymFlags::all())
+            }
             AliasTarget::Symbol(target) => {
                 Ok(files.export_symbol_of_value_symbol_if_exported(target))
             }

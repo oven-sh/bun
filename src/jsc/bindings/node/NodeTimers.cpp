@@ -472,9 +472,11 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__FakeTimers__loadNodeTimers(Zig::
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    BUN_REQUIRE_INTERNAL_MODULE(globalObject, NodeTimers, "bun:test");
+    if (Bun::DeclaredModuleLoad::canLoad(globalObject, Bun::InternalModuleRegistry::Field::NodeTimers))
+        BUN_REQUIRE_INTERNAL_MODULE(globalObject, NodeTimers, "node:timers");
     RETURN_IF_EXCEPTION(scope, );
-    BUN_REQUIRE_INTERNAL_MODULE(globalObject, NodeTimersPromises, "bun:test");
+    if (Bun::DeclaredModuleLoad::canLoad(globalObject, Bun::InternalModuleRegistry::Field::NodeTimersPromises))
+        BUN_REQUIRE_INTERNAL_MODULE(globalObject, NodeTimersPromises, "node:timers/promises");
     RETURN_IF_EXCEPTION(scope, );
 }
 

@@ -131,6 +131,11 @@ pub struct LoadOptions {
     pub left_to_loader: Vec<Vec<u8>>,
     /// One of each compile that added to `left_to_loader`.
     pub loads_below_files_left_to_loader: Vec<Arc<LoadsBelowFilesLeftToLoader>>,
+    /// The entry points that the build has added because Workers start from them, or data names them.
+    pub entry_points_added_by_build: Vec<Vec<u8>>,
+    /// Ascending. Of a test run: the files that an earlier compile of the same tests gave the names of the test runner, and that nothing but a Worker loads.
+    /// `bun test` hands those names to what the thread of the tests loads.
+    pub loaded_by_workers_alone: Vec<Vec<u8>>,
     /// `AotOptions::host_runs_files_from_disk`: the entry point that says what those files do with the program. Nothing loads it.
     /// Each import statement in it stands for a load by one of those files, so a module that cannot load fails none of the others.
     pub stand_in_for_files_from_disk: Option<Vec<u8>>,
@@ -283,6 +288,8 @@ impl LoadOptions {
             opened_names: Vec::new(),
             left_to_loader: Vec::new(),
             loads_below_files_left_to_loader: Vec::new(),
+            entry_points_added_by_build: Vec::new(),
+            loaded_by_workers_alone: Vec::new(),
             stand_in_for_files_from_disk: None,
             files_of_tests: Vec::new(),
         }

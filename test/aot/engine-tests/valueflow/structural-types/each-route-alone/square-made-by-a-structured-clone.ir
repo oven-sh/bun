@@ -284,21 +284,21 @@ function f5 name="Circle" module=m0 position=130 kind=BaseConstructor flags=[Has
   b0(v0: anything):
     Jump -> next b1() @130
   b1():
-    v1 = GetConstructPrototype v0 layout=L0 @124
-    v2 = NewObject v1 layout=L0 @124
-    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @124
-    v4 = CallDirect v3 function=f7 @124
-    Return v3 @124
+    v1 = GetConstructPrototype v0 layout=L0 @130
+    v2 = NewObject v1 layout=L0 @130
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @130
+    v4 = CallDirect v3 function=f7 @130
+    Return v3 @130
 }
 function f6 name="Square" module=m0 position=191 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
   b0(v0: anything):
     Jump -> next b1() @191
   b1():
-    v1 = GetConstructPrototype v0 layout=L1 @185
-    v2 = NewObject v1 layout=L1 @185
-    v3 = Convert v2 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @185
-    v4 = CallDirect v3 function=f8 @185
-    Return v3 @185
+    v1 = GetConstructPrototype v0 layout=L1 @191
+    v2 = NewObject v1 layout=L1 @191
+    v3 = Convert v2 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @191
+    v4 = CallDirect v3 function=f8 @191
+    Return v3 @191
 }
 function f7 module=m0 position=130 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: L0):
@@ -333,7 +333,7 @@ function f8 module=m0 position=191 kind=Initializer flags=[HasThis, IsChecked, I
 }
 # -- generated: f0 say make area describe Circle Square f7 f8
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f3 callPosition=733 module=m0}, {callee=f16 callPosition=767 isConstruction=true module=m0}, {callee=f14 callPosition=752 isConstruction=true module=m0}, {callee=f7 callPosition=124 parent=3 module=m0}, {callee=f8 callPosition=185 parent=2 module=m0}, {callee=f10 callPosition=374 parent=1 isTailCall=true module=m0}] {
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f3 callPosition=733 module=m0}, {callee=f16 callPosition=767 isConstruction=true module=m0}, {callee=f14 callPosition=752 isConstruction=true module=m0}, {callee=f7 callPosition=130 parent=3 module=m0}, {callee=f8 callPosition=191 parent=2 module=m0}, {callee=f10 callPosition=374 parent=1 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: f6 = GetModuleVariable variable=g2
 # CHECK-NEXT: v1: f6 = FinishClass v0 layout=L1
@@ -344,7 +344,7 @@ function f8 module=m0 position=191 kind=Initializer flags=[HasThis, IsChecked, I
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v7: 2000 = Integer integer=2000
 # CHECK-NEXT: v8: boolean = Less v5, v7
-# CHECK-NEXT: Branch v8 -> taken b2(| 0), notTaken b9()
+# CHECK-NEXT: Branch v8 -> taken b2(| 0), notTaken b6()
 # CHECK-NEXT: b2(v9: int[0, 1999]):
 # CHECK-NEXT: v10: 2 = Integer integer=2
 # CHECK-NEXT: v11: int[0, 1] = Mod v9, v10
@@ -352,63 +352,42 @@ function f8 module=m0 position=191 kind=Initializer flags=[HasThis, IsChecked, I
 # CHECK-NEXT: v13: boolean = StrictEq v11, v12
 # CHECK-NEXT: Branch v13 -> taken b3(), notTaken b4()
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v14: "circle" = String string="circle"
-# CHECK-NEXT: v15: 1 = Integer integer=1
-# CHECK-NEXT: v16: L0 = NewObject -, v14, v15 layout=L0 fields=[0, 1] storage=Frame allocationClass=0 [listsOnlyStoredValues]
-# CHECK-NEXT: Jump -> next b5(v16)
+# CHECK-NEXT: v14: 3 = Integer integer=3
+# CHECK-NEXT: Jump -> next b5(v14)
 # CHECK-NEXT: b4():
-# CHECK-NEXT: v17: "square" = String string="square"
-# CHECK-NEXT: v18: 2 = Integer integer=2
-# CHECK-NEXT: v19: 90 = Integer integer=90
-# CHECK-NEXT: v20: L1 = NewObject -, v17, v18, v19 layout=L1 fields=[0, 1, 2] storage=Frame allocationClass=1 [listsOnlyStoredValues]
-# CHECK-NEXT: Jump -> next b5(v20)
-# CHECK-NEXT: b5(v21: L0|L1):
-# CHECK-NEXT: v22: "circle"|"square" = GetSlot v21 key="kind" receivers=[L0, L1] level=Proven accessSite=24
-# CHECK-NEXT: v23: "square" = String string="square"
-# CHECK-NEXT: v24: boolean = StrictEq v22, v23
-# CHECK-NEXT: Branch v24 -> taken b6(| 0), notTaken b7(| 0)
-# CHECK-NEXT: b6(v25: "square"):
-# CHECK-NEXT: v26: L1 = NarrowByField v21, v25 key="kind"
-# CHECK-NEXT: v27: int[-2147483643, 2147483647] = GetSlot v26 key="edge" receivers=[L1] level=Proven accessSite=25
-# CHECK-NEXT: v28: int|whole = Mul v27, v27
-# CHECK-NEXT: Jump -> next b8(v28)
-# CHECK-NEXT: b7(v29: "circle"):
-# CHECK-NEXT: v30: L0 = NarrowByField v21, v29 key="kind"
-# CHECK-NEXT: v31: int[-2147483643, 2147483647] = GetSlot v30 key="radius" receivers=[L0] level=Proven accessSite=27
-# CHECK-NEXT: v32: 3 = Integer integer=3
-# CHECK-NEXT: v33: int[-6442450929, 6442450941] = Mul v31, v32
-# CHECK-NEXT: Jump -> next b8(v33)
-# CHECK-NEXT: b8(v34: int|whole):
-# CHECK-NEXT: v35: int|whole = Add v4, v34
-# CHECK-NEXT: v36: int[1, 2000] = Increment v9
-# CHECK-NEXT: Jump -> next b1(v35, v36)
-# CHECK-NEXT: b9():
-# CHECK-NEXT: v37: "honest rounds" = String string="honest rounds"
-# CHECK-NEXT: v38: undefined = CallDirect v37, v4 function=f1 accessSite=3
-# CHECK-NEXT: v39: anything ~ undefined|null|L1 = CallDirect function=f2 accessSite=4
-# CHECK-NEXT: v40: "kind" = String string="kind"
-# CHECK-NEXT: v41: boolean|number|string|symbol|bigint|object ~ L1 = RequireObjectCoercible v39 name="kind"
-# CHECK-NEXT: v42: anything ~ "square" = PropGet v41 key="kind" accessSite=5
-# CHECK-NEXT: v43: undefined = CallDirect v40, v42 function=f1 accessSite=6
-# CHECK-NEXT: v44: "edge" = String string="edge"
-# CHECK-NEXT: v45: anything ~ int[-2147483643, 2147483647] = PropGet v41 key="edge" accessSite=7
-# CHECK-NEXT: v46: undefined = CallDirect v44, v45 function=f1 accessSite=8
-# CHECK-NEXT: v47: "area" = String string="area"
-# CHECK-NEXT: v48: anything ~ number = CallDirect v41 function=f3 accessSite=9
-# CHECK-NEXT: v49: undefined = CallDirect v47, v48 function=f1 accessSite=10
-# CHECK-NEXT: v50: "described" = String string="described"
-# CHECK-NEXT: v51: undefined|string = CallDirect v41 function=f4 accessSite=11
-# CHECK-NEXT: v52: undefined = CallDirect v50, v51 function=f1 accessSite=12
-# CHECK-NEXT: v53: "is a square" = String string="is a square"
-# CHECK-NEXT: v54: boolean = InstanceOf v41, v1 writtenExpression="odd instanceof Square"
-# CHECK-NEXT: v55: undefined = CallDirect v53, v54 function=f1 accessSite=13
-# CHECK-NEXT: v56: 5 = Integer integer=5
-# CHECK-NEXT: PropSet v41, v56 key="edge" accessSite=14
-# CHECK-NEXT: v58: "area after a store" = String string="area after a store"
-# CHECK-NEXT: v59: anything ~ number = CallDirect v41 function=f3 accessSite=15
-# CHECK-NEXT: v60: undefined = CallDirect v58, v59 function=f1 accessSite=16
-# CHECK-NEXT: v61: undefined = Undefined
-# CHECK-NEXT: Return v61
+# CHECK-NEXT: v15: 4 = Integer integer=4
+# CHECK-NEXT: Jump -> next b5(v15)
+# CHECK-NEXT: b5(v16: int[3, 4]):
+# CHECK-NEXT: v17: int|whole = Add v4, v16
+# CHECK-NEXT: v18: int[1, 2000] = Increment v9
+# CHECK-NEXT: Jump -> next b1(v17, v18)
+# CHECK-NEXT: b6():
+# CHECK-NEXT: v19: "honest rounds" = String string="honest rounds"
+# CHECK-NEXT: v20: undefined = CallDirect v19, v4 function=f1 accessSite=3
+# CHECK-NEXT: v21: anything ~ undefined|null|L1 = CallDirect function=f2 accessSite=4
+# CHECK-NEXT: v22: "kind" = String string="kind"
+# CHECK-NEXT: v23: boolean|number|string|symbol|bigint|object ~ L1 = RequireObjectCoercible v21 name="kind"
+# CHECK-NEXT: v24: anything ~ "square" = PropGet v23 key="kind" accessSite=5
+# CHECK-NEXT: v25: undefined = CallDirect v22, v24 function=f1 accessSite=6
+# CHECK-NEXT: v26: "edge" = String string="edge"
+# CHECK-NEXT: v27: anything ~ int[-2147483643, 2147483647] = PropGet v23 key="edge" accessSite=7
+# CHECK-NEXT: v28: undefined = CallDirect v26, v27 function=f1 accessSite=8
+# CHECK-NEXT: v29: "area" = String string="area"
+# CHECK-NEXT: v30: anything ~ number = CallDirect v23 function=f3 accessSite=9
+# CHECK-NEXT: v31: undefined = CallDirect v29, v30 function=f1 accessSite=10
+# CHECK-NEXT: v32: "described" = String string="described"
+# CHECK-NEXT: v33: undefined|string = CallDirect v23 function=f4 accessSite=11
+# CHECK-NEXT: v34: undefined = CallDirect v32, v33 function=f1 accessSite=12
+# CHECK-NEXT: v35: "is a square" = String string="is a square"
+# CHECK-NEXT: v36: boolean = InstanceOf v23, v1 writtenExpression="odd instanceof Square"
+# CHECK-NEXT: v37: undefined = CallDirect v35, v36 function=f1 accessSite=13
+# CHECK-NEXT: v38: 5 = Integer integer=5
+# CHECK-NEXT: PropSet v23, v38 key="edge" accessSite=14
+# CHECK-NEXT: v40: "area after a store" = String string="area after a store"
+# CHECK-NEXT: v41: anything ~ number = CallDirect v23 function=f3 accessSite=15
+# CHECK-NEXT: v42: undefined = CallDirect v40, v41 function=f1 accessSite=16
+# CHECK-NEXT: v43: undefined = Undefined
+# CHECK-NEXT: Return v43
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="say"
 # CHECK: module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type="area"|"area after a store"|"described"|"edge"|"honest rounds"|"is a square"|"kind" site=w1 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -424,7 +403,7 @@ function f8 module=m0 position=191 kind=Initializer flags=[HasThis, IsChecked, I
 # CHECK-NEXT: Return v9
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="make"
-# CHECK: module=m0 position=305 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|L1 site=w2 flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f16 callPosition=356 isConstruction=true module=m0}, {callee=f8 callPosition=185 parent=1 module=m0}] {
+# CHECK: module=m0 position=305 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|L1 site=w2 flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f16 callPosition=356 isConstruction=true module=m0}, {callee=f8 callPosition=191 parent=1 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: "square" = String string="square"
 # CHECK-NEXT: v1: 2 = Integer integer=2
@@ -473,25 +452,9 @@ function f8 module=m0 position=191 kind=Initializer flags=[HasThis, IsChecked, I
 # CHECK-NEXT: Return v17
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Circle"
-# CHECK: module=m0 position=130 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L0 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 inlineFrames=[{}, {callee=f7 callPosition=124 module=m0}] {
-# CHECK-NEXT: b0(v0: anything):
-# CHECK-NEXT: v1: f5 = AssumeType v0 provenType=f5
-# CHECK-NEXT: v2: boolean = AreMembersUnchanged conditions=[{layout=L0 side=Static key="prototype"}]
-# CHECK-NEXT: Branch v2 -> taken b1(), notTaken b2()
-# CHECK-NEXT: b1():
-# CHECK-NEXT: v3: "circle" = String string="circle"
-# CHECK-NEXT: v4: 1 = Integer integer=1
-# CHECK-NEXT: v5: L0 = NewObject -, v3, v4 layout=L0 fields=[0, 1] allocationSite=6 allocationClass=0 [listsOnlyStoredValues]
-# CHECK-NEXT: Return v5
-# CHECK-NEXT: b2() frequency=Rare:
-# CHECK-NEXT: v6: object = GetConstructPrototype v1 layout=L0
-# CHECK-NEXT: v7: object ~ L0 = NewObject v6 layout=L0 allocationSite=6 allocationClass=0
-# CHECK-NEXT: v8: L0 = AssumeType v7 provenType=L0
-# CHECK-NEXT: v9: undefined = CallDirect v8 function=f7 accessSite=32
-# CHECK-NEXT: Return v8
-# CHECK-NEXT: }
+# CHECK: module=m0 position=130 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L0 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0
 # CHECK-LABEL: function {{*}}name="Square"
-# CHECK: module=m0 position=191 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L1 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 inlineFrames=[{}, {callee=f8 callPosition=185 module=m0}] {
+# CHECK: module=m0 position=191 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L1 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 inlineFrames=[{}, {callee=f8 callPosition=191 module=m0}] {
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: f6 = AssumeType v0 provenType=f6
 # CHECK-NEXT: v2: boolean = AreMembersUnchanged conditions=[{layout=L1 side=Static key="prototype"}]
@@ -510,15 +473,7 @@ function f8 module=m0 position=191 kind=Initializer flags=[HasThis, IsChecked, I
 # CHECK-NEXT: Return v9
 # CHECK-NEXT: }
 # CHECK-LABEL: function f7 module=
-# CHECK: m0 position=130 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: L0):
-# CHECK-NEXT: v1: "circle" = String string="circle"
-# CHECK-NEXT: PutSlot v0, -, v1 key="kind" receivers=[L0] level=Proven accessSite=34
-# CHECK-NEXT: v3: 1 = Integer integer=1
-# CHECK-NEXT: PutSlot v0, -, v3 key="radius" receivers=[L0] level=Proven accessSite=35
-# CHECK-NEXT: v5: undefined = Undefined
-# CHECK-NEXT: Return v5
-# CHECK-NEXT: }
+# CHECK: m0 position=130 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function f8 module=
 # CHECK: m0 position=191 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L1 flags=[IsFromCompiler]} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: L1):
@@ -577,11 +532,7 @@ function f8 module=m0 position=191 kind=Initializer flags=[HasThis, IsChecked, I
 # CHECK-NEXT: Return v14
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Circle"
-# CHECK: module=m0 position=130 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget, IsChecked] captures=[{type=f5}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f5} creator=Entrypoint{target=f5 arguments=Registers takesNewTarget=true} {
-# CHECK-NEXT: b0(v0: f5, v1: anything, v2: anything):
-# CHECK-NEXT: v3: L0 = CallDirect v2 function=f5
-# CHECK-NEXT: ReturnCall v3 requirement=Allowed
-# CHECK-NEXT: }
+# CHECK: module=m0 position=130 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget, IsChecked] captures=[{type=f5}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f5} creator=Entrypoint{target=f5 arguments=Registers takesNewTarget=true}
 # CHECK-LABEL: function {{*}}name="Circle"
 # CHECK: module=m0 position=130 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, IsChecked, HasExplicitName] thisType={type=L0} results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f5 parameterMap=[{}, {original=0}]} creator=Version{provenVersion=f5} constructedClass=L0
 # CHECK-LABEL: function {{*}}name="Square"

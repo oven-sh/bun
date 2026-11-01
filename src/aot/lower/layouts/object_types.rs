@@ -451,7 +451,7 @@ impl FileLowering<'_, '_, '_, '_> {
         site.is_some_and(|(home, _)| self.has_module(home))
     }
 
-    fn has_module(&self, home: FileId) -> bool {
+    pub(super) fn has_module(&self, home: FileId) -> bool {
         self.queries.files().is_compiled(home) && !self.inputs.is_left_out(home)
     }
 

@@ -173,7 +173,10 @@ impl Checker<'_, '_> {
                 call_sigs.len(),
                 construct_sigs.len(),
             ) {
-                if has_type_args && !self.is_error_type(called) {
+                if has_type_args
+                    && !self.is_error_type(called)
+                    && !self.comes_out_of_another_image(file, data.callee)
+                {
                     let node_start = self.start_inside_parentheses(file, e);
                     self.error_at(
                         (file, node_start, self.end_inside_parentheses(file, e)),
@@ -219,7 +222,7 @@ impl Checker<'_, '_> {
             return;
         }
         if self.is_any(apparent) {
-            if has_type_args {
+            if has_type_args && !self.comes_out_of_another_image(file, data.callee) {
                 let node_start = self.start_inside_parentheses(file, e);
                 self.error_at(
                     (file, node_start, self.end_inside_parentheses(file, e)),
@@ -635,6 +638,14 @@ impl Checker<'_, '_> {
 
     /// `isConstructorAccessible`. Returns `None` if it is, otherwise the constructor's accessibility modifiers, each of
     /// which is an error, and the class that declares it.
+    fn comes_out_of_another_image(&self, file: FileId, mut callee: ExprId) -> bool {
+        while let ExprKind::Dot { obj, .. } = self.hir(file).checked_kind(callee) {
+            callee = obj;
+        }
+        self.resolve_entity_name_expression(file, callee, SymFlags::VALUE)
+            .is_some_and(|symbol| self.files().stands_for_modules_in_other_images(symbol))
+    }
+
     pub(super) fn inaccessible_constructor(
         &mut self,
         file: FileId,

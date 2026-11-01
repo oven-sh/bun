@@ -689,7 +689,11 @@ fn find_type_attribute(
     hir: &hir::File<'_>,
     site: &ImportSite,
 ) -> Option<bun_ast::Loader> {
-    let (ImportSiteKind::Import(_), Some(attributes)) = (site.kind, site.attributes.some()) else {
+    let is_statement = matches!(
+        site.kind,
+        ImportSiteKind::Import(_) | ImportSiteKind::ExportFrom(_) | ImportSiteKind::ExportStar(_)
+    );
+    let (true, Some(attributes)) = (is_statement, site.attributes.some()) else {
         return None;
     };
     let written = hir.import_attribute(attributes, bun_sema::atom::known::r#type);

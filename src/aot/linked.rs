@@ -168,8 +168,12 @@ interface::define_linked_functions! {
         Box::new(UnlinkedFiles::new(files, atoms))
     }
 
-    fn bun_aot_find_what_tests_replace(files: &[Vec<u8>], threads: usize, resolve: &mut dyn FnMut(&[u8], &[u8], bool) -> Option<Vec<u8>>) -> ReplacedByTests {
-        crate::load::replaced_by_tests::find_what_tests_replace(files, threads, resolve)
+    fn bun_aot_find_what_tests_replace(files: &[Vec<u8>], threads: usize, product_replaces_nothing: bool, resolve: &mut dyn FnMut(&[u8], &[u8], bool) -> Option<Vec<u8>>) -> ReplacedByTests {
+        let product = match product_replaces_nothing {
+            true => crate::load::replaced_builtins::ProductFiles::ReplaceNothing,
+            false => crate::load::replaced_builtins::ProductFiles::AreReadAsTestsAre,
+        };
+        crate::load::replaced_by_tests::find_what_tests_replace(files, threads, product, resolve)
     }
 
     fn bun_aot_everything_that_tests_replace() -> ReplacedByTests {

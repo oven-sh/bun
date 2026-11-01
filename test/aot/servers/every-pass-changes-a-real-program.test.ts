@@ -13,6 +13,9 @@
 //                     end by themselves. Two passes that undo each other never come to rest: in every function where they meet, every
 //                     round up to the limit runs all the passes that look again behind a change, and the code is none the better.
 //                     The number of functions that end at the limit is held for every program.
+//   entrypoints       the entrypoint of a function that no call by value can find is closed: it keeps its address and holds no code. One call
+//                     of which the compiler cannot say what it finds leaves every entrypoint of the program open, and nothing else shows it.
+//                     No program has such a call.
 //
 // To take a pass out: this test says by a run what the pass does to these programs. A pass that changes them is at work, whatever a
 // benchmark says, and what it buys has to be asked of the programs (--aot-disable=pass:<name>).
@@ -146,5 +149,13 @@ describe("every pass changes a real program", () => {
     }));
     console.log(`ROUNDS ${seen.map(row => `${row.program} ${row.atLimit}`).join(", ")}`);
     expect(seen.filter(row => row.atLimit > functionsAtLimitOfRounds[row.program] * 2 + 2)).toEqual([]);
+  });
+
+  test("no call leaves every entrypoint of a program open", () => {
+    const seen = programs.map(program => ({
+      program,
+      calls: reports.get(program)!.statistics.CallsThatMayEnterAnyEntrypoint ?? 0,
+    }));
+    expect(seen.filter(row => row.calls > 0)).toEqual([]);
   });
 });

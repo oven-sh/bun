@@ -1,5 +1,6 @@
 // `if (flag) x = null` lets go of the object on that path, though `x` is read again behind the join.
 // Prints what the compiler saves: objects that are collected earlier
+// Alone: what is let go of goes by which bodies are copied into which, and that by all that the executable holds
 type Thing = { id: number; payload: number[] };
 let made = 0;
 function make(): Thing {

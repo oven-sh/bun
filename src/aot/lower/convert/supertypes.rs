@@ -254,15 +254,18 @@ impl FileLowering<'_, '_, '_, '_> {
         if self.types.conversions.compared_types.insert(pair, 0) == Some(0) {
             return;
         }
-        let Ok(members) = self.queries.members_typed_otherwise(instance, base) else {
+        let Ok((members, methods_above)) = self.queries.members_typed_otherwise(instance, base)
+        else {
             return;
         };
         let mut comparison = Comparison::default();
+        let mut methods_followed = 0;
         for member in members {
             let (from, to) = (member.checked, member.in_base);
             if is_read_through(member.kind_in_base)
                 && let Ok(true) = self.queries.is_assignable(from, to)
             {
+                methods_followed += usize::from(member.is_method_above);
                 comparison.add_pair(
                     ComparedPair {
                         source: from,
@@ -273,6 +276,9 @@ impl FileLowering<'_, '_, '_, '_> {
                     true,
                 );
             }
+        }
+        if let Some(methods) = methods_above.filter(|it| it.count == methods_followed) {
+            self.queries.note_methods_followed(methods);
         }
         self.compare_pending_pairs(comparison, position);
     }

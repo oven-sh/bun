@@ -24,8 +24,11 @@ const files = {
   // Its text does not say what it is, so who loads it decides: imports alone, whatever the comment in names.ts reads like.
   "src/undecided.cjs": `globalThis.undecided = (function () { return this === undefined ? "strict" : "sloppy"; })();\n`,
   "src/names.ts": `// require("./undecided.cjs")\nimport tools from "tools";\nexport const names = () => [tools.name, require("./required.cjs").name, require("./module.mjs").name].join();\n`,
-  "a.test.ts": `import { test } from "bun:test";\nimport { part } from "./src/load";\nimport { names } from "./src/names";\nimport { name } from "./src/only-imported.mjs";\nimport "./src/undecided.cjs";\ntest("a", async () => { console.error("OUT a", await part("one"), names(), name, globalThis.undecided); });\n`,
-  "b.test.ts": `import { test } from "bun:test";\nimport { part } from "./src/load";\nimport required from "./src/required.cjs";\nimport { name } from "./src/module.mjs";\ntest("b", async () => { console.error("OUT b", await part("two"), required.name, name); });\n`,
+  // A `require` behind what only looks like the start of a comment is one.
+  "src/required-script.cjs": `globalThis.requiredScript = (function () { return this === undefined ? "strict" : "sloppy"; })();\n`,
+  "src/behind.ts": `export const load = () => { const url = "http://host/*"; const slashes = /[/*"'\`]/; const part = \`//\${url}/*\`; require("./required-script.cjs"); return [url, slashes, part].length; };\n`,
+  "a.test.ts": `import { test } from "bun:test";\nimport { part } from "./src/load";\nimport { names } from "./src/names";\nimport { name } from "./src/only-imported.mjs";\nimport { load } from "./src/behind";\nimport "./src/undecided.cjs";\ntest("a", async () => { load(); console.error("OUT a", await part("one"), names(), name, globalThis.undecided, globalThis.requiredScript); });\n`,
+  "b.test.ts": `/* require("./src/undecided.cjs") */\nimport { test } from "bun:test";\nimport { part } from "./src/load";\nimport required from "./src/required.cjs";\nimport { name } from "./src/module.mjs";\ntest("b", async () => { console.error("OUT b", await part("two"), required.name, name); });\n`,
 };
 
 async function run(dir: string, words: string, flags: string[]) {
@@ -56,9 +59,7 @@ async function run(dir: string, words: string, flags: string[]) {
 // Two builds by one Bun of the same files under the same flags write the same bytes. The folder is part of every path, so both runs have one.
 test.concurrent.each([
   ["two layers", "TestRunLayers:2", ["--isolate"], "strict"],
-  // TODO: the lowest of several programs of the project is told of the project's files above it out of their texts, where the comment still
-  // reads as a `require`. Plain Bun prints "strict".
-  ["three layers", "TestRunLayers:3", ["--isolate"], expect.stringMatching(/^(strict|sloppy)$/)],
+  ["three layers", "TestRunLayers:3", ["--isolate"], "strict"],
   ["as the run plans them", "", ["--parallel=2", "--aot-memory-limit=1KB"], "strict"],
   // The run then takes its test files the slowest first: another order than the one in which it noted them for the plan.
   ["with timings", "", ["--parallel=2", "--aot-memory-limit=1KB", "--timings=timings.json"], "strict"],
@@ -71,7 +72,7 @@ test.concurrent.each([
     const read = await run(dir, [words, "TestRunBuildsReadTheProject"].filter(Boolean).join(","), flags);
     expect(handed.exitCode).toBe(0);
     expect(handed.printed.map(line => line.split(" "))).toEqual([
-      ["OUT", "a", "one", "tools,required.cjs,module.mjs", "only-imported.mjs", undecided],
+      ["OUT", "a", "one", "tools,required.cjs,module.mjs", "only-imported.mjs", undecided, "sloppy"],
       ["OUT", "b", "two", "required.cjs", "module.mjs"],
     ]);
     expect(handed.found).toHaveLength(1);

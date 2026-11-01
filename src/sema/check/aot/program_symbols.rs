@@ -6,6 +6,7 @@ use crate::types::{SigData, SigId};
 use smallvec::SmallVec;
 
 pub const COMPILER_DECLARATIONS_PATH: &[u8] = b"/$bun/types/compiler.d.ts";
+pub const MODULES_IN_OTHER_IMAGES_PATH: &[u8] = b"/$bun/types/modules-in-other-images.d.ts";
 
 pub(in crate::check) struct ProgramSymbols {
     compiler_declarations: Option<FileId>,

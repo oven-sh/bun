@@ -6,7 +6,7 @@
 // build says what the plan expected of it and what it took, and this test holds only what is true of every project: a smaller limit brings more programs, each of
 // them takes much less, and the tests see no difference.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import { buildEnvironment } from "./harness/flags";
 import { expectLayers } from "./harness/layers";
 import { run } from "./harness/run";
@@ -55,40 +55,47 @@ const printedByTests = (text: string) =>
     .filter(line => /^t\d /.test(line))
     .sort();
 
-test("a smaller limit cuts the files of the project into more programs", async () => {
-  using dir = tempDir("aot-layers-are-planned", project());
-  const plain = await run([bunExe(), "test"], String(dir), bunEnv);
-  expect(plain.exitCode).toBe(0);
-  const largest: Record<string, number> = {};
-  for (const [limit, programs] of [
-    ["760MB", 1],
-    ["560MB", 2],
-  ] as const) {
-    const { stdout, stderr, exitCode } = await run(
-      [bunExe(), "test", "--aot", "--parallel=4", `--aot-memory-limit=${limit}`],
-      String(dir),
-      { ...bunEnv, [buildEnvironment.logsPhaseTimes]: "1" },
-    );
-    // There every test file has a program of its own, with all that it imports.
-    if (stderr.includes("this Bun loads one program a realm")) return;
-    expect({ exitCode, printed: printedByTests(stdout + stderr) }).toEqual({
-      exitCode: 0,
-      printed: printedByTests(plain.stdout + plain.stderr),
-    });
-    // The run says its form when it begins, and plans while the packages are built.
-    expectLayers(stderr);
-    expect(stderr).toContain(` | ${programs} programs, each may take `);
-    // Each build of files of the project says what it took, and what the plan had said.
-    const took = [
-      ...stderr.matchAll(/^AOT part build \| (?:the lowest of )?what test files share \| .* most resident (\d+) KB/gm),
-    ].map(match => Number(match[1]));
-    const compared = [
-      ...stderr.matchAll(
-        /^AOT part build \| the plan said that it may take \d+ MB \| most resident \d+ MB: \d+ percent of that$/gm,
-      ),
-    ];
-    expect({ builds: took.length, compared: compared.length }).toEqual({ builds: programs, compared: programs });
-    largest[limit] = Math.max(...took);
-  }
-  expect(largest["560MB"]).toBeLessThan(largest["760MB"] * 0.7);
-}, 900_000);
+// What a sanitizer build has resident is mostly the sanitizer's: shadow memory and the freed blocks that it keeps. The two builds take it a quarter of an hour.
+test.skipIf(isASAN)(
+  "a smaller limit cuts the files of the project into more programs",
+  async () => {
+    using dir = tempDir("aot-layers-are-planned", project());
+    const plain = await run([bunExe(), "test"], String(dir), bunEnv);
+    expect(plain.exitCode).toBe(0);
+    const largest: Record<string, number> = {};
+    for (const [limit, programs] of [
+      ["760MB", 1],
+      ["560MB", 2],
+    ] as const) {
+      const { stdout, stderr, exitCode } = await run(
+        [bunExe(), "test", "--aot", "--parallel=4", `--aot-memory-limit=${limit}`],
+        String(dir),
+        { ...bunEnv, [buildEnvironment.logsPhaseTimes]: "1" },
+      );
+      // There every test file has a program of its own, with all that it imports.
+      if (stderr.includes("this Bun loads one program a realm")) return;
+      expect({ exitCode, printed: printedByTests(stdout + stderr) }).toEqual({
+        exitCode: 0,
+        printed: printedByTests(plain.stdout + plain.stderr),
+      });
+      // The run says its form when it begins, and plans while the packages are built.
+      expectLayers(stderr);
+      expect(stderr).toContain(` | ${programs} programs, each may take `);
+      // Each build of files of the project says what it took, and what the plan had said.
+      const took = [
+        ...stderr.matchAll(
+          /^AOT part build \| (?:the lowest of )?what test files share \| .* most resident (\d+) KB/gm,
+        ),
+      ].map(match => Number(match[1]));
+      const compared = [
+        ...stderr.matchAll(
+          /^AOT part build \| the plan said that it may take \d+ MB \| most resident \d+ MB: \d+ percent of that$/gm,
+        ),
+      ];
+      expect({ builds: took.length, compared: compared.length }).toEqual({ builds: programs, compared: programs });
+      largest[limit] = Math.max(...took);
+    }
+    expect(largest["560MB"]).toBeLessThan(largest["760MB"] * 0.7);
+  },
+  900_000,
+);

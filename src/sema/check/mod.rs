@@ -968,6 +968,8 @@ impl<'s> Program<'s> {
             instantiation_chain: Vec::new(),
             refused_instantiations: Vec::new(),
             leaves_depth_limit_unreported: false,
+            answers_lowering: false,
+            recursive_conditionals: Default::default(),
             refused_instantiations_tried: Default::default(),
             instantiations_spent_on_refused: 0,
             cycles_entered: Default::default(),
@@ -2109,6 +2111,8 @@ pub struct Checker<'p, 's> {
     refused_instantiations: Vec<(TypeId, MapperId)>,
     /// `leave_depth_limit_unreported`
     leaves_depth_limit_unreported: bool,
+    answers_lowering: bool,
+    recursive_conditionals: crate::util::FxHashMap<(FileId, TypeNodeId), bool>,
     /// `compute_refused_instantiations`
     refused_instantiations_tried: crate::util::FxHashSet<(TypeId, MapperId)>,
     /// `compute_refused_instantiations`

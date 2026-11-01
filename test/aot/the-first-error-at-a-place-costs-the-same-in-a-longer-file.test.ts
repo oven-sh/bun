@@ -25,11 +25,16 @@
 //
 // The program measures itself with process.cpuUsage(), around the forty throws alone, so the test needs no counters and runs on
 // every platform.
+//
+// A clock sees a cost only where it is dear. What `bun run` prints in place of pieces of the text is listed with the text, and
+// that list is read once for a statement or a function, however many places in it throw: how much of it is read is counted.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { built, spawned } from "./harness/commands";
 import { afterAll } from "./harness/default-timeout";
+import { runtimeEnvironment } from "./harness/flags";
 import { describe, test } from "./supported";
 
 const measuredPlaces = 40;
@@ -180,6 +185,26 @@ describe.concurrent("in a compiled test run too", () => {
 });
 
 describe.concurrent("the first error at a place costs in a long file what it costs in a short one", () => {
+  test("long: what is printed in place of the text is read once, not once for each place", async () => {
+    await measure("long");
+    const counts = join(folder, "counts-of-long");
+    const ran = await spawned(
+      [pathOf("long")],
+      folder,
+      { ...bunEnv, [runtimeEnvironment.countsPath]: counts },
+      200_000,
+    );
+    expect({ stderr: ran.stderr, exitCode: ran.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const line = readFileSync(counts, "utf8")
+      .split("\n")
+      .find(line => line.endsWith("\tdecoded:TextPrintedInPlace"));
+    const read = Number(line?.split("\t")[0]);
+    console.error(`FIRST ERRORS: ${read} pieces of text printed in place were read in long`);
+    expect(read).toBeGreaterThan(0);
+    // One filler in eleven has such a piece, in each of the three surroundings.
+    expect(read).toBeLessThan(long);
+  }, 480_000);
+
   for (const [grown, small, measured] of [
     ["long", "short", surroundings],
     ["long-with-carriage-returns", "short", surroundings],

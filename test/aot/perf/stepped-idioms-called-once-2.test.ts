@@ -1,3 +1,3 @@
 import { steppedIdiomsAgainstPins } from "./stepped-idioms";
 
-steppedIdiomsAgainstPins(2, 8, true);
+steppedIdiomsAgainstPins(2, 8, "called-once");

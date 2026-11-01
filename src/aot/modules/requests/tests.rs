@@ -649,6 +649,7 @@ fn import_statement_hands_its_type_to_the_loader() {
         import c from '{UNCOMPILED_MODULE}' with {{ type: 'TEXT' }};
         import d from '{UNCOMPILED_MODULE}' with {{ type: 'no loader' }};
         export {{ e }} from '{UNCOMPILED_MODULE}' with {{ type: 'toml' }};
+        export * as f from '{UNCOMPILED_MODULE}' with {{ type: 'text' }};
         import('{UNCOMPILED_MODULE}', {{ with: {{ type: 'toml' }} }});"
     );
     with_program(&[("main.js", main.as_str())], |program| {
@@ -662,7 +663,7 @@ fn import_statement_hands_its_type_to_the_loader() {
         let answers = program.site_answers("main.js");
         let answers: Vec<_> = answers.iter().map(|&(_, answer)| answer).collect();
         let (toml, text) = (Some(Loader::Toml), Some(Loader::Text));
-        let expected = [toml, None, text, None, None, None].map(external);
+        let expected = [toml, None, text, None, toml, text, None].map(external);
         assert_eq!(answers, expected);
         // One module for each type, and the one that no attribute asks for comes first.
         let modules = [None, toml, text].map(external);

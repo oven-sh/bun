@@ -108,6 +108,8 @@ await import(name); // finds the entry points, and files whose path is a string 
 
 The build compiles every file it can reach from your entry point. Where a path isn't a constant, it uses the parts that are. `__dirname`, `import.meta.dir`, `import.meta.url`, `path.join()`, `new URL()`, `require.resolve()`, `process.platform` and `process.arch` count as constants, so the usual loader of a native addon works.
 
+`import.meta.glob()` is expanded at build time, as in `bun build`, and every file that matches is compiled. A call that can't be expanded, like one whose pattern isn't a string literal, gets a warning from the build and throws a `TypeError` when your program reaches it.
+
 A file that only a non-constant path can reach doesn't stop the build if it has a syntax error, like a `.json` file with comments or a broken fixture in a package. Importing it throws when your program runs, with the same error as under `bun run`. A file that you import by a constant path still stops the build.
 
 With a `baseUrl` in `tsconfig.json`, or a key like `"*"` in its `paths`, a name like the last one can also mean one of your own files. An executable then holds your files that match and leaves the package's files on disk, as `bun build --compile` does without `--aot`. `bun test --aot` compiles both.
@@ -146,13 +148,13 @@ Code that's loaded from disk is interpreted, and both flags make the executable 
 
 Code from disk can't change a built-in either, and neither can a `node:` module that only code from disk loads. `mock.timers.enable()` of `node:test` and `createTracing().enable()` of `node:trace_events` replace `setTimeout`, so there they throw `Cannot assign to setTimeout`. Import the module in one of your own files, `import "node:test"`, and the build leaves writable what the module replaces.
 
-Workers follow the same rule. The build finds `new Worker("./worker.ts")`, `new Worker(new URL("./worker.ts", import.meta.url))` and `new Worker("./jobs/" + name + ".ts")` in your own files. Pass any other worker as an entry point, including one that a package in `node_modules` starts.
+Workers follow the same rule. The build finds `new Worker("./worker.ts")`, `new Worker(new URL("./worker.ts", import.meta.url))` and `new Worker("./jobs/" + name + ".ts")` in your own files. In a package in `node_modules` it only finds a worker file that something also imports, like `new Worker(__filename)`. Pass any other worker as an entry point.
 
 Next.js and Angular load your pages by dynamic paths. [Frameworks](/compiler/libraries#frameworks) shows what to pass.
 
 ### Under `bun test --aot`
 
-Your tests see the same rule as your executable. A `require()` or `import()` with a computed path can load a file that wasn't compiled only if the call is written in a test file, a preload, or a file in a test file's folder or below it. Written anywhere else, in your source or in a package, it finds compiled files only:
+Your tests see the same rule as your executable. A `require()` or `import()` with a computed path can load a file that wasn't compiled only if the call is written in a test file, a preload, a file in a test file's folder or below it, or a file of your project that imports from `bun:test`. Written anywhere else, in your source or in a package, it finds compiled files only:
 
 ```txt
 error: Cannot load '/home/me/plugins/late.ts': it wasn't compiled with the program, and --aot only runs code that was.
@@ -364,15 +366,12 @@ A variable that nothing in your program can read is removed. So is an object tha
 
 Few programs notice these.
 
-| What you read                                                                      | `bun run`                                                            | An executable                                           |
-| ---------------------------------------------------------------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------- |
-| `fn.caller` and `fn.arguments` while `fn` runs, outside strict mode                | The calling function and the arguments                               | `null`                                                  |
-| `error.originalColumn`                                                             | The column in the text that the transpiler printed                   | The same as `error.column`                              |
-| The descriptor of `globalAgent` on `node:_http_agent`                              | A data property                                                      | A getter and a setter. The agent is made when it's read |
-| `socket.map`, `.filter`, `.toArray` and the like, without importing `node:stream`  | There once anything has touched `process.stdout` or `process.stderr` | There once `node:stream` is imported                    |
-| The order of two `import()`s of one module, one of them started from a promise job | Varies from run to run                                               | Can be an order that `bun run` doesn't show             |
-| `require()` of an ES module that is still loading, under a name made at run time   | The rest of the graph runs inside the `require()`                    | The CommonJS file finishes first                        |
-| `Bun.deepMatch()`, `toMatchObject()`: objects that differ in a `#private` field    | They differ                                                          | They match, as for `Bun.deepEquals()` and `toEqual()`   |
+| What you read                                                                     | `bun run`                                                            | An executable                                         |
+| --------------------------------------------------------------------------------- | -------------------------------------------------------------------- | ----------------------------------------------------- |
+| `fn.caller` and `fn.arguments` while `fn` runs, outside strict mode               | The calling function and the arguments                               | `null`                                                |
+| `error.originalColumn`                                                            | The column in the text that the transpiler printed                   | The same as `error.column`                            |
+| `socket.map`, `.filter`, `.toArray` and the like, without importing `node:stream` | There once anything has touched `process.stdout` or `process.stderr` | There once `node:stream` is imported                  |
+| `Bun.deepMatch()`, `toMatchObject()`: objects that differ in a `#private` field   | They differ                                                          | They match, as for `Bun.deepEquals()` and `toEqual()` |
 
 `process.stdout.write()` and `process.stderr.write()` don't load `node:stream` in an executable, which is why the stream helpers aren't on a `net.Socket` until you import it.
 

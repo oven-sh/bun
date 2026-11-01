@@ -11,9 +11,13 @@ use bun_sema::bind::{BindOptions, Binding, Decl, Parent, RuntimeBindOptions, Sym
 use bun_sema::file_analysis::{FileInputs, analyze_file};
 use bun_sema::fold::{Constant, FoldInputs, FoldOptions, FoldedValue};
 use bun_sema::hir::{
-    CallId, ExportSpecId, ExprId, ExprKind, FileKind, ImportId, PatId, PatKind, StmtKind,
+    ArenaFew, CallId, ExportSpecId, ExprId, ExprKind, FileKind, ImportId, ImportedFileChanger,
+    PatId, PatKind, StmtKind, TextOfOtherFile,
 };
-use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier, JsxMode};
+use bun_sema::import_sites::{
+    ImportSiteKind, ImportSpecifier, JsxMode, find_texts_of_exports, write_from_other_folder,
+    write_start_from_other_folder,
+};
 use bun_sema::module_format::{DeclaredModuleType, ModuleFormat};
 use bun_sema::resolve::{JsxSettings, TransformRequest, TranspileSettings, TreeChange};
 use bun_sema::session::Session;
@@ -24,10 +28,10 @@ use crate::builtins::{
     BuiltinExported, BuiltinId, BuiltinNames, BuiltinsOfLoadedFile, ImportTargets,
     ReplacedMembersSought, ResolveInput, RuntimeModule, SourceDialect, resolve_file,
 };
-use crate::load::host_platform;
 use crate::load::replaced_modules::find_replaced_modules;
 use crate::load::runtime_modules::find_module_named;
-use crate::load::test_runner_names::import_used_names;
+use crate::load::test_runner_names::{FileOfTestRun, import_used_names};
+use crate::load::{host_platform, is_in_node_modules};
 use crate::modules::evicted::PathChangedOnDisk;
 use crate::options::OpenedName;
 
@@ -39,8 +43,12 @@ const MAX_FOLDED_STRING_BYTES: usize = 256;
 pub(crate) fn members_sought_in_file_outside_packages(
     targets: &[(ImportSiteKind, Option<RuntimeModule>)],
     is_beside_test_files: bool,
+    product: ProductFiles,
 ) -> ReplacedMembersSought {
     let takes_from_tests = (targets.iter()).any(|it| it.1 == Some(RuntimeModule::BunTest));
+    if product == ProductFiles::ReplaceNothing && !takes_from_tests && !is_beside_test_files {
+        return ReplacedMembersSought::NamesAddedByProduct;
+    }
     match takes_from_tests
         || is_beside_test_files
         || bun_core::env_var::BUN_AOT_TESTS_NAME_WHAT_THEY_USE.get() != Some(true)
@@ -48,6 +56,14 @@ pub(crate) fn members_sought_in_file_outside_packages(
         true => ReplacedMembersSought::WrittenOrNamed,
         false => ReplacedMembersSought::Written,
     }
+}
+
+/// The files of a test run that an executable holds too: those that lie beside no test file and take nothing from the test runner.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum ProductFiles {
+    /// `AotOptions::only_tests_load_code_from_disk`: they do what they do in the executable, where built-in objects are read-only.
+    ReplaceNothing,
+    AreReadAsTestsAre,
 }
 
 #[derive(Default)]
@@ -118,6 +134,19 @@ pub struct FoundInFile {
     pub builtins_exported: BuiltinsOfModule,
     /// What it takes from the modules that it loads: the module as it writes it, and the name. No name: the whole module, as `import * as`, `require()` and `import()` give it.
     pub names_loaded: Vec<(Vec<u8>, Option<Vec<u8>>)>,
+    /// `FileAnalysis::asked_of_other_files`
+    pub asked_of_other_files: Vec<(Vec<u8>, Vec<u8>)>,
+}
+
+/// `ExportedFileChanger`. A `start` that is written from the folder of the file is here as a whole path.
+#[derive(Clone, PartialEq, Eq)]
+pub struct FileChangerOfModule {
+    pub export: Vec<u8>,
+    pub place: u32,
+    pub reaches_below: bool,
+    pub start: Vec<u8>,
+    pub end: Vec<u8>,
+    pub is_start_whole_path: bool,
 }
 
 /// The built-ins that a file exports, each by its number and with the names that lead to it: `BuiltinExported`.
@@ -126,6 +155,10 @@ pub struct BuiltinsOfModule {
     pub exported: Vec<(Vec<Vec<u8>>, u32)>,
     /// `BuiltinsOfLoadedFile::object_is_default`
     pub object_is_default: bool,
+    pub file_changers: Vec<FileChangerOfModule>,
+    /// `find_texts_of_exports`: the export, the text, and whether it is written from `folder`, in which the file lies.
+    pub texts: Vec<(Vec<u8>, Vec<u8>, bool)>,
+    pub folder: Vec<u8>,
 }
 
 /// What the file with this path gets where it loads a module that it writes like this. `None`: no built-in, as far as anybody knows.
@@ -146,12 +179,14 @@ fn look_at_file(path: &[u8], text: &[u8]) -> FoundInFile {
 /// Nothing for a file with a syntax error: its build says so. Nothing for a file that holds no code: `import data from "./data.json"`, `./types.d.ts`.
 /// Several files, one after another. The table of the names of built-ins takes longer to make than a test file to read: it is made once for all of them.
 pub fn look_at_files(look_at_each: &mut dyn FnMut(&dyn Fn(&[u8], &[u8]) -> FoundInFile)) {
-    look_at_files_of_run(&|_| false, &|_, _| None, look_at_each);
+    let product = ProductFiles::AreReadAsTestsAre;
+    look_at_files_of_run(&|_| false, product, &|_, _| None, look_at_each);
 }
 
 /// `is_beside_test_files`: whether the file lies in the folder of a test file or below it. A helper does, whatever it imports, and so does the code that it holds as a string.
 pub fn look_at_files_of_run(
     is_beside_test_files: &(dyn Fn(&[u8]) -> bool + Sync),
+    product: ProductFiles,
     find_builtins_of_module: &FindBuiltinsOfModule<'_>,
     look_at_each: &mut dyn FnMut(&dyn Fn(&[u8], &[u8]) -> FoundInFile),
 ) {
@@ -162,10 +197,16 @@ pub fn look_at_files_of_run(
         names: BuiltinNames::new(&atoms),
         atoms,
         is_beside_test_files: Cell::new(false),
+        product: Cell::new(product),
         find_builtins_of_module,
     };
     look_at_each(&|path, text| {
         look.is_beside_test_files.set(is_beside_test_files(path));
+        // A package may be there to help the tests.
+        look.product.set(match is_in_node_modules(path) {
+            true => ProductFiles::AreReadAsTestsAre,
+            false => product,
+        });
         let mut found = FoundInFile::default();
         look.look_at_text(path, text, &mut found);
         found
@@ -177,6 +218,7 @@ struct Look<'s> {
     atoms: Interner<'s>,
     names: BuiltinNames,
     is_beside_test_files: Cell<bool>,
+    product: Cell<ProductFiles>,
     find_builtins_of_module: &'s FindBuiltinsOfModule<'s>,
 }
 
@@ -187,6 +229,10 @@ fn may_hold_code(text: &[u8]) -> bool {
     let holds = |byte: u8| strings::contains_char(text, byte);
     (holds(b'.') || holds(b'[') || strings::contains(text, b"bun:test"))
         && (holds(b'=') || holds(b'(') || strings::contains(text, b"delete "))
+}
+
+fn folder_of(path: &[u8]) -> &[u8] {
+    bun_paths::resolve_path::dirname::<bun_paths::resolve_path::platform::Auto>(path)
 }
 
 impl<'s> Look<'s> {
@@ -227,7 +273,7 @@ impl<'s> Look<'s> {
             is_library: false,
             host_values: &[],
             jsx: JsxMode::Classic,
-            own_name: b"",
+            own_name: arena.alloc_slice_copy(bun_paths::resolve_path::basename(path)),
         };
         let (mut bound, mut analysis) =
             analyze_file(&mut hir, bind_options, &fold, file, atoms, arena);
@@ -245,7 +291,60 @@ impl<'s> Look<'s> {
             },
             import_meta_main: None,
         };
-        if import_used_names(arena, atoms, &mut request, false) == TreeChange::Changed {
+        let file_of_run = FileOfTestRun::default();
+        if import_used_names(arena, atoms, &mut request, file_of_run) == TreeChange::Changed {
+            (bound, analysis) = analyze_file(&mut hir, bind_options, &fold, file, atoms, arena);
+        }
+        // `put(join(import.meta.dir, "state.js"), text)`, where the file that exports `put` has been looked at.
+        let mut file_changers: Vec<ImportedFileChanger> = Vec::new();
+        for site in analysis.import_sites {
+            let ImportSpecifier::Constant(specifier) = site.specifier else {
+                continue;
+            };
+            let module = (self.find_builtins_of_module)(path, atoms.bytes(specifier));
+            let exported = module.map_or(Vec::new(), |module| module.file_changers);
+            file_changers.extend(exported.iter().filter_map(|it| {
+                let start = match it.is_start_whole_path {
+                    true => write_start_from_other_folder(&it.start, b"", folder_of(path))?,
+                    false => it.start.clone(),
+                };
+                Some(ImportedFileChanger {
+                    specifier,
+                    export: atoms.intern(&it.export),
+                    place: it.place,
+                    reaches_below: it.reaches_below,
+                    start: atoms.intern(&start),
+                    end: atoms.intern(&it.end),
+                    starts_at_own_directory: it.is_start_whole_path,
+                })
+            }));
+        }
+        // `writeFileSync(join(folder, "state.js"), text)`, where the file that exports `folder` has been looked at.
+        let mut texts: Vec<TextOfOtherFile> = Vec::new();
+        for &(specifier, export) in analysis.asked_of_other_files {
+            let Some(module) = (self.find_builtins_of_module)(path, atoms.bytes(specifier)) else {
+                continue;
+            };
+            let own_folder =
+                bun_paths::resolve_path::dirname::<bun_paths::resolve_path::platform::Auto>(path);
+            for (_, text, starts_at_folder) in
+                (module.texts.iter()).filter(|it| it.0 == atoms.bytes(export))
+            {
+                let written = match starts_at_folder {
+                    true => write_from_other_folder(text, &module.folder, own_folder),
+                    false => Some(text.clone()),
+                };
+                texts.extend(written.map(|written| TextOfOtherFile {
+                    specifier,
+                    export,
+                    text: atoms.intern(&written),
+                    starts_at_own_directory: *starts_at_folder,
+                }));
+            }
+        }
+        if !file_changers.is_empty() || !texts.is_empty() {
+            hir.imported_file_changers = ArenaFew::from_iter_in(file_changers.into_iter(), arena);
+            hir.texts_of_other_files = ArenaFew::from_iter_in(texts.into_iter(), arena);
             (bound, analysis) = analyze_file(&mut hir, bind_options, &fold, file, atoms, arena);
         }
         let module_of = |specifier: ImportSpecifier| match specifier {
@@ -293,6 +392,7 @@ impl<'s> Look<'s> {
             replaced_members_sought: members_sought_in_file_outside_packages(
                 &targets,
                 self.is_beside_test_files.get(),
+                self.product.get(),
             ),
         });
         let imported = analysis
@@ -436,7 +536,37 @@ impl<'s> Look<'s> {
                 })
                 .collect(),
             object_is_default: analysis.module_format == ModuleFormat::CommonJs,
+            file_changers: (analysis.exported_file_changers.iter())
+                .map(|it| FileChangerOfModule {
+                    export: bytes_of(it.export),
+                    place: it.place,
+                    reaches_below: it.reaches_below,
+                    start: match it.starts_at_own_directory {
+                        // `./lib/`
+                        true => [folder_of(path), &atoms.bytes(it.start)[1..]].concat(),
+                        false => bytes_of(it.start),
+                    },
+                    end: bytes_of(it.end),
+                    is_start_whole_path: it.starts_at_own_directory,
+                })
+                .collect(),
+            texts: find_texts_of_exports(&hir, &bound, &analysis.decisions, &fold, &file, atoms)
+                .iter()
+                .map(|it| {
+                    (
+                        bytes_of(it.export),
+                        bytes_of(it.text),
+                        it.starts_at_own_directory,
+                    )
+                })
+                .collect(),
+            folder: bun_paths::resolve_path::dirname::<bun_paths::resolve_path::platform::Auto>(
+                path,
+            )
+            .to_vec(),
         };
+        let asked = analysis.asked_of_other_files.iter();
+        (found.asked_of_other_files).extend(asked.map(|&it| (bytes_of(it.0), bytes_of(it.1))));
         let holders = resolved.holders_named_from_outside().iter();
         (found.holders_named_from_outside).extend(holders.map(|&holder| holder as u32));
         let holders = resolved.builtins_handed_out().iter();

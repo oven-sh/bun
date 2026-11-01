@@ -1608,7 +1608,7 @@ runtimefunction id=SetIteratorPrototypeNext function=f55 visibility=Private
 # CHECK: module=m0 position=2478 role=CoroutineRamp flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] thisType={type=undefined} results=[{type=Generator<undefined|null|string, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{ramp=f11 body=f97} {
 # CHECK-NEXT: b0(v0: undefined, v1: function):
 # CHECK-NEXT: v2: Generator = NewGenerator v1 function=f11
-# CHECK-NEXT: v5: anything = NewHeapFrame v2 function=f97 numberOfWords=2
+# CHECK-NEXT: v5: anything = NewHeapFrame v2, v1 function=f97 numberOfWords=2
 # CHECK-NEXT: PutHeapFrameWord v5, v2
 # CHECK-NEXT: PutHeapFrameWord v5, v1 index=1
 # CHECK-NEXT: SuspendInHeapFrame v2, v5 [isFirstRun]
@@ -1752,7 +1752,7 @@ runtimefunction id=SetIteratorPrototypeNext function=f55 visibility=Private
 # CHECK-NEXT: v9: fact = Specified
 # CHECK-NEXT: v10: Generator<undefined|null|string, pristine[Storage, Names]> = AssumeType v8, v9 provenType=Generator<undefined|null|string, pristine[Storage, Names]>
 # CHECK-NEXT: MarkGeneratorRunning v10
-# CHECK-NEXT: v32: anything = NewHeapFrame v8 function=f96 numberOfWords=5
+# CHECK-NEXT: v32: anything = NewHeapFrame v8, v3 function=f96 numberOfWords=5
 # CHECK-NEXT: PutHeapFrameWord v32, v8
 # CHECK-NEXT: PutHeapFrameWord v32, v3 index=1
 # CHECK-NEXT: PutHeapFrameWord v32, v7 index=2
@@ -1922,7 +1922,7 @@ runtimefunction id=SetIteratorPrototypeNext function=f55 visibility=Private
 # CHECK-NEXT: b0(v0: f11, v1: anything):
 # CHECK-NEXT: v2: undefined = AssumeType v1 provenType=undefined
 # CHECK-NEXT: v3: Generator = NewGenerator v0 function=f11
-# CHECK-NEXT: v6: anything = NewHeapFrame v3 function=f97 numberOfWords=2
+# CHECK-NEXT: v6: anything = NewHeapFrame v3, v0 function=f97 numberOfWords=2
 # CHECK-NEXT: PutHeapFrameWord v6, v3
 # CHECK-NEXT: PutHeapFrameWord v6, v0 index=1
 # CHECK-NEXT: SuspendInHeapFrame v3, v6 [isFirstRun]

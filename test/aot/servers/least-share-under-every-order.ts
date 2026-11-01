@@ -2,7 +2,7 @@ import { afterAll, expect } from "bun:test";
 import { rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { join } from "path";
-import { built, slot, spawned } from "../harness/commands";
+import { built, limitOfARun, slots, spawned } from "../harness/commands";
 import { raiseDefaultTimeout } from "../harness/default-timeout";
 import { buildEnvironment, compileCommand } from "../harness/flags";
 import { beforeAll, describe, test } from "../supported";
@@ -10,6 +10,26 @@ import { functionsOfProgram } from "./functions-of-a-map";
 import { copyApp } from "./run-servers";
 
 const wordOf = (order: string) => `DelayFlowRules:${order}`;
+
+// A slot of the harness stands for one core, which a small build keeps busy for a second. A build of a server takes 45 s of processor time on as many threads as it gets, and
+// 80 s under a delayed order. Six of them at once on a runner with few cores had one core each, and the last was killed at the limit of a run.
+const coresOfABuild = 4;
+const atOnce = Math.max(1, Math.floor(slots / coresOfABuild));
+// The runner may have fewer cores to give than the machine shows.
+const limit = limitOfARun * atOnce;
+let free = atOnce;
+const waiting: (() => void)[] = [];
+async function slot<T>(work: () => Promise<T>): Promise<T> {
+  if (free > 0) free--;
+  else await new Promise<void>(resolve => waiting.push(resolve));
+  try {
+    return await work();
+  } finally {
+    const next = waiting.shift();
+    if (next) next();
+    else free++;
+  }
+}
 
 export function holdLeastShare(name: string, leastShareAtLeast: number, numberOfOrders: number) {
   const orders = ["usual", "0", "1", "2", "3"].slice(0, numberOfOrders);
@@ -40,15 +60,13 @@ export function holdLeastShare(name: string, leastShareAtLeast: number, numberOf
             slot(async () => {
               const executable = join(work, `compiled-${order}${isWindows ? ".exe" : ""}`);
               const flags = order === "usual" ? [] : [`--aot-testing=${wordOf(order)}`];
-              built(await spawned([bunExe(), ...compileCommand, ...flags, "--target=bun", `./${name}.ts`, "--outfile", executable], app, environment("executable", order))); // prettier-ignore
+              built(await spawned([bunExe(), ...compileCommand, ...flags, "--target=bun", `./${name}.ts`, "--outfile", executable], app, environment("executable", order), limit)); // prettier-ignore
               rmSync(executable, { force: true });
             }),
             slot(async () => {
               const words = order === "usual" ? {} : { BUN_DEBUG_TEST_AOT_WORDS: `testing=${wordOf(order)}` };
-              const run = await spawned([bunExe(), "test", "--aot", `./${name}.test.ts`], app, {
-                ...environment("test-run", order),
-                ...words,
-              });
+              const command = [bunExe(), "test", "--aot", `./${name}.test.ts`];
+              const run = await spawned(command, app, { ...environment("test-run", order), ...words }, limit);
               expect({ order, stderr: run.exitCode ? run.stderr : "", exitCode: run.exitCode }).toEqual({
                 order,
                 stderr: "",

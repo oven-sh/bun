@@ -431,7 +431,6 @@
   "everyday-objects/assign-into-a-new-object": 1.63,
   "everyday-objects/computed-key-in-a-literal": 1.65,
   "everyday-objects/create-from-a-prototype": 1.85,
-  "everyday-objects/define-property": 5.83,
   "everyday-objects/destructuring-nested": 1.24,
   "everyday-objects/destructuring-renamed": 1.3,
   "everyday-objects/destructuring-with-defaults": 2.08,

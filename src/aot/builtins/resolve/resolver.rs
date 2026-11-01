@@ -282,6 +282,7 @@ pub(super) struct ResolverOutput {
     pub(super) stores_with_module_exports: Vec<ExprId>,
     pub(super) replaced_members: Vec<BuiltinId>,
     pub(super) names_added: Vec<(BuiltinId, Atom)>,
+    pub(super) names_holder_that_takes_spelled_names: bool,
     pub(super) holders_named_from_outside: Vec<BuiltinId>,
     pub(super) writes_on_parameters_under_any_name: bool,
     pub(super) builtins_handed_out: Vec<BuiltinId>,
@@ -390,6 +391,7 @@ pub(super) fn run_for_program(
     resolver.collect_evaluated_texts();
     resolver.collect_replaced_members();
     resolver.classify_mentions();
+    resolver.collect_names_added();
     resolver.classify_stores_to_exports();
     resolver.collect_module_object_mentions();
     resolver.visit_implicit_references();

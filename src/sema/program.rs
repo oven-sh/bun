@@ -27,7 +27,9 @@ use self::code_load::{
 };
 use crate::atom::{Atom, Interner, known};
 use crate::bind::{self, Bound, Decl, ScopeId, ScopeKind, SymFlags, Symbol, SymbolId};
-use crate::check::aot::{BuiltinTypeSymbols, COMPILER_DECLARATIONS_PATH};
+use crate::check::aot::{
+    BuiltinTypeSymbols, COMPILER_DECLARATIONS_PATH, MODULES_IN_OTHER_IMAGES_PATH,
+};
 use crate::check::errors::{SuggestionLookup, is_close};
 use crate::check::spans::{Spans, skip_trivia, skip_trivia_back};
 use crate::components::Components;
@@ -2054,6 +2056,9 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
                 return SymFlags::all();
             };
             let target = self.export_symbol_of_value_symbol_if_exported(target);
+            if self.stands_for_modules_in_other_images(target) {
+                return SymFlags::all();
+            }
             if self.flags(target).contains(SymFlags::ALIAS) {
                 if target == symbol || seen_symbols.contains(&target) {
                     break;
@@ -10782,6 +10787,11 @@ impl<'s> Files<'s> {
                 });
             (!is_rejected).then_some((file, decl))
         })
+    }
+
+    pub fn stands_for_modules_in_other_images(&self, module: Sym) -> bool {
+        self.is_shorthand_ambient_module_symbol(module)
+            && self.module(module.file).path.text == MODULES_IN_OTHER_IMAGES_PATH
     }
 
     /// `isShorthandAmbientModuleSymbol`: true if `ValueDeclaration`, which is the first of several

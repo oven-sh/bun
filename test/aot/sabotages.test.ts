@@ -109,10 +109,14 @@ const noticedByTheEngineTestsAlone: Record<string, string> = {
   ConversionsOfStorageEndNoProofs: "plan-array-capacities-a-conversion-that-ends-a-proof-is-refused",
   StridedIndexesStayInRange: "a-strided-index-said-to-stay-in-range-is-reported",
   VectorTurnsMeetNoOtherAccess: "a-load-moved-across-the-store-of-another-view-is-reported",
+  // The pass that keeps such a word in a register is switched on by nobody yet, so no program is compiled with it. testb3 shows it.
+  WordsCarriedAroundLoopsOutlastWrites: "testPromoteLoopMemoryOverlooksOtherWritesOnlyWhereToldTo",
 };
-/** What costs a build words alone, and the test that holds it to that. */
+/** What costs a build words alone, and what does nothing until a run is told where memory runs out: each with the test that holds it to that. */
 const heldByATestOfItsOwn: Record<string, string> = {
   ListsOfPiecesEndInAPiece: "a-faulty-list-of-printed-text-costs-one-file-its-quotes",
+  MemoryRunsOutWhenCounted: "memory-that-runs-out-when-counted",
+  MemoryRunsOutWhenCountedByRule: "memory-that-runs-out-when-counted",
 };
 /** The names that a test under ./engine-tests/pipeline/sabotages is built with. */
 const pairs = join(import.meta.dir, "engine-tests", "pipeline", "sabotages");

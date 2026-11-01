@@ -57,6 +57,138 @@ mod coverage {
 }
 use coverage::{ByteRangeMapping, CodeCoverageReport, Fraction};
 
+fn end_of_string(text: &[u8], mut at: usize, quote: u8) -> usize {
+    while at < text.len()
+        && let Some(found) = strings::index_of_any(&text[at..], &[quote, b'\\', b'\n'])
+    {
+        at += found;
+        match text[at] {
+            b'\\' => at += 2,
+            _ => return at + 1,
+        }
+    }
+    text.len()
+}
+
+fn end_of_template_part(text: &[u8], mut at: usize, open_braces: &mut Vec<u32>) -> usize {
+    while at < text.len()
+        && let Some(found) = strings::index_of_any(&text[at..], b"`\\$")
+    {
+        at += found;
+        match text[at] {
+            b'\\' => at += 2,
+            b'`' => return at + 1,
+            _ if text.get(at + 1) == Some(&b'{') => {
+                open_braces.push(0);
+                return at + 2;
+            }
+            _ => at += 1,
+        }
+    }
+    text.len()
+}
+
+fn end_of_regular_expression(text: &[u8], mut at: usize) -> usize {
+    let mut is_in_class = false;
+    while at < text.len() {
+        match text[at] {
+            b'\\' => at += 1,
+            b'[' => is_in_class = true,
+            b']' => is_in_class = false,
+            b'/' if !is_in_class => return at + 1,
+            b'\n' => return at,
+            _ => {}
+        }
+        at += 1;
+    }
+    text.len()
+}
+
+fn begins_regular_expression(before_slash: &[u8]) -> bool {
+    const WORDS: [&[u8]; 14] = [
+        b"return",
+        b"typeof",
+        b"case",
+        b"do",
+        b"else",
+        b"in",
+        b"of",
+        b"void",
+        b"delete",
+        b"throw",
+        b"new",
+        b"instanceof",
+        b"yield",
+        b"await",
+    ];
+    let before = before_slash.trim_ascii_end();
+    let Some(&last) = before.last() else {
+        return true;
+    };
+    if is_identifier_byte(last) {
+        let start = before.iter().rposition(|&byte| !is_identifier_byte(byte));
+        return WORDS.contains(&&before[start.map_or(0, |at| at + 1)..]);
+    }
+    !matches!(last, b')' | b']' | b'}' | b'"' | b'\'' | b'`')
+}
+
+fn blank_comments(text: &mut [u8]) {
+    let mut open_braces: Vec<u32> = Vec::new();
+    let mut at = 0;
+    while at < text.len()
+        && let Some(found) = strings::index_of_any(&text[at..], b"\"'`/{}")
+    {
+        at += found;
+        match text[at] {
+            quote @ (b'"' | b'\'') => at = end_of_string(text, at + 1, quote),
+            b'`' => at = end_of_template_part(text, at + 1, &mut open_braces),
+            b'{' => {
+                if let Some(open) = open_braces.last_mut() {
+                    *open += 1;
+                }
+                at += 1;
+            }
+            b'}' => match open_braces.last_mut() {
+                Some(0) => {
+                    open_braces.pop();
+                    at = end_of_template_part(text, at + 1, &mut open_braces);
+                }
+                Some(open) => {
+                    *open -= 1;
+                    at += 1;
+                }
+                None => at += 1,
+            },
+            _ => match text.get(at + 1) {
+                Some(b'/') => {
+                    let length = strings::index_of_char_usize(&text[at..], b'\n');
+                    let end = length.map_or(text.len(), |length| at + length);
+                    text[at..end].fill(b' ');
+                    at = end;
+                }
+                Some(b'*') => {
+                    let length = strings::index_of(&text[at + 2..], b"*/");
+                    let end = length.map_or(text.len(), |length| at + length + 4);
+                    for byte in text[at..end].iter_mut().filter(|byte| **byte != b'\n') {
+                        *byte = b' ';
+                    }
+                    at = end;
+                }
+                _ if begins_regular_expression(&text[..at]) => {
+                    at = end_of_regular_expression(text, at + 1);
+                }
+                _ => at += 1,
+            },
+        }
+    }
+}
+
+fn read_code(path: &[u8]) -> Option<Vec<u8>> {
+    let mut text = File::read_from(Fd::cwd(), path).ok()?;
+    blank_comments(&mut text);
+    Some(text)
+}
+
 // The strings behind `from`, `import`, `require` and `module` (of `mock.module`). One too many names a file too many.
 fn for_each_imported_name(text: &[u8], mut visit: impl FnMut(&[u8])) {
     for_each_imported_name_and_word(text, |name, _| visit(name));
@@ -228,20 +360,29 @@ fn find_names_in<Path: core::ops::Deref<Target = [u8]> + Sync>(
     files: &[Path],
     for_each_name: fn(&[u8], &mut dyn FnMut(&[u8])),
 ) -> Vec<Vec<Box<[u8]>>> {
+    find_names_and_sizes_in(files, for_each_name).0
+}
+
+fn find_names_and_sizes_in<Path: core::ops::Deref<Target = [u8]> + Sync>(
+    files: &[Path],
+    for_each_name: fn(&[u8], &mut dyn FnMut(&[u8])),
+) -> (Vec<Vec<Box<[u8]>>>, Vec<u64>) {
     const MAX_READERS: usize = 64;
     const MIN_FILES_OF_READER: usize = 16;
     let mut names: Vec<Vec<Box<[u8]>>> = Vec::new();
     names.resize_with(files.len(), Vec::new);
+    let mut sizes = vec![0; files.len()];
     let share = files.len().div_ceil(MAX_READERS).max(MIN_FILES_OF_READER);
-    let shares = files.chunks(share).zip(names.chunks_mut(share));
-    run_compiled::for_each_on_threads(shares.collect(), |(files, names)| {
-        for (file, names) in files.iter().zip(names) {
-            if let Ok(text) = File::read_from(Fd::cwd(), file) {
+    let shares = (files.chunks(share).zip(names.chunks_mut(share))).zip(sizes.chunks_mut(share));
+    run_compiled::for_each_on_threads(shares.collect(), |((files, names), sizes)| {
+        for ((file, names), size) in files.iter().zip(names).zip(sizes) {
+            if let Some(text) = read_code(file) {
+                *size = text.len() as u64;
                 for_each_name(&text, &mut |name| names.push(Box::from(name)));
             }
         }
     });
-    names
+    (names, sizes)
 }
 
 fn keep_paths_for_the_build(paths: Vec<Box<[u8]>>) -> Vec<Interned> {
@@ -880,46 +1021,60 @@ fn find_all_that_is_reached_from(
         let _ = position_of.put(path, position as u32);
     }
     let mut imports: Vec<Vec<u32>> = Vec::new();
+    let mut sizes: Vec<u64> = Vec::new();
+    let mut resolved = bun_collections::StringHashMap::<Option<u32>>::default();
+    let mut asked: Vec<u8> = Vec::new();
     while imports.len() < paths.len() {
         let first = imports.len();
-        let names_of_level = find_names_in(
+        let (names_of_level, mut sizes_of_level) = find_names_and_sizes_in(
             &paths[first..],
             match first {
                 0 => for_each_name_that_loads,
                 _ => for_each_name_that_build_follows,
             },
         );
+        sizes.append(&mut sizes_of_level);
         for (file, names) in (first..).zip(names_of_level) {
             let folder = resolve_path::dirname::<bun_path::platform::Auto>(&paths[file]).to_vec();
-            let mut loaded: Vec<Box<[u8]>> = Vec::new();
+            let mut place = |path: Box<[u8]>| match position_of.get(&*path) {
+                Some(&position) => position,
+                None => {
+                    let position = paths.len() as u32;
+                    let _ = position_of.put(&path, position);
+                    paths.push(path);
+                    position
+                }
+            };
+            let mut loaded: Vec<u32> = Vec::new();
+            let mut behind_pattern: Vec<Box<[u8]>> = Vec::new();
             for marked in names {
                 let name = &marked[1..];
                 if let Some((prefix, suffix)) = strings::split_once_char(name, 0) {
-                    add_files_behind_pattern(&folder, prefix, suffix, &mut loaded);
+                    add_files_behind_pattern(&folder, prefix, suffix, &mut behind_pattern);
+                    loaded.extend(behind_pattern.drain(..).map(&mut place));
+                    continue;
+                }
+                asked.clear();
+                asked.extend_from_slice(&folder);
+                asked.push(0);
+                asked.extend_from_slice(name);
+                if let Some(&position) = resolved.get(&asked[..]) {
+                    loaded.extend(position);
                     continue;
                 }
                 let kind = bun_ast::ImportKind::Stmt;
-                let Ok(result) = vm.transpiler.resolver.resolve(&folder, name, kind) else {
-                    continue;
+                let result = vm.transpiler.resolver.resolve(&folder, name, kind).ok();
+                let path = result.as_ref().map(|it| it.path_pair.primary.text());
+                let is_code = |path: &&[u8]| {
+                    bun_path::is_absolute(path)
+                        && EXTENSIONS.iter().any(|extension| path.ends_with(extension))
                 };
-                let path = result.path_pair.primary.text();
-                if bun_path::is_absolute(path)
-                    && EXTENSIONS.iter().any(|extension| path.ends_with(extension))
-                {
-                    loaded.push(Box::from(path));
-                }
+                let position = path.filter(is_code).map(|path| place(Box::from(path)));
+                let _ = resolved.put(&asked, position);
+                loaded.extend(position);
             }
             let mut imported: Vec<u32> = Vec::new();
-            for path in loaded {
-                let position = match position_of.get(&*path) {
-                    Some(&position) => position,
-                    None => {
-                        let position = paths.len() as u32;
-                        let _ = position_of.put(&path, position);
-                        paths.push(path);
-                        position
-                    }
-                };
+            for position in loaded {
                 if position as usize != file && !imported.contains(&position) {
                     imported.push(position);
                 }
@@ -927,10 +1082,6 @@ fn find_all_that_is_reached_from(
             imports.push(imported);
         }
     }
-    let size_of = |path: &[u8]| {
-        bun_sys::stat(&bun_core::ZBox::from_bytes(path)).map_or(0, |stat| stat.st_size as u64)
-    };
-    let sizes = paths.iter().map(|path| size_of(path)).collect();
     (paths, imports, sizes)
 }
 
@@ -984,6 +1135,13 @@ fn select_shard_by_reach(
             .collect(),
         None => vec![1; tests],
     };
+    let of_heavy: Vec<u32> = (test_files.iter())
+        .map(|file| {
+            let heavy = timings.filter(|timings| timings.is_heavy(file.as_bytes()));
+            heavy.and_then(|timings| timings.growth_of(file.as_bytes()))
+        })
+        .map(|megabytes| megabytes.unwrap_or(0))
+        .collect();
     let costs = Costs {
         of_run: &of_run,
         of_thousand_bytes: match at_once {
@@ -991,6 +1149,7 @@ fn select_shard_by_reach(
             _ => MICROSECONDS_OF_TEST_FILES_FOR_THOUSAND_BYTES_TO_BUILD,
         },
         at_once,
+        of_heavy: &of_heavy,
     };
     let reach = Reach {
         test_count: tests,
@@ -1292,6 +1451,7 @@ fn find_what_tests_replace<Path: core::ops::Deref<Target = [u8]>>(
     vm: &mut VirtualMachine,
     test_files: &[Path],
     preloads: &[Box<[u8]>],
+    product_replaces_nothing: bool,
 ) -> ReplacedByTests {
     let preloads = find_files_of_preloads(vm, preloads);
     // Every name that a test file or a helper imports is asked for, and whoever loads the file says what is wrong with one.
@@ -1321,7 +1481,7 @@ fn find_what_tests_replace<Path: core::ops::Deref<Target = [u8]>>(
             .ok()?;
         Some(result.path_pair.primary.text().to_vec())
     };
-    bun_aot::builtins::find_what_tests_replace(&files, threads, resolve)
+    bun_aot::builtins::find_what_tests_replace(&files, threads, product_replaces_nothing, resolve)
 }
 
 // A trial. The build does not see the test files. This file stands in for what they do: it loads code under names that nothing says. The condition is one that flow cannot
@@ -1974,7 +2134,7 @@ impl NamedByTests<'_> {
         let mut statements: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
         let mut cannot_load: Vec<Vec<u8>> = Vec::new();
         while let Some(file) = left.pop() {
-            let Ok(text) = File::read_from(Fd::cwd(), &file) else {
+            let Some(text) = read_code(&file) else {
                 continue;
             };
             let folder = resolve_path::dirname::<bun_path::platform::Auto>(&file);
@@ -2054,7 +2214,7 @@ impl NamedByTests<'_> {
 
     // `is_test_file`: not a file that is loaded again. What such a file loads again in its turn is not followed.
     fn note_file(&mut self, file: &[u8], is_test_file: bool) {
-        let Ok(text) = File::read_from(Fd::cwd(), file) else {
+        let Some(text) = read_code(file) else {
             return;
         };
         let folder = resolve_path::dirname::<bun_path::platform::Auto>(file);
@@ -4691,7 +4851,10 @@ impl TestCommand {
             } else if builds_what_is_shared && !is_above_what_is_shared {
                 // The build is told what they replace. The builds above it take over what it ends with.
                 let files_above = files_above.as_ref().unwrap_or(&entry_points);
-                let replaced_by_tests = find_what_tests_replace(vm, files_above, &ctx.preloads);
+                let closed = (ctx.bundler_options.aot.as_ref())
+                    .is_some_and(|aot| aot.only_tests_load_code_from_disk);
+                let replaced_by_tests =
+                    find_what_tests_replace(vm, files_above, &ctx.preloads, closed);
                 if let Some(aot) = ctx.bundler_options.aot.as_mut() {
                     aot.replaced_by_tests = replaced_by_tests;
                 }
@@ -5137,7 +5300,10 @@ impl TestCommand {
                 }));
             }
             if (ctx.bundler_options.aot.as_ref()).is_some_and(|aot| !aot.checks_only) {
-                let replaced_by_tests = find_what_tests_replace(vm, test_files, &ctx.preloads);
+                let closed = (ctx.bundler_options.aot.as_ref())
+                    .is_some_and(|aot| aot.only_tests_load_code_from_disk);
+                let replaced_by_tests =
+                    find_what_tests_replace(vm, test_files, &ctx.preloads, closed);
                 if let Some(aot) = ctx.bundler_options.aot.as_mut() {
                     aot.loads_code_from_disk |= runs_files_from_disk;
                     aot.host_runs_files_from_disk = names_what_tests_use;

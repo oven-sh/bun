@@ -1,0 +1,79 @@
+# An object is made in each turn of an outer loop. An inner loop reads and writes its fields, and leaves over an edge that seldom runs into code that needs the object.
+# That edge stays in the outer loop and leaves the inner one, so the object is made on the edge, once, behind the inner loop's last turn. In the inner loop its fields are values.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass SinkAllocations
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment name="scope" fields=[{key="sum" declared={type=number}}]
+
+function f0 name="leavesTheInnerLoop" parameters=[{type=number}, {type=anything}] results=[{type=number}] {
+    v2 = Call v1
+    v3 = ToBoolean v2
+    Branch v3 -> taken b1(), notTaken b6()
+  b1():
+    LoopHint
+    v5 = NewObject -, v0 layout=L0 fields=[0]
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v7 = Call v1
+    v8 = ToBoolean v7
+    Branch v8 -> taken b3(), notTaken b4()
+  b3():
+    v9 = Call v1
+    v10 = ToBoolean v9
+    Branch v10 -> taken b5(), notTaken b9(v5)
+  b4():
+    v11 = GetEnvironmentField v5 layout=L0 field=0
+    v12 = Call v1, -, v11
+    v13 = ToBoolean v12
+    Branch v13 -> taken b1(), notTaken b12(v11)
+  b5():
+    v14 = GetEnvironmentField v5 layout=L0 field=0
+    v15 = Add v14, v0
+    PutEnvironmentField v5, v15 layout=L0
+    Jump -> next b2()
+  b6() frequency=Rare:
+    v17 = NewObject -, v0 layout=L0 fields=[0]
+    Jump -> next b7(v17, v17)
+  b7(v18: env L0, v19: env L0) frequency=Rare:
+    LoopHint
+    v21 = Call v1
+    v22 = ToBoolean v21
+    Branch v22 -> taken b8(), notTaken b11()
+  b8() frequency=Rare:
+    Jump -> next b9(v19)
+  b9(v23: env L0) frequency=Rare:
+    v24 = CallDirect v23, v0 function=f1
+    Jump -> next b10(v23)
+  b10(v25: env L0) frequency=Rare:
+    Jump -> next b7(v25, v25)
+  b11() frequency=Rare:
+    v26 = GetEnvironmentField v18 layout=L0 field=0
+    v27 = Call v1, -, v26
+    v28 = ToBoolean v27
+    Branch v28 -> taken b1(), notTaken b12(v26)
+  b12(v29: number):
+    Return v29
+}
+# CHECK-LABEL: function f0 name="leavesTheInnerLoop"
+# CHECK: b1():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: Jump -> next b2(v0)
+# CHECK: b3([[leaving]]: number):
+# CHECK: Branch v10 -> taken b5([[leaving]]), notTaken b13([[leaving]])
+# CHECK: b5([[sum]]: number):
+# CHECK-NOT: EnvironmentField
+# CHECK: b6() frequency=Rare:
+# CHECK: b13([[left]]: number) frequency=Rare:
+# CHECK-NEXT: [[made]]:{{*}}= NewObject -, [[left]] layout=L0 fields=[0]
+# CHECK-NEXT: Jump -> next b9([[made]])
+
+function f1 name="callback" kind=Arrow captures=[{type=env L0}] parameters=[{type=number}] results=[{type=undefined}] {
+    v2 = GetEnvironmentField v0 layout=L0 field=0
+    v3 = Add v2, v1
+    PutEnvironmentField v0, v3 layout=L0
+    v5 = Undefined
+    Return v5
+}

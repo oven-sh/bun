@@ -360,5 +360,5 @@ function f5 name="expected" module=m0 position=1209 flags=[IsChecked, HasExplici
 # -- generated: f0
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 505, patchpoints: 63, rare instructions: 109, polls: 10
+# CHECK-NEXT: instructions: 496, patchpoints: 63, rare instructions: 107, polls: 10
 # CHECK-NEXT: end of function f0

@@ -13,8 +13,8 @@ use crate::fold::{Decisions, FoldError, FoldInputs};
 use crate::hir::{ExprId, File, ImportEqualsId, ImportedName, NodeData};
 use crate::hir_from_data::HostValue;
 use crate::import_sites::{
-    ChangedPath, ImportSite, ImportSiteKind, ImportSpecifier, JsxImportSet, JsxMode, ResolvedForm,
-    ResolvedFrom,
+    ChangedPath, ExportedFileChanger, ImportSite, ImportSiteKind, ImportSpecifier, JsxImportSet,
+    JsxMode, ResolvedForm, ResolvedFrom,
 };
 use crate::module_format::{DeclaredModuleType, FormatByDeclaredType, ModuleFormat};
 use crate::session::Arena;
@@ -27,6 +27,23 @@ pub struct FileInputs<'s> {
     pub host_values: &'s [(ExprId, HostValue<'s>)],
     pub jsx: JsxMode,
     pub own_name: &'s [u8],
+}
+
+impl FileInputs<'_> {
+    pub fn type_by_name(&self) -> DeclaredModuleType {
+        let name = self.own_name;
+        if name.ends_with(b".mjs") || name.ends_with(b".mts") {
+            DeclaredModuleType::Esm
+        } else if name.ends_with(b".cjs") || name.ends_with(b".cts") {
+            DeclaredModuleType::CommonJs
+        } else {
+            DeclaredModuleType::Unknown
+        }
+    }
+
+    pub fn is_named_es_module(&self) -> bool {
+        self.type_by_name() == DeclaredModuleType::Esm
+    }
 }
 
 #[derive(Copy, Clone, Default, Debug)]
@@ -43,6 +60,8 @@ pub struct FileAnalysis<'s> {
     /// `writeFileSync(path, text)`, `rmSync(path)`, `Bun.write(path, text)`: each operand that names a file which the call writes, moves or removes, with what it may be,
     /// where that is known. `is_path_from_own_directory` and `find_resolved_form` say how it is written, as of the specifier of a site.
     pub paths_of_changed_files: &'s [ChangedPath],
+    pub exported_file_changers: &'s [ExportedFileChanger],
+    pub asked_of_other_files: &'s [(Atom, Atom)],
     pub asked_of_data_files: &'s [(Atom, Atom)],
     pub names_out_of_data_files: &'s [Atom],
     keys_stored_in_caches: &'s [(ExprId, ImportSpecifier)],

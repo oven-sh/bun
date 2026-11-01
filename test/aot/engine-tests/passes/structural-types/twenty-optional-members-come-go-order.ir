@@ -978,204 +978,204 @@ function f123 module=m0 role=Signature thisType={type=anything} results=[{type=a
 # CHECK-LABEL: function {{*}}name="k0"
 # CHECK: module=m0 position=1659 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f24}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f24} creator=Entrypoint{target=f24 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f24, v1: anything, v2: anything):
-# CHECK-NEXT: v3: never = ThrowNewError message="'k0' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v3: never = ThrowNewError message="'k0' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="k1"
 # CHECK: module=m0 position=1683 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f25}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f25} creator=Entrypoint{target=f25 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f25, v1: anything, v2: anything):
-# CHECK-NEXT: v3: never = ThrowNewError message="'k1' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v3: never = ThrowNewError message="'k1' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="k2"
 # CHECK: module=m0 position=1707 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f26}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f26} creator=Entrypoint{target=f26 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f26, v1: anything, v2: anything):
-# CHECK-NEXT: v3: never = ThrowNewError message="'k2' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v3: never = ThrowNewError message="'k2' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="k4"
 # CHECK: module=m0 position=1755 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f28}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f28} creator=Entrypoint{target=f28 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f28, v1: anything, v2: anything):
-# CHECK-NEXT: v3: never = ThrowNewError message="'k4' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v3: never = ThrowNewError message="'k4' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="k5"
 # CHECK: module=m0 position=1779 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f29}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f29} creator=Entrypoint{target=f29 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f29, v1: anything, v2: anything):
-# CHECK-NEXT: v3: never = ThrowNewError message="'k5' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v3: never = ThrowNewError message="'k5' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="k6"
 # CHECK: module=m0 position=1803 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f30}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f30} creator=Entrypoint{target=f30 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f30, v1: anything, v2: anything):
-# CHECK-NEXT: v3: never = ThrowNewError message="'k6' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v3: never = ThrowNewError message="'k6' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="k8"
 # CHECK: module=m0 position=1851 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f32}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f32} creator=Entrypoint{target=f32 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f32, v1: anything, v2: anything):
-# CHECK-NEXT: v3: never = ThrowNewError message="'k8' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v3: never = ThrowNewError message="'k8' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="k9"
 # CHECK: module=m0 position=1875 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f33}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f33} creator=Entrypoint{target=f33 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f33, v1: anything, v2: anything):
-# CHECK-NEXT: v3: never = ThrowNewError message="'k9' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v3: never = ThrowNewError message="'k9' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="k10"
 # CHECK: module=m0 position=1900 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f34}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f34} creator=Entrypoint{target=f34 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f34, v1: anything, v2: anything):
-# CHECK-NEXT: v3: never = ThrowNewError message="'k10' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v3: never = ThrowNewError message="'k10' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="k11"
 # CHECK: module=m0 position=1926 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f35}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f35} creator=Entrypoint{target=f35 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f35, v1: anything, v2: anything):
-# CHECK-NEXT: v3: never = ThrowNewError message="'k11' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v3: never = ThrowNewError message="'k11' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="k12"
 # CHECK: module=m0 position=1952 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f36}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f36} creator=Entrypoint{target=f36 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f36, v1: anything, v2: anything):
-# CHECK-NEXT: v3: never = ThrowNewError message="'k12' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v3: never = ThrowNewError message="'k12' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="k13"
 # CHECK: module=m0 position=1978 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f37}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f37} creator=Entrypoint{target=f37 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f37, v1: anything, v2: anything):
-# CHECK-NEXT: v3: never = ThrowNewError message="'k13' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v3: never = ThrowNewError message="'k13' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="k14"
 # CHECK: module=m0 position=2004 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f38}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f38} creator=Entrypoint{target=f38 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f38, v1: anything, v2: anything):
-# CHECK-NEXT: v3: never = ThrowNewError message="'k14' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v3: never = ThrowNewError message="'k14' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="k15"
 # CHECK: module=m0 position=2030 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f39}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f39} creator=Entrypoint{target=f39 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f39, v1: anything, v2: anything):
-# CHECK-NEXT: v3: never = ThrowNewError message="'k15' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v3: never = ThrowNewError message="'k15' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="k16"
 # CHECK: module=m0 position=2056 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f40}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f40} creator=Entrypoint{target=f40 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f40, v1: anything, v2: anything):
-# CHECK-NEXT: v3: never = ThrowNewError message="'k16' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v3: never = ThrowNewError message="'k16' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="k17"
 # CHECK: module=m0 position=2082 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f41}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f41} creator=Entrypoint{target=f41 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f41, v1: anything, v2: anything):
-# CHECK-NEXT: v3: never = ThrowNewError message="'k17' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v3: never = ThrowNewError message="'k17' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="k18"
 # CHECK: module=m0 position=2108 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f42}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f42} creator=Entrypoint{target=f42 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f42, v1: anything, v2: anything):
-# CHECK-NEXT: v3: never = ThrowNewError message="'k18' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v3: never = ThrowNewError message="'k18' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="k0"
 # CHECK: module=m0 position=2227 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f44}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f44} creator=Entrypoint{target=f44 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f44, v1: anything, v2: anything):
-# CHECK-NEXT: v3: never = ThrowNewError message="'k0' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v3: never = ThrowNewError message="'k0' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="k1"
 # CHECK: module=m0 position=2244 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f45}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f45} creator=Entrypoint{target=f45 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f45, v1: anything, v2: anything):
-# CHECK-NEXT: v3: never = ThrowNewError message="'k1' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v3: never = ThrowNewError message="'k1' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="k2"
 # CHECK: module=m0 position=2261 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f46}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f46} creator=Entrypoint{target=f46 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f46, v1: anything, v2: anything):
-# CHECK-NEXT: v3: never = ThrowNewError message="'k2' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v3: never = ThrowNewError message="'k2' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="k4"
 # CHECK: module=m0 position=2295 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f48}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f48} creator=Entrypoint{target=f48 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f48, v1: anything, v2: anything):
-# CHECK-NEXT: v3: never = ThrowNewError message="'k4' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v3: never = ThrowNewError message="'k4' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="k5"
 # CHECK: module=m0 position=2312 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f49}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f49} creator=Entrypoint{target=f49 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f49, v1: anything, v2: anything):
-# CHECK-NEXT: v3: never = ThrowNewError message="'k5' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v3: never = ThrowNewError message="'k5' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="k6"
 # CHECK: module=m0 position=2329 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f50}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f50} creator=Entrypoint{target=f50 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f50, v1: anything, v2: anything):
-# CHECK-NEXT: v3: never = ThrowNewError message="'k6' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v3: never = ThrowNewError message="'k6' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="k8"
 # CHECK: module=m0 position=2363 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f52}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f52} creator=Entrypoint{target=f52 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f52, v1: anything, v2: anything):
-# CHECK-NEXT: v3: never = ThrowNewError message="'k8' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v3: never = ThrowNewError message="'k8' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="k9"
 # CHECK: module=m0 position=2380 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f53}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f53} creator=Entrypoint{target=f53 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f53, v1: anything, v2: anything):
-# CHECK-NEXT: v3: never = ThrowNewError message="'k9' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v3: never = ThrowNewError message="'k9' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="k10"
 # CHECK: module=m0 position=2398 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f54}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f54} creator=Entrypoint{target=f54 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f54, v1: anything, v2: anything):
-# CHECK-NEXT: v3: never = ThrowNewError message="'k10' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v3: never = ThrowNewError message="'k10' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="k11"
 # CHECK: module=m0 position=2417 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f55}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f55} creator=Entrypoint{target=f55 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f55, v1: anything, v2: anything):
-# CHECK-NEXT: v3: never = ThrowNewError message="'k11' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v3: never = ThrowNewError message="'k11' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="k12"
 # CHECK: module=m0 position=2436 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f56}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f56} creator=Entrypoint{target=f56 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f56, v1: anything, v2: anything):
-# CHECK-NEXT: v3: never = ThrowNewError message="'k12' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v3: never = ThrowNewError message="'k12' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="k13"
 # CHECK: module=m0 position=2455 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f57}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f57} creator=Entrypoint{target=f57 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f57, v1: anything, v2: anything):
-# CHECK-NEXT: v3: never = ThrowNewError message="'k13' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v3: never = ThrowNewError message="'k13' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="k14"
 # CHECK: module=m0 position=2474 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f58}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f58} creator=Entrypoint{target=f58 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f58, v1: anything, v2: anything):
-# CHECK-NEXT: v3: never = ThrowNewError message="'k14' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v3: never = ThrowNewError message="'k14' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="k15"
 # CHECK: module=m0 position=2493 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f59}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f59} creator=Entrypoint{target=f59 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f59, v1: anything, v2: anything):
-# CHECK-NEXT: v3: never = ThrowNewError message="'k15' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v3: never = ThrowNewError message="'k15' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="k16"
 # CHECK: module=m0 position=2512 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f60}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f60} creator=Entrypoint{target=f60 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f60, v1: anything, v2: anything):
-# CHECK-NEXT: v3: never = ThrowNewError message="'k16' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v3: never = ThrowNewError message="'k16' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="k17"
 # CHECK: module=m0 position=2531 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f61}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f61} creator=Entrypoint{target=f61 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f61, v1: anything, v2: anything):
-# CHECK-NEXT: v3: never = ThrowNewError message="'k17' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v3: never = ThrowNewError message="'k17' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="k18"
 # CHECK: module=m0 position=2550 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f62}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f62} creator=Entrypoint{target=f62 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f62, v1: anything, v2: anything):
-# CHECK-NEXT: v3: never = ThrowNewError message="'k18' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v3: never = ThrowNewError message="'k18' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }

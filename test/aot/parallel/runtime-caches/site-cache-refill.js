@@ -26,15 +26,20 @@ function readA(a, b, n) { if (n > 1e9) return readA(a, b, 0); let s = 0; for (le
 function readB(a, b, n) { if (n > 1e9) return readB(a, b, 0); let s = 0; for (let i = 0; i < n; i++) s += (i & 1 ? b : a).shared; return s; }
 function readC(a, b, n) { if (n > 1e9) return readC(a, b, 0); let s = 0; for (let i = 0; i < n; i++) s += (i & 1 ? b : a).shared; return s; }
 function readD(a, b, n) { if (n > 1e9) return readD(a, b, 0); let s = 0; for (let i = 0; i < n; i++) s += (i & 1 ? b : a).shared; return s; }
+// The forty reads stand in no loop: a loop asks for the name once, ahead of its turns, and its sites see nothing.
+function readFortyOnce(o, n) {
+  if (n > 1e9) return readFortyOnce(o, 0);
+  let s = 0;
+  s += o.shared; s += o.shared; s += o.shared; s += o.shared; s += o.shared; s += o.shared; s += o.shared; s += o.shared;
+  s += o.shared; s += o.shared; s += o.shared; s += o.shared; s += o.shared; s += o.shared; s += o.shared; s += o.shared;
+  s += o.shared; s += o.shared; s += o.shared; s += o.shared; s += o.shared; s += o.shared; s += o.shared; s += o.shared;
+  s += o.shared; s += o.shared; s += o.shared; s += o.shared; s += o.shared; s += o.shared; s += o.shared; s += o.shared;
+  s += o.shared; s += o.shared; s += o.shared; s += o.shared; s += o.shared; s += o.shared; s += o.shared; s += o.shared;
+  return s;
+}
 function readForty(o, n) {
   let s = 0;
-  for (let i = 0; i < n; i++) {
-    s += o.shared; s += o.shared; s += o.shared; s += o.shared; s += o.shared; s += o.shared; s += o.shared; s += o.shared;
-    s += o.shared; s += o.shared; s += o.shared; s += o.shared; s += o.shared; s += o.shared; s += o.shared; s += o.shared;
-    s += o.shared; s += o.shared; s += o.shared; s += o.shared; s += o.shared; s += o.shared; s += o.shared; s += o.shared;
-    s += o.shared; s += o.shared; s += o.shared; s += o.shared; s += o.shared; s += o.shared; s += o.shared; s += o.shared;
-    s += o.shared; s += o.shared; s += o.shared; s += o.shared; s += o.shared; s += o.shared; s += o.shared; s += o.shared;
-  }
+  for (let i = 0; i < n; i++) s += readFortyOnce(o, i);
   return s;
 }
 

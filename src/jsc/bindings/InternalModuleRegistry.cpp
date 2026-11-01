@@ -403,11 +403,16 @@ JSValue DeclaredModuleLoad::requireField(Zig::GlobalObject* globalObject, Intern
     return globalObject->internalModuleRegistry()->requireId(globalObject, globalObject->vm(), field);
 }
 
+bool DeclaredModuleLoad::canLoad(Zig::GlobalObject* globalObject, InternalModuleRegistry::Field field)
+{
+    uint32_t id = field;
+    return id >= InternalModuleRegistryConstants::moduleCount || !JSC::AOT::refusesLibraryText(globalObject) || JSC::AOT::hasBuiltinModule(globalObject, id);
+}
+
 // The build compiles the module for a program that uses the built-in, whether or not the program can import the module by name.
 JSValue DeclaredModuleLoad::requireOnBehalfOf(Zig::GlobalObject* globalObject, InternalModuleRegistry::Field field, ASCIILiteral builtin)
 {
-    uint32_t id = field;
-    if (id < InternalModuleRegistryConstants::moduleCount && JSC::AOT::refusesLibraryText(globalObject) && !JSC::AOT::hasBuiltinModule(globalObject, id)) [[unlikely]] {
+    if (!canLoad(globalObject, field)) [[unlikely]] {
         // What is loaded for a method that prints its own object is the printer of node:util.
         JSC::AOT::throwBuiltinNotCompiled(globalObject, builtin == "Startup"_s ? "util.inspect"_s : builtin);
         return {};

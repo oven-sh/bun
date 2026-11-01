@@ -23,10 +23,7 @@ impl FileLowering<'_, '_, '_, '_> {
         &mut self,
         signatures: &[SignatureId],
     ) -> Option<FunctionId> {
-        let declaration = match signatures {
-            &[signature] => self.queries.signature_declaration(signature)?,
-            overloads => self.queries.first_overload(overloads)?,
-        };
+        let declaration = self.queries.declaration_of_signatures(signatures)?;
         Some(self.declare_signature(declaration))
     }
 

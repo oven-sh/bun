@@ -665,6 +665,10 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
         for &file in input.files.compiled_files() {
             if parsed_source(input.files, file).is_some_and(|source| !source.is_of_tests) {
                 plan.set_loads_compiled_files_alone(ModuleRef::File(file));
+                // A package may be there to help the tests: nock and msw patch `fetch`, sinon whatever a test names.
+                if parsed_source(input.files, file).is_some_and(|source| !source.is_in_package) {
+                    plan.set_finds_builtins_read_only(ModuleRef::File(file));
+                }
             }
         }
     }

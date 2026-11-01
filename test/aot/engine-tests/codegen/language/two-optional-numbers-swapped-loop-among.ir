@@ -345,7 +345,7 @@ typesite w184 module=m0 position=534 kind=Field
 typesite w185 module=m0 position=555 kind=Field
 typesite w186 module=m0 position=4494 kind=CallResult
 layout L0 kind=Instance name="Box" module=m0 position=246 constructor=f6 fields=[{key="n" declared={type=number site=w31} flags=[IsRequired]}, {key="next" declared={type=undefined|null|L0 site=w32 flags=[OmitsUndefined]} flags=[IsRequired]}, {key="d" declared={type=number site=w33} flags=[IsRequired]}, {key="w" declared={type=number site=w34} flags=[IsRequired]}, {key="u" declared={type=number site=w35} flags=[IsRequired]}, {key="on" declared={type=boolean site=w36} flags=[IsRequired]}, {key="tag" declared={type=undefined|null|""|"blue"|"green"|"red" site=w37 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="name" declared={type=undefined|null|string site=w38 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="ratio" declared={type=null|number site=w39} flags=[IsRequired]}] ownFieldCount=9
-layout L1 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=number|absent site=w80}}, {key=@"binding.1" declared={type=number|absent site=w81}}] ownFieldCount=2
+layout L1 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=number|absent site=w80} variableName="v17"}, {key=@"binding.1" declared={type=number|absent site=w81} variableName="v35"}] ownFieldCount=2
 data d0 root=Array{contents=undefined|null|""|"blue"|"green"|"red" elements=[String{value="red"}, String{value=""}]} module=m0
 variable g0 name="tick" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
 variable g1 name="fold" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
@@ -1313,20 +1313,21 @@ function f6 name="Box" module=m0 position=372 kind=BaseConstructor flags=[HasNew
   b9(v45):
     Return v45 @555
 }
-function f7 module=m0 position=4489 kind=Arrow flags=[IsChecked] length=1 captures=[{type=63 site=w42}] thisType={type=anything} parameters=[{type=number site=w44}] results=[{type=number site=w45}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f7 module=m0 position=4489 kind=Arrow flags=[IsChecked] length=1 captures=[{type=63 site=w42 variableName="b"}] thisType={type=anything} parameters=[{type=number site=w44}] results=[{type=number site=w45}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: 63, v1: number):
     Jump -> next b1() @4489
   b1():
     v2 = GetModuleVariable variable=g4 @4494
-    v3 = Integer @4503
-    v4 = Integer @4506
-    v5 = Double number=0.5 @4513
+    v3 = Integer integer=63 @4500
+    v4 = Integer @4503
+    v5 = Integer @4506
+    v6 = Double number=0.5 @4513
     Jump -> next b2() @4513
   b2():
     Jump -> next b3() @4529
   b3():
-    v6 = Call v2, -, v1, v0, v3, v4, v5, v1 calleeName="f0" @4494
-    ReturnCall v6 casts=[{declared={type=number site=w186}}, {declared={type=number site=w45}}] @4494
+    v7 = Call v2, -, v1, v3, v4, v5, v6, v1 calleeName="f0" @4494
+    ReturnCall v7 casts=[{declared={type=number site=w186}}, {declared={type=number site=w45}}] @4494
 }
 function f8 name="closure0" module=m0 position=3185 kind=Arrow flags=[IsChecked] captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=number site=w126}] functionTypes=[f10] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: env L1):

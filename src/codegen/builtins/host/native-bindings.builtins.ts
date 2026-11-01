@@ -1,6 +1,6 @@
 // The objects that the host answers for `$cpp(file, symbol)`, each from the code of the function of that name. operand-changes.builtins.ts says which binding answers which of the objects whose functions change an operand.
 import * as b from "bun-builtins-table";
-import { handedOver } from "./native-code.ts";
+import { answering, handedOver } from "./native-code.ts";
 
 const externalState = ["ExternalState"];
 const viewHeaps = ["TypedArrayStorage", "TypedArrayElements"];
@@ -123,9 +123,9 @@ export default b.declarations(
   // src/jsc/bindings/NodeVM.cpp. unseen-code.builtins.ts and runtime-dependencies.builtins.ts say which of them evaluate a text and start a realm.
   bagOfFunctions(vmBinding, {
     createContext: undeclaredFunction,
-    isContext: undeclaredFunction,
+    isContext: answering(b.bool),
     compileFunction: undeclaredFunction,
-    isModuleNamespaceObject: undeclaredFunction,
+    isModuleNamespaceObject: answering(b.bool),
     kLinked: b.property(b.f64),
     kEvaluated: b.property(b.f64),
     kErrored: b.property(b.f64),

@@ -490,6 +490,7 @@ known_atoms! {
     setup = "setup",
     jest_globals = "@jest/globals",
     vitest = "vitest",
+    doMock = "doMock",
 }
 
 /// Name prefix of a symbol-keyed property: `InternalSymbolNamePrefix` and `@`. Source text never

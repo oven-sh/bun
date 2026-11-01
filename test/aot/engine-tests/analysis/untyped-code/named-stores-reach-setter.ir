@@ -1420,6 +1420,6 @@ runtimefunction id=ArrayTraversalTraverseArray function=f87 visibility=Private
 # CHECK-LABEL: function {{*}}name="set"
 # CHECK: module=m2 position=3345 kind=Method role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f29}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f29} creator=Entrypoint{target=f29 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f29, v1: anything, v2: anything):
-# CHECK-NEXT: v3: never = ThrowNewError message="'set' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v3: never = ThrowNewError message="'set' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }

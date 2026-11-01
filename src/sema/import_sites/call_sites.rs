@@ -1,19 +1,24 @@
-use super::alternatives::{AskedOfDataFiles, WrittenNames, find_alternatives, find_texts_of_key};
+use super::alternatives::{
+    AskedOfDataFiles, Folder, WrittenNames, find_alternatives, find_path_around_parameter,
+    find_texts_of_key,
+};
 use super::changed_files::find_operands_that_name_changed_files;
 use super::made_requires::{
     OwnRequire, StepsLeft, Text, find_imported_export, find_own_require, follow_settled_bindings,
     follow_to_own_require, holds_import_meta_require, may_be_modified, may_require_get_members,
     settled_symbol,
 };
+use super::parameters::{find_names_exported_for, find_parameter_named};
 use super::{
-    Alternatives, ChangedPath, ImportSite, ImportSiteKind, ImportSpecifier, ResolvedForm,
-    ResolvedFrom, ScanInputs,
+    Alternatives, ChangedPath, ExportedFileChanger, ImportSite, ImportSiteKind, ImportSpecifier,
+    ResolvedForm, ResolvedFrom, ScanInputs,
 };
 use crate::atom::{Atom, Interner, known};
 use crate::bind::{Binding, Bound, CommonJsVariable, Decl, FnOwner, Parent, PatParent, ScopeKind};
 use crate::fold::{Decisions, FoldedValue, find_export_of_module};
 use crate::hir::{
-    ExprFlags, ExprId, ExprKind, File, IdList, MemberKey, NodeData, PropKey, PropKind,
+    ExprFlags, ExprId, ExprKind, File, IdList, ImportedFileChanger, MemberKey, NodeData, PropKey,
+    PropKind,
 };
 use crate::util::SharedSort;
 
@@ -300,12 +305,19 @@ fn is_module_of_plugin(hir: &File<'_>, bound: &Bound<'_>, object: ExprId, name: 
 }
 
 // `object.name` is `mock.module`, `jest.mock` or `vi.mock`, where the object is imported from the test runner.
-fn is_mock_module(hir: &File<'_>, bound: &Bound<'_>, object: ExprId, name: Atom) -> bool {
+fn is_mock_module(hir: &File<'_>, bound: &Bound<'_>, mut object: ExprId, name: Atom) -> bool {
     let holders: &[Atom] = match name {
         _ if name == known::module => &[known::mock],
-        _ if name == known::mock => &[known::jest, known::vi],
+        _ if name == known::mock || name == known::doMock => &[known::jest, known::vi],
         _ => return false,
     };
+    while let Some(ExprKind::Call(call)) = expr_kind(hir, object) {
+        let callee = hir.skip_type_assertions(hir[call].callee);
+        let Some((receiver, MemberKey::Name(_))) = hir.member_key(callee) else {
+            return false;
+        };
+        object = hir.skip_type_assertions(receiver);
+    }
     let imported = settled_symbol(hir, bound, object)
         .and_then(|symbol| find_imported_export(hir, bound, symbol));
     matches!(imported, Some((specifier, Some(export)))
@@ -439,7 +451,8 @@ fn read_path_given_to_create_require(
     path: ExprId,
 ) -> Result<Option<ResolvedFrom>, UnreadPath> {
     let asked = AskedOfDataFiles::default();
-    let found = find_alternatives(inputs, written_names, &asked, path).ok_or(UnreadPath)?;
+    let found = find_alternatives(inputs, written_names, &asked, path, Folder::OfFile, None)
+        .ok_or(UnreadPath)?;
     let ([ImportSpecifier::Constant(path)], true, false) = (
         &found.alternatives[..],
         found.start_at_own_directory,
@@ -496,6 +509,8 @@ pub(super) struct ScannedCalls {
     pub(super) answers_of_resolvers: Vec<(ExprId, ResolvedForm)>,
     pub(super) names_of_workers: Vec<(ExprId, ImportSpecifier)>,
     pub(super) paths_of_changed_files: Vec<ChangedPath>,
+    pub(super) exported_file_changers: Vec<ExportedFileChanger>,
+    pub(super) asked_of_other_files: Vec<(Atom, Atom)>,
     pub(super) asked_of_data_files: Vec<(Atom, Atom)>,
     pub(super) names_out_of_data_files: Vec<Atom>,
     pub(super) keys_stored_in_caches: Vec<(ExprId, ImportSpecifier)>,
@@ -515,6 +530,7 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
     let mut requires_of_other_files = Vec::new();
     let mut names_of_workers = Vec::new();
     let mut paths_of_changed_files = Vec::new();
+    let mut exported_file_changers: Vec<ExportedFileChanger> = Vec::new();
     let mut keys_stored_in_caches = Vec::new();
     for index in 0..hir.exprs.len() {
         let call = ExprId(index as u32);
@@ -529,13 +545,37 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
             continue;
         }
         if let (false, CallForm::Call { callee, args }) = (is_dead, form) {
-            for mut changed in find_operands_that_name_changed_files(inputs, callee, args) {
+            for (mut changed, around) in find_operands_that_name_changed_files(inputs, callee, args)
+            {
                 let names = alternatives.names_out_of_data_files.len();
-                changed.path = call_specifier(inputs, changed.operand, &mut alternatives);
+                changed.path = path_specifier(inputs, changed.operand, &mut alternatives);
                 alternatives.names_out_of_data_files.truncate(names);
+                if !matches!(
+                    changed.path,
+                    ImportSpecifier::Constant(_) | ImportSpecifier::OneOf(_)
+                ) && let Some(path) =
+                    find_path_below_working_directory(inputs, changed.operand, &mut alternatives)
+                {
+                    changed.path = path;
+                }
+                if let Some(around) = around {
+                    changed.path = write_around(inputs, &changed, around, &mut alternatives);
+                }
                 if changed.path != ImportSpecifier::Unknown {
                     paths_of_changed_files.push(changed);
                 }
+                if matches!(
+                    changed.path,
+                    ImportSpecifier::Constant(_) | ImportSpecifier::OneOf(_)
+                ) {
+                    continue;
+                }
+                let written_names = &alternatives.written_names;
+                exported_file_changers.extend(find_exports_that_take(
+                    inputs,
+                    written_names,
+                    &changed,
+                ));
             }
         }
         let text = Text::of(hir, bound, Some(decisions));
@@ -566,12 +606,17 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
     alternatives.answers_of_resolvers.shared_sort_unstable();
     names_of_workers.shared_sort_unstable_by_key(|it: &(ExprId, ImportSpecifier)| it.0);
     keys_stored_in_caches.shared_sort_unstable_by_key(|it: &(ExprId, ImportSpecifier)| it.0);
+    exported_file_changers
+        .shared_sort_unstable_by_key(|it| (it.export.0, it.place, it.reaches_below));
+    exported_file_changers.dedup();
     ScannedCalls {
         alternatives: alternatives.found,
         paths_from_own_directory: alternatives.paths_from_own_directory,
         answers_of_resolvers: alternatives.answers_of_resolvers,
         names_of_workers,
         paths_of_changed_files,
+        exported_file_changers,
+        asked_of_other_files: alternatives.asked_of_other_files.take(),
         asked_of_data_files: alternatives.asked_of_data_files.take(),
         names_out_of_data_files: alternatives.names_out_of_data_files,
         keys_stored_in_caches,
@@ -751,6 +796,7 @@ struct FoundAlternatives {
     answers_of_resolvers: Vec<(ExprId, ResolvedForm)>,
     written_names: WrittenNames,
     asked_of_data_files: AskedOfDataFiles,
+    asked_of_other_files: AskedOfDataFiles,
     names_out_of_data_files: Vec<Atom>,
 }
 
@@ -758,6 +804,23 @@ fn call_specifier(
     inputs: &ScanInputs<'_, '_>,
     argument: ExprId,
     alternatives: &mut FoundAlternatives,
+) -> ImportSpecifier {
+    find_specifier(inputs, argument, alternatives, false)
+}
+
+fn path_specifier(
+    inputs: &ScanInputs<'_, '_>,
+    argument: ExprId,
+    alternatives: &mut FoundAlternatives,
+) -> ImportSpecifier {
+    find_specifier(inputs, argument, alternatives, true)
+}
+
+fn find_specifier(
+    inputs: &ScanInputs<'_, '_>,
+    argument: ExprId,
+    alternatives: &mut FoundAlternatives,
+    reads_other_files: bool,
 ) -> ImportSpecifier {
     if let Some(ExprKind::String(text)) = expr_kind(inputs.hir, argument) {
         return ImportSpecifier::Constant(text);
@@ -771,6 +834,8 @@ fn call_specifier(
         &alternatives.written_names,
         &alternatives.asked_of_data_files,
         argument,
+        Folder::OfFile,
+        reads_other_files.then_some(&alternatives.asked_of_other_files),
     );
     let Some(found) = found else {
         return folded;
@@ -813,6 +878,98 @@ fn call_specifier(
             count: found.alternatives.len() as u32,
         })
     })
+}
+
+fn find_exports_that_take(
+    inputs: &ScanInputs<'_, '_>,
+    written_names: &WrittenNames,
+    changed: &ChangedPath,
+) -> Vec<ExportedFileChanger> {
+    let &ScanInputs {
+        hir, bound, atoms, ..
+    } = inputs;
+    let Some(path) = find_path_around_parameter(inputs, written_names, changed.operand) else {
+        return Vec::new();
+    };
+    let Some((function, place)) = find_parameter_named(hir, bound, path.mention) else {
+        return Vec::new();
+    };
+    let find_written = |name: Atom| written_names.find_expressions(hir, name);
+    let exports = find_names_exported_for(hir, bound, function, &find_written);
+    let changers = exports.into_iter().map(|export| ExportedFileChanger {
+        export,
+        place: place as u32,
+        reaches_below: changed.reaches_below,
+        start: atoms.intern(&path.start),
+        end: atoms.intern(&path.end),
+        starts_at_own_directory: path.starts_at_own_directory,
+    });
+    changers.collect()
+}
+
+fn write_around(
+    inputs: &ScanInputs<'_, '_>,
+    changed: &ChangedPath,
+    around: &ImportedFileChanger,
+    alternatives: &mut FoundAlternatives,
+) -> ImportSpecifier {
+    let atoms = inputs.atoms;
+    let (start, end) = (atoms.bytes(around.start), atoms.bytes(around.end));
+    if start.is_empty() && end.is_empty() {
+        return changed.path;
+    }
+    let is_written_from_somewhere = alternatives.paths_from_own_directory.last()
+        == Some(&changed.operand)
+        || (alternatives.answers_of_resolvers.last()).is_some_and(|it| it.0 == changed.operand)
+        || inputs.decisions.is_path_from_own_directory(changed.operand);
+    let given: Vec<ImportSpecifier> = match changed.path {
+        ImportSpecifier::OneOf(range) => {
+            alternatives.found[range.first as usize..][..range.count as usize].to_vec()
+        }
+        path => vec![path],
+    };
+    let mut whole = Vec::with_capacity(given.len());
+    for part in given {
+        let ImportSpecifier::Constant(part) = part else {
+            return ImportSpecifier::Unknown;
+        };
+        whole.push(ImportSpecifier::Constant(
+            atoms.intern(&[start, atoms.bytes(part), end].concat()),
+        ));
+    }
+    if is_written_from_somewhere {
+        return ImportSpecifier::Unknown;
+    }
+    if around.starts_at_own_directory {
+        alternatives.paths_from_own_directory.push(changed.operand);
+    }
+    let first = alternatives.found.len() as u32;
+    alternatives.found.extend_from_slice(&whole);
+    ImportSpecifier::OneOf(Alternatives {
+        first,
+        count: whole.len() as u32,
+    })
+}
+
+fn find_path_below_working_directory(
+    inputs: &ScanInputs<'_, '_>,
+    path: ExprId,
+    alternatives: &mut FoundAlternatives,
+) -> Option<ImportSpecifier> {
+    let asked = AskedOfDataFiles::default();
+    let written_names = &alternatives.written_names;
+    let of_other_files = Some(&alternatives.asked_of_other_files);
+    let folder = Folder::WorkingDirectory;
+    let found = find_alternatives(inputs, written_names, &asked, path, folder, of_other_files)?;
+    if !found.start_at_own_directory || found.is_out_of_data_file {
+        return None;
+    }
+    let first = alternatives.found.len() as u32;
+    alternatives.found.extend_from_slice(&found.alternatives);
+    Some(ImportSpecifier::OneOf(Alternatives {
+        first,
+        count: found.alternatives.len() as u32,
+    }))
 }
 
 fn call_attributes(hir: &File<'_>, kind: ImportSiteKind, options: ExprId) -> ExprId {

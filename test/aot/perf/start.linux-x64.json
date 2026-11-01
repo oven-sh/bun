@@ -1,6 +1,6 @@
 {
   "a-hundred-graphs-imported-in-turn-above-200-loaded-modules": {
-    "thousandInstructions": 6037,
+    "thousandInstructions": 4241,
     "pageFaults": 813,
     "systemCalls": 234
   },

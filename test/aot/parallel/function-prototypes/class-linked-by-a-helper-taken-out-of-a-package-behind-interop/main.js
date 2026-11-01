@@ -1,6 +1,6 @@
 // As a compiler writes a class for old engines: the helper that links the classes lies in a package, comes through a function that answers it or wraps it,
 // and is called behind `(0, ..)`. The build sees which function that is, so B has a layout below that of A and the loop looks nothing up.
-// COUNT: arrivals <= 14
+// COUNT: arrivals <= 12
 // COUNT: cells <= 5
 "use strict";
 var interop = require("helpers/interop.js");

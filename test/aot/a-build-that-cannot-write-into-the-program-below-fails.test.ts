@@ -45,7 +45,11 @@ test.skipIf(!isPosix)(
     };
     expect(await build("packages", "3,shared,packages", [])).toEqual({ errors: [], exitCode: 0 });
     expect(await buildAbove("r")).toEqual({
-      errors: ["error: the build failed", "error: failed to create executable: EBADF"],
+      errors: [
+        "error: the build failed",
+        `error: the headers of this program's texts could not be written into the program below it, ${at("packages")}: EBADF`,
+        "error: failed to create executable: EBADF",
+      ],
       exitCode: 1,
     });
     expect(await buildAbove("r+")).toEqual({ errors: [], exitCode: 0 });

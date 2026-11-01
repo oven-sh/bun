@@ -3552,6 +3552,7 @@ static constexpr BareStreamMethod methodsOfOutputAfterWrite[] = {
 static constexpr BareStreamMethod methodsOfInputBeforeRef[] = {
     { "on"_s, ""_s, 2 },
     { "addListener"_s, ""_s, 2, true, BareStreamMethod::Kind::SameAsPrevious },
+    { "_destroy"_s, ""_s, 2 },
 };
 // A file that is no terminal has none of them.
 static constexpr BareStreamMethod methodsOfInputThatWaits[] = {
@@ -5652,6 +5653,8 @@ JSC_DEFINE_CUSTOM_GETTER(processMainModuleOfTestFile, (JSGlobalObject * lexicalG
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    if (Bun::hasCompiledModules())
+        RELEASE_AND_RETURN(scope, JSValue::encode(Bun::mainModuleOfExecutable(globalObject)));
     JSValue main = globalObject->bunObject()->get(globalObject, Bun::builtinNames(vm).mainPublicName());
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(Bun::testFileRequireMap(globalObject)->get(globalObject, main)));
@@ -6276,8 +6279,7 @@ void Process::finishCreation(JSC::VM& vm)
 
     putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("process"_s)), 0);
     putDirect(vm, Identifier::fromString(vm, "_exiting"_s), jsBoolean(false), 0);
-    // Compiled code reads the property as the table of built-ins describes it.
-    if (isBunTest && !Bun::hasCompiledModules())
+    if (isBunTest)
         putDirectCustomAccessor(vm, Identifier::fromString(vm, "mainModule"_s), CustomGetterSetter::create(vm, processMainModuleOfTestFile, setProcessMainModuleOfTestFile), PropertyAttribute::CustomAccessor | 0);
 
     // No-op stubs Node only has on the main thread; a worker_threads Worker's process lacks them.

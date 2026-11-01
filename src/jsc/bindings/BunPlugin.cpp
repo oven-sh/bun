@@ -2647,9 +2647,28 @@ __attribute__((minsize)) static void unmockModule(Zig::GlobalObject* globalObjec
 
     if (auto* virtualModules = globalObject->onLoadPlugins.virtualModules)
         virtualModules->remove(specifier);
+#if ENABLE(AOT)
+    Vector<JSC::AOT::ModuleID, 1> compiledModulesOfMockToRun;
+    globalObject->onLoadPlugins.compiledMocksToRun.removeAllMatching([&](const auto& waiting) {
+        if (waiting.second.get() != mock)
+            return false;
+        compiledModulesOfMockToRun.append(JSC::AOT::ModuleID(waiting.first));
+        return true;
+    });
+    for (JSC::AOT::ModuleID module : compiledModulesOfMockToRun) {
+        JSC::AOT::didEndMock(globalObject, module);
+        RETURN_IF_EXCEPTION(scope, );
+    }
+#endif
 
     LoadedModule loaded = findLoadedModule(globalObject, mock->specifier.get());
     RETURN_IF_EXCEPTION(scope, );
+#if ENABLE(AOT)
+    if (loaded.compiledModule) {
+        JSC::AOT::didEndMock(globalObject, *loaded.compiledModule);
+        RETURN_IF_EXCEPTION(scope, );
+    }
+#endif
     keepModuleMockOfLoadInFlight(globalObject, mock, specifier, loaded);
     if (mock->hasSetLoadedModuleAside || (mock->isOfVitest() && isInNodeModules(specifier)))
         evict.packagesToBringBack.append(specifier);
@@ -2942,6 +2961,8 @@ void runCompiledMock(Zig::GlobalObject* globalObject, JSC::AOT::ModuleID module)
     LoadedModule loaded = findLoadedModule(globalObject, mock->specifier.get());
     RETURN_IF_EXCEPTION(scope, );
     loaded.compiledModule = module;
+    if (loaded.esmNamespace && loaded.esmNamespace->moduleRecord()->hasLiveExports())
+        loaded.esmNamespace = nullptr;
     // Nothing was loaded when the mock was made. Since then the host has answered a require(): of a name that the build does not know, or from code outside the image.
     mock->keepsModuleObject = !!loaded.commonJSModule;
     JSC::JSPromise* pendingFactory = mock->run(globalObject, false);

@@ -877,7 +877,7 @@ runtimefunction id=GeneratorPrototypeNext function=f16 visibility=Private
 # CHECK-NEXT: Branch v7 -> taken b2(), notTaken b1()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v8: undefined = Undefined
-# CHECK-NEXT: v9: anything = NewHeapFrame v4 function=f27 numberOfWords=4
+# CHECK-NEXT: v9: anything = NewHeapFrame v4, v1 function=f27 numberOfWords=4
 # CHECK-NEXT: PutHeapFrameWord v9, v4
 # CHECK-NEXT: PutHeapFrameWord v9, v1 index=1
 # CHECK-NEXT: PutHeapFrameWord v9, v5 index=2
@@ -886,7 +886,7 @@ runtimefunction id=GeneratorPrototypeNext function=f16 visibility=Private
 # CHECK-NEXT: Return v8
 # CHECK-NEXT: b2() handler=b3():
 # CHECK-NEXT: v15: 1 = Integer integer=1
-# CHECK-NEXT: v16: anything = NewHeapFrame v4 function=f27 numberOfWords=4
+# CHECK-NEXT: v16: anything = NewHeapFrame v4, v1 function=f27 numberOfWords=4
 # CHECK-NEXT: PutHeapFrameWord v16, v4
 # CHECK-NEXT: PutHeapFrameWord v16, v5 index=2
 # CHECK-NEXT: PutHeapFrameWord v16, v6 index=3

@@ -774,6 +774,7 @@
     "aot/one-line-changes-little-6.test.ts",
     "aot/one-line-changes-little-7.test.ts",
     "aot/options-that-a-library-module-carries-out.test.ts",
+    "aot/package-worker-file.test.ts",
     "aot/plain-bun.test.ts",
     "aot/plugin-answer-timing.test.ts",
     "aot/programs-that-died-in-the-shell-on-one-platform.test.ts",
@@ -838,6 +839,7 @@
     "aot/wide-union-build-time.test.ts",
     "aot/without-executable-memory.test.ts",
     "aot/work-that-data-causes.test.ts",
+    "aot/worker-module-by-parameter.test.ts",
     "aot/workers-from-embedded-files.test.ts",
     "aot/workers-from-texts-that-the-build-knows.test.ts",
     "aot/workers-within-address-space-limit.test.ts"

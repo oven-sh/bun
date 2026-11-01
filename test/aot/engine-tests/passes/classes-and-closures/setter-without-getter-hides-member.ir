@@ -1197,7 +1197,7 @@ runtimefunction id=ObjectsToLocaleString function=f56
 # CHECK-LABEL: function {{*}}name="toString"
 # CHECK: module=m0 position=358 kind=Setter role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f4}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f4} creator=Entrypoint{target=f4 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f4, v1: anything, v2: anything):
-# CHECK-NEXT: v3: never = ThrowNewError message="'toString' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)" @358
+# CHECK-NEXT: v3: never = ThrowNewError message="'toString' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)" @358
 # CHECK-NEXT: Unreachable @358
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="HidesValueOf"
@@ -1219,7 +1219,7 @@ runtimefunction id=ObjectsToLocaleString function=f56
 # CHECK-LABEL: function {{*}}name="hasOwnProperty"
 # CHECK: module=m0 position=456 kind=Setter role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f8}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f8} creator=Entrypoint{target=f8 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f8, v1: anything, v2: anything):
-# CHECK-NEXT: v3: never = ThrowNewError message="'hasOwnProperty' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)" @456
+# CHECK-NEXT: v3: never = ThrowNewError message="'hasOwnProperty' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)" @456
 # CHECK-NEXT: Unreachable @456
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="HidesIsPrototypeOf"

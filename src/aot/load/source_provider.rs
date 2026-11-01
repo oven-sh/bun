@@ -9,7 +9,11 @@ use crate::load::loaders::loader_name;
 use bstr::BStr;
 use bun_ast::runtime::ReactCompilerMode;
 use bun_ast::{ASTMemoryAllocator, Ast, ImportKind, Loader, Loc, Log, Source, Stmt, Symbol};
-use bun_js_parser::{Define, Parser, ParserOptions};
+use bun_core::Mutex;
+use bun_js_parser::{
+    Define, ExpandedImportMetaGlob, ImportMetaGlobHost, Parser, ParserOptions,
+    leave_import_meta_globs_as_written, record_import_meta_globs,
+};
 use bun_options_types::jsx;
 use bun_react_compiler::{Observer, observe};
 use bun_sema::atom::Interner;
@@ -101,6 +105,22 @@ pub struct ComponentFile<'a> {
     pub is_entry_point: bool,
     /// Some import has attributes, so it may be `with { type: "macro" }`.
     pub can_import_macros: bool,
+    /// Takes every call of `import.meta.glob()` as the parser has expanded it. Without it the calls stay as they are written: an expanded one
+    /// names imports that only the parser's tree holds.
+    pub expanded_globs: Option<&'a Mutex<Vec<ExpandedImportMetaGlob>>>,
+}
+
+impl ComponentFile<'_> {
+    /// `parse` runs on the thread that calls this.
+    pub fn record_expanded_globs<R>(&self, parse: impl FnOnce() -> R) -> R {
+        let Some(expanded_globs) = self.expanded_globs else {
+            return leave_import_meta_globs_as_written(parse);
+        };
+        let mut expanded = Vec::new();
+        let parsed = record_import_meta_globs(&mut expanded, parse);
+        *expanded_globs.lock() = expanded;
+        parsed
+    }
 }
 
 /// A file as Bun's transpiler has read it with the options of `bun run`.
@@ -264,6 +284,9 @@ pub fn compile_components_without_bundler(
     options.bundle = true;
     options.warn_about_unbundled_modules = false;
     options.tree_shaking = true;
+    // SAFETY: the function reads neither pointer nor slices.
+    options.import_meta_glob =
+        Some(unsafe { ImportMetaGlobHost::new(std::ptr::null_mut(), |_, _, _| None) });
     options.is_entry_point = file.is_entry_point;
     options.import_meta_main_value = Some(file.is_entry_point);
     options.use_define_for_class_fields = file.settings.use_define_for_class_fields != Some(false);
@@ -288,8 +311,11 @@ pub fn compile_components_without_bundler(
         }
     };
     let mut log = Log::init();
-    let parsed = observe(observer, || {
-        Parser::init(options, &mut log, &source, define, &arena).and_then(|parser| parser.parse())
+    let parsed = file.record_expanded_globs(|| {
+        observe(observer, || {
+            Parser::init(options, &mut log, &source, define, &arena)
+                .and_then(|parser| parser.parse())
+        })
     });
     parsed.is_ok() && !log.has_errors()
 }

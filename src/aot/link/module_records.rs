@@ -462,6 +462,9 @@ impl RecordBuilder<'_, '_, '_> {
         if graph.loads_compiled_files_alone(module) {
             flags |= ModuleFlags::LOADS_COMPILED_FILES_ALONE;
         }
+        if graph.finds_builtins_read_only(module) {
+            flags |= ModuleFlags::FINDS_BUILTINS_READ_ONLY;
+        }
         if matches!(module, ModuleRef::File(file) if graph.runs_again(file)) {
             flags |= ModuleFlags::RUNS_AGAIN;
         }

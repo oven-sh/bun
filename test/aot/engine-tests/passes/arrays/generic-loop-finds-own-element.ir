@@ -402,8 +402,8 @@ runtimefunction id=ArrayPrototypeSome function=f26
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function f11 module=
-# CHECK: m0 position=1037 kind=Arrow flags=[IsChecked] length=2 captures=[{type=env L2 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=undefined}, {type=number site=w25 flags=[IsExpected]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: env L2, v1: undefined, v2: anything ~ number):
+# CHECK: m0 position=1037 kind=Arrow flags=[IsChecked] length=2 captures=[{type=env L2 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=undefined}, {type=number site=w25}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: env L2, v1: undefined, v2: number):
 # CHECK-NEXT: v3: undefined = Undefined
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: }

@@ -97,6 +97,8 @@ pub(crate) struct ParsedSource {
     pub web_assembly: Option<Vec<u8>>,
     pub is_page: bool,
     pub has_compiled_components: bool,
+    /// `test_runner_names::import_used_names` has changed the tree.
+    pub has_names_of_test_runner: bool,
     /// Why the text is no program, where the program finds that out when it loads the file. An empty module stands in its place.
     pub parse_failure: Option<Vec<u8>>,
     /// The file as it is, where an executable holds a file that fails at load: it has no disk to read it from when the program loads it.
@@ -117,6 +119,8 @@ pub(crate) struct ParsedSource {
     pub loads_by_unknown_name: bool,
     /// `named_loads::FilesOfTests`, where `AotOptions::only_tests_load_code_from_disk`
     pub is_of_tests: bool,
+    /// A text that a file evaluates lies where that file lies.
+    pub is_in_package: bool,
     pub unknown_names_at: Vec<u32>,
     /// `named_loads::find_loads_of_files_missing_at_build`
     pub files_missing_at_build_at: Vec<u32>,
@@ -138,6 +142,7 @@ impl ParsedSource {
             web_assembly: None,
             is_page: false,
             has_compiled_components: false,
+            has_names_of_test_runner: false,
             parse_failure: None,
             text_that_fails_at_load: None,
             is_language_assumed: false,
@@ -152,6 +157,7 @@ impl ParsedSource {
             library_modules_written_as_values: Vec::new(),
             loads_by_unknown_name: false,
             is_of_tests: false,
+            is_in_package: false,
             unknown_names_at: Vec::new(),
             files_missing_at_build_at: Vec::new(),
             imports_given_unknown_names: Vec::new(),

@@ -1,6 +1,6 @@
 use crate::atom::Atom;
 use crate::hir::{ClassId, ExprId, FnId, MemberId, ParamId, TypeParamId};
-use crate::program::FileId;
+use crate::program::{FileId, Sym};
 use crate::types::{EnumValue, SigId, TypeId};
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -191,6 +191,13 @@ pub struct MemberTypedOtherwise {
     pub kind_in_base: ObjectMemberKind,
     pub checked: TypeId,
     pub in_base: TypeId,
+    pub is_method_above: bool,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct MethodsAbove {
+    pub(super) class: Sym,
+    pub count: usize,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

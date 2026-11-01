@@ -2290,39 +2290,39 @@ runtimefunction id=ArrayTraversalTraverseArray function=f40 visibility=Private
 # CHECK-NEXT: v1: Array<""|"\n7\u{9}"|" "|"  12  "|"+5"|"--1"|"-0"|"-1e400"|"-5"|"-Infinity"|".5"|"0.1"|"00012"|"0b101"|"0o17"|"0x"|"0x1f"|"1 2"|"123456789012345678901234567890"|"12px"|"1_000"|"1e3"|"1e400"|"2"|"42"|"5."|"9007199254740993"|"Infinity"|"NaN"|"abc"|"infinity"|"\u{a0}12\u{feff}"|"\u{661}\u{662}"|"\u{ff11}\u{ff12}", proven, pristine[Storage, Names, Dense]> = AssumeType v0 provenType=Array<""|"\n7\u{9}"|" "|"  12  "|"+5"|"--1"|"-0"|"-1e400"|"-5"|"-Infinity"|".5"|"0.1"|"00012"|"0b101"|"0o17"|"0x"|"0x1f"|"1 2"|"123456789012345678901234567890"|"12px"|"1_000"|"1e3"|"1e400"|"2"|"42"|"5."|"9007199254740993"|"Infinity"|"NaN"|"abc"|"infinity"|"\u{a0}12\u{feff}"|"\u{661}\u{662}"|"\u{ff11}\u{ff12}", proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v2: f5 = NewClosure function=f5 allocationSite=1 storage=Frame
 # CHECK-NEXT: v3: undefined = Undefined
-# CHECK-NEXT: v4: anything = CallDirect v1, v2, v3 function=f62 accessSite=3
+# CHECK-NEXT: v4: anything = CallDirect v1, v2, v3 function=f60 accessSite=3
 # CHECK-NEXT: v5: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v4 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v6: " " = String string=" "
 # CHECK-NEXT: v7: string = CallBuiltin v5, v6 overload=ArrayPrototypeJoin/0 accessSite=5
 # CHECK-NEXT: v8: undefined = CallBuiltin -, v7 overload=ConsoleLog/0 accessSite=6
 # CHECK-NEXT: v9: f6 = NewClosure function=f6 allocationSite=2 storage=Frame
 # CHECK-NEXT: v10: undefined = Undefined
-# CHECK-NEXT: v11: anything = CallDirect v1, v9, v10 function=f62 accessSite=10
+# CHECK-NEXT: v11: anything = CallDirect v1, v9, v10 function=f60 accessSite=10
 # CHECK-NEXT: v12: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v11 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v13: " " = String string=" "
 # CHECK-NEXT: v14: string = CallBuiltin v12, v13 overload=ArrayPrototypeJoin/0 accessSite=12
 # CHECK-NEXT: v15: undefined = CallBuiltin -, v14 overload=ConsoleLog/0 accessSite=13
 # CHECK-NEXT: v16: f7 = NewClosure function=f7 allocationSite=3 storage=Frame
 # CHECK-NEXT: v17: undefined = Undefined
-# CHECK-NEXT: v18: anything = CallDirect v1, v16, v17 function=f62 accessSite=17
+# CHECK-NEXT: v18: anything = CallDirect v1, v16, v17 function=f60 accessSite=17
 # CHECK-NEXT: v19: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v18 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v20: " " = String string=" "
 # CHECK-NEXT: v21: string = CallBuiltin v19, v20 overload=ArrayPrototypeJoin/0 accessSite=19
 # CHECK-NEXT: v22: undefined = CallBuiltin -, v21 overload=ConsoleLog/0 accessSite=20
 # CHECK-NEXT: v23: f8 = NewClosure function=f8 allocationSite=4 storage=Frame
 # CHECK-NEXT: v24: undefined = Undefined
-# CHECK-NEXT: v25: anything = CallDirect v1, v23, v24 function=f62 accessSite=22
+# CHECK-NEXT: v25: anything = CallDirect v1, v23, v24 function=f60 accessSite=22
 # CHECK-NEXT: v26: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v25 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v27: f9 = NewClosure function=f9 allocationSite=5 storage=Frame
 # CHECK-NEXT: v28: undefined = Undefined
-# CHECK-NEXT: v29: anything = CallDirect v26, v27, v28 function=f62 accessSite=26
+# CHECK-NEXT: v29: anything = CallDirect v26, v27, v28 function=f60 accessSite=26
 # CHECK-NEXT: v30: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v29 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v31: " " = String string=" "
 # CHECK-NEXT: v32: string = CallBuiltin v30, v31 overload=ArrayPrototypeJoin/0 accessSite=28
 # CHECK-NEXT: v33: undefined = CallBuiltin -, v32 overload=ConsoleLog/0 accessSite=29
 # CHECK-NEXT: v34: f10 = NewClosure function=f10 allocationSite=6 storage=Frame
 # CHECK-NEXT: v35: undefined = Undefined
-# CHECK-NEXT: v36: anything = CallDirect v26, v34, v35 function=f62 accessSite=33
+# CHECK-NEXT: v36: anything = CallDirect v26, v34, v35 function=f60 accessSite=33
 # CHECK-NEXT: v37: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v36 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v38: " " = String string=" "
 # CHECK-NEXT: v39: string = CallBuiltin v37, v38 overload=ArrayPrototypeJoin/0 accessSite=35
@@ -2333,7 +2333,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f40 visibility=Private
 # CHECK-NEXT: v44: Array<undefined|null, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v43 provenType=Array<undefined|null, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v45: f11 = NewClosure function=f11 allocationSite=8 storage=Frame
 # CHECK-NEXT: v46: undefined = Undefined
-# CHECK-NEXT: v47: anything = CallDirect v44, v45, v46 function=f62 accessSite=40
+# CHECK-NEXT: v47: anything = CallDirect v44, v45, v46 function=f60 accessSite=40
 # CHECK-NEXT: v48: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v47 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v49: " " = String string=" "
 # CHECK-NEXT: v50: string = CallBuiltin v48, v49 overload=ArrayPrototypeJoin/0 accessSite=42
@@ -2378,7 +2378,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f40 visibility=Private
 # CHECK-NEXT: v89: Array<undefined|null|boolean|0|double|bigint|L0|L1|L2|f14|Array<int[1, 5], proven, pristine[Storage, Names, Dense]>|Boolean|Date|Number|String, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v88 provenType=Array<undefined|null|boolean|0|double|bigint|L0|L1|L2|f14|Array<int[1, 5], proven, pristine[Storage, Names, Dense]>|Boolean|Date|Number|String, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v90: f15 = NewClosure function=f15 allocationSite=19 storage=Frame
 # CHECK-NEXT: v91: undefined = Undefined
-# CHECK-NEXT: v92: anything = CallDirect v89, v90, v91 function=f62 accessSite=52
+# CHECK-NEXT: v92: anything = CallDirect v89, v90, v91 function=f60 accessSite=52
 # CHECK-NEXT: v93: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v92 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v94: " " = String string=" "
 # CHECK-NEXT: v95: string = CallBuiltin v93, v94 overload=ArrayPrototypeJoin/0 accessSite=54
@@ -2530,7 +2530,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f40 visibility=Private
 # CHECK-NEXT: Return v194
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="show"
-# CHECK: module=m0 position=55 role=EntryChecks flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w0 flags=[IsExpected]}] results=[{type=string site=w1 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f42 fallback=f44} {
+# CHECK: module=m0 position=55 role=EntryChecks flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w0 flags=[IsExpected]}] results=[{type=string site=w1 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f42 fallback=f43} {
 # CHECK-NEXT: b0(v0: anything ~ number):
 # CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=number
 # CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
@@ -2538,7 +2538,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f40 visibility=Private
 # CHECK-NEXT: v3: string = CallDirect v2 function=f42
 # CHECK-NEXT: ReturnCall v3
 # CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v4: string = CallDirect v0 function=f44
+# CHECK-NEXT: v4: string = CallDirect v0 function=f43
 # CHECK-NEXT: ReturnCall v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="ofString"
@@ -2608,16 +2608,33 @@ runtimefunction id=ArrayTraversalTraverseArray function=f40 visibility=Private
 # CHECK-NEXT: Return v6
 # CHECK-NEXT: }
 # CHECK-LABEL: function f8 module=
-# CHECK: m0 position=942 kind=Arrow role=EntryChecks flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=undefined|""|"\n7\u{9}"|" "|"  12  "|"+5"|"--1"|"-0"|"-1e400"|"-5"|"-Infinity"|".5"|"0.1"|"00012"|"0b101"|"0o17"|"0x"|"0x1f"|"1 2"|"123456789012345678901234567890"|"12px"|"1_000"|"1e3"|"1e400"|"2"|"42"|"5."|"9007199254740993"|"Infinity"|"NaN"|"abc"|"infinity"|"\u{a0}12\u{feff}"|"\u{661}\u{662}"|"\u{ff11}\u{ff12}" site=w18 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w19 flags=[IsExpected]}] results=[{type=string site=w20 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f21] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f43 fallback=f45} {
-# CHECK-NEXT: b0(v0: undefined|""|"\n7\u{9}"|" "|"  12  "|"+5"|"--1"|"-0"|"-1e400"|"-5"|"-Infinity"|".5"|"0.1"|"00012"|"0b101"|"0o17"|"0x"|"0x1f"|"1 2"|"123456789012345678901234567890"|"12px"|"1_000"|"1e3"|"1e400"|"2"|"42"|"5."|"9007199254740993"|"Infinity"|"NaN"|"abc"|"infinity"|"\u{a0}12\u{feff}"|"\u{661}\u{662}"|"\u{ff11}\u{ff12}", v1: anything ~ number):
-# CHECK-NEXT: v2: boolean ~ true = TypeTest v1 testedType=number
-# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v3: number):
-# CHECK-NEXT: v4: string = CallDirect v0, v3 function=f43
-# CHECK-NEXT: ReturnCall v4 requirement=Allowed
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v5: string = CallDirect v0, v1 function=f45
-# CHECK-NEXT: ReturnCall v5 requirement=Allowed
+# CHECK: m0 position=942 kind=Arrow flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=undefined|""|"\n7\u{9}"|" "|"  12  "|"+5"|"--1"|"-0"|"-1e400"|"-5"|"-Infinity"|".5"|"0.1"|"00012"|"0b101"|"0o17"|"0x"|"0x1f"|"1 2"|"123456789012345678901234567890"|"12px"|"1_000"|"1e3"|"1e400"|"2"|"42"|"5."|"9007199254740993"|"Infinity"|"NaN"|"abc"|"infinity"|"\u{a0}12\u{feff}"|"\u{661}\u{662}"|"\u{ff11}\u{ff12}" site=w18 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w19}] results=[{type=string site=w20 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f21] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: undefined|""|"\n7\u{9}"|" "|"  12  "|"+5"|"--1"|"-0"|"-1e400"|"-5"|"-Infinity"|".5"|"0.1"|"00012"|"0b101"|"0o17"|"0x"|"0x1f"|"1 2"|"123456789012345678901234567890"|"12px"|"1_000"|"1e3"|"1e400"|"2"|"42"|"5."|"9007199254740993"|"Infinity"|"NaN"|"abc"|"infinity"|"\u{a0}12\u{feff}"|"\u{661}\u{662}"|"\u{ff11}\u{ff12}", v1: number):
+# CHECK-NEXT: v2: 1 = Integer integer=1
+# CHECK-NEXT: v3: int[0, 1] = BitAnd v1, v2
+# CHECK-NEXT: v4: boolean = ToBoolean v3
+# CHECK-NEXT: Branch v4 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v5: "" = String string=""
+# CHECK-NEXT: Jump -> next b3(v5)
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v6: "0" = String string="0"
+# CHECK-NEXT: Jump -> next b3(v6)
+# CHECK-NEXT: b3(v7: ""|"0"):
+# CHECK-NEXT: v8: string = Add v0, v7
+# CHECK-NEXT: v9: 2 = Integer integer=2
+# CHECK-NEXT: v10: int[0, 2] = BitAnd v1, v9
+# CHECK-NEXT: v11: boolean = ToBoolean v10
+# CHECK-NEXT: Branch v11 -> taken b4(), notTaken b5()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v12: "" = String string=""
+# CHECK-NEXT: Jump -> next b6(v12)
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v13: "1" = String string="1"
+# CHECK-NEXT: Jump -> next b6(v13)
+# CHECK-NEXT: b6(v14: ""|"1"):
+# CHECK-NEXT: v15: string = Add v8, v14
+# CHECK-NEXT: Return v15
 # CHECK-NEXT: }
 # CHECK-LABEL: function f9 module=
 # CHECK: m0 position=1038 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|string site=w22 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string site=w23 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f22] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=1046 isTailCall=true module=m0}, {callee=f2 callPosition=1051 module=m0}, {callee=f42 callPosition=55 parent=1 isTailCall=true module=m0}] {

@@ -834,6 +834,6 @@ function f9 module=m0 position=473 kind=Initializer flags=[HasThis, IsChecked, I
 # CHECK-LABEL: function {{*}}name="Holder"
 # CHECK: module=m0 position=473 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget, IsChecked] captures=[{type=f8}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f8} creator=Entrypoint{target=f8 arguments=Registers takesNewTarget=true} {
 # CHECK-NEXT: b0(v0: f8, v1: anything, v2: anything):
-# CHECK-NEXT: v3: never = ThrowNewError message="'Holder' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: v3: never = ThrowNewError message="'Holder' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, call it directly somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }

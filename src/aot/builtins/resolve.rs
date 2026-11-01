@@ -233,6 +233,8 @@ pub enum ReplacedMembersSought {
     None,
     /// No test run: the names that the file adds to built-in objects where it writes them. What it replaces stays locked, and so does Object.prototype.
     NamesAdded,
+    /// A file of a test run that an executable holds too. It is read as there, `NamesAdded`: what it replaces throws in the executable, and a suite that is green has to say so.
+    NamesAddedByProduct,
     /// Where the file writes a member of a built-in object. In a package a helper that is handed an object and a name mostly reads: `getNative(Object, "create")`.
     /// So there the object beside the name counts only for a member that is tested where it is used anyway, `fetch` and the timers: to open one costs nothing.
     Written,

@@ -1,6 +1,7 @@
 // The native functions that Bun's own modules make with $newCppFunction, each from the code of the function.
 import * as b from "bun-builtins-table";
 import { framesOfModuleGraphsCell, moduleGraphsCell } from "./native-cells.ts";
+import { answering } from "./native-code.ts";
 
 const cpp = (file: string, symbol: string): b.BuiltinPath => `native:NewCppFunction:${file}:${symbol}`;
 
@@ -151,7 +152,24 @@ const testOf = (name: string) => {
   return { ...testsKindOfCell, answersWhetherInstance: { value: b.union(first, ...others) } };
 };
 
+const answersOfNativeFunctions: readonly (readonly [b.BuiltinPath, b.TableType])[] = [
+  [cpp("BunDebugger.cpp", "jsFunction_closeNodeInspector"), b.undefined],
+  [
+    cpp("BunDebugger.cpp", "jsFunction_openNodeInspector"),
+    b.union(b.string, b.null, b.undefined, b.instance("EvalError")),
+  ],
+  [cpp("BunDebugger.cpp", "jsFunction_postNodeInspectorControl"), b.bool],
+  [cpp("BunDebugger.cpp", "jsFunction_waitForNodeInspectorConnection"), b.undefined],
+  [cpp("JSInspectorProfiler.cpp", "jsFunction_collectPreciseCoverage"), b.union(b.string, b.null)],
+  [cpp("JSInspectorProfiler.cpp", "jsFunction_startCPUProfiler"), b.undefined],
+  [cpp("JSInspectorProfiler.cpp", "jsFunction_startPreciseCoverage"), b.undefined],
+  [cpp("JSInspectorProfiler.cpp", "jsFunction_stopCPUProfiler"), b.string],
+  [cpp("JSInspectorProfiler.cpp", "jsFunction_stopPreciseCoverage"), b.undefined],
+  [cpp("Worker.cpp", "jsFunctionPostMessage"), b.undefined],
+];
+
 export default b.declarations(
+  answersOfNativeFunctions.flatMap(([path, returns]) => b.static(path, answering(returns, b.hostCall))),
   typeTestsOfNode.flatMap(name => b.static(`node:util/types.${name}`, { ...testOf(name), implementation: b.generic })),
   // Nothing leads from the realm to a member of a module: its native code tells which function it is. That of these two belongs to the functions below.
   typeTestsOfNode

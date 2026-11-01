@@ -16,6 +16,7 @@ const files = {
   // What a file of the tests has loaded is in the loader's registry from then on, so each of them loads a file of its own.
   "plugins/two.mjs": `export default "the helper's";`,
   "plugins/three.mjs": `export default "the preload's";`,
+  "plugins/four.mjs": `export default "the stub's";`,
   "main.mjs": `
     import { createRequire } from "node:module";
     import { load as imports } from "./src/imports.mjs";
@@ -23,6 +24,8 @@ const files = {
     console.log("SAID require:", load(process.cwd() + "/plugins/one.cjs"));
     console.log("SAID import:", await imports(process.cwd() + "/plugins/one.mjs"));`,
   "test/helper.mjs": `export const load = path => import(path).then(it => it.default);`,
+  // It lies among the sources, and no executable holds it: it takes something from the test runner.
+  "src/testing/stubs.mjs": `import { mock } from "bun:test";\nexport const load = mock(path => import(path).then(it => it.default));`,
   // It lies in no folder of a test file.
   "setup/preload.mjs": `globalThis.preloaded = (await import(process.cwd() + "/plugins/" + ["three", "mjs"].join("."))).default;`,
   "test/product.test.mjs": `
@@ -30,6 +33,7 @@ const files = {
     import { createRequire } from "node:module";
     import { rmSync, writeFileSync } from "node:fs";
     import { load as imports } from "../src/imports.mjs";
+    import { load as stubs } from "../src/testing/stubs.mjs";
     import { load as helps } from "./helper.mjs";
     const { load } = createRequire(import.meta.url)("../src/loads.cjs");
     test("the product", async () => {
@@ -42,6 +46,7 @@ const files = {
       console.log("SAID the test:", (await import(made)).default);
       console.log("SAID its helper:", await helps(process.cwd() + "/plugins/two.mjs"));
       console.log("SAID the preload:", globalThis.preloaded);
+      console.log("SAID a stub among the sources:", await stubs(process.cwd() + "/plugins/four.mjs"));
       rmSync(made);
     });`,
 };
@@ -57,7 +62,12 @@ const said = (output: string) =>
         .replace(/^(\d+ (?:loads? of code that wasn't compiled|native addons? that the build didn't find)).*$/, "$1"),
     );
 const loaded = ["SAID require: a CommonJS plug-in", "SAID import: an ES plug-in"];
-const ofTests = ["SAID the test: 42", "SAID its helper: the helper's", "SAID the preload: the preload's"];
+const ofTests = [
+  "SAID the test: 42",
+  "SAID its helper: the helper's",
+  "SAID the preload: the preload's",
+  "SAID a stub among the sources: the stub's",
+];
 
 async function testRun(directory: string, flags: string[], words = "") {
   const { stdout, stderr } = await run([bunExe(), "test", "--preload", "./setup/preload.mjs", ...flags], directory, {

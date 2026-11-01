@@ -167,6 +167,9 @@ impl Timings {
         let key = Self::key_for(abs_path);
         let _ = self.map.put(&key, ms);
         let _ = self.measured.put(&key, ms);
+        if let Some(&megabytes) = self.growth.get(&key) {
+            let _ = self.measured_growth.put(&key, megabytes);
+        }
     }
 
     pub(crate) fn growth_of(&self, abs_path: &[u8]) -> Option<u32> {

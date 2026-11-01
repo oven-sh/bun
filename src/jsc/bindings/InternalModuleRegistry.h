@@ -66,6 +66,7 @@ struct DeclaredModuleLoad {
         return requireOnBehalfOf(globalObject, field, onBehalfOf);
     }
 
+    static bool canLoad(Zig::GlobalObject*, InternalModuleRegistry::Field);
     static JSC::JSValue requireNamedAtRunTime(Zig::GlobalObject*, InternalModuleRegistry::Field, ErrorCode ifNotInExecutable);
     static JSC::JSValue requireForCommandLine(Zig::GlobalObject*, InternalModuleRegistry::Field);
 

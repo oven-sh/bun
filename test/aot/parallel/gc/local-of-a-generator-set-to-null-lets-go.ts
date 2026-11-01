@@ -1,5 +1,6 @@
 // A generator that has set a local to null behind a yield lets go of the object while it still runs.
 // Prints what the compiler saves: objects that are collected earlier
+// Alone: what is let go of goes by which bodies are copied into which, and that by all that the executable holds
 type Thing = { id: number; payload: number[] };
 let made = 0;
 function make(): Thing {

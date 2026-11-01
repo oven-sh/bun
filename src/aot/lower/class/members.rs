@@ -130,6 +130,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         head: ClassHead,
         member: MemberId,
         name: PropertyName,
+        has_decorators_in_key: bool,
         next_method_index: &mut u32,
     ) {
         let node = self.file.hir[member];
@@ -143,7 +144,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             }
         };
         self.set_position(node.name_pos);
-        let given = GivenName::under_member(&node, name);
+        let mut given = GivenName::under_member(&node, name);
+        given.is_under_computed_key |= has_decorators_in_key;
         let closure = self.lower_method(node.func, given, head.value);
         let side = class_side(node);
         self.emit_method_definition(head, side, kind, name, closure, next_method_index);
@@ -225,7 +227,14 @@ fn define_member(
         MemberKind::Method | MemberKind::Getter | MemberKind::Setter => {
             let is_standard = plan.transform == ClassTransform::Standard;
             if !is_private {
-                lowering.define_method(head, member, name, next_method_index);
+                let has_decorators_in_key = plan.members_with_decorators_in_key.contains(&member);
+                lowering.define_method(
+                    head,
+                    member,
+                    name,
+                    has_decorators_in_key,
+                    next_method_index,
+                );
             } else if !(is_standard && has_decorators(hir, node.modifiers)) {
                 lowering.set_position(node.name_pos);
                 let closure = lowering.lower_method(node.func, name, head.value);

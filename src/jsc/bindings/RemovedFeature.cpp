@@ -162,6 +162,15 @@ extern "C" JSC::EncodedJSValue Bun__throwForRemovedBuiltin(JSC::JSGlobalObject* 
 #endif
 }
 
+extern "C" bool mi_on_thread_idle_start(void);
+extern "C" void mi_on_thread_idle_end(void);
+
+extern "C" void Bun__didFinishFirstCollectionOfCompiledProgram()
+{
+    if (mi_on_thread_idle_start())
+        mi_on_thread_idle_end();
+}
+
 extern "C" [[noreturn]] void Bun__abortForRemovedFeature(uint16_t feature)
 {
     auto text = Bun::textOfRemovableFeature(static_cast<JSC::RemovableFeature>(feature)).span();

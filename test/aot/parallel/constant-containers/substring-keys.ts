@@ -2,7 +2,7 @@
 // CALLS+ sliceKeys Substring
 // CALLS+ sumValues MapGet
 // CALLS- sumValues Substring|Flatten|RopeCharacters
-// CALLS+ countMembers SetHas
+// CALLS+ countMembers MapHas
 // CALLS- countMembers Substring|Flatten|RopeCharacters
 const NUMBERS_3 = new Map<string, number>([["k0000", 0], ["k0001", 3], ["k0002", 6]]);
 const NUMBERS_40 = new Map<string, number>([["k0000", 0], ["k0001", 3], ["k0002", 6], ["k0003", 9], ["k0004", 12], ["k0005", 15], ["k0006", 18], ["k0007", 21], ["k0008", 24], ["k0009", 27], ["k0010", 30], ["k0011", 33], ["k0012", 36], ["k0013", 39], ["k0014", 42], ["k0015", 45], ["k0016", 48], ["k0017", 51], ["k0018", 54], ["k0019", 57], ["k0020", 60], ["k0021", 63], ["k0022", 66], ["k0023", 69], ["k0024", 72], ["k0025", 75], ["k0026", 78], ["k0027", 81], ["k0028", 84], ["k0029", 87], ["k0030", 90], ["k0031", 93], ["k0032", 96], ["k0033", 99], ["k0034", 102], ["k0035", 105], ["k0036", 108], ["k0037", 111], ["k0038", 114], ["k0039", 117]]);

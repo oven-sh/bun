@@ -135,3 +135,37 @@ test("a file that takes long does not wait behind a long build", async () => {
   const withLong = compiled.find(files => files.includes(names[long]))!;
   expect(withLong.filter(name => reachesLibrary(names.indexOf(name)))).toEqual([]);
 }, 240_000);
+
+test("files that are held back for their memory do not all wait for one another in one shard", async () => {
+  // Four files reach the same library, so by what they reach they belong together. But each took 2 GB when it was last
+  // measured, and a run starts such a file only when the one before it has ended: together they take 4 s whatever runs beside them.
+  const isHeavy = (index: number) => index % 3 === 0;
+  using dir = project(index => (isHeavy(index) ? ["a"] : []), {
+    "timings.json": JSON.stringify({
+      version: 1,
+      workers: 4,
+      files: Object.fromEntries(names.map((name, index) => [name, isHeavy(index) ? 1000 : 400])),
+      memory: Object.fromEntries(names.filter((_, index) => isHeavy(index)).map(name => [name, 2000])),
+    }),
+  });
+  const compiled = await deal(String(dir), 2, "--aot", "--timings=timings.json", "--parallel=4");
+  expect(compiled.flat().sort()).toEqual(names);
+  expect(compiled.map(files => files.filter(name => isHeavy(names.indexOf(name))).length)).toEqual([2, 2]);
+}, 240_000);
+
+test("one name means another file in another folder", async () => {
+  // "./big" three times, a file of its own each time: that is what brings test files together. Taken for one file, all of them
+  // would reach it, and the small files, which every third test file imports, would decide.
+  const small = libraries.map(name => `small_${name}`);
+  const folders = libraries.flatMap(name => [
+    [`lib/${name}.ts`, `import "./${name}/index";\nexport const name = "${name}";\n`],
+    [`lib/${name}/index.ts`, `import "./big";\n`],
+    [`lib/${name}/big.ts`, library(name, 100_000)],
+    [`lib/small_${name}.ts`, library(`small_${name}`, 3_000)],
+  ]);
+  using dir = project(index => [libraries[libraryOf[index]], small[index % 3]], Object.fromEntries(folders));
+  const compiled = await deal(String(dir), 3, "--aot");
+  expect(compiled.flat().sort()).toEqual(names);
+  const reached = compiled.map(files => [...new Set(files.map(name => libraryOf[names.indexOf(name)]))]);
+  expect(reached.map(libraries => libraries.length)).toEqual([1, 1, 1]);
+}, 240_000);

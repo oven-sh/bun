@@ -50,6 +50,7 @@ pub(in super::super) struct ClassMembersByName<'p> {
     /// looks for something else, which is how a class that is getting its base types finds that it isn't its own base
     /// without walking up the whole row.
     pub(super) with_stored_ancestry: crate::util::FxHashSet<Sym>,
+    with_only_this_all_the_way_up: crate::util::FxHashSet<Sym>,
 }
 
 impl<'p, 's> Checker<'p, 's> {
@@ -177,6 +178,9 @@ impl<'p, 's> Checker<'p, 's> {
     /// declares it to the `this` of the next class down, and so on. Here the steps are put together on the way up, one
     /// mapper for each class, and each member is copied once.
     pub(super) fn inherit_from_plain_classes(&mut self, b: &mut Builder<'s>, class: Sym) -> bool {
+        if !self.has_only_this_all_the_way_up(class) {
+            return false;
+        }
         let mut above: SmallVec<[(&'p Resolved<'p>, MapperId); 8]> = SmallVec::new();
         let mut count = 0;
         let mut at = class;
@@ -215,6 +219,23 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
         }
+        true
+    }
+
+    fn has_only_this_all_the_way_up(&mut self, class: Sym) -> bool {
+        let mut heirs: SmallVec<[Sym; 8]> = SmallVec::new();
+        let mut at = class;
+        while !(self.class_members_by_name.with_only_this_all_the_way_up).contains(&at) {
+            let Some(plain) = self.plain_class(at).filter(|plain| plain.maps_only_this) else {
+                return false;
+            };
+            heirs.push(at);
+            let Some((base, _)) = plain.base else {
+                break;
+            };
+            at = base;
+        }
+        (self.class_members_by_name.with_only_this_all_the_way_up).extend(heirs);
         true
     }
 

@@ -31,8 +31,8 @@ const rows: Row[] = [
   [3, "held", 16, "errors/frames-closures-of-one-function-named-by-unseen-code.mjs", "row 3740: the frames print `at <anonymous>` throughout"],
   [8, "held", 16, "define-property/function-told-its-name.cjs", "row 3741: a class that defineProperty told its name prints `new Plain`, not `new told`"],
   [4, "held", 16, "closed-world/external-package-finds-the-realm-locked/main.cjs", "row 3742: Date is not locked: the package's `globalThis.Date = ..` and `Date.now = ..` go through"],
-  [5, "held", 6, "host-object-writes/writes-after-the-first-use.mjs", "row 3743: TextEncoder.prototype.encode and TextDecoder.prototype.decode are not locked"],
-  [6, "held", 8, "host-object-writes/writes-before-the-first-use.mjs", "row 3744: TextEncoder.prototype.encode and TextDecoder.prototype.decode are not locked"],
+  [5, "seldom", 6, "host-object-writes/writes-after-the-first-use.mjs", "row 3743: TextEncoder.prototype.encode and TextDecoder.prototype.decode are not locked"],
+  [6, "seldom", 8, "host-object-writes/writes-before-the-first-use.mjs", "row 3744: TextEncoder.prototype.encode and TextDecoder.prototype.decode are not locked"],
 ];
 
 const tests = resolve(import.meta.dir, "..");

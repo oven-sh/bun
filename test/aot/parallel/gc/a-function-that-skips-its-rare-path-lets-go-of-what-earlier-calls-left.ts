@@ -1,5 +1,6 @@
 // A function keeps many values across calls on a path that it does not take. On the path that it takes, its frame holds nothing of what earlier calls left on the stack.
 // Prints what the compiler saves: objects that are collected earlier
+// Alone: what is let go of goes by which bodies are copied into which, and that by all that the executable holds
 // Entry points: ../bundler/json-named-exports/main.ts
 // Todo: Not every time: row 3468: prints KEPT where a word that an earlier call left lies inside the frame of the function that collects, or of its caller, and that frame has not written it. Which of the calls are hit goes by the layout of the build
 type Thing = { id: number; payload: number[] };

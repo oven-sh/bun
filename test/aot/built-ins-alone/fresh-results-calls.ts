@@ -53,6 +53,7 @@ export const calls: Record<string, string[]> = {
   "crypto > Crypto": ["crypto"],
   "Bun.Cookie.from": ['Bun.Cookie.from("name", "value")'],
   "Bun.Cookie.parse": ['Bun.Cookie.parse("name=value")'],
+  "Bun.dns.getServers": ["Bun.dns.getServers()"],
   "Performance.prototype.timing > PerformanceTiming": ["const timing = performance.timing;\ntiming"],
   "Performance.prototype.toJSON > PerformanceTiming": ["const timing = performance.toJSON().timing;\ntiming"],
   "PerformanceTiming.prototype.toJSON": ["performance.timing.toJSON()"],

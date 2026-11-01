@@ -11,9 +11,18 @@ const { symbols: c } = dlopen("libc.so.6", {
   waitpid: { args: ["i32", "ptr", "i32"], returns: "i32" },
   kill: { args: ["i32", "i32"], returns: "i32" },
 });
-const PTRACE_PEEKUSER = 3, PTRACE_CONT = 7, PTRACE_SINGLESTEP = 9, PTRACE_SEIZE = 0x4206;
+const PTRACE_PEEKUSER = 3, PTRACE_CONT = 7, PTRACE_SINGLESTEP = 9, PTRACE_GETREGSET = 0x4204, PTRACE_SEIZE = 0x4206;
 /** Of `rip` in `struct user`. */
 const offsetOfProgramCounter = 16 * 8;
+/** arm64 hands out `struct user_pt_regs` as a whole: x0 to x30, sp, pc, pstate. */
+const NT_PRSTATUS = 1;
+const registers = new BigUint64Array(34);
+const whereRegistersGo = new BigUint64Array([BigInt(ptr(registers)), BigInt(registers.byteLength)]);
+function programCounter(pid: number) {
+  if (process.arch === "x64") return c.ptrace(PTRACE_PEEKUSER, pid, offsetOfProgramCounter, 0);
+  c.ptrace(PTRACE_GETREGSET, pid, NT_PRSTATUS, ptr(whereRegistersGo));
+  return Number(registers[32]);
+}
 const WUNTRACED = 2, __WALL = 0x40000000;
 const SIGTRAP = 5, SIGKILL = 9, SIGUSR2 = 12, SIGCONT = 18;
 
@@ -72,7 +81,7 @@ for (;;) {
   } else if (signal === SIGTRAP) {
     if (marks === 1) {
       steps++;
-      const at = c.ptrace(PTRACE_PEEKUSER, pid, offsetOfProgramCounter, 0);
+      const at = programCounter(pid);
       if (code.some(({ start, end }) => at >= start && at < end)) compiled++;
       if (steps > mostSteps) {
         c.kill(pid, SIGKILL);

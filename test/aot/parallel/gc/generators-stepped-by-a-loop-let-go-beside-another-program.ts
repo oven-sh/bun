@@ -1,5 +1,6 @@
 // locals-of-generators-set-to-null-behind-yields-let-go.ts with the two forms that a loop steps, in one executable with another program: there `registry.register(x, name)` goes through a native call frame.
 // Prints what the compiler saves: objects that are collected earlier
+// Alone: what is let go of goes by which bodies are copied into which, and that by all that the executable holds
 // Entry points: ../bundler/json-named-exports/main.ts
 // Todo: rows 3465 and 3468: `stepped by for of` prints KEPT, and on x64 `delegated to` as well: the argument of the native call stays in a word of the stack, and the frame of the resumed generator lies over that word and has not written it
 type Thing = { id: number; payload: number[] };

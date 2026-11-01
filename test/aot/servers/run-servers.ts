@@ -2,7 +2,7 @@
 import { expect } from "bun:test";
 import { cpSync, existsSync, readFileSync, rmSync, symlinkSync } from "fs";
 import { bunEnv, bunExe, isWindows } from "harness";
-import { basename, join } from "path";
+import { basename, delimiter, join } from "path";
 import { spawned } from "../harness/commands";
 
 export const requestedServers = process.env.AOT_SERVERS;
@@ -31,9 +31,29 @@ export function packagesUnlikeLockfile(lockfile: string, modules: string) {
 }
 
 /** Runs `bun install` in the folder, by its bun.lock if it has one, or links AOT_SERVERS_MODULES, which must hold the same packages, as its node_modules. */
+/** Returns a line for each direct dependency of the manifest that the node_modules folder holds in another version or not at all. */
+export function packagesUnlikeManifest(manifest: string, modules: string) {
+  const { dependencies, devDependencies } = JSON.parse(readFileSync(manifest, "utf8"));
+  return Object.entries<string>({ ...dependencies, ...devDependencies }).flatMap(([name, expected]) => {
+    const found = join(modules, name, "package.json");
+    const version = existsSync(found) ? JSON.parse(readFileSync(found, "utf8")).version : "nothing";
+    return version === expected ? [] : [`${name}: the manifest has ${expected}, ${modules} has ${version}`];
+  });
+}
+
+/**
+ * Installs the packages of the folder's manifest. Where AOT_SERVERS_MODULES names a node_modules folder, nothing is
+ * installed: the folder is handed that one, or the first of AOT_SERVERS_MORE_MODULES, that holds what its manifest names.
+ */
 export async function installPackages(folder: string) {
-  const modules = process.env.AOT_SERVERS_MODULES;
-  if (modules) {
+  const given = [process.env.AOT_SERVERS_MODULES, ...(process.env.AOT_SERVERS_MORE_MODULES?.split(delimiter) ?? [])];
+  if (given[0]) {
+    const unlikeManifest = given.map(modules => packagesUnlikeManifest(join(folder, "package.json"), modules!));
+    const modules = given[unlikeManifest.findIndex(lines => !lines.length)];
+    if (!modules)
+      throw new Error(
+        `neither AOT_SERVERS_MODULES nor AOT_SERVERS_MORE_MODULES names a folder that holds what ${basename(folder)}/package.json names:\n${unlikeManifest.flat().join("\n")}`,
+      );
     const lockfile = join(folder, "bun.lock");
     const unlike = existsSync(lockfile) ? packagesUnlikeLockfile(lockfile, modules) : [];
     if (unlike.length)

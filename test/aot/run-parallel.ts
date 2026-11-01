@@ -6,6 +6,7 @@
 //   --each-alone      every program is built by itself: what an executable leaves out goes by all it holds, so beside others a program keeps what it would lose alone
 //   --root=<folder>   the programs lie under that folder, not under ./parallel
 //   --memory=<MB>     what all that runs at once may hold together. Without it: seven eighths of what the machine has available at the start
+//   --seconds=<n>     the time limit of a run. Default: 90, or 240 under ASAN
 //   --more-flags="--aot-validate --aot-check=moved-loads"   every build takes these flags too: the programs under the compiler's own checks. A check counts, prints and
 //                     keeps more than a build without it: what a program says that a build or a run counts or prints is not asked, and no `// Todo:` is held to fail
 //   --checks-at-run-time   an executable that has passed runs once more with the checks of the run time on (BUN_JSC_validateAOTRuntime): they end it with a line
@@ -396,11 +397,35 @@ async function withSlotsOfBuild<T>(weight: number, work: (threads: number) => Pr
 const isWindows = process.platform === "win32";
 /** In seconds, for a run or the build of one program, and for each further program of a build. A build that is ended for nothing is made twice, so the limit is several times what a busy machine takes. */
 const timeLimit = (cmd: string[], programs = 1) =>
-  (isASAN || cmd.some(flag => /^--aot-(validate$|verify-each-pass$|check=.*\bverify-each-pass\b)/.test(flag))
-    ? 240
-    : 90) +
+  ((cmd[1] !== "build" && Number(option("seconds"))) ||
+    (isASAN || cmd.some(flag => /^--aot-(validate$|verify-each-pass$|check=.*\bverify-each-pass\b)/.test(flag))
+      ? 240
+      : 90)) +
   (isASAN ? 30 : 15) * (programs - 1);
 const secondsToAnswer = 3;
+
+/** CPU time and the state and wait channel of each thread, from /proc. */
+function describeThreads(pid: number) {
+  if (process.platform !== "linux") return "";
+  try {
+    let seconds = 0;
+    const states = new Map<string, number>();
+    for (const thread of readdirSync(`/proc/${pid}/task`)) {
+      const read = (file: string) => readFileSync(`/proc/${pid}/task/${thread}/${file}`, "utf8").trim();
+      // The fields after the parenthesized name: state first, utime and stime (in 1/100 s) at 11 and 12.
+      const stat = read("stat");
+      const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+      seconds += (Number(fields[11]) + Number(fields[12])) / 100;
+      const waitChannel = read("wchan");
+      const state = `${fields[0]}${waitChannel && waitChannel !== "0" ? ` ${waitChannel}` : ""}`;
+      states.set(state, (states.get(state) ?? 0) + 1);
+    }
+    const threads = [...states].sort((a, b) => b[1] - a[1]).map(([state, count]) => `${count} ${state}`);
+    return ` (CPU time ${seconds.toFixed(1)} s; threads: ${threads.join(", ")})`;
+  } catch {
+    return "";
+  }
+}
 
 /** Each child leads a process group of its own, which holds whatever it starts. */
 const running = new Set<number>();
@@ -488,7 +513,9 @@ async function start(cmd: string[], cwd: string, env: Record<string, string | un
   const answers = cmd[1] === "build" && !isWindows;
   using held = memory.watch({ pid, leadsAGroup: true }, cmd[1] !== "build", answers);
   let ranOver = false;
+  let threadsAtLimit = "";
   const end = (signal: "SIGTERM" | "SIGKILL") => {
+    if (!ranOver) threadsAtLimit = describeThreads(pid);
     ranOver = true;
     endGroup(pid, signal);
   };
@@ -509,8 +536,8 @@ async function start(cmd: string[], cwd: string, env: Record<string, string | un
       overLimit: held.exceeded
         ? held.held
         : ranOver
-          ? `it ran over ${seconds} s`
-          : cmd[1] === "build" && exitCode !== 0 && stderr.includes("ENOSPC")
+          ? `it ran over ${seconds} s${threadsAtLimit}`
+          : exitCode !== 0 && stderr.includes("ENOSPC")
             ? `the disk is full: ${Math.round(leftOnDisk() / 2 ** 20)} MB are left for ${folder}`
             : undefined,
     };

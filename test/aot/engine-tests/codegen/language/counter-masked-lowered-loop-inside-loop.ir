@@ -4376,8 +4376,8 @@ runtimefunction id=GeneratorPrototypeReturn function=f14 visibility=Private
 # CHECK-LABEL: function f3 name=
 # CHECK: "f1" module=m0 position=3098 role=CoroutineRamp flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] length=2 thisType={type=undefined} parameters=[{type=int[-9007199254740992, 4294967293] site=w6}, {type=int[-9007199254740992, 4294967293] site=w7}] results=[{type=Generator<number, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{ramp=f3 body=f22} {
 # CHECK-NEXT: b0(v0: undefined, v1: function, v2: int[-9007199254740992, 4294967293] ~ i32, v3: int[-9007199254740992, 4294967293] ~ i32):
-# CHECK-NEXT: v4: Generator = NewGenerator v1 function=f3
-# CHECK-NEXT: v7: anything = NewHeapFrame v4 function=f22 numberOfWords=4
+# CHECK-NEXT: v4: Generator = NewGenerator v1 function=f3 [getsHeapFrame]
+# CHECK-NEXT: v7: anything = NewHeapFrame v4, v1 function=f22 numberOfWords=4
 # CHECK-NEXT: PutHeapFrameWord v7, v4
 # CHECK-NEXT: PutHeapFrameWord v7, v2 index=1
 # CHECK-NEXT: PutHeapFrameWord v7, v3 index=2

@@ -4347,7 +4347,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f64 visibility=Private
 # CHECK-LABEL: function {{*}}name="Kind"
 # CHECK: module=m0 position=922 flags=[HasThis, IsChecked] length=1 thisType={type=L1 site=w41} parameters=[{type=i32 site=w39 flags=[IsExpected]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] constructedClass=L1
 # CHECK-LABEL: function f17 module=
-# CHECK: m0 position=2891 kind=Arrow role=EntryChecks flags=[IsChecked] length=1 captures=[{type=int[0, 399] site=w43 variableName="i"}] thisType={type=anything} parameters=[{type=i32 site=w49 flags=[IsExpected]}] results=[{type=number site=w50}] functionTypes=[f38] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCalleeOnceRenamed] creator=EntryChecks{body=f67 fallback=f74} {
+# CHECK: m0 position=2891 kind=Arrow role=EntryChecks flags=[IsChecked] length=1 captures=[{type=int[0, 399] site=w43 variableName="i"}] thisType={type=anything} parameters=[{type=i32 site=w49 flags=[IsExpected]}] results=[{type=number site=w50}] functionTypes=[f38] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCalleeOnceRenamed, MakesNoTailCall] creator=EntryChecks{body=f67 fallback=f74} {
 # CHECK-NEXT: b0(v0: int[0, 399], v1: anything ~ i32):
 # CHECK-NEXT: v2: boolean ~ true = TypeTest v1 testedType=i32
 # CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2()
@@ -4541,8 +4541,8 @@ runtimefunction id=ArrayTraversalTraverseArray function=f64 visibility=Private
 # CHECK-NEXT: ReturnCall v7 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function f32 module=
-# CHECK: m0 position=490 kind=Arrow flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=undefined|string site=w231 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] functionTypes=[f34] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: undefined|string, v1: anything):
+# CHECK: m0 position=490 kind=Arrow flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=string site=w231 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] functionTypes=[f34] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: string, v1: anything):
 # CHECK-NEXT: v2: boolean = TypeTest v1 testedType=undefined
 # CHECK-NEXT: Branch v2 -> taken b1(), notTaken b2(| 0)
 # CHECK-NEXT: b1():
@@ -4580,21 +4580,9 @@ runtimefunction id=ArrayTraversalTraverseArray function=f64 visibility=Private
 # CHECK-LABEL: function {{*}}name="Kind"
 # CHECK: module=m0 position=922 role=ConstructBody flags=[IsChecked, AllocatesOwnThis] length=1 thisType={type=anything} parameters=[{type=i32 site=w39 flags=[IsExpected]}] results=[{type=L1}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f16 parameterMap=[{original=1}]} creator=Version{provenVersion=f16} constructedClass=L1 {
 # CHECK-NEXT: b0(v0: anything ~ i32):
-# CHECK-NEXT: v1: L1 = NewObject layout=L1 allocationClass=1
-# CHECK-NEXT: v2: int|whole ~ i32 = AssumeType v0 provenType=int|whole
-# CHECK-NEXT: v3: boolean = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L1}]
-# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b3()
-# CHECK-NEXT: b1(v4: guard):
-# CHECK-NEXT: v5: guard = AllGuards v1, v4
-# CHECK-NEXT: PutSlotOrAdd v1, v5, v2 key="id" receivers=[L1] level=Expected accessSite=294
-# CHECK-NEXT: FinishBirth v1
-# CHECK-NEXT: Jump -> next b2()
-# CHECK-NEXT: b2():
-# CHECK-NEXT: Return v1
-# CHECK-NEXT: b3() frequency=Rare:
-# CHECK-NEXT: PropSet v1, v2 key="id" accessSite=294
-# CHECK-NEXT: TryFinishBirth v1
-# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: v1: int|whole ~ i32 = AssumeType v0 provenType=int|whole
+# CHECK-NEXT: v2: L1 = NewObject -, v1 layout=L1 fields=[0] allocationClass=1
+# CHECK-NEXT: Return v2
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="get"
 # CHECK: module=m0 position=4402 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f19}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f19} creator=Entrypoint{target=f19 arguments=Registers} {

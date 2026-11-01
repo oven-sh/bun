@@ -382,6 +382,8 @@ describe("bundler", () => {
       // one fold of the define
       `X.length === 1`,
       `+X !== +X`,
+      `-X !== -X`,
+      `~X === -1`,
       `!(X < "z")`,
       `X[0] === "é"`,
       `X.charCodeAt(0) === 233`,
@@ -536,6 +538,22 @@ describe("bundler", () => {
       expect(out).toContain('delete "é".length');
       expect(out).toContain("console.log(1, 3)");
     },
+  });
+  // `"s"[n]` and `[x][n]` are not folded under `delete`: `delete "a"` is `true`, and `delete g` is another statement.
+  itBundled("minify/ConstantIndexFoldNotOnDeleteTarget", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(delete A[0]);
+        capture(delete X[0]);
+        capture(delete [g][0]);
+        capture(A[0]);
+        capture(X[0]);
+        capture([g][0]);
+      `,
+    },
+    define: { X: '"é"', A: '"abc"' },
+    minifySyntax: true,
+    capture: ['delete "abc"[0]', 'delete "é"[0]', "delete [g][0]", '"a"', '"é"', "g"],
   });
   // An index that is negative, not whole, or 2**32 and more is left for run time. -0 is index 0.
   itBundled("minify/StringIndexFoldingBounds", {

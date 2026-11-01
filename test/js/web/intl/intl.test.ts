@@ -326,8 +326,121 @@ describe("Intl.getCanonicalLocales", () => {
       mo: Intl.getCanonicalLocales("mo")[0],
       ji: Intl.getCanonicalLocales("ji")[0],
     }).toEqual({ in: "id", iw: "he", mo: "ro", ji: "yi" });
-    // sh/tl/no are kept as-is (ICU ships bundles under both names)
-    expect(Intl.getCanonicalLocales(["sh", "tl", "no"])).toEqual(["sh", "tl", "no"]);
+    // `no` is CLDR's macrolanguage and stays. `sh` and `tl` have replacements in CLDR's alias table.
+    expect(Intl.getCanonicalLocales(["sh", "tl", "no"])).toEqual(["sr-Latn", "fil", "no"]);
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/14713
+// A language tag is canonicalized with CLDR's alias tables (UTS #35 Annex C) wherever it enters Intl. The rows of
+// the ungated tests are the same in every CLDR that a supported macOS ships, where the tables are the system's.
+describe("locale alias replacement", () => {
+  test("a deprecated language, script, region or variant is replaced", () => {
+    const canonical = {
+      // A language, and one whose replacement has a script.
+      fre: "fr",
+      cmn: "zh",
+      tl: "fil",
+      aam: "aas",
+      sh: "sr-Latn",
+      // A language with a region, and a language with a variant.
+      "sgn-DE": "gsg",
+      "zh-guoyu": "zh",
+      "no-bokmal": "nb",
+      // A region, one in its numeric form, and one that several regions replace.
+      "en-uk": "en-GB",
+      "en-DD": "en-DE",
+      "en-BU": "en-MM",
+      "en-840": "en-US",
+      "ru-SU": "ru-RU",
+      "hy-SU": "hy-AM",
+      "und-Armn-SU": "und-Armn-AM",
+      // A script, a variant, and the language of a transformed extension.
+      "und-Qaai": "und-Zinh",
+      "el-polytoni": "el-polyton",
+      "ja-Latn-hepburn-heploc": "ja-Latn-alalc97",
+      "und-t-iw": "und-t-he",
+      // The keywords stay.
+      "fre-u-ca-gregory": "fr-u-ca-gregory",
+      "en-uk-u-ca-gregory": "en-GB-u-ca-gregory",
+    };
+    const tags = Object.keys(canonical);
+    expect(Object.fromEntries(tags.map(tag => [tag, new Intl.Locale(tag).toString()]))).toEqual(canonical);
+    // Tags that differ only in an alias are one locale: `cmn` and `zh-guoyu` are both `zh`.
+    expect(Intl.getCanonicalLocales(tags)).toEqual([...new Set(Object.values(canonical))]);
+    expect(Intl.getCanonicalLocales(["fr", "fre", "FRE", "fra"])).toEqual(["fr"]);
+  });
+
+  test("the root locale and tags without an alias stay as they are", () => {
+    // `und` is the empty locale ID to ICU, which libicucore on macOS 13 and 14 turns into the default locale.
+    const tags = "und und-u-ca-gregory und-x-private und-Latn en en-US zh-Hant-TW sr-Latn-RS no".split(" ");
+    expect(tags.map(tag => new Intl.Locale(tag).toString())).toEqual(tags);
+    expect(Intl.getCanonicalLocales(tags)).toEqual(tags);
+  });
+
+  test("Intl.Locale replaces aliases before and after it applies its options", () => {
+    expect({
+      // `SU` is replaced for `und-Armn`, before the language becomes `ru`: AM, and not RU.
+      "und-Armn-SU + language ru": new Intl.Locale("und-Armn-SU", { language: "ru" }).toString(),
+      "en + region uk": new Intl.Locale("en", { region: "uk" }).toString(),
+      "fre + region uk": new Intl.Locale("fre", { region: "uk" }).toString(),
+      "und + language sh": new Intl.Locale("und", { language: "sh" }).toString(),
+    }).toEqual({
+      "und-Armn-SU + language ru": "ru-Armn-AM",
+      "en + region uk": "en-GB",
+      "fre + region uk": "fr-GB",
+      "und + language sh": "sr-Latn",
+    });
+  });
+
+  test("what a locale is asked for follows the canonical form", () => {
+    const uk = new Intl.Locale("en-uk");
+    const sh = new Intl.Locale("sh");
+    expect({
+      region: uk.region,
+      baseName: uk.baseName,
+      language: sh.language,
+      script: sh.script,
+      maximized: sh.maximize().toString(),
+    }).toEqual({ region: "GB", baseName: "en-GB", language: "sr", script: "Latn", maximized: "sr-Latn-RS" });
+  });
+
+  test("formatters resolve the locale an alias stands for", () => {
+    // Without the replacement `fre` is no locale that ICU knows, and the default locale formats.
+    expect({
+      number: new Intl.NumberFormat("fre").resolvedOptions().locale,
+      date: new Intl.DateTimeFormat("fre").resolvedOptions().locale,
+      plural: new Intl.PluralRules("tl").resolvedOptions().locale,
+      supported: Intl.NumberFormat.supportedLocalesOf(["fre", "sh", "en-uk"]),
+    }).toEqual({ number: "fr", date: "fr", plural: "fil", supported: ["fr", "sr-Latn", "en-GB"] });
+    expect((1234.5).toLocaleString("fre")).toBe((1234.5).toLocaleString("fr"));
+    expect(new Date(0).toLocaleDateString("fre", { timeZone: "UTC", dateStyle: "full" })).toBe(
+      new Date(0).toLocaleDateString("fr", { timeZone: "UTC", dateStyle: "full" }),
+    );
+  });
+
+  // Replacements that a newer CLDR can revise, and values that other data of ICU decides.
+  snapshotIf("a deprecated subdivision, and the replacements that follow the CLDR version", () => {
+    const canonical = {
+      // A language whose replacement has a region. The tag's own region stays.
+      "hy-arevmda": "hyw",
+      cnr: "sr-ME",
+      "cnr-BA": "sr-BA",
+      // A region that several regions replace.
+      "sr-YU": "sr-RS",
+      "nl-AN": "nl-CW",
+      // A subdivision.
+      "en-u-sd-cn11": "en-u-sd-cnbj",
+      "en-u-rg-no23": "en-u-rg-no50",
+      // The fields of a transformed extension are put in order, and a deprecated value is replaced.
+      "und-t-iw-m0-names": "und-t-he-m0-prprname",
+      "en-t-hi-h0-hybrid-d0-fwidth": "en-t-hi-d0-fwidth-h0-hybrid",
+      // Several at once, in a locale ID that is longer than ICU's usual buffer.
+      "sh-Latn-YU-polytoni-u-ca-gregory-nu-latn-sd-cn11": "sr-Latn-RS-polyton-u-ca-gregory-nu-latn-sd-cnbj",
+    };
+    const tags = Object.keys(canonical);
+    expect(Object.fromEntries(tags.map(tag => [tag, new Intl.Locale(tag).toString()]))).toEqual(canonical);
+    expect(Intl.getCanonicalLocales(tags)).toEqual(Object.values(canonical));
   });
 });
 

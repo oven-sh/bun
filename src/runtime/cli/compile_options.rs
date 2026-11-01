@@ -531,6 +531,34 @@ fn check_unknown_names<'a>(names: Vec<&[u8]>) -> Result<(), OptionError<'a>> {
     }
 }
 
+unsafe extern "C" {
+    fn Bun__canonicalLocaleTag(tag: *const u8, len: usize, out: *mut u8, capacity: usize) -> usize;
+}
+
+/// The tag under which Intl looks for the data of `tag` at run time: `sh` is `sr-Latn` there, and `iw` is `he`. A text
+/// that is no language tag stays as it is, for the error that names it.
+fn canonical_locale_tag(tag: &[u8]) -> Box<[u8]> {
+    // `bun_trim` reads `de_DE` as `de-DE`.
+    let hyphenated: Vec<u8> = tag
+        .iter()
+        .map(|&byte| if byte == b'_' { b'-' } else { byte })
+        .collect();
+    let mut canonical = [0u8; 256];
+    // SAFETY: `hyphenated` is only read, `canonical` is written up to its length, and the callee keeps neither pointer.
+    let len = unsafe {
+        Bun__canonicalLocaleTag(
+            hyphenated.as_ptr(),
+            hyphenated.len(),
+            canonical.as_mut_ptr(),
+            canonical.len(),
+        )
+    };
+    match canonical.get(..len) {
+        Some(canonical) if len > 0 => Box::from(canonical),
+        _ => Box::from(tag),
+    }
+}
+
 fn resolve_trim<'a>(flags: &CompileFlags<'a>) -> Result<TrimRequest, OptionError<'a>> {
     let trim = &flags.trim;
     let mut unknown: Vec<&[u8]> = Vec::new();
@@ -580,7 +608,7 @@ fn resolve_trim<'a>(flags: &CompileFlags<'a>) -> Result<TrimRequest, OptionError
         locales: trim
             .locales
             .as_ref()
-            .map(|tags| tags.iter().map(|tag| Box::from(*tag)).collect()),
+            .map(|tags| tags.iter().map(|tag| canonical_locale_tag(tag)).collect()),
         logs: trim.logs,
         is_template: trim.is_template,
     })

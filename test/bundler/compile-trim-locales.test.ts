@@ -47,6 +47,13 @@ console.log(new Intl.NumberFormat("de").format(1234.5), new Intl.PluralRules("de
 console.log(new Intl.RelativeTimeFormat("de").format(-1, "day"), new Intl.ListFormat("de").format(["a", "b"]));`,
   // The locale comes with the command line: of a locale that the build can read, --aot makes the pattern itself, and the program asks for no data.
   "removed.ts": `console.log(new Date(0).toLocaleDateString(process.argv[2], { timeZone: "UTC" }));`,
+  "alias.ts": `
+const tag = process.argv[2];
+console.log(new Intl.NumberFormat(tag).resolvedOptions().locale, new Intl.PluralRules(tag).select(1));
+console.log(new Date(0).toLocaleDateString(tag, { timeZone: "UTC", dateStyle: "full" }));`,
+  "alias-constants.ts": `
+console.log(new Intl.NumberFormat("iw").resolvedOptions().locale, new Intl.PluralRules("sh").select(1));
+console.log(new Date(0).toLocaleDateString("tl", { timeZone: "UTC", dateStyle: "full" }));`,
 };
 
 (canTrim ? describe.concurrent : describe.skip)("--trim-locales", () => {
@@ -84,6 +91,33 @@ console.log(new Intl.RelativeTimeFormat("de").format(-1, "day"), new Intl.ListFo
           })),
         );
         expect(answers).toEqual(hosts.map(host => ({ host, ...expected })));
+      },
+    );
+
+    test.skipIf(flags.length > 0 && !!unsupported)(
+      `${how}: an alias keeps the data of the locale that it stands for`,
+      async () => {
+        using dir = tempDir("compile-trim-locales-alias", programs);
+        const folder = String(dir);
+        // Intl reads `iw` as `he`, `sh` as `sr-Latn` and `tl` as `fil`, and opens the data of those.
+        const locales = "--trim-locales=iw,sh,tl_PH";
+        const build = ["build", "--compile", ...flags, ...withoutDebugInformation, "--trim", locales];
+        expect(await run([bunExe(), ...build, "alias.ts", "--outfile", "alias"], folder)).toMatchObject({
+          exitCode: 0,
+        });
+        const kept = ["iw", "he", "sh", "sr-Latn", "tl", "fil"];
+        const whole = await Promise.all(kept.map(tag => run([bunExe(), "alias.ts", tag], folder)));
+        const trimmed = await Promise.all(kept.map(tag => run([join(folder, "alias"), tag], folder)));
+        const resolved = whole.map(({ stdout }) => stdout.split(" ")[0]);
+        expect(resolved).toEqual(["he", "he", "sr-Latn", "sr-Latn", "fil", "fil"]);
+        expect(trimmed).toEqual(whole);
+        // The system's ICU has every language.
+        if (!isMacOS) expect(await run([join(folder, "alias"), "de"], folder)).toMatchObject({ exitCode: 70 });
+
+        // Without a list, --trim keeps the locales that the program names: an alias there is what it stands for too.
+        const named = ["build", "--compile", ...flags, ...withoutDebugInformation, "--trim", "alias-constants.ts"];
+        expect(await run([bunExe(), ...named, "--outfile", "named"], folder)).toMatchObject({ exitCode: 0 });
+        expect(await run([join(folder, "named")], folder)).toEqual(await run([bunExe(), "alias-constants.ts"], folder));
       },
     );
 

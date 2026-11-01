@@ -1905,8 +1905,9 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
         };
         await Promise.all(buildingTests.map(t => buildingFilesLimit(() => tryBesideOthers(t))));
         // The five minutes before the end of the job are left to the rest of the shard, as a bucket leaves them. A file that
-        // has failed alone too is tried once more only if that try ends before them, taking as long as the one before it.
-        const hasTimeFor = (milliseconds: number) => jobBudgetMs() - 5 * 60_000 >= milliseconds;
+        // has failed alone too has each further try only if that try ends before them: it may take as long as the one before
+        // it, and the runner waits up to fifteen seconds before it starts.
+        const hasTimeFor = (milliseconds: number) => jobBudgetMs() - 5 * 60_000 >= milliseconds + 15_000;
         for (const { testPath, failure } of failedBesideOthers) {
           const alone = await runOneTest(testPath, false, false, hasTimeFor);
           if (!alone?.ok || !isBuildkite) continue;

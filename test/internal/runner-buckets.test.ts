@@ -32,10 +32,12 @@ case "$1" in
     esac
     if [ "$fails" = once ] && [ -e "$COMMANDS.failed" ]; then fails=; echo "begins again" >> "$COMMANDS.events"
     else echo "begins" >> "$COMMANDS.events"; fi
-    # Runs until as many files run at once as the test expects, until another file has seen that, or for two seconds. It
-    # looks when all that started with it are under way, so more files at once than the test expects are counted too.
+    # Runs until as many files run at once as the test expects, or until another file has seen that. It looks when all that
+    # started with it are under way, so more files at once than the test expects are counted too. A runner that starts one
+    # file at a time never lets it see them: it gives up after twenty seconds, far more than a loaded machine takes to
+    # start three processes.
     tries=0
-    while [ "\${RUNS_BESIDE:-0}" -gt 0 ] && [ ! -e "$COMMANDS.together" ] && [ "$tries" -lt 40 ]; do
+    while [ "\${RUNS_BESIDE:-0}" -gt 0 ] && [ ! -e "$COMMANDS.together" ] && [ "$tries" -lt 400 ]; do
       sleep 0.05
       tries=$((tries + 1))
       underWay=$(( $(grep -c begins "$COMMANDS.events") - $(grep -c ends "$COMMANDS.events") ))

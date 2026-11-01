@@ -7,7 +7,6 @@
 bundler/esbuild/css.test.ts
 bundler/metafile.test.ts
 bundler/resolver/cache-invalidation.test.ts
-bundler/transpiler/decorators.test.ts
 bundler/transpiler/property.test.ts
 bundler/transpiler/runtime-transpiler.test.ts
 bundler/transpiler/template-literal.test.ts

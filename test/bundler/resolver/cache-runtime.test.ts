@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, promises as fs, symlinkSync, writeFileSync } from "fs";
+import { existsSync, promises as fs, mkdirSync, symlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { createRequire } from "module";
 import * as path from "path";
@@ -180,7 +180,10 @@ describe.concurrent("a file or package created after the resolver read its direc
     expect(req("warm")).toBe("warm");
     expect(() => req("late-pkg")).toThrow("Cannot find module 'late-pkg'");
     mkdirSync(path.join(root, "node_modules", "late-pkg"));
-    writeFileSync(path.join(root, "node_modules", "late-pkg", "package.json"), `{ "name": "late-pkg", "main": "lib.js" }`);
+    writeFileSync(
+      path.join(root, "node_modules", "late-pkg", "package.json"),
+      `{ "name": "late-pkg", "main": "lib.js" }`,
+    );
     writeFileSync(path.join(root, "node_modules", "late-pkg", "lib.js"), `module.exports = "late";`);
     expect(req("late-pkg")).toBe("late");
   });

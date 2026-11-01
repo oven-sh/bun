@@ -984,6 +984,10 @@ pub(super) struct Repl<'a> {
     // POSIX: the REPL's own stdin raw-mode state
     #[cfg(unix)]
     tty_state: tty::State,
+
+    // POSIX: the SIGINT action from before the VM ran. It restores the terminal, and each promise wait ends with it.
+    #[cfg(unix)]
+    sigint_at_start: bun_sys::posix::Sigaction,
 }
 
 impl<'a> Repl<'a> {
@@ -1012,6 +1016,15 @@ impl<'a> Repl<'a> {
             original_windows_mode: None,
             #[cfg(unix)]
             tty_state: tty::State::new(),
+            #[cfg(unix)]
+            sigint_at_start: {
+                // SAFETY: all-zero is a valid `sigaction` (SIG_DFL), and a null `act` only reads the current one.
+                unsafe {
+                    let mut at_start: bun_sys::posix::Sigaction = bun_core::ffi::zeroed();
+                    bun_sys::posix::sigaction(libc::SIGINT, core::ptr::null(), &raw mut at_start);
+                    at_start
+                }
+            },
         }
     }
 
@@ -1133,14 +1146,13 @@ impl<'a> Repl<'a> {
                 .tty_state
                 .set_mode(0, tty::Mode::Raw, tty::SetAttrWhen::Drain);
 
-            // Restore default SIGINT handling
-            // SAFETY: zeroed `sigaction` is a valid empty mask + null restorer; SIG_DFL
-            // restores the default disposition. `act` is valid for the duration of the call.
+            // SAFETY: `sigint_at_start` is the action that `sigaction` wrote in `init`.
             unsafe {
-                let mut act: bun_sys::posix::Sigaction = bun_core::ffi::zeroed();
-                act.sa_sigaction = libc::SIG_DFL;
-                act.sa_flags = 0;
-                bun_sys::posix::sigaction(libc::SIGINT, &raw const act, core::ptr::null_mut());
+                bun_sys::posix::sigaction(
+                    libc::SIGINT,
+                    &raw const self.sigint_at_start,
+                    core::ptr::null_mut(),
+                );
             }
         }
     }

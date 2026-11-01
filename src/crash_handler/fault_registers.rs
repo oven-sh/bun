@@ -71,6 +71,11 @@ fn read(context: *mut c_void) -> ([usize; NAMES.len()], usize, usize) {
     for (register, value) in registers.iter_mut().zip(machine.regs) {
         *register = value as usize;
     }
+    // Signed from the first instruction of a function that signs to its first call. Between calls it may hold anything.
+    let link = bun_core::debug::strip_return_address_signature(registers[30]);
+    if may_be_address(link) {
+        registers[30] = link;
+    }
     (registers, machine.pc as usize, sp)
 }
 
@@ -91,9 +96,12 @@ impl core::fmt::Write for Line {
     }
 }
 
+fn may_be_address(value: usize) -> bool {
+    (1 << 32..1 << 48).contains(&value)
+}
+
 fn write_value(line: &mut Line, value: usize, sp: usize) -> core::fmt::Result {
-    let may_be_address = (1 << 32..1 << 48).contains(&value);
-    if !may_be_address {
+    if !may_be_address(value) {
         write!(line, "{value:#x}")
     } else if let Some(offset) = crate::compiled_frames::offset_in_code(value) {
         write!(line, "code+{offset:#x}")

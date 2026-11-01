@@ -925,6 +925,27 @@ const projects: Record<string, Record<string, string>> = {
         console.log(require("node:path") === require("path"), (await import("node:path")).default === require(hidden("path")));
       });`,
   },
+  // The loader takes every step of the import() before the require() returns, and what it made for the two modules goes when the test has ended.
+  "what an import() loaded inside a require() is when later tests load it again": {
+    ...state,
+    "helpers/running.js": `import { bump } from "./state.js";\nexport const loaded = import("./beside.js");\nexport const first = bump();`,
+    "helpers/beside.js": `import { bump } from "./state.js";\nexport const second = bump();\nlet calls = 0;\nexport function call() { return ++calls; }`,
+    "again.test.js": `${head}
+      test("a require() of a module that calls import() while it runs", async () => {
+        const running = require("./helpers/running.js");
+        const beside = await running.loaded;
+        console.log("the first load", running.first, beside.second, beside.call());
+      });
+      test("a later test loads both again", async () => {
+        const running = require("./helpers/running.js");
+        const beside = await import("./helpers/beside.js");
+        console.log("a later load", running.first, beside.second, beside.call(), beside === (await running.loaded), beside === require("./helpers/beside.js"));
+      });
+      test("the file that both import has run once", async () => {
+        const { count } = await import("./helpers/state.js");
+        console.log("the shared file", count, require("./helpers/state.js").bump(), require("./helpers/beside.js").call());
+      });`,
+  },
 };
 
 async function runTests(directory: string, words: string | undefined, ...flags: string[]) {

@@ -252,7 +252,7 @@ fn vm_console(global: &JSGlobalObject) -> *mut ConsoleObject {
 /// box. Consolidates the open-coded `&mut *vm_console(global)` deref at the
 /// `Bun__ConsoleObject__*` FFI entry points (each is a top-level JS-thread
 /// host call, so the `&mut` is exclusive for the duration). Callers that need
-/// to interleave borrows across a deferred guard (`message_with_type_and_level_`)
+/// to interleave borrows of the console (`message_with_type_and_level_`)
 /// keep using the raw [`vm_console`] pointer instead.
 #[inline]
 unsafe fn vm_console_mut<'a>(global: &JSGlobalObject) -> &'a mut ConsoleObject {
@@ -353,6 +353,14 @@ fn throw_for_removed_table_printer(global: &JSGlobalObject) -> jsc::JsError {
     jsc::JsError::Thrown
 }
 
+/// The last step of <https://console.spec.whatwg.org/#group>.
+#[inline]
+fn open_group(global: &JSGlobalObject) {
+    let console = vm_console(global);
+    // SAFETY: see [`vm_console`]; a field write on the JS thread, no `&mut ConsoleObject`.
+    unsafe { (*console).default_indent = (*console).default_indent.saturating_add(1) };
+}
+
 /// <https://console.spec.whatwg.org/#formatter>
 #[crate::host_call]
 pub extern "C" fn message_with_type_and_level(
@@ -382,33 +390,21 @@ fn message_with_type_and_level_(
     len: usize,
 ) -> JsResult<()> {
     let console: *mut ConsoleObject = vm_console(global);
-    // `defer console.default_indent +|= is_start_group as u16;`
-    // Capture the raw pointer (Copy) by `move` so no borrow of the local is
-    // held across the body; dereference only at scope-exit.
     let is_start_group = matches!(
         message_type,
         MessageType::StartGroup | MessageType::StartGroupCollapsed
     );
-    let _indent_guard = scopeguard::guard(console, move |console| {
-        // SAFETY: see `vm_console` — points at the live boxed
-        // `ConsoleObject` for this VM; JS-thread-only.
-        unsafe {
-            (*console).default_indent = (*console)
-                .default_indent
-                .saturating_add(is_start_group as u16);
-        }
-    });
 
-    if is_start_group && len == 0 {
+    if is_start_group {
         // No label prints nothing, so return before the before-print hook of
         // `bun test` runs. An explicit `undefined` is a label and is printed.
-        return Ok(());
-    }
-
-    if message_type == MessageType::EndGroup {
+        if len == 0 {
+            open_group(global);
+            return Ok(());
+        }
+    } else if message_type == MessageType::EndGroup {
         // SAFETY: set-once `VirtualMachine.console` box — no other
-        // borrow of the console is live yet; the deferred `_indent_guard`
-        // captured only the raw pointer.
+        // borrow of the console is live yet.
         let c = unsafe { vm_console_mut(global) };
         c.default_indent = c.default_indent.saturating_sub(1);
         return Ok(());
@@ -432,8 +428,7 @@ fn message_with_type_and_level_(
             "Assertion failed\n"
         };
         // SAFETY: no other borrow of the console is live in this
-        // early-return arm (the deferred `_indent_guard` only holds the raw
-        // pointer, not a reference).
+        // early-return arm.
         let ew = unsafe { vm_console_mut(global) }.error_writer();
         let _ = ew.write_all(text.as_bytes());
         let _ = ew.flush();
@@ -446,10 +441,7 @@ fn message_with_type_and_level_(
         Output::enable_ansi_colors_stdout()
     };
 
-    // Snapshot before borrowing the writer; `default_indent` is not mutated
-    // again until the deferred `_indent_guard` runs on scope exit, so the two
-    // later reads (FormatOptions / TablePrinter) can use this cached copy
-    // instead of re-dereferencing the raw `console` pointer.
+    // Formatting can re-enter `console.group()`, so `open_group` reads the field again.
     // SAFETY: see [`vm_console`] — single-JS-thread; no other `&mut` is live.
     let default_indent = unsafe { vm_console_mut(global) }.default_indent;
 
@@ -556,6 +548,10 @@ fn message_with_type_and_level_(
             writer,
             print_options,
         )?;
+        // `Formatter::print_error` returns Ok when a property of an Error label throws.
+        if is_start_group && global.has_exception() {
+            return Err(jsc::JsError::Thrown);
+        }
     } else if message_type == MessageType::Log {
         // SAFETY: see [`vm_console`]. `writer` (above) is dead in this arm —
         // the only later uses are in the mutually-exclusive `Trace` block, and
@@ -568,6 +564,10 @@ fn message_with_type_and_level_(
     if message_type == MessageType::Trace {
         write_trace(writer, global);
         let _ = writer.flush();
+    }
+
+    if is_start_group {
+        open_group(global);
     }
 
     Ok(())

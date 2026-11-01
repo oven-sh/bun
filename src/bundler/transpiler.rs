@@ -1568,6 +1568,7 @@ impl<'a> Transpiler<'a> {
                 opts.features.own_test_globals = self.options.own_test_globals;
                 opts.features.minify_syntax = self.options.minify_syntax;
                 opts.features.minify_identifiers = self.options.minify_identifiers;
+                opts.features.minify_keep_names = self.options.keep_names;
                 opts.features.dead_code_elimination = self.options.dead_code_elimination;
                 opts.features.remove_cjs_module_wrapper = this_parse.remove_cjs_module_wrapper;
                 // `Features.bundler_feature_flags` is currently owned

@@ -303,9 +303,15 @@ describe("names of digests", () => {
     expect(crypto.pbkdf2Sync("password", "salt", 1, 8, "blake2b256").toString("hex")).toBe("2ae662d8acc3fd98");
   });
 
-  it.each(functions)("that %s() does not know", (_, call) => {
+  it.each(functions)("that %s() does not know", (label, call) => {
     for (const name of ["nope", "", "sha256 ", "sha-257", "rsa-sha", "sha256WithRSA", "\u017fha256"]) {
-      expect(() => call(name)).toThrow();
+      expect(() => call(name)).toThrow(
+        label === "createHash"
+          ? expect.objectContaining({ name: "Error", message: "Digest method not supported" })
+          : label === "hash"
+            ? expect.objectContaining({ name: "Error", message: `Digest method ${name} is not supported` })
+            : expect.objectContaining({ name: "TypeError", code: "ERR_CRYPTO_INVALID_DIGEST" }),
+      );
     }
   });
 

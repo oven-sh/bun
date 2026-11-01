@@ -79,12 +79,24 @@ describe("crypto.hash", () => {
         bunExe(),
         "-e",
         `ArrayBuffer.isView = () => true;
+        const { hash } = require("node:crypto");
         for (const input of [{}, 5, [], new ArrayBuffer(8), null]) {
-          try {
-            console.log(require("node:crypto").hash("sha256", input));
-          } catch (e) {
-            console.log(e.code);
+          for (const options of [undefined, { outputLength: 0 }]) {
+            try {
+              console.log(hash(options ? "shake128" : "sha256", input, options));
+            } catch (e) {
+              console.log(e.code);
+            }
           }
+        }
+        // What is replaced later is not asked.
+        ArrayBuffer.isView = () => false;
+        String.prototype.toLowerCase = () => "buffer";
+        console.log(hash("sha1", Buffer.from("abc")));
+        try {
+          hash("sha1", "abc", "nope");
+        } catch (e) {
+          console.log(e.code);
         }`,
       ],
       env: bunEnv,
@@ -92,7 +104,7 @@ describe("crypto.hash", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: "ERR_INVALID_ARG_TYPE\n".repeat(5),
+      stdout: "ERR_INVALID_ARG_TYPE\n".repeat(10) + "a9993e364706816aba3e25717850c26c9cd0d89d\nERR_INVALID_ARG_VALUE\n",
       stderr: "",
       exitCode: 0,
     });

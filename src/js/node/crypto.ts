@@ -123,6 +123,9 @@ const {
 } = require("internal/validators");
 const { deprecate, getDeprecationWarningEmitter } = require("internal/util/deprecate");
 
+const ArrayBufferIsView = ArrayBuffer.isView;
+const StringPrototypeToLowerCase = String.prototype.toLowerCase;
+
 const kHandle = Symbol("kHandle");
 
 type CryptoData = $Node.CryptoData;
@@ -235,15 +238,15 @@ const maybeEmitDeprecationWarning = getDeprecationWarningEmitter(
   undefined,
   (algorithm: string) => {
     if (algorithm.length !== 8 && algorithm.length !== 9) return false;
-    const normalized = algorithm.toLowerCase().replace("-", "");
-    return normalized === "shake128" || normalized === "shake256";
+    const name = StringPrototypeToLowerCase.$call(algorithm);
+    return name === "shake128" || name === "shake256" || name === "shake-128" || name === "shake-256";
   },
 );
 
 // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/crypto/hash.js#L323-L391
 crypto_exports.hash = function hash(algorithm, input, options) {
   validateString(algorithm, "algorithm");
-  if (typeof input !== "string" && !ArrayBuffer.isView(input)) {
+  if (typeof input !== "string" && !ArrayBufferIsView(input)) {
     throw $ERR_INVALID_ARG_TYPE("input", ["Buffer", "TypedArray", "DataView", "string"], input);
   }
   if (options === undefined) {
@@ -273,7 +276,7 @@ crypto_exports.hash = function hash(algorithm, input, options) {
     // If the encoding is invalid, normalizeEncoding() returns undefined.
     if (normalized === undefined) {
       // normalizeEncoding() doesn't handle 'buffer'.
-      if (outputEncoding.toLowerCase() === "buffer") {
+      if (StringPrototypeToLowerCase.$call(outputEncoding) === "buffer") {
         normalized = "buffer";
       } else {
         throw $ERR_INVALID_ARG_VALUE("outputEncoding", outputEncoding);
@@ -371,7 +374,9 @@ function createVerify(algorithm: string, options?: $Node.WritableOptions): $Node
 
 crypto_exports.createVerify = createVerify;
 
-function Hash(this: $Node.Hash, algorithm: string | $Node.NativeHash, options?: $Node.TransformOptions): void {
+type HashOptions = $Node.TransformOptions & { outputLength?: number; functionName?: unknown; customization?: unknown };
+
+function Hash(this: $Node.Hash, algorithm: string | $Node.NativeHash, options?: HashOptions): void {
   if (!new.target) {
     return new Hash(algorithm, options) as any;
   }

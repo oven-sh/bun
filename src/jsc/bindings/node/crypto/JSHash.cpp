@@ -328,6 +328,12 @@ JSC_DEFINE_HOST_FUNCTION(jsOneShotDigest, (JSC::JSGlobalObject * lexicalGlobalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
     ncrypto::ClearErrorOnReturn clearErrorOnReturn;
 
+    // crypto.hash() asked ArrayBuffer.isView(), which can be replaced before node:crypto is loaded.
+    JSValue inputValue = callFrame->argument(1);
+    if (!inputValue.isString() && !inputValue.inherits<JSArrayBufferView>()) [[unlikely]] {
+        return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "input"_s, "string or an instance of Buffer, TypedArray, or DataView"_s, inputValue);
+    }
+
     WTF::String algorithm = callFrame->argument(0).toWTFString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -395,14 +401,8 @@ JSC_DEFINE_HOST_FUNCTION(jsOneShotDigest, (JSC::JSGlobalObject * lexicalGlobalOb
         RELEASE_AND_RETURN(scope, StringBytes::encode(lexicalGlobalObject, scope, bytes.first(outputLength), encoding));
     };
 
-    JSValue inputValue = callFrame->argument(1);
     if (!inputValue.isString()) {
-        // crypto.hash() asked ArrayBuffer.isView(), which anyone can replace.
-        auto* view = dynamicDowncast<JSArrayBufferView>(inputValue);
-        if (!view) [[unlikely]] {
-            return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "input"_s, "string or an instance of Buffer, TypedArray, or DataView"_s, inputValue);
-        }
-        return digest(view->span());
+        return digest(uncheckedDowncast<JSArrayBufferView>(inputValue)->span());
     }
 
     auto inputView = asString(inputValue)->view(lexicalGlobalObject);

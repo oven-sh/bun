@@ -230,7 +230,7 @@ const bashVersion = await (async () => {
   if (!bash) return 0;
   await using proc = Bun.spawn({ cmd: [bash, "-c", 'echo "${BASH_VERSINFO[0]} ${BASH_VERSINFO[1]}"'], stdout: "pipe" });
   const [major, minor] = (await proc.stdout.text()).trim().split(" ").map(Number);
-  return major * 100 + minor;
+  return Number.isInteger(major) && Number.isInteger(minor) ? major * 100 + minor : 0;
 })();
 
 // Each name that `script` reads, as not set in the environment. A row reads a name as not set until the row sets it.

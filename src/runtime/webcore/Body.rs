@@ -1035,7 +1035,7 @@ impl Value {
             ));
         }
 
-        Ok(Value::Blob(Blob::get::<true, false>(global_this, value)?))
+        Ok(Value::Blob(Blob::from_js_move(global_this, value)?))
     }
 
     pub(crate) fn from_readable_stream_without_lock_check(
@@ -1232,6 +1232,12 @@ impl Value {
             }
             _ => Blob::default(),
         }
+    }
+
+    /// Spends a string body as that string. `None` for any other body, which is left as it is.
+    pub(crate) fn use_as_string(&mut self) -> Option<BunString> {
+        matches!(self, Value::WTFStringImpl(_))
+            .then(|| BunString::adopt_wtf_impl(self.take_wtf_string().into_raw()))
     }
 
     /// Moves the string out of the `WTFStringImpl` arm and leaves `Used`.

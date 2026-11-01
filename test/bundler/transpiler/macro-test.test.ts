@@ -812,7 +812,7 @@ describe("macro VM env loader", () => {
   });
 });
 
-// A macro VM and a `Bun.Transpiler` each have their own resolver. Each resolver reads NODE_PATH from the loader of its own transpiler.
+// A macro VM and a `Bun.Transpiler` each have their own resolver. Each gets NODE_PATH when its own transpiler loads its env.
 describe("NODE_PATH", () => {
   const specifierSource = `import { value } from "macro-package" with { type: "macro" }; console.log(value());`;
   const files = {
@@ -840,6 +840,12 @@ describe("NODE_PATH", () => {
       cmd: ["build", "./entry.ts", "--target=bun"],
       expected: bundled,
       dotenv: true,
+    },
+    // A parse thread of the bundler resolves the macro with its copy of the build's resolver.
+    {
+      name: "bun build, the macro is the package",
+      cmd: ["build", "./specifier.ts", "--target=bun"],
+      expected: transformed,
     },
     { name: "Bun.build", cmd: ["build.ts"], expected: bundled },
     { name: "bun run, caller is an imported module", cmd: ["imports-entry.ts"], expected: "from NODE_PATH" },

@@ -1590,6 +1590,62 @@ describe("dangling symlinks in node_modules", () => {
       } catch {}
     }
   });
+
+  // The env load of the VM stops before the `.env` files when the cwd cannot be listed. The process env is loaded by then.
+  it.skipIf(!canTriggerEACCES)("bun test resolves from NODE_PATH in a cwd that it cannot list", async () => {
+    using dir = tempDir("node-path-unreadable-cwd", {
+      "modules/node-path-only/index.js": `module.exports = "NODE_PATH works";`,
+      "app/a.test.js": `
+        import { expect, test } from "bun:test";
+
+        test("NODE_PATH", () => {
+          expect(require("node-path-only")).toBe("NODE_PATH works");
+        });
+      `,
+      "work/.keep": "",
+    });
+    const root = String(dir);
+    const work = join(root, "work");
+    const testFile = join(root, "app", "a.test.js");
+    const packageDir = join(root, "modules", "node-path-only");
+
+    const cmd = [bunExe(), "test", testFile];
+    if (canUseRunuser) {
+      // Let `nobody` traverse and read everything except the cwd.
+      for (const p of [
+        root,
+        join(root, "app"),
+        testFile,
+        join(root, "modules"),
+        packageDir,
+        join(packageDir, "index.js"),
+      ]) {
+        chmodSync(p, 0o777);
+      }
+      cmd.unshift("runuser", "-u", "nobody", "--");
+    }
+    // Execute-only: the spawn can chdir into it, but listing it fails.
+    chmodSync(work, 0o111);
+
+    try {
+      await using proc = Bun.spawn({
+        cmd,
+        env: { ...bunEnv, NODE_PATH: join(root, "modules") },
+        cwd: work,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr, stdout).toContain(" 1 pass");
+      expect(exitCode).toBe(0);
+    } finally {
+      // Ensure tempDir cleanup can delete work/.keep.
+      try {
+        chmodSync(work, 0o755);
+      } catch {}
+    }
+  });
 }
 
 describe("resolving external URL specifiers with non-ASCII characters", () => {

@@ -382,7 +382,10 @@ test.concurrent("Bun.serve({ app }) reports an unsupported app router file", asy
 });
 
 // Each graph of an app has its own transpiler. Their resolvers read NODE_PATH, as `bun build` does.
-test.concurrent("an app resolves a package from NODE_PATH in every graph and in a macro", async () => {
+test.concurrent.each([
+  ["Bun.serve({ app })", ["fixture.ts"]],
+  ["bun build --app", ["build", "--app", "./app.ts"]],
+])("%s resolves a package from NODE_PATH in every graph and in a macro", async (_, args) => {
   using dir = tempDir("bake-app-node-path", {
     "vendor/dep/index.ts": `export const dep = "from NODE_PATH";\n`,
     "client.ts": `import { dep } from "dep";\nconsole.log("client " + dep);\n`,
@@ -423,28 +426,31 @@ test.concurrent("an app resolves a package from NODE_PATH in every graph and in 
       await server.stop(true);
     `,
   });
-  const run = async (...args: string[]) => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), ...args],
-      env: { ...bunEnv, NODE_PATH: join(String(dir), "vendor") },
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode };
-  };
+  const isBuild = args[0] === "build";
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    env: {
+      ...bunEnv,
+      NODE_PATH: join(String(dir), "vendor"),
+      // `bun build --app` exits with its graph transpilers alive, which LeakSanitizer reports.
+      ...(isBuild && { ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":") }),
+    },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const rendered = "server from NODE_PATH; ssr from NODE_PATH; macro from NODE_PATH";
 
-  // The dev server also prints a "Bundled page" line.
-  const dev = await run("fixture.ts");
-  expect(dev.stdout.split("\n"), dev.stderr).toContain("200 " + rendered);
-  expect(dev.exitCode).toBe(0);
-
-  const build = await run("build", "--app", "./app.ts");
-  const html = await Bun.file(join(String(dir), "dist", "index.html"))
-    .text()
-    .catch(() => build.stdout + build.stderr);
-  expect(html).toBe(rendered);
-  expect(build.exitCode).toBe(0);
+  if (isBuild) {
+    const html = await Bun.file(join(String(dir), "dist", "index.html"))
+      .text()
+      .catch(() => stdout + stderr);
+    expect(html).toBe(rendered);
+  } else {
+    // The dev server also prints a "Bundled page" line.
+    expect(stdout.split("\n"), stderr).toContain("200 " + rendered);
+  }
+  expect(exitCode).toBe(0);
 });

@@ -5579,26 +5579,38 @@ impl VirtualMachine {
             .map(|graph| graph.base_public_path_with_default_suffix())
             .filter(|root| !source_to_use.starts_with(root));
         let resolver = &mut self.transpiler.resolver;
-        let lookup = |resolver: &mut bun_resolver::Resolver<'_>, source_dir: &[u8]| match resolver
-            .resolve_and_auto_install(source_dir, normalized_specifier, import_kind, global_cache)
-        {
-            ResultUnion::Success(found) => Ok(Ok(found)),
-            ResultUnion::Failure(error) => Ok(Err(error)),
-            ResultUnion::Pending(_) | ResultUnion::NotFound => Err(()),
+        let lookup = |resolver: &mut bun_resolver::Resolver<'_>, source_dir: &[u8]| {
+            resolver.resolve_and_auto_install(
+                source_dir,
+                normalized_specifier,
+                import_kind,
+                global_cache,
+            )
         };
+        let is_miss =
+            |found: &ResultUnion| matches!(found, ResultUnion::Pending(_) | ResultUnion::NotFound);
         let found = match root {
             None => lookup(resolver, source_to_use),
             // One check on disk when both miss.
-            Some(root) => {
-                resolver.with_deferred_miss_check(source_to_use, normalized_specifier, |resolver| {
-                    lookup(resolver, source_to_use).or_else(|()| lookup(resolver, root))
+            Some(root) => resolver
+                .with_deferred_miss_check(source_to_use, normalized_specifier, |resolver| {
+                    let from_importer = lookup(resolver, source_to_use);
+                    if !is_miss(&from_importer) {
+                        return Ok(from_importer);
+                    }
+                    let from_root = lookup(resolver, root);
+                    if is_miss(&from_root) {
+                        Err(())
+                    } else {
+                        Ok(from_root)
+                    }
                 })
-            }
+                .unwrap_or(ResultUnion::NotFound),
         };
         let result: bun_resolver::Result = match found {
-            Ok(Ok(found)) => found,
-            Ok(Err(error)) => return Err(error.into()),
-            Err(()) => {
+            ResultUnion::Success(found) => found,
+            ResultUnion::Failure(error) => return Err(error.into()),
+            ResultUnion::Pending(_) | ResultUnion::NotFound => {
                 match self.resolve_chai_next_to_vitest(
                     normalized_specifier,
                     source_to_use,

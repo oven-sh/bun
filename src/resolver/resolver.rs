@@ -811,7 +811,14 @@ impl Drop for ReplayGuard {
 /// Whether this thread replays a lookup, which reads the caches and changes nothing. One load while no thread replays.
 #[inline(always)]
 pub(crate) fn replaying() -> bool {
-    ARMED_REPLAYS.load(core::sync::atomic::Ordering::Relaxed) != 0 && !REPLAY.get().is_null()
+    ARMED_REPLAYS.load(core::sync::atomic::Ordering::Relaxed) != 0 && replaying_on_this_thread()
+}
+
+/// Out of line: inlined, the read of the thread-local runs in front of every record.
+#[cold]
+#[inline(never)]
+fn replaying_on_this_thread() -> bool {
+    !REPLAY.get().is_null()
 }
 
 /// The cached listing of `dir` has no entry `name`. Called from `DirEntry::get`.
@@ -2310,6 +2317,7 @@ impl<'a> Resolver<'a> {
     }
 
     /// Runs `attempt`. While it misses: check on disk what the miss read, and run it again if that was stale.
+    #[inline]
     fn retry_while_stale<T>(
         &mut self,
         after_miss: AfterMiss,
@@ -2320,13 +2328,35 @@ impl<'a> Resolver<'a> {
     ) -> T {
         let log_mark = self.log_mark();
         let esm_failure = self.esm_failure;
-        let mut result = attempt(self);
+        let result = attempt(self);
+        if !missed(&result) || after_miss == AfterMiss::TrustCache || replaying() {
+            return result;
+        }
+        self.retry_after_miss(
+            result,
+            (log_mark, esm_failure),
+            source_dir,
+            import_path,
+            attempt,
+            missed,
+        )
+    }
+
+    /// The part of `retry_while_stale` that a lookup which finds its module never runs.
+    #[cold]
+    #[inline(never)]
+    fn retry_after_miss<T>(
+        &mut self,
+        mut result: T,
+        (log_mark, esm_failure): ((usize, u32, u32), Option<crate::package_json::Status>),
+        source_dir: &[u8],
+        import_path: &[u8],
+        mut attempt: impl FnMut(&mut Self) -> T,
+        missed: impl Fn(&T) -> bool,
+    ) -> T {
         let mut reread: Vec<u64> = Vec::new();
         let mut earlier_msgs: Vec<bun_ast::Msg> = Vec::new();
         for _ in 0..Self::MAX_RECHECKS {
-            if !missed(&result) || after_miss == AfterMiss::TrustCache || replaying() {
-                break;
-            }
             let stale = self.recheck_after_miss(source_dir, import_path, &mut reread, |this| {
                 !missed(&attempt(this))
             });
@@ -2340,6 +2370,9 @@ impl<'a> Resolver<'a> {
             self.take_log(log_mark, &mut earlier_msgs);
             self.esm_failure = esm_failure;
             result = attempt(self);
+            if !missed(&result) {
+                break;
+            }
         }
         if !earlier_msgs.is_empty() && missed(&result) {
             self.put_back_log(log_mark.0, earlier_msgs);

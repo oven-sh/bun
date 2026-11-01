@@ -450,8 +450,7 @@ describe("node:http", () => {
   });
 
   describe("request", () => {
-    function runTest(done: Function, callback: (server: Server, port: number, done: (err?: Error) => void) => void) {
-      let timer;
+    function runTest(done: Function, callback: (server: Server, port: number, done: (err?: unknown) => void) => void) {
       const server = createServer((req, res) => {
         if (Object.getPrototypeOf(req.headers) !== Object.prototype) {
           // Like Node.js, req.headers is a plain object.
@@ -462,7 +461,7 @@ describe("node:http", () => {
           if (reqUrl.pathname === "/redirect") {
             // Temporary redirect
             res.writeHead(301, {
-              Location: `http://localhost:${(server as any).port}/redirected`,
+              Location: `http://localhost:${(server.address() as AddressInfo).port}/redirected`,
             });
             res.end("Got redirect!\n");
             return;
@@ -492,22 +491,8 @@ describe("node:http", () => {
             res.end("Hello World");
             return;
           }
-          if (reqUrl.pathname.includes("timeout")) {
-            if (timer) clearTimeout(timer);
-            req.on("timeout", () => {
-              console.log("req timeout");
-            });
-            res.on("timeout", () => {
-              console.log("res timeout");
-            });
-            timer = setTimeout(() => {
-              if (res.closed) {
-                return;
-              }
-
-              res.end("Hello World");
-              timer = null;
-            }, 3000).unref();
+          if (reqUrl.pathname === "/timeout") {
+            // The client owns timeout cleanup; this route must never send a response.
             return;
           }
           if (reqUrl.pathname === "/pathTest") {
@@ -584,12 +569,11 @@ describe("node:http", () => {
           res.end("Hello World");
         }
       });
-      server.listen({ port: 0 }, (_?: any, __?: any, port?: number) => {
-        var _done = (...args) => {
-          server.close();
-          done(...args);
+      server.listen({ port: 0 }, () => {
+        const _done = (err?: unknown) => {
+          server.close(closeError => done(err ?? closeError));
         };
-        callback(server, port!, _done);
+        callback(server, (server.address() as AddressInfo).port, _done);
       });
     }
 
@@ -745,40 +729,76 @@ describe("node:http", () => {
     });
 
     it("should allow us to set timeout with request.setTimeout or `timeout` in options", done => {
-      runTest(done, (server, serverPort, done) => {
-        const createDone = createDoneDotAll(done);
-        const req1Done = createDone();
-        const req2Done = createDone();
-
-        const req1 = request(
-          {
-            host: "localhost",
-            port: serverPort,
-            path: "/timeout",
-            timeout: 500,
-          },
-          res => {
-            req1Done(new Error("Should not have received response"));
-          },
-        );
-        req1.on("timeout", () => req1Done());
-
-        const req2 = request(
-          {
-            host: "localhost",
-            port: serverPort,
-            path: "/timeout",
-          },
-          res => {
-            req2Done(new Error("Should not have received response"));
-          },
-        );
-
-        req2.setTimeout(500, () => {
-          req2Done();
-        });
-        req1.end();
-        req2.end();
+      runTest(done, async (server, serverPort, done) => {
+        const requests: {
+          req: http.ClientRequest;
+          reason: Error;
+          events: string[];
+          errors: Error[];
+          destroyedAtTimeout: boolean[];
+          closed: Promise<void>;
+        }[] = [];
+        let failure;
+        try {
+          for (const useOptions of [true, false]) {
+            const reason = new Error(useOptions ? "options timeout cleanup" : "setTimeout cleanup");
+            const req = request({
+              host: "localhost",
+              port: serverPort,
+              path: "/timeout",
+              ...(useOptions ? { timeout: 500 } : {}),
+            });
+            const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
+            const state = {
+              req,
+              reason,
+              events: [] as string[],
+              errors: [] as Error[],
+              destroyedAtTimeout: [] as boolean[],
+              closed,
+            };
+            requests.push(state);
+            req.on("socket", () => state.events.push("socket"));
+            req.on("response", res => {
+              state.events.push("response");
+              res.resume();
+              req.destroy(reason);
+            });
+            req.on("error", error => {
+              state.events.push("error");
+              state.errors.push(error);
+            });
+            req.once("close", () => {
+              state.events.push("close");
+              onClose();
+            });
+            const onTimeout = () => {
+              state.events.push("timeout");
+              state.destroyedAtTimeout.push(req.destroyed);
+              req.destroy(reason);
+            };
+            if (useOptions) req.on("timeout", onTimeout);
+            else req.setTimeout(500, onTimeout);
+            req.end();
+          }
+          // Timeout only notifies. Settle both explicit destroys before assertions or server teardown.
+          await Promise.all(requests.map(({ closed }) => closed));
+          for (const { req, reason, events, errors, destroyedAtTimeout } of requests) {
+            expect(events).toEqual(["socket", "timeout", "error", "close"]);
+            expect(destroyedAtTimeout).toEqual([false]);
+            expect(errors).toHaveLength(1);
+            expect(errors[0]).toBe(reason);
+            expect(req.destroyed).toBe(true);
+          }
+        } catch (error) {
+          failure = error;
+        } finally {
+          for (const { req, reason } of requests) {
+            if (!req.destroyed) req.destroy(reason);
+          }
+          await Promise.all(requests.map(({ closed }) => closed));
+          done(failure);
+        }
       });
     });
 
@@ -1183,16 +1203,30 @@ describe("node:http", () => {
       });
     });
 
-    it("should emit a socket event when connecting", async done => {
-      runTest(done, async (server, serverPort, done) => {
+    it("should emit a socket event when connecting", done => {
+      runTest(done, (server, serverPort, done) => {
         const req = request(`http://localhost:${serverPort}`, {});
-        // Destroying an in-flight request surfaces a "socket hang up" error,
-        // exactly like Node.js; swallow it so it does not leak into the next
-        // test as an unhandled error.
-        req.on("error", () => {});
-        req.on("socket", function onRequestSocket(socket) {
+        const events: string[] = [];
+        const errors: Error[] = [];
+        req.on("error", error => {
+          events.push("error");
+          errors.push(error);
+        });
+        req.on("socket", () => {
+          events.push("socket");
           req.destroy();
-          done();
+        });
+        req.once("close", () => {
+          events.push("close");
+          try {
+            expect(events).toEqual(["socket", "error", "close"]);
+            expect(errors).toHaveLength(1);
+            expect(errors[0]).toHaveProperty("code", "ECONNRESET");
+            expect(req.destroyed).toBe(true);
+            done();
+          } catch (error) {
+            done(error);
+          }
         });
         req.end();
       });

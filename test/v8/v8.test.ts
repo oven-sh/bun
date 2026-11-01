@@ -8,6 +8,7 @@ import {
   expectRssDeltaBelow,
   isASAN,
   isBroken,
+  isLinux,
   isMusl,
   isWindows,
   nodeExeMatchingAbi,
@@ -314,6 +315,76 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
       expect(() => require(join(directories.badModules, "build/Release/no_entrypoint.node"))).toThrow(
         "The module 'no_entrypoint' has no declared entry point.",
       );
+    });
+
+    it("throws ERR_DLOPEN_FAILED for an addon that registers no module and exports no entry point", () => {
+      const addon = join(directories.badModules, "build/Release/no_registration.node");
+      let error: any;
+      try {
+        process.dlopen({ exports: {} }, addon);
+      } catch (e) {
+        error = e;
+      }
+      expect({ code: error?.code, message: error?.message }).toEqual({
+        code: "ERR_DLOPEN_FAILED",
+        message: `Module did not self-register: '${addon}'.`,
+      });
+    });
+  });
+
+  // https://github.com/oven-sh/bun/issues/9785
+  describe("an addon whose only entry is the symbol node_register_module_v<ABI>", () => {
+    async function run(exe: string, ...args: string[]) {
+      await using proc = spawn({ cmd: [exe, ...args], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim(), stderr, exitCode };
+    }
+
+    it("loads with require(), with process.dlopen() and in a Worker, like in Node", async () => {
+      const fixture = join(directories.badModules, "initializer-only-fixture.js");
+      const loaded = {
+        stdout: JSON.stringify({ require: "world", dlopen: "world", worker: "world", workerExitCode: 0 }),
+        stderr: "",
+        exitCode: 0,
+      };
+      const [bun, node] = await Promise.all([run(bunExe(), fixture), run(await nodeExeMatchingAbi(), fixture)]);
+      expect(node).toEqual(loaded);
+      expect(bun).toEqual(loaded);
+    });
+
+    // Only a lazily bound ELF library can import a function that nothing defines and still be opened.
+    it.skipIf(!isLinux)("is refused when it imports a function that nothing defines", async () => {
+      const addon = join(directories.badModules, "build/Release/initializer_missing_import.node");
+      const script = `
+        try {
+          process.dlopen({ exports: {} }, ${JSON.stringify(addon)});
+          console.log("loaded");
+        } catch (e) {
+          console.log(JSON.stringify({ code: e.code, message: e.message }));
+        }`;
+      expect(await run(bunExe(), "-e", script)).toEqual({
+        stdout: JSON.stringify({
+          code: "ERR_DLOPEN_FAILED",
+          message: `Cannot load native addon ${addon}: it imports 'bun_test_symbol_that_nothing_defines', which Bun does not provide`,
+        }),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // Bun binds these imports in an ELF library only.
+    it.skipIf(!isLinux)("calls Bun's zlib through the zlib functions that Node's executable exports", async () => {
+      const addon = join(directories.badModules, "build/Release/initializer_zlib.node");
+      const text = "deflate and inflate, deflate and inflate, and the text is the same again";
+      const script = `
+        const { roundTrip } = require(${JSON.stringify(addon)});
+        const text = ${JSON.stringify(text)};
+        console.log(JSON.stringify({ zlib: roundTrip(text, false), rawWithDictionary: roundTrip(text, true) }));`;
+      expect(await run(bunExe(), "-e", script)).toEqual({
+        stdout: JSON.stringify({ zlib: text, rawWithDictionary: text }),
+        stderr: "",
+        exitCode: 0,
+      });
     });
   });
 

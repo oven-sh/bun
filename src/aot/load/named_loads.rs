@@ -286,16 +286,12 @@ impl FilesOfTests {
 }
 
 // A text that the file evaluates imports what it likes, and so does whoever gets a loader from the file.
-// The word `require` opens nothing: `require("node:path")` is as closed as an import of it. `loads_unknown_modules` says where a loader is handed about or anything else runs code
-// that nobody has seen, and `file_loads_by_unknown_path` where a loader is given a name that the build does not know.
 fn file_mentions_evaluator_or_loader(application: &Files<'_>, file: FileId) -> bool {
+    let opens = BuiltinFlags::EVALUATES_TEXT | BuiltinFlags::RUNS_UNSEEN_CODE;
     parsed_source(application, file).is_none_or(|source| {
         source.builtins.loads_unknown_modules()
-            || (source.builtins.mentioned().iter()).any(|&id| {
-                table::entry(id)
-                    .flags
-                    .contains(BuiltinFlags::EVALUATES_TEXT)
-            })
+            || (source.builtins.mentioned().iter())
+                .any(|&id| table::entry(id).flags.intersects(opens))
     })
 }
 

@@ -167,6 +167,8 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 🟡 Partially implemented. `Session` supports the `Profiler` domain (including precise coverage), `Runtime.enable` and `NodeTracing`, from both `node:inspector` and `node:inspector/promises`. After `open()`, `Session` also forwards `Debugger` configuration commands such as `Debugger.enable` and `Debugger.setBreakpointByUrl` to the inspector server. Their results, such as `breakpointId`, are not returned. Other `Session` commands such as `Runtime.evaluate` and the `HeapProfiler` domain are not implemented. `open()`, `url()`, `close()` and `waitForDebugger()` are implemented. `open()` serves the `Debugger` and `Runtime` domains and throws in workers. Missing `Network`.
 
+Disconnecting a local `Session` releases its VM's retained heap-snapshot metadata, including snapshots created by `v8.writeHeapSnapshot()`.
+
 ### [`node:repl`](https://nodejs.org/api/repl.html)
 
 🟡 Mostly implemented. `bun --interactive` starts a Node.js-compatible REPL. The REPL does not show result previews (they need V8's inspector-based side-effect-free eval). Tab-completion skips `let`/`const`/`class` bindings, and some V8-specific error-message and stack-frame wording differs.

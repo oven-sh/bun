@@ -1929,53 +1929,21 @@ impl<'a> Resolver<'a> {
         } else {
             None
         };
+        let marks = (self.log_mark(), self.esm_failure);
+        let as_written =
+            self.resolve_without_symlinks(source_dir_normalized, import_path, kind, global_cache);
         // The flag is set for what an executable compiled in place holds at the path.
-        let (tmp, is_at_source_path) = self.retry_while_stale(
-            self.after_miss(),
-            source_dir_normalized,
-            import_path,
-            |this| {
-                let as_written = this.resolve_without_symlinks(
-                    source_dir_normalized,
-                    import_path,
-                    kind,
-                    global_cache,
-                );
-                if !matches!(as_written, ResultUnion::NotFound) {
-                    return (as_written, false);
-                }
-                if let Some(path) =
-                    this.resolve_at_source_path(source_dir_normalized, import_path, kind)
-                {
-                    let at_source_path = Result {
-                        import_kind: kind,
-                        path_pair: PathPair {
-                            primary: Path::init(path),
-                            secondary: None,
-                        },
-                        ..Default::default()
-                    };
-                    return (ResultUnion::Success(at_source_path), true);
-                }
-                let Some(suffix) = css_suffix else {
-                    return (as_written, false);
-                };
-                if let Some(debug) = this.debug_logs.as_mut() {
-                    debug.add_note_fmt(format_args!(
-                        "Retrying resolution after removing the suffix {}",
-                        bstr::BStr::new(&import_path[suffix..])
-                    ));
-                }
-                let without_suffix = this.resolve_without_symlinks(
-                    source_dir_normalized,
-                    &import_path[0..suffix],
-                    kind,
-                    global_cache,
-                );
-                (without_suffix, false)
-            },
-            |(result, _): &(ResultUnion, bool)| matches!(result, ResultUnion::NotFound),
-        );
+        let (tmp, is_at_source_path) = if matches!(as_written, ResultUnion::NotFound) {
+            self.resolve_after_miss_as_written(
+                as_written,
+                marks,
+                (source_dir_normalized, import_path),
+                (kind, global_cache),
+                css_suffix,
+            )
+        } else {
+            (as_written, false)
+        };
         if is_at_source_path {
             self.extension_order = original_order;
             return tmp;
@@ -2314,6 +2282,82 @@ impl<'a> Resolver<'a> {
 
         result.module_type = module_type;
         Ok(())
+    }
+
+    /// The rest of a lookup whose first try, as written, missed: its other tries, then the check on disk.
+    #[cold]
+    #[inline(never)]
+    fn resolve_after_miss_as_written<'r>(
+        &mut self,
+        as_written: ResultUnion<'r>,
+        marks: ((usize, u32, u32), Option<crate::package_json::Status>),
+        (source_dir, import_path): (&[u8], &'r [u8]),
+        (kind, global_cache): (ast::ImportKind, GlobalCache),
+        css_suffix: Option<usize>,
+    ) -> (ResultUnion<'r>, bool) {
+        let missed = |(result, _): &(ResultUnion, bool)| matches!(result, ResultUnion::NotFound);
+        let first = self.lookups_after_as_written(
+            as_written,
+            (source_dir, import_path),
+            (kind, global_cache),
+            css_suffix,
+        );
+        if !missed(&first) || self.after_miss() == AfterMiss::TrustCache || replaying() {
+            return first;
+        }
+        self.retry_after_miss(
+            first,
+            marks,
+            source_dir,
+            import_path,
+            |this| {
+                let as_written =
+                    this.resolve_without_symlinks(source_dir, import_path, kind, global_cache);
+                if !matches!(as_written, ResultUnion::NotFound) {
+                    return (as_written, false);
+                }
+                this.lookups_after_as_written(
+                    as_written,
+                    (source_dir, import_path),
+                    (kind, global_cache),
+                    css_suffix,
+                )
+            },
+            missed,
+        )
+    }
+
+    /// What an executable compiled in place holds at the path, then a CSS URL without its query or fragment.
+    fn lookups_after_as_written<'r>(
+        &mut self,
+        as_written: ResultUnion<'r>,
+        (source_dir, import_path): (&[u8], &'r [u8]),
+        (kind, global_cache): (ast::ImportKind, GlobalCache),
+        css_suffix: Option<usize>,
+    ) -> (ResultUnion<'r>, bool) {
+        if let Some(path) = self.resolve_at_source_path(source_dir, import_path, kind) {
+            let at_source_path = Result {
+                import_kind: kind,
+                path_pair: PathPair {
+                    primary: Path::init(path),
+                    secondary: None,
+                },
+                ..Default::default()
+            };
+            return (ResultUnion::Success(at_source_path), true);
+        }
+        let Some(suffix) = css_suffix else {
+            return (as_written, false);
+        };
+        if let Some(debug) = self.debug_logs.as_mut() {
+            debug.add_note_fmt(format_args!(
+                "Retrying resolution after removing the suffix {}",
+                bstr::BStr::new(&import_path[suffix..])
+            ));
+        }
+        let without_suffix =
+            self.resolve_without_symlinks(source_dir, &import_path[0..suffix], kind, global_cache);
+        (without_suffix, false)
     }
 
     /// Runs `attempt`. While it misses: check on disk what the miss read, and run it again if that was stale.

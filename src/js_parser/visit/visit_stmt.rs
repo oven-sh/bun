@@ -2022,6 +2022,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     );
                     if let Some(relocated) = relocate.stmt {
                         data.init = Some(relocated);
+                    } else if relocate.ok && p.options.repl_mode {
+                        // `for (var i; ...)`: a "var" left here declares a second `i` inside the wrapper.
+                        data.init = None;
                     }
                 }
             }

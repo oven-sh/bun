@@ -3169,13 +3169,21 @@ impl OldModules {
     /// Deletes it on another thread. Anything that can't be deleted stays until the next `bun
     /// prune`.
     pub(crate) fn remove(&self) -> OldModulesRemoval {
+        fn delete(name: &[u8]) {
+            if let Ok(node_modules) = Dir::open(ROOT_DIR) {
+                let _ = node_modules.delete_tree(name);
+            }
+        }
         let done = Arc::new(WaitGroup::init_with_count(1));
+        if !WorkPool::get().ensure_worker() {
+            delete(&self.0);
+            done.finish();
+            return OldModulesRemoval(done);
+        }
         handle_oom(WorkPool::go(
             (self.0.clone(), Arc::clone(&done)),
             |(name, done): (Box<[u8]>, Arc<WaitGroup>)| {
-                if let Ok(node_modules) = Dir::open(ROOT_DIR) {
-                    let _ = node_modules.delete_tree(&name);
-                }
+                delete(&name);
                 done.finish();
             },
         ));

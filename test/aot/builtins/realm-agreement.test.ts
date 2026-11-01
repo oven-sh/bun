@@ -130,8 +130,7 @@ const functionsThatCanBeConstructed = [
 
 test("the table says what `new` does of every function that a program can name and construct", async () => {
   expect(JSON.parse((await runFile(functionsThatCanBeConstructed)).stdout)).toEqual({
-    // These three are written in JavaScript in the library, and the analysis goes through their bodies.
-    withoutSignature: ["Bun.$", "Bun.sql", "process.nextTick"],
+    withoutSignature: [],
     comparesMany: true,
   });
 });

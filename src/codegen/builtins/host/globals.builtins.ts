@@ -1432,6 +1432,7 @@ export default b.declarations(
   b.membersFrom("globalThis", b.staticTable("src/jsc/bindings/ZigGlobalObject.lut.txt", "bunGlobalObjectTable")),
   plainObjects.flatMap(path => b.inherits(path, "Object.prototype")),
   computedOnce.flatMap(name => b.extend(`Bun.${name}`, { mutability: "ConstantUnlessWritten" })),
+  b.constructionOfFunction("Bun.$", shellCommand),
   b.namespace(
     "Bun",
     {

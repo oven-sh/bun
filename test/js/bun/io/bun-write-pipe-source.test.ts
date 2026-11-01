@@ -4,6 +4,7 @@ import fs from "node:fs";
 import { join } from "node:path";
 
 // https://github.com/oven-sh/bun/issues/14054
+// Not in bun-write.test.js: that file is at the 5 s test limit on debug builds without these.
 (isWindows ? describe.skip : describe.concurrent)("Bun.write with a pipe source", () => {
   const resolved = (expr: string) => `process.stderr.write(String(await ${expr}))`;
   const outcome = (expr: string) =>
@@ -106,12 +107,22 @@ import { join } from "node:path";
     expect(exitCode).toBe(0);
   });
 
-  it("copies to EOF after exists() resolved the destination size to 0", async () => {
-    using dir = tempDir("bun-write-pipe-exists-first", {});
+  // A stat caches the size of the destination in the BunFile. That size is not a window.
+  it.each([
+    ["exists() on a missing file", "await file.exists()", {}],
+    ["exists() on a shorter file", "await file.exists()", { "out.txt": "short" }],
+    ["size on a shorter file", "file.size", { "out.txt": "short" }],
+    [
+      "exists() before and after the file appears",
+      'await file.exists(); await Bun.write(process.env.OUT, "short"); await file.exists()',
+      {},
+    ],
+  ])("copies to EOF after %s", async (_, stat, files) => {
+    using dir = tempDir("bun-write-pipe-stat-first", files);
     const out = join(String(dir), "out.txt");
     const { stdout, stderr, exitCode } = await sh(
       `printf 'hello world\\n' | "$BUN" -e "$SCRIPT"`,
-      `const file = Bun.file(process.env.OUT); await file.exists(); ${resolved("Bun.write(file, Bun.stdin)")}`,
+      `const file = Bun.file(process.env.OUT); ${stat}; ${resolved("Bun.write(file, Bun.stdin)")}`,
       { OUT: out },
     );
 

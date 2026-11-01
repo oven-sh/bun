@@ -485,9 +485,22 @@ impl CopyFile {
         Ok(())
     }
 
+    /// The byte budget of the capped loop. For a source with no length (a pipe, a device) a size
+    /// that a stat cached for the destination is not a window (#4930): only a narrower slice is.
+    fn loop_cap(&self, source: &Stat) -> SizeType {
+        let destination = &self.destination_file_store;
+        let stat_cached = self.offset == 0
+            && destination.seekable.is_some()
+            && destination.max_size != MAX_SIZE
+            && self.max_length >= destination.max_size;
+        if !bun_sys::S::ISREG(source.st_mode as _) && (self.max_length == 0 || stat_cached) {
+            MAX_SIZE
+        } else {
+            self.max_length
+        }
+    }
+
     fn do_read_write_loop_capped(&mut self, cap: SizeType) -> Result<(), crate::Error> {
-        // A cap of 0 is an unknown length (#4930), as in `do_copy_file_range`: copy to EOF.
-        let cap = if cap == 0 { MAX_SIZE } else { cap };
         let mut total: u64 = 0;
         match read_write_loop_capped(self.source_fd, self.destination_fd, cap, &mut total) {
             bun_sys::Result::Ok(()) => {
@@ -838,7 +851,7 @@ impl CopyFile {
 
             // A pipe or a block device. An fd with no file type (an eventfd) never reaches EOF.
             if stat.st_mode as Mode & bun_sys::S::IFMT != 0 {
-                let _ = self.do_read_write_loop_capped(self.max_length);
+                let _ = self.do_read_write_loop_capped(self.loop_cap(&stat));
                 self.do_close();
                 return;
             }
@@ -878,7 +891,10 @@ impl CopyFile {
                 } else {
                     self.read_len = copied as SizeType;
                 }
-            } else if self.do_read_write_loop_capped(self.max_length).is_err() {
+            } else if self
+                .do_read_write_loop_capped(self.loop_cap(&stat))
+                .is_err()
+            {
                 self.do_close();
                 return;
             }
@@ -922,7 +938,10 @@ impl CopyFile {
                 } else {
                     self.read_len = total_written as SizeType;
                 }
-            } else if self.do_read_write_loop_capped(self.max_length).is_err() {
+            } else if self
+                .do_read_write_loop_capped(self.loop_cap(&stat))
+                .is_err()
+            {
                 self.do_close();
                 return;
             }

@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { shapes as lastMessageShapes } from "./ipc-last-message-fixture.ts";
 
 // On Windows, when the initial uv_read_start on a subprocess stdout/stderr
 // pipe fails (observed from libuv as UV_EINVAL after a bad FileAccessInformation
@@ -102,6 +103,10 @@ try {
 // first n of them through. FAIL_EPOLL_CTL=pidfd-and-writer-add fails those and
 // what no mode fails, which is nearer to what running out of watches does.
 //
+// FAIL_EPOLL_CTL=pidfd-add-after-exit waits for the child to exit and then fails
+// the EPOLL_CTL_ADD of its pidfd, so that bun reaps the child and reports its
+// exit before Bun.spawn returns.
+//
 // FAIL_SIGKILL=1 refuses every kill(pid, SIGKILL) with EPERM, which is what the
 // kernel answers for a child that runs as another user by now (sudo, su).
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
@@ -110,6 +115,7 @@ const SHIM_C = /* c */ `
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <errno.h>
+#include <poll.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -137,6 +143,13 @@ static int should_fail(long op, int fd, struct epoll_event *event) {
   if (!event) return 0;
   const char *mode = getenv("FAIL_EPOLL_CTL");
   if (!mode) return op == EPOLL_CTL_ADD && (event->events & EPOLLOUT);
+  if (strcmp(mode, "pidfd-add-after-exit") == 0) {
+    if (op != EPOLL_CTL_ADD || !is_pidfd(fd)) return 0;
+    struct pollfd exited = { .fd = fd, .events = POLLIN };
+    while (poll(&exited, 1, -1) < 0 && errno == EINTR) {
+    }
+    return 1;
+  }
   int writers_too = strcmp(mode, "pidfd-and-writer-add") == 0;
   if (writers_too && op == EPOLL_CTL_ADD && (event->events & EPOLLOUT)) return 1;
   if (writers_too || strcmp(mode, "pidfd-add") == 0) {
@@ -345,19 +358,70 @@ while ((openFds() > fdBaseline || wrappers() > wrapperBaseline) && performance.n
 console.log(JSON.stringify({ error, write, sync, onExit, shell, leakedFds: openFds() - fdBaseline, leakedWrappers: wrappers() - wrapperBaseline }));
 `;
 
+// macOS needs no error of the shim's making: EVFILT_PROC cannot be registered for a child that has exited. This
+// delays each such registration until the child is dead, and the kernel then refuses it with ESRCH by itself.
+const LATE_WATCH_C = /* c */ `
+#include <errno.h>
+#include <sys/event.h>
+#include <sys/wait.h>
+
+static int late_kevent64(int kq, const struct kevent64_s *changes, int nchanges, struct kevent64_s *events,
+                         int nevents, unsigned int flags, const struct timespec *timeout) {
+  for (int i = 0; i < nchanges; i++) {
+    if (changes[i].filter != EVFILT_PROC || !(changes[i].flags & EV_ADD)) continue;
+    siginfo_t info;
+    while (waitid(P_PID, (id_t)changes[i].ident, &info, WEXITED | WNOWAIT) != 0 && errno == EINTR) {
+    }
+  }
+  return kevent64(kq, changes, nchanges, events, nevents, flags, timeout);
+}
+
+__attribute__((used, section("__DATA,__interpose"))) static const struct {
+  const void *replacement, *original;
+} interpose[] = {
+  {(const void *)late_kevent64, (const void *)kevent64},
+};
+`;
+
+// A child that ends with one IPC message and one out-of-band byte in the channel.
+const OOB_CHILD_C = /* c */ `
+#include <stdlib.h>
+#include <sys/socket.h>
+
+int main(void) {
+  int channel = atoi(getenv("NODE_CHANNEL_FD"));
+  send(channel, "\\"last\\"\\n", 7, 0);
+  send(channel, "!", 1, MSG_OOB);
+  return 0;
+}
+`;
+
 let dir: ReturnType<typeof tempDir> | undefined;
 
 beforeAll(async () => {
-  if (!isLinux || !cc) return;
-  dir = tempDir("poll-start-error", { "shim.c": SHIM_C, "fixture.js": FIXTURE });
-  await using ccProc = Bun.spawn({
-    cmd: [cc, "-shared", "-fPIC", "-o", join(String(dir), "shim.so"), join(String(dir), "shim.c"), "-ldl"],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
+  if (!cc || !(isLinux || isMacOS)) return;
+  dir = tempDir("poll-start-error", {
+    "shim.c": SHIM_C,
+    "fixture.js": FIXTURE,
+    "late-watch.c": LATE_WATCH_C,
+    "oob-child.c": OOB_CHILD_C,
   });
-  const [ccOut, ccErr, ccExit] = await Promise.all([ccProc.stdout.text(), ccProc.stderr.text(), ccProc.exited]);
-  if (ccExit !== 0) throw new Error(`shim compile failed: ${ccErr || ccOut}`);
+  const builds = isLinux
+    ? [
+        ["-shared", "-fPIC", "-o", join(String(dir), "shim.so"), join(String(dir), "shim.c"), "-ldl"],
+        ["-o", join(String(dir), "oob-child"), join(String(dir), "oob-child.c")],
+      ]
+    : [["-dynamiclib", "-o", join(String(dir), "late-watch.dylib"), join(String(dir), "late-watch.c")]];
+  for (const build of builds) {
+    await using ccProc = Bun.spawn({
+      cmd: [cc, ...build],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [ccOut, ccErr, ccExit] = await Promise.all([ccProc.stdout.text(), ccProc.stderr.text(), ccProc.exited]);
+    if (ccExit !== 0) throw new Error(`shim compile failed: ${ccErr || ccOut}`);
+  }
 });
 
 afterAll(() => {
@@ -492,6 +556,92 @@ describe.skipIf(!isLinux || !cc)(
     });
   },
 );
+
+// A child that is gone before it can be watched has its exit reported from inside the spawn call: before the loop has
+// read what the child sent over IPC. macOS refuses such a watch, and on Linux the shim does. The channel used to close
+// with that report, on top of the message, and onExit ran before Bun.spawn returned.
+describe.skipIf(!cc || !(isLinux || isMacOS))(
+  "the last IPC message of a child that exited before it could be watched",
+  () => {
+    const env = () =>
+      isMacOS
+        ? { ...bunEnv, DYLD_INSERT_LIBRARIES: join(String(dir), "late-watch.dylib") }
+        : { ...bunEnv, FAIL_EPOLL_CTL: "pidfd-add-after-exit", LD_PRELOAD: join(String(dir), "shim.so") };
+
+    // One at a time: each case starts two or more bun processes, and a debug build starts slowly.
+    test.each(lastMessageShapes)("%s", async (_, shape, expected) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(import.meta.dir, "ipc-last-message-fixture.ts"), shape],
+        env: env(),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      let report: unknown = stdout;
+      try {
+        report = JSON.parse(stdout);
+      } catch {}
+      expect({ report, stderr, exitCode }).toEqual({ report: expected, stderr: "", exitCode: 0 });
+    });
+
+    test("Bun.spawn: ipc handlers wait for the exit and for the disconnect in a nested turn of the loop", async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "./ipc-last-message-nested-fixture.ts"],
+        cwd: import.meta.dir,
+        env: env(),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("1 pass");
+      const delivered = ["message", "exit 0 null", "disconnect"];
+      expect({ events: stdout.split("\n").find(line => line.startsWith("EVENTS ")), exitCode }).toEqual({
+        events: "EVENTS " + JSON.stringify([delivered, delivered, delivered]),
+        exitCode: 0,
+      });
+    });
+  },
+);
+
+// The exit of a child waits for what its IPC channel holds. Linux counts an out-of-band byte in that, and no read
+// returns one: with a process that holds the channel open, the exit waited for as long as that process lived.
+test.skipIf(!isLinux || !cc)("an out-of-band byte in the IPC channel does not hold back the exit", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const events = [];
+      process.on("exit", () => console.log(JSON.stringify(events)));
+      Bun.spawn({
+        // What the child leaves behind holds the channel open until this process is gone.
+        cmd: ["sh", "-c", "(while kill -0 $PPID 2>/dev/null; do sleep 0.05; done) >/dev/null 2>&1 & exec ./oob-child"],
+        serialization: "json",
+        stdio: ["ignore", "inherit", "inherit"],
+        ipc() {
+          events.push("message");
+        },
+        onExit(_, exitCode, signalCode) {
+          events.push("exit " + exitCode + " " + signalCode);
+        },
+        onDisconnect() {
+          events.push("disconnect");
+        },
+      });
+    `,
+    ],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ events: stdout.trim(), stderr, exitCode }).toEqual({
+    events: JSON.stringify(["message", "exit 0 null", "disconnect"]),
+    stderr: "",
+    exitCode: 0,
+  });
+});
 
 // Both at once. The exit was reported, which runs onExit, with the writer's error already thrown: onExit's call took the
 // exception with it, and Bun.spawn returned nothing at all to a caller that went on to crash on it.

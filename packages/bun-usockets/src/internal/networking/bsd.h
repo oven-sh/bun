@@ -216,6 +216,8 @@ ssize_t bsd_recv(LIBUS_SOCKET_DESCRIPTOR fd, void *buf, int length, int flags);
 /* One of the LIBUS_QUEUED_INPUT_* codes. Peeks, so it consumes nothing and the
  * next readable event still reports whatever it found. */
 int bsd_queued_input(LIBUS_SOCKET_DESCRIPTOR fd);
+/* How many bytes a read can return right now, 0 when it cannot tell. */
+int bsd_queued_input_len(LIBUS_SOCKET_DESCRIPTOR fd);
 #if !defined(_WIN32)
 ssize_t bsd_recvmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct msghdr *msg, int flags);
 #endif

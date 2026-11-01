@@ -331,6 +331,8 @@ const response = await fetch("s3://my-bucket/path/to/object", {
 
 Only PUT and POST methods support request bodies when using S3. For uploads, Bun automatically uses multipart upload for streaming bodies.
 
+Bun signs an `s3://` request for one host and path, so `fetch` does not follow a redirect for it. With `redirect: "follow"` (the default) or `"manual"`, `fetch` resolves with the 3xx response. With `redirect: "error"`, `fetch` rejects. `maxRedirects` has no effect on `s3://` URLs.
+
 See the [S3](/runtime/s3) documentation.
 
 #### File URLs - `file://`

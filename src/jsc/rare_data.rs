@@ -196,8 +196,7 @@ impl CleanupHook {
 pub struct RareData {
     /// Erased `*mut webcore::blob::Store` (intrusive-refcounted on the runtime
     /// side). Constructed via `__bun_stdio_blob_store_new`; high tier casts back.
-    /// `mode` is cached so [`Bun__Process__getStdinFdType`] doesn't have to
-    /// re-stat.
+    /// `mode` is cached for [`Bun__Process__getCachedStdinFdType`], which does no `fstat` of its own.
     pub stderr_store: Option<NonNull<c_void>>,
     pub(crate) stderr_mode: Mode,
     pub stdin_store: Option<NonNull<c_void>>,
@@ -962,13 +961,18 @@ impl RareData {
 
     /// Returns an erased `*mut webcore::blob::Store`. High-tier callers cast back.
     pub fn stderr(&mut self) -> *mut c_void {
+        self.stderr_with_mode(None)
+    }
+
+    /// `known` is the mode from an `fstat` that the caller has done. A new store takes it and does none of its own.
+    fn stderr_with_mode(&mut self, known: Option<Mode>) -> *mut c_void {
         bun_analytics::features::bun_stderr.fetch_add(1, Ordering::Relaxed);
         if self.stderr_store.is_none() {
             let fd = Fd::from_uv(2);
-            let mode: Mode = match syscall::fstat(fd) {
+            let mode: Mode = known.unwrap_or_else(|| match syscall::fstat(fd) {
                 Ok(stat) => stat.st_mode as Mode,
                 Err(_) => 0,
-            };
+            });
             let is_atty =
                 Output::stderr_descriptor_type() == Output::OutputStreamDescriptor::Terminal;
             let store = Self::stdio_ctor(fd, is_atty, mode);
@@ -981,13 +985,18 @@ impl RareData {
 
     /// Returns an erased `*mut webcore::blob::Store`. High-tier callers cast back.
     pub fn stdout(&mut self) -> *mut c_void {
+        self.stdout_with_mode(None)
+    }
+
+    /// `known` is the mode from an `fstat` that the caller has done. A new store takes it and does none of its own.
+    fn stdout_with_mode(&mut self, known: Option<Mode>) -> *mut c_void {
         bun_analytics::features::bun_stdout.fetch_add(1, Ordering::Relaxed);
         if self.stdout_store.is_none() {
             let fd = Fd::from_uv(1);
-            let mode: Mode = match syscall::fstat(fd) {
+            let mode: Mode = known.unwrap_or_else(|| match syscall::fstat(fd) {
                 Ok(stat) => stat.st_mode as Mode,
                 Err(_) => 0,
-            };
+            });
             let is_atty =
                 Output::stdout_descriptor_type() == Output::OutputStreamDescriptor::Terminal;
             let store = Self::stdio_ctor(fd, is_atty, mode);
@@ -1000,13 +1009,18 @@ impl RareData {
 
     /// Returns an erased `*mut webcore::blob::Store`. High-tier callers cast back.
     pub fn stdin(&mut self) -> *mut c_void {
+        self.stdin_with_mode(None)
+    }
+
+    /// `known` is the mode from an `fstat` that the caller has done. A new store takes it and does none of its own.
+    fn stdin_with_mode(&mut self, known: Option<Mode>) -> *mut c_void {
         bun_analytics::features::bun_stdin.fetch_add(1, Ordering::Relaxed);
         if self.stdin_store.is_none() {
             let fd = Fd::from_uv(0);
-            let mode: Mode = match syscall::fstat(fd) {
+            let mode: Mode = known.unwrap_or_else(|| match syscall::fstat(fd) {
                 Ok(stat) => stat.st_mode as Mode,
                 Err(_) => 0,
-            };
+            });
             // On Windows an invalid stdin handle must short-circuit to false.
             let is_atty = fd.unwrap_valid().map(syscall::isatty).unwrap_or(false);
             let store = Self::stdio_ctor(fd, is_atty, mode);
@@ -1027,10 +1041,14 @@ enum StdinFdType {
     File = 0,
     Pipe = 1,
     Socket = 2,
+    /// libuv's `UV_UNKNOWN_HANDLE`: a closed descriptor, a directory or an anonymous inode.
+    #[cfg(not(windows))]
+    Unknown = 3,
 }
 
+/// The kind from the `fstat` mode that the stdio store cached when it was made. It never answers `Unknown`: the light streams of an AOT executable and Windows use it.
 #[unsafe(no_mangle)]
-extern "C" fn Bun__Process__getStdinFdType(vm: &VirtualMachine, fd: i32) -> StdinFdType {
+extern "C" fn Bun__Process__getCachedStdinFdType(vm: &VirtualMachine, fd: i32) -> StdinFdType {
     let rare = vm.as_mut().rare_data();
     // The store is type-erased here, so `stderr/stdout/stdin()` cache `mode`
     // alongside the pointer.
@@ -1056,6 +1074,36 @@ extern "C" fn Bun__Process__getStdinFdType(vm: &VirtualMachine, fd: i32) -> Stdi
         bun_sys::FileKind::NamedPipe => StdinFdType::Pipe,
         bun_sys::FileKind::UnixDomainSocket => StdinFdType::Socket,
         _ => StdinFdType::File,
+    }
+}
+
+/// The kind for the whole `process.stdin`, `process.stdout` and `process.stderr`, asked when their getter runs.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__Process__getStdinFdType(vm: &VirtualMachine, fd: i32) -> StdinFdType {
+    #[cfg(windows)]
+    {
+        Bun__Process__getCachedStdinFdType(vm, fd)
+    }
+    // POSIX asks the descriptor now, as libuv's `uv_guess_handle` does: the program may have closed or replaced it.
+    #[cfg(not(windows))]
+    {
+        let rare = vm.as_mut().rare_data();
+        let mode = syscall::fstat(Fd::from_uv(fd)).map(|stat| stat.st_mode as Mode);
+        let known = Some(mode.as_ref().copied().unwrap_or(0));
+        match fd {
+            0 => rare.stdin_with_mode(known),
+            1 => rare.stdout_with_mode(known),
+            2 => rare.stderr_with_mode(known),
+            _ => unreachable!(),
+        };
+        match mode.map(bun_sys::kind_from_mode) {
+            Ok(bun_sys::FileKind::NamedPipe) => StdinFdType::Pipe,
+            Ok(bun_sys::FileKind::UnixDomainSocket) => StdinFdType::Socket,
+            Ok(bun_sys::FileKind::Directory | bun_sys::FileKind::Unknown) => StdinFdType::Unknown,
+            Err(err) if err.get_errno() == syscall::E::EBADF => StdinFdType::Unknown,
+            // libuv has a block device and every failed `fstat` as unknown too. Bun reads a block device on stdin, and a sandbox can deny `fstat`.
+            _ => StdinFdType::File,
+        }
     }
 }
 

@@ -140,7 +140,7 @@ const globalObject = b.builtin("globalThis");
 const consoleObject = b.builtin("console");
 const processInternal = (name: string) => b.functionIn("builtins/ProcessObjectInternals", name);
 
-const kindOfDescriptor = b.int(0, 2);
+const kindOfDescriptor = b.int(0, 3);
 
 // In a worker of node:worker_threads the stream goes to a port of the parent, which native code has from the Worker's options.
 // Once the program has the stream, the function that prints a warning writes through it.

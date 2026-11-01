@@ -98,6 +98,9 @@ function internalBinding(name: string) {
       return { TCP: TestTCPWrap, constants: { SOCKET: 0, SERVER: 1 } };
     case "util":
       return { isInsideNodeModules };
+    // Node forgets the process.stdin, stdout and stderr that it has made. Bun makes each on first use, which comes after this call in node's tests.
+    case "process_methods":
+      return { resetStdioForTesting() {} };
     case "cares_wrap":
       // Only the pure IP-normalizer the vendored tls/dns tests reach for; the
       // resolver surface lives in node:dns.

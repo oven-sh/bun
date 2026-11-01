@@ -483,6 +483,15 @@ impl<'a> Prices<'a> {
 
 // ── binary tree search ────────────────────────────────────────────────────
 
+/// Where the repeat offsets lead, for [`Trees::skip_matchless_generic`].
+#[derive(Clone, Copy)]
+enum Reps {
+    /// Into the current segment, all three.
+    Near,
+    /// Before it, at least one of them.
+    Far,
+}
+
 /// What the match finders work on for the time of a block: the tables of a [`MatchState`], and what does not change
 /// of it.
 struct Trees<'a> {
@@ -907,7 +916,7 @@ impl<'a> Trees<'a> {
         limit: u32,
         rep: &[u32; ZSTD_REP_NUM],
     ) -> Result<(u32, u32)> {
-        self.skip_matchless_generic(matches, ip, limit, rep, false, false)
+        self.skip_matchless_generic(matches, ip, limit, rep, false, Reps::Near)
     }
 
     /// [`Self::skip_matchless`] where a dictionary is searched in place.
@@ -933,7 +942,7 @@ impl<'a> Trees<'a> {
                 return Ok((ip, found));
             }
         }
-        self.skip_matchless_generic(matches, ip, limit, rep, true, false)
+        self.skip_matchless_generic(matches, ip, limit, rep, true, Reps::Near)
     }
 
     /// [`Self::skip_matchless_in_place`] where a repeat offset leads into the dictionary, which after a match there is
@@ -946,11 +955,11 @@ impl<'a> Trees<'a> {
         limit: u32,
         rep: &[u32; ZSTD_REP_NUM],
     ) -> Result<(u32, u32)> {
-        self.skip_matchless_generic(matches, ip, limit, rep, true, true)
+        self.skip_matchless_generic(matches, ip, limit, rep, true, Reps::Far)
     }
 
-    /// `in_place` and `far_reps` are not const parameters: an instance of a generic function is compiled apart from the
-    /// rest of this file, after which [`Self::search_dms`] takes 2% longer on short records.
+    /// `in_place` and `reps` are not const parameters: an instance of a generic function is compiled apart from the rest
+    /// of this file, after which [`Self::search_dms`] takes 2% longer on short records.
     #[inline(always)]
     fn skip_matchless_generic(
         &mut self,
@@ -959,8 +968,9 @@ impl<'a> Trees<'a> {
         limit: u32,
         rep: &[u32; ZSTD_REP_NUM],
         in_place: bool,
-        far_reps: bool,
+        reps: Reps,
     ) -> Result<(u32, u32)> {
+        let far_reps = matches!(reps, Reps::Far);
         let near = self.input.near;
         let dict_limit = self.input.dict_limit;
         let min_match = self.min_match;

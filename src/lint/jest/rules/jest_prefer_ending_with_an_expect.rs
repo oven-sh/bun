@@ -11,7 +11,7 @@ struct Config {
     assert_function_names: Option<Vec<Regex>>,
 }
 
-const PREFER_ENDING_WITH_AN_EXPECT: Message = Message::new("", "Test must end with an assertion");
+const PREFER_ENDING_WITH_AN_EXPECT: &Message = &Message::new("", "Test must end with an assertion");
 
 impl<const RUNNER: u8> Rule for PreferEndingWithAnExpect<RUNNER> {
     const META: Meta = jest::meta(RUNNER, "prefer-ending-with-an-expect", Kind::Suggestion);

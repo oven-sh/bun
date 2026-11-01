@@ -1,0 +1,25 @@
+# import host from "node:module"; const x = new Error("x", { cause: host }).cause; (({ nothing, ...rest }) => rest)(x)
+# A rest pattern reads what stands under every name of node:module, which is among the objects nobody knows. The getter of `wrapper` is native code that calls a function of the library.
+# RUN: valueflow-why used-builtin=NodeModuleWrapper
+# CHECK: used-builtin=NodeModuleWrapper
+# CHECK-NOT: not held
+
+module m0 path="/app/main.js" displayPath="main.js" kind=SourceText body=f0 requests=[{target=m1 completes=true}]
+module m1 path="node:module" displayPath="node:module" kind=Runtime exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeModule
+entry module=m0
+layout L0 name="ErrorOptions" fields=[{key="cause" declared={type=anything}}] ownFieldCount=1
+layout L1 fields=[] ownFieldCount=0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = Builtin builtin=Error
+    v2 = String string="x"
+    v3 = Builtin builtin=NodeModule
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    v5 = FinishObject v4
+    v6 = Construct v1, -, v2, v5
+    v7 = PropGet v6 key="cause"
+    v8 = NewObject layout=L1
+    CopyDataProperties v8, v7 excludedKeys=["nothing"]
+    v10 = FinishObject v8
+    Return v10
+}

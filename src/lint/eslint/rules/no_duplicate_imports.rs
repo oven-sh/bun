@@ -9,10 +9,10 @@ pub struct NoDuplicateImports {
     allow_separate_type_imports: bool,
 }
 
-const IMPORT: Message = Message::new("import", "'{{module}}' import is duplicated.");
-const IMPORT_AS: Message = Message::new("importAs", "'{{module}}' import is duplicated as export.");
-const EXPORT: Message = Message::new("export", "'{{module}}' export is duplicated.");
-const EXPORT_AS: Message = Message::new("exportAs", "'{{module}}' export is duplicated as import.");
+const IMPORT: &Message = &Message::new("import", "'{{module}}' import is duplicated.");
+const IMPORT_AS: &Message = &Message::new("importAs", "'{{module}}' import is duplicated as export.");
+const EXPORT: &Message = &Message::new("export", "'{{module}}' export is duplicated.");
+const EXPORT_AS: &Message = &Message::new("exportAs", "'{{module}}' export is duplicated as import.");
 
 /// ESLint's `getImportExportType`.
 #[derive(Copy, Clone, PartialEq, Eq)]

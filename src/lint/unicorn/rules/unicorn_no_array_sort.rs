@@ -9,8 +9,8 @@ pub struct NoArraySort {
     allow_after_spread: bool,
 }
 
-const NO_ARRAY_SORT: Message = Message::new("", "Use `Array#toSorted()` instead of `Array#sort()`.");
-const USE_TO_SORTED: Message = Message::new(
+const NO_ARRAY_SORT: &Message = &Message::new("", "Use `Array#toSorted()` instead of `Array#sort()`.");
+const USE_TO_SORTED: &Message = &Message::new(
     "",
     "`Array#sort()` mutates the original array. Use `Array#toSorted()` to return a new sorted array without modifying \
      the original.",

@@ -12,7 +12,7 @@ type tjhandle = *mut c_void;
 
 // TJINIT_COMPRESS=0, TJINIT_DECOMPRESS=1.
 unsafe extern "C" {
-    fn tj3Init(init_type: c_int) -> tjhandle;
+    safe fn tj3Init(init_type: c_int) -> tjhandle;
     fn tj3Destroy(h: tjhandle);
     fn tj3Set(h: tjhandle, param: c_int, value: c_int) -> c_int;
     fn tj3Get(h: tjhandle, param: c_int) -> c_int;
@@ -58,8 +58,7 @@ impl Handle {
     /// `init_type`: `0` = compress, `1` = decompress.
     #[inline]
     pub(crate) fn init(init_type: c_int) -> Option<Self> {
-        // SAFETY: FFI — tj3Init has no preconditions; returns null on failure.
-        NonNull::new(unsafe { tj3Init(init_type) }).map(Self)
+        NonNull::new(tj3Init(init_type)).map(Self)
     }
 
     #[inline]

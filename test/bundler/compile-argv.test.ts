@@ -66,6 +66,18 @@ describe.each(["api", "cli"] as const)("compile env options (%s)", backend => {
   });
 });
 
+describe.each(["api", "cli"] as const)("AOT compile env options (%s)", backend => {
+  itBundled(`compile/env-options/${backend}/aot-disabled`, {
+    backend,
+    compile: { aot: true, envOptions: false },
+    files: { "/entry.ts": `console.log("APP");` },
+    run: {
+      env: { ...runtimeEnv, BUN_BE_BUN: "1", BUN_OPTIONS: "--invalid-runtime-option" },
+      stdout: "APP",
+    },
+  });
+});
+
 describe("compile env options validation", () => {
   test.each([false, true])(
     "rejects a custom executable path in the API (path with spaces: %s)",

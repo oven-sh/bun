@@ -9,8 +9,8 @@ pub struct NoUselessPromiseResolveReject {
     allow_reject: bool,
 }
 
-const RESOLVE: Message = Message::new("", "Prefer `{{preferred}} value` over `{{preferred}} Promise.resolve(value)`.");
-const REJECT: Message = Message::new("", "Prefer `throw error` over `{{preferred}} Promise.reject(error)`.");
+const RESOLVE: &Message = &Message::new("", "Prefer `{{preferred}} value` over `{{preferred}} Promise.resolve(value)`.");
+const REJECT: &Message = &Message::new("", "Prefer `throw error` over `{{preferred}} Promise.reject(error)`.");
 
 pub struct State<'a> {
     /// `resolve`, `reject`

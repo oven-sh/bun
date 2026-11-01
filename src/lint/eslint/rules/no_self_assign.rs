@@ -6,7 +6,7 @@ pub struct NoSelfAssign {
     props: bool,
 }
 
-const SELF_ASSIGNMENT: Message = Message::new("selfAssignment", "'{{name}}' is assigned to itself.");
+const SELF_ASSIGNMENT: &Message = &Message::new("selfAssignment", "'{{name}}' is assigned to itself.");
 
 /// ESLint's `eachSelfAssignment`: walks the target `left` and the value `right` in parallel.
 fn each_self_assignment<'a>(left: Expr<'a>, right: Expr<'a>, props: bool, report: &mut dyn FnMut(Expr<'a>)) {

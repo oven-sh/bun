@@ -28,6 +28,8 @@ pub(crate) mod os;
 
 #[path = "node/node_process.rs"]
 pub(crate) mod process;
+// codegen (`generated_js2native.rs`) addresses this by its file-stem name.
+pub(crate) use process as node_process;
 
 #[path = "node/node_crypto_binding.rs"]
 pub(crate) mod crypto;
@@ -101,6 +103,9 @@ pub(crate) mod uv_signal_handle_windows;
 
 #[path = "node/buffer.rs"]
 pub(crate) mod buffer;
+
+#[path = "node/histogram.rs"]
+pub(crate) mod histogram;
 
 #[path = "node/node_cluster_binding.rs"]
 pub(crate) mod node_cluster_binding;

@@ -4,12 +4,12 @@ use bun_lint::tokens::next_token;
 /// Disallow calling some `Object.prototype` methods directly on objects.
 pub struct NoPrototypeBuiltins;
 
-const PROTOTYPE_BUILD_IN: Message = Message::new(
+const PROTOTYPE_BUILD_IN: &Message = &Message::new(
     "prototypeBuildIn",
     "Do not access Object.prototype method '{{prop}}' from target object.",
 );
-const CALL_OBJECT_PROTOTYPE: Message =
-    Message::new("callObjectPrototype", "Call Object.prototype.{{prop}} explicitly.");
+const CALL_OBJECT_PROTOTYPE: &Message =
+    &Message::new("callObjectPrototype", "Call Object.prototype.{{prop}} explicitly.");
 
 fn disallowed_prop(name: Name<'_>) -> Option<&'static str> {
     match name.bytes() {

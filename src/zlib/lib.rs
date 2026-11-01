@@ -120,6 +120,8 @@ unsafe extern "C" {
 
     pub fn inflateReset(stream: *mut zStream_struct) -> ReturnCode;
 
+    pub fn inflateValidate(stream: *mut zStream_struct, check: c_int) -> ReturnCode;
+
     pub fn crc32(crc: uLong, buf: *const Bytef, len: uInt) -> uLong;
 }
 
@@ -768,6 +770,14 @@ impl DeflateEncoder {
         unsafe { deflateReset(self.strm.as_ptr()) }
     }
 
+    /// `deflateBound()`: room in which one `Finish` step over `source_len` bytes is sure to end the stream,
+    /// if both fit in 32 bits, which is all a step takes and gives.
+    pub fn bound(&mut self, source_len: usize) -> usize {
+        let source_len = uLong::try_from(source_len).unwrap_or(uLong::MAX);
+        // SAFETY: strm was initialized via deflateInit2_.
+        unsafe { deflateBound(self.strm.as_ptr(), source_len) as usize }
+    }
+
     /// One `deflate()` call writing into `out`'s spare capacity.
     ///
     /// Reserves at least `reserve` spare bytes in `out`, points
@@ -792,6 +802,18 @@ impl DeflateEncoder {
             flush,
             deflate,
         )
+    }
+
+    /// Like [`step`](Self::step), but `deflate()` sees exactly `limit` bytes of output space,
+    /// whatever `out`'s capacity is. At level 0 that space decides where a stored block ends.
+    pub fn step_limited(
+        &mut self,
+        input: &[u8],
+        out: &mut Vec<u8>,
+        limit: usize,
+        flush: FlushValue,
+    ) -> (usize, ReturnCode) {
+        step(&mut self.strm, input, out, limit, limit, flush, deflate)
     }
 }
 
@@ -847,6 +869,12 @@ impl InflateDecoder {
         rc
     }
 
+    /// `inflateValidate()`: whether the stream's check value (Adler-32 or CRC-32) is computed and compared.
+    pub fn set_validate(&mut self, check: bool) -> ReturnCode {
+        // SAFETY: strm was initialized via inflateInit2_.
+        unsafe { inflateValidate(self.strm.as_ptr(), c_int::from(check)) }
+    }
+
     #[inline]
     pub fn is_inflating(&self) -> bool {
         matches!(self.state, State::Inflating)
@@ -868,6 +896,24 @@ impl InflateDecoder {
             reserve,
             usize::MAX,
             flush,
+            inflate,
+        )
+    }
+
+    /// Like [`step`](Self::step), but appends at most `limit` bytes to `out`.
+    pub fn step_limited(
+        &mut self,
+        input: &[u8],
+        out: &mut Vec<u8>,
+        limit: usize,
+    ) -> (usize, ReturnCode) {
+        step(
+            &mut self.strm,
+            input,
+            out,
+            limit,
+            limit,
+            FlushValue::NoFlush,
             inflate,
         )
     }

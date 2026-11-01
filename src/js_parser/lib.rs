@@ -5,6 +5,8 @@
 //! `StoreSlice<T>` / `StoreStr` here. A future refactor could thread a
 //! crate-wide `'bump` and rewrite these to `&'bump [T]` / `&'bump mut [T]`.
 
+#![feature(optimize_attribute)]
+
 pub mod error;
 pub mod function_identities;
 pub use error::Error;
@@ -26,6 +28,7 @@ pub mod scan;
 pub mod typescript;
 pub mod visit;
 
+pub use lower::import_meta_glob::*;
 pub use p::P;
 pub use parse::parse_entry::{Options as ParserOptions, Parser};
 
@@ -79,6 +82,8 @@ pub mod Macro {
         /// (resolver/env/macros/remap/bump). Allocated by `init`, freed by
         /// `deinit`; `bun_js_parser` never dereferences it.
         pub data: *mut core::ffi::c_void,
+        /// Set by a build that parses a file more than once, for the length of a parse.
+        pub known_answers: Option<core::ptr::NonNull<dyn KnownAnswers>>,
     }
     impl Default for MacroContext {
         #[inline]
@@ -86,8 +91,15 @@ pub mod Macro {
             Self {
                 javascript_object: MacroJSCtx::ZERO,
                 data: core::ptr::null_mut(),
+                known_answers: None,
             }
         }
+    }
+    /// What calls of macros have answered. A macro can keep state and have effects, so a call that is parsed again
+    /// does not run again.
+    pub trait KnownAnswers {
+        fn find(&mut self, source: &bun_ast::Source, call: bun_ast::Loc) -> Option<bun_ast::Expr>;
+        fn add(&mut self, source: &bun_ast::Source, call: bun_ast::Loc, answer: &bun_ast::Expr);
     }
     unsafe extern "Rust" {
         /// Defined `#[no_mangle]` in `bun_js_parser_jsc::Macro`. `transpiler`
@@ -142,7 +154,7 @@ pub mod Macro {
     }
     impl MacroContext {
         #[inline]
-        pub(crate) fn call(
+        pub fn call(
             &mut self,
             import_record_path: &[u8],
             source_dir: &[u8],
@@ -152,7 +164,25 @@ pub mod Macro {
             caller: bun_ast::Expr,
             function_name: &[u8],
         ) -> Result<bun_ast::Expr, crate::Error> {
-            __bun_macro_context_call(
+            let Some(mut known_answers) = self.known_answers else {
+                return __bun_macro_context_call(
+                    self,
+                    import_record_path,
+                    source_dir,
+                    log,
+                    source,
+                    import_range,
+                    caller,
+                    function_name,
+                );
+            };
+            // SAFETY: whoever set it keeps it alive and untouched until it has taken it out again.
+            let known_answers = unsafe { known_answers.as_mut() };
+            let call = caller.loc;
+            if let Some(answer) = known_answers.find(source, call) {
+                return Ok(answer);
+            }
+            let answer = __bun_macro_context_call(
                 self,
                 import_record_path,
                 source_dir,
@@ -161,7 +191,9 @@ pub mod Macro {
                 import_range,
                 caller,
                 function_name,
-            )
+            )?;
+            known_answers.add(source, call, &answer);
+            Ok(answer)
         }
         /// `T` is always `bun_bundler::Transpiler<'_>`; generic so callers in
         /// `bun_bundler`/`bun_runtime` compile without `bun_js_parser` taking
@@ -356,6 +388,7 @@ pub mod defines {
         }
     }
 
+    /// Threads share it only through the read-only `Box<Define>`, and the `StoreRef`s in `value` point into immutable, process-lifetime AST stores.
     #[derive(Clone)]
     pub struct DefineData {
         pub value: ExprData,
@@ -368,14 +401,6 @@ pub mod defines {
         pub original_name: Option<Box<[u8]>>,
         pub flags: Flags,
     }
-
-    // SAFETY: `ExprData` contains `StoreRef` raw pointers into immutable,
-    // process-lifetime AST stores. `DefineData` is only shared across threads
-    // via the read-only `Box<Define>` after init. Never written through.
-    unsafe impl Send for DefineData {}
-    // SAFETY: see `Send` impl above — the `StoreRef` targets are immutable and
-    // process-lifetime, and `DefineData` is read-only after init.
-    unsafe impl Sync for DefineData {}
 
     impl Default for DefineData {
         fn default() -> Self {
@@ -447,7 +472,7 @@ pub mod defines {
             self.flags.method_call_must_be_replaced_with_undefined()
         }
         #[inline]
-        pub(crate) fn valueless(&self) -> bool {
+        pub fn valueless(&self) -> bool {
             self.flags.valueless()
         }
 
@@ -534,6 +559,64 @@ pub mod defines {
     }
 
     impl Define {
+        /// A table with only the globals that are known to have no side effects.
+        pub fn with_pure_globals(
+            drop_debugger: bool,
+            omit_unused_global_calls: bool,
+        ) -> Box<Define> {
+            use crate::defines_table::{
+                GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_SAFE_FOR_TO_STRING,
+                GLOBAL_NO_SIDE_EFFECT_PROPERTY_ACCESSES,
+            };
+            let mut define = Box::new(Define {
+                drop_debugger,
+                ..Default::default()
+            });
+            define.dots.reserve(124);
+
+            let value_define = DefineData::init(Options {
+                value: ExprData::EUndefined(E::Undefined),
+                valueless: true,
+                can_be_removed_if_unused: true,
+                ..Default::default()
+            });
+            for global in GLOBAL_NO_SIDE_EFFECT_PROPERTY_ACCESSES.iter() {
+                define.insert_global(global, &value_define);
+            }
+
+            let to_string_safe = DefineData::init(Options {
+                value: ExprData::EUndefined(E::Undefined),
+                valueless: true,
+                can_be_removed_if_unused: true,
+                call_can_be_unwrapped_if_unused: E::CallUnwrap::IfUnusedAndToStringSafe,
+                ..Default::default()
+            });
+            let call_define = if omit_unused_global_calls {
+                &to_string_safe
+            } else {
+                &value_define
+            };
+            for global in GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_SAFE_FOR_TO_STRING.iter() {
+                define.insert_global(global, call_define);
+            }
+            define
+        }
+
+        fn insert_global(&mut self, global: &[&[u8]], value_define: &DefineData) {
+            let key = global[global.len() - 1];
+            let parts: Vec<Box<[u8]>> = global.iter().map(|p| Box::<[u8]>::from(*p)).collect();
+            self.dots_filter.insert(key);
+            let dot_define = DotDefine {
+                parts,
+                data: value_define.clone(),
+            };
+            if let Some(existing) = self.dots.get_mut(key) {
+                existing.push(dot_define);
+            } else {
+                self.dots.put_assume_capacity(key, vec![dot_define]);
+            }
+        }
+
         /// The dot defines whose last part is `name` (`NODE_ENV` for
         /// `process.env.NODE_ENV`).
         #[inline]

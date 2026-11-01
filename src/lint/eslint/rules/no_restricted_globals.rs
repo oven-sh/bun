@@ -11,8 +11,8 @@ pub struct NoRestrictedGlobals {
     global_objects: Vec<Box<[u8]>>,
 }
 
-const DEFAULT_MESSAGE: Message = Message::new("defaultMessage", "Unexpected use of '{{name}}'.");
-const CUSTOM_MESSAGE: Message = Message::new(
+const DEFAULT_MESSAGE: &Message = &Message::new("defaultMessage", "Unexpected use of '{{name}}'.");
+const CUSTOM_MESSAGE: &Message = &Message::new(
     "customMessage",
     "Unexpected use of '{{name}}'. {{customMessage}}",
 );

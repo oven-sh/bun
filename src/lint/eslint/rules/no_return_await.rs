@@ -3,8 +3,8 @@ use bun_lint::prelude::*;
 /// Disallow unnecessary `return await`.
 pub struct NoReturnAwait;
 
-const REMOVE_AWAIT: Message = Message::new("removeAwait", "Remove redundant `await`.");
-const REDUNDANT_USE_OF_AWAIT: Message = Message::new(
+const REMOVE_AWAIT: &Message = &Message::new("removeAwait", "Remove redundant `await`.");
+const REDUNDANT_USE_OF_AWAIT: &Message = &Message::new(
     "redundantUseOfAwait",
     "Redundant use of `await` on a return value.",
 );

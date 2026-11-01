@@ -366,6 +366,9 @@ pub fn load_config_for_tool(
         );
     };
 
+    if !auto_loaded {
+        ctx.test_options.config_file = Some(config_path.as_bytes().into());
+    }
     if let Err(err) = load_config_path_for_tool(cmd, auto_loaded, config_path, ctx, tool) {
         report_bunfig_load_failure(cmd, ctx.log, err);
     }

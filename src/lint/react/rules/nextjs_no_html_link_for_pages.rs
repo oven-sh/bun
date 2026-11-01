@@ -6,7 +6,7 @@ use bun_lint::rule::Plugin;
 /// Prevents the usage of `<a>` elements to navigate between Next.js pages.
 pub struct NoHtmlLinkForPages;
 
-const NO_HTML_LINK_FOR_PAGES: Message = Message::new("", "Do not use `<a>` elements to navigate between Next.js pages.");
+const NO_HTML_LINK_FOR_PAGES: &Message = &Message::new("", "Do not use `<a>` elements to navigate between Next.js pages.");
 
 impl Rule for NoHtmlLinkForPages {
     const META: Meta = Meta::oxlint(Plugin::Nextjs, "no-html-link-for-pages", Kind::Problem);

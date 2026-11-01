@@ -28,11 +28,11 @@ pub struct NoUnstableNestedComponents {
 }
 
 /// Upstream's `generateErrorMessageWithParentName`. `info` is `COMPONENT_AS_PROPS_INFO` or empty.
-const DO_NOT_DEFINE_COMPONENTS_DURING_RENDER: Message = Message::new(
+const DO_NOT_DEFINE_COMPONENTS_DURING_RENDER: &Message = &Message::new(
     "",
     "Do not define components during render. React will see a new component type on every render and destroy the entire subtree’s DOM nodes and state (https://reactjs.org/docs/reconciliation.html#elements-of-different-types). Instead, move this component definition out of the parent component{{parentName}}and pass data as props.{{info}}",
 );
-const NO_UNSTABLE_NESTED_COMPONENTS: Message = Message::new("", "Do not define components during render.");
+const NO_UNSTABLE_NESTED_COMPONENTS: &Message = &Message::new("", "Do not define components during render.");
 
 const COMPONENT_AS_PROPS_INFO: &str =
     " If you want to allow component creation in props, set allowAsProps option to true.";

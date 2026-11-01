@@ -5,7 +5,8 @@ pub struct NoMultiAssign {
     ignore_non_declaration: bool,
 }
 
-const UNEXPECTED_CHAIN: Message = Message::new("unexpectedChain", "Unexpected chained assignment.");
+const UNEXPECTED_CHAIN: &Message =
+    &Message::new("unexpectedChain", "Unexpected chained assignment.");
 
 impl Rule for NoMultiAssign {
     const META: Meta = Meta::eslint("no-multi-assign", Kind::Suggestion);

@@ -16,25 +16,25 @@ pub struct ObjectShorthand {
     avoids_explicit_return_arrows: bool,
 }
 
-const EXPECTED_ALL_PROPERTIES_SHORTHANDED: Message = Message::new(
+const EXPECTED_ALL_PROPERTIES_SHORTHANDED: &Message = &Message::new(
     "expectedAllPropertiesShorthanded",
     "Expected shorthand for all properties.",
 );
-const EXPECTED_LITERAL_METHOD_LONGFORM: Message = Message::new(
+const EXPECTED_LITERAL_METHOD_LONGFORM: &Message = &Message::new(
     "expectedLiteralMethodLongform",
     "Expected longform method syntax for string literal keys.",
 );
-const EXPECTED_PROPERTY_SHORTHAND: Message =
-    Message::new("expectedPropertyShorthand", "Expected property shorthand.");
-const EXPECTED_PROPERTY_LONGFORM: Message = Message::new(
+const EXPECTED_PROPERTY_SHORTHAND: &Message =
+    &Message::new("expectedPropertyShorthand", "Expected property shorthand.");
+const EXPECTED_PROPERTY_LONGFORM: &Message = &Message::new(
     "expectedPropertyLongform",
     "Expected longform property syntax.",
 );
-const EXPECTED_METHOD_SHORTHAND: Message =
-    Message::new("expectedMethodShorthand", "Expected method shorthand.");
-const EXPECTED_METHOD_LONGFORM: Message =
-    Message::new("expectedMethodLongform", "Expected longform method syntax.");
-const UNEXPECTED_MIX: Message = Message::new(
+const EXPECTED_METHOD_SHORTHAND: &Message =
+    &Message::new("expectedMethodShorthand", "Expected method shorthand.");
+const EXPECTED_METHOD_LONGFORM: &Message =
+    &Message::new("expectedMethodLongform", "Expected longform method syntax.");
+const UNEXPECTED_MIX: &Message = &Message::new(
     "unexpectedMix",
     "Unexpected mix of shorthand and non-shorthand properties.",
 );
@@ -42,7 +42,7 @@ const UNEXPECTED_MIX: Message = Message::new(
 /// The problem found with a property.
 enum Finding<'a> {
     /// `{ x() {} }` should be written as `{ x: function() {} }`
-    MethodLongform(Message, Func<'a>),
+    MethodLongform(&'static Message, Func<'a>),
     /// `{ x }` should be written as `{ x: x }`
     PropertyLongform(Name<'a>),
     /// `{ x: function() {} }` should be written as `{ x() {} }`

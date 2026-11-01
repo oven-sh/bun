@@ -15,7 +15,7 @@ use std::iter::successors;
 /// Disallow definitions of unused state
 pub struct NoUnusedState;
 
-const UNUSED_STATE_FIELD: Message = Message::new("unusedStateField", "Unused state field: '{{name}}'");
+const UNUSED_STATE_FIELD: &Message = &Message::new("unusedStateField", "Unused state field: '{{name}}'");
 
 /// `quasis[0].value.raw` for the text between the backticks. espree normalizes each line break in it to `\n`.
 fn raw_of<'a>(file: &File<'a>, raw_text: &'a [u8]) -> Cow<'a, [u8]> {

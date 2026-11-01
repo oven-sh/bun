@@ -7076,7 +7076,7 @@ pub(crate) mod __gated_printer {
                     self.indent();
                     self.print_indent();
                     self.print_symbol(self.options.hmr_ref);
-                    self.print(b".cjs.exports = ");
+                    self.print(b".lazyExport(");
                     self.print_expr(
                         Expr {
                             data: *lazy,
@@ -7085,15 +7085,17 @@ pub(crate) mod __gated_printer {
                         Level::Comma,
                         ExprFlagSet::empty(),
                     );
-                    self.print(b"; // bun .s_lazy_export\n");
+                    self.print(b"); // bun .s_lazy_export\n");
                     self.unindent();
                 }
                 self.print_indent();
                 self.print(b"},\n");
                 return;
             }
-            // ESM is represented by an array tuple [ dependencies, exports, starImports, load, async ];
-            if ast.exports_kind == js_ast::ExportsKind::Esm {
+            // [ dependencies, exports, starImports, load, flags ]: ESM, or CommonJS whose `import()` needs `RecordFlags.nodeMode` (a lazy export has no `import()`).
+            let is_esm = ast.exports_kind == js_ast::ExportsKind::Esm;
+            let is_node_mode = self.options.input_module_type == bundle_opts::ModuleType::Esm;
+            if is_esm || (is_node_mode && !ast.has_lazy_export) {
                 self.print(b": [ [");
                 // Print the dependencies.
                 if stmts.len() > 1 {
@@ -7176,29 +7178,34 @@ pub(crate) mod __gated_printer {
                 self.print(b"], ");
 
                 // Print the code
-                if !ast.top_level_await_keyword.is_empty() {
-                    self.print(b"async");
-                }
-                self.print_fn_args(
-                    Some(func.open_parens_loc),
-                    slice_of(func.args),
-                    func.flags.contains(G::FnFlags::HasRestArg),
-                    false,
-                );
-                self.print(b" => {\n");
-                self.indent();
-                self.print_block_body(slice_of(func.body.stmts));
-                self.unindent();
-                self.print_indent();
-                self.print(b"}, ");
-
-                // Print isAsync
-                self.print(if !ast.top_level_await_keyword.is_empty() {
-                    b"true".as_slice()
+                let is_async = !ast.top_level_await_keyword.is_empty();
+                if is_esm {
+                    if is_async {
+                        self.print(b"async");
+                    }
+                    self.print_fn_args(
+                        Some(func.open_parens_loc),
+                        slice_of(func.args),
+                        func.flags.contains(G::FnFlags::HasRestArg),
+                        false,
+                    );
+                    self.print(b" => {\n");
+                    self.indent();
+                    self.print_block_body(slice_of(func.body.stmts));
+                    self.unindent();
+                    self.print_indent();
+                    self.print(b"}, ");
                 } else {
-                    b"false".as_slice()
-                });
-                self.print(b"],\n");
+                    debug_assert!(ast.exports_kind == js_ast::ExportsKind::Cjs);
+                    // Not an arrow: the body keeps `this` and `arguments`, as in the bare function below.
+                    self.print(b"function");
+                    self.print_func(func);
+                    self.print(b", ");
+                }
+
+                let flags =
+                    u8::from(is_async) | (u8::from(!is_esm) << 1) | (u8::from(is_node_mode) << 2);
+                let _ = self.fmt(format_args!("{}],\n", flags));
             } else {
                 debug_assert!(ast.exports_kind == js_ast::ExportsKind::Cjs);
                 self.print_func(func);

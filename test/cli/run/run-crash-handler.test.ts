@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   bunEnv,
   bunExe,
+  isArm64,
   isASAN,
   isDebug,
   isGlibc,
@@ -54,6 +55,14 @@ test.if(isDebug && isLinux && hasSymbolizer)(
   },
   60_000, // symbolizing the debug binary takes several seconds
 );
+
+// Code compiled with -mbranch-protection=pac-ret saves its return addresses
+// signed. Read as it is, such a word is the address of nothing, and the caller
+// is missing from the crash report. Nothing is signed on a machine without
+// pointer authentication, where this passes as is. CI's machines have it.
+test.if(isLinux && isArm64)("a stack trace takes the signature off a return address", () => {
+  expect(crash_handler.stackTraceStartsAtSignedReturnAddress()).toBe(true);
+});
 
 // `crash()` resets fatal-signal dispositions to SIG_DFL before re-raising so
 // that JS-registered listeners (`process.on("SIGABRT")` etc., installed by

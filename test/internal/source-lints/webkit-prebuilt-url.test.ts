@@ -134,13 +134,10 @@ describe("WebKit prebuilt URL", () => {
     expect(prebuiltUrlOf(resolveLinuxRelease({ hardened: true, lto: true, aot: false }))).toBe(
       `https://github.com/oven-sh/WebKit/releases/download/${defaultTag}/bun-webkit-linux-amd64-lto-hardened.tar.gz`,
     );
-    const others = [
-      { arch: "aarch64" },
-      { buildType: "Debug" },
-      { asan: true },
-      { assertions: true },
-      { fuzzilli: true },
-    ];
+    expect(prebuiltUrlOf(resolveLinuxRelease({ hardened: true, lto: true, aot: false, arch: "aarch64" }))).toBe(
+      `https://github.com/oven-sh/WebKit/releases/download/${defaultTag}/bun-webkit-linux-arm64-lto-hardened.tar.gz`,
+    );
+    const others = [{ buildType: "Debug" }, { asan: true }, { assertions: true }, { fuzzilli: true }];
     for (const other of others as PartialConfig[]) {
       expect(() => resolveLinuxRelease({ hardened: true, ...other })).toThrow("or webkit=local");
       expect(resolveLinuxRelease({ hardened: true, webkit: "local", ...other }).hardened).toBe(true);

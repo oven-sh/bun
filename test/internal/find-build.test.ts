@@ -140,7 +140,18 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
     created_at: createdAt(number),
     web_url: `https://buildkite.com/bun/bun/builds/${number}`,
   });
-  const onMain = (number: number, state = "failed") => ({ ...buildOf("main", number), state });
+  /**
+   * A build of main. `reported`: how many of its jobs set a `reported-<job>` meta-data key. Every test job does
+   * when it ends. A build that stops at a compile error has the few keys of its failed build steps.
+   */
+  const onMain = (number: number, state = "failed", reported = 4) => ({
+    ...buildOf("main", number),
+    state,
+    meta_data: {
+      "timings:linux-x64-build-bun": "{}",
+      ...Object.fromEntries(Array.from({ length: reported }, (_, job) => [`reported-${number}-${job}`, "1"])),
+    },
+  });
   /** The newest ten passed or failed builds of main. */
   const complete =
     "bk api /pipelines/bun/builds?branch=main&state[]=passed&state[]=failed&exclude_jobs=true&exclude_pipeline=true&per_page=10";
@@ -600,6 +611,83 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
       });
     });
 
+    // Builds 8, 6 and 5 of main stopped at a compile error: one failed build step reported, and no test job.
+    // Build 3 counts: half as many jobs reported as in the best build.
+    const compileError = "[E0425] cannot find value `x` in this scope";
+    const inFour = "test/js/on-main-4.test.ts";
+    const stopped = {
+      annotations: {
+        9: [],
+        8: [failing(compileError)],
+        7: [failing(inFour), failing(onThisBranch)],
+        6: [failing(compileError)],
+        5: [failing(compileError)],
+        4: [failing(inFour)],
+        3: [],
+        2: [],
+        14: [],
+      },
+      headings: [heading(onThisBranch, " [new]"), heading(inFour, " [pre-existing]")],
+    };
+    const stoppedBuilds: {
+      where: string;
+      ofMain: ReturnType<typeof onMain>[];
+      notes: string[];
+      requests: Record<string, readonly string[]>;
+    }[] = [
+      {
+        where: "in the ten newest",
+        ofMain: [
+          onMain(9),
+          onMain(8, "failed", 1),
+          onMain(6, "failed", 1),
+          onMain(5, "failed", 1),
+          onMain(4),
+          onMain(3, "passed", 2),
+          onMain(2),
+        ],
+        notes: ["compared with main #4 (1 failing), #3 (0 failing), newer #9 (0 failing)"],
+        requests: { 4: [names(4, 1)], 3: [names(3, 1)], 9: [names(9, 1)], comparison: [lookup(7), complete] },
+      },
+      {
+        // The ten newest hold builds below the target, and none of them ran its tests: a second request.
+        where: "below the target, at the end of the ten newest",
+        ofMain: [
+          ...Array.from({ length: 8 }, (_, i) => onMain(21 - i)),
+          onMain(6, "failed", 1),
+          onMain(5, "failed", 1),
+          onMain(4),
+          onMain(3, "passed", 2),
+          onMain(2),
+        ],
+        notes: ["compared with main #4 (1 failing), #3 (0 failing), newer #14 (0 failing)"],
+        requests: {
+          4: [names(4, 1)],
+          3: [names(3, 1)],
+          14: [names(14, 1)],
+          comparison: [lookup(7), complete, completeBefore(7)],
+        },
+      },
+    ];
+    scenario.each(stoppedBuilds)(
+      "does not compare with a build of main that ran no tests ($where)",
+      async ({ ofMain, notes, requests }) => {
+        const result = await runFindBuild(["--errors", "7"], {
+          main: ofMain,
+          annotations: stopped.annotations,
+          builds: [buildOf("a-branch", 7)],
+        });
+        expect(result).toEqual({
+          stdout: expect.any(Array),
+          headings: stopped.headings,
+          notes,
+          stderr: "",
+          exitCode: 0,
+          requests: { 7: [request(7, 1)], ...requests },
+        });
+      },
+    );
+
     scenario("--all gives no tag to an annotation that is not an error", async () => {
       const result = await runFindBuild(["--errors", "7", "--all"], {
         main: [onMain(6), onMain(5)],
@@ -644,7 +732,13 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
       {
         why: "main has no passed or failed build before the target",
         canned: { main: [onMain(9), onMain(8, "canceled"), onMain(6, "canceled")] },
-        reason: "no passed or failed build of main before this build",
+        reason: "no passed or failed build of main ran its tests before this build",
+        requests: { 7: [request(7, 1)], comparison: [lookup(7), complete] },
+      },
+      {
+        why: "no job of a build of main reported",
+        canned: { main: [onMain(6, "passed", 0), onMain(5, "passed", 0)] },
+        reason: "no passed or failed build of main ran its tests before this build",
         requests: { 7: [request(7, 1)], comparison: [lookup(7), complete] },
       },
     ];

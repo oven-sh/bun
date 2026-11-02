@@ -440,34 +440,46 @@ async function saveLogs(build: number) {
 /** `errors`: build of main -> its count of error annotations. `failing`: context -> the builds of main that have it. */
 type Baseline = { below: number[]; newer?: number; errors: Map<number, number>; failing: Map<string, number[]> };
 
-// The passed or failed builds of main that a build is compared with, every page of each. A canceled build
-// holds a part of its annotations, so it does not count.
+// The builds of main that a build is compared with, every page of each.
 //   `below`: the two newest that are numbered below the target. A lower number is an earlier build, so main
 //            had their failures before the target existed.
 //   `newer`: the first one that is numbered above the target. A commit of main that the target holds can
 //            have its first complete build there, and so can an outage that hit both. But the target's
 //            branch can also be what brought a failure there. A target on main gets none: that build has
 //            what the target brought.
+// Only a passed or failed build counts, because a canceled build holds a part of its annotations. Of those,
+// only a build that ran its tests: see `ranTests`.
 // Throws when a request fails, because a build that is left out would turn its failures into `[new]`.
 async function mainBaseline(target: Build): Promise<Baseline> {
+  type MainBuild = { number: number; meta_data?: Record<string, string> };
   const perPage = 10;
   const complete = `/pipelines/bun/builds?branch=main&state[]=passed&state[]=failed&exclude_jobs=true&exclude_pipeline=true&per_page=${perPage}`;
+  // A test job sets a `reported-<job>` key when its runner ends: markBuildkiteStepReported() in
+  // scripts/buildkite.ts. A build that stops at a compile error ends as failed, with the few keys of its failed
+  // build steps and no test result. So a build counts when at least half as many jobs reported as in the best
+  // build of the list.
+  const reported = (b: MainBuild) => Object.keys(b.meta_data ?? {}).filter(key => key.startsWith("reported-")).length;
+  const ranTests = (list: MainBuild[]) => {
+    const most = Math.max(1, ...list.map(reported));
+    return list.filter(b => reported(b) * 2 >= most);
+  };
 
-  const [newest, { branch, created_at }] = await Promise.all([
-    bk<{ number: number }[]>("api", complete),
+  const [page, { branch, created_at }] = await Promise.all([
+    bk<MainBuild[]>("api", complete),
     target.created_at ? target : bk<Build>("api", `/pipelines/bun/builds/${target.number}?exclude_jobs=true`),
   ]);
-  // Newest first: the builds from `firstBelow` on are below the target, and the one before them is the first
-  // above it. When the page holds no build below the target, which build is the first above is not known.
-  const firstBelow = newest.findIndex(b => b.number < target.number);
-  const newer = branch === "main" || firstBelow < 1 ? undefined : newest[firstBelow - 1].number;
-  let before = firstBelow < 0 ? [] : newest.slice(firstBelow);
-  // An older target: the builds of main before it are past the end of the page. `created_to` is exclusive.
-  if (before.length < 2 && newest.length === perPage) {
-    before = await bk<{ number: number }[]>("api", `${complete}&created_to=${created_at}`);
+  const newest = ranTests(page);
+  // Newest first. Which build is the first above the target is known only when the page reaches below the target.
+  const reaches = page.some(b => b.number < target.number);
+  const newer = branch === "main" || !reaches ? undefined : newest.findLast(b => b.number > target.number)?.number;
+  let before = newest.filter(b => b.number < target.number);
+  // The builds to compare with are past the end of the page: an older target, or builds that ran no tests.
+  // `created_to` is exclusive.
+  if (before.length < 2 && page.length === perPage) {
+    before = ranTests(await bk<MainBuild[]>("api", `${complete}&created_to=${created_at}`));
   }
   const below = before.slice(0, 2).map(b => b.number);
-  if (below.length === 0) throw new Error("no passed or failed build of main before this build");
+  if (below.length === 0) throw new Error("no passed or failed build of main ran its tests before this build");
   const numbers = newer == null ? below : [...below, newer];
 
   const lists = await Promise.all(numbers.map(n => annotations(n, { bodies: false, maxPages: Infinity })));

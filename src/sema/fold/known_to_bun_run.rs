@@ -24,6 +24,16 @@ fn has_radix(hir: &File<'_>, big_int: ExprId) -> bool {
     matches!(written, [b'0', next, ..] if *next != b'n')
 }
 
+/// The digits of a BigInt as `bun run` holds them: what is written in front of the `n`, without a `_`.
+fn written_digits<'a>(hir: &'a File<'_>, big_int: ExprId) -> impl Iterator<Item = u8> + 'a {
+    let written = hir
+        .text
+        .get(hir[big_int].pos as usize..)
+        .unwrap_or_default();
+    let digits = written.iter().copied().take_while(|&unit| unit != b'n');
+    digits.filter(|&unit| unit != b'_')
+}
+
 pub(super) enum NullishByShape {
     Known(bool),
     SameAs(ExprId),
@@ -229,11 +239,25 @@ impl<'s> Folder<'_, 's> {
             | ExprKind::AsConst(expr)
             | ExprKind::NonNull(expr)
             | ExprKind::Instantiation { expr, .. } => is_known(expr),
+            ExprKind::Cond { test, .. } if self.is_comparison_of_build_alone(test) => false,
             ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::Cond { .. } => {
                 self.tells_condition_by_what_is_in_place(e)
             }
             _ => false,
         }
+    }
+
+    /// `bun run` knows nothing of a comparison that it does not fold, as a value and as a test. Nearly every test that a build alone folds is one, with an operand that nobody knows: `a === b ? c : d`. This answers for those without a call.
+    #[inline]
+    fn is_comparison_of_build_alone(&self, e: ExprId) -> bool {
+        let is_comparison = matches!(
+            self.hir[e].kind,
+            ExprKind::Binary {
+                op: BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq,
+                ..
+            }
+        );
+        is_comparison && !self.is_folded_by_bun_run(e)
     }
 
     /// `(a(), 0) ? b : c` is `(a(), c)` to `bun run`, and `[a][0]` is `a`.
@@ -533,13 +557,14 @@ impl<'s> Folder<'_, 's> {
                 {
                     true
                 }
-                // A BigInt is not null, however it is written.
+                _ if !by_build_alone(left) && !by_build_alone(right) => false,
+                // A BigInt is not null, however it is written, and two that are written the same are equal.
                 BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq
-                    if self.compares_big_int_literal_with_null(left, right) =>
+                    if self.compares_big_int_literal_with_null(left, right)
+                        || self.compares_big_ints_written_the_same(left, right) =>
                 {
                     false
                 }
-                _ if !by_build_alone(left) && !by_build_alone(right) => false,
                 // `bun run` has the value of the operand that it puts in place, and none for what it keeps.
                 BinOp::And | BinOp::Or | BinOp::Nullish => self
                     .find_operand_in_place_of_logical(op, left, right)
@@ -548,10 +573,14 @@ impl<'s> Folder<'_, 's> {
             },
             ExprKind::Cond { test, branches } => {
                 let branches = hir.branches(branches);
-                let is_selected = |when: bool| self.condition(test) != Some(!when);
-                by_build_alone(test)
-                    || (is_selected(true) && by_build_alone(branches.yes))
-                    || (is_selected(false) && by_build_alone(branches.no))
+                // `bun run` has the value of the branch that it puts in place, whatever it has for the test.
+                let keeps_test = self.is_comparison_of_build_alone(test)
+                    || (by_build_alone(test) && self.find_operand_in_place(e).is_none());
+                keeps_test || {
+                    let condition = self.condition(test);
+                    (condition != Some(false) && by_build_alone(branches.yes))
+                        || (condition != Some(true) && by_build_alone(branches.no))
+                }
             }
             // `Template::fold` joins what it holds in 8 bits: `é${1}` stays as it is written.
             ExprKind::Template { exprs } => {
@@ -583,6 +612,16 @@ impl<'s> Folder<'_, 's> {
                     && self.is_literal_to_bun_run(null)
                     && self.is_nullish(null) == Some(true)
             })
+    }
+
+    /// `check_equality` asks whether two BigInts are written the same before it asks for a radix.
+    fn compares_big_ints_written_the_same(&self, left: ExprId, right: ExprId) -> bool {
+        let hir = self.hir;
+        let (left, right) = (self.held_by_bun_run(left), self.held_by_bun_run(right));
+        let is_big_int = |e: ExprId| matches!(hir[e].kind, ExprKind::BigInt(_));
+        is_big_int(left)
+            && is_big_int(right)
+            && written_digits(hir, left).eq(written_digits(hir, right))
     }
 
     fn is_text_in_pieces(&self, e: ExprId) -> bool {

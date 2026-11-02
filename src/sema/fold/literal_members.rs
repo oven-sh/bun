@@ -302,6 +302,15 @@ impl Folder<'_, '_> {
                 ExprKind::Binary { op: BinOp::Add, .. } if self.atoms.bytes(value).is_ascii() => {
                     Some(held)
                 }
+                // `bun run` joins nothing to a text that it holds in 16 bits. A sum that it computes to one is its last addend, behind empty texts: `"" + "é"`.
+                ExprKind::Binary {
+                    op: BinOp::Add,
+                    right,
+                    ..
+                } => {
+                    held = self.held_by_bun_run(right);
+                    continue;
+                }
                 _ => return None,
             };
             return Some(Text { value, joined });

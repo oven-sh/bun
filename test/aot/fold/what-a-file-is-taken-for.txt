@@ -123,6 +123,14 @@ cjs	=	js	const r = "ab" + "cd"; if (r.length === 3) module.exports = 1;
 cjs	=	js	const r = "ab" + "cd"; if (r === "x") module.exports = 1;
 cjs	=	js	if (`é${1}`.length === 3) module.exports = 1;
 cjs	=	js	if (("é" + "a").length === 3) module.exports = 1;
+esm	=	js	if (("" + "é").length === 3) module.exports = 1;
+esm	=	js	const t = "é"; if (((1 ? "" : "x") + t).length === 3) module.exports = 1;
+esm	=	js	if (("" + (0, "é")).length === 3) module.exports = 1;
+esm	=	js	if (("" + "" + "é").length === 3) module.exports = 1;
+cjs	=	js	if (("é" + "").length === 3) module.exports = 1;
+cjs	=	js	if (("" + "é")[0] === "x") module.exports = 1;
+cjs	=	js	if (((a(), "") + "é").length === 3) module.exports = 1;
+cjs	=	js	if ((0 + "é").length === 3) module.exports = 1;
 # Behind `?.`. `bun run` starts no optional chain behind what is never null or undefined as it is written.
 esm	=	js	if ({ b: 0 }?.b) module.exports = 1;
 esm	=	js	if ({ a: { b: 0 } }?.a.b) module.exports = 1;
@@ -273,8 +281,8 @@ cjs	=	js	if ("a" + "" + "é" === "aé") {} else module.exports = 1;
 cjs	=	js	if ("" + "é" + "a" === "éa") {} else module.exports = 1;
 cjs	=	js	if (1 + 2 + "é" === "3é") {} else module.exports = 1;
 cjs	=	js	if (1 + "" + "é" === "1é") {} else module.exports = 1;
-# A BigInt. `bun run` reads no digits of one that is written with a radix: it joins it to no text, compares it with no other and does not ask whether it is zero.
-# It knows that one is a BigInt and not null.
+# A BigInt. `bun run` reads no digits of one that is written with a radix: it joins it to no text, compares it with none that is written another way
+# and does not ask whether it is zero. It knows that one is a BigInt and not null, and that two that are written the same are equal.
 esm	=	js	[module, "a" + 10n];
 esm	=	js	[module, "a" + 0n];
 esm	=	js	[module, `a${1n}`];
@@ -292,6 +300,15 @@ cjs	=	js	if (0x10n && []) {} else module.exports = 1;
 cjs	=	js	if (0x10n ? [] : 0) {} else module.exports = 1;
 cjs	=	js	if (0x10n === 16n) {} else module.exports = 1;
 cjs	=	js	[module, +(0x10n === 16n)];
+esm	=	js	if (0x10n === 0x10n) {} else module.exports = 1;
+esm	=	js	if (0x10n !== 0x10n) module.exports = 1;
+esm	=	js	if (0x1_0n == 0x10n) {} else module.exports = 1;
+esm	=	js	if ((0, 0x10n) === [0x10n][0]) {} else module.exports = 1;
+cjs	=	js	if (0X10n === 0x10n) {} else module.exports = 1;
+cjs	=	js	if ((a(), 0x10n) === 0x10n) {} else module.exports = 1;
+cjs	=	js	if ((0x10n ? 0x10n : 1) === 0x10n) {} else module.exports = 1;
+cjs	=	js	if (0x10n === (0x10n ? 0x10n : 1)) {} else module.exports = 1;
+cjs	=	js	if (0x10n <= 0x10n) {} else module.exports = 1;
 esm	=	js	if (typeof 0x10n === "bigint") {} else module.exports = 1;
 esm	=	js	if (typeof (0, 0x10n) === "bigint") {} else module.exports = 1;
 esm	=	js	var v = 0x10n ?? module.exports;
@@ -382,6 +399,10 @@ esm	=	js	[module, ([] && 1) ? 0 : a()];
 esm	=	js	if ((([] && 1) ? [1, 0] : [])[1]) module.exports = 1;
 esm	=	js	if ([...(([] && 1) ? [1, 0] : [])][1]) module.exports = 1;
 cjs	=	js	var v = ((([] && 1) ? `t${a()}` : 0) + "b") ?? module.exports;
+esm	=	js	var b; if (((typeof b && 0) ? 1 : 2) === 2) {} else module.exports = 1;
+esm	=	js	var b; [module, +((typeof b && 2) ? 1 : 2)];
+cjs	=	js	if (((typeof a() && 0) ? 1 : 2) === 2) {} else module.exports = 1;
+esm	=	js	if (1 === 1 ? 0 : 1) module.exports = 1;
 # `bun run` asks what it has in place of an operator whether that is null or undefined: `x` for `!!x` where `x` is a boolean by its shape,
 # one template for a sum with a template, and the other addend for a sum with "" where that addend is a text by its shape.
 esm	=	js	var b; var v = !!b ?? module.exports;
@@ -424,6 +445,12 @@ cjs	=	js	var v = ("" + "" + (a() ? "x" : "y")) ?? module.exports;
 esm	=	js	var v = ("" + a()) ?? module.exports;
 esm	=	js	var v = ("" + (a(), "s")) ?? module.exports;
 cjs	=	js	var b; var v = ("" + (b = "x")) ?? module.exports;
+# A build does not know what `bun run` has in place of an enum member, or of a constant whose text it computes.
+# So it says nothing of `!` and of a sum over a logical or a conditional.
+cjs	=	ts	enum E { A = 0 } var b; var v = !(E.A || !(!b || !b)) ?? module.exports;
+cjs	=	js	const s = typeof 1; var b; var v = !(s && !(!b || !b)) ?? module.exports;
+cjs	=	ts	declare const a: any; enum E { A = 0 } var v = ("x" + (E.A ? "a" : `t${a()}`)) ?? module.exports;
+cjs	=	js	const s = typeof 1; var v = ("x" + (s ? `t${a()}` : "a")) ?? module.exports;
 # What only a build knows decides nothing.
 esm	=	js	if ([typeof Bun][0]) {} else module.exports = 1;
 cjs	=	js	if ({ b: Bun }.b) {} else module.exports = 1;
@@ -431,6 +458,8 @@ cjs	=	js	if (process.platform.length === 0) module.exports = 1;
 cjs	=	js	if ([1, 0][process.platform.length - 4]) module.exports = 1;
 cjs	=	js	if ({ b: process.platform }.b === "win32") module.exports = 1;
 cjs	=	js	if (1 ? process.platform === "plan9" : 0) module.exports = 1;
+esm	=	js	if ((0 ? process.platform === "plan9" : 0) === 0) {} else module.exports = 1;
+esm	=	js	if ((1 ? 0 : process.platform === "plan9") === 0) {} else module.exports = 1;
 cjs	=	js	if ((a(), 1) ? process.platform === "plan9" : 0) module.exports = 1;
 # Not yet: `bun run` removes a name of a built-in object that nothing uses. A build removes none from a list, or from the left of a comma.
 esm	cjs	js	if ([Math.PI, 0][1]) module.exports = 1;
@@ -453,13 +482,10 @@ esm	cjs	js	var b; var v = !!(b || b) ?? module.exports;
 esm	cjs	js	var v = (a() + `t${a()}`) ?? module.exports;
 esm	cjs	js	var v = ("x" + (a() ? "x" : "y")) ?? module.exports;
 esm	cjs	js	var v = ("" + (a() || "y")) ?? module.exports;
-# Not yet: `bun run` compares two BigInts that are written with a radix where both are written the same.
-esm	cjs	js	if (0x10n === 0x10n) {} else module.exports = 1;
-# Not yet: what `bun run` has in place of a comma, a conditional, a logical or a sum with "". A build does not follow it in three places: in a test,
-# on one side of a logical where it is a pattern or a function, and behind a test that `bun run` knows by its shape alone.
+# Not yet: what `bun run` has in place of a comma, a conditional, a logical or a sum with "". A build does not follow it in two places: in a test,
+# and on one side of a logical where it is a pattern or a function.
 esm	cjs	js	if ((0, (class {} && 1))) {} else module.exports = 1;
 esm	cjs	js	if (([] ? ([] && 1) : 0)) {} else module.exports = 1;
 esm	cjs	js	var b; if ((typeof b && "1") + "") {} else module.exports = 1;
 esm	cjs	js	var v = ((/r/ ?? []) && []) || module.exports;
 esm	cjs	js	var v = ([] && ("" || (() => 0))) ? 0 : module.exports;
-esm	cjs	js	var b; if (((typeof b && 0) ? 1 : 2) === 2) {} else module.exports = 1;

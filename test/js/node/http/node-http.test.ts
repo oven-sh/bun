@@ -1458,6 +1458,17 @@ describe("node:http", () => {
     await promise;
   });
 
+  test.if(isWindows)("test named pipe server", async () => {
+    const pipe = `\\\\.\\pipe\\bun-test-http-${Math.random().toString(32).slice(2)}`;
+    await using server = createServer((req, res) => res.end("Bun " + req.url));
+    server.listen(pipe);
+    await once(server, "listening");
+    expect(server.address()).toBe(pipe);
+    const { promise, resolve, reject } = Promise.withResolvers<IncomingMessage>();
+    get({ socketPath: pipe, path: "/a" }, resolve).on("error", reject);
+    expect(await text(await promise)).toBe("Bun /a");
+  });
+
   test("should not decompress gzip, issue#4397", async () => {
     using server = Bun.serve({
       port: 0,

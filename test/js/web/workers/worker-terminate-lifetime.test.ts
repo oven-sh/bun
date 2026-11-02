@@ -1305,3 +1305,51 @@ test(
   },
   timeout,
 );
+
+// The child neither writes to its descriptor 3, nor reads it, nor exits, so nothing but terminate() ends the wait. On
+// Windows that wait holds a pool thread, and this process's end of such a pipe is an overlapped handle.
+for (const [call, works] of [
+  ["Bun.file(fd).text()", true],
+  // TODO: on Linux terminate() does not return while the write is pending.
+  ["Bun.write(Bun.file(fd), Buffer.alloc(8 << 20))", isWindows],
+] as const) {
+  test.concurrent.todoIf(!works)(`terminate() ends a ${call} that waits for a child`, async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const worker = new Worker(
+          \`
+          const child = Bun.spawn({
+            cmd: [process.execPath, "-e", "setInterval(() => {}, 1000)"],
+            stdio: ["ignore", "ignore", "ignore", "pipe"],
+          });
+          const fd = child.stdio[3];
+          ${call}.catch(() => {});
+          require("node:worker_threads").parentPort.postMessage(child.pid);
+          \`,
+          { eval: true },
+        );
+        worker.once("message", async pid => {
+          await worker.terminate();
+          // Throws if there is no such process.
+          process.kill(pid, 0);
+          console.log("terminated while the child runs");
+          process.kill(pid);
+        });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "terminated while the child runs\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+}

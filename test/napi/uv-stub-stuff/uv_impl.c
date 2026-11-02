@@ -1,15 +1,101 @@
 #include <node_api.h>
 
-#include <pthread.h>
 #include <signal.h>
-#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 #include <uv.h>
+
+#ifdef _WIN32
+
+// What this file uses from <pthread.h>, <stdatomic.h> and <unistd.h>. MSVC
+// doesn't have the first and the last, and node-gyp doesn't pass the flags that
+// enable the second.
+
+typedef struct {
+  HANDLE handle;
+  DWORD id;
+} pthread_t;
+
+struct thread_start {
+  void *(*routine)(void *);
+  void *arg;
+};
+
+static unsigned __stdcall thread_entry(void *arg) {
+  struct thread_start start = *(struct thread_start *)arg;
+  free(arg);
+  start.routine(start.arg);
+  return 0;
+}
+
+static int pthread_create(pthread_t *thread, const void *attr,
+                          void *(*routine)(void *), void *arg) {
+  struct thread_start *start = malloc(sizeof(*start));
+  start->routine = routine;
+  start->arg = arg;
+  unsigned id;
+  thread->handle = (HANDLE)_beginthreadex(NULL, 0, thread_entry, start, 0, &id);
+  thread->id = id;
+  if (thread->handle == NULL) {
+    free(start);
+    return -1;
+  }
+  return 0;
+}
+
+static int pthread_join(pthread_t thread, void **result) {
+  WaitForSingleObject(thread.handle, INFINITE);
+  CloseHandle(thread.handle);
+  return 0;
+}
+
+static int pthread_detach(pthread_t thread) {
+  CloseHandle(thread.handle);
+  return 0;
+}
+
+static pthread_t pthread_self(void) {
+  pthread_t self = {NULL, GetCurrentThreadId()};
+  return self;
+}
+
+static int pthread_equal(pthread_t a, pthread_t b) { return a.id == b.id; }
+
+typedef SRWLOCK pthread_mutex_t;
+#define PTHREAD_MUTEX_INITIALIZER SRWLOCK_INIT
+#define pthread_mutex_lock(mutex) AcquireSRWLockExclusive(mutex)
+#define pthread_mutex_unlock(mutex) ReleaseSRWLockExclusive(mutex)
+
+typedef volatile LONG atomic_int;
+typedef volatile LONG atomic_uint;
+typedef volatile LONG atomic_bool;
+#define atomic_load(ptr) InterlockedOr((ptr), 0)
+#define atomic_store(ptr, value) InterlockedExchange((ptr), (value))
+#define atomic_fetch_add(ptr, value) InterlockedExchangeAdd((ptr), (value))
+
+#define sched_yield() SwitchToThread()
+
+// Loops because Sleep() can return before the time has passed: it wakes up on a
+// clock tick.
+static void usleep(unsigned microseconds) {
+  LARGE_INTEGER frequency, start, now;
+  QueryPerformanceFrequency(&frequency);
+  QueryPerformanceCounter(&start);
+  do {
+    Sleep(1);
+    QueryPerformanceCounter(&now);
+  } while ((now.QuadPart - start.QuadPart) * 1000000 / frequency.QuadPart <
+           microseconds);
+}
+
+#else
+#include <pthread.h>
+#include <stdatomic.h>
+#include <unistd.h>
+#endif
 
 // Test mutex initialization and destruction
 static napi_value test_mutex_init_destroy(napi_env env,
@@ -52,7 +138,21 @@ static napi_value test_mutex_recursive(napi_env env, napi_callback_info info) {
   return ret;
 }
 
-// Test mutex trylock
+struct trylock_attempt {
+  uv_mutex_t *mutex;
+  int result;
+};
+
+static void *trylock_on_another_thread(void *arg) {
+  struct trylock_attempt *attempt = arg;
+  attempt->result = uv_mutex_trylock(attempt->mutex);
+  if (attempt->result == 0)
+    uv_mutex_unlock(attempt->mutex);
+  return NULL;
+}
+
+// testMutexTrylock() takes a free mutex and returns what another thread's
+// attempt gets in the meantime.
 static napi_value test_mutex_trylock(napi_env env, napi_callback_info info) {
   uv_mutex_t mutex;
   uv_mutex_init(&mutex);
@@ -64,11 +164,23 @@ static napi_value test_mutex_trylock(napi_env env, napi_callback_info info) {
     return NULL;
   }
 
+  struct trylock_attempt attempt = {&mutex, 0};
+  pthread_t thread;
+  bool started =
+      pthread_create(&thread, NULL, trylock_on_another_thread, &attempt) == 0;
+  if (started)
+    pthread_join(thread, NULL);
+
   uv_mutex_unlock(&mutex);
   uv_mutex_destroy(&mutex);
 
+  if (!started) {
+    napi_throw_error(env, NULL, "pthread_create failed");
+    return NULL;
+  }
+
   napi_value ret;
-  napi_get_boolean(env, true, &ret);
+  napi_create_int32(env, attempt.result, &ret);
   return ret;
 }
 
@@ -129,11 +241,11 @@ static napi_value test_cwd(napi_env env, napi_callback_info info) {
   napi_create_int32(env, uv_cwd(dummy, &zero), &v);
   napi_set_named_property(env, obj, "zeroSize", v);
 
-  char small[2];
-  size_t small_size = sizeof(small);
-  napi_create_int32(env, uv_cwd(small, &small_size), &v);
+  char too_small[2];
+  size_t too_small_size = sizeof(too_small);
+  napi_create_int32(env, uv_cwd(too_small, &too_small_size), &v);
   napi_set_named_property(env, obj, "smallRc", v);
-  napi_create_int64(env, (int64_t)small_size, &v);
+  napi_create_int64(env, (int64_t)too_small_size, &v);
   napi_set_named_property(env, obj, "smallRequired", v);
 
   char buf[4096];
@@ -177,10 +289,10 @@ static napi_value test_hrtime(napi_env env, napi_callback_info info) {
   return obj;
 }
 
-// Test uv_tty_reset_mode, the one implemented uv_* function that lives in bun's
-// C++ (wtf-bindings.cpp) instead of uv-posix-polyfills.c, so the one that can
-// end up missing from bun's export table. Referenced directly, like a real
-// addon would.
+// Test uv_tty_reset_mode. On POSIX it's the one implemented uv_* function that
+// lives in bun's C++ (wtf-bindings.cpp) instead of uv-polyfills.c, so the one
+// that can end up missing from bun's export table. Referenced directly, like a
+// real addon would.
 static napi_value test_tty_reset_mode(napi_env env, napi_callback_info info) {
   napi_value ret;
   napi_create_int32(env, uv_tty_reset_mode(), &ret);
@@ -344,6 +456,18 @@ static napi_value test_sizes_and_names(napi_env env, napi_callback_info info) {
   napi_set_named_property(env, result, "unknownReqSizeIsMinusOne", value);
   napi_create_uint32(env, (uint32_t)sizeof(uv_async_t), &value);
   napi_set_named_property(env, result, "asyncSize", value);
+  napi_create_uint32(env, (uint32_t)sizeof(uv_idle_t), &value);
+  napi_set_named_property(env, result, "idleSize", value);
+  napi_create_uint32(env, (uint32_t)sizeof(uv_prepare_t), &value);
+  napi_set_named_property(env, result, "prepareSize", value);
+  napi_create_uint32(env, (uint32_t)sizeof(uv_check_t), &value);
+  napi_set_named_property(env, result, "checkSize", value);
+  napi_create_uint32(env, (uint32_t)sizeof(uv_timer_t), &value);
+  napi_set_named_property(env, result, "timerSize", value);
+  napi_create_uint32(env, (uint32_t)sizeof(uv_req_t), &value);
+  napi_set_named_property(env, result, "reqSize", value);
+  napi_create_uint32(env, (uint32_t)sizeof(uv_work_t), &value);
+  napi_set_named_property(env, result, "workSize", value);
 
   napi_create_string_utf8(env, uv_handle_type_name(UV_ASYNC), NAPI_AUTO_LENGTH,
                           &value);
@@ -362,7 +486,8 @@ static napi_value test_sizes_and_names(napi_env env, napi_callback_info info) {
 }
 
 // testOsfhandle(fd) returns uv_open_osfhandle(uv_get_osfhandle(fd)), which is
-// `fd` on Unix.
+// `fd` on Unix. On Windows it's a second fd for `fd`'s HANDLE, or -1 if `fd`
+// isn't open.
 static napi_value test_osfhandle(napi_env env, napi_callback_info info) {
   size_t argc = 1;
   napi_value args[1];

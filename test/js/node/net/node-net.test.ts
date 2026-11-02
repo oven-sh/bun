@@ -8,6 +8,7 @@ import {
   bunRun,
   expectMaxObjectTypeCount,
   gc,
+  isIPv6 as hasIPv6,
   isASAN,
   isDebug,
   isMusl,
@@ -16,11 +17,12 @@ import {
   tls as tlsCert,
   tmpdirSync,
 } from "harness";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import fs from "node:fs";
 import {
+  type AddressInfo,
   BlockList,
   connect,
   createConnection,
@@ -709,6 +711,33 @@ it("should handle connection error", done => {
   });
 });
 
+// Unless it is told not to, Windows tries a port that refuses twice more, which takes two seconds.
+it.if(isWindows)("a closed port is refused at once anywhere in 127.0.0.0/8", async () => {
+  const server = createServer().listen(0, "127.0.0.2");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+  server.close();
+  await once(server, "close");
+
+  const start = performance.now();
+  const [error] = await once(connect(port, "127.0.0.2"), "error");
+  expect(error.code).toBe("ECONNREFUSED");
+  expect(performance.now() - start).toBeLessThan(1900);
+});
+
+it.skipIf(!hasIPv6())("connects to an IPv4-mapped IPv6 address", async () => {
+  const server = createServer().listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const client = connect((server.address() as AddressInfo).port, "::ffff:127.0.0.1");
+  try {
+    await once(client, "connect");
+    expect(client.remoteAddress).toBe("::ffff:127.0.0.1");
+  } finally {
+    client.destroy();
+    server.close();
+  }
+});
+
 it("should handle connection error (unix)", done => {
   let errored = false;
 
@@ -1154,15 +1183,15 @@ it.if(isWindows)(
 );
 
 // The Windows counterpart of the synchronous-failure test below: a client
-// that polls for a daemon's pipe gets one asynchronous ENOENT per attempt,
-// and each failed attempt used to leave its native pipe context (and the
-// context's ref on the native socket) behind. Runs in a child so the context
+// that polls for a daemon's pipe gets one ENOENT per attempt, and no failed
+// attempt may keep its native socket alive. Runs in a child so the socket
 // count starts from zero: the test above leaves connections still closing.
-it.if(isWindows)("should not leak when connect({path}) fails asynchronously while polling for a pipe", async () => {
+it.if(isWindows)("should not leak when connect({path}) fails while polling for a pipe", async () => {
   const script = /* js */ `
     const { createServer, Socket } = require("node:net");
     const { once } = require("node:events");
-    const { namedPipeInternals } = require("bun:internal-for-testing");
+    const { heapStats } = require("bun:jsc");
+    const liveSockets = () => (Bun.gc(true), heapStats().objectTypeCounts.TCPSocket ?? 0);
     const path = "\\\\\\\\.\\\\pipe\\\\bun-test-polling-" + process.pid;
     const events = [];
     // Not events.once(): it rejects on the 'error' that precedes each 'close' here.
@@ -1191,24 +1220,16 @@ it.if(isWindows)("should not leak when connect({path}) fails asynchronously whil
     const clientClosed = watch(client);
     client.setEncoding("utf8");
     let received = "";
-    let contextsWhileConnected = -1;
-    client.on("data", chunk => {
-      received += chunk;
-      // Both ends of the live connection own a context; the failed attempts' contexts must be gone.
-      contextsWhileConnected = namedPipeInternals.liveCount();
-    });
+    client.on("data", chunk => (received += chunk));
     client.connect({ path });
     await clientClosed;
     await serverSideClosed.promise;
     server.close();
 
-    // Finalizing the handles must not touch a socket its context already released.
-    Bun.gc(true);
-    // A context frees itself from a task it queues once its pipe has closed.
-    for (let i = 0; i < 100 && namedPipeInternals.liveCount() > 0; i++) {
+    for (let i = 0; i < 100 && liveSockets() > 0; i++) {
       await new Promise(resolve => setImmediate(resolve));
     }
-    console.log(JSON.stringify({ events, received, contextsWhileConnected, contextsAtEnd: namedPipeInternals.liveCount() }));
+    console.log(JSON.stringify({ events, received, socketsAtEnd: liveSockets() }));
   `;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", script],
@@ -1224,17 +1245,307 @@ it.if(isWindows)("should not leak when connect({path}) fails asynchronously whil
     result: {
       events: [...Array(4).fill(["error:ENOENT", "close:true"]).flat(), "connect", "close:false"],
       received: "ready",
-      contextsWhileConnected: 2,
-      contextsAtEnd: 0,
+      socketsAtEnd: 0,
     },
     stderr: "",
     exitCode: 0,
   });
 });
 
-// On Windows, unix paths route through the named-pipe codepath which reports
-// failure asynchronously; this test targets the synchronous-failure branch in
-// Listener.connectInner.
+// fs.openSync() gives a synchronous handle, as a child inherits from most parents. A thread reads and writes it for
+// the event loop, and every write here has to get past the read that waits on the handle. Runs in a child because
+// what used to happen is an event loop that never comes back from write().
+it.if(isWindows)("writes to and ends a named pipe opened with fs.openSync() while a read waits on it", async () => {
+  const script = /* js */ `
+    const fs = require("node:fs");
+    const net = require("node:net");
+    const path = "\\\\\\\\.\\\\pipe\\\\bun-test-synchronous-" + process.pid;
+    let received = 0;
+    const server = net.createServer(peer => {
+      peer.on("data", chunk => {
+        received += chunk.length;
+      });
+      peer.on("end", () => {
+        console.log(received);
+        server.close();
+      });
+    });
+    server.listen(path, () => {
+      const client = net.connect({ fd: fs.openSync(path, "r+") });
+      client.on("data", () => {});
+      (function write(n) {
+        if (n < 32) client.write(Buffer.alloc(65536, n), () => write(n + 1));
+        else client.end();
+      })(0);
+    });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: `${32 * 65536}\n`, stderr: "", exitCode: 0 });
+});
+
+// Data comes in all the while, so the thread goes back and forth between its read and the writes.
+it.if(isWindows)("echoes what arrives on a named pipe opened with fs.openSync()", async () => {
+  const script = /* js */ `
+    const fs = require("node:fs");
+    const net = require("node:net");
+    const path = "\\\\\\\\.\\\\pipe\\\\bun-test-synchronous-echo-" + process.pid;
+    const sent = Buffer.alloc(1024 * 1024);
+    for (let i = 0; i < sent.length; i += 4) sent.writeUInt32LE(i, i);
+    const server = net.createServer(peer => {
+      const chunks = [];
+      peer.on("data", chunk => chunks.push(chunk));
+      peer.on("end", () => {
+        const echoed = Buffer.concat(chunks);
+        console.log(echoed.length, echoed.equals(sent));
+        server.close();
+      });
+      peer.write(sent);
+    });
+    server.listen(path, () => {
+      const client = net.connect({ fd: fs.openSync(path, "r+") });
+      let received = 0;
+      client.on("data", chunk => {
+        received += chunk.length;
+        client.write(chunk);
+        if (received === sent.length) client.end();
+      });
+    });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: `${1024 * 1024} true\n`, stderr: "", exitCode: 0 });
+});
+
+// Winsock asks its providers about a handle that it does not know, and on this one the question waits for the read.
+it.if(isWindows)("what is about TCP does not wait for the read on a named pipe opened with fs.openSync()", async () => {
+  const script = /* js */ `
+    const fs = require("node:fs");
+    const net = require("node:net");
+    const path = "\\\\\\\\.\\\\pipe\\\\bun-test-synchronous-tcp-" + process.pid;
+    let client;
+    const server = net.createServer(peer => {
+      // What the client wrote has arrived, so the thread that wrote it is back in its read.
+      peer.once("data", () => {
+        client.setNoDelay(true);
+        client.setKeepAlive(true, 1000);
+        client.setTypeOfService(8);
+        console.log(
+          JSON.stringify([
+            client.getTypeOfService(),
+            client.remoteAddress,
+            client.remotePort,
+            client.remoteFamily,
+            client.localAddress,
+            client.localPort,
+            client.address(),
+          ]),
+        );
+        if (process.send) process.send("message", client, () => process.disconnect());
+        else client.destroy();
+        server.close();
+      });
+    });
+    server.listen(path, () => {
+      client = net.connect({ fd: fs.openSync(path, "r+") });
+      client.on("data", () => {});
+      client.write("ping");
+    });
+  `;
+  for (const ipc of [undefined, () => {}]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      ipc,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: `[8,null,null,null,null,null,{}]\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+  }
+});
+
+describe.concurrent.skipIf(!isWindows)("a named pipe that another program made", () => {
+  const fixture = JSON.stringify(join(import.meta.dir, "windows-foreign-pipe-fixture.js"));
+
+  async function run(script: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `const fixture = require(${fixture}), net = require("node:net");${script}`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    return { stdout, exitCode };
+  }
+
+  // To a write that does not fit at once, such an end answers with success and 0 bytes written.
+  it("net.connect({ fd }) writes more than fits a pipe in the mode PIPE_NOWAIT", async () => {
+    const result = await run(`
+      const server = fixture.createServer({ quota: 4096 });
+      const { fd, handle } = fixture.openClient(server.name, "r+");
+      fixture.setNoWait(handle);
+      let total = 0;
+      const timer = setInterval(() => {
+        for (const length of server.read()) total += length;
+      }, 1);
+      const socket = net.connect({ fd });
+      await new Promise(done => socket.write(Buffer.alloc(100_000, "x"), done));
+      while (total < 100_000) await new Promise(setImmediate);
+      clearInterval(timer);
+      socket.destroy();
+      console.log(total);
+    `);
+    expect(result).toEqual({ stdout: "100000\n", exitCode: 0 });
+  });
+
+  // To a read that finds nothing, such an end answers with an error at once, so a read cannot be left to wait for data.
+  // A child gets an overlapped end for a descriptor after the first three.
+  it("net.connect({ fd }) reads from an overlapped end in the mode PIPE_NOWAIT", async () => {
+    const script = `
+      const fixture = require(${fixture}), net = require("node:net");
+      fixture.setNoWait(fixture.inheritedHandle(3));
+      let total = 0;
+      net
+        .connect({ fd: 3 })
+        .on("data", chunk => (total += chunk.length))
+        .on("end", () => console.log(total));
+      setImmediate(() => console.log("reading"));
+    `;
+    const child = spawn(bunExe(), ["-e", script], { env: bunEnv, stdio: ["ignore", "pipe", "inherit", "pipe"] });
+    let stdout = "";
+    child.stdout.on("data", chunk => {
+      stdout += chunk;
+      if (stdout === "reading\n") (child.stdio[3] as Socket).end(Buffer.alloc(70_000, "x"));
+    });
+    const [exitCode] = await once(child, "close");
+    expect({ stdout, exitCode }).toEqual({ stdout: "reading\n70000\n", exitCode: 0 });
+  });
+
+  it.each([
+    ["net.connect(path)", `net.connect(server.name)`],
+    ["net.connect({ fd })", `net.connect({ fd: fixture.openClient(server.name, "r+").fd })`],
+  ])("%s sends every write as one message, however much fits the pipe", async (_, connect) => {
+    const result = await run(`
+      const server = fixture.createServer({ messages: true, quota: 4096 });
+      const lengths = [];
+      const timer = setInterval(() => lengths.push(...server.read()), 1);
+      const socket = ${connect};
+      let total = 0;
+      for (const length of [1, 4096, 4097, 65_536, 65_537, 1_048_576, 1_048_577, 3_000_000, 1]) {
+        socket.write(Buffer.alloc(length, "x"));
+        total += length;
+        while (lengths.reduce((a, b) => a + b, 0) < total) await new Promise(setImmediate);
+      }
+      clearInterval(timer);
+      socket.destroy();
+      console.log(lengths.join(" "));
+    `);
+    expect(result).toEqual({ stdout: "1 4096 4097 65536 65537 1048576 1048577 3000000 1\n", exitCode: 0 });
+  });
+});
+
+describe.if(isWindows)("a write to a named pipe whose peer is gone fails with EPIPE", () => {
+  // "paused": the client has not read the end of the stream, so it is the system that rejects the write.
+  it.each(["after 'end'", "paused"] as const)("%s", async when => {
+    const server = createServer();
+    server.listen(`\\\\.\\pipe\\bun-test-epipe-${randomUUID()}`);
+    await once(server, "listening");
+    const client = connect({ path: server.address() as string, allowHalfOpen: true });
+    // Not events.once(): it rejects on the 'error' that precedes 'close' here.
+    const events: string[] = [];
+    const ended = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<void>();
+    client.on("error", err => events.push("error:" + (err as NodeJS.ErrnoException).code));
+    client.on("end", ended.resolve);
+    client.on("close", hadError => (events.push("close:" + hadError), closed.resolve()));
+    const [[peer]] = await Promise.all([once(server, "connection"), once(client, "connect")]);
+    server.close();
+    if (when === "paused") client.pause();
+    else client.resume();
+    peer.destroy();
+    await once(peer, "close");
+    if (when !== "paused") await ended.promise;
+
+    const written = Promise.withResolvers<Error | null | undefined>();
+    client.write("x", written.resolve);
+    expect(await written.promise).toMatchObject({ code: "EPIPE", errno: -4047, syscall: "write" });
+    await closed.promise;
+    expect(events).toEqual(["error:EPIPE", "close:true"]);
+  });
+});
+
+// As in Node, where libuv counts a write that is in progress whether or not it counts the handle.
+it.if(isWindows).each(["write", "end"])(
+  "the process stays for a %s() that a named pipe has yet to take, unref() or not",
+  async method => {
+    const server = createServer();
+    server.listen(`\\\\.\\pipe\\bun-test-unref-${randomUUID()}`);
+    await once(server, "listening");
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const client = require("node:net").connect(process.env.PIPE, () => {
+            client.${method}(Buffer.alloc(3_000_000, "u"));
+            client.unref();
+          });
+        `,
+      ],
+      env: { ...bunEnv, PIPE: server.address() as string },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [peer] = await once(server, "connection");
+    server.close();
+    let received = 0;
+    peer.on("data", (chunk: Buffer) => (received += chunk.length));
+    peer.on("error", () => {});
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, once(peer, "close")]);
+    expect({ received, stderr, exitCode }).toEqual({ received: 3_000_000, stderr: "", exitCode: 0 });
+  },
+);
+
+it.if(isWindows)("the fd of a named pipe is the descriptor it was opened from, or none", async () => {
+  const server = createServer();
+  server.listen(`\\\\.\\pipe\\bun-test-fd-${randomUUID()}`);
+  await once(server, "listening");
+  const sockets: Socket[] = [];
+  try {
+    const client = connect(server.address() as string);
+    sockets.push(client);
+    const [[accepted]] = await Promise.all([once(server, "connection"), once(client, "connect")]);
+    sockets.push(accepted);
+
+    const fd = fs.openSync(server.address() as string, "r+");
+    const adopted = connect({ fd });
+    sockets.push(adopted);
+
+    // @ts-expect-error
+    expect(sockets.map(socket => socket._handle.fd)).toEqual([-1, -1, fd]);
+  } finally {
+    for (const socket of sockets) socket.destroy();
+    server.close();
+  }
+});
+
+// This test targets the synchronous-failure branch in Listener.connectInner.
+// On Windows its page count sits too close to the bound.
 it.skipIf(isWindows)(
   "should not leak when connect({path}) fails synchronously on a reused handle",
   async () => {
@@ -1550,6 +1861,67 @@ describe("Socket fd adoption", () => {
       report: { events: [], destroyed: false, cb: null },
       exitCode: 0,
     });
+  });
+
+  it("connect({ fd }) closes the descriptor with the socket, so the number is free again", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          import fs from "node:fs";
+          import net from "node:net";
+          const socket = net.connect({ fd: 3 });
+          socket.on("close", async () => {
+            let code;
+            // On Windows the thread that read from the pipe closes it.
+            while (!code) {
+              try {
+                fs.fstatSync(3);
+                await new Promise(setImmediate);
+              } catch (e) {
+                code = e.code;
+              }
+            }
+            console.log(JSON.stringify({ code, next: fs.openSync(process.execPath, "r") }));
+          });
+          socket.destroy();
+        `,
+      ],
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ code: "EBADF", next: 3 }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Windows can read and write each of them as it can a pipe, but none is a stream.
+  it.skipIf(!isWindows).each(["file", "directory", "NUL"])("connect({ fd }) refuses a %s", async kind => {
+    using dir = tempDir("connect-fd-no-stream", { "file.txt": "0123456789" });
+    const file = join(String(dir), "file.txt");
+    const fd =
+      kind === "directory" ? fs.openSync(String(dir), "r") : fs.openSync(kind === "file" ? file : "\\\\.\\NUL", "r+");
+    try {
+      const events: string[] = [];
+      const socket = connect({ fd });
+      for (const event of ["connect", "data", "end"]) socket.on(event, () => events.push(event));
+      const { promise, resolve } = Promise.withResolvers<unknown>();
+      socket.on("error", error => resolve(error.code));
+      socket.on("close", resolve);
+      expect({ code: await promise, events, fd: fstatCode(fd) }).toEqual({ code: "ENOTSOCK", events: [], fd: "open" });
+    } finally {
+      fs.closeSync(fd);
+    }
+  });
+
+  it.skipIf(!isWindows)("connect({ fd }) refuses a descriptor that is not open", async () => {
+    const socket = connect({ fd: 4321 });
+    const [error] = await once(socket, "error");
+    expect(error.code).toBe("ENOTSOCK");
   });
 
   it("throws ERR_INVALID_FD_TYPE for a writable fd that cannot be fstat'ed", () => {
@@ -2907,9 +3279,7 @@ it("onread: a swallowed throw does not drop the rest of the current native read"
   expect(exitCode).toBe(0);
 });
 
-// On Windows the native layer does not report fatal send errors yet (the WSA
-// error translation is a follow-up), so the write error never surfaces there.
-it.skipIf(isWindows)("a write after the peer reset the connection fails with a write error", async () => {
+it("a write after the peer reset the connection fails with a write error", async () => {
   const { promise, resolve, reject } = Promise.withResolvers<NodeJS.ErrnoException>();
   // resetAndDestroy() sends an RST (not a FIN); allowHalfOpen keeps the client's
   // writable side open like Node, so the failure must surface from the write
@@ -3012,7 +3382,7 @@ describe("a write that fails at once", () => {
 
   // The peer dies and the client writes in the same tick, so the event loop
   // gets no chance to report the dead peer as a read error first.
-  // Windows: a path listens on a named pipe, which has its own write path.
+  // Not on Windows: the first send after the peer's close still succeeds there.
   it.skipIf(isWindows)("returns false from write() on a unix socket whose peer closed", async () => {
     using pair = await connectedPair({ path: join(socket_domain, "write-epipe.sock") });
     // A unix socket learns that its peer is gone inside the peer's close(2).
@@ -3373,6 +3743,25 @@ describe.skipIf(!isWindows)("connect() error codes on Windows", () => {
     }
   });
 
+  it("a connection that the server resets at once has connected first", async () => {
+    const server = createServer(c => {
+      c.resetAndDestroy();
+    });
+    try {
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const seen: string[] = [];
+      const { promise: closed, resolve } = Promise.withResolvers<void>();
+      connect((server.address() as import("node:net").AddressInfo).port, "127.0.0.1")
+        .on("connect", () => seen.push("connect"))
+        .on("error", (err: NodeJS.ErrnoException) => seen.push(`${err.code} ${err.syscall}`))
+        .on("close", () => resolve());
+      await closed;
+      expect(seen).toEqual(["connect", "ECONNRESET read"]);
+    } finally {
+      server.close();
+    }
+  });
+
   it("connect to a path that is not a socket reports ECONNREFUSED/ENOTSOCK, missing path reports ENOENT", async () => {
     const dir = tmpdirSync();
     const regular = join(dir, "not-a-socket.txt");
@@ -3394,6 +3783,16 @@ describe.skipIf(!isWindows)("connect() error codes on Windows", () => {
 
     const missingErr = await errFor(missing);
     expect(missingErr.code).toBe("ENOENT");
+  });
+
+  it("listening on a path in a directory that does not exist reports ENOENT", async () => {
+    using dir = tempDir("listen-missing-directory", {});
+    const path = join(String(dir), "missing", "a.sock");
+    const [error] = await once(createServer().listen(path), "error");
+    expect(error).toMatchObject({ code: "ENOENT", syscall: "listen", address: path });
+    expect(() => Bun.serve({ unix: path, fetch: () => new Response() })).toThrow(
+      expect.objectContaining({ code: "ENOENT", syscall: "listen" }),
+    );
   });
 });
 

@@ -2,9 +2,9 @@
 // c-ares retries over TCP on the same port, plus a TCP DNS server that
 // returns a single TXT "hello" record. The Resolver query then exercises
 // FilePoll with both .poll_readable and .poll_writable set on one fd.
+// With the argument "reset" the TCP server answers the query with an RST instead.
 import dgram from "node:dgram";
 import net from "node:net";
-import { once } from "node:events";
 import { Resolver } from "node:dns";
 
 // Build a DNS response that echoes the question section from `query`.
@@ -46,6 +46,10 @@ function onTcpConnection(socket: net.Socket) {
     while (buf.length >= 2) {
       const len = buf.readUInt16BE(0);
       if (buf.length < 2 + len) break;
+      if (process.argv[2] === "reset") {
+        socket.resetAndDestroy();
+        return;
+      }
       const query = buf.subarray(2, 2 + len);
       buf = buf.subarray(2 + len);
       // QR=1 RD=1 | RA=1
@@ -60,31 +64,41 @@ function onTcpConnection(socket: net.Socket) {
 }
 
 // c-ares talks to one server address on both UDP and TCP, so both listeners
-// must share a port. Bind UDP on an ephemeral port and then try TCP on the
-// same number; the kernel only guarantees that port was free for UDP, so if
-// TCP is already taken (EADDRINUSE) drop both and pick another.
+// must share a port. The kernel picks a free one for the first listener, which
+// says nothing about the other protocol: there the port can be taken
+// (EADDRINUSE) or, on Windows, lie in a range reserved for somebody else
+// (EACCES). Then drop both and pick another. Those ranges are hundreds of ports
+// long and Windows hands out ports in sequence, per protocol, so the two take
+// turns at going first.
+function bindUdp(port: number): Promise<dgram.Socket> {
+  const udp = dgram.createSocket("udp4");
+  return new Promise((resolve, reject) => {
+    udp.once("error", err => udp.close(() => reject(err)));
+    udp.bind(port, "127.0.0.1", () => resolve(udp));
+  });
+}
+function listenTcp(port: number): Promise<net.Server> {
+  const tcp = net.createServer(onTcpConnection);
+  return new Promise((resolve, reject) => {
+    tcp.once("error", reject);
+    tcp.listen(port, "127.0.0.1", () => resolve(tcp));
+  });
+}
 async function bindPair(): Promise<{ udp: dgram.Socket; tcp: net.Server; port: number }> {
   let lastErr: unknown;
-  for (let i = 0; i < 32; i++) {
-    const udp = dgram.createSocket("udp4");
-    udp.bind(0, "127.0.0.1");
-    await once(udp, "listening");
-    const port = (udp.address() as net.AddressInfo).port;
-
-    const tcp = net.createServer(onTcpConnection);
+  for (let i = 0; i < 1024; i++) {
+    const first = await (i & 1 ? listenTcp(0) : bindUdp(0));
+    const port = (first.address() as net.AddressInfo).port;
     try {
-      await new Promise<void>((resolve, reject) => {
-        tcp.once("error", reject);
-        tcp.listen(port, "127.0.0.1", resolve);
-      });
+      const second = await (i & 1 ? bindUdp(port) : listenTcp(port));
+      const [udp, tcp] = (i & 1 ? [second, first] : [first, second]) as [dgram.Socket, net.Server];
+      return { udp, tcp, port };
     } catch (e) {
       lastErr = e;
-      udp.close();
-      tcp.close();
-      if ((e as NodeJS.ErrnoException).code === "EADDRINUSE") continue;
-      throw e;
+      first.close();
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code !== "EADDRINUSE" && code !== "EACCES") throw e;
     }
-    return { udp, tcp, port };
   }
   throw lastErr;
 }

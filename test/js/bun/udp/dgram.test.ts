@@ -1,8 +1,9 @@
 import { describe, expect, jest, test } from "bun:test";
 import { createSocket } from "dgram";
+import { once } from "node:events";
 import { Worker } from "node:worker_threads";
 
-import { bunEnv, bunExe, bunRun, disableAggressiveGCScope, isWindows } from "harness";
+import { bunEnv, bunExe, bunRun, disableAggressiveGCScope, isIPv6, isWindows } from "harness";
 import path from "path";
 import { nodeDataCases } from "./testdata";
 
@@ -494,6 +495,63 @@ test("connect() with a custom lookup that yields a name that cannot be a hostnam
     hostname,
     message: `getaddrinfo ENOTFOUND ${hostname}`,
     connected: false,
+  });
+});
+
+// Windows has no route to the unspecified address.
+test.skipIf(!isWindows)("connect() that the system refuses reports Node's error shape", async () => {
+  const socket = createSocket("udp4");
+  const err: any = await new Promise(resolve => socket.connect(9, "0.0.0.0", resolve as () => void));
+  socket.close();
+  const { name, code, errno, syscall, address, port, message } = err ?? {};
+  expect({ name, code, errno, syscall, address, port, message }).toEqual({
+    name: "Error",
+    code: "EADDRNOTAVAIL",
+    errno: -4090,
+    syscall: "connect",
+    address: "0.0.0.0",
+    port: 9,
+    message: "connect EADDRNOTAVAIL 0.0.0.0:9",
+  });
+});
+
+describe.each([
+  ["udp4", "127.0.0.1", "0.0.0.0"],
+  ["udp6", "::1", "::"],
+] as const)("%s", (type, loopback, unspecified) => {
+  test.skipIf(type === "udp6" && !isIPv6())("disconnect() lets the socket send to any address again", async () => {
+    const receiver = createSocket(type);
+    await new Promise<void>(resolve => receiver.bind(0, loopback, resolve));
+    const { port } = receiver.address();
+    const socket = createSocket(type);
+    try {
+      await new Promise<void>(resolve => socket.connect(port, loopback, resolve));
+      socket.disconnect();
+      expect(() => socket.remoteAddress()).toThrow(expect.objectContaining({ code: "ERR_SOCKET_DGRAM_NOT_CONNECTED" }));
+      const [[message]] = await Promise.all([once(receiver, "message"), socket.send("again", port, loopback)]);
+      expect(String(message)).toBe("again");
+    } finally {
+      socket.close();
+      receiver.close();
+    }
+  });
+
+  test.skipIf(type === "udp6" && !isIPv6())("the unspecified address stands for this machine in send()", async () => {
+    const receiver = createSocket(type);
+    await new Promise<void>(resolve => receiver.bind(0, unspecified, resolve));
+    const { address, port } = receiver.address();
+    const socket = createSocket(type);
+    try {
+      const received = once(receiver, "message");
+      expect([address, await new Promise(resolve => socket.send("hi", port, address, resolve))]).toEqual([
+        unspecified,
+        null,
+      ]);
+      expect(String((await received)[0])).toBe("hi");
+    } finally {
+      socket.close();
+      receiver.close();
+    }
   });
 });
 

@@ -358,6 +358,31 @@ describe.concurrent("bun run", () => {
     }
   });
 
+  // A Windows exit code has 32 bits, and the low 8 of 256 are those of success.
+  it.skipIf(!isWindows).each([256, 3010])("exits with the %d that a program exited with", async code => {
+    using dir = tempDir("bun-run-exit-code", {
+      "package.json": JSON.stringify({ name: "test", version: "0.0.0", scripts: { fail: `exit ${code}` } }),
+    });
+    const run = async (...args: string[]) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", ...args],
+        cwd: String(dir),
+        env: bunEnv,
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      return { stderr: await proc.stderr.text(), exitCode: await proc.exited };
+    };
+    expect({
+      program: await run("cmd", "/d", "/c", `exit ${code}`),
+      script: await run("--shell=system", "fail"),
+    }).toEqual({
+      program: { stderr: `error: "cmd.exe" exited with code ${code}\n`, exitCode: code },
+      script: { stderr: `$ exit ${code}\nerror: script "fail" exited with code ${code}\n`, exitCode: code },
+    });
+  });
+
   describe("--cwd longer than the OS path limit", () => {
     // Longer than PATH_MAX on every platform (4096 on Linux, 1024 on macOS).
     const tooLong = Buffer.alloc(5000, "a").toString();
@@ -1199,7 +1224,7 @@ describe.concurrent("bun run", () => {
   // BUN-3MAQ: guards the user-visible contract that a >32,767-u16 environment
   // block reaches a .bunx child intact. CreateProcessW with
   // CREATE_UNICODE_ENVIRONMENT has no documented block-size limit. This does
-  // not assert which spawn path (fast .bunx shim vs. libuv fallback) was
+  // not assert which spawn path (fast .bunx shim vs. ordinary spawn) was
   // taken, since both are correct; it fails only if the child loses env data
   // or the process crashes. POSIX hits E2BIG first, so Windows-only.
   it.if(isWindows)(

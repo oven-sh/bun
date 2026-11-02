@@ -45,6 +45,35 @@ describe("Worker destruction", () => {
     expect(exitCode).toBe(0);
   });
 
+  // On Windows a pipe handle takes one synchronous read at a time, so each read waits behind the one before it.
+  test.concurrent.each([1, 2, 3])("terminate() a Worker with %d pending reads of a silent stdin", async count => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("worker_threads");
+        const w = new Worker(\`
+          for (let i = 0; i < ${count}; i++) Bun.file(0).text();
+          require("worker_threads").parentPort.postMessage("reading");
+        \`, { eval: true });
+        w.on("error", e => { console.error(e); process.exit(2); });
+        w.on("message", async () => {
+          console.log("terminated " + (await w.terminate()));
+          process.exit(0);
+        });
+        `,
+      ],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe("terminated 1");
+    expect(exitCode).toBe(0);
+  });
+
   // two private mimalloc heaps on one thread, then thread exit: mimalloc's teardown used to read a freed per-thread heap-slot array (debug builds abort with `threadlocal.c: "tls!=NULL"`)
   test.concurrent("a Worker that used several allocator heaps exits cleanly", async () => {
     await using proc = Bun.spawn({

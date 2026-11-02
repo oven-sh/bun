@@ -4,8 +4,8 @@ import { isWindows } from "harness";
 import { once } from "node:events";
 import net from "node:net";
 
-// Windows uses the libuv eventing backend; bsd_recv/bsd_send are still the
-// chokepoints there but errno semantics differ. Land POSIX coverage first.
+// bsd_recv/bsd_send are the chokepoints on Windows too, but the errors there
+// are Winsock's. Land POSIX coverage first.
 const skip = !fault.available() || isWindows;
 
 afterEach(() => fault.clear());

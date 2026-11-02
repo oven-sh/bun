@@ -41,6 +41,23 @@ test("writer.end() should not close the fd if it does not own the fd", async () 
   }
 });
 
+test.concurrent.each(["text", "json", "arrayBuffer", "bytes"])(
+  "the process waits for a Bun.file(missing).%s() that the module does not await",
+  async method => {
+    const script = `(async () => {
+      try {
+        await Bun.file("definitely-missing-file.txt").${method}();
+      } catch (error) {
+        console.log(error.code);
+      }
+    })();`;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "inherit" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("ENOENT\n");
+    expect(exitCode).toBe(0);
+  },
+);
+
 test("Bun.file() read errors include async stack frames", async () => {
   async function level2() {
     await Bun.file("/nonexistent-path/does-not-exist.txt").text();

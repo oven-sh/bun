@@ -1,10 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import "harness";
-import { bunEnv, bunExe, isASAN, isWindows } from "harness";
+import { bunEnv, bunExe, isASAN } from "harness";
 
-// TODO: on Windows, these tests fail.
-// This feature is mostly meant for serverless JS environments, so we can no-op it on Windows.
-describe.concurrent.todoIf(isWindows)("fetch.preconnect", () => {
+describe.concurrent("fetch.preconnect", () => {
   it("fetch.preconnect works", async () => {
     const { promise, resolve } = Promise.withResolvers<Bun.Socket>();
     using listener = Bun.listen({
@@ -34,7 +32,7 @@ describe.concurrent.todoIf(isWindows)("fetch.preconnect", () => {
       describe(endOrTerminate, () => {
         for (let at of ["before", "middle", "after"]) {
           it(at, async () => {
-            let { promise, resolve } = Promise.withResolvers<Bun.Socket>();
+            const { promise, resolve } = Promise.withResolvers<Bun.Socket>();
             using listener = Bun.listen({
               port: 0,
               hostname: "localhost",
@@ -42,13 +40,17 @@ describe.concurrent.todoIf(isWindows)("fetch.preconnect", () => {
                 open(socket) {
                   resolve(socket);
                 },
-                data() {},
+                // Windows resets a connection that is closed before the request arrives, and the answer is lost.
+                async data(received) {
+                  if (received === (await promise)) return;
+                  received.write("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+                  received.end();
+                },
                 close() {},
               },
             });
             fetch.preconnect(`http://localhost:${listener.port}`);
-            let socket = await promise;
-            ({ promise, resolve } = Promise.withResolvers<Bun.Socket>());
+            const socket = await promise;
             if (at === "before") {
               await Bun.sleep(16);
               socket[endOrTerminate]();
@@ -73,9 +75,6 @@ describe.concurrent.todoIf(isWindows)("fetch.preconnect", () => {
                 socket.end();
               }
             }
-            socket = await promise;
-            socket.write("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
-            socket.end();
 
             const response = await fetchPromise;
             expect(response.status).toBe(200);

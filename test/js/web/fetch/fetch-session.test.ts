@@ -528,8 +528,7 @@ describe("proxy policy", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  // fetch.preconnect() is a no-op on Windows.
-  test.concurrent.todoIf(isWindows)("fetch.preconnect does not dial an origin the environment proxies", async () => {
+  test.concurrent("fetch.preconnect does not dial an origin the environment proxies", async () => {
     using proxy = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("proxy") });
     // The origin lives in the subprocess, which has to see its connections.
     const result = await run(

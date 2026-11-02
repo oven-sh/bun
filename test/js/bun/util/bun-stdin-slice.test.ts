@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { join } from "node:path";
 
 // Reading a sliced non-regular file blob (like stdin from a pipe) with a size
 // close to Blob.max_size used to overflow when computing the initial read
-// buffer capacity. The overflow was only reachable on POSIX; on Windows the
-// ReadFileUV path already bailed on size > ULONG_MAX before the addition.
-test.skipIf(isWindows)("Bun.stdin.slice(1).text() does not crash when stdin is a pipe", async () => {
+// buffer capacity.
+test("Bun.stdin.slice(1).text() does not crash when stdin is a pipe", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", `process.stdout.write(await Bun.stdin.slice(1).text());`],
     env: bunEnv,
@@ -23,7 +23,7 @@ test.skipIf(isWindows)("Bun.stdin.slice(1).text() does not crash when stdin is a
   expect(exitCode).toBe(0);
 });
 
-test.skipIf(isWindows)("Bun.stdin.slice(0, N).text() caps reads at N bytes", async () => {
+test("Bun.stdin.slice(0, N).text() caps reads at N bytes", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", `process.stdout.write(await Bun.stdin.slice(0, 3).text());`],
     env: bunEnv,
@@ -41,7 +41,35 @@ test.skipIf(isWindows)("Bun.stdin.slice(0, N).text() caps reads at N bytes", asy
   expect(exitCode).toBe(0);
 });
 
-// Streaming a slice of a pipe is the POSIX path where the chunk that ends the
+// A terminal hands over one line for each read, however much has been typed.
+test("Bun.stdin.slice(0, N).text() takes N bytes of what arrives in pieces", async () => {
+  const decoder = new TextDecoder();
+  let output = "";
+  const result = Promise.withResolvers<string>();
+  await using terminal = new Bun.Terminal({
+    data(_, chunk: Uint8Array) {
+      output += decoder.decode(chunk, { stream: true });
+      const match = Bun.stripANSI(output).match(/<(.*)>/);
+      if (match) result.resolve(match[1]);
+    },
+  });
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      // It stays, so that what it printed is not behind the news of its exit.
+      `console.log("<" + JSON.stringify(await Bun.stdin.slice(0, 7).text()) + ">"); process.stdin.resume();`,
+    ],
+    env: bunEnv,
+    terminal,
+  });
+  proc.exited.then(code => result.reject(new Error(`exited with code ${code}: ${JSON.stringify(output)}`)));
+
+  terminal.write("012\r3456789\r");
+  expect(JSON.parse(await result.promise)).toBe(isWindows ? "012\r\n34" : "012\n345");
+});
+
+// Streaming a slice of a pipe is the path where the chunk that ends the
 // slice is handed to a read that is already waiting (FileReader::on_read_chunk
 // with a parked read); a regular file is read straight into the pull buffer
 // instead. stdin is never closed here, so only the end of the slice can end the
@@ -61,7 +89,7 @@ describe("Bun.stdin.slice(0, N).stream() over a pipe that stays open", () => {
     });
   }
 
-  test.concurrent.skipIf(isWindows)("ends after N bytes of a larger write", async () => {
+  test.concurrent("ends after N bytes of a larger write", async () => {
     await using proc = spawnSliceEcho(3);
     proc.stdin.write("0123456789");
     await proc.stdin.flush();
@@ -70,30 +98,27 @@ describe("Bun.stdin.slice(0, N).stream() over a pipe that stays open", () => {
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "012", stderr: "", exitCode: 0 });
   });
 
-  test.concurrent.skipIf(isWindows)(
-    "delivers a chunk that leaves the slice open, then ends on the one that fills it",
-    async () => {
-      await using proc = spawnSliceEcho(4);
-      const reader = proc.stdout.getReader();
-      const decoder = new TextDecoder();
-      let stdout = "";
+  test.concurrent("delivers a chunk that leaves the slice open, then ends on the one that fills it", async () => {
+    await using proc = spawnSliceEcho(4);
+    const reader = proc.stdout.getReader();
+    const decoder = new TextDecoder();
+    let stdout = "";
 
-      proc.stdin.write("01");
-      await proc.stdin.flush();
-      // Wait for the first chunk to come back out so the second write is a separate read in the child.
-      for (let r; !stdout.includes("01") && !(r = await reader.read()).done;) {
-        stdout += decoder.decode(r.value, { stream: true });
-      }
-      expect(stdout).toBe("01");
+    proc.stdin.write("01");
+    await proc.stdin.flush();
+    // Wait for the first chunk to come back out so the second write is a separate read in the child.
+    for (let r; !stdout.includes("01") && !(r = await reader.read()).done;) {
+      stdout += decoder.decode(r.value, { stream: true });
+    }
+    expect(stdout).toBe("01");
 
-      proc.stdin.write("23456");
-      await proc.stdin.flush();
-      for (let r; !(r = await reader.read()).done;) stdout += decoder.decode(r.value, { stream: true });
+    proc.stdin.write("23456");
+    await proc.stdin.flush();
+    for (let r; !(r = await reader.read()).done;) stdout += decoder.decode(r.value, { stream: true });
 
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "0123", stderr: "", exitCode: 0 });
-    },
-  );
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "0123", stderr: "", exitCode: 0 });
+  });
 });
 
 // The bytes after the window have to stay in the pipe for whoever reads stdin
@@ -101,8 +126,8 @@ describe("Bun.stdin.slice(0, N).stream() over a pipe that stays open", () => {
 // and prints the window as <chunk>...; once it has exited the child prints "|"
 // followed by whatever is still in the pipe. A reader that asks the kernel for
 // more than the window leaves nothing for the child. The stdin Bun.spawn hands
-// out is a socketpair on POSIX and a named pipe on Windows; the window is
-// enforced the same way on both, so unlike the tests above these run everywhere.
+// out is a socketpair on POSIX and a pipe on Windows; the window is
+// enforced the same way on both.
 describe("Bun.stdin.slice(0, N) over a pipe that stays open leaves the bytes after the window in the pipe", () => {
   const consumers = {
     // One <...> per chunk, so an empty window prints nothing.
@@ -195,5 +220,54 @@ describe("Bun.stdin.slice(0, N) over a pipe that stays open leaves the bytes aft
     expect(await child.stdoutUntil("|")).toBe("<01><23>|");
 
     expect(await child.finish()).toEqual({ stdout: "<01><23>|456", stderr: "", exitCode: 0 });
+  });
+});
+
+describe.concurrent("the process waits for a Bun.stdin.text() that the module does not await", () => {
+  const script = `
+    (async () => console.log(JSON.stringify(await Bun.stdin.text())))();
+    console.log("evaluated");
+  `;
+  const expected = { stdout: `evaluated\n"hello\\n"\n`, exitCode: 0 };
+
+  async function run(stdin: Blob | Bun.BunFile) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdin,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    return { stdout, exitCode };
+  }
+
+  test("a pipe", async () => {
+    expect(await run(new Blob(["hello\n"]))).toEqual(expected);
+  });
+
+  test("a pipe that has nothing to read until the module is done", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    let stdout = "";
+    const decoder = new TextDecoder();
+    for await (const chunk of proc.stdout) {
+      stdout += decoder.decode(chunk, { stream: true });
+      if (stdout === "evaluated\n") {
+        proc.stdin.write("hello\n");
+        await proc.stdin.end();
+      }
+    }
+    expect({ stdout, exitCode: await proc.exited }).toEqual(expected);
+  });
+
+  test("a file", async () => {
+    using dir = tempDir("stdin-text-not-awaited", { "in.txt": "hello\n" });
+    expect(await run(Bun.file(join(String(dir), "in.txt")))).toEqual(expected);
   });
 });

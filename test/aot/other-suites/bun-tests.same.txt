@@ -553,7 +553,6 @@ test/js/node/fs/promises.test.js
 test/js/node/fs/readdir-windows-ntstatus.test.ts
 test/js/node/fs/readdirSync-recursive-error-leak.test.ts
 test/js/node/fs/rm-windows-ntstatus.test.ts
-test/js/node/fs/translate-uv-error-windows.test.ts
 test/js/node/http/early-hints-crlf-injection.test.ts
 test/js/node/http/node-fetch-cjs.test.js
 test/js/node/http/node-fetch-primordials.test.ts

@@ -2898,8 +2898,7 @@ describe.concurrent("a test file that can never finish loading", () => {
     expect(exitCode).toBe(1);
   });
 
-  // On Windows faked timers share the ref'd timers' hold on the loop, which can't be told apart from any other ref.
-  test.skipIf(isWindows)("waiting on a fake timer that nothing fires", async () => {
+  test("waiting on a fake timer that nothing fires", async () => {
     const { errors, counts, exitCode } = await runFiles({
       "a.test.ts": `
         import { jest } from "bun:test";

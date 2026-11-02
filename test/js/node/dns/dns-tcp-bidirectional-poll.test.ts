@@ -10,10 +10,10 @@
 // the whole process, and the busy-loop on EPOLLOUT (pre-fix) would otherwise
 // starve the test runner.
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe } from "harness";
 import { join } from "node:path";
 
-test.skipIf(isWindows)("c-ares TCP DNS fd registers readable+writable on one FilePoll without asserting", async () => {
+test("c-ares TCP DNS fd registers readable+writable on one FilePoll without asserting", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), join(import.meta.dir, "dns-tcp-bidirectional-poll-fixture.ts")],
     env: bunEnv,
@@ -26,4 +26,22 @@ test.skipIf(isWindows)("c-ares TCP DNS fd registers readable+writable on one Fil
   expect(stderr.trim()).toBe("");
   expect(stdout.trim()).toBe('[["hello"]]');
   expect(exitCode).toBe(0);
+});
+
+test("a c-ares TCP connection that the server resets fails the query at once", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "dns-tcp-bidirectional-poll-fixture.ts"), "reset"],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // ETIMEOUT: nobody told c-ares about the reset, and the query ran into the resolver's own timeout.
+  expect({ stdout, stderr: stderr.trim(), exitCode }).toEqual({
+    stdout: "",
+    stderr: "resolve error: ECONNREFUSED",
+    exitCode: 1,
+  });
 });

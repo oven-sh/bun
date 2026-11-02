@@ -326,7 +326,6 @@ it.if(isWindows)("should be able to upgrade a named pipe connection to TLS", asy
   await expectMaxObjectTypeCount(expect, "TLSSocket", 3);
 });
 
-// A pipe has no fd for the native upgrade to adopt.
 type ServerWrap = (accepted: net.Socket, echo: (secure: TLSSocket) => void, fail: (err: Error) => void) => void;
 
 async function serverWrapRoundTrip(wrap: ServerWrap) {

@@ -3,7 +3,7 @@ import { bunEnv, bunExe, isWindows, nodeExe, tempDir, tls } from "harness";
 
 const node = nodeExe();
 
-describe.skipIf(isWindows)("process.send(message, handle)", () => {
+describe("process.send(message, handle)", () => {
   test.concurrent("bun parent -> bun child: net.Server handle and message both arrive", async () => {
     using dir = tempDir("ipc-handle-bun-bun", {
       "parent.js": `
@@ -470,7 +470,7 @@ server.bind(0, '127.0.0.1', () => {
     });
   };
   child.send({ greeting: 'hi' }, server, err => {
-    if (err) return finish(false, 'send:' + err.message);
+    if (err) return finish(false, 'send:' + err.code);
     server.close(() => { closed = true; maybePing(); });
   });
   child.on('message', m => {
@@ -501,6 +501,11 @@ process.on('message', (m, socket) => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (isWindows) {
+      // As in Node: what libuv sends over a pipe can describe a TCP socket and nothing else.
+      expect({ exitCode, stdout: stdout.trim() }).toEqual({ exitCode: 1, stdout: "FAILED:send:ENOTSUP" });
+      return;
+    }
     expect({ exitCode, stderr, response: stdout.includes("RESPONSE:pong:ping") }).toEqual({
       exitCode: 0,
       stderr: expect.any(String),
@@ -666,7 +671,8 @@ server.listen(0, '127.0.0.1', () => {
     },
   );
 
-  test.concurrent("a received handle that lands on fd 0 is adopted", async () => {
+  // On Windows what is received is a SOCKET, which takes the place of no descriptor.
+  test.concurrent.skipIf(isWindows)("a received handle that lands on fd 0 is adopted", async () => {
     using dir = tempDir("ipc-handle-fd0", {
       "parent.js": `
 const { fork } = require('node:child_process');
@@ -812,6 +818,119 @@ const server = net.createServer().listen(0, '127.0.0.1', () => {
       },
       stderr: "",
     });
+    expect(exitCode).toBe(0);
+  });
+
+  // Only a Windows pipe takes a write that is larger than its buffer in one piece, so that the parent
+  // has read and acknowledged all of it before the child's event loop learns that it is written.
+  test.concurrent.skipIf(!isWindows).each(["json", "advanced"])(
+    "the ack of a handle is not lost while the sender's thread is busy (%s)",
+    async serialization => {
+      using dir = tempDir("ipc-handle-ack-while-busy", {
+        "parent.js": `
+const { fork } = require('node:child_process');
+const fs = require('node:fs');
+const net = require('node:net');
+const child = fork('child.js', { serialization: process.argv[2] });
+const server = net.createServer(connection => connection.unref());
+child.on('message', (message, handle) => {
+  console.log('parent got', message.length, handle.constructor.name);
+  fs.writeFileSync('received', '');
+  handle.destroy();
+});
+child.on('disconnect', () => server.close());
+server.listen(0, '127.0.0.1', () => {
+  const socket = net.connect(server.address().port, '127.0.0.1', () => child.send('socket', socket));
+});
+`,
+        "child.js": `
+const fs = require('node:fs');
+process.once('message', (message, handle) => {
+  const large = Buffer.alloc(1 << 18, 'a').toString();
+  process.send(large, handle, { keepOpen: true }, error => console.log('child sent the first', error));
+  process.send(large, handle, error => {
+    console.log('child sent the second', error);
+    process.disconnect();
+  });
+  const deadline = Date.now() + 10_000;
+  while (!fs.existsSync('received') && Date.now() < deadline) {}
+});
+`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "parent.js", serialization],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim().split("\n").sort(), stderr }).toEqual({
+        stdout: [
+          "child sent the first null",
+          "child sent the second null",
+          "parent got 262144 Socket",
+          "parent got 262144 Socket",
+        ],
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test.concurrent.skipIf(!isWindows)("a received socket is not inheritable", async () => {
+    using dir = tempDir("ipc-handle-not-inheritable", {
+      "parent.js": `
+const { fork } = require('node:child_process');
+const net = require('node:net');
+const child = fork('child.js');
+child.on('message', inheritable => {
+  console.log(JSON.stringify(inheritable));
+  child.kill();
+  process.exit(0);
+});
+const server = net.createServer(connection => {
+  child.send('connection', connection);
+  child.send('server', server);
+});
+server.listen(0, '127.0.0.1', () => net.connect(server.address().port, '127.0.0.1'));
+`,
+      "child.js": `
+const { dlopen, ptr } = require('bun:ffi');
+const { GetHandleInformation } = dlopen('kernel32.dll', {
+  GetHandleInformation: { args: ['u64', 'ptr'], returns: 'i32' },
+}).symbols;
+const { getsockopt } = dlopen('ws2_32.dll', {
+  getsockopt: { args: ['u64', 'i32', 'i32', 'ptr', 'ptr'], returns: 'i32' },
+}).symbols;
+const received = [];
+process.on('message', (message, handle) => {
+  received.push(handle);
+  if (received.length < 2) return;
+  const flags = new Uint32Array(1);
+  const type = new Int32Array(1);
+  const length = new Int32Array(1);
+  const inheritable = [];
+  for (let handle = 4; handle < 0x4000; handle += 4) {
+    if (!GetHandleInformation(handle, ptr(flags))) continue;
+    length[0] = 4;
+    // SOL_SOCKET, SO_TYPE: only a socket has an answer.
+    if (getsockopt(handle, 0xffff, 0x1008, ptr(type), ptr(length)) !== 0) continue;
+    inheritable.push((flags[0] & 1) !== 0);
+  }
+  process.send(inheritable);
+});
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "[false,false]\n", stderr: "" });
     expect(exitCode).toBe(0);
   });
 });

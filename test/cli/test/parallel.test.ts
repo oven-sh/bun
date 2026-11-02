@@ -1261,10 +1261,8 @@ test("--parallel: a test writing garbage to fd 3 gets its worker killed and the 
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).toContain("PARALLEL");
-  // fd 3 is the worker's IPC channel. On POSIX the coordinator's own frame
-  // decoder rejects the bytes; on Windows they break libuv's IPC framing
-  // underneath it and surface as a read error. Both must end the same way:
-  // the coordinator kills that worker and says so, rather than printing the
+  // fd 3 is the worker's IPC channel. The coordinator's frame decoder rejects
+  // the bytes: the coordinator kills that worker and says so, rather than printing the
   // status the kill produced (SIGKILL) or, when the kill was skipped, the
   // "exit code 0" of a worker that later shut itself down. Writing to the
   // channel is not a Bun crash, so the rest of the run still completes.

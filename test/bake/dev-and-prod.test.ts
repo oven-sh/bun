@@ -265,7 +265,7 @@ devTest("hmr handles rapid consecutive edits", {
     // Writing IDENTICAL content N times forces same-sourceMapId duplicates
     // on every platform. Use synchronous writeFileSync so truncate + write
     // + close happen back-to-back on the calling thread; the previous
-    // `Bun.write` here is two separate async libuv ops on Windows with a
+    // `Bun.write` here was two separate async ops on Windows with a
     // JS-thread round-trip in between, giving the bundler a multi-ms window
     // to read 0 bytes. writeFileSync shrinks that window to microseconds —
     // usually enough, but the residual race is why allowUnlimitedReloads is

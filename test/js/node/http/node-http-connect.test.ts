@@ -1166,9 +1166,10 @@ describe("HTTP server CONNECT", () => {
   });
 
   // https CONNECT: server socket.end() after peer FIN must also FIN the TCP
-  // write side. Linux-only: the close is observed via EPOLLHUP once both halves
-  // have FIN'd; kqueue/libuv need the readable_ended re-arm to re-derive it.
-  test.skipIf(!isLinux)(
+  // write side. Not with kqueue: the close is observed via EPOLLHUP, or what
+  // Windows has for it, once both halves have FIN'd; kqueue needs the
+  // readable_ended re-arm to re-derive it.
+  test.skipIf(!isLinux && !isWindows)(
     "https CONNECT socket.end() after peer FIN half-closes TCP so the socket can close",
     async () => {
       // tls.connect wraps a raw net.Socket so end() sends a raw FIN (not
@@ -1747,8 +1748,8 @@ describe("Should be compatible with node.js", () => {
 });
 
 // Windows: after FIN on a CONNECT-tunnel socket, AFD's level-triggered
-// UV_DISCONNECT used to re-derive EOF and bounce the poll between 0 and
-// WRITABLE forever (pins the poll_cb allow_half_open arm).
+// disconnect used to re-derive EOF and bounce the poll between 0 and
+// WRITABLE forever.
 test("CONNECT: process exits after the tunnel socket is re-emitted as a connection and the server closes", async () => {
   await using proc = Bun.spawn({
     cmd: [

@@ -2848,6 +2848,20 @@ it("unix socket connection in Bun.serve", async () => {
   connection.end();
 });
 
+it.if(isWindows)("named pipe connection in Bun.serve", async () => {
+  const unix = "\\\\.\\pipe\\bun-test-serve-" + Math.random().toString(36).slice(2);
+  const options = { unix, fetch: (req: Request) => new Response("hey " + new URL(req.url).pathname) };
+  const first = Bun.serve(options);
+  try {
+    expect(await (await fetch("http://localhost/a", { unix })).text()).toBe("hey /a");
+    expect(() => Bun.serve(options)).toThrow(expect.objectContaining({ code: "EADDRINUSE", syscall: "listen" }));
+  } finally {
+    await first.stop(true);
+  }
+  using second = Bun.serve(options);
+  expect(await (await fetch("http://localhost/b", { unix })).text()).toBe("hey /b");
+});
+
 it("unix socket connection throws an error on a bad domain without crashing", async () => {
   const unix = "/i/don/tevent/exist/because/the/directory/is/invalid/yes.sock";
   expect(() => {

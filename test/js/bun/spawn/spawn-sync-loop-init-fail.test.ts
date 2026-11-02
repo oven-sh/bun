@@ -1,15 +1,14 @@
 // Bun.spawnSync lazily creates an isolated uSockets event loop per VM
-// (epoll_create1/kqueue on POSIX, uv_loop_new on Windows). When that syscall
+// (epoll_create1/kqueue on POSIX, a completion port on Windows). When that syscall
 // fails under resource exhaustion, us_create_loop used to dereference the
 // NULL/invalid result and crash the whole process. The one spawnSync call must
 // throw a catchable error instead, and once resources are freed a retry must
 // work.
 //
-// The Windows variant (uv_loop_new -> CreateIoCompletionPort failing under
-// handle/non-paged-pool exhaustion) routes through the same NULL propagation
-// in us_create_loop / WindowsLoop::create / SpawnSyncEventLoop::init; this
-// test exercises the POSIX half where the failure is reproducible with a file
-// descriptor limit.
+// The Windows variant (CreateIoCompletionPort failing under handle/non-paged-pool
+// exhaustion) routes through the same NULL propagation in us_create_loop /
+// SpawnSyncEventLoop::init; this test exercises the POSIX half where the failure
+// is reproducible with a file descriptor limit.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isPosix } from "harness";
 

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import { join } from "path";
 
 // Regression test for FileReader.onPull: after `drain()` moves the
@@ -14,9 +14,6 @@ import { join } from "path";
 // (which keeps climbing). See spawn-stdout-iterate-leak.fixture.ts for how
 // the exact code path is reached.
 
-// The leak is in the posix poll-reader path; Windows pipes go through
-// libuv with different buffering.
-//
 // On release builds without ASAN, mimalloc recycles the orphaned 32 KiB
 // blocks into later allocations of the same size class, so RSS growth is
 // sub-linear and too close to allocator noise to threshold reliably.
@@ -24,7 +21,7 @@ import { join } from "path";
 // cannot be reused, so the leak shows up as clean linear RSS growth
 // (~106-119 MB unfixed vs. <10 MB fixed over the sampled window). Debug
 // builds always enable ASAN.
-test.skipIf(isWindows || !(isDebug || isASAN))(
+test.skipIf(!(isDebug || isASAN))(
   "FileReader.onPull frees the drained buffer after memcpy",
   async () => {
     await using proc = Bun.spawn({

@@ -2226,22 +2226,19 @@ describe.skipIf(!isWindows)("Bun.connect named-pipe client Handlers lifecycle", 
     });
   });
 
-  // libuv reports a missing pipe from the connect callback, not from
-  // uv_pipe_connect itself. On that path the pipe was never handed to the
-  // writer, so closing the writer reported no close, and the native context
-  // (which holds a ref on the TCPSocket/TLSSocket, and for TLS the SSL_CTX)
-  // stayed alive once per failed attempt.
+  // A failed attempt must not keep its TCPSocket/TLSSocket alive, nor the SSL_CTX of a TLS one.
   it.concurrent.each([
-    ["plain", "", 0],
-    ["tls", "tls: true,", 1],
+    ["plain", "", "TCPSocket", 0],
+    ["tls", "tls: true,", "TLSSocket", 1],
   ])(
-    "a connect that fails asynchronously (%s) releases the native context",
-    async (_name, tlsOption, sslCtxPerAttempt) => {
+    "a connect to a pipe that does not exist (%s) releases the socket",
+    async (_name, tlsOption, socketType, sslCtxPerAttempt) => {
       const attempts = 8;
       const pipePrefix = "\\\\.\\pipe\\bun-test-missing-" + Math.random().toString(36).slice(2) + "-";
       const src = /* js */ `
-        const { namedPipeInternals, sslCtxLiveCount } = require("bun:internal-for-testing");
-        const contextsBefore = namedPipeInternals.liveCount();
+        const { sslCtxLiveCount } = require("bun:internal-for-testing");
+        const { heapStats } = require("bun:jsc");
+        const liveSockets = () => heapStats().objectTypeCounts.${socketType} ?? 0;
         const sslCtxBefore = sslCtxLiveCount();
 
         let connectErrors = 0;
@@ -2262,11 +2259,8 @@ describe.skipIf(!isWindows)("Bun.connect named-pipe client Handlers lifecycle", 
                 connectError(_socket, err) {
                   connectErrors++;
                   outcomes.add("connectError:" + err.code);
-                  // This attempt's context is still alive while it reports the failure.
-                  firstAttempt ??= {
-                    contexts: namedPipeInternals.liveCount() - contextsBefore,
-                    sslCtx: sslCtxLiveCount() - sslCtxBefore,
-                  };
+                  // This attempt's SSL_CTX is still alive while it reports the failure.
+                  firstAttempt ??= { sslCtx: sslCtxLiveCount() - sslCtxBefore };
                 },
               },
             });
@@ -2276,10 +2270,7 @@ describe.skipIf(!isWindows)("Bun.connect named-pipe client Handlers lifecycle", 
           }
         }
 
-        // Finalizing the wrappers must not touch a socket its context already released.
-        Bun.gc(true);
-        // A context frees itself from a task it queues when its last ref drops.
-        for (let i = 0; i < 100 && namedPipeInternals.liveCount() > contextsBefore; i++) {
+        for (let i = 0; i < 100 && (Bun.gc(true), liveSockets() > 0); i++) {
           await new Promise(resolve => setImmediate(resolve));
         }
 
@@ -2289,7 +2280,7 @@ describe.skipIf(!isWindows)("Bun.connect named-pipe client Handlers lifecycle", 
           outcomes: [...outcomes].sort(),
           firstAttempt,
           leaked: {
-            contexts: namedPipeInternals.liveCount() - contextsBefore,
+            sockets: liveSockets(),
             sslCtx: sslCtxLiveCount() - sslCtxBefore,
           },
         }));
@@ -2310,8 +2301,8 @@ describe.skipIf(!isWindows)("Bun.connect named-pipe client Handlers lifecycle", 
           connectErrors: attempts,
           closes: 0,
           outcomes: ["connectError:ENOENT", "rejected:ENOENT"],
-          firstAttempt: { contexts: 1, sslCtx: sslCtxPerAttempt },
-          leaked: { contexts: 0, sslCtx: 0 },
+          firstAttempt: { sslCtx: sslCtxPerAttempt },
+          leaked: { sockets: 0, sslCtx: 0 },
         },
         stderr: "",
         exitCode: 0,
@@ -2398,6 +2389,106 @@ describe.concurrent.skipIf(!isWindows)("named-pipe socket closed and event loop 
       signalCode: null,
     });
   });
+});
+
+// A pipe cannot be half closed: its stream ends when the peer closes its handle, and then nothing can be written either.
+describe.skipIf(!isWindows)("a named pipe socket with allowHalfOpen closes once its peer is gone", () => {
+  describe.each(["server", "client"] as const)("the %s", side => {
+    // "terminate": what the peer wrote and the end of its stream are read in one go.
+    describe.each(["end", "terminate"] as const)("whose peer calls %s()", leave => {
+      it.each(["shutdown()", "write()", "nothing"] as const)("answers the end with %s", async answer => {
+        const events: string[] = [];
+        const opened = Promise.withResolvers<Socket>();
+        const left = Promise.withResolvers<void>();
+        const closed = Promise.withResolvers<void>();
+        const stays: SocketHandler = {
+          open(socket) {
+            if (leave === "terminate") socket.pause();
+            opened.resolve(socket);
+          },
+          data(socket, chunk) {
+            events.push("data " + chunk.length);
+          },
+          end(socket) {
+            events.push("end");
+            if (answer === "shutdown()") socket.shutdown();
+            if (answer === "write()") socket.write("late");
+          },
+          close() {
+            events.push("close");
+            closed.resolve();
+          },
+        };
+        const leaves: SocketHandler = {
+          open(socket) {
+            socket.write("hi");
+            socket[leave]();
+          },
+          data() {},
+          close() {
+            left.resolve();
+          },
+        };
+        using server = Bun.listen({
+          unix: "\\\\.\\pipe\\bun-test-half-open-" + Math.random().toString(36).slice(2),
+          allowHalfOpen: side === "server",
+          socket: side === "server" ? stays : leaves,
+        });
+        await Bun.connect({
+          unix: server.unix,
+          allowHalfOpen: side === "client",
+          socket: side === "client" ? stays : leaves,
+        });
+        const socket = await opened.promise;
+        await left.promise;
+        socket.resume();
+        await closed.promise;
+        expect(events).toEqual(["data 2", "end", "close"]);
+      });
+    });
+  });
+});
+
+it.skipIf(!isWindows)("the listener of a named pipe has no fd", () => {
+  using server = Bun.listen({
+    unix: "\\\\.\\pipe\\bun-test-listener-fd-" + Math.random().toString(36).slice(2),
+    socket: { data() {} },
+  });
+  expect(server.fd).toBe(-1);
+});
+
+it.skipIf(!isWindows)("what is about TCP does not apply to a named pipe", async () => {
+  const about = (socket: Socket) => ({
+    remoteAddress: socket.remoteAddress,
+    remotePort: socket.remotePort,
+    remoteFamily: socket.remoteFamily,
+    localAddress: socket.localAddress,
+    localPort: socket.localPort,
+    setNoDelay: socket.setNoDelay(true),
+    setKeepAlive: socket.setKeepAlive(true, 1000),
+  });
+  const accepted = Promise.withResolvers<ReturnType<typeof about>>();
+  using server = Bun.listen({
+    unix: "\\\\.\\pipe\\bun-test-not-tcp-" + Math.random().toString(36).slice(2),
+    socket: {
+      open(socket) {
+        accepted.resolve(about(socket));
+      },
+      data() {},
+    },
+  });
+  const client = await Bun.connect({ unix: server.unix, socket: { data() {} } });
+  const nothing = {
+    remoteAddress: undefined,
+    remotePort: undefined,
+    remoteFamily: undefined,
+    localAddress: undefined,
+    localPort: undefined,
+    setNoDelay: false,
+    setKeepAlive: false,
+  };
+  expect([about(client), await accepted.promise]).toEqual([nothing, nothing]);
+  client.end();
 });
 
 it("reload() backs out cleanly when a handler getter closes the socket mid-reload", async () => {
@@ -5741,7 +5832,7 @@ function linuxSocketBufferLimit(name: "rmem_max" | "wmem_max") {
 const receiveBuffer = 8 * 1024 * 1024;
 const sendBuffer = 1024 * 1024;
 
-// setSocketOptions does nothing on Windows, where a readable event is at most two reads anyway.
+// Not on Windows: what write() took has not all reached the receive buffer when it returns, so a read can come up short.
 it.skipIf(
   isWindows ||
     (isLinux &&
@@ -6772,4 +6863,193 @@ describe.concurrent("a handler that closes its socket and then waits for a promi
       stderr: "",
     });
   });
+});
+// One call takes about 200 KB on a unix socket, 64 KiB on a Windows named pipe, a few MB on TCP, and a few records of TLS.
+describe.concurrent("more than the socket takes at once", () => {
+  const sizes = { unix: 3_000_000, tcp: 8_000_000, tls: 3_000_000, "tls over unix": 3_000_000 };
+  type Kind = keyof typeof sizes;
+
+  /** Connects a client that runs `send` once it can write. Resolves once both ends are closed. */
+  async function transfer(kind: Kind, send: (socket: Socket) => unknown, handlers: Partial<SocketHandler> = {}) {
+    using dir = tempDir("socket-more-than-it-takes", {});
+    const isTLS = kind.startsWith("tls");
+    const where = kind.endsWith("unix")
+      ? { unix: isWindows ? `\\\\.\\pipe\\bun-test-${crypto.randomUUID()}` : join(String(dir), "s.sock") }
+      : { hostname: "127.0.0.1", port: 0 };
+    let received = 0;
+    let returned: unknown;
+    const serverClosed = Promise.withResolvers<void>();
+    const clientClosed = Promise.withResolvers<void>();
+    using server = Bun.listen({
+      ...where,
+      tls: isTLS ? tls : undefined,
+      socket: {
+        data(_, chunk) {
+          received += chunk.length;
+        },
+        close() {
+          serverClosed.resolve();
+        },
+      },
+    });
+    await Bun.connect({
+      ...where,
+      port: server.port,
+      tls: isTLS ? { rejectUnauthorized: false } : undefined,
+      socket: {
+        [isTLS ? "handshake" : "open"](socket: Socket) {
+          returned = send(socket);
+        },
+        data() {},
+        close() {
+          clientClosed.resolve();
+        },
+        ...handlers,
+      },
+    } as Parameters<typeof Bun.connect>[0]);
+    await Promise.all([serverClosed.promise, clientClosed.promise]);
+    return { returned, received };
+  }
+
+  describe.each(Object.keys(sizes) as Kind[])("%s", kind => {
+    const size = sizes[kind];
+
+    it.each([
+      ["with", { drain() {} }],
+      ["without", {}],
+    ])("end(data) sends all of it and closes, %s a drain handler", async (_, handlers) => {
+      const payload = Buffer.alloc(size, "e");
+      expect(await transfer(kind, socket => socket.end(payload), handlers)).toEqual({ returned: size, received: size });
+    });
+
+    it("nothing can be written behind end(data)", async () => {
+      const payload = Buffer.alloc(size, "e");
+      const result = await transfer(kind, socket => [socket.end(payload), socket.write("late"), socket.end("later")]);
+      expect(result).toEqual({ returned: [size, -1, -1], received: size });
+    });
+  });
+
+  // A pipe has no room that could be asked for, so a write that has to wait is on its way already.
+  describe.skipIf(!isWindows).each(["unix", "tls over unix"] as const)("a named pipe (%s)", kind => {
+    it.each([65_536, 65_537, 3_000_000])("write(%d bytes) takes all of it, and end() waits for it", async size => {
+      const payload = Buffer.alloc(size, "w");
+      const result = await transfer(kind, socket => [socket.write(payload), socket.end()]);
+      expect(result).toEqual({ returned: [size, 0], received: size });
+    });
+
+    it("writes arrive in order, whatever the caller does about a full pipe", async () => {
+      const chunks = ["a", "b", "c", "d"].map(letter => Buffer.alloc(200_000, letter));
+      let text = "";
+      const decoder = new TextDecoder();
+      const closed = Promise.withResolvers<void>();
+      const unix = `\\\\.\\pipe\\bun-test-${crypto.randomUUID()}`;
+      using server = Bun.listen({
+        unix,
+        tls: kind === "unix" ? undefined : tls,
+        socket: {
+          data(_, chunk) {
+            text += decoder.decode(chunk, { stream: true });
+          },
+          close() {
+            closed.resolve();
+          },
+        },
+      });
+      let returned: number[] = [];
+      await Bun.connect({
+        unix,
+        tls: kind === "unix" ? undefined : { rejectUnauthorized: false },
+        socket: {
+          [kind === "unix" ? "open" : "handshake"](socket: Socket) {
+            returned = chunks.map(chunk => socket.write(chunk));
+            socket.end();
+          },
+          data() {},
+        },
+      } as Parameters<typeof Bun.connect>[0]);
+      await closed.promise;
+      expect({ returned, runs: text.replace(/(.)\1*/g, (run, letter) => `${letter}${run.length} `).trim() }).toEqual({
+        returned: [200_000, 200_000, 200_000, 200_000],
+        runs: "a200000 b200000 c200000 d200000",
+      });
+    });
+
+    it("shutdown() waits for what write() took", async () => {
+      const payload = Buffer.alloc(3_000_000, "s");
+      const result = await transfer(kind, socket => [socket.write(payload), socket.shutdown(), socket.write("late")]);
+      expect(result).toEqual({ returned: [3_000_000, undefined, -1], received: 3_000_000 });
+    });
+  });
+
+  // What a pipe has yet to take is gone when the process is.
+  it.skipIf(!isWindows)("the process stays for what a named pipe has yet to take, unref() or not", async () => {
+    let received = 0;
+    const closed = Promise.withResolvers<void>();
+    using server = Bun.listen({
+      unix: `\\\\.\\pipe\\bun-test-${crypto.randomUUID()}`,
+      socket: {
+        data(_, chunk) {
+          received += chunk.length;
+        },
+        close() {
+          closed.resolve();
+        },
+      },
+    });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          Bun.connect({
+            unix: process.env.PIPE,
+            socket: {
+              open(socket) {
+                socket.write(Buffer.alloc(3_000_000, "u"));
+                socket.unref();
+              },
+              data() {},
+            },
+          });
+        `,
+      ],
+      env: { ...bunEnv, PIPE: server.unix },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, closed.promise]);
+    expect({ received, stderr, exitCode }).toEqual({ received: 3_000_000, stderr: "", exitCode: 0 });
+  });
+});
+
+it.skipIf(!isWindows)("shutdown(true) on a named pipe stops reading", async () => {
+  const events: string[] = [];
+  const answered = Promise.withResolvers<void>();
+  using server = Bun.listen<{ name: string }>({
+    unix: `\\\\.\\pipe\\bun-test-${crypto.randomUUID()}`,
+    socket: {
+      open(socket) {
+        socket.data = { name: events.length ? "second" : "first" };
+        events.push(`open ${socket.data.name}`);
+        if (socket.data.name === "first") socket.shutdown(true);
+      },
+      data(socket, chunk) {
+        events.push(`data ${socket.data.name}`);
+        socket.write(chunk);
+      },
+    },
+  });
+  const client: SocketHandler = {
+    open(socket) {
+      socket.write("x");
+    },
+    data() {
+      answered.resolve();
+    },
+  };
+  using first = await Bun.connect({ unix: server.unix, socket: client });
+  // What the first one wrote has been in its pipe for the whole of this exchange.
+  using second = await Bun.connect({ unix: server.unix, socket: client });
+  await answered.promise;
+  expect(events).toEqual(["open first", "open second", "data second"]);
 });

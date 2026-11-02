@@ -1,23 +1,25 @@
 import { fork } from "child_process";
 
-if (process.argv[2] === "child") {
-  process.send("a!");
-  process.send("b!");
-  process.send("c!");
-  process.send("d!");
-  process.send("hello".repeat(2 ** 15));
-  process.send("goodbye".repeat(2 ** 15));
-  process.send("hello".repeat(2 ** 15));
-  process.send("goodbye".repeat(2 ** 15));
-  process.disconnect();
-} else {
-  const proc = fork(process.argv[1], ["child"], {});
+// usage: <sender: "child" | "parent">
+const [sender, role = "parent"] = process.argv.slice(2);
+const other = role === "parent" ? fork(process.argv[1], [sender, "child"]) : process;
 
-  proc.on("message", message => {
+if (role === sender) {
+  other.send("a!");
+  other.send("b!");
+  other.send("c!");
+  other.send("d!");
+  other.send("hello".repeat(2 ** 15));
+  other.send("goodbye".repeat(2 ** 15));
+  other.send("hello".repeat(2 ** 15));
+  other.send("goodbye".repeat(2 ** 15));
+  other.disconnect();
+} else {
+  other.on("message", message => {
     console.log(message.length + ": " + message[message.length - 2]);
   });
 
-  proc.on("disconnect", () => {
+  other.on("disconnect", () => {
     console.log("disconnected");
   });
 }

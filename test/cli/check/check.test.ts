@@ -6321,6 +6321,8 @@ declare function text(): PgTextBuilder<{ name: ""; data: string }>;
 declare function text<N extends string>(name: N): PgTextBuilder<{ name: N; data: string }>;
 type IsAny<T> = 0 extends 1 & T ? true : false;
 export const notAny: IsAny<ReturnType<typeof text>> = false;
+type Matches<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+export const lastOverload: Matches<ReturnType<typeof text>, PgTextBuilder<{ name: string; data: string }>> = true;
 export const column: PgTextBuilder<{ name: string; data: string }> = text("id");
 `,
         });

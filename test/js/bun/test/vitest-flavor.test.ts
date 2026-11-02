@@ -2593,6 +2593,9 @@ test.concurrent.each(["bun:test", "@jest/globals"])(
           then(resolve, reject) { console.log(name + ": then()"); this.end(error => (error ? reject(error) : resolve())); },
         });
         const thenable = (name, then) => ({ then(resolve, reject) { console.log(name + ": then()"); then?.(resolve, reject); } });
+        class Sub extends Promise {
+          then(onFulfilled, onRejected) { console.log("a Promise subclass: then()"); return super.then(onFulfilled, onRejected); }
+        }
         describe("a hook", () => {
           beforeEach(done => request("beforeEach").end(done));
           test("a request", done => request("test").end(done));
@@ -2600,6 +2603,7 @@ test.concurrent.each(["bun:test", "@jest/globals"])(
         test.each([["each"]])("test.each with a done parameter: %s", (name, done) => request(name).end(done));
         test("a thenable that rejects", done => { done(); return thenable("rejects", (resolve, reject) => reject(new Error("rejected"))); });
         test("a thenable that never settles", done => { done(); return thenable("never settles"); }, 500);
+        test("a Promise subclass", done => { done(); return Sub.resolve(); });
         test("done() is never called", done => request("never sent"), 10);
         test("done(error) is called later", done => { setImmediate(() => done(new Error("from done()"))); return request("never sent"); });
       `,
@@ -2611,6 +2615,7 @@ test.concurrent.each(["bun:test", "@jest/globals"])(
         "(pass) test.each with a done parameter: each",
         "(pass) a thenable that rejects",
         "(pass) a thenable that never settles",
+        "(pass) a Promise subclass",
         "(fail) done() is never called",
         "(fail) done(error) is called later",
       ],
@@ -2638,7 +2643,194 @@ test.concurrent("a function that a thenable from beforeEach or beforeAll resolve
   });
 });
 
+// Like Bun.$ and a Bun.SQL query: a pending Promise subclass that starts its work in the first then(). If nothing
+// called then() by the next turn of the event loop it starts itself, so a runner that never calls it fails the
+// expectations below at once, and not by a timeout.
+const lazyPromiseClass = `
+  class Lazy extends Promise {
+    static get [Symbol.species]() { return Promise; }
+    #start;
+    constructor(name, work) {
+      let settle;
+      super((resolve, reject) => { settle = { resolve, reject }; });
+      this.#start = () => { console.log(name + ": then()"); setImmediate(work, settle.resolve, settle.reject); };
+      setImmediate(() => { if (this.#start) { console.log(name + ": the runner did not call then()"); this.then(() => {}, () => {}); } });
+    }
+    then(onFulfilled, onRejected) {
+      const start = this.#start;
+      this.#start = undefined;
+      start?.();
+      return super.then(onFulfilled, onRejected);
+    }
+  }
+`;
+
+describe.concurrent.each(["vitest", "bun:test", "@jest/globals"])("a Promise subclass: %s", module => {
+  test("is awaited through its own then() when a hook, a test or a describe() callback returns it", async () => {
+    const { log, results, exitCode } = await runTests({
+      "a.test.js": `
+        import { test, describe, beforeAll, beforeEach, afterEach, afterAll, onTestFinished } from "${module}";
+        ${lazyPromiseClass}
+        const lazy = (name, beforeItResolves) => new Lazy(name, resolve => { beforeItResolves?.(); console.log(name + ": resolves"); resolve(); });
+        beforeAll(() => lazy("beforeAll"));
+        beforeEach(() => lazy("beforeEach"));
+        afterEach(() => lazy("afterEach"));
+        afterAll(() => lazy("afterAll"));
+        describe("block", () => lazy("describe", () => {
+          test("test", () => { console.log("test"); onTestFinished(() => lazy("onTestFinished")); return lazy("test"); });
+        }));
+      `,
+    });
+    expect({ log, results, exitCode }).toEqual({
+      log: ["describe", "beforeAll", "beforeEach", "test", "afterEach", "onTestFinished", "afterAll"].flatMap(name => [
+        ...(name === "test" ? ["test"] : []),
+        `${name}: then()`,
+        `${name}: resolves`,
+      ]),
+      results: ["(pass) block > test"],
+      exitCode: 0,
+    });
+  });
+
+  test("fails the test if it rejects, and is awaited through then() when it is already settled", async () => {
+    const { log, results, errors, exitCode } = await runTests({
+      "a.test.js": `
+        import { test } from "${module}";
+        ${lazyPromiseClass}
+        // The shape of the openai SDK's APIPromise: the promise is fulfilled at once, and each then() does the work.
+        class Settled extends Promise {
+          #work;
+          constructor(work) { super(resolve => resolve()); this.#work = work; }
+          then(onFulfilled, onRejected) { console.log("settled: then()"); return this.#work().then(onFulfilled, onRejected); }
+        }
+        class Plain extends Promise {}
+        class ConstructorThrows extends Promise {}
+        Object.defineProperty(ConstructorThrows.prototype, "constructor", { get() { throw new Error("the constructor getter threw"); } });
+        // No executor parameter and no Symbol.species: the then() it inherits cannot construct its result.
+        class CannotConstruct extends Promise { constructor() { super(resolve => resolve()); } }
+        test("rejects", () => new Lazy("rejects", (resolve, reject) => reject(new Error("rejected"))));
+        test("already fulfilled, and then() rejects", () => new Settled(() => Promise.reject(new Error("rejected in then()"))));
+        test("already fulfilled, and then() resolves later", () => new Settled(() => new Promise(resolve => setImmediate(() => { console.log("settled: resolves"); resolve(); }))));
+        test("already fulfilled, and then() never calls back", () => new Settled(() => new Promise(() => {})), 10);
+        test("already fulfilled, and then() throws", () => Object.assign(Plain.resolve(), { then() { throw new Error("then() threw"); } }));
+        test("already fulfilled, and reading then throws", () => Object.defineProperty(Plain.resolve(), "then", { get() { throw new Error("the then getter threw"); } }));
+        test("already rejected", () => Plain.reject(new Error("already rejected")));
+        test("then() cannot construct its result", () => new CannotConstruct());
+        test("reading constructor throws", () => new ConstructorThrows(resolve => resolve()));
+        // A promise whose then is not a function is awaited by its state.
+        test("pending, and then is not a function", () => Object.assign(new Plain(() => {}), { then: 1 }), 10);
+        test("already rejected, and then is not a function", () => Object.assign(Plain.reject(new Error("rejected, and then is 1")), { then: 1 }));
+        test("the next test", () => console.log("the next test"));
+      `,
+    });
+    expect({ log, results, errors, exitCode }).toEqual({
+      log: [
+        "rejects: then()",
+        "settled: then()",
+        "settled: then()",
+        "settled: resolves",
+        "settled: then()",
+        "the next test",
+      ],
+      results: [
+        "(fail) rejects",
+        "(fail) already fulfilled, and then() rejects",
+        "(pass) already fulfilled, and then() resolves later",
+        "(fail) already fulfilled, and then() never calls back",
+        "(fail) already fulfilled, and then() throws",
+        "(fail) already fulfilled, and reading then throws",
+        "(fail) already rejected",
+        "(fail) then() cannot construct its result",
+        "(fail) reading constructor throws",
+        "(fail) pending, and then is not a function",
+        "(fail) already rejected, and then is not a function",
+        "(pass) the next test",
+      ],
+      // Each error once: a rejection that then() handles is not also an unhandled error.
+      errors: [
+        "error: rejected",
+        "error: rejected in then()",
+        "error: then() threw",
+        "error: the then getter threw",
+        "error: already rejected",
+        "TypeError: executor did not take a resolve function",
+        "error: the constructor getter threw",
+        "error: rejected, and then is 1",
+      ],
+      exitCode: 1,
+    });
+  });
+});
+
 describe.concurrent("a value that a test returns", () => {
+  test("Bun.$ and a Bun.SQL query run, and fail the test when they reject", async () => {
+    const { results, errors, exitCode } = await runTests({
+      "a.test.js": `
+        import { SQL } from "bun";
+        import { test, expect } from "bun:test";
+        const sql = new SQL("sqlite://:memory:");
+        // Starts a value that the runner did not start by the next turn, so the file ends without a timeout.
+        let notStartedByTheRunner = 0;
+        const returned = value => {
+          const then = value.then;
+          let called = false;
+          value.then = function (...args) { called = true; return then.apply(this, args); };
+          setImmediate(() => { if (!called) { notStartedByTheRunner++; then.call(value, () => {}, () => {}); } });
+          return value;
+        };
+        test("a Bun.$ command runs", () => returned(Bun.$\`echo shell\`.quiet()));
+        test("a Bun.$ command that fails", () => returned(Bun.$\`exit 3\`.quiet()));
+        test("a Bun.SQL query runs", () => returned(sql\`create table returned (x integer)\`));
+        test("a Bun.SQL query that fails", () => returned(sql\`select * from missing\`));
+        test("the returned query created the table", async () => {
+          expect(await sql\`select count(*) as rows from returned\`).toEqual([{ rows: 0 }]);
+        });
+        test("the runner started every command and query", () => { expect(notStartedByTheRunner).toBe(0); });
+      `,
+    });
+    expect({ results, errors, exitCode }).toEqual({
+      results: [
+        "(pass) a Bun.$ command runs",
+        "(fail) a Bun.$ command that fails",
+        "(pass) a Bun.SQL query runs",
+        "(fail) a Bun.SQL query that fails",
+        "(pass) the returned query created the table",
+        "(pass) the runner started every command and query",
+      ],
+      errors: ["ShellError: Failed with exit code 3", "SQLiteError: no such table: missing"],
+      exitCode: 1,
+    });
+  });
+
+  test("a native promise is awaited without a then() call, also while Promise.prototype.then is replaced", async () => {
+    const { log, results, exitCode } = await runTests({
+      "a.test.js": `
+        import { test } from "bun:test";
+        import { runInNewContext } from "node:vm";
+        test("while then is replaced", async () => {
+          const then = Promise.prototype.then;
+          Promise.prototype.then = function () { console.log("the replaced then() was called"); return then.apply(this, arguments); };
+          try {
+            await new Promise(resolve => setImmediate(resolve));
+          } finally {
+            Promise.prototype.then = then;
+          }
+        });
+        test("after then was replaced", () => new Promise(resolve => setImmediate(resolve)));
+        // Not a subclass, and not this realm's Promise either: a new promise follows it.
+        test("a promise of another realm", () => {
+          const OtherPromise = runInNewContext("Promise");
+          return new OtherPromise(resolve => setImmediate(() => { console.log("the other realm's promise resolves"); resolve(); }));
+        });
+      `,
+    });
+    expect({ log, results, exitCode }).toEqual({
+      log: ["the other realm's promise resolves"],
+      results: ["(pass) while then is replaced", "(pass) after then was replaced", "(pass) a promise of another realm"],
+      exitCode: 0,
+    });
+  });
+
   test("then() is called one microtask turn after the callback returns, as with await", async () => {
     const { log, results, exitCode } = await runTests({
       "a.test.js": `
@@ -2658,12 +2850,21 @@ describe.concurrent("a value that a test returns", () => {
         const order = [];
         const turns = () => void Promise.resolve().then(() => order.push("turn 1")).then(() => order.push("turn 2"));
         test("the turn of then() of a thenable", () => { turns(); return { then(resolve) { order.push("then()"); resolve(); } }; });
+        class Sub extends Promise {
+          static get [Symbol.species]() { return Promise; }
+          then(onFulfilled, onRejected) { order.push("then()"); return super.then(onFulfilled, onRejected); }
+        }
+        test("the turn of then() of a Promise subclass", () => { turns(); return Sub.resolve(); });
         afterAll(() => console.log(order.join(", ")));
       `,
     });
     expect({ log, results, exitCode }).toEqual({
-      log: ["turn 1, then(), turn 2"],
-      results: ["(pass) a thenable", "(pass) the turn of then() of a thenable"],
+      log: ["turn 1, then(), turn 2, turn 1, then(), turn 2"],
+      results: [
+        "(pass) a thenable",
+        "(pass) the turn of then() of a thenable",
+        "(pass) the turn of then() of a Promise subclass",
+      ],
       exitCode: 0,
     });
   });
@@ -2720,18 +2921,28 @@ describe.concurrent("a value that a test returns", () => {
           import { test, beforeAll, describe, expect } from "bun:test";
           const inGraph = [];
           const thenable = name => ({ then(resolve) { inGraph.push([name, Bun.ModuleGraph.current !== undefined]); resolve(); } });
+          class Sub extends Promise {
+            static get [Symbol.species]() { return Promise; }
+            then(onFulfilled, onRejected) { inGraph.push(["subclass", Bun.ModuleGraph.current !== undefined]); return super.then(onFulfilled, onRejected); }
+          }
           beforeAll(() => thenable("beforeAll"));
           describe("block", () => { test("inside", () => {}); return thenable("describe"); });
           test("a thenable", () => thenable("test"));
+          test("a Promise subclass", () => Sub.resolve());
           test("each then() ran in the graph of the file", () => {
-            expect(inGraph).toEqual([["describe", true], ["beforeAll", true], ["test", true]]);
+            expect(inGraph).toEqual([["describe", true], ["beforeAll", true], ["test", true], ["subclass", true]]);
           });
         `,
       },
       ["--isolate=modules"],
     );
     expect({ results, exitCode }).toEqual({
-      results: ["(pass) block > inside", "(pass) a thenable", "(pass) each then() ran in the graph of the file"],
+      results: [
+        "(pass) block > inside",
+        "(pass) a thenable",
+        "(pass) a Promise subclass",
+        "(pass) each then() ran in the graph of the file",
+      ],
       exitCode: 0,
     });
   });

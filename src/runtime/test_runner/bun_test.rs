@@ -1524,15 +1524,9 @@ impl BunTest {
         Some(cfg_data)
     }
 
-    /// A promise that follows `returned` if it's a thenable other than a promise. Otherwise `returned`.
+    /// The promise of `awaited_promise`, or `returned` itself when `await` does not wait on it.
     pub(crate) fn promise_of_thenable(global_this: &JSGlobalObject, returned: JSValue) -> JsResult<JSValue> {
-        if !returned.is_object() || returned.as_promise().is_some() {
-            return Ok(returned);
-        }
-        // Reads `then` once. Only a value without a callable `then` fulfills the promise right away.
-        let promise = bun_jsc::JSPromise::create(global_this);
-        promise.resolve(global_this, returned)?;
-        Ok(if promise.status() == PromiseStatus::Fulfilled { returned } else { promise.to_js() })
+        Ok(Self::awaited_promise(global_this, returned)?.unwrap_or(returned))
     }
 
     /// What `await returned` waits on: a native promise as is, any other thenable through a new promise that follows its `then()`. `None`: `await` gives `returned` itself.

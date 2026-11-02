@@ -387,6 +387,48 @@ describe("expect()", () => {
     expect(promise.thenCalls).toBe(1);
   });
 
+  // The shape of the openai SDK's APIPromise: the promise is fulfilled with null at once, and each then() does the work.
+  test("resolves and rejects call then() of a Promise subclass that is already settled", async () => {
+    class Settled extends Promise {
+      thenCalls = 0;
+      #work;
+      constructor(/** @type {() => Promise<unknown>} */ work) {
+        super(resolve => resolve(null));
+        this.#work = work;
+      }
+      then(onFulfilled, onRejected) {
+        this.thenCalls++;
+        return this.#work().then(onFulfilled, onRejected);
+      }
+    }
+    const error = new Error("HTTP 500");
+    const resolved = new Settled(() => Promise.resolve("parsed"));
+    const rejected = new Settled(() => Promise.reject(error));
+    await expect(resolved).resolves.toBe("parsed");
+    await expect(rejected).rejects.toBe(error);
+    expect([resolved.thenCalls, rejected.thenCalls]).toEqual([1, 1]);
+
+    if (isBun) {
+      const notResolved = new Settled(() => Promise.reject(error));
+      const notRejected = new Settled(() => Promise.resolve("parsed"));
+      await expectFailure(() => expect(notResolved).resolves.toBeNull()).toThrow("Received promise that rejected");
+      await expectFailure(() => expect(notRejected).rejects.toBe(error)).toThrow("Received promise that resolved");
+      expect([notResolved.thenCalls, notRejected.thenCalls]).toEqual([1, 1]);
+    }
+  });
+
+  // The matcher is the first reaction of the promise, as in Jest and Vitest.
+  test("resolves and rejects compare before a reaction that is attached after the matcher call", async () => {
+    for (const outcome of ["resolves", "rejects"]) {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      const matcher = expect(promise)[outcome].toEqual({ checked: false });
+      const later = (/** @type {{ checked: boolean }} */ value) => void (value.checked = true);
+      promise.then(later, later);
+      (outcome === "resolves" ? resolve : reject)({ checked: false });
+      await matcher;
+    }
+  });
+
   test("can call without an argument", () => {
     expect().toBe(undefined);
   });

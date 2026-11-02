@@ -187,6 +187,91 @@ describe.concurrent(".resolves and .rejects", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("a settled Promise subclass is not checked at once: the matcher waits on its then()", async () => {
+    const { stdout, results, exitCode } = await runTests(`
+      import { runInNewContext } from "node:vm";
+      // The shape of the openai SDK's APIPromise: the promise is fulfilled with null at once, and each then() does the work.
+      class Settled extends Promise {
+        #work;
+        constructor(work) { super(resolve => resolve(null)); this.#work = work; }
+        then(onFulfilled, onRejected) { return this.#work().then(onFulfilled, onRejected); }
+      }
+      test("not awaited, and then() resolves", () => {
+        const matcher = expect(new Settled(() => later("parsed"))).resolves.toBe("parsed");
+        console.log("returned", matcher);
+        matcher.then(() => console.log("checked"));
+      });
+      test("not awaited, and then() rejects", () => {
+        expect(new Settled(() => laterReject(new Error("HTTP 500")))).resolves.toBeNull();
+      });
+      test("a subclass that inherits then(), and a promise of another realm", async () => {
+        class Plain extends Promise {}
+        const matchers = [expect(Plain.resolve(1)).resolves.toBe(1), expect(runInNewContext("Promise.resolve(1)")).resolves.toBe(1)];
+        console.log("returned", ...matchers);
+        await Promise.all(matchers);
+      });
+      test("expect.poll()", async () => {
+        let polls = 0;
+        // The third poll gives a plain value, so a build that reads the state of the promise ends this test too.
+        await expect.poll(() => (++polls < 3 ? new Settled(() => later("polled")) : "polled"), { timeout: 60_000, interval: 1 }).toBe("polled");
+        console.log("polls:", polls);
+      });
+      test("next", () => {});
+    `);
+    expect({ stdout, results, exitCode }).toEqual({
+      stdout: [
+        "returned Promise { <pending> }",
+        "checked",
+        "returned Promise { <pending> } Promise { <pending> }",
+        "polls: 1",
+      ],
+      results: [
+        "(pass) not awaited, and then() resolves",
+        "(fail) not awaited, and then() rejects",
+        "(pass) a subclass that inherits then(), and a promise of another realm",
+        "(pass) expect.poll()",
+        "(pass) next",
+      ],
+      exitCode: 1,
+    });
+  });
+
+  test("a matcher waits on a pending native promise itself, with no then() call", async () => {
+    const { stdout, results, exitCode } = await runTests(`
+      test("a replaced Promise.prototype.then is not called", async () => {
+        const { then } = Promise.prototype;
+        const pending = Array.from({ length: 5 }, () => Promise.withResolvers());
+        const calls = new Map(pending.map(({ promise }) => [promise, 0]));
+        let matchers;
+        Promise.prototype.then = function (...reactions) {
+          if (calls.has(this)) calls.set(this, calls.get(this) + 1);
+          return then.apply(this, reactions);
+        };
+        try {
+          matchers = [
+            expect(pending[0].promise).resolves.toBe(0),
+            expect(pending[1].promise).rejects.toBe(1),
+            expect(() => pending[2].promise).not.toThrow(),
+            expect({ x: pending[3].promise }).toEqual({ x: expect.resolvesTo.anything() }),
+            expect.poll(() => pending[4].promise, { timeout: 60_000, interval: 1 }).toBe(4),
+          ];
+          pending.forEach(({ resolve, reject }, index) => (index === 1 ? reject : resolve)(index));
+          // After one turn of the event loop every reaction of the five promises has run.
+          await new Promise(resolve => setImmediate(resolve));
+        } finally {
+          Promise.prototype.then = then;
+        }
+        await Promise.all(matchers);
+        console.log("then() calls:", ...calls.values());
+      });
+    `);
+    expect({ stdout, results, exitCode }).toEqual({
+      stdout: ["then() calls: 0 0 0 0 0"],
+      results: ["(pass) a replaced Promise.prototype.then is not called"],
+      exitCode: 0,
+    });
+  });
+
   // Expected values measured on Vitest 5.0.3.
   test('in a "vitest" test, a settled promise still gives a promise', async () => {
     const { stdout, results, exitCode } = await run(["test"], {
@@ -1238,6 +1323,21 @@ describe.concurrent("matchers that have to wait for a promise", () => {
         await expect([{ then }, later(1, 5)]).toEqual([expect.resolvesTo.stringContaining("thenable"), expect.resolvesTo.any(Number)]);
         expect(then).toHaveBeenCalledTimes(1);
       });
+      test("a settled Promise subclass is awaited through then(), once", async () => {
+        class Settled extends Promise {
+          thenCalls = 0;
+          #work;
+          constructor(work) { super(resolve => resolve(null)); this.#work = work; }
+          then(onFulfilled, onRejected) { this.thenCalls++; return this.#work().then(onFulfilled, onRejected); }
+        }
+        const resolved = new Settled(() => later("parsed"));
+        const rejected = new Settled(() => laterReject(new Error("HTTP 500")));
+        const matcher = expect({ a: resolved, b: [rejected] }).toEqual({
+          a: expect.resolvesTo.stringContaining("pars"),
+          b: [expect.rejectsTo.any(Error)],
+        });
+        console.log(matcher instanceof Promise, await matcher, resolved.thenCalls, rejected.thenCalls);
+      });
       test("not awaited", () => {
         expect(later("one")).toEqual(expect.resolvesTo.stringContaining("one"));
       });
@@ -1252,10 +1352,11 @@ describe.concurrent("matchers that have to wait for a promise", () => {
       }, 50);
     `;
     const { stdout, stderr, results, exitCode, signalCode } = await runTests(source);
-    expect(stdout).toEqual(["true undefined", "undefined"]);
+    expect(stdout).toEqual(["true undefined", "undefined", "true undefined 1 1"]);
     expect(results).toEqual([
       "(pass) passes",
       "(pass) calls then() once",
+      "(pass) a settled Promise subclass is awaited through then(), once",
       "(pass) not awaited",
       "(fail) fails",
       "(fail) fails, not awaited",
@@ -1639,6 +1740,8 @@ describe.concurrent("matchers that have to wait for a promise", () => {
         expect({ a: 1 }).toEqualWithThisEquals({ a: expect.toBeOddAtOnce() });
         expect({ a: 1 }).toEqualWithThisEquals({ a: expect.toBeOdd() });
         expect({ a: later(1) }).toEqualWithThisEquals({ a: expect.resolvesTo.anything() });
+        expect({ a: Promise.resolve(1) }).toEqualWithThisEquals({ a: expect.resolvesTo.anything() });
+        expect({ a: (class extends Promise {}).resolve(1) }).toEqualWithThisEquals({ a: expect.resolvesTo.anything() });
       });
     `);
     const cannotWait =
@@ -1648,6 +1751,8 @@ describe.concurrent("matchers that have to wait for a promise", () => {
       cannotWait,
       "this.equals(): true",
       "this.equals(): " + cannotWait,
+      "this.equals(): " + cannotWait,
+      "this.equals(): true",
       "this.equals(): " + cannotWait,
     ]);
     expect(exitCode).toBe(0);

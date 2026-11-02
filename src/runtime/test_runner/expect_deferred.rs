@@ -1124,7 +1124,7 @@ impl Expect {
                 global,
                 promise.map_or(JSValue::NULL, AnyPromise::as_value),
             );
-            // bun:test checks a settled promise right away and throws, as it always has. Vitest always returns a promise.
+            // bun:test checks a settled native promise right away and throws, as it always has. Vitest always returns a promise.
             let always_defer = self.is_vitest();
             if let Some(promise) =
                 promise.filter(|promise| always_defer || promise.status() == Status::Pending)

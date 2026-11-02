@@ -524,7 +524,7 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
     const older = [...Array.from({ length: 9 }, (_, i) => onMain(21 - i)), onMain(6), onMain(5), onMain(3)];
     const before = "test/js/on-main-before-the-target.test.ts";
     const olderTargets: {
-      below: string;
+      held: string;
       ofMain: ReturnType<typeof onMain>[];
       headings: string[];
       notes: string[];
@@ -532,7 +532,7 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
     }[] = [
       {
         // With build 22, the ten newest end at build 13. Which build is the first above the target is not known.
-        below: "none",
+        held: "none of them",
         ofMain: [onMain(22), ...older],
         headings: [
           heading(onlyOn(21), " [new]"),
@@ -541,10 +541,10 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
           heading(before, " [pre-existing]"),
         ],
         notes: ["compared with main #6 (1 failing), #5 (0 failing)"],
-        requests: {},
+        requests: { 6: [names(6, 1)], 5: [names(5, 1)] },
       },
       {
-        below: "one",
+        held: "one of them",
         ofMain: older,
         headings: [
           heading(onlyOn(21), " [new]"),
@@ -553,11 +553,24 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
           heading(before, " [pre-existing]"),
         ],
         notes: ["compared with main #6 (1 failing), #5 (0 failing), newer #13 (1 failing)"],
-        requests: { 13: [names(13, 1)] },
+        requests: { 6: [names(6, 1)], 5: [names(5, 1)], 13: [names(13, 1)] },
+      },
+      {
+        // Build 6 is the only build of main before the target: the second request is the last one.
+        held: "none of them, and main has one build before the target",
+        ofMain: [onMain(22), ...older.slice(0, 10)],
+        headings: [
+          heading(onlyOn(21), " [new]"),
+          heading(onlyOn(13), " [new]"),
+          heading(onThisBranch, " [new]"),
+          heading(before, " [pre-existing]"),
+        ],
+        notes: ["compared with main #6 (1 failing)"],
+        requests: { 6: [names(6, 1)] },
       },
     ];
     scenario.each(olderTargets)(
-      "asks for the builds of main before a target when the newest ten hold $below of them",
+      "asks for the builds of main before a target when the newest ten hold $held",
       async ({ ofMain, headings, notes, requests }) => {
         const result = await runFindBuild(["--errors", "7"], {
           main: ofMain,
@@ -576,13 +589,7 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
           notes,
           stderr: "",
           exitCode: 0,
-          requests: {
-            7: [request(7, 1)],
-            6: [names(6, 1)],
-            5: [names(5, 1)],
-            ...requests,
-            comparison: [lookup(7), complete, completeBefore(7)],
-          },
+          requests: { 7: [request(7, 1)], ...requests, comparison: [lookup(7), complete, completeBefore(7)] },
         });
       },
     );
@@ -740,6 +747,13 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
         canned: { main: [onMain(6, "passed", 0), onMain(5, "passed", 0)] },
         reason: "no passed or failed build of main ran its tests before this build",
         requests: { 7: [request(7, 1)], comparison: [lookup(7), complete] },
+      },
+      {
+        // The ten newest are all above the target, so the script asks for the builds before it first.
+        why: "no job of a build of main before an older target reported",
+        canned: { main: [onMain(22), ...older.slice(0, 9), onMain(6, "passed", 0), onMain(5, "passed", 0)] },
+        reason: "no passed or failed build of main ran its tests before this build",
+        requests: { 7: [request(7, 1)], comparison: [lookup(7), complete, completeBefore(7)] },
       },
     ];
     scenario.each(notCompared)("prints no tag, and says why, when $why", async ({ canned, reason, requests }) => {

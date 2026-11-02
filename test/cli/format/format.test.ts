@@ -950,6 +950,97 @@ describe.concurrent("bun fmt", () => {
     expect(checked.exitCode).toBe(0);
   });
 
+  // Known issue: for these Bun prints what Prettier 3.9.9 prints, and a TypeScript parser does not read that text as
+  // the input. tsc tries `a < b > (c)` as a call with type arguments. With `arrowParens: "avoid"`, it tries `( .. )`
+  // before the `:` of a conditional as the parameters of an arrow function, and the name after the `:` as their return
+  // type. Bun's parser reads a text as tsc does, so the last column is what a second `bun fmt` does with what is
+  // printed: "changed" where tsc reads another program and reports no syntax error, "refused" where it reports one.
+  describe("in TypeScript, prints text that a TypeScript parser reads in another way", () => {
+    const avoid = ["--arrow-parens=avoid"];
+    test.each<[text: string, flags: string[], byPrettier: string, again: "changed" | "refused"]>([
+      ["x = (a < b) > (c || d);\n", [], "x = a < b > (c || d);\n", "changed"],
+      ["f((i < n), total > (limit ?? 0));\n", [], "f(i < n, total > (limit ?? 0));\n", "changed"],
+      [
+        "export const x = cond ? (q) => ({ c: q }) : (deps) => (id): T => f(deps, id);\n",
+        avoid,
+        "export const x = cond\n  ? q => ({ c: q })\n  : deps =>\n      (id): T =>\n        f(deps, id);\n",
+        "changed",
+      ],
+      [
+        "x = cond ? (a, b) : (deps) => (id): T => y;\n",
+        avoid,
+        "x = cond\n  ? (a, b)\n  : deps =>\n      (id): T =>\n        y;\n",
+        "changed",
+      ],
+      [
+        "x = cond ? async(q) : (deps) => (id): T => y;\n",
+        avoid,
+        "x = cond\n  ? async(q)\n  : deps =>\n      (id): T =>\n        y;\n",
+        "changed",
+      ],
+      [
+        "x = cond ? <U>(a, b) : (deps) => (id): T => y;\n",
+        avoid,
+        "x = cond\n  ? <U>(a, b)\n  : deps =>\n      (id): T =>\n        y;\n",
+        "changed",
+      ],
+      [
+        "x = cond ? (q) => ({ q }) : (a, b) => (deps) => (id): T => y;\n",
+        avoid,
+        "x = cond\n  ? q => ({ q })\n  : (a, b) =>\n      deps =>\n      (id): T =>\n        y;\n",
+        "changed",
+      ],
+      [
+        "x = a ? b ? (q) => ({ q }) : (s) => f(s) : (x) => (id): T => 1;\n",
+        avoid,
+        "x = a\n  ? b\n    ? q => ({ q })\n    : s => f(s)\n  : x =>\n      (id): T =>\n        1;\n",
+        "changed",
+      ],
+      [
+        "x = a ? (q) => ({ c: q }) : (deps) => t ? () => { g(); } : (id): T => 1;\n",
+        avoid,
+        "x = a\n  ? q => ({ c: q })\n  : deps =>\n      t\n        ? () => {\n            g();\n          }\n        : (id): T => 1;\n",
+        "changed",
+      ],
+      [
+        "switch (v) {\n  case a ? (q) => ({ q }) : (d) => e: label: for (;;) {}\n}\n",
+        avoid,
+        "switch (v) {\n  case a ? q => ({ q }) : d => e:\n    label: for (;;) {}\n}\n",
+        "changed",
+      ],
+      ["x = a ? () => ({}) : (c) => c;\n", avoid, "x = a ? () => ({}) : c => c;\n", "refused"],
+      [
+        "x = cond ? (q) => ({ q }) : (deps) => (id): Promise<T> => y;\n",
+        avoid,
+        "x = cond\n  ? q => ({ q })\n  : deps =>\n      (id): Promise<T> =>\n        y;\n",
+        "refused",
+      ],
+      [
+        "x = cond ? (q) => ({ q }) : (deps) => (id, key: U): T => y;\n",
+        avoid,
+        "x = cond\n  ? q => ({ q })\n  : deps =>\n      (id, key: U): T =>\n        y;\n",
+        "refused",
+      ],
+      [
+        "x = p ? (a, b) : (y) => cond ? () => ({}) : (d) => (e): T => f;\n",
+        avoid,
+        "x = p\n  ? (a, b)\n  : y =>\n      cond\n        ? () => ({})\n        : d =>\n            (e): T =>\n              f;\n",
+        "refused",
+      ],
+    ])("known issue: %j", async (text, flags, byPrettier, outcome) => {
+      const [result, second, checked] = await Promise.all([
+        format({ "a.ts": text }, flags, { reads: ["a.ts"] }),
+        format({ "a.ts": byPrettier }, flags, { reads: ["a.ts"] }),
+        format({ "a.ts": text }, [...flags, "--debug-check"]),
+      ]);
+      expect(result.files).toEqual({ "a.ts": byPrettier });
+      expect(result.exitCode).toBe(0);
+      const again = second.exitCode !== 0 ? "refused" : second.files["a.ts"] !== byPrettier ? "changed" : "unchanged";
+      // `--debug-check` reports both.
+      expect({ again, check: checked.exitCode }).toEqual({ again: outcome, check: 2 });
+    });
+  });
+
   test("keeps two comments before an arrow function's `=>` on the same line", async () => {
     // Prettier 3.9.9 prints `(a) /* b */\n/* c */ => d`, and no line break is allowed before `=>`.
     const files = {

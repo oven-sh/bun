@@ -64,11 +64,12 @@ struct WebCore::Converter<Bun::Bindgen::IDLStrictInteger<T, allowBigInt>>
     }
 
 private:
+    // A copy of `ctx`: see DefaultTryConverter::throwConversionFailedSlow.
     template<Bun::IDLConversionContext Ctx>
     NEVER_INLINE static std::optional<T> tryConvertSlow(
         JSC::JSGlobalObject& globalObject,
         JSC::JSValue value,
-        Ctx& ctx)
+        Ctx ctx)
     {
         static constexpr auto minInt = std::numeric_limits<T>::min();
         static constexpr auto maxInt = std::numeric_limits<T>::max();

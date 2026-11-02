@@ -16,15 +16,34 @@ import {
 } from "./bindgen-lib-internal.ts";
 
 /** `source` is `<crate>=<a.bind.ts>`. */
+export const schemaFileOf = (source: string) => source.slice(source.indexOf("=") + 1);
+
 export async function loadSchemaFile(source: string): Promise<SchemaFile> {
+  const [file] = await loadSchemaFiles([source]);
+  if (file instanceof Error) throw file;
+  return file;
+}
+
+/** Each file, or why it cannot be read. They are imported together, and then read in order: the first to export a type owns it. */
+export async function loadSchemaFiles(sources: readonly string[]): Promise<(SchemaFile | Error)[]> {
+  const imports = await Promise.allSettled(sources.map(source => import(pathToFileURL(schemaFileOf(source)).href)));
+  return imports.map((imported, i) => {
+    if (imported.status === "rejected") {
+      return new Error(`${schemaFileOf(sources[i])}: ${imported.reason.message}`, { cause: imported.reason });
+    }
+    try {
+      return readSchemaFile(sources[i], imported.value);
+    } catch (error) {
+      return error as Error;
+    }
+  });
+}
+
+function readSchemaFile(source: string, exports: Record<string, unknown>): SchemaFile {
   const crate = source.slice(0, source.indexOf("="));
-  const file = source.slice(crate.length + 1);
-  const stem = path.basename(file, ".bind.ts");
+  const stem = path.basename(schemaFileOf(source), ".bind.ts");
   const origin: Origin = { stem, namespace: pascalCase(stem), rustModule: snakeCase(stem), crate };
   const result: SchemaFile = { origin, moduleDefinition: null, types: [], functions: [], namespaces: [] };
-  const exports: Record<string, unknown> = await import(pathToFileURL(file).href).catch(error => {
-    throw new Error(`${file}: ${error.message}`, { cause: error });
-  });
   for (const [name, value] of Object.entries(exports)) {
     if (value instanceof ModuleDefinition) {
       assert(name === "default", `${stem}.bind.ts: b.module() is the default export`);

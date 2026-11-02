@@ -146,6 +146,7 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.i32.withValue.optional).toThrow("put .withValue last");
   expect(() => b.i32.withValue.default(0)).toThrow("put .withValue last");
   expect(() => b.i32.ifPassed.withValue).toThrow(".ifPassed has no argument to give when it is absent");
+  expect(() => b.any.stringObjectAsString.ifPassed).toThrow(".ifPassed is not for a type that takes a String object");
   expect(() => b.any.withValue).toThrow(".withValue: the type is the argument itself");
   expect(() => b.bytes({ from: ["buffer"], held: "handle" }).withValue).toThrow(
     ".withValue: b.bytes already passes the argument",
@@ -684,6 +685,21 @@ describe("integers", () => {
   });
 });
 
+// Not a function of bindgen_test.bind.ts: how the characters are looked at depends on the target, and every build has this one.
+itAlways("a string as UTF-8 has its one Latin-1 character that is not ASCII, wherever that is", () => {
+  const lengths = [...Array(71).keys(), 127, 128, 129, 143, 144, 145, 255, 256, 257];
+  for (const length of lengths) {
+    const ascii = Buffer.alloc(length, "abcdefg");
+    expect(Bun.hash.crc32(ascii.toString("latin1"))).toBe(Bun.hash.crc32(ascii));
+    for (let at = 0; at < length; at++) {
+      const latin1 = Buffer.from(ascii);
+      latin1[at] = 0xe9;
+      const text = latin1.toString("latin1");
+      if (Bun.hash.crc32(text) !== Bun.hash.crc32(Buffer.from(text))) expect.unreachable(`length ${length}, at ${at}`);
+    }
+  }
+});
+
 describe("strings", () => {
   const rope = (a: string, b: string) => a + b + a; // long enough that JSC keeps it a rope
   const texts = [
@@ -1161,6 +1177,25 @@ describe("enumerations", () => {
     expect(bindgen.nextColor(new String("blue"))).toBe("red");
   });
 
+  it("takes a string however it is stored", () => {
+    const part = (text: string) => Buffer.from(text).toString();
+    const rope = part("bl") + part("ue");
+    expect(bindgen.nextColor(rope)).toBe("red");
+    expect(bindgen.nextColor(part("a blue one").slice(2, 6))).toBe("red");
+    expect(bindgen.nextColor(part("blue\u{1f600}").slice(0, 4))).toBe("red");
+    expect(bindgen.nextColor(new String(part("li") + part("me")))).toBe("blue");
+    // The low bytes of these spell "blue" and "lime".
+    for (const value of ["blu\u0165", "\u016cime"]) {
+      expect(() => bindgen.nextColor(value)).toThrow('color must be "red", "green", or "blue"');
+    }
+    const throws = Object.assign(new String("blue"), {
+      toString() {
+        throw new RangeError("from toString");
+      },
+    });
+    expect(() => bindgen.nextColor(throws)).toThrow(new RangeError("from toString"));
+  });
+
   it("rejects anything else", () => {
     const invalid = (message: string) =>
       expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message });
@@ -1467,6 +1502,55 @@ describe("dictionaries", () => {
     expect(bindgen.optionsEcho(Object.setPrototypeOf(make(), {}))).toStrictEqual(expected);
     expect(bindgen.optionsEcho(Object.defineProperty(make(), "count", { get: () => 1 }))).toStrictEqual(expected);
   });
+
+  it("a conversion that adds members, or changes where they come from, is seen by the members after it", () => {
+    // `change` runs once `count` and `flag` were found absent, and before the members after `name` are looked for.
+    const changedBy = (change: (options: object) => void, options: object) =>
+      Object.assign(options, {
+        name: Object.assign(new String("x"), {
+          toString() {
+            change(options);
+            return "n";
+          },
+        }),
+      });
+    const late = { color: "blue", renamed: 9 };
+    const add = (options: object) => void Object.assign(options, { count: 5, ...late });
+    const inherit = (options: object) => void Object.setPrototypeOf(options, late);
+    const disown = (options: object) => void Object.setPrototypeOf(options, Object.prototype);
+    // Its structure stays the same when it gets a property.
+    const inDictionaryMode = () => {
+      const object: Record<string, unknown> = {};
+      for (let i = 0; i < 200; i++) object["k" + i] = i;
+      for (let i = 0; i < 200; i++) delete object["k" + i];
+      return object;
+    };
+    // Its structure stays the same when it gets a prototype: JSC keeps that of such an object in the object ("poly proto").
+    const inheritingFrom = (prototype: object) => {
+      const make = () =>
+        new (class Options {
+          extra: number;
+          constructor() {
+            this.extra = 1;
+          }
+        })();
+      for (let i = 0; i < 20; i++) make();
+      return Object.setPrototypeOf(make(), prototype);
+    };
+    for (const make of [
+      () => ({}),
+      () => Object.create(null),
+      inDictionaryMode,
+      () => inheritingFrom(Object.prototype),
+    ]) {
+      expect(bindgen.optionsEcho(changedBy(add, make()))).toStrictEqual({ ...defaults, name: "n", ...late });
+      expect(bindgen.optionsEcho(changedBy(inherit, make()))).toStrictEqual({ ...defaults, name: "n", ...late });
+    }
+    for (const make of [() => Object.create(late), () => inheritingFrom(late)]) {
+      expect(bindgen.optionsEcho(changedBy(() => {}, make()))).toStrictEqual({ ...defaults, name: "n", ...late });
+      expect(bindgen.optionsEcho(changedBy(disown, make()))).toStrictEqual({ ...defaults, name: "n" });
+    }
+  });
 });
 
 describe("unions", () => {
@@ -1702,6 +1786,16 @@ describe("what is only a result", () => {
     expect(Reflect.ownKeys(positions)).toEqual(["2", "__proto__", "constructor"]);
   });
 
+  it("b.record takes a key of any length", () => {
+    for (const length of [1, 15, 16, 17, 255, 256, 257, 5000]) {
+      const key = Buffer.alloc(length, "k").toString();
+      expect(Object.entries(bindgen.positions(`${key} ${key}é`))).toEqual([
+        [key, 0],
+        [`${key}é`, 1],
+      ]);
+    }
+  });
+
   it("b.record keeps the last value of a key, where the key first came", () => {
     expect(Object.entries(bindgen.positions("a b a"))).toEqual([
       ["a", 2],
@@ -1725,7 +1819,7 @@ describe("arrays", () => {
     expect(bindgen.range(0)).toEqual([]);
     expect(bindgen.range(4)).toEqual([0, 1, 2, 3]);
     expect(bindgen.range(5000)).toEqual(Array.from({ length: 5000 }, (_, i) => i));
-    for (const length of [7, 8, 9]) {
+    for (const length of [7, 8, 9, 31, 32, 33, 64, 65]) {
       expect(bindgen.range(length)).toEqual(Array.from({ length }, (_, i) => i));
       const words = Array.from({ length }, (_, i) => "word" + i);
       expect(bindgen.words(words.join(" "))).toEqual(words);

@@ -92,7 +92,7 @@ function assertDistinct(names: readonly string[], what: string): void {
 }
 
 export function asciiLiteral(value: string): string {
-  assert(!/[^\x20-\x7e]/.test(value), `must be printable ASCII: ${util.inspect(value)}`);
+  if (/[^\x20-\x7e]/.test(value)) assert.fail(`must be printable ASCII: ${util.inspect(value)}`);
   return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"_s`;
 }
 
@@ -1887,6 +1887,10 @@ export class OptionalType extends Type {
       !(inner instanceof BytesType) || inner.canBe(modifier),
       'b.bytes can be absent if it is held: "borrowed", and .nullable if it is string: "asIs"',
     );
+    assert(
+      modifier !== "ifPassed" || inner.cppPrepare("") === null,
+      ".ifPassed is not for a type that takes a String object: an argument that is not passed has none to convert",
+    );
     this.inner = inner;
     this.modifier = modifier;
   }
@@ -2896,6 +2900,8 @@ export class Signature {
   readonly cppInlineBody: { name: string; header: string } | undefined;
   readonly length: number | undefined;
   readonly columns: SignatureColumns & EntryColumns;
+  /** What tells it from the other overloads of its function in a generated name. Set by the function. */
+  overloadSuffix = "";
   /** `hasThisValue`: the body is also handed its own JS object. `isProperty`: JS can call it, so each argument is converted from a JS value. */
   constructor(options: FunctionOptions & FunctionField & ConstructOptions, hasThisValue = false, isProperty = true) {
     this.columns = columnsOf(options, [
@@ -3106,6 +3112,7 @@ export class FunctionDefinition {
       `export: ${this.exportName} is not a C identifier`,
     );
     this.signatures = signatures.map(options => (options instanceof Signature ? options : new Signature(options)));
+    if (this.signatures.length > 1) this.signatures.forEach((signature, i) => (signature.overloadSuffix = `${i + 1}`));
     assert(this.signatures.filter(signature => signature.length !== undefined).length <= 1, "length is given once");
     assert(this.signatures.filter(signature => signature.givenName !== undefined).length <= 1, "name is given once");
     assert(

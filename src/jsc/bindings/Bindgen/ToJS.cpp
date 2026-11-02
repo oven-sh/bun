@@ -1,5 +1,6 @@
 #include "root.h"
 #include "Bindgen/ExternTraits.h"
+#include "Bindgen/JSStringUTF8View.h"
 #include "Bindgen/SchemaStrings.h"
 #include "ZigGlobalObject.h"
 #include "helpers.h"
@@ -79,16 +80,26 @@ extern "C" EncodedJSValue Bun__Bindgen__createNullPrototypeObject(JSGlobalObject
     return putMembers(vm, object, firstMemberNameIndex, values, count);
 }
 
+// Looking a key up as it is makes a string only of one that is new to the VM, and ends the process if there is no memory for that. A longer key goes the way that throws.
+static constexpr size_t longestKeyLookedUpAsItIs = 256;
+
 extern "C" bool Bun__Bindgen__putRecordEntry(JSGlobalObject* globalObject, EncodedJSValue record, const uint8_t* key, size_t keyLength, EncodedJSValue value)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto name = Zig::convertUTF8ToString(std::span { key, keyLength });
-    if (name.isNull()) [[unlikely]] {
-        throwOutOfMemoryError(globalObject, scope);
-        return false;
+    std::span bytes { key, keyLength };
+    Identifier name;
+    if (keyLength <= longestKeyLookedUpAsItIs && areAllASCII(byteCast<Latin1Character>(bytes))) [[likely]] {
+        name = Identifier::fromString(vm, byteCast<Latin1Character>(bytes));
+    } else {
+        auto string = Zig::convertUTF8ToString(bytes);
+        if (string.isNull()) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return false;
+        }
+        name = Identifier::fromString(vm, string);
     }
-    asObject(JSValue::decode(record))->putDirectMayBeIndex(globalObject, Identifier::fromString(vm, name), JSValue::decode(value));
+    asObject(JSValue::decode(record))->putDirectMayBeIndex(globalObject, name, JSValue::decode(value));
     RETURN_IF_EXCEPTION(scope, false);
     return true;
 }
@@ -109,6 +120,17 @@ extern "C" bool Bun__Bindgen__exceptionPresenceMatches(JSGlobalObject* globalObj
 extern "C" EncodedJSValue Bun__Bindgen__constructArrayFromValues(JSGlobalObject* globalObject, const JSValue* values, size_t count)
 {
     return JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), values, count));
+}
+
+extern "C" bool Bun__Bindgen__putArrayValues(JSGlobalObject* globalObject, EncodedJSValue array, unsigned firstIndex, const JSValue* values, size_t count)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    JSObject* object = asObject(JSValue::decode(array));
+    for (unsigned i = 0; i < count; ++i) {
+        object->putDirectIndex(globalObject, firstIndex + i, values[i]);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
+    return true;
 }
 
 }

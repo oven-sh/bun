@@ -15,7 +15,7 @@ import {
   rustForCrate,
   type SchemaFile,
 } from "./bindgen-emit.ts";
-import { loadSchemaFile, sortTypes } from "./bindgen-load.ts";
+import { loadSchemaFiles, sortTypes } from "./bindgen-load.ts";
 import { Guards } from "./builtins/guards.ts";
 import { argParse, writeIfNotChanged } from "./helpers.ts";
 
@@ -29,8 +29,10 @@ const builtinUses: string | undefined = args["builtin-uses"];
 /** Without the table of built-ins nothing is guarded, and nothing compiles the C++. */
 const guards = new Guards(builtinUses ? readBuiltinUses(builtinUses) : { entries: [] });
 
-const allFiles: SchemaFile[] = [];
-for (const source of sources) allFiles.push(await loadSchemaFile(source));
+const allFiles = (await loadSchemaFiles(sources)).map(file => {
+  if (file instanceof Error) throw file;
+  return file;
+});
 allFiles.forEach(sortTypes);
 const typesOnly = ((args["types-only"] as string | undefined) ?? "").split(",");
 /** What this build compiles. The types describe every schema. */

@@ -38,7 +38,7 @@ import {
   type OverloadDispatch,
   type ValueKind,
 } from "../bindgen-lib-internal.ts";
-import { loadSchemaFile } from "../bindgen-load.ts";
+import { loadSchemaFiles, schemaFileOf } from "../bindgen-load.ts";
 import { nativeCallList } from "../generate-js2native.ts";
 import {
   GeneratorError,
@@ -1033,15 +1033,11 @@ export async function collectBindgen(
   const joins: Joins = { placements, writtenMembers, writtenFeatureUses, nativeBindings: findNativeBindings() };
   // A type is named by the file that exports it, and another file may use it.
   const loaded: { file: string; schema: SchemaFile }[] = [];
-  for (const source of [...sources].sort(compareBytes)) {
-    const file = relative(bunRoot, source.slice(source.indexOf("=") + 1))
-      .split(sep)
-      .join("/");
-    const schema = await loadSchemaFile(source).catch((error: Error) => {
-      problems.add(null, error.message);
-      return null;
-    });
-    if (schema !== null) loaded.push({ file, schema });
+  const sorted = [...sources].sort(compareBytes);
+  for (const [i, schema] of (await loadSchemaFiles(sorted)).entries()) {
+    const file = relative(bunRoot, schemaFileOf(sorted[i])).split(sep).join("/");
+    if (schema instanceof Error) problems.add(null, schema.message);
+    else loaded.push({ file, schema });
   }
   const declarations = loaded.flatMap(({ file, schema }) => {
     const report = (message: string) =>

@@ -2,6 +2,7 @@
 
 use core::cell::UnsafeCell;
 use core::ffi::c_void;
+use core::iter::Fuse;
 use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
 
@@ -89,27 +90,46 @@ impl<'a> JsHeap<'a> {
         items: I,
         mut convert: impl FnMut(&JsHeap<'a>, I::Item) -> Result<'a, JsLocal<'a>>,
     ) -> Result<'a, JsLocal<'a, JSArray>> {
+        const CHUNK: usize = 32;
         let global = self.global_object();
-        // A short array is made with one call. A longer one takes a call per element.
-        let mut short = [JSValue::ZERO; 8];
-        let mut items = items.into_iter();
-        for count in 0..short.len() {
-            let Some(item) = items.next() else {
-                // SAFETY: `count` initialized values.
-                return JsLocal::from_js_result(crate::call_zero_is_throw(global, || unsafe {
-                    extern_types::Bun__Bindgen__constructArrayFromValues(
-                        self.global_ptr(),
-                        short.as_ptr(),
-                        count,
-                    )
-                }));
-            };
-            short[count] = convert(self, item)?.0;
+        // The values wait on the stack, where the collector sees them, for one call to take them all.
+        let mut values = bun_core::BoundedArray::<JSValue, CHUNK>::default();
+        let mut items = items.into_iter().fuse();
+        let mut refill = |values: &mut bun_core::BoundedArray<_, CHUNK>, items: &mut Fuse<_>| {
+            values.clear();
+            while values.len() < CHUNK
+                && let Some(item) = items.next()
+            {
+                values.append_assume_capacity(convert(self, item)?.0);
+            }
+            Result::<'a, ()>::Ok(())
+        };
+        refill(&mut values, &mut items)?;
+        if values.len() < CHUNK {
+            // SAFETY: a slice of values.
+            return JsLocal::from_js_result(crate::call_zero_is_throw(global, || unsafe {
+                extern_types::Bun__Bindgen__constructArrayFromValues(
+                    self.global_ptr(),
+                    values.as_slice().as_ptr(),
+                    values.len(),
+                )
+            }));
         }
-        let array = JSValue::create_empty_array(global, short.len() + items.size_hint().0)?;
-        let rest = items.map(|item| convert(self, item).map(|value| value.0));
-        for (index, value) in short.into_iter().map(Ok).chain(rest).enumerate() {
-            array.put_index(global, index as u32, value?)?;
+        let array = JSValue::create_empty_array(global, CHUNK + items.size_hint().0)?;
+        let mut length = 0;
+        while values.len() > 0 {
+            // SAFETY: `array` is an array, and the rest is a slice of values.
+            crate::call_false_is_throw(global, || unsafe {
+                extern_types::Bun__Bindgen__putArrayValues(
+                    self.global_ptr(),
+                    array,
+                    length,
+                    values.as_slice().as_ptr(),
+                    values.len(),
+                )
+            })?;
+            length += values.len() as u32;
+            refill(&mut values, &mut items)?;
         }
         Ok(JsLocal::from_raw(array))
     }

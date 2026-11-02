@@ -129,6 +129,7 @@ export function analyze(files: readonly SchemaFile[]): Tables {
   classesByName.clear();
   const markAccepted = (type: Type) => walk(type, t => void (t instanceof NamedType && (t.accepted = true)));
   const markReturned = (type: Type) => walk(type, t => void (t instanceof NamedType && (t.returned = true)));
+  const cppTypes = new Set(files.flatMap(file => file.types.map(type => type.cpp)));
   for (const file of files) {
     for (const type of file.types) {
       if (type instanceof DictionaryType && type.fromJS) markAccepted(type);
@@ -152,9 +153,7 @@ export function analyze(files: readonly SchemaFile[]): Tables {
       }
     }
     assert(
-      !files.some(other =>
-        other.types.some(type => type.cpp === `Bun::Bindgen::Generated::${file.origin.namespace}`),
-      ) ||
+      !cppTypes.has(`Bun::Bindgen::Generated::${file.origin.namespace}`) ||
         (file.functions.length === 0 && !file.types.some(type => type instanceof ClassType && type.construct)),
       `${file.origin.stem}.bind.ts: a type is named like the namespace of this file's functions`,
     );
@@ -189,7 +188,12 @@ export function analyze(files: readonly SchemaFile[]): Tables {
     ...file.functions.flatMap(fn => fn.signatures.map(signature => thunkSymbol(fn, signature))),
     ...file.types.flatMap(type => (type instanceof ClassType ? classSymbols(type) : [])),
   ]);
-  const repeated = symbols.filter((symbol, i) => symbols.indexOf(symbol) !== i);
+  const seen = new Set<string>();
+  const repeated = symbols.filter(symbol => {
+    if (seen.has(symbol)) return true;
+    seen.add(symbol);
+    return false;
+  });
   assert(repeated.length === 0, `two bindings make the same symbol: ${repeated.join(", ")}`);
   return tables;
 }
@@ -386,7 +390,7 @@ template<> struct Bun::Bindgen::ExternTraits<${type.cpp}> : Bun::Bindgen::Trivia
 template<> struct Bun::IDLHumanReadableName<${type.idlType}> : Bun::BaseIDLHumanReadableName {
     static constexpr auto humanReadableName = std::to_array("${humanReadableEnumeration(type)}");
 };
-template<> std::optional<${type.cpp}> WebCore::parseEnumerationFromString<${type.cpp}>(const WTF::String&);
+template<> std::optional<${type.cpp}> WebCore::parseEnumerationFromView<${type.cpp}>(const WTF::StringView&);
 template<> std::optional<${type.cpp}> WebCore::parseEnumeration<${type.cpp}>(JSC::JSGlobalObject&, JSC::JSValue);
 `;
   }
@@ -533,7 +537,7 @@ function cppSourceForEnum(type: EnumerationType): string {
     ([spelling]) => spelling.length,
   );
   return `
-template<> std::optional<${type.cpp}> WebCore::parseEnumerationFromString<${type.cpp}>(const WTF::String& string)
+template<> std::optional<${type.cpp}> WebCore::parseEnumerationFromView<${type.cpp}>(const WTF::StringView& string)
 {
     switch (string.length()) {
 ${[...byLength]
@@ -546,7 +550,7 @@ ${[...byLength]
 
 template<> std::optional<${type.cpp}> WebCore::parseEnumeration<${type.cpp}>(JSC::JSGlobalObject& globalObject, JSC::JSValue value)
 {
-    return parseEnumerationFromString<${type.cpp}>(value.toWTFString(&globalObject));
+    return parseEnumerationFromView<${type.cpp}>(Bun::Bindgen::viewOfString(globalObject, value));
 }
 `;
 }
@@ -664,12 +668,9 @@ ${indent(cppReturnIfFailed("Bun::Bindgen::convertDictionaryInto(*globalObject, J
   }`;
 }
 
-const overloadSuffix = (fn: FunctionDefinition, signature: Signature) =>
-  fn.signatures.length > 1 ? `${fn.signatures.indexOf(signature) + 1}` : "";
-
 export const thunkSymbol = (fn: FunctionDefinition, signature: Signature) =>
   signature.cppSymbol ??
-  `Bun__Bindgen__${fn.origin!.namespace}__${fn.name.replace(/^_+/, "")}${overloadSuffix(fn, signature)}`;
+  `Bun__Bindgen__${fn.origin!.namespace}__${fn.name.replace(/^_+/, "")}${signature.overloadSuffix}`;
 
 /** Lines that declare `variable` as what `value` converts to, and return `failure` if converting throws. */
 function cppDeclareConverted(
@@ -704,22 +705,35 @@ const cppHeldArgument = (type: Type, i: number) =>
     ? cppHeldValue(type, `argument${i}`)
     : { holder: "JSC::EnsureStillAliveScope", value: `argument${i}.value()` };
 
+/** Whether `argument${i}` comes with `areStrings${i}`: one pass over strings then finds nothing to prepare and nothing to refuse. */
+const cppAsksWhetherStrings = ({ element }: RestType) =>
+  element instanceof LocalStringType && element.cppPrepare("") !== null;
+
+/** `lines` for a `b.rest` that `areStrings${i}` is false of. */
+const cppUnlessStrings = (i: number, lines: readonly string[]) => [
+  `if (!areStrings${i}) [[unlikely]] {`,
+  ...lines.map(line => `    ${line}`),
+  "}",
+];
+
 /** Lines that declare `argument${i}`, which holds what is converted. `fromParameters`: as for `cppCallBody`. */
 function cppDeclareArgument({ type }: Argument, i: number, fromParameters?: { failure: string }): string[] {
   if (type instanceof VariadicType) return [];
   if (type instanceof RestType) {
-    return [
-      `Bun::Bindgen::RestArguments argument${i} { *callFrame, ${i} };`,
-      ...(type.element.cppPrepare("") === null
-        ? []
-        : [`argument${i}.convertStringObjects(*globalObject);`, "RETURN_IF_EXCEPTION(scope, {});"]),
-    ];
+    const declaration = `Bun::Bindgen::RestArguments argument${i} { *callFrame, ${i} };`;
+    if (type.element.cppPrepare("") === null) return [declaration];
+    const prepare = cppReturnIfFailed(`argument${i}.convertStringObjects(*globalObject)`, "{}").split("\n");
+    if (!cppAsksWhetherStrings(type)) return [declaration, ...prepare];
+    return [declaration, `const bool areStrings${i} = argument${i}.areStrings();`, ...cppUnlessStrings(i, prepare)];
   }
   const passed = fromParameters ? `parameter${i}` : `callFrame->argument(${i})`;
   const prepared = type.cppPrepare(passed);
-  const { holder } = cppHeldArgument(type, i);
+  const { holder, value } = cppHeldArgument(type, i);
   if (prepared !== null) {
-    return [`${holder} argument${i} = ${prepared};`, `RETURN_IF_EXCEPTION(scope, ${fromParameters?.failure ?? "{}"});`];
+    return [
+      `${holder} argument${i} = ${prepared};`,
+      ...cppReturnIfFailed(`!!${value}`, fromParameters?.failure ?? "{}").split("\n"),
+    ];
   }
   return [
     !fromParameters && isIfPassed(type)
@@ -777,8 +791,7 @@ function cppCallBody(
     if (type instanceof RestType) {
       if (!(type.element instanceof LocalStringType)) return [];
       const ctx = cppArgumentContext(lines, argument, i, `argument${i}.at(index)`, "index");
-      return [
-        ...lines,
+      const refuse = [
         `for (size_t index = 0; index < argument${i}.size(); ++index) {`,
         `    if (!argument${i}.at(index).isString()) [[unlikely]] {`,
         `        ${ctx}.throwNotString(*globalObject, scope);`,
@@ -786,6 +799,7 @@ function cppCallBody(
         "    }",
         "}",
       ];
+      return [...lines, ...(cppAsksWhetherStrings(type) ? cppUnlessStrings(i, refuse) : refuse)];
     }
     const { value } = cppHeldArgument(type, i);
     const ctx = cppArgumentContext(lines, argument, i, value);
@@ -831,10 +845,9 @@ const memberFunctionSymbolName = (type: ClassType, member: string) =>
   `Bun__Bindgen__${type.name}MemberFunction__${member}`;
 export const methodSymbolName = (type: ClassType, method: Method) => {
   if (!method.isProperty) return memberFunctionSymbolName(type, method.name);
-  const fn = type.nativeFunctions.find(fn => fn.signatures.includes(method))!;
   return (method.receiver === "static" ? classSymbolName : protoSymbolName)(
     type,
-    memberIdentifier(method.name) + overloadSuffix(fn, method),
+    memberIdentifier(method.name) + method.overloadSuffix,
   );
 };
 export const getterSymbolName = (type: ClassType, getter: Getter) =>
@@ -1121,8 +1134,7 @@ const isCalledByProtoCaller = (type: ClassType, fn: FunctionDefinition) =>
 function cppMethod(type: ClassType, declared: FunctionDefinition): string {
   const host = methodHostFunctionName(type, declared);
   const throughCaller = isCalledByProtoCaller(type, declared);
-  const symbol = (method: Signature) =>
-    methodSymbolName(type, (throughCaller ? Object.getPrototypeOf(method) : method) as Method);
+  const symbol = (method: Signature) => methodSymbolName(type, method as Method);
   const fn: FunctionDefinition = throughCaller
     ? Object.create(declared, {
         signatures: {
@@ -1635,7 +1647,7 @@ ${takeThis}${cppThrowIfArgumentsMissing(fn.signatures[0])}${cppCallBody(fn.signa
   // An overload reads `this` and the callee from the frame.
   const passed = takeThis ? leading : [];
   const overloads = fn.signatures.map(
-    signature => `static inline JSC::EncodedJSValue ${name}${overloadSuffix(fn, signature)}(${["JSC::JSGlobalObject* globalObject", "JSC::CallFrame* callFrame", ...passed.map(argument => `JSC::JSCell* ${argument}`)].join(", ")})
+    signature => `static inline JSC::EncodedJSValue ${name}${signature.overloadSuffix}(${["JSC::JSGlobalObject* globalObject", "JSC::CallFrame* callFrame", ...passed.map(argument => `JSC::JSCell* ${argument}`)].join(", ")})
 {
 ${cppPrologue}
 ${cppCallBody(signature, symbol(signature), leading)}
@@ -1643,7 +1655,7 @@ ${cppCallBody(signature, symbol(signature), leading)}
   );
   const cppDispatch = (dispatch: OverloadDispatch): string => {
     if (dispatch instanceof Signature)
-      return `RELEASE_AND_RETURN(scope, ${name}${overloadSuffix(fn, dispatch)}(${["globalObject", "callFrame", ...passed].join(", ")}));`;
+      return `RELEASE_AND_RETURN(scope, ${name}${dispatch.overloadSuffix}(${["globalObject", "callFrame", ...passed].join(", ")}));`;
     const argument = `argument${dispatch.argument}`;
     const choice = `choice${dispatch.argument}`;
     const { outcomes, code, condition } = cppChooseByKind(argument, dispatch.byKind, choice);
@@ -2114,7 +2126,7 @@ ${
 
   for (const method of type.methods) {
     const isStatic = method.receiver === "static";
-    const throughCaller = type.functions.some(fn => fn.signatures.includes(method) && isCalledByProtoCaller(type, fn));
+    const throughCaller = type.protoCaller !== undefined && type.functions.some(fn => fn.signatures.includes(method));
     const call = `<${rustPath}>::${method.rustName}(${[
       ...leading(method.receiver, method.passThis, method.capability),
       ...(throughCaller
@@ -2592,8 +2604,9 @@ ${declarations.filter(text => text.length > 0).join("\n")}
   /** What \`$bindgen(file, name)\` returns. */
   interface Exports {
 ${files
-  .filter(file => exported(file).length > 0)
-  .map(file => `    ${JSON.stringify(`${file.origin.stem}.bind.ts`)}: {\n${exported(file).join("\n")}\n    };`)
+  .map(file => ({ file, lines: exported(file) }))
+  .filter(({ lines }) => lines.length > 0)
+  .map(({ file, lines }) => `    ${JSON.stringify(`${file.origin.stem}.bind.ts`)}: {\n${lines.join("\n")}\n    };`)
   .join("\n")}
   }
   /** The namespaces, which it returns too. */

@@ -91,6 +91,7 @@ extern "C" Bun::Bindgen::ExternBytes Bun__Bindgen__bytesOfBlobOrBuffer(JSC::Enco
 
 extern "C" Bun::Bindgen::ExternBytes Bun__Bindgen__bytesOfBlobOrBufferAndIsShared(JSC::EncodedJSValue value, bool* isShared)
 {
-    *isShared = Bun::Bindgen::isSharedBuffer(JSC::JSValue::decode(value));
-    return Bun__Bindgen__bytesOfBlobOrBuffer(value);
+    *isShared = false;
+    auto bytes = Bun::Bindgen::bytesOfBlobOrBuffer(JSC::JSValue::decode(value), *isShared);
+    return { bytes.data(), bytes.size() };
 }

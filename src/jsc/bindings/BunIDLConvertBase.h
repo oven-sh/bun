@@ -62,13 +62,18 @@ struct DefaultTryConverter : DefaultContextConverter<IDL> {
     {
         auto& vm = JSC::getVM(&globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
-        auto converted = WebCore::Converter<IDL>::tryConvert(globalObject, value, ctx);
-        if (converted.has_value()) [[likely]] {
-            scope.release();
-            result = WTF::move(*converted);
-            return true;
+        // In a block of its own: where the paths after it destroy `converted` too, they share that code with the path in it, which then runs a destructor on what it moved from.
+        {
+            auto converted = WebCore::Converter<IDL>::tryConvert(globalObject, value, ctx);
+            if (converted.has_value()) [[likely]] {
+                scope.release();
+                result = WTF::move(*converted);
+                return true;
+            }
         }
-        throwConversionFailedSlow(globalObject, scope, ctx);
+        RETURN_IF_EXCEPTION(scope, false);
+        scope.release();
+        throwConversionFailedSlow(globalObject, ctx);
         return false;
     }
 
@@ -81,10 +86,11 @@ struct DefaultTryConverter : DefaultContextConverter<IDL> {
     }
 
 private:
+    // Takes a copy of `ctx` and no scope: what is passed by reference is stored in the frame for a value of the right type too.
     template<IDLConversionContext Ctx>
-    NEVER_INLINE static void throwConversionFailedSlow(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
+    NEVER_INLINE static void throwConversionFailedSlow(JSC::JSGlobalObject& globalObject, Ctx ctx)
     {
-        RETURN_IF_EXCEPTION(scope, void());
+        auto scope = DECLARE_THROW_SCOPE(JSC::getVM(&globalObject));
         WebCore::Converter<IDL>::throwConversionFailed(globalObject, scope, ctx);
     }
 };

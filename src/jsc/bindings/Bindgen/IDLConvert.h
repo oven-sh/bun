@@ -111,12 +111,22 @@ void throwNotUnsharedBufferSource(JSC::JSGlobalObject& globalObject, JSC::ThrowS
     ctx.throwTypeMustBe(globalObject, scope, "an ArrayBuffer or ArrayBufferView that is not shared"_s);
 }
 
-// What `ToString` gives for a `String` object, which runs its `toString`. Any other value as it is.
+// What `ToString` gives for a `String` object, which runs its `toString`: empty if that threw. Any other value as it is.
 ALWAYS_INLINE JSC::JSValue stringOfStringObject(JSC::JSGlobalObject& globalObject, JSC::JSValue value)
 {
     if (value.inherits<JSC::StringObject>()) [[unlikely]]
-        return value.toString(&globalObject);
+        return value.toStringOrNull(&globalObject);
     return value;
+}
+
+// The characters of what `ToString` gives for `value`, where they are: no reference is taken. Null if it threw.
+inline JSC::GCOwnedDataScope<WTF::StringView> viewOfString(JSC::JSGlobalObject& globalObject, JSC::JSValue value)
+{
+    auto& vm = JSC::getVM(&globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSString* string = value.toString(&globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, string->view(&globalObject));
 }
 
 // An argument of a function whose body is C++ (`cppSymbol`).
@@ -185,25 +195,40 @@ public:
     size_t size() const { return m_size; }
     JSC::JSValue at(size_t index) const { return JSC::JSValue::decode(m_values[index]); }
 
-    // As stringOfStringObject, in order.
-    ALWAYS_INLINE void convertStringObjects(JSC::JSGlobalObject& globalObject)
+    ALWAYS_INLINE bool areStrings() const
+    {
+        for (size_t index = 0; index < m_size; ++index) {
+            if (!at(index).isString()) [[unlikely]]
+                return false;
+        }
+        return true;
+    }
+
+    // As stringOfStringObject, in order. False if it threw.
+    ALWAYS_INLINE bool convertStringObjects(JSC::JSGlobalObject& globalObject)
     {
         for (size_t index = 0; index < m_size; ++index) {
             if (at(index).inherits<JSC::StringObject>()) [[unlikely]]
                 return convertStringObjectsSlow(globalObject);
         }
+        return true;
     }
 
 private:
-    NEVER_INLINE void convertStringObjectsSlow(JSC::JSGlobalObject& globalObject)
+    NEVER_INLINE bool convertStringObjectsSlow(JSC::JSGlobalObject& globalObject)
     {
         auto scope = DECLARE_THROW_SCOPE(JSC::getVM(&globalObject));
         auto& converted = m_converted.emplace();
         for (size_t index = 0; index < m_size; ++index) {
             converted.append(stringOfStringObject(globalObject, at(index)));
-            RETURN_IF_EXCEPTION(scope, void());
+            RETURN_IF_EXCEPTION(scope, false);
+        }
+        if (converted.hasOverflowed()) [[unlikely]] {
+            JSC::throwOutOfMemoryError(&globalObject, scope);
+            return false;
         }
         m_values = converted.data();
+        return true;
     }
 
     const JSC::EncodedJSValue* m_values;
@@ -257,9 +282,9 @@ struct BytesConverter : DefaultContextConverter<IDL> {
     }
 
 private:
-    // Does not take `result`, which can then live in registers.
+    // Does not take `result`, which can then live in registers. A copy of `ctx`: see DefaultTryConverter::throwConversionFailedSlow.
     template<IDLConversionContext Ctx>
-    NEVER_INLINE static bool isBlobOrThrow(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx, WTF::ASCIILiteral expected)
+    NEVER_INLINE static bool isBlobOrThrow(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx ctx, WTF::ASCIILiteral expected)
     {
         auto& vm = JSC::getVM(&globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
@@ -274,7 +299,7 @@ private:
     }
 
     template<IDLConversionContext Ctx>
-    NEVER_INLINE static bool convertIntoSlow(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx, Result& result, WTF::ASCIILiteral expected)
+    NEVER_INLINE static bool convertIntoSlow(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx ctx, Result& result, WTF::ASCIILiteral expected)
     {
         auto& vm = JSC::getVM(&globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);

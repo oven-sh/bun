@@ -4,9 +4,34 @@
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/JSStringInlines.h>
 #include <wtf/MallocSpan.h>
+#include <wtf/UnalignedAccess.h>
 #include <wtf/text/ASCIIFastPath.h>
 
 namespace Bun::Bindgen {
+
+// WTF::charactersAreAllASCII reads what follows the last whole vector one character at a time: up to 15 of them, and all of a short string. Here those loads overlap.
+ALWAYS_INLINE bool areAllASCII(std::span<const Latin1Character> characters)
+{
+    namespace SIMD = WTF::SIMD;
+    constexpr size_t stride = SIMD::stride<uint8_t>;
+    const size_t length = characters.size();
+    const auto* data = byteCast<uint8_t>(characters.data());
+    if (length >= stride) {
+        // That function is at its best on runs of 8 vectors.
+        const size_t runs = length & ~(8 * stride - 1);
+        if (runs && !WTF::charactersAreAllASCII(characters.first(runs)))
+            return false;
+        auto bits = SIMD::load(data + length - stride);
+        for (size_t at = runs; at + stride < length; at += stride)
+            bits = SIMD::bitOr2(bits, SIMD::load(data + at));
+        return !SIMD::isNonZero(SIMD::bitAnd2(bits, SIMD::splat<uint8_t>(0x80)));
+    }
+    if (length >= sizeof(uint64_t))
+        return !((WTF::unalignedLoad<uint64_t>(data) | WTF::unalignedLoad<uint64_t>(data + length - sizeof(uint64_t))) & 0x8080808080808080ULL);
+    if (length >= sizeof(uint32_t))
+        return !((WTF::unalignedLoad<uint32_t>(data) | WTF::unalignedLoad<uint32_t>(data + length - sizeof(uint32_t))) & 0x80808080U);
+    return !length || !((data[0] | data[length / 2] | data[length - 1]) & 0x80);
+}
 
 // Bun::UTF8View for an argument of a host call.
 class JSStringUTF8View {
@@ -27,7 +52,7 @@ public:
         m_view = string->view(&globalObject);
         RETURN_IF_EXCEPTION(scope, false);
         m_isNull = false;
-        if (m_view->is8Bit() && WTF::charactersAreAllASCII(m_view->span8())) [[likely]]
+        if (m_view->is8Bit() && areAllASCII(m_view->span8())) [[likely]]
             return true;
         if (convert()) [[likely]]
             return true;

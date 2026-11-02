@@ -58,6 +58,8 @@ impl ContextParameter {
         let mut options = bun_js_parser::ParserOptions::init(Default::default(), bun_ast::Loader::Js);
         options.features.no_macros = true;
         options.suppress_warnings_about_weird_code = true;
+        // A legal comment would be one more statement in the lists that are matched below.
+        options.keep_legal_comments = false;
         let define = bun_js_parser::Define::default();
         let mut log = bun_ast::Log::init();
         bun_js_parser::Parser::init(options, &mut log, &source, &define, &arena)

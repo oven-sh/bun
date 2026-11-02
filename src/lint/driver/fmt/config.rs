@@ -1956,6 +1956,7 @@ impl<'c> Configs<'c> {
         resolved.options.parse_javascript = Some(super::parse_javascript);
         resolved.options.parse_parts = Some(super::parse_parts);
         resolved.options.embedded_html = true;
+        resolved.options.no_short_cuts = self.options.no_short_cuts;
         resolved.options.toml = self.is_native_in(scope);
         resolved.options.svelte.is_on = self.formats_svelte(scope, path);
         if is_oxfmt {

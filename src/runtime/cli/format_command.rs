@@ -99,7 +99,22 @@ impl FormatCommand {
             );
             Global::exit(u32::from(!ran));
         }
-        let args: Vec<&[u8]> = args.iter().map(|arg| arg.as_bytes()).collect();
+        let mut args: Vec<&[u8]> = args.iter().map(|arg| arg.as_bytes()).collect();
+        // `--bench=<rounds>` and `--no-short-cuts`, for measurements and for the tests.
+        let (mut bench, mut no_short_cuts) = (0, false);
+        if HAS_TEST_RUNNER {
+            args.retain(|arg| match arg.strip_prefix(b"--bench=") {
+                Some(rounds) => {
+                    bench = bun_core::fmt::parse_decimal::<usize>(rounds).unwrap_or(1);
+                    false
+                }
+                None if *arg == b"--no-short-cuts" => {
+                    no_short_cuts = true;
+                    false
+                }
+                None => true,
+            });
+        }
         let options = match Options::parse(&args) {
             Ok(options) => options,
             Err(UsageError(message)) => usage_error("fmt", &message),
@@ -124,12 +139,13 @@ impl FormatCommand {
                     })
                 },
             );
-            let options =
+            let mut options =
                 match defaults.map(|defaults| Options::parse_with_defaults(defaults, &args)) {
                     None => options,
                     Some(Ok(options)) => options,
                     Some(Err(UsageError(message))) => usage_error("fmt", &message),
                 };
+            (options.bench, options.no_short_cuts) = (bench, no_short_cuts);
             bun_lint_driver::fmt::run(&options, environment)
         })
     }

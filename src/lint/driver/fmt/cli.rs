@@ -363,6 +363,11 @@ pub struct Options {
     pub debug_check: bool,
     /// Print the files that would be formatted, without formatting.
     pub list_files: bool,
+    /// For measurements, in builds that have the test runner: read the files, format all of them this many times, and
+    /// print how long each round took.
+    pub bench: usize,
+    /// For tests: `FormatOptions::no_short_cuts`.
+    pub no_short_cuts: bool,
 }
 
 impl Default for Options {
@@ -412,6 +417,8 @@ impl Default for Options {
             cwd: None,
             debug_check: false,
             list_files: false,
+            bench: 0,
+            no_short_cuts: false,
         }
     }
 }

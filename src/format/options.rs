@@ -101,6 +101,9 @@ pub struct FormatOptions {
     pub toml: bool,
     /// For tests: what to output instead of the formatted text.
     pub debug_comments: DebugComments,
+    /// For tests: everything goes the long way, through a document and the printer. The output has to be the same as
+    /// with the short cuts.
+    pub no_short_cuts: bool,
 }
 
 #[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]

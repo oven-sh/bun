@@ -1878,6 +1878,40 @@ impl Run<'_> {
             scratches.lock().push(scratch);
             results.lock()[index] = Some(result.unwrap_or_else(Done::Failed));
         };
+        if options.bench > 0 {
+            let loaded: Vec<Option<(Resolved, Vec<u8>)>> = (work.iter())
+                .map(|(_, target)| {
+                    let resolved = configs.options_for(&target.scope, &target.path).ok()?;
+                    Some((resolved, git::read(only.as_ref(), &target.path).ok()?))
+                })
+                .collect();
+            let mut best = f64::MAX;
+            for round in 0..options.bench {
+                let began = Instant::now();
+                pool.for_each(work.len(), 1, &|at| {
+                    let Some((resolved, text)) = &loaded[at] else {
+                        return;
+                    };
+                    let mut scratch = scratches.lock().pop().unwrap_or_default();
+                    let names = (&atoms as &dyn Intern, &memory);
+                    let path = &work[at].1.path;
+                    let _ = std::hint::black_box(format(
+                        path,
+                        text,
+                        resolved,
+                        names,
+                        &mut scratch,
+                        false,
+                    ));
+                    scratches.lock().push(scratch);
+                });
+                let took = began.elapsed().as_secs_f64() * 1e3;
+                best = best.min(took);
+                let _ = writeln!(self.out.stderr, "round {round}: {took:.2} ms");
+            }
+            let _ = writeln!(self.out.stderr, "best round {best:.2} ms");
+            return self.out;
+        }
         pool.for_each(work.len(), 1, &format_at);
         let deferred: Vec<usize> = (0..work.len())
             .filter(|&at| matches!(results.lock()[work[at].0], Some(Done::Deferred)))

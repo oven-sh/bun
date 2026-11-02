@@ -87,6 +87,10 @@ pub(crate) struct FormatOptions {
     pub(crate) quote_strings: bool,
 }
 
+/// Vitest's `maxOutputLength`: once a side of a failure message has printed this many
+/// bytes, its nested objects and arrays print as `[Object]` or `[Array]`.
+pub(crate) const OUTPUT_BUDGET: usize = 1_000_000;
+
 /// What one side of a failure message has printed so far.
 #[derive(Default)]
 struct OutputBudget {
@@ -2559,9 +2563,9 @@ impl<'a> Formatter<'a> {
         value: JSValue,
         global_this: &'a JSGlobalObject,
     ) -> JsResult<()> {
-        // Vitest's `maxOutputLength`. A React fiber or `window` would print hundreds of megabytes.
+        // A React fiber or `window` would print hundreds of megabytes.
         if let Some(budget) = self.budget
-            && budget.length.get() > 1_000_000
+            && budget.length.get() > OUTPUT_BUDGET
             && result.prints_nested_values(value)
         {
             budget.cut.set(true);
@@ -3847,9 +3851,8 @@ impl Formatter<'_> {
         if self.is_inline
             && let Some(output) = self.output_at_depth.get_mut(self.depth as usize)
         {
-            // Vitest's `maxOutputLength`.
             *output += strings::element_length_utf8_into_utf16(&out[start..]);
-            if *output > 1_000_000 {
+            if *output > OUTPUT_BUDGET {
                 self.max_depth = 0;
             }
         }

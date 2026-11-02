@@ -8,6 +8,8 @@ use bun_core::output::ansi as colors;
 use bun_core::strings::{self, str_utf8};
 use bun_text_diff::{self as diff, Hunk};
 
+use super::super::pretty_format::OUTPUT_BUDGET;
+
 pub(crate) struct DiffConfig {
     pub(crate) min_bytes_before_chunking: usize,
     pub(crate) chunk_context_lines: usize,
@@ -31,7 +33,47 @@ impl DiffConfig {
 /// jest-diff's sentence for two values that print the same.
 pub(crate) const NO_VISUAL_DIFFERENCE: &str = "Compared values have no visual difference.";
 
-const CUT_NOTE: &str = "each side prints nested objects and arrays as [Object] or [Array] after its first 1,000,000 bytes. Compare one of them directly to see its diff.";
+const CUT_NOTE: &str = const_format::concatcp!(
+    "each side prints nested objects and arrays as [Object] or [Array] after its first ",
+    BUDGET_TEXT,
+    " bytes. Compare one of them directly to see its diff."
+);
+
+/// `OUTPUT_BUDGET` with a comma every three digits.
+const BUDGET_TEXT: &str = {
+    const fn grouped_len(mut n: usize) -> usize {
+        let mut digits = 1;
+        while n >= 10 {
+            n /= 10;
+            digits += 1;
+        }
+        digits + (digits - 1) / 3
+    }
+    const LEN: usize = grouped_len(OUTPUT_BUDGET);
+    const fn grouped(mut n: usize) -> [u8; LEN] {
+        let mut out = [b','; LEN];
+        let mut i = LEN;
+        let mut digits = 0;
+        loop {
+            i -= 1;
+            out[i] = b'0' + (n % 10) as u8;
+            n /= 10;
+            digits += 1;
+            if n == 0 {
+                break;
+            }
+            if digits % 3 == 0 {
+                i -= 1;
+            }
+        }
+        out
+    }
+    const BYTES: [u8; LEN] = grouped(OUTPUT_BUDGET);
+    match core::str::from_utf8(&BYTES) {
+        Ok(text) => text,
+        Err(_) => unreachable!(),
+    }
+};
 
 pub(crate) fn print_diff_main(
     not: bool,

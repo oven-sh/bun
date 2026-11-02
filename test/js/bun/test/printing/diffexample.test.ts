@@ -1125,16 +1125,15 @@ test("the note appears exactly when the output budget hides the difference", () 
     const body = Buffer.alloc(length, "x").toString();
     return messageOf(() => expect({ body, meta: { a: 1 } }).toEqual({ body, meta: { a: 2 } }));
   };
-  let [shown, hidden] = [999_000, 1_001_000];
-  while (hidden - shown > 1) {
-    const middle = (shown + hidden) >> 1;
-    if (message(middle).includes("note:")) hidden = middle;
-    else shown = middle;
-  }
-  expect(message(shown)).toContain(`\n-     "a": 2,\n+     "a": 1,\n`);
-  expect(message(shown)).toEndWith("\n\n- Expected  - 1\n+ Received  + 1\n");
-  expect(message(shown)).not.toContain("note:");
-  expect(message(hidden)).toBe(`expect(received).toEqual(expected)\n\n${sentence}\n${cutNote}\n`);
+  // Each side prints `\n{\n  "body": "<body>",\n  "meta": ` before the value of `meta`.
+  // The diff trims the leading newline later, but it counts toward the budget.
+  const before = `\n{\n  "body": "`.length + `",\n  "meta": `.length;
+  const shown = message(1_000_000 - before);
+  expect(shown).toContain(`\n-     "a": 2,\n+     "a": 1,\n`);
+  expect(shown).toEndWith("\n\n- Expected  - 1\n+ Received  + 1\n");
+  expect(shown).not.toContain("note:");
+  const hidden = message(1_000_000 - before + 1);
+  expect(hidden).toBe(`expect(received).toEqual(expected)\n\n${sentence}\n${cutNote}\n`);
 });
 
 test("a diff of values that were cut short has the note above the footer", () => {

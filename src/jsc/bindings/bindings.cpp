@@ -2512,14 +2512,19 @@ bool Bun__deepMatch(
     RETURN_IF_EXCEPTION(throwScope, false);
     if (subsetIsArray) {
         // An array pattern needs an array. An object pattern can be satisfied by one.
-        if (!objIsArray || obj->getArrayLength() != subsetObj->getArrayLength()) {
-            return false;
-        }
-        PropertyNameArrayBuilder objProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
-        obj->getPropertyNames(globalObject, objProps, DontEnumPropertiesMode::Exclude);
-        RETURN_IF_EXCEPTION(throwScope, false);
-        if (objProps.size() != subsetProps.size()) {
-            return false;
+        if (!objIsArray) {
+            // The sample of expect.objectContaining() only lists keys, and a value that is not an array can have them.
+            if (!(enableAsymmetricMatchers && isMatchingObjectContaining)) return false;
+        } else {
+            if (obj->getArrayLength() != subsetObj->getArrayLength()) {
+                return false;
+            }
+            PropertyNameArrayBuilder objProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+            obj->getPropertyNames(globalObject, objProps, DontEnumPropertiesMode::Exclude);
+            RETURN_IF_EXCEPTION(throwScope, false);
+            if (objProps.size() != subsetProps.size()) {
+                return false;
+            }
         }
     }
 

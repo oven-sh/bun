@@ -5078,6 +5078,81 @@ describe("expect()", () => {
       expect(JSON.stringify(sample)).toEqual(sample_json);
     });
 
+    test("ObjectContaining with an array as the sample matches a value that is not an array by the keys of the sample", () => {
+      const args = (function () {
+        return arguments;
+      })(1);
+      const sparse = [];
+      sparse[1] = 2;
+      const oneThenFour = () => expect.objectContaining([1, expect.any(Number), expect.any(Number), 4]);
+
+      expect({ 0: 1 }).toEqual(expect.objectContaining([1]));
+      expect({ 0: 1, 1: 2 }).toEqual(expect.objectContaining([1]));
+      expect({ 0: 1, length: 1 }).toEqual(expect.objectContaining([1]));
+      expect(args).toEqual(expect.objectContaining([1]));
+      expect(new Uint8Array([1])).toEqual(expect.objectContaining([1]));
+      expect(new Uint8Array([1, 2])).toEqual(expect.objectContaining([1]));
+      expect(new Proxy({ 0: 1 }, {})).toEqual(expect.objectContaining([1]));
+      expect({}).toEqual(expect.objectContaining([]));
+      expect({ x: 1 }).toEqual(expect.objectContaining([]));
+      // a hole in the sample is not a key
+      expect({ 1: 2 }).toEqual(expect.objectContaining(sparse));
+      // a matcher in the sample is applied, and another value in it is compared as a whole
+      expect(new Uint8Array([1, 2, 3, 4])).toEqual(oneThenFour());
+      expect(new Uint8Array([1, 2, 3, 5])).not.toEqual(oneThenFour());
+      expect({ 0: { a: 1 } }).toEqual(expect.objectContaining([{ a: 1 }]));
+      expect({ 0: { a: 1, b: 2 } }).not.toEqual(expect.objectContaining([{ a: 1 }]));
+      expect({ 0: { a: 1, b: 2 } }).toEqual(expect.objectContaining([expect.objectContaining({ a: 1 })]));
+
+      // a key of the sample is missing, or its value differs
+      expect({}).not.toEqual(expect.objectContaining([1]));
+      expect({ 1: 1 }).not.toEqual(expect.objectContaining([1]));
+      expect({ 0: 2 }).not.toEqual(expect.objectContaining([1]));
+      expect({ 0: 1 }).not.toEqual(expect.objectContaining([1, 2]));
+      expect(new Uint8Array([2])).not.toEqual(expect.objectContaining([1]));
+
+      // toMatchObject() and Bun.deepMatch() keep their own rule: an expected array needs an array
+      expect({ 0: 1 }).not.toMatchObject([1]);
+      if (isBun) expect(Bun.deepMatch([1], { 0: 1 })).toBe(false);
+    });
+
+    test("ObjectContaining with an array as the sample gives each matcher the same answer", () => {
+      const contains1 = () => expect.objectContaining([1]);
+      expect({ 0: 1 }).toStrictEqual(contains1());
+      expect([{ 0: 1 }]).toContainEqual(contains1());
+      expect({ k: { 0: 1 } }).toHaveProperty("k", contains1());
+      expect({ k: { 0: 1 } }).toEqual({ k: contains1() });
+      expect({ k: { 0: 1 } }).toMatchObject({ k: contains1() });
+      expect({ k: { 0: 1 } }).toEqual(expect.objectContaining({ k: contains1() }));
+      expect([{ 0: 1 }]).toEqual(expect.arrayContaining([contains1()]));
+      expect(contains1()).toEqual({ 0: 1 });
+      expect(() => {
+        throw Object.assign(new Error("x"), { 0: 1 });
+      }).toThrow(contains1());
+      expect({ k: { 0: 2 } }).not.toMatchObject({ k: contains1() });
+      expect(contains1()).not.toEqual({ 0: 2 });
+
+      const fn = jest.fn((/** @type {Uint8Array} */ bytes) => bytes);
+      fn(new Uint8Array([1, 2, 3, 4]));
+      expect(fn).toHaveBeenCalledWith(expect.objectContaining([1, expect.any(Number), expect.any(Number), 4]));
+      expect(fn).toHaveReturnedWith(contains1());
+      expect(fn).not.toHaveBeenCalledWith(expect.objectContaining([2]));
+    });
+
+    test("ObjectNotContaining with an array as the sample does not match a value that has the keys of the sample", () => {
+      expect(() => expect({ 0: 1 }).toEqual(expect.not.objectContaining([1]))).toThrow();
+      expect(() => expect({ 0: 1 }).not.toEqual(expect.objectContaining([1]))).toThrow();
+      expect(() => expect({}).toEqual(expect.not.objectContaining([]))).toThrow();
+      expect(() => expect(new Uint8Array([1])).toEqual(expect.not.objectContaining([1]))).toThrow();
+      const fn = jest.fn();
+      fn({ 0: 1 });
+      expect(fn).not.toHaveBeenCalledWith(expect.not.objectContaining([1]));
+
+      expect({ 0: 2 }).toEqual(expect.not.objectContaining([1]));
+      expect({}).toEqual(expect.not.objectContaining([1]));
+      expect(new Uint8Array([2])).toEqual(expect.not.objectContaining([1]));
+    });
+
     test("ObjectNotContaining matches", () => {
       const foo = Symbol("foo");
       const bar = Symbol("bar");

@@ -338,9 +338,14 @@ const handleFrames = new WeakMap<UDPHandle, object>();
 // Bun.udpSocket() takes the socket's Bun.ModuleGraph from the async context, so a socket that another graph binds opens in the context of bind(): it stays the binder's.
 function openInFrameOfHandle(frame: unknown, udpOptions: any) {
   const AsyncContextFrame = require("internal/async_context_frame");
-  return AsyncContextFrame.graphOf(frame) === AsyncContextFrame.currentGraph()
-    ? AsyncContextFrame.run(frame, Bun.udpSocket, Bun, udpOptions)
-    : Bun.udpSocket(udpOptions);
+  if (AsyncContextFrame.graphOf(frame) !== AsyncContextFrame.currentGraph()) return Bun.udpSocket(udpOptions);
+  // Not AsyncContextFrame.run(): handed `Bun` or `process` as a value, an ahead-of-time build keeps every member of it, and the apply() in run() hides the type of what the call returns.
+  const previous = AsyncContextFrame.exchange(frame);
+  try {
+    return Bun.udpSocket(udpOptions);
+  } finally {
+    AsyncContextFrame.exchange(previous);
+  }
 }
 
 function newHandle(type: string, lookup: LookupFunction | undefined) {
@@ -541,8 +546,13 @@ function completeQueuedSend(handle: UDPHandle, entry: QueuedSend, err: unknown) 
     if (!req.callback || frame === $getInternalField($asyncContext, 0))
       process.nextTick(runQueuedSendComplete, req, err, sent);
     else {
-      const run = require("internal/async_context_frame").run;
-      run(frame, process.nextTick, process, runQueuedSendComplete, req, err, sent);
+      const AsyncContextFrame = require("internal/async_context_frame");
+      const previous = AsyncContextFrame.exchange(frame);
+      try {
+        process.nextTick(runQueuedSendComplete, req, err, sent);
+      } finally {
+        AsyncContextFrame.exchange(previous);
+      }
     }
   }
 }

@@ -9,7 +9,7 @@
 import assert from "node:assert";
 import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { inspect } from "node:util";
+import { format, inspect } from "node:util";
 import { SourceTextModule } from "node:vm";
 
 const throwsReferenceError = `{ [Symbol.for("nodejs.util.inspect.custom")]() { throw new ReferenceError("from the custom inspect function"); } }`;
@@ -33,6 +33,13 @@ test("an export named constructor does not name the namespace object", async () 
   assert.match(inspect(ns, { breakLength: Infinity }), /^\[?Module\b.* \{ constructor: \[Function: constructor\] \}$/);
 });
 
+test("format() with %s calls an export named toString, and prints a namespace object that has none", async () => {
+  const withToString = await importSource(`export function toString() { return "from the export"; }`);
+  assert.strictEqual(format("%s", withToString), "from the export");
+  const without = await importSource(`export const y = 1;`);
+  assert.match(format("%s", without), /\{ y: 1 \}$/);
+});
+
 test("a constructor getter that throws does not make inspect throw", () => {
   const prototype = Object.create(null, {
     constructor: {
@@ -46,8 +53,9 @@ test("a constructor getter that throws does not make inspect throw", () => {
 
 // Only in Bun: when Node.js runs this file it must not spawn itself again.
 if (typeof Bun !== "undefined") {
-  const { bunEnv, nodeExe } = await import("harness");
-  const node = nodeExe();
+  const { bunEnv, nodeExeAtLeast } = await import("harness");
+  // An older Node.js does not parse the `await using` below.
+  const node = nodeExeAtLeast("24.0.0");
 
   describe("Node.js compatibility", () => {
     (node ? test : test.skip)("all tests pass in Node.js", async () => {

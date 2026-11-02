@@ -5,6 +5,7 @@ export interface Place {
   code: string;
 }
 
+// What is scanned as a whole: a segment of an ELF file, a section of a Mach-O file.
 interface Segment {
   offset: number;
   end: number;
@@ -26,6 +27,9 @@ const jumpSlot = { x64: 7, arm64: 1026 };
 const globalData = { x64: 6, arm64: 1025 };
 const absolute = { x64: 1, arm64: 257 };
 const operandOpcodes = [0x8d, 0x8b, 0xff, 0x3b, 0x39, 0x89];
+// Of a Mach-O section: the attributes S_ATTR_PURE_INSTRUCTIONS and S_ATTR_SOME_INSTRUCTIONS, and the types S_ZEROFILL, S_GB_ZEROFILL and S_THREAD_LOCAL_ZEROFILL, which have no bytes in the file.
+const instructions = 0x80000400;
+const zeroFill = [1, 12, 18];
 
 function signed(value: number, bits: number): number {
   return value >= 2 ** (bits - 1) ? value - 2 ** bits : value;
@@ -49,11 +53,16 @@ function readMachO(file: Uint8Array): Image {
     if (command === 2) [symbols, strings] = [u32(at + 8), u32(at + 16)];
     if (command === 11) indirect = u32(at + 56);
     if (command !== 0x19) continue;
-    if (u64(at + 48) > 0) image.segments.push({ offset: u64(at + 40), end: u64(at + 40) + u64(at + 48), address: u64(at + 24), isExecutable: (u32(at + 60) & 4) !== 0 });
     for (let section = at + 72; section < at + 72 + u32(at + 64) * 80; section += 80) {
-      const type = u32(section + 64) & 0xff;
-      if (type === 6 || type === 7) pointers.push({ address: u64(section + 32), size: u64(section + 40), first: u32(section + 68), each: 8, isStub: false });
-      if (type === 8) pointers.push({ address: u64(section + 32), size: u64(section + 40), first: u32(section + 68), each: u32(section + 72), isStub: true });
+      const address = u64(section + 32);
+      const size = u64(section + 40);
+      const offset = u32(section + 48);
+      const flags = u32(section + 64);
+      const type = flags & 0xff;
+      // __TEXT is executable as a whole, and __const and __cstring are in it. Only a section says whether its bytes are instructions.
+      if (!zeroFill.includes(type)) image.segments.push({ offset, end: offset + size, address, isExecutable: (flags & instructions) !== 0 });
+      if (type === 6 || type === 7) pointers.push({ address, size, first: u32(section + 68), each: 8, isStub: false });
+      if (type === 8) pointers.push({ address, size, first: u32(section + 68), each: u32(section + 72), isStub: true });
     }
   }
   for (const { address, size, first, each, isStub } of pointers) {
@@ -202,6 +211,8 @@ function placesIn(elf: Image, wanted: (name: string) => boolean): Place[] {
       }
       continue;
     }
+    // A call can be the first instruction of a section. The loop sees a displacement only with two bytes before it.
+    if (offset + 5 <= end && (file[offset] === 0xe8 || file[offset] === 0xe9)) found(nameAt(base + offset + 5 + view.getInt32(offset + 1, true)), base + offset + 1);
     for (let at = offset + 2; at + 4 <= end; at++) {
       const word = view.getInt32(at, true);
       const before = file[at - 1]!;

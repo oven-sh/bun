@@ -16,23 +16,26 @@ const test = oneAtATime.concurrent;
 async function ran(dir: string, flags: string[], env: Record<string, string> = {}) {
   const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], dir, { ...bunEnv, ...env });
   const all = (pattern: RegExp) => [...stderr.matchAll(pattern)].map(match => match[1]);
+  const reasons = all(/^AOT test run \| every file may load again: (?:.*[\\/])?(.*)$/gm);
   return {
     // The first line names the Bun. What the test files print ends with a line break, so the last line is empty.
     printed: stdout.split("\n").slice(1),
-    passed: all(/^\(pass\) (.*?)(?: \[.*\])?$/gm),
-    // Where the run writes its stage log: each reason that it gives for this, once.
-    everyFileMayLoadAgain: [...new Set(all(/^AOT test run \| every file may load again: (?:.*[\\/])?(.*)$/gm))].sort(),
+    // Behind the name stands the time that the test took, unless it took none to speak of. Nothing else is cut off the name.
+    passed: all(/^\(pass\) (.*?)(?: \[\d+\.\d\dms\])?$/gm),
+    // Of a run that is asked for its stage log here: each reason that the log gives for this, once. The shell may ask every
+    // run for the log, and the other runs say nothing of it.
+    ...(env.BUN_JSC_logAOTPhaseTimes ? { everyFileMayLoadAgain: [...new Set(reasons)].sort() } : {}),
     // A run that fails says why there, beside its stage log.
     stderr: exitCode ? stderr.replace(/^AOT .*\n/gm, "") : "",
     exitCode,
   };
 }
 
-/** A run that prints these lines, passes these tests in this order and fails none. */
-const passing = (printed: string[], passed: string[], everyFileMayLoadAgain: string[] = []) => ({
+/** A run that prints these lines, passes these tests in this order and fails none. The reasons: of a run with the stage log. */
+const passing = (printed: string[], passed: string[], everyFileMayLoadAgain?: string[]) => ({
   printed: [...printed, ""],
   passed,
-  everyFileMayLoadAgain,
+  ...(everyFileMayLoadAgain ? { everyFileMayLoadAgain } : {}),
   stderr: "",
   exitCode: 0,
 });
@@ -101,7 +104,7 @@ test("require.cache lists files alone, and a loop over it takes all of them out"
     `const births = (globalThis.births ??= {});\nconst me = "${name}#" + (births.${name} = (births.${name} ?? 0) + 1);\nlet calls = 0;\n`;
   const head = `
       import { test } from "bun:test";
-      const keys = () => Object.keys(require.cache).map(key => key.replace(/.*\\//, "")).sort().join(" ");
+      const keys = () => Object.keys(require.cache).map(key => key.replace(/.*[\\\\/]/, "")).sort().join(" ");
       const clear = () => { for (const key in require.cache) delete require.cache[key]; };`;
   await expectPlainAndCompiledToEndAs(
     {
@@ -294,6 +297,8 @@ describe("a file that is loaded under a query", () => {
   test("only that file may load again where the host runs the test files", async () => {
     using dir = tempDir("require-cache-in-test-runs", files);
     const hostRunsTestFiles = { BUN_AOT_TEST_FILES_FROM_DISK: "1", BUN_AOT_TESTS_NAME_WHAT_THEY_USE: "1" };
-    expect(await ran(String(dir), ["--aot"], { ...logs, ...hostRunsTestFiles })).toEqual(passing(printed, ["fresh"]));
+    expect(await ran(String(dir), ["--aot"], { ...logs, ...hostRunsTestFiles })).toEqual(
+      passing(printed, ["fresh"], []),
+    );
   });
 });

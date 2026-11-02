@@ -1200,7 +1200,9 @@ test("a value that prints as one token is not cut short", () => {
 test("no note when no value was cut short", () => {
   const long = Buffer.alloc(1_600_000, "x").toString();
   // A string prints in full, whatever its length.
-  expect(messageOf(() => expect(long + "A").toEqual(long + "B"))).not.toContain("note:");
+  const diff = messageOf(() => expect(long + "A").toEqual(long + "B"));
+  expect(diff).toStartWith("expect(received).toEqual(expected)");
+  expect(diff).not.toContain("note:");
   expect(messageOf(() => expect([long, Symbol("a")]).toEqual([long, Symbol("a")]))).toBe(
     `expect(received).toEqual(expected)\n\n${sentence}\n`,
   );

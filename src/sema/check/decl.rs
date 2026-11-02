@@ -2890,6 +2890,8 @@ impl<'p, 's> Checker<'p, 's> {
             return TypeId::UNRESOLVED;
         }
         if let Some(known) = self.p.type_node_types.get(&self.task, &(file, node)) {
+            // Another task may have resolved the node. This task creates the type now, as far as it can tell.
+            self.push_serial(known);
             return known;
         }
         self.resolve_type_from_node(file, node)

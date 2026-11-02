@@ -18925,7 +18925,7 @@
   },
   "node-from-interfaces-boxed-in-tuples-declared-last": {
     "files": {
-      "a.ts": "type Node = null | { next: Node } | { v: Node } | [Node];\ndeclare const x: I4;\nexport const y: Node = x;\nconst sentinel: number = \"\";\n",
+      "a.ts": "type Node = null | { next: Node } | { v: Node } | [Node];\ndeclare const x: I4;\nexport const y: Node = x;\ntype Box<T> = { v: T };\ninterface I0 { next: Box<number> }\ninterface I1 { next: Box<[I0]> }\ninterface I2 { next: Box<[[I1]]> }\ninterface I3 { next: Box<[[[I2]]]> }\ninterface I4 { next: Box<[[[[I3]]]]> }\nconst sentinel: number = \"\";\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
     }
   },

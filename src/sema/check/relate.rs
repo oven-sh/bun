@@ -2783,7 +2783,7 @@ impl<'p, 's> Checker<'p, 's> {
         bun_core::scoped_log!(
             SemaVariances,
             "measured {}: {:?} (nested: {}, file {:?})",
-            String::from_utf8_lossy(self.atoms().bytes(self.files().symbol(sym).name)),
+            bstr::BStr::new(self.atoms().bytes(self.files().symbol(sym).name)),
             variances,
             was_computing,
             self.task.file
@@ -4240,9 +4240,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let save_reliability = std::mem::replace(&mut self.reliability, 0);
         let result = if r.expanding == REC_BOTH {
-            self.comparisons_of_deeply_nested_types += 1;
-            self.task.hold_back();
-            Ternary::MAYBE
+            self.cut_deeply_nested()
         } else {
             self.structured_type_related_to::<REPORT>(r, source, sd, target, td, state)
         };
@@ -4522,6 +4520,14 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         false
+    }
+
+    /// The result of a comparison that `isDeeplyNestedType` cuts off. Where that happens depends on the push serials,
+    /// which this task alone has, so the results that follow from it stay in the task.
+    fn cut_deeply_nested(&mut self) -> Ternary {
+        self.comparisons_of_deeply_nested_types += 1;
+        self.task.hold_back();
+        Ternary::MAYBE
     }
 
     /// `t.id >= last.id` in `isDeeplyNestedType`, with the push serials for the ids. See `push_serial`.
@@ -5433,7 +5439,7 @@ impl<'p, 's> Checker<'p, 's> {
             TypeData::Cond { file, node, .. } => {
                 if self.is_deeply_nested_type(target, [&r.source_stack, &r.target_stack], false, 10)
                 {
-                    return Ternary::MAYBE;
+                    return self.cut_deeply_nested();
                 }
                 // Only without `infer`, when the result doesn't depend on distribution, and when
                 // the source isn't instantiated from the same conditional type.
@@ -5652,7 +5658,7 @@ impl<'p, 's> Checker<'p, 's> {
             TypeData::Cond { .. } => {
                 if self.is_deeply_nested_type(source, [&r.source_stack, &r.target_stack], true, 10)
                 {
-                    return Ternary::MAYBE;
+                    return self.cut_deeply_nested();
                 }
                 if matches!(self.data(target), TypeData::Cond { .. }) {
                     // `T1 extends U1 ? X1 : Y1` is related to `T2 extends U2 ? X2 : Y2` if one of

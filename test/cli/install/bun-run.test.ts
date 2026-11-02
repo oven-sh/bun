@@ -28,7 +28,7 @@ import {
   tempDir,
   tempDirWithFiles,
 } from "harness";
-import { basename, delimiter, dirname, isAbsolute, join, resolve } from "path";
+import { basename, dirname, isAbsolute, join, resolve } from "path";
 
 const bunEnv: typeof bunEnv_ = {
   ...bunEnv_,
@@ -1694,17 +1694,26 @@ describe.concurrent("bun run", () => {
       if (!isWindows) expect(basename(dirname(result.stdout))).toBe(aliasDirName(own));
       return result.stdout;
     };
-    // A second executable of the build under test. On Windows it has to be another file.
-    const secondBun = (path: string) => {
+    // Another path of the build under test: a hard link, or a copy if it is on another volume.
+    const linkedBun = (path: string) => {
       mkdirSync(dirname(path), { recursive: true });
       try {
-        if (isWindows) throw new Error("a hard link is the same file");
         linkSync(bunExe(), path);
       } catch {
         copyFileSync(bunExe(), path);
       }
       return path;
     };
+    // A second executable of the build under test. On Windows, where the links are hard links, it
+    // has to be another file: a copy.
+    const secondBun = (path: string) => {
+      if (!isWindows) return linkedBun(path);
+      mkdirSync(dirname(path), { recursive: true });
+      copyFileSync(bunExe(), path);
+      return path;
+    };
+    // A debug or ASAN executable is too large to copy in a test.
+    const copyIsLarge = isWindows && (isDebug || isASAN);
     // A script of the bun under test that is in progress: `alias()` is its `node`, and `finish()`
     // lets it start that `node` and end.
     const waitingScript = (cwd: string) => {
@@ -1733,7 +1742,8 @@ describe.concurrent("bun run", () => {
       exitCode: 0,
     });
 
-    it("a second executable of the same build gets its own directory", async () => {
+    // Not on a Windows debug or ASAN build: the second executable is a copy there.
+    it.skipIf(copyIsLarge)("a second executable of the same build gets its own directory", async () => {
       using dir = tempDir("bun-run-node-alias-second", files);
       using cleanup = new DisposableStack();
       await using waiting = waitingScript(String(dir));
@@ -1762,6 +1772,7 @@ describe.concurrent("bun run", () => {
     });
 
     // https://github.com/oven-sh/bun/issues/30711: in a nested run, `argv[0]` is the `bun` link.
+    // Not on Windows: a symlink needs a privilege there, and the cases below have the nested run.
     it.skipIf(isWindows)("an executable has one directory, however it is started", async () => {
       using dir = tempDir("bun-run-node-alias-started", files);
       const link = join(String(dir), "link", "bun");
@@ -1779,39 +1790,37 @@ describe.concurrent("bun run", () => {
       });
     });
 
-    it.skipIf(isWindows)(
-      "a link to another file in the directory stays, and PATH does not get the directory",
-      async () => {
-        using dir = tempDir("bun-run-node-alias-foreign", {
-          ...files,
-          "package.json": JSON.stringify({ name: "alias", scripts: { alias: "node alias.js", path: 'echo "$PATH"' } }),
-          "not-bun": "",
+    // https://github.com/oven-sh/bun/issues/4690: bun kept a `node` link that was wrong. The
+    // directory is for one executable, so only an entry from elsewhere is not a link to it.
+    // Not on Windows: the links are hard links there. The "beside" case below has one to another file.
+    it.skipIf(isWindows)("an entry in the directory that is not a link to the executable is replaced", async () => {
+      using dir = tempDir("bun-run-node-alias-foreign", { ...files, "not-bun": "" });
+      using cleanup = new DisposableStack();
+
+      const alias = await aliasOf(bunExe(), String(dir));
+      const second = secondBun(join(String(dir), "second", "bun"));
+      const secondAlias = await aliasOf(second, String(dir), bunEnv, cleanup);
+      // Only a directory of this test's own executable is changed below.
+      expect({
+        sameDirectory: dirname(secondAlias) === dirname(alias),
+        second: startsExecutable(secondAlias, second),
+      }).toEqual({ sameDirectory: false, second: true });
+
+      const foreign = join(String(dir), "not-bun");
+      for (const name of ["bun", "node"]) {
+        const entry = join(dirname(secondAlias), name);
+        unlinkSync(entry);
+        // A link to another path for `bun`, a file for `node`.
+        if (name === "bun") symlinkSync(foreign, entry);
+        else copyFileSync(foreign, entry);
+
+        expect({ name, alias: await aliasOf(second, String(dir)), entry: linkOf(entry) }).toEqual({
+          name,
+          alias: secondAlias,
+          entry: linkTo(second),
         });
-        using cleanup = new DisposableStack();
-
-        const alias = await aliasOf(bunExe(), String(dir));
-        const second = secondBun(join(String(dir), "second", "bun"));
-        const secondAlias = await aliasOf(second, String(dir), bunEnv, cleanup);
-        // Only a directory of this test's own executable is changed below.
-        expect({
-          sameDirectory: dirname(secondAlias) === dirname(alias),
-          second: startsExecutable(secondAlias, second),
-        }).toEqual({ sameDirectory: false, second: true });
-
-        const foreign = join(String(dir), "not-bun");
-        const bunLink = join(dirname(secondAlias), "bun");
-        unlinkSync(bunLink);
-        symlinkSync(foreign, bunLink);
-
-        const { stdout, stderr, exitCode } = await run([second, "run", "--bun", "path"], String(dir));
-        expect({
-          link: readlinkSync(bunLink),
-          inPath: stdout.split(delimiter).includes(dirname(secondAlias)),
-          stderr,
-          exitCode,
-        }).toEqual({ link: foreign, inPath: false, stderr: '$ echo "$PATH"\n', exitCode: 0 });
-      },
-    );
+      }
+    });
 
     // `bun build --compile` output runs as bun while BUN_BE_BUN is set. A script of another bun does
     // not have that variable: through a `node` link to the app it starts the program of the app.
@@ -1869,11 +1878,12 @@ describe.concurrent("bun run", () => {
       // The key of the directory ignores the case of ASCII letters only.
       const upperCase = (path: string) => path.replace(/[a-z]/g, letter => letter.toUpperCase());
 
-      it("beside the executable, each executable of a folder has its own directory", async () => {
+      // Not on a debug or ASAN build: `bun.exe` is a copy, so that `other.exe` is another file.
+      it.skipIf(copyIsLarge)("beside the executable, each executable of a folder has its own directory", async () => {
         using dir = tempDir("bun-run-node-alias-beside", nestedFiles);
         const bin = join(String(dir), "bin");
         const bun = secondBun(join(bin, "bun.exe"));
-        const other = secondBun(join(bin, "other.exe"));
+        const other = linkedBun(join(bin, "other.exe"));
         const env = envWithTemp(otherDrive(String(dir)));
 
         const alias = await aliasOf(bun, String(dir), env);
@@ -1911,13 +1921,22 @@ describe.concurrent("bun run", () => {
           bun: ["bun.exe", "node.exe"],
           other: ["bun.exe", "node.exe"],
         });
+
+        // Another file gets the path of `bun.exe`, as in an upgrade. The links in its directory
+        // are to the file that was there before: they are made again.
+        renameSync(bun, join(bin, "old.exe"));
+        renameSync(other, bun);
+        expect({
+          alias: await lowerAliasOf(bun, String(dir), env),
+          bun: startsExecutable(alias, bun),
+        }).toEqual({ alias: alias.toLowerCase(), bun: true });
       });
 
       // `bunx.exe` is a hard link to `bun.exe`: one file that has two paths.
       it("under %TEMP%, each path of one file has its own directory", async () => {
         using dir = tempDir("bun-run-node-alias-temp", { ...nestedFiles, "bin2/.keep": "" });
         const temp = join(String(dir), "tmp");
-        const bun = secondBun(join(String(dir), "bin", "bun.exe"));
+        const bun = linkedBun(join(String(dir), "bin", "bun.exe"));
         const other = join(String(dir), "bin2", "bun.exe");
         linkSync(bun, other);
         const env = envWithTemp(temp);
@@ -1964,7 +1983,7 @@ describe.concurrent("bun run", () => {
       it("a folder that has the name of the directory keeps its node.exe", async () => {
         using dir = tempDir("bun-run-node-alias-name", { ...files, "bun-node/node.exe": "not bun" });
         const folder = join(String(dir), "bun-node");
-        const bun = secondBun(join(folder, "bun.exe"));
+        const bun = linkedBun(join(folder, "bun.exe"));
 
         const alias = await aliasOf(bun, String(dir), envWithTemp(otherDrive(String(dir))));
         expect({

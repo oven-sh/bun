@@ -664,19 +664,25 @@ impl RunCommand {
             }
 
             for dest in &links {
-                match bun_sys::symlink(argv0_z, dest) {
-                    Ok(()) => {}
-                    Err(e) if e.get_errno() == bun_sys::E::EEXIST => {
-                        // Not a link from this code: it stays, and `dir` is not used.
-                        let mut buf = bun_paths::path_buffer_pool::get();
-                        let matches = bun_sys::readlink(dest, &mut buf)
-                            .map(|n| &buf[..n] == argv0_z.as_bytes())
-                            .unwrap_or(false);
-                        if !matches {
-                            return Ok(());
+                let mut replaced = false;
+                loop {
+                    match bun_sys::symlink(argv0_z, dest) {
+                        Ok(()) => break,
+                        Err(e) if e.get_errno() == bun_sys::E::EEXIST => {
+                            // An entry that differs is not from this code: replace it once.
+                            // Never remove a matching link: concurrent runs' scripts exec it.
+                            let mut buf = bun_paths::path_buffer_pool::get();
+                            let matches = bun_sys::readlink(dest, &mut buf)
+                                .map(|n| &buf[..n] == argv0_z.as_bytes())
+                                .unwrap_or(false);
+                            if matches || replaced {
+                                break;
+                            }
+                            let _ = bun_sys::unlink(dest);
+                            replaced = true;
                         }
+                        Err(_) => return Ok(()),
                     }
-                    Err(_) => return Ok(()),
                 }
             }
 

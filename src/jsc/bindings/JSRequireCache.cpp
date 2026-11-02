@@ -87,6 +87,8 @@ static bool isHiddenKey(Zig::GlobalObject* globalObject, UniquedStringImpl* key)
 // reading a key again allocates nothing.
 static JSString* stringOfKey(VM& vm, UniquedStringImpl* key)
 {
+    if (JSString* string = vm.atomStringToJSStringMap.get(key)) [[likely]]
+        return string;
     DeferGC deferGC(vm);
     return vm.atomStringToJSStringMap.ensureValue(key, [&] {
         return jsString(vm, String(key));

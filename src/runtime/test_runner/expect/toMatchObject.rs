@@ -1,5 +1,5 @@
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
-use bun_jsc::{JSValue, JsResult};
+use bun_jsc::{JSType, JSValue, JsResult};
 use super::DiffFormatter;
 use super::throw;
 use super::{get_signature, Expect};
@@ -29,7 +29,12 @@ impl Expect {
             );
         }
 
-        if !expected.is_object() {
+        // Jest refuses a function too. To Vitest it's a value that only matches itself.
+        if !expected.is_object()
+            || (!matches!(expected.js_type(), JSType::FinalObject | JSType::Array)
+                && expected.is_callable()
+                && !this.is_vitest())
+        {
             let signature: &str = get_signature("toMatchObject", "", not);
             return throw!(
                 this, global, signature,

@@ -2636,6 +2636,56 @@ describe.concurrent("behavior depends on the module a function is imported from"
     });
   });
 
+  test("toMatchObject() with an expected function", async () => {
+    const { log, exitCode } = await runTests({
+      "a.test.js": `
+        import * as bun from "bun:test";
+        import * as vitest from "vitest";
+        const outcome = fn => { try { fn(); return "passes"; } catch (error) { return /Matcher error: .*/.exec(Bun.stripANSI(error.message))?.[0] ?? "fails"; } };
+        const f = () => 1;
+        const g = () => 1;
+        const key = Symbol("key");
+        for (const [name, { test, expect }] of Object.entries({ bun, vitest })) {
+          test(name, () => {
+            console.log(name, "under a key:", [
+              outcome(() => expect({ cb: f }).toMatchObject({ cb: f })),
+              outcome(() => expect({ cb: f }).toMatchObject({ cb: g })),
+              outcome(() => expect({ cb: f }).not.toMatchObject({ cb: g })),
+            ].join(" "));
+            // Vitest does not read the symbol keys of a pattern.
+            console.log(name, "under a symbol key:", outcome(() => expect({ [key]: f }).toMatchObject({ [key]: g })));
+            for (const [label, run] of Object.entries({
+              "the same function": () => expect(f).toMatchObject(f),
+              "another function": () => expect(f).toMatchObject(g),
+              "an object": () => expect({}).toMatchObject(f),
+              "an object, with .not": () => expect({}).not.toMatchObject(f),
+            })) {
+              console.log(name, "as the whole value,", label + ":", outcome(run));
+            }
+          });
+        }
+      `,
+    });
+    const refused = "Matcher error: expected value must be a non-null object";
+    expect({ log, exitCode }).toEqual({
+      log: [
+        "bun under a key: passes fails passes",
+        "bun under a symbol key: fails",
+        `bun as the whole value, the same function: ${refused}`,
+        `bun as the whole value, another function: ${refused}`,
+        `bun as the whole value, an object: ${refused}`,
+        `bun as the whole value, an object, with .not: ${refused}`,
+        "vitest under a key: passes fails passes",
+        "vitest under a symbol key: fails",
+        "vitest as the whole value, the same function: passes",
+        "vitest as the whole value, another function: fails",
+        "vitest as the whole value, an object: fails",
+        "vitest as the whole value, an object, with .not: passes",
+      ],
+      exitCode: 0,
+    });
+  });
+
   test("toHaveProperty() with an own key that is spelled like a path", async () => {
     const { log, exitCode } = await runTests({
       "a.test.js": `

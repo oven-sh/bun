@@ -1242,6 +1242,22 @@ describe("expect.addEqualityTesters", () => {
     expect(new Float64Array([1, 2])).not.toEqual(new Float64Array([1, 3]));
   });
 
+  test("a tester decides for two functions before toMatchObject compares them by identity", () => {
+    const tagged = (tag: string) => Object.assign(() => {}, { tag });
+    expect.addEqualityTesters([
+      (a, b) =>
+        typeof a === "function" && typeof b === "function" && "tag" in a && "tag" in b ? a.tag === b.tag : undefined,
+    ]);
+    expect({ cb: tagged("x") }).toMatchObject({ cb: tagged("x") });
+    expect({ cb: tagged("x") }).not.toMatchObject({ cb: tagged("y") });
+    expect({ s: new Set([tagged("x")]) }).toMatchObject({ s: new Set([tagged("x")]) });
+    expect({ s: new Set([tagged("x")]) }).not.toMatchObject({ s: new Set([tagged("y")]) });
+    expect({ m: new Map([["k", tagged("x")]]) }).toMatchObject({ m: new Map([["k", tagged("x")]]) });
+    expect({ m: new Map([["k", tagged("x")]]) }).not.toMatchObject({ m: new Map([["k", tagged("y")]]) });
+    // the tester has no answer for these two, so they are compared by identity
+    expect({ cb: () => {} }).not.toMatchObject({ cb: () => {} });
+  });
+
   test("testers run on the elements of typed arrays", () => {
     expect.addEqualityTesters([
       (a, b) =>

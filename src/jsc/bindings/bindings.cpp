@@ -2586,7 +2586,7 @@ static bool subsetMapMatches(JSGlobalObject* globalObject, ThrowScope& scope, Bu
     return true;
 }
 
-// A Date, an Error, a Set and a Map keep what they hold out of their enumerable properties, so the key walk accepts any object for them.
+// A Date, an Error, a Set, a Map and a function keep what they are out of their enumerable properties, so the key walk accepts any object for them.
 static NEVER_INLINE bool subsetSpecialObjectMatches(JSGlobalObject* globalObject, ThrowScope& scope, Bun::DeepMatchState& state, JSObject* obj, JSObject* subsetObj, SubsetValueMatches valueMatches)
 {
     switch (subsetObj->type()) {
@@ -2624,7 +2624,8 @@ static NEVER_INLINE bool subsetSpecialObjectMatches(JSGlobalObject* globalObject
         return subsetMapMatches(globalObject, scope, state, uncheckedDowncast<JSMap>(obj), uncheckedDowncast<JSMap>(subsetObj), valueMatches);
     }
     default:
-        return true;
+        // An expected function matches only itself, and that pair does not get here.
+        return !subsetObj->isCallable();
     }
 }
 
@@ -2672,16 +2673,17 @@ bool Bun__deepMatch(
         }
     }
 
-    PropertyNameArrayBuilder subsetProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
-    subsetObj->getPropertyNames(globalObject, subsetProps, DontEnumPropertiesMode::Exclude);
-    RETURN_IF_EXCEPTION(throwScope, false);
-
+    // Before the keys are listed, so that an expected function is answered without a read of its keys.
     JSC::JSType subsetType = subsetObj->type();
     if (subsetType != FinalObjectType && subsetType != ArrayType && !isMatchingObjectContaining) [[unlikely]] {
         bool matched = subsetSpecialObjectMatches(globalObject, throwScope, state, obj, subsetObj, subsetValueMatches<enableAsymmetricMatchers>);
         RETURN_IF_EXCEPTION(throwScope, false);
         if (!matched) return false;
     }
+
+    PropertyNameArrayBuilder subsetProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    subsetObj->getPropertyNames(globalObject, subsetProps, DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(throwScope, false);
 
     // TODO: add fast paths for:
     // - two "simple" objects (using ->forEachProperty in both)

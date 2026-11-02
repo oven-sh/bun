@@ -104,6 +104,12 @@ describe("net.Server.prototype", () => {
 
   it("has EventEmitter methods", () => {
     expect((net.Server.prototype as any).__proto__).toBe(EventEmitter.prototype);
+    const { constructor: _, ...methods } = EventEmitter.prototype as any;
+    expect(net.Server.prototype).toMatchObject(methods);
+  });
+
+  // `constructor` is enumerable on EventEmitter.prototype in Bun and not in Node.js: https://github.com/oven-sh/bun/pull/46197
+  it.failing("matches EventEmitter.prototype", () => {
     expect(net.Server.prototype).toMatchObject(EventEmitter.prototype);
   });
 }); // </net.Server.prototype>

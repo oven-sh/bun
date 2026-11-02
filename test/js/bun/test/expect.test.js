@@ -4520,6 +4520,82 @@ describe("expect()", () => {
       expect({ k: [new Tags(1)] }).toMatchObject({ k: [new Tags(2)] });
     });
 
+    // The enumerable properties of a function do not say which function it is. Jest and Vitest
+    // compare an expected function by identity.
+    test("an expected function matches only itself", () => {
+      const f = () => 1;
+      const g = () => 1;
+      expect({ cb: f }).toMatchObject({ cb: f });
+      expect({ cb: f, other: 1 }).toMatchObject({ cb: f });
+      expect({ cb: f }).not.toMatchObject({ cb: g });
+      expect({ cb: {} }).not.toMatchObject({ cb: f });
+      expect({ cb: 1 }).not.toMatchObject({ cb: f });
+      expect({ a: [f] }).toMatchObject({ a: [f] });
+      expect({ a: [f] }).not.toMatchObject({ a: [g] });
+      expect({ a: { b: { cb: f } } }).toMatchObject({ a: { b: { cb: f } } });
+      expect({ a: { b: { cb: f } } }).not.toMatchObject({ a: { b: { cb: g } } });
+      // each kind of function
+      expect({ cb: class A {} }).not.toMatchObject({ cb: class B {} });
+      expect({ cb: Map }).not.toMatchObject({ cb: Set });
+      expect({ cb: f.bind(null) }).not.toMatchObject({ cb: f.bind(null) });
+      expect({ cb: async () => 1 }).not.toMatchObject({ cb: async () => 1 });
+      expect({ cb: function* () {} }).not.toMatchObject({ cb: function* () {} });
+      expect({ cb: new Proxy(f, {}) }).not.toMatchObject({ cb: new Proxy(f, {}) });
+      expect({ cb: jest.fn() }).not.toMatchObject({ cb: jest.fn() });
+      // the properties of an expected function do not make it match
+      expect({ cb: Object.assign(() => 1, { x: 1 }) }).not.toMatchObject({ cb: Object.assign(() => 1, { x: 1 }) });
+      expect({ cb: { x: 1 } }).not.toMatchObject({ cb: Object.assign(() => 1, { x: 1 }) });
+      // as a member of a Set, and as a key or a value of a Map
+      expect({ s: new Set([f]) }).toMatchObject({ s: new Set([f]) });
+      expect({ s: new Set([f]) }).not.toMatchObject({ s: new Set([g]) });
+      expect({ m: new Map([["a", f]]) }).toMatchObject({ m: new Map([["a", f]]) });
+      expect({ m: new Map([["a", f]]) }).not.toMatchObject({ m: new Map([["a", g]]) });
+      expect({ m: new Map([[f, 1]]) }).not.toMatchObject({ m: new Map([[g, 1]]) });
+      // a function under two keys is compared under each
+      expect({ a: f, b: f }).toMatchObject({ a: f, b: f });
+      expect({ a: f, b: g }).not.toMatchObject({ a: f, b: f });
+      // a matcher and a plain expected object still accept a function
+      expect({ cb: f }).toMatchObject({ cb: expect.any(Function) });
+      expect({ cb: f }).toMatchObject({ cb: {} });
+      // expect.objectContaining() compares two functions by identity, as before
+      expect({ cb: f }).toEqual(expect.objectContaining({ cb: f }));
+      expect({ cb: f }).not.toEqual(expect.objectContaining({ cb: g }));
+      expect({ cb: Array }).not.toEqual(expect.objectContaining({ cb: Object }));
+    });
+
+    // Vitest compares a function that is the whole expected value by identity. It has no matcher error.
+    test_skipIf(isVitest)("a function as the whole expected value is refused", () => {
+      const f = () => 1;
+      expect(() => expect({}).toMatchObject(f)).toThrow("value must be a non-null object");
+      expect(() => expect({}).not.toMatchObject(f)).toThrow("value must be a non-null object");
+      expect(() => expect(f).toMatchObject(f)).toThrow("value must be a non-null object");
+      expect(() => expect({ x: 1 }).toMatchObject(Object.assign(() => 1, { x: 1 }))).toThrow(
+        "value must be a non-null object",
+      );
+      expect(() => expect({}).toMatchObject(class A {})).toThrow("value must be a non-null object");
+    });
+
+    // Vitest does not read the symbol keys of an expected object.
+    test_skipIf(isVitest)("an expected function under a symbol key is compared", () => {
+      const f = () => 1;
+      const g = () => 1;
+      const key = Symbol("key");
+      expect({ [key]: f }).toMatchObject({ [key]: f });
+      expect({ [key]: f }).not.toMatchObject({ [key]: g });
+      expect({ [key]: { cb: f } }).not.toMatchObject({ [key]: { cb: g } });
+    });
+
+    // Jest and Vitest compare two iterables by what they yield. Bun has no rule for an iterable, so it compares the two methods.
+    test.todo("two iterables with their own iterator method match", () => {
+      const iterable = () => ({
+        a: 1,
+        *[Symbol.iterator]() {
+          yield 1;
+        },
+      });
+      expect({ k: iterable() }).toMatchObject({ k: iterable() });
+    });
+
     test("a matcher beside a value that only has the type of a matcher is applied", () => {
       // A Response and a URL are objects of the type that the built-in matchers have.
       const isResponse = { asymmetricMatch: (/** @type {unknown} */ value) => value instanceof Response };
@@ -4599,12 +4675,62 @@ describe("expect()", () => {
         // an object in the expected Set needs an object, as a property does
         expect({ s: new Set([1]) }).not.toMatchObject({ s: new Set([{}]) });
         // a function in a Set or a Map is matched as a function under a property is
-        expect({ s: new Set([() => 1]) }).toMatchObject({ s: new Set([() => 2]) });
+        expect({ s: new Set([() => 1]) }).not.toMatchObject({ s: new Set([() => 2]) });
         // a received Proxy is not read as a Set or a Map. Its properties are matched, as before.
         expect({ s: new Proxy(new Set([1]), {}) }).toMatchObject({ s: new Set([2]) });
         expect({ m: new Proxy(new Map(), {}) }).toMatchObject({ m: new Map([["a", 1]]) });
         // expect.objectContaining() still takes a Set or a Map as an object with no properties
         expect({ a: 1 }).toEqual(expect.objectContaining(new Set([1])));
+      });
+
+      test("Bun.deepMatch compares a function in the subset by identity", () => {
+        const f = () => 1;
+        const g = () => 1;
+        expect(Bun.deepMatch(f, f)).toBe(true);
+        expect(Bun.deepMatch(f, g)).toBe(false);
+        expect(Bun.deepMatch(f, {})).toBe(false);
+        expect(Bun.deepMatch({ cb: f }, { cb: f, other: 1 })).toBe(true);
+        expect(Bun.deepMatch({ cb: f }, { cb: g })).toBe(false);
+        expect(Bun.deepMatch({ cb: f }, { cb: {} })).toBe(false);
+        expect(Bun.deepMatch({ s: new Set([f]) }, { s: new Set([g]) })).toBe(false);
+        expect(Bun.deepMatch({ m: new Map([["a", f]]) }, { m: new Map([["a", g]]) })).toBe(false);
+      });
+
+      test("the keys of an expected function are not read", () => {
+        /** @type {string[]} */
+        const traps = [];
+        // Each trap of this handler records its name, then does what the target does.
+        const handler = new Proxy(
+          {},
+          {
+            get:
+              (_, /** @type {string} */ trap) =>
+              (/** @type {any[]} */ ...args) => {
+                traps.push(trap);
+                return ANY(Reflect)[trap](...args);
+              },
+          },
+        );
+        const f = () => 1;
+        const expected = new Proxy(() => 1, handler);
+        expect({ cb: f }).not.toMatchObject({ cb: expected });
+        expect({ cb: {} }).not.toMatchObject({ cb: expected });
+        expect({ s: new Set([f]) }).not.toMatchObject({ s: new Set([expected]) });
+        expect({ m: new Map([["a", f]]) }).not.toMatchObject({ m: new Map([["a", expected]]) });
+        expect(Bun.deepMatch(expected, f)).toBe(false);
+        expect(Bun.deepMatch({ cb: expected }, { cb: f })).toBe(false);
+        expect(traps).toEqual([]);
+        // so a trap that throws does not turn a mismatch into an error
+        const throws = new Proxy(() => 1, {
+          ownKeys() {
+            throw new Error("ownKeys");
+          },
+        });
+        expect({ cb: f }).not.toMatchObject({ cb: throws });
+        expect(Bun.deepMatch(throws, f)).toBe(false);
+        // the same Proxy on both sides is the same function
+        expect({ cb: expected }).toMatchObject({ cb: expected });
+        expect(traps).toEqual([]);
       });
 
       test("a pair that a Set or a Map compared first still shows its matcher under a property", () => {

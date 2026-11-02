@@ -416,15 +416,6 @@ pub(crate) fn get_source_map_impl<P: SourceProvider + ?Sized>(
     load_hint: SourceMapLoadHint,
     result: ParseUrlResultHint,
 ) -> Option<ParseUrl> {
-    // This was previously 65535 but that is a size that can risk stack overflow
-    // and due to the many layers of indirections and wrappers this function is called in, it
-    // is difficult to reason about how deeply nested of a callstack this
-    // function is called in. 1024 is a safer number.
-    //
-    // TODO: Experiment in debug builds calculating how much stack space we have left and using that to
-    //       adjust the size
-    let arena = bun_alloc::Arena::new();
-
     let (new_load_hint, mut parsed): (SourceMapLoadHint, ParseUrl) = 'parsed: {
         let mut inline_err: Option<crate::Error> = None;
 
@@ -444,7 +435,7 @@ pub(crate) fn get_source_map_impl<P: SourceProvider + ?Sized>(
                     break 'try_inline;
                 };
 
-                match parse_url(&arena, found_url.slice(), result) {
+                match parse_url(found_url.slice(), result) {
                     Ok(parsed) => break 'parsed (SourceMapLoadHint::IsInlineMap, parsed),
                     Err(err) => {
                         inline_err = Some(err);
@@ -465,7 +456,7 @@ pub(crate) fn get_source_map_impl<P: SourceProvider + ?Sized>(
                     };
 
                     // Parse the JSON source map
-                    match parse_json(&arena, json_slice, result) {
+                    match parse_json(json_slice, result) {
                         Ok(parsed) => {
                             break 'parsed (SourceMapLoadHint::IsExternalMap, parsed);
                         }
@@ -490,7 +481,7 @@ pub(crate) fn get_source_map_impl<P: SourceProvider + ?Sized>(
                         let Some(data) = provider.get_external_data(source_filename) else {
                             break 'fallback_to_normal;
                         };
-                        match parse_json(&arena, data, result) {
+                        match parse_json(data, result) {
                             Ok(parsed) => {
                                 break 'parsed (SourceMapLoadHint::IsExternalMap, parsed);
                             }
@@ -535,7 +526,7 @@ pub(crate) fn get_source_map_impl<P: SourceProvider + ?Sized>(
                     Err(_) => break 'try_external,
                 };
 
-                match parse_json(&arena, &data, result) {
+                match parse_json(&data, result) {
                     Ok(parsed) => break 'parsed (SourceMapLoadHint::IsExternalMap, parsed),
                     Err(err) => {
                         // Print warning even if this came from non-visible code like
@@ -818,13 +809,8 @@ impl SourceMapPieces {
 ///
 /// `source` must be in UTF-8 and can be freed after this call.
 /// The mappings are owned by the global allocator.
-/// Temporary allocations are made to the `arena` allocator, which
-/// should be an arena allocator (caller is assumed to call `reset`).
-pub(crate) fn parse_url(
-    arena: &bun_alloc::Arena,
-    source: &[u8],
-    hint: ParseUrlResultHint,
-) -> crate::Result<ParseUrl> {
+pub(crate) fn parse_url(source: &[u8], hint: ParseUrlResultHint) -> crate::Result<ParseUrl> {
+    let decoded_json: Vec<u8>;
     let json_bytes: &[u8] = 'json_bytes: {
         const DATA_PREFIX: &[u8] = b"data:application/json";
 
@@ -846,13 +832,9 @@ pub(crate) fn parse_url(
                         }
                         let base64_data = &after[comma + 1..];
 
-                        let len = bun_base64::decode_len(base64_data);
-                        let bytes = arena.alloc_slice_fill_default::<u8>(len);
-                        let decoded = bun_base64::decode(bytes, base64_data);
-                        if !decoded.is_successful() {
-                            return Err(crate::Error::InvalidBase64);
-                        }
-                        break 'json_bytes &bytes[..decoded.count];
+                        decoded_json = bun_base64::decode_alloc(base64_data)
+                            .map_err(|_| crate::Error::InvalidBase64)?;
+                        break 'json_bytes &decoded_json;
                     }
                     b',' => break 'json_bytes &source[DATA_PREFIX.len() + 1..],
                     _ => break 'try_data_url,
@@ -863,19 +845,14 @@ pub(crate) fn parse_url(
         return Err(crate::Error::UnsupportedFormat);
     };
 
-    parse_json(arena, json_bytes, hint)
+    parse_json(json_bytes, hint)
 }
 
 /// Parses a JSON source-map
 ///
 /// `source` must be in UTF-8 and can be freed after this call.
 /// The mappings are owned by the global allocator.
-/// The AST nodes of the JSON go to `arena`.
-pub(crate) fn parse_json(
-    arena: &bun_alloc::Arena,
-    source: &[u8],
-    hint: ParseUrlResultHint,
-) -> crate::Result<ParseUrl> {
+pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Result<ParseUrl> {
     use crate::mapping::SourceMap as SourceMapLog;
     use std::sync::Arc;
 
@@ -884,7 +861,8 @@ pub(crate) fn parse_json(
     // `defer log.deinit()` → Drop
 
     // This can run in a GC end phase: an outer frame may still read this thread's AST store, or the thread has none.
-    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
+    let arena = bun_alloc::Arena::new();
+    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
     let _ast_scope = ast_memory_allocator.enter();
     // In a debug build, a node that goes to that store panics.
     let _stmt_guard = bun_ast::stmt::Disabler::scope();

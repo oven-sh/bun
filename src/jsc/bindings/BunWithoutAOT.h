@@ -84,6 +84,7 @@ enum class Presence : uint8_t { Present,
 
 constexpr bool isCompiledObject(const JSCell*) { return false; }
 template<typename Functor> Result forEachOwnProperty(VM&, JSObject*, Filter, const Functor&) { return Result::NeedsGenericPath; }
+template<typename Functor> Result forEachOwnPropertyAsCreated(VM&, JSObject*, const Functor&) { return Result::NeedsGenericPath; }
 inline void materializeLazyProperties(VM&, JSObject*) {}
 inline void prepareHoldersBeforeLookupsUnder(JSGlobalObject*, Symbol*, JSObject*) {}
 inline Presence tryGetOwnValue(JSObject*, UniquedStringImpl*, JSValue&) { return Presence::Unknown; }

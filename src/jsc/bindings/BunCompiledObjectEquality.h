@@ -27,14 +27,17 @@ inline bool collectOwnEnumerableProperties(JSC::VM& vm, JSC::JSObject* object, O
 {
     namespace PropertyWalk = JSC::AOT::PropertyWalk;
     if (PropertyWalk::isCompiledObject(object)) {
-        auto visit = [&](const PropertyWalk::OwnProperty& property) {
+        // An ordinary object with an own `__proto__` key, enumerable or not, is refused below by canPerformFastPropertyEnumeration().
+        auto visit = [&properties, underscoreProto = vm.propertyNames->underscoreProto.impl()](const PropertyWalk::OwnProperty& property) {
+            if (property.name == underscoreProto)
+                return IterationStatus::Done;
             if (property.attributes & JSC::PropertyAttribute::DontEnum)
                 return IterationStatus::Continue;
             properties.names.append(property.name);
             properties.values.appendWithCrashOnOverflow(property.value);
             return IterationStatus::Continue;
         };
-        return PropertyWalk::forEachOwnProperty(vm, object, PropertyWalk::Filter::StringsAndSymbols, visit) == PropertyWalk::Result::Completed;
+        return PropertyWalk::forEachOwnPropertyAsCreated(vm, object, visit) == PropertyWalk::Result::Completed;
     }
     JSC::Structure* structure = object->structure();
     if (structure->hasNonReifiedStaticProperties() || !structure->canPerformFastPropertyEnumeration())

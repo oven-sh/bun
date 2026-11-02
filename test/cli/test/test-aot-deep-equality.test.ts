@@ -10,7 +10,7 @@ setDefaultTimeout(60_000);
 const files = {
   "cases.ts": readFileSync(join(import.meta.dir, "../../aot/parallel/typed-objects/deep-equality/cases.ts"), "utf8"),
   "matchers.test.ts": `
-import { expect, test } from "bun:test";
+import { expect, mock, test } from "bun:test";
 import { cases, type T } from "./cases";
 const ok = (f: () => void) => { try { f(); return "T"; } catch { return "f"; } };
 test("every pair, every matcher, both ways round", () => {
@@ -35,6 +35,33 @@ test("asymmetric matchers against typed objects", () => {
   ];
   for (const [name, f] of rows) console.log("ROW asymmetric:", name + ":", ok(f));
 });
+// A getter on each value says when the matcher reads it: a symbol key that was written before a name is compared first.
+test("the order in which a matcher compares the keys of an object", () => {
+  const first = Symbol("first");
+  const log: string[] = [];
+  const leaf = (name: string) => ({ get read() { log.push(name); return 1; } });
+  const pair = () => ({ [first]: leaf("first"), second: leaf("second") });
+  class Pair { [first] = leaf("first"); second = leaf("second"); }
+  expect.extend({ toEqualByThisEquals(received: unknown, expected: unknown) { return { pass: this.equals(received, expected), message: () => "" }; } });
+  const rows: [string, () => void][] = [
+    ["toEqual", () => expect(pair()).toEqual(pair())],
+    ["toStrictEqual", () => expect(pair()).toStrictEqual(pair())],
+    ["toEqual, instances", () => expect(new Pair()).toEqual(new Pair())],
+    ["toStrictEqual, instances", () => expect(new Pair()).toStrictEqual(new Pair())],
+    ["not.toEqual", () => expect(pair()).not.toEqual(pair())],
+    ["toContainEqual", () => expect([pair()]).toContainEqual(pair())],
+    ["toHaveProperty", () => expect({ k: pair() }).toHaveProperty("k", pair())],
+    ["toBeOneOf", () => expect(pair()).toBeOneOf([pair()])],
+    ["toContainValue", () => expect({ k: pair() }).toContainValue(pair())],
+    ["toHaveBeenCalledWith", () => { const called = mock((_: unknown) => {}); called(pair()); expect(called).toHaveBeenCalledWith(pair()); }],
+    ["toHaveReturnedWith", () => { const called = mock(() => pair()); called(); expect(called).toHaveReturnedWith(pair()); }],
+    ["arrayContaining", () => expect([pair()]).toEqual(expect.arrayContaining([pair()]))],
+    ["under objectContaining", () => expect({ k: pair() }).toEqual(expect.objectContaining({ k: pair() }))],
+    ["this.equals of expect.extend", () => (expect(pair()) as any).toEqualByThisEquals(pair())],
+    ["the hint of a failing toBe", () => expect(pair()).toBe(pair())],
+  ];
+  for (const [name, f] of rows) { log.length = 0; const answer = ok(f); console.log("ROW order:", name + ":", answer, log.join(" ")); }
+});
 `,
 };
 
@@ -50,7 +77,7 @@ test("under bun test --aot, matchers that compare deeply answer for typed object
   using expectedDir = tempDir("test-aot-deep-equality", files);
   using actualDir = tempDir("test-aot-deep-equality", files);
   const [expected, actual] = await Promise.all([rowsOf(String(expectedDir), false), rowsOf(String(actualDir), true)]);
-  expect(expected.rows.length).toBe(88);
+  expect(expected.rows.length).toBe(103);
   expect(actual).toEqual(expected);
   expect(actual.exitCode).toBe(0);
 });

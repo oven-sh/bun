@@ -199,7 +199,7 @@ impl PostgresSQLQuery {
         self.end_with_error(err, global_object, false);
     }
 
-    /// As `on_js_error`, for a request that the server never ran outside a transaction block: the pool may
+    /// As `on_js_error`, for a request that the server never ran: the pool may
     /// send it again on another connection.
     pub(crate) fn on_never_ran(&self, err: JSValue, global_object: &JSGlobalObject) {
         self.end_with_error(err, global_object, true);

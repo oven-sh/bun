@@ -18,8 +18,7 @@ pub(crate) struct JSSourceMap {
     names: Box<[bstring::String]>,
 }
 
-/// TODO: when we implement --enable-source-map CLI flag, set this to true.
-// Mutable global; AtomicBool for safe mutation.
+/// Off: `findSourceMap()` has to answer with a module's own source map and its `payload` while `process.sourceMapsEnabled` is on. What is below answers with the map that Bun wrote, which has no `payload`.
 static ENABLE_SOURCE_MAPS: AtomicBool = AtomicBool::new(false);
 
 pub(crate) fn find_source_map<'a>(

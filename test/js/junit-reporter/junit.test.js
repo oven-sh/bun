@@ -1202,6 +1202,39 @@ describe("only block", () => {
       },
     );
 
+    it.each([[[]], [["--parallel=2"]]])(
+      "puts a rejection left by the callback that settles a test on that test %j",
+      async args => {
+        using dir = tempDir("junit-left", {
+          "a.test.js": `
+            test("leaves", async () => {
+              await new Promise(resolve => {
+                setTimeout(() => {
+                  Promise.reject(new Error("left"));
+                  resolve();
+                });
+              });
+            });
+            test("next", () => {});
+          `,
+        });
+        await using proc = spawn([bunExe(), "test", ...junit, ...args], {
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "ignore",
+          stderr: "ignore",
+        });
+        const exitCode = await proc.exited;
+        const xml = await file(join(String(dir), "junit.xml")).text();
+        expect(xml.match(/<testcase name="[^"]*"|<failure [^>]*>/g)).toEqual([
+          `<testcase name="leaves"`,
+          `<failure type="Error" message="left" uncaught="true">`,
+          `<testcase name="next"`,
+        ]);
+        expect(exitCode).toBe(1);
+      },
+    );
+
     it("rejects any other value", async () => {
       const [flag, bunfig] = await Promise.all([
         report([...junit, "--reporter-junit-suites=deep"]),

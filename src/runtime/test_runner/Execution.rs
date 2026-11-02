@@ -418,6 +418,15 @@ impl Result {
     }
 }
 
+/// What ran for an entry since the last report of rejected promises, for `Execution::leave_entry`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Leave {
+    /// The event loop ran the callback that ended the entry, or the runner ran the listeners of its abort signal.
+    Report,
+    /// Nothing: `run_test_callback` reported right after the entry's callback, or that callback never ran.
+    AlreadyReported,
+}
+
 impl Execution {
     pub(crate) fn init() -> Execution {
         Execution {
@@ -476,9 +485,7 @@ impl Execution {
         data: &RefDataValue,
     ) -> JsResult<StepResult> {
         let _g = group_begin!();
-        let buntest = buntest_strong.get();
-        let buntest_ptr = NonNull::from(&mut *buntest);
-        let this = &mut buntest.execution;
+        let this = &mut buntest_strong.get().execution;
         let mut now = Timespec::now_force_real_time();
 
         match data {
@@ -509,7 +516,10 @@ impl Execution {
                     return Ok(StepResult::Waiting { timeout: Timespec::EPOCH });
                 }
                 let group_ptr = NonNull::from(group);
-                Execution::advance_sequence(buntest_ptr, sequence, group_ptr);
+                if !Execution::leave_entry(buntest_strong, global_this, group_ptr, sequence_index, Leave::Report) {
+                    return Ok(StepResult::Waiting { timeout: Timespec::EPOCH });
+                }
+                let this = &mut buntest_strong.get().execution;
 
                 let sequence_result =
                     step_sequence(buntest_strong, global_this, group_ptr, sequence_index, &mut now)?;
@@ -574,6 +584,11 @@ impl Execution {
         Some(&self.groups[self.group_index])
     }
 
+    /// Whether the tests of the active group take turns. No single one of them is the current test then.
+    pub(crate) fn is_group_concurrent(&self) -> bool {
+        self.active_group_ref().is_some_and(|group| group.sequence_end - group.sequence_start > 1)
+    }
+
     pub(crate) fn get_current_and_valid_execution_sequence(
         &mut self,
         data: &RefDataValue,
@@ -631,14 +646,35 @@ impl Execution {
         Some((sequence, group))
     }
 
-    /// `group_ptr` is a `NonNull` because the callers carry it across `run_test_callback`, which re-enters.
+    /// The one way past an entry. What the entry left rejected is reported first, while it is still the current one:
+    /// after the move the same report would be charged to the next entry. Returns false if the report started
+    /// matchers that the entry has to wait for: it then isn't left.
     #[optimize(size)]
-    fn advance_sequence(
-        buntest: NonNull<BunTest>,
-        sequence: &mut ExecutionSequence,
+    fn leave_entry(
+        buntest_strong: &BunTestPtr,
+        global_this: &JSGlobalObject,
         group_ptr: NonNull<ConcurrentGroup>,
-    ) {
+        sequence_index: usize,
+        leave: Leave,
+    ) -> bool {
         let _g = group_begin!();
+
+        // SAFETY: `group_ptr` points into `execution.groups`, a boxed slice that lives until the file is done.
+        let group = unsafe { group_ptr.as_ref() };
+        let seq_abs = group.sequence_start + sequence_index;
+        // The tests of a concurrent group take turns, so one of them ending is no checkpoint for the others.
+        let report = leave == Leave::Report && group.sequence_end - group.sequence_start == 1;
+        if report {
+            BunTest::report_before_leaving(buntest_strong, global_this);
+        }
+
+        let buntest_mut = buntest_strong.get();
+        let buntest = NonNull::from(&mut *buntest_mut);
+        let sequence = &mut buntest_mut.execution.sequences[seq_abs];
+        // The report ran JS, which can have called matchers. The entry waits for those like for any other.
+        if report && sequence.waits_for_matchers() {
+            return false;
+        }
 
         debug_assert!(sequence.executing);
         if core::mem::take(&mut sequence.pending_matchers) > 0 {
@@ -694,7 +730,7 @@ impl Execution {
                 sequence.remaining_retry_count -= 1;
                 Execution::save_attempt_failure(buntest, sequence);
                 Execution::reset_sequence(sequence);
-                return;
+                return true;
             }
 
             // Handle repeat logic: if test passed and we have repeats remaining, repeat it
@@ -704,7 +740,7 @@ impl Execution {
                 sequence.remaining_retry_count = sequence.test_entry.map_or(0, |test| unsafe { test.as_ref() }.retry_count);
                 sequence.earlier_failures.clear();
                 Execution::reset_sequence(sequence);
-                return;
+                return true;
             }
 
             // Only report the final result after all retries/repeats are done
@@ -716,10 +752,11 @@ impl Execution {
             let group = unsafe { &mut *group_ptr.as_ptr() };
             if group.remaining_incomplete_entries == 0 {
                 debug_assert!(false); // remaining_incomplete_entries should never go below 0
-                return;
+                return true;
             }
             group.remaining_incomplete_entries -= 1;
         }
+        true
     }
 
     fn on_group_started(global_this: &JSGlobalObject) {
@@ -997,18 +1034,16 @@ fn step_group(
     now: &mut Timespec,
 ) -> JsResult<StepResult> {
     let _g = group_begin!();
-    let buntest = buntest_strong.get();
-    let this = &mut buntest.execution;
 
     loop {
-        let Some(group) = this.active_group() else {
+        let Some(group) = buntest_strong.get().execution.active_group() else {
             return Ok(ExpectDeferred::step_file_end(buntest_strong, global_this, now));
         };
         if !group.executing {
             Execution::on_group_started(global_this);
             group.executing = true;
         }
-        // Raw, so that it does not alias the `&mut Execution` that step_group_one re-derives.
+        // Raw, so that it does not alias the `&mut Execution` that the calls below re-derive.
         let group_ptr = NonNull::from(group);
 
         // loop over items in the group and advance their execution
@@ -1021,8 +1056,11 @@ fn step_group(
             AdvanceStatus::Done => {}
         }
 
-        // SAFETY: re-deref after step_group_one; disjoint from this.sequences read below.
+        let this = &mut buntest_strong.get().execution;
+        // SAFETY: points into `this.groups`, a boxed slice that lives until the file is done. Disjoint from
+        // `this.sequences`.
         let group = unsafe { &mut *group_ptr.as_ptr() };
+        let is_concurrent = group.sequence_end - group.sequence_start > 1;
         if group.pending_matchers > 0 {
             // Any test in the group may have called them, so wait until the latest test deadline.
             let timeout = this.sequences[group.sequence_start..group.sequence_end]
@@ -1037,6 +1075,20 @@ fn step_group(
             group.pending_matchers = 0;
             ExpectDeferred::group_timed_out(buntest_strong, global_this, this.group_index);
         }
+        // The tests of a concurrent group end one by one, and `leave_entry` reports nothing for them.
+        // All of them have ended now, so what they left is reported before a test of the next group is current.
+        if is_concurrent {
+            BunTest::report_before_leaving(buntest_strong, global_this);
+            // The report ran JS, which can have called matchers. The group waits for those like for any other.
+            // SAFETY: as above.
+            if unsafe { group_ptr.as_ref() }.pending_matchers > 0 {
+                continue;
+            }
+        }
+
+        let this = &mut buntest_strong.get().execution;
+        // SAFETY: as above.
+        let group = unsafe { &mut *group_ptr.as_ptr() };
         group.executing = false;
         Execution::on_group_completed(global_this);
 
@@ -1168,9 +1220,7 @@ fn step_sequence_one(
     if core::mem::take(&mut buntest_strong.get().unclaimed.some_ended) {
         ExpectDeferred::settle_ended(buntest_strong, global_this)?;
     }
-    let buntest = buntest_strong.get();
-    let buntest_ptr = NonNull::from(&mut *buntest);
-    let this = &mut buntest.execution;
+    let this = &mut buntest_strong.get().execution;
 
     // SAFETY: group points into this.groups; read-only.
     let seq_abs = unsafe { group.as_ref() }.sequence_start + sequence_index;
@@ -1203,7 +1253,8 @@ fn step_sequence_one(
                 active_entry,
                 &RefDataValue::Execution { group_index: this.group_index, entry_data: Some(entry_data) },
             )?;
-            Execution::advance_sequence(buntest_ptr, sequence, group);
+            let left = Execution::leave_entry(buntest_strong, global_this, group, sequence_index, Leave::Report);
+            debug_assert!(left); // an entry that timed out doesn't wait for matchers
             return Ok(None); // run again
         }
         group_log::log(format_args!("runOne: can't advance; already executing"));
@@ -1296,7 +1347,7 @@ fn step_sequence_one(
                 Err(err) => {
                     let thrown = global_this.take_exception(err);
                     buntest_strong.get().on_uncaught_exception(global_this, Some(thrown), false, &callback_data);
-                    Execution::advance_sequence(buntest_ptr, sequence, group);
+                    Execution::leave_entry(buntest_strong, global_this, group, sequence_index, Leave::AlreadyReported);
                     return Ok(None); // run again
                 }
             }
@@ -1345,19 +1396,23 @@ fn step_sequence_one(
             // SAFETY: re-deref after run_test_callback; sequence_ptr still valid (sequences is a
             // Box<[ExecutionSequence]>, never reallocated during execution).
             let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
-            if next_item.evaluate_timeout(sequence, now) {
+            let leave = if next_item.evaluate_timeout(sequence, now) {
                 if let Some(context) = context {
                     TestContext::abort_signal(context, global_this);
                 }
                 report_around_timeout(buntest_strong, global_this, next_item, &callback_data)?;
+                Leave::Report
             } else if sequence.waits_for_matchers() {
                 return Ok(Some(AdvanceSequenceStatus::Execute {
                     timeout: next_item.timespec,
                 }));
-            }
+            } else {
+                Leave::AlreadyReported
+            };
 
             // the result is available immediately; advance the sequence and run again.
-            Execution::advance_sequence(buntest_ptr, sequence, group);
+            let left = Execution::leave_entry(buntest_strong, global_this, group, sequence_index, leave);
+            debug_assert!(left); // an entry that timed out doesn't wait for matchers
             return Ok(None); // run again
         }
         return Ok(Some(AdvanceSequenceStatus::Execute {
@@ -1392,7 +1447,7 @@ fn step_sequence_one(
                 debug_assert!(sequence.test_entry.is_none());
             }
         }
-        Execution::advance_sequence(buntest_ptr, sequence, group);
+        Execution::leave_entry(buntest_strong, global_this, group, sequence_index, Leave::AlreadyReported);
         return Ok(None); // run again
     }
 }

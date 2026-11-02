@@ -891,13 +891,14 @@ unsafe extern "C" {
 
 /// `toThrow()` takes a rejection that nothing handles during the call for what the function threw. What was rejected
 /// before the call isn't the function's, and can still get its handler, so it waits here until the call is over.
-struct EarlierRejections<'a> {
+/// The runner does the same around a callback of a concurrent group, for what the other tests of the group rejected.
+pub(crate) struct EarlierRejections<'a> {
     global: &'a JSGlobalObject,
     mark: usize,
 }
 
 impl<'a> EarlierRejections<'a> {
-    fn hold(global: &'a JSGlobalObject) -> Self {
+    pub(crate) fn hold(global: &'a JSGlobalObject) -> Self {
         Self { global, mark: Bun__holdRejectedPromises(global) }
     }
 }

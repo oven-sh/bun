@@ -17,6 +17,7 @@ use crate::generated_bindgen::bun_test::{
     Bun__BunTest__hook, Bun__TestScope__Describe2__bunTestCatch, Bun__TestScope__Describe2__bunTestThen,
 };
 use super::execution::TimespecExt as _;
+use super::expect::EarlierRejections;
 use super::test_context::{self, Deferred, TestContext};
 use super::test_context_fixtures::TestFixtures;
 use super::test_context_parameter::SharedContextParameter;
@@ -778,6 +779,11 @@ pub(crate) struct BunTest {
     pending_phase: RefDataValue,
     /// Set while the global unhandled-error handler reports an error through `on_uncaught_exception`.
     pub(crate) is_reporting_uncaught: bool,
+    /// Set while the runner reports what the entry, concurrent group or describe() that it is moving past left
+    /// rejected.
+    pub(crate) is_leaving: bool,
+    /// What `skip()` of a test context throws to unwind its test.
+    skip_error: Option<Strong>,
     /// True until `TestCommand::run` starts the runner, because the file's module may still be registering tests.
     pub(crate) is_loading: bool,
     /// Callback-less entry that runs last in the file. `defer_to_file_end` links its entries after it.
@@ -823,6 +829,8 @@ impl BunTest {
             wants_wakeup: false,
             pending_phase: RefDataValue::Start,
             is_reporting_uncaught: false,
+            is_leaving: false,
+            skip_error: None,
             is_loading: true,
             file_end: None,
             unclaimed: Default::default(),
@@ -1377,6 +1385,11 @@ impl BunTest {
         // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point (before JS re-entry).
         unsafe { (*this).update_min_timeout(global_this, timeout) };
         let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { cfg_args };
+        // Another test of a concurrent group can still handle what it rejected before this callback, so the report
+        // below leaves that alone.
+        // SAFETY: `UnsafeCell`-derived; sole borrow at this point (before JS re-entry).
+        let earlier_rejections = unsafe { (*this).phase == Phase::Execution && (*this).execution.is_group_concurrent() }
+            .then(|| EarlierRejections::hold(global_this));
         // SAFETY: `this_strong` keeps the cell alive and in place for the whole call.
         let on_stack = unsafe { OnStack::enter(&raw const (*this).execution.on_stack, &cfg_data) };
         let result: JSValue = match vm
@@ -1403,8 +1416,7 @@ impl BunTest {
 
         done_callback.ensure_still_alive();
 
-        // Drain unhandled promise rejections.
-        loop {
+        Self::report_rejections(global_this, || {
             // Prevent the user's Promise rejection from going into the uncaught promise rejection queue.
             if !result.is_empty() {
                 if let Some(promise) = result.as_promise() {
@@ -1416,13 +1428,8 @@ impl BunTest {
                     }
                 }
             }
-
-            let prev_unhandled_count = vm.unhandled_error_counter;
-            let _ = global_this.handle_rejected_promises();
-            if vm.unhandled_error_counter == prev_unhandled_count {
-                break;
-            }
-        }
+        });
+        drop(earlier_rejections);
 
         // `dcb_ref` is a raw observer alias, NOT a
         // counted handle. The single +1 from `ref()` is owned by
@@ -1518,6 +1525,45 @@ impl BunTest {
             unsafe { (*this).adopt_teardown(&cfg_data, result) };
         }
         Some(cfg_data)
+    }
+
+    /// Reports the promises that are rejected and have no handler, until a pass reports none.
+    /// `before_pass` runs before each pass, because a pass runs JS.
+    fn report_rejections(global_this: &JSGlobalObject, mut before_pass: impl FnMut()) {
+        let vm = global_this.bun_vm();
+        loop {
+            before_pass();
+            let prev_unhandled_count = vm.unhandled_error_counter;
+            let _ = global_this.handle_rejected_promises();
+            if vm.unhandled_error_counter == prev_unhandled_count {
+                break;
+            }
+        }
+    }
+
+    /// Reports what the entry, concurrent group or describe() that the runner is about to move past left rejected.
+    /// It is still the current one, so the report is charged to it. After the move the same report would be charged
+    /// to the next one. The report re-enters the runner, so the caller holds no `&mut` into it.
+    pub(crate) fn report_before_leaving(this_strong: &BunTestPtr, global_this: &JSGlobalObject) {
+        debug_assert!(this_strong.in_run_loop);
+        this_strong.get().is_leaving = true;
+        Self::report_rejections(global_this, || {});
+        this_strong.get().is_leaving = false;
+    }
+
+    pub(crate) fn skip_error(&mut self, global_this: &JSGlobalObject) -> JSValue {
+        self.skip_error
+            .get_or_insert_with(|| {
+                let error = global_this.create_error_instance(format_args!("test is skipped; abort execution"));
+                Strong::create(error, global_this)
+            })
+            .get()
+    }
+
+    pub(crate) fn is_skip_error(&self, value: JSValue) -> bool {
+        self.skip_error
+            .as_ref()
+            .is_some_and(|error| value == error.get() || value.to_error() == Some(error.get()))
     }
 
     /// A promise that follows `returned` if it's a thenable other than a promise. Otherwise `returned`.

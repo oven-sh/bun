@@ -900,8 +900,7 @@ extern "C" void Bun__onExit();
 extern "C" int32_t bun_stdio_tty[3];
 #if !OS(WINDOWS)
 static termios termios_to_restore_later[3];
-// Startup F_GETFL (-1 = not captured) and identity of each stdio fd, for the O_NONBLOCK
-// restore at exit. The flag lives on the open file description the parent shell shares.
+// Startup F_GETFL (-1 = not captured) and identity of each stdio fd, for the O_NONBLOCK restore at exit.
 static int stdio_flags_to_restore[3] = { -1, -1, -1 };
 static struct stat stdio_stat_at_start[3];
 // Whether Bun itself has modified the termios of each stdio fd during this

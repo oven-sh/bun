@@ -1816,7 +1816,24 @@ function setDefaultCACertificates(certs: ReadonlyArray<CACertInput>): void {
   if (normalized.length === 0 && snapshot.length > 0) {
     throw $ERR_CRYPTO_OPERATION_FAILED("No valid certificates found in the provided array");
   }
+  reuseCachedCertificateStrings(normalized);
   _defaultCACertificatesOverride = normalized;
+}
+
+// parseCACertificates() writes PEM the way the "system" and "extra" lists do, so equal text there is a second copy.
+function reuseCachedCertificateStrings(certs: string[]): void {
+  const cached = new $Map<string, string>();
+  const lists = [systemCACertificates, extraCACertificates];
+  for (let i = 0; i < lists.length; i++) {
+    const list = lists[i];
+    if (list === undefined) continue;
+    for (let j = 0; j < list.length; j++) {
+      cached.$set(list[j], list[j]);
+    }
+  }
+  for (let i = 0; i < certs.length; i++) {
+    certs[i] = cached.$get(certs[i]) ?? certs[i];
+  }
 }
 
 function getCACertificates(type = "default") {

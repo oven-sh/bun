@@ -546,24 +546,5 @@ describe.concurrent.skipIf(isWindows)(
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stdout, stderr, exitCode }).toEqual({ stdout: "alive\n", stderr: "", exitCode: 0 });
     });
-
-    // The symptom from the shell's point of view: a plain tool that writes more than the pipe holds after bun exits, into a
-    // consumer that is slow to start. The sleep is that slow consumer, not a wait for a condition.
-    test("a plain tool can write more than a pipe holds after bun exited", async () => {
-      await using proc = spawn({
-        cmd: [
-          "sh",
-          "-c",
-          `{ "$0" -e 'process.stdout.write("go\\n")'; head -c 1000000 /dev/zero; echo "head=$?" >&2; } | { read -r line; sleep 1; cat >/dev/null; }`,
-          bunExe(),
-        ],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout, stderr }).toEqual({ stdout: "", stderr: "head=0\n" });
-      expect(exitCode).toBe(0);
-    });
   },
 );

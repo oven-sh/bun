@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "async_hooks";
 import { describe, expect, jest, test } from "bun:test";
 import { createSocket } from "dgram";
 import { Worker } from "node:worker_threads";
@@ -240,6 +241,21 @@ describe("unref()", () => {
 
 // Cluster-shared dgram descriptors are POSIX-only (Windows reports ENOTSUP).
 describe.skipIf(isWindows)("cluster", () => {
+  // A bind that goes through the primary gives the socket the handle the primary sent, so the store of
+  // createSocket() is not that handle's. Node.js v26.3.0 reads these stores.
+  test("a shared socket's 'message' runs in no store, an exclusive socket's in the store of createSocket()", async () => {
+    const { stdout, stderr, exitCode } = await runClusterFixture("dgram-cluster-async-context-fixture.ts", 20_000);
+    expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+      stdout: {
+        "shared": { "'listening'": "undefined", "'message'": "undefined" },
+        "the primary's descriptor": { "'listening'": "undefined", "'message'": "undefined" },
+        "exclusive": { "'listening'": "bind()", "'message'": "createSocket()" },
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  }, 40_000);
+
   // The shared wrap's close(cb) must invoke cb (Node's HandleWrap contract) or
   // cluster's disconnect refcount never reaches zero and the worker hangs.
   test("worker.disconnect() with a shared socket lets the worker exit", async () => {
@@ -842,6 +858,162 @@ test("handleDrain resumes after renewed backpressure and steps past a throwing e
   }
 });
 
+// bind({ fd }) opens the socket's own handle on the descriptor, so 'message' still runs in the store of
+// createSocket(). Node.js v26.3.0 reads these stores.
+test.skipIf(isWindows)("bind({ fd }): 'message' runs in the store of createSocket()", async () => {
+  const { _createSocketHandle } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
+  const storage = new AsyncLocalStorage<string>();
+  const wrap = _createSocketHandle("127.0.0.1", 0, "udp4");
+  const socket = storage.run("createSocket()", () => createSocket("udp4"));
+  const sender = createSocket("udp4");
+  try {
+    const listening = Promise.withResolvers<string>();
+    const message = Promise.withResolvers<string>();
+    socket.on("error", listening.reject);
+    sender.on("error", message.reject);
+    socket.on("listening", () => listening.resolve(String(storage.getStore())));
+    socket.on("message", () => message.resolve(String(storage.getStore())));
+    storage.run("bind()", () => socket.bind({ fd: wrap.fd }));
+    const seen = { "'listening'": await listening.promise };
+    socket.on("error", message.reject);
+    sender.send("x", socket.address().port, "127.0.0.1");
+    expect({ ...seen, "'message'": await message.promise }).toEqual({
+      "'listening'": "bind()",
+      "'message'": "createSocket()",
+    });
+  } finally {
+    sender.close();
+    socket.close();
+    wrap.close();
+  }
+});
+
+// Node.js makes the request of a send() inside that send(), and completes it in that async context. A request that
+// waited behind backpressure is completed from the socket's drain, or from close(): neither is its context. The
+// queued path is forced as in the two tests above.
+test("a send() that waited behind backpressure runs its callback in the store of that send()", async () => {
+  const { kStateSymbol } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
+  const storage = new AsyncLocalStorage<string>();
+  const inStore = <T>(store: string | undefined, fn: () => T) => (store === undefined ? fn() : storage.run(store, fn));
+  const socket = storage.run("createSocket()", () => createSocket("udp4"));
+  await new Promise<void>((resolve, reject) => socket.once("error", reject).bind(0, "127.0.0.1", resolve));
+  // connect() hands a failure to its callback.
+  await new Promise<void>((resolve, reject) =>
+    socket.connect(socket.address().port, "127.0.0.1", (error?: Error) => (error ? reject(error) : resolve())),
+  );
+
+  const handle = socket[kStateSymbol].handle;
+  const realSocket = handle.socket;
+  const seen: Record<string, string> = {};
+  // Queues a send() made in `store`, and resolves when its callback has run.
+  const send = (name: string, store: string | undefined) => {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    inStore(store, () =>
+      socket.send("x", err => {
+        seen[name] = String(storage.getStore()) + (err ? ` (${(err as NodeJS.ErrnoException).code})` : "");
+        resolve();
+      }),
+    );
+    return promise;
+  };
+  let closed = false;
+  try {
+    for (const drainIn of ["the drain", undefined]) {
+      handle.sendQueue = [];
+      const where = drainIn ? "a drain inside a store" : "a drain in no store";
+      const completed = [
+        send(`made in a store, completed by ${where}`, "send() 1"),
+        send(`made in another store, completed by ${where}`, "send() 2"),
+        send(`made in no store, completed by ${where}`, undefined),
+      ];
+      handle.socket = { send: () => true };
+      inStore(drainIn, () => handle.drain());
+      await Promise.all(completed);
+      handle.socket = realSocket;
+    }
+
+    handle.sendQueue = [];
+    const cancelled = [
+      send("made in a store, cancelled by close() inside a store", "send() 3"),
+      send("made in no store, cancelled by close() inside a store", undefined),
+    ];
+    closed = true;
+    storage.run("close()", () => socket.close());
+    await Promise.all(cancelled);
+
+    expect(seen).toEqual({
+      "made in a store, completed by a drain inside a store": "send() 1",
+      "made in another store, completed by a drain inside a store": "send() 2",
+      "made in no store, completed by a drain inside a store": "undefined",
+      "made in a store, completed by a drain in no store": "send() 1",
+      "made in another store, completed by a drain in no store": "send() 2",
+      "made in no store, completed by a drain in no store": "undefined",
+      "made in a store, cancelled by close() inside a store": "send() 3 (ECANCELED)",
+      "made in no store, cancelled by close() inside a store": "undefined (ECANCELED)",
+    });
+  } finally {
+    handle.socket = realSocket;
+    if (!closed) socket.close();
+  }
+});
+
+// What such a callback throws is reported in that async context too, as Node.js reports it (v26.3.0, run with
+// --test-udp-no-try-send): the tick that calls it is queued inside the context of the send(). An 'uncaughtException'
+// listener needs a process of its own, because bun:test takes an uncaught throw for itself.
+test("a send() that waited behind backpressure reports what its callback throws in the store of the callback", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { AsyncLocalStorage } = require("node:async_hooks");
+        const { kStateSymbol } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
+        const storage = new AsyncLocalStorage();
+        const socket = require("node:dgram").createSocket("udp4");
+        const ways = ["throws", "enterWith() then throws"];
+        const seen = {};
+        let row;
+        function next() {
+          const way = ways.shift();
+          if (way === undefined) return socket.close(() => console.log(JSON.stringify(seen)));
+          row = seen[way] = {};
+          const handle = socket[kStateSymbol].handle;
+          const realSocket = handle.socket;
+          // With a queue, every send() waits behind it: what backpressure does.
+          handle.sendQueue = [];
+          storage.run("send()", () =>
+            socket.send("x", () => {
+              row["the callback"] = String(storage.getStore());
+              if (way !== "throws") storage.enterWith("entered");
+              throw new Error("boom");
+            }),
+          );
+          handle.socket = { send: () => true };
+          storage.run("the drain", () => handle.drain());
+          handle.socket = realSocket;
+        }
+        process.on("uncaughtException", () => {
+          row["'uncaughtException'"] = String(storage.getStore());
+          setImmediate(next);
+        });
+        socket.bind(0, "127.0.0.1", () => socket.connect(socket.address().port, "127.0.0.1", next));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+    stdout: {
+      "throws": { "the callback": "send()", "'uncaughtException'": "send()" },
+      "enterWith() then throws": { "the callback": "send()", "'uncaughtException'": "entered" },
+    },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 // Reserves an ephemeral UDP port and frees it, so datagrams sent there get
 // ICMP port-unreachable replies on loopback.
 async function getDeadPort() {
@@ -912,6 +1084,59 @@ for (const [kind, bind] of Object.entries(icmpBindModes)) {
     // The socket stays usable after the error, like Node's.
     expect(native.closed).toBe(false);
     socket.close();
+  });
+}
+
+// Node's handle delivers the receive error too, so its 'error' listener runs in the store of createSocket(),
+// whichever call binds the socket. Node.js v26.3.0 reads these stores.
+for (const [kind, bind] of Object.entries(icmpBindModes)) {
+  test.skipIf(isWindows)(`${kind} socket emits the ICMP error in the store of createSocket()`, async () => {
+    const { kStateSymbol } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
+    const storage = new AsyncLocalStorage<string>();
+    const inStore = <T>(store: string | undefined, fn: () => T) =>
+      store === undefined ? fn() : storage.run(store, fn);
+    const storeOfError = async (createIn: string | undefined, bindIn: string | undefined) => {
+      const deadPort = await getDeadPort();
+      const socket = inStore(createIn, () => createSocket("udp4"));
+      try {
+        const { promise: errored, resolve: onError } = Promise.withResolvers<string>();
+        socket.on("error", error => onError(`${storage.getStore()} (${error.message})`));
+        await inStore(bindIn, () => bind(socket));
+        await new Promise<void>((resolve, reject) =>
+          socket.connect(deadPort, "127.0.0.1", (error?: Error) => (error ? reject(error) : resolve())),
+        );
+        // Keep sending until the queued ICMP error surfaces. If the native socket is silently closed instead, say
+        // that rather than time out.
+        const native = socket[kStateSymbol].handle.socket;
+        let stop = false;
+        const pump = (async () => {
+          while (!stop) {
+            if (native.closed) return onError("the native socket was silently closed instead of emitting 'error'");
+            try {
+              socket.send("x");
+            } catch {}
+            await Bun.sleep(10);
+          }
+        })();
+        try {
+          return await errored;
+        } finally {
+          stop = true;
+          await pump;
+        }
+      } finally {
+        socket.close();
+      }
+    };
+    expect({
+      "createSocket() and bind() each inside a store of its own": await storeOfError("createSocket()", "bind()"),
+      "createSocket() in no store, bind() inside a store": await storeOfError(undefined, "bind()"),
+      "createSocket() inside a store, bind() in none": await storeOfError("createSocket()", undefined),
+    }).toEqual({
+      "createSocket() and bind() each inside a store of its own": "createSocket() (recvmsg ECONNREFUSED)",
+      "createSocket() in no store, bind() inside a store": "undefined (recvmsg ECONNREFUSED)",
+      "createSocket() inside a store, bind() in none": "createSocket() (recvmsg ECONNREFUSED)",
+    });
   });
 }
 

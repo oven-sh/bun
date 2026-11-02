@@ -607,3 +607,39 @@ exports[`snapshot numbering 4`] = `"snap"`;
 exports[`snapshot numbering 6`] = `"hello"`;
 
 exports[`snapshot numbering: hinted 1`] = `"hello"`;
+
+exports[`most types: Object with Map, Set, String and multi-line string 1`] = `
+{
+  "emptyMap": Map {},
+  "emptySet":   Set {},
+  "map": 
+Map {
+    "k" => 1,
+  }
+,
+  "set":   
+Set {
+    1,
+  }
+,
+  "stringObject": String {
+    "0": "a",
+    "1": "b",
+}
+,
+  "text": 
+"a
+b"
+,
+  "weakMap": WeakMap {},
+  "weakSet":   WeakSet {},
+}
+`;
+
+exports[`most types: Array with Promise after a long string 1`] = `
+[
+  "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  
+  Promise {},
+]
+`;

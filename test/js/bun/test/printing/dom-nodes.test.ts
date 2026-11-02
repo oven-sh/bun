@@ -319,6 +319,12 @@ describe("diffs", () => {
       "+ Received  + 1",
     ]);
   });
+
+  test("a Set in a collection starts on the line of its member", () => {
+    expect(messageOf(() => expect(new NodeList([new Set([1])])).toEqual<unknown>(1))).toContain(
+      "+ NodeList [\n+   Set {\n+     1,\n+   },\n+ ]\n",
+    );
+  });
 });
 
 describe("snapshots", () => {

@@ -732,6 +732,7 @@ impl TransformTask {
             runtime_transpiler_cache: None,
             keep_json_and_toml_as_one_statement: false,
             allow_bytecode_cache: false,
+            forbid_jsx_preserve: false,
         };
 
         let Some(parse_result) = transpiler.parse(parse_options, None) else {
@@ -1068,6 +1069,7 @@ impl JSTranspiler {
             runtime_transpiler_cache: None,
             keep_json_and_toml_as_one_statement: false,
             allow_bytecode_cache: false,
+            forbid_jsx_preserve: false,
         };
 
         // SAFETY: JS thread. Does not hold for a macro that calls this object while this parse

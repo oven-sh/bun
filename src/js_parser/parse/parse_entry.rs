@@ -123,6 +123,25 @@ pub struct Parser<'a> {
     pub(crate) orig_error_count: u32,
 }
 
+/// Preserved JSX would be executed by Bun instead of handed to another compiler.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum JsxPreserveRestriction {
+    #[default]
+    None,
+    Executable,
+    Runtime,
+}
+
+impl JsxPreserveRestriction {
+    pub fn error_message(self) -> Option<&'static [u8]> {
+        match self {
+            Self::None => None,
+            Self::Executable => Some(b"Cannot preserve JSX when compiling an executable"),
+            Self::Runtime => Some(b"Cannot preserve JSX in a file that Bun runs"),
+        }
+    }
+}
+
 pub struct Options<'a> {
     pub jsx: options::JSX::Pragma,
     pub ts: bool,
@@ -141,8 +160,7 @@ pub struct Options<'a> {
     pub tree_shaking: bool,
     pub bundle: bool,
     pub code_splitting: bool,
-    /// JSX preservation restriction for standalone executables
-    pub forbid_jsx_preserve: bool,
+    pub jsx_preserve_restriction: JsxPreserveRestriction,
     pub package_version: &'a [u8],
 
     pub macro_context: Option<MacroContext<'a>>,
@@ -260,7 +278,7 @@ impl<'a> Options<'a> {
             tree_shaking: self.tree_shaking,
             bundle: self.bundle,
             code_splitting: self.code_splitting,
-            forbid_jsx_preserve: self.forbid_jsx_preserve,
+            jsx_preserve_restriction: self.jsx_preserve_restriction,
             package_version: self.package_version,
             macro_context: None,
             macro_remap: None,
@@ -341,7 +359,7 @@ impl<'a> Options<'a> {
             tree_shaking: false,
             bundle: false,
             code_splitting: false,
-            forbid_jsx_preserve: false,
+            jsx_preserve_restriction: JsxPreserveRestriction::None,
             package_version: b"",
             macro_context: None,
             macro_remap: None,
@@ -1026,16 +1044,12 @@ impl<'a> Parser<'a> {
         let mut visit_tracer = bun_core::perf::trace("JSParser::visit");
         p.prepare_for_visit_pass()?;
 
-        if p.options.forbid_jsx_preserve
-            && p.options.jsx.parse
-            && p.options.jsx.runtime == options::JSX::Runtime::Preserve
-        {
-            p.log().add_error(
-                Some(p.source),
-                bun_ast::Loc { start: 0 },
-                b"Cannot preserve JSX when compiling an executable",
-            );
-            return Err(crate::Error::SyntaxError);
+        if p.options.jsx.parse && p.options.jsx.runtime == options::JSX::Runtime::Preserve {
+            if let Some(message) = p.options.jsx_preserve_restriction.error_message() {
+                p.log()
+                    .add_error(Some(p.source), bun_ast::Loc { start: 0 }, message);
+                return Err(crate::Error::SyntaxError);
+            }
         }
 
         if p.options.features.react_compiler.is_enabled() {

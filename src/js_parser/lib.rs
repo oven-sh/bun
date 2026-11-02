@@ -29,7 +29,8 @@ pub mod visit;
 pub use lower::import_meta_glob::*;
 pub use p::P;
 pub use parse::parse_entry::{
-    CacheLookup, Options as ParserOptions, ParsedForCache, Parser, TranspilerCache,
+    CacheLookup, JsxPreserveRestriction, Options as ParserOptions, ParsedForCache, Parser,
+    TranspilerCache,
 };
 
 // The part of macros that needs no JSC. The rest is in `bun_js_parser_jsc::Macro`.

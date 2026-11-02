@@ -771,6 +771,8 @@ pub struct ParseOptions<'a, 'b> {
 
     pub keep_json_and_toml_as_one_statement: bool,
     pub allow_bytecode_cache: bool,
+    /// Bun executes the output, so JSX cannot stay as syntax.
+    pub forbid_jsx_preserve: bool,
 }
 
 use bun_options_types::schema::api;
@@ -1313,7 +1315,11 @@ impl<'a> Transpiler<'a> {
                     tree_shaking: self.options.tree_shaking,
                     bundle: false,
                     code_splitting: false,
-                    forbid_jsx_preserve: self.options.compile_mode.is_executable(),
+                    jsx_preserve_restriction: if this_parse.forbid_jsx_preserve {
+                        js_ast::JsxPreserveRestriction::Runtime
+                    } else {
+                        js_ast::JsxPreserveRestriction::None
+                    },
                     package_version: b"",
                     macro_context: None,
                     macro_remap: None,
@@ -2674,6 +2680,7 @@ impl<'a> Transpiler<'a> {
                     runtime_transpiler_cache: None,
                     keep_json_and_toml_as_one_statement: false,
                     allow_bytecode_cache: false,
+                    forbid_jsx_preserve: false,
                 };
 
                 let Some(mut result) = self.parse(parse_opts, None) else {

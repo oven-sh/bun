@@ -334,23 +334,18 @@ interface UDPHandle {
 
 // The AsyncLocalStorage stores of createSocket(), by handle. node makes the UDP handle there, and what that handle delivers ('message', a receive error) runs in them: https://github.com/nodejs/node/blob/v26.3.0/lib/dgram.js#L143
 let handleStores: WeakMap<UDPHandle, object> | undefined;
-// Made on first use: a program without AsyncLocalStorage and Bun.ModuleGraph has neither these nor the table.
-let withoutModuleGraphs: ((frame: unknown) => object | undefined) | undefined;
-let inCurrentModuleGraph: ((stores: unknown) => unknown) | undefined;
 
-// Without the frames of a Bun.ModuleGraph: a socket that the host keeps does not keep the graph that made it.
+// Without the frames of a Bun.ModuleGraph: the socket does not keep the graph that made it through the frame that entered the graph.
 function saveStoresOfHandle(handle: UDPHandle, frame: unknown) {
-  withoutModuleGraphs ??= $newCppFunction("ModuleGraph.cpp", "jsFunctionAsyncContextWithoutModuleGraphs", 1);
-  const stores = withoutModuleGraphs!(frame);
+  const stores = require("internal/async_context_frame").withoutModuleGraphs(frame);
   if (stores !== undefined) WeakMapPrototypeSet.$call((handleStores ??= new SafeWeakMap()), handle, stores);
 }
 
 // Bun.udpSocket() takes the socket's Bun.ModuleGraph from the async context: the socket opens in the graph of the caller, entered over the stores of createSocket().
 function openInStoresOfHandle(stores: unknown, udpOptions: any) {
-  inCurrentModuleGraph ??= $newCppFunction("ModuleGraph.cpp", "jsFunctionAsyncContextInCurrentModuleGraph", 1);
   const AsyncContextFrame = require("internal/async_context_frame");
   // Not through AsyncContextFrame.run(), here and in completeQueuedSend(): with it an ahead-of-time executable compiles more of a program's functions to other bytes than its test run does, and test/aot/servers has a floor for that.
-  const previous = AsyncContextFrame.exchange(inCurrentModuleGraph!(stores));
+  const previous = AsyncContextFrame.exchange(AsyncContextFrame.inCurrentModuleGraph(stores));
   try {
     return Bun.udpSocket(udpOptions);
   } finally {

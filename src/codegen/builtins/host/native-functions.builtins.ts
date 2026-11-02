@@ -37,6 +37,16 @@ const looksForModuleGraph = (returns: b.TableType, uses: readonly b.UseSpec[]) =
     implementation: b.hostCall,
   }) satisfies b.FunctionField;
 
+// Where the operand has a frame of a Bun.ModuleGraph in it, or the running script is inside a graph, they make frames. So they allocate, which the three above do not.
+const makesFramesAroundModuleGraph = {
+  ...looksForModuleGraph(b.union(b.object, b.undefined), [
+    b.returned,
+    b.reachableValuesStoredIn(b.result),
+    b.returnedFrom(framesOfModuleGraphsCell),
+  ]),
+  capability: "heap",
+} satisfies b.FunctionField;
+
 // Functions on which the host puts members that have no entry yet: Bun.inspect.custom, process.hrtime.bigint .. Bun.$ and Bun.sql are callable objects of classes of the library, and require.resolve inherits `paths` from an object of its own.
 const functionsWithUndeclaredMembers = [
   "%ModuleRequire%.resolve",
@@ -291,6 +301,10 @@ export default b.declarations(
       b.returnedFrom(framesOfModuleGraphsCell),
     ]),
   ),
+  // The frame it answers is the operand, one below it, or a copy that it makes of the frames that are of no graph.
+  b.static(cpp("ModuleGraph.cpp", "jsFunctionAsyncContextWithoutModuleGraphs"), makesFramesAroundModuleGraph),
+  // The frame it answers is the operand, the frame of a graph's loader, or a frame that it makes over the operand.
+  b.static(cpp("ModuleGraph.cpp", "jsFunctionAsyncContextInCurrentModuleGraph"), makesFramesAroundModuleGraph),
 
   // What Bun.jest answers. It has no feature: the `require` that gets its names at run time calls it, and such a name keeps nothing.
   b.static(cpp("JSCommonJSModule.cpp", "jsFunctionRequireTestModule"), {

@@ -270,3 +270,18 @@ pub(crate) fn to_utf16_alloc_sentinel<'a>(
 
     Ok(String::clone_utf16(&result[..result.len() - 1]))
 }
+
+/// Used in JS tests, see `internal-for-testing.ts`.
+pub(crate) fn index_of_line_ranges(text: &[u8], target_line: u32, count: u32) -> Vec<u32> {
+    fn flat<const LINE_RANGE_COUNT: usize>(text: &[u8], target_line: u32) -> Vec<u32> {
+        strings::index_of_line_ranges::<LINE_RANGE_COUNT>(text, target_line)
+            .iter()
+            .flat_map(|range| [range.start, range.end])
+            .collect()
+    }
+    if count == 1 {
+        flat::<1>(text, target_line)
+    } else {
+        flat::<{ crate::zig_exception::SOURCE_LINES_COUNT }>(text, target_line)
+    }
+}

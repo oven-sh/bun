@@ -1721,11 +1721,11 @@ pub fn trim_suffix<'a>(buffer: &'a [u8], suffix: &[u8]) -> &'a [u8] {
 /// The final element is the end index of the desired line
 #[derive(Copy, Clone, Default)]
 pub struct LineRange {
-    pub(crate) start: u32,
-    pub(crate) end: u32,
+    pub start: u32,
+    pub end: u32,
 }
 
-pub(crate) fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
+pub fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
     text: &[u8],
     target_line: u32,
 ) -> BoundedArray<LineRange, LINE_RANGE_COUNT> {

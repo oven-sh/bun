@@ -1319,7 +1319,7 @@ async function serveGraph(
     for (const [version, rest] of Object.entries(versions)) {
       const files: Record<string, string> = { "package/package.json": JSON.stringify({ name, version, ...rest }) };
       for (const [path, text] of Object.entries(more[`${name}-${version}`] ?? {})) files[`package/${path}`] = text;
-      tarballs.set(`/${name}-${version}.tgz`, await new Bun.Archive(files, { compress: "gzip" }).bytes());
+      tarballs.set(`/${name}/-/${name}-${version}.tgz`, await new Bun.Archive(files, { compress: "gzip" }).bytes());
     }
   }
   return Bun.serve({
@@ -1331,7 +1331,7 @@ async function serveGraph(
       const name = pathname.slice(1);
       const versions: Record<string, object> = {};
       for (const [version, rest] of Object.entries(graph[name] ?? {})) {
-        versions[version] = { name, version, ...rest, dist: { tarball: `${origin}/${name}-${version}.tgz` } };
+        versions[version] = { name, version, ...rest, dist: { tarball: `${origin}/${name}/-/${name}-${version}.tgz` } };
       }
       return Response.json({ name, versions, "dist-tags": { latest: Object.keys(versions).at(-1) } });
     },
@@ -3072,6 +3072,38 @@ describe.concurrent("two names that differ only in case never share a node_modul
     expect(exitCode).toBe(1);
   });
 
+  // `bufferutil` is trusted by default. Its install script, node-gyp-build, reads `./package.json`
+  // and requires the file that `prebuild.test` names. With the alias in the same folder, that is
+  // the alias's file.
+  test("a trusted install script runs with its own package.json, not the alias's", async () => {
+    const build = `const pkg = require(require("path").join(process.cwd(), "package.json"));
+      require("fs").writeFileSync(require("path").join(process.cwd(), "..", "..", "ran.txt"), pkg.name);
+      if (pkg.prebuild?.test) require(require("path").join(process.cwd(), pkg.prebuild.test));`;
+    using server = await serveGraph(
+      {
+        bufferutil: { "1.0.0": { scripts: { install: `${bunExe()} build.js` } } },
+        payload: { "1.0.0": { prebuild: { test: "pwn.js" } } },
+        helper: { "1.0.0": { dependencies: { Bufferutil: "npm:payload@1.0.0" } } },
+      },
+      {
+        "bufferutil-1.0.0": { "build.js": build },
+        "payload-1.0.0": { "pwn.js": `require("fs").writeFileSync("../../ran.txt", "payload");` },
+      },
+    );
+    using dir = tempDir("hoist-case-trusted-script", {
+      "bunfig.toml": bunfig(server),
+      "package.json": JSON.stringify({ name: "app", dependencies: { bufferutil: "1.0.0", helper: "1.0.0" } }),
+    });
+    await run(String(dir), "install");
+    expect({
+      ran: readFileSync(join(String(dir), "ran.txt"), "utf8"),
+      layout: layout(String(dir)),
+    }).toEqual({
+      ran: "bufferutil",
+      layout: ["bufferutil@1.0.0", "helper@1.0.0", "helper/Bufferutil@1.0.0"],
+    });
+  });
+
   // Bun 1.4.4 and older wrote bun.lock with `React` at the root. The tree is hoisted again when it
   // is loaded, so the same install from that lockfile gives the same layout.
   test("a bun.lock with the alias at the root still installs, and the alias nests", async () => {
@@ -3080,7 +3112,7 @@ describe.concurrent("two names that differ only in case never share a node_modul
       preact: { "1.0.0": {} },
       helper: { "1.0.0": { dependencies: { React: "npm:preact@1.0.0" } } },
     });
-    const url = (name: string) => `${server.url.origin}/${name}-1.0.0.tgz`;
+    const url = (name: string) => `${server.url.origin}/${name}/-/${name}-1.0.0.tgz`;
     const files = {
       "bunfig.toml": bunfig(server),
       "package.json": JSON.stringify({ name: "app", dependencies: { react: "1.0.0", helper: "1.0.0" } }),

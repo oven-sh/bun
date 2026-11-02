@@ -6,8 +6,8 @@ use bun_lint::rule::Plugin;
 /// Disallow confusing uses of `Array#with()`.
 pub struct NoConfusingArrayWith;
 
-const NEGATIVE_INDEX: Message = Message::new("", "Avoid using a negative index with `Array#with()`.");
-const LENGTH_INDEX: Message = Message::new("", "Avoid using `.length` as the index in `Array#with()`.");
+const NEGATIVE_INDEX: &Message = &Message::new("", "Avoid using a negative index with `Array#with()`.");
+const LENGTH_INDEX: &Message = &Message::new("", "Avoid using `.length` as the index in `Array#with()`.");
 
 /// The `name` in `a.name`, but not in `a?.name`, `a.#name` or `a["name"]`.
 fn plain_member_name(member: Expr<'_>) -> Option<Ident<'_>> {

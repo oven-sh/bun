@@ -5,9 +5,12 @@ use bun_sema::bind::BindingInitializer;
 use bun_sema::fold::Decision;
 use bun_sema::hir::ExprId;
 use rustc_hash::FxHashMap;
+use smallvec::smallvec;
 
 use self::values::Part;
+use super::call::Arguments;
 use super::{FileLowering, FunctionLowering};
+use crate::builtins::id::BuiltinId;
 use crate::diagnostic_codes::Code;
 use crate::ir::generated::{Data, DataNode, LimitId};
 use crate::ir::{DataId, ValueId};
@@ -25,7 +28,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         let root = match self.file.decisions().decision(expression) {
             Decision::Data(value) => values::create_node(self.file, Part::Value(value)),
-            Decision::DeferredData => self.file.create_deferred_node(),
+            Decision::DeferredData => match self.file.create_deferred_node() {
+                Some(node) => node,
+                None => return self.emit_refusal_of_unbundled_page(),
+            },
             Decision::Unknown | Decision::Constant(_) | Decision::GlobalPath(_) => {
                 debug_assert!(
                     self.file.decisions().is_data_literal(expression),
@@ -37,6 +43,19 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.convert_int32_members(expression);
         let data = add_record(self.file, expression, root);
         self.builder.data(data)
+    }
+
+    // No `import` or `require()` names the page, so the build did not bundle it. A load of a computed path can still reach it.
+    fn emit_refusal_of_unbundled_page(&mut self) -> ValueId {
+        let mut pages = self.file.inputs.sources.pages().iter();
+        let page = pages.find(|page| page.0 == self.file.file);
+        let name = page.map_or(&b""[..], |page| bun_paths::basename(&page.1));
+        let reason = b"': the page isn't bundled into this executable, because no import or require() names it";
+        let message = self.emit_text(&[b"Cannot load '", name, reason].concat());
+        let constructor = self.emit_builtin_itself(BuiltinId::Error);
+        let error = self.emit_construct(constructor, Arguments::Values(smallvec![message]), None);
+        self.emit_throw(error);
+        self.builder.undefined()
     }
 }
 
@@ -59,7 +78,7 @@ impl FileLowering<'_, '_, '_, '_> {
         };
         let root = match self.decisions().decision(expression) {
             Decision::Data(value) => values::create_node(self, Part::Value(value)),
-            Decision::DeferredData => self.create_deferred_node(),
+            Decision::DeferredData => self.create_deferred_node()?,
             Decision::Unknown | Decision::Constant(_) | Decision::GlobalPath(_) => return None,
         };
         Some(add_record(self, expression, root))
@@ -96,11 +115,11 @@ fn add_record(
     expression: ExprId,
     mut root: DataNode,
 ) -> DataId {
-    let maximum = file.inputs.limits.get(LimitId::MaxNestingDepth);
+    let maximum = file.inputs.limits.get(LimitId::MaxDataNestingDepth);
     if nesting_depth(&root) > maximum {
         let position = file.hir[expression].pos;
         file.queries.answer_nothing_from_now_on();
-        file.gave_up(LimitId::MaxNestingDepth, position);
+        file.gave_up(LimitId::MaxDataNestingDepth, position);
         let span = file.span_at(position);
         let depth = maximum.to_string();
         file.diagnostics

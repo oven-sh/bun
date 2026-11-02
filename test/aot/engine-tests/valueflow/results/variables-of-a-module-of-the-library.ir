@@ -54,10 +54,10 @@ function f4 name="readerBesideRegistered" module=m2 role=Library results=[{type=
     v1 = CheckInitialized v0 name="besideRegistered"
     Return v1
 }
-function f5 name="registered" module=m2 role=Library flags=[HasThis] enclosingRuntimeFunction=47 parameters=[{type=anything}] results=[{type=anything}] {
+function f5 name="registered" module=m2 role=Library flags=[HasThis] enclosingRuntimeFunction=ArrayConstructorFrom parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
     v2 = GetModuleVariable variable=g3
     v3 = Call v2
     Return v3
 }
-runtimefunction id=47 function=f5
+runtimefunction id=ArrayConstructorFrom function=f5

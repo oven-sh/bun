@@ -1,5 +1,5 @@
-pub use super::generated::{DeclaredType, PositionFlags};
-use super::ids::{TypeId, TypeSiteId};
+pub use super::generated::{DeclaredCapture, DeclaredType, PositionFlags};
+use super::ids::{StringId, TypeId, TypeSiteId};
 use super::types::TypeTable;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -27,6 +27,31 @@ impl Mapped {
             ty,
             is_checked: ty == TypeTable::ANYTHING,
         }
+    }
+}
+
+impl DeclaredCapture {
+    pub fn new(declared: DeclaredType, variable_name: Option<StringId>) -> DeclaredCapture {
+        DeclaredCapture {
+            ty: declared.ty,
+            site: declared.site,
+            flags: declared.flags,
+            variable_name,
+        }
+    }
+
+    pub fn declared(self) -> DeclaredType {
+        DeclaredType {
+            ty: self.ty,
+            site: self.site,
+            flags: self.flags,
+        }
+    }
+}
+
+impl From<DeclaredType> for DeclaredCapture {
+    fn from(declared: DeclaredType) -> DeclaredCapture {
+        DeclaredCapture::new(declared, None)
     }
 }
 

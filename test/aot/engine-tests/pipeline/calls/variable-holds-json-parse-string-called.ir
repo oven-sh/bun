@@ -24,83 +24,83 @@ variable g0 name="text" module=m0 declared={type=undefined|null|absent|"{\"id\":
 variable g1 name="parse" module=m0 declared={type=undefined|null|function|absent|builtin(String)|builtin(JSONParse) flags=[IsExpected]}
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    Jump -> next b1()
+    Jump -> next b1() @0
   b1():
-    v0 = NewClosure function=f1
-    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v2 = String string="{\"id\":7}"
-    v3 = Convert v2 declared={type=undefined|null|"{\"id\":7}" flags=[IsExpected]}
-    PutModuleVariable v3 variable=g0
-    v5 = Builtin builtin=JSON
-    v6 = PropGet v5 key="parse"
-    v7 = Convert v6 declared={type=builtin(JSONParse) flags=[IsExpected]}
-    v8 = Convert v7 declared={type=undefined|null|function|builtin(String)|builtin(JSONParse) flags=[IsExpected]}
-    PutModuleVariable v8 variable=g1
-    v10 = PropGet v3 key="length"
-    v11 = Convert v10 declared={type=number flags=[IsExpected]}
-    v12 = Integer integer=1000
-    v13 = Greater v11, v12
-    Branch v13 -> taken b2(), notTaken b3()
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = String string="{\"id\":7}" @121
+    v3 = Convert v2 declared={type=undefined|null|"{\"id\":7}" flags=[IsExpected]} @121
+    PutModuleVariable v3 variable=g0 @114
+    v5 = Builtin builtin=JSON @145
+    v6 = PropGet v5 key="parse" @145
+    v7 = Convert v6 declared={type=builtin(JSONParse) flags=[IsExpected]} @145
+    v8 = Convert v7 declared={type=undefined|null|function|builtin(String)|builtin(JSONParse) flags=[IsExpected]} @145
+    PutModuleVariable v8 variable=g1 @137
+    v10 = PropGet v3 key="length" @161
+    v11 = Convert v10 declared={type=number flags=[IsExpected]} @161
+    v12 = Integer integer=1000 @175
+    v13 = Greater v11, v12 @161
+    Branch v13 -> taken b2(), notTaken b3() @161
   b2():
-    v14 = GetModuleVariable variable=g1
-    v15 = CheckInitialized v14 name="parse"
-    v16 = Builtin builtin=String
-    v17 = Convert v16 declared={type=undefined|null|function|builtin(String)|builtin(JSONParse) flags=[IsExpected]}
-    PutModuleVariable v17 variable=g1
-    Jump -> next b3()
+    v14 = GetModuleVariable variable=g1 @181
+    v15 = CheckInitialized v14 name="parse" @181
+    v16 = Builtin builtin=String @189
+    v17 = Convert v16 declared={type=undefined|null|function|builtin(String)|builtin(JSONParse) flags=[IsExpected]} @181
+    PutModuleVariable v17 variable=g1 @181
+    Jump -> next b3() @181
   b3():
-    v19 = Builtin builtin=GlobalThis
-    v20 = PropGet v19 key="console" [isFreeName]
-    v21 = Convert v20 declared={type=builtin(Console) flags=[IsExpected]}
-    v22 = PropGet v21 key="log"
-    v23 = Convert v22 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-    v24 = Integer integer=10
-    v25 = Call v1, -, v24 calleeName="read"
-    v26 = Convert v25 declared={type=number flags=[IsExpected]}
-    v27 = Call v23, v21, v26 calleeKey="log" calleeName="console.log"
-    v28 = Undefined
-    Return v28
+    v19 = Builtin builtin=GlobalThis @359
+    v20 = PropGet v19 key="console" [isFreeName] @359
+    v21 = Convert v20 declared={type=builtin(Console) flags=[IsExpected]} @359
+    v22 = PropGet v21 key="log" @359
+    v23 = Convert v22 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @359
+    v24 = Integer integer=10 @376
+    v25 = Call v1, -, v24 calleeName="read" @371
+    v26 = Convert v25 declared={type=number flags=[IsExpected]} @371
+    v27 = Call v23, v21, v26 calleeKey="log" calleeName="console.log" @367
+    v28 = Undefined @359
+    Return v28 @359
 }
 function f1 name="read" module=m0 position=197 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
-    Jump -> next b1()
+    Jump -> next b1() @197
   b1():
-    v1 = Integer
-    v2 = Convert v1 declared={type=i32 flags=[IsExpected]}
-    v3 = Integer
-    v4 = Convert v3 declared={type=number flags=[IsExpected]}
-    Jump -> next b2(v2, v4)
+    v1 = Integer @232
+    v2 = Convert v1 declared={type=i32 flags=[IsExpected]} @232
+    v3 = Integer @253
+    v4 = Convert v3 declared={type=number flags=[IsExpected]} @253
+    Jump -> next b2(v2, v4) @246
   b2(v5, v6):
-    LoopHint
-    v8 = Convert v0 declared={type=number flags=[IsExpected]}
-    v9 = Less v6, v8
-    Branch v9 -> taken b3(| 0, 1), notTaken b6(| 0, 1)
+    LoopHint @246
+    v8 = Convert v0 declared={type=number flags=[IsExpected]} @263
+    v9 = Less v6, v8 @256
+    Branch v9 -> taken b3(| 0, 1), notTaken b6(| 0, 1) @256
   b3(v10, v11):
-    Jump -> next b4()
+    Jump -> next b4() @256
   b4():
-    v12 = GetModuleVariable variable=g1
-    v13 = CheckInitialized v12 name="parse"
-    v14 = Convert v13 declared={type=builtin(JSONParse) flags=[IsExpected]}
-    v15 = GetModuleVariable variable=g0
-    v16 = CheckInitialized v15 name="text"
-    v17 = Call v14, -, v16 calleeName="parse"
-    v18 = Convert v17 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
-    v19 = PropGet v18 key="id"
-    v20 = Convert v19 declared={type=number flags=[IsExpected]}
-    v21 = Add v5, v20
-    v22 = Integer
-    v23 = BitOr v21, v22
-    v24 = Convert v23 declared={type=i32 flags=[IsExpected]}
-    Jump -> next b5()
+    v12 = GetModuleVariable variable=g1 @296
+    v13 = CheckInitialized v12 name="parse" @296
+    v14 = Convert v13 declared={type=builtin(JSONParse) flags=[IsExpected]} @296
+    v15 = GetModuleVariable variable=g0 @302
+    v16 = CheckInitialized v15 name="text" @302
+    v17 = Call v14, -, v16 calleeName="parse" @296
+    v18 = Convert v17 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @296
+    v19 = PropGet v18 key="id" @326
+    v20 = Convert v19 declared={type=number flags=[IsExpected]} @326
+    v21 = Add v5, v20 @320
+    v22 = Integer @336
+    v23 = BitOr v21, v22 @320
+    v24 = Convert v23 declared={type=i32 flags=[IsExpected]} @313
+    Jump -> next b5() @313
   b5():
-    v25 = Increment v10
-    v26 = Convert v25 declared={type=number flags=[IsExpected]}
-    Jump -> next b2(v24, v26)
+    v25 = Increment v10 @320
+    v26 = Convert v25 declared={type=number flags=[IsExpected]} @270
+    Jump -> next b2(v24, v26) @270
   b6(v27, v28):
-    Jump -> next b7()
+    Jump -> next b7() @256
   b7():
-    v29 = Convert v5 declared={type=number flags=[IsExpected]}
-    Return v29
+    v29 = Convert v5 declared={type=number flags=[IsExpected]} @352
+    Return v29 @352
 }
 function f2 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] builtinMembers=[String, JSONParse]
 # -- generated: f0 read
@@ -109,55 +109,78 @@ function f2 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: builtin(JSONParse) = Builtin builtin=JSONParse
 # CHECK-NEXT: PutModuleVariable v0 variable=g1
-# CHECK-NEXT: v2: 10 = Integer integer=10
-# CHECK-NEXT: v3: i32 = CallDirect v2 function=f1 accessSite=4
-# CHECK-NEXT: v4: undefined = CallBuiltin -, v3 overload=ConsoleLog/0 accessSite=5
-# CHECK-NEXT: v5: undefined = Undefined
-# CHECK-NEXT: Return v5
+# CHECK-NEXT: v2: i32 = CallDirect function=f5 accessSite=4
+# CHECK-NEXT: v3: undefined = CallBuiltin -, v2 overload=ConsoleLog/0 accessSite=5
+# CHECK-NEXT: v4: undefined = Undefined
+# CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="read"
-# CHECK: module=m0 position=197 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=10}] results=[{type=i32}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: 10):
+# CHECK: module=m0 position=197 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=10}] results=[{type=i32}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
+# CHECK-LABEL: function {{*}}name="read"
+# CHECK: module=m0 position=197 flags=[HasExplicitName] length=1 thisType={type=anything} results=[{type=i32}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f1} {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: 10 = Integer integer=10
 # CHECK-NEXT: v1: 0 = Integer
 # CHECK-NEXT: v2: 0 = Integer
+# CHECK-NEXT: v3: builtin(String)|builtin(JSONParse) = GetModuleVariable variable=g1
 # CHECK-NEXT: Jump -> next b1(v1, v2)
-# CHECK-NEXT: b1(v3: i32, v4: int[0, 10]):
+# CHECK-NEXT: b1(v4: i32 ~ 0, v5: int[0, 10] ~ 0):
+# CHECK-NEXT: v6: boolean = TypeTest v3 testedType=builtin(JSONParse)
+# CHECK-NEXT: Branch v6 -> taken b2(), notTaken b11()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: Jump -> next b3(v4, v5)
+# CHECK-NEXT: b3(v7: i32 ~ 0, v8: int[0, 10] ~ 0):
+# CHECK-NEXT: Jump -> next b4(v7, v8)
+# CHECK-NEXT: b4(v9: i32, v10: int[0, 10]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v6: boolean = Less v4, v0
-# CHECK-NEXT: Branch v6 -> taken b2(| 0), notTaken b9()
-# CHECK-NEXT: b2(v7: int[0, 9]):
-# CHECK-NEXT: v8: builtin(String)|builtin(JSONParse) = GetModuleVariable variable=g1
-# CHECK-NEXT: v9: builtin(String)|builtin(JSONParse) ~ builtin(JSONParse) = Upcast v8 castType=anything
-# CHECK-NEXT: v10: "{\"id\":7}" = String string="{\"id\":7}"
-# CHECK-NEXT: v11: boolean ~ true = TypeTest v9 testedType=builtin(JSONParse)
-# CHECK-NEXT: Branch v11 -> taken b3(), notTaken b4()
-# CHECK-NEXT: b3():
-# CHECK-NEXT: v12: undefined = Undefined
-# CHECK-NEXT: v13: null|boolean|number|string|object = CallBuiltin -, v10, v12 overload=JSONParse/0 accessSite=6
-# CHECK-NEXT: v14: null|boolean|number|string|object ~ null|number|string|object = Upcast v13 castType=anything
-# CHECK-NEXT: v15: anything = PropGet v14 key="id" accessSite=7
-# CHECK-NEXT: Jump -> next b5(v15)
-# CHECK-NEXT: b4() frequency=Unlikely:
-# CHECK-NEXT: v16: "{\"id\":7}" = Upcast v10 castType=anything
-# CHECK-NEXT: v17: anything = PropGet v16 key="id" accessSite=7
-# CHECK-NEXT: Jump -> next b5(v17)
-# CHECK-NEXT: b5(v18: anything):
-# CHECK-NEXT: v19: anything ~ number = Upcast v18 castType=anything
-# CHECK-NEXT: v20: boolean ~ true = TypeTest v19 testedType=number
-# CHECK-NEXT: Branch v20 -> taken b6(| 0), notTaken b7(| 0)
-# CHECK-NEXT: b6(v21: number):
-# CHECK-NEXT: v22: number = Add v3, v21
-# CHECK-NEXT: v23: 0 = Integer
-# CHECK-NEXT: v24: i32 = BitOr v22, v23
-# CHECK-NEXT: Jump -> next b8(v24)
-# CHECK-NEXT: b7(v25: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: v26: number|string|bigint = Add v3, v25
-# CHECK-NEXT: v27: 0 = Integer
-# CHECK-NEXT: v28: i32 = BitOr v26, v27
-# CHECK-NEXT: Jump -> next b8(v28)
-# CHECK-NEXT: b8(v29: i32):
-# CHECK-NEXT: v30: int[1, 10] = Increment v7
-# CHECK-NEXT: Jump -> next b1(v29, v30)
-# CHECK-NEXT: b9():
-# CHECK-NEXT: Return v3
+# CHECK-NEXT: v12: boolean = Less v10, v0
+# CHECK-NEXT: Branch v12 -> taken b5(| 0), notTaken b14(v9)
+# CHECK-NEXT: b5(v13: int[0, 9]):
+# CHECK-NEXT: v14: "{\"id\":7}" = String string="{\"id\":7}"
+# CHECK-NEXT: v15: undefined = Undefined
+# CHECK-NEXT: v16: null|boolean|number|string|object = CallBuiltin -, v14, v15 overload=JSONParse/0 accessSite=6
+# CHECK-NEXT: v17: null|boolean|number|string|object ~ null|number|string|object = Upcast v16 castType=anything
+# CHECK-NEXT: v18: anything = PropGet v17 key="id" accessSite=7 [asksOnlyTables]
+# CHECK-NEXT: v19: boolean = DidReadAbove v18
+# CHECK-NEXT: Branch v19 -> taken b6(), notTaken b8()
+# CHECK-NEXT: b6():
+# CHECK-NEXT: v20: anything ~ number = Upcast v18 castType=anything
+# CHECK-NEXT: v21: boolean ~ true = TypeTest v20 testedType=number
+# CHECK-NEXT: Branch v21 -> taken b7(| 0), notTaken b10(| 0)
+# CHECK-NEXT: b7(v22: number):
+# CHECK-NEXT: v23: number = Add v9, v22
+# CHECK-NEXT: v24: 0 = Integer
+# CHECK-NEXT: v25: i32 = BitOr v23, v24
+# CHECK-NEXT: v26: int[1, 10] = Increment v13
+# CHECK-NEXT: Jump -> next b4(v25, v26)
+# CHECK-NEXT: b8() frequency=Rare:
+# CHECK-NEXT: v27: anything = PropGet v17 key="id" accessSite=7
+# CHECK-NEXT: v28: anything ~ number = Upcast v27 castType=anything
+# CHECK-NEXT: v29: boolean ~ true = TypeTest v28 testedType=number
+# CHECK-NEXT: Branch v29 -> taken b9(| 0), notTaken b10(| 0)
+# CHECK-NEXT: b9(v30: number) frequency=Unlikely:
+# CHECK-NEXT: v31: number = Add v9, v30
+# CHECK-NEXT: v32: 0 = Integer
+# CHECK-NEXT: v33: i32 = BitOr v31, v32
+# CHECK-NEXT: v34: int[1, 10] = Increment v13
+# CHECK-NEXT: Jump -> next b3(v33, v34)
+# CHECK-NEXT: b10(v35: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b13(v9, v13, v35)
+# CHECK-NEXT: b11() frequency=Unlikely:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v37: boolean = Less v5, v0
+# CHECK-NEXT: Branch v37 -> taken b12(| 0), notTaken b14(v4)
+# CHECK-NEXT: b12(v38: int[0, 9] ~ 0) frequency=Unlikely:
+# CHECK-NEXT: v39: "{\"id\":7}" = String string="{\"id\":7}"
+# CHECK-NEXT: v40: anything = PropGet v39 key="id" accessSite=7
+# CHECK-NEXT: v41: anything ~ number = Upcast v40 castType=anything
+# CHECK-NEXT: Jump -> next b13(v4, v38, v41)
+# CHECK-NEXT: b13(v42: i32, v43: int[0, 9], v44: anything ~ number) frequency=Unlikely:
+# CHECK-NEXT: v45: number|string|bigint ~ number = Add v42, v44
+# CHECK-NEXT: v46: 0 = Integer
+# CHECK-NEXT: v47: i32 = BitOr v45, v46
+# CHECK-NEXT: v48: int[1, 10] = Increment v43
+# CHECK-NEXT: Jump -> next b1(v47, v48)
+# CHECK-NEXT: b14(v49: i32):
+# CHECK-NEXT: Return v49
 # CHECK-NEXT: }

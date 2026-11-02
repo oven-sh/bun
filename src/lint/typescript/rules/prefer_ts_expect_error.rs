@@ -5,7 +5,7 @@ use bun_lint::utils::oxlint::after_comment_decoration;
 /// Enforce using `@ts-expect-error` over `@ts-ignore`.
 pub struct PreferTsExpectError;
 
-const PREFER_EXPECT_ERROR_COMMENT: Message = Message::new(
+const PREFER_EXPECT_ERROR_COMMENT: &Message = &Message::new(
     "preferExpectErrorComment",
     "Use \"@ts-expect-error\" to ensure an error is actually being suppressed.",
 );

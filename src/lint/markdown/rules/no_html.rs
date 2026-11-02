@@ -6,7 +6,7 @@ pub struct NoHtml {
     allowed_ignore_case: bool,
 }
 
-const DISALLOWED_ELEMENT: Message = Message::new(
+const DISALLOWED_ELEMENT: &Message = &Message::new(
     "disallowedElement",
     "HTML element \"{{name}}\" is not allowed.",
 );

@@ -32,10 +32,10 @@ function f1 name="manyLayoutsHaveTheName" parameters=[{type=object flags=[IsExpe
     Return v1
 }
 # CHECK-LABEL: function f1 name="manyLayoutsHaveTheName"
-# CHECK-NEXT: b0(v0: anything ~ L0|L1|L2|L3):
-# CHECK-NEXT: = TypeTest v0 testedType=L0|L1|L2|L3
+# CHECK-NEXT: b0(v0: anything ~ L0|L1|L2):
+# CHECK-NEXT: = TypeTest v0 testedType=L0|L1|L2
 # CHECK-NOT: L4
-# CHECK: = GetSlot {{*}} key="tag" receivers=[L0, L1, L2, L3] level=Expected
+# CHECK: = GetSlot {{*}} key="tag" receivers=[L0, L1, L2] level=Expected
 # CHECK-NOT: L4
 # CHECK: = PropGet v0 key="tag"
 

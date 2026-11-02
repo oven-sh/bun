@@ -77,5 +77,5 @@ function f3 name="repeated" module=m0 position=887 flags=[IsChecked, HasExplicit
 # -- generated: checksum
 # CHECK-LABEL: function {{*}}name="checksum"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 67, patchpoints: 24, rare instructions: 27
+# CHECK-NEXT: instructions: 67, patchpoints: 23, rare instructions: 27
 # CHECK-NEXT: end of function f2

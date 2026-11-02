@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""objects.py <seed>: random strict TypeScript programs about objects used as objects: literals, records of declared types, class instances, dictionaries grown and shrunk key by key (into dictionary mode),
-objects with index keys, symbols, accessors, hidden and read-only properties, prototypes with properties of their own, null prototypes, frozen | sealed | non-extensible objects, arrays, functions with properties; read, stored to, deleted from and
-asked by keys that are there, absent, inherited, text of numbers, numbers, symbols; listed by keys | values | entries | for-in | getOwnPropertyNames | Reflect.ownKeys | JSON.stringify | spread | assign | fromEntries; the order of keys after every change;
-truthiness and typeof of what is read."""
+"""objects.py <seed>: Random strict TypeScript programs about objects: literals, records of declared types, class
+instances, dictionaries grown and shrunk key by key (into dictionary mode), objects with index keys, symbols and
+accessors.
+"""
 import random, sys, os
 
 HEAD = r'''const G: any = globalThis;

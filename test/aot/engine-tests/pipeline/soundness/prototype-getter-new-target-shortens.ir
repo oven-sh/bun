@@ -21,7 +21,7 @@ typesite w0 module=m1 position=4142 kind=Variable
 typesite w1 module=m1 position=4344 kind=Variable
 layout L0 kind=Instance name="B" module=m0 position=140 constructor=f2 flags=[HasHeritage]
 layout L1 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=boolean|absent flags=[IsExpected]}}, {key=@"this.1" declared={type=absent|L0 flags=[IsFromCompiler]}}] ownFieldCount=2
-layout L2 fields=[{key="configurable" declared={type=undefined|boolean flags=[IsExpected]}}, {key="enumerable" declared={type=undefined|boolean flags=[IsExpected]}}, {key="get" declared={type=undefined|null|function|f4 flags=[IsExpected]} flags=[IsMethod]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean flags=[IsExpected]}}] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
+layout L2 fields=[{key="configurable" declared={type=undefined|boolean flags=[IsExpected]} flags=[IsNeverWritten]}, {key="enumerable" declared={type=undefined|boolean flags=[IsExpected]} flags=[IsNeverWritten]}, {key="get" declared={type=undefined|null|function|f4 flags=[IsExpected]} flags=[IsMethod]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean flags=[IsExpected]} flags=[IsNeverWritten]}] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
 data d0 root=Array{contents=number elements=[Number{value=1}, Number{value=2}, Number{value=3}, Number{value=4}]} module=m0
 data d1 root=Array{contents=anything} module=m0
 data d2 root=Array{contents=anything} module=m0
@@ -31,165 +31,165 @@ variable g2 name="B" module=m0 declared={type=absent|f2 flags=[IsFromCompiler]} 
 variable g3 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    Jump -> next b1()
+    Jump -> next b1() @0
   b1():
-    v0 = NewClosure function=f1
-    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v2 = Data data=d0
-    v3 = Convert v2 declared={type=undefined|null|Array<number> flags=[IsExpected]}
-    PutModuleVariable v3 variable=g0
-    v5 = Data data=d1
-    v6 = Convert v5 declared={type=undefined|null|Array<never> flags=[IsExpected]}
-    v7 = Convert v6 declared={type=undefined|null|Array flags=[IsExpected]}
-    PutModuleVariable v7 variable=g1
-    v9 = ResolveHeritage v1
-    v10 = NewClosure function=f2
-    v11 = NewClass v10, v1, v9 layout=L0
-    PutModuleVariable v11 variable=g3
-    v13 = FinishClass v11 layout=L0
-    v14 = Convert v13 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v15 = Convert v13 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    PutModuleVariable v15 variable=g2
-    v17 = NewClosure function=f3
-    v18 = PropGet v17 key="bind"
-    v19 = Convert v18 declared={type=undefined|null|function flags=[IsExpected]}
-    v20 = Null
-    v21 = Call v19, v17, v20 calleeKey="bind" calleeName="bind"
-    v22 = Convert v21 declared={type=undefined|null|function|f3 flags=[IsExpected]}
-    v23 = Builtin builtin=Object
-    v24 = Builtin builtin=ObjectDefineProperty
-    v25 = String string="prototype"
-    v26 = NewClosure function=f4
-    v27 = Convert v26 declared={type=undefined|null|function|f4 flags=[IsExpected]}
-    v28 = NewObject layout=L2
-    PropDefine v28, v27 key="get"
-    v30 = FinishObject v28
-    v31 = Call v24, v23, v22, v25, v30 calleeName="Object.defineProperty"
-    v32 = Builtin builtin=Reflect
-    v33 = Builtin builtin=ReflectConstruct
-    v34 = Data data=d2
-    v35 = Convert v34 declared={type=undefined|null|Array<never> flags=[IsExpected]}
-    v36 = Call v33, v32, v15, v35, v22 calleeName="Reflect.construct" [isDoneInPlace]
-    v37 = Builtin builtin=GlobalThis
-    v38 = PropGet v37 key="console" [isFreeName]
-    v39 = Convert v38 declared={type=builtin(Console) flags=[IsExpected]}
-    v40 = PropGet v39 key="log"
-    v41 = Convert v40 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-    v42 = PropGet v7 key="join"
-    v43 = Convert v42 declared={type=undefined|null|function flags=[IsExpected]}
-    v44 = Call v43, v7 calleeKey="join" calleeName="seen.join"
-    v45 = Convert v44 declared={type=undefined|null|string flags=[IsExpected]}
-    v46 = PropGet v3 key="length"
-    v47 = Convert v46 declared={type=number flags=[IsExpected]}
-    v48 = Call v41, v39, v45, v47 calleeKey="log" calleeName="console.log"
-    v49 = Undefined
-    Return v49
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = Data data=d0 @103
+    v3 = Convert v2 declared={type=undefined|null|Array<number> flags=[IsExpected]} @103
+    PutModuleVariable v3 variable=g0 @96
+    v5 = Data data=d1 @130
+    v6 = Convert v5 declared={type=undefined|null|Array<never> flags=[IsExpected]} @130
+    v7 = Convert v6 declared={type=undefined|null|Array flags=[IsExpected]} @130
+    PutModuleVariable v7 variable=g1 @123
+    v9 = ResolveHeritage v1 @150
+    v10 = NewClosure function=f2 @134
+    v11 = NewClass v10, v1, v9 layout=L0 @134
+    PutModuleVariable v11 variable=g3 @134
+    v13 = FinishClass v11 layout=L0 @134
+    v14 = Convert v13 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @134
+    v15 = Convert v13 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @134
+    PutModuleVariable v15 variable=g2 @134
+    v17 = NewClosure function=f3 @279
+    v18 = PropGet v17 key="bind" @291
+    v19 = Convert v18 declared={type=undefined|null|function flags=[IsExpected]} @279
+    v20 = Null @299
+    v21 = Call v19, v17, v20 calleeKey="bind" calleeName="bind" @294
+    v22 = Convert v21 declared={type=undefined|null|function|f3 flags=[IsExpected]} @279
+    v23 = Builtin builtin=Object @306
+    v24 = Builtin builtin=ObjectDefineProperty @306
+    v25 = String string="prototype" @331
+    v26 = NewClosure function=f4 @346
+    v27 = Convert v26 declared={type=undefined|null|function|f4 flags=[IsExpected]} @349
+    v28 = NewObject layout=L2 @346
+    PropDefine v28, v27 key="get" @346
+    v30 = FinishObject v28 @344
+    v31 = Call v24, v23, v22, v25, v30 calleeName="Object.defineProperty" @313
+    v32 = Builtin builtin=Reflect @397
+    v33 = Builtin builtin=ReflectConstruct @397
+    v34 = Data data=d2 @418
+    v35 = Convert v34 declared={type=undefined|null|Array<never> flags=[IsExpected]} @418
+    v36 = Call v33, v32, v15, v35, v22 calleeName="Reflect.construct" [isDoneInPlace] @405 constructs
+    v37 = Builtin builtin=GlobalThis @426
+    v38 = PropGet v37 key="console" [isFreeName] @426
+    v39 = Convert v38 declared={type=builtin(Console) flags=[IsExpected]} @426
+    v40 = PropGet v39 key="log" @426
+    v41 = Convert v40 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @426
+    v42 = PropGet v7 key="join" @438
+    v43 = Convert v42 declared={type=undefined|null|function flags=[IsExpected]} @438
+    v44 = Call v43, v7 calleeKey="join" calleeName="seen.join" @443
+    v45 = Convert v44 declared={type=undefined|null|string flags=[IsExpected]} @438
+    v46 = PropGet v3 key="length" @451
+    v47 = Convert v46 declared={type=number flags=[IsExpected]} @451
+    v48 = Call v41, v39, v45, v47 calleeKey="log" calleeName="console.log" @434
+    v49 = Undefined @426
+    Return v49 @426
 }
 function f1 name="F" module=m0 position=74 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    Jump -> next b1()
+    Jump -> next b1() @74
   b1():
-    v0 = Undefined
-    Return v0
+    v0 = Undefined @74
+    Return v0 @74
 }
 function f2 name="B" module=m0 position=165 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
   b0(v0: function, v1: anything):
-    Jump -> next b1()
+    Jump -> next b1() @165
   b1():
-    v2 = Absent
-    v3 = NewObject layout=L1
-    v4 = Boolean boolean=true
-    v5 = Convert v4 declared={type=boolean flags=[IsExpected]}
-    PutEnvironmentField v3, v5 layout=L1
-    v7 = GetModuleVariable variable=g0
-    v8 = CheckInitialized v7 name="list"
-    v9 = PropGet v8 key="forEach"
-    v10 = Convert v9 declared={type=undefined|null|function flags=[IsExpected]}
-    v11 = NewClosure v3, v1, v0 function=f5
-    v12 = Call v10, v8, v11 calleeKey="forEach" calleeName="list.forEach"
-    v13 = Undefined
-    v14 = TypeTest v13 testedType=object
-    Branch v14 -> taken b2(| 0), notTaken b3(| 0)
+    v2 = Absent @165
+    v3 = NewObject layout=L1 @165
+    v4 = Boolean boolean=true @182
+    v5 = Convert v4 declared={type=boolean flags=[IsExpected]} @182
+    PutEnvironmentField v3, v5 layout=L1 @174
+    v7 = GetModuleVariable variable=g0 @188
+    v8 = CheckInitialized v7 name="list" @188
+    v9 = PropGet v8 key="forEach" @188
+    v10 = Convert v9 declared={type=undefined|null|function flags=[IsExpected]} @188
+    v11 = NewClosure v3, v1, v0 function=f5 @201
+    v12 = Call v10, v8, v11 calleeKey="forEach" calleeName="list.forEach" @193
+    v13 = Undefined @188
+    v14 = TypeTest v13 testedType=object @188
+    Branch v14 -> taken b2(| 0), notTaken b3(| 0) @188
   b2(v15):
-    Jump -> next b7(v15)
+    Jump -> next b7(v15) @188
   b3(v16):
-    v17 = TypeTest v16 testedType=undefined
-    Branch v17 -> taken b4(| 0), notTaken b8(| 0)
+    v17 = TypeTest v16 testedType=undefined @188
+    Branch v17 -> taken b4(| 0), notTaken b8(| 0) @188
   b4(v18):
-    v19 = GetEnvironmentField v3 layout=L1 field=1
-    v20 = TypeTest v19 testedType=absent
-    Branch v20 -> taken b5(| 0), notTaken b6(| 0)
+    v19 = GetEnvironmentField v3 layout=L1 field=1 @188
+    v20 = TypeTest v19 testedType=absent @188
+    Branch v20 -> taken b5(| 0), notTaken b6(| 0) @188
   b5(v21) frequency=Unlikely:
-    v22 = NewRuntimeError runtimeError=UninitializedThis
-    Throw v22
+    v22 = NewRuntimeError runtimeError=UninitializedThis @193
+    Throw v22 @193
   b6(v23):
-    Jump -> next b7(v23)
+    Jump -> next b7(v23) @188
   b7(v24):
-    Return v24
+    Return v24 @188
   b8(v25) frequency=Unlikely:
-    v26 = NewRuntimeError runtimeError=DerivedConstructorResult name="B"
-    Throw v26
+    v26 = NewRuntimeError runtimeError=DerivedConstructorResult name="B" @193
+    Throw v26 @193
 }
 function f3 module=m0 position=279 thisType={type=anything} results=[{type=anything}] functionTypes=[f7] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    Jump -> next b1()
+    Jump -> next b1() @279
   b1():
-    v0 = Undefined
-    Return v0
+    v0 = Undefined @279
+    Return v0 @279
 }
 function f4 name="get" module=m0 position=346 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|boolean|number|string|symbol|bigint|L0 flags=[IsExpected]}] functionTypes=[f8] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    Jump -> next b1()
+    Jump -> next b1() @346
   b1():
-    v0 = GetModuleVariable variable=g0
-    v1 = CheckInitialized v0 name="list"
-    v2 = Integer integer=2
-    v3 = Convert v2 declared={type=number flags=[IsExpected]}
-    PropSet v1, v3 key="length"
-    v5 = GetModuleVariable variable=g2
-    v6 = CheckInitialized v5 name="B"
-    v7 = PropGet v6 key="prototype"
-    v8 = Convert v7 declared={type=undefined|null|boolean|number|string|symbol|bigint|L0 flags=[IsExpected]}
-    Return v8
+    v0 = GetModuleVariable variable=g0 @354
+    v1 = CheckInitialized v0 name="list" @354
+    v2 = Integer integer=2 @368
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @354
+    PropSet v1, v3 key="length" @354
+    v5 = GetModuleVariable variable=g2 @378
+    v6 = CheckInitialized v5 name="B" @378
+    v7 = PropGet v6 key="prototype" @378
+    v8 = Convert v7 declared={type=undefined|null|boolean|number|string|symbol|bigint|L0 flags=[IsExpected]} @378
+    Return v8 @378
 }
 function f5 module=m0 position=201 kind=Arrow length=1 captures=[{type=env L1 flags=[IsFromCompiler]}, {type=anything}, {type=function flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: env L1, v1: anything, v2: function, v3: number):
-    Jump -> next b1()
+    Jump -> next b1() @201
   b1():
-    v4 = GetModuleVariable variable=g1
-    v5 = CheckInitialized v4 name="seen"
-    v6 = PropGet v5 key="push"
-    v7 = Convert v6 declared={type=undefined|null|function flags=[IsExpected]}
-    v8 = Call v7, v5, v3 calleeKey="push" calleeName="seen.push"
-    v9 = GetEnvironmentField v0 layout=L1
-    v10 = CheckInitialized v9 name="first"
-    v11 = ToBoolean v10
-    Branch v11 -> taken b2(| 0), notTaken b6(| 0)
+    v4 = GetModuleVariable variable=g1 @208
+    v5 = CheckInitialized v4 name="seen" @208
+    v6 = PropGet v5 key="push" @208
+    v7 = Convert v6 declared={type=undefined|null|function flags=[IsExpected]} @208
+    v8 = Call v7, v5, v3 calleeKey="push" calleeName="seen.push" @213
+    v9 = GetEnvironmentField v0 layout=L1 @226
+    v10 = CheckInitialized v9 name="first" @226
+    v11 = ToBoolean v10 @226
+    Branch v11 -> taken b2(| 0), notTaken b6(| 0) @226
   b2(v12):
-    Jump -> next b3()
+    Jump -> next b3() @226
   b3():
-    v13 = GetEnvironmentField v0 layout=L1
-    v14 = CheckInitialized v13 name="first"
-    v15 = Boolean
-    v16 = Convert v15 declared={type=boolean flags=[IsExpected]}
-    PutEnvironmentField v0, v16 layout=L1
-    v18 = GetSuperBase v2
-    v19 = SuperConstruct v18, v1 layout=L0
-    v20 = Convert v19 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v21 = GetEnvironmentField v0 layout=L1 field=1
-    v22 = TypeTest v21 testedType=absent
-    Branch v22 -> taken b4(| 0), notTaken b5(| 0)
+    v13 = GetEnvironmentField v0 layout=L1 @235
+    v14 = CheckInitialized v13 name="first" @235
+    v15 = Boolean @243
+    v16 = Convert v15 declared={type=boolean flags=[IsExpected]} @235
+    PutEnvironmentField v0, v16 layout=L1 @235
+    v18 = GetSuperBase v2 @250
+    v19 = SuperConstruct v18, v1 layout=L0 @250
+    v20 = Convert v19 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @250
+    v21 = GetEnvironmentField v0 layout=L1 field=1 @250
+    v22 = TypeTest v21 testedType=absent @250
+    Branch v22 -> taken b4(| 0), notTaken b5(| 0) @250
   b4(v23):
-    PutEnvironmentField v0, v20 layout=L1 field=1
-    Jump -> next b7()
+    PutEnvironmentField v0, v20 layout=L1 field=1 @250
+    Jump -> next b7() @250
   b5(v25) frequency=Unlikely:
-    v26 = NewRuntimeError runtimeError=ThisAlreadyBound
-    Throw v26
+    v26 = NewRuntimeError runtimeError=ThisAlreadyBound @250
+    Throw v26 @250
   b6(v27):
-    Jump -> next b7()
+    Jump -> next b7() @226
   b7():
-    v28 = Undefined
-    Return v28
+    v28 = Undefined @250
+    Return v28 @250
 }
 function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f14]
 function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
@@ -201,67 +201,67 @@ function f12 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f13 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f14 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f15 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f16 name="forEach" module=m1 position=3958 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=44 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f16 name="forEach" module=m1 position=3958 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeForEach thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything, v2: anything):
-    Jump -> next b1()
+    Jump -> next b1() @3958
   b1():
-    v3 = Undefined
-    v4 = ToObject v0 message="Array.prototype.forEach requires that |this| not be null or undefined"
-    v5 = PropGet v4 key="length"
-    v6 = ToLength v5
-    v7 = Convert v6 declared={type=undefined|number site=w0}
-    v8 = Convert v1 declared={type=undefined|null|function flags=[IsExpected]}
-    v9 = TypeTest v8 testedType=function
-    Branch v9 -> taken b2(| 0), notTaken b14(| 0)
+    v3 = Undefined @3982
+    v4 = ToObject v0 message="Array.prototype.forEach requires that |this| not be null or undefined" @4044
+    v5 = PropGet v4 key="length" @4161
+    v6 = ToLength v5 @4151
+    v7 = Convert v6 declared={type=undefined|number site=w0} @4151
+    v8 = Convert v1 declared={type=undefined|null|function flags=[IsExpected]} @4198
+    v9 = TypeTest v8 testedType=function @4186
+    Branch v9 -> taken b2(| 0), notTaken b14(| 0) @4186
   b2(v10):
-    Jump -> next b3()
+    Jump -> next b3() @4186
   b3():
-    v11 = Integer
-    v12 = Convert v11 declared={type=undefined|number site=w1}
-    Jump -> next b4(v12)
+    v11 = Integer @4348
+    v12 = Convert v11 declared={type=undefined|number site=w1} @4348
+    Jump -> next b4(v12) @4344
   b4(v13: undefined|number):
-    LoopHint
-    v15 = Convert v13 declared={type=number} illTypedCause=Assertion
-    v16 = Convert v7 declared={type=number} illTypedCause=Assertion
-    v17 = Less v15, v16
-    Branch v17 -> taken b5(| 0, 1), notTaken b12(| 0, 1)
+    LoopHint @4344
+    v15 = Convert v13 declared={type=number} illTypedCause=Assertion @4351
+    v16 = Convert v7 declared={type=number} illTypedCause=Assertion @4355
+    v17 = Less v15, v16 @4351
+    Branch v17 -> taken b5(| 0, 1), notTaken b12(| 0, 1) @4351
   b5(v18, v19):
-    Jump -> next b6()
+    Jump -> next b6() @4351
   b6():
-    v20 = Convert v18 declared={type=number} illTypedCause=Assertion
-    v21 = ElemHas v4, v20
-    v22 = ToBoolean v21
-    Branch v22 -> taken b7(| 0), notTaken b9(| 0)
+    v20 = Convert v18 declared={type=number} illTypedCause=Assertion @4382
+    v21 = ElemHas v4, v20 @4387
+    v22 = ToBoolean v21 @4382
+    Branch v22 -> taken b7(| 0), notTaken b9(| 0) @4382
   b7(v23):
-    Jump -> next b8()
+    Jump -> next b8() @4382
   b8():
-    v24 = Convert v10 declared={type=undefined|null|function} illTypedCause=Assertion
-    v25 = Convert v20 declared={type=i32 flags=[IsExpected]}
-    v26 = ElemGet v4, v25
-    v27 = Convert v25 declared={type=number} illTypedCause=Assertion
-    v28 = Call v24, v2, v26, v27, v4
-    Jump -> next b10(v27)
+    v24 = Convert v10 declared={type=undefined|null|function} illTypedCause=Assertion @4406
+    v25 = Convert v20 declared={type=i32 flags=[IsExpected]} @4436
+    v26 = ElemGet v4, v25 @4430
+    v27 = Convert v25 declared={type=number} illTypedCause=Assertion @4440
+    v28 = Call v24, v2, v26, v27, v4 @4406
+    Jump -> next b10(v27) @4406
   b9(v29):
-    Jump -> next b10(v20)
+    Jump -> next b10(v20) @4382
   b10(v30: undefined|number):
-    Jump -> next b11()
+    Jump -> next b11() @4406
   b11():
-    v31 = Increment v30
-    v32 = Convert v31 declared={type=undefined|number site=w1}
-    Jump -> next b4(v32)
+    v31 = Increment v30 @4406
+    v32 = Convert v31 declared={type=undefined|number site=w1} @4363
+    Jump -> next b4(v32) @4363
   b12(v33, v34):
-    Jump -> next b13()
+    Jump -> next b13() @4351
   b13():
-    v35 = Undefined
-    Return v35
+    v35 = Undefined @4363
+    Return v35 @4363
   b14(v36):
-    Jump -> next b15()
+    Jump -> next b15() @4186
   b15():
-    v37 = ThrowNewError errorKind=TypeError message="Array.prototype.forEach callback must be a function"
-    Unreachable
+    v37 = ThrowNewError errorKind=TypeError message="Array.prototype.forEach callback must be a function" @4217
+    Unreachable @4217
 }
-runtimefunction id=44 function=f16
-# -- generated: f0 F B get f5 forEach
+runtimefunction id=ArrayPrototypeForEach function=f16
+# -- generated: f0 F B get f5
 # CHECK-LABEL: function f0 module=
 # CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
 # CHECK-NEXT: b0():
@@ -307,7 +307,7 @@ runtimefunction id=44 function=f16
 # CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="B"
-# CHECK: module=m0 position=165 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler, IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 inlineFrames=[{}, {callee=f16 callPosition=4294967295 module=m1}, {callee=f5 callPosition=4294967295 parent=1 calleeIsPredicted=true module=m0}] {
+# CHECK: module=m0 position=165 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler, IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 inlineFrames=[{}, {callee=f16 callPosition=193 module=m1}, {callee=f5 callPosition=4406 parent=1 calleeIsPredicted=true module=m0}] {
 # CHECK-NEXT: b0(v0: function, v1: anything):
 # CHECK-NEXT: v2: true = Boolean boolean=true
 # CHECK-NEXT: v3: Array<int, proven, pristine[Storage, Names]> = GetModuleVariable variable=g0
@@ -456,98 +456,6 @@ runtimefunction id=44 function=f16
 # CHECK-NEXT: b4():
 # CHECK-NEXT: v17: undefined = Undefined
 # CHECK-NEXT: Return v17
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="forEach"
-# CHECK: module=m1 position=3958 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=44 thisType={type=Array flags=[IsExpected]} parameters=[{type=function flags=[IsExpected]}, {type=anything}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
-# CHECK-NEXT: b0(v0: anything ~ Array, v1: anything ~ function, v2: anything):
-# CHECK-NEXT: v3: object ~ Array = ToObject v0 message="Array.prototype.forEach requires that |this| not be null or undefined"
-# CHECK-NEXT: v4: boolean ~ true = TypeTest v3 testedType=Array
-# CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b3()
-# CHECK-NEXT: b1(v5: Array):
-# CHECK-NEXT: v6: int[0, 4294967295] = CallBuiltin v5 overload=ArrayPrototypeLength/0 accessSite=18
-# CHECK-NEXT: v7: boolean ~ true = TypeTest v1 testedType=function
-# CHECK-NEXT: Branch v7 -> taken b2(| 0), notTaken b26()
-# CHECK-NEXT: b2(v8: function):
-# CHECK-NEXT: v9: 0 = Integer
-# CHECK-NEXT: Jump -> next b14(v9, v5, v6, v8)
-# CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v10: anything = PropGet v3 key="length" accessSite=18
-# CHECK-NEXT: v11: int[0, 9007199254740991] = ToLength v10
-# CHECK-NEXT: v12: boolean ~ true = TypeTest v1 testedType=function
-# CHECK-NEXT: Branch v12 -> taken b4(| 0), notTaken b26()
-# CHECK-NEXT: b4(v13: function) frequency=Unlikely:
-# CHECK-NEXT: v14: 0 = Integer
-# CHECK-NEXT: Jump -> next b5(v14, v11, v13)
-# CHECK-NEXT: b5(v15: int[0, 9007199254740991] ~ int[0, 4294967295], v16: int[0, 9007199254740991], v17: function) frequency=Unlikely:
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v19: boolean = Less v15, v16
-# CHECK-NEXT: Branch v19 -> taken b6(| 0, 1), notTaken b25()
-# CHECK-NEXT: b6(v20: int[0, 9007199254740990] ~ int[0, 4294967295], v21: int[1, 9007199254740991]) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b7(v21, v17, v20)
-# CHECK-NEXT: b7(v22: int[1, 9007199254740991] ~ int[1, 4294967295], v23: function, v24: int[0, 9007199254740990] ~ int[0, 4294967294]) frequency=Unlikely:
-# CHECK-NEXT: v25: boolean = ElemHas v3, v24 accessSite=19 [keyIsIntegral]
-# CHECK-NEXT: Branch v25 -> taken b8(), notTaken b9()
-# CHECK-NEXT: b8() frequency=Unlikely:
-# CHECK-NEXT: v26: int[0, 9007199254740990] ~ int[0, 2147483647] = Upcast v24 castType=int[0, 9007199254740990]
-# CHECK-NEXT: v27: anything = ElemGet v3, v26 accessSite=20 [keyIsIntegral]
-# CHECK-NEXT: v28: anything = Call v23, v2, v27, v26, v3 accessSite=21
-# CHECK-NEXT: Jump -> next b10()
-# CHECK-NEXT: b9() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b10()
-# CHECK-NEXT: b10() frequency=Unlikely:
-# CHECK-NEXT: v29: int[1, 9007199254740991] ~ int[1, 4294967295] = Increment v24
-# CHECK-NEXT: v30: boolean ~ true = TypeTest v22 testedType=int[0, 4294967295]
-# CHECK-NEXT: Branch v30 -> taken b11(| 0), notTaken b23()
-# CHECK-NEXT: b11(v31: int[1, 4294967295]) frequency=Unlikely:
-# CHECK-NEXT: v32: boolean ~ true = TypeTest v29 testedType=int[1, 4294967295]
-# CHECK-NEXT: Branch v32 -> taken b12(| 0), notTaken b22()
-# CHECK-NEXT: b12(v33: int[1, 4294967295]) frequency=Unlikely:
-# CHECK-NEXT: v34: boolean ~ true = TypeTest v3 testedType=Array
-# CHECK-NEXT: Branch v34 -> taken b13(| 0), notTaken b21()
-# CHECK-NEXT: b13(v35: Array) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b14(v33, v35, v31, v23)
-# CHECK-NEXT: b14(v36: int[0, 4294967295] ~ 0, v37: Array, v38: int[0, 4294967295], v39: function):
-# CHECK-NEXT: Jump -> next b15(v36)
-# CHECK-NEXT: b15(v40: int[0, 4294967295]):
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v42: boolean = Less v40, v38
-# CHECK-NEXT: Branch v42 -> taken b16(| 0, 1), notTaken b25()
-# CHECK-NEXT: b16(v43: int[0, 4294967294], v44: int[1, 4294967295]):
-# CHECK-NEXT: v45: boolean = IsPristine v37 builtinClass=Array aspects=[Storage, Names]
-# CHECK-NEXT: Branch v45 -> taken b17(| 0), notTaken b7(v44, v39, v43)
-# CHECK-NEXT: b17(v46: guard):
-# CHECK-NEXT: v47: boolean = HasArrayElement v37, v43, v46 level=Expected accessSite=19 [keyIsIntegral]
-# CHECK-NEXT: Branch v47 -> taken b18(), notTaken b19()
-# CHECK-NEXT: b18():
-# CHECK-NEXT: v48: int[0, 4294967294] ~ int[0, 2147483647] = Upcast v43 castType=int[0, 9007199254740990]
-# CHECK-NEXT: v49: anything = GetArrayElement v37, v48, v46 level=Expected accessSite=20 [keyIsIntegral]
-# CHECK-NEXT: v50: anything = Call v39, v2, v49, v48, v37 accessSite=21
-# CHECK-NEXT: Jump -> next b20()
-# CHECK-NEXT: b19() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b20()
-# CHECK-NEXT: b20():
-# CHECK-NEXT: v51: int[1, 4294967295] = Increment v43
-# CHECK-NEXT: Jump -> next b15(v51)
-# CHECK-NEXT: b21() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b24()
-# CHECK-NEXT: b22() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b24()
-# CHECK-NEXT: b23() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b24()
-# CHECK-NEXT: b24() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b5(v29, v22, v23)
-# CHECK-NEXT: b25():
-# CHECK-NEXT: v52: undefined = Undefined
-# CHECK-NEXT: Return v52
-# CHECK-NEXT: b26():
-# CHECK-NEXT: v53: never = ThrowNewError errorKind=TypeError message="Array.prototype.forEach callback must be a function"
-# CHECK-NEXT: Unreachable
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="forEach"
-# CHECK: module=m1 position=3958 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 enclosingRuntimeFunction=44 captures=[{type=f16}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f16} creator=Entrypoint{target=f16 arguments=Registers} {
-# CHECK-NEXT: b0(v0: f16, v1: anything, v2: anything, v3: anything):
-# CHECK-NEXT: v4: undefined = CallDirect v1, v2, v3 function=f16 @3958 tail
-# CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="F"
 # CHECK: module=m0 position=74 role=GenericEntrypoint flags=[HasThis] captures=[{type=f1}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f1} creator=Entrypoint{target=f1 arguments=Registers} inlineFrames=[{}, {callee=f1 callPosition=74 isTailCall=true module=m0}] {

@@ -115,9 +115,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
         let has_own_name = node.name.is_some();
         let binding = self.file.class_binding(class);
-        let own_key = has_own_name.then(|| {
-            self.file
-                .function_name_key(binding, node.name, node.name_pos)
+        let own_key = has_own_name.then(|| match has_class_decorators {
+            true => self.file.name_key(node.name),
+            false => self
+                .file
+                .function_name_key(binding, node.name, node.name_pos),
         });
         let own_name = own_key.map(|key| GivenName::from(PropertyName::Constant(key)));
         let name = own_name.or(name);

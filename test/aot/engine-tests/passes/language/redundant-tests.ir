@@ -259,44 +259,50 @@ function f21 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v29: anything ~ object = Construct v16, -, v28 calleeName="Wrap" accessSite=5 callees=[f10]
 # CHECK-NEXT: v30: anything ~ L3 = Expect v29 expectedType=undefined|null|L3
 # CHECK-NEXT: v31: undefined = Undefined
-# CHECK-NEXT: v32: Array<undefined|L1, Contiguous> = NewArray v17, v20, v23, v27, v30, v31 contents=undefined|L1 allocationSite=5 storage=Frame arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v33: Array<undefined|L1, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v32 provenType=Array<undefined|L1, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v34: false = Boolean
-# CHECK-NEXT: v35: 0 = Integer
-# CHECK-NEXT: Jump -> next b1(v34, v35)
-# CHECK-NEXT: b1(v36: boolean, v37: int[0, 4294967295]):
+# CHECK-NEXT: v32: false = Boolean
+# CHECK-NEXT: v33: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v32, v33)
+# CHECK-NEXT: b1(v34: boolean, v35: int[0, 2147483647]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: Branch v36 -> taken b2(), notTaken b3()
+# CHECK-NEXT: Branch v34 -> taken b2(), notTaken b3()
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v39: true = Boolean boolean=true
-# CHECK-NEXT: v40: undefined = Undefined
-# CHECK-NEXT: Jump -> next b6(v39, v40, v37)
+# CHECK-NEXT: v37: true = Boolean boolean=true
+# CHECK-NEXT: v38: undefined = Undefined
+# CHECK-NEXT: Jump -> next b6(v37, v38, v35)
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v41: int[0, 4294967295] = CallBuiltin v33 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v42: boolean = Less v37, v41
-# CHECK-NEXT: Branch v42 -> taken b4(| 0), notTaken b5()
-# CHECK-NEXT: b4(v43: int[0, 4294967294]):
-# CHECK-NEXT: v44: undefined|L1 = GetArrayElement v33, v43 arrayStorage=Contiguous level=Proven [keyIsIntegral]
-# CHECK-NEXT: v45: 1 = Integer integer=1
-# CHECK-NEXT: v46: int[1, 4294967295] = Add v43, v45
-# CHECK-NEXT: v47: false = Boolean
-# CHECK-NEXT: Jump -> next b6(v47, v44, v46)
+# CHECK-NEXT: v39: 6 = Integer integer=6
+# CHECK-NEXT: v40: boolean = Less v35, v39
+# CHECK-NEXT: Branch v40 -> taken b4(| 0), notTaken b5()
+# CHECK-NEXT: b4(v41: int[0, 5]):
+# CHECK-NEXT: v42: fact = Specified
+# CHECK-NEXT: v43: L1 = AssumeType v17, v42 provenType=undefined|L1
+# CHECK-NEXT: v44: undefined|L1 ~ L1 = AssumeType v20, v42 provenType=undefined|L1
+# CHECK-NEXT: v45: undefined|L1 ~ L1 = AssumeType v23, v42 provenType=undefined|L1
+# CHECK-NEXT: v46: undefined|L1 ~ L1 = AssumeType v27, v42 provenType=undefined|L1
+# CHECK-NEXT: v47: undefined|L1 ~ L1 = AssumeType v30, v42 provenType=undefined|L1
+# CHECK-NEXT: v48: undefined = AssumeType v31 provenType=undefined|L1
+# CHECK-NEXT: Switch v41 cases=[0, 1, 2, 3, 4] -> case b9(v43), case b9(v44), case b9(v45), case b9(v46), case b9(v47), otherwise b9(v48)
 # CHECK-NEXT: b5():
-# CHECK-NEXT: v48: true = Boolean boolean=true
-# CHECK-NEXT: v49: undefined = Undefined
-# CHECK-NEXT: Jump -> next b6(v48, v49, v37)
-# CHECK-NEXT: b6(v50: boolean, v51: undefined|L1, v52: int[0, 4294967295]) handler=b7():
-# CHECK-NEXT: v53: undefined|null|string = CallDirect v51 function=f11 accessSite=9
+# CHECK-NEXT: v49: true = Boolean boolean=true
+# CHECK-NEXT: v50: undefined = Undefined
+# CHECK-NEXT: Jump -> next b6(v49, v50, v35)
+# CHECK-NEXT: b6(v51: boolean, v52: undefined|L1, v53: int[0, 2147483647]) handler=b7():
+# CHECK-NEXT: v54: undefined|null|string = CallDirect v52 function=f11 accessSite=9
 # CHECK-NEXT: Jump -> next b8()
 # CHECK-NEXT: b7() role=CatchHandler:
-# CHECK-NEXT: v54: anything = CatchValue
-# CHECK-NEXT: v55: builtin(ErrorPrototype) = Builtin builtin=ErrorPrototype
-# CHECK-NEXT: v56: boolean = HasInPrototypeChain v54, v55
-# CHECK-NEXT: v57: anything ~ undefined|null|Error = Upcast v54 castType=anything
-# CHECK-NEXT: v58: anything = PropGet v57 key="name" accessSite=12
+# CHECK-NEXT: v55: anything = CatchValue
+# CHECK-NEXT: v56: builtin(ErrorPrototype) = Builtin builtin=ErrorPrototype
+# CHECK-NEXT: v57: boolean = HasInPrototypeChain v55, v56
+# CHECK-NEXT: v58: anything ~ undefined|null|Error = Upcast v55 castType=anything
+# CHECK-NEXT: v59: anything = PropGet v58 key="name" accessSite=12
 # CHECK-NEXT: Jump -> next b8()
 # CHECK-NEXT: b8():
-# CHECK-NEXT: Jump -> next b1(v50, v52)
+# CHECK-NEXT: Jump -> next b1(v51, v53)
+# CHECK-NEXT: b9(v60: undefined|L1):
+# CHECK-NEXT: v61: 1 = Integer integer=1
+# CHECK-NEXT: v62: int[1, 6] = Add v41, v61
+# CHECK-NEXT: v63: false = Boolean
+# CHECK-NEXT: Jump -> next b6(v63, v60, v62)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="isWrap"
 # CHECK: module=m0 position=803 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|L1}] results=[{type=boolean}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -335,13 +341,13 @@ function f21 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b0(v0: anything, v1: int, v2: int):
 # CHECK-NEXT: v3: f8 = AssumeType v0 provenType=f8
 # CHECK-NEXT: v4: object = GetConstructPrototype v3 layout=L0
-# CHECK-NEXT: v5: object ~ L0|L1|L2|L3 = NewObject v4 layout=L0 allocationSite=7 allocationClass=0
+# CHECK-NEXT: v5: object ~ L1 = NewObject v4 layout=L0 allocationSite=7 allocationClass=0
 # CHECK-NEXT: v6: L1 = AssumeType v5 provenType=L1
 # CHECK-NEXT: Return v6
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Leaf"
-# CHECK: module=m0 position=525 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=string flags=[OmitsNull, OmitsUndefined]}] results=[{type=L1 flags=[IsFromCompiler]}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
-# CHECK-NEXT: b0(v0: function, v1: anything, v2: string):
+# CHECK: module=m0 position=525 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type="l" flags=[OmitsNull, OmitsUndefined]}] results=[{type=L1 flags=[IsFromCompiler]}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+# CHECK-NEXT: b0(v0: function, v1: anything, v2: "l"):
 # CHECK-NEXT: v3: f8 = AssumeType v1 provenType=f8
 # CHECK-NEXT: v4: 0 = Integer
 # CHECK-NEXT: v5: 1 = Integer integer=1
@@ -424,9 +430,9 @@ function f21 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-LABEL: function {{*}}name="Leaf"
 # CHECK: module=m0 position=525 kind=DerivedConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget, IsChecked] length=1 captures=[{type=f8}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f8} creator=Entrypoint{target=f8 arguments=Registers takesNewTarget=true} {
 # CHECK-NEXT: b0(v0: f8, v1: anything, v2: anything, v3: anything):
-# CHECK-NEXT: v4: string = AssumeType v3 provenType=string
+# CHECK-NEXT: v4: "l" = AssumeType v3 provenType="l"
 # CHECK-NEXT: v5: L1 = CallDirect v0, v2, v4 function=f8
 # CHECK-NEXT: ReturnCall v5 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Leaf"
-# CHECK: module=m0 position=525 kind=DerivedConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=L1} parameters=[{type=string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] functionTypes=[f15] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f8 parameterMap=[{}, {original=0}, {original=1}, {original=2}]} creator=Version{provenVersion=f8} constructedClass=L1
+# CHECK: module=m0 position=525 kind=DerivedConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=L1} parameters=[{type="l" flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] functionTypes=[f15] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f8 parameterMap=[{}, {original=0}, {original=1}, {original=2}]} creator=Version{provenVersion=f8} constructedClass=L1

@@ -589,6 +589,7 @@ bun_core::comptime_string_map! {
         b"latin1" => Encoding::Latin1,
         b"buffer" => Encoding::Buffer,
         b"utf16le" => Encoding::Utf16le,
+        b"utf-16le" => Encoding::Utf16le,
         b"utf16-le" => Encoding::Utf16le,
         b"base64url" => Encoding::Base64url,
     };
@@ -1075,6 +1076,18 @@ impl PathLikeExt for PathLike<'_> {
         ctx: &JSGlobalObject,
         arguments: &mut ArgumentsSlice,
     ) -> JsResult<Option<PathLike<'static>>> {
+        // The common road: a string, and no folder of an executable to start from.
+        let Some(arg) = arguments.next() else {
+            return Ok(None);
+        };
+        if arg.js_type() == jsc::JSType::String
+            && bun_core::working_directory_in_executable().is_none()
+        {
+            let str = arg.to_bun_string(ctx)?;
+            arguments.eat();
+            let path = path_like_from_string(ctx, str, arguments.will_be_async)?;
+            return Valid::path_length(path, ctx, arguments).map(Some);
+        }
         Self::from_js_resolved_by(ctx, arguments, RelativePaths::StartAtWorkingDirectory)
     }
 

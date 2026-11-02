@@ -1,4 +1,4 @@
-# A function that is a value and has text has an entry under its generic entrypoint: its range in the retained text, which is the union of those ranges, module after module, so a nested or overlapping range adds no byte twice. A function that is never a value, one without text and one in a module of the runtime have none
+# A function that is a value and has text has an entry under its generic entrypoint: its range in the retained text, which is the union of those ranges, module after module, so a nested or overlapping range adds no byte twice. A function that is never a value and can stand in a frame has one under its own number, because an error quotes from it. One without text and one in a module of the runtime have none
 # OPTIONS: disable=pass:InlineCalls
 # RUN: tables functions function-texts
 # RUN(SIZES): tables
@@ -73,6 +73,7 @@ function f10 name="runtime" module=m2 kind=Module results=[{type=anything}] {
     Return
 }
 
+# CHECK: function [[neverAValue]] name="neverAValue"
 # CHECK: function [[afterGap]] name="afterGap" {{*}}length=
 # CHECK: function [[nested]] name="nested" {{*}}length=
 # CHECK: function [[outer]] name="outer" {{*}}length=
@@ -81,11 +82,12 @@ function f10 name="runtime" module=m2 kind=Module results=[{type=anything}] {
 # CHECK: function {{*}}name="withoutText" {{*}}length=
 # CHECK: function {{*}}name="inRuntimeModule" {{*}}length=
 # CHECK-NOT: ..
-# CHECK: [[afterGap]] 5..7 "89"
+# CHECK: [[afterGap]] 7..9 "89"
 # CHECK-NEXT: [[nested]] 1..3 "23"
 # CHECK-NEXT: [[outer]] 0..5 "12345"
-# CHECK-NEXT: [[overlapsPrevious]] 9..14 "defgh"
-# CHECK-NEXT: [[overlapsNext]] 7..11 "bcde"
+# CHECK-NEXT: [[neverAValue]] 5..7 "67"
+# CHECK-NEXT: [[overlapsPrevious]] 11..16 "defgh"
+# CHECK-NEXT: [[overlapsNext]] 9..13 "bcde"
 # CHECK-NOT: ..
 # SIZES: magic ok
-# SIZES: functionTexts 1 12
+# SIZES: functionTexts 1 24

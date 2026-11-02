@@ -124,7 +124,7 @@ row("a default's closure, a var over it with a value", () => { function o(p, q =
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="self"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsSloppy] captures=[{type=[[L_3]] flags=[IsExpected]}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_4]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsSloppy] captures=[{type=[[L_3]] flags=[IsExpected] variableName="this"}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_4]]] {
 // CHECK-NEXT: b0(v0: [[L_3]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

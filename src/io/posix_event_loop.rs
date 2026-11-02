@@ -623,7 +623,7 @@ impl FilePoll {
             }
 
             // Note: libc::epoll_event flattens the data union to a single `u64` field.
-            let mut event = linux::epoll_event {
+            let event = linux::epoll_event {
                 events: flags,
                 u64: Pollable::init(self).ptr() as u64,
             };
@@ -634,8 +634,7 @@ impl FilePoll {
                 EPOLL::CTL_ADD
             };
 
-            // SAFETY: FFI syscall; `event` is a stack-local valid for the call.
-            let ctl = unsafe { linux::epoll_ctl(watcher_fd, op, fd.native(), &raw mut event) };
+            let ctl = linux::epoll_ctl(watcher_fd, op, fd.native(), Some(&event));
             self.flags.insert(Flags::WasEverRegistered);
             if let Some(errno) = errno_sys(ctl, sys::Tag::epoll_ctl) {
                 self.deactivate(loop_);
@@ -949,10 +948,7 @@ impl FilePoll {
         {
             use bun_sys::linux::{self, EPOLL};
             // CTL_DEL keys on fd alone, so both directions are removed together.
-            // SAFETY: FFI syscall; null event is valid for CTL_DEL on Linux ≥2.6.9.
-            let ctl = unsafe {
-                linux::epoll_ctl(watcher_fd, EPOLL::CTL_DEL, fd.native(), ptr::null_mut())
-            };
+            let ctl = linux::epoll_ctl(watcher_fd, EPOLL::CTL_DEL, fd.native(), None);
 
             match sys::get_errno(ctl) {
                 sys::E::SUCCESS => {}
@@ -1328,6 +1324,24 @@ impl Store {
         }
         self.pending_free_head = ptr::null_mut();
         self.pending_free_tail = ptr::null_mut();
+    }
+
+    /// Counts fired one-shot polls awaiting rearm. They're still in the JS loop's `num_polls` but can't fire.
+    pub fn disarmed_count(&self) -> i32 {
+        let mut count = 0;
+        let mut used = self.hive.hive.used.iter_set();
+        while let Some(index) = used.next() {
+            let poll = self.hive.hive.ptr_at(index);
+            // SAFETY: slots are only claimed through `get_init`, so a used slot is initialized; this only reads `Copy` fields.
+            let (flags, allocator_type) = unsafe { ((*poll).flags, (*poll).allocator_type) };
+            count += i32::from(
+                allocator_type == AllocatorType::Js
+                    && flags.contains(Flags::HasIncrementedPollCount)
+                    && flags.contains(Flags::NeedsRearm)
+                    && !flags.contains(Flags::HasIncrementedActiveCount),
+            );
+        }
+        count
     }
 
     /// `poll` is a live, fully-initialized slot in `self.hive`. It may point

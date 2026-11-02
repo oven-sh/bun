@@ -47,11 +47,12 @@ import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs"
 import path from "path";
 import { builtinFunctionIds, firstBuiltinFunctionId } from "./builtin-function-ids";
 import { sliceSourceCode } from "./builtin-parser";
+import type { SourceMap } from "./bundled-names";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { getJS2NativeDTS } from "./generate-js2native";
 import { cap, checkAscii, low, writeIfNotChanged } from "./helpers";
 import { beginGuardedBody, endGuardedBody, removableFeatures } from "./removable-entry-points.ts";
-import { applyGlobalReplacements, define } from "./replacements";
+import { applyGlobalReplacements, assertNoDestructuredGlobalThis, define } from "./replacements";
 
 const PARALLEL = false;
 const KEEP_TMP = true;
@@ -87,6 +88,11 @@ interface BundledBuiltin {
   params: string[];
   visibility: string;
   sourceOffset: number;
+  /** What the bundler made, of which `source` is a part with pieces replaced, and its map. */
+  output: string;
+  sourceMap: SourceMap;
+  /** How many functions the file writes in front of it. */
+  numberInFile: number;
 }
 
 function builtinSourceMetadata(source: string): (number | boolean)[] {
@@ -342,15 +348,20 @@ $$capture_start$$(${fn.async ? "async " : ""}${
       define,
       target: "bun",
       minify: { syntax: true, whitespace: false, keepNames: true },
+      sourcemap: "external",
     });
     // TODO: Wait a few versions before removing this
     if (!build.success) {
       throw new AggregateError(build.logs, "Failed bundling builtin function " + fn.name + " from " + basename + ".ts");
     }
-    if (build.outputs.length !== 1) {
-      throw new Error("expected one output");
+    const [made, ...others] = build.outputs.filter(it => it.kind !== "sourcemap");
+    if (others.length !== 0 || !made?.sourcemap) {
+      throw new Error("expected one output and its source map");
     }
-    let output = (await build.outputs[0].text()).replaceAll("// @bun\n", "");
+    const bundled = await made.text();
+    const sourceMap: SourceMap = await made.sourcemap.json();
+    let output = bundled.replaceAll("// @bun\n", "");
+    assertNoDestructuredGlobalThis(output, `${basename}.ts (${fn.name})`);
     let usesDebug = output.includes("$debug_log");
     let usesAssert = output.includes("$assert");
     const captured = output.match(/\$\$capture_start\$\$([\s\S]+)\.\$\$capture_end\$\$/)![1];
@@ -383,6 +394,9 @@ $$capture_start$$(${fn.async ? "async " : ""}${
 
       // Not known yet.
       sourceOffset: 0,
+      output: bundled,
+      sourceMap,
+      numberInFile: bundledFunctions.length,
 
       overriddenName: fn.directives.getter
         ? `"get ${fn.name}"_s`
@@ -939,5 +953,5 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
   // bundle-modules.ts prepends this to InternalModuleRegistryConstants.bin so the
   // same linked blob carries both the builtin function sources and the internal
   // module sources. `privateNames` lists every private name registered by BunBuiltinNames.
-  return { combinedSourceCode, privateNames };
+  return { combinedSourceCode, privateNames, files };
 }

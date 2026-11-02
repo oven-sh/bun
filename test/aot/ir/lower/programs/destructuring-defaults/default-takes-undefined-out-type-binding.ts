@@ -217,7 +217,7 @@ export {};
 // CHECK-NEXT: Return v2
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="read"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] captures=[{type=number site=[[w_20]]}] thisType={type=anything} results=[{type=number site=[[w_21]]}] functionTypes={{*}}[[f_7]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] captures=[{type=number site=[[w_20]] variableName="c"}] thisType={type=anything} results=[{type=number site=[[w_21]]}] functionTypes={{*}}[[f_7]]] {
 // CHECK-NEXT: b0(v0: number):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

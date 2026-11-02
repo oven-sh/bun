@@ -290,6 +290,31 @@ pub fn program(code_of_this_process: &[Range<u64>], libraries: Libraries) -> Vec
     filter.finish()
 }
 
+/// The services that /etc/nsswitch.conf lists for `databases`. glibc loads `libnss_<service>.so.2` at the first lookup.
+pub fn name_services<'a>(configuration: &'a [u8], databases: &[&[u8]]) -> Vec<&'a [u8]> {
+    use bun_core::strings::{split, split_once_char, tokenize_any};
+    let mut services: Vec<&[u8]> = Vec::new();
+    for line in split(configuration, b"\n") {
+        let line = split(line, b"#").next().unwrap_or_default();
+        let Some((database, list)) = split_once_char(line, b':') else {
+            continue;
+        };
+        if !databases.contains(&database.trim_ascii()) {
+            continue;
+        }
+        // `[NOTFOUND=return]` follows a service.
+        for part in split(list, b"]") {
+            let names = split(part, b"[").next().unwrap_or_default();
+            for name in tokenize_any(names, b" \t\r") {
+                if !services.contains(&name) {
+                    services.push(name);
+                }
+            }
+        }
+    }
+    services
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -645,5 +670,31 @@ mod tests {
             ),
             ALLOW
         );
+    }
+
+    #[test]
+    fn name_services_reads_nsswitch_conf() {
+        let configuration = b"# hosts: commented\n\
+            passwd:     sss files systemd\n\
+            shadow:     ldap\n\
+            \thosts : files mdns4_minimal [NOTFOUND=return] resolve[!UNAVAIL=return TRYAGAIN=continue]dns # myhostname\n\
+            group:sss files\n\
+            services\n\
+            hosts_of_others: nis";
+        let names = |databases: &[&[u8]]| name_services(configuration, databases);
+        assert_eq!(
+            names(&[b"hosts", b"passwd", b"group", b"services"]),
+            [
+                &b"sss"[..],
+                b"files",
+                b"systemd",
+                b"mdns4_minimal",
+                b"resolve",
+                b"dns"
+            ]
+        );
+        assert_eq!(names(&[b"shadow"]), [b"ldap"]);
+        assert!(names(&[b"netgroup"]).is_empty());
+        assert!(name_services(b"", &[b"hosts"]).is_empty());
     }
 }

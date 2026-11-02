@@ -589,6 +589,30 @@ if (!Bun.isMainThread) {
 }
 `;
 
+// The table that finds the Symbol of a key has a power of two of buckets and asks for all of its next size at once.
+const keepsSymbolsWhereTheirTableFindsNoRoom = `const [first, last] = process.argv.slice(2).map(Number);
+const symbols: symbol[] = new Array(last);
+let count = 0;
+while (count < first) symbols[count++] = Symbol();
+// No piece as large as a table of that many Symbols stays free, and there is room for whatever is small.
+const held: ArrayBuffer[] = [];
+for (const megabytes of [64, 32, 16, 8]) {
+  try {
+    for (;;) held.push(new ArrayBuffer(megabytes * 1024 * 1024));
+  } catch {}
+}
+try {
+  while (count < last) symbols[count++] = Symbol();
+  console.log("no error");
+} catch (error) {
+  console.log(error instanceof RangeError, count < last);
+}
+held.length = 0;
+Bun.gc(true);
+while (count < last) symbols[count++] = Symbol();
+console.log(count, symbols[0] !== symbols[last - 1]);
+`;
+
 // More shapes of objects than the table that finds properties by name has rows for at first.
 const readsManyShapesByName = `const objects: any[] = [];
 for (let i = 0; i < 120_000; i++) {
@@ -951,6 +975,25 @@ export function workersWithinAddressSpaceLimit(part: number, parts: number) {
         });
       },
       120_000,
+    );
+
+    test.skipIf(!isLinux || isASAN).each(
+      dealt([
+        // It has grown ahead of need.
+        ["passes a power of two", 1_040_000, 1_060_000, "no error\n1060000 true\n"],
+        // It is time to grow.
+        ["fills three eighths of the buckets", 1_560_000, 1_600_000, "true true\n1600000 true\n"],
+      ] as const),
+    )(
+      "a program goes on where the number of its Symbols %s and their table finds no room to grow",
+      async (_, first, last, stdout) => {
+        const limits = [1280, 1792].map(megabytes => megabytes * 1024);
+        const results = await runWithinEach(limits, keepsSymbolsWhereTheirTableFindsNoRoom, String(first), String(last));
+        expect(results.map((result, i) => ({ limit: limits[i], ...result }))).toEqual(
+          limits.map(limit => ({ limit, stdout, stderr: "", exitCode: 0 })),
+        );
+      },
+      240_000,
     );
   });
 }

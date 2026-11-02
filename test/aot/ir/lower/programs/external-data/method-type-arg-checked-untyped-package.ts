@@ -117,7 +117,7 @@ export function any() {
 // CHECK-NEXT: Return v31
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="resolve"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 captures=[{type=undefined|null|[[f_13]] flags=[IsExpected]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes={{*}}[[f_14]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 captures=[{type=undefined|null|[[f_13]] flags=[IsExpected] variableName="resolve"}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes={{*}}[[f_14]]] {
 // CHECK-NEXT: b0(v0: undefined|null|[[f_13]], v1: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

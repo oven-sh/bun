@@ -11,17 +11,17 @@ use bun_lint_oxlint::ast_util::static_name;
 /// Enforce sandbox attribute on iframe elements
 pub struct IframeMissingSandbox;
 
-const ATTRIBUTE_MISSING: Message = Message::new("attributeMissing", "An iframe element is missing a sandbox attribute");
-const INVALID_VALUE: Message =
-    Message::new("invalidValue", "An iframe element defines a sandbox attribute with invalid value \"{{ value }}\"");
-const INVALID_COMBINATION: Message = Message::new(
+const ATTRIBUTE_MISSING: &Message = &Message::new("attributeMissing", "An iframe element is missing a sandbox attribute");
+const INVALID_VALUE: &Message =
+    &Message::new("invalidValue", "An iframe element defines a sandbox attribute with invalid value \"{{ value }}\"");
+const INVALID_COMBINATION: &Message = &Message::new(
     "invalidCombination",
     "An iframe element defines a sandbox attribute with both allow-scripts and allow-same-origin which is invalid",
 );
-const MISSING_SANDBOX_PROP: Message = Message::new("", "An iframe element is missing a sandbox attribute");
-const INVALID_SANDBOX_PROP: Message =
-    Message::new("", "An iframe element defines a sandbox attribute with invalid value: {{value}}");
-const INVALID_SANDBOX_COMBINATION_PROP: Message = Message::new(
+const MISSING_SANDBOX_PROP: &Message = &Message::new("", "An iframe element is missing a sandbox attribute");
+const INVALID_SANDBOX_PROP: &Message =
+    &Message::new("", "An iframe element defines a sandbox attribute with invalid value: {{value}}");
+const INVALID_SANDBOX_COMBINATION_PROP: &Message = &Message::new(
     "",
     "An `iframe` element defines a sandbox attribute with both allow-scripts and allow-same-origin which is invalid",
 );

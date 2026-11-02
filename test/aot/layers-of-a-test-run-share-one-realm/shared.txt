@@ -1,0 +1,43 @@
+import events, { EventEmitter, errorMonitor } from "node:events";
+import stream, { Readable, Writable, PassThrough } from "node:stream";
+import util from "node:util";
+import fs from "node:fs";
+import path from "node:path";
+import { AsyncLocalStorage, AsyncResource } from "node:async_hooks";
+import { Buffer as NodeBuffer } from "node:buffer";
+import assert from "node:assert";
+import timers from "node:timers";
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+export const things = () => ({
+  events, EventEmitter, errorMonitor, stream, Readable, Writable, PassThrough, util, inspect: util.inspect, custom: util.inspect.custom, promisify: util.promisify, fs, readFileSync: fs.readFileSync, promises: fs.promises, path, join: path.join,
+  AsyncLocalStorage, AsyncResource, NodeBuffer, Buffer, assert, AssertionError: assert.AssertionError, timers, required: require("node:events"), requiredStream: require("node:stream"), requiredOs: require("node:os"),
+  stdout: process.stdout, stderr: process.stderr, stdin: process.stdin, env: process.env, nextTick: process.nextTick, process, console, log: console.log, globalThis,
+  setTimeout, clearTimeout, setImmediate, queueMicrotask, structuredClone, fetch, Response, Request, Headers, URL, URLSearchParams, Blob, ReadableStream, WritableStream, TransformStream, TextEncoder, TextDecoder, AbortController, AbortSignal, EventTarget, Event,
+  performance, crypto, subtle: crypto.subtle, navigator, Bun, BunFile: Bun.file, BunStdout: Bun.stdout, BunEnv: Bun.env,
+  ArrayPrototype: Array.prototype, ObjectPrototype: Object.prototype, FunctionPrototype: Function.prototype, PromisePrototype: Promise.prototype, ErrorPrototype: Error.prototype, iteratorPrototype: Object.getPrototypeOf(Object.getPrototypeOf([][Symbol.iterator]())),
+  generatorPrototype: Object.getPrototypeOf(function* () {}), asyncFunctionPrototype: Object.getPrototypeOf(async function () {}), typedArray: Object.getPrototypeOf(Uint8Array), symbolFor: Symbol.for("shared"), asyncIterator: Symbol.asyncIterator,
+  readablePrototype: Readable.prototype, emitterPrototype: EventEmitter.prototype, on: EventEmitter.prototype.on, emit: EventEmitter.prototype.emit, bufferFrom: Buffer.from, bufferPrototype: Buffer.prototype,
+});
+export const make = {
+  emitter: () => new EventEmitter(), readable: () => Readable.from(["a"]), through: () => new PassThrough(), buffer: () => Buffer.from("a"), error: () => new Error("made"), assertion: () => { try { assert.equal(1, 2); } catch (error) { return error; } },
+  promise: () => Promise.resolve(1), asyncResult: async () => 1, map: () => new Map(), date: () => new Date(0), regexp: () => /a/, url: () => new URL("http://a/"), response: () => new Response("a"), controller: () => new AbortController(), storage: () => new AsyncLocalStorage(),
+  array: () => [1], object: () => ({}), bytes: () => new Uint8Array(1), generator: () => (function* () { yield 1; })(), webStream: () => new ReadableStream(), blob: () => new Blob(["a"]), event: () => new Event("x"), timer: () => { const timer = setTimeout(() => {}, 1); clearTimeout(timer); return timer; },
+};
+export const is = {
+  emitter: value => value instanceof EventEmitter, readable: value => value instanceof Readable, through: value => value instanceof PassThrough && value instanceof stream.Duplex, buffer: value => value instanceof Buffer && Buffer.isBuffer(value) && value instanceof Uint8Array, error: value => value instanceof Error && util.types.isNativeError(value),
+  assertion: value => value instanceof assert.AssertionError && value.code === "ERR_ASSERTION", promise: value => value instanceof Promise && util.types.isPromise(value), asyncResult: value => value instanceof Promise, map: value => value instanceof Map, date: value => value instanceof Date, regexp: value => value instanceof RegExp,
+  url: value => value instanceof URL, response: value => value instanceof Response, controller: value => value instanceof AbortController && value.signal instanceof AbortSignal && value.signal instanceof EventTarget, storage: value => value instanceof AsyncLocalStorage, array: value => value instanceof Array && Array.isArray(value),
+  object: value => value instanceof Object && Object.getPrototypeOf(value) === Object.prototype, bytes: value => value instanceof Uint8Array && ArrayBuffer.isView(value), generator: value => typeof value.next === "function" && value[Symbol.iterator]() === value, webStream: value => value instanceof ReadableStream, blob: value => value instanceof Blob, event: value => value instanceof Event,
+  timer: value => typeof value.ref === "function" && value.constructor === setTimeout(() => {}, 0).constructor,
+};
+export const storage = new AsyncLocalStorage();
+export const state = {
+  stored: () => storage.getStore(), storedOf: other => other.getStore(), runIn: (other, value, body) => other.run(value, body),
+  tick: (order, name) => process.nextTick(() => order.push("tick " + name)), micro: (order, name) => queueMicrotask(() => order.push("micro " + name)), resolved: (order, name) => Promise.resolve().then(() => order.push("then " + name)), immediate: (order, name) => setImmediate(() => order.push("immediate " + name)), timeout: (order, name) => setTimeout(() => order.push("timeout " + name), 0),
+  maxListeners: () => EventEmitter.defaultMaxListeners + " " + events.defaultMaxListeners + " " + new EventEmitter().getMaxListeners(), setMaxListeners: count => { EventEmitter.defaultMaxListeners = count; },
+  stackLimit: () => Error.stackTraceLimit, framesOfNew: () => new Error("x").stack.split("\n").length, prepared: () => { const stack = new Error("x").stack; return typeof stack === "string" ? "text" : String(stack); },
+  inspectDepth: () => util.inspect.defaultOptions.depth + " " + util.inspect({ a: { b: { c: { d: 1 } } } }), inspected: value => util.inspect(value), env: name => process.env[name] + " " + Bun.env[name], setEnv: (name, value) => { process.env[name] = value; },
+  global: name => typeof globalThis[name] + " " + String(globalThis[name]), setGlobal: (name, value) => { globalThis[name] = value; }, poolSize: () => Buffer.poolSize, listeners: name => process.listenerCount(name), cwd: () => process.cwd() === path.resolve("."), symbol: description => Symbol.for(description),
+  prototypeHas: name => typeof [][name] + " " + typeof ({})[name] + " " + typeof (() => {})[name] + " " + typeof ""[name], captureRejections: () => events.captureRejections, title: () => typeof process.title,
+};

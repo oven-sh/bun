@@ -87,6 +87,8 @@ struct ParseSettings<'a> {
     attach_comments: bool,
     /// `Options::compiles`
     compiles: bool,
+    /// `Options::reads_as_bun_run`
+    reads_as_bun_run: bool,
     /// `Options::keeps_function_directives`
     keeps_function_directives: bool,
     /// `Options::skips_function_blocks`
@@ -266,6 +268,7 @@ fn parse_file_as(
         part: None,
         attach_comments: how.attach_comments,
         compiles: how.compiles,
+        reads_as_bun_run: how.reads_as_bun_run,
         keeps_function_directives: how.keeps_function_directives,
         skips_function_blocks: how.skips_function_blocks,
         reads_module_statements_alone: how.reads_module_statements_alone,
@@ -437,6 +440,7 @@ pub fn summarize<'s>(
     atoms: &Interner<'s>,
     experimental_decorators: bool,
     every_file_is_a_module: bool,
+    reads_as_bun_run: bool,
 ) -> File<'s> {
     let how = ParseSettings {
         dialect: Dialect::default(),
@@ -447,6 +451,7 @@ pub fn summarize<'s>(
         jsdoc: JsDoc::Read,
         attach_comments: false,
         compiles: false,
+        reads_as_bun_run,
         keeps_function_directives: false,
         skips_function_blocks: false,
         reads_module_statements_alone: false,
@@ -466,6 +471,7 @@ pub fn summarize_top_level<'s>(
     atoms: &Interner<'s>,
     experimental_decorators: bool,
     every_file_is_a_module: bool,
+    reads_as_bun_run: bool,
 ) -> Option<File<'s>> {
     let kind = script_kind.or_else(|| ScriptKind::from_file_name(path))?;
     if kind.is_javascript()
@@ -484,6 +490,7 @@ pub fn summarize_top_level<'s>(
             jsdoc: JsDoc::Read,
             attach_comments: false,
             compiles: false,
+            reads_as_bun_run,
             keeps_function_directives: false,
             skips_function_blocks: true,
             reads_module_statements_alone,
@@ -546,6 +553,7 @@ pub fn summarize_in<'s>(
         jsdoc: JsDoc::Ignored,
         attach_comments: false,
         compiles: false,
+        reads_as_bun_run: false,
         keeps_function_directives: false,
         skips_function_blocks: false,
         reads_module_statements_alone: false,
@@ -640,6 +648,7 @@ pub fn with_summary_in_place<'s, R>(
         jsdoc: JsDoc::Ignored,
         attach_comments,
         compiles: false,
+        reads_as_bun_run: false,
         keeps_function_directives: false,
         skips_function_blocks: false,
         reads_module_statements_alone: false,

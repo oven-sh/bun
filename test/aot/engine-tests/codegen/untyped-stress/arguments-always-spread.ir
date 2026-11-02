@@ -202,81 +202,12 @@ function f16 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} re
 # CHECK-NEXT: BB#0: ; frequency = 1.000000
 # CHECK-NEXT: Int64 b@18 = ArgumentReg(%rdi)
 # CHECK-NEXT: Int32 b@19 = Trunc(b@18)
-# CHECK-NEXT: Int64 b@20 = ArgumentReg(%rsi)
-# CHECK-NEXT: Int32 b@21 = Trunc(b@20)
-# CHECK-NEXT: Int64 b@22 = ArgumentReg(%rdx)
-# CHECK-NEXT: Int32 b@23 = Trunc(b@22)
-# CHECK-NEXT: Int64 b@24 = ArgumentReg(%rcx)
-# CHECK-NEXT: Int32 b@25 = Trunc(b@24)
-# CHECK-NEXT: Int64 b@26 = ArgumentReg(%r8)
-# CHECK-NEXT: Int32 b@27 = Trunc(b@26)
-# CHECK-NEXT: Int64 b@28 = ArgumentReg(%r9)
-# CHECK-NEXT: Int32 b@29 = Trunc(b@28)
-# CHECK-NEXT: Int64 b@30 = ArgumentReg(%rax)
-# CHECK-NEXT: Int32 b@31 = Trunc(b@30)
-# CHECK-NEXT: Int64 b@32 = ArgumentReg(%r10)
-# CHECK-NEXT: Int32 b@33 = Trunc(b@32)
-# CHECK-NEXT: Int64 b@34 = FramePointer()
-# CHECK-NEXT: Int32 b@35 = Load(b@34, offset = 16, ControlDependent|Reads:argumentBuffer)
-# CHECK-NEXT: Int32 b@40 = Const32(9, v9:Integer)
-# CHECK-NEXT: Int32 b@41 = BitXor(b@25, $9(b@40), v10:BitXor)
-# CHECK-NEXT: Int32 b@42 = BitOr(b@27, b@29, v11:BitOr)
-# CHECK-NEXT: Int32 b@43 = Add(b@41, b@42, v12:Add)
-# CHECK-NEXT: Int32 b@17 = Const32(274877907, v14:Mod)
-# CHECK-NEXT: Int32 b@16 = UMulHigh(b@43, $274877907(b@17), v14:Mod)
-# CHECK-NEXT: Int32 b@48 = Const32(6, v15:Integer)
-# CHECK-NEXT: Int32 b@14 = ZShr(b@16, $6(b@48), v14:Mod)
-# CHECK-NEXT: Int32 b@44 = Const32(1000, v13:Integer)
-# CHECK-NEXT: Int32 b@46 = Mul(b@14, $1000(b@44), v14:Mod)
-# CHECK-NEXT: Int32 b@13 = Sub(b@42, b@46, v14:Mod)
-# CHECK-NEXT: Int32 b@12 = Add(b@13, b@41, v14:Mod)
-# CHECK-NEXT: Int32 b@49 = BitAnd(b@33, b@35, v16:BitAnd)
-# CHECK-NEXT: Int32 b@51 = Const32(1, v18:Integer)
-# CHECK-NEXT: Int32 b@54 = SShr(b@12, $1(b@51), v19:RShift)
-# CHECK-NEXT: Int32 b@11 = Sub($6(b@48), b@54, v20:Sub)
-# CHECK-NEXT: Int32 b@10 = Add(b@11, b@49, v20:Sub)
-# CHECK-NEXT: Int32 b@56 = Add(b@10, b@12, v21:Add)
-# CHECK-NEXT: Int32 b@9 = LessThan(b@23, b@56, v22:Greater)
-# CHECK-NEXT: Void b@62 = Branch(b@9, Terminal, v22:Greater)
-# CHECK-NEXT: Successors: Then:#5, Else:#6
-# CHECK-NEXT: BB#5: ; frequency = 0.500000
-# CHECK-NEXT: Predecessors: #0
-# CHECK-NEXT: Int32 b@37 = Sub(b@41, b@23, v24:Sub)
-# CHECK-NEXT: Int32 b@59 = Add(b@13, b@37, v24:Sub)
-# CHECK-NEXT: Int32 b@7 = Add(b@10, b@59, v24:Sub)
-# CHECK-NEXT: Void b@64 = Upsilon(b@7, ^38, WritesLocalState)
-# CHECK-NEXT: Void b@65 = Jump(Terminal)
-# CHECK-NEXT: Successors: #4
-# CHECK-NEXT: BB#4: ; frequency = 1.000000
-# CHECK-NEXT: Predecessors: #6, #5
-# CHECK-NEXT: Int32 b@38 = Phi(ReadsLocalState, v27:Parameter)
-# CHECK-NEXT: Int32 b@69 = Add(b@19, b@38, v28:Add)
-# CHECK-NEXT: Int32 b@70 = Add(b@21, b@69, v29:Add)
-# CHECK-NEXT: Int32 b@71 = Add(b@23, b@70, v30:Add)
-# CHECK-NEXT: Int32 b@72 = Add(b@25, b@71, v31:Add)
-# CHECK-NEXT: Int32 b@73 = Add(b@27, b@72, v32:Add)
-# CHECK-NEXT: Int32 b@74 = Add(b@29, b@73, v33:Add)
-# CHECK-NEXT: Int32 b@75 = Add(b@31, b@74, v34:Add)
-# CHECK-NEXT: Int32 b@76 = Add(b@33, b@75, v35:Add)
-# CHECK-NEXT: Int64 b@77 = ZExt32(b@76, v36:Add)
-# CHECK-NEXT: Int64 b@78 = SExt32(b@35, v36:Add)
-# CHECK-NEXT: Int64 b@79 = Add(b@77, b@78, v36:Add)
-# CHECK-NEXT: Double b@80 = IToD(b@79)
-# CHECK-NEXT: Void b@81 = Return(b@80, Terminal)
-# CHECK-NEXT: BB#6: ; frequency = 0.500000
-# CHECK-NEXT: Predecessors: #0
-# CHECK-NEXT: Int32 b@66 = Add(b@23, b@56, v26:Add)
-# CHECK-NEXT: Void b@67 = Upsilon(b@66, ^38, WritesLocalState)
-# CHECK-NEXT: Void b@68 = Jump(Terminal)
-# CHECK-NEXT: Successors: #4
-# CHECK-NEXT: Known properties:
-# CHECK-NEXT: b@19: range = [5,5]
-# CHECK-NEXT: b@21: range = [1,1]
-# CHECK-NEXT: b@23: range = [2,2]
-# CHECK-NEXT: b@25: range = [3,3]
-# CHECK-NEXT: b@27: range = [4,4]
-# CHECK-NEXT: b@29: range = [5,5]
-# CHECK-NEXT: b@31: range = [6,6]
-# CHECK-NEXT: b@33: range = [7,7]
-# CHECK-NEXT: b@38: range = [-3,33]
-# CHECK-NEXT: end of function f5
+# CHECK-NEXT: Int32 b@30 = Const32(7, v7:Integer)
+# CHECK-NEXT: Int32 b@39 = BitAnd(b@19, $7(b@30), v16:BitAnd)
+# CHECK-NEXT: Int64 b@67 = SExt32(b@19, v36:Add)
+# CHECK-NEXT: Int64 b@72 = ZExt32(b@39, v36:Add)
+# CHECK-NEXT: Int64 b@73 = Add(b@67, b@72, v36:Add)
+# CHECK-NEXT: Int64 b@74 = Const64(45, v36:Add)
+# CHECK-NEXT: Int64 b@68 = Add(b@73, $45(b@74), v36:Add)
+# CHECK-NEXT: Void b@69 = Return(b@68, Terminal)
+# CHECK-NEXT: end of function f23

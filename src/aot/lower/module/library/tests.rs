@@ -18,7 +18,8 @@ use super::{
 };
 use crate::builtins::id::RuntimeFunction;
 use crate::builtins::{
-    BuiltinNames, ImportTargets, Platforms, ResolveInput, SourceDialect, resolve_file, table,
+    BuiltinNames, ImportTargets, Platforms, ReplacedMembersSought, ResolveInput, SourceDialect,
+    resolve_file, table,
 };
 use crate::compile::testing::lower_program;
 use crate::diagnostic_codes::Code;
@@ -75,6 +76,8 @@ fn with_runtime_source<R>(text: &str, then: impl FnOnce(&LibrarySource<'_, '_>) 
         names: &names,
         platform: Platforms::LINUX,
         dialect: SourceDialect::Runtime,
+        replaced: &[],
+        replaced_members_sought: ReplacedMembersSought::None,
     });
     then(&LibrarySource {
         hir: &hir,
@@ -133,6 +136,7 @@ fn lower_library_file_for(
         removable: Default::default(),
         minifies_identifiers: false,
         obfuscates: false,
+        counts_executions: false,
     };
     let mut lowered = lower_program(&files, options);
     assert_eq!(lowered.len(), 2, "the entry point and the library file");

@@ -5,6 +5,7 @@ use core::mem::take;
 use std::sync::Arc;
 
 /// The functions of the program where lowering made them, a list for each unit, and what maps the ids of each unit.
+/// Their code is still packed.
 #[derive(Default)]
 pub struct BodyRemap {
     units: Vec<UnitIds>,
@@ -50,6 +51,7 @@ impl BodyRemap {
                 .map(|function| {
                     let mut function = Arc::unwrap_or_clone(function);
                     let function_types = take(&mut function.function_types);
+                    function.body.unpack_code();
                     function.remap_ids(&map);
                     function.function_types = function_types;
                     function

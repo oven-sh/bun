@@ -94,11 +94,12 @@ const specsNotInTheExecutable = (dir: string) =>
       `SPEC ${name} | THROWS Cannot load '${join(dir, "node_modules/specs/build", `${name}.js`)}': it isn't in this executable`,
   );
 
-/** What a command reports of the project: the level, the code, the file and the line of each. */
+/** What a command reports with a code: the level and the code of each, and its file and line in the project where it names a place. */
 const reportsIn = (stderr: string, dir: string) =>
-  [...stderr.matchAll(/^(\w+): (TS\d+): .*\n +at (.+):(\d+):\d+$/gm)].map(
-    ([, level, code, file, line]) =>
-      `${level} ${code} ${file.replace(dir, "").replaceAll("\\", "/").replace(/^\//, "")}:${line}`,
+  [...stderr.matchAll(/^(\w+): (TS\d+): .*(?:\n +at (.+):(\d+):\d+$)?/gm)].map(([, level, code, file, line]) =>
+    file === undefined
+      ? `${level} ${code}`
+      : `${level} ${code} ${file.replace(dir, "").replaceAll("\\", "/").replace(/^\//, "")}:${line}`,
   );
 // Where the import path isn't a constant, and the executable may not load code from disk.
 const bothImportsMayThrow = ["warn TS100064 src/registry.ts:2", "warn TS100064 src/registry.ts:3"];
@@ -174,17 +175,6 @@ export function casesUnder(name: keyof typeof configs) {
     expect(told(compiledAway)).toEqual(quietly([...specs(specsOfNoPackage), ...compiledPlugins]));
   }, 240_000);
 
-  const withoutThePackage = Object.fromEntries(
-    Object.entries(filesOf(config)).filter(([path]) => !path.startsWith("node_modules/")),
-  );
-  // The words are for the compiler: what plain Bun says is asked once for both.
-  let saidByPlainBun: Promise<ReturnType<typeof toldOfTests>> | undefined;
-  const plainBunWithoutThePackage = () =>
-    (saidByPlainBun ??= (async () => {
-      using dir = tempDir("aot-computed-import-tsconfig-paths", withoutThePackage);
-      return toldOfTests(await run([bunExe(), "test", "--isolate"], String(dir), bunEnv), String(dir));
-    })());
-
   for (const words of ["TestRunLayers:0", "TestRunLayers:2,TestRunPartFiles:1"]) {
     // A file that runs from its text trips the wire. A file that the run itself writes anew is read from disk, as in plain Bun, so writing over it tells nothing.
     const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words, BUN_JSC_crashIfInterpreterIsUsed: "1" };
@@ -205,7 +195,9 @@ export function casesUnder(name: keyof typeof configs) {
     }, 120_000);
 
     test(`a test run under ${name} without the package says what bun test says (${words})`, async () => {
-      const plain = await plainBunWithoutThePackage();
+      const files = Object.entries(filesOf(config)).filter(([path]) => !path.startsWith("node_modules/"));
+      using dir = tempDir("aot-computed-import-tsconfig-paths", Object.fromEntries(files));
+      const plain = toldOfTests(await run([bunExe(), "test", "--isolate"], String(dir), bunEnv), String(dir));
       expect(plain).toEqual({
         printed: [
           expect.stringMatching(/^SPEC a \| THROWS Cannot find package 'specs' (imported )?from /),
@@ -213,9 +205,9 @@ export function casesUnder(name: keyof typeof configs) {
         ],
         ...bothFilesPass,
       });
-      using dir = tempDir("aot-computed-import-tsconfig-paths", withoutThePackage);
+      using again = tempDir("aot-computed-import-tsconfig-paths", Object.fromEntries(files));
       // The importer too: the files of a test run keep their paths.
-      await expectCompiledRun(String(dir), plain);
+      await expectCompiledRun(String(again), plain);
     }, 120_000);
   }
 }

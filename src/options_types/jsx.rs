@@ -184,8 +184,8 @@ pub struct Pragma {
 
     /// Configuration Priority:
     /// - `--define=process.env.NODE_ENV=...`
-    /// - `NODE_ENV=...`
-    /// - tsconfig.json's `compilerOptions.jsx` (`react-jsx`, `react-jsxdev`, or `preserve`)
+    /// - `BUN_ENV=...`, falling back to `NODE_ENV=...`
+    /// - `--jsx-runtime` or tsconfig.json's `compilerOptions.jsx` (`react-jsx` or `react-jsxdev`)
     pub development: bool,
     pub parse: bool,
     pub side_effects: bool,

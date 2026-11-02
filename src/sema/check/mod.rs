@@ -980,6 +980,7 @@ impl<'s> Program<'s> {
             variances_in_progress: Vec::new(),
             variances_marked_empty: Vec::new(),
             suspended_variances: Vec::new(),
+            older_than_markers: Vec::new(),
             in_progress_variance_reads: 0,
             variances_measured: Vec::new(),
             failed_type_argument: 0,
@@ -2104,6 +2105,10 @@ pub struct Checker<'p, 's> {
     variances_marked_empty: Vec<Sym>,
     /// Measurements suspended by a restart. Their marker types still count as marker types.
     suspended_variances: Vec<Sym>,
+    /// Types with a marker that were on the stacks of the comparison that started each nested
+    /// measurement in progress. They existed before that measurement's marker types. See
+    /// `is_at_least_as_new`.
+    older_than_markers: Vec<TypeId>,
     /// The entries cached since the outermost `variances_worker` call on the stack began.
     variances_measured: Vec<(Sym, &'s [u8])>,
     /// The computed names of `task.file` whose expression `GetConstantValue` was the first to

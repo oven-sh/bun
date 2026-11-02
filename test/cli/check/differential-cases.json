@@ -18892,5 +18892,24 @@
       "a.ts": "declare function box<A extends any[], R>(o: { f: (...args: A) => R; args: A }): R;\ndeclare const c: boolean;\nfunction h(this: unknown, p: string | number) {\n    return p;\n}\nlet s: string | number = 1;\nouter: for (;;) {\n    for (;;) {\n        s = h.apply(null, ([s]));\n        if (c) continue outer;\n        if (!c) break outer;\n    }\n}\nlet t: string | number = 1;\nouter: for (;;) {\n    for (;;) {\n        t = h.apply(null, c ? [t] : [t]);\n        if (c) continue outer;\n        if (!c) break outer;\n    }\n}\nlet u: string | number = 1;\nouter: for (;;) {\n    for (;;) {\n        u = box({ f: h, args: [u] });\n        if (c) continue outer;\n        if (!c) break outer;\n    }\n}\nconst sentinel: number = \"\";\nexport {};\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
     }
+  },
+  "nested-variance-measurement-meets-an-instantiation-of-the-outer-comparison": {
+    "files": {
+      "a.ts": "type Simplify<T> = { [K in keyof T]: T[K] } & {};\ninterface Config { name: string; data: unknown }\ndeclare class ColumnBuilder<T extends Config, TTypeConfig = {}> {\n    $type(): this & { _: { $type: unknown } };\n    $onUpdate: (fn: this[\"_\"] extends { $type: infer U } ? U : T[\"data\"]) => void;\n    _: Simplify<{ data: T[\"data\"] } & TTypeConfig>;\n}\ndeclare class PgColumnBuilder<T extends Config, TTypeConfig = {}> extends ColumnBuilder<T, TTypeConfig> {\n    array(): PgArrayBuilder<{ name: T[\"name\"]; data: unknown }, T>;\n}\ndeclare class PgArrayBuilder<T extends Config, TBase extends Config> extends PgColumnBuilder<T> {\n    config: PgColumnBuilder<TBase, TBase>;\n}\ndeclare class PgTextBuilder<T extends Config> extends PgColumnBuilder<T> {}\ndeclare const t1: PgTextBuilder<{ name: \"\"; data: string }>;\nexport const c: PgTextBuilder<{ name: string; data: string }> = t1;\nconst sentinel: number = \"\";\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
+  },
+  "nested-variance-measurement-meets-an-instantiation-of-the-outer-comparison-with-invariant-assignments": {
+    "files": {
+      "a.ts": "type Simplify<T> = { [K in keyof T]: T[K] } & {};\ninterface Config { name: string; data: unknown }\ndeclare class ColumnBuilder<T extends Config, TTypeConfig = {}> {\n    $type(): this & { _: { $type: unknown } };\n    $onUpdate: (fn: this[\"_\"] extends { $type: infer U } ? U : T[\"data\"]) => void;\n    _: Simplify<{ data: T[\"data\"] } & TTypeConfig>;\n}\ndeclare class PgColumnBuilder<T extends Config, TTypeConfig = {}> extends ColumnBuilder<T, TTypeConfig> {\n    array(): PgArrayBuilder<{ name: T[\"name\"]; data: unknown }, T>;\n}\ndeclare class PgArrayBuilder<T extends Config, TBase extends Config> extends PgColumnBuilder<T> {\n    config: PgColumnBuilder<TBase, TBase>;\n}\ndeclare class PgTextBuilder<T extends Config> extends PgColumnBuilder<T> {}\ndeclare const t1: PgTextBuilder<{ name: \"\"; data: string }>;\nexport const c: PgTextBuilder<{ name: string; data: string }> = t1;\ndeclare const p1: PgColumnBuilder<{ name: string; data: string }>;\nexport const d: PgColumnBuilder<{ name: \"\"; data: string }> = p1;\ndeclare const p2: PgColumnBuilder<{ name: \"\"; data: string }>;\nexport const e: PgColumnBuilder<{ name: string; data: string }> = p2;\nconst sentinel: number = \"\";\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
+  },
+  "nested-variance-measurement-meets-an-instantiation-of-the-outer-comparison-imported": {
+    "files": {
+      "a.ts": "import type { PgTextBuilder } from \"./builders\";\ndeclare const t1: PgTextBuilder<{ name: \"\"; data: string }>;\nexport const c: PgTextBuilder<{ name: string; data: string }> = t1;\nconst sentinel: number = \"\";\n",
+      "builders.ts": "type Simplify<T> = { [K in keyof T]: T[K] } & {};\ninterface Config { name: string; data: unknown }\nexport declare class ColumnBuilder<T extends Config, TTypeConfig = {}> {\n    $type(): this & { _: { $type: unknown } };\n    $onUpdate: (fn: this[\"_\"] extends { $type: infer U } ? U : T[\"data\"]) => void;\n    _: Simplify<{ data: T[\"data\"] } & TTypeConfig>;\n}\nexport declare class PgColumnBuilder<T extends Config, TTypeConfig = {}> extends ColumnBuilder<T, TTypeConfig> {\n    array(): PgArrayBuilder<{ name: T[\"name\"]; data: unknown }, T>;\n}\nexport declare class PgArrayBuilder<T extends Config, TBase extends Config> extends PgColumnBuilder<T> {\n    config: PgColumnBuilder<TBase, TBase>;\n}\nexport declare class PgTextBuilder<T extends Config> extends PgColumnBuilder<T> {}\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"], \"module\": \"esnext\", \"moduleResolution\": \"bundler\" } }\n"
+    }
   }
 }

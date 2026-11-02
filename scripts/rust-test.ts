@@ -165,7 +165,7 @@ if (extraArgs.length) {
 }
 
 // The crates of the list whose documentation has examples that run. `--no-run` builds none of them.
-const cratesWithExamples = ["bun_pod"];
+const cratesWithExamples = ["bun_collections", "bun_pod"];
 
 // It asks for a path below `/` that a test cannot create.
 const programArgs = ["--skip", "realpath_under_the_marked_root_stays_under_it"];

@@ -4,8 +4,8 @@ use core::cell::Cell;
 use core::ptr::NonNull;
 use std::borrow::Cow;
 
+use bun_collections::EnumSet;
 use bun_jsc::JsCell;
-use enumset::EnumSet;
 
 use super::response::HeadersRef;
 use crate::api::AnyRequestContext;
@@ -937,7 +937,7 @@ impl Request {
     }
 }
 
-#[derive(enumset::EnumSetType)]
+#[derive(Clone, Copy, PartialEq, Eq, bun_collections::EnumSetType)]
 enum Fields {
     Method,
     Headers,

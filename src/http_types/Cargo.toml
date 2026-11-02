@@ -12,7 +12,6 @@ workspace = true
 [dependencies]
 strum.workspace = true
 bstr.workspace = true
-enumset.workspace = true
 bun_alloc.workspace = true
 bun_core.workspace = true
 bun_collections.workspace = true

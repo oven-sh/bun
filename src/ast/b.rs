@@ -154,7 +154,7 @@ impl B {
                 raw(hasher, object.properties().len());
                 for property in object.properties().iter() {
                     raw(hasher, property.default_value.is_some());
-                    raw(hasher, property.flags.as_u8());
+                    raw(hasher, property.flags.bits());
                     if let Some(default) = &property.default_value {
                         default.data.write_to_hasher(hasher, symbol_table);
                     }

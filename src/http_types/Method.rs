@@ -1,8 +1,8 @@
-use enumset::EnumSet;
+use bun_collections::EnumSet;
 
 #[allow(non_camel_case_types)]
 #[repr(u8)]
-#[derive(enumset::EnumSetType, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, bun_collections::EnumSetType)]
 pub enum Method {
     ACL = 0,
     BIND = 1,
@@ -369,7 +369,7 @@ pub enum HeaderName {
 
 #[cfg(test)]
 mod tests {
-    use super::Method;
+    use super::{Method, Set};
 
     /// Exhaustive parity check for `Method::which`: every variant round-trips
     /// via its uppercase wire form and the all-lower convenience form, and
@@ -378,7 +378,7 @@ mod tests {
     /// compiles).
     #[test]
     fn which_roundtrip() {
-        for m in enumset::EnumSet::<Method>::all() {
+        for m in Set::all() {
             let upper = m.as_str();
             assert_eq!(Method::which(upper.as_bytes()), Some(m), "upper {upper}");
             let lower = upper.to_ascii_lowercase();

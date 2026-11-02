@@ -1545,7 +1545,7 @@ unsafe extern "Rust" {
     fn __bun_io_pollable_on_io_error(tag: PollableTag, poll: *mut Poll, err: &sys::Error);
 }
 
-#[derive(enumset::EnumSetType)]
+#[derive(Clone, Copy, PartialEq, Eq, bun_collections::EnumSetType)]
 pub enum Flags {
     // What are we asking the event loop about?
     /// Poll for readable events
@@ -1568,7 +1568,7 @@ pub enum Flags {
     Registered,
 }
 
-pub type FlagsSet = enumset::EnumSet<Flags>;
+pub type FlagsSet = bun_collections::EnumSet<Flags>;
 
 // A runtime parameter rather than a const generic: `adt_const_params`
 // is nightly-only and the body never uses ACTION in a type position — it just
@@ -1765,8 +1765,6 @@ impl Poll {
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    // `enumset::EnumSetType` cannot be a const generic, so `flag` is a runtime
-    // arg. The `match` below preserves the exhaustiveness check.
     pub(crate) fn register_for_epoll(
         &mut self,
         flag: Flags,

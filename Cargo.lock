@@ -262,7 +262,6 @@ dependencies = [
  "bun_wyhash",
  "const_format",
  "enum-map",
- "enumset",
  "strum",
  "thiserror",
 ]
@@ -463,6 +462,7 @@ dependencies = [
  "allocator-api2",
  "bun_alloc",
  "bun_core",
+ "bun_core_macros",
  "bun_ptr",
  "bun_simdutf_sys",
  "bun_wyhash",
@@ -619,7 +619,6 @@ dependencies = [
  "bun_sys",
  "bun_url",
  "bun_which",
- "enumset",
  "thiserror",
 ]
 
@@ -810,7 +809,6 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_url",
- "enumset",
  "strum",
 ]
 
@@ -936,7 +934,6 @@ dependencies = [
  "bun_sys",
  "bun_threading",
  "bun_uws_sys",
- "enumset",
  "libc",
  "scopeguard",
  "strum",
@@ -966,7 +963,6 @@ dependencies = [
  "bun_url",
  "bun_wyhash",
  "criterion",
- "enumset",
  "regex",
  "scopeguard",
  "smallvec",
@@ -1012,7 +1008,6 @@ dependencies = [
  "bun_wyhash",
  "const_format",
  "enum-map",
- "enumset",
  "scopeguard",
  "thiserror",
 ]
@@ -1505,7 +1500,6 @@ dependencies = [
  "bun_core",
  "bun_removable_features",
  "bun_threading",
- "enumset",
  "rustc-hash",
  "smallvec",
 ]
@@ -1560,7 +1554,6 @@ dependencies = [
  "bun_wyhash",
  "bun_zstd",
  "const_format",
- "enumset",
  "libc",
  "scopeguard",
  "strum",
@@ -1693,7 +1686,6 @@ dependencies = [
  "const_format",
  "encoding_rs",
  "enum-map",
- "enumset",
  "getrandom",
  "libc",
  "lol_html",
@@ -1935,11 +1927,11 @@ version = "0.0.0"
 dependencies = [
  "bstr",
  "bun_analytics",
+ "bun_collections",
  "bun_core",
  "bun_libuv_sys",
  "bun_sys",
  "bun_windows_sys",
- "enumset",
  "libc",
  "strum",
  "thiserror",
@@ -2481,40 +2473,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "darling"
-version = "0.21.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9cdf337090841a411e2a7f3deb9187445851f91b309c0c0a29e05f74a00a48c0"
-dependencies = [
- "darling_core",
- "darling_macro",
-]
-
-[[package]]
-name = "darling_core"
-version = "0.21.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1247195ecd7e3c85f83c8d2a366e4210d588e802133e1e355180a9870b517ea4"
-dependencies = [
- "fnv",
- "ident_case",
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
-name = "darling_macro"
-version = "0.21.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d38308df82d1080de0afee5d069fa14b0326a88c14f15c5ccda35b4a6c414c81"
-dependencies = [
- "darling_core",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "derive_more"
 version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2597,27 +2555,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "enumset"
-version = "1.1.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "25b07a8dfbbbfc0064c0a6bdf9edcf966de6b1c33ce344bdeca3b41615452634"
-dependencies = [
- "enumset_derive",
-]
-
-[[package]]
-name = "enumset_derive"
-version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f43e744e4ea338060faee68ed933e46e722fb7f3617e722a5772d7e856d8b3ce"
-dependencies = [
- "darling",
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2644,12 +2581,6 @@ name = "find-msvc-tools"
 version = "0.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3e0f1c7c3a72c66fd80abe965175f7523475c0489a87d3ff9d6e8c87d87a9d2d"
-
-[[package]]
-name = "fnv"
-version = "1.0.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 
 [[package]]
 name = "foldhash"
@@ -2765,12 +2696,6 @@ name = "id-arena"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d3067d79b975e8844ca9eb072e16b31c3c1c36928edf9c6789548c524d0d954"
-
-[[package]]
-name = "ident_case"
-version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
 
 [[package]]
 name = "indexmap"

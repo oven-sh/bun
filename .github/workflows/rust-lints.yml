@@ -10,6 +10,7 @@ on:
       - "src/**/*.rs"
       - "src/**/Cargo.toml"
       - "src/pod/README.md"
+      - "src/collections/enum_set.md"
       - "src/**/*.bind.ts"
       - "src/codegen/**"
       - "scripts/build/**"

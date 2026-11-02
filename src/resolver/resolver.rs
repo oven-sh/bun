@@ -6810,7 +6810,7 @@ impl<'a> Resolver<'a> {
                     mc.base_url = core::mem::take(&mut parent_config.base_url);
                 }
                 mc.jsx = parent_config.merge_jsx(mc.jsx.clone());
-                mc.jsx_flags.insert_all(parent_config.jsx_flags);
+                mc.jsx_flags |= parent_config.jsx_flags;
 
                 if let Some(value) = parent_config.preserve_imports_not_used_as_values {
                     mc.preserve_imports_not_used_as_values = Some(value);

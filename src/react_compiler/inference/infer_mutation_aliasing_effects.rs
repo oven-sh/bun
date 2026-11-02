@@ -345,7 +345,7 @@ impl PackedValue {
     #[inline]
     fn new(value: AbstractValue) -> Self {
         let packed =
-            PackedValue(1 | (value.kind as u32) << 1 | u32::from(value.reason.as_u16()) << 16);
+            PackedValue(1 | (value.kind as u32) << 1 | u32::from(value.reason.bits()) << 16);
         debug_assert!(packed.get() == Some(value));
         packed
     }
@@ -367,7 +367,7 @@ impl PackedValue {
         ];
         Some(AbstractValue {
             kind: KINDS[(self.0 >> 1 & 7) as usize],
-            reason: ValueReasonSet::from_u16_truncated((self.0 >> 16) as u16),
+            reason: ValueReasonSet::from_bits_truncate((self.0 >> 16) as u16),
         })
     }
 }

@@ -14,7 +14,6 @@ strum.workspace = true
 bstr.workspace = true
 scopeguard.workspace = true
 const_format.workspace = true
-enumset.workspace = true
 libc.workspace = true
 bitflags.workspace = true
 thiserror.workspace = true

@@ -1547,7 +1547,7 @@ pub struct PrintResultSuccess {
 // stage1 compiler bug:
 // > /optional-chain-with-function.js: Evaluation failed: TypeError: (intermediate value) is not a function
 // this test failure was caused by the packed struct implementation
-#[derive(enumset::EnumSetType)]
+#[derive(Clone, Copy, PartialEq, Eq, bun_collections::EnumSetType)]
 pub enum ExprFlag {
     ForbidCall,
     ForbidIn,
@@ -1556,7 +1556,7 @@ pub enum ExprFlag {
     IsFollowedByOf,
 }
 
-pub(crate) type ExprFlagSet = enumset::EnumSet<ExprFlag>;
+pub(crate) type ExprFlagSet = bun_collections::EnumSet<ExprFlag>;
 
 impl ExprFlag {
     #[inline]
@@ -1614,15 +1614,6 @@ pub(crate) mod __gated_printer {
     #[inline(always)]
     pub(crate) fn slice_of<'a, T>(p: js_ast::StoreSlice<T>) -> &'a [T] {
         p.slice()
-    }
-    /// `EnumSet<T>` field-style mutation helper.
-    #[inline(always)]
-    fn set_flag<T: enumset::EnumSetType>(set: &mut enumset::EnumSet<T>, flag: T, on: bool) {
-        if on {
-            set.insert(flag);
-        } else {
-            set.remove(flag);
-        }
     }
 
     pub(crate) use bun_core::strings::encode_wtf8_rune as encode_wtf8_rune_t;
@@ -4879,21 +4870,13 @@ pub(crate) mod __gated_printer {
                                         && !sref.eql_comptime(b"constructor")
                                         && !sref.eql_comptime(b"prototype")
                                     {
-                                        set_flag(
-                                            &mut item.flags,
-                                            js_ast::flags::Property::IsComputed,
-                                            false,
-                                        );
+                                        item.flags.remove(js_ast::flags::Property::IsComputed);
                                     }
                                 }
                                 js_ast::InlinedEnumValueDecoded::Number(num) => {
                                     item.key.as_mut().unwrap().data =
                                         ExprData::ENumber(E::Number::new(num));
-                                    set_flag(
-                                        &mut item.flags,
-                                        js_ast::flags::Property::IsComputed,
-                                        false,
-                                    );
+                                    item.flags.remove(js_ast::flags::Property::IsComputed);
                                 }
                             }
                         }
@@ -4960,7 +4943,7 @@ pub(crate) mod __gated_printer {
                 // "{ -1: 0 }" must be printed as "{ [-1]: 0 }"
                 // "{ 1/0: 0 }" must be printed as "{ [1/0]: 0 }"
                 // "{ {x: 1}: 0 }" must be printed as "{ [{x: 1}]: 0 }"
-                set_flag(&mut item.flags, js_ast::flags::Property::IsComputed, true);
+                item.flags.insert(js_ast::flags::Property::IsComputed);
             }
 
             if !IS_JSON && item.flags.contains(js_ast::flags::Property::IsComputed) {

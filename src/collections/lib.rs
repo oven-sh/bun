@@ -11,6 +11,9 @@
 #![allow(incomplete_features)]
 #![warn(unused_must_use)]
 
+// `#[derive(EnumSetType)]` names `::bun_collections`.
+extern crate self as bun_collections;
+
 pub mod hive_array;
 pub mod index_sort;
 pub mod multi_array_list;
@@ -24,6 +27,8 @@ pub mod identity_context;
 pub mod linear_fifo;
 
 pub mod bit_set;
+mod enum_set;
+pub use enum_set::{EnumSet, EnumSetType};
 pub mod pool;
 pub use pool::{ObjectPool, ObjectPoolType, PoolGuard};
 #[path = "StaticHashMap.rs"]

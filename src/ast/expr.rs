@@ -1266,8 +1266,7 @@ impl Expr {
 // PrimitiveType
 // ───────────────────────────────────────────────────────────────────────────
 
-// EnumSetType derives Clone/Copy/PartialEq/Eq itself.
-#[derive(Debug, enumset::EnumSetType)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PrimitiveType {
     Unknown,
     Mixed,

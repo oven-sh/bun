@@ -1116,14 +1116,6 @@ fn leak_stmts(body: Vec<Stmt>) -> StoreSlice<Stmt> {
     StoreSlice::new_mut(v.leak())
 }
 
-fn set_flag(flags: &mut flags::FunctionSet, flag: flags::Function, on: bool) {
-    if on {
-        flags.insert(flag);
-    } else {
-        flags.remove(flag);
-    }
-}
-
 fn build_outlined_decl(outlined: CodegenFunction) -> Stmt {
     let mut fn_flags = flags::FUNCTION_NONE;
     if outlined.is_async {
@@ -1401,9 +1393,9 @@ fn compile_pending(
         pending.is_top_level,
     )?;
     let mut flags = pending.flags;
-    set_flag(&mut flags, flags::Function::IsAsync, cf.is_async);
-    set_flag(&mut flags, flags::Function::IsGenerator, cf.generator);
-    set_flag(&mut flags, flags::Function::HasRestArg, cf.has_rest_arg);
+    flags.set(flags::Function::IsAsync, cf.is_async);
+    flags.set(flags::Function::IsGenerator, cf.generator);
+    flags.set(flags::Function::HasRestArg, cf.has_rest_arg);
     Some((
         cf.body,
         CompileResult {

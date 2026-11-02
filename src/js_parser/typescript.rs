@@ -307,7 +307,7 @@ pub mod identifier {
     }
 }
 
-#[derive(enumset::EnumSetType)]
+#[derive(Clone, Copy, PartialEq, Eq, bun_collections::EnumSetType)]
 pub enum SkipTypeOptions {
     IsReturnType,
     IsIndexSignature,
@@ -318,4 +318,4 @@ pub enum SkipTypeOptions {
 // Inherent associated types (`impl Foo { type Bar = ...; }`) are unstable
 // (`inherent_associated_types`), so the alias and empty constant are hoisted
 // to module scope.
-pub(crate) type SkipTypeOptionsBitset = enumset::EnumSet<SkipTypeOptions>;
+pub(crate) type SkipTypeOptionsBitset = bun_collections::EnumSet<SkipTypeOptions>;

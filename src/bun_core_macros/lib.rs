@@ -685,3 +685,75 @@ pub fn derive_enum_tag(input: TokenStream) -> TokenStream {
     }
     .into()
 }
+
+/// `bun_collections::EnumSetType`, and `|` between variants, for a fieldless enum whose discriminants count up from 0.
+#[proc_macro_derive(EnumSetType)]
+pub fn derive_enum_set_type(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    let name = &input.ident;
+
+    let Data::Enum(data) = &input.data else {
+        return syn::Error::new_spanned(name, "EnumSetType: only enums are supported")
+            .to_compile_error()
+            .into();
+    };
+    if let Some(variant) = data
+        .variants
+        .iter()
+        .find(|variant| !matches!(variant.fields, Fields::Unit))
+    {
+        return syn::Error::new_spanned(variant, "EnumSetType: variants cannot have fields")
+            .to_compile_error()
+            .into();
+    }
+    let count = data.variants.len();
+    let bits = match count {
+        1..=8 => quote!(::core::primitive::u8),
+        9..=16 => quote!(::core::primitive::u16),
+        17..=32 => quote!(::core::primitive::u32),
+        33..=64 => quote!(::core::primitive::u64),
+        _ => {
+            return syn::Error::new_spanned(name, "EnumSetType: needs 1 to 64 variants")
+                .to_compile_error()
+                .into();
+        }
+    };
+    let all_bits = proc_macro2::Literal::u64_unsuffixed(u64::MAX >> (64 - count));
+    let variants: Vec<_> = data.variants.iter().map(|variant| &variant.ident).collect();
+    let positions = 0..count as i128;
+
+    quote! {
+        const _: () = {
+            #( ::core::assert!(
+                #name::#variants as ::core::primitive::i128 == #positions,
+                "EnumSetType: discriminants must count up from 0",
+            ); )*
+        };
+
+        #[automatically_derived]
+        impl ::bun_collections::EnumSetType for #name {
+            type Bits = #bits;
+            const NO_BITS: #bits = 0;
+            const ALL_BITS: #bits = #all_bits;
+            const VARIANTS: &'static [Self] = &[#( Self::#variants ),*];
+
+            #[inline(always)]
+            fn bit(self) -> #bits {
+                1 << (self as ::core::primitive::u32)
+            }
+        }
+
+        #[automatically_derived]
+        impl<__Rhs: ::core::convert::Into<::bun_collections::EnumSet<#name>>> ::core::ops::BitOr<__Rhs>
+            for #name
+        {
+            type Output = ::bun_collections::EnumSet<#name>;
+
+            #[inline(always)]
+            fn bitor(self, rhs: __Rhs) -> Self::Output {
+                ::bun_collections::EnumSet::only(self) | rhs
+            }
+        }
+    }
+    .into()
+}

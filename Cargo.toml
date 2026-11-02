@@ -372,7 +372,6 @@ bstr = { version = "1", default-features = false, features = ["alloc"] }
 scopeguard = "1"
 const_format = "0.2"
 enum-map = "2"
-enumset = "1"
 libc = "0.2"
 rustix = { version = "0.38", default-features = false, features = ["std", "fs", "event", "process", "net"] }
 bitflags = "2"

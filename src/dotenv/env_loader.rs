@@ -4,14 +4,13 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
 use bun_alloc::AllocError;
-use bun_collections::{ArrayHashMapExt, GetOrPutResult, StringSet};
+use bun_collections::{ArrayHashMapExt, EnumSet, GetOrPutResult, StringSet};
 use bun_core::{self, Output};
 use bun_core::{ZStr, strings};
 use bun_paths::{self, MAX_PATH_BYTES, PathBuffer};
 use bun_sys;
 use bun_url::URL;
 use bun_which::which;
-use enumset::EnumSet;
 
 use bun_core::analytics;
 
@@ -23,7 +22,7 @@ pub enum DotEnvFileSuffix {
 }
 
 /// Declaration order is the order `print_loaded` lists the files in.
-#[derive(enumset::EnumSetType)]
+#[derive(Clone, Copy, PartialEq, Eq, bun_collections::EnumSetType)]
 pub(crate) enum DefaultEnvFile {
     DevelopmentLocal,
     ProductionLocal,

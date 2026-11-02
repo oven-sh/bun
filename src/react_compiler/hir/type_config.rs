@@ -27,7 +27,7 @@ pub enum ValueKind {
 }
 
 /// Mirrors TS `ValueReason` enum for use in config.
-#[derive(enumset::EnumSetType, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, bun_collections::EnumSetType)]
 pub enum ValueReason {
     KnownReturnSignature,
     State,
@@ -43,7 +43,7 @@ pub enum ValueReason {
     Other,
 }
 
-pub type ValueReasonSet = enumset::EnumSet<ValueReason>;
+pub type ValueReasonSet = bun_collections::EnumSet<ValueReason>;
 
 // =============================================================================
 // Aliasing effect config types (from TypeSchema.ts)

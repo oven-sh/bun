@@ -343,6 +343,26 @@ hand-written `unsafe impl` of these traits is only for what rustc cannot analyze
 over 4 KiB, and pointers for `Zeroable`). If a function is generic over "`u8` or
 `u16`", dispatch with a trait method (`PathByte::units`), not a cast.
 
+## Sets of enum variants (`bun_collections::EnumSet`)
+
+One bit per variant, in the narrowest of `u8`/`u16`/`u32`/`u64` that fits. The
+derive takes a fieldless enum of up to 64 variants whose discriminants count up
+from 0; anything else is a compile error.
+
+```rust
+use bun_collections::{EnumSet, EnumSetType};
+
+#[derive(Clone, Copy, PartialEq, Eq, EnumSetType)]
+enum Flag { A, B, C }
+
+let mut set = Flag::A | Flag::C;             // EnumSet<Flag>, one byte
+set.insert(Flag::B); set.remove(Flag::A); set.set(Flag::C, on); set.contains(Flag::C);
+set |= Flag::A; set &= Flag::A | Flag::B; !set  // a variant or a set on the right
+for flag in set { .. }                       // declaration order
+EnumSet::<Flag>::empty() / all()             // const fn
+set.bits() / EnumSet::from_bits_truncate(n)  // `n` is the set's own integer type
+```
+
 ## Environment Variables (`bun_core::env_var`)
 
 Typed, cached accessors. Each known env var is a module with a `get()`

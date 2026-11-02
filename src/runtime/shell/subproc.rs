@@ -12,7 +12,7 @@ use crate::shell::io_writer::{self, IOWriter};
 use crate::shell::{self as sh, Yield};
 use crate::webcore::{self, FileSink};
 use bun_alloc::Arena;
-use bun_collections::VecExt;
+use bun_collections::{EnumSet, VecExt};
 use bun_io::Loop as AsyncLoop;
 #[cfg(windows)]
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
@@ -22,7 +22,6 @@ use bun_ptr::RefPtr;
 #[cfg(not(windows))]
 use bun_sys::FdExt;
 use bun_sys::{self, Fd, SystemError};
-use enumset::EnumSet;
 
 use crate::api::bun_spawn::stdio::{self, Stdio};
 use crate::shell::util::OutKind;

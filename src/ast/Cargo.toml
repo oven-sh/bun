@@ -15,7 +15,6 @@ strum.workspace = true
 bstr.workspace = true
 const_format.workspace = true
 enum-map.workspace = true
-enumset.workspace = true
 bitflags.workspace = true
 bun_alloc.workspace = true
 bun_dispatch.workspace = true

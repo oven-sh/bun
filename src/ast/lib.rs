@@ -2672,15 +2672,15 @@ pub mod part {
 
 /// `flags` — bitset enums on AST nodes (`G.rs`/`B.rs` import `crate::flags`).
 pub mod flags {
-    use enumset::{EnumSet, EnumSetType};
+    use bun_collections::{EnumSet, EnumSetType};
 
-    #[derive(EnumSetType, Debug)]
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, EnumSetType)]
     pub enum JSXElement {
         IsKeyAfterSpread,
     }
     pub type JSXElementBitset = EnumSet<JSXElement>;
 
-    #[derive(EnumSetType, Debug)]
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, EnumSetType)]
     pub enum Property {
         IsComputed,
         IsMethod,
@@ -2691,7 +2691,7 @@ pub mod flags {
     pub type PropertySet = EnumSet<Property>;
     pub const PROPERTY_NONE: PropertySet = EnumSet::empty();
 
-    #[derive(EnumSetType, Debug)]
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, EnumSetType)]
     pub enum Function {
         IsAsync,
         IsGenerator,

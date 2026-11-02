@@ -1149,7 +1149,7 @@ impl fmt::Display for FilePoll {
 // Flags
 // ──────────────────────────────────────────────────────────────────────────
 
-#[derive(enumset::EnumSetType, strum::IntoStaticStr, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, bun_collections::EnumSetType, strum::IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum Flags {
     // What are we asking the event loop about?
@@ -1194,7 +1194,7 @@ pub enum Flags {
     Tty,
 }
 
-pub type FlagsSet = enumset::EnumSet<Flags>;
+pub type FlagsSet = bun_collections::EnumSet<Flags>;
 
 impl Flags {
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]

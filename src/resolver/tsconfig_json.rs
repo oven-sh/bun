@@ -1,8 +1,7 @@
-use bun_collections::ArrayHashMap;
+use bun_collections::{ArrayHashMap, EnumSet, EnumSetType};
 use bun_core::strings;
 use bun_js_parser::lexer as js_lexer;
 use bun_parsers::json_parser;
-use enumset::{EnumSet, EnumSetType};
 
 // D042: `options::jsx::{Pragma, Runtime, ImportSource, RUNTIME_MAP, ...}` is
 // the canonical `bun_options_types::jsx` module. `merge_jsx` uses
@@ -121,7 +120,7 @@ impl JsonCache {
 pub(crate) type PathsMap = ArrayHashMap<Box<[u8]>, Vec<Box<[u8]>>>;
 
 // Hand-listed Pragma fields actually used below.
-#[derive(EnumSetType, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, EnumSetType)]
 pub(crate) enum JsxField {
     Factory,
     Fragment,

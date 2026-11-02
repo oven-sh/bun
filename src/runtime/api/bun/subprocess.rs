@@ -6,6 +6,7 @@ use core::ptr::NonNull;
 
 use bun_ptr::{RefCount, RefPtr};
 
+use bun_collections::{EnumSet, EnumSetType};
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{
     self as jsc, JSGlobalObject, JSPromise, JSValue, JsCell, JsRef, JsResult, VirtualMachine,
@@ -14,7 +15,6 @@ use bun_jsc::{JsClass, SysErrorJsc};
 #[cfg(not(windows))]
 use bun_sys::FdExt as _;
 use bun_sys::{self, SignalCode};
-use enumset::{EnumSet, EnumSetType};
 
 // Process / spawn machinery lives in this crate (api/bun/process.rs), not in an
 // external `bun_spawn` crate. The `bun_spawn` workspace crate only carries the
@@ -76,7 +76,7 @@ impl<'a> static_pipe_writer::StaticPipeWriterProcess for Subprocess<'a> {
     }
 }
 
-#[derive(EnumSetType, strum::IntoStaticStr)]
+#[derive(Clone, Copy, PartialEq, Eq, EnumSetType, strum::IntoStaticStr)]
 pub enum ObservableGetter {
     Stdin,
     Stdout,

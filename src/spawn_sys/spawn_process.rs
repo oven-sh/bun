@@ -384,10 +384,7 @@ impl PosixSpawnOptions {
 ///
 /// `EnumSetType` is load-bearing for `closed: EnumSet<StdioKind>` on both
 /// `Subprocess` and `ShellSubprocess`; `IntoStaticStr` for close-IO logging.
-/// (`EnumSetType` auto-supplies `Copy + Clone + Eq + PartialEq`; do not add
-/// `#[repr(u8)]` — the derive forbids it, and no caller casts `as u8`.)
-#[derive(enumset::EnumSetType, Debug, strum::IntoStaticStr)]
-#[enumset(repr = "u8")]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, bun_collections::EnumSetType, strum::IntoStaticStr)]
 pub enum StdioKind {
     Stdin,
     Stdout,

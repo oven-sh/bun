@@ -43,9 +43,9 @@ test.if(isDebug && isLinux && hasSymbolizer)(
     expect(exitCode).not.toBe(0);
 
     // The innermost frame of the trace must be the code that crashed (the
-    // js_panic test hook)...
+    // `panic` test hook)...
     const firstFrame = stdout.split("\n").find(line => line.trim().length > 0);
-    expect(firstFrame ?? "<no frames printed>").toContain("js_panic");
+    expect(firstFrame ?? "<no frames printed>").toContain("crash_handler_jsc::panic");
 
     // ...not the capture machinery. A mismatched trim anchor used to leave
     // `capture_stack_trace` → `crash_handler` → `panic_impl` as the innermost

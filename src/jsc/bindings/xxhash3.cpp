@@ -27,6 +27,7 @@
 #include <hwy/foreach_target.h> // Must come before highway.h
 
 #include <hwy/highway.h>
+#include "highway_dispatch.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -643,11 +644,11 @@ static u64 Hash64(const u8* input, size_t len, u64 seed)
     // Long input: seed == 0 uses the default secret directly; otherwise derive
     // a per-seed secret (matches XXH3_hashLong_64b_withSeed_internal).
     if (seed == 0) {
-        return HWY_DYNAMIC_DISPATCH(HashLong)(input, len, kSecret);
+        return BUN_HWY_DISPATCH(HashLong)(input, len, kSecret);
     }
     alignas(64) u8 customSecret[kSecretLen];
     InitCustomSecret(customSecret, seed);
-    return HWY_DYNAMIC_DISPATCH(HashLong)(input, len, customSecret);
+    return BUN_HWY_DISPATCH(HashLong)(input, len, customSecret);
 }
 
 } // namespace xxh3

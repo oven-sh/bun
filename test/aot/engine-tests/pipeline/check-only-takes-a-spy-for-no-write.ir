@@ -1,0 +1,17 @@
+# A program that is only checked runs from its source afterwards, where spyOn of bun:test goes through the lock: a spy on a locked member that every run reaches is not reported
+# RUN: compile CodeBytesEmitted
+# OPTIONS: check-only
+# CHECK-NOT: diagnostic
+# CHECK: image empty
+
+module m0 path="main.test.js" displayPath="main.test.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=StringPrototype
+    v1 = String string="normalize"
+    v2 = Undefined
+    v3 = Builtin builtin=BunTestSpyOn
+    v4 = Call v3, v2, v0, v1 @10
+    Return
+}

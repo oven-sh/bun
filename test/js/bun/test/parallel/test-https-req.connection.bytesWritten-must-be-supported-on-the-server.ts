@@ -18,7 +18,7 @@ await using httpServer = createHttpsServer(COMMON_TLS_CERT, function (req, res) 
   res.write(chunk);
   res.write(bchunk);
   // Get .bytesWritten while buffer is not empty
-  expect(res.connection.bytesWritten).toBe(1024 * 2);
+  expect(res.connection!.bytesWritten).toBe(1024 * 2);
 
   res.end("bunbunbun");
 });

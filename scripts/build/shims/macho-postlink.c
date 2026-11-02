@@ -9,7 +9,7 @@
  *
  *  1. `--stack-size`: set `LC_MAIN.stacksize`. Apple's ld64 implements
  *     `-stack_size`; lld's Mach-O port parses it and prints "not yet
- *     implemented" (LLVM 21), leaving the field 0 (= the 8 MB default).
+ *     implemented" (still so in LLVM 23), leaving the field 0 (= the 8 MB default).
  *     JSC's interpreter recurses deeply enough that bun ships with an
  *     18 MB main-thread stack on every platform — patch the load command
  *     after the fact.

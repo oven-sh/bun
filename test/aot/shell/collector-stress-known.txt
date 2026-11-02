@@ -1,0 +1,16 @@
+# Programs that collector-stress.py does not judge, and why.
+external-data/json-parse-type-argument-keys-another    counts calls into the runtime
+external-data/json-parse-type-argument-undeclared-stay    counts calls into the runtime
+classes-and-closures/property-stores-on-new-functions    counts calls into the runtime
+private-members/members-added-at-once-untyped    counts calls into the runtime
+untyped-code/definitions-under-computed-keys    counts calls into the runtime
+untyped-code/for-in-after-delete-or-hidden-properties    counts calls into the runtime
+untyped-code/engine-constructed-functions    counts calls into the runtime
+untyped-code/literals-with-accessors    counts calls into the runtime
+untyped-code/one-constructor-symbol-stores-many-kinds    counts calls into the runtime
+untyped-code/private-methods-without-inline-capacity    counts calls into the runtime
+untyped-code/stores-add-props-accessor-prototypes    counts calls into the runtime
+untyped-code/stores-find-some-names-present    counts calls into the runtime
+untyped-code/spread-of-objects-with-another-prototype    counts calls into the runtime
+typed-objects/arrow-fields-lie-in-plain-from-creation    counts calls into the runtime
+external-data/json-parse-type-argument-texts-broken    gives each text one second, which collections all the time use up

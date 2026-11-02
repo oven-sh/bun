@@ -1,0 +1,1 @@
+{ "compilerOptions": { "target": "esnext", "module": "preserve", "moduleResolution": "bundler", "noEmit": true, "strict": true, "allowJs": true, "types": [], "skipLibCheck": true, "allowImportingTsExtensions": true, "baseUrl": ".", "paths": { "@app/*": ["packages/app/src/*"], "~shared": ["packages/shared/src/index.ts"] } } }

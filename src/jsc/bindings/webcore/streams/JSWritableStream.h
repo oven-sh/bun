@@ -87,8 +87,6 @@ public:
     WritableStreamState m_state { WritableStreamState::Writable };
     // [[backpressure]]
     bool m_backpressure : 1 { false };
-    // [[Detached]] (transferable streams are not implemented; the slot exists)
-    bool m_detached : 1 { false };
 
 private:
     JSWritableStream(JSC::VM&, JSC::Structure*);

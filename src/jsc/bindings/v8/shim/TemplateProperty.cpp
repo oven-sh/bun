@@ -61,12 +61,8 @@ static JSC::JSValue invokeAccessor(
 
     HandleScope hs(isolate);
 
-    JSC::JSObject* jscThis = globalObject->globalThis();
-    if (!thisObject.isUndefinedOrNull()) {
-        jscThis = thisObject.toObject(globalObject);
-        if (!jscThis) [[unlikely]]
-            return JSC::jsUndefined();
-    }
+    // Sloppy-mode receiver, as in FunctionTemplate::functionCall.
+    JSC::JSObject* jscThis = JSC::asObject(thisObject.toThis(globalObject, JSC::ECMAMode::sloppy()));
     Local<v8::Object> holder = hs.createLocal<v8::Object>(vm, jscThis);
     Local<v8::Name> property = hs.createLocal<v8::Name>(vm, name);
     Local<v8::Value> dataLocal = hs.createLocal<v8::Value>(vm, data);

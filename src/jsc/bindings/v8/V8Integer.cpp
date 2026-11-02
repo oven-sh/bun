@@ -2,9 +2,20 @@
 #include "V8HandleScope.h"
 #include "v8_compatibility_assertions.h"
 
+#include "JavaScriptCore/MathCommon.h"
+
 ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::Integer)
+ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::Int32)
 
 namespace v8 {
+
+int32_t Int32::Value() const
+{
+    JSC::JSValue value = localToJSValue();
+    if (value.isInt32()) [[likely]]
+        return value.asInt32();
+    return JSC::toInt32(value.asNumber());
+}
 
 Local<Integer> Integer::New(Isolate* isolate, int32_t value)
 {

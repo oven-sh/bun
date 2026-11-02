@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import stripAnsi from "strip-ansi";
 
 describe("Bun.inspect", () => {
@@ -24,12 +25,12 @@ describe("Bun.inspect", () => {
   });
 
   it("supports colors: false, via 2nd arg", () => {
-    const output = Bun.inspect({ a: 1 }, null, null);
+    const output = (Bun.inspect as any)({ a: 1 }, null, null);
     expect(stripAnsi(output)).toBe(output);
   });
 
   it("supports colors: true, via 2nd arg", () => {
-    const output = Bun.inspect({ a: 1 }, true, 2);
+    const output = (Bun.inspect as any)({ a: 1 }, true, 2);
     expect(stripAnsi(output)).not.toBe(output);
   });
 
@@ -46,6 +47,58 @@ describe("Bun.inspect", () => {
   it("depth < 0 throws", () => {
     expect(() => Bun.inspect({}, { depth: -1 })).toThrow();
     expect(() => Bun.inspect({}, { depth: -13210 })).toThrow();
+  });
+
+  describe("depth is read by value, whichever way JSC boxes the number", () => {
+    // A Float64Array element is always a double-boxed JSValue, and -0 can only be one,
+    // even though each is === to the int32 it holds.
+    const asDouble = (n: number) => new Float64Array([n])[0];
+    const obj = { a: { b: { c: { d: 1 } } } };
+    const inspected = (depth: number) => {
+      try {
+        return Bun.inspect(obj, { depth });
+      } catch (e) {
+        return "threw: " + (e as Error).message;
+      }
+    };
+    const inspectedPositional = (depth: number) => {
+      try {
+        return Bun.inspect(obj, depth as any);
+      } catch (e) {
+        return "threw: " + (e as Error).message;
+      }
+    };
+
+    it("a double-boxed integer behaves like the int32", () => {
+      for (const depth of [0, 1, 2]) {
+        expect(asDouble(depth)).toBe(depth);
+        expect(inspected(asDouble(depth))).toBe(inspected(depth));
+        expect(inspectedPositional(asDouble(depth))).toBe(inspectedPositional(depth));
+      }
+      expect(inspected(asDouble(1))).toBe("{\n  a: {\n    b: [Object ...],\n  },\n}");
+    });
+
+    it("-0 is depth 0", () => {
+      expect(inspected(-0)).toBe(inspected(0));
+      expect(inspectedPositional(-0)).toBe(inspectedPositional(0));
+    });
+
+    it("an integer past int32 is clamped like a large int32", () => {
+      expect(inspected(2 ** 32)).toBe(inspected(0x0fff0000));
+      expect(inspected(Number.MAX_SAFE_INTEGER)).toBe(inspected(Infinity));
+    });
+
+    it("a negative double-boxed integer gets the same error as the int32", () => {
+      expect(inspected(asDouble(-1))).toBe("threw: expected depth to be greater than or equal to 0, got -1");
+      expect(inspected(asDouble(-1))).toBe(inspected(-1));
+      expect(inspectedPositional(asDouble(-1))).toBe(inspectedPositional(-1));
+    });
+
+    it("non-integers still throw", () => {
+      expect(inspected(1.5)).toBe("threw: expected depth to be an integer, got 1.5");
+      expect(inspected(NaN)).toBe("threw: expected depth to be an integer, got NaN");
+      expect(inspectedPositional(1.5)).toBe("threw: expected depth to be an integer, got 1.5");
+    });
   });
   for (let base of [new Error("hi"), { a: "hi" }]) {
     it(`depth = Infinity works for ${base.constructor.name}`, () => {
@@ -64,7 +117,7 @@ describe("Bun.inspect", () => {
   }
 
   it("stack overflow is thrown when it should be for objects", () => {
-    var object = { a: { b: { c: { d: 1 } } } };
+    var object: object = { a: { b: { c: { d: 1 } } } };
     for (let i = 0; i < 16 * 1024; i++) {
       object = { a: object };
     }
@@ -75,10 +128,10 @@ describe("Bun.inspect", () => {
   });
 
   it("stack overflow is thrown when it should be for Error", () => {
-    var object = { a: { b: { c: { d: 1 } } } };
+    var object: object = { a: { b: { c: { d: 1 } } } };
     for (let i = 0; i < 16 * 1024; i++) {
       const err = new Error("hello");
-      err.object = object;
+      (err as any).object = object;
       object = err;
     }
 
@@ -89,5 +142,50 @@ describe("Bun.inspect", () => {
 
   it("depth = 0", () => {
     expect(Bun.inspect({ a: { b: { c: { d: 1 } } } }, { depth: 0 })).toEqual("{\n  a: [Object ...],\n}");
+  });
+
+  // Like Node, whose printers keep using the `inspect` that node:util started with.
+  it.concurrent.each([
+    `util.inspect = 5;`,
+    `util.inspect = {};`,
+    `util.inspect = "str";`,
+    `util.inspect = undefined;`,
+    `util.inspect = null;`,
+    `util.inspect = () => "replaced";`,
+    `delete util.inspect;`,
+    `Object.defineProperty(util, "inspect", { get() { throw new Error("getter"); } });`,
+  ])("native printers do not read node:util's inspect: %s", async replace => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const util = require("node:util");
+        ${replace}
+        const custom = Symbol.for("nodejs.util.inspect.custom");
+        const channel = new BroadcastChannel("x");
+        console.log(channel);
+        channel.close();
+        console.log({ [custom]: (depth, options, inspect) => inspect({ a: 1 }) });
+        console.log(Bun.inspect({ [custom]: (depth, options, inspect) => options.stylize("s", "string") }, { colors: true }) === "\\x1b[32ms\\x1b[39m");
+        console.log(new URLSearchParams("a=1")[custom](2, {}));
+        console.log(new ReadableStream());
+        Bun.gc(true);
+        console.log({ [custom]: (depth, options, inspect) => inspect({ b: 2 }) });`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.split("\n")).toEqual([
+      "BroadcastChannel { name: 'x', active: true }",
+      "{ a: 1 }",
+      "true",
+      "URLSearchParams { 'a' => '1' }",
+      "ReadableStream { locked: false, state: 'readable', supportsBYOB: false }",
+      "{ b: 2 }",
+      "",
+    ]);
+    expect(exitCode).toBe(0);
   });
 });

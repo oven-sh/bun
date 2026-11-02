@@ -1,0 +1,57 @@
+------------------
+{ printWidth: 80 }
+------------------
+.a {
+  padding: $global-spacing * 1.5 (25px + $global-spacing * 2) $global-spacing *
+    1.5 $global-spacing * 3;
+  margin: $a * 2 $b;
+  margin: $a + $b;
+  width: $global-spacing-of-the-whole-page * 1.5 +
+    $global-spacing-of-the-whole-page * 2.5 + $more;
+  font: 12px/1.5 $font;
+}
+.b {
+  --hover-bg-color: rgb(
+    from var(--color-text-on-media-of-the-page) r g b /
+      var(--overlay-strength-secondary)
+  );
+  background: rgb(
+    from var(--color-text-on-media-of-the-whole-page) r g b /
+      var(--overlay-strength-secondary)
+  );
+  text-shadow:
+    1px 0px 0px var(--bg-color),
+    // 2px 0px 0px var(--bg-color),
+    -1px 0px 0px var(--bg-color),
+    0px 1px 0px var(--bg-color);
+  margin: 0 -1px 0
+    $a-variable-with-a-long-name-that-fills-the-line-up-to-the-last-column-x;
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+.a {
+  padding: $global-spacing * 1.5 (25px + $global-spacing * 2) $global-spacing * 1.5
+    $global-spacing * 3;
+  margin: $a * 2 $b;
+  margin: $a + $b;
+  width: $global-spacing-of-the-whole-page * 1.5 + $global-spacing-of-the-whole-page * 2.5 + $more;
+  font: 12px/1.5 $font;
+}
+.b {
+  --hover-bg-color: rgb(
+    from var(--color-text-on-media-of-the-page) r g b / var(--overlay-strength-secondary)
+  );
+  background: rgb(
+    from var(--color-text-on-media-of-the-whole-page) r g b / var(--overlay-strength-secondary)
+  );
+  text-shadow:
+    1px 0px 0px var(--bg-color),
+    // 2px 0px 0px var(--bg-color),
+    -1px 0px 0px var(--bg-color),
+    0px 1px 0px var(--bg-color);
+  margin: 0 -1px 0 $a-variable-with-a-long-name-that-fills-the-line-up-to-the-last-column-x;
+}
+
+===================== End =====================

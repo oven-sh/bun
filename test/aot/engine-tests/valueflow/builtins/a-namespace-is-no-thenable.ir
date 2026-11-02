@@ -1,0 +1,40 @@
+# Promise.resolve(Bun).then(bun => new bun.Glob()); (async () => Bun)().then(bun => bun.nanoseconds())
+# No namespace of the table has a `then`, so the promise is fulfilled with the namespace itself, nothing runs that nobody knows, and the reaction has the namespace and nothing beside it
+# RUN: valueflow-solve calls
+# CHECK: f1 v2 -> BunGlob
+# CHECK: f3 v2 -> BunNanoseconds
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Bun
+    v1 = Builtin builtin=Promise
+    v2 = Builtin builtin=PromiseResolve
+    v3 = Call v2, v1, v0
+    v4 = Builtin builtin=PromisePrototypeThen
+    v5 = NewClosure function=f1
+    v6 = Call v4, v3, v5
+    v7 = NewClosure function=f2
+    v8 = Call v7, -
+    v9 = NewClosure function=f3
+    v10 = Call v4, v8, v9
+    Return
+}
+function f1 name="constructs" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="Glob"
+    v2 = Construct v1, -
+    Return v2
+}
+function f2 name="answers" flags=[IsAsync] results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Bun
+    Return v0
+}
+function f3 name="calls" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="nanoseconds"
+    v2 = Call v1, v0
+    Return v2
+}

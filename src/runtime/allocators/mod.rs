@@ -3,7 +3,6 @@
 //! callers import these paths directly (no forwarding stubs in `bun_alloc`).
 #![warn(unused_must_use)]
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
 #[path = "LinuxMemFdAllocator.rs"]
-pub mod linux_mem_fd_allocator;
-
-pub use linux_mem_fd_allocator::LinuxMemFdAllocator;
+pub(crate) mod linux_mem_fd_allocator;

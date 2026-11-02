@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, MAX_PATH_BYTES, tempDir } from "harness";
 import { join } from "path";
 
 async function runPmPkg(args: string[], cwd: string, expectSuccess = true) {
@@ -23,6 +23,7 @@ async function runPmPkg(args: string[], cwd: string, expectSuccess = true) {
 }
 
 const readPkg = (dir: string) => Bun.file(join(dir, "package.json")).json();
+const readRaw = (dir: string) => Bun.file(join(dir, "package.json")).text();
 
 function createTestPackageJson(overrides = {}) {
   return JSON.stringify(
@@ -157,6 +158,138 @@ describe.concurrent("bun pm pkg", () => {
       expect(code).toBe(0);
     });
 
+    // Keys that need JSON escapes, string values that hold braces, values that nest, and scalars.
+    const severalKeysPkg = {
+      name: "n",
+      version: "1.0.0",
+      'a"b': 1,
+      "c\\d": 2,
+      "e\nf": 3,
+      "g\th": 4,
+      s: "x}",
+      scripts: { build: "echo ${FOO}" },
+      files: ["dist/**/*.{js,ts}"],
+      arr: [{ q: "}" }, { q: "{}" }],
+      nested: { x: { y: "z}" } },
+      emptyobj: {},
+      multi: [1, 2],
+      flag: true,
+      off: false,
+      nothing: null,
+      ratio: 3.14,
+      neg: -7,
+      port: 10000,
+      big: 2 ** 54 + 8,
+    };
+    const pretty = (value: unknown) => JSON.stringify(value, null, 2) + "\n";
+    const makeSeveralKeysDir = () => tempDir("pm-pkg-get-keys", { "package.json": pretty(severalKeysPkg) });
+
+    it("should escape keys when getting multiple properties", async () => {
+      using dir = makeSeveralKeysDir();
+      expect(await runPmPkg(["get", 'a"b', "c\\d", "e\nf", "g\th", "name"], String(dir))).toEqual({
+        output: pretty({ 'a"b': 1, "c\\d": 2, "e\nf": 3, "g\th": 4, name: "n" }),
+        error: "",
+        code: 0,
+      });
+    });
+
+    it("should not alter values that hold a closing brace when getting multiple properties", async () => {
+      using dir = makeSeveralKeysDir();
+      const keys = ["s", "scripts.build", "scripts[build]", "files", "arr[0].q", "arr", "name"];
+      const [several, everyElement] = await Promise.all([
+        runPmPkg(["get", ...keys], String(dir)),
+        // One key that reads `q` from every element of `arr`.
+        runPmPkg(["get", "arr.q"], String(dir)),
+      ]);
+      expect(several).toEqual({
+        output: pretty({
+          s: "x}",
+          "scripts.build": "echo ${FOO}",
+          "scripts[build]": "echo ${FOO}",
+          files: ["dist/**/*.{js,ts}"],
+          "arr[0].q": "}",
+          arr: [{ q: "}" }, { q: "{}" }],
+          name: "n",
+        }),
+        error: "",
+        code: 0,
+      });
+      expect(everyElement).toEqual({
+        output: pretty({ "arr[0].q": "}", "arr[1].q": "{}" }),
+        error: "",
+        code: 0,
+      });
+    });
+
+    it("should print nested values and scalars of multiple properties as JSON.stringify does", async () => {
+      using dir = makeSeveralKeysDir();
+      const keys = ["nested", "emptyobj", "multi", "flag", "off", "nothing", "ratio", "neg", "port", "big"];
+      expect(await runPmPkg(["get", ...keys], String(dir))).toEqual({
+        output: pretty({
+          nested: { x: { y: "z}" } },
+          emptyobj: {},
+          multi: [1, 2],
+          flag: true,
+          off: false,
+          nothing: null,
+          ratio: 3.14,
+          neg: -7,
+          port: 10000,
+          big: 2 ** 54 + 8,
+        }),
+        error: "",
+        code: 0,
+      });
+    });
+
+    it("should pick the output shape after it resolves every key", async () => {
+      using dir = makeSeveralKeysDir();
+      const ok = (output: string) => ({ output, error: "", code: 0 });
+      const emptyBrackets = {
+        output: "",
+        error: "error: Empty brackets are not valid syntax for retrieving values.\n",
+        code: 1,
+      };
+      const cases: [keys: string[], expected: ReturnType<typeof ok>][] = [
+        // One key found of several asked: the bare value. npm 11 prints the object.
+        [["s", "missing"], ok(pretty("x}"))],
+        [["missing", "s"], ok(pretty("x}"))],
+        [["s", "s"], ok(pretty("x}"))],
+        [["nested", "missing"], ok(pretty({ x: { y: "z}" } }))],
+        // No key found.
+        [["missing", "other"], ok("{}\n")],
+        // A repeated key keeps its first position.
+        [["name", "version", "name"], ok(pretty({ name: "n", version: "1.0.0" }))],
+        // Empty brackets in any position fail the command before it prints a value.
+        [["arr[]", "name"], emptyBrackets],
+        [["name", "arr[]"], emptyBrackets],
+      ];
+      const results = await Promise.all(cases.map(([keys]) => runPmPkg(["get", ...keys], String(dir), false)));
+      for (const [i, [keys, expected]] of cases.entries()) {
+        expect(results[i], `get ${keys.join(" ")}`).toEqual(expected);
+      }
+    });
+
+    // argv holds any bytes on POSIX. `printf` builds the key `e`, 0xC3, `z`, which is not UTF-8.
+    it.skipIf(isWindows)("should print U+FFFD for a non-UTF-8 key when getting multiple properties", async () => {
+      using dir = tempDir("pm-pkg-get-bytes", {
+        "package.json": Buffer.concat([Buffer.from('{"e'), Buffer.from([0xc3]), Buffer.from('z":1,"s":"x}"}')]),
+      });
+      await using proc = spawn({
+        cmd: ["sh", "-c", `exec "$0" pm pkg get "$(printf 'e\\303z')" s`, bunExe()],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: pretty({ "e\uFFFDz": 1, s: "x}" }),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
     it("should handle boolean values", async () => {
       const { output, code } = await runPmPkg(["get", "testBoolean"], readonlyDir);
       expect(output.trim()).toBe("true");
@@ -272,6 +405,105 @@ describe.concurrent("bun pm pkg", () => {
       expect((await readPkg(dir)).newArray).toEqual(["one", "two", "three"]);
     });
 
+    it("should accept any valid JSON value with --json flag", async () => {
+      using dir = tempDir("pm-pkg-json-valid", {
+        "package.json": JSON.stringify({ name: "x", version: "1.0.0" }, null, 2),
+      });
+      const { error, code } = await runPmPkg(
+        [
+          "set",
+          "a=0",
+          "b=-1.5e3",
+          "c=1E+2",
+          'd="str \\u00e9\\n"',
+          'e={"k":[1,{"m":null}],"":""}',
+          "f= [ true ,\tfalse ]\n",
+          "g=0.5",
+          "h= 100\n",
+          "i=0e1",
+          'j=[0,-0.5 , 1e3,{"a":10,"b": [ 100 ]}]',
+          "--json",
+        ],
+        dir,
+      );
+      expect(error).toBe("");
+      expect(await readPkg(dir)).toEqual({
+        name: "x",
+        version: "1.0.0",
+        a: 0,
+        b: -1500,
+        c: 100,
+        d: "str \u00e9\n",
+        e: { k: [1, { m: null }], "": "" },
+        f: [true, false],
+        g: 0.5,
+        h: 100,
+        i: 0,
+        j: [0, -0.5, 1000, { a: 10, b: [100] }],
+      });
+      expect(code).toBe(0);
+    });
+
+    // npm runs the value through JSON.parse and refuses to write on failure: never a package.json
+    // that no longer parses (`NaN`), never a silent fallback to a string, never half of the value.
+    it.each([
+      ["undefined", "Unexpected undefined"],
+      ["NaN", "Unexpected NaN"],
+      ["Infinity", "Unexpected Infinity"],
+      ["-Infinity", 'Expected number but found "-Infinity"'],
+      ["abc", "Unexpected abc"],
+      ["{x:1}", 'Expected string but found "x"'],
+      ["1/0", "Unsupported syntax: Operators are not allowed in JSON"],
+      ["+1", "Unsupported syntax: Operators are not allowed in JSON"],
+      ["[1,]", "JSON does not support trailing commas"],
+      ['{"a":1,}', "JSON does not support trailing commas"],
+      ["//c 1", "JSON does not support comments"],
+      ["1 2", "Unexpected 2"],
+      ["[1] {}", "Unexpected {"],
+      // JavaScript literals that are not JSON
+      ["010", "Syntax Error"],
+      ["-010", "Syntax Error"],
+      ["0x10", "Syntax Error"],
+      ["0b11", "Syntax Error"],
+      ["1_000", "Syntax Error"],
+      [".5", "Syntax Error"],
+      ["5.", "Syntax Error"],
+      ["'text'", "Syntax Error"],
+      ["[010]", "Syntax Error"],
+      ['{"a": 010}', "Syntax Error"],
+      ['{"a":[1,{"b":0x10}]}', "Syntax Error"],
+      ['[1, "a", .5]', "Syntax Error"],
+      ["['text']", "Syntax Error"],
+      ["{'a':1}", "Syntax Error"],
+    ])("should reject the invalid JSON value %s with --json flag", async (value, message) => {
+      using dir = makeTestDir();
+      const before = await readRaw(dir);
+      const { output, error, code } = await runPmPkg(["set", `x=${value}`, "--json"], dir, false);
+      expect(output).toBe("");
+      expect(error).toBe(
+        `error: Invalid JSON value for "x": ${message}\n` +
+          "note: --json parses each value as JSON. To store the text as a string, drop --json.\n",
+      );
+      expect(await readRaw(dir)).toBe(before);
+      expect(code).toBe(1);
+    });
+
+    it("should write every character of a key or a string as valid JSON", async () => {
+      const all = Array.from({ length: 0x10000 }, (_, i) => String.fromCharCode(i)).join("") + "\u{1f600}";
+      const original = { name: "n", version: "1.0.0", description: "a\u001b[1mb\v", [all]: all };
+      using dir = tempDir("pm-pkg-escapes", { "package.json": JSON.stringify(original, null, 2) });
+
+      const { error, code } = await runPmPkg(["set", "x=1"], String(dir));
+      expect(error).toBe("");
+      const raw = await readRaw(String(dir));
+      expect(raw).toContain('"description": "a\\u001B[1mb\\u000B"');
+      expect(JSON.parse(raw)).toEqual({ ...original, x: "1" });
+      expect(code).toBe(0);
+
+      const { output } = await runPmPkg(["get", "description"], String(dir));
+      expect(output).toBe('"a\\u001B[1mb\\u000B"\n');
+    });
+
     it("should treat values as strings without --json flag", async () => {
       using dir = makeTestDir();
       const { code } = await runPmPkg(
@@ -296,6 +528,70 @@ describe.concurrent("bun pm pkg", () => {
       expect(JSON.parse(modifiedContent).version).toBe("1.0.1");
     });
 
+    it("should write integers as plain digits, never in exponent notation", async () => {
+      // The JS printer shortens 10000 to 1e4. JSON.stringify never does that
+      // for integers below 1e21, and neither should package.json.
+      const original = {
+        name: "test-package",
+        version: "1.0.0",
+        port: 10000,
+        timeout: 1000,
+        big: 160000,
+        negative: -100000,
+        float: 1.5,
+        list: [10000, 1000000000, 123456789],
+      };
+      using dir = tempDir("pm-pkg-integers", {
+        "package.json": JSON.stringify(original, null, 2),
+      });
+
+      const { error, code } = await runPmPkg(["set", "config.limit=1000000", "--json"], dir);
+      expect(error).toBe("");
+      expect(code).toBe(0);
+
+      const content = await Bun.file(join(dir, "package.json")).text();
+      expect(content).toContain('"port": 10000');
+      expect(content).toContain('"timeout": 1000');
+      expect(content).toContain('"big": 160000');
+      expect(content).toContain('"negative": -100000');
+      expect(content).toContain('"limit": 1000000');
+      expect(content).toMatch(/\[\s*10000,\s*1000000000,\s*123456789\s*\]/);
+      expect(content).not.toMatch(/\d[eE][-+]?\d/);
+      expect(JSON.parse(content)).toEqual({ ...original, config: { limit: 1000000 } });
+    });
+
+    // `1e400` is a valid JSON number. It reads as Infinity, which JSON has no token for.
+    it("should write null for numbers that overflow to Infinity, like JSON.stringify", async () => {
+      using dir = tempDir("pm-pkg-nonfinite", {
+        "package.json": `{
+  "name": "n",
+  "version": "1.0.0",
+  "config": { "max": 1e400, "min": -1e999, "tiny": 1e-400, "ok": 1.5 }
+}`,
+      });
+
+      expect(await runPmPkg(["get", "config.max"], String(dir))).toEqual({ output: "null\n", error: "", code: 0 });
+
+      // Values that overflow, and a rewrite of the existing literals.
+      expect(await runPmPkg(["set", "limit=1e400", "low=-1e400", "--json"], String(dir))).toEqual({
+        output: "",
+        error: "",
+        code: 0,
+      });
+      expect(JSON.parse(await readRaw(String(dir)))).toEqual({
+        name: "n",
+        version: "1.0.0",
+        config: { max: null, min: null, tiny: 0, ok: 1.5 },
+        limit: null,
+        low: null,
+      });
+
+      // Bun can read what it wrote.
+      const after = await runPmPkg(["get", "config"], String(dir));
+      expect(JSON.parse(after.output)).toEqual({ max: null, min: null, tiny: 0, ok: 1.5 });
+      expect(after.error).toBe("");
+    });
+
     it("should write literal keys when setting with bracket notation", async () => {
       // Key-path segments parsed from a bracket path must stay alive until
       // the file is written; otherwise the printer serializes freed bytes.
@@ -312,9 +608,153 @@ describe.concurrent("bun pm pkg", () => {
       expect(await readPkg(dir)).toEqual({
         name: "x",
         version: "1.0.0",
-        contributors: { "0": "alice" },
-        nested: { deep: { "0": "value" } },
+        contributors: ["alice"],
+        nested: { deep: ["value"] },
         scripts: { lint: "eslint ." },
+      });
+    });
+
+    describe("arrays", () => {
+      it("should append, index, and create arrays", async () => {
+        using dir = makeTestDir();
+        const { error, code } = await runPmPkg(
+          [
+            "set",
+            // existing array: append, then replace by bracket and dot index, then add at index == length
+            "keywords[]=cli",
+            "keywords[0]=first",
+            "keywords.1=second",
+            "keywords[3]=fourth",
+            // missing properties: [] and a bracketed index create arrays, a dotted number creates an object
+            "files[]=dist",
+            "files[]=README.md",
+            "os[0]=linux",
+            "config.0=zero",
+            // existing object: either notation is a property name
+            "scripts[0]=bracket",
+            "scripts.1=dot",
+            // null is treated as missing
+            "testNull[0]=x",
+            "matrix[0][0]=a",
+            "matrix[0][]=b",
+            "matrix[][0]=c",
+          ],
+          dir,
+        );
+        expect(error).toBe("");
+        expect(code).toBe(0);
+        expect(await readPkg(dir)).toEqual({
+          ...JSON.parse(createTestPackageJson()),
+          keywords: ["first", "second", "cli", "fourth"],
+          files: ["dist", "README.md"],
+          os: ["linux"],
+          config: { "0": "zero" },
+          scripts: { test: "echo 'test'", build: "echo 'build'", "0": "bracket", "1": "dot" },
+          testNull: ["x"],
+          matrix: [["a", "b"], ["c"]],
+        });
+
+        const { output } = await runPmPkg(["get", "scripts[0]", "scripts.1", "keywords[3]"], dir);
+        expect(JSON.parse(output)).toEqual({ "scripts[0]": "bracket", "scripts.1": "dot", "keywords[3]": "fourth" });
+      });
+
+      it("should set properties of objects inside an array, creating elements as needed", async () => {
+        using dir = makeTestDir();
+        const { error, code } = await runPmPkg(
+          [
+            "set",
+            "contributors[0].email=john@new.example",
+            "contributors[1].email=jane@example.com",
+            "contributors[2].name=Third",
+            "contributors[].name=Fourth",
+            "testNull.key=x",
+          ],
+          dir,
+        );
+        expect(error).toBe("");
+        expect(code).toBe(0);
+        expect(await readPkg(dir)).toEqual({
+          ...JSON.parse(createTestPackageJson()),
+          contributors: [
+            { name: "John Doe", email: "john@new.example" },
+            { name: "Jane Smith", email: "jane@example.com" },
+            { name: "Third" },
+            { name: "Fourth" },
+          ],
+          testNull: { key: "x" },
+        });
+      });
+
+      it("should append --json values", async () => {
+        using dir = makeTestDir();
+        const { code } = await runPmPkg(["set", "keywords[]=42", 'contributors[]={"name":"Obj"}', "--json"], dir);
+        expect(code).toBe(0);
+        expect(await readPkg(dir)).toMatchObject({
+          keywords: ["test", "package", 42],
+          contributors: [{ name: "John Doe", email: "john@example.com" }, { name: "Jane Smith" }, { name: "Obj" }],
+        });
+      });
+
+      it("should still replace a whole array or element when it is the final segment", async () => {
+        using dir = makeTestDir();
+        const { code } = await runPmPkg(["set", "keywords=none", "contributors[0]=alice"], dir);
+        expect(code).toBe(0);
+        expect(await readPkg(dir)).toMatchObject({
+          keywords: "none",
+          contributors: ["alice", { name: "Jane Smith" }],
+        });
+      });
+
+      const rejected = [
+        [
+          "keywords[3]=x",
+          'error: "keywords[3]": index 3 is out of range for "keywords" (length 2)\n' +
+            "note: keywords[] appends to the end of the array\n",
+        ],
+        ["keywords.foo=x", 'error: "keywords.foo": "keywords" is an array, so "foo" must be an index or []\n'],
+        ["scripts[]=x", 'error: "scripts[]": cannot append to "scripts" because it is not an array\n'],
+        ["name[]=x", 'error: "name[]": "name" already exists and is not an object or array\n'],
+        ["name.first=x", 'error: "name.first": "name" already exists and is not an object or array\n'],
+        // nested values are named by the part of the key that leads to them
+        [
+          "matrix[0][9]=x",
+          'error: "matrix[0][9]": index 9 is out of range for "matrix[0]" (length 2)\n' +
+            "note: matrix[0][] appends to the end of the array\n",
+        ],
+        ["matrix[0].foo=x", 'error: "matrix[0].foo": "matrix[0]" is an array, so "foo" must be an index or []\n'],
+        [
+          "contributors[0].name.first=x",
+          'error: "contributors[0].name.first": "contributors[0].name" already exists and is not an object or array\n',
+        ],
+        [
+          "nested.matrix[0][9]=x",
+          'error: "nested.matrix[0][9]": index 9 is out of range for "nested.matrix[0]" (length 1)\n' +
+            "note: nested.matrix[0][] appends to the end of the array\n",
+        ],
+        // an empty part between dots is skipped but still counts towards the name
+        [
+          "nested..matrix[0].foo=x",
+          'error: "nested..matrix[0].foo": "nested..matrix[0]" is an array, so "foo" must be an index or []\n',
+        ],
+      ] as const;
+
+      it.each(rejected)("should reject %s without touching package.json", async (arg, expectedError) => {
+        using dir = tempDir("pm-pkg-reject", {
+          "package.json": createTestPackageJson({ matrix: [["a", "b"]], nested: { matrix: [["a"]] } }),
+        });
+        const before = await readRaw(dir);
+        const { output, error, code } = await runPmPkg(["set", arg], dir, false);
+        expect({ output, error, code }).toEqual({ output: "", error: expectedError, code: 1 });
+        expect(await readRaw(dir)).toBe(before);
+      });
+
+      it("should not write earlier arguments when a later one is rejected", async () => {
+        using dir = makeTestDir();
+        const before = await readRaw(dir);
+        const { error, code } = await runPmPkg(["set", "description=changed", "keywords[9]=x"], dir, false);
+        expect(error).toStartWith('error: "keywords[9]": index 9 is out of range');
+        expect(code).toBe(1);
+        expect(await readRaw(dir)).toBe(before);
       });
     });
 
@@ -337,6 +777,38 @@ describe.concurrent("bun pm pkg", () => {
       const { error, code } = await runPmPkg(["set"], dir, false);
       expect(error).toContain("set expects a key=value pair");
       expect(code).toBe(1);
+    });
+  });
+
+  describe("--dry-run", () => {
+    it("set prints the result without writing package.json", async () => {
+      using dir = makeTestDir();
+      const before = await readRaw(dir);
+      const { output, error, code } = await runPmPkg(["set", "description=New description", "--dry-run"], dir);
+      expect(error).toBe("");
+      expect(output).toBe(before.replace("A test package", "New description") + "\n");
+      expect(code).toBe(0);
+      expect(await readRaw(dir)).toBe(before);
+    });
+
+    it("delete prints the result without writing package.json", async () => {
+      using dir = makeTestDir();
+      const before = await readRaw(dir);
+      const { output, error, code } = await runPmPkg(["delete", "description", "--dry-run"], dir);
+      expect(error).toBe("");
+      expect(output).toBe(before.replace('  "description": "A test package",\n', "") + "\n");
+      expect(code).toBe(0);
+      expect(await readRaw(dir)).toBe(before);
+    });
+
+    it("fix prints the result without writing package.json", async () => {
+      const before = JSON.stringify({ name: "TEST-PACKAGE", version: "1.0.0" }, null, 2) + "\n";
+      using dir = tempDir("pm-pkg-fix-dry-run", { "package.json": before });
+      const { output, error, code } = await runPmPkg(["fix", "--dry-run"], String(dir));
+      expect(error).toBe("");
+      expect(output).toBe(before.replace("TEST-PACKAGE", "test-package"));
+      expect(code).toBe(0);
+      expect(await readRaw(String(dir))).toBe(before);
     });
   });
 
@@ -378,6 +850,43 @@ describe.concurrent("bun pm pkg", () => {
       const { error, code } = await runPmPkg(["delete"], dir, false);
       expect(error).toContain("delete expects key args");
       expect(code).toBe(1);
+    });
+
+    it("should delete array elements and bracketed properties", async () => {
+      using dir = makeTestDir();
+      const { error, code } = await runPmPkg(
+        ["delete", "keywords[0]", "contributors.1", "contributors[0].email", "scripts[test]"],
+        dir,
+      );
+      expect(error).toBe("");
+      expect(code).toBe(0);
+      expect(await readPkg(dir)).toEqual({
+        ...JSON.parse(createTestPackageJson()),
+        keywords: ["package"],
+        contributors: [{ name: "John Doe" }],
+        scripts: { build: "echo 'build'" },
+      });
+    });
+
+    it("should not change package.json when the path doesn't lead anywhere", async () => {
+      using dir = makeTestDir();
+      const before = await readRaw(dir);
+      const { error, code } = await runPmPkg(
+        ["delete", "keywords[2]", "keywords.foo", "contributors[0].missing", "name[0]", "missing[0]"],
+        dir,
+      );
+      expect(error).toBe("");
+      expect(code).toBe(0);
+      expect(await readRaw(dir)).toBe(before);
+    });
+
+    it("should reject empty brackets", async () => {
+      using dir = makeTestDir();
+      const before = await readRaw(dir);
+      const { error, code } = await runPmPkg(["delete", "keywords[]"], dir, false);
+      expect(error).toBe("error: Empty brackets are not valid syntax for deleting values.\n");
+      expect(code).toBe(1);
+      expect(await readRaw(dir)).toBe(before);
     });
   });
 
@@ -668,20 +1177,22 @@ describe.concurrent("bun pm pkg", () => {
     it("should handle numeric indices with different data types", async () => {
       using dir = makeTestDir();
 
-      const [arr0, arr1] = await Promise.all([
-        runPmPkg(["get", "keywords.0"], dir, false),
-        runPmPkg(["get", "keywords.1"], dir, false),
+      const setThenGet = async () => {
+        const { code } = await runPmPkg(["set", "config.0=zero-value"], dir);
+        expect(code).toBe(0);
+        return runPmPkg(["get", "config.0"], dir);
+      };
+      // The read-only gets use the shared fixture so they can overlap with the set/get round trip.
+      const [arr0, arr1, config0] = await Promise.all([
+        runPmPkg(["get", "keywords.0"], readonlyDir, false),
+        runPmPkg(["get", "keywords.1"], readonlyDir, false),
+        setThenGet(),
       ]);
       expect(arr0.output.trim()).toBe('"test"');
       expect(arr0.code).toBe(0);
       expect(arr1.output.trim()).toBe('"package"');
       expect(arr1.code).toBe(0);
-
-      const { code: setCode } = await runPmPkg(["set", "config.0=zero-value"], dir);
-      expect(setCode).toBe(0);
-
-      const { output } = await runPmPkg(["get", "config.0"], dir);
-      expect(output.trim()).toBe('"zero-value"');
+      expect(config0.output.trim()).toBe('"zero-value"');
     });
 
     it("should gracefully handle invalid notation patterns", async () => {
@@ -705,15 +1216,75 @@ describe.concurrent("bun pm pkg", () => {
     it("should maintain consistency between set and get operations", async () => {
       using dir = makeTestDir();
 
-      const { code: setCode1 } = await runPmPkg(["set", "test.array.0=first"], dir);
-      expect(setCode1).toBe(0);
-      const { output: getOutput1 } = await runPmPkg(["get", "test.array.0"], dir);
-      expect(getOutput1.trim()).toBe('"first"');
+      const { code: setCode } = await runPmPkg(["set", "test.array.0=first", "test.bracket.access=success"], dir);
+      expect(setCode).toBe(0);
 
-      const { code: setCode2 } = await runPmPkg(["set", "test.bracket.access=success"], dir);
-      expect(setCode2).toBe(0);
-      const { output: getOutput2 } = await runPmPkg(["get", "test.bracket.access"], dir);
-      expect(getOutput2.trim()).toBe('"success"');
+      const [getOutput1, getOutput2] = await Promise.all([
+        runPmPkg(["get", "test.array.0"], dir),
+        runPmPkg(["get", "test.bracket.access"], dir),
+      ]);
+      expect(getOutput1.output.trim()).toBe('"first"');
+      expect(getOutput2.output.trim()).toBe('"success"');
+    });
+
+    // The grammar `bun pm view` shares: brackets hold one literal name, dots included.
+    it("should take a bracketed name literally in get, set and delete", async () => {
+      const exports = { ".": { import: "./i.mjs" }, "./package.json": "./package.json" };
+      using dir = tempDir("pm-pkg-literal-brackets", {
+        "package.json": JSON.stringify({ name: "x", exports, list: [{ b: 1 }, { b: 2 }] }, null, 2),
+      });
+
+      expect(await runPmPkg(["get", "exports[./package.json]"], dir)).toEqual({
+        output: '"./package.json"\n',
+        error: "",
+        code: 0,
+      });
+      expect(await runPmPkg(["get", "exports[.].import", "list.0.b", "list[1].b", "list[1]b"], dir)).toEqual({
+        output: '{\n  "exports[.].import": "./i.mjs",\n  "list.0.b": 1,\n  "list[1].b": 2,\n  "list[1]b": 2\n}\n',
+        error: "",
+        code: 0,
+      });
+
+      expect(await runPmPkg(["set", "exports[./a.js]=./a.js", "exports[.].require=./r.cjs"], dir)).toEqual({
+        output: "",
+        error: "",
+        code: 0,
+      });
+      expect((await readPkg(dir)).exports).toEqual({
+        ".": { import: "./i.mjs", require: "./r.cjs" },
+        "./package.json": "./package.json",
+        "./a.js": "./a.js",
+      });
+
+      expect(await runPmPkg(["delete", "exports[./package.json]", "exports[.].import", "list[0].b"], dir)).toEqual({
+        output: "",
+        error: "",
+        code: 0,
+      });
+      expect(await readPkg(dir)).toEqual({
+        name: "x",
+        exports: { ".": { require: "./r.cjs" }, "./a.js": "./a.js" },
+        list: [{}, { b: 2 }],
+      });
+    });
+
+    it("should read a name after an array from every element (npm compatibility)", async () => {
+      expect(await runPmPkg(["get", "contributors.name"], readonlyDir)).toEqual({
+        output: '{\n  "contributors[0].name": "John Doe",\n  "contributors[1].name": "Jane Smith"\n}\n',
+        error: "",
+        code: 0,
+      });
+      // Only one element has it, so a single value is printed bare.
+      expect(await runPmPkg(["get", "contributors.email"], readonlyDir)).toEqual({
+        output: '"john@example.com"\n',
+        error: "",
+        code: 0,
+      });
+      expect(await runPmPkg(["get", "name", "contributors[email]", "contributors.nope"], readonlyDir)).toEqual({
+        output: '{\n  "name": "test-package",\n  "contributors[0][email]": "john@example.com"\n}\n',
+        error: "",
+        code: 0,
+      });
     });
 
     it("should handle edge cases with special characters", async () => {
@@ -884,6 +1455,23 @@ describe.concurrent("bun pm pkg", () => {
       expect(error).toContain("No bin file found at ./nonexistent2.js");
       expect(code).toBe(0);
       expect((await readPkg(multiIssueDir)).name).toBe("multiple-issues-package");
+    });
+
+    it("should warn about a bin path longer than the path buffer", async () => {
+      const binPath =
+        "./" +
+        Array(Math.ceil(MAX_PATH_BYTES / 200) + 1)
+          .fill(Buffer.alloc(200, "a").toString())
+          .join("/") +
+        ".js";
+      using longBinDir = tempDir("pm-pkg-long-bin", {
+        "package.json": JSON.stringify({ name: "LONG-BIN-PACKAGE", version: "1.0.0", bin: { b: binPath } }, null, 2),
+      });
+
+      const { error, code } = await runPmPkg(["fix"], longBinDir);
+      expect(error).toContain(`No bin file found at ${binPath}`);
+      expect((await readPkg(longBinDir)).name).toBe("long-bin-package");
+      expect(code).toBe(0);
     });
 
     it("should not crash on empty bin object", async () => {

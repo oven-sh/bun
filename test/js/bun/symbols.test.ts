@@ -36,7 +36,7 @@ if (process.platform === "linux") {
 
     const output = await $`${objdump} -T ${BUN_EXE} | grep GLIBC_`.nothrow().text();
     const lines = output.split("\n");
-    const errors = [];
+    const errors: { symbol: string; "glibc version": string }[] = [];
     for (const line of lines) {
       const match = line.match(/\(GLIBC_(\d+(?:\.\d+)+)\)\s/);
       if (match?.[1]) {
@@ -66,7 +66,7 @@ To fix this, add it to -Wl,--wrap=symbol in the linker flags and update workarou
 
     const output = await $`${ldd} ${BUN_EXE}`.text();
     const lines = output.split("\n");
-    const errors = [];
+    const errors: string[] = [];
     for (const line of lines) {
       // libatomic
       if (line.includes("libatomic")) {

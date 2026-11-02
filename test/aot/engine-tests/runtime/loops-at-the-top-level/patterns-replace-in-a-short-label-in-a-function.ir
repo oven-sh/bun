@@ -1,0 +1,169 @@
+# A loop costs the same wherever it stands: at the top level of a module, the way a first benchmark is written, and in a function that is called once.
+# What a turn takes: calls into the run time, and instructions by the counter of the hardware, where that can be read. The file beside this one has the other place.
+# -- source: main.ts
+# declare const turns: string, given: string | undefined, report: (...values: unknown[]) => void;
+# const labels = ["worker-7 finished job 8123 ok", "cache-2 evicted 17 entries now"];
+# const rules = [/\bkey-[a-z0-9]{20}\b/g, /\btok_[A-Za-z0-9]{24}\b/g, /\bid:[0-9a-f]{32}\b/g, /-----BEGIN [A-Z ]+-----/g];
+# const count = Number(turns);
+# function main() {
+#   let sum = 0;
+#   for (let i = 0; i < count; i++) {
+#     let label = labels[i & 1]!;
+#     for (const rule of rules) label = label.replace(rule, "[hidden]");
+#     sum = (sum + label.length) | 0;
+#   }
+#   report(sum);
+# }
+# main();
+# -- end of source
+# FORM: AsRead
+# REPEAT: run = L0; loop = the_loop; most = 937.9
+# RUN(%(run)): run-in-shell --aotCountsPath=/dev/null --useConcurrentGC=0 --numberOfGCMarkers=1 const calls = () => aotRuntimeCounters().split("\n").reduce((sum, line) => sum + (/\toperation:/.test(line) ? parseInt(line) : 0), 0); let callsBefore, instructionsBefore; globalThis.loop = "%(loop)".replaceAll("_", " "); globalThis.isLoud = false; Object.defineProperty(globalThis, "turns", { get() { callsBefore = calls(); instructionsBefore = aotInstructionCount(); return 100000; } }); globalThis.given = undefined; globalThis.apply = Reflect.apply; globalThis.report = (...values) => { const instructions = aotInstructionCount(); print(values.join(" ")); if (callsBefore === undefined) return; const taken = instructions === null ? 0 : Math.round((instructions - instructionsBefore) / 10000) / 10; print("a turn:", Math.round((calls() - callsBefore) / 10000) / 10, "calls into the run time,", taken <= %(most) ? "at most %(most) instructions" : taken + " instructions"); callsBefore = undefined; };
+# REQUIRES(%(run)): x86_64 unsanitized-code not-windows faulting-loop-polls
+# END REPEAT
+# the loop
+# L0: 2950000
+# L0-NEXT: a turn: 0 calls into the run time, at most 937.9 instructions
+# L0-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+entry module=m0
+typesite w0 module=m0 position=102 kind=Variable
+typesite w1 module=m0 position=186 kind=Variable
+typesite w2 module=m0 position=307 kind=Variable
+typesite w3 module=m0 position=315 kind=CallResult
+typesite w4 module=m0 position=354 kind=Variable
+typesite w5 module=m0 position=374 kind=Variable
+typesite w6 module=m0 position=415 kind=Element
+typesite w7 module=m0 position=446 kind=Element
+typesite w8 module=m0 position=469 kind=CallResult
+typesite w9 module=m0 position=519 kind=PropertyRead
+data d0 root=Array{contents=undefined|null|string elements=[String{value="worker-7 finished job 8123 ok"}, String{value="cache-2 evicted 17 entries now"}]} module=m0
+variable g0 name="labels" module=m0 declared={type=undefined|null|absent|Array<undefined|null|string> site=w0 flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+variable g1 name="rules" module=m0 declared={type=undefined|null|absent|Array<undefined|null|RegExp> site=w1 flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+variable g2 name="count" module=m0 declared={type=number|absent site=w2} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = Data data=d0 @111
+    v3 = Convert v2 declared={type=undefined|null|Array<undefined|null|string> site=w0 flags=[OmitsNull, OmitsUndefined]} @111
+    PutModuleVariable v3 variable=g0 @102
+    v5 = NewRegExp pattern="\\bkey-[a-z0-9]{20}\\b" regExpFlags=[Global] @195
+    v6 = NewRegExp pattern="\\btok_[A-Za-z0-9]{24}\\b" regExpFlags=[Global] @220
+    v7 = NewRegExp pattern="\\bid:[0-9a-f]{32}\\b" regExpFlags=[Global] @248
+    v8 = NewRegExp pattern="-----BEGIN [A-Z ]+-----" regExpFlags=[Global] @272
+    v9 = NewArray v5, v6, v7, v8 contents=undefined|null|RegExp @194
+    v10 = Convert v9 declared={type=undefined|null|Array<undefined|null|RegExp> site=w1 flags=[OmitsNull, OmitsUndefined]} @194
+    PutModuleVariable v10 variable=g1 @186
+    v12 = Builtin builtin=Number @315
+    v13 = Builtin builtin=GlobalThis @327
+    v14 = PropGet v13 key="turns" [isFreeName] @327
+    v15 = Call v12, -, v14 calleeName="Number" @315
+    v16 = Convert v15 declared={type=number site=w3} illTypedCause=DeclarationWithoutBody @315
+    PutModuleVariable v16 variable=g2 @307
+    v18 = Call v1 calleeName="main" @559
+    v19 = Undefined @559
+    Return v19 @559
+}
+function f1 name="main" module=m0 position=330 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @330
+  b1():
+    v0 = Integer @360
+    v1 = Convert v0 declared={type=number site=w4} @360
+    v2 = Integer @378
+    v3 = Convert v2 declared={type=number site=w5} @378
+    Jump -> next b2(v1, v3) @374
+  b2(v4: number, v5: number):
+    LoopHint @374
+    v7 = Convert v5 declared={type=i32 flags=[IsExpected]} @381
+    v8 = GetModuleVariable variable=g2 @385
+    v9 = CheckInitialized v8 name="count" @385
+    v10 = Less v7, v9 @381
+    Branch v10 -> taken b3(| 0), notTaken b12(| 0) @381
+  b3(v11):
+    Jump -> next b4() @381
+  b4():
+    v12 = GetModuleVariable variable=g0 @415
+    v13 = CheckInitialized v12 name="labels" @415
+    v14 = Convert v11 declared={type=i32 flags=[IsExpected]} @422
+    v15 = Integer integer=1 @426
+    v16 = BitAnd v14, v15 @422
+    v17 = ElemGet v13, v16 @415
+    v18 = Convert v17 declared={type=undefined|null|string site=w6 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen @415
+    v19 = GetModuleVariable variable=g1 @454
+    v20 = CheckInitialized v19 name="rules" @454
+    v21 = IteratorOpen v20 @446
+    Jump -> next b5(v18) @446
+  b5(v22: undefined|null|string):
+    LoopHint @446
+    v24 = IteratorResume v21 @446
+    v25 = ResultAt v24 @446
+    v26 = ResultAt v24 index=1 @446
+    Branch v25 -> taken b6(), notTaken b8() @446
+  b6():
+    v27 = Convert v4 declared={type=i32 flags=[IsExpected]} @513
+    v28 = PropGet v22 key="length" @519
+    v29 = Convert v28 declared={type=number site=w9} illTypedCause=Assertion @519
+    v30 = Add v27, v29 @513
+    v31 = Integer @535
+    v32 = BitOr v30, v31 @513
+    v33 = Convert v32 declared={type=number site=w4} @506
+    Jump -> next b7() @506
+  b7():
+    v34 = Increment v14 @513
+    v35 = Convert v34 declared={type=number site=w5} @392
+    Jump -> next b2(v33, v35) @392
+  b8():
+    Jump -> next b9() @446
+  b9() handler=b11():
+    v36 = Convert v26 declared={type=undefined|null|RegExp site=w7 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen @446
+    v37 = PropGet v22 key="replace" @469
+    v38 = String string="[hidden]" @489
+    v39 = Call v37, v22, v36, v38 calleeKey="replace" calleeName="label.replace" @475
+    v40 = Convert v39 declared={type=undefined|null|string site=w8 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @469
+    Jump -> next b10() @461
+  b10() handler=b11():
+    Jump -> next b5(v40) @461
+  b11() role=IterationCleanup subject=v21:
+    v41 = CatchException @446
+    IteratorClose v21 completion=Throw @446
+    Rethrow v41 @446
+  b12(v43):
+    Jump -> next b13() @381
+  b13():
+    v44 = Builtin builtin=GlobalThis @544
+    v45 = PropGet v44 key="report" [isFreeName] @544
+    v46 = Convert v4 declared={type=i32 flags=[IsExpected]} @551
+    v47 = Call v45, -, v46 calleeName="report" @544
+    v48 = Undefined @544
+    Return v48 @544
+}
+function f2 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    Jump -> next b1() @25
+  b1():
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0) @78
+  b2(v3):
+    Jump -> next b3() @78
+  b3():
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b4(v10):
+    Jump -> next b5() @78
+  b5():
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f2 visibility=Private

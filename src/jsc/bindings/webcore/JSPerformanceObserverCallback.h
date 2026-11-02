@@ -37,7 +37,6 @@ public:
     ScriptExecutionContext* scriptExecutionContext() const { return ContextDestructionObserver::scriptExecutionContext(); }
 
     ~JSPerformanceObserverCallback() final;
-    JSCallbackData* callbackData() { return m_data; }
 
     // Functions
     CallbackResult<typename IDLUndefined::ImplementationType> handleEvent(typename IDLInterface<PerformanceObserver>::ParameterType thisObject, typename IDLInterface<PerformanceObserverEntryList>::ParameterType entries, typename IDLInterface<PerformanceObserver>::ParameterType observer) override;
@@ -45,16 +44,11 @@ public:
 private:
     JSPerformanceObserverCallback(JSC::JSObject*, JSDOMGlobalObject*);
 
-    bool hasCallback() const final { return m_data && m_data->callback(); }
-
     void visitJSFunction(JSC::AbstractSlotVisitor&) override;
 
     void visitJSFunction(JSC::SlotVisitor&) override;
 
     JSCallbackData* m_data;
 };
-
-JSC::JSValue toJS(PerformanceObserverCallback&);
-inline JSC::JSValue toJS(PerformanceObserverCallback* impl) { return impl ? toJS(*impl) : JSC::jsNull(); }
 
 } // namespace WebCore

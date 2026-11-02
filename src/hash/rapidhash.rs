@@ -1,7 +1,6 @@
 //! RapidHash.
 //!
-//! `HashObject.rs` exposes this via `hash_wrap::<RapidHash>`,
-//! which calls `hash(seed: u64, input: &[u8]) -> u64`.
+//! `HashObject.rs` exposes `hash(seed: u64, input: &[u8]) -> u64`.
 
 pub struct RapidHash;
 

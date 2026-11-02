@@ -35,12 +35,6 @@ impl JSONOptions {
     };
 }
 
-impl Default for JSONOptions {
-    fn default() -> Self {
-        Self::DEFAULT
-    }
-}
-
 const JSON_OPTS: JSONOptions = JSONOptions::DEFAULT;
 
 const DOTENV_JSON_OPTS: JSONOptions = JSONOptions {
@@ -188,7 +182,7 @@ fn parse_impl_in(
 }
 
 fn run_stage2<'s>(
-    source: &'s bun_ast::Source,
+    source: &'s bun_ast::Source<'s>,
     log: &mut bun_ast::Log,
     sidx: &mut StructuralIndex<'s>,
     opts: JSONOptions,
@@ -254,7 +248,7 @@ fn report_index_error(
     crate::Error::SyntaxError
 }
 
-fn guess_indentation(s: &[u8]) -> Indentation {
+pub fn guess_indentation(s: &[u8]) -> Indentation {
     let mut i = 0;
     while i < s.len() {
         if s[i] == b'"' || s[i] == b'\'' {
@@ -361,13 +355,33 @@ fn parse_classic(
     Ok(out)
 }
 
+/// For a tree that outlives the next reset of the thread-local `Store`.
+pub fn clone_out_of_store(
+    root: &Expr,
+    source: &bun_ast::Source,
+    log: &mut bun_ast::Log,
+    bump: &Bump,
+) -> crate::Result<Expr> {
+    root.deep_clone(bump).map_err(|err| {
+        if let bun_ast::Error::Alloc(err) = err {
+            return err.into();
+        }
+        log.add_error_fmt(
+            source,
+            root.loc,
+            format_args!("JSON document is too deeply nested"),
+        );
+        crate::Error::StackOverflow
+    })
+}
+
 impl ParsedJson {
     /// Strict JSON.
     pub fn parse_json(
         source: &bun_ast::Source,
         log: &mut bun_ast::Log,
     ) -> crate::Result<ParsedJson> {
-        parse_to_rows(source, log, JSON_OPTS)
+        parse_to_rows(source, log, JSON_OPTS, false)
     }
 
     /// JSONC (comments and trailing commas).
@@ -375,7 +389,15 @@ impl ParsedJson {
         source: &bun_ast::Source,
         log: &mut bun_ast::Log,
     ) -> crate::Result<ParsedJson> {
-        parse_to_rows(source, log, TSCONFIG_OPTS)
+        parse_to_rows(source, log, TSCONFIG_OPTS, false)
+    }
+
+    /// JSONC, with nothing but whitespace and comments after the value.
+    pub fn parse_jsonc_document(
+        source: &bun_ast::Source,
+        log: &mut bun_ast::Log,
+    ) -> crate::Result<ParsedJson> {
+        parse_to_rows(source, log, TSCONFIG_OPTS, true)
     }
 
     /// package.json (comments & trailing commas allowed).
@@ -383,7 +405,7 @@ impl ParsedJson {
         source: &bun_ast::Source,
         log: &mut bun_ast::Log,
     ) -> crate::Result<ParsedJson> {
-        parse_to_rows(source, log, PACKAGE_JSON_OPTS)
+        parse_to_rows(source, log, PACKAGE_JSON_OPTS, false)
     }
 
     /// A document fetched from an npm registry: strict JSON with no duplicate-key warnings.
@@ -395,7 +417,7 @@ impl ParsedJson {
             json_warn_duplicate_keys: false,
             ..JSONOptions::DEFAULT
         };
-        parse_to_rows(source, log, MANIFEST_OPTS)
+        parse_to_rows(source, log, MANIFEST_OPTS, false)
     }
 }
 
@@ -421,6 +443,7 @@ fn parse_to_rows(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
     opts: JSONOptions,
+    check_len: bool,
 ) -> crate::Result<ParsedJson> {
     if source.contents.is_empty() {
         let mut tape = Box::new(E::JsonTape::empty());
@@ -435,7 +458,7 @@ fn parse_to_rows(
             tape: Some(tape),
         });
     }
-    let out = parse_impl(source, log, opts, false)?;
+    let out = parse_impl(source, log, opts, check_len)?;
     Ok(ParsedJson {
         root: out.root,
         tape: out.tape,
@@ -644,7 +667,7 @@ fn parse_auto_quoted_string(
 
 /// Extracts the top-level `name` and `version` strings from a package.json.
 pub struct PackageJSONVersionChecker<'a> {
-    source: &'a bun_ast::Source,
+    source: &'a bun_ast::Source<'a>,
     log: &'a mut bun_ast::Log,
 
     pub(crate) found_version_buf: [u8; 1024],
@@ -656,7 +679,7 @@ pub struct PackageJSONVersionChecker<'a> {
 }
 
 impl<'a> PackageJSONVersionChecker<'a> {
-    pub fn init(source: &'a bun_ast::Source, log: &'a mut bun_ast::Log) -> Self {
+    pub fn init(source: &'a bun_ast::Source<'a>, log: &'a mut bun_ast::Log) -> Self {
         Self {
             source,
             log,
@@ -687,7 +710,7 @@ impl<'a> PackageJSONVersionChecker<'a> {
 
     /// Parse the document and record its first top-level string-valued `name` and `version`.
     pub fn parse(&mut self) -> crate::Result<()> {
-        let parsed = parse_to_rows(self.source, self.log, PKG_JSON_CHECKER_OPTS)?;
+        let parsed = parse_to_rows(self.source, self.log, PKG_JSON_CHECKER_OPTS, false)?;
         let js_ast::expr::Data::EObjectJSON(obj) = &parsed.root.data else {
             return Ok(());
         };
@@ -769,14 +792,24 @@ pub enum ValueLocation<'p> {
 
 impl ValueLocation<'_> {
     /// First byte of the value, falling back to the nearest key/container location.
+    /// Iterates instead of recursing so deeply nested arrays can't overflow the stack.
     pub fn resolve(&self, contents: &[u8]) -> bun_ast::Loc {
-        match self {
-            ValueLocation::Property(key_loc) => property_value_loc_or_key(contents, *key_loc),
-            ValueLocation::ArrayItem(array, index) => {
-                let array_loc = array.resolve(contents);
-                array_item_loc(contents, array_loc, *index).unwrap_or(array_loc)
+        let mut indices: Vec<usize> = Vec::new();
+        let mut cur = self;
+        let key_loc = loop {
+            match cur {
+                ValueLocation::Property(key_loc) => break *key_loc,
+                ValueLocation::ArrayItem(array, index) => {
+                    indices.push(*index);
+                    cur = array;
+                }
             }
+        };
+        let mut loc = property_value_loc_or_key(contents, key_loc);
+        for &index in indices.iter().rev() {
+            loc = array_item_loc(contents, loc, index).unwrap_or(loc);
         }
+        loc
     }
 }
 
@@ -1088,8 +1121,12 @@ mod tests {
                 tape = p.tape;
                 p.root
             }),
+            Which::JsoncDocument => ParsedJson::parse_jsonc_document(&source, &mut log).map(|p| {
+                tape = p.tape;
+                p.root
+            }),
             Which::Immutable => {
-                parse_to_rows(&source, &mut log, JSONOptions::DEFAULT).map(|mut p| {
+                parse_to_rows(&source, &mut log, JSONOptions::DEFAULT, false).map(|mut p| {
                     tape = p.tape.take();
                     p.root
                 })
@@ -1118,6 +1155,7 @@ mod tests {
         Env,
         PackageJson,
         Jsonc,
+        JsoncDocument,
         Immutable,
     }
 
@@ -1316,6 +1354,44 @@ mod tests {
             "{\n  \"p\": {\n    \"m\": \"l\"\n  }\n}",
             "{\"p\":{\"m\":\"l\"}}",
         );
+    }
+
+    #[test]
+    fn jsonc_document_is_one_value() {
+        for src in [
+            "{} // c",
+            "{} /* c */ \n",
+            "\u{FEFF}{}\u{FEFF}",
+            "// c\n[1,]\n\t",
+            "\"semi\"",
+            "1 ",
+            "null\u{2028}",
+        ] {
+            let p = run(src.as_bytes(), Which::JsoncDocument);
+            assert!(
+                p.root.is_some() && p.errors == 0,
+                "{src:?}: {}",
+                p.first_msg
+            );
+        }
+        for src in [
+            "{} x",
+            "{} {}",
+            "{},",
+            "[] 1",
+            "\"semi\": false",
+            "1 2",
+            "true false",
+            "{}\0",
+            "{} /* c",
+            "{} /",
+        ] {
+            let p = run(src.as_bytes(), Which::JsoncDocument);
+            assert!(p.root.is_none() && p.errors > 0, "{src:?} is accepted");
+        }
+        for src in ["{} x", "\"semi\": false", "{}\0"] {
+            assert!(run(src.as_bytes(), Which::Jsonc).root.is_some(), "{src:?}");
+        }
     }
 
     #[test]
@@ -1859,9 +1935,9 @@ mod tests {
             writeln!(
                 out,
                 "str={:?}",
-                root.get_string(bump, b"name")
-                    .unwrap()
-                    .map(|(s, _)| std::string::String::from_utf8_lossy(s).into_owned())
+                root.get(b"name")
+                    .and_then(|e| e.as_string(bump))
+                    .map(|s| std::string::String::from_utf8_lossy(s).into_owned())
             )
             .unwrap();
             writeln!(
@@ -1912,20 +1988,13 @@ mod tests {
             assert!(root.get(b"empty_arr").unwrap().as_array().is_none());
             assert!(root.get_array(b"empty_obj").is_none());
 
-            for path in [
-                &b"deps.a"[..],
-                b"files[0]",
-                b"files[4]",
-                b"files[5][0]",
-                b"files[99]",
-                b"deps.zzz",
-            ] {
-                write!(out, "{}=", std::str::from_utf8(path).unwrap()).unwrap();
-                match root.get_path_may_be_index(bump, path) {
-                    Some(e) => describe(&e, bump, &mut out),
-                    None => out.push_str("none"),
+            let mut files = root.get_array(b"files").unwrap();
+            while let Some(item) = files.next() {
+                if let Some(mut nested) = item.as_array() {
+                    out.push_str("files[5][0]=");
+                    describe(&nested.next().unwrap(), bump, &mut out);
+                    out.push('\n');
                 }
-                out.push('\n');
             }
 
             out
@@ -1945,10 +2014,8 @@ mod tests {
             full.contains("deps_map=[(\"a\", \"^1\"), (\"b\", \"~2.0\"), (\"empty\", \"\")]\n")
         );
         assert!(full.contains("files=[\"lib\",3,true,null,{object},[array],]\n"));
-        assert!(full.contains("files[4]={object}\n"));
         assert!(full.contains("files[5][0]=\"nested\"\n"));
         assert!(full.contains("deps.a=\"^1\"\n"));
-        assert!(full.contains("files[99]=none\n"));
     }
 
     #[test]

@@ -2,7 +2,9 @@ use core::mem::{align_of, size_of};
 
 use bun_alloc::AllocError;
 
+use crate::compat;
 use crate::helpers;
+use crate::links::{ParsedDest, scan_link_destination};
 use crate::parser::{BlockHeader, Parser};
 use crate::types::{self, VerbatimLine};
 use crate::unicode;
@@ -23,11 +25,6 @@ pub(crate) struct ParsedRefDef<'a> {
     pub(crate) title: &'a [u8],
 }
 
-pub(crate) struct ParsedDest<'a> {
-    pub(crate) dest: &'a [u8],
-    pub(crate) end_pos: usize,
-}
-
 pub(crate) struct ParsedTitle<'a> {
     pub(crate) title: &'a [u8],
     pub(crate) end_pos: usize,
@@ -36,7 +33,7 @@ pub(crate) struct ParsedTitle<'a> {
 impl Parser<'_> {
     /// Normalize a link label for comparison: collapse whitespace runs to single space,
     /// strip leading/trailing whitespace, case-fold.
-    pub(crate) fn normalize_label(&mut self, raw: &[u8]) -> Vec<u8> {
+    pub(crate) fn normalize_label(&self, raw: &[u8]) -> Vec<u8> {
         // Collapse whitespace and apply Unicode case folding (per CommonMark §6.7)
         let mut result: Vec<u8> = Vec::new();
         let mut in_ws = true; // skip leading whitespace
@@ -250,55 +247,12 @@ impl Parser<'_> {
         text: &'a [u8],
         start: usize,
     ) -> Option<ParsedDest<'a>> {
-        let mut p = start;
-        if p >= text.len() {
+        let parsed = scan_link_destination(text, start)?;
+        // A reference definition needs a destination: only `<>` may be empty.
+        if parsed.end_pos == start {
             return None;
         }
-
-        if text[p] == b'<' {
-            // Angle-bracket destination
-            p += 1;
-            let dest_start = p;
-            while p < text.len() && text[p] != b'>' && text[p] != b'\n' {
-                if text[p] == b'\\' && p + 1 < text.len() {
-                    p += 2;
-                } else {
-                    p += 1;
-                }
-            }
-            if p >= text.len() || text[p] != b'>' {
-                return None;
-            }
-            let dest = &text[dest_start..p];
-            p += 1; // skip >
-            Some(ParsedDest { dest, end_pos: p })
-        } else {
-            // Bare destination — balance parentheses
-            let dest_start = p;
-            let mut paren_depth: u32 = 0;
-            while p < text.len() && !helpers::is_whitespace(text[p]) {
-                if text[p] == b'(' {
-                    paren_depth += 1;
-                } else if text[p] == b')' {
-                    if paren_depth == 0 {
-                        break;
-                    }
-                    paren_depth -= 1;
-                }
-                if text[p] == b'\\' && p + 1 < text.len() {
-                    p += 2;
-                } else {
-                    p += 1;
-                }
-            }
-            if p == dest_start {
-                return None; // empty dest not allowed for bare
-            }
-            Some(ParsedDest {
-                dest: &text[dest_start..p],
-                end_pos: p,
-            })
-        }
+        Some(parsed)
     }
 
     pub(crate) fn parse_ref_def_title<'a>(
@@ -325,7 +279,10 @@ impl Parser<'_> {
                 p += 2;
             } else {
                 // For () titles, nested ( is not allowed
-                if open_char == b'(' && text[p] == b'(' {
+                if open_char == b'('
+                    && text[p] == b'('
+                    && !compat::parenthesis_can_be_in_a_title(&self.flags)
+                {
                     return None;
                 }
                 p += 1;
@@ -385,6 +342,7 @@ impl Parser<'_> {
 
             // Merge lines into buffer to parse ref defs
             self.buffer.clear();
+            self.def_lines.clear();
             for li in 0..n_lines {
                 // SAFETY: li < n_lines so lines_off + li*size_of::<VerbatimLine>() is within
                 // the [lines_off, lines_off + lines_size) range bounds-checked above;
@@ -395,6 +353,10 @@ impl Parser<'_> {
                         .cast::<VerbatimLine>()
                         .read_unaligned()
                 };
+                // A reference definition starts with `[`
+                if li == 0 && self.ch(vline.beg) != b'[' {
+                    break;
+                }
                 if vline.beg > vline.end || vline.end > self.size {
                     continue;
                 }
@@ -403,6 +365,9 @@ impl Parser<'_> {
                 }
                 self.buffer
                     .extend_from_slice(&self.text[vline.beg as usize..vline.end as usize]);
+                if self.track {
+                    self.def_lines.push(vline);
+                }
             }
 
             // Move the merged buffer out of self so parse_ref_def/normalize_label
@@ -446,6 +411,23 @@ impl Parser<'_> {
                     && (result.end_pos == pos || merged[result.end_pos - 1] != b'\n')
                 {
                     newlines += 1;
+                }
+                if self.track {
+                    let first = self.def_lines.get(lines_consumed as usize);
+                    let last = self
+                        .def_lines
+                        .get((lines_consumed + newlines).saturating_sub(1) as usize);
+                    if let (Some(first), Some(last)) = (first, last) {
+                        self.renderer.ptr.definition(&types::Definition {
+                            beg: first.beg,
+                            end: last.end,
+                            label: result.label,
+                            dest: result.dest,
+                            title: result.title,
+                            lines: &self.def_lines
+                                [lines_consumed as usize..(lines_consumed + newlines) as usize],
+                        });
+                    }
                 }
                 lines_consumed += newlines;
                 pos = result.end_pos;

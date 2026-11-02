@@ -1,0 +1,23 @@
+// The keys of the namespace of a JSON file.
+const settled = () => new Promise(resolve => setTimeout(resolve, 1));
+console.log("# keys");
+await import("./keys/keys.mjs");
+await settled();
+console.log("# members");
+await import("./members/members.mjs");
+await settled();
+console.log("# odd-keys");
+await import("./odd-keys/odd-keys.mjs");
+await settled();
+console.log("# not-an-object");
+await import("./not-an-object/not-an-object.mjs");
+await settled();
+console.log("# dynamic");
+await import("./dynamic/dynamic.mjs");
+await settled();
+console.log("# typescript");
+await import("./typescript/typescript.ts");
+await settled();
+console.log("# re-exported");
+await import("./re-exported/re-exported.mjs");
+await settled();

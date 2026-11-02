@@ -1,0 +1,954 @@
+# Six objects, each the prototype of the next, and four receivers of four shapes below them. A round reads a value, calls a method, runs a getter and misses a name on each receiver, and adds a name to four new objects.
+# Between any two of 30 rounds one of the six is given a name that nobody reads: Object.defineProperty(chain[0], "unrelated0", { value: 0, writable: true, enumerable: true, configurable: true });
+# FORM: AsRead
+# RUN: run-in-shell --aotCountsPath=/dev/null const asked = () => aotOperationCount("operationAOTGetByIdAndCache") + aotOperationCount("operationAOTPutByIdAndCache") + aotOperationCount("operationAOTFillSiteCache"); let marked; globalThis.mark = () => { marked = asked(); }; globalThis.report = (...values) => { let text = ""; for (let i = 0; i < values.length; i++) text += (i ? " " : "") + values[i]; print(text); print(marked > 0 ? "the first rounds ask" : "nothing asks"); const later = asked() - marked; print(later < 90 ? "few ask later: a round that lost its caches would ask sixteen times" : later); };
+# What is cached under the names that are read outlives the names that a prototype is given.
+# CHECK: 64080
+# CHECK-NEXT: the first rounds ask
+# CHECK-NEXT: few ask later: a round that lost its caches would ask sixteen times
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+entry module=m0
+layout L0 module=m0
+layout L1 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=f1 flags=[IsFromCompiler]} flags=[IsImmutable]}, {key=@"binding.1" declared={type=undefined|null|absent|Array flags=[IsExpected]} flags=[IsImmutable]}, {key=@"binding.2" declared={type=undefined|null|absent|Array flags=[IsExpected]} flags=[IsImmutable]}] ownFieldCount=3
+layout L2 fields=[{key="configurable" declared={type=undefined|boolean flags=[IsExpected]}}, {key="enumerable" declared={type=undefined|boolean flags=[IsExpected]}}, {key="get" declared={type=undefined|null|function|f4 flags=[IsExpected]} flags=[IsMethod]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean flags=[IsExpected]}}] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewObject layout=L0
+    v1 = FinishObject v0
+    PutModuleVariable v1 variable=g0
+    v3 = NewObject layout=L1
+    v4 = NewClosure v3 function=f1
+    v5 = Convert v4 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutEnvironmentField v3, v5 layout=L1
+    v7 = NewClosure v3 function=f2
+    v8 = Convert v7 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v9 = Builtin builtin=Object
+    v10 = Builtin builtin=ObjectCreate
+    v11 = Null
+    v12 = Call v10, v9, v11 calleeName="Object.create"
+    v13 = NewArray v12 contents=anything
+    v14 = Convert v13 declared={type=undefined|null|Array flags=[IsExpected]}
+    PutEnvironmentField v3, v14 layout=L1 field=1
+    v16 = Integer integer=1
+    v17 = Convert v16 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b2(v17)
+  b2(v18):
+    LoopHint
+    v20 = Integer integer=6
+    v21 = Less v18, v20
+    Branch v21 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v22):
+    Jump -> next b4()
+  b4():
+    v23 = Builtin builtin=Object
+    v24 = Builtin builtin=ObjectCreate
+    v25 = Integer integer=1
+    v26 = Sub v22, v25
+    v27 = ElemGet v14, v26
+    v28 = Convert v27 declared={type=undefined|null|object flags=[IsExpected]}
+    v29 = Call v24, v23, v28 calleeName="Object.create"
+    ElemSet v14, v22, v29 mode=Sloppy
+    Jump -> next b5()
+  b5():
+    v31 = Increment v22
+    v32 = Convert v31 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b2(v32)
+  b6(v33):
+    Jump -> next b7()
+  b7():
+    v34 = Integer
+    v35 = ElemGet v14, v34
+    v36 = Convert v35 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v37 = Integer integer=10
+    PropSet v36, v37 key="value" mode=Sloppy
+    v39 = Integer
+    v40 = ElemGet v14, v39
+    v41 = Convert v40 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v42 = NewClosure function=f3
+    PropSet v41, v42 key="method" mode=Sloppy
+    v44 = Builtin builtin=Object
+    v45 = Builtin builtin=ObjectDefineProperty
+    v46 = Integer
+    v47 = ElemGet v14, v46
+    v48 = String string="computed"
+    v49 = NewClosure function=f4
+    v50 = Convert v49 declared={type=undefined|null|function|f4 flags=[IsExpected]}
+    v51 = NewObject layout=L2
+    PropDefine v51, v50 key="get"
+    v53 = Boolean boolean=true
+    v54 = Convert v53 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v51, v54 key="configurable"
+    v56 = FinishObject v51
+    v57 = Call v45, v44, v47, v48, v56 calleeName="Object.defineProperty"
+    v58 = Call v5 calleeName="make"
+    v59 = Convert v58 declared={type=undefined|null|Array flags=[IsExpected]}
+    PutEnvironmentField v3, v59 layout=L1 field=2
+    v61 = Integer
+    v62 = Convert v61 declared={type=number flags=[IsExpected]}
+    v63 = Integer
+    v64 = Convert v63 declared={type=number flags=[IsExpected]}
+    Jump -> next b8(v62, v64)
+  b8(v65, v66):
+    LoopHint
+    v68 = Integer integer=6
+    v69 = Less v66, v68
+    Branch v69 -> taken b9(| 0), notTaken b12(| 0)
+  b9(v70):
+    Jump -> next b10()
+  b10():
+    v71 = Call v8 calleeName="round"
+    v72 = Convert v71 declared={type=number flags=[IsExpected]}
+    v73 = Add v65, v72
+    v74 = Convert v73 declared={type=number flags=[IsExpected]}
+    Jump -> next b11()
+  b11():
+    v75 = Increment v70
+    v76 = Convert v75 declared={type=number flags=[IsExpected]}
+    Jump -> next b8(v74, v76)
+  b12(v77):
+    Jump -> next b13()
+  b13():
+    v78 = Builtin builtin=GlobalThis
+    v79 = PropGet v78 key="mark" [isFreeName]
+    v80 = Call v79 calleeName="mark"
+    v81 = Builtin builtin=Object
+    v82 = Builtin builtin=ObjectDefineProperty
+    v83 = Integer
+    v84 = ElemGet v14, v83
+    v85 = String string="unrelated0"
+    v86 = Integer
+    v87 = Boolean boolean=true
+    v88 = Convert v87 declared={type=undefined|boolean flags=[IsExpected]}
+    v89 = NewObject -, v86 layout=L2 fields=[4]
+    PropDefine v89, v88 key="writable"
+    v91 = Boolean boolean=true
+    v92 = Convert v91 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v89, v92 key="enumerable"
+    v94 = Boolean boolean=true
+    v95 = Convert v94 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v89, v95 key="configurable"
+    v97 = FinishObject v89
+    v98 = Call v82, v81, v84, v85, v97 calleeName="Object.defineProperty"
+    v99 = Call v8 calleeName="round"
+    v100 = Convert v99 declared={type=number flags=[IsExpected]}
+    v101 = Add v65, v100
+    v102 = Convert v101 declared={type=number flags=[IsExpected]}
+    v103 = Builtin builtin=Object
+    v104 = Builtin builtin=ObjectDefineProperty
+    v105 = Integer integer=1
+    v106 = ElemGet v14, v105
+    v107 = String string="unrelated1"
+    v108 = Integer integer=1
+    v109 = Boolean boolean=true
+    v110 = Convert v109 declared={type=undefined|boolean flags=[IsExpected]}
+    v111 = NewObject -, v108 layout=L2 fields=[4]
+    PropDefine v111, v110 key="writable"
+    v113 = Boolean boolean=true
+    v114 = Convert v113 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v111, v114 key="enumerable"
+    v116 = Boolean boolean=true
+    v117 = Convert v116 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v111, v117 key="configurable"
+    v119 = FinishObject v111
+    v120 = Call v104, v103, v106, v107, v119 calleeName="Object.defineProperty"
+    v121 = Call v8 calleeName="round"
+    v122 = Convert v121 declared={type=number flags=[IsExpected]}
+    v123 = Add v102, v122
+    v124 = Convert v123 declared={type=number flags=[IsExpected]}
+    v125 = Builtin builtin=Object
+    v126 = Builtin builtin=ObjectDefineProperty
+    v127 = Integer integer=2
+    v128 = ElemGet v14, v127
+    v129 = String string="unrelated2"
+    v130 = Integer integer=2
+    v131 = Boolean boolean=true
+    v132 = Convert v131 declared={type=undefined|boolean flags=[IsExpected]}
+    v133 = NewObject -, v130 layout=L2 fields=[4]
+    PropDefine v133, v132 key="writable"
+    v135 = Boolean boolean=true
+    v136 = Convert v135 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v133, v136 key="enumerable"
+    v138 = Boolean boolean=true
+    v139 = Convert v138 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v133, v139 key="configurable"
+    v141 = FinishObject v133
+    v142 = Call v126, v125, v128, v129, v141 calleeName="Object.defineProperty"
+    v143 = Call v8 calleeName="round"
+    v144 = Convert v143 declared={type=number flags=[IsExpected]}
+    v145 = Add v124, v144
+    v146 = Convert v145 declared={type=number flags=[IsExpected]}
+    v147 = Builtin builtin=Object
+    v148 = Builtin builtin=ObjectDefineProperty
+    v149 = Integer integer=3
+    v150 = ElemGet v14, v149
+    v151 = String string="unrelated3"
+    v152 = Integer integer=3
+    v153 = Boolean boolean=true
+    v154 = Convert v153 declared={type=undefined|boolean flags=[IsExpected]}
+    v155 = NewObject -, v152 layout=L2 fields=[4]
+    PropDefine v155, v154 key="writable"
+    v157 = Boolean boolean=true
+    v158 = Convert v157 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v155, v158 key="enumerable"
+    v160 = Boolean boolean=true
+    v161 = Convert v160 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v155, v161 key="configurable"
+    v163 = FinishObject v155
+    v164 = Call v148, v147, v150, v151, v163 calleeName="Object.defineProperty"
+    v165 = Call v8 calleeName="round"
+    v166 = Convert v165 declared={type=number flags=[IsExpected]}
+    v167 = Add v146, v166
+    v168 = Convert v167 declared={type=number flags=[IsExpected]}
+    v169 = Builtin builtin=Object
+    v170 = Builtin builtin=ObjectDefineProperty
+    v171 = Integer integer=4
+    v172 = ElemGet v14, v171
+    v173 = String string="unrelated4"
+    v174 = Integer integer=4
+    v175 = Boolean boolean=true
+    v176 = Convert v175 declared={type=undefined|boolean flags=[IsExpected]}
+    v177 = NewObject -, v174 layout=L2 fields=[4]
+    PropDefine v177, v176 key="writable"
+    v179 = Boolean boolean=true
+    v180 = Convert v179 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v177, v180 key="enumerable"
+    v182 = Boolean boolean=true
+    v183 = Convert v182 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v177, v183 key="configurable"
+    v185 = FinishObject v177
+    v186 = Call v170, v169, v172, v173, v185 calleeName="Object.defineProperty"
+    v187 = Call v8 calleeName="round"
+    v188 = Convert v187 declared={type=number flags=[IsExpected]}
+    v189 = Add v168, v188
+    v190 = Convert v189 declared={type=number flags=[IsExpected]}
+    v191 = Builtin builtin=Object
+    v192 = Builtin builtin=ObjectDefineProperty
+    v193 = Integer integer=5
+    v194 = ElemGet v14, v193
+    v195 = String string="unrelated5"
+    v196 = Integer integer=5
+    v197 = Boolean boolean=true
+    v198 = Convert v197 declared={type=undefined|boolean flags=[IsExpected]}
+    v199 = NewObject -, v196 layout=L2 fields=[4]
+    PropDefine v199, v198 key="writable"
+    v201 = Boolean boolean=true
+    v202 = Convert v201 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v199, v202 key="enumerable"
+    v204 = Boolean boolean=true
+    v205 = Convert v204 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v199, v205 key="configurable"
+    v207 = FinishObject v199
+    v208 = Call v192, v191, v194, v195, v207 calleeName="Object.defineProperty"
+    v209 = Call v8 calleeName="round"
+    v210 = Convert v209 declared={type=number flags=[IsExpected]}
+    v211 = Add v190, v210
+    v212 = Convert v211 declared={type=number flags=[IsExpected]}
+    v213 = Builtin builtin=Object
+    v214 = Builtin builtin=ObjectDefineProperty
+    v215 = Integer
+    v216 = ElemGet v14, v215
+    v217 = String string="unrelated6"
+    v218 = Integer integer=6
+    v219 = Boolean boolean=true
+    v220 = Convert v219 declared={type=undefined|boolean flags=[IsExpected]}
+    v221 = NewObject -, v218 layout=L2 fields=[4]
+    PropDefine v221, v220 key="writable"
+    v223 = Boolean boolean=true
+    v224 = Convert v223 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v221, v224 key="enumerable"
+    v226 = Boolean boolean=true
+    v227 = Convert v226 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v221, v227 key="configurable"
+    v229 = FinishObject v221
+    v230 = Call v214, v213, v216, v217, v229 calleeName="Object.defineProperty"
+    v231 = Call v8 calleeName="round"
+    v232 = Convert v231 declared={type=number flags=[IsExpected]}
+    v233 = Add v212, v232
+    v234 = Convert v233 declared={type=number flags=[IsExpected]}
+    v235 = Builtin builtin=Object
+    v236 = Builtin builtin=ObjectDefineProperty
+    v237 = Integer integer=1
+    v238 = ElemGet v14, v237
+    v239 = String string="unrelated7"
+    v240 = Integer integer=7
+    v241 = Boolean boolean=true
+    v242 = Convert v241 declared={type=undefined|boolean flags=[IsExpected]}
+    v243 = NewObject -, v240 layout=L2 fields=[4]
+    PropDefine v243, v242 key="writable"
+    v245 = Boolean boolean=true
+    v246 = Convert v245 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v243, v246 key="enumerable"
+    v248 = Boolean boolean=true
+    v249 = Convert v248 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v243, v249 key="configurable"
+    v251 = FinishObject v243
+    v252 = Call v236, v235, v238, v239, v251 calleeName="Object.defineProperty"
+    v253 = Call v8 calleeName="round"
+    v254 = Convert v253 declared={type=number flags=[IsExpected]}
+    v255 = Add v234, v254
+    v256 = Convert v255 declared={type=number flags=[IsExpected]}
+    v257 = Builtin builtin=Object
+    v258 = Builtin builtin=ObjectDefineProperty
+    v259 = Integer integer=2
+    v260 = ElemGet v14, v259
+    v261 = String string="unrelated8"
+    v262 = Integer integer=8
+    v263 = Boolean boolean=true
+    v264 = Convert v263 declared={type=undefined|boolean flags=[IsExpected]}
+    v265 = NewObject -, v262 layout=L2 fields=[4]
+    PropDefine v265, v264 key="writable"
+    v267 = Boolean boolean=true
+    v268 = Convert v267 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v265, v268 key="enumerable"
+    v270 = Boolean boolean=true
+    v271 = Convert v270 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v265, v271 key="configurable"
+    v273 = FinishObject v265
+    v274 = Call v258, v257, v260, v261, v273 calleeName="Object.defineProperty"
+    v275 = Call v8 calleeName="round"
+    v276 = Convert v275 declared={type=number flags=[IsExpected]}
+    v277 = Add v256, v276
+    v278 = Convert v277 declared={type=number flags=[IsExpected]}
+    v279 = Builtin builtin=Object
+    v280 = Builtin builtin=ObjectDefineProperty
+    v281 = Integer integer=3
+    v282 = ElemGet v14, v281
+    v283 = String string="unrelated9"
+    v284 = Integer integer=9
+    v285 = Boolean boolean=true
+    v286 = Convert v285 declared={type=undefined|boolean flags=[IsExpected]}
+    v287 = NewObject -, v284 layout=L2 fields=[4]
+    PropDefine v287, v286 key="writable"
+    v289 = Boolean boolean=true
+    v290 = Convert v289 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v287, v290 key="enumerable"
+    v292 = Boolean boolean=true
+    v293 = Convert v292 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v287, v293 key="configurable"
+    v295 = FinishObject v287
+    v296 = Call v280, v279, v282, v283, v295 calleeName="Object.defineProperty"
+    v297 = Call v8 calleeName="round"
+    v298 = Convert v297 declared={type=number flags=[IsExpected]}
+    v299 = Add v278, v298
+    v300 = Convert v299 declared={type=number flags=[IsExpected]}
+    v301 = Builtin builtin=Object
+    v302 = Builtin builtin=ObjectDefineProperty
+    v303 = Integer integer=4
+    v304 = ElemGet v14, v303
+    v305 = String string="unrelated10"
+    v306 = Integer integer=10
+    v307 = Boolean boolean=true
+    v308 = Convert v307 declared={type=undefined|boolean flags=[IsExpected]}
+    v309 = NewObject -, v306 layout=L2 fields=[4]
+    PropDefine v309, v308 key="writable"
+    v311 = Boolean boolean=true
+    v312 = Convert v311 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v309, v312 key="enumerable"
+    v314 = Boolean boolean=true
+    v315 = Convert v314 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v309, v315 key="configurable"
+    v317 = FinishObject v309
+    v318 = Call v302, v301, v304, v305, v317 calleeName="Object.defineProperty"
+    v319 = Call v8 calleeName="round"
+    v320 = Convert v319 declared={type=number flags=[IsExpected]}
+    v321 = Add v300, v320
+    v322 = Convert v321 declared={type=number flags=[IsExpected]}
+    v323 = Builtin builtin=Object
+    v324 = Builtin builtin=ObjectDefineProperty
+    v325 = Integer integer=5
+    v326 = ElemGet v14, v325
+    v327 = String string="unrelated11"
+    v328 = Integer integer=11
+    v329 = Boolean boolean=true
+    v330 = Convert v329 declared={type=undefined|boolean flags=[IsExpected]}
+    v331 = NewObject -, v328 layout=L2 fields=[4]
+    PropDefine v331, v330 key="writable"
+    v333 = Boolean boolean=true
+    v334 = Convert v333 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v331, v334 key="enumerable"
+    v336 = Boolean boolean=true
+    v337 = Convert v336 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v331, v337 key="configurable"
+    v339 = FinishObject v331
+    v340 = Call v324, v323, v326, v327, v339 calleeName="Object.defineProperty"
+    v341 = Call v8 calleeName="round"
+    v342 = Convert v341 declared={type=number flags=[IsExpected]}
+    v343 = Add v322, v342
+    v344 = Convert v343 declared={type=number flags=[IsExpected]}
+    v345 = Builtin builtin=Object
+    v346 = Builtin builtin=ObjectDefineProperty
+    v347 = Integer
+    v348 = ElemGet v14, v347
+    v349 = String string="unrelated12"
+    v350 = Integer integer=12
+    v351 = Boolean boolean=true
+    v352 = Convert v351 declared={type=undefined|boolean flags=[IsExpected]}
+    v353 = NewObject -, v350 layout=L2 fields=[4]
+    PropDefine v353, v352 key="writable"
+    v355 = Boolean boolean=true
+    v356 = Convert v355 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v353, v356 key="enumerable"
+    v358 = Boolean boolean=true
+    v359 = Convert v358 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v353, v359 key="configurable"
+    v361 = FinishObject v353
+    v362 = Call v346, v345, v348, v349, v361 calleeName="Object.defineProperty"
+    v363 = Call v8 calleeName="round"
+    v364 = Convert v363 declared={type=number flags=[IsExpected]}
+    v365 = Add v344, v364
+    v366 = Convert v365 declared={type=number flags=[IsExpected]}
+    v367 = Builtin builtin=Object
+    v368 = Builtin builtin=ObjectDefineProperty
+    v369 = Integer integer=1
+    v370 = ElemGet v14, v369
+    v371 = String string="unrelated13"
+    v372 = Integer integer=13
+    v373 = Boolean boolean=true
+    v374 = Convert v373 declared={type=undefined|boolean flags=[IsExpected]}
+    v375 = NewObject -, v372 layout=L2 fields=[4]
+    PropDefine v375, v374 key="writable"
+    v377 = Boolean boolean=true
+    v378 = Convert v377 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v375, v378 key="enumerable"
+    v380 = Boolean boolean=true
+    v381 = Convert v380 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v375, v381 key="configurable"
+    v383 = FinishObject v375
+    v384 = Call v368, v367, v370, v371, v383 calleeName="Object.defineProperty"
+    v385 = Call v8 calleeName="round"
+    v386 = Convert v385 declared={type=number flags=[IsExpected]}
+    v387 = Add v366, v386
+    v388 = Convert v387 declared={type=number flags=[IsExpected]}
+    v389 = Builtin builtin=Object
+    v390 = Builtin builtin=ObjectDefineProperty
+    v391 = Integer integer=2
+    v392 = ElemGet v14, v391
+    v393 = String string="unrelated14"
+    v394 = Integer integer=14
+    v395 = Boolean boolean=true
+    v396 = Convert v395 declared={type=undefined|boolean flags=[IsExpected]}
+    v397 = NewObject -, v394 layout=L2 fields=[4]
+    PropDefine v397, v396 key="writable"
+    v399 = Boolean boolean=true
+    v400 = Convert v399 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v397, v400 key="enumerable"
+    v402 = Boolean boolean=true
+    v403 = Convert v402 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v397, v403 key="configurable"
+    v405 = FinishObject v397
+    v406 = Call v390, v389, v392, v393, v405 calleeName="Object.defineProperty"
+    v407 = Call v8 calleeName="round"
+    v408 = Convert v407 declared={type=number flags=[IsExpected]}
+    v409 = Add v388, v408
+    v410 = Convert v409 declared={type=number flags=[IsExpected]}
+    v411 = Builtin builtin=Object
+    v412 = Builtin builtin=ObjectDefineProperty
+    v413 = Integer integer=3
+    v414 = ElemGet v14, v413
+    v415 = String string="unrelated15"
+    v416 = Integer integer=15
+    v417 = Boolean boolean=true
+    v418 = Convert v417 declared={type=undefined|boolean flags=[IsExpected]}
+    v419 = NewObject -, v416 layout=L2 fields=[4]
+    PropDefine v419, v418 key="writable"
+    v421 = Boolean boolean=true
+    v422 = Convert v421 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v419, v422 key="enumerable"
+    v424 = Boolean boolean=true
+    v425 = Convert v424 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v419, v425 key="configurable"
+    v427 = FinishObject v419
+    v428 = Call v412, v411, v414, v415, v427 calleeName="Object.defineProperty"
+    v429 = Call v8 calleeName="round"
+    v430 = Convert v429 declared={type=number flags=[IsExpected]}
+    v431 = Add v410, v430
+    v432 = Convert v431 declared={type=number flags=[IsExpected]}
+    v433 = Builtin builtin=Object
+    v434 = Builtin builtin=ObjectDefineProperty
+    v435 = Integer integer=4
+    v436 = ElemGet v14, v435
+    v437 = String string="unrelated16"
+    v438 = Integer integer=16
+    v439 = Boolean boolean=true
+    v440 = Convert v439 declared={type=undefined|boolean flags=[IsExpected]}
+    v441 = NewObject -, v438 layout=L2 fields=[4]
+    PropDefine v441, v440 key="writable"
+    v443 = Boolean boolean=true
+    v444 = Convert v443 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v441, v444 key="enumerable"
+    v446 = Boolean boolean=true
+    v447 = Convert v446 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v441, v447 key="configurable"
+    v449 = FinishObject v441
+    v450 = Call v434, v433, v436, v437, v449 calleeName="Object.defineProperty"
+    v451 = Call v8 calleeName="round"
+    v452 = Convert v451 declared={type=number flags=[IsExpected]}
+    v453 = Add v432, v452
+    v454 = Convert v453 declared={type=number flags=[IsExpected]}
+    v455 = Builtin builtin=Object
+    v456 = Builtin builtin=ObjectDefineProperty
+    v457 = Integer integer=5
+    v458 = ElemGet v14, v457
+    v459 = String string="unrelated17"
+    v460 = Integer integer=17
+    v461 = Boolean boolean=true
+    v462 = Convert v461 declared={type=undefined|boolean flags=[IsExpected]}
+    v463 = NewObject -, v460 layout=L2 fields=[4]
+    PropDefine v463, v462 key="writable"
+    v465 = Boolean boolean=true
+    v466 = Convert v465 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v463, v466 key="enumerable"
+    v468 = Boolean boolean=true
+    v469 = Convert v468 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v463, v469 key="configurable"
+    v471 = FinishObject v463
+    v472 = Call v456, v455, v458, v459, v471 calleeName="Object.defineProperty"
+    v473 = Call v8 calleeName="round"
+    v474 = Convert v473 declared={type=number flags=[IsExpected]}
+    v475 = Add v454, v474
+    v476 = Convert v475 declared={type=number flags=[IsExpected]}
+    v477 = Builtin builtin=Object
+    v478 = Builtin builtin=ObjectDefineProperty
+    v479 = Integer
+    v480 = ElemGet v14, v479
+    v481 = String string="unrelated18"
+    v482 = Integer integer=18
+    v483 = Boolean boolean=true
+    v484 = Convert v483 declared={type=undefined|boolean flags=[IsExpected]}
+    v485 = NewObject -, v482 layout=L2 fields=[4]
+    PropDefine v485, v484 key="writable"
+    v487 = Boolean boolean=true
+    v488 = Convert v487 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v485, v488 key="enumerable"
+    v490 = Boolean boolean=true
+    v491 = Convert v490 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v485, v491 key="configurable"
+    v493 = FinishObject v485
+    v494 = Call v478, v477, v480, v481, v493 calleeName="Object.defineProperty"
+    v495 = Call v8 calleeName="round"
+    v496 = Convert v495 declared={type=number flags=[IsExpected]}
+    v497 = Add v476, v496
+    v498 = Convert v497 declared={type=number flags=[IsExpected]}
+    v499 = Builtin builtin=Object
+    v500 = Builtin builtin=ObjectDefineProperty
+    v501 = Integer integer=1
+    v502 = ElemGet v14, v501
+    v503 = String string="unrelated19"
+    v504 = Integer integer=19
+    v505 = Boolean boolean=true
+    v506 = Convert v505 declared={type=undefined|boolean flags=[IsExpected]}
+    v507 = NewObject -, v504 layout=L2 fields=[4]
+    PropDefine v507, v506 key="writable"
+    v509 = Boolean boolean=true
+    v510 = Convert v509 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v507, v510 key="enumerable"
+    v512 = Boolean boolean=true
+    v513 = Convert v512 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v507, v513 key="configurable"
+    v515 = FinishObject v507
+    v516 = Call v500, v499, v502, v503, v515 calleeName="Object.defineProperty"
+    v517 = Call v8 calleeName="round"
+    v518 = Convert v517 declared={type=number flags=[IsExpected]}
+    v519 = Add v498, v518
+    v520 = Convert v519 declared={type=number flags=[IsExpected]}
+    v521 = Builtin builtin=Object
+    v522 = Builtin builtin=ObjectDefineProperty
+    v523 = Integer integer=2
+    v524 = ElemGet v14, v523
+    v525 = String string="unrelated20"
+    v526 = Integer integer=20
+    v527 = Boolean boolean=true
+    v528 = Convert v527 declared={type=undefined|boolean flags=[IsExpected]}
+    v529 = NewObject -, v526 layout=L2 fields=[4]
+    PropDefine v529, v528 key="writable"
+    v531 = Boolean boolean=true
+    v532 = Convert v531 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v529, v532 key="enumerable"
+    v534 = Boolean boolean=true
+    v535 = Convert v534 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v529, v535 key="configurable"
+    v537 = FinishObject v529
+    v538 = Call v522, v521, v524, v525, v537 calleeName="Object.defineProperty"
+    v539 = Call v8 calleeName="round"
+    v540 = Convert v539 declared={type=number flags=[IsExpected]}
+    v541 = Add v520, v540
+    v542 = Convert v541 declared={type=number flags=[IsExpected]}
+    v543 = Builtin builtin=Object
+    v544 = Builtin builtin=ObjectDefineProperty
+    v545 = Integer integer=3
+    v546 = ElemGet v14, v545
+    v547 = String string="unrelated21"
+    v548 = Integer integer=21
+    v549 = Boolean boolean=true
+    v550 = Convert v549 declared={type=undefined|boolean flags=[IsExpected]}
+    v551 = NewObject -, v548 layout=L2 fields=[4]
+    PropDefine v551, v550 key="writable"
+    v553 = Boolean boolean=true
+    v554 = Convert v553 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v551, v554 key="enumerable"
+    v556 = Boolean boolean=true
+    v557 = Convert v556 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v551, v557 key="configurable"
+    v559 = FinishObject v551
+    v560 = Call v544, v543, v546, v547, v559 calleeName="Object.defineProperty"
+    v561 = Call v8 calleeName="round"
+    v562 = Convert v561 declared={type=number flags=[IsExpected]}
+    v563 = Add v542, v562
+    v564 = Convert v563 declared={type=number flags=[IsExpected]}
+    v565 = Builtin builtin=Object
+    v566 = Builtin builtin=ObjectDefineProperty
+    v567 = Integer integer=4
+    v568 = ElemGet v14, v567
+    v569 = String string="unrelated22"
+    v570 = Integer integer=22
+    v571 = Boolean boolean=true
+    v572 = Convert v571 declared={type=undefined|boolean flags=[IsExpected]}
+    v573 = NewObject -, v570 layout=L2 fields=[4]
+    PropDefine v573, v572 key="writable"
+    v575 = Boolean boolean=true
+    v576 = Convert v575 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v573, v576 key="enumerable"
+    v578 = Boolean boolean=true
+    v579 = Convert v578 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v573, v579 key="configurable"
+    v581 = FinishObject v573
+    v582 = Call v566, v565, v568, v569, v581 calleeName="Object.defineProperty"
+    v583 = Call v8 calleeName="round"
+    v584 = Convert v583 declared={type=number flags=[IsExpected]}
+    v585 = Add v564, v584
+    v586 = Convert v585 declared={type=number flags=[IsExpected]}
+    v587 = Builtin builtin=Object
+    v588 = Builtin builtin=ObjectDefineProperty
+    v589 = Integer integer=5
+    v590 = ElemGet v14, v589
+    v591 = String string="unrelated23"
+    v592 = Integer integer=23
+    v593 = Boolean boolean=true
+    v594 = Convert v593 declared={type=undefined|boolean flags=[IsExpected]}
+    v595 = NewObject -, v592 layout=L2 fields=[4]
+    PropDefine v595, v594 key="writable"
+    v597 = Boolean boolean=true
+    v598 = Convert v597 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v595, v598 key="enumerable"
+    v600 = Boolean boolean=true
+    v601 = Convert v600 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v595, v601 key="configurable"
+    v603 = FinishObject v595
+    v604 = Call v588, v587, v590, v591, v603 calleeName="Object.defineProperty"
+    v605 = Call v8 calleeName="round"
+    v606 = Convert v605 declared={type=number flags=[IsExpected]}
+    v607 = Add v586, v606
+    v608 = Convert v607 declared={type=number flags=[IsExpected]}
+    v609 = Builtin builtin=Object
+    v610 = Builtin builtin=ObjectDefineProperty
+    v611 = Integer
+    v612 = ElemGet v14, v611
+    v613 = String string="unrelated24"
+    v614 = Integer integer=24
+    v615 = Boolean boolean=true
+    v616 = Convert v615 declared={type=undefined|boolean flags=[IsExpected]}
+    v617 = NewObject -, v614 layout=L2 fields=[4]
+    PropDefine v617, v616 key="writable"
+    v619 = Boolean boolean=true
+    v620 = Convert v619 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v617, v620 key="enumerable"
+    v622 = Boolean boolean=true
+    v623 = Convert v622 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v617, v623 key="configurable"
+    v625 = FinishObject v617
+    v626 = Call v610, v609, v612, v613, v625 calleeName="Object.defineProperty"
+    v627 = Call v8 calleeName="round"
+    v628 = Convert v627 declared={type=number flags=[IsExpected]}
+    v629 = Add v608, v628
+    v630 = Convert v629 declared={type=number flags=[IsExpected]}
+    v631 = Builtin builtin=Object
+    v632 = Builtin builtin=ObjectDefineProperty
+    v633 = Integer integer=1
+    v634 = ElemGet v14, v633
+    v635 = String string="unrelated25"
+    v636 = Integer integer=25
+    v637 = Boolean boolean=true
+    v638 = Convert v637 declared={type=undefined|boolean flags=[IsExpected]}
+    v639 = NewObject -, v636 layout=L2 fields=[4]
+    PropDefine v639, v638 key="writable"
+    v641 = Boolean boolean=true
+    v642 = Convert v641 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v639, v642 key="enumerable"
+    v644 = Boolean boolean=true
+    v645 = Convert v644 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v639, v645 key="configurable"
+    v647 = FinishObject v639
+    v648 = Call v632, v631, v634, v635, v647 calleeName="Object.defineProperty"
+    v649 = Call v8 calleeName="round"
+    v650 = Convert v649 declared={type=number flags=[IsExpected]}
+    v651 = Add v630, v650
+    v652 = Convert v651 declared={type=number flags=[IsExpected]}
+    v653 = Builtin builtin=Object
+    v654 = Builtin builtin=ObjectDefineProperty
+    v655 = Integer integer=2
+    v656 = ElemGet v14, v655
+    v657 = String string="unrelated26"
+    v658 = Integer integer=26
+    v659 = Boolean boolean=true
+    v660 = Convert v659 declared={type=undefined|boolean flags=[IsExpected]}
+    v661 = NewObject -, v658 layout=L2 fields=[4]
+    PropDefine v661, v660 key="writable"
+    v663 = Boolean boolean=true
+    v664 = Convert v663 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v661, v664 key="enumerable"
+    v666 = Boolean boolean=true
+    v667 = Convert v666 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v661, v667 key="configurable"
+    v669 = FinishObject v661
+    v670 = Call v654, v653, v656, v657, v669 calleeName="Object.defineProperty"
+    v671 = Call v8 calleeName="round"
+    v672 = Convert v671 declared={type=number flags=[IsExpected]}
+    v673 = Add v652, v672
+    v674 = Convert v673 declared={type=number flags=[IsExpected]}
+    v675 = Builtin builtin=Object
+    v676 = Builtin builtin=ObjectDefineProperty
+    v677 = Integer integer=3
+    v678 = ElemGet v14, v677
+    v679 = String string="unrelated27"
+    v680 = Integer integer=27
+    v681 = Boolean boolean=true
+    v682 = Convert v681 declared={type=undefined|boolean flags=[IsExpected]}
+    v683 = NewObject -, v680 layout=L2 fields=[4]
+    PropDefine v683, v682 key="writable"
+    v685 = Boolean boolean=true
+    v686 = Convert v685 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v683, v686 key="enumerable"
+    v688 = Boolean boolean=true
+    v689 = Convert v688 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v683, v689 key="configurable"
+    v691 = FinishObject v683
+    v692 = Call v676, v675, v678, v679, v691 calleeName="Object.defineProperty"
+    v693 = Call v8 calleeName="round"
+    v694 = Convert v693 declared={type=number flags=[IsExpected]}
+    v695 = Add v674, v694
+    v696 = Convert v695 declared={type=number flags=[IsExpected]}
+    v697 = Builtin builtin=Object
+    v698 = Builtin builtin=ObjectDefineProperty
+    v699 = Integer integer=4
+    v700 = ElemGet v14, v699
+    v701 = String string="unrelated28"
+    v702 = Integer integer=28
+    v703 = Boolean boolean=true
+    v704 = Convert v703 declared={type=undefined|boolean flags=[IsExpected]}
+    v705 = NewObject -, v702 layout=L2 fields=[4]
+    PropDefine v705, v704 key="writable"
+    v707 = Boolean boolean=true
+    v708 = Convert v707 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v705, v708 key="enumerable"
+    v710 = Boolean boolean=true
+    v711 = Convert v710 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v705, v711 key="configurable"
+    v713 = FinishObject v705
+    v714 = Call v698, v697, v700, v701, v713 calleeName="Object.defineProperty"
+    v715 = Call v8 calleeName="round"
+    v716 = Convert v715 declared={type=number flags=[IsExpected]}
+    v717 = Add v696, v716
+    v718 = Convert v717 declared={type=number flags=[IsExpected]}
+    v719 = Builtin builtin=Object
+    v720 = Builtin builtin=ObjectDefineProperty
+    v721 = Integer integer=5
+    v722 = ElemGet v14, v721
+    v723 = String string="unrelated29"
+    v724 = Integer integer=29
+    v725 = Boolean boolean=true
+    v726 = Convert v725 declared={type=undefined|boolean flags=[IsExpected]}
+    v727 = NewObject -, v724 layout=L2 fields=[4]
+    PropDefine v727, v726 key="writable"
+    v729 = Boolean boolean=true
+    v730 = Convert v729 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v727, v730 key="enumerable"
+    v732 = Boolean boolean=true
+    v733 = Convert v732 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v727, v733 key="configurable"
+    v735 = FinishObject v727
+    v736 = Call v720, v719, v722, v723, v735 calleeName="Object.defineProperty"
+    v737 = Call v8 calleeName="round"
+    v738 = Convert v737 declared={type=number flags=[IsExpected]}
+    v739 = Add v718, v738
+    v740 = Convert v739 declared={type=number flags=[IsExpected]}
+    v741 = Builtin builtin=GlobalThis
+    v742 = PropGet v741 key="report" [isFreeName]
+    v743 = Call v742, -, v740 calleeName="report"
+    v744 = Undefined
+    Return v744
+}
+function f1 name="make" module=m0 flags=[IsSloppy, HasExplicitName] captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=undefined|null|Array flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L1):
+    Jump -> next b1()
+  b1():
+    v1 = Data data=d0
+    v2 = Convert v1 declared={type=undefined|null|Array<never> flags=[IsExpected]}
+    v3 = Convert v2 declared={type=undefined|null|Array flags=[IsExpected]}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
+    Jump -> next b2(v5)
+  b2(v6):
+    LoopHint
+    v8 = Integer integer=4
+    v9 = Less v6, v8
+    Branch v9 -> taken b3(| 0), notTaken b12(| 0)
+  b3(v10):
+    Jump -> next b4()
+  b4():
+    v11 = Builtin builtin=Object
+    v12 = Builtin builtin=ObjectCreate
+    v13 = GetEnvironmentField v0 layout=L1 field=1
+    v14 = CheckInitialized v13 name="chain"
+    v15 = Integer integer=5
+    v16 = ElemGet v14, v15
+    v17 = Convert v16 declared={type=undefined|null|object flags=[IsExpected]}
+    v18 = Call v12, v11, v17 calleeName="Object.create"
+    v19 = Convert v18 declared={type=undefined|null|object flags=[IsExpected]}
+    v20 = Integer
+    v21 = Convert v20 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b5(v21)
+  b5(v22):
+    LoopHint
+    v24 = Less v22, v10
+    Branch v24 -> taken b6(| 0, 1), notTaken b9(| 0, 1)
+  b6(v25, v26):
+    Jump -> next b7()
+  b7():
+    v27 = String string="own"
+    v28 = Add v27, v25
+    ElemSet v19, v28, v25 mode=Sloppy
+    Jump -> next b8()
+  b8():
+    v30 = Increment v25
+    v31 = Convert v30 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b5(v31)
+  b9(v32, v33):
+    Jump -> next b10()
+  b10():
+    PropSet v19, v33 key="shared" mode=Sloppy
+    v35 = PropGet v3 key="push"
+    v36 = Convert v35 declared={type=undefined|null|function flags=[IsExpected]}
+    v37 = Call v36, v3, v19 calleeKey="push" calleeName="objects.push"
+    Jump -> next b11()
+  b11():
+    v38 = Increment v33
+    v39 = Convert v38 declared={type=number flags=[IsExpected]}
+    Jump -> next b2(v39)
+  b12(v40):
+    Jump -> next b13()
+  b13():
+    Return v3
+}
+function f2 name="round" module=m0 flags=[IsSloppy, HasExplicitName] captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L1):
+    Jump -> next b1()
+  b1():
+    v1 = Integer
+    v2 = Convert v1 declared={type=number flags=[IsExpected]}
+    v3 = Integer
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b2(v2, v4)
+  b2(v5, v6):
+    LoopHint
+    v8 = Integer integer=16
+    v9 = Less v6, v8
+    Branch v9 -> taken b3(| 0), notTaken b11(| 0)
+  b3(v10):
+    Jump -> next b4()
+  b4():
+    v11 = GetEnvironmentField v0 layout=L1 field=2
+    v12 = CheckInitialized v11 name="receivers"
+    v13 = Integer integer=3
+    v14 = BitAnd v10, v13
+    v15 = ElemGet v12, v14
+    v16 = Convert v15 declared={type=undefined|null|object flags=[IsExpected]}
+    v17 = PropGet v16 key="value"
+    v18 = PropGet v16 key="method"
+    v19 = Convert v18 declared={type=undefined|null|function flags=[IsExpected]}
+    v20 = Call v19, v16 calleeKey="method" calleeName="object.method"
+    v21 = Add v17, v20
+    v22 = PropGet v16 key="computed"
+    v23 = Add v21, v22
+    v24 = PropGet v16 key="missing"
+    v25 = TypeTest v24 testedType=undefined
+    Branch v25 -> taken b5(| 0), notTaken b7(| 0)
+  b5(v26):
+    Jump -> next b6()
+  b6():
+    v27 = Integer
+    Jump -> next b9(v27)
+  b7(v28):
+    Jump -> next b8()
+  b8():
+    v29 = Integer integer=1000
+    Jump -> next b9(v29)
+  b9(v30):
+    v31 = Add v23, v30
+    v32 = Add v5, v31
+    v33 = Convert v32 declared={type=number flags=[IsExpected]}
+    Jump -> next b10()
+  b10():
+    v34 = Increment v10
+    v35 = Convert v34 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b2(v33, v35)
+  b11(v36):
+    Jump -> next b12()
+  b12():
+    v37 = GetEnvironmentField v0 layout=L1
+    v38 = Call v37 calleeName="make"
+    v39 = Convert v38 declared={type=undefined|null|Array flags=[IsExpected]}
+    v40 = IteratorOpen v39
+    Jump -> next b13(v5)
+  b13(v41):
+    LoopHint
+    v43 = IteratorResume v40
+    v44 = ResultAt v43
+    v45 = ResultAt v43 index=1
+    Branch v44 -> taken b14(), notTaken b15()
+  b14():
+    v46 = Convert v41 declared={type=number flags=[IsExpected]}
+    Return v46
+  b15():
+    Jump -> next b16()
+  b16() handler=b18():
+    v47 = Convert v45 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v48 = Integer integer=1
+    PropSet v47, v48 key="added" mode=Sloppy
+    v50 = PropGet v47 key="added"
+    v51 = Convert v50 declared={type=number flags=[IsExpected]}
+    v52 = Add v41, v51
+    v53 = Convert v52 declared={type=number flags=[IsExpected]}
+    Jump -> next b17()
+  b17() handler=b18():
+    Jump -> next b13(v53)
+  b18() role=IterationCleanup subject=v40:
+    v54 = CatchException
+    IteratorClose v40 completion=Throw
+    Rethrow v54
+}
+function f3 module=m0 flags=[IsSloppy] thisType={type=anything} results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Integer integer=1
+    v1 = Convert v0 declared={type=number flags=[IsExpected]}
+    Return v1
+}
+function f4 name="get" module=m0 kind=Method flags=[IsSloppy, HasExplicitName] thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f5] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Integer integer=100
+    v1 = Convert v0 declared={type=number flags=[IsExpected]}
+    Return v1
+}
+function f5 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f6]
+function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f8 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+data d0 root=Array{contents=anything} module=m0

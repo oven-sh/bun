@@ -18,7 +18,7 @@ test("rejects multiple Transfer-Encoding headers with chunked", async () => {
     },
   });
 
-  const client = net.connect(server.port, "127.0.0.1");
+  const client = net.connect(server.port!, "127.0.0.1");
 
   const maliciousRequest = [
     "POST / HTTP/1.1",
@@ -55,7 +55,7 @@ test("rejects Transfer-Encoding with chunked not last", async () => {
     },
   });
 
-  const client = net.connect(server.port, "127.0.0.1");
+  const client = net.connect(server.port!, "127.0.0.1");
 
   const maliciousRequest = [
     "POST / HTTP/1.1",
@@ -89,7 +89,7 @@ test("rejects duplicate chunked in Transfer-Encoding", async () => {
     },
   });
 
-  const client = net.connect(server.port, "127.0.0.1");
+  const client = net.connect(server.port!, "127.0.0.1");
 
   const maliciousRequest = [
     "POST / HTTP/1.1",
@@ -125,7 +125,7 @@ test("rejects Transfer-Encoding + Content-Length", async () => {
     },
   });
 
-  const client = net.connect(server.port, "127.0.0.1");
+  const client = net.connect(server.port!, "127.0.0.1");
 
   const maliciousRequest = [
     "POST / HTTP/1.1",
@@ -152,6 +152,108 @@ test("rejects Transfer-Encoding + Content-Length", async () => {
   });
 });
 
+test.each([
+  ["default close", ""],
+  ["Connection: keep-alive", "Connection: keep-alive\r\n"],
+])("rejects Transfer-Encoding on an HTTP/1.0 request (%s)", async (_label, connectionHeader) => {
+  // RFC 9112 6.1: a server that receives an HTTP/1.0 message containing a
+  // Transfer-Encoding header field MUST treat the message as if the framing is
+  // faulty and close the connection after processing the message. Bun.serve
+  // rejects such a request outright (400) so a proxy/backend split on whether
+  // HTTP/1.0 honours Transfer-Encoding cannot desync on the body boundary.
+  let handlerCalled = false;
+  await using server = Bun.serve({
+    port: 0,
+    fetch() {
+      handlerCalled = true;
+      return new Response("OK");
+    },
+  });
+
+  const client = net.connect(server.port!, "127.0.0.1");
+
+  const maliciousRequest =
+    "POST / HTTP/1.0\r\n" +
+    "Host: localhost\r\n" +
+    connectionHeader +
+    "Transfer-Encoding: chunked\r\n" +
+    "\r\n" +
+    "5\r\nhello\r\n0\r\n\r\n";
+
+  const response = await new Promise<string>((resolve, reject) => {
+    let buf = "";
+    client.on("error", reject);
+    client.on("data", data => (buf += data.toString("latin1")));
+    client.on("close", () => resolve(buf));
+    client.write(maliciousRequest);
+  });
+
+  expect(response).toStartWith("HTTP/1.1 400 Bad Request\r\n");
+  expect(handlerCalled).toBe(false);
+});
+
+test("accepts Transfer-Encoding: chunked on an HTTP/1.1 request", async () => {
+  // Control for the HTTP/1.0 rejection above: the same chunked body is valid on HTTP/1.1.
+  let received = "";
+  await using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      received = await req.text();
+      return new Response("OK");
+    },
+  });
+
+  const client = net.connect(server.port!, "127.0.0.1");
+  const request =
+    "POST / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n";
+
+  const response = await new Promise<string>((resolve, reject) => {
+    let buf = "";
+    client.on("error", reject);
+    client.on("data", data => (buf += data.toString("latin1")));
+    client.on("close", () => resolve(buf));
+    client.write(request);
+  });
+
+  expect(response).toStartWith("HTTP/1.1 200 OK\r\n");
+  expect(received).toBe("hello");
+});
+
+test("node:http dispatches Transfer-Encoding on an HTTP/1.0 request (llhttp parity)", async () => {
+  // node:http follows llhttp here: the HTTP/1.0 + Transfer-Encoding: chunked request
+  // is dispatched with the chunked body decoded, and the connection closes after (an
+  // HTTP/1.0 request already marks the connection for close).
+  const hits: { url: string; body: string; httpVersion: string }[] = [];
+  const server = createServer((req, res) => {
+    let body = "";
+    req.on("data", d => (body += d));
+    req.on("end", () => {
+      hits.push({ url: req.url!, body, httpVersion: req.httpVersion });
+      res.end("ok");
+    });
+  });
+  await new Promise<void>(r => server.listen(0, r));
+  try {
+    const port = (server.address() as net.AddressInfo).port;
+
+    const client = net.connect(port, "127.0.0.1");
+    const request = "POST /a HTTP/1.0\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n";
+
+    const response = await new Promise<string>((resolve, reject) => {
+      let buf = "";
+      client.on("error", reject);
+      client.on("data", d => (buf += d.toString("latin1")));
+      client.on("close", () => resolve(buf));
+      client.write(request);
+    });
+
+    expect(response).toStartWith("HTTP/1.1 200 OK\r\n");
+    expect(hits).toEqual([{ url: "/a", body: "hello", httpVersion: "1.0" }]);
+  } finally {
+    server.close();
+  }
+});
+
 test("rejects conflicting duplicate Content-Length headers", async () => {
   // RFC 9112 6.3: multiple Content-Length headers with differing values must be rejected
   // to prevent request smuggling.
@@ -162,7 +264,7 @@ test("rejects conflicting duplicate Content-Length headers", async () => {
     },
   });
 
-  const client = net.connect(server.port, "127.0.0.1");
+  const client = net.connect(server.port!, "127.0.0.1");
 
   const maliciousRequest = [
     "POST / HTTP/1.1",
@@ -196,7 +298,7 @@ test("accepts duplicate Content-Length headers with identical values", async () 
     },
   });
 
-  const client = net.connect(server.port, "127.0.0.1");
+  const client = net.connect(server.port!, "127.0.0.1");
 
   const request = ["POST / HTTP/1.1", "Host: localhost", "Content-Length: 5", "Content-Length: 5", "", "Hello"].join(
     "\r\n",
@@ -227,7 +329,7 @@ test("rejects empty-valued Content-Length followed by smuggled Content-Length", 
     },
   });
 
-  const client = net.connect(server.port, "127.0.0.1");
+  const client = net.connect(server.port!, "127.0.0.1");
   const smuggled = "GET /admin HTTP/1.1\r\nHost: x\r\n\r\n";
   const payload =
     "POST /api HTTP/1.1\r\n" +
@@ -262,7 +364,7 @@ test("accepts valid Transfer-Encoding: chunked", async () => {
     },
   });
 
-  const client = net.connect(server.port, "127.0.0.1");
+  const client = net.connect(server.port!, "127.0.0.1");
 
   const validRequest = [
     "POST / HTTP/1.1",
@@ -303,7 +405,7 @@ test("rejects Transfer-Encoding: gzip, chunked", async () => {
     },
   });
 
-  const client = net.connect(server.port, "127.0.0.1");
+  const client = net.connect(server.port!, "127.0.0.1");
 
   const request = ["POST / HTTP/1.1", "Host: localhost", "Transfer-Encoding: gzip, chunked", "", "0", "", ""].join(
     "\r\n",
@@ -333,7 +435,7 @@ test("accepts Transfer-Encoding with whitespace around chunked", async () => {
     },
   });
 
-  const client = net.connect(server.port, "127.0.0.1");
+  const client = net.connect(server.port!, "127.0.0.1");
 
   const validRequest = [
     "POST / HTTP/1.1",
@@ -372,7 +474,7 @@ test("rejects malformed Transfer-Encoding with chunked-false", async () => {
     },
   });
 
-  const client = net.connect(server.port, "127.0.0.1");
+  const client = net.connect(server.port!, "127.0.0.1");
 
   const maliciousRequest = [
     "POST / HTTP/1.1",
@@ -424,7 +526,7 @@ test("prevents request smuggling attack", async () => {
     },
   });
 
-  const client = net.connect(server.port, "127.0.0.1");
+  const client = net.connect(server.port!, "127.0.0.1");
 
   // Try to smuggle a GET /bad request
   const smuggleAttempt = [
@@ -475,7 +577,7 @@ test("rejects split Transfer-Encoding headers gzip + chunked", async () => {
     },
   });
 
-  const client = net.connect(server.port, "127.0.0.1");
+  const client = net.connect(server.port!, "127.0.0.1");
 
   const request = [
     "POST / HTTP/1.1",
@@ -545,7 +647,7 @@ describe("Transfer-Encoding lists with codings other than a single chunked", () 
         return new Response("OK");
       },
     });
-    const { status } = await rawPost(server.port, headerLines, plainChunked);
+    const { status } = await rawPost(server.port!, headerLines, plainChunked);
     expect(status).toBe("400");
     expect(handlerReached).toBe(false);
   });
@@ -565,7 +667,7 @@ describe("Transfer-Encoding lists with codings other than a single chunked", () 
     });
     const gz = Buffer.from(Bun.gzipSync("hello"));
     const body = gz.length.toString(16) + "\r\n" + gz.toString("latin1") + "\r\n0\r\n\r\n";
-    const { status } = await rawPost(server.port, ["Transfer-Encoding: gzip, chunked"], body);
+    const { status } = await rawPost(server.port!, ["Transfer-Encoding: gzip, chunked"], body);
     expect(status).toBe("400");
     expect(seen).toBeUndefined();
   });
@@ -640,7 +742,7 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
       },
     });
 
-    const client = net.connect(server.port, "127.0.0.1");
+    const client = net.connect(server.port!, "127.0.0.1");
 
     // Chunk size 5, but terminator is "XY" instead of "\r\n"
     const maliciousRequest =
@@ -683,7 +785,7 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
       },
     });
 
-    const client = net.connect(server.port, "127.0.0.1");
+    const client = net.connect(server.port!, "127.0.0.1");
 
     // Chunk size 3, terminator is "\rX" instead of "\r\n"
     const maliciousRequest =
@@ -726,7 +828,7 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
       },
     });
 
-    const client = net.connect(server.port, "127.0.0.1");
+    const client = net.connect(server.port!, "127.0.0.1");
 
     // Chunk size 3, terminator is "X\n" instead of "\r\n"
     const maliciousRequest =
@@ -765,7 +867,7 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
       },
     });
 
-    const client = net.connect(server.port, "127.0.0.1");
+    const client = net.connect(server.port!, "127.0.0.1");
 
     const validRequest =
       "POST / HTTP/1.1\r\n" +
@@ -809,7 +911,7 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
       },
     });
 
-    const client = net.connect(server.port, "127.0.0.1");
+    const client = net.connect(server.port!, "127.0.0.1");
 
     // The bytes "X:" replace the required "\r\n" after the zero-chunk.
     // A vulnerable server consumes "X:" as the terminator and then parses
@@ -853,7 +955,7 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
       },
     });
 
-    const client = net.connect(server.port, "127.0.0.1");
+    const client = net.connect(server.port!, "127.0.0.1");
 
     const maliciousRequest =
       "POST / HTTP/1.1\r\n" + "Host: localhost\r\n" + "Transfer-Encoding: chunked\r\n" + "\r\n" + "0\r\n" + "A\n"; // 'A' instead of '\r'
@@ -881,7 +983,7 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
       },
     });
 
-    const client = net.connect(server.port, "127.0.0.1");
+    const client = net.connect(server.port!, "127.0.0.1");
 
     const maliciousRequest =
       "POST / HTTP/1.1\r\n" + "Host: localhost\r\n" + "Transfer-Encoding: chunked\r\n" + "\r\n" + "0\r\n" + "\rA"; // '\r' followed by 'A' instead of '\n'
@@ -915,7 +1017,7 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
       },
     });
 
-    const client = net.connect(server.port, "127.0.0.1");
+    const client = net.connect(server.port!, "127.0.0.1");
     client.setNoDelay(true);
 
     // Attach the data/close/error listeners BEFORE any write so the response
@@ -963,7 +1065,7 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
       },
     });
 
-    const client = net.connect(server.port, "127.0.0.1");
+    const client = net.connect(server.port!, "127.0.0.1");
     client.setNoDelay(true);
 
     // Listeners first — see comment in the previous test.
@@ -1020,7 +1122,7 @@ describe("chunked encoding size hardening", () => {
       },
     });
 
-    const client = net.connect(server.port, "127.0.0.1");
+    const client = net.connect(server.port!, "127.0.0.1");
 
     // 16 hex digits all 'F' — sets overflow bits and must be rejected
     const maliciousRequest =
@@ -1076,7 +1178,7 @@ describe("chunked encoding size hardening", () => {
       },
     });
 
-    const client = net.connect(server.port, "127.0.0.1");
+    const client = net.connect(server.port!, "127.0.0.1");
 
     // Send the chunk header claiming 4GB of data, followed by a few bytes,
     // then close the connection.
@@ -1116,7 +1218,7 @@ describe("chunked encoding size hardening", () => {
       },
     });
 
-    const client = net.connect(server.port, "127.0.0.1");
+    const client = net.connect(server.port!, "127.0.0.1");
 
     // Use hex chunk sizes that are perfectly valid
     const validRequest =
@@ -1192,7 +1294,7 @@ describe("chunk size strict hex digit validation", () => {
     });
 
     // "9" = 9 bytes
-    const response = await sendRawChunkedRequest(server.port, "9", "123456789");
+    const response = await sendRawChunkedRequest(server.port!, "9", "123456789");
     expect(response).toContain("HTTP/1.1 200");
     expect(receivedBody).toBe("123456789");
   });
@@ -1208,7 +1310,7 @@ describe("chunk size strict hex digit validation", () => {
     });
 
     // "a" = 10 bytes
-    const response = await sendRawChunkedRequest(server.port, "a", "1234567890");
+    const response = await sendRawChunkedRequest(server.port!, "a", "1234567890");
     expect(response).toContain("HTTP/1.1 200");
     expect(receivedBody).toBe("1234567890");
   });
@@ -1224,7 +1326,7 @@ describe("chunk size strict hex digit validation", () => {
     });
 
     // "B" = 11 bytes
-    const response = await sendRawChunkedRequest(server.port, "B", "12345678901");
+    const response = await sendRawChunkedRequest(server.port!, "B", "12345678901");
     expect(response).toContain("HTTP/1.1 200");
     expect(receivedBody).toBe("12345678901");
   });
@@ -1240,7 +1342,7 @@ describe("chunk size strict hex digit validation", () => {
     });
 
     // "1a" = 26 bytes
-    const response = await sendRawChunkedRequest(server.port, "1a", "abcdefghijklmnopqrstuvwxyz");
+    const response = await sendRawChunkedRequest(server.port!, "1a", "abcdefghijklmnopqrstuvwxyz");
     expect(response).toContain("HTTP/1.1 200");
     expect(receivedBody).toBe("abcdefghijklmnopqrstuvwxyz");
   });
@@ -1255,7 +1357,7 @@ describe("chunk size strict hex digit validation", () => {
         },
       });
 
-      const response = await sendRawChunkedRequest(server.port, `1${ch}`, "A".repeat(32));
+      const response = await sendRawChunkedRequest(server.port!, `1${ch}`, "A".repeat(32));
       expect(response).toContain("HTTP/1.1 400");
     });
   }
@@ -1271,7 +1373,7 @@ describe("chunk size strict hex digit validation", () => {
         },
       });
 
-      const response = await sendRawChunkedRequest(server.port, `1${ch}`, "A".repeat(32));
+      const response = await sendRawChunkedRequest(server.port!, `1${ch}`, "A".repeat(32));
       expect(response).toContain("HTTP/1.1 400");
     });
   }
@@ -1286,7 +1388,7 @@ describe("chunk size strict hex digit validation", () => {
         },
       });
 
-      const response = await sendRawChunkedRequest(server.port, `1${ch}`, "A".repeat(32));
+      const response = await sendRawChunkedRequest(server.port!, `1${ch}`, "A".repeat(32));
       expect(response).toContain("HTTP/1.1 400");
     });
   }
@@ -1311,7 +1413,7 @@ describe("pipelined request header isolation", () => {
       },
     });
 
-    const client = net.connect(server.port, "127.0.0.1");
+    const client = net.connect(server.port!, "127.0.0.1");
 
     // First request: has Content-Length header with a body
     // Second request: has NO headers at all (just request line + \r\n\r\n)
@@ -1369,7 +1471,7 @@ describe("pipelined request header isolation", () => {
       },
     });
 
-    const client = net.connect(server.port, "127.0.0.1");
+    const client = net.connect(server.port!, "127.0.0.1");
 
     const body = "X".repeat(30);
     // Request 1: POST with Content-Length
@@ -1433,7 +1535,7 @@ describe("pipelined request header isolation", () => {
       },
     });
 
-    const client = net.connect(server.port, "127.0.0.1");
+    const client = net.connect(server.port!, "127.0.0.1");
 
     const body = "B".repeat(50);
     // Request 1: POST with Content-Length: 50
@@ -1476,11 +1578,16 @@ describe("pipelined request header isolation", () => {
   });
 });
 
-test("rejects Transfer-Encoding header with empty value", async () => {
-  // RFC 9112 requires rejecting a request whose Transfer-Encoding field names no
-  // valid transfer coding. Treating a present-but-empty Transfer-Encoding value as
-  // if the header were absent falls back to Content-Length framing, so the bytes
-  // after the declared body get parsed as a second pipelined request (CL.TE desync).
+// RFC 9112 requires rejecting a request whose Transfer-Encoding field names no
+// valid transfer coding. Treating a present-but-empty Transfer-Encoding value as
+// if the header were absent falls back to Content-Length framing, so the bytes
+// after the declared body get parsed as a second pipelined request (CL.TE desync).
+// Unlike node:http (which follows llhttp and only rejects the field when it comes
+// after Content-Length), Bun.serve rejects it in either order.
+test.each([
+  ["before", ["Transfer-Encoding: ", "Content-Length: 4"]],
+  ["after", ["Content-Length: 4", "Transfer-Encoding: "]],
+])("rejects Transfer-Encoding header with empty value %s Content-Length", async (name, headers) => {
   const seen: string[] = [];
   await using server = Bun.serve({
     port: 0,
@@ -1491,7 +1598,7 @@ test("rejects Transfer-Encoding header with empty value", async () => {
     },
   });
 
-  const client = net.connect(server.port, "127.0.0.1");
+  const client = net.connect(server.port!, "127.0.0.1");
 
   // Transfer-Encoding is present but its value is empty. If it were treated as
   // absent, Content-Length would frame only the first 4 bytes ("ABCD") and the
@@ -1499,8 +1606,7 @@ test("rejects Transfer-Encoding header with empty value", async () => {
   const payload =
     "POST / HTTP/1.1\r\n" +
     "Host: localhost\r\n" +
-    "Transfer-Encoding: \r\n" +
-    "Content-Length: 4\r\n" +
+    `${headers.join("\r\n")}\r\n` +
     "\r\n" +
     "ABCD" +
     "GET /admin HTTP/1.1\r\n" +
@@ -1526,14 +1632,56 @@ test("rejects Transfer-Encoding header with empty value", async () => {
   expect(seen).not.toContain("GET /admin");
 });
 
+// RFC 9110 5.6.1: empty list members are ignored, so these two fields combine
+// to just "chunked". The parser frames the body as chunked, and the handler
+// must receive that body: a has-body decision that reads only the first
+// Transfer-Encoding field sees an empty value and drops the chunk data.
+test.each([
+  ["empty", ""],
+  ["whitespace-only", "   "],
+])("delivers the chunked body when a %s Transfer-Encoding field precedes chunked", async (name, te) => {
+  const seen: string[] = [];
+  await using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      seen.push(`${req.method} ${new URL(req.url).pathname} body=${JSON.stringify(await req.text())}`);
+      return new Response("OK");
+    },
+  });
+
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
+  const client = net.connect(server.port!, "127.0.0.1", () => {
+    client.write(
+      "POST /a HTTP/1.1\r\n" +
+        "Host: localhost\r\n" +
+        `Transfer-Encoding:${te}\r\n` +
+        "Transfer-Encoding: chunked\r\n" +
+        "\r\n" +
+        "5\r\nhello\r\n0\r\n\r\n" +
+        "GET /after HTTP/1.1\r\n" +
+        "Host: localhost\r\n" +
+        "Connection: close\r\n" +
+        "\r\n",
+    );
+  });
+  let raw = "";
+  client.on("data", chunk => (raw += chunk.toString()));
+  client.on("error", reject);
+  client.on("close", () => resolve(raw));
+  const response = await promise;
+
+  expect(seen).toEqual(['POST /a body="hello"', 'GET /after body=""']);
+  expect(response.match(/HTTP\/1\.1 200/g)).toHaveLength(2);
+});
+
 describe("Host header field values in request.url", () => {
   // Windows refuses connections under accept-backlog/TIME_WAIT churn even while the
   // server is listening, so a refused connect (before anything was read) is retried.
   const maxRefusedConnects = 20;
-  async function sendRawRequest(server: { port: number }, payload: string): Promise<string> {
+  async function sendRawRequest(server: { port?: number }, payload: string): Promise<string> {
     for (let attempt = 0; ; attempt++) {
       const outcome = await new Promise<{ response: string } | { refused: true }>((resolve, reject) => {
-        const client = net.connect(server.port, "127.0.0.1");
+        const client = net.connect(server.port!, "127.0.0.1");
         const chunks: Buffer[] = [];
         client.on("error", error => {
           if (
@@ -1546,7 +1694,7 @@ describe("Host header field values in request.url", () => {
             reject(error);
           }
         });
-        client.on("data", chunk => chunks.push(chunk));
+        client.on("data", (chunk: Buffer) => chunks.push(chunk));
         // `close` rather than `end`: `close` fires on every teardown path, so a
         // server that fails to FIN (or a connection reset) still resolves the
         // promise instead of hanging the test.
@@ -1633,6 +1781,72 @@ describe("Host header field values in request.url", () => {
     const response = await sendRawRequest(server, "GET /index HTTP/1.1\r\nHost:\r\nConnection: close\r\n\r\n");
     expect(response).toContain("HTTP/1.1 200");
     expect(response.slice(response.indexOf("\r\n\r\n") + 4)).toBe("/index");
+  });
+
+  // Only node:http relaxes the Host requirement, because Node emits 'upgrade'
+  // and 'connect' before it checks for Host. Bun.serve has no such events, so a
+  // request without Host would reach fetch() with a relative req.url.
+  test.each([
+    ["Upgrade: websocket", "GET /index HTTP/1.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"],
+    ["Upgrade: foo", "GET /index HTTP/1.1\r\nUpgrade: foo\r\n\r\n"],
+    ["empty Upgrade", "GET /index HTTP/1.1\r\nUpgrade:\r\n\r\n"],
+    ["CONNECT", "CONNECT example.com:443 HTTP/1.1\r\n\r\n"],
+  ])("rejects an HTTP/1.1 request with no Host header even with %s", async (_name, payload) => {
+    let fetchCalled = false;
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch() {
+        fetchCalled = true;
+        return new Response("OK");
+      },
+      websocket: {
+        message() {},
+      },
+    });
+
+    // Only read the status line. If the server wrongly serves the request it
+    // keeps the connection open, so waiting for close would hang.
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const client = net.connect(server.port, "127.0.0.1", () => client.write(payload));
+    client.on("error", reject);
+    let received = "";
+    client.on("data", chunk => {
+      received += chunk.toString();
+      if (received.includes("\r\n")) resolve(received);
+    });
+    try {
+      const response = await promise;
+      expect(response).toStartWith("HTTP/1.1 400");
+      expect(fetchCalled).toBe(false);
+    } finally {
+      client.destroy();
+    }
+  });
+
+  test("a node:http server still emits 'upgrade' for a request with no Host header", async () => {
+    const server = createServer((req, res) => {
+      res.writeHead(500);
+      res.end();
+    });
+    const { promise, resolve, reject } = Promise.withResolvers<string | undefined>();
+    server.on("upgrade", (req, socket) => {
+      resolve(req.headers.host);
+      socket.end("HTTP/1.1 101 Switching Protocols\r\nUpgrade: foo\r\nConnection: Upgrade\r\n\r\n");
+    });
+    server.on("clientError", reject);
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const response = await sendRawRequest(
+        server.address() as { port: number },
+        "GET / HTTP/1.1\r\nUpgrade: foo\r\nConnection: Upgrade\r\n\r\n",
+      );
+      expect(response).toStartWith("HTTP/1.1 101");
+      expect(await promise).toBeUndefined();
+    } finally {
+      server.close();
+    }
   });
 
   test.each([

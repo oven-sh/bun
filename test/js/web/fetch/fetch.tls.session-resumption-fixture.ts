@@ -10,11 +10,14 @@
 // the per-`(hostname, port, hash)` cache key keeps them isolated.
 import tls from "node:tls";
 import type { AddressInfo } from "node:net";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { tls as cert } from "harness";
 
 const version = (process.argv[2] ?? "TLSv1.3") as tls.SecureVersion;
 
-function makeServer() {
+function makeServer(unixPath?: string) {
   const reused: boolean[] = [];
   const connections: tls.TLSSocket[] = [];
   const server = tls.createServer({
@@ -38,7 +41,8 @@ function makeServer() {
   server.on("tlsClientError", () => {});
   const listening = new Promise<number>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => resolve((server.address() as AddressInfo).port));
+    if (unixPath) server.listen(unixPath, () => resolve(0));
+    else server.listen(0, "127.0.0.1", () => resolve((server.address() as AddressInfo).port));
   });
   const close = () => {
     for (const c of connections) c.destroy();
@@ -129,6 +133,28 @@ const out: Record<string, unknown> = {};
   await ok(await fetch(`https://127.0.0.1:${port}/`, { tls: ca }));
   out.hostIsolation = a.reused;
   a.close();
+}
+
+// unix: a second fresh connect over the same socket path resumes.
+if (process.platform !== "win32") {
+  const dir = mkdtempSync(join(tmpdir(), "fetch-tls-resume-unix-"));
+  const a = makeServer(join(dir, "a.sock"));
+  await a.listening;
+  await ok(await fetch("https://localhost/", { unix: join(dir, "a.sock"), tls: ca }));
+  await ok(await fetch("https://localhost/", { unix: join(dir, "a.sock"), tls: ca }));
+  out.unix = a.reused;
+  a.close();
+
+  // unix-path-isolation: same URL, different socket path — the cache key
+  // includes the path, so A's ticket must never be offered to B.
+  const b = makeServer(join(dir, "b.sock"));
+  const c = makeServer(join(dir, "c.sock"));
+  await Promise.all([b.listening, c.listening]);
+  await ok(await fetch("https://localhost/", { unix: join(dir, "b.sock"), tls: ca }));
+  await ok(await fetch("https://localhost/", { unix: join(dir, "c.sock"), tls: ca }));
+  out.unixPathIsolation = { b: b.reused, c: c.reused };
+  b.close();
+  c.close();
 }
 
 console.log(JSON.stringify(out));

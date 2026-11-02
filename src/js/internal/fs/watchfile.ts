@@ -1,31 +1,28 @@
 // fs.watchFile and fs.unwatchFile are lazily loaded so that the StatWatcher
 // machinery is not set up until it is actually used.
 const EventEmitter = require("node:events");
+const AsyncContextFrame = require("internal/async_context_frame");
 const { getValidatedPath, throwIfNullBytesInFileName } = require("internal/validators");
 
 // The native `node:fs` binding, shared via `internal/fs/binding`.
 const fs = require("internal/fs/binding");
 
-/** Implemented natively. */
-interface StatWatcherHandle {
-  ref();
-  unref();
-  close();
-}
+type AnyStats = $Node.Stats | $Node.BigIntStats;
+type StatListener = (current: AnyStats, previous: AnyStats) => void;
 
 function emitStop(self: StatWatcher) {
   self.emit("stop");
 }
 
 class StatWatcher extends EventEmitter {
-  _handle: StatWatcherHandle | null;
+  _handle: $Bindgen.StatWatcher | null;
 
-  constructor(path, options) {
+  constructor(path: string, options: $Node.WatchFileOptions | undefined) {
     super();
     this._handle = fs.watchFile(path, options, this.#onChange.bind(this));
   }
 
-  #onChange(curr, prev) {
+  #onChange(curr: AnyStats, prev: AnyStats) {
     this.emit("change", curr, prev);
   }
 
@@ -53,9 +50,26 @@ class StatWatcher extends EventEmitter {
 // This is implemented in JavaScript instead of entirely in native code because there isn't a
 // great way to have multiple listeners per StatWatcher with the current implementation in
 // native code. The downside of this is that we need to do path validation on the JS side.
-const statWatchers = new Map();
+//
+// One StatWatcher per path and per owner: the realm, or the Bun.ModuleGraph whose code is watching.
+// The watcher is the owner's (its context made it, and dispose() closes it), so sharing one between
+// owners would let one graph's dispose() silence everybody else's listeners, and keep a disposed
+// graph's listener running on a watcher somebody else made.
+const realmStatWatchers = new Map<string, StatWatcher>();
+const graphStatWatchers = new WeakMap<object, Map<string, StatWatcher>>();
+function statWatchersOfCaller(): Map<string, StatWatcher> {
+  const graph = AsyncContextFrame.currentGraph();
+  if (graph === undefined) return realmStatWatchers;
+  let watchers = graphStatWatchers.get(graph);
+  if (!watchers) graphStatWatchers.set(graph, (watchers = new Map()));
+  return watchers;
+}
 
-function watchFile(filename, options, listener) {
+function watchFile(
+  filename: string | URL,
+  options: $Node.WatchFileOptions | StatListener | undefined,
+  listener?: StatListener,
+) {
   filename = getValidatedPath(filename);
 
   if (typeof options === "function") {
@@ -67,6 +81,7 @@ function watchFile(filename, options, listener) {
     throw $ERR_INVALID_ARG_TYPE("listener", "function", listener);
   }
 
+  const statWatchers = statWatchersOfCaller();
   var stat = statWatchers.get(filename);
   if (!stat) {
     stat = new StatWatcher(filename, options);
@@ -76,9 +91,10 @@ function watchFile(filename, options, listener) {
   return stat;
 }
 
-function unwatchFile(filename, listener) {
+function unwatchFile(filename: string | URL, listener?: StatListener) {
   filename = getValidatedPath(filename);
 
+  const statWatchers = statWatchersOfCaller();
   var stat = statWatchers.get(filename);
   if (!stat) return throwIfNullBytesInFileName(filename);
   if (listener) {

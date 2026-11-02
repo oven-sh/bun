@@ -242,11 +242,28 @@ extern "C" ssize_t posix_spawn_bun(
     if (pipe(errpipe) == -1) {
         return errno;
     }
+    // With fd 0, 1 or 2 closed, the write end can get the number a file action targets, and that action would replace it in the child.
+    int highestTarget = STDERR_FILENO;
+    for (size_t i = 0; i < request->actions.len; i++) {
+        const bun_spawn_request_file_action_t& action = request->actions.ptr[i];
+        highestTarget = std::max(highestTarget, action.type == FileActionType::Dup2 ? action.fds[1] : action.fds[0]);
+    }
+    if (errpipe[1] <= highestTarget) {
+        int above = fcntl(errpipe[1], F_DUPFD_CLOEXEC, highestTarget + 1);
+        if (above != -1) {
+            close(errpipe[1]);
+            errpipe[1] = above;
+        }
+    }
     // Set cloexec on write end so it closes on successful exec
     fcntl(errpipe[1], F_SETFD, FD_CLOEXEC);
 #endif
 
     sigfillset(&blockall);
+#if OS(LINUX)
+    // The kernel kills the process if a seccomp trap fires while SIGSYS is blocked.
+    sigdelset(&blockall, SIGSYS);
+#endif
     sigprocmask(SIG_SETMASK, &blockall, &oldmask);
 #if !OS(ANDROID)
     pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &cs);
@@ -296,6 +313,11 @@ extern "C" ssize_t posix_spawn_bun(
         struct sigaction sa = { 0 };
         sa.sa_handler = SIG_DFL;
         for (int i = 0; i < NSIG; i++) {
+#if OS(LINUX)
+            // close_range() below still needs the handler that turns a seccomp trap into ENOSYS.
+            if (i == SIGSYS)
+                continue;
+#endif
             sigaction(i, &sa, 0);
         }
 
@@ -383,24 +405,24 @@ extern "C" ssize_t posix_spawn_bun(
                 break;
             }
             case FileActionType::Open: {
-                int opened = -1;
-                opened = open(action.path, action.flags, action.mode);
+                int opened = open(action.path, action.flags, action.mode);
 
                 if (opened == -1) {
                     return childFailed();
                 }
 
-                if (opened != -1) {
+                // open() lands on the target itself when that slot is free.
+                if (opened != action.fds[0]) {
                     if (dup2(opened, action.fds[0]) == -1) {
                         close(opened);
                         return childFailed();
                     }
-                    current_max_fd = std::max(current_max_fd, action.fds[0]);
                     if (close(opened)) {
                         return childFailed();
                     }
                 }
 
+                current_max_fd = std::max(current_max_fd, action.fds[0]);
                 break;
             }
             default: {
@@ -444,13 +466,17 @@ extern "C" ssize_t posix_spawn_bun(
         }
 #endif
 
-        sigprocmask(SIG_SETMASK, &childmask, 0);
         if (!envp)
             envp = environ;
 
         // Close all fds > current_max_fd, preferring cloexec if available
         closeRangeOrLoop(current_max_fd + 1, INT_MAX, true);
 
+        // The caller's mask may block SIGSYS, so apply it after close_range().
+        sigprocmask(SIG_SETMASK, &childmask, 0);
+#if OS(LINUX)
+        sigaction(SIGSYS, &sa, 0);
+#endif
         if (execve(path, argv, envp) == -1) {
             return childFailed();
         }

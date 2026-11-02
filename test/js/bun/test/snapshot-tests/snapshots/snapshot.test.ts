@@ -2262,7 +2262,7 @@ describe.concurrent("expect.addSnapshotSerializer()", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("is not asked about the accessor that a getter that throws leaves", async () => {
+  test("is asked about each value, and not about the accessor that a getter that throws leaves", async () => {
     using dir = tempDir("snapshot-serializer-accessor", {
       "a.test.js": `
           const asked = [];
@@ -2275,15 +2275,19 @@ describe.concurrent("expect.addSnapshotSerializer()", () => {
           });
           test("t", () => {
             const throws = { get() { throw new Error("not ready"); }, enumerable: true };
-            const value = Object.defineProperties({ price: { amount: 5, currency: "EUR" } }, { named: throws, [Symbol("symbol")]: throws });
+            const values = { bigint: 5n, price: { amount: 5, currency: "EUR" }, string: "text", symbol: Symbol("value") };
+            const value = Object.defineProperties(values, { named: throws, [Symbol("accessor")]: throws });
             expect(value).toMatchInlineSnapshot(\`
               {
+                [Symbol(accessor)]: [native code],
+                "bigint": 5n,
                 "named": [native code],
                 "price": 5 EUR,
-                [Symbol(symbol)]: [native code],
+                "string": "text",
+                "symbol": Symbol(value),
               }
             \`);
-            expect(asked).toEqual(["object", "object"]);
+            expect(asked).toEqual(["object", "bigint", "object", "string", "symbol"]);
           });
         `,
     });

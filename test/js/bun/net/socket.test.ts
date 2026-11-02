@@ -378,7 +378,7 @@ describe.concurrent("socket", () => {
     expect(await bunRun(fileURLToPath(new URL("./tls-handshake-pause-spin-fixture.ts", import.meta.url)))).toSpawn();
   });
 
-  it.skipIf(!isLinux).each(["tls", "udp"])(
+  it.skipIf(!isLinux).each(["tcp", "tls", "udp"])(
     "the loop's receive buffers give their memory back once large reads stop (%s)",
     async mode => {
       const { stdout, stderr, exitCode } = await bunRun([
@@ -386,10 +386,11 @@ describe.concurrent("socket", () => {
         mode,
       ]);
       expect(stderr).toBe("");
-      const { peak, settled } = JSON.parse(stdout);
+      const { first, peak, second } = JSON.parse(stdout);
+      expect(first).toEqual({ recv: 0, tls: 0 });
       expect(peak.recv).toBeGreaterThan(0);
       if (mode === "tls") expect(peak.tls).toBeGreaterThan(0);
-      expect(settled).toEqual({ recv: 0, tls: 0 });
+      expect(second).toEqual({ recv: 0, tls: 0 });
       expect(exitCode).toBe(0);
     },
   );

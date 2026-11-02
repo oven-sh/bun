@@ -16,8 +16,12 @@ function sample(tails: Tails) {
 
 // The HTTP client thread has no timers: once its last socket is closed it polls with no timeout, so
 // nothing but the release's own deadline wakes it.
-async function overTLS() {
-  using server = Bun.serve({ port: 0, tls, fetch: () => new Response(Buffer.alloc(4 * 1024 * 1024, "a")) });
+async function overHTTP(secure: boolean) {
+  using server = Bun.serve({
+    port: 0,
+    tls: secure ? tls : undefined,
+    fetch: () => new Response(Buffer.alloc(4 * 1024 * 1024, "a")),
+  });
   const response = await fetch(server.url, { tls: { ca: tls.cert }, keepalive: false });
   for await (const _ of response.body!) sample(recvBufferTails(true)!);
   return recvBufferTails(true)!;
@@ -44,12 +48,21 @@ async function overUDP() {
   return recvBufferTails()!;
 }
 
-const tails = await (process.argv[2] === "udp" ? overUDP() : overTLS());
-const deadline = performance.now() + 30_000;
-let settled = resident(tails);
-while ((settled.recv || settled.tls) && performance.now() < deadline) {
-  await Bun.sleep(20);
-  settled = resident(tails);
+async function settle(tails: Tails) {
+  const deadline = performance.now() + 30_000;
+  let settled = resident(tails);
+  while ((settled.recv || settled.tls) && performance.now() < deadline) {
+    await Bun.sleep(20);
+    settled = resident(tails);
+  }
+  return settled;
 }
-console.log(JSON.stringify({ peak, settled }));
+
+// Allocating a buffer schedules a release too. Only the second round's depends on the reads alone.
+const mode = process.argv[2];
+const run = mode === "udp" ? overUDP : () => overHTTP(mode === "tls");
+const first = await settle(await run());
+peak.recv = peak.tls = 0;
+const second = await settle(await run());
+console.log(JSON.stringify({ first, peak, second }));
 process.exit(0);

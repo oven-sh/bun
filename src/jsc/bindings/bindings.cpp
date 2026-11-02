@@ -5916,8 +5916,7 @@ static void sortByCodePoint(JSC::PropertyNameArray::PropertyNameVector& names)
     std::sort(names.begin(), names.end(), [](const Identifier& a, const Identifier& b) { return codePointCompare(a.impl(), b.impl()) < 0; });
 }
 
-// A read of a property that holds the sandbox gives the global of the context, and the print shows a global too. A sandbox can be the global of another context.
-// Node prints the sandbox (https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/lib/internal/util/inspect.js#L2551-L2555). This printer lists inherited properties, so a sandbox that inherits from globalThis would list the host's globals.
+// A read of a property that holds the sandbox gives the context's global, so the print shows a global. Node prints the sandbox: https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/lib/internal/util/inspect.js#L2551-L2555
 static bool isSandboxOf(JSC::JSGlobalProxy* contextGlobal, JSC::JSValue value)
 {
     while (contextGlobal) {
@@ -5938,13 +5937,13 @@ static bool isSandboxOf(JSC::JSGlobalProxy* contextGlobal, JSC::JSValue value)
     return false;
 }
 
-// The global of another realm shows what the program put on it: its own enumerable properties, not the realm's builtins.
-// A [[Get]] on the global of a node:vm context calls the sandbox's getter. So only a walk that calls getters reads a property, and any other walk takes its own slot.
+// A [[Get]] on the global of a node:vm context calls the sandbox's getter, so a walk that calls no getter takes each property's own slot.
 static NEVER_INLINE void forEachOwnPropertyOfRealmGlobal(JSC::JSGlobalProxy* proxy, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol), bool callGetters, bool sorted)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
+    // The global of another realm shows what the program put on it, not the realm's builtins.
     JSC::PropertyNameArrayBuilder properties(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     proxy->methodTable()->getOwnPropertyNames(proxy, globalObject, properties, DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(scope, );

@@ -14,7 +14,7 @@ import {
 import { basename, delimiter, dirname, isAbsolute, join } from "node:path";
 import { zstdDecompressSync } from "node:zlib";
 import { endChildren, longLimit, spawn } from "../children";
-import { env as projectSelectionEnv, modulesInCycles, tsc as projectSelectionTsc } from "./differential";
+import { modulesInCycles, env as projectSelectionEnv, tsc as projectSelectionTsc } from "./differential";
 
 afterAll(endChildren);
 
@@ -26049,7 +26049,13 @@ describe("project ownership", () => {
       ["bun build --check, JavaScript", ["build", "--check", "start.js", "--outdir", "out"]],
     ])("does not run an entry point that both list, if what it imports has a type error: %s", async (_, cmd) => {
       const files = shared(`export const n: number = "1";\n`);
-      expect(await outcome(files, cmd)).toEqual(stopped("TS2322"));
+      using dir = tempDir("bun-check-project-of-file", files);
+      const { stdout, stderr, exitCode } = await run(String(dir), cmd);
+      expect({
+        codes: `${stdout}\n${stderr}`.match(/\bTS\d+\b/g) ?? [],
+        ran: stdout.includes("it ran"),
+        exitCode,
+      }).toEqual(stopped("TS2322"));
     });
 
     test.each(["main.ts", "start.js"])("runs it if there is none: bun --check %s", async entry => {

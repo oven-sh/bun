@@ -1,4 +1,4 @@
-import { expect } from "bun:test";
+import { afterAll, expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
@@ -7,9 +7,26 @@ import { test as oneAtATime } from "./supported";
 // supported.ts sets the limit for the first file of a process alone.
 raiseDefaultTimeout(120_000);
 
-// Each case builds and runs in a folder of its own. One after the other they take longer than CI gives a file on the lane with assertions,
-// and at once they still take about that long there: so they are dealt out over four files, by the time that they take.
+// Each case is a project that runs under plain `bun test`, compiled as one program, and compiled over two layers. The cases are dealt out over four files, by the time that they take.
+// As one program a case has a folder of its own: what a build finds in one program holds for all of it, and beside the other cases a case is compiled to other code.
+// Over layers nearly all of a build is the lowest layer, which holds Bun's own code and is the same under every case that does not let every file load again. Those cases
+// are the folders of one project there: one run builds that layer for all of them, and `TestRunPartFiles:1` keeps each test file a program of its own.
 const test = oneAtATime.concurrent;
+
+type Case = {
+  name: string;
+  files: Record<string, string>;
+  /** The lines that its test files print. */
+  prints: string[];
+  /** What a run says of its test files, without the times. */
+  reports: string[];
+  /**
+   * Why every file of a run that holds the case may load again, as the stage log of a build says it. Such a run has another lowest layer, and each of its test files
+   * is another program: the case has a run in layers to itself.
+   */
+  everyFileMayLoadAgain?: string[];
+};
+const cases: Case[] = [];
 
 const looksAtFiles = {
   "src/look.cjs": `
@@ -35,22 +52,9 @@ const moduleThatLooksAtItself = (name: string) => `
   export const seen = look(require.resolve("./${name}"));
   export const later = () => [look(require.resolve("./${name}")), whileItRan === undefined || whileItRan === require.cache[require.resolve("./${name}")]].join(" ");`;
 
-async function expectCompiledToRunAsPlainInLayersToo(files: Record<string, string>) {
-  using dir = tempDir("require-cache-in-test-runs", files);
-  const seen = async (words?: string, ...flags: string[]) => {
-    const env = words ? { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words } : bunEnv;
-    const { stdout, stderr, exitCode } = await run([bunExe(), "test", "--isolate", ...flags], String(dir), env);
-    if (exitCode !== 0) console.error(stderr);
-    return { stdout, exitCode };
-  };
-  const plain = await seen();
-  expect(plain.exitCode).toBe(0);
-  for (const words of ["TestRunLayers:0", "TestRunLayers:2,TestRunPartFiles:1"])
-    expect(await seen(words, "--aot")).toEqual(plain);
-}
-
-test("a CommonJS file finds its own module in require.cache while it runs, whoever has begun it", async () => {
-  await expectCompiledToRunAsPlainInLayersToo({
+cases.push({
+  name: "a CommonJS file finds its own module in require.cache while it runs, whoever has begun it",
+  files: {
     ...looksAtFiles,
     "src/in-function.cjs": commonJSFileThatLooksAtItself,
     "src/at-top.cjs": commonJSFileThatLooksAtItself,
@@ -76,11 +80,23 @@ test("a CommonJS file finds its own module in require.cache while it runs, whoev
         console.log((await import("./src/imported-late.cjs")).default.seen);
         console.log(require("./src/requires-file").seen);
       });`,
-  });
+  },
+  prints: [
+    "in-function.cjs true,true exports [early] true true true",
+    "in-function.cjs true,true exports [early+seen+later] true true",
+    "at-top.cjs true,true exports [early] true true true",
+    "imported.cjs true,true exports [early] true true true",
+    "imported.cjs true,true exports [early+seen+later] true true",
+    "imported-below.cjs true,true exports [early] true true true",
+    "imported-late.cjs true,true exports [early] true true true",
+    "under-module.cjs true,true exports [early] true true true",
+  ],
+  reports: ["one.test.ts:", "(pass) each way to begin it"],
 });
 
-test("an ES module is listed while it runs if a require() has begun it, and not if an import has", async () => {
-  await expectCompiledToRunAsPlainInLayersToo({
+cases.push({
+  name: "an ES module is listed while it runs if a require() has begun it, and not if an import has",
+  files: {
     ...looksAtFiles,
     "src/in-function.ts": moduleThatLooksAtItself("in-function.ts"),
     "src/at-top.ts": moduleThatLooksAtItself("at-top.ts"),
@@ -106,11 +122,24 @@ test("an ES module is listed while it runs if a require() has begun it, and not 
         console.log(require("./src/file-requires.cjs").seen);
         console.log(require("./src/module-requires").seen);
       });`,
-  });
+  },
+  prints: [
+    "in-function.ts true,true exports [] true",
+    "in-function.ts true,true exports [early+later+seen] true true",
+    "at-top.ts true,true exports [] true",
+    "at-top.ts true,true exports [early+later+seen] true true",
+    "imported.ts false,false ",
+    "imported.ts true,true exports [early+later+seen] true true",
+    "imported-late.ts false,false ",
+    "under-file.ts true,true exports [] true",
+    "under-module.ts true,true exports [] true",
+  ],
+  reports: ["one.test.ts:", "(pass) each way to begin it"],
 });
 
-test("what a required ES module imports sees that module listed, and not itself", async () => {
-  await expectCompiledToRunAsPlainInLayersToo({
+cases.push({
+  name: "what a required ES module imports sees that module listed, and not itself",
+  files: {
     ...looksAtFiles,
     "src/root.ts": `import { seen as below } from "./below-root";\nexport const seen = below;`,
     "src/below-root.ts": `import { look } from "./look.cjs";\nexport const seen = [look(require.resolve("./below-root")), look(require.resolve("./root"))].join(" | ");`,
@@ -122,11 +151,17 @@ test("what a required ES module imports sees that module listed, and not itself"
         console.log(require("./src/root").seen);
         console.log(require("./src/root-with-nothing-to-run").seen);
       });`,
-  });
+  },
+  prints: [
+    "below-root.ts false,false  | root.ts true,true exports [] true",
+    "root-with-nothing-to-run.ts true,true exports [] true",
+  ],
+  reports: ["one.test.ts:", "(pass) below a require()"],
 });
 
-test("files that require each other are all listed while the innermost runs", async () => {
-  await expectCompiledToRunAsPlainInLayersToo({
+cases.push({
+  name: "files that require each other are all listed while the innermost runs",
+  files: {
     ...looksAtFiles,
     "src/outer.ts": `const inner = require("./inner");\nexport const seen = inner.seen;`,
     "src/inner.ts": `import { look } from "./look.cjs";\nexport const seen = [look(require.resolve("./outer")), look(require.resolve("./inner"))].join(" | ");`,
@@ -152,11 +187,19 @@ test("files that require each other are all listed while the innermost runs", as
         console.log(require("./src/ring-first").seen);
         console.log(require("./src/ring-first.cjs").seen);
       });`,
-  });
+  },
+  prints: [
+    "outer.ts true,true exports [] true | inner.ts true,true exports [] true",
+    "outer.cjs true,true exports [before] true | inner.cjs true,true exports [] true",
+    " true ring-first.ts true,true exports [] true",
+    "first true ring-first.cjs true,true exports [first] true",
+  ],
+  reports: ["one.test.ts:", "(pass) one below the other", "(pass) in a ring"],
 });
 
-test("an ES module that an import has begun is listed from the first require() of it", async () => {
-  await expectCompiledToRunAsPlainInLayersToo({
+cases.push({
+  name: "an ES module that an import has begun is listed from the first require() of it",
+  files: {
     ...looksAtFiles,
     "src/importer.ts": `
       import { seen as below } from "./requires-importer";
@@ -175,11 +218,17 @@ test("an ES module that an import has begun is listed from the first require() o
     "call.test.ts": `
       import { test } from "bun:test";
       test("import()", async () => { console.log((await import("./src/importer")).seen); });`,
-  });
+  },
+  prints: [
+    "importer.ts false,false  | importer.ts true,true exports [ReferenceError] true | importer.ts true,true exports [ReferenceError] true",
+    "importer.ts false,false  | importer.ts true,true exports [ReferenceError] true | importer.ts true,true exports [ReferenceError] true",
+  ],
+  reports: ["call.test.ts:", "(pass) import()", "statement.test.ts:", "(pass) an import statement"],
 });
 
-test("a file that throws while it is required was listed until then, and is not afterwards", async () => {
-  await expectCompiledToRunAsPlainInLayersToo({
+cases.push({
+  name: "a file that throws while it is required was listed until then, and is not afterwards",
+  files: {
     ...looksAtFiles,
     "src/throws.cjs": `globalThis.seenByFile = require("./look.cjs").look(__filename);\nthrow new Error("from the file");`,
     "src/throws.ts": `
@@ -198,11 +247,18 @@ test("a file that throws while it is required was listed until then, and is not 
         for (const turn of [1, 2])
           console.log(turn, message(() => require("./src/throws.ts")), "|", (globalThis as any).seenByModule, "|", look(require.resolve("./src/throws.ts")));
       });`,
-  });
+  },
+  prints: [
+    "from the file | throws.cjs true,true exports [] true | throws.cjs false,false ",
+    "1 from the module | throws.ts true,true exports [] true | throws.ts false,false ",
+    "2 from the module | throws.ts true,true exports [] true | throws.ts false,false ",
+  ],
+  reports: ["one.test.ts:", "(pass) a CommonJS file", "(pass) an ES module"],
 });
 
-test("a file that takes itself out of require.cache while it runs: a CommonJS file runs again, an ES module does not", async () => {
-  await expectCompiledToRunAsPlainInLayersToo({
+cases.push({
+  name: "a file that takes itself out of require.cache while it runs: a CommonJS file runs again, an ES module does not",
+  files: {
     ...looksAtFiles,
     "src/file.cjs": `
       const { look } = require("./look.cjs");
@@ -227,11 +283,23 @@ test("a file that takes itself out of require.cache while it runs: a CommonJS fi
       test("an ES module", () => {
         for (const turn of [1, 2]) console.log(turn, require("./src/module.ts").seen, "|", look(require.resolve("./src/module.ts")));
       });`,
-  });
+  },
+  prints: [
+    "1 1 | file.cjs true,true exports [] true | file.cjs false,false  | file.cjs false,false ",
+    "2 2 | file.cjs true,true exports [] true | file.cjs false,false  | file.cjs false,false ",
+    "1 1 | module.ts true,true exports [] true | module.ts false,false  | module.ts true,true exports [seen] true",
+    "2 1 | module.ts true,true exports [] true | module.ts false,false  | module.ts true,true exports [seen] true",
+  ],
+  reports: ["one.test.ts:", "(pass) a CommonJS file", "(pass) an ES module"],
+  everyFileMayLoadAgain: [
+    "file.cjs takes a key out of require.cache that it does not spell",
+    "the scan of the test files says so",
+  ],
 });
 
-test("an ES module whose import fails behind a require() of it that has returned stays listed, and require() answers", async () => {
-  await expectCompiledToRunAsPlainInLayersToo({
+cases.push({
+  name: "an ES module whose import fails behind a require() of it that has returned stays listed, and require() answers",
+  files: {
     ...looksAtFiles,
     "src/fails.ts": `import "./requires-what-fails";\nthrow new Error("fails");\nexport const value = 1;`,
     "src/requires-what-fails.ts": `require("./fails");\nexport const below = 1;`,
@@ -244,5 +312,122 @@ test("an ES module whose import fails behind a require() of it that has returned
         try { require("./src/fails"); } catch (error) { message = error.message; }
         console.log(message, "|", look(require.resolve("./src/fails")));
       });`,
-  });
+  },
+  prints: [
+    "fails | fails.ts true,true exports [ReferenceError] true",
+    "no error | fails.ts true,true exports [ReferenceError] true",
+  ],
+  reports: ["one.test.ts:", "(pass) import(), then require()"],
 });
+
+const ways = {
+  "plain bun test": { flags: [], env: {} },
+  "one program": { flags: ["--aot"], env: { BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:0" } },
+  // With the stage log a build says why every file of its run may load again. The log changes no byte of a program.
+  "two layers": {
+    flags: ["--aot"],
+    env: { BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:2,TestRunPartFiles:1", BUN_JSC_logAOTPhaseTimes: "1" },
+  },
+} satisfies Record<string, { flags: string[]; env: Record<string, string> }>;
+
+/** What a run tells of one case. */
+type Told = { printed: string[]; reported: string[]; exitCode: number };
+
+const folderOf = (it: Case) => `c${cases.indexOf(it) + 1}`;
+const folders = new Map<string, ReturnType<typeof tempDir>>();
+afterAll(() => folders.forEach(folder => folder[Symbol.dispose]()));
+const runs = new Map<string, Promise<{ of: (it: Case) => Told; everyFileMayLoadAgain: string[] }>>();
+
+/**
+ * `bun test --isolate` in one project, once for each way. One case is the project as it is written. Several are the folders c1, c2 .. of one project:
+ * `--isolate` gives each test file a realm of its own, and the test files print to one stdout, so there a line says first which folder it is of.
+ */
+function ran(together: Case[], way: keyof typeof ways) {
+  const project = together.map(folderOf).join();
+  return runs.getOrInsertComputed(`${project} ${way}`, async () => {
+    const inFolders = together.length > 1;
+    const folder = folders.getOrInsertComputed(project, () => {
+      const files = together.flatMap(it =>
+        Object.entries(it.files).map(([path, text]) =>
+          inFolders
+            ? [`${folderOf(it)}/${path}`, text.replaceAll("console.log(", `console.log("${folderOf(it)}|", `)]
+            : [path, text],
+        ),
+      );
+      return tempDir("require-cache-in-test-runs", Object.fromEntries(files));
+    });
+    const { flags, env } = ways[way];
+    const cmd = [bunExe(), "test", "--isolate", ...flags];
+    const { stdout, stderr, exitCode } = await run(cmd, String(folder), { ...bunEnv, ...env });
+    // Of the stage log, only what it says of the run as a whole.
+    if (exitCode !== 0) console.error(stderr.replace(/^(?:AOT (?!test run \|)|  \w+: wall ).*\n/gm, ""));
+    // run() asks a run in layers for its form.
+    if (way === "one program") expect(stderr).toMatch(/^AOT test run \| one program\b/m);
+
+    // Under "": what names no case, which is told of every case. A line of stdout without a folder in front, and what stderr says ahead of the first test file.
+    const printed = new Map<string, string[]>([["", []]]);
+    for (const line of stdout.split("\n")) {
+      if (!line || line.startsWith("bun test v")) continue;
+      const named = inFolders ? line.match(/^(c\d+)\| ?(.*)$/) : null;
+      const [from, text] = named ? [named[1], named[2]] : [inFolders ? "" : project, line];
+      printed.getOrInsertComputed(from, () => []).push(text);
+    }
+    const reported = new Map<string, string[]>([["", []]]);
+    const failed = new Set<string>();
+    let from = "";
+    for (const line of stderr.split("\n")) {
+      const file = line.match(/^(\S+\.test\.ts):$/)?.[1].split(/[\\/]/);
+      if (file) from = inFolders ? file.shift()! : project;
+      const said = file
+        ? `${file.join("/")}:`
+        : /^(?:\((?:pass|fail|skip|todo)\) |error)/.test(line) && line.replace(/ \[[\d.]+m?s\]$/, "");
+      if (!said) continue;
+      if (said.startsWith("(fail) ")) failed.add(from);
+      reported.getOrInsertComputed(from, () => []).push(said);
+    }
+    const why = stderr.matchAll(/^AOT test run \| every file may load again: (?:.*[\\/])?(.*)$/gm);
+    return {
+      of: (it: Case): Told => ({
+        printed: [...printed.get("")!, ...(printed.get(folderOf(it)) ?? [])],
+        reported: [...reported.get("")!, ...(reported.get(folderOf(it)) ?? [])],
+        // A run ends with 1 where a test has failed: that is held against the case of the test alone.
+        exitCode: exitCode === 1 && failed.size > 0 && !failed.has(folderOf(it)) ? 0 : exitCode,
+      }),
+      everyFileMayLoadAgain: [...new Set(Array.from(why, match => match[1]))].sort(),
+    };
+  });
+}
+
+/** Plain `bun test` tells of the case what the case is written to print and to pass, and the compiled run of the same project tells the same. */
+async function expectToRunAsPlain(it: Case, together: Case[], way: keyof typeof ways) {
+  const plain = (await ran(together, "plain bun test")).of(it);
+  expect(plain).toEqual({ printed: it.prints, reported: it.reports, exitCode: 0 });
+  const compiled = await ran(together, way);
+  expect(compiled.of(it)).toEqual(plain);
+  return compiled;
+}
+
+for (const it of cases) {
+  test(`${it.name}: plain bun test`, async () => {
+    const told = (await ran([it], "plain bun test")).of(it);
+    expect(told).toEqual({ printed: it.prints, reported: it.reports, exitCode: 0 });
+  });
+}
+
+const shareLayers = cases.filter(it => !it.everyFileMayLoadAgain);
+// The runs in layers take longest, so their tests come first, and first of all that of a case with a run of its own: the builds begin together, and
+// where few tests are under way at once no other build runs beside them.
+for (const it of [...cases.filter(it => it.everyFileMayLoadAgain), ...shareLayers]) {
+  test(`${it.name}: two layers`, async () => {
+    const together = it.everyFileMayLoadAgain ? [it] : shareLayers;
+    const compiled = await expectToRunAsPlain(it, together, "two layers");
+    // A case that lets every file load again and does not say so would change what the others of its run are compiled to.
+    expect(compiled.everyFileMayLoadAgain).toEqual(it.everyFileMayLoadAgain ?? []);
+  });
+}
+
+for (const it of cases) {
+  test(`${it.name}: one program`, async () => {
+    await expectToRunAsPlain(it, [it], "one program");
+  });
+}

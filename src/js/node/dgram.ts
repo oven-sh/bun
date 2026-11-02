@@ -312,8 +312,6 @@ interface QueuedSend {
   port: number | undefined;
   address: string | null | undefined;
   req: SendRequest;
-  // The async context of a send() that has a callback, where node makes the request that it completes: https://github.com/nodejs/node/blob/v26.3.0/lib/dgram.js#L738
-  frame: unknown;
 }
 
 interface UDPHandle {
@@ -334,6 +332,8 @@ interface UDPHandle {
 
 // The async context of createSocket(), for a handle whose native socket is not open yet. node makes the UDP handle there, and what that handle delivers ('message', a receive error) runs in it: https://github.com/nodejs/node/blob/v26.3.0/lib/dgram.js#L143
 const handleFrames = new WeakMap<UDPHandle, object>();
+// The async context of a queued send() that has a callback, where node makes the request that it completes (https://github.com/nodejs/node/blob/v26.3.0/lib/dgram.js#L738). Not a field of the queue entry: with a frame in one, an ahead-of-time build of a program that can reach send() loses the types of its AsyncLocalStorage stores.
+const queuedSendFrames = new WeakMap<SendRequest, object>();
 
 // Bun.udpSocket() takes the socket's Bun.ModuleGraph from the async context, so a socket that another graph binds opens in the context of bind(): it stays the binder's.
 function openInFrameOfHandle(frame: unknown, udpOptions: any) {
@@ -477,14 +477,9 @@ function handleQueueSend(
   // same way.
   const length = data.byteLength;
   handle.sendQueue ??= [];
-  handle.sendQueue.push({
-    data,
-    length,
-    port,
-    address,
-    req,
-    frame: req.callback ? $getInternalField($asyncContext, 0) : undefined,
-  });
+  handle.sendQueue.push({ data, length, port, address, req });
+  const frame = req.callback ? $getInternalField($asyncContext, 0) : undefined;
+  if (frame !== undefined) WeakMapPrototypeSet.$call(queuedSendFrames, req, frame);
   handle.queueCount += 1;
   handle.queueSize += length;
   return 0;
@@ -541,7 +536,7 @@ function completeQueuedSend(handle: UDPHandle, entry: QueuedSend, err: unknown) 
   const req = entry.req;
   if (req && typeof req.oncomplete === "function") {
     const sent = err === undefined ? entry.length : 0;
-    const frame = entry.frame;
+    const frame = req.callback && WeakMapPrototypeGet.$call(queuedSendFrames, req);
     // Queued inside the frame of the send(), so that what the callback throws is reported in it too. The frames are equal in every program without AsyncLocalStorage and Bun.ModuleGraph, which never loads the helper.
     if (!req.callback || frame === $getInternalField($asyncContext, 0))
       process.nextTick(runQueuedSendComplete, req, err, sent);

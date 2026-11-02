@@ -3,8 +3,9 @@ import { describe, expect, jest, test } from "bun:test";
 import { createSocket } from "dgram";
 import { Worker } from "node:worker_threads";
 
-import { bunEnv, bunExe, bunRun, disableAggressiveGCScope, isWindows } from "harness";
+import { bunEnv, bunExe, bunRun, disableAggressiveGCScope, isDebug, isWindows, tempDir } from "harness";
 import path from "path";
+import { unsupported as aotUnsupported } from "../../../aot/harness/compiler";
 import { nodeDataCases } from "./testdata";
 
 // Spawn a cluster fixture with a hard deadline and no-orphan protection so a
@@ -1013,6 +1014,55 @@ test("a send() that waited behind backpressure reports what its callback throws 
     exitCode: 0,
   });
 });
+
+// node:dgram saves the async context of createSocket() and of a queued send(). Where an ahead-of-time build cannot
+// follow a saved context, it takes every AsyncLocalStorage store of the program to be used by code it cannot see, and
+// keeps all that a store names. `bun check --aot` says what a build keeps. node:child_process reaches bind() for a
+// socket that a child receives. (Not on a debug build: the two reports take 50 s there.)
+test.skipIf(aotUnsupported !== undefined || isDebug)(
+  "an ahead-of-time build removes what only a method of a store names, in a program that binds and sends and in one that spawns a child",
+  async () => {
+    const programs = {
+      "binds a node:dgram socket and sends on it": `import { createSocket } from "node:dgram";
+const socket = createSocket("udp4");
+socket.bind(0, "127.0.0.1", () => socket.send("x", socket.address().port, "127.0.0.1", () => socket.close()));`,
+      "spawns a child process": `import { spawn } from "node:child_process";
+spawn(process.execPath, ["--version"]).on("exit", () => {});`,
+    };
+    const collation = "Intl.Collator and localeCompare (";
+    const reports = await Promise.all(
+      Object.entries(programs).map(async ([program, uses]) => {
+        using dir = tempDir("dgram-aot-store", {
+          "main.ts": `// @ts-nocheck
+import { AsyncLocalStorage } from "node:async_hooks";
+class Store {
+  used() { return 1; }
+  neverCalled() { return new Intl.Collator("en").compare("a", "b"); }
+}
+const storage = new AsyncLocalStorage();
+const store = new Store();
+console.log(storage.run(store, () => store.used()));
+${uses}
+`,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "check", "--aot", "--no-pretty", "--explain=trim", "main.ts"],
+          cwd: String(dir),
+          env: { ...bunEnv, NO_COLOR: "1" },
+          stdout: "ignore",
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        return [program, { collation: stderr.split("\n").filter(line => line.includes(collation)), exitCode }];
+      }),
+    );
+    const removed = { collation: [expect.stringContaining(`aot: trim: removed ${collation}`)], exitCode: 0 };
+    expect(Object.fromEntries(reports)).toEqual({
+      "binds a node:dgram socket and sends on it": removed,
+      "spawns a child process": removed,
+    });
+  },
+);
 
 // Reserves an ephemeral UDP port and frees it, so datagrams sent there get
 // ICMP port-unreachable replies on loopback.

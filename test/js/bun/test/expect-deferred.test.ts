@@ -1246,6 +1246,10 @@ describe.concurrent("a failing matcher whose promise only passes the rejection o
             matcher.finally(() => {});
             matcher.finally(() => {});
           },
+          "finally with a callback that throws the same error": () => {
+            const thrown = new Error("finally with a callback that throws the same error");
+            satisfy(thrown).finally(() => { throw thrown; });
+          },
           "a string": () => satisfy("a string").finally(() => {}),
           "null": () => satisfy(null).finally(() => {}),
           "undefined": () => satisfy(undefined).finally(() => {}),
@@ -1279,6 +1283,7 @@ describe.concurrent("a failing matcher whose promise only passes the rejection o
         "then, finally and then",
         "finally twice in a row",
         "finally twice on one promise",
+        "finally with a callback that throws the same error",
       ].flatMap(name => ["error: " + name, "(fail) " + name]),
       "error: a string",
       "(fail) a string",

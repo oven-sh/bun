@@ -3039,7 +3039,7 @@ describe.concurrent("util.inspect() of a mocked module", () => {
           test("the mocked module", () => {
             expect(print(ns)).toEndWith("{ value: <Inspection threw (from the factory getter)>, later: <uninitialized>, plain: 1 }");
             expect(print([ns])).toEndWith("{ value: <Inspection threw (from the factory getter)>, later: <uninitialized>, plain: 1 } ]");
-            expect(util.format("%O", ns)).toContain("value: <Inspection threw (from the factory getter)>,");
+            expect(util.format("%O", ns)).toEndWith("{\\n  value: <Inspection threw (from the factory getter)>,\\n  later: <uninitialized>,\\n  plain: 1\\n}");
           });
 
           test("a module that re-exports from it", () => {
@@ -3057,11 +3057,12 @@ describe.concurrent("util.inspect() of a mocked module", () => {
       {
         "dep.ts": `export const a = "real-a";`,
         "other.ts": `export const a = "other-a";`,
-        "cycle.ts": `import { printed } from "./prints-cycle"; export const a = "real-a"; export { printed };`,
+        "cycle.ts": `import { formatted, printed } from "./prints-cycle"; export const a = "real-a"; export { formatted, printed };`,
         "prints-cycle.ts": `
           import util from "node:util";
           import * as ns from "./cycle";
           export const printed = util.inspect(ns, { breakLength: Infinity });
+          export const formatted = util.format("%s", ns);
         `,
         "constructor.test.ts": `
           import { expect, test, vi } from "bun:test";
@@ -3083,6 +3084,7 @@ describe.concurrent("util.inspect() of a mocked module", () => {
 
           test("a mocked module that is printed before its factory has returned", () => {
             expect(cycle.printed).toEndWith("{  }");
+            expect(cycle.formatted).toEndWith("{  }");
           });
         `,
       },

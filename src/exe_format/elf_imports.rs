@@ -1,4 +1,4 @@
-//! The imports that the dynamic loader has left unbound in an ELF object that it has mapped into this process.
+//! The imports that the dynamic loader has left unbound in an ELF object that it has mapped into this process: which of them nothing defines, and which the host fills.
 
 use core::ffi::CStr;
 use core::mem::{align_of, size_of};
@@ -9,6 +9,8 @@ use bun_core::AnyBitPattern;
 use bun_sys::elf::PT_LOAD;
 
 const PT_DYNAMIC: u32 = 2;
+const PT_GNU_RELRO: u32 = 0x6474_e552;
+const PF_W: u32 = 2;
 const PF_R: u32 = 4;
 const DT_NULL: i64 = 0;
 const DT_PLTRELSZ: i64 = 2;
@@ -26,14 +28,19 @@ const DT_VERNEEDNUM: i64 = 0x6fff_ffff;
 const RELA_SIZE: u64 = size_of::<Elf64_Rela>() as u64;
 const SHN_UNDEF: u16 = 0;
 const STB_GLOBAL: u8 = 1;
+const STB_WEAK: u8 = 2;
 /// The low 15 bits of a `DT_VERSYM` element and of `vna_other`: 0 and 1 mean that the symbol has no version.
 const VERSION_INDEX: u16 = 0x7fff;
+#[cfg(target_arch = "x86_64")]
+const R_ABS64: u32 = 1;
 #[cfg(target_arch = "x86_64")]
 const R_GLOB_DAT: u32 = 6;
 #[cfg(target_arch = "x86_64")]
 const R_JUMP_SLOT: u32 = 7;
 #[cfg(target_arch = "x86_64")]
 const R_TLSDESC: u32 = 36;
+#[cfg(target_arch = "aarch64")]
+const R_ABS64: u32 = 257;
 #[cfg(target_arch = "aarch64")]
 const R_GLOB_DAT: u32 = 1025;
 #[cfg(target_arch = "aarch64")]
@@ -53,7 +60,7 @@ struct Elf64_Dyn {
 struct Elf64_Rela {
     r_offset: u64,
     r_info: u64,
-    _r_addend: i64,
+    r_addend: i64,
 }
 
 #[repr(C)]
@@ -149,11 +156,11 @@ struct Image<'a> {
 }
 
 impl Image<'_> {
-    /// The bytes from `address` to the end of the `PT_LOAD` range around it, of the ranges that have `flags`.
-    fn room(&self, flags: u32, address: usize) -> usize {
+    /// The bytes from `address` to the end of the range around it, of the `kind` ranges that have `flags`.
+    fn room(&self, kind: u32, flags: u32, address: usize) -> usize {
         self.headers
             .iter()
-            .filter(|header| header.p_type == PT_LOAD && header.p_flags & flags == flags)
+            .filter(|header| header.p_type == kind && header.p_flags & flags == flags)
             .find_map(|header| {
                 let start = self.base.wrapping_add(header.p_vaddr as usize);
                 (header.p_memsz as usize)
@@ -169,7 +176,7 @@ impl Image<'_> {
             .into_iter()
             .map(|address| Table {
                 address,
-                room: self.room(PF_R, address),
+                room: self.room(PT_LOAD, PF_R, address),
             })
             .find(|table| table.room != 0)
     }
@@ -177,7 +184,7 @@ impl Image<'_> {
     /// What the slot of an import holds, if it is an aligned pointer inside a readable `PT_LOAD` range.
     fn slot(&self, address: usize) -> Option<usize> {
         let aligned = address.is_multiple_of(align_of::<AtomicUsize>());
-        if !aligned || self.room(PF_R, address) < size_of::<usize>() {
+        if !aligned || self.room(PT_LOAD, PF_R, address) < size_of::<usize>() {
             return None;
         }
         // SAFETY: the slot is aligned and inside a range that the loader mapped readable, and the caller of the walk keeps the object loaded.
@@ -188,11 +195,17 @@ impl Image<'_> {
 
     /// Whether a slot that holds `value` has the address of a definition. An unbound slot holds 0 or points into the object, at its stub for the import, and musl (`unrelocated`) leaves there what the file has: the stub's offset from the base.
     fn is_bound(&self, value: usize, unrelocated: bool) -> bool {
-        let in_object = |address| self.room(0, address) != 0;
+        let in_object = |address| self.room(PT_LOAD, 0, address) != 0;
         // With musl a bound slot can look unbound: it holds an address in the host's image, which is not position independent, and `base + value` can lie inside a large object. The question by the name is what accepts such an import.
         value != 0
             && !in_object(value)
             && !(unrelocated && in_object(self.base.wrapping_add(value)))
+    }
+
+    /// Whether the host can store to a slot that `slot` has read. The loader makes `PT_GNU_RELRO` read-only once it has relocated the object.
+    fn is_writable(&self, address: usize) -> bool {
+        self.room(PT_LOAD, PF_R | PF_W, address) >= size_of::<usize>()
+            && self.room(PT_GNU_RELRO, 0, address) == 0
     }
 
     /// The version that the object names for its import `symbol`. A version table that is missing or malformed names none.
@@ -237,25 +250,57 @@ struct Versions {
     needed_count: u64,
 }
 
-/// The first import that the loader has left unbound and that `is_defined` rejects by its name and then by the version that the object names for it, of an object whose loader keeps `headers` mapped at `base`. `defers_got` is for musl, which leaves a `GLOB_DAT` import unbound too, and an unbound slot as the file has it.
-pub unsafe fn unresolved_lazy_import<'a>(
-    headers: &'a [libc::Elf64_Phdr],
-    base: usize,
-    defers_got: bool,
-    mut is_defined: impl FnMut(&CStr, Option<&CStr>) -> bool,
-) -> Result<Option<&'a CStr>, Unreadable> {
-    let image = Image { headers, base };
-    let dynamic = headers
+/// The tables of the dynamic section that a walk of the relocations reads.
+#[derive(Clone, Copy)]
+struct Tables {
+    /// The table of `DT_JMPREL`, and that of `DT_RELA` if the walk reads it.
+    relocations: [Option<Table>; 2],
+    symbols: Table,
+    strings: Table,
+    versions: Versions,
+}
+
+impl Tables {
+    fn relocations(self) -> impl Iterator<Item = Elf64_Rela> {
+        self.relocations
+            .into_iter()
+            .flatten()
+            .flat_map(|table| (0..).map_while(move |index| table.element::<Elf64_Rela>(index)))
+    }
+}
+
+/// A slot that the host fills, and the function of its library that it stores there.
+#[derive(Clone, Copy)]
+struct Fill {
+    slot: usize,
+    function: usize,
+}
+
+/// Makes an object call `function` through a slot that `Image::is_writable` accepts.
+unsafe fn store(slot: usize, function: usize) {
+    // SAFETY: the slot is aligned and inside a range that the loader keeps writable, and the caller keeps the object loaded.
+    let slot = unsafe { AtomicUsize::from_ptr(slot as *mut usize) };
+    // Loads of one library in several Workers store the same value here at the same time, while other threads call through the slot.
+    if slot.load(Ordering::SeqCst) != function {
+        slot.store(function, Ordering::SeqCst);
+    }
+}
+
+/// The tables of an object, or none if it has no relocations that the walk reads. `reads_rela_dyn` says whether the walk reads the table of `DT_RELA` beside that of `DT_JMPREL`.
+fn tables(image: &Image, reads_rela_dyn: bool) -> Result<Option<Tables>, Unreadable> {
+    let dynamic = image
+        .headers
         .iter()
         .find(|header| header.p_type == PT_DYNAMIC)
         .ok_or(Unreadable::Dynamic)?;
-    let address = base.wrapping_add(dynamic.p_vaddr as usize);
+    let address = image.base.wrapping_add(dynamic.p_vaddr as usize);
     let entries = Table {
         address,
-        room: image.room(PF_R, address).min(dynamic.p_memsz as usize),
+        room: image
+            .room(PT_LOAD, PF_R, address)
+            .min(dynamic.p_memsz as usize),
     };
 
-    // `rela_plt` is the table of `DT_JMPREL`, and `rela_dyn` that of `DT_RELA`, which is read only for musl.
     let (mut rela_plt, mut rela_dyn, mut symbols, mut strings) = (None, None, None, None);
     let (mut rela_plt_size, mut rela_dyn_size, mut strings_size) = (0, 0, 0);
     let mut versions = Versions::default();
@@ -265,14 +310,14 @@ pub unsafe fn unresolved_lazy_import<'a>(
         match entry.d_tag {
             DT_NULL => break,
             DT_JMPREL => rela_plt = Some(table()?),
-            DT_RELA if defers_got => rela_dyn = Some(table()?),
+            DT_RELA if reads_rela_dyn => rela_dyn = Some(table()?),
             DT_SYMTAB => symbols = Some(table()?),
             DT_STRTAB => strings = Some(table()?),
             DT_PLTRELSZ => rela_plt_size = entry.d_val as usize,
             DT_RELASZ => rela_dyn_size = entry.d_val as usize,
             DT_STRSZ => strings_size = entry.d_val as usize,
             DT_PLTREL if entry.d_val != DT_RELA as u64 => return Err(Unreadable::Relocations),
-            DT_RELAENT if defers_got && entry.d_val != RELA_SIZE => {
+            DT_RELAENT if reads_rela_dyn && entry.d_val != RELA_SIZE => {
                 return Err(Unreadable::Relocations);
             }
             DT_VERSYM => versions.symbols = Some(entry.d_val),
@@ -288,11 +333,11 @@ pub unsafe fn unresolved_lazy_import<'a>(
             ..table
         })),
     };
-    let (rela_plt, rela_dyn) = (
+    let relocations = [
         sized(rela_plt, rela_plt_size)?,
         sized(rela_dyn, rela_dyn_size)?,
-    );
-    if rela_plt.is_none() && rela_dyn.is_none() {
+    ];
+    if relocations.iter().all(Option::is_none) {
         return Ok(None);
     }
     let (Some(symbols), Some(strings)) = (symbols, strings) else {
@@ -302,12 +347,74 @@ pub unsafe fn unresolved_lazy_import<'a>(
         room: strings.room.min(strings_size),
         ..strings
     };
+    Ok(Some(Tables {
+        relocations,
+        symbols,
+        strings,
+        versions,
+    }))
+}
 
-    let relocations = [rela_plt, rela_dyn]
-        .into_iter()
-        .flatten()
-        .flat_map(|table| (0..).map_while(move |index| table.element::<Elf64_Rela>(index)));
-    for relocation in relocations {
+/// The slots that the host fills with the functions of `library`: one for each relocation of the object that stores the address of one of these functions, or none at all. A slot that holds its function already is left out. The host fills none if one of these slots is bound to something else, which shows a definition of the library in the scope of the object, if `is_defined` finds one of the names, if one of the slots is not storable or its relocation has an addend, or if the host cannot read one of these relocations.
+fn slots_to_fill(
+    image: &Image,
+    defers_got: bool,
+    library: &[(&CStr, usize)],
+    mut is_defined: impl FnMut(&CStr, Option<&CStr>) -> bool,
+) -> Option<Vec<Fill>> {
+    if library.is_empty() {
+        return None;
+    }
+    let tables = tables(image, true).ok()??;
+    let mut slots = Vec::new();
+    for relocation in tables.relocations() {
+        let kind = relocation.r_info as u32;
+        if kind != R_JUMP_SLOT && kind != R_GLOB_DAT && kind != R_ABS64 {
+            continue;
+        }
+        let symbol: Elf64_Sym = tables.symbols.element((relocation.r_info >> 32) as usize)?;
+        let binding = symbol.st_info >> 4;
+        if symbol.st_shndx != SHN_UNDEF || (binding != STB_GLOBAL && binding != STB_WEAK) {
+            continue;
+        }
+        let name = tables.strings.string(symbol.st_name as usize)?;
+        let Some(&(_, function)) = library.iter().find(|&&(import, _)| import == name) else {
+            continue;
+        };
+        let slot = image.base.wrapping_add(relocation.r_offset as usize);
+        let value = image.slot(slot)?;
+        // The host has filled this slot in an earlier load of the object, or a load on another thread is filling the slots now.
+        if value == function {
+            continue;
+        }
+        if image.is_bound(value, defers_got) || (kind == R_ABS64 && relocation.r_addend != 0) {
+            return None;
+        }
+        slots.push(Fill { slot, function });
+    }
+    let fills = !slots.is_empty()
+        && !library.iter().any(|&(name, _)| is_defined(name, None))
+        && slots.iter().all(|fill| image.is_writable(fill.slot));
+    fills.then_some(slots)
+}
+
+/// The first import that the loader has left unbound and that `is_defined` rejects by its name and then by the version that the object names for it. An import whose slot is in `filled` counts as bound. `defers_got` is for musl, which leaves a `GLOB_DAT` import unbound too, and an unbound slot as the file has it.
+fn unresolved_lazy_import<'a>(
+    image: &Image<'a>,
+    defers_got: bool,
+    filled: &[Fill],
+    mut is_defined: impl FnMut(&CStr, Option<&CStr>) -> bool,
+) -> Result<Option<&'a CStr>, Unreadable> {
+    let Some(tables) = tables(image, defers_got)? else {
+        return Ok(None);
+    };
+    let Tables {
+        symbols,
+        strings,
+        versions,
+        ..
+    } = tables;
+    for relocation in tables.relocations() {
         let kind = relocation.r_info as u32;
         // glibc before 2.27 (aarch64) and before 2.34 (x86-64) binds a thread-local import in `DT_JMPREL` at its first access: until then the first word of its descriptor points at a stub of the object.
         if kind != R_JUMP_SLOT && kind != R_TLSDESC && !(defers_got && kind == R_GLOB_DAT) {
@@ -319,9 +426,10 @@ pub unsafe fn unresolved_lazy_import<'a>(
         if symbol.st_info >> 4 != STB_GLOBAL || symbol.st_shndx != SHN_UNDEF {
             continue;
         }
-        let slot = base.wrapping_add(relocation.r_offset as usize);
-        // The loader has bound such a slot, so a definition exists and there is nothing to ask.
-        if image.is_bound(image.slot(slot).ok_or(Unreadable::Slot)?, defers_got) {
+        let slot = image.base.wrapping_add(relocation.r_offset as usize);
+        // The loader has bound such a slot, so a definition exists and there is nothing to ask. The host binds a slot that it fills.
+        let bound = image.is_bound(image.slot(slot).ok_or(Unreadable::Slot)?, defers_got);
+        if bound || filled.iter().any(|fill| fill.slot == slot) {
             continue;
         }
         let name = strings
@@ -339,12 +447,31 @@ pub unsafe fn unresolved_lazy_import<'a>(
     Ok(None)
 }
 
+/// Checks the imports of an object whose loader keeps `headers` mapped at `base`: returns the first one that the loader has left unbound and that nothing defines (`unresolved_lazy_import`). `library` names functions that the host has and does not export, with their addresses. The host fills all the imports of these functions in the object or none (`slots_to_fill`): it decides that before the check, in which a slot that it fills counts as bound, and stores the functions after the check, if that has found nothing. With an empty `library` only the check runs.
+pub unsafe fn resolve_lazy_imports<'a>(
+    headers: &'a [libc::Elf64_Phdr],
+    base: usize,
+    defers_got: bool,
+    library: &[(&CStr, usize)],
+    mut is_defined: impl FnMut(&CStr, Option<&CStr>) -> bool,
+) -> Result<Option<&'a CStr>, Unreadable> {
+    let image = Image { headers, base };
+    let fill = slots_to_fill(&image, defers_got, library, &mut is_defined).unwrap_or_default();
+    let unresolved = unresolved_lazy_import(&image, defers_got, &fill, &mut is_defined)?;
+    if unresolved.is_none() {
+        for Fill { slot, function } in fill {
+            // SAFETY: the slot is one that `Image::slot` has read and that `Image::is_writable` accepts, in the object that the caller keeps loaded.
+            unsafe { store(slot, function) };
+        }
+    }
+    Ok(unresolved)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const PF_X: u32 = 1;
-    const PF_W: u32 = 2;
     const DT_REL: u64 = 17;
     const DT_DEBUG: i64 = 21;
     const DT_BIND_NOW: i64 = 24;
@@ -352,7 +479,6 @@ mod tests {
     const DT_FLAGS_1: i64 = 0x6fff_fffb;
     const DF_BIND_NOW: u64 = 8;
     const DF_1_NOW: u64 = 1;
-    const STB_WEAK: u8 = 2;
     /// The copy relocation of each processor, which every loader applies in dlopen().
     const R_COPY: u32 = R_GLOB_DAT - 1;
     const DYNAMIC_ENTRY: usize = 16;
@@ -364,6 +490,15 @@ mod tests {
     const GAP: usize = 11 * SYMBOL;
     /// What a slot holds once the loader has bound it: an address in another object. This one is no address of a process, so no `Object` is around it.
     const ELSEWHERE: usize = 0xdef1_0000_0000_0000;
+    /// The functions of the host's library, which no `Object` is around either.
+    const DEFLATE: usize = 0xdef1_a7e0;
+    const INFLATE: usize = 0x1f1a_7e00;
+    const INFLATE_END: usize = 0x1f1a_7eed;
+    const ZLIB: [(&CStr, usize); 3] = [
+        (c"deflate", DEFLATE),
+        (c"inflate", INFLATE),
+        (c"inflateEnd", INFLATE_END),
+    ];
     /// The last but one is a spare entry, which `add_dynamic` replaces.
     const DYNAMIC_TAGS: [i64; 14] = [
         DT_JMPREL,
@@ -445,6 +580,21 @@ mod tests {
         }
     }
 
+    /// An import whose address the object keeps in a word of its data.
+    const fn absolute_import(name: &'static str) -> Import {
+        Import {
+            relocation_type: R_ABS64,
+            ..got_import(name)
+        }
+    }
+
+    const fn weak(import: Import) -> Import {
+        Import {
+            binding: STB_WEAK,
+            ..import
+        }
+    }
+
     /// The offset of the name of a version index in the string table of an `Object`. The indexes below 2 get the first name.
     fn version_name(index: u16) -> u32 {
         let before = &VERSIONS[..usize::from(index).saturating_sub(2)];
@@ -483,12 +633,14 @@ mod tests {
         data_relocations: usize,
         /// Whether the walk is that of musl.
         defers_got: bool,
-        /// A slot for each import. That of a jump slot points at its stub, as glibc and FreeBSD leave it, and that of a `GLOB_DAT` holds 0.
+        /// A slot for each import. That of a jump slot points at its stub, as glibc and FreeBSD leave it, and that of a `GLOB_DAT` or of a word of data holds 0.
         slots: usize,
         slots_flags: u32,
         slots_size: usize,
         stubs: usize,
         stubs_size: usize,
+        /// The `PT_GNU_RELRO` range, if the object has one.
+        read_only_after_relocation: Option<(usize, usize)>,
     }
 
     impl Object {
@@ -551,6 +703,7 @@ mod tests {
                 slots_size,
                 stubs,
                 stubs_size,
+                read_only_after_relocation: None,
             };
             if linked == Linked::AboveItsMapping {
                 object.link_address = (object.memory.as_ptr() as u64).wrapping_add(0x1000_0000);
@@ -571,7 +724,7 @@ mod tests {
                     }
                 }
                 object.set_relocation_offset(index, slots + index * SLOT);
-                if import.relocation_type != R_GLOB_DAT {
+                if import.relocation_type != R_GLOB_DAT && import.relocation_type != R_ABS64 {
                     object.set_slot(index, object.stub(index));
                 }
             }
@@ -636,6 +789,15 @@ mod tests {
             let offset = self.link_address.wrapping_add(offset as u64);
             self.write_u64(self.relocations + index * RELOCATION, offset);
             self.write_u64(self.data_relocations + index * RELOCATION, offset);
+        }
+
+        /// Gives the relocation of an import, in either table, an addend.
+        fn set_relocation_addend(&mut self, index: usize, addend: i64) {
+            self.write_u64(self.relocations + index * RELOCATION + 16, addend as u64);
+            self.write_u64(
+                self.data_relocations + index * RELOCATION + 16,
+                addend as u64,
+            );
         }
 
         fn set_slot(&mut self, import: usize, value: usize) {
@@ -734,28 +896,46 @@ mod tests {
             if let Some(size) = self.dynamic_size {
                 headers.push(header(PT_DYNAMIC, PF_R | PF_W, self.dynamic, size));
             }
+            if let Some((offset, size)) = self.read_only_after_relocation {
+                headers.push(header(PT_GNU_RELRO, PF_R, offset, size));
+            }
             headers
         }
 
-        /// The result of the walk when only `defined` have a definition, and what it asked for: each a name, or a name and a version as `name@version`.
-        fn walk(&self, defined: &[&str]) -> (Result<Option<String>, Unreadable>, Vec<String>) {
+        /// The result for a host with `library` when only `defined` have a definition, and what it asked for: each a name, or a name and a version as `name@version`.
+        fn resolve_with(
+            &self,
+            library: &[(&CStr, usize)],
+            defined: &[&str],
+        ) -> (Result<Option<String>, Unreadable>, Vec<String>) {
             let mut asked = Vec::new();
             let headers = self.headers();
+            let is_defined = |name: &CStr, version: Option<&CStr>| {
+                let mut question = name.to_str().unwrap().to_owned();
+                if let Some(version) = version {
+                    question = format!("{question}@{}", version.to_str().unwrap());
+                }
+                asked.push(question);
+                defined.contains(&asked.last().unwrap().as_str())
+            };
             // SAFETY: the headers describe ranges inside `self.memory`, which outlives the call.
             let found = unsafe {
-                unresolved_lazy_import(&headers, self.base(), self.defers_got, |name, version| {
-                    let mut question = name.to_str().unwrap().to_owned();
-                    if let Some(version) = version {
-                        question = format!("{question}@{}", version.to_str().unwrap());
-                    }
-                    asked.push(question);
-                    defined.contains(&asked.last().unwrap().as_str())
-                })
+                resolve_lazy_imports(&headers, self.base(), self.defers_got, library, is_defined)
             };
             (
                 found.map(|name| name.map(|name| name.to_str().unwrap().to_owned())),
                 asked,
             )
+        }
+
+        /// The same for a host without a library, as the targets are where the host fills nothing: the check alone.
+        fn walk(&self, defined: &[&str]) -> (Result<Option<String>, Unreadable>, Vec<String>) {
+            self.resolve_with(&[], defined)
+        }
+
+        /// The same for a host that has `ZLIB`.
+        fn resolve(&self, defined: &[&str]) -> (Result<Option<String>, Unreadable>, Vec<String>) {
+            self.resolve_with(&ZLIB, defined)
         }
     }
 
@@ -1594,5 +1774,448 @@ mod tests {
             object.defers_got = true;
             assert_eq!(object.walk(&["first"]), (Err(error), vec![]));
         }
+    }
+
+    /// An import outside the host's library before two imports of it.
+    const ZLIB_IMPORTS: [Import; 3] = [import("other"), import("deflate"), import("inflate")];
+    /// What the host asks before it fills: the names of its library.
+    const ZLIB_NAMES: [&str; 3] = ["deflate", "inflate", "inflateEnd"];
+
+    #[test]
+    fn checks_an_object_without_an_import_of_the_library_as_a_host_without_a_library_does() {
+        let object = Object::new(Linked::AtZero, Pointers::Addresses, &IMPORTS);
+        for defined in [&[][..], &["first"], &["first", "second", "third"]] {
+            assert_eq!(object.resolve(defined), object.walk(defined));
+        }
+        assert_eq!(
+            object.resolve(&["first", "second", "third"]),
+            (Ok(None), asked(&["first", "second", "third"]))
+        );
+    }
+
+    #[test]
+    fn a_host_without_a_library_fills_nothing() {
+        let object = Object::new(Linked::AtZero, Pointers::Addresses, &ZLIB_IMPORTS);
+        let unbound = object.slot_values();
+        assert_eq!(
+            object.walk(&["other"]),
+            (unresolved("deflate"), asked(&["other", "deflate"]))
+        );
+        assert_eq!(object.slot_values(), unbound);
+    }
+
+    #[test]
+    fn fills_the_imports_of_the_library_where_nothing_defines_it() {
+        for linked in [Linked::AtZero, Linked::AboveItsMapping] {
+            let object = Object::new(linked, Pointers::Offsets, &ZLIB_IMPORTS);
+            let other = object.stub(0);
+            // The host asks about its library before the check, and the check asks nothing about a slot that the host fills.
+            assert_eq!(
+                object.resolve(&["other"]),
+                (
+                    Ok(None),
+                    asked(&["deflate", "inflate", "inflateEnd", "other"])
+                )
+            );
+            assert_eq!(object.slot_values(), [other, DEFLATE, INFLATE]);
+
+            // A later load of the object finds the functions in the slots: nothing is left to fill, and the host asks nothing about its library.
+            assert_eq!(object.resolve(&["other"]), (Ok(None), asked(&["other"])));
+            assert_eq!(object.slot_values(), [other, DEFLATE, INFLATE]);
+        }
+    }
+
+    #[test]
+    fn fills_nothing_where_something_defines_a_function_of_the_library() {
+        let object = Object::new(Linked::AtZero, Pointers::Addresses, &ZLIB_IMPORTS);
+        let unbound = object.slot_values();
+        // What defines functions of the library, the questions that find the first of them, and what the check then finds.
+        let providers: [(&[&str], &[&str], Result<Option<String>, Unreadable>); 4] = [
+            (
+                &["deflate", "inflate", "inflateEnd"],
+                &["deflate"],
+                Ok(None),
+            ),
+            (&["deflate", "inflate"], &["deflate"], Ok(None)),
+            (&["inflate"], &["deflate", "inflate"], unresolved("deflate")),
+            // Only a function that the object does not import.
+            (&["inflateEnd"], &ZLIB_NAMES, unresolved("deflate")),
+        ];
+        for (provider, questions, found) in providers {
+            let defined = [&["other"], provider].concat();
+            let (checked, check_questions) = object.walk(&defined);
+            assert_eq!(checked, found, "{provider:?}");
+            // The check runs as for a host without a library: it asks about each import of the library too.
+            assert_eq!(
+                object.resolve(&defined),
+                (found, [asked(questions), check_questions].concat()),
+                "{provider:?}"
+            );
+            assert_eq!(object.slot_values(), unbound, "{provider:?}");
+        }
+    }
+
+    #[test]
+    fn fills_nothing_where_a_slot_of_the_library_is_bound_to_something_else() {
+        for relocation_type in [R_JUMP_SLOT, R_GLOB_DAT, R_ABS64] {
+            for relocated_in in [Section::RelaPlt, Section::RelaDyn] {
+                let bound = Import {
+                    relocation_type,
+                    relocated_in,
+                    ..import("inflate")
+                };
+                let imports = [import("deflate"), bound, import("inflateEnd")];
+                let mut object = Object::new(Linked::AtZero, Pointers::Addresses, &imports);
+                object.set_slot(1, ELSEWHERE);
+                let unbound = object.slot_values();
+                // The loader found `inflate` in a scope that the host cannot ask. The host asks nothing about its library, and the check runs as for a host without one.
+                assert_eq!(
+                    object.resolve(&[]),
+                    (unresolved("deflate"), asked(&["deflate"])),
+                    "{relocation_type} {}",
+                    relocated_in == Section::RelaDyn
+                );
+                assert_eq!(object.resolve(&[]), object.walk(&[]));
+                assert_eq!(object.slot_values(), unbound);
+            }
+        }
+
+        // With every slot bound, nothing is left to fill or to ask.
+        let mut object = Object::new(Linked::AtZero, Pointers::Addresses, &ZLIB_IMPORTS);
+        for import in 0..ZLIB_IMPORTS.len() {
+            object.set_slot(import, ELSEWHERE);
+        }
+        assert_eq!(object.resolve(&[]), (Ok(None), vec![]));
+        assert_eq!(object.slot_values(), [ELSEWHERE; 3]);
+    }
+
+    #[test]
+    fn fills_nothing_where_a_word_of_data_holds_the_address_plus_an_addend() {
+        let imports = [import("deflate"), weak(absolute_import("inflate"))];
+        let object = || Object::new(Linked::AtZero, Pointers::Addresses, &imports);
+        let filled = object();
+        assert_eq!(filled.resolve(&[]), (Ok(None), asked(&ZLIB_NAMES)));
+        assert_eq!(filled.slot_values(), [DEFLATE, INFLATE]);
+
+        // The loader leaves the addend alone in the word of a weak import that nothing defines, and the test of the slot takes that for an address. The second word here holds 0, as no loader leaves it.
+        for word in [8, 0] {
+            let mut object = object();
+            object.set_relocation_addend(1, 8);
+            object.set_slot(1, word);
+            let unbound = object.slot_values();
+            assert_eq!(
+                object.resolve(&[]),
+                (unresolved("deflate"), asked(&["deflate"])),
+                "{word}"
+            );
+            assert_eq!(object.slot_values(), unbound, "{word}");
+        }
+    }
+
+    #[test]
+    fn fills_nothing_where_it_cannot_read_a_relocation_that_stores_an_address() {
+        // `inflate` is a weak import through the global offset table: its relocation is in the table of `DT_RELA`, which the check reads only for a loader that defers such an import.
+        let imports = [
+            import("other"),
+            import("deflate"),
+            weak(got_import("inflate")),
+        ];
+        let object = || Object::new(Linked::AtZero, Pointers::Addresses, &imports);
+        let filled = object();
+        assert_eq!(filled.resolve(&["other"]).0, Ok(None));
+        assert_eq!(filled.slot_values(), [filled.stub(0), DEFLATE, INFLATE]);
+
+        let outside = |object: &Object| object.tables_size / SYMBOL;
+        let cases: [(&str, Result<Option<String>, Unreadable>, fn(&mut Object)); 9] = [
+            (
+                "the table of DT_RELA is outside the segments",
+                unresolved("deflate"),
+                |object| {
+                    let outside = object.pointer(Pointers::Addresses, object.tables_size);
+                    object.set_dynamic(DT_RELA, outside)
+                },
+            ),
+            (
+                "the table of DT_RELA is larger than its segment",
+                unresolved("deflate"),
+                |object| object.set_dynamic(DT_RELASZ, (object.versions_size + 1) as u64),
+            ),
+            (
+                "the table of DT_RELA has entries of another size",
+                unresolved("deflate"),
+                |object| object.set_dynamic(DT_RELAENT, 16),
+            ),
+            (
+                "a symbol of the table of DT_RELA is outside the symbol table",
+                unresolved("deflate"),
+                |object| object.set_data_relocation(2, object.tables_size / SYMBOL, R_GLOB_DAT),
+            ),
+            (
+                "a name of the table of DT_RELA is outside the string table",
+                unresolved("deflate"),
+                |object| object.set_symbol_name(2, object.strings_size),
+            ),
+            (
+                "a slot of the table of DT_RELA is outside the segments",
+                unresolved("deflate"),
+                |object| object.set_relocation_offset(2, object.slots + object.slots_size),
+            ),
+            (
+                "a slot of the table of DT_RELA is not aligned",
+                unresolved("deflate"),
+                |object| object.set_relocation_offset(2, object.slots + SLOT + SLOT / 2),
+            ),
+            // The check reads these two as well, and reports them.
+            (
+                "a symbol of the table of DT_JMPREL is outside the symbol table",
+                Err(Unreadable::SymbolIndex),
+                |object| object.set_relocation(1, object.tables_size / SYMBOL, R_JUMP_SLOT),
+            ),
+            (
+                "the table of DT_JMPREL is larger than its segment",
+                Err(Unreadable::Relocations),
+                |object| object.set_dynamic(DT_PLTRELSZ, (object.tables_size + 1) as u64),
+            ),
+        ];
+        assert_eq!(outside(&filled) * SYMBOL, filled.tables_size);
+        for (case, found, change) in cases {
+            let mut object = object();
+            change(&mut object);
+            let unbound = object.slot_values();
+            // It is no error of its own: the check says what it says for a host without a library.
+            assert_eq!(
+                object.resolve(&["other"]),
+                object.walk(&["other"]),
+                "{case}"
+            );
+            assert_eq!(object.resolve(&["other"]).0, found, "{case}");
+            assert_eq!(object.slot_values(), unbound, "{case}");
+        }
+    }
+
+    #[test]
+    fn fills_nothing_where_it_cannot_store_to_a_slot_of_the_library() {
+        let object = || Object::new(Linked::AtZero, Pointers::Addresses, &ZLIB_IMPORTS);
+        let cases: [(&str, fn(&mut Object)); 3] = [
+            ("in a segment that is not writable", |object| {
+                object.slots_flags = PF_R
+            }),
+            ("read-only after relocation", |object| {
+                object.read_only_after_relocation = Some((object.slots, 2 * SLOT))
+            }),
+            // The slot of the first import of the library is writable, and nothing is stored there either.
+            ("the last one read-only after relocation", |object| {
+                object.read_only_after_relocation = Some((object.slots + 2 * SLOT, SLOT))
+            }),
+        ];
+        for (case, change) in cases {
+            let mut object = object();
+            change(&mut object);
+            let unbound = object.slot_values();
+            let (checked, check_questions) = object.walk(&["other"]);
+            assert_eq!(checked, unresolved("deflate"), "{case}");
+            assert_eq!(
+                object.resolve(&["other"]),
+                (checked, [asked(&ZLIB_NAMES), check_questions].concat()),
+                "{case}"
+            );
+            assert_eq!(object.slot_values(), unbound, "{case}");
+        }
+
+        // Only the slots that the host fills have to be writable.
+        let mut object = object();
+        object.read_only_after_relocation = Some((object.slots, SLOT));
+        assert_eq!(object.resolve(&["other"]).0, Ok(None));
+        assert_eq!(object.slot_values(), [object.stub(0), DEFLATE, INFLATE]);
+    }
+
+    #[test]
+    fn leaves_out_a_slot_that_holds_the_function_already() {
+        // A load of the object on another thread has stored the first of the functions, and not yet the others.
+        let imports = [
+            import("deflate"),
+            import("other"),
+            import("inflate"),
+            weak(got_import("inflateEnd")),
+        ];
+        let mut object = Object::new(Linked::AtZero, Pointers::Addresses, &imports);
+        object.set_slot(0, DEFLATE);
+        assert_eq!(
+            object.resolve(&["other"]),
+            (
+                Ok(None),
+                asked(&["deflate", "inflate", "inflateEnd", "other"])
+            )
+        );
+        let filled = [DEFLATE, object.stub(1), INFLATE, INFLATE_END];
+        assert_eq!(object.slot_values(), filled);
+        assert_eq!(object.resolve(&["other"]), (Ok(None), asked(&["other"])));
+        assert_eq!(object.slot_values(), filled);
+    }
+
+    #[test]
+    fn fills_a_weak_import_of_the_library_through_each_kind_of_relocation() {
+        for relocated_in in [Section::RelaPlt, Section::RelaDyn] {
+            // A jump slot, a slot of the global offset table, and a word of data. The loader has stored 0 in the last two, as nothing defines them.
+            let imports = [
+                weak(import("deflate")),
+                Import {
+                    relocated_in,
+                    ..weak(got_import("inflate"))
+                },
+                Import {
+                    relocated_in,
+                    ..weak(absolute_import("inflateEnd"))
+                },
+                weak(import("other")),
+            ];
+            let mut object = Object::new(Linked::AtZero, Pointers::Addresses, &imports);
+            // The host reads no slot of an import outside its library, and the check none of a weak import.
+            object.set_relocation_offset(3, object.slots + object.slots_size);
+            assert_eq!(object.slot_values()[..3], [object.stub(0), 0, 0]);
+            assert_eq!(object.resolve(&[]), (Ok(None), asked(&ZLIB_NAMES)));
+            assert_eq!(object.slot_values()[..3], [DEFLATE, INFLATE, INFLATE_END]);
+        }
+    }
+
+    #[test]
+    fn reads_no_name_of_a_symbol_that_cannot_be_an_import_of_the_library() {
+        // A symbol that the object defines, and one that is neither global nor weak. Neither has a name inside the string table.
+        let imports = [
+            Import {
+                section: 1,
+                ..import("own")
+            },
+            Import {
+                binding: 0,
+                ..got_import("local")
+            },
+            import("deflate"),
+        ];
+        let mut object = Object::new(Linked::AtZero, Pointers::Addresses, &imports);
+        object.set_symbol_name(0, object.strings_size);
+        object.set_symbol_name(1, object.strings_size);
+        assert_eq!(object.resolve(&[]), (Ok(None), asked(&ZLIB_NAMES)));
+        assert_eq!(object.slot_values()[2], DEFLATE);
+    }
+
+    #[test]
+    fn stores_nothing_before_the_check_has_passed() {
+        // The slots at each question. The last question is that of the check, about an import after those of the library.
+        let imports = [import("deflate"), import("inflate"), import("other")];
+        let object = Object::new(Linked::AtZero, Pointers::Addresses, &imports);
+        let (headers, unbound) = (object.headers(), object.slot_values());
+        let mut slots_at_each_question = Vec::new();
+        // SAFETY: the headers describe ranges inside the memory of `object`, which outlives the call.
+        let found = unsafe {
+            resolve_lazy_imports(&headers, object.base(), false, &ZLIB, |name, _| {
+                slots_at_each_question.push(object.slot_values());
+                name == c"other"
+            })
+        };
+        assert_eq!(found, Ok(None));
+        assert_eq!(slots_at_each_question, vec![unbound; 4]);
+        assert_eq!(object.slot_values(), [DEFLATE, INFLATE, object.stub(2)]);
+
+        // The check finds an import that nothing defines between the imports of the library.
+        let imports = [import("deflate"), import("missing"), import("inflate")];
+        let object = Object::new(Linked::AtZero, Pointers::Addresses, &imports);
+        let unbound = object.slot_values();
+        let questions = [&ZLIB_NAMES[..], &["missing"]].concat();
+        assert_eq!(
+            object.resolve(&[]),
+            (unresolved("missing"), asked(&questions))
+        );
+        assert_eq!(object.slot_values(), unbound);
+
+        // The check cannot read the slot of an import outside the library, which the host did not read before.
+        let mut object = Object::new(Linked::AtZero, Pointers::Addresses, &ZLIB_IMPORTS);
+        object.set_relocation_offset(0, object.slots + object.slots_size);
+        let unbound = object.slot_values();
+        assert_eq!(
+            object.resolve(&[]),
+            (Err(Unreadable::Slot), asked(&ZLIB_NAMES))
+        );
+        assert_eq!(object.slot_values(), unbound);
+    }
+
+    #[test]
+    fn asks_about_the_library_once_before_the_check_and_by_the_names_alone() {
+        // Each import of the library names a version, and the other import comes after the first of them.
+        let imports = [
+            versioned("deflate", 3),
+            versioned("other", 3),
+            versioned("inflate", 2),
+        ];
+        let object = || {
+            let mut object = Object::new(Linked::AtZero, Pointers::Addresses, &imports);
+            object.set_version_needs(&[&[2, 3]]);
+            object
+        };
+        let filled = object();
+        let questions = [&ZLIB_NAMES[..], &["other", "other@VERSION_3"]].concat();
+        assert_eq!(
+            filled.resolve(&["other@VERSION_3"]),
+            (Ok(None), asked(&questions))
+        );
+        assert_eq!(filled.slot_values(), [DEFLATE, filled.stub(1), INFLATE]);
+
+        // A definition that only the version finds is none of the library: the host's functions have no version.
+        let filled = object();
+        let questions = [&ZLIB_NAMES[..], &["other"]].concat();
+        assert_eq!(
+            filled.resolve(&["other", "deflate@VERSION_3", "inflate@VERSION_2"]),
+            (Ok(None), asked(&questions))
+        );
+        assert_eq!(filled.slot_values(), [DEFLATE, filled.stub(1), INFLATE]);
+    }
+
+    #[test]
+    fn two_loads_fill_the_same_slots_at_the_same_time() {
+        let object = Object::new(Linked::AtZero, Pointers::Addresses, &ZLIB_IMPORTS);
+        let gate = std::sync::Barrier::new(2);
+        let load = || {
+            gate.wait();
+            object.resolve(&["other"]).0
+        };
+        let results = std::thread::scope(|scope| {
+            let loads = [scope.spawn(load), scope.spawn(load)];
+            loads.map(|load| load.join().unwrap())
+        });
+        assert_eq!(results, [Ok(None), Ok(None)]);
+        assert_eq!(object.slot_values(), [object.stub(0), DEFLATE, INFLATE]);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri has neither mprotect() nor fork()")]
+    fn does_not_write_to_a_slot_that_holds_the_function() {
+        let protection = libc::PROT_READ | libc::PROT_WRITE;
+        let flags = libc::MAP_PRIVATE | libc::MAP_ANONYMOUS;
+        // SAFETY: maps a new page.
+        let page = unsafe { libc::mmap(core::ptr::null_mut(), SLOT, protection, flags, -1, 0) };
+        assert_ne!(page, libc::MAP_FAILED);
+        // SAFETY: the slot is the start of the page, which is writable.
+        unsafe { store(page.expose_provenance(), DEFLATE) };
+        // SAFETY: `page` is the mapping above.
+        assert_eq!(unsafe { libc::mprotect(page, SLOT, libc::PROT_READ) }, 0);
+        // A write to the page ends the process that makes it with SIGSEGV, so a child makes the second store.
+        // SAFETY: the child has one thread, which only stores and exits.
+        let child = unsafe { libc::fork() };
+        assert_ne!(child, -1);
+        if child == 0 {
+            // SAFETY: the page is readable, and `_exit` ends the child without the test's cleanup.
+            unsafe {
+                store(page.expose_provenance(), DEFLATE);
+                libc::_exit(0);
+            }
+        }
+        let mut status = 0;
+        // SAFETY: `child` is the process above, and `status` is writable.
+        assert_eq!(unsafe { libc::waitpid(child, &raw mut status, 0) }, child);
+        assert!(libc::WIFEXITED(status), "the child wrote to the slot");
+        // SAFETY: the page is readable.
+        assert_eq!(unsafe { page.cast::<usize>().read() }, DEFLATE);
+        // SAFETY: `page` is the mapping above.
+        assert_eq!(unsafe { libc::munmap(page, SLOT) }, 0);
     }
 }

@@ -8,6 +8,7 @@ import {
   expectRssDeltaBelow,
   isASAN,
   isBroken,
+  isGlibc,
   isLinux,
   isMacOS,
   isMusl,
@@ -321,9 +322,9 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
 
   // https://github.com/oven-sh/bun/issues/9785
   describe("the symbol node_register_module_v<ABI>", () => {
-    const run = async (exe: string, fixture: string) => {
+    const run = async (exe: string, fixture: string, ...args: string[]) => {
       await using proc = spawn({
-        cmd: [exe, join(directories.badModules, fixture)],
+        cmd: [exe, join(directories.badModules, fixture), ...args],
         env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",
@@ -331,8 +332,8 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       return { stdout: stdout.trim(), stderr, exitCode };
     };
-    const runInBunAndNode = async (fixture: string) =>
-      await Promise.all([run(bunExe(), fixture), run(await nodeExeMatchingAbi(), fixture)]);
+    const runInBunAndNode = async (fixture: string, ...args: string[]) =>
+      await Promise.all([run(bunExe(), fixture, ...args), run(await nodeExeMatchingAbi(), fixture, ...args)]);
 
     const loaded = {
       stdout: JSON.stringify({ require: "world", dlopen: "world", worker: "world", workerExitCode: 0 }),
@@ -367,6 +368,19 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
         const body = Array(20).fill("Hello /uWS").join(", ");
         const served = { stdout: JSON.stringify({ status: 200, encoding: null, body }), stderr: "", exitCode: 0 };
         const [bun, node] = await runInBunAndNode("uws-shaped-fixture.js");
+        expect(node).toEqual(served);
+        expect(bun).toEqual(served);
+      },
+    );
+
+    // uws_shaped_deflate.node takes zlib from the host as uWebSockets.js does, and Bun has its zlib for an addon with
+    // glibc only.
+    it.skipIf(!isGlibc)(
+      "an addon with only this entry serves a response that it deflates with the host's zlib, like in Node",
+      async () => {
+        const body = Array(20).fill("Hello /uWS").join(", ");
+        const served = { stdout: JSON.stringify({ status: 200, encoding: "deflate", body }), stderr: "", exitCode: 0 };
+        const [bun, node] = await runInBunAndNode("uws-shaped-fixture.js", "uws_shaped_deflate");
         expect(node).toEqual(served);
         expect(bun).toEqual(served);
       },

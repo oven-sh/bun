@@ -999,7 +999,7 @@ describe("copyFileSync", () => {
     const fixture = join(import.meta.dir, "fs-copyFile-non-regular-source-fixture.js");
 
     // The file size limit stops a build that reads a device to EOF. A build that reads the FIFO blocks in the
-    // child, where the timeout of the test ends it.
+    // child, where the timeout of the spawn ends it with a signal.
     async function run(exe: string) {
       using dir = tempDir("copyfile-non-regular-source", {});
       await using proc = Bun.spawn({
@@ -1008,15 +1008,18 @@ describe("copyFileSync", () => {
         cwd: String(dir),
         stdout: "pipe",
         stderr: "pipe",
+        timeout: 30_000,
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      return { stdout: stdout.trim().split("\n"), stderr, exitCode };
+      return { stdout: stdout.trim().split("\n"), stderr, exitCode, signalCode: proc.signalCode };
     }
 
     // sendfile(2) on macOS, which libuv calls for a source that reports a size, fails with ENOTSUP.
     const directoryCode = isMacOS ? "ENOTSUP" : "EISDIR";
     const emptied = (path: string, mode: string) => `ok, ${path} is a file of 0 bytes with mode ${mode}`;
     const untouched = "file.txt is a file of 11 bytes with mode 600";
+    // The destination gets the mode of the source. The mode of a device differs between systems.
+    const modeOf = (path: string) => (statSync(path).mode & 0o7777).toString(8);
 
     // A device or a FIFO gives the results of an empty regular file with the same mode.
     const withoutBytes = (source: string, mode: string) => [
@@ -1031,13 +1034,13 @@ describe("copyFileSync", () => {
     // open(2) of a socket fails with ENXIO on Linux and with EOPNOTSUPP on FreeBSD. The gate on macOS gives ENOTSUP.
     const socketCode = isMacOS ? "ENOTSUP" : isFreeBSD ? "EOPNOTSUPP" : "ENXIO";
     const socket = `a socket to a new path: ${socketCode}, new.txt is absent`;
-    const sameAsNode = [
-      ...withoutBytes("/dev/null", "666"),
+    const sameAsNode = () => [
+      ...withoutBytes("/dev/null", modeOf("/dev/null")),
       ...withoutBytes("an empty file with mode 666", "666"),
       ...withoutBytes("a FIFO", "640"),
       ...withoutBytes("an empty file with mode 640", "640"),
-      `/dev/zero to a new path: ${emptied("new.txt", "666")}`,
-      `/dev/urandom to a new path: ${emptied("new.txt", "666")}`,
+      `/dev/zero to a new path: ${emptied("new.txt", modeOf("/dev/zero"))}`,
+      `/dev/urandom to a new path: ${emptied("new.txt", modeOf("/dev/urandom"))}`,
       `a FIFO that holds bytes to a new path: ${emptied("new.txt", "640")}`,
       "left in the FIFO: unread",
       `a directory to a new path: ${directoryCode}, new.txt is absent`,
@@ -1048,11 +1051,12 @@ describe("copyFileSync", () => {
       ...(isLinux ? [] : [socket]),
       ...(isLinux
         ? [
-            // The steps of a regular source: the destination gets the mode of the source. Node.js fails with
-            // EINVAL from ftruncate(2) and unlinks the FIFO.
-            "/dev/null onto a FIFO: ok, dest.fifo is a FIFO with mode 666",
+            // A device or a FIFO is refused before the destination is opened. A regular file gives its mode to
+            // the FIFO. Node.js on Linux fails all four with EINVAL from ftruncate(2) and unlinks the FIFO. On
+            // FreeBSD 14.3 it succeeds for a device or a FIFO and gives the FIFO the mode of that source.
+            "/dev/null onto a FIFO: ENOTSUP, dest.fifo is a FIFO with mode 600",
             "an empty file with mode 666 onto a FIFO: ok, dest.fifo is a FIFO with mode 666",
-            "a FIFO onto a FIFO: ok, dest.fifo is a FIFO with mode 640",
+            "a FIFO onto a FIFO: ENOTSUP, dest.fifo is a FIFO with mode 600",
             "an empty file with mode 640 onto a FIFO: ok, dest.fifo is a FIFO with mode 640",
             // Refused before the destination is opened. Node.js reports EXDEV from FICLONE for the first, and
             // success for the second.
@@ -1067,31 +1071,95 @@ describe("copyFileSync", () => {
       `a directory into a missing directory: ${directoryCode}, missing/new.txt is absent`,
       ...(isLinux
         ? [
-            // Node.js copies st_size bytes from both: an empty file.
+            // Node.js copies st_size bytes from both: an empty file. So does Bun for the second on a kernel
+            // before Linux 5.19 that lacks its copy_file_range(2) fix for procfs.
             "a directory of size 0 to a new path: EISDIR, new.txt is absent",
             "a regular file of size 0 to a new path: ok, new.txt is a file of 6 bytes with mode 444",
           ]
         : []),
     ];
 
-    it("copies no bytes from a device or a FIFO, and refuses a directory before it opens the destination", async () => {
-      expect(await run(bunExe())).toEqual({
-        stdout: [...sameAsNode, ...differentFromNode],
-        stderr: "",
-        exitCode: 0,
-      });
-    });
+    it.concurrent(
+      "copies no bytes from a device or a FIFO, and refuses a directory before it opens the destination",
+      async () => {
+        expect(await run(bunExe())).toEqual({
+          stdout: [...sameAsNode(), ...differentFromNode],
+          stderr: "",
+          exitCode: 0,
+          signalCode: null,
+        });
+      },
+    );
 
     // This test does not run Bun. It holds Node.js to the rows that the test above holds Bun to.
     const node = nodeExeAtLeast("22.0.0");
-    it.skipIf(!node)("Node.js gives the same results, apart from the rows named as different", async () => {
+    it.concurrent.skipIf(!node)("Node.js gives the same results, apart from the rows named as different", async () => {
       const labels = differentFromNode.map(line => line.slice(0, line.indexOf(": ")));
-      const { stdout, stderr, exitCode } = await run(node!);
+      const { stdout, ...rest } = await run(node!);
       expect({
         stdout: stdout.filter(line => !labels.some(label => line.startsWith(label + ": "))),
-        stderr,
-        exitCode,
-      }).toEqual({ stdout: sameAsNode, stderr: "", exitCode: 0 });
+        ...rest,
+      }).toEqual({ stdout: sameAsNode(), stderr: "", exitCode: 0, signalCode: null });
+    });
+
+    // Node.js opens the FIFO and waits there for a reader.
+    it.concurrent("refuses a FIFO at the destination before it opens it", async () => {
+      using dir = tempDir("copyfile-fifo-no-reader", {});
+      mkfifo(join(String(dir), "fifo"), 0o600);
+      const script = `
+        const fs = require("node:fs");
+        const code = copy => Promise.resolve().then(copy).then(() => "ok", error => error.code);
+        (async () => {
+          const sync = await code(() => fs.copyFileSync("/dev/null", "fifo"));
+          const promise = await code(() => fs.promises.copyFile("/dev/null", "fifo"));
+          console.log(sync, promise, (fs.statSync("fifo").mode & 0o7777).toString(8));
+        })();
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 10_000,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const refused = isFreeBSD ? "EOPNOTSUPP" : "ENOTSUP";
+      expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+        stdout: `${refused} ${refused} 600\n`,
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+
+    // On macOS the type of the source is known before open(2). Node.js waits there for a writer. So does Bun on
+    // Linux and FreeBSD, where open(2) comes first.
+    it.concurrent.skipIf(!isMacOS)("does not wait for a writer of a FIFO at the source on macOS", async () => {
+      using dir = tempDir("copyfile-fifo-no-writer", {});
+      mkfifo(join(String(dir), "fifo"), 0o640);
+      const script = `
+        const fs = require("node:fs");
+        fs.copyFileSync("fifo", "sync.txt");
+        fs.promises.copyFile("fifo", "promise.txt").then(() => {
+          console.log(fs.statSync("sync.txt").size, fs.statSync("promise.txt").size);
+        });
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 10_000,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+        stdout: "0 0\n",
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
     });
   });
 

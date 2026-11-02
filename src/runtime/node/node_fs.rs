@@ -5343,6 +5343,17 @@ impl NodeFS {
         Ok(())
     }
 
+    /// For a device or FIFO source. libuv opens such a destination, waits for its other end, then unlinks it or gives it the source's mode.
+    #[cfg(not(windows))]
+    fn copy_dest_is_fifo_or_device(dest: &ZStr) -> bool {
+        Syscall::stat(dest).is_ok_and(|st| {
+            matches!(
+                st.st_mode as u32 & sys::S::IFMT,
+                sys::S::IFIFO | sys::S::IFCHR | sys::S::IFBLK
+            )
+        })
+    }
+
     pub(crate) fn copy_file(&mut self, args: &args::CopyFile, _: Flavor) -> Maybe<ret::CopyFile> {
         if let Some(error) = creation_in_executable(args.dest.slice(), sys::Tag::copyfile, E::EROFS)
         {
@@ -5435,6 +5446,9 @@ impl NodeFS {
                         ..Default::default()
                     });
                 }
+                if !is_regular && Self::copy_dest_is_fifo_or_device(dest) {
+                    return Err(sys::Error::from_code(E::ENOTSUP, sys::Tag::copyfile));
+                }
 
                 // 64 KB is about the break-even point for clonefile() to be worth it
                 // at least, on an M1 with an NVME SSD.
@@ -5454,7 +5468,13 @@ impl NodeFS {
                         return Ok(());
                     }
                 } else {
-                    let src_fd = match Syscall::open(src, sys::O::RDONLY, 0o644) {
+                    // libuv waits in open(2) for a writer of a FIFO. No byte of a FIFO or a device is read, so do not wait.
+                    let nonblocking = if is_regular {
+                        0
+                    } else {
+                        sys::O::NONBLOCK | sys::O::NOCTTY
+                    };
+                    let src_fd = match Syscall::open(src, sys::O::RDONLY | nonblocking, 0o644) {
                         Ok(result) => result,
                         Err(err) => return Err(err.with_path(args.src.slice())),
                     };
@@ -5543,8 +5563,11 @@ impl NodeFS {
                 if sys::S::ISDIR(stat_.st_mode as u32) {
                     return Err(sys::Error::from_code(E::EISDIR, sys::Tag::copyfile));
                 }
-                // A pipe reports its buffered bytes in st_size. Node copies them, and this arm still refuses them.
+                // A pipe or a socket behind /dev/fd reports its buffered bytes in st_size. Node copies them, and this arm refuses them.
                 if stat_.st_size > 0 {
+                    return Err(sys::Error::from_code(E::EOPNOTSUPP, sys::Tag::copyfile));
+                }
+                if Self::copy_dest_is_fifo_or_device(dest) {
                     return Err(sys::Error::from_code(E::EOPNOTSUPP, sys::Tag::copyfile));
                 }
             }
@@ -5651,6 +5674,9 @@ impl NodeFS {
                 }
                 // FICLONE needs two regular files. Node runs it, then unlinks the destination.
                 if args.mode.is_force_clone() {
+                    return Err(sys::Error::from_code(E::ENOTSUP, sys::Tag::copyfile));
+                }
+                if Self::copy_dest_is_fifo_or_device(dest) {
                     return Err(sys::Error::from_code(E::ENOTSUP, sys::Tag::copyfile));
                 }
             }

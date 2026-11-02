@@ -900,12 +900,8 @@ extern "C" void Bun__onExit();
 extern "C" int32_t bun_stdio_tty[3];
 #if !OS(WINDOWS)
 static termios termios_to_restore_later[3];
-// F_GETFL and identity (st_dev, st_ino) of each stdio fd at startup (flags -1
-// = not captured). O_NONBLOCK lives on the open file description, which the
-// parent shell and pipeline siblings share, so a bit Bun sets outlives the
-// process unless the exit path puts it back. Same as Node's ResetStdio(),
-// including the identity check: a script that closes fd 1 and opens another
-// file gets a description Bun never snapshotted, and that one is left alone.
+// Startup F_GETFL (-1 = not captured) and identity of each stdio fd, for the O_NONBLOCK
+// restore at exit. The flag lives on the open file description the parent shell shares.
 static int stdio_flags_to_restore[3] = { -1, -1, -1 };
 static struct stat stdio_stat_at_start[3];
 // Whether Bun itself has modified the termios of each stdio fd during this
@@ -941,8 +937,7 @@ extern "C" void bun_restore_stdio()
     // the state the user expects back.
     const bool pipeline_producer = bun_stdio_tty[1] == 0;
 
-    // Put the O_NONBLOCK bit back to its startup value. Only that bit: other
-    // flags are left as they are now. fcntl and fstat are async-signal-safe.
+    // Only the O_NONBLOCK bit. fcntl and fstat are async-signal-safe.
     for (int32_t fd = 0; fd < 3; fd++) {
         if (stdio_flags_to_restore[fd] == -1)
             continue;
@@ -958,7 +953,7 @@ extern "C" void bun_restore_stdio()
         if ((flags & O_NONBLOCK) == nonblock)
             continue;
 
-        // The script reopened this fd onto another file.
+        // Skip a fd the script reopened onto another file.
         struct stat now;
         if (fstat(fd, &now) != 0 || now.st_dev != stdio_stat_at_start[fd].st_dev || now.st_ino != stdio_stat_at_start[fd].st_ino)
             continue;
@@ -1135,12 +1130,7 @@ extern "C" void bun_initialize_process()
         }
     }
 
-    // Restore stdio state (termios, O_NONBLOCK) when SIGINT or SIGTERM kills
-    // the process, as Node does. The O_NONBLOCK restore matters with no TTY at
-    // all, so this does not depend on one. A disposition inherited as SIG_IGN
-    // (nohup, `trap '' INT`, a shell background job) is left alone: that
-    // signal cannot kill the process, so there is nothing to restore. Other
-    // fatal signals and SIGKILL do not restore, same as Node.
+    // Restore stdio when SIGINT or SIGTERM kills the process. An inherited SIG_IGN stays.
     installExitSignalHandler(SIGTERM);
     installExitSignalHandler(SIGINT);
 #elif OS(WINDOWS)

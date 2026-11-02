@@ -467,7 +467,6 @@ impl ShellSubprocess {
                     writer.cancel_chunks(io_writer::ChildPtr::subproc_capture(
                         captured.cast::<c_void>(),
                     ));
-                    (*captured).dead = true;
                 }
             }
         }
@@ -1502,32 +1501,24 @@ impl BufferedOutput {
     }
 }
 
+#[derive(Default)]
 pub(crate) struct CapturedWriter {
-    pub(crate) dead: bool,
-    /// `None` iff `dead == true`.
+    /// `None`: nothing relays this pipe's output, or the relay was cancelled.
     pub(crate) writer: Option<Rc<IOWriter>>,
     pub(crate) written: usize,
     pub(crate) err: Option<SystemError>,
-}
-
-impl Default for CapturedWriter {
-    fn default() -> Self {
-        CapturedWriter {
-            dead: true,
-            writer: None,
-            written: 0,
-            err: None,
-        }
-    }
 }
 
 bun_core::impl_field_parent! { CapturedWriter => PipeReader.captured_writer; fn parent; fn mut parent_mut; }
 
 impl CapturedWriter {
     pub(crate) fn do_write(&mut self, chunk: &[u8]) {
-        if self.dead || self.err.is_some() {
+        if self.err.is_some() {
             return;
         }
+        let Some(writer) = self.writer.clone() else {
+            return;
+        };
 
         let addr = std::ptr::from_mut(self) as usize;
         let parent = self.parent();
@@ -1538,11 +1529,6 @@ impl CapturedWriter {
             chunk.len(),
             parent.buffered_output.len()
         );
-        // `dead == false` ⇒ writer.is_some() (set in PipeReader::create).
-        let writer = self
-            .writer
-            .clone()
-            .expect("CapturedWriter live without writer");
         // The CapturedWriter lives outside the NodeId arena (embedded in a
         // heap-allocated PipeReader), so dispatch is by raw pointer — see
         // `io_writer::ChildPtr::subproc_capture` / `WriterTag::Subproc`.
@@ -1605,7 +1591,7 @@ impl PipeReader {
             cw.written,
             self.buffered_output.len()
         );
-        if cw.dead || cw.err.is_some() {
+        if cw.writer.is_none() || cw.err.is_some() {
             return true;
         }
         if matches!(self.state, PipeReaderState::Pending) {
@@ -1668,11 +1654,10 @@ impl PipeReader {
         out_type: OutKind,
         interp: bun_ptr::ParentRef<Interpreter>,
     ) -> Rc<PipeReader> {
-        let mut captured_writer = CapturedWriter::default();
-        if let Some(cap) = capture {
-            captured_writer.writer = Some(cap); // dupeRef → Rc clone already happened on pass-in
-            captured_writer.dead = false;
-        }
+        let captured_writer = CapturedWriter {
+            writer: capture,
+            ..Default::default()
+        };
 
         #[cfg(not(windows))]
         let reader = IOReader::init::<PipeReader>();
@@ -2095,10 +2080,6 @@ impl Drop for PipeReader {
         }
 
         // PipeReaderState::Done(Box<[u8]>) drops its buffer automatically.
-
-        if !self.captured_writer.dead {
-            // CapturedWriter::drop handles err.deref() and writer Rc drop.
-        }
 
         if let PipeReaderState::Err(slot) = &mut self.state {
             *slot = None;

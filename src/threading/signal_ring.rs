@@ -159,9 +159,11 @@ mod tests {
     }
 
     /// Producers wait while `outstanding_limit` accepted entries are in the ring.
+    /// `before_consuming` runs on the consumer thread once the producers are up.
     fn stress<const CAPACITY: usize>(
         ring: &SignalRing<CAPACITY>,
         outstanding_limit: usize,
+        before_consuming: impl FnOnce(),
     ) -> Stress {
         let done = AtomicUsize::new(0);
         let outstanding = AtomicUsize::new(0);
@@ -196,6 +198,7 @@ mod tests {
                 })
                 .collect();
 
+            before_consuming();
             let mut producers_done = false;
             loop {
                 match ring.dequeue() {
@@ -236,7 +239,7 @@ mod tests {
     #[test]
     fn concurrent_producers_deliver_every_accepted_signal_once() {
         let ring = SignalRing::<64>::new();
-        let result = stress(&ring, usize::MAX);
+        let result = stress(&ring, usize::MAX, || {});
         assert_eq!((result.zeros, result.unknown), (0, 0));
         assert_eq!(result.dequeued, result.accepted);
     }
@@ -245,7 +248,7 @@ mod tests {
     #[test]
     fn never_rejects_below_capacity() {
         let ring = SignalRing::<64>::new();
-        let result = stress(&ring, 32);
+        let result = stress(&ring, 32, || {});
         assert_eq!((result.zeros, result.unknown, result.rejected), (0, 0, 0));
         assert_eq!(result.dequeued, result.accepted);
     }
@@ -370,12 +373,16 @@ mod tests {
         const CAPACITY: usize = 64;
         let ring = SignalRing::<CAPACITY>::new();
         let finished = AtomicUsize::new(0);
+        let seen_signals = AtomicUsize::new(0);
         let (result, (views, bad)) = std::thread::scope(|scope| {
             let viewer = scope.spawn(|| {
                 let (mut views, mut bad) = (0usize, 0usize);
                 loop {
                     let view = queued(&ring);
                     views += 1;
+                    if !view.is_empty() {
+                        seen_signals.store(1, Ordering::Release);
+                    }
                     bad += usize::from(view.len() > CAPACITY);
                     bad += view.iter().filter(|&&s| s == 0 || s > PRODUCERS).count();
                     if finished.load(Ordering::Acquire) != 0 {
@@ -384,7 +391,12 @@ mod tests {
                     std::thread::yield_now();
                 }
             });
-            let result = stress(&ring, usize::MAX);
+            // The consumer holds back until a view has seen producers at work.
+            let result = stress(&ring, usize::MAX, || {
+                while seen_signals.load(Ordering::Acquire) == 0 {
+                    std::thread::yield_now();
+                }
+            });
             finished.store(1, Ordering::Release);
             (result, viewer.join().unwrap())
         });

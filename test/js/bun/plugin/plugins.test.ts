@@ -2553,8 +2553,10 @@ describe.concurrent("onResolve is called for a specifier with no extension and n
     const files = {
       ...packages,
       "node_modules/helper-pkg/package.json": `{ "name": "helper-pkg", "main": "index.js" }`,
-      "node_modules/helper-pkg/index.js": `let lazy; exports.help = path => (lazy ??= require("./lib/lazy"))(path);`,
+      // (The digit after the dot of "v1.4" does not make it a path with an extension.)
+      "node_modules/helper-pkg/index.js": `let lazy, versioned; exports.help = path => ((versioned ??= require("./lib/v1.4")), (lazy ??= require("./lib/lazy")))(path);`,
       "node_modules/helper-pkg/lib/lazy.js": `module.exports = path => (path === "aliased" ? { path: "dep-pkg" } : undefined);`,
+      "node_modules/helper-pkg/lib/v1.4.js": ``,
       "plugin.ts": `
         Bun.plugin({
           name: "catch-all",
@@ -3907,6 +3909,50 @@ it.concurrent.each([[[]], [["--isolate"]]])(
   },
 );
 
+// https://github.com/oven-sh/bun/issues/4609, https://github.com/oven-sh/bun/issues/37699
+it.concurrent(
+  "onLoad is asked about the original of a mocked module named with a digit after its last dot or imported with a dotted query",
+  async () => {
+    using dir = tempDir("plugin-original-asked", {
+      "preload.ts": `
+      globalThis.paths = [];
+      Bun.plugin({
+        name: "compile",
+        setup(build) {
+          build.onLoad({ filter: /price\\.1$|tax\\.ts\\?v=1\\.2$/ }, async ({ path }) => {
+            globalThis.paths.push(require("node:path").basename(path));
+            return { contents: (await Bun.file(path.split("?")[0]).text()).replaceAll("source", "compiled"), loader: "ts" };
+          });
+        },
+      });
+    `,
+      "price.1": `export const price = "source"; export const other = "source";`,
+      "tax.ts": `export const tax = "source"; export const other = "source";`,
+      "original.test.ts": `
+      import { expect, test, vi } from "bun:test";
+      vi.mock("./price.1", async importOriginal => ({ ...(await importOriginal()), other: "mock" }));
+      vi.mock("./tax.ts?v=1.2", async importOriginal => ({ ...(await importOriginal()), other: "mock" }));
+      import * as price from "./price.1";
+      import * as tax from "./tax.ts?v=1.2";
+      test("the plugin's output", () => {
+        expect([price.price, price.other, tax.tax, tax.other]).toEqual(["compiled", "mock", "compiled", "mock"]);
+        expect(globalThis.paths.toSorted()).toEqual(["price.1", "tax.ts?v=1.2"]);
+      });
+    `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--preload", "./preload.ts", "./original.test.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(" 1 pass\n 0 fail\n");
+    expect(exitCode).toBe(0);
+  },
+);
+
 describe.concurrent("an invalid result from a plugin is an error", () => {
   async function run(files: Record<string, string>, args: string[]) {
     using dir = tempDir("plugin-answers", files);
@@ -4810,6 +4856,8 @@ describe.concurrent("what onResolve and onLoad are asked about", () => {
     "./video.3gp",
     "./ok.yaml.1",
     "./.1",
+    "./video.3gp?v=1",
+    "./ok.yaml.1?t=12:30",
     // Each of these is asked about without its query.
     "./.env?v=1.2.3",
     "./.babelrc?mtime=1786494961337.0317",
@@ -4868,6 +4916,8 @@ describe.concurrent("what onResolve and onLoad are asked about", () => {
       "ok.txt.2": "",
       "video.3gp": "",
       "ok.custom": "",
+      "node_modules/a-package/package.json": `{ "name": "a-package" }`,
+      "node_modules/a-package/video.3gp": "",
       "plugin.ts": `
         Bun.plugin({
           name: "Loader",
@@ -4877,14 +4927,15 @@ describe.concurrent("what onResolve and onLoad are asked about", () => {
           },
         });
       `,
+      // (The file of a package has an absolute path when it is loaded.)
       "index.ts": `
         import { from } from "./ok.yaml.1";
-        const rest = [await import("./ok.txt.2"), await import("./video.3gp"), await import("./ok.custom"), require("./ok.yaml" + ".1")];
+        const rest = [await import("./ok.txt.2"), await import("./video.3gp"), await import("./ok.custom"), require("./ok.yaml" + ".1"), require("a-package/video.3gp")];
         console.log(from, ...rest.map(module => module.from));
       `,
     };
     expect(await run(files, ["--preload", "./plugin.ts", "index.ts"])).toEqual({
-      stdout: "one two 3gp custom one\n",
+      stdout: "one two 3gp custom one 3gp\n",
       stderr: "",
       exitCode: 0,
     });
@@ -4923,20 +4974,28 @@ describe.concurrent("what onResolve and onLoad are asked about", () => {
     // In its namespace first, and when that declines in the namespace "file", whole.
     ["virtual:thing", "virtual thing", "file virtual:thing"],
     ["virtual:thing.js?t=12:30", "virtual thing.js?t=12:30", "file virtual:thing.js?t=12:30"],
+    ["/slash:thing.js", "/slash thing.js", "file /slash:thing.js"],
   ];
+  // While an onResolve callback runs, the namespace "file" is asked only about a specifier with an extension, or a
+  // callback that loads a module would be asked about that module without end. There an extension starts with a letter.
+  const notAskedInACallback = ["./video.3gp", "<dir>/video.3gp", "./ok.yaml.1", "./.1", "./v1.2/"];
   // Wherever the temporary directory is, nothing after the last dot of the path of `bin/cli` is an extension: it is
   // under a directory whose name ends in a dot and a digit.
   const fixture = {
     "app-1.2/bin/cli": `exports.from = "disk";`,
-    "app-1.2/node_modules/a-package/index.js": "",
     "app-1.2/plugin.ts": `
+      globalThis.resolveEach = () => {
+        for (const [specifier] of ${JSON.stringify(asked)})
+          try { Bun.resolveSync(specifier.replace("<dir>", import.meta.dir), import.meta.dir); } catch {}
+      };
       Bun.plugin({
         name: "asked",
         setup(build) {
-          for (const namespace of ["file", "node", "virtual"])
+          for (const namespace of ["file", "node", "virtual", "/slash"])
             build.onResolve({ filter: /.*/, namespace }, ({ path }) => {
               if (globalThis.logs) console.log(namespace, path.replace(import.meta.dir, "<dir>"));
             });
+          build.onResolve({ filter: /^in-a-callback$/ }, () => resolveEach());
           build.onResolve({ filter: /\\.answer$/ }, () => ({ path: "served@1.2" }));
           build.onLoad({ filter: /cli$|^served/ }, () => ({ contents: "exports.from = 'onLoad';", loader: "js" }));
         },
@@ -4944,16 +5003,19 @@ describe.concurrent("what onResolve and onLoad are asked about", () => {
     `,
     "app-1.2/entry.mjs": `
       globalThis.logs = true;
-      for (const [specifier] of ${JSON.stringify(asked)})
-        try { Bun.resolveSync(specifier.replace("<dir>", import.meta.dir), import.meta.dir); } catch {}
+      resolveEach();
       globalThis.logs = false;
-      // No onLoad is asked about a file without an extension, nor about a bare name with a version and no query.
+      // The digit after the dot of "app-1.2" or of "served@1.2" is not the start of an extension.
       console.log(require("./bin/cli").from);
       try { require.resolve("to.answer"); } catch (error) { console.log(error.message.split("\\n")[0]); }
     `,
+    "app-1.2/in-a-callback.mjs": `
+      globalThis.logs = true;
+      try { Bun.resolveSync("in-a-callback", import.meta.dir); } catch {}
+    `,
   };
 
-  it("is each of these for onResolve, and is not a path without an extension for onLoad", async () => {
+  it("is each of these for onResolve, and a digit after the dot of a directory or of a bare name starts no extension for onLoad", async () => {
     expect(await run(fixture, ["--preload", "./plugin.ts", "entry.mjs"], "app-1.2")).toEqual({
       stdout:
         asked
@@ -4965,8 +5027,27 @@ describe.concurrent("what onResolve and onLoad are asked about", () => {
     });
   });
 
+  it("is, while an onResolve callback runs, each of these that has a letter after its last dot, query aside", async () => {
+    expect(await run(fixture, ["--preload", "./plugin.ts", "in-a-callback.mjs"], "app-1.2")).toEqual({
+      stdout: [
+        "file in-a-callback",
+        ...asked.flatMap(([specifier, ...asks]) =>
+          asks.length
+            ? asks.filter(ask => !ask.startsWith("file "))
+            : notAskedInACallback.includes(specifier)
+              ? []
+              : ["file " + specifier],
+        ),
+      ]
+        .map(ask => ask + "\n")
+        .join(""),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   // The source of -e is "[eval]" in the working directory: a path without an extension, under "app-1.2" too.
-  it("is the source of -e for onResolve, and is not for onLoad", async () => {
+  it("is the source of -e for onResolve, and is not for onLoad under a directory with a dot and a digit", async () => {
     const files = {
       "app-1.2/plugin.ts": `
         import { basename } from "node:path";
@@ -4986,14 +5067,14 @@ describe.concurrent("what onResolve and onLoad are asked about", () => {
     });
   });
 
-  it("is in a namespace that starts with a slash, with a query too", async () => {
+  it("is in a namespace that starts with a slash, with a dotted query or a digit after the last dot too", async () => {
     const files = {
       "plugin.ts": `
         Bun.plugin({
           name: "slash",
           setup(build) {
-            build.onResolve({ filter: /\\.slash$/ }, () => ({ path: "x.js", namespace: "/virtual" }));
-            build.onResolve({ filter: /\\.dotted$/ }, () => ({ path: "x.js?v=1.5", namespace: "/virtual" }));
+            for (const [filter, path] of [[/\\.slash$/, "x.js"], [/\\.dotted$/, "x.js?v=1.5"], [/\\.digit$/, "video.3gp"]])
+              build.onResolve({ filter }, () => ({ path, namespace: "/virtual" }));
             build.onLoad({ filter: /.*/, namespace: "/virtual" }, ({ path }) => ({
               contents: "export default " + JSON.stringify(path) + ";",
               loader: "js",
@@ -5001,23 +5082,60 @@ describe.concurrent("what onResolve and onLoad are asked about", () => {
           },
         });
       `,
-      "entry.mjs": `console.log((await import("to.slash")).default, (await import("to.dotted")).default);`,
+      "entry.mjs": `
+        const paths = [];
+        for (const specifier of ["to.slash", "to.dotted", "to.digit"]) paths.push((await import(specifier)).default);
+        console.log(...paths);
+      `,
     };
     expect(await run(files, ["--preload", "./plugin.ts", "entry.mjs"])).toEqual({
-      stdout: "x.js x.js?v=1.5\n",
+      stdout: "x.js x.js?v=1.5 video.3gp\n",
       stderr: "",
       exitCode: 0,
     });
   });
 
-  // A drive is not a namespace, the last letter included: "Z:" was read as the namespace "Z".
-  it.skipIf(!isWindows)("is a path on drive Z, which onResolve answers and an onLoad serves", async () => {
+  // An onResolve answer that is not on disk is the key of a module if an onLoad is asked about it.
+  it("is for onLoad an answer with more than a dot after its name, and is not one with less", async () => {
+    const served = ["video.3gp", "ok.yaml.1", ".1"];
+    const notServed = ["plain", "name.", ".", "..", "LICENSE?v=1.2"];
     const files = {
       "plugin.ts": `
         Bun.plugin({
+          name: "nowhere",
+          setup(build) {
+            build.onResolve({ filter: /^\\.\\/somewhere\\// }, ({ path }) => ({ path: path.replace("somewhere", "nowhere") }));
+            build.onLoad({ filter: /nowhere/ }, ({ path }) => ({
+              contents: "export default " + JSON.stringify(path) + ";",
+              loader: "js",
+            }));
+          },
+        });
+      `,
+      "entry.mjs": `
+        for (const name of ${JSON.stringify([...served, ...notServed])})
+          console.log(await import("./somewhere/" + name).then(module => module.default, () => name + " is not served"));
+      `,
+    };
+    expect(await run(files, ["--preload", "./plugin.ts", "entry.mjs"])).toEqual({
+      stdout: [...served.map(name => `./nowhere/${name}\n`), ...notServed.map(name => `${name} is not served\n`)].join(
+        "",
+      ),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A drive is not a namespace, the first and the last letter included: "Z:" was read as the namespace "Z".
+  it.skipIf(!isWindows)(
+    "is a path on drive A, Z, a, z or C, which onResolve answers and an onLoad serves",
+    async () => {
+      const files = {
+        "plugin.ts": `
+        Bun.plugin({
           name: "drive",
           setup(build) {
-            build.onResolve({ filter: /\\.drive$/ }, () => ({ path: "Z:\\\\not-on-disk\\\\served.txt" }));
+            build.onResolve({ filter: /^drive-.$/ }, ({ path }) => ({ path: path.at(-1) + ":\\\\not-on-disk\\\\served.txt" }));
             build.onLoad({ filter: /served\\.txt$/ }, ({ path }) => ({
               contents: "export default " + JSON.stringify(path) + ";",
               loader: "js",
@@ -5025,12 +5143,13 @@ describe.concurrent("what onResolve and onLoad are asked about", () => {
           },
         });
       `,
-      "entry.mjs": `console.log((await import("to.drive")).default);`,
-    };
-    expect(await run(files, ["--preload", "./plugin.ts", "entry.mjs"])).toEqual({
-      stdout: "Z:\\not-on-disk\\served.txt\n",
-      stderr: "",
-      exitCode: 0,
-    });
-  });
+        "entry.mjs": `for (const drive of "AZazC") console.log((await import("drive-" + drive)).default);`,
+      };
+      expect(await run(files, ["--preload", "./plugin.ts", "entry.mjs"])).toEqual({
+        stdout: [..."AZazC"].map(drive => drive + ":\\not-on-disk\\served.txt\n").join(""),
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
 });

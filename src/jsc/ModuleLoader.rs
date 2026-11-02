@@ -369,8 +369,14 @@ pub(crate) fn namespace_and_path(specifier: &[u8]) -> (&[u8], &[u8]) {
     }
 }
 
+/// `onLoad` alone takes an extension that starts with no letter: `run_on_resolve` reads `has_extension_or_namespace` as its recursion guard.
 pub(crate) fn on_load_namespace_and_path(key: &[u8]) -> Option<(&[u8], &[u8])> {
-    has_extension_or_namespace(key).then(|| namespace_and_path(key))
+    // A file's extension may start with a digit ("video.3gp"). In a bare name that is a version ("zod@3.0.0").
+    let has_other_extension = || {
+        !bun_paths::is_package_path(key)
+            && bun_paths::fs::PathName::init(without_query(key)).ext.len() > 1
+    };
+    (has_extension_or_namespace(key) || has_other_extension()).then(|| namespace_and_path(key))
 }
 
 /// C++ entry point: length of `key`'s `onLoad` namespace (0 for `file`), or -1 if no `onLoad` runs for it.
@@ -429,9 +435,5 @@ pub(crate) fn has_extension_or_namespace(specifier: &[u8]) -> bool {
     }
     // A query cannot make the answer no: the letter test again, on the specifier without it.
     let path = without_query(specifier);
-    if path.len() < specifier.len() && letter_follows_last_dot(path) {
-        return true;
-    }
-    // The extension of a file may start with a digit ("video.3gp"). In a bare name that is a version ("zod@3.0.0").
-    !bun_paths::is_package_path(specifier) && bun_paths::fs::PathName::init(path).ext.len() > 1
+    path.len() < specifier.len() && letter_follows_last_dot(path)
 }

@@ -116,8 +116,7 @@ impl<const CAPACITY: usize> SignalRing<CAPACITY> {
                     f(signal);
                     break;
                 }
-                // The consumer swaps a slot to 0 before it moves `head` past it. A 0 slot
-                // outside the live `head_now..tail_now` is taken, whatever the u16 wrap did.
+                // A 0 slot outside the live range is one the consumer took.
                 let (head_now, tail_now) = unpack(self.state.load(Ordering::Acquire));
                 if index.wrapping_sub(head_now) >= tail_now.wrapping_sub(head_now) {
                     continue 'slots;
@@ -354,8 +353,7 @@ mod tests {
         assert_eq!(ring.dequeue(), None);
     }
 
-    /// A view that waits on a slot while the consumer takes 65536 signals sees `head` where it
-    /// started. The slot is still 0, and the live range is what says that it is taken.
+    /// The consumer takes 65536 signals while the view waits: `head` reads as before.
     #[test]
     fn view_ends_when_the_consumer_drained_a_full_u16_cycle_past_its_snapshot() {
         let ring = SignalRing::<8>::starting_at(7);

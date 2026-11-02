@@ -186,6 +186,13 @@ describe.skipIf(isMacOS)("macOS cross-compile config (non-darwin host)", () => {
     expect(arm64.ldflags).not.toContain("-Wl,-sectalign,__BUN,__bun,0x1000");
   });
 
+  test("every link keeps room behind the load commands for the segments of compiled code", () => {
+    // `bun build --compile --aot` gives the code of each program a segment, and a build without the room is an error.
+    for (const partial of [{}, { arch: "x64" }, { buildType: "Debug", assertions: true }] as const) {
+      expect(computeFlags(resolveDarwin(partial)).ldflags).toContain("-Wl,-headerpad,0x2000");
+    }
+  });
+
   test("rust side cross-compiles to apple-darwin triples from linux", () => {
     const cfg = resolveDarwin();
     expect(rustTarget(cfg)).toBe("aarch64-apple-darwin");

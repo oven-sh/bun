@@ -36,6 +36,16 @@ impl CutCapacity {
             _ => CutCapacity::Cuts(free_slots),
         }
     }
+
+    /// What is left for cuts when `slots` of the table stay free for what is written after them.
+    pub(crate) fn leaving_slots_free(self, slots: usize) -> CutCapacity {
+        match self {
+            CutCapacity::Cuts(free_slots) => {
+                CutCapacity::from_free_slots(free_slots.saturating_sub(slots))
+            }
+            CutCapacity::NoCuts(reason) => CutCapacity::NoCuts(reason),
+        }
+    }
 }
 
 /// A table in which a cut takes more than one slot, and fewer where it touches the end of a piece or what is cut already.

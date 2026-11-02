@@ -1,9 +1,11 @@
 import { afterAll, expect } from "bun:test";
-import { bunEnv, bunExe, isASAN, isGlibc, isLinux, readElf64ProgramHeaders, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isGlibc, isLinux, isMacOS, readElf64ProgramHeaders, tempDir } from "harness";
 import { chmodSync, copyFileSync, readFileSync } from "node:fs";
 import { release } from "node:os";
 import { join } from "node:path";
-import { findImage, imageHeader } from "./cli/compiled-image";
+import { canTrim } from "../bundler/compile-trim-features";
+import { findImage, findImages, imageHeader } from "./cli/compiled-image";
+import { payloadSegments, protection } from "./cli/macho-segments";
 import { refusesExecuteOnlyStart } from "./execute-only-start";
 import { test } from "./supported";
 
@@ -638,6 +640,154 @@ test.skipIf(!canUnmountProc || isASAN)(
       exitCode: 0,
       signalCode: null,
     });
+  },
+  120_000,
+);
+
+const programWithAWorker = {
+  "worker.ts": `declare var self: Worker;
+function sum(n: number): number {
+  let total = 0;
+  for (let i = 1; i <= n; i++) total += i;
+  return total;
+}
+self.onmessage = event => postMessage("worker " + sum(event.data));
+`,
+  "main.ts": `const worker = new Worker("./worker.ts");
+worker.onmessage = event => {
+  console.log(String(event.data));
+  worker.terminate();
+};
+worker.postMessage(10);
+`,
+};
+
+type BuiltForMacOS = { executable: string; stdout: string; imageCount: number };
+
+// A Worker that starts at a file of its own runs a program of its own, and each program has an image with its code.
+const buildsForMacOS: Record<string, () => Promise<BuiltForMacOS>> = {
+  "one program": builtOnce({ "program.ts": `console.log([3, 4].map(x => x * x).join());` }, async directory => {
+    return { executable: await build(directory), stdout: "9,16\n", imageCount: 1 };
+  }),
+  "a program and the program of its Worker": builtOnce(programWithAWorker, async directory => {
+    const executable = join(directory, "program");
+    const entryPoints = [join(directory, "main.ts"), join(directory, "worker.ts")];
+    const built = await run([bunExe(), "build", "--compile", "--aot", ...entryPoints, "--outfile", executable]);
+    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
+    return { executable, stdout: "worker 55\n", imageCount: 2 };
+  }),
+  ...(canTrim && {
+    "a trimmed program that Bun.build() makes": builtOnce(
+      { "program.ts": `console.log([5, 12].map(x => x * x).join());` },
+      async directory => {
+        const executable = join(directory, "program");
+        await Bun.build({
+          entrypoints: [join(directory, "program.ts")],
+          compile: { outfile: executable, aot: true, trim: true },
+        });
+        return { executable, stdout: "25,144\n", imageCount: 1 };
+      },
+    ),
+  }),
+};
+
+test.skipIf(!isMacOS).each(Object.keys(buildsForMacOS))(
+  "on macOS the loader maps the compiled code to be executed and the rest of the embedded program to be read: %s",
+  async name => {
+    const { executable, stdout, imageCount } = await buildsForMacOS[name]();
+    const file = readFileSync(executable);
+    const code = findImages(file).map(image => {
+      const start = image + Number(file.readBigUInt64LE(image + imageHeader.codeOffset));
+      return { start, end: start + Number(file.readBigUInt64LE(image + imageHeader.executableSize)) };
+    });
+    expect(code.length).toBe(imageCount);
+
+    const segments = payloadSegments(file);
+    const { read, execute } = protection;
+    expect(segments.map(segment => segment.name)).toEqual([
+      "__BUN",
+      ...Array.from({ length: 2 * imageCount }, (_, index) => `__BUN.${index + 1}`),
+    ]);
+    expect(segments.map(segment => segment.protection)).toEqual(
+      segments.map((_, index) => (index % 2 ? read | execute : read)),
+    );
+    expect(segments.map(segment => segment.maxProtection)).toEqual(segments.map(segment => segment.protection));
+    // Each begins where the one before it ends, in the file and in memory.
+    for (const [index, segment] of segments.slice(1).entries()) {
+      const before = segments[index];
+      expect({ offset: segment.offset, address: segment.address }).toEqual({
+        offset: before.offset + before.fileSize,
+        address: before.address + before.size,
+      });
+    }
+    const inFile = ({ offset, fileSize }: { offset: number; fileSize: number }) => ({
+      start: offset,
+      end: offset + fileSize,
+    });
+    expect(segments.filter(segment => segment.protection & execute).map(inFile)).toEqual(code);
+
+    // What names the code for a tool is a section, and the sections are the length of the program and the program.
+    const sections = segments.flatMap(segment => segment.sections);
+    expect(sections.map(section => [section.name, section.segment])).toEqual(sections.map(() => ["__bun", "__BUN"]));
+    expect(
+      sections
+        .filter(section => section.holdsInstructions)
+        .map(({ offset, size }) => inFile({ offset, fileSize: size })),
+    ).toEqual(code);
+    const programSize = Number(file.readBigUInt64LE(segments[0].offset));
+    expect(sections.reduce((size, section) => size + section.size, 0)).toBe(8 + programSize);
+
+    expect(await run([executable])).toEqual({ stdout, stderr: "", exitCode: 0, signalCode: null });
+  },
+  120_000,
+);
+
+// `Bun.build({ compile })` inside an executable takes that executable as its template, and so may
+// `--compile-executable-path`.
+test.skipIf(!isMacOS)(
+  "on macOS an executable with compiled code is the template of a program with compiled code and of one without",
+  async () => {
+    const { executable: template } = await buildsForMacOS["one program"]();
+    using dir = tempDir("aot-code-mapping-onto", {
+      "compiled.ts": `console.log([6, 8].map(x => x * x).join());`,
+      "plain.js": `console.log("plain");`,
+    });
+    const folder = String(dir);
+    const onto = async (name: string, entryPoint: string, flags: string[]) => {
+      const executable = join(folder, name);
+      const built = await run([
+        bunExe(),
+        "build",
+        "--compile",
+        ...flags,
+        "--compile-executable-path",
+        template,
+        join(folder, entryPoint),
+        "--outfile",
+        executable,
+      ]);
+      expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
+      return { executable, segments: payloadSegments(readFileSync(executable)) };
+    };
+    const { read, write, execute } = protection;
+    const access = (segments: ReturnType<typeof payloadSegments>) =>
+      segments.map(segment => ({
+        name: segment.name,
+        protection: segment.protection,
+        holdsInstructions: segment.sections.map(section => section.holdsInstructions),
+      }));
+
+    const compiled = await onto("compiled", "compiled.ts", ["--aot"]);
+    expect(access(compiled.segments)).toEqual([
+      { name: "__BUN", protection: read, holdsInstructions: [false] },
+      { name: "__BUN.1", protection: read | execute, holdsInstructions: [true] },
+      { name: "__BUN.2", protection: read, holdsInstructions: [false] },
+    ]);
+    expect(await run([compiled.executable])).toEqual({ stdout: "36,64\n", stderr: "", exitCode: 0, signalCode: null });
+
+    const plain = await onto("plain", "plain.js", []);
+    expect(access(plain.segments)).toEqual([{ name: "__BUN", protection: read | write, holdsInstructions: [false] }]);
+    expect(await run([plain.executable])).toEqual({ stdout: "plain\n", stderr: "", exitCode: 0, signalCode: null });
   },
   120_000,
 );

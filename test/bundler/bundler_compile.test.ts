@@ -1,8 +1,9 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { rmSync } from "fs";
+import { readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
+import { payloadSegments, protection, readMachOSegments } from "../aot/cli/macho-segments";
 import { BundlerTestInput, itBundled as itBundledBase } from "./expectBundled";
 
 // Default to the CLI backend. We intentionally use plain `describe` here
@@ -1939,6 +1940,140 @@ test("compile --compile-executable-path rejects a template shorter than the exec
     expect(exitCode).toBe(1);
   }
 }, 60_000);
+
+/**
+ * A macOS arm64 executable as `bun build --compile --aot` leaves it: the payload of a program with compiled code is three
+ * segments, `__BUN` in front of the code, `__BUN.1` the code, which alone may be executed, and `__BUN.2` behind it.
+ */
+function machoExecutableWithCompiledCode(): Buffer {
+  const page = 0x4000;
+  const [segCmdSize, sectSize, sigCmdSize] = [72, 80, 16];
+  const [noDeadStrip, someInstructions] = [0x1000_0000, 0x400];
+  const signatureSize = 0x2000;
+  const linkeditOffset = 4 * page;
+  const buf = Buffer.alloc(linkeditOffset + signatureSize, 0xc3);
+  const writeName = (off: number, name: string) => buf.fill(0, off, off + 16).write(name, off, "latin1");
+  let o = 32;
+  let ncmds = 0;
+  const writeSegment = (
+    name: string,
+    pages: [start: number, end: number],
+    access: number,
+    section?: { size: number; flags: number },
+  ) => {
+    const [offset, size] = [pages[0] * page, (pages[1] - pages[0]) * page];
+    buf.fill(0, o, o + segCmdSize + (section ? sectSize : 0));
+    buf.writeUInt32LE(LC_SEGMENT_64, o);
+    buf.writeUInt32LE(segCmdSize + (section ? sectSize : 0), o + 4);
+    writeName(o + 8, name);
+    buf.writeBigUInt64LE(BigInt(0x1_0000_0000 + offset), o + 24); // vmaddr
+    buf.writeBigUInt64LE(BigInt(size), o + 32); // vmsize
+    buf.writeBigUInt64LE(BigInt(offset), o + 40); // fileoff
+    buf.writeBigUInt64LE(BigInt(name === "__LINKEDIT" ? signatureSize : size), o + 48); // filesize
+    buf.writeInt32LE(access, o + 56); // maxprot
+    buf.writeInt32LE(access, o + 60); // initprot
+    buf.writeUInt32LE(section ? 1 : 0, o + 64); // nsects
+    o += segCmdSize;
+    if (section) {
+      writeName(o, "__bun");
+      writeName(o + 16, "__BUN");
+      buf.writeBigUInt64LE(BigInt(0x1_0000_0000 + offset), o + 32); // addr
+      buf.writeBigUInt64LE(BigInt(section.size), o + 40); // size
+      buf.writeUInt32LE(offset, o + 48); // offset
+      buf.writeUInt32LE(14, o + 52); // align = 2^14
+      buf.writeUInt32LE(section.flags, o + 64); // flags
+      o += sectSize;
+    }
+    ncmds++;
+  };
+  const { read, execute } = protection;
+  writeSegment("__TEXT", [0, 1], read | execute);
+  writeSegment("__BUN", [1, 2], read, { size: page, flags: noDeadStrip });
+  writeSegment("__BUN.1", [2, 3], read | execute, { size: page, flags: noDeadStrip | someInstructions });
+  writeSegment("__BUN.2", [3, 4], read, { size: 0x123, flags: noDeadStrip });
+  writeSegment("__LINKEDIT", [4, 5], read);
+  buf.writeUInt32LE(0x1d, o); // LC_CODE_SIGNATURE
+  buf.writeUInt32LE(sigCmdSize, o + 4);
+  buf.writeUInt32LE(linkeditOffset, o + 8); // dataoff
+  buf.writeUInt32LE(signatureSize, o + 12); // datasize
+  o += sigCmdSize;
+  ncmds++;
+
+  // mach_header_64
+  buf.writeUInt32LE(MH_MAGIC_64, 0);
+  buf.writeInt32LE(0x0100000c, 4); // CPU_TYPE_ARM64
+  buf.writeInt32LE(0, 8); // cpusubtype
+  buf.writeUInt32LE(MH_EXECUTE, 12);
+  buf.writeUInt32LE(ncmds, 16);
+  buf.writeUInt32LE(o - 32, 20); // sizeofcmds
+  buf.writeUInt32LE(0, 24); // flags
+  buf.writeUInt32LE(0, 28); // reserved
+  buf.fill(0, o, page);
+  buf.writeBigUInt64LE(BigInt(2 * page + 0x123 - 8), page); // the length of the program, in front of it
+  return buf;
+}
+
+// `Bun.build({ compile })` inside an executable takes that executable as its template, and so may
+// `--compile-executable-path`. The small program fits in front of the code of the template. The large one moves what
+// lies behind the payload.
+test.each([
+  ["small", `console.log("hi");`, `"hi"`],
+  ["large", `console.log("${Buffer.alloc(3 * 0x4000, "a").toString()}");`, "aaaaaaaa"],
+])(
+  "compile --compile-executable-path gives a %s program without compiled code one payload that nothing executes, on a macOS executable with compiled code",
+  async (name, source, text) => {
+    const page = 0x4000;
+    using dir = tempDir(`compile-onto-compiled-code-${name}`, { "entry.ts": source });
+    const cwd = String(dir);
+    const template = machoExecutableWithCompiledCode();
+    expect(payloadSegments(template).map(segment => segment.name)).toEqual(["__BUN", "__BUN.1", "__BUN.2"]);
+    await Bun.write(join(cwd, "template"), template);
+
+    await using build = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        "--target=bun-darwin-arm64",
+        "--compile-executable-path",
+        join(cwd, "template"),
+        join(cwd, "entry.ts"),
+        "--outfile",
+        join(cwd, "out"),
+      ],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect({ stderr: exitCode ? stderr : "", exitCode }).toEqual({ stderr: "", exitCode: 0 });
+
+    const out = readFileSync(join(cwd, "out"));
+    const segments = readMachOSegments(out);
+    expect(segments.map(segment => segment.name)).toEqual(["__TEXT", "__BUN", "__LINKEDIT"]);
+    const [, payload, linkedit] = segments;
+    const { read, write } = protection;
+    expect(payload).toMatchObject({
+      address: 0x1_0000_0000 + page,
+      offset: page,
+      protection: read | write,
+      maxProtection: read | write,
+      sections: [
+        { name: "__bun", segment: "__BUN", address: 0x1_0000_0000 + page, offset: page, holdsInstructions: false },
+      ],
+    });
+    expect(payload.fileSize).toBeGreaterThanOrEqual(3 * page);
+    expect(payload.fileSize % page).toBe(0);
+    // The section is the length of the program and the program, and the program is there.
+    const programSize = Number(out.readBigUInt64LE(page));
+    expect(payload.sections[0].size).toBe(8 + programSize);
+    expect(payload.sections[0].size).toBeLessThanOrEqual(payload.fileSize);
+    expect(out.subarray(page + 8, page + 8 + programSize).includes(text)).toBe(true);
+    expect(linkedit.offset).toBe(payload.offset + payload.fileSize);
+    expect(linkedit.offset + linkedit.fileSize).toBe(out.length);
+  },
+);
 
 // The startup path used to release weak refs, drop every unlinked code block and run a synchronous full collection right
 // after a standalone executable's entry module finished evaluating, i.e. before its first turn of the event loop.

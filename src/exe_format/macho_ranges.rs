@@ -5,17 +5,18 @@ use bun_core::AnyBitPattern;
 
 use crate::cut_model::{CutCapacity, CutModel, NoCutReason};
 use crate::image::{
-    AddressRange, Architecture, ExecutableFormat, ImageBytes, ImageError, MappedSpan,
+    AddressRange, Architecture, ExecutableFormat, ImageBytes, ImageError, KnownSection, MappedSpan,
     RemovedFileRanges, merge_ranges, subtract_cuts,
 };
 use crate::macho::{MachoSigner, SEG_LINKEDIT};
 use crate::macho_fixups::{SegmentPiece, rebuild_chained_fixups};
 use crate::macho_types::{
     CPU_TYPE_ARM64, CPU_TYPE_X86_64, CommandKind, LC, LoadCommandIterator, MH_EXECUTE, MH_MAGIC_64,
-    N_SECT, N_STAB, N_TYPE, S_4BYTE_LITERALS, S_8BYTE_LITERALS, S_16BYTE_LITERALS,
-    S_CSTRING_LITERALS, S_GB_ZEROFILL, S_REGULAR, S_THREAD_LOCAL_ZEROFILL, S_ZEROFILL,
-    SECTION_TYPE, SG_READ_ONLY, command_kind, dysymtab_command, linkedit_data_command,
-    load_command, mach_header_64, nlist_64, section_64, segment_command_64, symtab_command,
+    N_SECT, N_STAB, N_TYPE, PROT, S_4BYTE_LITERALS, S_8BYTE_LITERALS, S_16BYTE_LITERALS,
+    S_ATTR_SOME_INSTRUCTIONS, S_CSTRING_LITERALS, S_GB_ZEROFILL, S_REGULAR,
+    S_THREAD_LOCAL_ZEROFILL, S_ZEROFILL, SECTION_TYPE, SG_READ_ONLY, command_kind,
+    dysymtab_command, linkedit_data_command, load_command, mach_header_64, nlist_64, section_64,
+    segment_command_64, symtab_command,
 };
 use crate::{align_up, read_struct, write_struct};
 
@@ -88,13 +89,16 @@ pub(crate) fn mapped_spans(macho: &[u8]) -> Result<Vec<MappedSpan>, ImageError> 
         .collect())
 }
 
-pub(crate) fn cut_model(macho: &[u8]) -> CutModel {
+/// `segments_to_come`: how many segments `split_payload_at_code` adds once the cuts are made. Their room stays free.
+pub(crate) fn cut_model(macho: &[u8], segments_to_come: usize) -> CutModel {
     let without_cuts =
         |reason| CutModel::without_cuts(ExecutableFormat::MachO, CUT_ALIGNMENT, reason);
     let Ok(parsed) = parse(macho) else {
         return without_cuts(NoCutReason::HeadersUnreadable);
     };
-    match compute_capacity(macho, &parsed) {
+    let capacity = compute_capacity(macho, &parsed)
+        .map(|capacity| capacity.leaving_slots_free(segments_to_come));
+    match capacity {
         Ok(capacity @ CutCapacity::Cuts(_)) => CutModel {
             format: ExecutableFormat::MachO,
             alignment: CUT_ALIGNMENT,
@@ -116,6 +120,147 @@ pub(crate) fn remove_ranges(
     let plan = plan_removal(macho, &parsed, cuts)?;
     apply_plan(macho, parsed.header_room_end, &plan);
     Ok(())
+}
+
+pub(crate) struct PayloadSplit {
+    /// How many segments may be executed. Fewer than the ranges of code: the last of them holds the ranges that are
+    /// left, and the data between them.
+    pub(crate) code_segment_count: usize,
+    /// Where the padding behind the load commands ends: the file is written anew up to there.
+    pub(crate) header_room_end: usize,
+}
+
+/// Gives each range of `code` a segment of the payload to itself, which may be executed. The rest of the payload,
+/// before, between and behind them, is only read. The payload is one segment that holds no code when `code` is empty.
+///
+/// A segment takes room behind the load commands. Where that has room for fewer segments, the last ranges share one
+/// with the data between them.
+pub(crate) fn split_payload_at_code(
+    macho: &mut dyn ImageBytes,
+    code: &[AddressRange],
+) -> Result<PayloadSplit, ImageError> {
+    let mut parsed = parse(macho)?;
+    let payload = join_payload(&mut parsed)?;
+    let mut code = code.to_vec();
+    let plan = loop {
+        let plan = plan_pieces(macho, &parsed, &[], |index, removed| {
+            let segment = &parsed.segments[index];
+            if index == payload.start {
+                split_at_code(segment, &code, removed)
+            } else if payload.contains(&index) {
+                Ok(Vec::new())
+            } else {
+                split_segment(segment, &[], removed)
+            }
+        });
+        let has_no_room = matches!(plan, Err(ImageError::HeaderRoomExhausted));
+        match code.len() {
+            count if has_no_room && count > 1 => {
+                let last = code.remove(count - 1);
+                code[count - 2].end = last.end;
+            }
+            _ => break plan?,
+        }
+    };
+    apply_plan(macho, parsed.header_room_end, &plan);
+    Ok(PayloadSplit {
+        code_segment_count: code.len(),
+        header_room_end: parsed.header_room_end,
+    })
+}
+
+/// Where the segments of the payload are in `parsed`. An earlier build may have split it at its code: the first segment
+/// then spans them all, as it does in a template.
+fn join_payload(parsed: &mut Parsed) -> Result<Range<usize>> {
+    let names = KnownSection::Payload.names();
+    let is_payload = |section: &section_64| {
+        section.sect_name() == names.macho_section && section.seg_name() == names.macho_segment
+    };
+    let segments = &mut parsed.segments[..parsed.linkedit];
+    let first = segments
+        .iter()
+        .position(|segment| segment.sections.iter().any(is_payload))
+        .ok_or(ImageError::MalformedHeaders)?;
+    let (head, later) = segments[first..]
+        .split_first_mut()
+        .ok_or(ImageError::MalformedHeaders)?;
+    let mut piece_count = 1;
+    for piece in later {
+        let name = create_piece_name(head.command.seg_name(), piece_count);
+        if piece.command.seg_name() != bun_core::slice_to_nul(&name) {
+            break;
+        }
+        let follows = piece.command.vmaddr == vm_addresses(&head.command).end
+            && piece.command.fileoff == head.command.fileoff + head.command.filesize
+            && head.command.filesize == head.command.vmsize;
+        if !follows {
+            return Err(ImageError::MalformedHeaders);
+        }
+        head.command.vmsize += piece.command.vmsize;
+        head.command.filesize += piece.command.filesize;
+        let section_end = piece.sections.iter().filter(|section| is_payload(section));
+        let section_end = section_end
+            .map(|section| section_addresses(section).end)
+            .max();
+        if let Some(section) = head.sections.iter_mut().find(|section| is_payload(section))
+            && let Some(end) = section_end
+        {
+            section.size = end - section.addr;
+        }
+        piece_count += 1;
+    }
+    Ok(first..first + piece_count)
+}
+
+fn split_at_code(
+    segment: &Segment,
+    code: &[AddressRange],
+    removed: &RemovedFileRanges,
+) -> Result<Vec<NewSegment>> {
+    if code.is_empty() {
+        return split_segment(segment, &[], removed);
+    }
+    for section in &segment.sections {
+        check_section_removal(section, code)?;
+    }
+    let addresses = vm_addresses(&segment.command);
+    let is_aligned = |address: u64| (address - addresses.start).is_multiple_of(CUT_ALIGNMENT);
+    let create = |start: u64, end: u64, is_code: bool| {
+        let mut piece = create_piece(segment, AddressRange { start, end }, removed)?;
+        let protection = match is_code {
+            true => PROT::READ | PROT::EXECUTE,
+            false => PROT::READ,
+        };
+        piece.command.maxprot = protection;
+        piece.command.initprot = protection;
+        for (_, section) in &mut piece.sections {
+            section.flags &= !S_ATTR_SOME_INSTRUCTIONS;
+            if is_code {
+                section.flags |= S_ATTR_SOME_INSTRUCTIONS;
+            }
+        }
+        Ok(piece)
+    };
+    let mut pieces = Vec::with_capacity(2 * code.len() + 1);
+    let mut data_start = addresses.start;
+    for range in code {
+        let is_in_file = file_backed_addresses(&segment.command).contains(*range);
+        if range.is_empty() || range.start < data_start || !is_in_file {
+            return Err(ImageError::MalformedHeaders);
+        }
+        if !is_aligned(range.start) || !is_aligned(range.end) {
+            return Err(ImageError::CutNotAligned);
+        }
+        if data_start < range.start {
+            pieces.push(create(data_start, range.start, false)?);
+        }
+        pieces.push(create(range.start, range.end, true)?);
+        data_start = range.end;
+    }
+    if data_start < addresses.end {
+        pieces.push(create(data_start, addresses.end, false)?);
+    }
+    Ok(pieces)
 }
 
 fn compute_capacity(macho: &[u8], parsed: &Parsed) -> Result<CutCapacity> {
@@ -315,6 +460,18 @@ fn find_command<T: AnyBitPattern>(macho: &[u8], parsed: &Parsed, cmd: u32) -> Re
 }
 
 fn plan_removal(macho: &[u8], parsed: &Parsed, cuts: &[AddressRange]) -> Result<Plan> {
+    plan_pieces(macho, parsed, cuts, |index, removed| {
+        split_segment(&parsed.segments[index], cuts, removed)
+    })
+}
+
+/// `split` gives the segments that take the place of the segment of `parsed` at an index.
+fn plan_pieces(
+    macho: &[u8],
+    parsed: &Parsed,
+    cuts: &[AddressRange],
+    split: impl Fn(usize, &RemovedFileRanges) -> Result<Vec<NewSegment>>,
+) -> Result<Plan> {
     let linkedit_segment = &parsed.segments[parsed.linkedit];
     let old_linkedit = linkedit_segment.command.fileoff..macho.len() as u64;
     if old_linkedit.start + linkedit_segment.command.filesize != old_linkedit.end {
@@ -322,8 +479,8 @@ fn plan_removal(macho: &[u8], parsed: &Parsed, cuts: &[AddressRange]) -> Result<
     }
     let removed = find_removed_file_ranges(parsed, cuts)?;
     let mut pieces = Vec::with_capacity(parsed.segments.len());
-    for segment in &parsed.segments {
-        pieces.push(split_segment(segment, cuts, &removed)?);
+    for index in 0..parsed.segments.len() {
+        pieces.push(split(index, &removed)?);
     }
     let new_ordinals = number_sections(linkedit_segment.first_ordinal, &pieces)?;
     let find_blob = |cmd: u32| -> Result<Option<Range<usize>>> {
@@ -415,8 +572,7 @@ fn split_segment(
     cuts: &[AddressRange],
     removed: &RemovedFileRanges,
 ) -> Result<Vec<NewSegment>> {
-    let old = &segment.command;
-    let addresses = vm_addresses(old);
+    let addresses = vm_addresses(&segment.command);
     for section in &segment.sections {
         check_section_removal(section, cuts)?;
     }
@@ -424,23 +580,30 @@ fn split_segment(
     if addresses.is_empty() {
         pieces.push(addresses);
     }
-    let mut new_segments = Vec::with_capacity(pieces.len());
-    for piece in pieces {
-        let sections = split_sections(segment, piece, removed)?;
-        let offset_in_segment = piece.start - old.vmaddr;
-        let remaining_file_size = old.filesize.saturating_sub(offset_in_segment);
-        let mut command = *old;
-        command.cmdsize = (SEGMENT_COMMAND_SIZE + SECTION_SIZE * sections.len()) as u32;
-        command.nsects = sections.len() as u32;
-        command.vmaddr = piece.start;
-        command.vmsize = piece.len();
-        if !addresses.is_empty() {
-            command.filesize = remaining_file_size.min(piece.len());
-        }
-        command.fileoff = removed.moved_floor(old.fileoff + offset_in_segment.min(old.filesize));
-        new_segments.push(NewSegment { command, sections });
+    let create = |piece| create_piece(segment, piece, removed);
+    pieces.into_iter().map(create).collect()
+}
+
+/// The part of `segment` at `piece`, with what its sections have there.
+fn create_piece(
+    segment: &Segment,
+    piece: AddressRange,
+    removed: &RemovedFileRanges,
+) -> Result<NewSegment> {
+    let old = &segment.command;
+    let sections = split_sections(segment, piece, removed)?;
+    let offset_in_segment = piece.start - old.vmaddr;
+    let remaining_file_size = old.filesize.saturating_sub(offset_in_segment);
+    let mut command = *old;
+    command.cmdsize = (SEGMENT_COMMAND_SIZE + SECTION_SIZE * sections.len()) as u32;
+    command.nsects = sections.len() as u32;
+    command.vmaddr = piece.start;
+    command.vmsize = piece.len();
+    if !vm_addresses(old).is_empty() {
+        command.filesize = remaining_file_size.min(piece.len());
     }
-    Ok(new_segments)
+    command.fileoff = removed.moved_floor(old.fileoff + offset_in_segment.min(old.filesize));
+    Ok(NewSegment { command, sections })
 }
 
 fn check_section_removal(section: &section_64, cuts: &[AddressRange]) -> Result<()> {

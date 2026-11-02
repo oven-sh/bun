@@ -358,24 +358,60 @@ fn append_elf_symbols(file: &bun_sys::File, size: u64, symbols: ImageSymbols<'_>
     tail.write(|offset, bytes| file.pwrite_all(bytes, offset as i64).is_ok())
 }
 
-/// What is executed. The data behind it belongs to the image's code part too, and is only read.
-/// Reads `ImageHeader::size`, `ImageHeader::codeOffset` and `ImageHeader::executableSize`, whose offsets AOTImageFormat.h asserts.
-fn find_code_range(payload: &[u8], image: ImageRange) -> Option<core::ops::Range<u64>> {
-    let bytes = payload
-        .get(image.offset as usize..)?
-        .get(..image.length as usize)?;
+/// One image of the compiled program behind the other, each as long as `ImageHeader::size` says, whose offset
+/// AOTImageFormat.h asserts.
+fn find_images(payload: &[u8], image: ImageRange) -> Vec<core::ops::Range<usize>> {
+    let mut images = Vec::new();
+    let (mut start, end) = (
+        image.offset as usize,
+        image.offset as usize + image.length as usize,
+    );
+    while start < end {
+        let size = payload
+            .get(start..end)
+            .and_then(|bytes| bytes.get(32..)?.first_chunk::<8>())
+            .map_or(0, |word| u64::from_le_bytes(*word));
+        if size == 0 || size > (end - start) as u64 {
+            break;
+        }
+        images.push(start..start + size as usize);
+        start += size as usize;
+    }
+    images
+}
+
+/// What is executed of `image`. The data behind it belongs to the image's code part too, and is only read.
+/// Reads `ImageHeader::codeOffset` and `ImageHeader::executableSize`, whose offsets AOTImageFormat.h asserts.
+fn find_code_range(
+    payload: &[u8],
+    image: &core::ops::Range<usize>,
+) -> Option<core::ops::Range<u64>> {
+    let bytes = payload.get(image.clone())?;
     let word_at = |offset: usize| {
         bytes
             .get(offset..)?
             .first_chunk::<8>()
             .map(|word| u64::from_le_bytes(*word))
     };
-    let (size, code_offset, executable_size) = (word_at(32)?, word_at(40)?, word_at(64)?);
-    (code_offset < size && size <= u64::from(image.length) && executable_size <= size - code_offset)
-        .then(|| {
-            let start = u64::from(image.offset) + code_offset;
-            start..start + executable_size
-        })
+    let (size, code_offset, executable_size) = (bytes.len() as u64, word_at(40)?, word_at(64)?);
+    (code_offset < size && executable_size <= size - code_offset).then(|| {
+        let start = image.start as u64 + code_offset;
+        start..start + executable_size
+    })
+}
+
+/// What is executed of each image of the payload. `None`: an image does not say.
+pub(crate) fn find_code_ranges(
+    payload: &[u8],
+    image: ImageRange,
+) -> Option<Vec<core::ops::Range<u64>>> {
+    let images = find_images(payload, image);
+    let is_whole =
+        images.last().map(|last| last.end) == Some(image.offset as usize + image.length as usize);
+    let ranges = images.iter().map(|image| find_code_range(payload, image));
+    let ranges = ranges.collect::<Option<Vec<_>>>()?;
+    let has_code = ranges.iter().all(|range| !range.is_empty());
+    (is_whole && has_code).then_some(ranges)
 }
 
 pub(crate) fn write_elf(
@@ -394,26 +430,19 @@ pub(crate) fn write_elf(
     let mut elf = ElfFile::over(template).map_err(Template)?;
     elf.normalize_interpreter();
     // An image that is written for its address shares its pages with the file: nothing is written to them at start.
-    if let Some(image) = image
+    let images = image.map_or(Vec::new(), |image| find_images(payload, image));
+    if !images.is_empty()
         && let Some(address) = elf.payload_address(payload.len() as u64).map_err(Elf)?
     {
-        // One image behind the other, each as long as `ImageHeader::size` says.
-        let (mut start, end) = (
-            image.offset as usize,
-            (image.offset + image.length) as usize,
-        );
-        while start < end {
-            let bytes = &mut payload[start..end];
-            let size = bytes.get(32..).and_then(|rest| rest.first_chunk::<8>());
-            let size = size.map_or(0, |word| u64::from_le_bytes(*word) as usize);
-            if size == 0 || size > bytes.len() {
-                break;
-            }
-            bun_aot::engine::relocate_image(&mut bytes[..size], address + start as u64);
-            start += size;
+        for image in &images {
+            let start = image.start as u64;
+            bun_aot::engine::relocate_image(&mut payload[image.clone()], address + start);
         }
     }
-    let code = image.and_then(|image| find_code_range(payload, image));
+    // The engine maps the code of the images behind the first from the file.
+    let code = images
+        .first()
+        .and_then(|image| find_code_range(payload, image));
     let pieces = elf.bun_section_in_pieces(payload, code).map_err(Elf)?;
     let (size, _) = write_pieces(file, pieces, original)?;
     let has_symbols = symbols.is_some_and(|symbols| append_elf_symbols(file, size, symbols));
@@ -597,6 +626,77 @@ mod tests {
         assert_eq!(size, expected.len() as u64);
         assert_eq!(bytes_written, 2 * BLOCK as u64);
         assert!(read_file(&path) == expected);
+    }
+
+    fn toy_image(size: u64, code_offset: u64, executable_size: u64) -> Vec<u8> {
+        let mut image = vec![0x5a; size as usize];
+        image[32..40].copy_from_slice(&size.to_le_bytes());
+        image[40..48].copy_from_slice(&code_offset.to_le_bytes());
+        image[64..72].copy_from_slice(&executable_size.to_le_bytes());
+        image
+    }
+
+    fn toy_payload(images: &[Vec<u8>]) -> (Vec<u8>, ImageRange) {
+        let modules = [0xaa; 120];
+        let payload = [&modules[..], &images.concat(), b"trailer"].concat();
+        let length = images.iter().map(Vec::len).sum::<usize>() as u32;
+        let range = ImageRange {
+            offset: modules.len() as u32,
+            length,
+        };
+        (payload, range)
+    }
+
+    #[test]
+    fn code_of_every_image_is_found() {
+        let images = [
+            toy_image(0x400, 0x100, 0x200),
+            toy_image(0x800, 0x200, 0x600),
+            toy_image(0x300, 0x100, 0x80),
+        ];
+        let (payload, range) = toy_payload(&images);
+        assert_eq!(
+            find_images(&payload, range),
+            [120..0x478, 0x478..0xc78, 0xc78..0xf78]
+        );
+        assert_eq!(
+            find_code_ranges(&payload, range),
+            Some(vec![0x178..0x378, 0x678..0xc78, 0xd78..0xdf8])
+        );
+        let (payload, range) = toy_payload(&images[..1]);
+        assert_eq!(find_code_ranges(&payload, range), Some(vec![0x178..0x378]));
+    }
+
+    #[test]
+    fn image_that_does_not_say_where_its_code_is_gives_no_ranges() {
+        let whole = toy_image(0x400, 0x100, 0x200);
+        let unreadable = [
+            toy_image(0x400, 0x400, 0),
+            toy_image(0x400, 0x500, 0x100),
+            toy_image(0x400, 0x100, 0x301),
+            toy_image(0x400, 0x100, 0),
+        ];
+        for image in unreadable {
+            let (payload, range) = toy_payload(&[whole.clone(), image]);
+            assert_eq!(find_images(&payload, range).len(), 2);
+            assert_eq!(find_code_ranges(&payload, range), None);
+        }
+
+        // An image whose size leaves the range ends the images, and the range is not all images then.
+        let mut too_long = toy_image(0x400, 0x100, 0x200);
+        too_long[32..40].copy_from_slice(&0x401u64.to_le_bytes());
+        let mut empty = toy_image(0x400, 0x100, 0x200);
+        empty[32..40].copy_from_slice(&0u64.to_le_bytes());
+        for image in [too_long, empty] {
+            let (payload, range) = toy_payload(&[whole.clone(), image]);
+            assert_eq!(find_images(&payload, range), [120..0x478]);
+            assert_eq!(find_code_ranges(&payload, range), None);
+        }
+        let (payload, mut range) = toy_payload(&[whole]);
+        range.length += 8;
+        assert_eq!(find_code_ranges(&payload, range), None);
+        range.offset = payload.len() as u32;
+        assert_eq!(find_images(&payload, range), []);
     }
 
     #[test]

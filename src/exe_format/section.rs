@@ -2,11 +2,12 @@ use core::mem::size_of;
 
 use bun_core::slice_to_nul;
 
-use crate::builtins::{Image, u32_at};
+use crate::builtins::Image;
 use crate::elf::{Elf64_Ehdr, Elf64_Shdr, SHT_NOBITS};
 use crate::image::{ExecutableFormat, KnownSection, SectionLocation, SectionNames};
 use crate::macho_types as macho;
 use crate::pe::{DOSHeader, PEHeader, SectionHeader};
+use crate::read_struct;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, thiserror::Error, strum::IntoStaticStr)]
 pub enum SectionError {
@@ -77,36 +78,121 @@ fn find_elf(file: &mut Image<'_>, names: SectionNames) -> Result<SectionLocation
 
 fn find_macho(file: &mut Image<'_>, names: SectionNames) -> Result<SectionLocation, SectionError> {
     let header: macho::mach_header_64 = file.struct_at(0)?;
-    let mut offset = size_of::<macho::mach_header_64>();
-    for _ in 0..header.ncmds {
-        let command = file.bytes(offset, 8)?;
-        let (cmd, cmdsize) = (u32_at(&command, 0), u32_at(&command, 4) as usize);
-        if cmdsize < 8 {
-            return Err(SectionError::Invalid);
-        }
-        if cmd == macho::LC::SEGMENT_64 {
-            let seg: macho::segment_command_64 = file.struct_at(offset)?;
-            let mut sect_offset = offset + size_of::<macho::segment_command_64>();
-            for _ in 0..seg.nsects {
-                if sect_offset + size_of::<macho::section_64>() > offset + cmdsize {
-                    return Err(SectionError::Invalid);
-                }
-                let sect: macho::section_64 = file.struct_at(sect_offset)?;
-                if sect.sect_name() == names.macho_section && sect.seg_name() == names.macho_segment
-                {
-                    file.range(sect.offset as usize, to_usize(sect.size)?)?;
-                    return Ok(SectionLocation {
-                        address: sect.addr,
-                        file_offset: u64::from(sect.offset),
-                        size: sect.size,
-                    });
-                }
-                sect_offset += size_of::<macho::section_64>();
-            }
-        }
-        offset = offset.checked_add(cmdsize).ok_or(SectionError::Invalid)?;
+    let commands = file.bytes(
+        size_of::<macho::mach_header_64>(),
+        header.sizeofcmds as usize,
+    )?;
+    let location = find_in_macho_commands(header.ncmds, &commands, names)?;
+    file.range(to_usize(location.file_offset)?, to_usize(location.size)?)?;
+    Ok(location)
+}
+
+/// Where `section` of this executable is loaded: `address` is the address in this process.
+#[cfg(target_os = "macos")]
+pub fn find_in_this_executable(section: KnownSection) -> Option<SectionLocation> {
+    let (header_address, header, commands) = loaded::commands()?;
+    let location = find_in_macho_commands(header.ncmds, commands, section.names()).ok()?;
+    let image_base = find_macho_image_base(header.ncmds, commands)?;
+    let offset_in_image = location.address.checked_sub(image_base)?;
+    Some(SectionLocation {
+        address: (header_address as u64).checked_add(offset_in_image)?,
+        ..location
+    })
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) mod loaded {
+    use crate::macho_types::{MH_MAGIC_64, mach_header_64};
+
+    unsafe extern "C" {
+        /// The linker's name for the header of the executable it links. dyld's image 0 is not
+        /// always that one: it puts the libraries of `DYLD_INSERT_LIBRARIES` in front.
+        #[link_name = "_mh_execute_header"]
+        static MAIN_EXECUTABLE_HEADER: mach_header_64;
     }
-    Err(SectionError::MissingSection)
+
+    /// The address of this executable's header, the header, and the load commands behind it.
+    pub(crate) fn commands() -> Option<(usize, mach_header_64, &'static [u8])> {
+        let header_address = &raw const MAIN_EXECUTABLE_HEADER;
+        // SAFETY: the header of the main executable is mapped for the life of the process.
+        let header = unsafe { header_address.read() };
+        if header.magic != MH_MAGIC_64 {
+            return None;
+        }
+        // SAFETY: `sizeofcmds` bytes of load commands follow the header in the same mapped segment.
+        let commands = unsafe {
+            core::slice::from_raw_parts(
+                header_address.add(1).cast::<u8>(),
+                header.sizeofcmds as usize,
+            )
+        };
+        Some((header_address as usize, header, commands))
+    }
+}
+
+/// The address that the first byte of the file is linked at, where the header is.
+#[cfg(any(target_os = "macos", test))]
+fn find_macho_image_base(ncmds: u32, commands: &[u8]) -> Option<u64> {
+    macho::LoadCommandIterator::new(ncmds, commands)
+        .filter(|command| command.cmd() == macho::LC::SEGMENT_64)
+        .filter_map(|command| command.cast::<macho::segment_command_64>())
+        .find(|segment| segment.fileoff == 0 && segment.filesize > 0)
+        .map(|segment| segment.vmaddr)
+}
+
+/// The first section of these names. It goes on in a later section of the same names that begins where it ends: the
+/// payload of a program with compiled code is split at the code, each part in a segment of its own.
+fn find_in_macho_commands(
+    ncmds: u32,
+    commands: &[u8],
+    names: SectionNames,
+) -> Result<SectionLocation, SectionError> {
+    const SEGMENT_SIZE: usize = size_of::<macho::segment_command_64>();
+    const SECTION_SIZE: usize = size_of::<macho::section_64>();
+    let mut found: Option<SectionLocation> = None;
+    let mut commands_read = 0;
+    for command in macho::LoadCommandIterator::new(ncmds, commands) {
+        commands_read += 1;
+        if command.cmd() != macho::LC::SEGMENT_64 {
+            continue;
+        }
+        let segment = command.cast::<macho::segment_command_64>();
+        let sections = segment.and_then(|segment| {
+            let sections = command.data[SEGMENT_SIZE..].as_chunks::<SECTION_SIZE>().0;
+            sections.get(..segment.nsects as usize)
+        });
+        let Some(sections) = sections else {
+            return found.ok_or(SectionError::Invalid);
+        };
+        for section in sections {
+            let section: macho::section_64 = read_struct(section);
+            if section.sect_name() != names.macho_section
+                || section.seg_name() != names.macho_segment
+            {
+                continue;
+            }
+            let Some(first) = &mut found else {
+                found = Some(SectionLocation {
+                    address: section.addr,
+                    file_offset: u64::from(section.offset),
+                    size: section.size,
+                });
+                continue;
+            };
+            let goes_on = section.addr == first.address.wrapping_add(first.size)
+                && u64::from(section.offset) == first.file_offset.wrapping_add(first.size);
+            if !goes_on {
+                return Ok(*first);
+            }
+            first.size = first.size.saturating_add(section.size);
+        }
+    }
+    // The iterator ends at a command that is cut short.
+    let missing = match commands_read == ncmds {
+        true => SectionError::MissingSection,
+        false => SectionError::Invalid,
+    };
+    found.ok_or(missing)
 }
 
 fn find_pe(file: &mut Image<'_>, names: SectionNames) -> Result<SectionLocation, SectionError> {
@@ -478,6 +564,110 @@ mod tests {
         for toy in [BUILTIN_MODULES, TRIM_TABLE, FEATURE_STATE] {
             assert_eq!(find(&file, toy.section), Ok(toy.location));
         }
+    }
+
+    #[test]
+    fn macho_section_goes_on_in_sections_of_its_name_that_follow_it() {
+        let piece = |address: u64, file_offset: u64, size: u64| ToySection {
+            location: SectionLocation {
+                address,
+                file_offset,
+                size,
+            },
+            ..PAYLOAD
+        };
+        let head = piece(0x40_9000, 0x2000, 0x400);
+        let code = piece(0x40_9400, 0x2400, 0x800);
+        let find_with_tail = |tail: ToySection| {
+            let file = build_macho_segments(&[
+                ToySegment {
+                    command_name: b"__TEXT",
+                    sections: &[BUILTIN_MODULES],
+                },
+                ToySegment {
+                    command_name: b"__BUN",
+                    sections: &[head],
+                },
+                ToySegment {
+                    command_name: b"__BUN.1",
+                    sections: &[code, TRIM_TABLE],
+                },
+                ToySegment {
+                    command_name: b"__BUN.2",
+                    sections: &[tail],
+                },
+            ]);
+            find(&file, KnownSection::Payload)
+        };
+        let with_size = |size: u64| {
+            Ok(SectionLocation {
+                size,
+                ..head.location
+            })
+        };
+        assert_eq!(
+            find_with_tail(piece(0x40_9c00, 0x2c00, 0x18)),
+            with_size(0xc18)
+        );
+        // A section that begins elsewhere, in memory or in the file, is another section.
+        assert_eq!(
+            find_with_tail(piece(0x40_9c10, 0x2c00, 0x18)),
+            with_size(0xc00)
+        );
+        assert_eq!(
+            find_with_tail(piece(0x40_9c00, 0x2c10, 0x18)),
+            with_size(0xc00)
+        );
+        assert_eq!(
+            find_with_tail(piece(0x40_9000, 0x2000, 0x18)),
+            with_size(0xc00)
+        );
+    }
+
+    #[test]
+    fn macho_image_base_is_the_address_of_the_first_byte_of_the_file() {
+        let mut file = build_macho_segments(&[
+            ToySegment {
+                command_name: b"__PAGEZERO",
+                sections: &[],
+            },
+            ToySegment {
+                command_name: b"__TEXT",
+                sections: &[BUILTIN_MODULES],
+            },
+            ToySegment {
+                command_name: b"__DATA",
+                sections: &[],
+            },
+        ]);
+        let segment_size = size_of::<macho::segment_command_64>();
+        let text_offset = MACHO_FIRST_SEGMENT_OFFSET + segment_size;
+        let data_offset = text_offset + segment_size + size_of::<macho::section_64>();
+        type Segment = macho::segment_command_64;
+        edit_struct(
+            &mut file,
+            MACHO_FIRST_SEGMENT_OFFSET,
+            |zero: &mut Segment| {
+                zero.vmsize = 0x1_0000_0000;
+            },
+        );
+        edit_struct(&mut file, text_offset, |text: &mut Segment| {
+            text.vmaddr = 0x1_0000_0000;
+            text.filesize = 0x2000;
+        });
+        edit_struct(&mut file, data_offset, |data: &mut Segment| {
+            data.vmaddr = 0x1_0000_4000;
+            data.fileoff = 0x2000;
+            data.filesize = 0x1000;
+        });
+        let header: macho::mach_header_64 = read_struct(&file);
+        let commands = &file[size_of::<macho::mach_header_64>()..][..header.sizeofcmds as usize];
+        assert_eq!(
+            find_macho_image_base(header.ncmds, commands),
+            Some(0x1_0000_0000)
+        );
+        assert_eq!(find_macho_image_base(1, commands), None);
+        assert_eq!(find_macho_image_base(header.ncmds, &commands[..8]), None);
     }
 
     #[test]

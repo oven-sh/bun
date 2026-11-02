@@ -6,6 +6,7 @@ use crate::image::{ImageEditor, KnownSection, SectionLocation};
 use crate::macho::MachoFile;
 use crate::macho_types::dyld_chained_fixups_header;
 
+mod payload;
 mod toy;
 
 pub(crate) use toy::toy_macho;
@@ -21,6 +22,11 @@ const PAYLOAD: [u8; 0x5000] = [7; 0x5000];
 
 fn toy() -> Vec<u8> {
     create_toy(LINKED_TOY)
+}
+
+/// For a payload without code.
+fn cut_model(macho: &[u8]) -> CutModel {
+    super::cut_model(macho, 0)
 }
 
 fn command_offset(bytes: &[u8], cmd: u32) -> usize {

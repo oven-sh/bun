@@ -1255,6 +1255,17 @@ export const linkerFlags: Flag[] = [
     desc: "macOS cross-link: keep __BUN as the last content segment so `bun build --compile` can grow it",
   },
   {
+    // `bun build --compile --aot` gives the compiled code of each program a
+    // segment of its own, and the data behind it another
+    // (exe_format/macho_ranges.rs). Load commands can only grow into the
+    // padding behind them, and without it the build is an error. The trimmable
+    // link passes the same flag (trim/linker-macho.ts): this one also reaches
+    // a link that is not trimmable, such as a native `bun bd`.
+    flag: "-Wl,-headerpad,0x2000",
+    when: c => c.darwin,
+    desc: "Room behind the load commands for the segments `bun build --compile --aot` adds",
+  },
+  {
     // Identical-code folding, on top of -dead_strip: dead_strip removes
     // unreferenced functions, ICF merges duplicate ones (template/bindgen
     // instantiations, mostly). `safe` only folds functions whose address is

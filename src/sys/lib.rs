@@ -6049,7 +6049,7 @@ pub mod macho {
     /// address isn't in the code. `address` is unslid, like the addresses in the load commands.
     ///
     /// A linker emits one code segment. `bun build --compile --trim` splits it into several,
-    /// with gaps between them.
+    /// with gaps between them, and `--aot` adds one for the code of each compiled program.
     pub fn offset_in_code(ncmds: u32, commands: &[u8], address: u64) -> Option<u64> {
         let mut code_segments = LoadCommandIterator::new(ncmds, commands)
             .filter(|command| command.cmd() == LC_SEGMENT_64)

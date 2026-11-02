@@ -5,6 +5,7 @@ import {
   bunExe,
   isArm64,
   isLinux,
+  isMacOS,
   isWindows,
   readElf64ProgramHeaders,
   tempDirWithBunTypes as tempDir,
@@ -28,6 +29,8 @@ console.log("answer", sum * 0.125, /^a+[b-y\\u00e0-\\u00ff\\u0430-\\u044f]?z$/.t
 `;
 
 const imagePage = isLinux && isArm64 ? 65536 : 16384;
+// The loader maps the code of the image from a segment of its own, so code that the header names elsewhere is not in it.
+const givesCodeASegment = isLinux || isMacOS;
 const corrupt = "the file is corrupt (bad tables)";
 const outside =
   "its header names code or data outside the segments the executable loads them in. Something modified the executable after it was built";
@@ -157,10 +160,11 @@ beforeAll(async () => {
   for (const [name, edit] of Object.entries(headersThatContradictThemselves)) {
     results["contradicts: " + name] = await runEdited(edit);
   }
-  if (!isLinux) return;
+  if (!givesCodeASegment) return;
   for (const [name, edit] of Object.entries(headersThatAgreeWithThemselves)) {
     results["agrees: " + name] = await runEdited(edit);
   }
+  if (!isLinux) return;
   const code = image + Number(original.readBigUInt64LE(image + codeOffset));
   for (const [name, offset] of Object.entries({
     tables: image,
@@ -189,7 +193,7 @@ describe("an executable whose image header names a range outside its code segmen
     expect(results["contradicts: " + name]).toEqual(refusedWith(corrupt));
   });
 
-  test.skipIf(!isLinux).each(Object.keys(headersThatAgreeWithThemselves))(
+  test.skipIf(!givesCodeASegment).each(Object.keys(headersThatAgreeWithThemselves))(
     "the code %s, and the rest of the header agrees",
     name => {
       expect(results["agrees: " + name]).toEqual(refusedWith(outside));

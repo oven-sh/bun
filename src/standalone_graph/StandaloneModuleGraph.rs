@@ -26,8 +26,8 @@ use bun_sys::{self as Syscall, E, Fd, FdExt as _, Stat};
 
 use crate::compiled_program::{self, CompiledProgramInput, Payload};
 use crate::executable_file::{
-    ElfWriteError, ImageRange, MappedFile, Original, TemplateBytes, with_executable_image,
-    write_elf,
+    ElfWriteError, ImageRange, MappedFile, Original, TemplateBytes, find_code_ranges,
+    with_executable_image, write_elf,
 };
 use crate::executable_request::{
     ExecutableAdditions, GraphBytes, InjectionAdditions, append_compiled_program_record,
@@ -575,6 +575,9 @@ pub enum ModuleFormat {
 
 #[cfg(target_os = "macos")]
 mod macho {
+    use bun_exe_format::image::KnownSection;
+    use bun_exe_format::section::find_in_this_executable;
+
     // Declared inline rather than in a dedicated `*_sys` crate: this crate is
     // the symbol's only consumer.
     unsafe extern "C" {
@@ -588,7 +591,7 @@ mod macho {
     pub(super) fn get_data() -> Option<(*mut u8, usize)> {
         let length_ptr = Bun__getStandaloneModuleGraphMachoLength();
         if length_ptr.is_null() {
-            return None;
+            return get_split_data();
         }
         // SAFETY: pointer is valid if non-null; read unaligned u64.
         let length = unsafe { core::ptr::read_unaligned(length_ptr) };
@@ -600,6 +603,23 @@ mod macho {
         let slice_ptr = length_ptr.cast::<u8>();
         // SAFETY: section data is `length` bytes immediately following the u64 header.
         Some((unsafe { slice_ptr.add(data_offset) }, length as usize))
+    }
+
+    /// The payload of a program with compiled code is split at the code, each part in a segment of its own, and
+    /// `Bun__getStandaloneModuleGraphMachoLength` measures the first part alone.
+    #[cold]
+    fn get_split_data() -> Option<(*mut u8, usize)> {
+        let payload = find_in_this_executable(KnownSection::Payload)?;
+        let data_offset = core::mem::size_of::<u64>();
+        let capacity = payload.size.checked_sub(data_offset as u64)?;
+        let length_ptr = payload.address as usize as *mut u8;
+        // SAFETY: the load commands map `payload.size` bytes there, which are at least 8.
+        let length = unsafe { core::ptr::read_unaligned(length_ptr.cast::<u64>()) };
+        if length < 8 || length > capacity {
+            return None;
+        }
+        // SAFETY: the `length` bytes of the payload follow their length.
+        Some((unsafe { length_ptr.add(data_offset) }, length as usize))
     }
 
     unsafe extern "C" {
@@ -2593,6 +2613,19 @@ pub(crate) fn inject<'a>(
 
     match target.os {
         CompileTargetOs::Mac => {
+            let code = match additions.image {
+                Some(image) => find_code_ranges(bytes, image),
+                None => Some(Vec::new()),
+            };
+            let Some(code) = code.filter(|code| additions.has_code != code.is_empty()) else {
+                bun_core::pretty_errorln!(
+                    "Error writing standalone module graph: the compiled program does not say where its code is"
+                );
+                cleanup(zname, cloned_executable_fd);
+                return None;
+            };
+            // A segment for the code and one for the data behind it. The code of more programs takes what the cuts leave.
+            additions.segments_of_code = 2 * code.len().min(1);
             let symbols_size = additions.symbols.map_or(0, |symbols| symbols.table.len());
             let mapped = MappedFile::open_with_room(self_exe, |template_size| {
                 bun_macho::MachoFile::room_for(template_size, bytes.len(), symbols_size)
@@ -2621,10 +2654,23 @@ pub(crate) fn inject<'a>(
                 }
             };
             additions.add_macho_symbols(&mut macho_file);
-            if let Err(e) = macho_file.write_section(bytes, additions.has_code) {
-                bun_core::pretty_errorln!("Error writing standalone module graph: {}", e);
-                cleanup(zname, cloned_executable_fd);
-                return None;
+            let written = macho_file
+                .write_section(bytes, additions.has_code)
+                .and_then(|()| macho_file.split_section_at_code(&code));
+            let code_segment_count = match written {
+                Ok(count) => count,
+                Err(e) => {
+                    bun_core::pretty_errorln!("Error writing standalone module graph: {}", e);
+                    cleanup(zname, cloned_executable_fd);
+                    return None;
+                }
+            };
+            if code_segment_count < code.len() {
+                bun_core::warn!(
+                    "the load commands of this executable have no room for a segment for the code of each of its {} compiled programs: the last {} share one, and the data between them can be executed",
+                    code.len(),
+                    code.len() - code_segment_count + 1
+                );
             }
 
             let file = bun_sys::File::borrow(&cloned_executable_fd);

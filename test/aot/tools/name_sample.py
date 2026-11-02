@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""name_sample.py <the output of /usr/bin/sample> <the executable file> [command]: macOS shows all compiled code of an executable built with `bun build --compile --aot` under one symbol, BUN_COMPILED.
+"""name_sample.py <the output of /usr/bin/sample> <the executable file> [command]: macOS shows all compiled code of an executable built with `bun build --compile --aot` under one symbol, BUN_COMPILED, or under none, by its distance from where the executable is loaded.
 This gives every such frame its function, the file:line:column of the call site and the frames inlined there (code_in_image.py beside this file reads the image's own tables). It only reads the two files and runs nothing.
   tree [part of a thread's name = main-thread] [least count = 3]   the call graph again, named
   top [thread]                                                      self and inclusive counts by function
@@ -38,7 +38,7 @@ def short(p): return p.replace('/$bunfs/root/', '')
 
 def name_all(threads, im, code_base):
     def walk(n, is_leaf_possible=True):
-        if n.symbol == 'BUN_COMPILED' and n.address is not None:
+        if (n.symbol == 'BUN_COMPILED' or n.symbol.startswith('???')) and n.address is not None:
             o = n.address - code_base; n.code = o; f = im.function_at(o) if 0 <= o else None
             if f and not im.region(o).startswith('shared'):
                 n.kind = 'compiled'; n.frames = im.stack_at(f[0], o - f[1])
@@ -62,21 +62,26 @@ def function_key(n):
 def main():
     sample, exe = sys.argv[1:3]; cmd = sys.argv[3] if len(sys.argv) > 3 else 'top'; args = sys.argv[4:]
     im = Image(exe); threads = parse(sample)
-    base = None
-    for raw in open(sample, errors='replace'):
-        m = re.search(r'BUN_COMPILED  \(in [^)]*\) \+ (\d+)  \[(0x[0-9a-f]+)\]', raw)
-        if m: base = int(m.group(2), 16) - int(m.group(1)); break
-    # BUN_COMPILED is the first byte of the section __BUN,__bun, which holds the image behind a head of its own.
+    # BUN_COMPILED is the first byte of the first section __BUN,__bun, which holds the image behind a head of its own. The sections of that name behind it are the rest of the payload: its code has a segment to itself.
     import struct
-    sect = None; m = im.m; count = struct.unpack_from('<I', m, 16)[0]; at = 32
+    sect = None; linked = None; m = im.m; count = struct.unpack_from('<I', m, 16)[0]; at = 32
     for _ in range(count):
         command, size = struct.unpack_from('<II', m, at)
         if command == 0x19:
+            address, _, offset, file_size = struct.unpack_from('<QQQQ', m, at + 24)
+            if linked is None and not offset and file_size: linked = address
             for k in range(struct.unpack_from('<I', m, at + 64)[0]):
                 s = at + 72 + 80 * k
-                if m[s:s + 16].rstrip(b'\0') == b'__bun': sect = struct.unpack_from('<I', m, s + 48)[0]
+                if sect is None and m[s:s + 16].rstrip(b'\0') == b'__bun': sect_address = struct.unpack_from('<Q', m, s + 32)[0]; sect = struct.unpack_from('<I', m, s + 48)[0]
         at += size
     if sect is None: raise SystemExit('no section __bun in ' + exe)
+    base = None
+    for raw in open(sample, errors='replace'):
+        named = re.search(r'BUN_COMPILED  \(in [^)]*\) \+ (\d+)  \[(0x[0-9a-f]+)\]', raw)
+        if named: base = int(named.group(2), 16) - int(named.group(1)); break
+        loaded = re.search(r'\?\?\?  \(in %s\)  load address (0x[0-9a-f]+)' % re.escape(os.path.basename(exe)), raw)
+        if loaded and linked is not None: base = int(loaded.group(1), 16) + sect_address - linked; break
+    if base is None: raise SystemExit('no frame of the embedded program in ' + sample)
     code_base = base + (im.base - sect) + im.code_offset
     name_all(threads, im, code_base)
     if cmd == 'tree':

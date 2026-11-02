@@ -1523,6 +1523,7 @@ extern "C" BlobHeader __attribute__((section("__BUN,__bun"))) BUN_COMPILED = { 0
 extern "C" uint64_t* Bun__getStandaloneModuleGraphMachoLength()
 {
     // A corrupt file can claim any length, so check it against the section size from the load command.
+    // A payload with compiled code is longer than this section: macho::get_split_data in StandaloneModuleGraph.rs measures it.
     unsigned long sectionSize = 0;
     uint8_t* sectionData = getsectiondata(&_mh_execute_header, "__BUN", "__bun", &sectionSize);
     if (!sectionData || sectionSize < sizeof(uint64_t)) return nullptr;

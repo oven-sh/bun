@@ -1339,6 +1339,57 @@ fn aligned_range_is_cut_ragged_range_is_filled() {
     }
 }
 
+#[test]
+fn cut_that_takes_the_room_of_segments_to_come_is_filled() {
+    const MORE_THAN_ANY_HEADER_HOLDS: usize = 1 << 16;
+    for target in ALL_TARGETS {
+        let layout = layout_of(target);
+        let start =
+            (layout.code.start + NEVER_REMOVED_BYTES).next_multiple_of(layout.cut_alignment);
+        let aligned = AddressRange {
+            start,
+            end: start + layout.cut_alignment,
+        };
+        let range = ToyRange {
+            range: aligned,
+            set: 0,
+            is_code: true,
+            can_be_cut: true,
+            can_be_filled: true,
+        };
+        let table = encode_table(&create_table(vec![range]));
+        let before = build_executable(&layout, Some(&table), &[]);
+        let request = removing(&[chosen_features()[0]]);
+        let plan = compute_plan(&nothing_used(), &request, &before).unwrap();
+        let apply = |segments_to_come: usize| {
+            let mut after = before.clone();
+            let summary = bun_trim::apply_leaving_room(&mut after, &plan, segments_to_come);
+            (after, summary.unwrap())
+        };
+
+        let (cut, summary) = apply(0);
+        let mut as_without_room = before.clone();
+        let summary_without_room = bun_trim::apply(&mut as_without_room, &plan).unwrap();
+        assert!(cut == as_without_room, "{target:?}");
+        assert_eq!(summary.cut_bytes, summary_without_room.cut_bytes);
+        assert_eq!(summary.cut_bytes, aligned.len(), "{target:?}");
+
+        // Only a Mach-O file gets segments for its compiled code out of the room that its cuts take.
+        let (filled, summary) = apply(MORE_THAN_ANY_HEADER_HOLDS);
+        if target.format != ExecutableFormat::MachO {
+            assert!(filled == cut, "{target:?}");
+            continue;
+        }
+        assert_eq!(summary.cut_bytes, 0, "{target:?}");
+        assert_eq!(summary.filled_bytes, aligned.len(), "{target:?}");
+        let reason = summary.uncut.map(|uncut| uncut.reason.name());
+        assert_eq!(reason, Some("HeaderRoomExhausted"), "{target:?}");
+        let fill = fill_byte(target.architecture, true, aligned.start);
+        let loaded = LoadedImage::load(&filled);
+        assert!(loaded.byte_at(aligned.start) == MemoryByte::Mapped(fill));
+    }
+}
+
 fn assert_unchanged(layout: &ToyLayout, trimmed: &Trimmed, range: AddressRange) {
     let target = layout.target;
     let old_bytes = LoadedImage::load(&trimmed.before).bytes(range);

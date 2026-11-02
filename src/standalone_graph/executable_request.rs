@@ -64,6 +64,8 @@ pub(crate) struct GraphBytes {
 pub(crate) struct InjectionAdditions<'a> {
     pub(crate) has_code: bool,
     pub(crate) image: Option<ImageRange>,
+    /// How many segments the compiled code takes in a Mach-O file once the template is edited. Trimming leaves room for them.
+    pub(crate) segments_of_code: usize,
     pub(crate) symbols: Option<ImageSymbols<'a>>,
     pub(crate) has_symbols: bool,
     build_id: Option<[u8; bun_exe_format::build_id::SIZE]>,
@@ -84,6 +86,7 @@ impl<'a> ExecutableAdditions<'a> {
         InjectionAdditions {
             has_code: self.compiled_program.is_some(),
             image,
+            segments_of_code: 0,
             symbols,
             has_symbols: false,
             build_id: None,
@@ -116,7 +119,7 @@ impl InjectionAdditions<'_> {
         let Some(plan) = self.trim else {
             return true;
         };
-        match bun_trim::apply(template, plan) {
+        match bun_trim::apply_leaving_room(template, plan, self.segments_of_code) {
             Ok(summary) => {
                 self.trim_summary = Some(summary);
                 true

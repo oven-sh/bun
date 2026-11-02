@@ -33,6 +33,15 @@ struct TrimSections {
 }
 
 pub fn apply(executable: &mut dyn ImageBytes, plan: &TrimPlan) -> Result<TrimSummary, TrimError> {
+    apply_leaving_room(executable, plan, 0)
+}
+
+/// As `apply`, for an executable that gets `segments_to_come` more segments afterwards: the cuts leave the headers room for them.
+pub fn apply_leaving_room(
+    executable: &mut dyn ImageBytes,
+    plan: &TrimPlan,
+    segments_to_come: usize,
+) -> Result<TrimSummary, TrimError> {
     if plan.is_empty() {
         return Ok(TrimSummary {
             removed: FeatureSet::EMPTY,
@@ -44,6 +53,7 @@ pub fn apply(executable: &mut dyn ImageBytes, plan: &TrimPlan) -> Result<TrimSum
         });
     }
     let mut editor = ImageEditor::open(executable)?;
+    editor.leave_room_for_segments(segments_to_come);
     let format = editor.format();
     let sections = find_trim_sections(&editor)?;
     let is_cut_template = check_state_untrimmed(&mut editor, sections.state)?;

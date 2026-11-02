@@ -474,6 +474,7 @@ mod tests {
             data: FileBytes::Vector(file.to_vec()),
             segment: read_struct(&[0; SEGMENT_COMMAND_SIZE]),
             section: read_struct(&[0; SECTION_SIZE]),
+            rewritten_end: 0,
         };
         let result = macho.add_symbols(table, IMAGE_OFFSET);
         (result, macho.data.to_vec())

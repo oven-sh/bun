@@ -12,7 +12,7 @@ mod settings;
 mod summary;
 pub mod table;
 
-pub use apply::apply;
+pub use apply::{apply, apply_leaving_room};
 pub use bun_exe_format::cut_model::{NoCutReason, Uncut, UncutReason};
 pub use bun_removable_features::{
     EnteredFrom, Feature, FeatureSet, Removal, RuntimeRequirement, TrimFeature,

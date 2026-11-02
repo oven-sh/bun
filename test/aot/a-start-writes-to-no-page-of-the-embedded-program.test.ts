@@ -40,18 +40,22 @@ function onMacOS() {
     proc_pidinfo: { args: ["i32", "i32", "u64", "ptr", "i32"], returns: "i32" },
   });
   const size = new BigUint64Array(1);
-  const start = Number(symbols.getsegmentdata(symbols._NSGetMachExecuteHeader(), Buffer.from("__BUN\\0"), ptr(size)));
-  const end = start + Number(size[0]);
   const regionInfo = 7, offsetOfPagesDirtied = 48, offsetOfPrivatePagesResident = 64, offsetOfAddress = 80, offsetOfSize = 88;
   const bytes = new Uint8Array(96);
   const info = new DataView(bytes.buffer);
   let pages = 0;
-  for (let address = start; address < end; ) {
-    if (symbols.proc_pidinfo(symbols.getpid(), regionInfo, BigInt(address), ptr(bytes), 96) !== 96) throw new Error("proc_pidinfo failed");
-    const regionStart = Number(info.getBigUint64(offsetOfAddress, true));
-    if (regionStart >= end) break;
-    pages += Math.max(info.getUint32(offsetOfPagesDirtied, true), info.getUint32(offsetOfPrivatePagesResident, true));
-    address = regionStart + Number(info.getBigUint64(offsetOfSize, true));
+  // The program has compiled code, so it is a segment in front of the code, one of the code, and one behind it.
+  for (const name of ["__BUN", "__BUN.1", "__BUN.2"]) {
+    const start = Number(symbols.getsegmentdata(symbols._NSGetMachExecuteHeader(), Buffer.from(name + "\\0"), ptr(size)));
+    if (!start) throw new Error("no segment " + name + " holds the embedded program");
+    const end = start + Number(size[0]);
+    for (let address = start; address < end; ) {
+      if (symbols.proc_pidinfo(symbols.getpid(), regionInfo, BigInt(address), ptr(bytes), 96) !== 96) throw new Error("proc_pidinfo failed");
+      const regionStart = Number(info.getBigUint64(offsetOfAddress, true));
+      if (regionStart >= end) break;
+      pages += Math.max(info.getUint32(offsetOfPagesDirtied, true), info.getUint32(offsetOfPrivatePagesResident, true));
+      address = regionStart + Number(info.getBigUint64(offsetOfSize, true));
+    }
   }
   return pages;
 }

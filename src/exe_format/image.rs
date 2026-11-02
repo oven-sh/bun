@@ -356,6 +356,7 @@ pub struct ImageEditor<'a> {
     format: ExecutableFormat,
     architecture: Architecture,
     spans: Vec<MappedSpan>,
+    segments_to_come: usize,
 }
 
 impl<'a> ImageEditor<'a> {
@@ -375,7 +376,14 @@ impl<'a> ImageEditor<'a> {
             format,
             architecture,
             spans,
+            segments_to_come: 0,
         })
+    }
+
+    /// The segments that the code of a Mach-O payload takes once the cuts are made: the headers keep room for them.
+    /// An ELF file has headers for its payload set aside, and a PE file has one section for it.
+    pub fn leave_room_for_segments(&mut self, segments_to_come: usize) {
+        self.segments_to_come = segments_to_come;
     }
 
     pub fn format(&self) -> ExecutableFormat {
@@ -419,7 +427,7 @@ impl<'a> ImageEditor<'a> {
         let bytes: &[u8] = &**self.bytes;
         match self.format {
             ExecutableFormat::Elf => elf_ranges::cut_model(bytes),
-            ExecutableFormat::MachO => macho_ranges::cut_model(bytes),
+            ExecutableFormat::MachO => macho_ranges::cut_model(bytes, self.segments_to_come),
             ExecutableFormat::Pe => pe_ranges::cut_model(bytes),
         }
     }

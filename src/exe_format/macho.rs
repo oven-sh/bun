@@ -2,6 +2,8 @@ use core::mem::size_of;
 
 // `std.macho` types ported locally (see macho_types.rs).
 use crate::align_up as align_size;
+use crate::image::AddressRange;
+use crate::image::ImageError;
 use crate::image::KnownSection;
 use crate::macho_types as macho;
 use crate::macho_types::{BlobIndex, CodeDirectory, CommandKind, SuperBlob, command_kind};
@@ -53,6 +55,12 @@ pub enum MachoError {
     MissingRequiredSegment,
     #[error("OutOfMemory")]
     OutOfMemory,
+    #[error(
+        "the padding behind the Mach-O load commands has no room for the segments of the compiled code"
+    )]
+    NoRoomForCodeSegments,
+    #[error("cannot give the compiled code segments of its own: {0}")]
+    CodeSegments(ImageError),
     /// A shifted `__LINKEDIT` load command offset no longer fits the u32 Mach-O stores.
     #[error("executable would exceed 4 GiB (Mach-O load commands store 32-bit file offsets)")]
     ExecutableTooLarge,
@@ -61,11 +69,22 @@ pub enum MachoError {
 }
 bun_core::oom_from_alloc!(MachoError);
 
+impl From<ImageError> for MachoError {
+    fn from(error: ImageError) -> MachoError {
+        match error {
+            ImageError::HeaderRoomExhausted => MachoError::NoRoomForCodeSegments,
+            error => MachoError::CodeSegments(error),
+        }
+    }
+}
+
 pub struct MachoFile {
     pub(crate) header: macho::mach_header_64,
     pub(crate) data: FileBytes,
     pub(crate) segment: macho::segment_command_64,
     pub(crate) section: macho::section_64,
+    /// Where the padding behind the load commands ends, once `split_payload_at_code` has written it anew.
+    pub(crate) rewritten_end: usize,
 }
 
 /// Expands to one `shift_one` call per named field.
@@ -137,10 +156,15 @@ impl MachoFile {
             data,
             segment: bun_core::ffi::zeroed(),
             section: bun_core::ffi::zeroed(),
+            rewritten_end: 0,
         }))
     }
 
+    /// `has_code`: nothing writes the payload at run time. `split_section_at_code` says which of it is executed.
     pub fn write_section(&mut self, data: &[u8], has_code: bool) -> Result<(), MachoError> {
+        if self.has_split_payload() {
+            self.split_payload_at_code(&[])?;
+        }
         let blob_alignment: u64 = 16 * 1024;
         const PAGE_SIZE: u64 = 1 << 12;
         const HASH_SIZE: usize = 32; // SHA256 = 32 bytes
@@ -209,7 +233,7 @@ impl MachoFile {
                                         align_vmsize(aligned_size, blob_alignment);
                                     self.segment.filesize = aligned_size;
                                     let protection = if has_code {
-                                        macho::PROT::READ | macho::PROT::EXECUTE
+                                        macho::PROT::READ
                                     } else {
                                         macho::PROT::READ | macho::PROT::WRITE
                                     };
@@ -225,13 +249,7 @@ impl MachoFile {
                                         align: (blob_alignment as f64).log2() as u32,
                                         reloff: 0,
                                         nreloc: 0,
-                                        flags: macho::S_REGULAR
-                                            | macho::S_ATTR_NO_DEAD_STRIP
-                                            | if has_code {
-                                                macho::S_ATTR_SOME_INSTRUCTIONS
-                                            } else {
-                                                0
-                                            },
+                                        flags: macho::S_REGULAR | macho::S_ATTR_NO_DEAD_STRIP,
                                         reserved1: 0,
                                         reserved2: 0,
                                         reserved3: 0,
@@ -413,6 +431,70 @@ impl MachoFile {
         Ok(())
     }
 
+    /// Gives each range of `code` a segment of its own, which may be executed. The rest of the payload that
+    /// `write_section` has written stays where nothing executes it. `code` counts from the start of that payload, in
+    /// ascending order, and each range begins and ends where a segment may.
+    ///
+    /// Answers how many segments may be executed. Fewer than the ranges: the padding behind the load commands has no
+    /// room for more, and the last of them holds the ranges that are left, with the data between them.
+    pub fn split_section_at_code(
+        &mut self,
+        code: &[core::ops::Range<u64>],
+    ) -> Result<usize, MachoError> {
+        if code.is_empty() {
+            return Ok(0);
+        }
+        let length_size = size_of::<u64>() as u64;
+        let payload_size = self.section.size.saturating_sub(length_size);
+        if code.iter().any(|range| range.end > payload_size) {
+            return Err(MachoError::OffsetOutOfRange);
+        }
+        let payload_start = self.section.addr + length_size;
+        let code: Vec<AddressRange> = code
+            .iter()
+            .map(|range| AddressRange {
+                start: payload_start + range.start,
+                end: payload_start + range.end,
+            })
+            .collect();
+        // `write_section` has sized `__LINKEDIT` for a signature that is written later. The file ends where the segment ends.
+        let linkedit = self
+            .segments()
+            .find(|segment| segment.seg_name() == SEG_LINKEDIT);
+        let linkedit = linkedit.ok_or(MachoError::MissingLinkeditSegment)?;
+        let end = linkedit
+            .fileoff
+            .checked_add(linkedit.filesize)
+            .and_then(|end| usize::try_from(end).ok())
+            .ok_or(MachoError::OffsetOverflow)?;
+        self.data.resize(end);
+        let code_segment_count = self.split_payload_at_code(&code)?;
+        self.validate_segments()?;
+        Ok(code_segment_count)
+    }
+
+    /// Whether an earlier build gave the code of this file's payload segments of its own.
+    fn has_split_payload(&self) -> bool {
+        let name = KnownSection::Payload.names().macho_segment;
+        self.segments().any(|segment| {
+            let piece = segment.seg_name().strip_prefix(name);
+            piece.is_some_and(|number| number.starts_with(b"."))
+        })
+    }
+
+    fn split_payload_at_code(&mut self, code: &[AddressRange]) -> Result<usize, MachoError> {
+        let split = crate::macho_ranges::split_payload_at_code(&mut self.data, code)?;
+        self.rewritten_end = split.header_room_end;
+        self.header = read_macho_header(&self.data)?;
+        Ok(split.code_segment_count)
+    }
+
+    fn segments(&self) -> impl Iterator<Item = macho::segment_command_64> + '_ {
+        self.iterator()
+            .filter(|command| command.cmd() == macho::LC::SEGMENT_64)
+            .filter_map(|command| command.cast::<macho::segment_command_64>())
+    }
+
     // Helper function to update load command offsets when resizing an existing section
     fn update_load_command_offsets(
         &mut self,
@@ -527,9 +609,9 @@ impl MachoFile {
     }
 
     /// What `write_section` and `add_symbols` leave as the template has it.
-    fn bytes_of_template(&self) -> core::ops::Range<usize> {
-        size_of::<macho::mach_header_64>() + self.header.sizeofcmds as usize
-            ..self.section.offset as usize
+    pub(crate) fn bytes_of_template(&self) -> core::ops::Range<usize> {
+        let commands_end = size_of::<macho::mach_header_64>() + self.header.sizeofcmds as usize;
+        commands_end.max(self.rewritten_end)..self.section.offset as usize
     }
 
     fn validate_segments(&self) -> Result<(), MachoError> {

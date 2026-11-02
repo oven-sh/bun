@@ -2262,6 +2262,36 @@ describe.concurrent("expect.addSnapshotSerializer()", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("is not asked about the accessor that a getter that throws leaves", async () => {
+    using dir = tempDir("snapshot-serializer-accessor", {
+      "a.test.js": `
+          const asked = [];
+          expect.addSnapshotSerializer({
+            test(value) {
+              asked.push(typeof value);
+              return value?.currency !== undefined;
+            },
+            serialize: value => value.amount + " " + value.currency,
+          });
+          test("t", () => {
+            const throws = { get() { throw new Error("not ready"); }, enumerable: true };
+            const value = Object.defineProperties({ price: { amount: 5, currency: "EUR" } }, { named: throws, [Symbol("symbol")]: throws });
+            expect(value).toMatchInlineSnapshot(\`
+              {
+                "named": [native code],
+                "price": 5 EUR,
+                [Symbol(symbol)]: [native code],
+              }
+            \`);
+            expect(asked).toEqual(["object", "object"]);
+          });
+        `,
+    });
+    const { stderr, exitCode, pass } = await runTests(String(dir), { CI: "true" });
+    expect({ pass, stderr: pass === 1 ? "" : stderr }).toEqual({ pass: 1, stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
   test("what it refuses, and what a serializer may not do", async () => {
     using dir = tempDir("snapshot-serializer-errors", {
       "a.test.js": `

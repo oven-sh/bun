@@ -373,8 +373,16 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_recvBufferTails, (JSC::JSGlobalObject * glob
 JSC_DEFINE_HOST_FUNCTION(jsFunction_residentBytes, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
 #if OS(LINUX)
-    auto* address = reinterpret_cast<void*>(static_cast<uintptr_t>(callFrame->argument(0).asNumber()));
-    size_t length = static_cast<size_t>(callFrame->argument(1).asNumber());
+    // test/aot/builtins/native-contract.test.ts calls every native function with operands of every kind.
+    constexpr double maxLength = 16 * 1024 * 1024;
+    JSValue addressValue = callFrame->argument(0);
+    JSValue lengthValue = callFrame->argument(1);
+    if (!addressValue.isNumber() || !lengthValue.isNumber())
+        return encodedJSUndefined();
+    if (!(addressValue.asNumber() >= 0 && addressValue.asNumber() <= JSC::maxSafeInteger()) || !(lengthValue.asNumber() >= 0 && lengthValue.asNumber() <= maxLength))
+        return JSValue::encode(jsNumber(-EINVAL));
+    auto* address = reinterpret_cast<void*>(static_cast<uintptr_t>(addressValue.asNumber()));
+    size_t length = static_cast<size_t>(lengthValue.asNumber());
     size_t pageSize = static_cast<size_t>(sysconf(_SC_PAGESIZE));
     Vector<unsigned char> pages(WTF::FillWith {}, (length + pageSize - 1) / pageSize, 0);
     if (length && mincore(address, length, pages.mutableSpan().data()) != 0)

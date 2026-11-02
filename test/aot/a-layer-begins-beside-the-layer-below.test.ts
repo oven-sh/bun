@@ -1,7 +1,10 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { test } from "./supported";
+
+raiseDefaultTimeout(240_000);
 
 // Over layers, the files of packages that only computed imports reach are a program of their own, under the files of the project.
 // The build of the layer above it begins beside its build. Of the program below a front end needs to know only which files it
@@ -126,7 +129,7 @@ test("a right guess: one build of the project's files, begun beside the build be
       "TestRunLayers:2,TestRunLayersBuiltAlone": { began: undefined, builds: oneAfterTheOther },
     },
   );
-}, 240_000);
+});
 
 test("the program below ends with more that is replaced than it was told of: the build above is started again", async () => {
   using dir = tempDir("aot-layer-begins-beside-again", {
@@ -142,7 +145,7 @@ test("the program below ends with more that is replaced than it was told of: the
     },
     { "TestRunLayers:2": { began: { guessed: 2, otherwise: 0, endsAsItBegan: false }, builds: startedAgain } },
   );
-}, 240_000);
+});
 
 test("a file that the project's files and the files behind the computed import both load runs once", async () => {
   // The lowest layer takes the files of packages that the test files reach by the names in their texts, and the guess takes what
@@ -178,7 +181,7 @@ test("a file that the project's files and the files behind the computed import b
     // The guess holds the two files that the import stands for. The program also holds the file that one of them requires.
     { "TestRunLayers:2": { began: { guessed: 2, otherwise: 1, endsAsItBegan: true }, builds: startedAgain } },
   );
-}, 240_000);
+});
 
 test("no computed import: the build above goes on without a program below", async () => {
   using dir = tempDir("aot-layer-begins-beside-nothing", {
@@ -191,4 +194,4 @@ test("no computed import: the build above goes on without a program below", asyn
     { stdout: ["value 1"], results: [" 0 fail", " 1 pass", "(pass) one", "Ran 1 test across 1 file."], exitCode: 0 },
     { "TestRunLayers:2": { began: { guessed: 0, otherwise: 0, endsAsItBegan: true }, builds: beside } },
   );
-}, 240_000);
+});

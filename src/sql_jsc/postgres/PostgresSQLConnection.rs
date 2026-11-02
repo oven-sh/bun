@@ -463,10 +463,11 @@ impl PostgresSQLConnection {
     }
 
     pub(crate) fn fail_with_js_value(&self, value: JSValue) {
-        self.end_session(value, SessionEnd::Failure);
+        self.end_session(value, false);
     }
 
-    fn end_session(&self, value: JSValue, end: SessionEnd) {
+    /// `server_ended`: the server ended the session with an ErrorResponse, see `clean_up_requests`.
+    fn end_session(&self, value: JSValue, server_ended: bool) {
         self.timers.stop();
         if self.status.get() == Status::Failed {
             self.update_has_pending_activity();
@@ -496,7 +497,7 @@ impl PostgresSQLConnection {
             // rejected below whatever `onclose` did.
             run_callback(self.global(), on_close, &[js_error]);
         }
-        self.clean_up_requests(Some(value), end);
+        self.clean_up_requests(Some(value), server_ended);
         self.update_has_pending_activity();
         if let Some(target) = self.cancel_target.take() {
             target
@@ -549,14 +550,7 @@ impl PostgresSQLConnection {
                 b"Connection closed before the connection was established",
                 AnyPostgresError::ConnectionFailed,
             ),
-            _ => this.end_session(
-                postgres_error_to_js(
-                    this.global(),
-                    Some(b"Connection closed"),
-                    AnyPostgresError::ConnectionClosed,
-                ),
-                SessionEnd::Closed,
-            ),
+            _ => this.fail(b"Connection closed", AnyPostgresError::ConnectionClosed),
         });
     }
 
@@ -1317,22 +1311,17 @@ impl PostgresSQLConnection {
         self.close();
     }
 
-    /// Which requests did not run, see [`SessionEnd`].
-    fn clean_up_requests(&self, js_reason: Option<JSValue>, end: SessionEnd) {
-        let in_transaction = self.is_in_transaction();
-        let mut is_head = true;
+    /// The head may have run. Behind it, a request that was never written did not, nor did any when
+    /// `server_ended`: the server reads nothing after the request that it was at work on.
+    fn clean_up_requests(&self, js_reason: Option<JSValue>, server_ended: bool) {
+        let mut behind_head = false;
         while let Some(request) = self.current() {
-            let status = request.status.get();
-            if !matches!(status, QueryStatus::Success | QueryStatus::Fail) {
-                let never_ran = !in_transaction
-                    && !request.is_rejected()
-                    && match end {
-                        _ if is_head => {
-                            end != SessionEnd::Failure && status == QueryStatus::Pending
-                        }
-                        SessionEnd::ServerEnded => true,
-                        _ => request.flags.get().counter == RequestCounter::Pending,
-                    };
+            if !matches!(
+                request.status.get(),
+                QueryStatus::Success | QueryStatus::Fail
+            ) {
+                let never_ran = behind_head
+                    && (server_ended || request.flags.get().counter == RequestCounter::Pending);
                 self.count(&request, RequestCounter::None);
                 let global = self.global();
                 let reason = js_reason.unwrap_or_else(|| {
@@ -1345,7 +1334,7 @@ impl PostgresSQLConnection {
                 }
             }
             self.discard_request(&request);
-            is_head = false;
+            behind_head = true;
         }
     }
 
@@ -1372,7 +1361,7 @@ impl PostgresSQLConnection {
         if self.status.get() == Status::Connected {
             self.status.set(Status::Disconnected);
             self.close_socket();
-            self.clean_up_requests(None, SessionEnd::Closed);
+            self.clean_up_requests(None, false);
         }
     }
 
@@ -1656,18 +1645,6 @@ impl PostgresSQLConnection {
             && !flags.contains(ConnectionFlags::HAS_BACKPRESSURE) // dont make sense to buffer more if we have backpressure
             && self.write_buffer.get().len() < MAX_PIPELINE_SIZE // buffer is too big need to flush before pipeline more
     }
-}
-
-/// Why the session ends: what it says of the requests that were written. One that was never written did not run.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum SessionEnd {
-    /// This side gave up on it, as the answer to what the head has written can be why.
-    Failure,
-    /// The socket closed. What was written may have run.
-    Closed,
-    /// With an ErrorResponse. The server reads nothing after the request that it was at work on, so none behind it
-    /// ran.
-    ServerEnded,
 }
 
 // Made by `writer()` and never stored: the connection outlives it.
@@ -2701,7 +2678,7 @@ impl PostgresSQLConnection {
                     let v =
                         crate::postgres::protocol::error_response_jsc::to_js(&err, self.global());
                     drop(err);
-                    self.end_session(v, SessionEnd::ServerEnded);
+                    self.end_session(v, true);
                     return Ok(());
                 };
                 let js_err =

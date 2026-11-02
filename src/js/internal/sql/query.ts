@@ -13,7 +13,6 @@ const _adapter = Symbol("adapter");
 const _waiter = Symbol("waiter");
 const _settled = Symbol("settled");
 const _copy = Symbol("copy");
-const _requeues = Symbol("requeues");
 
 const PublicPromise = Promise;
 
@@ -36,8 +35,6 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   public [_flags]: SQLQueryFlags;
   public [_waiter]: ((err: Error | null, connection: any) => void) | null;
   public [_settled]: Promise<void> | null;
-  /// How often requeue() has sent it again. -1: no connection of the pool was bound to it, see bindQuery().
-  public [_requeues]: number;
   /// What is behind the stream of a query with SQLQueryFlags.copy. No other query has the property.
   declare public [_copy]: { attach(handle: Handle): void; abandon(why: string): void };
 
@@ -115,7 +112,6 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     this[_flags] = flags;
     this[_waiter] = null;
     this[_settled] = null;
-    this[_requeues] = -1;
 
     this[_results] = null;
   }
@@ -238,19 +234,13 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     return this;
   }
 
-  /// The server never ran it on the connection that the pool bound to it, which is gone. It goes through its handler
-  /// again for another one. `false`: it is the caller's to reject.
-  requeue(limit: number): boolean {
-    const requeues = this[_requeues];
-    if (
-      requeues < 0 ||
-      requeues >= limit ||
-      this[_queryStatus] & (SQLQueryStatus.cancelled | SQLQueryStatus.error) ||
-      this[_flags] & SQLQueryFlags.copy
-    ) {
+  /// The server never ran it, and its connection is gone. It goes through its handler again, which finds it another
+  /// connection, or refuses it when the begin() or reserve() it belongs to has ended. `false`: the caller rejects it.
+  requeue(): boolean {
+    // Its stream stays with the handle it was attached to.
+    if (this[_flags] & SQLQueryFlags.copy) {
       return false;
     }
-    this[_requeues] = requeues + 1;
     // releases the connection
     this.#settling();
     this[_settled] = null;
@@ -405,7 +395,6 @@ export default {
     _results,
     _waiter,
     _copy,
-    _requeues,
     _adapter,
   },
 };

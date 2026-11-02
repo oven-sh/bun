@@ -1396,12 +1396,12 @@ await Promise.all([
 
 ### When the server closes a connection
 
-Bun sends several queries on one connection without waiting for each answer. When a PostgreSQL connection closes, for example because of a failover, a proxy restart or `pg_terminate_backend`, Bun knows which of its queries never ran: those it had not sent yet and, when the server ended the session with an error, those that wait behind the query the server was running.
+Bun sends several queries on one connection without waiting for each answer. A PostgreSQL connection can close while queries wait on it, for example after a failover, a proxy restart or `pg_terminate_backend`. Bun then knows which of those queries never ran. A query that waited behind the one the server was running never ran if Bun had not sent it yet. When the server ended the session with an error, none of the queries behind that one ran.
 
 - Bun sends a query that never ran again on another connection of the pool.
 - The query that the server was running fails with the server's error, such as `57P01`, or with `ERR_POSTGRES_CONNECTION_CLOSED`. It may have run.
-- Inside a transaction, every query that has not finished fails with the error that closed the connection, and the server rolls the transaction back. Retry the whole transaction.
-- With `max: 1` and on a reserved connection, Bun does not send a query again, because a manual `BEGIN` or a `SET` on that connection would not apply to it. A query that never ran rejects with `ERR_POSTGRES_CONNECTION_CLOSED` and the message `Connection closed before the query ran`, and its `cause` is the error that closed the connection. Such a query is safe to retry.
+- Inside `sql.begin` and on a reserved connection, every query that has not finished fails with the error that closed the connection. The server rolls back an open transaction. Retry the whole transaction.
+- With `max: 1`, Bun does not send a query again, because a manual `BEGIN` on that connection would not apply to it. Bun also does not send a `COPY` again. A query that never ran rejects with `ERR_POSTGRES_CONNECTION_CLOSED` and the message `Connection closed before the query ran`, and its `cause` is the error that closed the connection. Such a query is safe to retry.
 
 ### Hot reloading
 

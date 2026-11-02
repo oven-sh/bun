@@ -491,6 +491,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) enclosing_class_keyword: bun_ast::Range,
     pub(crate) import_items_for_namespace: HashMap<Ref, ImportItemForNamespaceMap>,
     pub(crate) is_import_item: RefMap,
+    /// `import { "not-a-name" as Local }`: the linker may turn `Local` into a computed property access.
+    pub(crate) string_named_import_items: RefMap,
     /// See `Ast::export_default_alias_of_import`.
     pub(crate) export_default_alias_of_import: Ref,
     pub(crate) named_imports: bun_ast::ast_result::NamedImports,
@@ -4430,6 +4432,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.is_import_item.insert(r#ref, ());
             // `ClauseItem.alias` is an arena-owned `StoreStr` valid for 'a.
             let alias: &'a [u8] = item.alias.slice();
+            if !bun_core::identifier::is_identifier(alias) {
+                self.string_named_import_items.insert(r#ref, ());
+            }
             self.check_for_non_bmp_code_point(item.alias_loc, alias);
 
             if self.options.features.inject_jest_globals
@@ -9856,6 +9861,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             esm_export_keyword: bun_ast::Range::NONE,
             enclosing_class_keyword: bun_ast::Range::NONE,
             import_items_for_namespace: Default::default(),
+            string_named_import_items: Default::default(),
             is_import_item: Default::default(),
             export_default_alias_of_import: Ref::NONE,
             scope_order_to_visit: &[],

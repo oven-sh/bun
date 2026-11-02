@@ -575,17 +575,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     .first()
                                     .is_some_and(u8::is_ascii_lowercase)
                             });
-                            if matches!(root.data, Data::EImportIdentifier(_))
-                                || is_defined_string
-                                || has_lowercase_name
-                            {
+                            let has_string_named_import = match root.data {
+                                Data::EImportIdentifier(id) => {
+                                    p.string_named_import_items.contains_key(&id.ref_)
+                                }
+                                _ => false,
+                            };
+                            if has_string_named_import || is_defined_string || has_lowercase_name {
                                 let (member, initializer, binding) = Self::jsx_tag_member(p, tag);
                                 tag = member;
                                 tag_initializer = Some(initializer);
                                 tag_binding = binding;
-                            } else if let Some(id) = identifier {
-                                p.symbols[id.ref_.inner_index() as usize]
-                                    .set_must_start_with_capital_letter_for_jsx(true);
+                            } else {
+                                let ref_ = match tag.data {
+                                    Data::EIdentifier(id) => Some(id.ref_),
+                                    Data::EImportIdentifier(id) => Some(id.ref_),
+                                    _ => None,
+                                };
+                                if let Some(ref_) = ref_ {
+                                    p.symbols[ref_.inner_index() as usize]
+                                        .set_must_start_with_capital_letter_for_jsx(true);
+                                }
                             }
                         }
                         break 'tagger tag;

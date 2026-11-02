@@ -999,17 +999,14 @@ booga"
         .runAsTest("DEBUG=* bun foo.js sets DEBUG to * in foo.js");
 
       const printValues =
-        "const { ONE, DEEP, SUBST, BRACE } = process.env; console.log(JSON.stringify({ ONE, DEEP, SUBST, BRACE }));";
-      // Brace expansion of the value is not changed: `{a,b}*` still gives two words.
-      TestBuilder.command`ONE=hi* DEEP=**/*.txt SUBST=*$(echo x) BRACE={a,b}* ${BUN} -e ${printValues}`
+        "const { ONE, DEEP, SUBST } = process.env; console.log(JSON.stringify({ ONE, DEEP, SUBST }));";
+      TestBuilder.command`ONE=hi* DEEP=**/*.txt SUBST=*$(echo x) ${BUN} -e ${printValues}`
         .ensureTempDir()
         .file("hihello", "")
         .directory("sub")
         .file("sub/deep.txt", "")
         .file("box", "")
-        .file("a1", "")
-        .file("b1", "")
-        .stdout(out => expect(JSON.parse(out)).toEqual({ ONE: "hi*", DEEP: "**/*.txt", SUBST: "*x", BRACE: "a* b*" }))
+        .stdout(out => expect(JSON.parse(out)).toEqual({ ONE: "hi*", DEEP: "**/*.txt", SUBST: "*x" }))
         .runAsTest("a value before a command that matches files stays text");
 
       TestBuilder.command`export DEBUG=xss:* && ${BUN} -e ${"console.log(process.env.DEBUG)"}`

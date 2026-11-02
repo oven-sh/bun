@@ -2144,12 +2144,18 @@ struct ExecveStdioRestorer {
     }
     void restore()
     {
+        // A background job gets SIGTTOU from tcsetattr, which would stop it.
+        sigset_t ttou;
+        sigemptyset(&ttou);
+        sigaddset(&ttou, SIGTTOU);
+        pthread_sigmask(SIG_BLOCK, &ttou, nullptr);
         for (int fd = 0; fd < 3; fd++) {
             if (flags[fd] != -1)
                 fcntl(fd, F_SETFL, flags[fd]);
             if (hasTio[fd])
                 tcsetattr(fd, TCSANOW, &tio[fd]);
         }
+        pthread_sigmask(SIG_UNBLOCK, &ttou, nullptr);
     }
 };
 

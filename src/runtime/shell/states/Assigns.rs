@@ -3,10 +3,12 @@
 
 use crate::shell::ast;
 use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, log};
+use crate::shell::io::OutKind;
+use crate::shell::io_writer;
 use crate::shell::states::base::Base;
 use crate::shell::states::expansion::Expansion;
 use crate::shell::yield_::Yield;
-use crate::shell::{EnvStr, ExitCode};
+use crate::shell::{EnvStr, ExitCode, ShellErr};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AssignCtx {
@@ -30,6 +32,8 @@ pub(crate) enum AssignsState {
     Expanding {
         idx: u32,
     },
+    /// The error of a value is being written to stderr.
+    WaitingWriteErr,
     Done,
 }
 
@@ -75,6 +79,7 @@ impl Assigns {
                     let child = Expansion::init(interp, shell, atom, this, true);
                     return Expansion::start(interp, child);
                 }
+                AssignsState::WaitingWriteErr => return Yield::suspended(),
                 AssignsState::Done => {
                     let parent = interp.as_assigns(this).base.parent;
                     return interp.child_done(parent, this, 0);
@@ -91,10 +96,9 @@ impl Assigns {
     ) -> Yield {
         // Child is always an Expansion.
         if exit_code != 0 {
+            let err = Expansion::take_err(interp, child);
             interp.deinit_node(child);
-            interp.as_assigns_mut(this).state = AssignsState::Done;
-            let parent = interp.as_assigns(this).base.parent;
-            return interp.child_done(parent, this, 1);
+            return Self::fail(interp, this, err);
         }
 
         let out = Expansion::take_out(interp, child);
@@ -137,6 +141,50 @@ impl Assigns {
         value_ref.deref();
 
         Yield::Next(this)
+    }
+
+    /// A value did not expand: its error goes to the stderr of the statement or the `Cmd` of these assignments.
+    fn fail(interp: &Interpreter, this: NodeId, err: Option<ShellErr>) -> Yield {
+        let parent = interp.as_assigns(this).base.parent;
+        let stderr = match (&err, interp.node(parent).io()) {
+            (Some(_), Some(io)) => io.stderr.clone(),
+            _ => OutKind::Ignore,
+        };
+        let me = interp.as_assigns_mut(this);
+        match (stderr, err) {
+            (OutKind::Fd(fd), Some(err)) => {
+                me.state = AssignsState::WaitingWriteErr;
+                let child = io_writer::ChildPtr::new(this, io_writer::WriterTag::Assigns);
+                fd.writer
+                    .enqueue(child, fd.captured, format!("{err}\n").as_bytes())
+            }
+            (OutKind::Pipe, Some(err)) => {
+                // SAFETY: single trampoline frame; no other borrow of the env's
+                // (or its parent's) stderr buffer is live.
+                let stderr = unsafe { me.base.shell_mut().buffered_stderr_mut() };
+                stderr.extend_from_slice(format!("{err}\n").as_bytes());
+                me.state = AssignsState::Done;
+                interp.child_done(parent, this, 1)
+            }
+            _ => {
+                me.state = AssignsState::Done;
+                interp.child_done(parent, this, 1)
+            }
+        }
+    }
+
+    /// The error of `fail` is written, or the write failed: the exit code is 1 in both cases.
+    pub(crate) fn on_io_writer_chunk(
+        interp: &Interpreter,
+        this: NodeId,
+        _written: usize,
+        _err: Option<bun_sys::SystemError>,
+    ) -> Yield {
+        let me = interp.as_assigns_mut(this);
+        debug_assert!(matches!(me.state, AssignsState::WaitingWriteErr));
+        me.state = AssignsState::Done;
+        let parent = me.base.parent;
+        interp.child_done(parent, this, 1)
     }
 
     pub(crate) fn deinit(_interp: &Interpreter, this: NodeId) {

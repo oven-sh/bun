@@ -143,7 +143,7 @@ pub(crate) use bun_shell_parser::{escape_8bit, needs_escape_utf8_ascii_latin1};
 // layout) at the arena/state-machine boundary.
 pub(crate) mod ast {
     use bun_shell_parser::parse::ast as p;
-    pub(crate) use p::{BinaryOp, CondExprOp, IoKind, RedirectFlags};
+    pub(crate) use p::{BinaryOp, CondExprOp, IoKind, ParamAction, RedirectFlags};
 
     pub(crate) type SmolList<T, const N: usize> = bun_shell_parser::parse::SmolList<'static, T, N>;
     pub(crate) type Script = p::Script<'static>;
@@ -160,6 +160,9 @@ pub(crate) mod ast {
     pub(crate) type Assign = p::Assign<'static>;
     pub(crate) type Atom = p::Atom<'static>;
     pub(crate) type SimpleAtom = p::SimpleAtom<'static>;
+    pub(crate) type CmdSubst = p::CmdSubst<'static>;
+    pub(crate) type ParamExp = p::ParamExp<'static>;
+    pub(crate) type ParamTarget = p::ParamTarget<'static>;
 }
 
 // Canonical 4-variant shell error enum. Defined in

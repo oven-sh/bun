@@ -1163,7 +1163,13 @@ impl UvPoll {
             // libuv's kqueue checks without its `EV_ADD` and `EV_DELETE`, which would replace and remove a knote that Bun has for the fd.
             let _ = (poll, uws_loop);
             let mode = bun_sys::fstat(fd)?.st_mode as bun_sys::Mode;
-            if bun_sys::S::ISREG(mode) || bun_sys::S::ISDIR(mode) {
+            let mut watchable = !bun_sys::S::ISREG(mode) && !bun_sys::S::ISDIR(mode);
+            // Like libuv on macOS, refuse a FIFO: kqueue doesn't report that its last writer closed it. A pipe is `S_IFIFO` too, and only a FIFO has a path.
+            if cfg!(target_os = "macos") && bun_sys::S::ISFIFO(mode) {
+                watchable =
+                    bun_sys::get_fd_path(fd, &mut bun_paths::path_buffer_pool::get()).is_err();
+            }
+            if !watchable {
                 return Err(bun_sys::Error::from_code(
                     bun_sys::E::EINVAL,
                     bun_sys::Tag::fstat,
@@ -1294,7 +1300,7 @@ impl UvPoll {
     }
 }
 
-/// Implements `uv_poll_init`. Like libuv, fails for an fd that the loop can't watch or already watches, and makes it non-blocking.
+/// Implements `uv_poll_init`. Like libuv, fails for an fd that the loop can't watch or that a started poll handle watches, and makes it non-blocking.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn uv_poll_init(
     loop_: *mut UvLoop,

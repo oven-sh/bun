@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDirWithFiles } from "harness";
 import { existsSync, readFileSync } from "node:fs";
 import { constants } from "node:os";
 import path from "node:path";
@@ -901,6 +901,16 @@ describe.if(!isWindows)("uv stubs", () => {
     // epoll refuses both fds. With kqueue, libuv's uv__io_check_fd returns UV_EINVAL for them.
     const refused = isLinux ? -constants.errno.EPERM : -constants.errno.EINVAL;
     expect(JSON.parse(stdout)).toEqual([refused, refused]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("uv_poll_init refuses a named FIFO on macOS, like libuv", async () => {
+    const { stdout, stderr, exitCode } = await runInChild(`
+      console.log(addon.testPollInitFifo(${JSON.stringify(path.join(tempdir, "poll-init-fifo"))}));
+    `);
+    expect(stderr).toBe("");
+    // libuv's uv__io_check_fd returns UV_EINVAL for a FIFO on macOS: kqueue doesn't report that its last writer closed it.
+    expect(stdout).toBe(`${isMacOS ? -constants.errno.EINVAL : 0}\n`);
     expect(exitCode).toBe(0);
   });
 

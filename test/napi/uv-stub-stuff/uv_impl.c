@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <uv.h>
 
@@ -1245,7 +1246,7 @@ static struct poll_test *init_poll(napi_env env, napi_value callback,
   if (fd == POLL_SOCKET) {
     rc = socketpair(AF_UNIX, SOCK_STREAM, 0, test->fds);
   } else {
-    int pipe_fds[2];
+    int pipe_fds[2] = {-1, -1};
     rc = pipe(pipe_fds);
     int watched = fd == POLL_PIPE_READ_END ? 0 : 1;
     test->fds[0] = pipe_fds[watched];
@@ -1631,23 +1632,39 @@ static napi_value test_poll_init_default_loop(napi_env env,
   return poll_init_result(env, uv_default_loop(), fds[0], fds[1]);
 }
 
-// testPollInitFile(path) returns uv_poll_init of an fd that's open on `path`.
-// uv.test.ts passes a regular file and a directory, which epoll can't watch
-// (EPERM) and libuv refuses for kqueue (UV_EINVAL).
-static napi_value test_poll_init_file(napi_env env, napi_callback_info info) {
+// Returns uv_poll_init of an fd that's open on the path in the first argument.
+// With `fifo` it makes a FIFO at that path first.
+static napi_value poll_init_path(napi_env env, napi_callback_info info,
+                                 bool fifo) {
   napi_value args[1];
   get_args(env, info, args, 1);
   char path[4096];
   size_t length = 0;
   int fd = -1;
   if (napi_get_value_string_utf8(env, args[0], path, sizeof(path), &length) ==
-      napi_ok)
-    fd = open(path, O_RDONLY);
+          napi_ok &&
+      (!fifo || mkfifo(path, 0600) == 0))
+    // Without O_NONBLOCK the open of a FIFO waits for a writer.
+    fd = open(path, O_RDONLY | O_NONBLOCK);
   if (fd < 0) {
-    napi_throw_error(env, NULL, "open failed");
+    napi_throw_error(env, NULL, fifo ? "mkfifo or open failed" : "open failed");
     return NULL;
   }
   return poll_init_result(env, get_loop(env, false), fd, -1);
+}
+
+// testPollInitFile(path) returns uv_poll_init of an fd that's open on `path`.
+// uv.test.ts passes a regular file and a directory, which epoll can't watch
+// (EPERM) and libuv refuses for kqueue (UV_EINVAL).
+static napi_value test_poll_init_file(napi_env env, napi_callback_info info) {
+  return poll_init_path(env, info, false);
+}
+
+// testPollInitFifo(path) makes a FIFO at `path` and returns uv_poll_init of an
+// fd that's open on it. epoll watches a FIFO. libuv refuses it on macOS
+// (UV_EINVAL), where kqueue doesn't report that its last writer closed it.
+static napi_value test_poll_init_fifo(napi_env env, napi_callback_info info) {
+  return poll_init_path(env, info, true);
 }
 
 static void unused_poll_cb(uv_poll_t *handle, int status, int events) {
@@ -1825,6 +1842,9 @@ napi_value Init(napi_env env, napi_value exports) {
 
   napi_create_function(env, NULL, 0, test_poll_init_file, NULL, &fn);
   napi_set_named_property(env, exports, "testPollInitFile", fn);
+
+  napi_create_function(env, NULL, 0, test_poll_init_fifo, NULL, &fn);
+  napi_set_named_property(env, exports, "testPollInitFifo", fn);
 
   napi_create_function(env, NULL, 0, test_poll_unref, NULL, &fn);
   napi_set_named_property(env, exports, "testPollUnref", fn);

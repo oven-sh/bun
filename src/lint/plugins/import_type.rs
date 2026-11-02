@@ -1,4 +1,4 @@
-//! `core/importType.js` of eslint-plugin-import: what kind of module a file means by a name.
+//! `core/importType.js` from eslint-plugin-import: classifies the module a specifier refers to.
 
 use crate::import_package_path::file_package_path;
 use crate::import_resolve::{Resolved, Resolvers};
@@ -10,7 +10,7 @@ use bun_lint::utils::node::is_builtin_module;
 use std::borrow::Cow;
 use std::cell::OnceCell;
 
-/// In the order of `types` in `import/order`. `Object` and `Type` are only known there.
+/// In the order of `types` in `import/order`. Only that rule uses `Object` and `Type`.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum ImportType {
     Builtin,
@@ -43,7 +43,7 @@ impl ImportType {
     }
 }
 
-/// `isScoped`: `/^@[^/]+\/?[^/]+/.test(name)`, which counts units of UTF-16.
+/// `isScoped`: `/^@[^/]+\/?[^/]+/.test(name)`, which counts UTF-16 code units.
 pub(crate) fn is_scoped(name: &[u8]) -> bool {
     let Some(rest) = name.strip_prefix(b"@") else {
         return false;
@@ -92,7 +92,7 @@ fn is_external_looking_name(name: &[u8]) -> bool {
     is_module(name) || is_scoped(name)
 }
 
-/// What is the same for all the names in a file.
+/// State shared by all the specifiers in a file.
 pub(crate) struct ImportTypes<'a> {
     file: &'a File<'a>,
     resolvers: Resolvers<'a>,
@@ -102,7 +102,7 @@ pub(crate) struct ImportTypes<'a> {
 }
 
 impl<'a> ImportTypes<'a> {
-    /// `None`: as [`Resolvers::of`].
+    /// `None` in the same cases as [`Resolvers::of`].
     pub(crate) fn of(file: &'a File<'a>) -> Option<ImportTypes<'a>> {
         Some(ImportTypes {
             file,
@@ -116,7 +116,7 @@ impl<'a> ImportTypes<'a> {
         &self.resolvers
     }
 
-    /// `isBuiltIn(name, settings, path)`. `None`: it is called without a path.
+    /// `isBuiltIn(name, settings, path)`. Pass `None` where upstream calls it without a path.
     pub(crate) fn is_built_in(&self, name: &[u8], path: Option<&Resolved>) -> bool {
         if path.is_some_and(|it| it.file().is_some()) || name.is_empty() {
             return false;
@@ -125,7 +125,7 @@ impl<'a> ImportTypes<'a> {
         is_builtin_module(&base) || self.settings.is_core_module(&base)
     }
 
-    /// Where the closest `package.json` is. `None`: there is none, and upstream throws.
+    /// The directory of the closest `package.json`. `None` if there's none, where upstream throws.
     fn package_path(&self) -> Option<&[u8]> {
         let found = self
             .package_path
@@ -133,7 +133,7 @@ impl<'a> ImportTypes<'a> {
         found.as_deref()
     }
 
-    /// `path.resolve(path)`, which is what `path.relative` begins with.
+    /// `path.resolve(path)`, which is the first thing `path.relative` does.
     fn absolute<'p>(&self, path: &'p [u8]) -> Cow<'p, [u8]> {
         match self.file.modules() {
             Some(modules) if !paths::is_absolute(path) => {
@@ -171,7 +171,7 @@ impl<'a> ImportTypes<'a> {
         !paths::relative(package_path, path).starts_with(b"../")
     }
 
-    /// `typeTest`. `path` is only asked for where it decides: to resolve a name costs the most.
+    /// `typeTest`. `path` is only called where the result depends on it, because resolving is the most expensive step.
     fn type_test<'p>(&self, name: &[u8], path: &dyn Fn() -> &'p Resolved) -> ImportType {
         if self.settings.is_internal_regex_match(name) {
             return ImportType::Internal;

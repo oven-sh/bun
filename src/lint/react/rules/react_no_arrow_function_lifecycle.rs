@@ -8,7 +8,7 @@ use bun_lint::rule::Plugin;
 /// Lifecycle methods should be methods on the prototype, not class fields
 pub struct NoArrowFunctionLifecycle;
 
-const LIFECYCLE: Message = Message::new(
+const LIFECYCLE: &Message = &Message::new(
     "lifecycle",
     "{{propertyName}} is a React lifecycle method, and should not be an arrow function or in a class field. \
      Use an instance method instead.",
@@ -23,7 +23,8 @@ impl Rule for NoArrowFunctionLifecycle {
         .fixable(Fixable::Code)
         .reports_at_the_end();
     const ON: On = On::new().members().props().finish();
-    /// Whether something with the name of a lifecycle method is an arrow function: few files need the components.
+    /// True if something named like a lifecycle method is an arrow function. Few files get that far and need the
+    /// component list.
     type State<'a> = bool;
 
     fn new(_: &Options) -> Self {
@@ -68,7 +69,8 @@ impl Rule for NoArrowFunctionLifecycle {
     }
 }
 
-/// `node.value`, if upstream's `reportNoArrowFunctionLifecycle` reports `node`. At an `accessor` upstream throws.
+/// Returns `node.value`, if upstream's `reportNoArrowFunctionLifecycle` reports `node`. Upstream throws on an
+/// `accessor`.
 fn arrow_function_of_lifecycle_method(node: Property<'_>) -> Option<Func<'_>> {
     let value = node.value()?.as_fn().filter(|it| it.is_arrow())?;
     if matches!(node, Property::Member(it) if !ast_utils::is_property_definition(it)) {
@@ -116,7 +118,7 @@ fn fix<'a>(fixer: Fixer<'a>, node: Property<'a>, key: Key<'a>, value: Func<'a>) 
         last = comment.span();
     }
     replacement.extend_from_slice(b"; }");
-    // The parenthesis after an object literal.
+    // Include the parenthesis after an object literal.
     let is_wrapped = body.tag() == ExprTag::Object;
     let has_semi = file.slice(Span::after(value.estree_span(), node.node().span().end)) == b";";
     Some(fixer.replace(Span::after(key, last.end + u32::from(is_wrapped) + u32::from(has_semi)), replacement))

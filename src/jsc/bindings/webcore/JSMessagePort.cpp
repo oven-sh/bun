@@ -325,6 +325,7 @@ static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_postMessageOver
 
 JSC_DEFINE_HOST_FUNCTION(jsMessagePortPrototypeFunction_postMessage, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(MessageChannel, jsMessagePortPrototypeFunction_postMessage);
     return IDLOperation<JSMessagePort>::call<jsMessagePortPrototypeFunction_postMessageOverloadDispatcher>(*lexicalGlobalObject, *callFrame, "postMessage");
 }
 
@@ -340,6 +341,7 @@ static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_startBody(JSC::
 
 JSC_DEFINE_HOST_FUNCTION(jsMessagePortPrototypeFunction_start, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(MessageChannel, jsMessagePortPrototypeFunction_start);
     return IDLOperation<JSMessagePort>::call<jsMessagePortPrototypeFunction_startBody>(*lexicalGlobalObject, *callFrame, "start");
 }
 
@@ -356,6 +358,7 @@ static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_closeBody(JSC::
 
 JSC_DEFINE_HOST_FUNCTION(jsMessagePortPrototypeFunction_close, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(MessageChannel, jsMessagePortPrototypeFunction_close);
     return IDLOperation<JSMessagePort>::call<jsMessagePortPrototypeFunction_closeBody>(*lexicalGlobalObject, *callFrame, "close");
 }
 
@@ -371,6 +374,7 @@ static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_refBody(JSC::JS
 
 JSC_DEFINE_HOST_FUNCTION(jsMessagePortPrototypeFunction_ref, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(MessageChannel, jsMessagePortPrototypeFunction_ref);
     return IDLOperation<JSMessagePort>::call<jsMessagePortPrototypeFunction_refBody>(*lexicalGlobalObject, *callFrame, "ref");
 }
 
@@ -386,6 +390,7 @@ static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_unrefBody(JSC::
 
 JSC_DEFINE_HOST_FUNCTION(jsMessagePortPrototypeFunction_unref, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(MessageChannel, jsMessagePortPrototypeFunction_unref);
     return IDLOperation<JSMessagePort>::call<jsMessagePortPrototypeFunction_unrefBody>(*lexicalGlobalObject, *callFrame, "unref");
 }
 
@@ -401,6 +406,7 @@ static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_hasRefBody(JSC:
 
 JSC_DEFINE_HOST_FUNCTION(jsMessagePortPrototypeFunction_hasRef, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(MessageChannel, jsMessagePortPrototypeFunction_hasRef);
     return IDLOperation<JSMessagePort>::call<jsMessagePortPrototypeFunction_hasRefBody>(*lexicalGlobalObject, *callFrame, "hasRef");
 }
 
@@ -498,8 +504,9 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
     return createWrapper<MessagePort>(globalObject, WTF::move(impl));
 }
 
-JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, MessagePort& impl)
+NEVER_INLINE JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, MessagePort& impl)
 {
+    BUN_REMOVABLE_DEFINITION(MessageChannel, static_cast<JSC::JSValue (*)(JSC::JSGlobalObject*, JSDOMGlobalObject*, MessagePort&)>(toJS));
     return wrap(lexicalGlobalObject, globalObject, impl);
 }
 

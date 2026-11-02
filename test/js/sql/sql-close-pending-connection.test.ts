@@ -6,7 +6,7 @@
 
 // https://github.com/oven-sh/bun/issues/32095
 //
-// A forced pool close (`close({ timeout: "0" })`) must resolve even when a
+// A forced pool close (`close({ timeout: 0 })`) must resolve even when a
 // pool connection has been accepted at the TCP level but the database
 // handshake has not completed yet (a database that is still starting up).
 // Previously the pending queries were rejected but the promise returned by
@@ -114,7 +114,7 @@ for (const [name, scheme, closedCode, timeoutCode] of drivers) {
       // the server holds the connection open without ever completing the
       // handshake, so the pool connection stays mid-handshake from here on
       await accepted;
-      await sql.close({ timeout: "0" as any });
+      await sql.close({ timeout: 0 });
       expect((await queryError).code).toBe(closedCode);
     } finally {
       server.close();
@@ -141,7 +141,7 @@ for (const [name, scheme, closedCode, timeoutCode] of drivers) {
       });
       const queryError = sql`SELECT 1`.catch(e => e);
       await accepted;
-      await sql.close({ timeout: "0" as any });
+      await sql.close({ timeout: 0 });
       expect((await queryError).code).toBe(closedCode);
       expect(onconnect).not.toHaveBeenCalled();
       expect(onclose).not.toHaveBeenCalled();
@@ -157,7 +157,7 @@ for (const [name, scheme, closedCode, timeoutCode] of drivers) {
       const connectError = sql.connect().catch(e => e);
       // close in the same tick: the pool slot exists but its native handle
       // has not been assigned yet
-      await sql.close({ timeout: "0" as any });
+      await sql.close({ timeout: 0 });
       expect((await connectError).code).toBe(closedCode);
     } finally {
       server.close();
@@ -196,7 +196,7 @@ for (const [name, scheme, closedCode, timeoutCode] of drivers) {
 
   // A graceful TLS close waits for the peer's close_notify. A connection that failed does not.
   test.each([
-    ["close()", `await sql.close({ timeout: "0" });`, closedCode],
+    ["close()", `await sql.close({ timeout: 0 });`, closedCode],
     ["the server's refusal", "", startTls[name].refusalCode],
   ])(`${name}: the process exits after %s of a TLS connection whose peer reads nothing more`, async (_, act, code) => {
     const server = await silentAfterFirstMessageTlsServer(name);
@@ -279,7 +279,7 @@ test("giving up on a connection in the middle of its TLS handshake", async () =>
         const query = sql\`SELECT 1\`.catch(err => err.code);
         if (!connectionTimeout) {
           await clientHello.promise;
-          await sql.close({ timeout: "0" });
+          await sql.close({ timeout: 0 });
         }
         return query;
       }
@@ -301,11 +301,6 @@ test("giving up on a connection in the middle of its TLS handshake", async () =>
 });
 
 // https://github.com/oven-sh/bun/issues/39940
-//
-// The per-slot "fired onconnect" marker is per connect cycle. A slot that
-// connected once, closed, and is now redialing must not reuse the marker from
-// the previous cycle: a forced close() that lands mid-reconnect used to fire
-// a second onclose for a cycle whose onconnect never fired.
 test("postgres: close() mid-reconnect does not fire onclose for the unfinished cycle", async () => {
   const firstClose = Promise.withResolvers<void>();
   const onconnect = mock();
@@ -316,7 +311,7 @@ test("postgres: close() mid-reconnect does not fire onclose for the unfinished c
   const { port, server } = await listeningServer(socket => {
     if (++connections === 1) {
       firstSocket = socket;
-      // complete the handshake so the slot fires onconnect
+      // complete the handshake so onconnect fires
       socket.once("data", () => socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()])));
     } else {
       // the reconnect stays mid-handshake
@@ -337,10 +332,10 @@ test("postgres: close() mid-reconnect does not fire onclose for the unfinished c
     firstSocket!.destroy();
     await firstClose.promise;
     expect(onclose).toHaveBeenCalledTimes(1);
-    // a new query redials the closed slot, then close() lands mid-handshake
+    // a new query dials again, then close() lands mid-handshake
     const queryError = sql`SELECT 1`.catch(e => e);
     await secondAccepted.promise;
-    await sql.close({ timeout: "0" as any });
+    await sql.close({ timeout: 0 });
     expect((await queryError).code).toBe("ERR_POSTGRES_CONNECTION_CLOSED");
     expect(onconnect).toHaveBeenCalledTimes(1);
     expect(onclose).toHaveBeenCalledTimes(1);
@@ -350,11 +345,7 @@ test("postgres: close() mid-reconnect does not fire onclose for the unfinished c
 });
 
 // https://github.com/oven-sh/bun/issues/32198
-//
-// The pool's connection array is allocated as `new Array(max)` and filled one
-// slot at a time when the pool starts. A function-valued `password` option
-// runs synchronously during that fill, so pool methods re-entered from it
-// used to dereference unassigned slots and throw a raw TypeError.
+// A function-valued `password` option runs synchronously inside the dial, so pool methods are re-entered from it.
 test("pool scans tolerate unassigned connection slots during pool start", async () => {
   const { port, server } = await neverAnsweringServer();
   let passwordCalls = 0;
@@ -384,13 +375,12 @@ test("pool scans tolerate unassigned connection slots during pool start", async 
   });
   try {
     sql.connect().catch(() => {});
-    // the pool-start fill loop runs synchronously inside connect(), invoking
-    // password() once per pool slot
+    // the connect() inside password() dials the second connection; `max` stops the third
     expect(passwordCalls).toBe(2);
     expect(errors).toEqual([]);
   } finally {
     // force an immediate close even with waiters queued
-    await sql.close({ timeout: "0" as any });
+    await sql.close({ timeout: 0 });
     server.close();
   }
 });
@@ -628,7 +618,7 @@ for (const [name, peer, url] of tlsDrivers) {
       query.catch(() => {});
       // The query is written at the end of this turn of the event loop.
       await new Promise(setImmediate);
-      await sql.close({ timeout: "0" as any });
+      await sql.close({ timeout: 0 });
       act(client);
       expect(await outcome.promise).toBe(expected);
       if (expected === "end") expect(received).toBeGreaterThan(64 * 1024);

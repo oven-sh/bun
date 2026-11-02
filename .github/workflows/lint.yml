@@ -23,6 +23,8 @@ jobs:
         uses: ./.github/actions/setup-bun
         with:
           bun-version: ${{ env.BUN_VERSION }}
+          # The action's default bucket can be many commits behind for canary.
+          download-url: https://github.com/oven-sh/bun/releases/download
       - name: Setup Dependencies
         run: |
           bun install --frozen-lockfile
@@ -32,12 +34,27 @@ jobs:
         run: |
           bun x tsc --noEmit -p scripts/build/tsconfig.json
           bun x tsc --noEmit -p scripts/tsconfig.json
+      - name: Fetch the engine's code generators
+        # The code generators and their types import TypeScript of the engine. A release of WebKit has it as an asset of its
+        # own; an older one only inside its tarballs.
+        run: |
+          version=$(sed -n 's/^export const WEBKIT_VERSION = "\(.*\)";$/\1/p' scripts/build/deps/webkit.ts)
+          release="https://github.com/oven-sh/WebKit/releases/download/autobuild-${version#autobuild-}"
+          mkdir -p vendor/WebKit
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/engine.tar.gz" "$release/bun-webkit-aot-sources.tar.gz" ||
+            curl -fsSL --retry 3 -o "$RUNNER_TEMP/engine.tar.gz" "$release/bun-webkit-linux-amd64-lto.tar.gz"
+          tar -xzf "$RUNNER_TEMP/engine.tar.gz" -C vendor/WebKit --strip-components=1 --exclude=bun-webkit/Source/JavaScriptCore/aot/tests bun-webkit/Source/JavaScriptCore/aot
+      - name: Check that the engine's generator writes what the build declares
+        env:
+          AOT_SCHEMA: ${{ github.workspace }}/vendor/WebKit/Source/JavaScriptCore/aot/ir/AOTSchema.def
+        run: bun test ./test/internal/aot-schema-generator.test.ts
       - name: Typecheck the built-in modules
         # The code generators write the types src/js/builtins.d.ts references (build/types) and the enums the dev
-        # server's sources import (src/runtime/bake/generated.ts).
+        # server's sources import (src/runtime/bake/generated.ts). A module with a second text in src/js/ahead-of-time is
+        # checked as the compiler reads it.
         run: |
           bun run build:types
-          bun x tsc --noEmit -p src/js/tsconfig.json
+          bun src/codegen/check-types-of-modules.ts
       - name: Typecheck the rest of src
         # The code generators, the class definitions and the other build-time TypeScript, then the dev server.
         run: |

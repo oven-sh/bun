@@ -31,11 +31,11 @@ const EVP_PKEY_ALG* pqcNidToAlg(int nid);
 namespace ExternZigHash {
 struct Hasher;
 
-Hasher* getByName(Zig::GlobalObject* globalObject, const StringView& name);
-Hasher* getFromOther(Zig::GlobalObject* globalObject, Hasher* hasher);
+Hasher* getByName(const StringView& name);
+Hasher* getFromOther(Hasher* hasher);
 void destroy(Hasher* hasher);
 bool update(Hasher* hasher, std::span<const uint8_t> data);
-uint32_t digest(Hasher* hasher, Zig::GlobalObject* globalObject, std::span<uint8_t> out);
+uint32_t digest(Hasher* hasher, std::span<uint8_t> out);
 uint32_t getDigestSize(Hasher* hasher);
 bool isXof(Hasher* hasher);
 
@@ -63,6 +63,8 @@ JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, Throw
 JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, ASCIILiteral argName, BufferEncodingType encoding);
 bool isKeyValidForCurve(const EC_GROUP* group, const ncrypto::BignumPointer& privateKey);
 std::optional<std::span<const uint8_t>> getBuffer(JSC::JSValue maybeBuffer);
+// Like Node, throws ERR_OUT_OF_RANGE "<argName> is too big" if `bytes` is longer than INT32_MAX.
+std::optional<WTF::Vector<uint8_t>> copyArgumentBytes(JSGlobalObject* globalObject, ThrowScope& scope, std::span<const uint8_t> bytes, ASCIILiteral argName);
 
 // For output encoding
 void parsePublicKeyEncoding(JSGlobalObject*, ThrowScope&, JSObject* enc, JSValue keyTypeValue, WTF::StringView objName, ncrypto::EVPKeyPointer::PublicKeyEncodingConfig&);

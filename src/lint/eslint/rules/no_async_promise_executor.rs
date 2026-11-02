@@ -4,7 +4,7 @@ use bun_lint::utils::oxlint::is_global_by_name;
 /// Disallow using an async function as a Promise executor.
 pub struct NoAsyncPromiseExecutor;
 
-const ASYNC: Message = Message::new("async", "Promise executor functions should not be async.");
+const ASYNC: &Message = &Message::new("async", "Promise executor functions should not be async.");
 
 impl Rule for NoAsyncPromiseExecutor {
     const META: Meta = Meta::eslint("no-async-promise-executor", Kind::Problem).recommended().hints();
@@ -38,6 +38,6 @@ impl Rule for NoAsyncPromiseExecutor {
         }
         let start = executor.span().start;
         cx.report(Span::new(start, start + "async".len() as u32), ASYNC)
-            .hint("If it throws, the promise never settles. Await outside of new Promise().");
+            .hint("If it throws, the promise never settles. Await outside new Promise().");
     }
 }

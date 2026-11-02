@@ -1,10 +1,9 @@
-//! `prettier-plugin-organize-imports` 4.3, which hands a file to the "Organize Imports" of
-//! TypeScript's language service before Prettier formats it: `organizeImports.ts` of TypeScript
-//! 5.9, and of `textChanges.ts` what it uses.
+//! `prettier-plugin-organize-imports` 4.3, which runs a file through the TypeScript language service's "Organize
+//! Imports" before Prettier formats it. This ports TypeScript 5.9's `organizeImports.ts` and the parts of
+//! `textChanges.ts` it uses.
 //!
-//! Imports that nothing refers to are removed, imports of one module are combined, and imports,
-//! what they import, and exports with a `from` are sorted. An empty line or a line of comments
-//! separates groups, which are sorted on their own.
+//! Removes unused imports, combines imports of the same module, and sorts imports, their specifiers, and exports with a
+//! `from`. An empty line or a line of comments separates groups, and each group is sorted separately.
 
 use super::compare::lowercase;
 use super::sort::stable_sort_by;
@@ -26,11 +25,11 @@ pub(super) enum TypeOrder {
 
 #[derive(Debug)]
 pub(super) struct Options {
-    /// `organizeImportsSkipDestructiveCodeActions`: nothing is removed.
+    /// `organizeImportsSkipDestructiveCodeActions`: don't remove anything.
     pub(super) skips_destructive_code_actions: bool,
     /// `organizeImportsTypeOrder`
     pub(super) type_order: Option<TypeOrder>,
-    /// `jsx` of the `tsconfig.json` is `react` or `react-native`: JSX uses what the next two name.
+    /// The `tsconfig.json`'s `jsx` is `react` or `react-native`, so JSX uses the names in the next two fields.
     pub(super) jsx_needs_import: bool,
     /// The first name in `jsxFactory`, or `reactNamespace`, or `React`.
     pub(super) jsx_namespace: Box<[u8]>,
@@ -66,7 +65,7 @@ const COMPARERS: [Comparer; 2] = [Comparer::IgnoringCase, Comparer::CaseSensitiv
 #[derive(Copy, Clone)]
 struct Declaration<'a> {
     statement: Stmt<'a>,
-    /// `getFullStart()`: where the token before it ends.
+    /// `getFullStart()`: the end of the previous token.
     full_start: u32,
 }
 
@@ -166,7 +165,7 @@ fn detect_named_import_organization_by_sort(
             },
         ));
     }
-    // For each order, the comparer that what is there is closest to being sorted by.
+    // For each order, the comparer under which the existing specifiers are closest to sorted.
     let best: Vec<(usize, Comparer, TypeOrder)> = (orders.iter())
         .map(|&order| {
             let unsortedness = |comparer: Comparer| -> usize {
@@ -216,8 +215,8 @@ fn compare_module_specifiers(a: Option<&[u8]>, b: Option<&[u8]>, comparer: Compa
 /// An element of `NamedImports`.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Specifier<'a> {
-    /// As it is written, but for an `a as a`, which is `a`.
-    Written(ImportSpec<'a>),
+    /// As in the source, except that `a as a` becomes `a`.
+    Existing(ImportSpec<'a>),
     /// `default as name`
     Default(Ident<'a>),
 }
@@ -225,23 +224,22 @@ enum Specifier<'a> {
 impl<'a> Specifier<'a> {
     fn key(&self) -> (bool, &'a [u8]) {
         match self {
-            Specifier::Written(it) => (it.is_type_only(), it.local().bytes()),
+            Specifier::Existing(it) => (it.is_type_only(), it.local().bytes()),
             Specifier::Default(name) => (false, name.bytes()),
         }
     }
 }
 
-/// An `ImportDeclaration` that is written in place of the old ones.
+/// An `ImportDeclaration` that replaces the old ones.
 #[derive(Clone)]
 struct NewImport<'a> {
-    /// The declaration that it is an update of: what its comments, its module specifier and its
-    /// attributes are those of.
+    /// The declaration it updates. Its comments, module specifier and attributes come from there.
     base: Declaration<'a>,
     name: Option<Ident<'a>>,
     namespace: Option<Ident<'a>>,
-    /// `Some` and empty: `{}`.
+    /// `Some` of an empty list is `{}`.
     named: Option<Vec<Specifier<'a>>>,
-    /// The import whose `{ }` it has, and whether all that is written there is still in them.
+    /// The import whose `{ }` it reuses, and true if everything in those braces in the source is still in them.
     braces: Option<(Import<'a>, bool)>,
 }
 
@@ -253,7 +251,7 @@ impl<'a> NewImport<'a> {
             namespace: import.namespace(),
             named: import
                 .has_named_imports()
-                .then(|| import.named().iter().map(Specifier::Written).collect()),
+                .then(|| import.named().iter().map(Specifier::Existing).collect()),
             braces: import.has_named_imports().then_some((import, true)),
         }
     }
@@ -277,7 +275,7 @@ impl<'a> NewImport<'a> {
         }
     }
 
-    /// Whether it says what `base` says.
+    /// True if it's the same import as `base`.
     fn is_unchanged(&self) -> bool {
         let Some(import) = self.base.import() else {
             return false;
@@ -292,7 +290,7 @@ impl<'a> NewImport<'a> {
                     import.has_named_imports()
                         && named.len() == import.named().len()
                         && named.iter().zip(import.named().iter()).all(|(new, old)| {
-                            *new == Specifier::Written(old)
+                            *new == Specifier::Existing(old)
                                 && !(old.is_renamed()
                                     && !old.imported().is_string()
                                     && old.imported().bytes() == old.local().bytes())
@@ -302,13 +300,13 @@ impl<'a> NewImport<'a> {
     }
 }
 
-/// An element of named imports or exports that is written.
+/// An element of named imports or exports to print.
 struct Element {
-    /// Where it is in the file, if it is.
+    /// Its span in the file, if it comes from the file.
     span: Option<Span>,
     code: Vec<u8>,
-    /// Where the statement starts that it is in, and which element of that it is.
-    place: (u32, usize),
+    /// The start of the statement it's from, and its index in that statement.
+    origin: (u32, usize),
 }
 
 /// Where `skipTrivia` stops: `stopAfterLineBreak`, `stopAtComments`.
@@ -320,7 +318,7 @@ enum Stops {
     AfterLineBreakOrAtComment,
 }
 
-/// How the elements of named imports or exports are written.
+/// How the elements of named imports or exports are printed.
 #[derive(Copy, Clone)]
 struct ListFormat {
     /// `ListFormat.PreferNewLine`
@@ -333,15 +331,15 @@ struct Organizer<'a, 'o> {
     text: &'a [u8],
     options: &'o Options,
     end_of_line: &'static [u8],
-    /// The comments of the file.
+    /// The file's comments.
     comments: Vec<(Span, bool)>,
     module_comparer: Comparer,
-    /// `None`: there is nothing to tell it by.
+    /// `None` if there's nothing to detect it from.
     named_comparer: Option<Comparer>,
     type_order: TypeOrder,
-    /// The names that JSX uses, if there is JSX and it uses any.
+    /// The names that JSX uses, if the file has JSX and it uses any.
     jsx_names: Vec<Vec<u8>>,
-    /// What replaces which part of the text.
+    /// Replacements: a span of the text and its new content.
     changes: Vec<(Span, Vec<u8>)>,
 }
 
@@ -358,7 +356,7 @@ impl<'a> Organizer<'a, '_> {
             .filter(|comment| comment.0.start == at)
     }
 
-    /// If a line break is at `at`, where it ends.
+    /// The end of the line break at `at`, if there is one.
     fn line_break_end(&self, at: u32) -> Option<u32> {
         match self.text.get(at as usize..).unwrap_or_default() {
             [b'\r', b'\n', ..] => Some(at + 2),
@@ -368,7 +366,7 @@ impl<'a> Organizer<'a, '_> {
         }
     }
 
-    fn blank_end(&self, at: u32) -> Option<u32> {
+    fn space_or_tab_end(&self, at: u32) -> Option<u32> {
         match self.text.get(at as usize..).unwrap_or_default() {
             [b' ' | b'\t' | 0x0B | 0x0C, ..] => Some(at + 1),
             [0xC2, 0xA0, ..] => Some(at + 2),
@@ -391,7 +389,7 @@ impl<'a> Organizer<'a, '_> {
                 if stops_after_line_break {
                     return at;
                 }
-            } else if let Some(end) = self.blank_end(at) {
+            } else if let Some(end) = self.space_or_tab_end(at) {
                 at = end;
             } else if let Some(comment) = self.comment_at(at).filter(|_| !stops_at_comments) {
                 at = comment.0.end;
@@ -405,7 +403,7 @@ impl<'a> Organizer<'a, '_> {
     fn trailing_comments(&self, mut at: u32) -> Vec<(Span, bool)> {
         let mut found = Vec::new();
         loop {
-            if let Some(end) = self.blank_end(at) {
+            if let Some(end) = self.space_or_tab_end(at) {
                 at = end;
             } else if let Some(comment) = self.comment_at(at) {
                 found.push(comment);
@@ -424,7 +422,7 @@ impl<'a> Organizer<'a, '_> {
         loop {
             if let Some(end) = self.line_break_end(at) {
                 (at, is_collecting) = (end, true);
-            } else if let Some(end) = self.blank_end(at) {
+            } else if let Some(end) = self.space_or_tab_end(at) {
                 at = end;
             } else if let Some(comment) = self.comment_at(at) {
                 if is_collecting {
@@ -496,8 +494,7 @@ impl<'a> Organizer<'a, '_> {
 
     // ───────────────────────────── organizeImports.ts ─────────────────────────────
 
-    /// `isNewGroup`: whether there are two line breaks, not counting those in comments, before
-    /// `declaration`.
+    /// `isNewGroup`: true if there are two line breaks before `declaration`, not counting those in comments.
     fn is_new_group(&self, declaration: &Declaration) -> bool {
         let (mut at, mut line_breaks) = (declaration.full_start, 0);
         while at < declaration.span().start {
@@ -531,9 +528,9 @@ impl<'a> Organizer<'a, '_> {
         groups
     }
 
-    /// Whether a JSDoc comment names `name` where TypeScript takes it for a reference: in the type
-    /// after a tag, as what a `{@link}` links to, or after `@see` and the like.
-    fn is_named_in_jsdoc(&self, name: &[u8]) -> bool {
+    /// True if a JSDoc comment mentions `name` where TypeScript treats it as a reference: in the type after a tag, as a
+    /// `{@link}` target, or after `@see` and similar tags.
+    fn is_referenced_in_jsdoc(&self, name: &[u8]) -> bool {
         let is_word = |byte: Option<&u8>| {
             byte.is_some_and(|byte| {
                 byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$') || !byte.is_ascii()
@@ -544,7 +541,7 @@ impl<'a> Organizer<'a, '_> {
             .filter(|comment| comment.1)
             .any(|comment| {
                 let text = self.file.slice(comment.0);
-                // One that follows something on its line documents nothing, unless that is a parameter.
+                // A comment that follows code on its line documents nothing, unless it precedes a parameter.
                 let before = self
                     .text
                     .get(..comment.0.start as usize)
@@ -609,14 +606,14 @@ impl<'a> Organizer<'a, '_> {
         let Some(symbol) = Node::Stmt(statement).scope().get_name(name.name()) else {
             return true;
         };
-        // For TypeScript, neither part of the tag `<a:b>` is a name.
+        // TypeScript doesn't treat either part of the tag `<a:b>` as a name.
         let is_in_namespaced_tag = |node: Node| matches!(node, Node::Expr(tag) if matches!(tag.kind(), ExprKind::String(_)));
         self.jsx_names.iter().any(|it| it == name.bytes())
             || symbol.declarations().len() > 1
             || symbol
                 .references()
                 .any(|it| !it.is_jsx_pragma() && !is_in_namespaced_tag(it.node()))
-            || self.is_named_in_jsdoc(name.bytes())
+            || self.is_referenced_in_jsdoc(name.bytes())
     }
 
     /// `removeUnusedImports`
@@ -634,7 +631,7 @@ impl<'a> Organizer<'a, '_> {
                 .filter(|name| self.is_used(*name, statement));
             if let Some(named) = &mut import.named {
                 let count = named.len();
-                named.retain(|it| matches!(it, Specifier::Written(it) if self.is_used(it.local(), statement)));
+                named.retain(|it| matches!(it, Specifier::Existing(it) if self.is_used(it.local(), statement)));
                 import.braces = import.braces.map(|it| (it.0, named.len() == count));
                 if named.is_empty() && count > 0 {
                     import.named = None;
@@ -643,7 +640,7 @@ impl<'a> Organizer<'a, '_> {
             if import.has_clause() {
                 used.push(import);
             } else if self.has_module_declaration_matching(import.base.module()) {
-                // `declare module "m"` needs an import of it to be an augmentation.
+                // `declare module "m"` is only an augmentation if the file imports `"m"`.
                 match (self.file.is_declaration_file(), import.base.import()) {
                     (false, Some(original)) => used.push(NewImport::of(import.base, original)),
                     _ => used.push(import),
@@ -666,7 +663,7 @@ impl<'a> Organizer<'a, '_> {
             })
     }
 
-    /// What the imports that are combined have to have in common.
+    /// The key that imports must share to be combined.
     fn attributes_key(&self, declaration: &Declaration<'a>) -> Vec<u8> {
         let Some(attributes) = declaration.statement.import_attributes() else {
             return Vec::new();
@@ -705,15 +702,16 @@ impl<'a> Organizer<'a, '_> {
         for (_, group) in by_attributes {
             coalesced.extend(group.iter().find(|it| !it.has_clause()).cloned());
             for is_type_only in [false, true] {
-                let of_kind = || {
+                let same_kind = || {
                     group
                         .iter()
                         .filter(move |it| it.has_clause() && it.is_type_only() == is_type_only)
                 };
-                let defaults: Vec<&NewImport> = of_kind().filter(|it| it.name.is_some()).collect();
+                let defaults: Vec<&NewImport> =
+                    same_kind().filter(|it| it.name.is_some()).collect();
                 let mut namespaces: Vec<&NewImport> =
-                    of_kind().filter(|it| it.namespace.is_some()).collect();
-                let named: Vec<&NewImport> = of_kind().filter(|it| it.named.is_some()).collect();
+                    same_kind().filter(|it| it.namespace.is_some()).collect();
+                let named: Vec<&NewImport> = same_kind().filter(|it| it.named.is_some()).collect();
                 if let (false, [default], [namespace], []) =
                     (is_type_only, &defaults[..], &namespaces[..], &named[..])
                 {
@@ -781,7 +779,7 @@ impl<'a> Organizer<'a, '_> {
         coalesced
     }
 
-    /// The groups of `declarations` by module, sorted.
+    /// `declarations` grouped by module, with the groups sorted.
     fn sorted_by_module(&self, declarations: &[Declaration<'a>]) -> Vec<Vec<Declaration<'a>>> {
         let mut by_module: Vec<Vec<Declaration<'a>>> = Vec::new();
         for declaration in declarations {
@@ -807,7 +805,7 @@ impl<'a> Organizer<'a, '_> {
             .collect()
     }
 
-    /// The comments that the printer writes before and after the declaration `base`, around `code`.
+    /// Writes `code` with the comments that the printer emits before and after the declaration `base`.
     fn with_comments(
         &self,
         base: &Declaration<'a>,
@@ -818,8 +816,10 @@ impl<'a> Organizer<'a, '_> {
         if has_leading_comments {
             for (span, is_block) in self.leading_comments(base.full_start) {
                 out.extend_from_slice(self.file.slice(span));
-                let is_on_its_own_line =
-                    !is_block || self.line_break_end(self.skip_blanks(span.end)).is_some();
+                let is_on_its_own_line = !is_block
+                    || self
+                        .line_break_end(self.skip_spaces_and_tabs(span.end))
+                        .is_some();
                 out.extend_from_slice(if is_on_its_own_line {
                     self.end_of_line
                 } else {
@@ -834,14 +834,14 @@ impl<'a> Organizer<'a, '_> {
         }
     }
 
-    fn skip_blanks(&self, mut at: u32) -> u32 {
-        while let Some(end) = self.blank_end(at) {
+    fn skip_spaces_and_tabs(&self, mut at: u32) -> u32 {
+        while let Some(end) = self.space_or_tab_end(at) {
             at = end;
         }
         at
     }
 
-    /// `getFullStart()` of what starts at `start`: where the token before it ends.
+    /// `getFullStart()` of the node that starts at `start`: the end of the previous token.
     fn full_start_of(&self, start: u32) -> u32 {
         let mut at = start;
         loop {
@@ -872,7 +872,7 @@ impl<'a> Organizer<'a, '_> {
         out.extend_from_slice(self.file.slice(comment.0));
         let ends_line = !comment.1
             || self
-                .line_break_end(self.skip_blanks(comment.0.end))
+                .line_break_end(self.skip_spaces_and_tabs(comment.0.end))
                 .is_some();
         out.extend_from_slice(if ends_line { self.end_of_line } else { b" " });
     }
@@ -889,7 +889,7 @@ impl<'a> Organizer<'a, '_> {
             .for_each(|it| self.write_comment(it, out));
     }
 
-    /// `writer.writeLine()`: nothing at the start of a line.
+    /// `writer.writeLine()`: a no-op at the start of a line.
     fn write_line(&self, out: &mut Vec<u8>) {
         if out.last() == Some(&b' ') {
             out.pop();
@@ -899,8 +899,8 @@ impl<'a> Organizer<'a, '_> {
         }
     }
 
-    /// `emitNodeListItems` for the elements of named imports or exports, with the comments that
-    /// the printer writes with them. `list`: the list that the braces are those of.
+    /// `emitNodeListItems` for the elements of named imports or exports, with the comments the printer emits with them.
+    /// `list` is the start of the statement whose braces these are.
     fn write_elements(
         &self,
         elements: &[Element],
@@ -920,7 +920,7 @@ impl<'a> Organizer<'a, '_> {
         let starts_on_new_line = prefers_new_lines
             || (elements
                 .first()
-                .filter(|it| it.place.0 == list)
+                .filter(|it| it.origin.0 == list)
                 .and_then(|it| it.span))
             .is_some_and(|span| self.has_line_break_in(self.full_start_of(span.start), span.start));
         out.extend_from_slice(if starts_on_new_line {
@@ -928,7 +928,7 @@ impl<'a> Organizer<'a, '_> {
         } else {
             b" "
         });
-        // Whether what is between the `,` before an element and the end of that line is written.
+        // True while the comments between the `,` before an element and the end of that line are printed.
         let mut writes_intervening_comments = !starts_on_new_line;
         let mut previous: Option<&Element> = None;
         for element in elements {
@@ -941,7 +941,8 @@ impl<'a> Organizer<'a, '_> {
                 // `getSeparatingLineTerminatorCount`
                 let is_on_new_line = match (previous.span, element.span) {
                     (Some(before), Some(span))
-                        if previous.place == (element.place.0, element.place.1.wrapping_sub(1)) =>
+                        if previous.origin
+                            == (element.origin.0, element.origin.1.wrapping_sub(1)) =>
                     {
                         self.has_line_break_in(before.end, span.start)
                     }
@@ -1025,11 +1026,11 @@ impl<'a> Organizer<'a, '_> {
     }
 
     fn import_code(&self, import: &NewImport<'a>) -> Vec<u8> {
-        if self.is_written_alike(import) {
-            return self.as_written(&import.base);
+        if self.prints_same_as_source(import) {
+            return self.source_text_of(&import.base);
         }
         let original = import.base.import();
-        // What is before and after the braces is written as it is, with its comments.
+        // The text before and after the braces is copied as is, with its comments.
         let own_braces = original
             .filter(|it| {
                 import.named.is_some() && import.braces.is_some_and(|braces| braces.0 == *it)
@@ -1069,9 +1070,9 @@ impl<'a> Organizer<'a, '_> {
                     Specifier::Default(name) => Element {
                         span: None,
                         code: [b"default as ", self.file.slice(name.span())].concat(),
-                        place: (0, 0),
+                        origin: (0, 0),
                     },
-                    Specifier::Written(it) => {
+                    Specifier::Existing(it) => {
                         let is_redundant = it.is_renamed()
                             && !it.imported().is_string()
                             && it.imported().bytes() == it.local().bytes();
@@ -1089,7 +1090,7 @@ impl<'a> Organizer<'a, '_> {
                                 .concat(),
                                 false => self.file.slice(it.span()).to_vec(),
                             },
-                            place: (
+                            origin: (
                                 it.import().stmt().span().start,
                                 it.import()
                                     .named()
@@ -1141,8 +1142,8 @@ impl<'a> Organizer<'a, '_> {
         out
     }
 
-    /// `organizeDeclsWorker`, once what replaces `old` is known: for each new declaration, the
-    /// old one that it has the comments of, and its code.
+    /// `organizeDeclsWorker`, once the replacement for `old` is known. `new` holds, for each new declaration, the old
+    /// one whose comments it gets, and its code.
     fn replace(&mut self, old: &[Declaration<'a>], new: &[(Declaration<'a>, Vec<u8>)]) {
         let Some((first, rest)) = old.split_first() else {
             return;
@@ -1186,9 +1187,8 @@ impl<'a> Organizer<'a, '_> {
         }
     }
 
-    /// Whether writing `declarations` anew in the same order changes nothing: no other statement
-    /// is between them, no comment that is written with the second or a later one, and none has
-    /// its `;` on a later line.
+    /// True if reprinting `declarations` in the same order changes nothing: there's no other statement between them, no
+    /// comment that's printed with the second or a later one, and none has its `;` on a later line.
     fn is_plain(&self, declarations: &[Declaration<'a>]) -> bool {
         !declarations
             .iter()
@@ -1199,7 +1199,7 @@ impl<'a> Organizer<'a, '_> {
             })
     }
 
-    /// Of a declaration with its `;` on a later line, what is before the `;`.
+    /// For a declaration with its `;` on a later line, returns the text before the `;`.
     fn before_far_semicolon(&self, declaration: &Declaration<'a>) -> Option<&'a [u8]> {
         let text = self.file.slice(declaration.span()).strip_suffix(b";")?;
         let before = text.trim_ascii_end();
@@ -1212,8 +1212,8 @@ impl<'a> Organizer<'a, '_> {
             .then_some(before)
     }
 
-    /// `declaration` the way it is written, with its `;` where the printer writes it.
-    fn as_written(&self, declaration: &Declaration<'a>) -> Vec<u8> {
+    /// `declaration` as in the source, with its `;` where the printer puts it.
+    fn source_text_of(&self, declaration: &Declaration<'a>) -> Vec<u8> {
         match self.before_far_semicolon(declaration) {
             Some(before) => [before, b";"].concat(),
             None => self.file.slice(declaration.span()).to_vec(),
@@ -1229,9 +1229,9 @@ impl<'a> Organizer<'a, '_> {
             .is_some_and(|comment| comment.0.end <= span.end)
     }
 
-    /// Whether the printer writes `import` the way it is written. It makes a new list of what is
-    /// in the braces, and leaves out some of the comments there.
-    fn is_written_alike(&self, import: &NewImport<'a>) -> bool {
+    /// True if the printer's output for `import` matches the source. The printer builds a new list from the braces'
+    /// contents and drops some of the comments there.
+    fn prints_same_as_source(&self, import: &NewImport<'a>) -> bool {
         import.is_unchanged()
             && !(import.base.import())
                 .and_then(|it| self.braces_in(it.clause_span()))
@@ -1258,7 +1258,7 @@ impl<'a> Organizer<'a, '_> {
             && new
                 .iter()
                 .zip(old)
-                .all(|(new, old)| new.base.span() == old.span() && self.is_written_alike(new));
+                .all(|(new, old)| new.base.span() == old.span() && self.prints_same_as_source(new));
         if !is_same {
             let new: Vec<(Declaration<'a>, Vec<u8>)> = new
                 .iter()
@@ -1283,7 +1283,7 @@ impl<'a> Organizer<'a, '_> {
             .map(|it| Element {
                 span: Some(it.span()),
                 code: self.file.slice(it.span()).to_vec(),
-                place: (
+                origin: (
                     it.export().stmt().span().start,
                     it.export()
                         .items()
@@ -1323,11 +1323,11 @@ impl<'a> Organizer<'a, '_> {
                 group
                     .iter()
                     .find(is_star)
-                    .map(|it| (*it, self.as_written(it))),
+                    .map(|it| (*it, self.source_text_of(it))),
             );
             is_same &= group.iter().filter(is_star).count() <= 1;
             for is_type_only in [false, true] {
-                let of_kind: Vec<&Declaration> = (group.iter())
+                let same_kind: Vec<&Declaration> = (group.iter())
                     .filter(|it| match it.statement.kind() {
                         StmtKind::ExportNamed(export) => export.is_type_only() == is_type_only,
                         StmtKind::ExportStar {
@@ -1338,15 +1338,15 @@ impl<'a> Organizer<'a, '_> {
                         _ => false,
                     })
                     .collect();
-                let Some(&first) = of_kind.first() else {
+                let Some(&first) = same_kind.first() else {
                     continue;
                 };
-                is_same &= of_kind.len() == 1;
+                is_same &= same_kind.len() == 1;
                 let StmtKind::ExportNamed(export) = first.statement.kind() else {
-                    new.push((*first, self.as_written(first)));
+                    new.push((*first, self.source_text_of(first)));
                     continue;
                 };
-                let written: Vec<ExportSpec<'a>> = (of_kind.iter())
+                let source_specs: Vec<ExportSpec<'a>> = (same_kind.iter())
                     .filter_map(|it| {
                         if let StmtKind::ExportNamed(export) = it.statement.kind() {
                             Some(export.items())
@@ -1356,7 +1356,7 @@ impl<'a> Organizer<'a, '_> {
                     })
                     .flat_map(List::iter)
                     .collect();
-                let mut items = written.clone();
+                let mut items = source_specs.clone();
                 stable_sort_by(&mut items, |a, b| {
                     let key = |it: &ExportSpec<'a>| (it.is_type_only(), it.exported().bytes());
                     compare_specifiers(
@@ -1368,14 +1368,14 @@ impl<'a> Organizer<'a, '_> {
                 });
                 let is_sorted = items
                     .iter()
-                    .zip(&written)
+                    .zip(&source_specs)
                     .all(|(a, b)| a.span() == b.span())
                     && !self.has_comment_in(first.span());
                 is_same &= is_sorted;
                 new.push((
                     *first,
-                    if is_sorted && of_kind.len() == 1 {
-                        self.as_written(first)
+                    if is_sorted && same_kind.len() == 1 {
+                        self.source_text_of(first)
                     } else {
                         self.export_code(first, export, &items)
                     },
@@ -1393,8 +1393,8 @@ impl<'a> Organizer<'a, '_> {
         }
     }
 
-    /// The imports, and the groups of exports (`getTopLevelExportGroups`), among `statements`,
-    /// before which the token before ends at `start`.
+    /// The imports and the groups of exports (`getTopLevelExportGroups`) among `statements`. `start` is the end of the
+    /// token before the first statement.
     fn declarations_in(
         &self,
         statements: List<'a, Stmt<'a>>,
@@ -1403,7 +1403,7 @@ impl<'a> Organizer<'a, '_> {
         let (mut imports, mut exports): (Vec<Declaration<'a>>, Vec<Vec<Declaration<'a>>>) =
             (Vec::new(), vec![Vec::new()]);
         let mut full_start = start;
-        // Exports without a `from` that follow each other end a group.
+        // A run of consecutive exports without a `from` ends a group.
         let mut is_in_local_run = false;
         for statement in statements.iter() {
             let declaration = Declaration {
@@ -1443,8 +1443,8 @@ fn stable_sort_by_clone<T: Clone>(items: &mut Vec<T>, compare: impl Fn(&T, &T) -
         .collect();
 }
 
-/// The text that the plugin hands to Prettier in place of `file`. `None`: the same text, or one
-/// that is formatted the same.
+/// The text that the plugin hands to Prettier in place of `file`. Returns `None` if it's the same text, or one that
+/// formats the same.
 pub(super) fn preprocess<'a>(
     file: &'a File<'a>,
     options: &Options,

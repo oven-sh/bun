@@ -22,6 +22,18 @@ A refusal is a synchronous `EvalError` that you can catch. `import()` of a refus
 
 Two refusals reach you another way. `ShadowRealm.prototype.importValue()` of a refused URL rejects with a `TypeError` whose message contains the `EvalError`. A refused URL in a Worker's `preload` option is reported by the Worker's `error` event.
 
+## How `=strict` decides
+
+With `=strict`, the engine runs static code and nothing else. Static code is:
+
+- Bun's own built-in modules and functions.
+- The modules that Bun's loader reads from where the program is stored: files on disk or, for a [compiled executable](#in-a-compiled-executable), the executable itself.
+- The program given to `bun -e` or on standard input.
+
+Everything else counts as made at run time, and the engine refuses it at the one place where code is made ready to run. The check does not depend on the API that the code came through, so it also holds for a way in that the tables below do not list.
+
+Some APIs refuse earlier, so that the error is where the string is: `new vm.Script()` throws, though nothing has run yet.
+
 ## The flag applies to the whole process
 
 Bun reads the flag at startup. Nothing turns it off afterwards:
@@ -54,9 +66,11 @@ A `Worker` whose own `execArgv` contains the flag throws `ERR_WORKER_INVALID_EXE
 | `eval()` inside a `node:vm` context, including one made with `codeGeneration: { strings: true }`      | allowed | refused   |
 | `module._compile()`, and a `require.extensions` handler that calls it                                 | allowed | refused   |
 | Assigning a different `Module.wrapper`                                                                | allowed | refused   |
-| `import`, `import()` and `require()` of a `data:` or `blob:` URL                                      | allowed | refused   |
+| `import`, `import()` and `require()` of a `data:` or `blob:` URL that holds code                      | allowed | refused   |
 | A `Worker` started from a `data:` or `blob:` URL, or with `eval: true`                                | allowed | refused   |
-| A [plugin](/runtime/plugins) that returns `contents` for the `js`, `jsx`, `ts` or `tsx` loader        | allowed | refused   |
+| A [plugin](/runtime/plugins) that returns `contents`                                                  | allowed | refused   |
+| [Macros](/bundler/macros)                                                                             | allowed | refused   |
+| `Bun.serve()` with the experimental `app` option                                                      | allowed | refused   |
 | `inspector.open()` from `node:inspector`, `startRemoteDebugger()` from `bun:jsc`                      | allowed | refused   |
 | `napi_run_script()` in a native addon                                                                 | allowed | refused   |
 
@@ -64,15 +78,18 @@ With the flag and no value, Bun matches Node.js: `node:vm` is not affected, and 
 
 These keep working at both levels:
 
-- Importing module files, with literal or computed specifiers, and modules embedded in a [compiled executable](/bundler/executables).
+- Importing module files, with literal or computed specifiers, and modules embedded in a [compiled executable](/compiler/executables).
 - `new Worker()` with a file.
 - `require()` and `createRequire()` of files and built-in modules.
 - `Bun.ModuleGraph`.
 - `JSON.parse()`, `RegExp`, and `eval()` of a value that is not a string.
 - WebAssembly.
 - Native addons and `bun:ffi`. See [What the flag does not cover](#what-the-flag-does-not-cover).
-- A plugin that returns an `exports` object, or `contents` for a data loader such as `json` or `toml`.
+- A plugin that returns an `exports` object.
+- `import()` of a `data:` or `blob:` URL that holds data, such as JSON, and of a `blob:` URL made from `Bun.file()`, which Bun reads from the file.
 - `vm.createContext()` and `new vm.SyntheticModule()`. Neither one compiles a string.
+
+A compiled executable with `=strict` loads modules, Workers and `require()`d files from the executable only. See [Files on disk are not part of the program](#files-on-disk-are-not-part-of-the-program).
 
 ## The inspector
 
@@ -116,7 +133,9 @@ One part of Bun calls `new Function()` itself: the development server. Every oth
 | `bun:jsc`: `startRemoteDebugger()`                                                       | works  | throws    |
 | `node:vm`: everything that takes source text                                             | works  | throws    |
 | `node:module`: `module._compile()`, assigning `Module.wrapper`                           | works  | throws    |
-| `Bun.plugin()`: `onLoad` and `build.module()` that return source text                    | works  | throws    |
+| `Bun.plugin()`: `onLoad` and `build.module()` that return `contents`                     | works  | throws    |
+| [Macros](/bundler/macros)                                                                | work   | fail      |
+| `Bun.serve()` with the experimental `app` option                                         | works  | throws    |
 
 Every built-in module still loads with `=strict`. `import { REPLServer } from "node:repl"` is the one import that fails, because it reads `REPLServer`.
 
@@ -124,27 +143,48 @@ Tools that transpile through `require.extensions`, such as `ts-node` and `@babel
 
 ## In a compiled executable
 
-Embed the flag when you compile. The executable then runs with it every time, with no arguments:
+Pass the flag when you compile. The executable then runs with it every time, with no arguments:
 
 ```bash icon="terminal" terminal
-bun build --compile --compile-exec-argv="--disallow-code-generation-from-strings=strict" ./server.ts --outfile server
+bun build --compile --disallow-code-generation-from-strings=strict ./server.ts --outfile server
 ```
 
 ```ts build.ts icon="/icons/typescript.svg"
 await Bun.build({
   entrypoints: ["./server.ts"],
   compile: {
-    execArgv: ["--disallow-code-generation-from-strings=strict"],
+    disallowCodeGenerationFromStrings: "strict", // or true, for the level of Node.js's flag
     outfile: "./server",
   },
 });
 ```
+
+It is the same as putting the flag first in `--compile-exec-argv` (`execArgv` in `Bun.build`), which also works.
 
 Write the value with `=`. In `--compile-exec-argv="--disallow-code-generation-from-strings strict"`, with a space, `strict` is a separate argument, which a compiled executable ignores. That executable runs with the flag and no value, and prints no error. The check in [Checking that the flag is on](#checking-that-the-flag-is-on) catches the mistake.
 
 `BUN_OPTIONS` can raise the level of a compiled executable. It cannot lower it.
 
 A compiled executable does not read its own command line as Bun flags. `./server --preload ./x.js` passes both arguments to the program in `process.argv`.
+
+### With `--trim`
+
+`bun compile --trim` does not turn the flag on. `eval` and `new Function` work in a trimmed executable as in any other.
+
+If you pass both, the flag also makes the executable smaller: Bun removes the JavaScript parser and the interpreter, since nothing can use them. See [Turn off code from strings](/compiler/size#turn-off-code-from-strings).
+
+### Files on disk are not part of the program
+
+A compiled executable is stored in itself. With `=strict`, what it loads from disk is not [static code](#how-strict-decides), so the engine refuses it.
+
+| At run time                                                                                         | `=strict` in a compiled executable                    |
+| --------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| `import()`, `require()` or `new Worker()` of a file in the executable                               | works                                                 |
+| `import()`, `require()` or `new Worker()` of a JavaScript or TypeScript file on disk                | refused, including a file that the program just wrote |
+| `--preload`, `--import` or `--require` in `BUN_OPTIONS`                                             | refused: Bun prints the error and exits               |
+| `import()` or `require()` of a `.json`, `.jsonc`, `.json5`, `.toml`, `.yaml` or `.xml` file on disk | works: Bun makes the value without making code        |
+| `import()` of a database on disk with `{ type: "sqlite" }`                                          | works                                                 |
+| `import()` or `require()` of a `.txt` or `.md` file on disk, or of any file with `{ type: "text" }` | refused: read the file with `Bun.file()` instead      |
 
 ### `data:` URLs written in the source
 
@@ -195,9 +235,11 @@ The option is on in the builds of Bun that we publish.
 
 ## What the flag does not cover
 
-- **Files.** A program that writes a file and then imports it runs that file. Importing files is what a program does, so the flag allows it. Use file system permissions to limit what the process can write.
+- **Files.** Outside a compiled executable, a program that writes a file and then imports it runs that file. Importing files is what a program does, so the flag allows it. Use file system permissions to limit what the process can write, or [compile the program](#files-on-disk-are-not-part-of-the-program).
 - **Startup.** The entry point, a file given to `--preload`, `--import` or `--require`, and `bun -e` are the program. So is what you type into `bun repl`. The flag applies to what the program does once it runs. A `data:` URL given to `--preload`, `--import` or `--require` is not a file, and `=strict` refuses it like any other `data:` URL.
-- **`BUN_OPTIONS`.** Bun reads `BUN_OPTIONS` in a compiled executable too. It cannot lower the level, but `--preload` in `BUN_OPTIONS` loads a file before the entry point.
+- **`BUN_OPTIONS`.** Bun reads `BUN_OPTIONS` in a compiled executable too. It cannot lower the level. With the flag and no value, `--preload` in `BUN_OPTIONS` loads a file before the entry point.
+- **The executable file.** Whoever can replace or edit a compiled executable decides what is embedded in it.
 - **`BUN_BE_BUN`.** With `BUN_BE_BUN=1`, a compiled executable runs as the `bun` CLI. The embedded program does not start, and the flags embedded with it do not apply.
+- **The process's own memory.** A program that can write to its own memory can change anything, including the embedded modules and Bun itself. On Linux, writing to `/proc/self/mem` with `node:fs` does that. Native code can do it everywhere.
 - **Native code.** A native addon, or a library loaded with `bun:ffi`, can do what native code can do. `--no-addons` refuses `process.dlopen()` and `cc()` from `bun:ffi`, and `--no-ffi-cc` refuses `cc()`. Neither one refuses `dlopen()`, `linkSymbols()` or `CFunction()` from `bun:ffi`.
 - **Child processes.** A process that the program spawns has its own flags.

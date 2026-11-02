@@ -1,27 +1,31 @@
+use super::class::dangling_comments_with_marker;
 use super::function::{FormatContentWithCacheMode, FormatFunctionBody};
-use super::parameters::{FormatFormalParameters, comments_between, has_only_simple_parameters};
-use super::sequence_expression::span_that_comments_lead;
+use super::parameters::{FormatFormalParameters, has_only_simple_parameters};
 use super::type_parameters::type_parameters;
+use crate::js::attach::Marker;
 use crate::js::format::{ExprOptions, FormatTypeAnnotation, write_expression};
 use crate::js::trivia::comments_stay_between_head_and_body;
 use crate::js::utils::assignment_like::AssignmentLikeLayout;
 use crate::js::utils::expression::ExpressionLeftSide;
-use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::utils::suppressed::FormatSuppressedNode;
-use crate::js::utils::typecast::is_cast_target;
+use crate::js::utils::typecast::{
+    cast_parentheses, has_leading_own_line_comment, is_cast_target,
+    is_cast_target_that_hides_its_kind,
+};
 use crate::prelude::*;
 use crate::{format_args, write};
+use smallvec::SmallVec;
 
 #[derive(Default, Clone, Copy)]
 pub(crate) struct FormatJsArrowFunctionExpressionOptions {
     pub(crate) assignment_layout: Option<AssignmentLikeLayout>,
     pub(crate) call_argument_layout: Option<GroupedCallArgumentLayout>,
-    /// Whether what is formatted is kept, to be written again.
+    /// Controls whether the formatted output is cached so it can be written again.
     pub(crate) cache_mode: FunctionCacheMode,
 }
 
-/// Which argument of a call is written right after the `(` or right before the `)`, while the
-/// others stay on the line.
+/// The call argument that's hugged: printed right after the `(` or right before the `)`, while the others stay on one
+/// line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum GroupedCallArgumentLayout {
     GroupedFirstArgument,
@@ -42,11 +46,11 @@ impl GroupedCallArgumentLayout {
 pub(crate) enum FunctionCacheMode {
     #[default]
     NoCache,
-    /// What is formatted is kept, and what has been kept is written.
+    /// Caches the formatted output, and reuses cached output if there is any.
     Cache,
 }
 
-/// The body, if it is an expression.
+/// Returns the body if it's an expression.
 fn get_expression(arrow: Func<'_>) -> Option<Expr<'_>> {
     match arrow.body() {
         FnBody::Expr(e) => Some(e),
@@ -64,20 +68,23 @@ fn is_sequence(e: Expr<'_>) -> bool {
     )
 }
 
-/// The arrow function that is the body of `arrow`.
-fn next_in_chain(arrow: Func<'_>) -> Option<Func<'_>> {
-    get_expression(arrow).and_then(|body| body.arrow_function())
+/// Returns the arrow function that's the body of `arrow`. For Prettier, one inside type cast parentheses is a
+/// `ParenthesizedExpression` instead: `() => /** @type {T} */ ((a) => a)`
+fn next_in_chain<'a>(arrow: Func<'a>, f: &Formatter<'a>) -> Option<Func<'a>> {
+    get_expression(arrow)
+        .filter(|body| !is_cast_target_that_hides_its_kind(*body, f))
+        .and_then(|body| body.arrow_function())
 }
 
-/// `f(a, b =>⏎ // comment⏎ c ? d : e)`: for oxfmt the line of the `=>` is one column longer than it
-/// looks, as if a space were behind it.
+/// `f(a, b =>⏎ // comment⏎ c ? d : e)`: for oxfmt the line with the `=>` counts as one column longer than it looks, as
+/// if a space followed it.
 fn counts_space_before_commented_conditional(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// `a => b => (c ? d : e)`: for oxfmt the conditional expression is on the next line, without the parentheses, if the
-/// chain does not fit on its line. For Prettier it is a group of its own behind a blank, which counts: a line that the
-/// `=>` fills to the last column is too long.
+/// `a => b => (c ? d : e)`: for oxfmt the conditional expression goes on the next line, without the parentheses, if the
+/// chain doesn't fit on its line. For Prettier it's a separate group after a space, and that space counts, so a line
+/// that the `=>` fills to the last column is too long.
 fn conditional_body_breaks_with_the_chain(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
@@ -90,12 +97,19 @@ fn conditional_body_breaks_with_the_chain(f: &Formatter<'_>) -> bool {
 ///   (c) => {};                 (c) => {};
 /// ```
 ///
-/// oxfmt on the left, Prettier on the right: wherever the chain is, not only as an argument or an operand.
+/// oxfmt is on the left and Prettier on the right. oxfmt does this wherever the chain is, not only when it's an
+/// argument or an operand.
 fn first_signature_starts_where_chain_starts(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// Prettier's `printArrowFunction`. `e`: the expression that `arrow` is.
+/// `((a) /* comment */ => (b) =>⏎c⏎)()` for Prettier, for which any comment of the first arrow function counts.
+/// `(⏎(a) /* comment */ => (b) =>⏎c⏎)()` for oxfmt, for which `a /* comment */ = (b) => (c) => d` doesn't count either.
+fn only_comment_directly_before_chain_replaces_line_break(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
+/// Prettier's `printArrowFunction`. `e` is `arrow`'s expression.
 pub(crate) fn write_arrow_function_expression<'a>(
     e: Expr<'a>,
     arrow: Func<'a>,
@@ -105,8 +119,7 @@ pub(crate) fn write_arrow_function_expression<'a>(
     write_arrow(e, arrow, options, false, f);
 }
 
-/// `is_nested`: `arrow` is the body of an arrow function that is the expanded last argument of a
-/// call.
+/// `is_nested` means `arrow` is the body of an arrow function that's the expanded last argument of a call.
 fn write_arrow<'a>(
     e: Expr<'a>,
     arrow: Func<'a>,
@@ -117,28 +130,34 @@ fn write_arrow<'a>(
     let expand_last_arg =
         options.call_argument_layout == Some(GroupedCallArgumentLayout::GroupedLastArgument);
 
-    // Arrow functions that are each the body of the one before break after each `=>`:
+    // A chain of arrow functions, each the body of the previous one, breaks after each `=>`:
     //
     //     const x =
     //       (a): string =>
     //       (b) =>
     //       (c) =>
     //         d;
-    let should_print_as_chain = !expand_last_arg && next_in_chain(arrow).is_some();
+    let should_print_as_chain = !expand_last_arg && next_in_chain(arrow, f).is_some();
     let mut tail = arrow;
     let mut should_break_chain = false;
     if should_print_as_chain {
         loop {
             should_break_chain = should_break_chain || has_complex_signature(tail);
-            match next_in_chain(tail) {
+            match next_in_chain(tail, f) {
                 Some(next) => tail = next,
                 None => break,
             }
         }
     }
 
-    let has_own_line_comment = has_leading_own_line_comment(tail, options.cache_mode, f);
-    // For Prettier the body is a `ParenthesizedExpression` then, whatever is in it.
+    let has_own_line_comment = body_has_leading_own_line_comment(tail, f);
+    let is_block_after_comments = has_own_line_comment
+        && options.call_argument_layout.is_some()
+        && !is_nested
+        && get_expression(tail).is_none()
+        && block_of_grouped_argument_stays_after_arrow(f);
+    let has_own_line_comment = has_own_line_comment && !is_block_after_comments;
+    // In that case the body is a `ParenthesizedExpression` for Prettier, no matter what's inside.
     let is_body_type_cast = get_expression(tail).is_some_and(|body| is_cast_target(body, f));
     let add_parens_if_not_break = !is_body_type_cast && should_add_parens_if_not_break(tail);
     let is_body_on_same_line = (!has_own_line_comment
@@ -160,20 +179,27 @@ fn write_arrow<'a>(
         options,
         has_own_line_comment,
     };
+    // Prettier's `bodyComments`: the trailing comments of the arrow functions after the first in a chain.
+    let format_body_comments = format_with(|f| {
+        if should_print_as_chain && !f.is_quiet() {
+            write_trailing_comments_of_chain(arrow, options.cache_mode, f);
+        }
+    });
     // Prettier's `printArrowFunctionBody`.
     let format_body = format_with(|f| {
         if is_body_on_same_line && !add_parens_if_not_break {
-            return write!(f, [space(), format_body]);
+            if is_block_after_comments
+                && write_comments_on_line_of_arrow_for_oxfmt(tail, options.cache_mode, f)
+            {
+                write!(f, hard_line_break());
+            }
+            return write!(f, [space(), format_body, format_body_comments]);
         }
         let trailing_comma = expand_last_arg.then_some(FormatTrailingCommas::All);
-        // The `)` of the call, or the `}` in JSX, is on a line of its own if the body is.
+        // The `)` of the call, or the `}` in JSX, goes on its own line if the body does.
         let should_add_soft_line = (expand_last_arg
-            && !has_dangling_comments(arrow, options.cache_mode, f))
-            || matches!(
-                e.ast_parent(),
-                container @ AstNodes::JSXExpressionContainer(_)
-                    if !f.comments().has_comment_in_range(e.span().end, container.span().end)
-            );
+            || matches!(e.ast_parent(), AstNodes::JSXExpressionContainer(_)))
+            && !f.comments().has_comments(arrow.as_ast_nodes());
         let trailing_line = should_add_soft_line.then_some(soft_line_break());
         if breaks_with_chain {
             write!(
@@ -182,7 +208,8 @@ fn write_arrow<'a>(
                     soft_line_indent_or_space(&format_args!(
                         if_group_fits_on_line(&"("),
                         format_body,
-                        if_group_fits_on_line(&")")
+                        if_group_fits_on_line(&")"),
+                        format_body_comments
                     )),
                     trailing_comma,
                     trailing_line
@@ -193,23 +220,18 @@ fn write_arrow<'a>(
                 f,
                 [
                     space(),
-                    FormatConditionalBody(&format_body, trailing_comma, trailing_line)
+                    FormatConditionalBody(&format_body, trailing_comma, trailing_line),
+                    format_body_comments
                 ]
             );
         } else {
-            // See `comments_stay_between_head_and_body`.
-            if !f.is_quiet()
-                && comments_stay_between_head_and_body(f)
-                && matches!(tail.body(), FnBody::Block(_))
-                && let Some(arrow_token) = tail.arrow_span()
-            {
-                let comments = f.comments().end_of_line_comments_after(arrow_token.end);
-                write!(f, FormatTrailingComments::Comments(comments));
+            if !should_print_as_chain {
+                write_comments_on_line_of_arrow_for_oxfmt(tail, options.cache_mode, f);
             }
             write!(
                 f,
                 [
-                    soft_line_indent_or_space(&format_body),
+                    soft_line_indent_or_space(&format_args!(format_body, format_body_comments)),
                     trailing_comma,
                     trailing_line
                 ]
@@ -232,20 +254,25 @@ fn write_arrow<'a>(
         };
     }
 
-    // `(() => () => a)()`: as a callee, the chain breaks onto lines of its own, to show that it is
-    // the result that is called.
+    // `(() => () => a)()`: as a callee, the chain breaks onto its own lines, to show that it's the result that gets
+    // called.
     let parent = e.ast_parent();
     let is_callee = parent.is_call_like_callee(e);
     // As a callee or on the right of an assignment, all signatures are indented by one level.
     let should_indent_signatures = is_callee || options.assignment_layout.is_some();
-    // Not after a comment, which has a line break of its own.
+    // Prettier checks `CommentCheckFlags.Leading & CommentCheckFlags.Line`, which evaluates to no flags at all.
+    let follows_comment = match only_comment_directly_before_chain_replaces_line_break(f) {
+        true => (f.comments().of_node(arrow.as_ast_nodes()).leading.last())
+            .is_some_and(|comment| comment.next_token_start() >= e.outer_span().start),
+        false => f.comments().has_comments(arrow.as_ast_nodes()),
+    };
     let should_print_soft_line = should_indent_signatures
         && options.assignment_layout != Some(AssignmentLikeLayout::BreakAfterOperator)
-        && !has_leading_comment(e, is_callee, f);
+        && !follows_comment;
     let should_break_signatures = options.assignment_layout
         == Some(AssignmentLikeLayout::ChainTailArrowFunction)
         || (is_callee && (!is_body_on_same_line || breaks_with_chain));
-    // As an argument or an operand, the first starts where the chain starts.
+    // As an argument or an operand, the first signature starts where the chain starts.
     let is_first_indented = !first_signature_starts_where_chain_starts(f)
         && !matches!(
             parent,
@@ -259,16 +286,9 @@ fn write_arrow<'a>(
     // Prettier's `printArrowFunctionSignatures`.
     let format_rest = format_with(|f| {
         let mut current = arrow;
-        while let Some(next) = next_in_chain(current).filter(|_| current != tail) {
-            write!(
-                f,
-                [
-                    space(),
-                    "=>",
-                    soft_line_break_or_space(),
-                    FormatCommentsBeforeArrow(next, options.cache_mode)
-                ]
-            );
+        while let Some(next) = next_in_chain(current, f).filter(|_| current != tail) {
+            write!(f, [space(), "=>", soft_line_break_or_space()]);
+            write_leading_comments_of_arrow(next, options.cache_mode, f);
             write!(f, FormatSignature::new(next, options, false));
             current = next;
         }
@@ -312,12 +332,16 @@ fn write_arrow<'a>(
             space(),
             "=>",
             indent_if_group_breaks(&format_body, group_id),
-            is_callee.then_some(if_group_breaks(&soft_line_break()).with_group_id(Some(group_id)))
+            // `(⏎// comment⏎(a) => (b) =>⏎c⏎⏎)()`: another line break follows if there are comments in the parentheses.
+            // The empty text makes it count.
+            is_callee.then_some(
+                if_group_breaks(&format_args!(soft_line_break(), "")).with_group_id(Some(group_id))
+            )
         ))
     );
 }
 
-/// A body that is a conditional expression: `a => (b ? c : d)`, so that it is not mistaken for
+/// A conditional expression as the body gets parentheses, `a => (b ? c : d)`, so it isn't mistaken for
 /// `a <= b ? c : d`. If it breaks, it goes on the next line without the parentheses.
 struct FormatConditionalBody<'b, T>(&'b T, Option<FormatTrailingCommas>, Option<Line>);
 
@@ -336,8 +360,8 @@ impl<'a, T: Format<'a>> Format<'a> for FormatConditionalBody<'_, T> {
     }
 }
 
-/// Whether the signature is too complex to share a line with others: it has type parameters, a
-/// destructuring, rest or default parameter, or parameters and a return type.
+/// True if the signature is too complex to share a line with others: it has type parameters, a destructuring, rest or
+/// default parameter, or parameters and a return type.
 fn has_complex_signature(arrow: Func<'_>) -> bool {
     if !arrow.type_params().is_empty() || !has_only_simple_parameters(arrow, true) {
         return true;
@@ -345,84 +369,21 @@ fn has_complex_signature(arrow: Func<'_>) -> bool {
     arrow.return_type().is_some() && arrow.params_with_this().next().is_some()
 }
 
-/// Whether a comment, printed or not, is the last thing before `e`. Before the parentheses of a
-/// callee, it belongs to the call.
-fn has_leading_comment<'a>(e: Expr<'a>, is_callee: bool, f: &Formatter<'a>) -> bool {
-    let comments = f.comments();
-    let start = e.span().start;
-    comments
-        .comments_before(start)
-        .last()
-        .or_else(|| comments.printed_comments().last())
-        .is_some_and(|comment| {
-            comment.end() <= start
-                && (!is_callee || comment.start() >= e.outer_span().start)
-                && f.source_text()
-                    .all_bytes(Span::before(comment.end(), e.span()), |b| {
-                        b.is_ascii_whitespace() || b == b'('
-                    })
-        })
-}
-
-/// Whether there are comments in the `()` of `arrow`, or before its `=>`.
-fn has_dangling_comments<'a>(
-    arrow: Func<'a>,
-    cache_mode: FunctionCacheMode,
-    f: &Formatter<'a>,
-) -> bool {
-    if f.is_quiet() && matches!(cache_mode, FunctionCacheMode::NoCache) {
-        return false;
-    }
-    let Some(arrow_token) = arrow.arrow_span() else {
-        return false;
-    };
-    let params = FormatFormalParameters(arrow).span();
-    let signature_end = arrow.return_type().map_or(params.end, |ty| ty.span().end);
-    comments_between(Span::before(signature_end, arrow_token), f)
-        .next()
-        .is_some()
-        || (arrow.params_with_this().next().is_none()
-            && comments_between(params, f).next().is_some())
-}
-
-/// Prettier's `hasLeadingOwnLineComment` for the body of `arrow`: then the body goes on the next
-/// line, after the comment.
-fn has_leading_own_line_comment<'a>(
-    arrow: Func<'a>,
-    cache_mode: FunctionCacheMode,
-    f: &Formatter<'a>,
-) -> bool {
-    if f.is_quiet() && matches!(cache_mode, FunctionCacheMode::NoCache) {
-        return false;
-    }
-    let Some(arrow_token) = arrow.arrow_span() else {
-        return false;
-    };
-    let has_preceding_node = arrow.params_with_this().next().is_some()
-        || !arrow.type_params().is_empty()
-        || arrow.return_type().is_some();
-    // If nothing else is between them and the body, the comments before the `(` lead it as well.
-    let start = match has_preceding_node {
-        true => arrow_token.end,
-        false => arrow.span().start,
-    };
-    let is_before_arrow_token = |comment: &Comment| {
-        comment.start() >= FormatFormalParameters(arrow).span().start
-            && comment.end() <= arrow_token.start
-    };
-    let mut comments =
-        comments_between(Span::before(start, AstNodes::FunctionBody(arrow).span()), f)
-            .filter(|comment| has_preceding_node || !is_before_arrow_token(comment));
+/// Prettier's `hasLeadingOwnLineComment` for the body of `arrow`: the body goes on the next line, after the comment.
+fn body_has_leading_own_line_comment<'a>(arrow: Func<'a>, f: &Formatter<'a>) -> bool {
     match arrow.body() {
-        FnBody::Expr(body) if matches!(body.kind(), ExprKind::Jsx(_)) => {
-            comments.any(|comment| f.comments().is_suppression_comment(comment))
+        _ if f.is_quiet() => false,
+        FnBody::Expr(body) => has_leading_own_line_comment(body, f),
+        _ => {
+            // `() =>⏎/* comment */ {}` stays as it is for oxfmt. See `write_space_before_body`.
+            let keeps_line_break_before = comments_stay_between_head_and_body(f);
+            (f.comments().of_node(AstNodes::FunctionBody(arrow)).leading)
+                .iter()
+                .any(|comment| {
+                    comment.has_newline_after()
+                        || (keeps_line_break_before && comment.has_newline_before())
+                })
         }
-        FnBody::Expr(_) => comments.any(|comment| comment.followed_by_newline()),
-        // A comment at the end of the line of the `=>` is moved into the block, if there is
-        // anything before the `=>` that it could belong to.
-        _ => comments.any(|comment| {
-            comment.followed_by_newline() && (comment.preceded_by_newline() || !has_preceding_node)
-        }),
     }
 }
 
@@ -445,9 +406,9 @@ fn may_break_after_short_prefix<'a>(body: Expr<'a>, f: &Formatter<'a>) -> bool {
     }
 }
 
-/// The parameters and the return type of a function that is hugged as an argument: Prettier's `removeLines`, after which
-/// the printer still chooses how a member chain or the arguments of a call in them are written, and breaks them if the
-/// line is too long. oxfmt writes them on one line.
+/// Writes the parameters and return type of a function that's hugged as an argument. Prettier uses `removeLines`, after
+/// which the printer still chooses how to lay out a member chain or call arguments inside them, and breaks those if the
+/// line is too long. oxfmt prints them on one line.
 pub(crate) fn write_signature_without_lines<'a>(
     content: &(impl Format<'a> + ?Sized),
     f: &mut Formatter<'a>,
@@ -458,8 +419,8 @@ pub(crate) fn write_signature_without_lines<'a>(
     }
 }
 
-/// Whether `expression` is a template that has a line break in its text and starts on the line of
-/// the token before it.
+/// True if `expression` is a template that has a line break in its text and starts on the same line as the token before
+/// it.
 #[inline]
 pub(crate) fn is_multiline_template_starting_on_same_line(
     expression: Expr<'_>,
@@ -471,7 +432,7 @@ pub(crate) fn is_multiline_template_starting_on_same_line(
     ) && is_multiline_and_starts_on_same_line(expression, source_text)
 }
 
-/// `expression`: a template.
+/// `expression` must be a template.
 fn is_multiline_and_starts_on_same_line(expression: Expr<'_>, source_text: SourceText<'_>) -> bool {
     let template = match expression.kind() {
         ExprKind::Template(template) => template,
@@ -485,8 +446,8 @@ fn is_multiline_and_starts_on_same_line(expression: Expr<'_>, source_text: Sourc
         && !source_text.has_line_terminator_before(expression.span().start)
 }
 
-/// Prettier's `shouldAddParensIfNotBreak`: `a => (b ? c : d)`, so that it is not mistaken for
-/// `a <= b ? c : d`. Not if the condition starts with something that is in parentheses anyway.
+/// Prettier's `shouldAddParensIfNotBreak`: `a => (b ? c : d)`, so it isn't mistaken for `a <= b ? c : d`. This doesn't
+/// apply if the condition starts with something that gets parentheses anyway.
 fn should_add_parens_if_not_break(arrow: Func<'_>) -> bool {
     let Some(expression) = get_expression(arrow) else {
         return false;
@@ -498,21 +459,114 @@ fn should_add_parens_if_not_break(arrow: Func<'_>) -> bool {
         )
 }
 
-/// The comments before `arrow`, which is the body of another arrow function.
-struct FormatCommentsBeforeArrow<'a>(Func<'a>, FunctionCacheMode);
+/// Writes `content`, which prints `comments`. A call argument can be formatted twice, but a comment can only be printed
+/// once, so the output is cached under the first comment's span.
+fn write_comments_once<'a>(
+    comments: CommentList<'a>,
+    content: impl Format<'a>,
+    cache_mode: FunctionCacheMode,
+    f: &mut Formatter<'a>,
+) {
+    if let Some(first) = comments.first() {
+        FormatContentWithCacheMode::new(|| first.span(), content, cache_mode).fmt(f);
+    }
+}
 
-impl<'a> Format<'a> for FormatCommentsBeforeArrow<'a> {
-    fn fmt(&self, f: &mut Formatter<'a>) {
-        if f.is_quiet() && matches!(self.1, FunctionCacheMode::NoCache) {
-            return;
-        }
-        let span = self.0.as_ast_nodes().span();
-        FormatContentWithCacheMode::new(
-            || Span::empty(span.start),
-            format_leading_comments(span),
-            self.1,
-        )
-        .fmt(f);
+/// For oxfmt a block's leading comments that are on the same line as the `=>` stay there. The block writes the others.
+/// Returns true if the last of them ends the line.
+///
+/// ```js
+/// a = () => // comment
+///   {};
+/// ```
+fn write_comments_on_line_of_arrow_for_oxfmt<'a>(
+    arrow: Func<'a>,
+    cache_mode: FunctionCacheMode,
+    f: &mut Formatter<'a>,
+) -> bool {
+    if f.is_quiet()
+        || !comments_stay_between_head_and_body(f)
+        || !matches!(arrow.body(), FnBody::Block(_))
+    {
+        return false;
+    }
+    let owned = f.comments().of_node(AstNodes::FunctionBody(arrow));
+    let leading_comments = owned.leading;
+    let count = (leading_comments.iter())
+        .take_while(|comment| !comment.has_newline_before())
+        .count();
+    let comments = leading_comments.slice(0, count);
+    let content = FormatTrailingComments::Comments(comments);
+    write_comments_once(comments, content, cache_mode, f);
+    // `a(() => /* prettier-ignore */⏎{ b( ) })` is `a(() => /* prettier-ignore */ { b( ) })`
+    (comments.last()).is_some_and(|comment| {
+        comment.is_line() || (comment.has_newline_after() && !owned.is_ignored)
+    })
+}
+
+/// `arrow` is the body of another arrow function: `(a) => /* comment */ (b) => c`
+fn write_leading_comments_of_arrow<'a>(
+    arrow: Func<'a>,
+    cache_mode: FunctionCacheMode,
+    f: &mut Formatter<'a>,
+) {
+    if f.is_quiet() {
+        return;
+    }
+    // `() => /** @type {A} */ (/** @type {B} */ ((a) => a))` is `() => /** @type {A} */ /** @type {B} */ (a) => a` for
+    // oxfmt, which drops type cast parentheses here.
+    for parenthesis in cast_parentheses_of_arrow(arrow, f) {
+        let comments = f.comments().of_cast_parens(parenthesis.start).leading;
+        let content = FormatLeadingComments::Comments(comments);
+        write_comments_once(comments, content, cache_mode, f);
+    }
+    let comments = f.comments().of_node(arrow.as_ast_nodes()).leading;
+    let content = FormatLeadingComments::Comments(comments);
+    write_comments_once(comments, content, cache_mode, f);
+}
+
+/// `arrow` is the body of another arrow function: `(a) => ((b) => c /* comment */)`
+fn write_trailing_comments_of_arrow<'a>(
+    arrow: Func<'a>,
+    cache_mode: FunctionCacheMode,
+    f: &mut Formatter<'a>,
+) {
+    if f.is_quiet() {
+        return;
+    }
+    let comments = f.comments().of_node(arrow.as_ast_nodes()).trailing;
+    let content = FormatTrailingComments::Comments(comments);
+    write_comments_once(comments, content, cache_mode, f);
+    for parenthesis in cast_parentheses_of_arrow(arrow, f).iter().rev() {
+        let comments = f.comments().of_cast_parens(parenthesis.start).trailing;
+        let content = FormatTrailingComments::Comments(comments);
+        write_comments_once(comments, content, cache_mode, f);
+    }
+}
+
+/// Returns the type cast parentheses around `arrow`, from the outside in.
+fn cast_parentheses_of_arrow<'a>(arrow: Func<'a>, f: &Formatter<'a>) -> SmallVec<[Span; 2]> {
+    match arrow.owner().as_expr() {
+        Some(e) if is_cast_target(e, f) => cast_parentheses(e, f),
+        _ => SmallVec::new(),
+    }
+}
+
+/// Writes the trailing comments of the arrow functions in the chain that starts with `head`, from the innermost to the
+/// second. `head`'s own are written along with its expression.
+fn write_trailing_comments_of_chain<'a>(
+    head: Func<'a>,
+    cache_mode: FunctionCacheMode,
+    f: &mut Formatter<'a>,
+) {
+    let mut chain: SmallVec<[Func<'a>; 4]> = SmallVec::new();
+    let mut current = head;
+    while let Some(next) = next_in_chain(current, f) {
+        chain.push(next);
+        current = next;
+    }
+    for &arrow in chain.iter().rev() {
+        write_trailing_comments_of_arrow(arrow, cache_mode, f);
     }
 }
 
@@ -521,8 +575,8 @@ impl<'a> Format<'a> for FormatCommentsBeforeArrow<'a> {
 struct FormatSignature<'a> {
     arrow: Func<'a>,
     cache_mode: FunctionCacheMode,
-    /// In an expanded argument of a call the signature has no soft line breaks. Those of the
-    /// argument itself have been removed from the cache by the arguments.
+    /// In an expanded call argument the signature has no soft line breaks. For the argument itself, the arguments
+    /// printer has already removed them from the cached output.
     should_remove_soft_lines: bool,
 }
 
@@ -550,11 +604,10 @@ impl<'a> Format<'a> for FormatSignature<'a> {
         let params = FormatFormalParameters(arrow);
         let type_params = type_parameters(arrow.type_params(), Node::Func(arrow));
         let return_type = arrow.return_type().map(FormatTypeAnnotation);
-        let return_type = return_type.as_ref().map(FormatNodeWithoutTrailingComments);
         let has_parameters = arrow.params_with_this().next().is_some();
 
-        // What loses its soft line breaks in an expanded argument is cached under the span of the
-        // parameters. Without parameters, that is only the return type.
+        // The part that loses its soft line breaks in an expanded argument is cached under the parameters' span.
+        // Without parameters, that's only the return type.
         let fixed = format_with(|f| {
             if !has_parameters {
                 let key = || Span::new(params.span().start, params.span().start + 1);
@@ -563,7 +616,7 @@ impl<'a> Format<'a> for FormatSignature<'a> {
             }
         });
         let flattened = format_with(|f| match (has_parameters, &return_type) {
-            // The arguments ask whether the return type breaks.
+            // The arguments printer checks whether the return type breaks.
             (true, Some(return_type)) => {
                 let key = || {
                     arrow
@@ -575,7 +628,7 @@ impl<'a> Format<'a> for FormatSignature<'a> {
             }
             (true, None) => write!(f, [type_params, params]),
             (false, Some(return_type)) => write!(f, return_type),
-            // The arguments expect to find something in the cache.
+            // The arguments printer expects a cache entry.
             (false, None) if matches!(cache_mode, FunctionCacheMode::Cache) => {
                 f.write_element(FormatElement::Nop)
             }
@@ -594,27 +647,32 @@ impl<'a> Format<'a> for FormatSignature<'a> {
             ))
         );
 
-        if f.is_quiet() && matches!(cache_mode, FunctionCacheMode::NoCache) {
+        if f.is_quiet() {
             return;
         }
-        let Some(arrow_token) = arrow.arrow_span() else {
-            return;
-        };
-        // If the first is from before the `(`, it leads the body, and takes the others along.
-        let comments = f.comments().comments_before(arrow_token.start);
-        let comments = match comments.first() {
-            Some(first) if first.start() < params.span().end => &[][..],
-            _ => comments,
-        };
+        // `(a) /* comment */ => b`. Prettier breaks the line between two such comments, which is a syntax error before
+        // `=>`.
+        let comments =
+            dangling_comments_with_marker(arrow.as_ast_nodes(), Marker::CommentBeforeArrow, f);
         let content = FormatTrailingComments::Comments(comments);
-        write!(
-            f,
-            FormatContentWithCacheMode::new(|| arrow.as_ast_nodes().span(), content, cache_mode)
-        );
+        write_comments_once(comments, content, cache_mode, f);
     }
 }
 
-/// The body of a function that is not an arrow function.
+/// `a((b) => // comment⏎{ c; })` is `a((b) => // comment⏎{⏎  c;⏎});` for oxfmt. Anywhere else, as in
+/// `a((b) => (c) => ..)`, the comment and the block are indented, on their own lines. Prettier moves the comment into
+/// the block: `a((b) => {⏎  // comment⏎  c;⏎});`
+fn block_of_grouped_argument_stays_after_arrow(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
+/// `a((b) => /* prettier-ignore */ (c) => { d( ) })`: oxfmt formats `(c) => ..`, as both do in a chain that isn't the
+/// last argument of a call.
+fn arrow_in_arrow_is_never_ignored(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
+/// The body of a function that isn't an arrow function.
 pub(crate) struct FormatMaybeCachedFunctionBody<'a> {
     pub(crate) func: Func<'a>,
     pub(crate) mode: FunctionCacheMode,
@@ -627,7 +685,7 @@ impl<'a> Format<'a> for FormatMaybeCachedFunctionBody<'a> {
     }
 }
 
-/// What is after the `=>`, with the comments before it.
+/// The body after the `=>`, with its leading comments.
 struct FormatArrowBody<'a> {
     arrow: Func<'a>,
     options: FormatJsArrowFunctionExpressionOptions,
@@ -640,109 +698,77 @@ impl<'a> Format<'a> for FormatArrowBody<'a> {
         let arrow = self.arrow;
         let cache_mode = self.options.cache_mode;
 
-        // In the expanded last argument of a call. Anywhere else it is part of a chain.
+        // In the expanded last argument of a call. Anywhere else it's part of a chain.
         if let FnBody::Expr(body) = arrow.body()
-            && let Some(next) = body.arrow_function()
+            && let Some(next) = next_in_chain(arrow, f)
         {
-            // It is not written by way of `Expr`.
+            // This bypasses `Expr`'s `Format` impl, which does the stack check.
             if !f.context_mut().has_stack_left() {
                 return;
             }
-            write!(f, FormatCommentsBeforeArrow(next, cache_mode));
-            return write_arrow(body, next, self.options, true, f);
+            write_leading_comments_of_arrow(next, cache_mode, f);
+            match !f.is_quiet()
+                && !arrow_in_arrow_is_never_ignored(f)
+                && f.comments().is_ignored(next.as_ast_nodes())
+            {
+                true => write!(f, FormatSuppressedNode(body.span())),
+                false => write_arrow(body, next, self.options, true, f),
+            }
+            return write_trailing_comments_of_arrow(next, cache_mode, f);
         }
 
         let span = || AstNodes::FunctionBody(arrow).span();
         let content = format_with(|f| match arrow.body() {
-            FnBody::Expr(body) => write_expression_body(body, self.has_own_line_comment, f),
-            _ => {
-                // Otherwise the block takes the block comments, and the others are moved into it.
-                if self.has_own_line_comment {
-                    write!(f, format_leading_comments(span()));
-                }
-                write!(f, FormatFunctionBody(arrow));
-            }
+            FnBody::Expr(body) => write_expression_body(arrow, body, self.has_own_line_comment, f),
+            _ => write!(f, FormatFunctionBody(arrow)),
         });
         FormatContentWithCacheMode::new(span, content, cache_mode).fmt(f);
     }
 }
 
-/// `() =>⏎ /* comment */ (a, b)` for oxfmt, `() => /* comment */ (a, b)` for Prettier.
-fn sequence_behind_comments_is_on_its_own_line(f: &Formatter<'_>) -> bool {
+/// `() =>⏎ /* comment */ (a, b)` for oxfmt, `() => /* comment */ (a, b)` for Prettier. For oxfmt a comment anywhere in
+/// the arrow function before the sequence counts: `(/* comment */ a) =>⏎ (b, c)`.
+fn sequence_after_comments_is_on_its_own_line(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// `const a = (b) => (⏎b && c⏎// comment⏎);`: for oxfmt the comment is behind the statement. For Prettier it trails `b && c`.
-fn only_the_body_of_an_argument_keeps_comments_before_its_parenthesis(f: &Formatter<'_>) -> bool {
-    f.options().flavor.is_oxfmt()
-}
-
-/// `is_on_its_own_line`: a comment has moved it off the line of the `=>` already.
-fn write_expression_body<'a>(body: Expr<'a>, is_on_its_own_line: bool, f: &mut Formatter<'a>) {
+/// `body` is `arrow`'s body. `is_on_its_own_line` means a comment has already moved it off the line with the `=>`.
+fn write_expression_body<'a>(
+    arrow: Func<'a>,
+    body: Expr<'a>,
+    is_on_its_own_line: bool,
+    f: &mut Formatter<'a>,
+) {
     let is_sequence = is_sequence(body) && !is_cast_target(body, f);
+    if !is_sequence {
+        return write!(f, body);
+    }
     if f.is_quiet() {
-        return write!(
-            f,
-            [is_sequence.then_some("("), body, is_sequence.then_some(")")]
-        );
+        return write!(f, ["(", body, ")"]);
     }
-    if is_sequence {
-        // The comments are outside of the parentheses.
-        let span = body.span();
-        let is_suppressed = f.comments().is_suppressed(span.start);
-        let leading = span_that_comments_lead(body, f);
-        let content = format_with(|f| {
-            match f.comments().comments_before(span.start) {
-                // But for one that is about the parentheses behind it.
-                [others @ .., cast]
-                    if sequence_behind_comments_is_on_its_own_line(f)
-                        && f.comments().is_cast_parenthesis(span.start) =>
-                {
-                    let cast = FormatLeadingComments::Comments(std::slice::from_ref(cast));
-                    write!(f, [FormatLeadingComments::Comments(others), "(", cast]);
-                }
-                _ => write!(f, [format_leading_comments(leading), "("]),
-            }
-            match is_suppressed {
-                true => write!(f, FormatSuppressedNode(span)),
-                false => write_expression(body, ExprOptions::None, f),
-            }
-            write!(f, ")");
-        });
-        return match !is_on_its_own_line
-            && sequence_behind_comments_is_on_its_own_line(f)
-            && f.comments().has_comment_before(leading.start)
-        {
-            true => write!(f, group(&indent(&format_args!(hard_line_break(), content)))),
-            false => write!(f, content),
-        };
-    }
-    write!(f, body);
-    let comments = f
-        .comments()
-        .comments_in(Span::after(body.span(), body.outer_span().end));
-    let count = match body.kind() {
-        // `(a ? b : c /* comment */)`: in the parentheses that are written if it does not break.
-        ExprKind::Cond { .. } => comments
-            .iter()
-            .take_while(|comment| !comment.preceded_by_newline())
-            .count(),
-        // What is before the `)` of parentheses that go trails the body, with its indentation.
-        ExprKind::Binary { .. }
-            if !comments.is_empty()
-                && (!only_the_body_of_an_argument_keeps_comments_before_its_parenthesis(f)
-                    || matches!(
-                        // The statement that the body is, the body, the function, what that is in.
-                        body.ast_parent().parent().parent().parent(),
-                        AstNodes::CallExpression(_) | AstNodes::NewExpression(_)
-                    )) =>
-        {
-            comments.len()
+    // The comments go outside the parentheses.
+    let owned = f.comments().of_node(body.as_ast_nodes());
+    let content = format_with(|f| {
+        write!(f, [FormatLeadingComments::Comments(owned.leading), "("]);
+        match owned.is_ignored {
+            true => write!(f, FormatSuppressedNode(body.span())),
+            false => write_expression(body, ExprOptions::None, f),
         }
-        _ => 0,
-    };
-    write!(
-        f,
-        FormatTrailingComments::Comments(comments.get(..count).unwrap_or_default())
-    );
+        write!(f, ")");
+        // `((/* prettier-ignore */ a, b) /* comment */)`: the comment trails `b`, which is copied without it.
+        if owned.is_ignored
+            && let Some(last) = body.sequence().last()
+        {
+            write!(f, trailing_comments(last.as_chain_element()));
+        }
+        write!(f, FormatTrailingComments::Comments(owned.trailing));
+    });
+    match !is_on_its_own_line
+        && sequence_after_comments_is_on_its_own_line(f)
+        && (!owned.leading.is_empty()
+            || (f.comments()).has_comment_in_span(Span::before(arrow.span().start, body.span())))
+    {
+        true => write!(f, group(&indent(&format_args!(hard_line_break(), content)))),
+        false => write!(f, content),
+    }
 }

@@ -1,8 +1,13 @@
 const { validateString } = require("internal/validators");
 
-const codesWarned = new Set();
+const codesWarned = new Set<string>();
 
-function getDeprecationWarningEmitter(code, msg, deprecated, shouldEmitWarning = () => true) {
+function getDeprecationWarningEmitter(
+  code: string | undefined,
+  msg: string,
+  deprecated: (...args: unknown[]) => unknown,
+  shouldEmitWarning = () => true,
+) {
   let warned = false;
   return function () {
     if (!warned && shouldEmitWarning()) {
@@ -19,13 +24,19 @@ function getDeprecationWarningEmitter(code, msg, deprecated, shouldEmitWarning =
   };
 }
 
-function deprecate(fn, msg, code) {
+function deprecate<T extends abstract new (...args: never[]) => unknown>(fn: T, msg: string, code?: string): T;
+function deprecate<Args extends unknown[], Result>(
+  fn: (...args: Args) => Result,
+  msg: string,
+  code?: string,
+): (...args: Args) => Result;
+function deprecate(fn: (this: unknown, ...args: unknown[]) => unknown, msg: string, code?: string) {
   // Lazy-load to avoid a circular dependency.
   if (code !== undefined) validateString(code, "code");
 
   const emitDeprecationWarning = getDeprecationWarningEmitter(code, msg, deprecated);
 
-  function deprecated(...args) {
+  function deprecated(this: unknown, ...args: unknown[]) {
     if (!process.noDeprecation) {
       emitDeprecationWarning();
     }

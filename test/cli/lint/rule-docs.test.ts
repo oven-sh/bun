@@ -3,6 +3,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
+  FILES,
   bodyFor,
   configFor,
   examplesIn,
@@ -158,8 +159,8 @@ describe("docs/lint/rules", () => {
     const outcomes = await lintExamples(String(dir), examples, byPage, lint);
     for (const it of examples) {
       const { reports, error } = outcomes.get(it)!;
-      const given = it.config === "oxlint" ? ", with an oxlint config" : "";
-      const where = `${it.page}: line ${it.line}${it.options.length ? ` with ${JSON.stringify(it.options)}` : ""}${given}`;
+      const configNote = it.config === "oxlint" ? ", with an oxlint config" : "";
+      const where = `${it.page}: line ${it.line}${it.options.length ? ` with ${JSON.stringify(it.options)}` : ""}${configNote}`;
       if (error) wrong.push(`${where}: ${error}`);
       else if (it.want === "good" && reports.length) wrong.push(`${where}: reported: ${reports[0][4]}`);
       else if (it.want === "bad" && !reports.length) wrong.push(`${where}: not reported`);
@@ -175,9 +176,32 @@ describe("docs/lint/rules", () => {
     expect(wrong).toEqual([]);
   });
 
+  test.concurrent("reports.json is the same on Windows, where a path in a message has backslashes", async () => {
+    const names = ["import/no-relative-packages", "import/named", "eslint/no-useless-escape"];
+    const examples = names.flatMap(name => examplesIn(name, text(name))!.examples);
+    using dir = tempDir("bun-lint-rule-docs", {});
+    const asOnWindows = async (cwd: string, args: string[]) => {
+      const { stdout, ...rest } = await lint(cwd, args);
+      const native = stdout
+        .replaceAll("@acme/ui/button.js", String.raw`@acme\\ui\\button.js`)
+        .replaceAll("'./dates.js'", String.raw`'.\\dates.js'`);
+      return { ...rest, stdout: native };
+    };
+    const now = reportsOf(examples, await lintExamples(String(dir), examples, byPage, asOnWindows));
+    expect(JSON.stringify(recorded["import/no-relative-packages"])).toContain("@acme/ui/button.js");
+    expect(JSON.stringify(recorded["import/named"])).toContain("'./dates.js'");
+    // In the other rule's messages a backslash is part of what they say.
+    expect(JSON.stringify(recorded["eslint/no-useless-escape"])).toContain(String.raw`character: \\d.`);
+    for (const name of names) expect(now[name]).toEqual(recorded[name]);
+  });
+
+  // bunfig.toml can't turn on a rule for another language, so those pages have no bunfig.toml snippets.
+  const otherLanguages = new Set(Object.keys(FILES).map(language => language.split("/")[0]));
+  const withSnippets = batches.filter(([, names]) => !otherLanguages.has(names[0].split("/")[0]));
+
   // Lints every example in the batch twice: with each rule just turned on, then with each rule's options snippet.
   // The snippets claim to set every option to its default, so both runs must report the same.
-  test.concurrent.each(batches)("snippets load, and the defaults in them are real: %s", async (_, names) => {
+  test.concurrent.each(withSnippets)("snippets load, and the defaults in them are real: %s", async (_, names) => {
     using dir = tempDir("bun-lint-rule-docs", {
       "package.json": JSON.stringify({ dependencies: { react: "^19.0.0" } }),
     });
@@ -216,6 +240,7 @@ describe("docs/lint/rules", () => {
       if (!Bun.deepEquals(parsed.lint.rules[rule.id].slice(1), config.defaults.options))
         wrong.push(`${name}: the snippet sets ${JSON.stringify(parsed.lint.rules[rule.id].slice(1))}`);
     }
+    expect(plain).not.toEqual([]);
 
     const run = async (lines: string[]) => {
       put("bunfig.toml", `[lint.rules]\n${lines.join("\n")}\n`);

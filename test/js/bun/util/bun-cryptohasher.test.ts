@@ -1,28 +1,68 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
-import { createHash, createHmac } from "node:crypto";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { createHash, createHmac, hash as nodeHash } from "node:crypto";
+import { join } from "node:path";
 
 // Every digest literal in this file was checked against python hashlib (openssl for md4).
 
-test("Bun.file in CryptoHasher is not supported yet", () => {
-  const file = Bun.file(import.meta.path);
-  const fileBlob = expect.objectContaining({
-    name: "TypeError",
-    code: "ERR_INVALID_ARG_TYPE",
-    message: "File blob cannot be used here",
-  });
+const fileBlob = expect.objectContaining({
+  name: "TypeError",
+  code: "ERR_INVALID_ARG_TYPE",
+  message: "File blob cannot be used here",
+});
+
+test.each([
+  ["Bun.file", () => Bun.file(import.meta.path)],
+  [
+    "an S3 file",
+    () => new Bun.S3Client({ accessKeyId: "id", secretAccessKey: "secret", bucket: "bucket" }).file("key"),
+  ],
+])("%s in CryptoHasher is not supported yet", (_, make) => {
+  const file = make();
   expect(() => Bun.SHA1.hash(file)).toThrow(fileBlob);
   expect(() => Bun.CryptoHasher.hash("sha1", file)).toThrow(fileBlob);
   expect(() => new Bun.SHA1().update(file)).toThrow(fileBlob);
-  expect(() => new Bun.CryptoHasher("sha1").update(file)).toThrow(
-    "Bun.file() is not supported here yet (it needs an async version)",
-  );
+  expect(() => new Bun.CryptoHasher("sha1").update(file)).toThrow(fileBlob);
+  expect(() => Bun.sha(file)).toThrow(fileBlob);
+});
+
+test("an output of Bun.build() is hashed as its bytes, and one written to outdir is refused", async () => {
+  using dir = tempDir("cryptohasher-build-output", { "entry.js": `console.log("hello");` });
+  const entrypoints = [join(String(dir), "entry.js")];
+  // `any`: the types of the static hashers do not list Blob.
+  const inMemory: any = (await Bun.build({ entrypoints })).outputs[0];
+  const written: any = (await Bun.build({ entrypoints, outdir: join(String(dir), "out") })).outputs[0];
+  const code = Buffer.from(await inMemory.arrayBuffer());
+  expect(code.length).toBeGreaterThan(0);
+
+  expect({
+    classStatic: Bun.SHA1.hash(inMemory, "hex"),
+    static: Bun.CryptoHasher.hash("sha1", inMemory, "hex"),
+    classInstance: new Bun.SHA1().update(inMemory).digest("hex"),
+    instance: new Bun.CryptoHasher("sha1").update(inMemory).digest("hex"),
+    sha: Bun.sha(inMemory, "hex"),
+    nodeCrypto: nodeHash("sha1", inMemory, "hex"),
+  }).toEqual({
+    classStatic: Bun.SHA1.hash(code, "hex"),
+    static: Bun.CryptoHasher.hash("sha1", code, "hex"),
+    classInstance: new Bun.SHA1().update(code).digest("hex"),
+    instance: new Bun.CryptoHasher("sha1").update(code).digest("hex"),
+    sha: Bun.sha(code, "hex"),
+    nodeCrypto: nodeHash("sha1", code, "hex"),
+  });
+
+  expect(() => Bun.SHA1.hash(written)).toThrow(fileBlob);
+  expect(() => Bun.CryptoHasher.hash("sha1", written)).toThrow(fileBlob);
+  expect(() => new Bun.SHA1().update(written)).toThrow(fileBlob);
+  expect(() => new Bun.CryptoHasher("sha1").update(written)).toThrow(fileBlob);
+  expect(() => Bun.sha(written)).toThrow(fileBlob);
+  expect(() => nodeHash("sha1", written)).toThrow(fileBlob);
 });
 test("CryptoHasher update should throw when no parameter/null/undefined is passed", () => {
   const expected = expect.objectContaining({
     name: "TypeError",
     code: "ERR_INVALID_ARG_TYPE",
-    message: "expected blob, string or buffer",
+    message: "input must be a string, ArrayBuffer, ArrayBufferView or Blob",
   });
   // @ts-expect-error
   expect(() => new Bun.CryptoHasher("sha1").update()).toThrow(expected);
@@ -97,11 +137,51 @@ test("CryptoHasher throws on non-latin1 algorithm names instead of crashing", ()
   expect(() => new Bun.CryptoHasher("ünïcode")).toThrow(unsupported("Unsupported algorithm ünïcode"));
 });
 
+test("a subclass inherits the static getters", () => {
+  class MyMD5 extends Bun.MD5 {}
+  expect(MyMD5.byteLength).toBe(16);
+  expect(MyMD5.hash("abc", "hex")).toBe("900150983cd24fb0d6963f7d28e17f72");
+  class MyHasher extends Bun.CryptoHasher {}
+  expect(MyHasher.algorithms).toEqual(Bun.CryptoHasher.algorithms);
+});
+
+test("heapStats does not count a prototype as an instance", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const classes = ["CryptoHasher", "MD4", "MD5", "SHA1", "SHA224", "SHA256", "SHA384", "SHA512", "SHA512_256"];
+      for (const name of classes) Bun[name].prototype;
+      const counts = require("bun:jsc").heapStats().objectTypeCounts;
+      console.log(JSON.stringify(classes.filter(name => counts[name])));`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("[]\n");
+  expect(exitCode).toBe(0);
+});
+
+test("hex of odd length is refused in a String object as in a string", () => {
+  const expected = expect.objectContaining({
+    name: "TypeError",
+    code: "ERR_INVALID_ARG_VALUE",
+    message: "The argument 'encoding' is invalid for data of length 3. Received 'hex'",
+  });
+  expect(() => new Bun.CryptoHasher("sha1").update("616", "hex")).toThrow(expected);
+  // @ts-expect-error
+  expect(() => new Bun.CryptoHasher("sha1").update(new String("616"), "hex")).toThrow(expected);
+  // @ts-expect-error
+  expect(new Bun.CryptoHasher("sha1").update(new String("6162"), "hex").digest("hex")).toBe(Bun.SHA1.hash("ab", "hex"));
+});
+
 test("static hash requires the algorithm to be a string primitive", () => {
   const expected = expect.objectContaining({
     name: "TypeError",
     code: "ERR_INVALID_ARG_TYPE",
-    message: "Expected string",
+    message: "algorithm must be a string",
   });
   // @ts-expect-error
   expect(() => Bun.CryptoHasher.hash(new String("sha256"), "hello")).toThrow(expected);
@@ -241,7 +321,7 @@ test("Bun.sha validates its arguments like Bun.SHA512_256.hash", () => {
   const badOutput = expect.objectContaining({
     name: "TypeError",
     code: "ERR_INVALID_ARG_TYPE",
-    message: "expected string or buffer",
+    message: "output must be of type string or ArrayBuffer or ArrayBufferView",
   });
   for (const output of [123, {}, null, true, [], () => {}, Symbol("x")]) {
     const label = `output ${typeof output}`;
@@ -254,7 +334,7 @@ test("Bun.sha validates its arguments like Bun.SHA512_256.hash", () => {
   const badInput = expect.objectContaining({
     name: "TypeError",
     code: "ERR_INVALID_ARG_TYPE",
-    message: "expected blob, string or buffer",
+    message: "input must be a string, ArrayBuffer, ArrayBufferView or Blob",
   });
   for (const input of [undefined, 123, null, {}]) {
     const label = `input ${typeof input}`;

@@ -16,9 +16,15 @@ const env = {
   NO_COLOR: "1",
 };
 
-type Result = { filePath: string; messages: { line: number; column: number; severity: number; ruleId: string }[] };
+type Result = {
+  filePath: string;
+  messages: { line: number; column: number; severity: number; ruleId: string; message: string }[];
+};
 
-/** `reports` has one `a.js:1:1 error no-debugger` string per problem. `texts` has the files' contents after the run. */
+/**
+ * Runs `bun lint -f json` on `files`. `reports` lists each problem as `a.js:1:1 error no-debugger`, `problems` lists
+ * each as `a.js:1:1 Unexpected 'debugger' statement.`, and `texts` maps each file name to its contents after the run.
+ */
 async function lint(files: Record<string, string>, args: string[], stdin?: string, cwd = ".") {
   using dir = tempDir("bun-lint-defaults", files);
   await using proc = spawn({
@@ -37,10 +43,13 @@ async function lint(files: Record<string, string>, args: string[], stdin?: strin
       it => `${nameOf(filePath)}:${it.line}:${it.column} ${it.severity === 2 ? "error" : "warning"} ${it.ruleId}`,
     ),
   );
+  const problems = (Array.isArray(json) ? (json as Result[]) : []).flatMap(({ filePath, messages }) =>
+    messages.map(it => `${nameOf(filePath)}:${it.line}:${it.column} ${it.message}`),
+  );
   const texts = Object.fromEntries(
     Object.keys(files).map(name => [name, readFileSync(join(String(dir), name), "utf8")]),
   );
-  return { json, reports, texts, stderr, exitCode };
+  return { json, reports, problems, texts, stderr, exitCode };
 }
 
 describe.concurrent("globals", () => {
@@ -125,16 +134,17 @@ describe.concurrent("globals", () => {
     expect(exitCode).toBe(1);
   });
 
-  // Which names `**/*{.,_,-}{test,spec,e2e,cy}.{js,mjs,cjs,jsx,ts,mts,cts,tsx}` is for. A global of a test runner can't be
-  // assigned to. In another file nothing defines it, which is only reported in JavaScript.
-  test("a file is a test by what its name ends with", async () => {
+  // Checks which names `**/*{.,_,-}{test,spec,e2e,cy}.{js,mjs,cjs,jsx,ts,mts,cts,tsx}` matches. In a test file,
+  // assigning to a test runner's global is reported by no-global-assign. In any other file the global is undefined,
+  // which is only reported in JavaScript.
+  test("a file is a test file if its name ends with a test suffix", async () => {
     const [stems, separators] = [
       ["a", "", "a.b", "test"],
       [".", "_", "-", "", "+"],
     ];
     const words = ["test", "spec", "e2e", "cy", "tes", "tests", "Test", "atest"];
     const extensions = ["js", "mjs", "cjs", "jsx", "ts", "mts", "cts", "tsx"];
-    // To Windows and macOS `a.Test.js` is the file `a.test.js`.
+    // On Windows and macOS, `a.Test.js` and `a.test.js` are the same file.
     const folderOf = (word: string) => (word === "Test" ? "cased/" : "");
     const names = stems.flatMap(stem =>
       separators.flatMap(separator =>
@@ -216,7 +226,7 @@ skipWaitng();
     }
   });
 
-  test("the test folders count from the closest package.json, also when run from inside one", async () => {
+  test("test folders are matched relative to the closest package.json, even when run from inside one", async () => {
     const files = {
       "package.json": "{}",
       "test/a.js": 'describe("a", () => {});\n',
@@ -579,6 +589,75 @@ export namespace Shapes {
     expect(eslint).toEqual([`a.ts:2:3 error ${rule}`, `a.ts:8:8 error ${rule}`]);
   });
 
+  describe("no-var and a var that only declares a type", () => {
+    const files = {
+      "a.ts": `declare var top: number;
+// eslint-disable-next-line no-var
+declare var disabled: number;
+export declare var exported: number;
+declare namespace ns { var inNamespace: number; }
+declare module "m" { var inModule: number; }
+declare global { var inGlobal: number; }
+declare global { export var exportedInGlobal: number; }
+declare global { namespace inner { var nestedInGlobal: number; } }
+namespace real { declare var inReal: number; }
+var plain = 1;
+`,
+    };
+    const eslint = {
+      ...files,
+      "eslint.config.mjs": `export default [{ files: ["**/*.ts"], extends: ["typescript-eslint/base"], rules: { "no-var": "error" } }];\n`,
+    };
+    const oxlint = {
+      ...files,
+      ".oxlintrc.json": `{ "categories": { "correctness": "off" }, "rules": { "no-var": "error" } }`,
+    };
+    const at = (...places: string[]) => places.map(place => `a.ts:${place} error no-var`);
+
+    test("is reported with an ESLint config, so the comment that disables it isn't unused, and not without a config", async () => {
+      const [withEslint, native] = await Promise.all([lint(eslint, ["a.ts"]), lint(files, [])]);
+      expect(withEslint.reports).toEqual(at("1:1", "4:8", "5:24", "6:22", "8:25", "9:36", "10:18", "11:1"));
+      expect(native.reports.filter(it => it.endsWith(" no-var"))).toEqual(["a.ts:11:1 warning no-var"]);
+    });
+
+    test("with an ESLint config, --fix changes what ESLint changes", async () => {
+      const { texts } = await lint(eslint, ["--fix", "a.ts"]);
+      expect(texts["a.ts"]).toBe(`declare let top: number;
+// eslint-disable-next-line no-var
+declare var disabled: number;
+export declare var exported: number;
+declare namespace ns { let inNamespace: number; }
+declare module "m" { let inModule: number; }
+declare global { var inGlobal: number; }
+declare global { export var exportedInGlobal: number; }
+declare global { namespace inner { let nestedInGlobal: number; } }
+namespace real { declare let inReal: number; }
+let plain = 1;
+`);
+    });
+
+    test("with an ESLint 8 config, a var in declare global is reported too, and --fix changes none in a block", async () => {
+      const eslintrc = `{ "root": true, "parser": "@typescript-eslint/parser", "parserOptions": { "sourceType": "module" }, "rules": { "no-var": "error" } }`;
+      const eslint8 = { ...files, ".eslintrc.json": eslintrc };
+      const [{ reports }, { texts }] = await Promise.all([
+        lint(eslint8, ["--report-unused-disable-directives", "a.ts"]),
+        lint(eslint8, ["--fix", "a.ts"]),
+      ]);
+      expect(reports).toEqual(at("1:1", "4:8", "5:24", "6:22", "7:18", "8:25", "9:36", "10:18", "11:1"));
+      expect(texts["a.ts"]).toBe(
+        files["a.ts"].replace("declare var top", "declare let top").replace("var plain", "let plain"),
+      );
+    });
+
+    test("with an oxlint config, only a var in an ambient block isn't reported", async () => {
+      const { json } = await lint(oxlint, ["--report-unused-disable-directives", "a.ts"]);
+      const reports = json.diagnostics.map(
+        (it: any) => `${it.labels[0].span.line}:${it.labels[0].span.column} ${it.code}`,
+      );
+      expect(reports).toEqual(["1:9", "4:16", "10:26", "11:1"].map(place => `${place} eslint(no-var)`));
+    });
+  });
+
   const react = { "package.json": JSON.stringify({ dependencies: { react: "^19.0.0" } }) };
 
   test("a parameter named use isn't React's hook", async () => {
@@ -692,6 +771,150 @@ export function run(command: string) {
     expect(eslint).toEqual(["a.ts:6:5 error no-fallthrough", "a.ts:8:5 error no-fallthrough"]);
   });
 
+  describe("with --type-aware, URL in a template literal", () => {
+    const rule = "@typescript-eslint/restrict-template-expressions";
+    const tsconfig = (lib: string[]) =>
+      JSON.stringify({ compilerOptions: { strict: true, lib, types: [], moduleDetection: "force" } });
+    const code = `declare const server: { url: URL };
+export const texts = [
+  \`\${server.url}api\`,
+  \`\${new URL("/x", server.url)}\`,
+  \`\${server.url.searchParams}\`,
+  \`\${{ a: 1 }}\`,
+];
+`;
+    // Same shape as @types/node: the global URL extends node:url's interface.
+    const node = `declare module "node:url" {
+  interface URLSearchParams { toString(): string }
+  interface URL { href: string; searchParams: URLSearchParams; toString(): string }
+  var URL: { prototype: URL; new (url: string, base?: string | URL): URL };
+}
+`;
+    const globalsOfNode = `import * as url from "node:url";
+declare global {
+  interface URL extends url.URL {}
+  var URL: typeof url.URL;
+}
+`;
+
+    test("isn't reported when a types package declares the global, like in a `bun init` project", async () => {
+      const files = {
+        "tsconfig.json": tsconfig(["ESNext"]),
+        "url.d.ts": node,
+        "globals.d.ts": globalsOfNode,
+        "a.ts": code,
+      };
+      const { native, eslint } = await inBothModes(files, [rule], ["--type-aware"]);
+      expect(native).toEqual([`a.ts:6:6 error ${rule}`]);
+      expect(eslint).toEqual([3, 4, 5, 6].map(line => `a.ts:${line}:6 error ${rule}`));
+    });
+
+    test("isn't reported when a script declares the global", async () => {
+      const declared = `declare class URLSearchParams { toString(): string }
+declare class URL { constructor(url: string, base?: string | URL); searchParams: URLSearchParams; toString(): string }
+`;
+      const files = { "tsconfig.json": tsconfig(["ESNext"]), "globals.d.ts": declared, "a.ts": code };
+      expect((await inBothModes(files, [rule], ["--type-aware"])).native).toEqual([`a.ts:6:6 error ${rule}`]);
+    });
+
+    test("isn't reported when it's imported from node:url", async () => {
+      const imported = `import { URL } from "node:url";\nexport const text = \`\${new URL("https://bun.com")}\`;\n`;
+      const files = { "tsconfig.json": tsconfig(["ESNext"]), "url.d.ts": node, "a.ts": imported };
+      expect((await inBothModes(files, [rule], ["--type-aware"])).native).toEqual([]);
+    });
+
+    test("isn't reported with the DOM lib", async () => {
+      const files = { "tsconfig.json": tsconfig(["ESNext", "DOM"]), "a.ts": code };
+      const { native, eslint } = await inBothModes(files, [rule], ["--type-aware"]);
+      expect(native).toEqual([`a.ts:6:6 error ${rule}`]);
+      expect(eslint).toEqual(native);
+    });
+
+    test("is reported when URL is the project's own class", async () => {
+      const files = {
+        "tsconfig.json": tsconfig(["ESNext", "DOM"]),
+        "url.ts": 'export class URL {\n  href = "";\n}\n',
+        "a.ts": `import { URL } from "./url";\nexport const text = \`\${new URL()}\`;\n`,
+        "b.ts": `class URL {\n  href = "";\n}\nexport const text = \`\${new URL()}\`;\n`,
+      };
+      const { native } = await inBothModes(files, [rule], ["--type-aware"]);
+      expect(native).toEqual([`a.ts:2:24 error ${rule}`, `b.ts:4:24 error ${rule}`]);
+    });
+
+    test("is reported when the allow list only allows URL from lib and the lib doesn't declare it", async () => {
+      const files = {
+        "tsconfig.json": tsconfig(["ESNext"]),
+        "url.d.ts": node,
+        "globals.d.ts": globalsOfNode,
+        "a.ts": code,
+        "bunfig.toml": `[lint.rules]\n"${rule}" = ["error", { allow = [{ from = "lib", name = ["URL", "URLSearchParams"] }] }]\n`,
+      };
+      const { reports } = await lint(files, ["--type-aware"]);
+      expect(reports.filter(it => it.endsWith(rule))).toEqual([3, 4, 5, 6].map(line => `a.ts:${line}:6 error ${rule}`));
+    });
+  });
+
+  test("with --type-aware, no-implied-eval ignores a setTimeout argument of type any", async () => {
+    const rule = "@typescript-eslint/no-implied-eval";
+    const files = {
+      "tsconfig.json": `{ "compilerOptions": { "strict": true, "lib": ["esnext", "dom"], "types": [] } }`,
+      "a.ts": `import { stub } from "not-installed";
+export function later(callback: any, code: string, options: { done: any }) {
+  setTimeout(callback, 1);
+  setTimeout(options.done, 1);
+  setTimeout(stub, 1);
+  setTimeout(JSON.parse(code), 1);
+  setTimeout(code, 1);
+}
+`,
+    };
+    const { native, eslint } = await inBothModes(files, [rule], ["--type-aware"]);
+    expect(native).toEqual([`a.ts:7:14 warning ${rule}`]);
+    expect(eslint).toEqual([3, 4, 5, 6, 7].map(line => `a.ts:${line}:14 error ${rule}`));
+  });
+
+  describe("with --type-aware, awaiting a bun:test promise matcher", () => {
+    const rule = "@typescript-eslint/await-thenable";
+    const tsconfig = `{ "compilerOptions": { "strict": true, "lib": ["esnext"], "types": [] } }`;
+    // The relevant declarations from bun-types.
+    const matchers = `interface Matchers<T> {
+    not: Matchers<unknown>;
+    resolves: Matchers<Awaited<T>>;
+    rejects: Matchers<unknown>;
+    toBe(expected: T): void;
+    toThrow(expected?: unknown): void;
+  }
+  export function expect<T>(actual: T): Matchers<T>;`;
+    const code = (source: string) => `import { expect } from "${source}";
+declare const promise: Promise<number>;
+await expect(promise).resolves.toBe(1);
+await expect(promise).rejects.toThrow();
+await expect(promise).resolves.not.toBe(2);
+await expect(1).toBe(1);
+`;
+
+    test("isn't reported", async () => {
+      const files = {
+        "tsconfig.json": tsconfig,
+        "bun-test.d.ts": `declare module "bun:test" {\n  ${matchers}\n}\n`,
+        "a.ts": code("bun:test"),
+      };
+      const { native, eslint } = await inBothModes(files, [rule], ["--type-aware"]);
+      expect(native).toEqual([`a.ts:6:1 warning ${rule}`]);
+      expect(eslint).toEqual([`a.ts:6:1 error ${rule}`]);
+    });
+
+    test("is reported when expect doesn't come from bun:test", async () => {
+      const files = {
+        "tsconfig.json": tsconfig,
+        "mine.ts": `export ${matchers.replace("export function", "export declare function")}\n`,
+        "a.ts": code("./mine"),
+      };
+      const { native } = await inBothModes(files, [rule], ["--type-aware"]);
+      expect(native).toEqual([3, 4, 5, 6].map(line => `a.ts:${line}:1 warning ${rule}`));
+    });
+  });
+
   test("an array of elements needs keys only where React renders it as a list", async () => {
     const files = {
       ...react,
@@ -712,7 +935,7 @@ export const Mapped = ({ items }) => items.map(item => <li>{item}</li>);
     };
     const rule = "react/jsx-key";
     const { native, eslint } = await inBothModes(files, [rule]);
-    const at = (places: string[]) => places.map(place => `a.jsx:${place} error ${rule}`);
+    const at = (positions: string[]) => positions.map(position => `a.jsx:${position} error ${rule}`);
     const rendered = ["7:33", "7:45", "8:46", "10:11", "10:23", "12:29", "13:56"];
     expect(native).toEqual(at(rendered));
     expect(eslint).toEqual(at(["2:18", "2:31", "5:23", "5:33", "6:46", "6:69", ...rendered]));
@@ -756,7 +979,7 @@ export const HALF = 9007199254740993.5;
     };
     const rule = "no-loss-of-precision";
     const { native, eslint } = await inBothModes(files, [rule]);
-    const at = (places: string[]) => places.map(place => `${name}:${place} error ${rule}`);
+    const at = (positions: string[]) => positions.map(position => `${name}:${position} error ${rule}`);
     const integers = ["3:19", "4:20", "5:20", "6:21", "7:21", "8:21"];
     expect(native).toEqual(at(integers));
     expect(eslint).toEqual(at(["1:19", "2:20", ...integers]));
@@ -786,10 +1009,10 @@ export const HALF = 9007199254740993.5;
     };
     const { native, eslint } = await inBothModes(files, ["no-undef"]);
     expect(native).toEqual(["a.js:3:57 error no-undef"]);
-    expect(eslint).toEqual(["2:39", "2:51", "3:44", "3:57"].map(place => `a.js:${place} error no-undef`));
+    expect(eslint).toEqual(["2:39", "2:51", "3:44", "3:57"].map(position => `a.js:${position} error no-undef`));
     const strict = { "bunfig.toml": `[lint.rules]\n"no-undef" = ["error", { typeof = true }]\n` };
     expect((await inBothModes({ ...files, ...strict }, ["no-undef"])).native).toEqual(
-      ["2:14", "2:39", "2:51", "3:17", "3:44", "3:57"].map(place => `a.js:${place} error no-undef`),
+      ["2:14", "2:39", "2:51", "3:17", "3:44", "3:57"].map(position => `a.js:${position} error no-undef`),
     );
   });
 
@@ -845,7 +1068,7 @@ export const HALF = 9007199254740993.5;
       expect((await lint(commented, [])).reports).toEqual(expected);
     });
 
-    test("the options of an override replace those of [lint.rules], not the defaults", async () => {
+    test("an override's options replace the ones from [lint.rules], not the defaults", async () => {
       const bunfig = `[lint.rules]
 "no-irregular-whitespace" = ["error", { skipComments = false }]
 [[lint.overrides]]
@@ -898,7 +1121,7 @@ describe.concurrent("JSX uses the function it compiles to", () => {
     expect(reports).toEqual([]);
   });
 
-  test.each(["a.jsx", "a.tsx"])("the function that a @jsx comment names isn't unused in %s", async name => {
+  test.each(["a.jsx", "a.tsx"])("the function named in a @jsx comment isn't unused in %s", async name => {
     const { reports } = await lint({ [name]: preact }, []);
     expect(reports).toEqual([]);
   });
@@ -1008,44 +1231,44 @@ export {};
 
   test.each([
     [
-      "a line that has something else on it stays",
+      "keeps a line that has something else on it",
       "const a = 1; // why\nconst b = 2; export {};\n",
       "// why\nexport {};\n",
     ],
-    ["no space stays at the end of a line", "g(); const a = 1;\nexport {};\n", "g();\nexport {};\n"],
+    ["leaves no trailing space", "g(); const a = 1;\nexport {};\n", "g();\nexport {};\n"],
     [
-      "no doubled space stays",
+      "leaves no double space",
       'import { a, used } from "./b.js";\nused();\n',
       'import { used } from "./b.js";\nused();\n',
     ],
     [
-      "no empty first line in a block",
+      "leaves no empty first line in a block",
       "export function f() {\n  const a = 1;\n\n  return 1;\n}\n",
       "export function f() {\n  return 1;\n}\n",
     ],
     [
-      "no empty last line in a block",
+      "leaves no empty last line in a block",
       "export function f() {\n  g();\n\n  const a = 1;\n}\n",
       "export function f() {\n  g();\n}\n",
     ],
     [
-      "no two empty lines in a row",
+      "leaves no two empty lines in a row",
       'import x from "./x.js";\n\nconst a = 1;\n\nexport const y = x;\n',
       'import x from "./x.js";\n\nexport const y = x;\n',
     ],
-    ["no empty line at the start of the file", "const a = 1;\n\nexport {};\n", "export {};\n"],
-    ["no empty line at the end of the file", "export {};\n\nconst a = 1;\n", "export {};\n"],
+    ["leaves no empty line at the start of the file", "const a = 1;\n\nexport {};\n", "export {};\n"],
+    ["leaves no empty line at the end of the file", "export {};\n\nconst a = 1;\n", "export {};\n"],
     [
-      "an empty line between two statements stays",
+      "keeps an empty line between two statements",
       "g();\nconst a = 1;\n\nh();\nexport {};\n",
       "g();\n\nh();\nexport {};\n",
     ],
     [
-      "the same with \\r\\n",
+      "handles \\r\\n the same way",
       "export function f() {\r\n  const a = 1;\r\n\r\n  return 1;\r\n}\r\n",
       "export function f() {\r\n  return 1;\r\n}\r\n",
     ],
-  ])("%s", async (_, code, expected) => {
+  ])("removing a declaration %s", async (_, code, expected) => {
     const { texts } = await lint({ "a.mjs": code }, ["--fix-suggestions"]);
     expect(texts["a.mjs"]).toBe(expected);
   });
@@ -1103,7 +1326,62 @@ export function Timer({ ms, cb }) {
     expect(dangerous.texts["b.jsx"]).toBe(files["b.jsx"].replace("[ms]", "[cb, ms]"));
   });
 
-  test("it leaves alone what would change working code or break the type check", async () => {
+  // ESLint's --fix applies all of these. The project type checks before those fixes and fails after them.
+  test("--fix skips fixes that would cause type errors", async () => {
+    const kept = {
+      // TS2339 on `globalThis.BUILD_ID`, and TS2451 if another file declares it too
+      "global.ts": "declare var BUILD_ID: string;\nconsole.log(globalThis.BUILD_ID);\n",
+      "ambient.ts": "declare namespace Legacy {\n  var version: string;\n}\nconsole.log(Legacy.version);\n",
+      // TS2540
+      "namespace.ts":
+        "export namespace Config {\n  export let verbose = false;\n}\nConfig.verbose = true;\nconsole.log(Config.verbose);\n",
+      // TS2322, TS2345
+      "object.ts":
+        'export const a: Object = 1;\nexport function f(x: Object) {\n  return x;\n}\nconsole.log(f("s"));\n',
+      // TS2774
+      "cast.ts":
+        'declare function cb(): void;\nif (!!cb) console.log("has cb");\nexport const b = Boolean(cb) ? 1 : 2;\n',
+    };
+    const fixed = {
+      "fixed.ts":
+        'export let n = 1;\nlet m = 2;\nvar k = 3;\nexport const s: String = "x";\nconst v = 0;\nif (!!v) console.log(k, m, n);\nexport const g = (name: string) => (!!name ? 1 : 2);\nexport const h = (cb: () => void) => !Boolean(cb);\nexport const i = (value: unknown) => (!!value ? 1 : 2);\n',
+      "fixed.js": "export function call(cb) {\n  if (!!cb) cb();\n}\n",
+    };
+    const rules = /(no-var|prefer-const|no-wrapper-object-types|no-extra-boolean-cast)$/;
+    const reportsOf = (result: { reports: string[] }) =>
+      result.reports
+        .filter(it => rules.test(it))
+        .map(it => it.replace(/:\d+:\d+ warning/, ""))
+        .sort();
+    const [safe, dangerous] = await Promise.all([
+      lint({ ...kept, ...fixed }, ["--fix"]),
+      lint({ ...kept, ...fixed }, ["--fix-dangerously"]),
+    ]);
+    expect(safe.texts).toEqual({
+      ...kept,
+      "fixed.ts":
+        'export const n = 1;\nconst m = 2;\nconst k = 3;\nexport const s: string = "x";\nconst v = 0;\nif (v) console.log(k, m, n);\nexport const g = (name: string) => (name ? 1 : 2);\nexport const h = (cb: () => void) => !cb;\nexport const i = (value: unknown) => (value ? 1 : 2);\n',
+      "fixed.js": "export function call(cb) {\n  if (cb) cb();\n}\n",
+    });
+    expect(reportsOf(safe)).toEqual([
+      "cast.ts no-extra-boolean-cast",
+      "cast.ts no-extra-boolean-cast",
+      "namespace.ts prefer-const",
+      "object.ts @typescript-eslint/no-wrapper-object-types",
+      "object.ts @typescript-eslint/no-wrapper-object-types",
+    ]);
+    // `declare var` isn't reported at all, so no flag rewrites it.
+    expect(dangerous.texts["global.ts"]).toBe(kept["global.ts"]);
+    expect(dangerous.texts["ambient.ts"]).toBe(kept["ambient.ts"]);
+    expect(dangerous.texts["namespace.ts"]).toContain("export const verbose = false;");
+    expect(dangerous.texts["object.ts"]).toContain("a: object = 1");
+    expect(dangerous.texts["object.ts"]).toContain("f(x: object)");
+    expect(dangerous.texts["cast.ts"]).toContain("if (cb) console.log");
+    expect(dangerous.texts["cast.ts"]).toContain("b = cb ? 1 : 2");
+    expect(reportsOf(dangerous)).toEqual([]);
+  });
+
+  test("skips suggestions that would change working code or break the type check", async () => {
     const files = {
       "tsconfig.json": `{ "compilerOptions": { "strict": true, "lib": ["esnext", "dom"], "types": [] } }`,
       "a.ts": `// @ts-ignore
@@ -1206,15 +1484,20 @@ declare const c: any;
   });
 
   test("rules set in bunfig.toml or with --rule apply to them too", async () => {
-    const bunfig = `[lint.rules]\n"@typescript-eslint/no-explicit-any" = "warn"\n"no-var" = "error"\n`;
+    const bunfig = `[lint.rules]\n"@typescript-eslint/no-explicit-any" = "warn"\n"@typescript-eslint/no-empty-object-type" = "error"\n`;
     const expected = [
-      "types.d.ts:1:1 error no-var",
       "types.d.ts:1:16 warning @typescript-eslint/no-explicit-any",
       "types.d.ts:2:19 error @typescript-eslint/no-misused-new",
+      "types.d.ts:3:18 error @typescript-eslint/no-empty-object-type",
     ];
     const [byFile, byFlag] = await Promise.all([
       lint({ "types.d.ts": code, "bunfig.toml": bunfig }, []),
-      lint({ "types.d.ts": code }, ["--rule", "@typescript-eslint/no-explicit-any: warn", "--rule", "no-var: error"]),
+      lint({ "types.d.ts": code }, [
+        "--rule",
+        "@typescript-eslint/no-explicit-any: warn",
+        "--rule",
+        "@typescript-eslint/no-empty-object-type: error",
+      ]),
     ]);
     expect(byFile.reports).toEqual(expected);
     expect(byFlag.reports).toEqual(expected);
@@ -1250,7 +1533,7 @@ const h = 1;
   test.each([
     ["a.js", "no-unused-vars"],
     ["a.ts", "@typescript-eslint/no-unused-vars"],
-  ])("%s", async (name, rule) => {
+  ])("in %s", async (name, rule) => {
     const set = (setting: string) => ({ [name]: code, "bunfig.toml": `[lint.rules]\n"${rule}" = ${setting}\n` });
     const [plain, severity, options] = await Promise.all([
       lint({ [name]: code }, []),
@@ -1446,14 +1729,14 @@ export function useThing(a, on) {
       "src/App.jsx": component,
       "src/deep/App.jsx": component,
     };
-    const [searched, named, piped, printed] = await Promise.all([
+    const [searched, explicit, piped, printed] = await Promise.all([
       lint(files, []),
       lint(files, ["src/App.jsx", "src/deep/App.jsx"]),
       lint(files, ["--stdin", "--stdin-filename", "src/Other.jsx"], component),
       lint(files, ["--print-config", "src/App.jsx"]),
     ]);
     expect(searched.reports).toEqual([...found("src/App.jsx"), ...found("src/deep/App.jsx")]);
-    expect(named.reports).toEqual(searched.reports);
+    expect(explicit.reports).toEqual(searched.reports);
     expect(piped.reports).toEqual(found("src/Other.jsx"));
     expect(printed.json.rules["react-hooks/rules-of-hooks"]).toEqual([2]);
   });
@@ -1464,18 +1747,18 @@ export function useThing(a, on) {
       "server/package.json": `{ "dependencies": {} }`,
       "server/App.jsx": component,
     };
-    const [searched, named] = await Promise.all([lint(files, []), lint(files, ["server/App.jsx"])]);
+    const [searched, explicit] = await Promise.all([lint(files, []), lint(files, ["server/App.jsx"])]);
     expect(searched.reports).toEqual([]);
-    expect(named.reports).toEqual([]);
+    expect(explicit.reports).toEqual([]);
   });
 
   test("they also run on files passed by name and on stdin", async () => {
     const files = { "package.json": dependingOn("dependencies"), "src/App.jsx": component };
-    const [named, piped] = await Promise.all([
+    const [explicit, piped] = await Promise.all([
       lint(files, ["src/App.jsx"]),
       lint(files, ["--stdin", "--stdin-filename", "src/Other.jsx"], component),
     ]);
-    expect(named.reports).toEqual(found("src/App.jsx"));
+    expect(explicit.reports).toEqual(found("src/App.jsx"));
     expect(piped.reports).toEqual(found("src/Other.jsx"));
   });
 
@@ -1529,16 +1812,16 @@ export function useThing(a, on) {
       lint(files, ["--print-config", "App.jsx"]),
       lint(files, ["--print-config", "mail/App.jsx"]),
     ]);
-    const ofReact = (printed: { rules: object }) =>
+    const reactRules = (printed: { rules: object }) =>
       Object.fromEntries(Object.entries(printed.rules).filter(([name]) => name.startsWith("react")));
-    expect(ofReact(withReact.json)).toEqual({
+    expect(reactRules(withReact.json)).toEqual({
       "react-hooks/rules-of-hooks": [2],
       "react-hooks/exhaustive-deps": [1],
       "react/jsx-key": [2, { checkArraysOutsideJSX: false }],
       "react/jsx-uses-react": [2],
     });
     // `react/jsx-uses-react` reports nothing. It's also for Preact's `h`, so it doesn't depend on React.
-    expect(ofReact(without.json)).toEqual({
+    expect(reactRules(without.json)).toEqual({
       "react/jsx-key": [0, { checkArraysOutsideJSX: false }],
       "react/jsx-uses-react": [2],
     });
@@ -1546,13 +1829,1145 @@ export function useThing(a, on) {
 
   test("they stay off with an ESLint or oxlint config", async () => {
     const files = { "package.json": dependingOn("dependencies"), "App.jsx": component };
-    const ofEslint = `export default [{ files: ["**/*.jsx"], languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } } }];\n`;
+    const eslintConfig = `export default [{ files: ["**/*.jsx"], languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } } }];\n`;
     const [eslint, oxlint] = await Promise.all([
-      lint({ ...files, "eslint.config.js": ofEslint }, ["App.jsx"]),
+      lint({ ...files, "eslint.config.js": eslintConfig }, ["App.jsx"]),
       lint({ ...files, ".oxlintrc.json": "{}" }, ["App.jsx"]),
     ]);
     expect(eslint.json).toEqual([expect.objectContaining({ messages: [] })]);
     expect(oxlint.json.diagnostics).toEqual([]);
     expect([eslint.exitCode, oxlint.exitCode]).toEqual([0, 0]);
+  });
+});
+
+describe.concurrent("ES modules and CommonJS", () => {
+  const early = `const os = require("os");
+if (os.platform() === "never") {
+  return;
+}
+module.exports = os.platform();
+`;
+  const returnOutside = "Parsing error: 'return' outside of function";
+  const esmPackage = { "package.json": `{ "type": "module" }` };
+
+  test.each([
+    ["no package.json", {}],
+    ["a package.json without a type", { "package.json": `{ "name": "a" }` }],
+    [`"type": "commonjs"`, { "package.json": `{ "type": "commonjs" }` }],
+  ])("allows a top-level return with %s", async (_, files) => {
+    const { problems, exitCode } = await lint({ ...files, "early.js": early }, []);
+    expect(problems).toEqual([]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("runs rules on a file with a top-level return", async () => {
+    const { reports } = await lint({ "early.js": `${early}debugger;\n` }, []);
+    expect(reports).toEqual(["early.js:6:1 error no-debugger"]);
+  });
+
+  test(`reports a top-level return with "type": "module"`, async () => {
+    const { problems, exitCode } = await lint({ ...esmPackage, "early.js": early }, []);
+    expect(problems).toEqual([`early.js:3:3 ${returnOutside}`]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("uses the type from the nearest package.json", async () => {
+    const files = {
+      ...esmPackage,
+      "early.js": early,
+      "src/early.js": early,
+      "legacy/package.json": "{}",
+      "legacy/early.js": early,
+      "legacy/esm/package.json": esmPackage["package.json"],
+      "legacy/esm/early.js": early,
+    };
+    const expected = ["early.js", "legacy/esm/early.js", "src/early.js"].map(it => `${it}:3:3 ${returnOutside}`);
+    const names = Object.keys(files).filter(it => it.endsWith(".js"));
+    const [all, explicit] = await Promise.all([lint(files, []), lint(files, names)]);
+    expect(all.problems.sort()).toEqual(expected);
+    expect(explicit.problems.sort()).toEqual(expected);
+  });
+
+  test.each([
+    ["import", `import "./b.js";`],
+    ["export", "export {};"],
+    ["import.meta", "console.log(import.meta.url);"],
+    ["a top-level await", "await 1;"],
+    ["a top-level for await", "for await (const a of []) console.log(a);"],
+  ])("%s makes a file a module", async (_, code) => {
+    const files = { "a.js": `${code}\nreturn;\n`, "b.js": "" };
+    const [withoutPackageJson, inCommonJs] = await Promise.all([
+      lint(files, ["a.js"]),
+      lint({ ...files, "package.json": `{ "type": "commonjs" }` }, ["a.js"]),
+    ]);
+    expect(withoutPackageJson.problems).toEqual([`a.js:2:1 ${returnOutside}`]);
+    expect(inCommonJs.problems).toEqual([`a.js:2:1 ${returnOutside}`]);
+  });
+
+  test.each([
+    ["import()", `import("./b.js").then(console.log);`],
+    ["an await in a function", "(async () => { await 1; })();"],
+    ["a keyword inside a string", `console.log("import.meta, export, await");`],
+  ])("%s doesn't make a file a module", async (_, code) => {
+    const { problems } = await lint({ "a.js": `${code}\nreturn;\n`, "b.js": "" }, ["a.js"]);
+    expect(problems).toEqual([]);
+  });
+
+  test(`allows an import with "type": "commonjs", like Bun and TypeScript`, async () => {
+    const files = {
+      "package.json": `{ "type": "commonjs" }`,
+      "a.js": `import os from "os";\nexport default os.platform();\n`,
+      "b.ts": `import os from "os";\nexport default os.platform();\n`,
+    };
+    const { problems, exitCode } = await lint(files, []);
+    expect(problems).toEqual([]);
+    expect(exitCode).toBe(0);
+  });
+
+  const sloppy: [name: string, code: string, inStrictMode: string][] = [
+    ["with", "with (Math) console.log(PI);", "'with' in strict mode"],
+    ["deleting a variable", "var a = 1;\ndelete a;", "Deleting local variable in strict mode"],
+    ["a strict-mode reserved word", "var public = 1;\nconsole.log(public);", "The keyword 'public' is reserved"],
+    ["an octal literal", "console.log(010);", ""],
+    ["duplicate parameter names", "console.log(function (a, a) {});", ""],
+    ["await as an identifier", "var await = 1;\nconsole.log(await);", ""],
+    ["an HTML comment", "<!-- hidden from old browsers\nconsole.log(1);\n--> the end", ""],
+  ];
+
+  test.each(sloppy)("parses a CommonJS file in sloppy mode: %s", async (_, code, inStrictMode) => {
+    const line = code.split("\n").length + 1;
+    const files = { "a.js": `${code}\ndebugger;\n` };
+    const [commonJs, esm] = await Promise.all([lint(files, []), lint({ ...esmPackage, ...files }, [])]);
+    expect(commonJs.problems.filter(it => it.includes("Parsing error"))).toEqual([]);
+    expect(commonJs.reports).toContain(`a.js:${line}:1 error no-debugger`);
+    expect(esm.problems).toEqual([expect.stringContaining(`Parsing error: ${inStrictMode}`)]);
+  });
+
+  test(`"use strict" makes a CommonJS file strict`, async () => {
+    const { problems } = await lint({ "a.js": `"use strict";\nwith (Math) console.log(PI);\n` }, []);
+    expect(problems).toEqual(["a.js:2:1 Parsing error: 'with' in strict mode"]);
+  });
+
+  test("the file extension overrides package.json", async () => {
+    const files = { "a.mjs": early, "a.cjs": early };
+    const [inCommonJs, inModule] = await Promise.all([
+      lint({ ...files, "package.json": `{ "type": "commonjs" }` }, []),
+      lint({ ...files, ...esmPackage }, []),
+    ]);
+    expect(inCommonJs.problems).toEqual([`a.mjs:3:3 ${returnOutside}`]);
+    expect(inModule.problems).toEqual([`a.mjs:3:3 ${returnOutside}`]);
+  });
+
+  describe("sourceType and globalReturn", () => {
+    const ways = (toml: string, ...flags: string[]): [string, Record<string, string>, string[]][] => [
+      [flags.join(" "), {}, flags.flatMap(it => ["--parser-options", it])],
+      [toml.replaceAll("\n", " "), { "bunfig.toml": `[lint.parserOptions]\n${toml}\n` }, []],
+    ];
+
+    test.each([
+      ...ways(`sourceType = "commonjs"`, "sourceType:commonjs"),
+      ...ways("ecmaFeatures = { globalReturn = true }", "ecmaFeatures:{globalReturn:true}"),
+      ...ways(
+        `sourceType = "script"\necmaFeatures = { globalReturn = true }`,
+        "sourceType:script",
+        "ecmaFeatures:{globalReturn:true}",
+      ),
+    ])(`%s allows a top-level return with "type": "module"`, async (_, files, flags) => {
+      const { problems, exitCode } = await lint({ ...esmPackage, ...files, "early.js": early }, flags);
+      expect(problems).toEqual([]);
+      expect(exitCode).toBe(0);
+    });
+
+    test.each([
+      ...ways(`sourceType = "module"`, "sourceType:module"),
+      ...ways(`sourceType = "script"`, "sourceType:script"),
+    ])("%s rejects a top-level return", async (_, files, flags) => {
+      const { problems, exitCode } = await lint({ ...files, "early.js": early }, flags);
+      expect(problems).toEqual([`early.js:3:3 ${returnOutside}`]);
+      expect(exitCode).toBe(1);
+    });
+
+    test("ignores globalReturn in a file with an import, like ESLint", async () => {
+      const flags = ["--parser-options", "ecmaFeatures:{globalReturn:true}", "a.js"];
+      const { problems } = await lint({ "a.js": `import "./b.js";\nreturn;\n`, "b.js": "" }, flags);
+      expect(problems).toEqual([`a.js:2:1 ${returnOutside}`]);
+    });
+
+    test("parses a script in sloppy mode and rejects an import", async () => {
+      const files = { "a.js": "with (Math) console.log(PI);\ndebugger;\n", "b.js": `import "./a.js";\n` };
+      const { problems, reports } = await lint(files, ["--parser-options", "sourceType:script"]);
+      expect(reports).toContain("a.js:2:1 error no-debugger");
+      expect(problems).toContain(
+        "b.js:1:1 Parsing error: 'import' and 'export' may appear only with 'sourceType: module'",
+      );
+    });
+
+    test("top-level declarations are global in a script but not in a CommonJS file", async () => {
+      const files = { "a.js": "var a = 1;\nconsole.log(a);\n" };
+      const rule = ["--rule", "no-implicit-globals: error"];
+      const [commonJs, script] = await Promise.all([
+        lint(files, rule),
+        lint(files, [...rule, "--parser-options", "sourceType:script"]),
+      ]);
+      expect(commonJs.reports).toEqual([]);
+      expect(script.reports).toEqual(["a.js:1:5 error no-implicit-globals"]);
+    });
+
+    test.each(ways(`sourceType = "esm"`, "sourceType:esm"))("%s is an error", async (_, files, flags) => {
+      const { stderr, exitCode } = await lint({ ...files, "a.js": "" }, flags);
+      expect(stderr).toContain(`Key "sourceType": Expected "script", "module", or "commonjs".`);
+      expect(exitCode).toBe(2);
+    });
+
+    test("--print-config prints the sourceType", async () => {
+      const files = { "esm/package.json": esmPackage["package.json"] };
+      const sourceType = async (...args: string[]) =>
+        (await lint(files, ["--print-config", ...args])).json.languageOptions.sourceType;
+      expect(
+        await Promise.all([
+          sourceType("a.js"),
+          sourceType("a.ts"),
+          sourceType("a.mjs"),
+          sourceType("a.cjs"),
+          sourceType("a.cts"),
+          sourceType("esm/a.js"),
+          sourceType("a.js", "--parser-options", "sourceType:script"),
+        ]),
+      ).toEqual(["unambiguous", "unambiguous", "module", "commonjs", "commonjs", "module", "script"]);
+    });
+  });
+
+  describe("strict", () => {
+    const bunfig = { "bunfig.toml": `[lint.rules]\nstrict = "error"\n` };
+    const strict = `"use strict";
+module.exports = (function () {
+  return this === undefined;
+})();
+`;
+    const unnecessary = "'use strict' is unnecessary inside of modules.";
+
+    test.each([{}, { "package.json": `{ "type": "commonjs" }` }])(
+      `--fix keeps "use strict" in a CommonJS file: %j`,
+      async files => {
+        const { problems, texts } = await lint({ ...bunfig, ...files, "strict.js": strict }, ["--fix"]);
+        expect(problems).toEqual([]);
+        expect(texts["strict.js"]).toBe(strict);
+      },
+    );
+
+    test(`reports a CommonJS file without "use strict"`, async () => {
+      const { problems } = await lint({ ...bunfig, "a.js": "module.exports = 1;\n" }, []);
+      expect(problems).toEqual(["a.js:1:1 Use the global form of 'use strict'."]);
+    });
+
+    test(`--fix removes "use strict" from a module`, async () => {
+      const files = {
+        ...bunfig,
+        "a.js": `"use strict";\nexport default 1;\n`,
+        "esm/package.json": esmPackage["package.json"],
+      };
+      const { problems, texts } = await lint({ ...files, "esm/strict.js": strict }, ["--fix"]);
+      expect(problems).toEqual([]);
+      expect(texts["a.js"]).not.toContain("use strict");
+      expect(texts["esm/strict.js"]).not.toContain("use strict");
+    });
+
+    test.each([
+      ["a.js", false],
+      ["a.jsx", false],
+      ["a.ts", false],
+      ["a.tsx", false],
+      ["a.cjs", false],
+      ["a.cts", false],
+      ["a.mjs", true],
+      ["a.mts", true],
+    ])("%s without an import or an export is a module: %p", async (name, isModule) => {
+      const { problems } = await lint({ ...bunfig, [name]: `"use strict";\nconsole.log(1);\n` }, []);
+      expect(problems).toEqual(isModule ? [`${name}:1:1 ${unnecessary}`] : []);
+    });
+  });
+
+  test("no-undef allows the CommonJS globals in a CommonJS file", async () => {
+    const code = "module.exports = exports.a = [require, __filename, __dirname];\n";
+    const { reports } = await lint({ "a.js": code, "b.cjs": code }, ["--rule", "no-undef: error"]);
+    expect(reports).toEqual([]);
+  });
+
+  test("no-inner-declarations reports a function inside a block in a CommonJS file", async () => {
+    const code = "if (process.env.DEBUG) {\n  function log() {}\n  log();\n}\n";
+    const files = { "a.js": code, "b.js": `${code}export {};\n` };
+    const { reports } = await lint(files, ["--rule", "no-inner-declarations: error"]);
+    expect(reports).toEqual(["a.js:2:3 error no-inner-declarations"]);
+  });
+
+  test("a JavaScript plugin sees the file's sourceType", async () => {
+    const files = {
+      "bunfig.toml": `[lint]\nplugins = ["./plugin.mjs"]\n\n[lint.rules]\n"local/kind" = "error"\n`,
+      "plugin.mjs": `
+        const kind = {
+          create(context) {
+            return {
+              Program(node) {
+                const scopes = context.sourceCode.scopeManager;
+                const message = [context.languageOptions.sourceType, node.sourceType, scopes.isGlobalReturn(), scopes.scopes[1].type];
+                context.report({ node, message: message.join(" ") });
+              },
+            };
+          },
+        };
+        export default { meta: { name: "local" }, rules: { kind } };`,
+      "src/commonjs.js": "module.exports = 1;\n",
+      "src/module.js": "export default 1;\n",
+    };
+    const { problems } = await lint(files, ["src"]);
+    expect(problems.sort()).toEqual([
+      "src/commonjs.js:1:1 commonjs commonjs true function",
+      "src/module.js:1:1 module module false module",
+    ]);
+  });
+
+  describe("with an eslint.config.js, ESLint's defaults apply", () => {
+    const config = (languageOptions = "{}", rules = "{}") => ({
+      "package.json": `{ "type": "commonjs" }`,
+      "eslint.config.mjs": `export default [{ languageOptions: ${languageOptions}, rules: ${rules} }];\n`,
+    });
+
+    test(".js and .mjs are modules and .cjs is CommonJS, regardless of package.json", async () => {
+      const files = { ...config(), "a.js": early, "a.mjs": early, "a.cjs": early };
+      const { problems, exitCode } = await lint(files, ["a.js", "a.mjs", "a.cjs"]);
+      expect(problems.sort()).toEqual([`a.js:3:3 ${returnOutside}`, `a.mjs:3:3 ${returnOutside}`]);
+      expect(exitCode).toBe(1);
+    });
+
+    test.each([
+      `{ sourceType: "commonjs" }`,
+      `{ sourceType: "script", parserOptions: { ecmaFeatures: { globalReturn: true } } }`,
+    ])("languageOptions: %s allows a top-level return", async languageOptions => {
+      const { problems, exitCode } = await lint({ ...config(languageOptions), "a.js": early }, ["a.js"]);
+      expect(problems).toEqual([]);
+      expect(exitCode).toBe(0);
+    });
+
+    test.each([
+      `{ sourceType: "script" }`,
+      `{ parserOptions: { ecmaFeatures: { globalReturn: true } } }`,
+      // ESLint overwrites it with `languageOptions.sourceType` before it calls espree.
+      `{ parserOptions: { sourceType: "commonjs" } }`,
+    ])("languageOptions: %s rejects a top-level return", async languageOptions => {
+      const { problems } = await lint({ ...config(languageOptions), "a.js": early }, ["a.js"]);
+      expect(problems).toEqual([`a.js:3:3 ${returnOutside}`]);
+    });
+
+    test("no-undef allows require and module only in CommonJS", async () => {
+      const code = "module.exports = require;\n";
+      const rules = `{ "no-undef": "error" }`;
+      const [byDefault, commonJs] = await Promise.all([
+        lint({ ...config("{}", rules), "a.js": code, "a.cjs": code }, ["a.js", "a.cjs"]),
+        lint({ ...config(`{ sourceType: "commonjs" }`, rules), "a.js": code }, ["a.js"]),
+      ]);
+      expect(byDefault.reports).toEqual(["a.js:1:1 error no-undef", "a.js:1:18 error no-undef"]);
+      expect(commonJs.reports).toEqual([]);
+    });
+
+    test(`strict reports "use strict" in a .js file`, async () => {
+      const files = { ...config("{}", `{ strict: "error" }`), "a.js": `"use strict";\nmodule.exports = 1;\n` };
+      const { problems } = await lint(files, ["a.js"]);
+      expect(problems).toEqual(["a.js:1:1 'use strict' is unnecessary inside of modules."]);
+    });
+  });
+
+  test("with an .oxlintrc.json, allows a top-level return in a file without imports or exports", async () => {
+    const { json, exitCode } = await lint({ ...esmPackage, ".oxlintrc.json": "{}", "early.js": early }, ["early.js"]);
+    expect(json.diagnostics).toEqual([]);
+    expect(exitCode).toBe(0);
+  });
+});
+
+// Each rule's original linter applies all of these fixes with --fix.
+describe.concurrent("--fix preserves behavior and comments", () => {
+  type Case = {
+    rule: string;
+    /** Code that is reported but that --fix doesn't change. */
+    kept: string;
+    /** `kept` after --fix-dangerously. If omitted, --fix-dangerously doesn't change `kept` either. */
+    dangerous?: string;
+    /** Code where the fix is safe, before and after --fix. */
+    fixed?: [string, string];
+    extension?: string;
+  };
+  const cases: Case[] = [
+    {
+      rule: "unicorn/prefer-single-call",
+      // The second argument of `Readable#push` is the encoding. `nextId()` depends on the first `push`.
+      kept: 'import { Readable } from "node:stream";\nexport const readable = new Readable({ read() {} });\nreadable.push("a");\nreadable.push("b");\nexport const rows = [];\nconst nextId = () => rows.length + 1;\nrows.push(nextId());\nrows.push(nextId());\n',
+      dangerous:
+        'import { Readable } from "node:stream";\nexport const readable = new Readable({ read() {} });\nreadable.push("a", "b");\nexport const rows = [];\nconst nextId = () => rows.length + 1;\nrows.push(nextId(), nextId());\n',
+      fixed: ["export const list = [];\nlist.push(1);\nlist.push(2);\n", "export const list = [];\nlist.push(1, 2);\n"],
+    },
+    {
+      rule: "unicorn/prefer-string-raw",
+      kept: 'export const dir = "C:\\\\café\\\\menu";\n',
+      fixed: ['export const dir = "C:\\\\cafe\\\\menu";\n', "export const dir = String.raw`C:\\cafe\\menu`;\n"],
+    },
+    {
+      rule: "unicorn/text-encoding-identifier-case",
+      kept: 'export const isUtf8 = new TextDecoder().encoding === "utf-8";\n',
+      dangerous: 'export const isUtf8 = new TextDecoder().encoding === "utf8";\n',
+      fixed: [
+        'import fs from "node:fs";\nexport const text = fs.readFileSync("a.txt", "utf-8");\n',
+        'import fs from "node:fs";\nexport const text = fs.readFileSync("a.txt", "utf8");\n',
+      ],
+    },
+    {
+      rule: "unicorn/prefer-regexp-test",
+      // `pattern` can be a string or have the `g` flag, and `database` isn't a regular expression.
+      kept: "export const has = (text, pattern) => (text.match(pattern) ? 1 : 2);\nexport const ran = (database, sql) => (database.exec(sql) ? 1 : 2);\n",
+      dangerous:
+        "export const has = (text, pattern) => (pattern.test(text) ? 1 : 2);\nexport const ran = (database, sql) => (database.test(sql) ? 1 : 2);\n",
+      fixed: [
+        "const pattern = /b/g;\nexport const has = text => (pattern.exec(text) ? 1 : 2);\nexport const starts = text => (`${text}`.match(/^b/) ? 1 : 2);\n",
+        "const pattern = /b/g;\nexport const has = text => (pattern.test(text) ? 1 : 2);\nexport const starts = text => (/^b/.test(`${text}`) ? 1 : 2);\n",
+      ],
+    },
+    {
+      rule: "unicorn/no-useless-undefined",
+      kept: "export const text = String(undefined);\nfor (const i of [1, 2]) {\n  var seen = undefined;\n  console.log(seen);\n  seen = i;\n}\nexport function f(a = undefined, b) {\n  return [a, b];\n}\n",
+      dangerous:
+        "export const text = String();\nfor (const i of [1, 2]) {\n  var seen;\n  console.log(seen);\n  seen = i;\n}\nexport function f(a, b) {\n  return [a, b];\n}\n",
+      fixed: [
+        "export function g() {\n  return undefined;\n}\nexport let x = undefined;\nx = g();\n",
+        "export function g() {\n  return;\n}\nexport let x;\nx = g();\n",
+      ],
+    },
+    {
+      rule: "unicorn/no-useless-undefined",
+      // `g` would return `void`, and `x` would lose its inferred type.
+      kept: "export function g() {\n  return undefined;\n}\nexport let x = undefined;\nx = g();\n",
+      dangerous: "export function g() {\n  return;\n}\nexport let x;\nx = g();\n",
+      fixed: [
+        "export function* h() {\n  yield undefined;\n}\nexport const { a = undefined } = { a: 1 };\n",
+        "export function* h() {\n  yield;\n}\nexport const { a } = { a: 1 };\n",
+      ],
+      extension: "ts",
+    },
+    {
+      rule: "unicorn/prefer-spread",
+      kept: "export const copy = buffer1 => buffer1.slice();\nexport const list = arrayLike => Array.from(arrayLike);\n",
+      dangerous: "export const copy = buffer1 => [...buffer1];\nexport const list = arrayLike => [...arrayLike];\n",
+      fixed: [
+        "const set = new Set([1, 2]);\nexport const list = Array.from(set);\n",
+        "const set = new Set([1, 2]);\nexport const list = [...set];\n",
+      ],
+    },
+    {
+      rule: "unicorn/prefer-string-starts-ends-with",
+      kept: "export const isA = x => /^a/.test(x);\n",
+      dangerous: "export const isA = x => x.startsWith('a');\n",
+      fixed: ["export const isA = x => /^a/.test(`${x}`);\n", "export const isA = x => `${x}`.startsWith('a');\n"],
+    },
+    {
+      rule: "unicorn/no-useless-spread",
+      kept: 'export const ranges = [\n  ...["<x", ">x"],\n  // the same after a wildcard\n  ...["<x.1", ">x.1"],\n];\n',
+      fixed: ["export const a = [...[1, 2]]; // beside it\n", "export const a = [1, 2]; // beside it\n"],
+    },
+    {
+      rule: "no-implicit-coercion",
+      kept: "export const isOn = a =>\n  !!(\n    a // not b\n  );\n",
+      fixed: ["export const isOn = a => !!a; // beside it\n", "export const isOn = a => Boolean(a); // beside it\n"],
+    },
+    {
+      rule: "@typescript-eslint/method-signature-style",
+      kept: "export interface Hot {\n  /** Accepts this module. */\n  accept(): void;\n  /** Accepts a dependency. */\n  accept(specifier: string): void;\n}\n",
+      fixed: [
+        "export interface Hot {\n  /** Accepts this module. */\n  accept(): void;\n}\n",
+        "export interface Hot {\n  /** Accepts this module. */\n  accept: () => void;\n}\n",
+      ],
+      extension: "ts",
+    },
+    // A type alias can't be declared twice, so a merged interface has no fix. Two properties with the same name parse
+    // but don't type check, so that fix needs --fix-dangerously.
+    {
+      rule: "@typescript-eslint/no-empty-interface",
+      kept: "export interface Base { a: number }\nexport interface Thing extends Base {}\nexport interface Thing { b: string }\n",
+      fixed: [
+        "export interface Base { a: number }\nexport interface Alone extends Base {}\n",
+        "export interface Base { a: number }\nexport type Alone = Base\n",
+      ],
+      extension: "ts",
+    },
+    {
+      rule: "@typescript-eslint/method-signature-style",
+      kept: "export interface Api { get(id: number): string }\nexport interface Api { get(id: string): number }\n",
+      dangerous:
+        "export interface Api { get: (id: number) => string }\nexport interface Api { get: (id: string) => number }\n",
+      fixed: [
+        "export interface Api { get(id: number): string }\n",
+        "export interface Api { get: (id: number) => string }\n",
+      ],
+      extension: "ts",
+    },
+    {
+      rule: "@typescript-eslint/prefer-function-type",
+      kept: "export interface Handler { (event: string): void }\nexport interface Handler { once?: boolean }\n",
+      fixed: [
+        "export interface Handler { (event: string): void }\n",
+        "export type Handler = (event: string) => void\n",
+      ],
+      extension: "ts",
+    },
+    {
+      rule: "@typescript-eslint/consistent-indexed-object-style",
+      kept: "export interface Env { [key: string]: string | undefined }\nexport interface Env { HOME: string }\n",
+      fixed: ["export interface Env { [key: string]: string }\n", "export type Env = Record<string, string>;\n"],
+      extension: "ts",
+    },
+    {
+      // Other files can merge with an interface in `declare global`. A single top-level interface in a script is fixed.
+      rule: "@typescript-eslint/prefer-function-type",
+      kept: "export {};\ndeclare global {\n  interface Handler { (event: string): void }\n}\n",
+      dangerous: "export {};\ndeclare global {\n  type Handler = (event: string) => void\n}\n",
+      fixed: [
+        'interface Handler { (event: string): void }\nconst handler: Handler = () => {};\nhandler("a");\n',
+        'type Handler = (event: string) => void\nconst handler: Handler = () => {};\nhandler("a");\n',
+      ],
+      extension: "ts",
+    },
+    {
+      rule: "unicorn/require-module-specifiers",
+      kept: 'const name = "one";\nconsole.log(name);\nexport {};\n',
+      dangerous: 'const name = "one";\nconsole.log(name);\n\n',
+      fixed: ["export const a = 1;\nexport {};\n", "export const a = 1;\n\n"],
+      extension: "ts",
+    },
+    {
+      rule: "unicorn/prefer-dom-node-append",
+      kept: 'export const add = (list, item) => {\n  list.appendChild(item);\n};\nexport const li = document.body.appendChild(document.createElement("li"));\n',
+      dangerous:
+        'export const add = (list, item) => {\n  list.append(item);\n};\nexport const li = document.body.append(document.createElement("li"));\n',
+      fixed: [
+        'document.body.appendChild(document.createElement("p"));\n',
+        'document.body.append(document.createElement("p"));\n',
+      ],
+    },
+    {
+      rule: "unicorn/prefer-dom-node-dataset",
+      kept: 'new HTMLRewriter().on("div", {\n  element(element) {\n    element.setAttribute("data-count", "1");\n  },\n});\nexport const count = document.body.getAttribute("data-count");\n',
+      dangerous:
+        'new HTMLRewriter().on("div", {\n  element(element) {\n    element.dataset.count = "1";\n  },\n});\nexport const count = document.body.dataset.count;\n',
+      fixed: ['document.body.setAttribute("data-count", "1");\n', 'document.body.dataset.count = "1";\n'],
+    },
+    {
+      rule: "unicorn/prefer-query-selector",
+      kept: 'export const a = document.getElementById("user.name");\nexport const b = document.getElementsByClassName("item");\n',
+      dangerous:
+        'export const a = document.querySelector("#user.name");\nexport const b = document.querySelectorAll(".item");\n',
+      fixed: [
+        'export const main = document.getElementById("main");\n',
+        'export const main = document.querySelector("#main");\n',
+      ],
+    },
+    {
+      rule: "unicorn/prefer-dom-node-text-content",
+      kept: "export const text = node => node.innerText;\n",
+      dangerous: "export const text = node => node.textContent;\n",
+    },
+    {
+      rule: "unicorn/prefer-keyboard-event-key",
+      kept: 'window.addEventListener("keydown", event => {\n  if (event.keyCode === 65) save();\n});\n',
+      dangerous: "window.addEventListener(\"keydown\", event => {\n  if (event.key === 'A') save();\n});\n",
+      fixed: [
+        'window.addEventListener("keydown", event => {\n  if (event.keyCode === 27) close();\n});\n',
+        "window.addEventListener(\"keydown\", event => {\n  if (event.key === 'Escape') close();\n});\n",
+      ],
+    },
+    {
+      rule: "prefer-destructuring",
+      kept: "export function f(o: { x?: number }) {\n  let x: number | null | undefined = o.x;\n  x ??= null;\n  return x;\n}\n",
+      fixed: [
+        "export function f(o: { x: number }) {\n  const x = o.x;\n  return x;\n}\n",
+        "export function f(o: { x: number }) {\n  const {x} = o;\n  return x;\n}\n",
+      ],
+      extension: "ts",
+    },
+    {
+      rule: "import/order",
+      kept: 'import { b } from "./b";\n// @ts-expect-error there are no types for this one\nimport { a } from "a-package";\nconsole.log(a, b);\n',
+      fixed: [
+        'import { b } from "./b";\nimport { a } from "a-package";\nconsole.log(a, b);\n',
+        'import { a } from "a-package";\nimport { b } from "./b";\nconsole.log(a, b);\n',
+      ],
+      extension: "ts",
+    },
+    {
+      rule: "import/order",
+      // The `@type` comment would apply to `a`.
+      kept: '/** @type {{ b: number }} */\nconst b = require("./b");\nconst a = require("a-package");\nconsole.log(a, b);\n',
+      fixed: [
+        '// the two letters\nconst b = require("./b");\nconst a = require("a-package");\nconsole.log(a, b);\n',
+        '// the two letters\nconst a = require("a-package");\nconst b = require("./b");\nconsole.log(a, b);\n',
+      ],
+    },
+    {
+      rule: "import/order",
+      // The doc comment would end up above `console.log`. A license followed by an empty line stays at the top.
+      kept: 'import { b } from "./b";\n/** The package. */\nimport { a } from "a-package";\nconsole.log(a, b);\n',
+      fixed: [
+        '/**\n * Copyright 2024 Foo\n */\n\nimport { b } from "./b";\nimport { a } from "a-package";\nconsole.log(a, b);\n',
+        '/**\n * Copyright 2024 Foo\n */\n\nimport { a } from "a-package";\nimport { b } from "./b";\nconsole.log(a, b);\n',
+      ],
+    },
+    {
+      rule: "import/order",
+      // A header doesn't hide the directive below it.
+      kept: '/** @fileoverview Prints two letters. */\n// @ts-expect-error there are no types for this one\nimport { b } from "./b";\nimport { a } from "a-package";\nconsole.log(a, b);\n',
+      fixed: [
+        '/** @fileoverview Prints two letters. */\nimport { b } from "./b";\nimport { a } from "a-package";\nconsole.log(a, b);\n',
+        '/** @fileoverview Prints two letters. */\nimport { a } from "a-package";\nimport { b } from "./b";\nconsole.log(a, b);\n',
+      ],
+      extension: "ts",
+    },
+    {
+      rule: "import/order",
+      // Here the first import is the one that moves.
+      kept: '/** The local one. */\nimport { b } from "./b";\nimport { a } from "a-package";\nimport { c } from "c-package";\nconsole.log(a, b, c);\n',
+      fixed: [
+        '/** @fileoverview Prints three letters. */\nimport { b } from "./b";\nimport { a } from "a-package";\nimport { c } from "c-package";\nconsole.log(a, b, c);\n',
+        '/** @fileoverview Prints three letters. */\nimport { a } from "a-package";\nimport { c } from "c-package";\nimport { b } from "./b";\nconsole.log(a, b, c);\n',
+      ],
+    },
+    {
+      rule: "import/order",
+      // `require("./b")` and `[a, b]` would parse as one expression.
+      kept: 'const b = require("./b")\nconst a = require("a-package")\n;[a, b].forEach(console.log)\n',
+      fixed: [
+        'const b = require("./b");\nconst a = require("a-package")\n;[a, b].forEach(console.log)\n',
+        'const a = require("a-package")\n;\nconst b = require("./b");\n[a, b].forEach(console.log)\n',
+      ],
+    },
+  ];
+
+  test.each(cases)("$rule", async ({ rule, kept, dangerous = kept, fixed, extension = "js" }) => {
+    const [keptName, fixedName] = [`kept.${extension}`, `fixed.${extension}`];
+    const [before, after] = fixed ? [{ [fixedName]: fixed[0] }, { [fixedName]: fixed[1] }] : [{}, {}];
+    const files = { [keptName]: kept, ...before };
+    const [safe, all] = await Promise.all([
+      lint(files, ["--fix", "--rule", `${rule}: warn`]),
+      lint(files, ["--fix-dangerously", "--rule", `${rule}: warn`]),
+    ]);
+    const filesWithReports = (result: { reports: string[] }) => [
+      ...new Set(result.reports.filter(it => it.endsWith(` ${rule}`)).map(it => it.slice(0, it.indexOf(":")))),
+    ];
+    expect(safe.texts).toEqual({ [keptName]: kept, ...after });
+    expect(filesWithReports(safe)).toEqual([keptName]);
+    expect(all.texts).toEqual({ [keptName]: dangerous, ...after });
+    expect(filesWithReports(all)).toEqual(dangerous === kept ? [keptName] : []);
+  });
+
+  describe("@typescript-eslint/prefer-function-type", () => {
+    const rule = "@typescript-eslint/prefer-function-type";
+    const use = "export const handler: Handler = () => {};\n";
+    const alias = "type Handler = (event: string) => void;";
+    /** Code before and after --fix. */
+    type Cases = Record<string, [string, string]>;
+    // typescript-eslint 8.71.1 moves a line comment that follows the signature in front of the declaration, which
+    // comments the declaration out. It also reverses the comments' order and drops comments before the `{`.
+    // oxlint 1.87.0 duplicates a comment inside the signature and drops every comment in an interface with type
+    // parameters or in a type literal.
+    const comments: Cases = {
+      "after-the-signature.ts": [
+        `interface Handler {\n  (event: string): void; // called once\n}\n${use}`,
+        `// called once\n${alias}\n${use}`,
+      ],
+      "above-the-signature.ts": [
+        `interface Handler {\n  // called once\n  (event: string): void;\n}\n${use}`,
+        `// called once\n${alias}\n${use}`,
+      ],
+      "below-the-signature.ts": [
+        `interface Handler {\n  (event: string): void;\n  // called once\n}\n${use}`,
+        `// called once\n${alias}\n${use}`,
+      ],
+      "after-the-opening-brace.ts": [
+        `interface Handler { // called once\n  (event: string): void;\n}\n${use}`,
+        `// called once\n${alias}\n${use}`,
+      ],
+      "after-the-closing-brace.ts": [
+        `interface Handler {\n  (event: string): void;\n} // called once\n${use}`,
+        `${alias} // called once\n${use}`,
+      ],
+      "code-after-the-closing-brace.ts": [
+        `interface Handler {\n  (event: string): void; // called once\n} ${use}`,
+        `// called once\n${alias} ${use}`,
+      ],
+      "everywhere.ts": [
+        `interface /* one */ Handler /* two */ { // three\n  // four\n  /* five */ (event: string /* six */): void /* seven */; // eight\n  /** nine */\n} // ten\n${use}`,
+        `/* one */\n/* two */\n// three\n// four\n/* five */ // eight\n/** nine */\ntype Handler = (event: string /* six */) => void /* seven */; // ten\n${use}`,
+      ],
+      "block-comments-on-the-line.ts": [
+        `interface Handler {\n  /* called */ (event: string): void; /* once */\n}\n${use}`,
+        `/* called */ /* once */ ${alias}\n${use}`,
+      ],
+      "jsdoc.ts": [
+        `interface Handler {\n  /**\n   * Called once.\n   */\n  (event: string): void;\n}\n${use}`,
+        `/**\n   * Called once.\n   */\n${alias}\n${use}`,
+      ],
+      "in-the-signature.ts": [
+        `interface Handler {\n  (\n    event: string, // the name\n  ): void;\n}\n${use}`,
+        `type Handler = (\n    event: string, // the name\n  ) => void;\n${use}`,
+      ],
+      "comma.ts": [
+        `interface Handler {\n  (event: string): void, // called once\n}\n${use}`,
+        `// called once\n${alias}\n${use}`,
+      ],
+      "crlf.ts": [
+        `interface Handler {\r\n  (event: string): void; // called once\r\n}\r\n${use}`,
+        `// called once\n${alias}\r\n${use}`,
+      ],
+      "export.ts": [
+        "export interface Handler {\n  /* called */ (event: string): void; // once\n}\n",
+        `/* called */\n// once\nexport ${alias}\n`,
+      ],
+      "export-declare.ts": [
+        "export declare interface Handler {\n  (event: string): void; // called once\n}\n",
+        `// called once\nexport ${alias}\n`,
+      ],
+      "declare.ts": [
+        `declare interface Handler {\n  (event: string): void; // called once\n}\n${use}`,
+        `// called once\n${alias}\n${use}`,
+      ],
+      "type-parameters.ts": [
+        "export interface Handler<T /* the event */> /* generic */ {\n  (event: T): void; // called once\n}\n",
+        "/* generic */\n// called once\nexport type Handler<T /* the event */> = (event: T) => void;\n",
+      ],
+      "construct-signature.ts": [
+        "export interface Maker {\n  new (name: string): object; // called once\n}\n",
+        "// called once\nexport type Maker = new (name: string) => object;\n",
+      ],
+      "directive.ts": [
+        "export interface Handler {\n  // @ts-expect-error Missing is not declared\n  (event: Missing): void;\n}\n",
+        "// @ts-expect-error Missing is not declared\nexport type Handler = (event: Missing) => void;\n",
+      ],
+      "type-literal.ts": [
+        "export type Handler = {\n  (event: string): void; // called once\n};\n",
+        "export type Handler = // called once\n(event: string) => void;\n",
+      ],
+      "type-literal-above.ts": [
+        "export type Handler = {\n  // called once\n  (event: string): void;\n};\n",
+        "export type Handler = // called once\n(event: string) => void;\n",
+      ],
+      "type-literal-comma.ts": [
+        "export type Handler = { (event: string): void, };\n",
+        "export type Handler = (event: string) => void;\n",
+      ],
+      "union.ts": [
+        "export type Handler = {\n  (event: string): void; // called once\n} | undefined;\n",
+        "export type Handler = // called once\n((event: string) => void) | undefined;\n",
+      ],
+      "union-on-one-line.ts": [
+        "export type Handler = { /* called */ (event: string): void /* once */ } | undefined;\n",
+        "export type Handler = /* called */ /* once */ ((event: string) => void) | undefined;\n",
+      ],
+      "parameter.ts": [
+        'export function call(handler: {\n  (event: string): void; // called once\n}) {\n  handler("a");\n}\n',
+        'export function call(handler: // called once\n(event: string) => void) {\n  handler("a");\n}\n',
+      ],
+    };
+    // oxlint doesn't report these. typescript-eslint only adds parentheses for the array. Without them,
+    // `() => void["length"]` and `() => void extends object ? 1 : 2` are function types.
+    const parentheses: Cases = {
+      "array.ts": [
+        "export type Handlers = {\n  (event: string): void; // called once\n}[];\n",
+        "export type Handlers = // called once\n((event: string) => void)[];\n",
+      ],
+      "keyof.ts": ["export type Keys = keyof { (): void };\n", "export type Keys = keyof (() => void);\n"],
+      "indexed-access.ts": [
+        'export type Length = { (): void }["length"];\n',
+        'export type Length = (() => void)["length"];\n',
+      ],
+      "conditional.ts": [
+        "export type One = { (): void } extends object ? 1 : 2;\nexport type IsCallable<T> = T extends { (): void } ? { (): true } : { (): false };\n",
+        "export type One = (() => void) extends object ? 1 : 2;\nexport type IsCallable<T> = T extends (() => void) ? () => true : () => false;\n",
+      ],
+      "tuple.ts": [
+        "export type Optional = [{ (): void }?];\nexport type Named = [handler?: { (): void }];\n",
+        "export type Optional = [(() => void)?];\nexport type Named = [handler?: () => void];\n",
+      ],
+      "type-argument.ts": [
+        "export const handlers: Array<{ (): void }> = [];\n",
+        "export const handlers: Array<() => void> = [];\n",
+      ],
+    };
+    // `export default type` doesn't exist. In the other two files, a block comment would end up between the directive
+    // and its line.
+    const kept = {
+      "export-default.ts": "export default interface Handler {\n  (event: string): void; // called once\n}\n",
+      "directive-above.ts":
+        "// @ts-expect-error Missing is not declared\nexport interface Handler<T extends Missing> {\n  /* called once */\n  (event: T): void;\n}\n",
+      "directive-and-a-comment-below.ts":
+        "export interface Handler {\n  // @ts-expect-error Missing is not declared\n  (event: Missing): void;\n  /* called once */\n}\n",
+    };
+    const inNamespace: Cases = {
+      "namespace.ts": [
+        `export namespace Events {\n  interface Handler {\n    (event: string): void; // called once\n  }\n  ${use}}\n`,
+        `export namespace Events {\n  // called once\n${alias}\n  ${use}}\n`,
+      ],
+      "exported-from-namespace.ts": [
+        "export namespace Events {\n  export interface Handler {\n    (event: string): void; // called once\n  }\n}\n",
+        `export namespace Events {\n  // called once\nexport ${alias}\n}\n`,
+      ],
+    };
+    const pick = (cases: Cases, index: 0 | 1) =>
+      Object.fromEntries(Object.entries(cases).map(([name, texts]) => [name, texts[index]]));
+    const filesWithReports = (result: { reports: string[] }) =>
+      [...new Set(result.reports.filter(it => it.endsWith(` ${rule}`)).map(it => it.slice(0, it.indexOf(":"))))].sort();
+    const turnedOn = ["--rule", `${rule}: warn`];
+    const oxlintrc = '{ "plugins": ["typescript"], "rules": { "typescript/prefer-function-type": "warn" } }\n';
+
+    test.each([
+      ["no config", {}, turnedOn, { ...comments, ...parentheses }],
+      [".oxlintrc.json", { ".oxlintrc.json": oxlintrc }, [], comments],
+    ])("--fix keeps every comment exactly once and never comments out code: %s", async (_, config, args, cases) => {
+      const expected = { ...config, ...pick(cases, 1), ...kept };
+      const first = await lint({ ...config, ...pick(cases, 0), ...kept }, ["--fix", ...args]);
+      expect(first.texts).toEqual(expected);
+      const second = await lint(first.texts, ["--fix", ...args]);
+      expect(second.texts).toEqual(expected);
+    });
+
+    test("still reports code it can't fix", async () => {
+      const result = await lint({ ...pick(comments, 0), ...kept }, ["--fix-dangerously", ...turnedOn]);
+      expect(result.texts).toEqual({ ...pick(comments, 1), ...kept });
+      expect(filesWithReports(result)).toEqual(Object.keys(kept).sort());
+    });
+
+    test("only --fix-dangerously fixes an interface in a namespace", async () => {
+      const [safe, first] = await Promise.all([
+        lint(pick(inNamespace, 0), ["--fix", ...turnedOn]),
+        lint(pick(inNamespace, 0), ["--fix-dangerously", ...turnedOn]),
+      ]);
+      expect(safe.texts).toEqual(pick(inNamespace, 0));
+      expect(filesWithReports(safe)).toEqual(Object.keys(inNamespace).sort());
+      expect(first.texts).toEqual(pick(inNamespace, 1));
+      const second = await lint(first.texts, ["--fix-dangerously", ...turnedOn]);
+      expect(second.texts).toEqual(pick(inNamespace, 1));
+      expect(filesWithReports(second)).toEqual([]);
+    });
+  });
+
+  test("--fix inserts an import below the hashbang, directives and file-level comments", async () => {
+    const body = 'test("a", () => {\n  expect(1).toBe(1);\n});\n';
+    const heads = ["// @ts-nocheck\n", '/// <reference types="node" />\n', '"use strict";\n', "#!/usr/bin/env bun\n"];
+    const files = Object.fromEntries(heads.map((head, i) => [`${i}.test.ts`, head + body]));
+    const [vitest, jest, first] = await Promise.all([
+      lint(files, ["--fix", "--rule", "vitest/prefer-importing-vitest-globals: warn"]),
+      lint(files, ["--fix", "--rule", "jest/prefer-importing-jest-globals: warn"]),
+      lint({ "a.ts": '"use client";\nconst started = 1;\nimport { b } from "./b";\nconsole.log(started, b);\n' }, [
+        "--fix",
+        "--rule",
+        "import/first: warn",
+      ]),
+    ]);
+    for (const [i, head] of heads.entries()) {
+      expect(vitest.texts[`${i}.test.ts`]).toBe(`${head}import { expect, test } from 'vitest';\n${body}`);
+      expect(jest.texts[`${i}.test.ts`]).toStartWith(head);
+      expect(jest.texts[`${i}.test.ts`]).toContain("@jest/globals");
+    }
+    expect(first.texts["a.ts"]).toBe(
+      '"use client";\nimport { b } from "./b";\nconst started = 1;\nconsole.log(started, b);\n',
+    );
+  });
+
+  describe("an import that becomes the first statement", () => {
+    type Cases = Record<string, [before: string, after: string]>;
+    const license = "// Copyright 2026 Someone\n// Use of this file is governed by the MIT license.\n";
+    const moduleDoc = "/**\n * Counts.\n * @module\n */\n\n";
+    const suppressed = "// @ts-expect-error a string is no number\n";
+    const filesWithReports = (result: { reports: string[] }, rule: string) =>
+      [...new Set(result.reports.filter(it => it.endsWith(` ${rule}`)).map(it => it.slice(0, it.indexOf(":"))))].sort();
+
+    /** Expects `--fix` to turn each `before` into its `after` and report nothing, and a second run to be a no-op. */
+    async function expectFixed(rule: string, cases: Cases) {
+      const pick = (index: 0 | 1) => Object.fromEntries(Object.entries(cases).map(([name, it]) => [name, it[index]]));
+      const args = ["--fix", "--rule", `${rule}: warn`];
+      const first = await lint(pick(0), args);
+      expect(first.texts).toEqual(pick(1));
+      expect(filesWithReports(first, rule)).toEqual([]);
+      const second = await lint(first.texts, args);
+      expect(second.texts).toEqual(pick(1));
+    }
+
+    /** Expects `--fix` to leave the files unchanged without attempting a broken fix, and to still report each file. */
+    async function expectKept(rule: string, files: Record<string, string>) {
+      const result = await lint(files, ["--fix", "--rule", `${rule}: warn`]);
+      expect(result.texts).toEqual(files);
+      expect(result.stderr).not.toContain("not applied");
+      expect(filesWithReports(result, rule)).toEqual(Object.keys(files).sort());
+    }
+
+    // Each entry is the header that must stay first, then the first statement with its own comments.
+    const heads: Record<string, [head: string, first: string]> = {
+      "directive.ts": ["", `${suppressed}console.log(Math.abs("1"));\n`],
+      "doc.ts": ["", "/** Adds one. */\nfunction increment(n: number) {\n  return n + 1;\n}\n"],
+      "use-client.ts": ['"use client";\n', `${suppressed}console.log(Math.abs("1"));\n`],
+      "use-strict.ts": ['"use strict";\n', "/** Starts at one. */\nconst count = 1;\n"],
+      "comment-beside-use-client.ts": ['"use client"; // for the router\n', "// starts at one\nconst count = 1;\n"],
+      "nocheck.ts": ["// @ts-nocheck\n", "// starts at one\nconst count = 1;\n"],
+      "reference.ts": ['/// <reference lib="dom" />\n', "// starts at one\nconst count = 1;\n"],
+      "hashbang.ts": ["#!/usr/bin/env bun\n", "// starts at one\nconst count = 1;\n"],
+      "license.ts": [`${license}\n`, "// starts at one\nconst count = 1;\n"],
+      "license-without-an-empty-line.ts": [license, "const count = 1;\n"],
+      "license-in-two-paragraphs.ts": [
+        `${license}\n// IT IS PROVIDED "AS IS".\n\n`,
+        "// starts at one\nconst count = 1;\n",
+      ],
+      "license-and-directive.ts": [license, `${suppressed}console.log(Math.abs("1"));\n`],
+      "directive-above-license.ts": ["", `${suppressed}// Copyright 2026 Someone\nconsole.log(Math.abs("1"));\n`],
+      "module-doc.ts": [moduleDoc, "/** Starts at one. */\nconst count = 1;\n"],
+      "jest-environment.ts": ["/**\n * @jest-environment jsdom\n */\n", "// starts at one\nconst count = 1;\n"],
+      "doc-above-nocheck.ts": ["/** Counts. */\n// @ts-nocheck\n", "// starts at one\nconst count = 1;\n"],
+      "doc-above-reference.ts": ['/** Counts. */\n/// <reference lib="dom" />\n', "const count = 1;\n"],
+      "doc-above-license.ts": [`/** Counts. */\n${license}\n`, "/** Starts at one. */\nconst count = 1;\n"],
+      "byte-order-mark.ts": ["\ufeff", "// starts at one\nconst count = 1;\n"],
+      // An empty line separates file-level comments from the first statement's comments.
+      "header.ts": ["// Counts things.\n// Nothing else.\n\n", "const count = 1;\n"],
+      "header-in-a-block.ts": ["/**\n * Counts things.\n */\n\n", "// starts at one\nconst count = 1;\n"],
+      "header-and-doc.ts": ["// Counts things.\n\n", "/** Starts at one. */\nconst count = 1;\n"],
+      "header-in-two-parts.ts": ["// Counts things.\n\n// Nothing else.\n\n", "// starts at one\nconst count = 1;\n"],
+      "header-without-an-empty-line.ts": ["", "// Counts things.\n// Nothing else.\nconst count = 1;\n"],
+      "header-below-use-strict.ts": ['"use strict";\n// Counts things.\n\n', "// starts at one\nconst count = 1;\n"],
+      "header-below-hashbang.ts": ["#!/usr/bin/env bun\n// Counts things.\n\n", "// starts at one\nconst count = 1;\n"],
+      "header-and-directive.ts": ["// Counts things.\n\n", `${suppressed}console.log(Math.abs("1"));\n`],
+      "disable-in-the-middle.ts": [
+        "// Counts things.\n/* eslint-disable @typescript-eslint/no-unused-vars */\n",
+        "// starts at one\nconst count = 1;\n",
+      ],
+      // A next-line directive applies across an empty line, so it and the comments below it stay with the statement.
+      "directive-and-empty-line.ts": ["", `${suppressed}\nconsole.log(Math.abs("1"));\n`],
+      "directive-above-header.ts": ["", `${suppressed}// Counts things.\n\nconsole.log(Math.abs("1"));\n`],
+      "triple-slash-directive.ts": ["", `/${suppressed}\nconsole.log(Math.abs("1"));\n`],
+      "directive-above-reference.ts": [
+        '// deno-lint-ignore triple-slash-reference\n/// <reference lib="dom" />\n',
+        "const count = 1;\n",
+      ],
+      "ignore-above-license.ts": ["", `// prettier-ignore\n${license}const count   = 1;\n`],
+      "directive-for-the-file.ts": [license, '// @ts-ignore-file\nconsole.log(Math.abs("1"));\n'],
+      "directive-with-a-suffix.ts": [license, '// @ts-expect-error-next-line\nconsole.log(Math.abs("1"));\n'],
+      "coverage.ts": ["", "/* v8 ignore next -- @preserve */\n\nconst count = 1;\n"],
+      "no-side-effects.ts": ["", "/* @__NO_SIDE_EFFECTS__ */\n\nfunction one() {\n  return 1;\n}\n"],
+      "deno.ts": ["// deno-lint-ignore-file no-console\n", "// deno-lint-ignore no-unused-vars\n\nconst count = 1;\n"],
+    };
+    // Repeat a few with CRLF line endings.
+    for (const name of ["directive.ts", "use-strict.ts", "license.ts", "header.ts", "header-in-two-parts.ts"]) {
+      heads[`crlf-${name}`] = heads[name];
+    }
+    const withLineBreaksOf = (name: string, text: string) =>
+      name.startsWith("crlf-") ? text.replaceAll("\n", "\r\n") : text;
+
+    test("import/first: moves the import below the file header, above the first statement's comments", async () => {
+      const a = 'import { a } from "./a";\n';
+      const cases = Object.entries(heads).map(([name, [head, first]]) => [
+        name,
+        [`${head}${first}${a}console.log(a);\n`, `${head}${a}${first}console.log(a);\n`].map(it =>
+          withLineBreaksOf(name, it),
+        ),
+      ]);
+      await expectFixed("import/first", {
+        ...Object.fromEntries(cases),
+        "directive-beside-use-client.ts": [
+          `"use client"; ${suppressed}console.log(Math.abs("1"));\n${a}console.log(a);\n`,
+          `"use client"; ${a}${suppressed}console.log(Math.abs("1"));\nconsole.log(a);\n`,
+        ],
+        "indented.ts": [
+          `  // starts at one\n  const count = 1;\n  ${a}  console.log(a, count);\n`,
+          `  ${a}  // starts at one\n  const count = 1;\n  console.log(a, count);\n`,
+        ],
+      });
+    });
+
+    test.each([
+      ["vitest/prefer-importing-vitest-globals", "import { test } from 'vitest';\n"],
+      ["jest/prefer-importing-jest-globals", "const { test } = require('@jest/globals');\n"],
+    ])("%s: adds the import below the file header, above the first statement's comments", async (rule, statement) => {
+      const cases = Object.entries(heads).map(([name, [head, first]]) => [
+        name.replace(".ts", ".test.ts"),
+        [`${head}${first}test("a", () => {});\n`, `${head}${statement}${first}test("a", () => {});\n`].map(it =>
+          withLineBreaksOf(name, it),
+        ),
+      ]);
+      await expectFixed(rule, Object.fromEntries(cases));
+    });
+
+    test.each([
+      ["vitest/prefer-importing-vitest-globals", "import { test } from 'vitest';\n"],
+      ["jest/prefer-importing-jest-globals", "import { test } from '@jest/globals';\n"],
+    ])("%s: adds the import in a file that starts with comments and imports", async (rule, statement) => {
+      const rest = 'import { a } from "./a";\ntest("a", () => a);\n';
+      await expectFixed(rule, {
+        "header.test.ts": [`// Tests a.\n\n${rest}`, `// Tests a.\n\n${statement}${rest}`],
+        "header-without-an-empty-line.test.ts": [`// Tests a.\n${rest}`, `${statement}// Tests a.\n${rest}`],
+      });
+    });
+
+    test("import/first: keeps a trailing comment with its statement", async () => {
+      const [a, b] = ['import { a } from "./a";', 'import { b } from "./b";'];
+      await expectFixed("import/first", {
+        "the-statement-before.ts": [
+          `const count = 1; // starts at one\n${a}\nconsole.log(a, count);\n`,
+          `${a}\nconst count = 1; // starts at one\nconsole.log(a, count);\n`,
+        ],
+        "the-import.ts": [
+          `const count = 1;\n${a} // the first letter\nconsole.log(a, count);\n`,
+          `${a} // the first letter\nconst count = 1;\nconsole.log(a, count);\n`,
+        ],
+        "two-imports.ts": [
+          `const count = 1;\n${a} // the first letter\n${b} // the second letter\nconsole.log(a, b, count);\n`,
+          `${a} // the first letter\n${b} // the second letter\nconst count = 1;\nconsole.log(a, b, count);\n`,
+        ],
+        "the-last-import-on-top.ts": [
+          `${b} // the second letter\nconst count = 1;\n${a}\nconsole.log(a, b, count);\n`,
+          `${b} // the second letter\n${a}\nconst count = 1;\nconsole.log(a, b, count);\n`,
+        ],
+        "an-import-behind-a-statement.ts": [
+          `const count = 1;\n${a} // the first letter\nconsole.log(count); ${b}\nconsole.log(a, b);\n`,
+          `${a} // the first letter\n${b}\nconst count = 1;\nconsole.log(count);\nconsole.log(a, b);\n`,
+        ],
+        // These two comments apply to the next line.
+        "directive-for-the-import.ts": [
+          'const count = 1; // @ts-expect-error there is no c\nimport { c } from "./a";\nconsole.log(c, count);\n',
+          '// @ts-expect-error there is no c\nimport { c } from "./a";\nconst count = 1;\nconsole.log(c, count);\n',
+        ],
+        "directive-beside-the-import.ts": [
+          `const count = 1;\n${a} ${suppressed}console.log(Math.abs("1"));\nconsole.log(a, count);\n`,
+          `${a}\nconst count = 1; ${suppressed}console.log(Math.abs("1"));\nconsole.log(a, count);\n`,
+        ],
+      });
+      // The second `run()` would end up inside the comment.
+      await expectKept("import/first", { "code-behind-the-import.js": 'run(); // once\nimport "./side"; run();\n' });
+    });
+
+    describe("import/first: in code without semicolons", () => {
+      // Each of these continues the previous line's statement unless that line ends with a `;`.
+      const starts = {
+        bracket: "[1, 2].forEach(run)",
+        parenthesis: "(function () {})()",
+        template: "`a`.trim()",
+        plus: "+run()",
+        minus: "-run()",
+        regex: "/a/.test(run())",
+        jsx: "<div />",
+      };
+      const each = <T>(make: (name: string, start: string) => [string, T][]) =>
+        Object.fromEntries(Object.entries(starts).flatMap(([name, start]) => make(name, start)));
+
+      test("keeps a leading `;` on its line", async () => {
+        await expectFixed("import/first", {
+          ...each<[string, string]>((name, start) => [
+            [`${name}.js`, [`run()\nimport "./side"\n;${start}\n`, `import "./side"\nrun()\n;${start}\n`]],
+            [`closed-${name}.js`, [`run();\nimport "./side"\n${start}\n`, `import "./side"\nrun();\n${start}\n`]],
+          ]),
+          "two-imports.js": [
+            'run()\nimport "./side"\nimport "./other"\n;[1, 2].forEach(run)\n',
+            'import "./side"\nimport "./other"\nrun()\n;[1, 2].forEach(run)\n',
+          ],
+          "comment-beside-the-import.js": [
+            'run()\nimport "./side" // first\n;[1, 2].forEach(run)\n',
+            'import "./side" // first\nrun()\n;[1, 2].forEach(run)\n',
+          ],
+          "below-the-last-import-on-top.js": [
+            'import "./first"\n;[1, 2].forEach(run)\nimport "./side"\n',
+            'import "./first"\nimport "./side"\n;[1, 2].forEach(run)\n',
+          ],
+        });
+      });
+
+      test("moves an import without a `;` onto its own line", async () => {
+        await expectFixed("import/first", {
+          "behind-a-statement.js": ['run(); import "./side"\nrun()\n', 'import "./side"\nrun();\nrun()\n'],
+          "behind-a-statement-with-an-import-on-top.js": [
+            'import "./first"\nrun(); import "./side"\nrun()\n',
+            'import "./first"\nimport "./side"\nrun();\nrun()\n',
+          ],
+          "behind-a-block.js": [
+            'if (run()) {} import "./side"\n[1, 2].forEach(run)\n',
+            'import "./side"\nif (run()) {}\n[1, 2].forEach(run)\n',
+          ],
+        });
+      });
+
+      test("fixes the import when the next line can't continue the previous statement", async () => {
+        await expectFixed("import/first", {
+          "word.js": ['run()\nimport "./side"\nrun()\n', 'import "./side"\nrun()\nrun()\n'],
+          "increment.js": ['let n = run()\nimport "./side"\n++n\n', 'import "./side"\nlet n = run()\n++n\n'],
+          "function.js": [
+            'function f() {}\nimport "./side"\n[1, 2].forEach(f)\n',
+            'import "./side"\nfunction f() {}\n[1, 2].forEach(f)\n',
+          ],
+          "same-line.js": ['run();\nimport "./side"; run()\n', 'import "./side";\nrun(); run()\n'],
+          "parenthesis-after-increment.js": [
+            'let n = 1\nn++\nimport "./side"\n(run)(n)\n',
+            'import "./side"\nlet n = 1\nn++\n(run)(n)\n',
+          ],
+          "parenthesis-after-type.ts": [
+            'const n = run() as number\nimport "./side"\n(run)(n)\n',
+            'import "./side"\nconst n = run() as number\n(run)(n)\n',
+          ],
+        });
+      });
+
+      test("doesn't fix the import when two statements would merge", async () => {
+        await expectKept("import/first", {
+          ...each<string>((name, start) => [
+            [`${name}.js`, `run()\nimport "./side"\n${start}\n`],
+            [`semicolon-${name}.js`, `run()\nimport "./side";\n${start}\n`],
+          ]),
+          "object.js": 'const o = {}\nimport "./side"\n[1, 2].forEach(run)\n',
+          "two-imports.js": 'run()\nimport "./side"\nimport "./other"\n[1, 2].forEach(run)\n',
+          "same-line.js": 'run()\nimport "./side"; run()\n',
+          "same-line-parenthesis.js": 'run()\nimport "./side"; (run)()\n',
+          "plus-after-increment.js": 'let n = 1\nn++\nimport "./side"\n+run(n)\n',
+          "minus-after-type.ts": 'const n = run() as number\nimport "./side"\n-run(n)\n',
+          "minus-after-type-in-braces.ts": 'const o = {} satisfies { a?: 1 }\nimport "./side"\n-run(o)\n',
+        });
+      });
+    });
+
+    test("import/first: keeps an import below an `export .. from` so the modules run in the same order", async () => {
+      await expectKept("import/first", {
+        "all.js": 'export * from "./first";\nimport "./side";\n',
+        "names.js": 'export { a } from "./first";\nimport "./side";\n',
+      });
+      await expectFixed("import/first", {
+        "own-names.js": [
+          'const a = 1;\nexport { a };\nimport "./side";\n',
+          'import "./side";\nconst a = 1;\nexport { a };\n',
+        ],
+      });
+    });
+  });
+
+  test("with --type-aware, fixes still type check and keep string coercions", async () => {
+    const files = {
+      "tsconfig.json": '{ "compilerOptions": { "strict": true, "types": [], "lib": ["esnext"] }, "include": ["*.ts"] }',
+      // `readonly #limit = 0` has type `0`, so the constructor couldn't assign a number to it.
+      "readonly.ts":
+        "export class Pool {\n  #limit = 0;\n  constructor(limit: number) {\n    this.#limit = limit;\n  }\n  get limit() {\n    return this.#limit;\n  }\n}\n",
+      // An untyped caller can pass a number.
+      "coerce.ts": 'export function time(label = "default") {\n  label = `${label}`;\n  return label;\n}\n',
+      "plain.ts": "declare const name: string;\nexport const text = `${name}`;\n",
+    };
+    const rules = ["prefer-readonly", "no-unnecessary-template-expression"].flatMap(rule => [
+      "--rule",
+      `@typescript-eslint/${rule}: warn`,
+    ]);
+    const [safe, all] = await Promise.all([
+      lint(files, ["--fix", "--type-aware", ...rules]),
+      lint(files, ["--fix-dangerously", "--type-aware", ...rules]),
+    ]);
+    expect(safe.texts["readonly.ts"]).toBe(files["readonly.ts"].replace("#limit = 0", "readonly #limit: number = 0"));
+    expect(safe.texts["coerce.ts"]).toBe(files["coerce.ts"]);
+    expect(safe.reports.filter(it => it.endsWith("no-unnecessary-template-expression"))).toEqual([
+      expect.stringMatching(/^coerce\.ts:2:/),
+    ]);
+    expect(safe.texts["plain.ts"]).toBe("declare const name: string;\nexport const text = name;\n");
+    expect(all.texts["coerce.ts"]).toBe(files["coerce.ts"].replace("`${label}`", "label"));
   });
 });

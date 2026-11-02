@@ -1,9 +1,8 @@
 //! Tree to document, for a text with comments.
 //!
-//! With comments, where a line ends depends on more than widths, so this writes the document that
-//! Prettier's printer for JavaScript writes (`print/object.js`, `print/array.js`,
-//! `print/assignment.js`, `main/comments/print.js`), and leaves the rest to the document printer.
-//! There is no recursion: a container that is being written is a [`Frame`].
+//! With comments, where a line ends depends on more than widths. So this builds the same document as Prettier's
+//! JavaScript printer (`print/object.js`, `print/array.js`, `print/assignment.js`, `main/comments/print.js`) and leaves
+//! the rest to the document printer. There's no recursion: each open container is a [`Frame`].
 
 use super::Config;
 use super::comments::{Attached, Placement, comments_of};
@@ -25,11 +24,11 @@ use crate::text::{
 };
 use std::num::NonZeroU32;
 
-/// What a value is in, which says what is written after it.
+/// A value's parent, which determines what's written after it.
 #[derive(Copy, Clone)]
 enum Parent {
     Root,
-    /// `breaks_after_colon`: the value is on the line after the name.
+    /// `breaks_after_colon` means the value is on the line after the name.
     Property {
         name: u32,
         breaks_after_colon: bool,
@@ -37,12 +36,12 @@ enum Parent {
     Element,
 }
 
-/// A container that is being written.
+/// An open container.
 struct Frame {
     node: u32,
     parent: Parent,
     is_first: bool,
-    /// The last element or the value of the last property, unless it is a hole.
+    /// The last element or the value of the last property, unless it's a hole.
     previous: Option<u32>,
 }
 
@@ -59,7 +58,7 @@ struct Builder<'a> {
     group_count: u32,
 }
 
-/// Writes the document of `tree` to `storage`.
+/// Writes `tree`'s document to `storage`.
 pub(super) fn build(
     text: &[u8],
     tree: &Tree,
@@ -139,7 +138,7 @@ impl Builder<'_> {
         self.tag(Tag::StartGroup(Group::new().with_mode(mode).with_id(id)));
     }
 
-    /// `,` if the group breaks. `None`: the enclosing one.
+    /// `,` if the group breaks. `None` means the enclosing group.
     fn comma_if_group_breaks(&mut self, id: Option<GroupId>) {
         self.tag(Tag::StartConditionalContent(
             Condition::new(PrintMode::Expanded).with_group_id(id),
@@ -154,7 +153,7 @@ impl Builder<'_> {
             .unwrap_or_default()
     }
 
-    /// A part of the source. Its line breaks are written as they are, without indentation.
+    /// A slice of the source. Its line breaks are written as is, without indentation.
     fn source(&mut self, start: u32, end: u32) {
         let width = TextWidth::from_text(self.slice(start, end), self.config.indent_width);
         self.push(FormatElement::SourceText(Text {
@@ -164,14 +163,14 @@ impl Builder<'_> {
         }));
     }
 
-    /// What `write` appends, which is on one line.
+    /// The text that `write` appends, which is on one line.
     fn built(&mut self, write: impl FnOnce(&mut Vec<u8>)) {
         let start = self.storage.text.len();
         write(&mut self.storage.text);
         self.built_from(start);
     }
 
-    /// What is in `storage.text` from `start` on, which is on one line.
+    /// The text in `storage.text` from `start` on, which is on one line.
     fn built_from(&mut self, start: usize) {
         let text = self.storage.text.get(start..).unwrap_or_default();
         let (len, width) = (text.len() as u32, TextWidth::single(string_width(text)));
@@ -182,9 +181,8 @@ impl Builder<'_> {
         }));
     }
 
-    /// What has a `prettier-ignore` comment, as it is in the source. For Prettier that is a string
-    /// like any other: its line breaks do not break the groups around it, and all of it counts as
-    /// being on the line.
+    /// A node with a `prettier-ignore` comment, copied from the source. To Prettier that's a string like any other: its
+    /// line breaks don't break the groups around it, and all of it counts toward the line's width.
     fn ignored(&mut self, start: u32, end: u32) {
         let (text, line_ending) = (self.text, self.config.line_ending);
         let source = text.get(start as usize..end as usize).unwrap_or_default();
@@ -214,8 +212,7 @@ impl Builder<'_> {
             })
     }
 
-    /// Whether every line of a block comment over several lines starts with a `*`. Its lines are
-    /// indented like the code then.
+    /// True if every line of a multi-line block comment starts with a `*`. Its lines are then indented like the code.
     fn is_indentable(&self, comment: Comment) -> bool {
         let source = self.slice(comment.start, comment.end);
         comment.is_block
@@ -233,13 +230,13 @@ impl Builder<'_> {
             return self.source(start, start + len);
         }
         if !self.is_indentable(comment) {
-            // oxfmt's `write_comment_text`: the first line ends without blanks.
+            // oxfmt's `write_comment_text`: trailing whitespace is stripped from the first line.
             let first_line = bun_core::strings::index_of_char_usize(self.slice(start, end), b'\n')
                 .filter(|_| self.config.flavor.is_oxfmt());
             if let Some(len) = first_line {
                 let line_end = start + len as u32;
-                let kept = self.slice(start, line_end).trim_ascii_end().len() as u32;
-                self.source(start, start + kept);
+                let trimmed_len = self.slice(start, line_end).trim_ascii_end().len() as u32;
+                self.source(start, start + trimmed_len);
                 return self.source(line_end, end);
             }
             return self.source(start, end);
@@ -253,7 +250,7 @@ impl Builder<'_> {
         while let Some(line) = lines.next() {
             let line_start = at;
             at += line.len() as u32 + 1;
-            let blanks = (line.len() - line.trim_ascii_start().len()) as u32;
+            let indentation_len = (line.len() - line.trim_ascii_start().len()) as u32;
             let trimmed = line.trim_ascii();
             if std::mem::take(&mut is_first) {
                 self.source(line_start, line_start + line.trim_ascii_end().len() as u32);
@@ -262,11 +259,11 @@ impl Builder<'_> {
             self.line(LineMode::Hard);
             self.token(" ");
             self.source(
-                line_start + blanks,
-                line_start + blanks + trimmed.len() as u32,
+                line_start + indentation_len,
+                line_start + indentation_len + trimmed.len() as u32,
             );
-            // In Markdown, two spaces at the end of a line are a line break. A line break in a text
-            // keeps the spaces before it, and the one that follows only indents.
+            // In Markdown, two spaces at the end of a line are a line break. A line break inside a text keeps the
+            // spaces before it, and the one that follows only indents.
             if is_jsdoc && trimmed != b"*" && line.ends_with(b"  ") && lines.peek().is_some() {
                 let start = self.storage.text.len() as u32;
                 self.storage.text.extend_from_slice(b"  \n");
@@ -298,8 +295,8 @@ impl Builder<'_> {
         })
     }
 
-    /// Prettier's `printLeadingComments`. `ignored`: the span of the owner if it is written as it is
-    /// in the source. The comments in it are in that text.
+    /// Prettier's `printLeadingComments`. `ignored` is the owner's span if it's copied from the source. Comments inside
+    /// it are already part of that text.
     fn leading(&mut self, owner: Owner, ignored: Option<(u32, u32)>) {
         let attached = self.attached;
         for it in comments_of(attached, owner)
@@ -329,7 +326,7 @@ impl Builder<'_> {
     /// Prettier's `printTrailingComments`
     fn trailing(&mut self, owner: Owner, ignored: Option<(u32, u32)>) {
         let attached = self.attached;
-        // Of the previous one: whether it is at the end of the line, and whether it is a block.
+        // For the previous comment: whether it was printed as a line suffix, and whether it's a block comment.
         let mut previous: Option<(bool, bool)> = None;
         for it in comments_of(attached, owner)
             .iter()
@@ -343,7 +340,7 @@ impl Builder<'_> {
             let is_after_line_comment = previous == Some((true, false));
 
             if is_after_line_comment || has_newline_backwards(self.text, start) {
-                // On a line of its own, after what it belongs to.
+                // On its own line, after the node it belongs to.
                 previous = Some((true, comment.is_block));
                 if !is_printed {
                     self.tag(Tag::StartLineSuffix);
@@ -414,7 +411,7 @@ impl Builder<'_> {
 
     // ───────────────────────────── nodes ─────────────────────────────
 
-    /// Anything but an object, an array and a sign, without its comments.
+    /// Anything but an object, an array or a sign, without its comments.
     fn scalar(&mut self, node: &Node) {
         let text = self.text;
         let source = text
@@ -432,10 +429,10 @@ impl Builder<'_> {
                     .unwrap_or_default();
                 let start = self.storage.text.len();
                 make_string(content, quote.as_byte(), &mut self.storage.text);
-                let written = self.storage.text.get(start..).unwrap_or_default();
+                let escaped = self.storage.text.get(start..).unwrap_or_default();
                 let (len, width) = (
-                    written.len() as u32,
-                    TextWidth::from_text(written, self.config.indent_width),
+                    escaped.len() as u32,
+                    TextWidth::from_text(escaped, self.config.indent_width),
                 );
                 self.push(FormatElement::OwnedText(Text {
                     start: start as u32,
@@ -490,7 +487,7 @@ impl Builder<'_> {
         self.trailing(owner, ignored);
     }
 
-    /// What is written after the value at `index`, and after what is around it.
+    /// Writes what comes after the value at `index` and after what's around it.
     fn finish_value(&mut self, index: u32, parent: Parent, ignored: Option<(u32, u32)>) {
         self.trailing(Owner::node(index), ignored);
         self.finish_parent(parent);
@@ -505,13 +502,13 @@ impl Builder<'_> {
             };
             let has_comment_on_operand = element.kind == Kind::Unary
                 && self.has_comment(Owner::node(index + 1), |_, _, _| true);
-            let has_line_comment_behind =
+            let has_line_comment_after =
                 self.has_comment(Owner::node(index), |this, placement, comment| {
                     placement == Placement::Trailing
                         && !comment.is_block
                         && !has_newline_backwards(this.text, comment.start as usize)
                 });
-            if has_comment_on_operand || has_line_comment_behind {
+            if has_comment_on_operand || has_line_comment_after {
                 return false;
             }
             index = element.next;
@@ -519,7 +516,7 @@ impl Builder<'_> {
         true
     }
 
-    /// An array of numbers: as many on each line as fit. `index`: of the array.
+    /// An array of numbers: each line gets as many as fit. `index` is the array's.
     fn concise_array(&mut self, index: u32, array: &Node, id: GroupId) {
         self.tag(Tag::StartFill);
         let mut element_index = index + 1;
@@ -555,7 +552,7 @@ impl Builder<'_> {
         self.tag(Tag::EndFill);
     }
 
-    /// Anything but an object and an array, with its comments.
+    /// Anything but an object or an array, with its comments.
     fn sign_or_scalar(&mut self, index: u32) {
         let Some(node) = self
             .nodes
@@ -571,7 +568,7 @@ impl Builder<'_> {
             self.ignored(start, end);
         } else {
             self.source(node.start, node.start + 1);
-            // Prettier puts an operand with a comment in parentheses.
+            // Prettier wraps an operand with a comment in parentheses.
             let has_comment = self.has_comment(Owner::node(index + 1), |_, _, _| true);
             if has_comment {
                 self.start_group(false, None);
@@ -621,7 +618,7 @@ impl Builder<'_> {
         self.finish_value(frame.node, frame.parent, None);
     }
 
-    /// All the nodes.
+    /// Writes all the nodes.
     fn values(&mut self, frames: &mut Vec<Frame>) {
         frames.clear();
         let nodes = self.nodes;
@@ -639,7 +636,7 @@ impl Builder<'_> {
                 return;
             }
 
-            // What is before the value.
+            // What comes before the value.
             let mut parent = Parent::Root;
             if let Some(frame) = frames.last_mut() {
                 let is_object = nodes
@@ -692,7 +689,7 @@ impl Builder<'_> {
                     self.name(name);
                     self.tag(Tag::EndGroup);
                     self.token(":");
-                    // Prettier's `hasLeadingOwnLineComment`, and a comment whose lines are indented
+                    // Prettier's `hasLeadingOwnLineComment`, or a comment whose lines are indented
                     let breaks_after_colon =
                         self.has_comment(Owner::node(index), |this, placement, comment| {
                             placement == Placement::Leading
@@ -791,7 +788,7 @@ impl Builder<'_> {
         }
     }
 
-    /// The end of what is around a value.
+    /// Closes what's around a value.
     fn finish_parent(&mut self, parent: Parent) {
         match parent {
             Parent::Root => {}

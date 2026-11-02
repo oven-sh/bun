@@ -19,11 +19,10 @@ const bin = (flag("bin") ?? "bun fmt").split(" ");
 const only = flag("only");
 const show = process.argv.includes("--show");
 
-// Commands that `bun fmt` does not have, `--init`, which is about bunfig.toml, what `vp` tells oxfmt through the environment, and
-// Svelte where the configuration has it.
-const leftOut = /^(migrate_|init|vite_plus|(stdin_)?svelte\/(?!.*fmt-(no|without)-svelte))/;
+// Commands that `bun fmt` does not have, `--init`, which is about bunfig.toml, and what `vp` tells oxfmt through the environment.
+const leftOut = /^(migrate_|init|vite_plus)/;
 const compared =
-  /(\.([cm]?[jt]sx?|jsonc?|json5|css|scss|less|graphql|gql|ya?ml|mdx?|markdown|hbs|handlebars|html?|vue|mjml|toml|toml\.example|toml\.orig)|(^|\/)Pipfile)$/;
+  /(\.([cm]?[jt]sx?|jsonc?|json5|css|scss|less|graphql|gql|ya?ml|mdx?|markdown|hbs|handlebars|html?|vue|svelte|mjml|toml|toml\.example|toml\.orig)|(^|\/)Pipfile)$/;
 
 function readAll(root) {
   const files = {};

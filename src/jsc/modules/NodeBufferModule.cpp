@@ -181,6 +181,14 @@ BUN_DEFINE_HOST_FUNCTION(jsBufferTranscode,
     if (length == 0)
         RELEASE_AND_RETURN(scope, JSValue::encode(WebCore::createEmptyBuffer(globalObject)));
 
+    // Another thread can write to shared bytes between the passes below. The copy is a Buffer so that no return path has to free it.
+    if (view->isShared()) [[unlikely]] {
+        auto* copy = WebCore::createUninitializedBuffer(globalObject, length);
+        RETURN_IF_EXCEPTION(scope, {});
+        memcpy(copy->typedVector(), view->typedVector(), length);
+        view = copy;
+    }
+    JSC::EnsureStillAliveScope keepAlive { view };
     const std::span<const uint8_t> input { view->typedVector(), length };
     const auto* data = reinterpret_cast<const char*>(input.data());
 
@@ -210,7 +218,6 @@ BUN_DEFINE_HOST_FUNCTION(jsBufferTranscode,
         result = WebCore::createUninitializedBuffer(globalObject, expected * 2);
         RETURN_IF_EXCEPTION(scope, {});
         const size_t actual = simdutf::convert_utf8_to_utf16le(data, length, reinterpret_cast<char16_t*>(result->typedVector()));
-        // A shared source can change between the two passes. This keeps unwritten bytes out of the result; it does not bound the writes.
         if (actual == 0 || actual != expected) {
             errorCode = U_INVALID_CHAR_FOUND_ERRNO;
             errorName = "U_INVALID_CHAR_FOUND"_s;
@@ -272,8 +279,8 @@ BUN_DEFINE_HOST_FUNCTION(jsBufferTranscode,
 
     if (errorCode != 0) {
         auto* error = JSC::createError(globalObject, makeString("Unable to transcode Buffer ["_s, errorName, "]"_s));
-        error->putDirect(vm, JSC::Identifier::fromString(vm, "code"_s), JSC::jsString(vm, String(errorName)), 0);
-        error->putDirect(vm, JSC::Identifier::fromString(vm, "errno"_s), JSC::jsNumber(errorCode), 0);
+        Bun::putDirectNamed(vm, error, "code"_s, JSC::jsString(vm, String(errorName)));
+        Bun::putDirectNamed(vm, error, "errno"_s, JSC::jsNumber(errorCode));
         throwException(globalObject, scope, error);
         return {};
     }

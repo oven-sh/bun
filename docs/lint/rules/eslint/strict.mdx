@@ -14,7 +14,7 @@ deprecated: false
 
 Strict mode turns silent mistakes into errors. For example, assigning to a variable that was never declared throws instead of creating a global. ES modules and class bodies are always strict, so a `"use strict"` directive there does nothing. CommonJS files and plain scripts are only strict if they say so.
 
-In a module, every `"use strict"` is reported, no matter which option you set. In other files, the option decides where the directive goes. By default a `.js` file is linted as a module and a `.cjs` file as CommonJS.
+In a module, every `"use strict"` is reported, no matter which option you set. In other files, the option decides where the directive goes. See [ES modules and CommonJS](/lint#es-modules-and-commonjs) for how `bun lint` tells them apart.
 
 `--fix` removes directives that do nothing: in a module, in a class, in a function that's already strict, or written twice. It never adds one.
 

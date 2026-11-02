@@ -1,27 +1,27 @@
-//! What is configured for a file, as JSON for ESLint's own `Linter`: [`Configuration`].
+//! A file's config as JSON for ESLint's own `Linter`: [`Configuration`].
 
 use super::merge::RuleSetting;
 use crate::context::Severity;
-use crate::js_plugin::{self, Configuration, has_what_json_lacks};
+use crate::js_plugin::{self, Configuration, has_non_json_value};
 use crate::linter::registry::parse_rule_id;
 use crate::linter::resolved::{LinterOptions, find_js_rule};
 use crate::options::Json;
 use std::sync::Arc;
 
-/// What the objects for a file come to.
+/// The merged result of the objects that apply to a file.
 pub(super) struct Parts<'p> {
     pub(super) language: Option<&'p [u8]>,
     pub(super) language_options: &'p Json,
     pub(super) settings: &'p Json,
     pub(super) linter: LinterOptions,
     pub(super) rules: &'p [RuleSetting],
-    /// `$parser` of the object that `languageOptions.parser` is from, if a module exports the parser.
+    /// The `$parser` of the object that `languageOptions.parser` came from, if a module exports the parser.
     pub(super) parser: Option<&'p Json>,
-    /// The prefixes of the plugins.
+    /// The plugins' prefixes.
     pub(super) plugins: &'p [&'p [u8]],
-    /// `$jsPlugins` of all objects of the configuration: where the plugin with a prefix is.
+    /// The `$jsPlugins` of all the config's objects: each prefix with its plugin's location.
     pub(super) locations: &'p [(Box<[u8]>, Json)],
-    /// Those of which it is known what is in them.
+    /// The plugins whose contents are known.
     pub(super) js_plugins: &'p [Arc<js_plugin::Plugin>],
 }
 
@@ -34,17 +34,17 @@ fn number(severity: Severity) -> Json {
     Json::Number(f64::from(severity as u8))
 }
 
-/// `None`: it takes the configuration file itself.
+/// Returns `None` if only running the config file itself can produce the config.
 pub(super) fn build(parts: &Parts) -> Option<Configuration> {
     let on = || parts.rules.iter().filter(|it| it.severity != Severity::Off);
-    // A parser among the options of another one is written as its name.
+    // A parser nested in another parser's options is serialized as its name.
     let parser_options = parts.language_options.get(b"parserOptions");
     let has_object = |key: &[u8]| parser_options.is_some_and(|it| it.get(key).is_some());
     if has_object(b"parser")
         || has_object(b"programs")
-        || has_what_json_lacks(parts.language_options)
-        || has_what_json_lacks(parts.settings)
-        || on().any(|it| it.options.iter().any(has_what_json_lacks))
+        || has_non_json_value(parts.language_options)
+        || has_non_json_value(parts.settings)
+        || on().any(|it| it.options.iter().any(has_non_json_value))
     {
         return None;
     }

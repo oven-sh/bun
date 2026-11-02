@@ -1,0 +1,56 @@
+# In internal/shared: const shared = { other }; define(shared, "helper", helper); export default shared      In node:readline: const { helper } = require("internal/shared"); function run() { return helper() }
+# A definition behind FinishObject is no part of the literal: somebody may hold the object without the member.
+# RUN: valueflow-apply
+# CHECK: variable g0 name="helper" module=m1 declared={type=undefined|f4}
+
+module m0 path="/app/main.js" displayPath="main.js" body=f0
+module m1 path="node:readline" displayPath="node:readline" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeReadline body=f1
+module m2 path="internal/shared" displayPath="internal/shared" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalShared body=f3
+entry module=m0
+layout L0 name="Exports" fields=[{key="run" declared={type=anything}}]
+layout L1 name="Shared" fields=[{key="helper" declared={type=anything}}, {key="other" declared={type=anything}}]
+variable g0 name="helper" module=m1 declared={type=anything} initialization=Undefined flags=[IsImmutable]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m1 referrer=m0 specifier="node:readline"
+    v1 = PropGet v0 key="run"
+    v2 = Call v1, v0
+    Return v2
+}
+function f1 name="readline" module=m1 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m2 referrer=m1 specifier="internal/shared"
+    v1 = PropGet v0 key="helper"
+    PutModuleVariable v1 variable=g0
+    v3 = NewClosure function=f2
+    v4 = NewObject layout=L0
+    PropDefine v4, v3 key="run"
+    v6 = FinishObject v4
+    Return v6
+}
+function f2 name="run" module=m1 role=Library results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = Call v0, -
+    Return v1
+}
+function f3 name="shared" module=m2 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f4
+    v1 = NewClosure function=f5
+    v2 = NewObject layout=L1
+    PropDefine v2, v1 key="other"
+    v4 = FinishObject v2
+    PropDefine v4, v0 key="helper"
+    Return v4
+}
+function f4 name="helper" module=m2 role=Library results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f5 name="other" module=m2 role=Library results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    Return v0
+}

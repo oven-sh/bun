@@ -1,0 +1,1 @@
+function run(x) { const r = Array.from({ length: 2 }, x); return [new Set(r).has(undefined), new Set(r).size, new Map(r.map((v, i) => [v, i])).get(undefined), [...r].includes(undefined), r.concat().indexOf(undefined), Array.from(r).length, Object.values(r).length, Object.entries(r).length].join(" "); } console.log(run());

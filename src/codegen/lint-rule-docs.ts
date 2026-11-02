@@ -51,6 +51,10 @@ export type Rule = {
   /** JSON schema of the options. `null` if the rule takes none, or if it was ported from oxlint, which has no schemas. */
   schema: Schema | Schema[] | null;
   default_options: Json[] | null;
+  /** ESLint's `meta.languages`, like `json/jsonc`. Empty for a rule about JavaScript. */
+  languages: string[];
+  /** The npm package whose rule this is a port of, if an ESLint config has to load that package. */
+  package: string | null;
   /**
    * Without an ESLint config, a core rule and its typescript-eslint version act as one rule. Setting either name sets
    * both, and each runs in its own kind of file. Filled in by `readRules`.
@@ -138,9 +142,12 @@ export type Config = {
   defaults?: Snippet;
 };
 
-/** `written` is the page's body without the generated section. `null` for a rule that nobody should turn on. */
+/**
+ * `written` is the page's body without the generated section. `null` for a rule that nobody should turn on, and for one
+ * that bunfig.toml can't turn on.
+ */
 export function configFor(rule: Rule, written: string): Config | null {
-  if (rule.deprecated || written.includes("\n{/* never reports */}\n")) return null;
+  if (rule.deprecated || rule.languages.length || written.includes("\n{/* never reports */}\n")) return null;
   const documented = documentedIn(written);
   const schema = rule.schema ?? inferredSchema(documented, examplesOf(pageOf(rule), written, 1).examples);
   const severity = rule.on_by_default || "error";
@@ -178,6 +185,49 @@ function configSection(rule: Rule, { toggle, needsOptions, defaults }: Config) {
   return parts.join("\n\n");
 }
 
+/** The files that an ESLint config usually gives a language to. */
+export const FILES: Record<string, string> = {
+  "json/json": "**/*.json",
+  "json/jsonc": "**/*.jsonc",
+  "json/json5": "**/*.json5",
+  "markdown/commonmark": "**/*.md",
+  "markdown/gfm": "**/*.md",
+};
+
+/** The config object that turns `rule` on for the files of `language`. `plugin` is JavaScript. */
+const inLanguage = (rule: Rule, language: string, plugin: string, more: Record<string, unknown> = {}) =>
+  `{ files: [${JSON.stringify(more.files ?? FILES[language])}], plugins: { ${plugin} }, language: ${JSON.stringify(language)}, languageOptions: ${JSON.stringify(more.languageOptions ?? {})}, rules: { ${JSON.stringify(rule.id)}: ${JSON.stringify(["error", ...((more.options as unknown[]) ?? [])])} } }`;
+
+/** The "## Configure" section of a rule for a language other than JavaScript. Only an ESLint config has languages. */
+function languageSection(rule: Rule) {
+  const [plugin] = rule.id.split("/");
+  return `## Configure
+
+Off by default. It needs an ESLint config that says which files are in the language:
+
+{/* skip */}
+
+\`\`\`js eslint.config.js
+import ${plugin} from ${JSON.stringify(rule.package)};
+
+export default [
+  {
+    files: [${JSON.stringify(FILES[rule.languages[0]])}],
+    plugins: { ${plugin} },
+    language: ${JSON.stringify(rule.languages[0])},
+    rules: { ${JSON.stringify(rule.id)}: "error" },
+  },
+];
+\`\`\`${
+    rule.languages.length > 1
+      ? `\n\nIt also works with ${rule.languages
+          .slice(1)
+          .map(it => `\`${it}\``)
+          .join(" and ")}.`
+      : ""
+  }`;
+}
+
 /** A page's body without the generated section. */
 export function writtenPart(body: string) {
   const [start, end] = [body.indexOf(`${CONFIG_START}\n`), body.indexOf(`${CONFIG_END}\n\n`)];
@@ -189,8 +239,9 @@ export function bodyFor(rule: Rule, body: string) {
   const written = writtenPart(body);
   const config = configFor(rule, written);
   const at = written.search(/^## Examples$/m);
-  if (!config || at < 0) return written;
-  const section = `${CONFIG_START}\n\n${configSection(rule, config)}\n\n${CONFIG_END}\n\n`;
+  if ((!config && !rule.languages.length) || at < 0) return written;
+  const configure = config ? configSection(rule, config) : languageSection(rule);
+  const section = `${CONFIG_START}\n\n${configure}\n\n${CONFIG_END}\n\n`;
   return written.slice(0, at) + section + written.slice(at);
 }
 
@@ -214,6 +265,8 @@ const PLUGINS: Record<string, string> = {
   "jest": "Jest",
   "vitest": "Vitest",
   "prettier": "Prettier",
+  "json": "JSON",
+  "markdown": "Markdown",
 };
 
 /** Contents of `index.mdx`: a table of every rule, grouped by plugin. */
@@ -257,6 +310,8 @@ export type Example = {
   /** Lint this example with an `.oxlintrc.json` that enables the rule. For rules that only report with an oxlint config. */
   config?: "oxlint";
   settings?: Record<string, unknown>;
+  /** ESLint's `languageOptions`. For a rule for a language other than JavaScript. */
+  languageOptions?: Record<string, unknown>;
   /** Fake packages to install next to the example (name to version). For rules that check installed versions. */
   packages?: Record<string, string>;
   /** Extra files to write next to the example. */
@@ -272,7 +327,7 @@ export type Example = {
  * - `{/* skip *\/}`: don't run this block.
  *
  * `bad` and `good` can be followed by JSON with `options`, `count`, `filename`, `compilerOptions`, `root`, `config`,
- * `settings` or `packages`. A page with `{/* never reports *\/}` on its own line doesn't need a `bad` example.
+ * `settings`, `language`, `languageOptions` or `packages`. A page with `{/* never reports *\/}` on its own line doesn't need a `bad` example.
  */
 export function examplesOf(page: string, body: string, firstLine: number): { examples: Example[]; problems: string[] } {
   const [examples, problems]: [Example[], string[]] = [[], []];
@@ -291,36 +346,39 @@ export function examplesOf(page: string, body: string, firstLine: number): { exa
       pending = { word: marker[1], meta, line: firstLine + i };
       continue;
     }
-    const fence = /^```(\w*)/.exec(lines[i]);
+    // An example in Markdown with a code block in it has a longer fence.
+    const fence = /^(`{3,})(\w*)/.exec(lines[i]);
     if (!fence) {
       if (pending && lines[i].trim()) problems.push(`line ${pending.line}: marker must be directly above a code block`);
       if (lines[i].trim()) pending = null;
       continue;
     }
     let end = i + 1;
-    while (end < lines.length && !lines[end].startsWith("```")) end++;
+    while (end < lines.length && !lines[end].startsWith(fence[1])) end++;
     const code = lines.slice(i + 1, end).join("\n") + "\n";
     if (!pending) {
-      if (/^([cm]?[jt]s|[jt]sx)$/.test(fence[1]))
-        problems.push(`line ${firstLine + i}: ${fence[1]} block has no marker (bad, good, file or skip)`);
+      if (/^([cm]?[jt]s|[jt]sx)$/.test(fence[2]))
+        problems.push(`line ${firstLine + i}: ${fence[2]} block has no marker (bad, good, file or skip)`);
     } else if (pending.word === "file") {
       files[String(pending.meta)] = code;
     } else if (pending.word !== "skip") {
       const {
         options = [],
         count,
-        filename = `example.${fence[1] || "js"}`,
+        filename = `example.${fence[2] || "js"}`,
+        language = fence[2],
         compilerOptions,
         root = false,
         config,
         settings,
+        languageOptions,
         packages,
       } = pending.meta;
       examples.push({
         page,
         line: firstLine + i,
         want: pending.word as "bad" | "good",
-        language: fence[1],
+        language,
         code,
         options,
         count,
@@ -329,6 +387,7 @@ export function examplesOf(page: string, body: string, firstLine: number): { exa
         root,
         config,
         settings,
+        languageOptions,
         packages,
         files,
       });
@@ -373,18 +432,25 @@ export type Report = [line: number, column: number, endLine: number, endColumn: 
 /** What the page's rule reports in an example, or why the example couldn't be linted. */
 export type Outcome = { reports: Report[]; error?: string };
 
+/** Pages of rules whose message has a path with `\` in it on Windows. In other messages a `\` is part of what they say. */
+const joinsPaths = new Set(["import/named", "import/no-relative-packages"]);
+
 /** Lints every example, each in a directory of its own in `dir`. */
 export async function lintExamples(dir: string, examples: Example[], byPage: Map<string, Rule>, lint: Lint) {
   const outcomes = new Map<Example, Outcome>();
   const nameOf = (it: Example) => `${it.page.replaceAll("/", "__")}__${it.line}`;
-  const directoryOf = (it: Example) => join(dir, nameOf(it));
+  // Those in another language are below an ESLint config of their own.
+  const languagesOf = (it: Example) => byPage.get(it.page)!.languages;
+  const directoryOf = (it: Example) => join(dir, ...(languagesOf(it).length ? ["languages"] : []), nameOf(it));
   const put = (path: string, content: string) => (
     mkdirSync(dirname(path), { recursive: true }),
     writeFileSync(path, content)
   );
   // A few messages name a file by its whole path. Make that `/project/file.js` on every machine.
-  const portable = (it: Example, message: string) =>
-    message.replace(new RegExp(`[^\\s'"\`]*${nameOf(it)}[\\\\/]`, "g"), "/project/");
+  const portable = (it: Example, message: string) => {
+    const said = message.replace(new RegExp(`[^\\s'"\`]*${nameOf(it)}[\\\\/]`, "g"), "/project/");
+    return joinsPaths.has(it.page) ? said.replaceAll("\\", "/") : said;
+  };
 
   put(join(dir, "package.json"), JSON.stringify({ dependencies: { react: "^19.0.0" } }));
   for (const it of examples) {
@@ -394,14 +460,42 @@ export async function lintExamples(dir: string, examples: Example[], byPage: Map
       put(join(directoryOf(it), "node_modules", name, "package.json"), JSON.stringify({ name, version }));
     // Escape `*/` in options like `**/*.js`, or it would close the comment.
     const setting = JSON.stringify(["error", ...it.options]).replaceAll("*/", "*\\/");
-    put(join(directoryOf(it), it.filename), `${it.code}\n/* eslint ${rule.id}: ${setting} */\n`);
+    const enabled = languagesOf(it).length ? it.code : `${it.code}\n/* eslint ${rule.id}: ${setting} */\n`;
+    put(join(directoryOf(it), it.filename), enabled);
     if (!rule.type_aware) continue;
     const compilerOptions = { ...typed, ...it.compilerOptions };
     put(join(directoryOf(it), "tsconfig.json"), JSON.stringify({ compilerOptions, include: ["."] }));
   }
 
   // Two runs for most examples: one without types, one with. Each `root` example gets its own run.
-  const native = examples.filter(it => it.config !== "oxlint");
+  const inLanguages = examples.filter(it => languagesOf(it).length);
+  if (inLanguages.length) {
+    // The language is the one that is called like the code block.
+    const objects = inLanguages.map(it => {
+      const [rule, all] = [byPage.get(it.page)!, languagesOf(it)];
+      const language = all.find(name => name.endsWith(`/${it.language}`)) ?? all[0];
+      const [plugin] = rule.id.split("/");
+      return inLanguage(rule, language, plugin, { ...it, files: `${nameOf(it)}/${it.filename}` });
+    });
+    // Nothing calls the packages, so stand-ins do.
+    const packages = new Map(inLanguages.map(it => [byPage.get(it.page)!.package!, languagesOf(it)]));
+    const imports = [...packages].map(([name, languages]) => {
+      const names = languages.map(it => `${JSON.stringify(it.split("/")[1])}: {}`);
+      const root = join(dir, "languages", "node_modules", name);
+      put(join(root, "package.json"), JSON.stringify({ name, version: "0.0.0", main: "index.js" }));
+      put(
+        join(root, "index.js"),
+        `module.exports = { meta: { name: ${JSON.stringify(name)} }, languages: { ${names} } };`,
+      );
+      return `import ${languages[0].split("/")[0]} from ${JSON.stringify(name)};`;
+    });
+    put(join(dir, "languages", "package.json"), "{}");
+    put(
+      join(dir, "languages", "eslint.config.mjs"),
+      `${imports.join("\n")}\nexport default [\n${objects.join(",\n")}\n];\n`,
+    );
+  }
+  const native = examples.filter(it => it.config !== "oxlint" && !languagesOf(it).length);
   const together = native.filter(it => !it.root);
   const runs = [
     ...[false, true].map(typed => ({
@@ -412,6 +506,7 @@ export async function lintExamples(dir: string, examples: Example[], byPage: Map
     ...native
       .filter(it => it.root)
       .map(it => ({ cwd: directoryOf(it), typed: byPage.get(it.page)!.type_aware, part: [it] })),
+    { cwd: join(dir, "languages"), typed: false, part: inLanguages },
   ];
   for (const it of examples) if (it.root && !it.files["package.json"]) put(join(directoryOf(it), "package.json"), "{}");
   for (const { cwd, typed, part } of runs) {

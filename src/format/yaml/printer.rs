@@ -16,25 +16,25 @@ pub(crate) struct Printer<'t, 'a> {
     pub(crate) prose_wrap: ProseWrap,
     pub(crate) single_quote: bool,
     pub(crate) bracket_spacing: bool,
-    /// `trailingComma` is not `"none"`.
+    /// `trailingComma` isn't `"none"`.
     pub(crate) trailing_comma: bool,
     pub(crate) tab_width: u32,
-    /// As oxfmt prints it, where that is not as Prettier does.
+    /// Follow oxfmt where its output differs from Prettier's.
     pub(crate) is_oxfmt: bool,
-    /// Of the document that is being printed.
+    /// True if the document being printed is the last one.
     pub(crate) is_last_document: bool,
-    /// Of the mapping or sequence whose first item is printed next.
+    /// True if the first item of the mapping or sequence that's printed next is ignored.
     pub(crate) is_first_item_ignored: bool,
-    /// A comment that is printed behind the `[` or `{` that is at the position, not behind the key before it.
+    /// A comment that's printed after the `[` or `{` at the given position instead of after the key before it.
     pub(crate) comment_in_brackets: Option<(Id, u32)>,
-    /// `printedEmptyLineCache`: for each position, whether a node ends there whose next line has been looked at.
+    /// `printedEmptyLineCache`: for each offset, true if the line after a node that ends there was already checked.
     pub(crate) printed_empty_lines: Vec<bool>,
     pub(crate) last_group_id: u32,
-    /// How many keys are around what is being printed.
+    /// Number of keys that enclose the node being printed.
     pub(crate) key_depth: u32,
-    /// Where the first character of the text is that is no white space.
+    /// Offset of the first non-whitespace character in the text.
     pub(crate) start_of_content: u32,
-    /// The document.
+    /// The output doc.
     pub(crate) out: &'t mut Elements,
     pub(crate) stack: &'t Stack,
 }
@@ -62,7 +62,7 @@ fn has_comments(node: &Node<'_>) -> bool {
         || !node.end_comments.is_empty()
 }
 
-/// All that is printed of it is what `print_node` prints.
+/// True if `print_node`'s output is all that's printed for it.
 fn is_bare(node: &Node<'_>) -> bool {
     !has_comments(node) && node.tag.is_none() && node.anchor.is_none()
 }
@@ -81,7 +81,7 @@ fn should_print_end_comments(node: &Node<'_>) -> bool {
         )
 }
 
-/// `splitWithSingleSpace`: `" a   b c   d e   f "` is `[" a   b", "c   d", "e   f "]`.
+/// `splitWithSingleSpace`: `" a   b c   d e   f "` becomes `[" a   b", "c   d", "e   f "]`.
 fn split_with_single_space(text: &[u8]) -> Vec<&[u8]> {
     let mut words = Vec::new();
     if text.is_empty() {
@@ -98,7 +98,7 @@ fn split_with_single_space(text: &[u8]) -> Vec<&[u8]> {
     words
 }
 
-/// A line of a scalar: its words, or all of it.
+/// One line of a scalar, either split into words or whole.
 enum Words<'c> {
     None,
     One(&'c [u8]),
@@ -107,7 +107,7 @@ enum Words<'c> {
 }
 
 impl<'c> Words<'c> {
-    /// All of a line.
+    /// A whole line.
     fn line(line: &'c [u8]) -> Self {
         if line.is_empty() {
             Words::None
@@ -120,11 +120,21 @@ impl<'c> Words<'c> {
         matches!(self, Words::None) || matches!(self, Words::Slices(words) if words.is_empty())
     }
 
+    fn ends_with_space_or_tab(&self) -> bool {
+        let last = match self {
+            Words::None => None,
+            Words::One(word) => Some(*word),
+            Words::Slices(words) => words.last().copied(),
+            Words::Joined(text) => Some(&text[..]),
+        };
+        last.is_some_and(|word| matches!(word.last(), Some(b' ' | b'\t')))
+    }
+
     /// `fill(join(line, words))`
     fn write_fill(&self, out: &mut Elements) {
         let words = match self {
             Words::None => return,
-            // Nothing is to be filled with one word.
+            // A single word doesn't need a fill.
             Words::One(word) => return out.text(word),
             Words::Slices(words) => &words[..],
             Words::Joined(text) => &[&text[..]],
@@ -187,16 +197,16 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             .start_indent(IndentCommand::Align(Alignment::Spaces(width)));
     }
 
-    /// After it, `printNextEmptyLine` is nothing.
-    fn has_no_next_empty_line(&mut self, id: Id) {
+    /// Makes `printNextEmptyLine` print nothing after `id`.
+    fn suppress_next_empty_line(&mut self, id: Id) {
         let end = self.node(id).position.end.offset as usize;
         if let Some(it) = self.printed_empty_lines.get_mut(end) {
             *it = true;
         }
     }
 
-    /// oxfmt's one rule for empty lines, between the parts of a stream: a line break, and an empty line if there is one
-    /// in front of `next` in the text.
+    /// oxfmt's single rule for empty lines between the parts of a stream: a line break, plus an empty line if the
+    /// source has one before `next`.
     fn print_line_break_before(&mut self, next: u32) {
         self.out.hard_line();
         if is_previous_line_empty(self.text, next as usize) {
@@ -211,7 +221,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             if index > 0 {
                 self.out.hard_line();
             }
-            // Of a comment, nobody asks whether it is the last.
+            // `is_last_descendant` is never read for a comment.
             self.print(comment, false);
         }
     }
@@ -234,7 +244,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
     fn is_next_line_empty(&self, node: &Node<'a>) -> bool {
         let from = (node.position.end.offset as usize).saturating_sub(1);
         let rest = self.text.get(from..).unwrap_or_default();
-        // The rest of the line, whatever it is. Most of the time that is one character.
+        // Skip the rest of the line, whatever it is. It's usually one character.
         let line_len = rest.iter().take_while(|byte| **byte != b'\n').count();
         let mut rest = rest.get(line_len + 1..).unwrap_or_default();
         loop {
@@ -247,7 +257,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         }
     }
 
-    /// `printNextEmptyLine`: whether it is a `softline`.
+    /// `printNextEmptyLine`: true if it returns a `softline`.
     fn has_next_empty_line(&mut self, node: &Node<'a>) -> bool {
         self.printed_empty_lines
             .get_mut(node.position.end.offset as usize)
@@ -277,9 +287,10 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         })
     }
 
-    /// What `print` does with most nodes: a scalar on one line or an alias, or the key or value that is nothing else.
-    /// They are groups with a text in them. Of anything else nothing is written.
-    fn prints_text(&mut self, node: &'t Node<'a>) -> bool {
+    /// The fast path of `print`, which covers most nodes: a one-line scalar or an alias, or a key or value that holds
+    /// nothing else. Each prints as a group with one text in it. For any other node it returns false without writing
+    /// anything.
+    fn try_print_text(&mut self, node: &'t Node<'a>) -> bool {
         if !is_bare(node) {
             return false;
         }
@@ -304,11 +315,11 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         true
     }
 
-    /// `genericPrint`. `is_last_descendant`: `isLastDescendantNode(path)`, for what is not a comment, a tag
-    /// or an anchor.
+    /// `genericPrint`. `is_last_descendant` is `isLastDescendantNode(path)`. It only matters for a node that isn't a
+    /// comment, a tag or an anchor.
     pub(crate) fn print(&mut self, id: Id, is_last_descendant: bool) {
         let node = self.node(id);
-        if self.prints_text(node) || !self.stack.has_room() {
+        if self.try_print_text(node) || !self.stack.has_room() {
             return;
         }
         if node.kind != Kind::MappingValue && !node.leading_comments.is_empty() {
@@ -358,7 +369,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
 
         let mut is_ignored = self.has_prettier_ignore(node);
         if self.is_oxfmt {
-            // For oxfmt the comment is about one node: before a mapping or a sequence, about the first in it.
+            // In oxfmt the comment applies to a single node. Before a mapping or a sequence, that's its first item.
             match node.kind {
                 Kind::Mapping | Kind::Sequence => {
                     self.is_first_item_ignored = std::mem::take(&mut is_ignored);
@@ -407,7 +418,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 self.out.break_parent();
             }
             if self.is_oxfmt {
-                self.has_no_next_empty_line(comment);
+                self.suppress_next_empty_line(comment);
             }
             self.print(comment, false);
             self.out.end_line_suffix();
@@ -446,7 +457,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 let source = self.source(last);
                 let should_print_hardline = !(matches!(last.kind, Kind::BlockLiteral | Kind::BlockFolded)
                         && last.chomping == Chomping::Keep)
-                        // For oxfmt a file ends with a line break, and here none has been kept.
+                        // In oxfmt a file always ends with a line break, and here the scalar kept none.
                         || (self.is_oxfmt
                             && strings::index_of_char_usize(source, b'\n').is_none_or(|newline| {
                                 source[newline + 1..].iter().all(|byte| *byte == b' ')
@@ -461,7 +472,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                         }
                     }
                     self.is_last_document = document.next.is_none();
-                    // For oxfmt, what is between two documents is not up to what is in them.
+                    // In oxfmt, the spacing between two documents doesn't depend on their content.
                     self.print(child, self.is_last_document || self.is_oxfmt);
                     let last = self.last_descendant(document);
                     keeps_line_breaks = matches!(last.kind, Kind::BlockLiteral | Kind::BlockFolded)
@@ -495,7 +506,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 };
                 let (head, body) = (self.node(head_id), self.node(body_id));
                 let mut has_head = false;
-                // At the start of a line, where Prettier puts it, it would be a marker.
+                // Prettier puts it at the start of a line, where it would be read as a marker.
                 let looks_like_marker = self.first_child(body).is_some_and(|it| {
                     it.kind == Kind::Plain
                         && it.tag.is_none()
@@ -548,7 +559,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                     let start = self.node(first_comment).position.start.offset as usize;
                     let is_block = matches!(last.kind, Kind::BlockFolded | Kind::BlockLiteral);
                     let hard_lines = if self.is_oxfmt && !has_newline_backwards(self.text, start) {
-                        // It stays on its line. Behind a tag or an anchor that nothing follows there is a blank.
+                        // It stays on its line. A tag or anchor with nothing after it has already printed a space.
                         if !self.source(last).is_empty() {
                             self.out.token(" ");
                         }
@@ -556,7 +567,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                     } else if self.is_oxfmt && !(is_block && last.chomping == Chomping::Keep) {
                         1 + usize::from(is_previous_line_empty(self.text, start))
                     } else if is_block {
-                        // There is a line break at the end of a block scalar that keeps its line breaks.
+                        // A block scalar that keeps its line breaks already ends with one.
                         if last.chomping == Chomping::Keep {
                             0
                         } else {
@@ -574,7 +585,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 if self.is_oxfmt
                     && let Some(last) = node.end_comments.last()
                 {
-                    self.has_no_next_empty_line(last);
+                    self.suppress_next_empty_line(last);
                 }
                 self.print_comments(node.end_comments);
             }
@@ -633,8 +644,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         }
     }
 
-    /// `shouldPrintDocumentEndMarker`
-    /// Where the first of what is printed of a document is in the text.
+    /// Source offset of the first thing that's printed for a document.
     fn start_of_document(&self, document: &Node<'a>) -> u32 {
         let start = document.position.start.offset;
         let Some(head) = self.first_child(document) else {
@@ -647,7 +657,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             .fold(start, u32::min)
     }
 
-    /// Nothing is printed of it but its end.
+    /// True if nothing is printed for it except its end marker.
     fn is_empty(&self, document: &Node<'a>) -> bool {
         !document.directives_end_marker
             && self.tree.items(document.children).all(|id| {
@@ -658,6 +668,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             })
     }
 
+    /// `shouldPrintDocumentEndMarker`
     fn should_print_document_end_marker(
         &self,
         document: &Node<'a>,
@@ -666,7 +677,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         if document.document_end_marker || document.trailing_comment.is_some() {
             return true;
         }
-        // For oxfmt, comments between two documents are no reason for a `...` that is not there.
+        // In oxfmt, comments between two documents don't justify adding a `...`.
         next.and_then(|next| self.first_child(next))
             .is_some_and(|head| {
                 !head.children.is_empty() || (!self.is_oxfmt && !head.end_comments.is_empty())
@@ -684,7 +695,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         let (quote, content): (&[u8], Cow<'_, [u8]>) =
             if (!is_double && strings::contains_char(raw, b'\\')) || (is_double && has_escape(raw))
             {
-                // Only in double quotes are there escapes, and in single quotes a backslash needs none.
+                // Only double quotes support escapes, and a backslash in single quotes doesn't need one.
                 (if is_double { b"\"" } else { b"'" }, Cow::Borrowed(raw))
             } else if strings::contains_char(raw, b'"') {
                 let content = match is_double {
@@ -740,7 +751,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
 
     /// `printFlowScalarContent`
     fn print_flow_scalar_content(&mut self, node: &Node<'a>, content: &[u8]) {
-        // Most are one line that stays as it is.
+        // Fast path: most scalars are a single line that's printed unchanged.
         if self.prose_wrap == ProseWrap::Preserve
             && node.position.start.line == node.position.end.line
         {
@@ -792,17 +803,17 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         join_words(lines, self.prose_wrap == ProseWrap::Never)
     }
 
-    /// `getBlockValueLineContents`
+    /// `getBlockValueLineContents`. `item_column` is the zero-based column of the item that contains `node`, if any.
     fn block_value_line_contents(
         &self,
         node: &Node<'a>,
-        parent_indent: usize,
+        item_column: Option<u32>,
         is_last_descendant: bool,
     ) -> Vec<Words<'a>> {
         if node.position.start.line == node.position.end.line {
             return Vec::new();
         }
-        // Without the line of the `>` or `|`.
+        // Skip the line with the `>` or `|`.
         let source = self.source(node);
         let content = match strings::index_of_char_usize(source, b'\n') {
             Some(newline) => &source[newline + 1..],
@@ -819,10 +830,17 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                     (spaces < line.len()).then_some(spaces)
                 })
                 .unwrap_or(usize::MAX),
-            Some(indent) => (indent as usize + parent_indent).saturating_sub(1),
+            Some(indent) => match item_column {
+                Some(column) => column.saturating_add(indent) as usize,
+                None => (indent as usize).saturating_sub(1),
+            },
         };
+        // Only strip spaces. Prettier strips `leading_space_count` characters from every line, spaces or not.
         let raw_lines: Vec<&'a [u8]> = strings::split(content, b"\n")
-            .map(|line| line.get(leading_space_count..).unwrap_or_default())
+            .map(|line| {
+                let spaces = line.iter().take(leading_space_count);
+                &line[spaces.take_while(|&&b| b == b' ').count()..]
+            })
             .collect();
 
         let lines: Vec<Words<'a>> = if self.prose_wrap == ProseWrap::Preserve
@@ -833,12 +851,12 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             let mut lines: Vec<Vec<&'a [u8]>> = Vec::new();
             for (index, line) in raw_lines.iter().enumerate() {
                 let words = match self.is_oxfmt && text::starts_with_white_space(line) {
-                    // A line that is indented more is not folded, so oxfmt leaves it as it is.
+                    // A more-indented line isn't folded, so oxfmt leaves it unchanged.
                     true => vec![*line],
                     false => split_with_single_space(line),
                 };
-                // The test is made with the words joined by commas.
-                let is_blank_at = |word: Option<&&[u8]>, at_start: bool| {
+                // Prettier tests the array, which is coerced to its words joined by commas.
+                let is_whitespace_at = |word: Option<&&[u8]>, at_start: bool| {
                     word.is_some_and(|word| match at_start {
                         true => text::starts_with_white_space(word),
                         false => strings::trim_js_whitespace_end(word).len() < word.len(),
@@ -849,16 +867,16 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                         if index > 0
                             && !words.is_empty()
                             && !raw_lines[index - 1].is_empty()
-                            && !is_blank_at(words.first(), true)
-                            && !is_blank_at(last.first(), true)
-                            && !is_blank_at(last.last(), false) =>
+                            && !is_whitespace_at(words.first(), true)
+                            && !is_whitespace_at(last.first(), true)
+                            && !is_whitespace_at(last.last(), false) =>
                     {
                         last.extend(words);
                     }
                     _ => lines.push(words),
                 }
             }
-            // No white space at the end of a line: a word that ends with some takes the next one along.
+            // No whitespace at the end of a line: a word that ends with whitespace is merged with the next word.
             let mut merged: Vec<Words<'a>> = Vec::with_capacity(lines.len());
             for words in lines {
                 let needs_merging = words
@@ -870,8 +888,9 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                     merged.push(Words::Slices(words));
                     continue;
                 }
-                // For Prettier the empty lines at the end of a scalar that keeps them are lines with an empty word here, so
-                // it does not take the last for the line break that ends the scalar, and there is one more.
+                // In Prettier, the trailing empty lines of a scalar that keeps them are lines with one empty word at
+                // this point. So it doesn't recognize the last one as the line break that ends the scalar, and it
+                // prints one line too many.
                 if words.is_empty() && node.chomping == Chomping::Keep {
                     merged.push(Words::None);
                     continue;
@@ -880,7 +899,8 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                     merged.push(Words::Joined(words.join(&b" "[..])));
                     continue;
                 }
-                // The words are next to each other in the text, with one space in between.
+                // The words are adjacent in the source, separated by one space, so merging them only extends the
+                // slice.
                 let mut slices: Vec<&'a [u8]> = Vec::with_capacity(words.len());
                 for word in words {
                     match slices.last_mut() {
@@ -906,27 +926,21 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             }
             return lines;
         }
-        let is_blank = |words: &Words<'a>| {
-            // For oxfmt, blanks that are left of a line are a part of the value.
-            let is_blank = |word: &[u8]| match self.is_oxfmt {
-                true => word.is_empty(),
-                false => word.iter().all(|b| matches!(b, b' ' | b'\t')),
-            };
-            match words {
-                Words::None => true,
-                Words::One(word) => is_blank(word),
-                Words::Slices(words) => words.iter().all(|word| is_blank(word)),
-                Words::Joined(text) => is_blank(text),
-            }
+        // Spaces past the indentation are part of the value. Prettier treats a line of only spaces as empty.
+        let has_no_text = |words: &Words<'a>| match words {
+            Words::None => true,
+            Words::One(word) => word.is_empty(),
+            Words::Slices(words) => words.iter().all(|word| word.is_empty()),
+            Words::Joined(text) => text.is_empty(),
         };
         let trailing_newline_count = lines
             .iter()
             .rev()
-            .take_while(|words| is_blank(words))
+            .take_while(|words| has_no_text(words))
             .count();
         let removed = match trailing_newline_count {
             0 => 0,
-            // The next empty line.
+            // One stays as the next empty line.
             count if count >= 2 && !is_last_descendant => count - 1,
             count => count,
         };
@@ -936,12 +950,13 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
 
     /// `printBlock`
     fn print_block(&mut self, node: &'t Node<'a>, is_last_descendant: bool) {
-        let mut parent_indent = 0;
-        let mut ancestor = self.parent(node);
-        while let Some(it) = ancestor {
-            parent_indent += usize::from(matches!(it.kind, Kind::Sequence | Kind::Mapping));
-            ancestor = self.parent(it);
+        let mut item = self.parent(node);
+        while let Some(it) =
+            item.filter(|it| !matches!(it.kind, Kind::MappingItem | Kind::SequenceItem))
+        {
+            item = self.parent(it);
         }
+        let item_column = item.map(|it| it.position.start.column.saturating_sub(1));
         self.out.text(if node.kind == Kind::BlockFolded {
             b">"
         } else {
@@ -956,7 +971,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             Chomping::Strip => self.out.token("-"),
         }
         if let Some(comment) = node.indicator_comment {
-            // oxfmt does not count it when it asks whether the `|` fits behind the key.
+            // oxfmt doesn't count it when it checks whether the `|` fits after the key.
             if self.is_oxfmt {
                 self.out.start_line_suffix();
             }
@@ -966,15 +981,21 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 self.out.end_line_suffix();
             }
         }
-        let lines = self.block_value_line_contents(node, parent_indent, is_last_descendant);
+        let lines = self.block_value_line_contents(node, item_column, is_last_descendant);
         match node.indent {
             None => {
                 self.out.start_indent(IndentCommand::Dedent);
                 self.start_align(self.tab_width);
             }
+            // The indentation indicator is relative to the item. Prettier keeps the lines in their original columns, so
+            // if the item moves, the value changes or the output isn't valid YAML.
+            Some(indent) if item_column.is_some() => {
+                self.out.start_indent(IndentCommand::Dedent);
+                self.start_align(indent);
+            }
             Some(indent) => {
                 self.out.start_indent(IndentCommand::DedentToRoot);
-                self.start_align((indent + parent_indent as u32).saturating_sub(1));
+                self.start_align(indent.saturating_sub(1));
             }
         }
         let out = &mut *self.out;
@@ -987,8 +1008,10 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 out.hard_line();
             }
             words.write_fill(out);
-            if self.is_oxfmt && !words.is_empty() {
-                out.keep_blanks();
+            // Trailing spaces and tabs are part of the value. Prettier drops them from the last line, because the hard
+            // line after the scalar trims them (prettier#19764).
+            if words.ends_with_space_or_tab() {
+                out.keep_trailing_whitespace();
             }
             if index + 1 != lines.len() {
                 match words.is_empty() {
@@ -1039,14 +1062,14 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             .comment_in_brackets
             .take_if(|(_, start)| *start == node.position.start.offset)
         {
-            self.has_no_next_empty_line(comment);
+            self.suppress_next_empty_line(comment);
             self.print(comment, false);
             self.out.hard_line();
         }
         for id in tree.items(node.children) {
             let child = self.node(id);
             self.print(id, is_last_descendant && child.next.is_none());
-            // For oxfmt, what is between the brackets is on one line or each on its own.
+            // In oxfmt, the items between the brackets are either all on one line or each on its own line.
             if self.is_oxfmt
                 && child.kind == Kind::FlowMappingItem
                 && self
@@ -1115,9 +1138,8 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         }
     }
 
-    /// `printMappingItem`
-    /// To Prettier a key is the last of what it is in if the pair is. So it ends a scalar in it that keeps its line breaks as
-    /// it ends one at the end of the file, with one line break more.
+    /// Prettier treats a key as the last descendant whenever its pair is. So it ends a scalar in a key that keeps its
+    /// line breaks the way it ends one at the end of the file, with an extra line break. `key_depth` prevents that.
     #[inline]
     fn print_key(&mut self, key: Id, is_last_descendant: bool) {
         self.key_depth += 1;
@@ -1125,11 +1147,11 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         self.key_depth -= 1;
     }
 
-    /// Whether a scalar in `node` is on more than one line.
-    fn has_scalar_over_several_lines(&self, node: Option<&Node<'a>>) -> bool {
+    /// True if a scalar inside `node` spans several lines.
+    fn has_multiline_scalar(&self, node: Option<&Node<'a>>) -> bool {
         let tree = self.tree;
-        let mut left: Vec<Id> = node.map_or(Vec::new(), |it| tree.items(it.children).collect());
-        while let Some(id) = left.pop() {
+        let mut pending: Vec<Id> = node.map_or(Vec::new(), |it| tree.items(it.children).collect());
+        while let Some(id) = pending.pop() {
             let node = self.node(id);
             if matches!(
                 node.kind,
@@ -1138,11 +1160,12 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             {
                 return true;
             }
-            left.extend(tree.items(node.children));
+            pending.extend(tree.items(node.children));
         }
         false
     }
 
+    /// `printMappingItem`
     fn print_mapping_item(&mut self, node: &'t Node<'a>, is_last_descendant: bool) {
         let (Some(key_id), Some(value_id), 2) = (
             node.children.first(),
@@ -1158,8 +1181,8 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             return self.out.token(": ");
         }
         let (key_content, value_content) = (self.first_child(key), self.first_child(value));
-        // For oxfmt a comment behind the `[` or `{` of the value stays between the brackets. Prettier takes it for one
-        // behind the key.
+        // In oxfmt a comment after the value's `[` or `{` stays inside the brackets. Prettier treats it as a comment
+        // after the key.
         let mut key_comment = key_content.and_then(|it| it.trailing_comment);
         if self.is_oxfmt
             && let (Some(comment), Some(value)) = (key_comment, value_content)
@@ -1177,7 +1200,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             b""
         };
 
-        // At the start of the file, U+FEFF is a byte order mark. Prettier puts it there.
+        // U+FEFF at the start of the file is a byte order mark, and that's where Prettier puts it.
         let would_be_byte_order_mark = node.position.start.offset == self.start_of_content
             && key_content.is_some_and(|it| self.source(it).starts_with(text::BOM));
 
@@ -1253,7 +1276,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         if is_single_line_key
             && key_has_no_comments
             && has_no_comments_before_or_in(value_content)
-            // For oxfmt the comments behind a value do not matter to where it is.
+            // In oxfmt the comments after a value don't affect where it's placed.
             && (value.end_comments.is_empty() || self.is_oxfmt)
             && self.is_absolutely_printed_as_single_line(value_content)
             && self.is_absolutely_printed_as_single_line(key_content)
@@ -1269,7 +1292,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             return self.out.end_indent();
         }
 
-        // Everything from the colon on is taken for the value: what is between the colon and the value.
+        // Writes the colon and whatever goes between it and the value. Both are printed as part of the value.
         let is_block_collection = |it: &Node<'a>| matches!(it.kind, Kind::Mapping | Kind::Sequence);
         let has_end_comments = !value.end_comments.is_empty();
         let is_oxfmt = self.is_oxfmt;
@@ -1307,7 +1330,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             is_conditional: true,
             ..Group::default()
         });
-        // A key that is on one line for sure is implicit, however long it is.
+        // A key that's guaranteed to be on one line is implicit, no matter how long it is.
         if self.is_absolutely_printed_as_single_line(key_content) && key_has_no_comments {
             self.print_key(key_id, is_last_descendant);
             self.start_align(self.tab_width);
@@ -1317,9 +1340,10 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             return self.out.end_group();
         }
 
-        // Explicit if the key breaks, implicit otherwise. The line break in a scalar in a pair in `{ }` breaks no group
-        // around the pair, so Prettier prints a key over several lines that is implicit, which cannot be read.
-        let should_break = self.has_scalar_over_several_lines(key_content);
+        // Explicit if the key breaks, implicit otherwise. A line break in a scalar in a pair in `{ }` doesn't break
+        // any group around the pair, so Prettier prints an implicit key that spans several lines, which can't be
+        // parsed.
+        let should_break = self.has_multiline_scalar(key_content);
         self.last_group_id += 1;
         let group_id = self.last_group_id;
         self.out.start_group(Group {
@@ -1342,7 +1366,8 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         self.out.end_group();
 
         // `ifBreak([hardline, ": ", align(2, value)], align(tabWidth, [colon, value]), { groupId })`. The value is
-        // written once: with it in both, a mapping in a mapping would be written four times, and so on.
+        // written only once. If it were in both branches, a mapping in a mapping would be written four times, and so
+        // on.
         self.out.start_if_break(group_id);
         self.out.hard_line();
         self.out.token(": ");

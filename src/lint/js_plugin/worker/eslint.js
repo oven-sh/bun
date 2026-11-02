@@ -117,7 +117,7 @@ function movedPattern(pattern, from, to) {
 async function reviveOverride(object, arrayBase) {
   const resolve = createRequire(nodePath.join(cwd, "noop.js")).resolve;
   const importFrom = async name => load(pathToFileURL(resolve(name)).href);
-  const { $globsOfBun: isOfBunfig, basePath = arrayBase, ...revived } = object;
+  const { $globsOfBun: isOfBunfig, $jsPlugins: located = {}, basePath = arrayBase, ...revived } = object;
   if (isOfBunfig) {
     revived.files = [bunfigMatcher(object.files, basePath)];
     if (object.ignores !== undefined) revived.ignores = [bunfigMatcher(object.ignores, basePath)];
@@ -127,7 +127,19 @@ async function reviveOverride(object, arrayBase) {
   if (object.plugins !== undefined) {
     revived.plugins = {};
     for (const [prefix, name] of Object.entries(object.plugins)) {
-      const module = await importFrom(longPluginName(name));
+      if (located[prefix] !== undefined) {
+        revived.plugins[prefix] = await locatedPlugin(located[prefix], prefix);
+        continue;
+      }
+      let module;
+      try {
+        module = await importFrom(longPluginName(name));
+      } catch (error) {
+        if (error?.code !== "MODULE_NOT_FOUND") throw error;
+        throw new Error(
+          `${longPluginName(name)} is not installed\n  bun lint has the rules of "${prefix}" built in, but some of your files go to the installed ESLint, which needs the package`,
+        );
+      }
       if (!("default" in module)) {
         throw new Error(
           `"${longPluginName(name)}" cannot be used with the \`--plugin\` option because its default module does not provide a \`default\` export`,

@@ -16,7 +16,7 @@ An interface with no members checks almost nothing. `interface Options {}` accep
 
 An empty interface that extends two or more types isn't reported, because it combines them.
 
-`--fix` rewrites an empty interface that extends one type to a type alias.
+`--fix` rewrites an empty interface that extends one type to a type alias. A type alias can't be declared twice, so an interface whose name is declared again in the file is reported but not fixed. Other files add to an interface in a declaration file, a `namespace` or a `declare module` block, so only `--fix-dangerously` rewrites those.
 
 This rule is deprecated. Use `@typescript-eslint/no-empty-object-type` instead. It reports the same interfaces, and the `{}` type too.
 

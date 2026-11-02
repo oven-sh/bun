@@ -5,11 +5,12 @@ var IPv4Reg: RegExp | undefined;
 const v6Seg = "(?:[0-9a-fA-F]{1,4})";
 var IPv6Reg: RegExp | undefined;
 
-function isIPv4(s) {
-  return (IPv4Reg ??= new RegExp(`^${v4Str}$`)).test(s);
+// Whatever is no string is no address: `test` reads it as text.
+function isIPv4(s: string | null | undefined) {
+  return (IPv4Reg ??= new RegExp(`^${v4Str}$`)).test(s!);
 }
 
-function isIPv6(s) {
+function isIPv6(s: string | null | undefined) {
   return (IPv6Reg ??= new RegExp(
     "^(?:" +
       `(?:${v6Seg}:){7}(?:${v6Seg}|:)|` +
@@ -21,10 +22,10 @@ function isIPv6(s) {
       `(?:${v6Seg}:){1}(?:(?::${v6Seg}){0,4}:${v4Str}|(?::${v6Seg}){1,6}|:)|` +
       `(?::(?:(?::${v6Seg}){0,5}:${v4Str}|(?::${v6Seg}){1,7}|:))` +
       ")(?:%[0-9a-zA-Z-.:]{1,})?$",
-  )).test(s);
+  )).test(s!);
 }
 
-function isIP(s) {
+function isIP(s: string | null | undefined): 0 | 4 | 6 {
   if (isIPv4(s)) return 4;
   if (isIPv6(s)) return 6;
   return 0;

@@ -9,28 +9,28 @@ use smallvec::SmallVec;
 
 /// Enforce shorthand or standard form for React fragments
 pub struct JsxFragments {
-    /// `"element"`, not `"syntax"`
+    /// True for `"element"`, false for `"syntax"`.
     prefers_element: bool,
 }
 
-const FRAGMENTS_NOT_SUPPORTED: Message = Message::new(
+const FRAGMENTS_NOT_SUPPORTED: &Message = &Message::new(
     "fragmentsNotSupported",
     "Fragments are only supported starting from React v16.2. Please disable the `react/jsx-fragments` rule in `eslint` settings or upgrade your version of React.",
 );
-const PREFER_PRAGMA: Message = Message::new("preferPragma", "Prefer {{react}}.{{fragment}} over fragment shorthand");
-const PREFER_FRAGMENT: Message =
-    Message::new("preferFragment", "Prefer fragment shorthand over {{react}}.{{fragment}}");
-const OXLINT_PREFER_ELEMENT: Message = Message::new("", "Standard form for React fragments is preferred.");
-const OXLINT_PREFER_SYNTAX: Message = Message::new("", "Shorthand form for React fragments is preferred.");
+const PREFER_PRAGMA: &Message = &Message::new("preferPragma", "Prefer {{react}}.{{fragment}} over fragment shorthand");
+const PREFER_FRAGMENT: &Message =
+    &Message::new("preferFragment", "Prefer fragment shorthand over {{react}}.{{fragment}}");
+const OXLINT_PREFER_ELEMENT: &Message = &Message::new("", "Standard form for React fragments is preferred.");
+const OXLINT_PREFER_SYNTAX: &Message = &Message::new("", "Shorthand form for React fragments is preferred.");
 
 pub struct Names<'a> {
     react_pragma: &'a [u8],
     fragment_pragma: &'a [u8],
-    /// `fragmentNames`, but for the first.
+    /// `fragmentNames`, except the first.
     fragment_names: SmallVec<[Name<'a>; 2]>,
     /// `testReactVersion(context, ">= 16.2.0")`
     has_fragments: bool,
-    /// The file has a name that `refersToReactFragment` looks for.
+    /// True if the file mentions a name that `refersToReactFragment` looks for.
     can_refer_to_react: bool,
 }
 
@@ -86,7 +86,7 @@ impl Rule for JsxFragments {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Names<'a>> {
-        // oxlint reads no settings and no comment, and asks for no version.
+        // oxlint doesn't read the settings or the pragma comment, and doesn't check the React version.
         if file.language().is_oxlint {
             return is_jsx(file).then(|| Names {
                 react_pragma: b"React",
@@ -128,7 +128,7 @@ impl Rule for JsxFragments {
             return;
         }
         let (opening, closing) = (jsx.opening_span(), jsx.closing_span());
-        // oxlint takes every `Fragment` for React's, and passes over `<Fragment />`.
+        // oxlint treats every `Fragment` as React's, and skips `<Fragment />`.
         if name.is_some() && !(if is_oxlint { is_jsx_fragment(jsx) && closing.is_some() } else { names.has(e, jsx) }) {
             return;
         }
@@ -137,7 +137,7 @@ impl Rule for JsxFragments {
             // `reportOnReactVersion`
             _ if !names.has_fragments => cx.report(e, FRAGMENTS_NOT_SUPPORTED),
             None => {
-                // oxlint points at the `<>`.
+                // oxlint reports the `<>`.
                 let (at, message) =
                     if is_oxlint { (opening, OXLINT_PREFER_ELEMENT) } else { (e.span(), PREFER_PRAGMA) };
                 cx.report(at, message).data("react", react).data("fragment", fragment).fix(|fixer| {
@@ -147,7 +147,7 @@ impl Rule for JsxFragments {
                 })
             }
             Some(name) => {
-                // oxlint points at the name.
+                // oxlint reports the name.
                 let (at, message) =
                     if is_oxlint { (name.span(), OXLINT_PREFER_SYNTAX) } else { (e.span(), PREFER_FRAGMENT) };
                 cx.report(at, message).data("react", react).data("fragment", fragment).fix(|fixer| match closing {
@@ -156,7 +156,7 @@ impl Rule for JsxFragments {
                 })
             }
         };
-        // Upstream looks at the elements when the program ends.
+        // Upstream checks the elements in `Program:exit`.
         if name.is_some() && !is_oxlint {
             report.at_the_end();
         }

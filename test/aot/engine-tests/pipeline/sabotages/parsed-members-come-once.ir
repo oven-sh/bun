@@ -1,0 +1,6 @@
+# sabotage=ParsedMembersComeOnce: the program answers something else
+# FORM: AsRead
+# RUN: run-in-shell globalThis.argumentCount = 2;
+# OPTIONS: sabotage=ParsedMembersComeOnce
+# CHECK-NOT: one a+m+z,1,z1,a+m+z,2,z2,a+m+z,3,z3,a+m+z,4,z4,end
+# PROGRAM-OF: parsed-members-come-once-left-alone.ir

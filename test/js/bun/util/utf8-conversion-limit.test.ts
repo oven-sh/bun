@@ -19,7 +19,7 @@
 import { decodeURIComponentSIMD } from "bun:internal-for-testing";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tls } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tls } from "harness";
 import crypto from "node:crypto";
 import Module from "node:module";
 import { totalmem } from "node:os";
@@ -42,6 +42,10 @@ const fixture = `
     "hkdfSync salt": text => crypto.hkdfSync("sha256", "key", text, "info", 8),
     "hkdfSync info": text => crypto.hkdfSync("sha256", "key", "salt", text, 8),
     "hkdf salt": text => crypto.hkdf("sha256", "key", text, "info", 8, () => {}),
+    "createHash": text => crypto.createHash(text),
+    "getCipherInfo": text => crypto.getCipherInfo(text),
+    "createECDH": text => crypto.createECDH(text),
+    "generateKeyPairSync namedCurve": text => crypto.generateKeyPairSync("ec", { namedCurve: text }),
     "require.resolve.paths": text => require.resolve.paths(text),
     "Module._resolveLookupPaths": text => Module._resolveLookupPaths(text, { paths: ["/node_modules"] }),
     "Database#run": text => db.run(text),
@@ -50,6 +54,17 @@ const fixture = `
     "decodeURIComponentSIMD": text => decodeURIComponentSIMD(text),
     // The value of a cookie is converted only when the header has a "%" in it.
     "new Bun.CookieMap": text => new Bun.CookieMap("a=%41" + text),
+    ...(${isWindows} ? {} : {
+      "process.initgroups user": text => process.initgroups(text, 0),
+      // The message includes the whole name, so only print the code.
+      "process.setuid": text => {
+        try {
+          process.setuid(text);
+        } catch (e) {
+          return e.code;
+        }
+      },
+    }),
   };
   let text = "\\u00e9".repeat(2 ** 30);
   for (const [name, run] of Object.entries(cases)) {
@@ -70,6 +85,9 @@ const fixture = `
     const tooBigForSQLite = e.message === "string or blob too big";
     console.log("ASCII parameter: " + (tooBigForSQLite ? "SQLite got the string" : e.name + ": " + e.message));
   }
+
+  // Debug builds need 14 seconds to hash 1 GiB.
+  if (!${isDebug}) console.log("console.countReset: returned " + console.countReset("q".repeat(2 ** 30)));
 `;
 
 // The length is what is under test, so the child holds a string of 1 GiB, and a
@@ -97,6 +115,10 @@ test.skipIf(totalmem() < 8 * 1024 ** 3)(
         "hkdfSync salt: RangeError: Out of memory",
         "hkdfSync info: RangeError: Out of memory",
         "hkdf salt: RangeError: Out of memory",
+        "createHash: Error: Digest method not supported",
+        "getCipherInfo: returned undefined",
+        "createECDH: TypeError: Invalid EC curve name",
+        "generateKeyPairSync namedCurve: TypeError: Invalid EC curve name",
         "require.resolve.paths: returned an array",
         "Module._resolveLookupPaths: returned an array",
         "Database#run: RangeError: Out of memory",
@@ -104,7 +126,11 @@ test.skipIf(totalmem() < 8 * 1024 ** 3)(
         "Statement#get parameter: RangeError: Out of memory",
         "decodeURIComponentSIMD: RangeError: Out of memory",
         "new Bun.CookieMap: RangeError: Out of memory",
+        ...(isWindows
+          ? []
+          : ["process.initgroups user: RangeError: Out of memory", "process.setuid: returned ERR_UNKNOWN_CREDENTIAL"]),
         "ASCII parameter: SQLite got the string",
+        ...(isDebug ? [] : ["console.countReset: returned undefined"]),
       ],
       stderr: "",
       exitCode: 0,

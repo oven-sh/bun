@@ -1,9 +1,11 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::types::tsutils::{CompilerOption, is_strict_compiler_option_enabled};
-use bun_lint::types::utils::get_constraint_info;
+use bun_lint::types::utils::{get_constraint_info, is_possibly_truthy};
 use bun_lint::types::{Type, TypeFlags};
 use bun_lint::utils::ts_utils::{
-    is_conditional_test, is_strong_precedence_node, is_weak_precedence_parent,
+    is_conditional_test, is_missing_semicolon_before, is_strong_precedence_node,
+    is_weak_precedence_parent,
 };
 
 /// Disallow unnecessary equality comparisons against boolean literals.
@@ -13,27 +15,27 @@ pub struct NoUnnecessaryBooleanLiteralCompare {
     allow_rule_to_run_without_strict_null_checks: bool,
 }
 
-const COMPARING_NULLABLE_TO_FALSE: Message = Message::new(
+const COMPARING_NULLABLE_TO_FALSE: &Message = &Message::new(
     "comparingNullableToFalse",
     "This expression unnecessarily compares a nullable boolean value to false instead of using the ?? operator to provide a default.",
 );
-const COMPARING_NULLABLE_TO_TRUE_DIRECT: Message = Message::new(
+const COMPARING_NULLABLE_TO_TRUE_DIRECT: &Message = &Message::new(
     "comparingNullableToTrueDirect",
     "This expression unnecessarily compares a nullable boolean value to true instead of using it directly.",
 );
-const COMPARING_NULLABLE_TO_TRUE_NEGATED: Message = Message::new(
+const COMPARING_NULLABLE_TO_TRUE_NEGATED: &Message = &Message::new(
     "comparingNullableToTrueNegated",
     "This expression unnecessarily compares a nullable boolean value to true instead of negating it.",
 );
-const DIRECT: Message = Message::new(
+const DIRECT: &Message = &Message::new(
     "direct",
     "This expression unnecessarily compares a boolean value to a boolean instead of using it directly.",
 );
-const NEGATED: Message = Message::new(
+const NEGATED: &Message = &Message::new(
     "negated",
     "This expression unnecessarily compares a boolean value to a boolean instead of negating it.",
 );
-const NO_STRICT_NULL_CHECK: Message = Message::new(
+const NO_STRICT_NULL_CHECK: &Message = &Message::new(
     "noStrictNullCheck",
     "This rule requires the `strictNullChecks` compiler option to be turned on to function correctly.",
 );
@@ -50,8 +52,9 @@ fn is_boolean_type(expression_type: Type) -> bool {
     expression_type.has_flags(TypeFlags::BOOLEAN | TypeFlags::BOOLEAN_LITERAL)
 }
 
-/// A union that has `null` or `undefined`, has `true`, `false` or `boolean`, and has nothing else.
-fn is_nullable_boolean(expression_type: Type) -> bool {
+/// A union that has `null` or `undefined`, has `true`, `false` or `boolean`, and has nothing else. tsgolint skips the
+/// last condition, so `boolean | string | undefined` is a nullable boolean there.
+fn is_nullable_boolean(expression_type: Type, is_oxlint: bool) -> bool {
     if !expression_type.is_union() {
         return false;
     }
@@ -61,7 +64,7 @@ fn is_nullable_boolean(expression_type: Type) -> bool {
             has_nullable_type = true;
         } else if is_boolean_type(ty) {
             has_non_nullish_type = true;
-        } else {
+        } else if !is_oxlint {
             return false;
         }
     }
@@ -69,7 +72,7 @@ fn is_nullable_boolean(expression_type: Type) -> bool {
 }
 
 fn boolean_literal(against: Expr) -> Option<bool> {
-    match against.kind() {
+    match against.with_jsdoc_cast().kind() {
         ExprKind::True => Some(true),
         ExprKind::False => Some(false),
         _ => None,
@@ -93,7 +96,7 @@ fn get_boolean_comparison(node: Expr<'_>) -> Option<BooleanComparison<'_>> {
     let constraint_type = get_constraint_info(expression.ty()).constraint_type?;
     let expression_is_nullable_boolean = match is_boolean_type(constraint_type) {
         true => false,
-        false if is_nullable_boolean(constraint_type) => true,
+        false if is_nullable_boolean(constraint_type, expression.file().language().is_oxlint) => true,
         false => return None,
     };
     Some(BooleanComparison {
@@ -116,7 +119,7 @@ fn fix<'a>(fixer: Fixer<'a>, node: Expr<'a>, comparison: BooleanComparison<'a>) 
     };
     let mutated_node = unary_negation.unwrap_or(node);
 
-    // Whether the truth table of all that is replaced is negated, apart from the nullish cases.
+    // True if the truth table of everything being replaced is negated, ignoring the nullish cases.
     let is_overall_negated = unary_negation.is_some() ^ comparison.negated ^ !comparison.boolean_literal;
 
     let mut replacement_text = comparison.expression.text().to_vec();
@@ -152,38 +155,136 @@ fn fix<'a>(fixer: Fixer<'a>, node: Expr<'a>, comparison: BooleanComparison<'a>) 
     fixer.replace(mutated_node, replacement_text)
 }
 
-/// The fix of tsgolint 7.0. What it puts in place of the comparison begins where the token before the expression ends:
-/// `a = b === true` becomes `a =  b`.
-fn fix_as_tsgolint<'a>(fixer: Fixer<'a>, node: Expr<'a>, comparison: BooleanComparison<'a>) -> Fix {
+/// tsgolint's `isConditionalTest`: it only looks through `&&` and `||`, and everything under a `!` counts as a test.
+fn is_conditional_test_as_tsgolint(node: Expr<'_>) -> bool {
+    let mut node = node;
+    loop {
+        node = match node.parent() {
+            Node::Expr(parent) => match parent.kind() {
+                ExprKind::Binary {
+                    op: BinOp::And | BinOp::Or,
+                    ..
+                } => parent,
+                ExprKind::Cond { test, .. } => return test == node,
+                ExprKind::Unary { op: UnOp::Not, .. } => return true,
+                _ => return false,
+            },
+            Node::Stmt(parent) => {
+                return match parent.kind() {
+                    StmtKind::DoWhile { test, .. }
+                    | StmtKind::If { test, .. }
+                    | StmtKind::While { test, .. } => test == node,
+                    StmtKind::For { test, .. } => test == Some(node),
+                    _ => false,
+                };
+            }
+            _ => return false,
+        };
+    }
+}
+
+/// True if `node` is the first thing after a `return`, `throw` or `yield`, where a line break would end the statement.
+fn is_in_restricted_production(node: Expr<'_>) -> bool {
+    let mut node = node;
+    loop {
+        if node.is_parenthesized() {
+            return false;
+        }
+        node = match node.parent() {
+            Node::Stmt(parent) => return matches!(parent.kind(), StmtKind::Return(_) | StmtKind::Throw(_)),
+            Node::Expr(parent) if matches!(parent.kind(), ExprKind::Yield { .. }) => return true,
+            Node::Expr(parent) if parent.span().start == node.span().start => parent,
+            _ => return false,
+        };
+    }
+}
+
+/// True if a statement begins with `node`, with no parenthesis before it.
+fn is_at_statement_start(node: Expr<'_>) -> bool {
+    let mut parent = node.parent();
+    loop {
+        parent = match parent {
+            Node::Stmt(statement) => return statement.span().start == node.span().start,
+            Node::Expr(expression) => expression.parent(),
+            _ => return false,
+        };
+    }
+}
+
+/// tsgolint 7.0's fix. Its replacement text starts at the end of the token before the expression, so `a = b === true`
+/// becomes `a =  b`. Returns `None` where tsgolint's text would behave differently from the comparison.
+fn fix_as_tsgolint<'a>(fixer: Fixer<'a>, node: Expr<'a>, comparison: BooleanComparison<'a>) -> Option<Fix> {
     let unary_negation = match node.parent() {
         Node::Expr(parent) if matches!(parent.kind(), ExprKind::Unary { op: UnOp::Not, .. }) => Some(parent),
         _ => None,
     };
     let mutated_node = unary_negation.unwrap_or(node);
     let (file, expression) = (fixer.file(), comparison.expression);
-    let whole = expression.outer_span();
-    let text = file.slice(Span::new(file.end_of_token_before(whole.start), whole.end));
-    let is_strong = expression.is_parenthesized() || is_strong_precedence_node(expression);
     let is_nullable = comparison.expression_is_nullable_boolean;
+    if is_nullable {
+        // tsgolint also rewrites `boolean | string | undefined`, where `x === true` isn't `!!x`. A `void` member is
+        // `undefined`, and an always-falsy member such as `0` is never `true`.
+        let constraint_type = get_constraint_info(expression.ty()).constraint_type?;
+        for member in constraint_type.types() {
+            let is_boolean_or_nullish = is_boolean_type(member)
+                || member.has_flags(TypeFlags::UNDEFINED | TypeFlags::NULL | TypeFlags::VOID);
+            if !is_boolean_or_nullish && (!comparison.boolean_literal || is_possibly_truthy(member)) {
+                return None;
+            }
+        }
+    }
+    let whole = expression.outer_span();
+    let mut text = file.slice(Span::new(file.end_of_token_before(whole.start), whole.end));
+    // For tsgolint every member access and call is strong, even an optional chain.
+    let is_strong = expression.is_parenthesized()
+        || is_strong_precedence_node(expression)
+        || matches!(expression.tag(), ExprTag::Call | ExprTag::Dot | ExprTag::Index);
     let adds_negation = (comparison.negated != comparison.boolean_literal) == unary_negation.is_some();
 
-    if is_nullable && comparison.boolean_literal && !adds_negation && !is_conditional_test(mutated_node) {
-        let (open, close): (&[u8], &[u8]) = if is_strong { (b"(!!", b")") } else { (b"(!!(", b"))") };
-        return fixer.replace(mutated_node, [open, text.trim_ascii(), close].concat());
-    }
     let (mut before, mut after) = (Vec::new(), Vec::new());
-    if adds_negation {
-        before.push(b'!');
-        if !is_strong {
+    if is_nullable && comparison.boolean_literal && !adds_negation && !is_conditional_test_as_tsgolint(mutated_node) {
+        let (open, close): (&[u8], &[u8]) = if is_strong { (b"(!!", b")") } else { (b"(!!(", b"))") };
+        before.extend_from_slice(open);
+        after.extend_from_slice(close);
+        text = text.trim_ascii();
+    } else {
+        if adds_negation {
+            before.push(b'!');
+            if !is_strong {
+                before.push(b'(');
+                after.push(b')');
+            }
+        }
+        if is_nullable && !comparison.boolean_literal {
+            before.push(b'(');
+            after.extend_from_slice(b" ?? true)");
+        }
+        // tsgolint adds no parentheses here, so `return true ===\n x` would return nothing and `!!(a < b !== true)`
+        // would become `!a < b`.
+        let breaks_line = mutated_node.span().start != whole.start
+            && text.strip_suffix(file.slice(whole)).is_some_and(strings::contains_js_line_break)
+            && is_in_restricted_production(mutated_node);
+        let is_operand = unary_negation.is_some()
+            && !is_strong
+            && !mutated_node.is_parenthesized()
+            && is_weak_precedence_parent(mutated_node)
+            && !matches!(
+                mutated_node.parent(),
+                Node::Expr(parent) if matches!(
+                    parent.kind(),
+                    ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish, .. } | ExprKind::Cond { .. }
+                )
+            );
+        if before.is_empty() && (breaks_line || is_operand) {
             before.push(b'(');
             after.push(b')');
         }
     }
-    if is_nullable && !comparison.boolean_literal {
-        before.push(b'(');
-        after.extend_from_slice(b" ?? true)");
+    // tsgolint adds no `;` here, so `a()\n(!!x)` would be a call.
+    if before.first() == Some(&b'(') && is_at_statement_start(mutated_node) && is_missing_semicolon_before(mutated_node) {
+        before.insert(0, b';');
     }
-    fixer.replace(mutated_node, [before.as_slice(), text, after.as_slice()].concat())
+    Some(fixer.replace(mutated_node, [before.as_slice(), text, after.as_slice()].concat()))
 }
 
 impl NoUnnecessaryBooleanLiteralCompare {
@@ -203,7 +304,7 @@ impl NoUnnecessaryBooleanLiteralCompare {
         let is_oxlint = cx.language().is_oxlint;
         cx.report(node, message).fix(|fixer| match is_oxlint {
             true => fix_as_tsgolint(fixer, node, comparison),
-            false => fix(fixer, node, comparison),
+            false => Some(fix(fixer, node, comparison)),
         });
     }
 }

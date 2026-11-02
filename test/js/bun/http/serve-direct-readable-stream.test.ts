@@ -1,5 +1,5 @@
 import { sleep } from "bun";
-import { heapStats } from "bun:jsc";
+import { estimateShallowMemoryUsageOf, heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows, tls } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -36,7 +36,51 @@ test("HTTPResponseSink displays correct message", async () => {
   expect(() => leakedCtrl.write("c")).toThrow(
     'This HTTPResponseSink has already been closed. A "direct" ReadableStream terminates its underlying socket once `async pull()` returns.',
   );
-  expect(() => leakedCtrl.write.call({}, "c")).toThrow("Expected HTTPResponseSink");
+  expect(() => leakedCtrl.write.call({}, "c")).toThrow("Expected this to be instanceof ReadableSinkController");
+});
+
+test("every native sink gives a direct stream the same controller class", async () => {
+  const controllers: any[] = [];
+  const stream = () =>
+    new ReadableStream({
+      type: "direct",
+      pull(controller) {
+        controllers.push(controller);
+        controller.write("a");
+        controller.close();
+      },
+    } as any);
+  using server = Bun.serve({ port: 0, fetch: () => new Response(stream()) });
+  expect(await (await fetch(server.url)).text()).toBe("a");
+  using echo = Bun.serve({ port: 0, fetch: async req => new Response(await req.text()) });
+  expect(await (await fetch(echo.url, { method: "POST", body: stream() })).text()).toBe("a");
+
+  const [response, request] = controllers;
+  expect(Object.prototype.toString.call(response)).toBe("[object ReadableSinkController]");
+  expect(Object.getPrototypeOf(request)).toBe(Object.getPrototypeOf(response));
+  expect([response.sinkId, request.sinkId]).toEqual([4, 7]);
+});
+
+test("estimateShallowMemoryUsageOf(controller) includes the sink until the controller detaches", async () => {
+  let attached = 0;
+  let detached = 0;
+  using server = Bun.serve({
+    port: 0,
+    fetch: () =>
+      new Response(
+        new ReadableStream({
+          type: "direct",
+          pull(controller) {
+            attached = estimateShallowMemoryUsageOf(controller);
+            controller.close();
+            detached = estimateShallowMemoryUsageOf(controller);
+          },
+        } as any),
+      ),
+  });
+  await (await fetch(server.url)).text();
+  expect(detached).toBeGreaterThan(0);
+  expect(attached).toBeGreaterThan(detached);
 });
 
 // Sentry BUN-2WJA / BUN-2WKB: JSReadable*Controller.end() ran the onClose
@@ -2406,4 +2450,45 @@ describe("direct stream edge cases over Bun.serve", () => {
     // Server still answers.
     expect(await (await fetch(server.url, { method: "POST", body: "again" })).text()).toBe("again");
   });
+});
+
+test("survives server.stop(true) called while a body chunk is converted to a string", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      let server;
+      const chunk = Object.assign(new String("x"), {
+        [Symbol.toPrimitive]() { server.stop(true); return "payload"; },
+      });
+      server = Bun.serve({
+        port: 0,
+        fetch: () => new Response(new ReadableStream({
+          async pull(controller) {
+            controller.enqueue("seed");
+            await new Promise(resolve => setImmediate(resolve));
+            controller.enqueue(chunk);
+            controller.close();
+          },
+        })),
+      });
+      try {
+        const res = await fetch(server.url);
+        console.log("status", res.status);
+        console.log("body", JSON.stringify(await res.text()));
+      } catch (e) {
+        console.log("read failed", e.code);
+      }
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // The connection can reset before or after the client reads the headers.
+  expect(stdout).toMatch(/^(status 200\n)?read failed ECONNRESET\n$/);
+  if (exitCode !== 0) expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });

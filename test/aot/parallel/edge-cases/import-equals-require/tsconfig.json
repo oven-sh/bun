@@ -1,0 +1,1 @@
+{ "compilerOptions": { "strict": true, "allowJs": true, "target": "esnext", "module": "preserve", "moduleResolution": "bundler", "resolveJsonModule": true, "noEmit": true, "types": [], "lib": ["esnext"] }, "include": ["main.ts"] }

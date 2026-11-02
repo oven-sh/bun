@@ -1,7 +1,8 @@
-//! The flags of a regular expression that is written as a literal or made by `RegExp`: `resolve_regex_flags` and
-//! `extract_regex_flags` of oxlint's `ast_util.rs`, `is_regexp_callee` of its `utils/regex.rs`.
+//! The flags of a regular expression literal or a `RegExp` call: `resolve_regex_flags` and `extract_regex_flags` from
+//! oxlint's `ast_util.rs`, and `is_regexp_callee` from its `utils/regex.rs`.
 //!
-//! And the regular expressions that oxlint makes of options with the crate `regex`: [`rust_regex`], [`regex_of_option`].
+//! Also the regular expressions that oxlint compiles from options with the `regex` crate: [`rust_regex`],
+//! [`option_regex`].
 
 use crate::ast_util::{
     get_inner_expression, get_member_expr, is_global_reference, is_global_reference_name,
@@ -9,8 +10,8 @@ use crate::ast_util::{
 };
 use bun_lint::prelude::*;
 
-/// Where the name `method` is written, and where the regular expression is, if `e` calls that method with one that is known not to
-/// have the flag `g`.
+/// If `e` calls `method` with a regular expression that's known not to have the `g` flag, returns the spans of the
+/// method name and of the regular expression.
 pub fn method_called_without_global_flag(e: Expr, method: &str) -> Option<(Span, Span)> {
     let call = e.as_call()?;
     if !is_method_call(call, None, Some(&[method]), Some(1), None) {
@@ -32,10 +33,11 @@ struct RegExpFlags {
     is_global: bool,
 }
 
-/// The flags of the regular expression that `e` is, or is a variable for, and where it is. `None` if that is not known.
+/// The flags and span of the regular expression that `e` is, or that the variable `e` holds. `None` if that can't be
+/// determined.
 fn resolve_regex_flags(e: Expr) -> Option<(RegExpFlags, Span)> {
     let mut at = e;
-    // `const a = b, b = a` goes in a circle.
+    // `const a = b, b = a` is a cycle.
     let mut seen = rustc_hash::FxHashSet::default();
     while seen.insert(at) {
         let flags = match at.kind() {
@@ -109,18 +111,19 @@ pub fn is_regexp_callee(callee: Expr) -> bool {
     })
 }
 
-/// A regular expression of the crate `regex`, which knows Unicode, as far as one of JavaScript does the same.
+/// Approximates a pattern for the `regex` crate, which is Unicode-aware, with a JavaScript regular expression.
 pub fn rust_regex(pattern: &str, ignores_case: bool) -> Option<Regex> {
     let (unicode, plain) = if ignores_case { ("iu", "i") } else { ("u", "") };
-    // With the `u` flag JavaScript refuses escapes that mean nothing, such as `\-`.
+    // With the `u` flag JavaScript rejects unnecessary escapes such as `\-`.
     Regex::new(pattern, unicode)
         .or_else(|_| Regex::new(pattern, plain))
         .ok()
 }
 
-/// A pattern of an option that oxlint compiles with the crate `regex`. `None` if it is none for JavaScript either.
-pub fn regex_of_option(pattern: &str) -> Option<Regex> {
-    // The crate has `(?i)`, JavaScript has not.
+/// Compiles an option's pattern that oxlint compiles with the `regex` crate. `None` if it isn't a valid JavaScript
+/// pattern.
+pub fn option_regex(pattern: &str) -> Option<Regex> {
+    // The crate supports `(?i)`, but JavaScript doesn't.
     match pattern.strip_prefix("(?i)") {
         Some(pattern) => rust_regex(pattern, true),
         None => rust_regex(pattern, false),

@@ -1,4 +1,4 @@
-// Generates `data.rs`: since which version of Node.js each built-in is there, from eslint-plugin-n.
+// Generates `data.rs` from eslint-plugin-n: the Node.js versions that added each built-in.
 //
 //   ESLINT_PLUGIN_N_DIR=<checkout of eslint-plugin-n with node_modules> node generate-data.mjs
 
@@ -10,9 +10,9 @@ import { pathToFileURL } from "node:url";
 
 const root = resolve(process.env.ESLINT_PLUGIN_N_DIR);
 const require = createRequire(join(root, "package.json"));
-const { Table, check, pack, place } = createRequire(import.meta.url)("./generate-table.cjs");
+const { Table, check, pack, findOrAppend } = createRequire(import.meta.url)("./generate-table.cjs");
 const load = file => import(pathToFileURL(join(root, file)).href);
-// The same module that the plugin imports: its symbols are the keys.
+// This has to be the same module instance the plugin imports, because its symbols are the keys.
 const { READ, CALL, CONSTRUCT } = await import(
   pathToFileURL(require.resolve("@eslint-community/eslint-utils").replace(/\.js$/, ".mjs")).href
 );
@@ -21,13 +21,13 @@ const rsort = require("semver/functions/rsort.js");
 const { NodeBuiltinGlobals, NodeBuiltinModules, NodeBuiltinImportMeta } = await load(
   "lib/unsupported-features/node-builtins.js",
 );
-// The trace map of `es-builtins` is not exported.
+// The trace map of `es-builtins` isn't exported.
 const source = readFileSync(join(root, "lib/rules/no-unsupported-features/es-builtins.js"), "utf8");
 const literal = source.slice(
   source.indexOf("const traceMap = {") + "const traceMap = ".length,
   source.indexOf("/** @type {import('../rule-module.js').RuleModule} */"),
 );
-// As a module of its own.
+// Evaluate it as a separate module.
 const pieces = mkdtempSync(join(tmpdir(), "generate-data-"));
 writeFileSync(join(pieces, "trace-map.mjs"), `export default READ => (${literal});\n`);
 const esBuiltins = (await import(pathToFileURL(join(pieces, "trace-map.mjs")).href)).default(READ);
@@ -39,8 +39,8 @@ const text = ([latest, ...backported]) =>
 
 const versionPool = []; // "[1, 2, 3]"
 /**
- * The arguments of `Part::new`: where the versions are in the pool, the latest first. And what upstream says, if that
- * is not what `versions_to_string` makes of the numbers.
+ * Returns the arguments of `Part::new` for the versions' range in the pool, latest first. Also returns upstream's text,
+ * if it differs from what `versions_to_string` produces.
  */
 function versions(list) {
   const sorted = rsort([...(list ?? [])]);
@@ -51,7 +51,7 @@ function versions(list) {
       .split(".")
       .map(part => check(Number(part), 0x100, it)),
   );
-  const start = place(
+  const start = findOrAppend(
     versionPool,
     numbers.map(it => `[${it.join(", ")}]`),
   );
@@ -63,7 +63,7 @@ function versions(list) {
 }
 const infoRows = [];
 const infoKeys = [];
-const otherwise = []; // an info, what upstream says of `supported`
+const otherwise = []; // [info index, upstream's text for `supported`]
 function info(value) {
   if (value === undefined) return undefined;
   const [supported, supportedText] = versions(value.supported);
@@ -126,14 +126,14 @@ const fn i(supported: u16, supported_len: u8, experimental: u16, experimental_le
     }
 }
 
-/// The [\`INFOS\`] whose \`supported\` upstream writes otherwise than [\`versions_to_string\`](super::versions_to_string)
-/// does.
+/// The [\`INFOS\`] whose \`supported\` text upstream formats differently from
+/// [\`versions_to_string\`](super::versions_to_string).
 #[rustfmt::skip]
 pub(crate) static WRITTEN_OTHERWISE: [(u16, &str); ${otherwise.length}] = [
 ${otherwise.map(([info, text]) => `    (${info}, ${JSON.stringify(text)}),`).join("\n")}
 ];
 
-/// The versions that the [\`INFOS\`] have, those of one after each other, the latest first.
+/// The versions that the [\`INFOS\`] refer to. Each info's versions are contiguous, latest first.
 #[rustfmt::skip]
 pub(crate) static VERSIONS: [[u8; 3]; ${versionPool.length}] = [
 ${pack(versionPool)}

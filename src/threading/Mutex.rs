@@ -279,9 +279,6 @@ pub struct DarwinImpl {
 // `UnsafeCell` only exists to hand the FFI a mutable pointer from `&self`.
 #[cfg(target_vendor = "apple")]
 unsafe impl Sync for DarwinImpl {}
-// SAFETY: see `Sync` above.
-#[cfg(target_vendor = "apple")]
-unsafe impl Send for DarwinImpl {}
 
 #[cfg(target_vendor = "apple")]
 #[repr(C)]

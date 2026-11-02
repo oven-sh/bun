@@ -6,8 +6,8 @@ use bun_lint::rule::Plugin;
 /// This rule prefers borrowing methods from the prototype instead of the instance.
 pub struct PreferPrototypeMethods;
 
-const KNOWN_METHOD: Message = Message::new("", "Prefer using `{{obj_name}}.prototype.{{method_name}}`.");
-const UNKNOWN_METHOD: Message = Message::new("", "Prefer using method from `{{obj_name}}.prototype`.");
+const KNOWN_METHOD: &Message = &Message::new("", "Prefer using `{{obj_name}}.prototype.{{method_name}}`.");
+const UNKNOWN_METHOD: &Message = &Message::new("", "Prefer using method from `{{obj_name}}.prototype`.");
 
 impl Rule for PreferPrototypeMethods {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-prototype-methods", Kind::Suggestion).fixable(Fixable::Code);
@@ -28,7 +28,7 @@ impl Rule for PreferPrototypeMethods {
         let Some(call_expr) = e.as_call() else {
             return;
         };
-        // `a.b`, `a.#b`. The whole of an optional chain, which here is in parentheses, is something else for oxlint.
+        // `a.b`, `a.#b`. oxlint treats a whole optional chain, which is parenthesized here, as something else.
         let callee = call_expr.callee();
         if !callee.member_name().is_some_and(|it| cx.state.contains(&it.name()))
             || call_expr.is_optional()

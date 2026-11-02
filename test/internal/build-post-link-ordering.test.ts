@@ -13,6 +13,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { isMacOS, tempDir } from "harness";
+import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import { binaryChecksWarnOnly, emitPostLink } from "../../scripts/build/bun.ts";
@@ -29,7 +30,6 @@ function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
     clangVersion: "23.1.1",
     clangResourceDir: "/fake/llvm/lib/clang/23",
     ar: "/fake/llvm/bin/llvm-ar",
-    ranlib: "/fake/llvm/bin/llvm-ranlib",
     ld: "/fake/llvm/bin/ld.lld",
     ld64Lld: "/fake/llvm/bin/ld64.lld",
     rustLlvmVersion: "23.1.1",
@@ -52,7 +52,6 @@ function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
     rustupHome: undefined,
     msvcLinker: undefined,
     rc: undefined,
-    mt: undefined,
     nasm: undefined,
     ...overrides,
   };
@@ -105,7 +104,49 @@ describe("emitPostLink ninja ordering", () => {
     );
     // A Windows target has nothing to strip: its `bun` is a copy.
     const strip = cfg.windows ? "copy_exe" : "strip";
-    expect(buildEdge(out, strip)).toBe(`build bun${cfg.exeSuffix}: ${strip} bun-profile${cfg.exeSuffix}`);
+    const scan = cfg.linux || cfg.freebsd ? " |@ bun.binary-verified" : "";
+    expect(buildEdge(out, strip)).toBe(`build bun${cfg.exeSuffix}: ${strip} bun-profile${cfg.exeSuffix}${scan}`);
+  });
+
+  describe.each([
+    ["plain", {}, { type: "EXEC", relro: false, bindNow: false }],
+    ["--hardened=on", { hardened: true, webkit: "local" }, { type: "DYN", relro: true, bindNow: true }],
+  ] as [string, PartialConfig, object][])("the stripped executable of a %s Linux build", (_name, partial, layout) => {
+    test.each([
+      ["fails the build in CI", true],
+      ["only warns elsewhere", false],
+    ])("is scanned whenever it is written, which %s", (_outcome, ci) => {
+      using dir = tempDir("build-post-link", {});
+      const buildDir = String(dir);
+      const cfg = resolveConfig(
+        {
+          os: "linux",
+          arch: "x64",
+          abi: "gnu",
+          buildType: "Release",
+          linuxSysroot: buildDir,
+          buildDir,
+          ci,
+          ...partial,
+        },
+        mockToolchain(),
+      );
+      const n = new Ninja({ buildDir });
+      const exe = resolve(buildDir, "bun-profile");
+      const { strippedExe } = emitPostLink(n, cfg, exe, "bun-profile", [], [exe + ".o"]);
+      const out = n.toString().replace(/ \$\n +/g, " ");
+
+      expect(buildEdge(out, "strip")).toEndWith(" |@ bun.binary-verified");
+      expect(buildEdge(out, "stripped_verify")).toStartWith("build bun.binary-verified: stripped_verify bun | ");
+      expect(buildEdge(out, "phony")).toContain(" bun.binary-verified");
+      expect(/^rule stripped_verify\n  command = (.*)$/m.exec(out)![1]!.includes("--warn-only")).toBe(!ci);
+
+      const spec = JSON.parse(readFileSync(join(buildDir, "bun.verify.json"), "utf8"));
+      expect(spec.exe).toBe(strippedExe);
+      expect(spec.expect.elf).toEqual({ ...layout, execStack: false, rwxLoad: false, tlsSegment: true });
+      for (const needsSymbols of ["staticInitializers", "forbiddenSymbols", "debugInfo"])
+        expect(spec.expect).not.toHaveProperty(needsSymbols);
+    });
   });
 
   // `ci` comes from the config alone (resolveConfig never reads the

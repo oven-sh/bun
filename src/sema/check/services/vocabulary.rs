@@ -1,5 +1,5 @@
-//! The words in which [`Services`](super::Services) is asked and answers: TypeScript's flags, and
-//! plain values that have no lifetime of the checker in them.
+//! The types used in [`Services`](super::Services) queries and results: TypeScript's flags, and
+//! plain values that don't borrow from the checker.
 
 use crate::bind::SymFlags;
 use crate::hir::{self, Flags};
@@ -8,8 +8,8 @@ use crate::program::FileId;
 use crate::types::{TypeId, tf};
 
 bitflags::bitflags! {
-    /// `ts.TypeFlags`. The names and the meanings are TypeScript's, the numbers are not those of
-    /// TypeScript 5.
+    /// `ts.TypeFlags`. The names and meanings are TypeScript's, but the values differ from
+    /// TypeScript 5's.
     #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
     pub struct TypeFlags: u32 {
         const ANY = tf::ANY;
@@ -83,7 +83,7 @@ bitflags::bitflags! {
 }
 
 bitflags::bitflags! {
-    /// `ts.ObjectFlags`, those that say what kind of object type a type is.
+    /// The `ts.ObjectFlags` that describe what kind of object type a type is.
     #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
     pub struct ObjectFlags: u32 {
         /// The declared type of a class.
@@ -92,7 +92,7 @@ bitflags::bitflags! {
         const INTERFACE = 1 << 1;
         /// A reference to a generic class, interface, array or tuple type.
         const REFERENCE = 1 << 2;
-        /// In TypeScript the target of a tuple type has it. Here a tuple type is its own target.
+        /// In TypeScript this is set on a tuple type's target. Here a tuple type is its own target.
         const TUPLE = 1 << 3;
         const ANONYMOUS = 1 << 4;
         const MAPPED = 1 << 5;
@@ -114,7 +114,7 @@ bitflags::bitflags! {
 }
 
 bitflags::bitflags! {
-    /// `ts.SymbolFlags`, with TypeScript's numbers.
+    /// `ts.SymbolFlags`, with TypeScript's values.
     #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
     pub struct SymbolFlags: u32 {
         const FUNCTION_SCOPED_VARIABLE = 1 << 0;
@@ -214,17 +214,17 @@ impl From<SymbolFlags> for SymFlags {
 }
 
 bitflags::bitflags! {
-    /// `ts.CheckFlags`, those of a property that the checker has made.
+    /// The `ts.CheckFlags` of a property the checker created.
     #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
     pub struct CheckFlags: u32 {
         /// An instantiation of a declared member.
         const INSTANTIATED = 1 << 0;
         /// A property of a union or an intersection.
         const SYNTHETIC_PROPERTY = 1 << 1;
-        /// The same, where all of them are methods.
+        /// The same, where all the constituents' properties are methods.
         const SYNTHETIC_METHOD = 1 << 2;
         const READONLY = 1 << 3;
-        /// Some constituents of the union do not have it.
+        /// Some constituents of the union don't have it.
         const READ_PARTIAL = 1 << 4;
         const WRITE_PARTIAL = 1 << 5;
         const HAS_NON_UNIFORM_TYPE = 1 << 6;
@@ -241,7 +241,7 @@ bitflags::bitflags! {
 }
 
 bitflags::bitflags! {
-    /// `ts.ModifierFlags`, with TypeScript's numbers.
+    /// `ts.ModifierFlags`, with TypeScript's values.
     #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
     pub struct ModifierFlags: u32 {
         const PUBLIC = 1 << 0;
@@ -267,7 +267,7 @@ bitflags::bitflags! {
 }
 
 impl From<Flags> for ModifierFlags {
-    /// The modifiers among the flags of a node of the HIR.
+    /// Extracts the modifiers from a HIR node's flags.
     fn from(flags: Flags) -> ModifierFlags {
         const MODIFIERS: [(Flags, ModifierFlags); 15] = [
             (Flags::PUBLIC, ModifierFlags::PUBLIC),
@@ -292,7 +292,7 @@ impl From<Flags> for ModifierFlags {
 }
 
 bitflags::bitflags! {
-    /// `ts.NodeFlags`, those that rules look at.
+    /// The `ts.NodeFlags` that rules look at.
     #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
     pub struct NodeFlags: u32 {
         const LET = 1 << 0;
@@ -310,7 +310,7 @@ bitflags::bitflags! {
 }
 
 bitflags::bitflags! {
-    /// `ts.ElementFlags`: the kind of an element of a tuple type.
+    /// `ts.ElementFlags`: the kind of a tuple type's element.
     #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
     pub struct ElementFlags: u8 {
         /// `T`
@@ -321,13 +321,12 @@ bitflags::bitflags! {
         const REST = 1 << 2;
         /// `...T`
         const VARIADIC = 1 << 3;
-        const FIXED = Self::REQUIRED.bits() | Self::OPTIONAL.bits();
         const VARIABLE = Self::REST.bits() | Self::VARIADIC.bits();
     }
 }
 
 bitflags::bitflags! {
-    /// `ts.TypeFormatFlags`, those that change what `typeToString` prints.
+    /// The `ts.TypeFormatFlags` that change what `typeToString` prints.
     #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
     pub struct TypeFormatFlags: u32 {
         const NO_TRUNCATION = 1 << 0;
@@ -345,7 +344,7 @@ bitflags::bitflags! {
 }
 
 impl TypeFormatFlags {
-    /// What `typeToString(type)` uses when it is given no flags.
+    /// The flags `typeToString(type)` uses when none are passed.
     pub const DEFAULT: TypeFormatFlags = TypeFormatFlags::ALLOW_UNIQUE_ES_SYMBOL_TYPE
         .union(TypeFormatFlags::USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE);
 }
@@ -377,14 +376,14 @@ pub enum TypePredicateKind {
     AssertsIdentifier,
 }
 
-/// A node of a file of the program, as TypeScript's syntax tree has it.
+/// A node of TypeScript's syntax tree, in a file of the program.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct NodeRef {
     pub file: FileId,
     pub node: Node,
 }
 
-/// A node of the file at hand, named by what the HIR stores for it.
+/// A node in the current file, identified by its HIR id.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Row {
     File,
@@ -413,7 +412,7 @@ pub enum Row {
     NameAt(u32),
 }
 
-/// A [`Row`], or a node that is derived from one: its name, its body.
+/// A [`Row`], or a node derived from one, like its name or its body.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct Location {
     pub row: Row,
@@ -437,12 +436,12 @@ impl Location {
     }
 }
 
-/// What the checker calls a symbol, for as long as a [`Services`](super::Services) lives: equal
-/// numbers are the same symbol.
+/// A symbol, valid for the lifetime of one [`Services`](super::Services). Equal numbers mean the
+/// same symbol.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct SymbolRef(pub u32);
 
-/// A child of a node that has a name in TypeScript's syntax tree.
+/// A child that TypeScript's syntax tree exposes as a named field of the node.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Child {
     /// `node.name`
@@ -484,7 +483,7 @@ pub enum TypeOp {
     ModifiersTypeOfMapped,
 }
 
-/// A property of a type that is true or false.
+/// A boolean test on a type.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum TypeTest {
     /// `isArrayType`: `T[]`, `readonly T[]`
@@ -495,8 +494,8 @@ pub enum TypeTest {
     ArrayLike,
     /// `isErrorType`
     Error,
-    /// The checker gave up: a cycle or a limit. It has `TypeFlags::ANY`, and nothing should be
-    /// reported for it.
+    /// The checker gave up because of a cycle or a limit. The type has `TypeFlags::ANY`, and
+    /// nothing should be reported for it.
     Unresolved,
     /// `isNonDeferredTypeReference`
     NonDeferredTypeReference,
@@ -506,8 +505,8 @@ pub enum TypeTest {
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Relation {
     Assignable,
-    /// `a.target === b.target`, for two tuple types: TypeScript has one target for all the tuple
-    /// types with the same kinds of elements and the same labels.
+    /// `a.target === b.target` for two tuple types. TypeScript shares one target among all tuple
+    /// types with the same element kinds and labels.
     SameTupleTarget,
 }
 
@@ -545,7 +544,7 @@ pub enum LiteralValue<'a> {
     },
 }
 
-/// What a type is made of, where that is not a list of types.
+/// A type's components, where they aren't just a list of types.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Structure<'a> {
     /// `check extends extends ? .. : ..`
@@ -554,7 +553,7 @@ pub enum Structure<'a> {
         extends: TypeId,
         /// `root.isDistributive`
         is_distributive: bool,
-        /// `getTypeFromTypeNode(root.node.trueType)`, which is not instantiated.
+        /// `getTypeFromTypeNode(root.node.trueType)`, which isn't instantiated.
         root_true_type: TypeId,
         /// `getTypeFromTypeNode(root.node.falseType)`
         root_false_type: TypeId,
@@ -589,15 +588,15 @@ pub enum Structure<'a> {
     Other,
 }
 
-/// `TupleType`: what the target of a tuple type knows.
+/// `TupleType`: the fields of a tuple type's target.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct TupleInfo<'a> {
     pub element_flags: &'a [ElementFlags],
     /// The number of elements that are `REQUIRED` or `VARIADIC`.
     pub min_length: u32,
-    /// The number of elements before the first that is `VARIABLE`.
+    /// The number of elements before the first `VARIABLE` one.
     pub fixed_length: u32,
-    /// All of `element_flags`.
+    /// The union of all `element_flags`.
     pub combined_flags: ElementFlags,
     pub readonly: bool,
 }
@@ -620,18 +619,18 @@ pub struct TypePredicateData<'a> {
     pub ty: Option<TypeId>,
 }
 
-/// What a `ts.Symbol` has as fields.
+/// The fields of a `ts.Symbol`.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct SymbolInfo<'a> {
-    /// `symbol.name`, spelled as TypeScript spells it: `__type`, `__@iterator`, `__#1@#x`.
+    /// `symbol.name`, spelled the way TypeScript spells it: `__type`, `__@iterator`, `__#1@#x`.
     pub name: &'a [u8],
     pub flags: SymbolFlags,
     pub check_flags: CheckFlags,
-    /// The symbol of the binder, if it is one of the file at hand.
+    /// The binder symbol, if it's one in the current file.
     pub local: Option<crate::bind::SymbolId>,
 }
 
-/// What a `ts.Signature` has as fields.
+/// The fields of a `ts.Signature`.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct SignatureInfo<'a> {
     pub parameters: &'a [SymbolRef],
@@ -640,7 +639,7 @@ pub struct SignatureInfo<'a> {
     pub declaration: Option<NodeRef>,
 }
 
-/// What a `ts.SourceFile` and the `ts.Program` know about a file.
+/// A file's facts from `ts.SourceFile` and `ts.Program`.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct FileInfo<'a> {
     /// `sourceFile.fileName`
@@ -651,12 +650,12 @@ pub struct FileInfo<'a> {
     pub is_from_external_library: bool,
     pub is_declaration_file: bool,
     pub is_javascript: bool,
-    /// `program.sourceFileToPackageName`: the name of the package in `node_modules` that it is
-    /// part of.
+    /// `program.sourceFileToPackageName`: the name of the `node_modules` package the file belongs
+    /// to.
     pub package_name: Option<&'a [u8]>,
 }
 
-/// `ts.CompilerOptions`, as far as rules read them. What `strict` implies is resolved.
+/// The `ts.CompilerOptions` that rules read. Options implied by `strict` are already resolved.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 pub struct CompilerOptions {
     pub strict_null_checks: bool,

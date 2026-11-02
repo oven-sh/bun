@@ -316,3 +316,62 @@ test("BuildMessage finalize frees with the same allocator it was created with", 
     Bun.gc(true);
   }
 });
+
+// A virtual source's path is a view of the UTF-8 copy of the specifier that the
+// native fetch makes when the specifier is not 8-bit ASCII, and frees when it
+// returns. The location of a YAML or JSON5 error used to point into that copy.
+test.concurrent("a BuildMessage's position.file outlives the fetch that made it", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      Bun.plugin({
+        name: "virtual-yaml",
+        setup(build) {
+          build.onResolve({ filter: /^virtual:/ }, ({ path }) => ({ path, namespace: "virtual" }));
+          build.onLoad({ filter: /.*/, namespace: "virtual" }, () => ({ contents: "[", loader: "yaml" }));
+        },
+      });
+
+      // The same characters in a flat 16-bit string.
+      function wide(string) {
+        const prefixed = "\\u0100" + string;
+        void prefixed.charCodeAt(0);
+        return prefixed.slice(1);
+      }
+
+      async function check(label, specifier, load) {
+        let error;
+        try {
+          await load(specifier);
+        } catch (e) {
+          error = e;
+        }
+        const files = [error?.position.file, error?.toJSON().position.file];
+        console.log(label, error?.name, JSON.stringify(files.map(file => (file === specifier ? "the specifier" : file))));
+      }
+
+      const url = URL.createObjectURL(new File(["["], "bad.yaml"));
+      await check("blob", wide(url), s => import(s));
+      // Joined at run time: as one literal it would be an 8-bit atom, which then is the module's key.
+      await check("node fallback", wide(["/bun-vfs$$/node_", "modules/events/.json5"].join("")), s => import(s));
+      await check("node fallback import", "/bun-vfs$$/node_modules/events/\\u00e9.json5", s => import(s));
+      await check("node fallback require", "/bun-vfs$$/node_modules/events/\\u00e8.json5", s => require(s));
+      await check("plugin", "virtual:\\u00e9.yaml", s => import(s));
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  if (exitCode !== 0) console.error(stderr);
+  expect(stdout.trim().split("\n")).toEqual(
+    ["blob", "node fallback", "node fallback import", "node fallback require", "plugin"].map(
+      label => `${label} BuildMessage ["the specifier","the specifier"]`,
+    ),
+  );
+  expect(exitCode).toBe(0);
+});

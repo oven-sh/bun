@@ -1,0 +1,6 @@
+# sabotage=GeneratorHeadsHaveEffects: the program answers something else
+# FORM: AsRead
+# RUN: run-in-shell
+# OPTIONS: sabotage=GeneratorHeadsHaveEffects
+# CHECK-NOT: read,made,0
+# PROGRAM-OF: generator-heads-have-effects-left-alone.ir

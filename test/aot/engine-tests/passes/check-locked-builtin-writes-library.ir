@@ -1,0 +1,19 @@
+# A store to a locked built-in at the top of the body of a module of the runtime that the entry module imports is a warning: it is not the program's own code
+# RUN: pipeline CheckLockedBuiltinWrites
+# DIAGNOSTIC: LockedBuiltinWriteMayRun 1
+# CHECK: PropSet v0, v1 key="fromRuntime"
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="bun:sqlite" displayPath="bun:sqlite" kind=RuntimeSource exportRule=RuntimeModule runtimeModule=BunSqlite body=f1
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f1 name="runtime" module=m1 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=ObjectPrototype
+    v1 = Integer integer=1
+    PropSet v0, v1 key="fromRuntime" mode=Strict @10
+    Return
+}

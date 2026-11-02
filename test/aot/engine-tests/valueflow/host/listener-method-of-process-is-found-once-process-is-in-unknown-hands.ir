@@ -1,0 +1,23 @@
+# handedOver(process).on("message", 1)
+# `process` is in unknown hands, so the object that the call answers may be `process`, which inherits `on` from %EventEmitter%.prototype.
+# LIBRARY: own
+# RUN: valueflow-why escaped-builtin=Process used-builtin=EventEmitterPrototypeOn
+# CHECK: escaped-builtin=Process
+# CHECK-NEXT: n0 escaped
+# CHECK: used-builtin=EventEmitterPrototypeOn
+# CHECK-NEXT: by Lookup
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="handedOver" [isFreeName]
+    v2 = Builtin builtin=Process
+    v3 = Call v1, -, v2
+    v4 = PropGet v3 key="on"
+    v5 = String string="message"
+    v6 = Integer integer=1
+    v7 = Call v4, v3, v5, v6
+    Return
+}

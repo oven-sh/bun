@@ -1,0 +1,40 @@
+// The object on which the exports of node:zlib hang is handed to code that the compiler cannot follow at the start. Its namespace object reaches a parameter through ten calls, long after a value that the compiler cannot follow; members are read there under keys that it cannot follow, and called. ../../flow-schedules.test.ts builds it under four schedules.
+import * as zlib from "node:zlib";
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+const hide = value => new CustomEvent("x", { detail: value }).detail;
+hide(zlib.default);
+hide(require("node:querystring"));
+function member(object, key) {
+  hide(object);
+  return object[key];
+}
+member(hide({ a: 1 }), hide("a"));
+const z0 = { get: () => zlib };
+const z1 = { get: () => z0.get() };
+const z2 = { get: () => z1.get() };
+const z3 = { get: () => z2.get() };
+const z4 = { get: () => z3.get() };
+const z5 = { get: () => z4.get() };
+const z6 = { get: () => z5.get() };
+const z7 = { get: () => z6.get() };
+const z8 = { get: () => z7.get() };
+const z9 = { get: () => z8.get() };
+const z = () => z9.get();
+const q0 = { get: () => require("node:querystring") };
+const q1 = { get: () => q0.get() };
+const q2 = { get: () => q1.get() };
+const q3 = { get: () => q2.get() };
+const q4 = { get: () => q3.get() };
+const q5 = { get: () => q4.get() };
+const q6 = { get: () => q5.get() };
+const q7 = { get: () => q6.get() };
+const q8 = { get: () => q7.get() };
+const q9 = { get: () => q8.get() };
+const q = () => q9.get();
+const attempt = (label, run) => { try { console.log(label, run()); } catch (error) { console.log(label, "THROWS", String(error.message).slice(0, 60)); } };
+attempt("gzip", () => member(z(), hide("gunzipSync"))(member(z(), hide("gzipSync"))("hello")).toString());
+attempt("deflate", () => member(z(), hide("inflateSync"))(member(z(), hide("deflateSync"))("hello")).toString());
+attempt("brotli", () => member(z(), hide("brotliDecompressSync"))(member(z(), hide("brotliCompressSync"))("hello")).toString());
+attempt("crc32", () => member(z(), hide("crc32"))("hello"));
+attempt("stringify", () => member(q(), hide("stringify"))({ a: 1, b: "x y" }));

@@ -1,15 +1,16 @@
-//! What oxlint 1.87 prints for a diagnostic of the compiler.
+//! Renders a compiler diagnostic the way oxlint 1.87 prints it.
 //!
-//! oxc has a fork of the compiler whose diagnostics are the functions of its `diagnostics.rs`. They differ from the compiler's in
-//! three ways:
-//! - The texts. A link is never part of a text. Many are written anew.
-//! - The places. A function is marked up to its `{`, a call at what is called, an element of JSX at its name.
-//! - More places: where the variable is declared, which function is the nested one, which effect it is in.
+//! oxc has a fork of the compiler whose diagnostics are the functions in its `diagnostics.rs`. They differ from the
+//! compiler's in three ways:
+//! - The wording. A link is never part of the text, and many messages are rewritten.
+//! - The spans. A function is marked up to its `{`, a call at its callee, a JSX element at its name.
+//! - Extra labels: where the variable is declared, which function is the nested one, which effect contains the code.
 //!
-//! [`render`] applies the rules that hold for all of them first, which are those of oxc's `diagnostic()`, `with_fallback_label()`
-//! and `run_react_compiler_rule()`. Then come the exceptions, one function for each category, in which a diagnostic is known by
-//! its reason. The name of oxc's function is at each. What oxc takes from its HIR is taken from the syntax and the scopes here.
-//! [`render_all`] leaves out what oxc says only once.
+//! [`render`] first applies the rules that hold for every diagnostic, which are oxc's `diagnostic()`,
+//! `with_fallback_label()` and `run_react_compiler_rule()`. Then come the exceptions, one function per category, which
+//! recognize a diagnostic by its reason. Each is marked with the name of oxc's function. What oxc reads from its HIR is
+//! derived from the syntax and the scopes here. [`render_all`] drops the repeats of diagnostics that oxc reports only
+//! once.
 
 use crate::finding::{Detail, Finding};
 use bun_core::strings;
@@ -28,7 +29,7 @@ pub(crate) type Text = Cow<'static, str>;
 
 pub struct Label {
     pub span: Span,
-    /// Empty if the place is marked and nothing is said about it.
+    /// Empty if the span is marked without a message.
     pub text: Text,
 }
 
@@ -36,7 +37,7 @@ pub struct Rendered {
     pub message: Text,
     pub help: Text,
     pub note: Text,
-    /// In the order of `-f json`. The first is the primary one in every diagnostic of oxc.
+    /// In `-f json` order. The first is the primary label in every oxc diagnostic.
     pub labels: Vec<Label>,
 }
 
@@ -46,34 +47,34 @@ impl Rendered {
         self.help = Cow::Borrowed(help);
     }
 
-    /// Where the first label is.
-    fn place(&self) -> Option<Span> {
+    /// The first label's span.
+    fn primary_span(&self) -> Option<Span> {
         self.labels.first().map(|label| label.span)
     }
 
-    /// What the first label says.
+    /// The first label's text.
     fn text(&self) -> &str {
         self.labels.first().map_or("", |label| &*label.text)
     }
 
-    /// The first label says `text`.
+    /// Sets the first label's text.
     fn relabel(&mut self, text: impl Into<Text>) {
         if let Some(first) = self.labels.first_mut() {
             first.text = text.into();
         }
     }
 
-    /// The first label is at `span`, if that is known.
+    /// Moves the first label to `span`, if that's known.
     fn move_to(&mut self, span: Option<Span>) {
         if let (Some(first), Some(span)) = (self.labels.first_mut(), span) {
             first.span = span;
         }
     }
 
-    /// One more label, unless it would be where the first is.
+    /// Adds a label, unless it would be at the same span as the first.
     fn also(&mut self, span: Option<Span>, text: impl Into<Text>) {
         if let Some(span) = span
-            && self.place() != Some(span)
+            && self.primary_span() != Some(span)
         {
             self.push(span, text);
         }
@@ -124,7 +125,7 @@ const fn documentation_url(category: ErrorCategory) -> &'static str {
             react_lint_url!("unsupported-syntax")
         }
         ErrorCategory::Invariant => "https://github.com/oxc-project/oxc/issues/new/choose",
-        // oxc does not have the last two.
+        // oxc doesn't have the last two.
         ErrorCategory::Suppression | ErrorCategory::EffectDependencies | ErrorCategory::FBT => {
             "https://react.dev/reference/eslint-plugin-react-hooks"
         }
@@ -165,14 +166,14 @@ const fn default_note(category: ErrorCategory) -> &'static str {
 
 const LOCAL_FBT: &str = "Support local variables named `fbt`";
 
-/// What oxlint prints for `findings`, in their order, each with what it is made of.
+/// Renders `findings` the way oxlint prints them, in order. Each result comes with the finding it was made from.
 pub fn render_all<'a, 'f>(
     file: &'a File<'a>,
     findings: impl IntoIterator<Item = &'f Finding>,
 ) -> impl Iterator<Item = (&'f Finding, Rendered)> {
-    let mut said = FxHashSet::default();
+    let mut seen_labels = FxHashSet::default();
     findings.into_iter().filter_map(move |finding| {
-        if is_about_what_a_callback_captures(file, finding) {
+        if is_about_callback_capture(file, finding) {
             return None;
         }
         let rendered = render(file, finding);
@@ -182,20 +183,21 @@ pub fn render_all<'a, 'f>(
                 .iter()
                 .map(|label| (label.span, label.text.clone()))
         };
-        let is_new = !is_said_once(finding) || said.insert(labels().collect::<Vec<_>>());
+        let is_new = !is_reported_once(finding) || seen_labels.insert(labels().collect::<Vec<_>>());
         is_new.then_some((finding, rendered))
     })
 }
 
-/// The compiler says these each time it comes by. oxc's `validate_no_ref_access_in_render` drops a diagnostic that is equal to an
-/// earlier one (`DiagnosticKey`), and its `resolve_binding_with_span` complains about a binding the first time it resolves it.
-fn is_said_once(finding: &Finding) -> bool {
+/// The compiler reports these every time it encounters them. oxc's `validate_no_ref_access_in_render` drops a
+/// diagnostic that equals an earlier one (`DiagnosticKey`), and its `resolve_binding_with_span` only complains about a
+/// binding the first time it resolves it.
+fn is_reported_once(finding: &Finding) -> bool {
     finding.category == ErrorCategory::Refs || finding.reason == LOCAL_FBT
 }
 
 fn render<'a>(file: &'a File<'a>, finding: &Finding) -> Rendered {
     let category = finding.category;
-    // oxc's `diagnostic()`. What the compiler calls a hint is left out.
+    // oxc's `diagnostic()`. The compiler's hints are dropped.
     let mut out = Rendered {
         message: Cow::Owned(finding.reason.clone()),
         help: match &finding.description {
@@ -250,9 +252,9 @@ fn render<'a>(file: &'a File<'a>, finding: &Finding) -> Rendered {
     out
 }
 
-/// Of the effects of a call, oxc's validation of refs looks at those on the operands of the call. Upstream's also looks at those
-/// on what a function among the operands captures, which is written in that function.
-fn is_about_what_a_callback_captures<'a>(file: &'a File<'a>, finding: &Finding) -> bool {
+/// Of a call's effects, oxc's ref validation only checks those on the call's operands. Upstream's also checks those on
+/// values captured by a function operand, and such a diagnostic points into that function.
+fn is_about_callback_capture<'a>(file: &'a File<'a>, finding: &Finding) -> bool {
     let Some(Detail::Error {
         span: Some(at),
         message: Some(message),
@@ -266,7 +268,7 @@ fn is_about_what_a_callback_captures<'a>(file: &'a File<'a>, finding: &Finding) 
     {
         return false;
     }
-    // A function that is the operand is not around it.
+    // If the operand is itself a function, that function doesn't count as enclosing it.
     let innermost = get_node_by_range_index(file, at.start);
     let operand = std::iter::once(innermost)
         .chain(innermost.ancestors())
@@ -278,8 +280,7 @@ fn is_about_what_a_callback_captures<'a>(file: &'a File<'a>, finding: &Finding) 
         .any(|it| !is_inlined(it))
 }
 
-/// The compiler puts the body of a function that is called where it is written, and that of the callback of `useMemo`, in the
-/// place of the call.
+/// The compiler inlines the body of an immediately invoked function, and of a `useMemo` callback, at the call.
 fn is_inlined(func: Func<'_>) -> bool {
     let owner = func.owner();
     let Node::Expr(parent) = owner.parent() else {
@@ -299,7 +300,7 @@ fn is_inlined(func: Func<'_>) -> bool {
 fn labels_of(finding: &Finding) -> Vec<Label> {
     let text_of = |message: Option<&str>| match message {
         Some(message) => Cow::Owned(message.to_owned()),
-        // The compiler's `invariant()` repeats the reason where it has nothing else to say.
+        // The compiler's `invariant()` repeats the reason if it has no other message.
         None if finding.category == ErrorCategory::Invariant && !finding.is_error_detail => {
             Cow::Owned(finding.reason.clone())
         }
@@ -318,9 +319,9 @@ fn labels_of(finding: &Finding) -> Vec<Label> {
     labels.collect()
 }
 
-// ───────────────────────────── from a place to the syntax ─────────────────────────────
+// ────────────────────────────── from a span to the syntax ─────────────────────────────
 
-/// What `pick` makes of a node that is written exactly at `span`, the innermost first.
+/// Returns the first `Some` that `pick` returns for a node whose span is exactly `span`, trying the innermost first.
 pub(crate) fn find<'a, T>(
     file: &'a File<'a>,
     span: Span,
@@ -338,12 +339,12 @@ fn function_at<'a>(file: &'a File<'a>, span: Span) -> Option<Func<'a>> {
     find(file, span, Node::as_func)
 }
 
-/// The innermost function around what is written at `span`.
+/// Innermost function enclosing `span`.
 fn enclosing_function<'a>(file: &'a File<'a>, span: Span) -> Option<Func<'a>> {
     get_node_by_range_index(file, span.start).enclosing_function()
 }
 
-/// The parameter that `span` is, or is the start of.
+/// The parameter that contains the start of `span`.
 fn parameter_at<'a>(file: &'a File<'a>, span: Span) -> Option<Param<'a>> {
     let innermost = get_node_by_range_index(file, span.start);
     std::iter::once(innermost)
@@ -355,8 +356,8 @@ fn parameter_at<'a>(file: &'a File<'a>, span: Span) -> Option<Param<'a>> {
         })
 }
 
-/// The property of a pattern or of an object literal that `span` is in.
-pub(crate) fn property_around<'a>(file: &'a File<'a>, span: Span) -> Option<Span> {
+/// The pattern or object literal property that contains `span`.
+pub(crate) fn enclosing_property<'a>(file: &'a File<'a>, span: Span) -> Option<Span> {
     let innermost = get_node_by_range_index(file, span.start);
     std::iter::once(innermost)
         .chain(innermost.ancestors())
@@ -367,7 +368,7 @@ pub(crate) fn property_around<'a>(file: &'a File<'a>, span: Span) -> Option<Span
         })
 }
 
-/// Where the variable that is read or written at `span` is declared: the `span` of a named `Identifier` of oxc's HIR.
+/// Where the variable read or written at `span` is declared. That's the `span` of a named `Identifier` in oxc's HIR.
 fn declaration_of<'a>(file: &'a File<'a>, span: Span) -> Option<Span> {
     let reference = file
         .reference_at(span.start)
@@ -375,8 +376,8 @@ fn declaration_of<'a>(file: &'a File<'a>, span: Span) -> Option<Span> {
     reference.symbol()?.declarations().next()?.name_span()
 }
 
-/// Where the variable that is called `` `name` `` where `span` starts is declared. What is written at `span` can be another name
-/// for the same value, or more than a name.
+/// Where the variable called `` `name` `` in the scope at the start of `span` is declared. The text at `span` can be
+/// another name for the same value, or more than a name.
 fn declaration_named<'a>(file: &'a File<'a>, span: Span, name: &str) -> Option<Span> {
     let name = name.strip_prefix('`')?.strip_suffix('`')?;
     let scope = match file.reference_at(span.start) {
@@ -392,8 +393,8 @@ fn start_of(span: Span, len: u32) -> Span {
     Span::new(span.start, span.start.saturating_add(len).min(span.end))
 }
 
-/// Where oxc's HIR has a parameter. It has a pattern and a parameter with a default nowhere.
-fn place_of_parameter(param: Param) -> Option<Span> {
+/// The span oxc's HIR has for a parameter. It has none for a pattern or a parameter with a default.
+fn parameter_span(param: Param) -> Option<Span> {
     if param.is_rest() {
         return Some(param.span());
     }
@@ -401,14 +402,14 @@ fn place_of_parameter(param: Param) -> Option<Span> {
     (param.default().is_none() && pat.as_ident().is_some()).then(|| pat.span())
 }
 
-/// oxc's `HirFunction::diagnostic_span`: up to the `{`. Of an arrow function without one it is `async`, or up to the first
-/// parameter, or two bytes.
+/// oxc's `HirFunction::diagnostic_span`: through the `{`. For an arrow function without one it's `async`, or through
+/// the first parameter, or two bytes.
 fn function_head(func: Func) -> Span {
     let whole = func.span();
     let end = match func.body_span() {
         Some(body) => body.start.saturating_add(1),
         None if func.is_async() => whole.start.saturating_add(5),
-        None => match func.params().first().and_then(place_of_parameter) {
+        None => match func.params().first().and_then(parameter_span) {
             Some(first) => first.end,
             None => whole.start.saturating_add(2),
         },
@@ -416,7 +417,7 @@ fn function_head(func: Func) -> Span {
     Span::new(whole.start, end.min(whole.end))
 }
 
-/// What a variable is declared with: the `init` of `const name = init`.
+/// A variable's initializer: the `init` in `const name = init`.
 fn initializer(declaration: Declaration) -> Option<Expr> {
     match declaration {
         Declaration::Var(pat) => match pat.parent() {
@@ -427,14 +428,14 @@ fn initializer(declaration: Declaration) -> Option<Expr> {
     }
 }
 
-/// The function that the value at `span` is: it is written there, or the name of a function declaration is, or of a variable that
-/// is declared with a function, with a `useCallback` of one, or with such a name. oxc follows the loads and the stores of its
-/// HIR, also those of a later assignment.
+/// Resolves the value at `span` to a function. `span` can be the function itself, the name of a function declaration,
+/// or a variable initialized with a function, with `useCallback` of a function, or with another such name. oxc follows
+/// the loads and stores in its HIR, which also covers later assignments.
 fn function_of_value<'a>(file: &'a File<'a>, span: Span) -> Option<Func<'a>> {
     let Some(mut reference) = file.reference_at(span.start).filter(|it| it.span() == span) else {
         return function_at(file, span);
     };
-    // Names that stand for each other in a circle do not end.
+    // Names that refer to each other in a cycle would loop forever.
     let mut seen = FxHashSet::default();
     loop {
         let symbol = reference.symbol()?;
@@ -459,7 +460,7 @@ fn function_of_value<'a>(file: &'a File<'a>, span: Span) -> Option<Func<'a>> {
     }
 }
 
-/// The name of what is called: `name(..)`, `object.name(..)`.
+/// The callee's name: `name(..)` or `object.name(..)`.
 fn called(call: Call) -> Option<Name> {
     match call.callee().kind() {
         ExprKind::Ident(name) => Some(name),
@@ -468,8 +469,8 @@ fn called(call: Call) -> Option<Name> {
     }
 }
 
-/// The `object.name` or `object["name"]` that `object` is the object of, also as `object!`.
-fn member_around(mut object: Expr) -> Option<Expr> {
+/// The `object.name` or `object["name"]` whose object is `object`, possibly as `object!`.
+fn enclosing_member(mut object: Expr) -> Option<Expr> {
     loop {
         let parent = object.parent().as_expr()?;
         match parent.kind() {
@@ -485,10 +486,12 @@ fn member_around(mut object: Expr) -> Option<Expr> {
     }
 }
 
-/// Where the property of `member` is named, if `name` is its name.
+/// The span of `member`'s property name, if the name is `name`.
 fn property_named(member: Expr, name: &[u8]) -> Option<Span> {
     match member.kind() {
-        ExprKind::Dot { name: written, .. } => (written.bytes() == name).then(|| written.span()),
+        ExprKind::Dot {
+            name: member_name, ..
+        } => (member_name.bytes() == name).then(|| member_name.span()),
         ExprKind::Index { index, .. } => {
             let is_same = match index.kind() {
                 ExprKind::String(value) => value.bytes() == name,
@@ -500,7 +503,7 @@ fn property_named(member: Expr, name: &[u8]) -> Option<Span> {
     }
 }
 
-/// Where the name of what `callee` calls is written.
+/// The span of the name that `callee` calls.
 fn called_name(callee: Expr) -> Span {
     match callee.kind() {
         ExprKind::Dot { name, .. } => name.span(),
@@ -509,22 +512,22 @@ fn called_name(callee: Expr) -> Span {
     }
 }
 
-/// The call that has the function `func` as its first argument.
+/// The call whose first argument is the function `func`.
 fn call_with_callback(func: Func) -> Option<Call> {
     let callback = func.owner().as_expr()?;
     let call = callback.parent().as_expr()?.as_call()?;
     (call.args().first() == Some(callback)).then_some(call)
 }
 
-/// The call of `useEffect` and the like in whose callback `span` is, not in a function in it.
-fn effect_around<'a>(file: &'a File<'a>, span: Span) -> Option<Call<'a>> {
+/// The `useEffect`-like call whose callback directly contains `span`, not through a nested function.
+fn enclosing_effect<'a>(file: &'a File<'a>, span: Span) -> Option<Call<'a>> {
     let call = call_with_callback(enclosing_function(file, span)?)?;
     called(call)?
         .is_any(&["useEffect", "useLayoutEffect", "useInsertionEffect"])
         .then_some(call)
 }
 
-/// The call of `useMemo` or `useCallback` that is written at `span`, or whose callback is.
+/// The `useMemo` or `useCallback` call at `span`, or the one whose callback is at `span`.
 fn memo_call_at<'a>(file: &'a File<'a>, span: Span) -> Option<Call<'a>> {
     find(file, span, |node| match node {
         Node::Func(func) => call_with_callback(func),
@@ -533,9 +536,9 @@ fn memo_call_at<'a>(file: &'a File<'a>, span: Span) -> Option<Call<'a>> {
     })
 }
 
-/// The first label marks the head of the function that it is at.
+/// Narrows the first label to the head of the function it's at.
 fn narrow_to_function_head<'a>(file: &'a File<'a>, out: &mut Rendered) {
-    let head = out.place().and_then(|at| function_at(file, at));
+    let head = out.primary_span().and_then(|at| function_at(file, at));
     out.move_to(head.map(function_head));
 }
 
@@ -558,13 +561,14 @@ fn hooks<'a>(file: &'a File<'a>, finding: &Finding, out: &mut Rendered) {
         );
         out.relabel("This Hook is used as a value");
     } else if reason.starts_with("Hooks must be the same function on every render") {
-        // `dynamic_hook`. What is called by a name originates where the name is declared, anything else where it is written.
+        // `dynamic_hook`. A value called by name originates at the name's declaration, anything else where it's
+        // written.
         out.say(
             "Hooks must be the same function on every render, but this value may change over time",
             "Call a statically known Hook instead of selecting a Hook dynamically",
         );
         out.relabel("This Hook may change between renders");
-        let origin = out.place().and_then(|at| declaration_of(file, at));
+        let origin = out.primary_span().and_then(|at| declaration_of(file, at));
         out.also(origin, "This dynamic Hook value originates here");
     } else if reason.starts_with("Hooks must be called at the top level") {
         // `hook_in_function_expression`
@@ -572,7 +576,9 @@ fn hooks<'a>(file: &'a File<'a>, finding: &Finding, out: &mut Rendered) {
             "Hooks must be called at the top level of a function component or custom Hook",
         );
         out.relabel("This Hook is called inside a nested function");
-        let nested = out.place().and_then(|at| enclosing_function(file, at));
+        let nested = out
+            .primary_span()
+            .and_then(|at| enclosing_function(file, at));
         out.also(nested.map(function_head), "This is the nested function");
     }
 }
@@ -594,7 +600,7 @@ fn capitalized_calls<'a>(file: &'a File<'a>, finding: &Finding, out: &mut Render
     ));
     out.relabel(format!("`{name}` may be a component"));
     let callee = out
-        .place()
+        .primary_span()
         .and_then(|at| find(file, at, |node| node.as_expr()?.callee()));
     out.move_to(callee.map(called_name));
 }
@@ -628,8 +634,8 @@ fn use_memo<'a>(file: &'a File<'a>, finding: &Finding, out: &mut Rendered) {
         }
         // `use_memo_callback_parameters`
         "useMemo() callbacks may not accept parameters" => {
-            if let Some(param) = out.place().and_then(|at| parameter_at(file, at)) {
-                match place_of_parameter(param) {
+            if let Some(param) = out.primary_span().and_then(|at| parameter_at(file, at)) {
+                match parameter_span(param) {
                     Some(span) => out.move_to(Some(span)),
                     None => out.labels.clear(),
                 }
@@ -641,7 +647,7 @@ fn use_memo<'a>(file: &'a File<'a>, finding: &Finding, out: &mut Rendered) {
         }
         // `use_memo_reassigns_outer_variable`
         "useMemo() callbacks may not reassign variables declared outside of the callback" => {
-            let origin = out.place().and_then(|at| declaration_of(file, at));
+            let origin = out.primary_span().and_then(|at| declaration_of(file, at));
             out.also(
                 origin,
                 "This variable is captured from outside the callback",
@@ -667,7 +673,7 @@ fn void_use_memo<'a>(file: &'a File<'a>, finding: &Finding, out: &mut Rendered) 
 }
 
 fn preserve_manual_memo<'a>(file: &'a File<'a>, out: &mut Rendered) {
-    let call = out.place().and_then(|at| memo_call_at(file, at));
+    let call = out.primary_span().and_then(|at| memo_call_at(file, at));
     match out.text() {
         // `preserve_memo_unmemoized`
         "Could not preserve existing memoization" => {
@@ -701,60 +707,62 @@ fn preserve_manual_memo<'a>(file: &'a File<'a>, out: &mut Rendered) {
     }
 }
 
-/// Where the compiler comes by the dependency that `help` names for the first time in a reactive scope of the callback of `call`.
-/// oxc keeps that in its `ReactiveScopeDependency`: of `a.b.c` where the `c` is written, of a variable all of the `a.b.c` that is
-/// read of it there.
+/// The first place in a reactive scope of `call`'s callback where the compiler encounters the dependency named in
+/// `help`. oxc keeps that in its `ReactiveScopeDependency`. For `a.b.c` it's the span of the `c`. For a plain variable
+/// it's the whole `a.b.c` that's read from it there.
 ///
-/// Where the scopes are only the compiler knows. All of the callback of a `useCallback` is in one, which is that of the function.
-/// That of a `useMemo` is a part of the component: see [`is_in_reactive_scope`].
+/// Only the compiler knows where the scopes are. A `useCallback` callback is entirely in one scope, the function's. A
+/// `useMemo` callback is part of the component: see [`is_in_reactive_scope`].
 fn inferred_dependency(call: Call, help: &str) -> Option<Span> {
     const BEFORE: &[u8] = b"The inferred dependency was `";
     let help = help.as_bytes();
     let rest = help.get(strings::index_of(help, BEFORE)? + BEFORE.len()..)?;
     let dependency = rest.get(..strings::index_of_char_usize(rest, b'`')?)?;
-    // `a?.b` is printed as it is written.
+    // `a?.b` is printed as written.
     let mut names = strings::split(dependency, b".").map(|it| it.strip_suffix(b"?").unwrap_or(it));
     let variable = names.next()?;
     let path: Vec<&[u8]> = names.collect();
 
     let callback = call.args().first()?;
     let (func, whole) = (callback.as_fn()?, callback.span());
-    let is_one_scope = called(call)?.is("useCallback");
+    let is_single_scope = called(call)?.is("useCallback");
     let symbol = callback.parent().scope().resolve_bytes(variable)?;
     let (mut first, mut barren) = (None, Span::default());
     for reference in symbol.references().filter(|it| whole.contains(it.span())) {
-        let Some((read, place)) = reference.expr().and_then(|it| read_of(it, &path)) else {
+        let Some((read, dependency_span)) = reference.expr().and_then(|it| read_of(it, &path))
+        else {
             continue;
         };
-        if is_one_scope || is_in_reactive_scope(read, func, &mut barren) {
-            return Some(place);
+        if is_single_scope || is_in_reactive_scope(read, func, &mut barren) {
+            return Some(dependency_span);
         }
-        first.get_or_insert(place);
+        first.get_or_insert(dependency_span);
     }
     first
 }
 
-/// The `variable.a.b` that is read of `variable` if `path` is `a`, `b`, with where the `b` is written. Without a path all that is
-/// read of it, with where that is written.
+/// With the path `a`, `b`, returns the `variable.a.b` read from `variable` and the span of the `b`. With an empty path,
+/// returns the longest member chain read from `variable` and its span.
 fn read_of<'a>(variable: Expr<'a>, path: &[&[u8]]) -> Option<(Expr<'a>, Span)> {
-    let (mut read, mut place) = (variable, None);
+    let (mut read, mut property_span) = (variable, None);
     for name in path {
-        read = member_around(read)?;
-        place = Some(property_named(read, name)?);
+        read = enclosing_member(read)?;
+        property_span = Some(property_named(read, name)?);
     }
-    if let Some(place) = place {
-        return Some((read, place));
+    if let Some(property_span) = property_span {
+        return Some((read, property_span));
     }
-    while let Some(member) = member_around(read) {
+    while let Some(member) = enclosing_member(read) {
         read = member;
     }
     Some((read, read.span()))
 }
 
-/// Whether `read` is in a reactive scope of the callback of a `useMemo`, as far as the syntax tells: it is a part of what makes an
-/// object, or of a `?:`, `&&`, `||` or `??` a part of which does. The test of `if (!a?.b) return` is not.
+/// True if `read` is in a reactive scope of a `useMemo` callback, as far as the syntax can tell: it's part of an
+/// expression that creates an object, or part of a `?:`, `&&`, `||` or `??` that contains one. The test in
+/// `if (!a?.b) return` isn't.
 ///
-/// `barren`: the last `?:`, `&&`, `||` or `??` in which nothing makes an object.
+/// `barren` caches the last `?:`, `&&`, `||` or `??` that doesn't create an object anywhere inside.
 fn is_in_reactive_scope<'a>(read: Expr<'a>, callback: Func<'a>, barren: &mut Span) -> bool {
     if barren.contains(read.span()) {
         return false;
@@ -763,7 +771,7 @@ fn is_in_reactive_scope<'a>(read: Expr<'a>, callback: Func<'a>, barren: &mut Spa
     for node in Node::Expr(read).ancestors() {
         match node {
             Node::Func(func) if func == callback => break,
-            _ if makes_an_object(node) => return true,
+            _ if creates_object(node) => return true,
             Node::Expr(e) => match e.kind() {
                 ExprKind::Cond { .. }
                 | ExprKind::Binary {
@@ -780,7 +788,7 @@ fn is_in_reactive_scope<'a>(read: Expr<'a>, callback: Func<'a>, barren: &mut Spa
     };
     let mut rest = vec![Node::Expr(outermost)];
     while let Some(node) = rest.pop() {
-        if makes_an_object(node) {
+        if creates_object(node) {
             return true;
         }
         node.for_each_child(|child| rest.push(child));
@@ -789,7 +797,7 @@ fn is_in_reactive_scope<'a>(read: Expr<'a>, callback: Func<'a>, barren: &mut Spa
     false
 }
 
-fn makes_an_object(node: Node) -> bool {
+fn creates_object(node: Node) -> bool {
     match node {
         Node::Func(_) | Node::Class(_) => true,
         Node::Expr(e) => matches!(
@@ -806,7 +814,8 @@ fn makes_an_object(node: Node) -> bool {
     }
 }
 
-/// What oxc's `validate_dependencies` adds to `exhaustive_dependencies`. The list is what the compiler suggests to replace.
+/// The label that oxc's `validate_dependencies` adds to `exhaustive_dependencies`. The list's span is the range that
+/// the compiler suggests replacing.
 fn exhaustive_dependencies(finding: &Finding, out: &mut Rendered) {
     if matches!(
         finding.reason.as_str(),
@@ -825,7 +834,7 @@ fn exhaustive_dependencies(finding: &Finding, out: &mut Rendered) {
 
 fn immutability<'a>(file: &'a File<'a>, finding: &Finding, out: &mut Rendered) {
     match finding.reason.as_str() {
-        // `immutable_value`. What has no name is a temporary, which originates where it is modified.
+        // `immutable_value`. A value without a name is a temporary, which originates where it's modified.
         "This value cannot be modified" => {
             if out.help
                 == "Modifying component props or hook arguments is not allowed. Consider using a local variable instead"
@@ -840,12 +849,12 @@ fn immutability<'a>(file: &'a File<'a>, finding: &Finding, out: &mut Rendered) {
             {
                 let text = format!("{variable} originates here");
                 let origin = out
-                    .place()
+                    .primary_span()
                     .and_then(|at| declaration_named(file, at, variable));
                 out.also(origin, text);
             }
         }
-        // `variable_accessed_before_declaration`, which is not told where the variable is declared.
+        // `variable_accessed_before_declaration`, which isn't passed the variable's declaration.
         "Cannot access variable before it is declared" => {
             let description = finding.description.as_deref().unwrap_or_default();
             let variable = (strings::index_of(
@@ -889,19 +898,20 @@ fn immutability<'a>(file: &'a File<'a>, finding: &Finding, out: &mut Rendered) {
 fn declared_here<'a>(file: &'a File<'a>, variable: Option<&str>, out: &mut Rendered) {
     if let Some(variable) = variable {
         let declaration = out
-            .place()
+            .primary_span()
             .and_then(|at| declaration_named(file, at, variable));
         out.also(declaration, format!("{variable} is declared here"));
     }
 }
 
-/// `known_mutable_function`: what is modified comes first. The function is left out if its label would be around that.
+/// `known_mutable_function`. The modified value comes first. A function is dropped if its label would contain that
+/// span.
 fn known_mutable_function<'a>(file: &'a File<'a>, out: &mut Rendered) {
     let (modified, functions): (Vec<Label>, Vec<Label>) = std::mem::take(&mut out.labels)
         .into_iter()
         .partition(|label| label.text.starts_with("This modifies "));
     out.labels = modified;
-    let modified = out.place();
+    let modified = out.primary_span();
     for mut function in functions {
         if let Some(func) = function_of_value(file, function.span) {
             function.span = function_head(func);
@@ -923,7 +933,7 @@ fn globals(out: &mut Rendered) {
     }
 }
 
-/// `ref_access` and what calls it.
+/// `ref_access` and its callers.
 fn refs<'a>(file: &'a File<'a>, out: &mut Rendered) {
     out.help = Cow::Borrowed(
         "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in \
@@ -932,15 +942,16 @@ fn refs<'a>(file: &'a File<'a>, out: &mut Rendered) {
     );
     match out.text() {
         "Cannot update ref during render" => ref_update(file, out),
-        // `function_accesses_ref`. The compiler says where the first error in the function is: `RefFnType::ref_access_span`.
+        // `function_accesses_ref`. The compiler reports the location of the function's first error:
+        // `RefFnType::ref_access_span`.
         "This function accesses a ref value" => {
-            let place = out.place();
+            let primary_span = out.primary_span();
             if let Some(access) = out.labels.get_mut(1) {
                 if access.text == "The ref is updated here" {
                     access.span = updated_part(file, access.span).map_or(access.span, |it| it.0);
                 }
                 access.text = Cow::Borrowed("The ref is accessed here");
-                if Some(access.span) == place {
+                if Some(access.span) == primary_span {
                     out.labels.truncate(1);
                 }
             }
@@ -949,7 +960,7 @@ fn refs<'a>(file: &'a File<'a>, out: &mut Rendered) {
     }
 }
 
-/// What `ref_update` marks of the `whole` that is assigned to, and the ref.
+/// The part of the assignment target `whole` that `ref_update` marks, and the ref's span.
 fn updated_part<'a>(file: &'a File<'a>, whole: Span) -> Option<(Span, Span)> {
     let object = find(file, whole, |node| Some(node.as_expr()?.object()?.span()))?;
     let value = match whole.start == object.start && object.end < whole.end {
@@ -961,7 +972,7 @@ fn updated_part<'a>(file: &'a File<'a>, whole: Span) -> Option<(Span, Span)> {
 
 fn ref_update<'a>(file: &'a File<'a>, out: &mut Rendered) {
     out.relabel("Cannot update ref value during render");
-    let Some(whole) = out.place() else {
+    let Some(whole) = out.primary_span() else {
         return;
     };
     let Some((value, object)) = updated_part(file, whole) else {
@@ -973,28 +984,29 @@ fn ref_update<'a>(file: &'a File<'a>, out: &mut Rendered) {
     }
 }
 
-/// `set_state_in_effect`. Which effect it is only the compiler knows, unless the call is written in its callback.
+/// `set_state_in_effect`. Only the compiler knows which effect it is, unless the call is written in the effect's
+/// callback.
 fn set_state_in_effect<'a>(file: &'a File<'a>, out: &mut Rendered) {
     out.help = Cow::Borrowed(
         "Effects should synchronize React with external systems. Calling setState synchronously inside an effect starts \
          another render and is usually unnecessary. Derive the value during render, initialize state directly, or update it \
          from the event that caused the change. Use an effect only when synchronizing with an external system.",
     );
-    let effect = out.place().and_then(|at| effect_around(file, at));
+    let effect = out.primary_span().and_then(|at| enclosing_effect(file, at));
     out.also(
         effect.map(|call| call.callee().span()),
         "This is the containing effect",
     );
 }
 
-/// `derived_state_in_effect_from_dependencies`. The compiler reports it only if the callback and the dependencies are written in
-/// the call, and each dependency is a variable.
+/// `derived_state_in_effect_from_dependencies`. The compiler only reports it if the callback and the dependencies are
+/// written inline in the call and each dependency is a variable.
 fn derived_state_in_effect<'a>(file: &'a File<'a>, out: &mut Rendered) {
     out.message = Cow::Borrowed(
         "Values derived from props and state should be calculated during render, not in an effect",
     );
     out.relabel("This state update stores a value that can be calculated during render");
-    let effect = out.place().and_then(|at| effect_around(file, at));
+    let effect = out.primary_span().and_then(|at| enclosing_effect(file, at));
     let dependencies = effect.and_then(|call| match call.args().get(1)?.kind() {
         ExprKind::Array(elements) => Some(elements),
         _ => None,
@@ -1006,7 +1018,7 @@ fn derived_state_in_effect<'a>(file: &'a File<'a>, out: &mut Rendered) {
             && seen.insert(name)
         {
             let separator = if names.is_empty() { "" } else { "`, `" };
-            // Writing to a `String` does not fail.
+            // Writing to a `String` can't fail.
             let _ = write!(names, "{separator}{name}");
         }
         let text = match (index, total) {
@@ -1032,7 +1044,7 @@ fn jsx_in_try<'a>(file: &'a File<'a>, out: &mut Rendered) {
         "React does not immediately render components when JSX is constructed, so rendering errors will not be caught by the \
          try/catch. Wrap the component in an error boundary instead",
     );
-    let name = out.place().and_then(|at| {
+    let name = out.primary_span().and_then(|at| {
         find(file, at, |node| match node.as_expr()?.kind() {
             ExprKind::Jsx(jsx) => Some(jsx.tag().map_or_else(|| jsx.opening_span(), Expr::span)),
             _ => None,
@@ -1067,7 +1079,7 @@ fn set_state_in_render(finding: &Finding, out: &mut Rendered) {
                  useMemo(), prefer deriving the value during render",
             );
         }
-        // `set_state_in_render`. `set_state_in_render_with_keyed_state` says what the compiler says.
+        // `set_state_in_render`. `set_state_in_render_with_keyed_state` keeps the compiler's text.
         "Cannot call setState during render"
             if !strings::contains(description.as_bytes(), b"useKeyedState") =>
         {
@@ -1081,9 +1093,9 @@ fn set_state_in_render(finding: &Finding, out: &mut Rendered) {
     }
 }
 
-/// `useWindowVirtualizer` is `useVirtualizer` in the tree that the compiler is given.
+/// The tree given to the compiler has `useVirtualizer` in place of `useWindowVirtualizer`.
 fn incompatible_library<'a>(file: &'a File<'a>, out: &mut Rendered) {
-    if (out.place()).is_some_and(|at| file.slice(at) == b"useWindowVirtualizer")
+    if (out.primary_span()).is_some_and(|at| file.slice(at) == b"useWindowVirtualizer")
         && let Some(rest) = (out.text()).strip_prefix("TanStack Virtual's `useVirtualizer()`")
     {
         let text = format!("TanStack Virtual's `useWindowVirtualizer()`{rest}");
@@ -1092,7 +1104,7 @@ fn incompatible_library<'a>(file: &'a File<'a>, out: &mut Rendered) {
 }
 
 fn invariant(finding: &Finding, out: &mut Rendered) {
-    // `empty_goto`, which is never told where.
+    // `empty_goto`, which is never passed a span.
     if finding.reason == "Unexpected empty block with `goto` terminal" {
         out.labels.clear();
     }
@@ -1107,7 +1119,7 @@ fn invariant(finding: &Finding, out: &mut Rendered) {
 fn todo<'a>(file: &'a File<'a>, finding: &Finding, out: &mut Rendered) {
     let reason = finding.reason.as_str();
     let between = |prefix: &str, suffix: &str| reason.strip_prefix(prefix)?.strip_suffix(suffix);
-    let place = out.place();
+    let primary_span = out.primary_span();
     if reason == "(BuildHIR::lowerStatement) Handle TryStatement without a catch clause" {
         // `todo_build_hir_lower_statement_handle_try_statement_without_catch_clause`
         out.say(
@@ -1116,8 +1128,8 @@ fn todo<'a>(file: &'a File<'a>, finding: &Finding, out: &mut Rendered) {
              warning if this function should remain uncompiled",
         );
         out.relabel("Unsupported `try` starts here");
-        out.move_to(place.map(|at| start_of(at, 3)));
-        let finally = place.and_then(|at| {
+        out.move_to(primary_span.map(|at| start_of(at, 3)));
+        let finally = primary_span.and_then(|at| {
             find(file, at, |node| match node.as_stmt()?.kind() {
                 StmtKind::Try {
                     block,
@@ -1134,7 +1146,7 @@ fn todo<'a>(file: &'a File<'a>, finding: &Finding, out: &mut Rendered) {
     } else if reason
         == "(BuildHIR::lowerStatement) Handle TryStatement with a finalizer ('finally') clause"
     {
-        out.move_to(place.and_then(|at| {
+        out.move_to(primary_span.and_then(|at| {
             find(file, at, |node| match node.as_stmt()?.kind() {
                 StmtKind::Try {
                     handler: Some(handler),
@@ -1145,14 +1157,14 @@ fn todo<'a>(file: &'a File<'a>, finding: &Finding, out: &mut Rendered) {
             })
         }));
     } else if reason == "(BuildHIR::lowerStatement) Handle for-await loops" {
-        out.move_to(place.and_then(|at| {
+        out.move_to(primary_span.and_then(|at| {
             find(file, at, |node| match node.as_stmt()?.kind() {
                 StmtKind::ForOf { left, .. } => Some(Span::before(at.start, left.span())),
                 _ => None,
             })
         }));
     } else if reason == "(BuildHIR::lowerExpression) Handle ClassExpression expressions" {
-        out.move_to(place.map(|at| {
+        out.move_to(primary_span.map(|at| {
             let name = find(file, at, |node| node.as_expr()?.as_class()?.name());
             name.map_or_else(
                 || start_of(at, 5),
@@ -1160,15 +1172,15 @@ fn todo<'a>(file: &'a File<'a>, finding: &Finding, out: &mut Rendered) {
             )
         }));
     } else if reason == "(BuildHIR::lowerAssignment) Handle computed properties in ObjectPattern" {
-        // The compiler marks the key here, oxc the property.
-        out.move_to(place.and_then(|at| property_around(file, at)));
+        // The compiler marks the key here, oxc the whole property.
+        out.move_to(primary_span.and_then(|at| enclosing_property(file, at)));
     } else if let Some(kind) = between(
         "(BuildHIR::lowerExpression) Handle ",
         " functions in ObjectExpression",
     ) {
         // `unsupported_object_method`
         out.relabel(format!("Unsupported {kind} function"));
-        out.move_to(place.map(|at| start_of(at, kind.len() as u32)));
+        out.move_to(primary_span.map(|at| start_of(at, kind.len() as u32)));
     } else if let Some(kind) = between(
         "(BuildHIR::lowerAssignment) Handle ",
         " rest element in ObjectPattern",
@@ -1181,18 +1193,18 @@ fn todo<'a>(file: &'a File<'a>, finding: &Finding, out: &mut Rendered) {
     ) {
         // `unsafe_reorderable_expression`
         out.relabel(format!("`{kind}` cannot be safely reordered"));
-        let func = place.and_then(|at| function_at(file, at));
+        let func = primary_span.and_then(|at| function_at(file, at));
         out.move_to(func.map(crate::program::diagnostic_span));
     } else if reason
         == "Support functions with unreachable code that may contain hoisted declarations"
     {
-        let func = place.and_then(|at| function_at(file, at));
+        let func = primary_span.and_then(|at| function_at(file, at));
         out.move_to(func.map(crate::program::diagnostic_span));
     } else if reason
         == "(BuildHIR::lowerExpression) Support UpdateExpression where argument is a global"
     {
-        // To oxc, a variable of a function around the one that is compiled is captured.
-        let variable = place.and_then(|at| {
+        // oxc treats a variable of a function that encloses the compiled one as captured.
+        let variable = primary_span.and_then(|at| {
             find(file, at, |node| match node.as_expr()?.kind() {
                 ExprKind::Unary { operand, .. } => operand.symbol(),
                 _ => None,
@@ -1204,9 +1216,9 @@ fn todo<'a>(file: &'a File<'a>, finding: &Finding, out: &mut Rendered) {
             );
         }
     } else if reason == LOCAL_FBT {
-        // `local_fbt_variable`, which is told where the variable is declared.
+        // `local_fbt_variable`, which is passed the variable's declaration.
         out.relabel("Local variables named `fbt` are not supported");
-        out.move_to(place.and_then(|at| declaration_of(file, at)));
+        out.move_to(primary_span.and_then(|at| declaration_of(file, at)));
     } else if reason == "[hoisting] EnterSSA: Expected identifier to be defined before being used" {
         // `undefined_ssa_identifier`
         let description = finding.description.as_deref().unwrap_or_default();
@@ -1226,7 +1238,9 @@ fn syntax<'a>(file: &'a File<'a>, finding: &Finding, out: &mut Rendered) {
                 return;
             };
             out.relabel(format!("Cannot reassign {name}"));
-            if let Some(declaration) = out.place().and_then(|at| declaration_named(file, at, name))
+            if let Some(declaration) = out
+                .primary_span()
+                .and_then(|at| declaration_named(file, at, name))
             {
                 out.push(declaration, format!("{name} is declared here"));
             }
@@ -1257,7 +1271,7 @@ fn unsupported_syntax(finding: &Finding, out: &mut Rendered) {
     }
 }
 
-/// `suppression`: what the compiler says is the note.
+/// `suppression`. The compiler's text becomes the note.
 fn suppression(finding: &Finding, out: &mut Rendered) {
     out.say(
         "React rule suppression prevents optimization",

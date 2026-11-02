@@ -90,6 +90,22 @@ void JSReadRequest::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::Context), "context"_s);
 }
 
+static bool closeStepsCloseAnotherStream(ReadRequestKind kind)
+{
+    switch (kind) {
+    case ReadRequestKind::DefaultTee:
+    case ReadRequestKind::ByteTee:
+    case ReadRequestKind::TextDecode:
+        return true;
+    case ReadRequestKind::Promise:
+    case ReadRequestKind::PipeTo:
+    case ReadRequestKind::ReadStreamIntoSink:
+    case ReadRequestKind::AsyncIterator:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 void JSReadRequest::chunkSteps(JSGlobalObject* globalObject, JSValue chunk)
 {
     auto& vm = getVM(globalObject);
@@ -124,10 +140,12 @@ void JSReadRequest::chunkSteps(JSGlobalObject* globalObject, JSValue chunk)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-void JSReadRequest::closeSteps(JSGlobalObject* globalObject)
+void JSReadRequest::closeSteps(JSGlobalObject* globalObject, MayDefer mayDefer)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (mayDefer == MayDefer::Yes && closeStepsCloseAnotherStream(m_kind) && streamLinkMustDefer(vm)) [[unlikely]]
+        return queueReactionJob(vm, globalObject, JSStreamsRuntime::from(globalObject)->onReadRequestCloseStepsDeferred(), jsUndefined(), this);
     switch (m_kind) {
     case ReadRequestKind::Promise: {
         auto* promise = uncheckedDowncast<JSPromise>(context());
@@ -199,7 +217,7 @@ void JSReadRequest::closeSteps(JSGlobalObject* globalObject)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-void JSReadRequest::errorSteps(JSGlobalObject* globalObject, JSValue error)
+void JSReadRequest::errorSteps(JSGlobalObject* globalObject, JSValue error, MayDefer mayDefer)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -225,6 +243,8 @@ void JSReadRequest::errorSteps(JSGlobalObject* globalObject, JSValue error)
         return;
     }
     case ReadRequestKind::TextDecode: {
+        if (mayDefer == MayDefer::Yes && streamLinkMustDefer(vm)) [[unlikely]]
+            return queueReactionJob(vm, globalObject, JSStreamsRuntime::from(globalObject)->onReadRequestErrorStepsDeferred(), error, this);
         auto* controller = uncheckedDowncast<JSReadableStreamDefaultController>(context());
         auto* reader = dynamicDowncast<JSReadableStreamDefaultReader>(controller->m_algorithms.algorithmContext.get());
         readableStreamDefaultControllerError(globalObject, controller, error);
@@ -306,7 +326,7 @@ void JSReadIntoRequest::chunkSteps(JSGlobalObject* globalObject, JSArrayBufferVi
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-void JSReadIntoRequest::closeSteps(JSGlobalObject* globalObject, JSArrayBufferView* chunkOrNull)
+void JSReadIntoRequest::closeSteps(JSGlobalObject* globalObject, JSArrayBufferView* chunkOrNull, MayDefer mayDefer)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -318,6 +338,8 @@ void JSReadIntoRequest::closeSteps(JSGlobalObject* globalObject, JSArrayBufferVi
         RELEASE_AND_RETURN(scope, resolvePromise(globalObject, promise, result));
     }
     case ReadIntoRequestKind::ByteTee: {
+        if (mayDefer == MayDefer::Yes && streamLinkMustDefer(vm)) [[unlikely]]
+            return queueReactionJob(vm, globalObject, JSStreamsRuntime::from(globalObject)->onReadIntoRequestCloseStepsDeferred(), chunkOrNull ? JSValue(chunkOrNull) : jsUndefined(), this);
         auto* context = uncheckedDowncast<InternalFieldTuple>(this->context());
         auto* teeState = uncheckedDowncast<JSStreamTeeState>(context->getInternalField(0));
         bool forBranch2 = context->getInternalField(1).asBoolean();
@@ -367,6 +389,33 @@ void JSReadIntoRequest::errorSteps(JSGlobalObject* globalObject, JSValue error)
         return;
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onReadRequestCloseStepsDeferred, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    uncheckedDowncast<JSReadRequest>(callFrame->argument(1))->closeSteps(globalObject, MayDefer::No);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onReadRequestErrorStepsDeferred, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    uncheckedDowncast<JSReadRequest>(callFrame->argument(1))->errorSteps(globalObject, callFrame->argument(0), MayDefer::No);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onReadIntoRequestCloseStepsDeferred, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    uncheckedDowncast<JSReadIntoRequest>(callFrame->argument(1))->closeSteps(globalObject, dynamicDowncast<JSArrayBufferView>(callFrame->argument(0)), MayDefer::No);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsUndefined());
 }
 
 } // namespace WebCore

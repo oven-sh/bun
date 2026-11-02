@@ -1,9 +1,10 @@
-//! The order in which the scope manager makes the references, where it does not visit a node as it is written: `Referencer`,
-//! `ClassVisitor` and `PatternVisitor` of typescript-eslint, and what `eslint-scope` has of them.
+//! The order in which the scope manager creates references, for the nodes it doesn't visit in source order:
+//! typescript-eslint's `Referencer`, `ClassVisitor` and `PatternVisitor`, and the parts of them that `eslint-scope`
+//! has.
 //!
-//! Every reference has a position that it is visited at, which is where it is written to begin with. A node whose parts are
-//! visited in another order moves what is in them, as if the parts were written in that order. The references are made in
-//! the order of these positions.
+//! Every reference has a visit position, which starts out as its source position. A node whose parts are visited in a
+//! different order shifts the references inside them, as if the parts were written in that order. The references are
+//! created in the order of these positions.
 
 use super::ScopeKind;
 use super::references::{self, RawReference};
@@ -13,23 +14,23 @@ use bun_sema::bind::{MemberOwner, Parent};
 use bun_sema::hir::{self, ExprKind, ExprTag, MemberKind, ModifierKind, UnOp};
 use smallvec::SmallVec;
 
-/// Parts of the text that follow each other.
+/// Consecutive parts of the text.
 struct Parts {
-    /// Where each starts, and where the last ends.
+    /// The start of each part, plus the end of the last.
     bounds: SmallVec<[u32; 5]>,
-    /// How far what is in each moves, which wraps around for what moves to the left.
+    /// How far the contents of each part move. A move to the left wraps around.
     shifts: SmallVec<[u32; 4]>,
 }
 
 struct Moves<'t, 'a> {
     file: &'a File<'a>,
-    /// Where the references are visited before any of this. Sorted.
+    /// The references' visit positions before any of these moves. Sorted.
     visits: &'t [u32],
     found: Vec<Parts>,
 }
 
 impl Moves<'_, '_> {
-    /// `bounds`: see `Parts`. The parts are visited in the order of `ranks`, those with the same in the order of the source.
+    /// For `bounds`, see `Parts`. The parts are visited in `ranks` order, and parts with the same rank in source order.
     fn add(&mut self, bounds: &[u32], ranks: &[u8]) {
         let [start, ends @ ..] = bounds else {
             return;
@@ -37,7 +38,7 @@ impl Moves<'_, '_> {
         if !bounds.is_sorted() || ends.len() != ranks.len() {
             return;
         }
-        // It takes references in two of the parts to change anything.
+        // Nothing changes unless at least two of the parts contain references.
         let mut rest = &self.visits[self.visits.partition_point(|it| it < start)..];
         let mut parts_with_references = 0;
         for end in ends {
@@ -49,11 +50,11 @@ impl Moves<'_, '_> {
             return;
         }
         let lengths = || bounds.iter().zip(ends).map(|(start, end)| end - start);
-        let shifts = (bounds.iter().zip(ranks).enumerate()).map(|(part, (written_at, rank))| {
+        let shifts = (bounds.iter().zip(ranks).enumerate()).map(|(part, (source_start, rank))| {
             let visited_before = (lengths().zip(ranks).enumerate())
                 .filter(|&(other, (_, other_rank))| (other_rank, other) < (rank, part))
                 .map(|(_, (length, _))| length);
-            (start + visited_before.sum::<u32>()).wrapping_sub(*written_at)
+            (start + visited_before.sum::<u32>()).wrapping_sub(*source_start)
         });
         self.found.push(Parts {
             shifts: shifts.collect(),
@@ -61,12 +62,12 @@ impl Moves<'_, '_> {
         });
     }
 
-    /// What is from `second` to `stop` is visited before what is from `first` to `second`.
+    /// The range from `second` to `stop` is visited before the range from `first` to `second`.
     fn swap(&mut self, first: u32, second: u32, stop: u32) {
         self.add(&[first, second, stop], &[1, 0]);
     }
 
-    /// `PatternVisitor.MemberExpression`: the `b` of `a[b]` before `a`.
+    /// `PatternVisitor.MemberExpression`: the `b` in `a[b]` comes before `a`.
     fn member(&mut self, id: hir::ExprId) {
         let file = self.file;
         if let Some(&hir::Expr {
@@ -81,7 +82,8 @@ impl Moves<'_, '_> {
         }
     }
 
-    /// `visitTypeAssertion`: the type last. `visitExpressionTarget`: of what is assigned to, the type first.
+    /// `visitTypeAssertion`: the type comes last. `visitExpressionTarget`: in an assignment target, the type comes
+    /// first.
     fn assertion(&mut self, id: hir::ExprId) {
         let file = self.file;
         let (hir, bound) = (&file.hir, &file.bound);
@@ -96,8 +98,8 @@ impl Moves<'_, '_> {
         let (Some(expr), Some(ty)) = (hir.exprs.get(expr.idx()), hir.types.get(ty.idx())) else {
             return;
         };
-        let is_target = match bound.expr_parent.get(id.idx()) {
-            Some(&Parent::Expr(parent)) => match hir.exprs.get(parent.idx()).map(|it| it.kind) {
+        let is_target = match bound.parent_of_expr(id) {
+            Parent::Expr(parent) => match hir.exprs.get(parent.idx()).map(|it| it.kind) {
                 Some(ExprKind::Assign { target, .. }) => target == id,
                 Some(ExprKind::Unary { op, .. }) => matches!(
                     op,
@@ -115,7 +117,7 @@ impl Moves<'_, '_> {
         }
     }
 
-    /// `CallExpression`, `NewExpression`, `TaggedTemplateExpression`: the type arguments last.
+    /// `CallExpression`, `NewExpression`, `TaggedTemplateExpression`: the type arguments come last.
     fn call(&mut self, id: hir::ExprId) {
         let file = self.file;
         let hir = &file.hir;
@@ -127,7 +129,10 @@ impl Moves<'_, '_> {
             && let Some(call) = hir.calls.get(call.idx())
             && !call.type_args.is_empty()
         {
-            let types = hir.ids.get(call.type_args.range()).unwrap_or_default();
+            let types = hir
+                .ids
+                .get(hir.list_at(call.type_args).range())
+                .unwrap_or_default();
             let mut types = types.iter().filter_map(|&it| hir.types.get(it as usize));
             if let Some(first) = types.next() {
                 self.swap(first.pos, types.next_back().unwrap_or(first).end, end);
@@ -135,7 +140,7 @@ impl Moves<'_, '_> {
         }
     }
 
-    /// Where the decorators among `modifiers` start and end.
+    /// The start and end of the decorators among `modifiers`.
     fn decorators(&self, modifiers: hir::Span<hir::ModifierId>) -> Option<(u32, u32)> {
         let file = self.file;
         let hir = &file.hir;
@@ -148,13 +153,13 @@ impl Moves<'_, '_> {
         Some((first.0, decorators.next_back().unwrap_or(first).1))
     }
 
-    /// `visitFunction`, `visitMethodFunction`: parameter by parameter the pattern with its defaults and then the type, the
-    /// return type, the type parameters. Before all that the decorators of the parameters of a method.
+    /// `visitFunction`, `visitMethodFunction`: for each parameter the pattern with its defaults and then the type, then
+    /// the return type, then the type parameters. A method's parameter decorators come before all of that.
     fn function(&mut self, id: hir::FnId) {
         let file = self.file;
         let (hir, tree) = (&file.hir, file.scope_tree());
-        let scope = (tree.of_fn.get(id.idx())).and_then(|&it| tree.scopes.get(it as usize));
-        // Signatures and function types are visited as they are written.
+        let scope = (tree.scope_of_fn.get(id.idx())).and_then(|&it| tree.scopes.get(it as usize));
+        // Signatures and function types are visited as written.
         let Some(function) = (hir.fns.get(id.idx()))
             .filter(|_| scope.is_some_and(|it| it.kind == ScopeKind::Function))
         else {
@@ -183,9 +188,9 @@ impl Moves<'_, '_> {
                 self.swap(ty.pos, ty.end, default.end);
             }
             // The first part after the type parameters starts where they end.
-            let start = |written_at: u32| match ranks[..] {
-                [2] => end_of_type_parameters.unwrap_or(written_at),
-                _ => written_at,
+            let start = |source_pos: u32| match ranks[..] {
+                [2] => end_of_type_parameters.unwrap_or(source_pos),
+                _ => source_pos,
             };
             let modifiers = hir.modifiers_of_params.get(id.idx()).copied();
             if let Some(decorators) = modifiers.and_then(|it| self.decorators(it)) {
@@ -215,7 +220,7 @@ impl Moves<'_, '_> {
         self.add(&bounds, &ranks);
     }
 
-    /// `visitClass`: what it extends before its type parameters.
+    /// `visitClass`: what it extends comes before its type parameters.
     fn class(&mut self, id: hir::ClassId) {
         let file = self.file;
         let hir = &file.hir;
@@ -266,14 +271,14 @@ impl Moves<'_, '_> {
     fn find(&mut self) {
         let file = self.file;
         file.every_expr_of(&[ExprTag::Index], |it| self.member(it.id()));
-        // Without types and decorators that is all.
+        // Without types and decorators, that's all.
         if scopes::is_javascript_mode(file) {
             return;
         }
         file.every_expr_of(&[ExprTag::As], |it| self.assertion(it.id()));
         let calls = [ExprTag::Call, ExprTag::New, ExprTag::TaggedTemplate];
         file.every_expr_of(&calls, |it| self.call(it.id()));
-        // `VariableDeclaration`: the type after the initializer.
+        // `VariableDeclaration`: the type comes after the initializer.
         file.every_var_decl(|it| {
             if let Some(declaration) = file.hir.var_decls.get(it.id().idx())
                 && let Some(ty) = file.hir.types.get(declaration.ty.idx())
@@ -288,26 +293,27 @@ impl Moves<'_, '_> {
     }
 }
 
-/// Indices into `all`, which is in source order, in the order the references are made. `moved`: `References::moved`.
-/// `None`: nothing but `moved` changes the order.
-pub(super) fn as_made<'a>(
+/// Indices into `all`, which is in source order, sorted into the order the references are created in. `moved` is
+/// `References::moved`. `None` if that's `all`'s order: no node reorders its parts, and `moved` doesn't change the
+/// order either.
+pub(super) fn in_creation_order<'a>(
     file: &'a File<'a>,
     all: &[RawReference],
     moved: &[(u32, u32)],
 ) -> Option<Vec<u32>> {
-    // The position and the index in one number: those at one position keep their order.
+    // The position and the index are packed into one number, so references at the same position keep their order.
     let key = |visit: u32, index: u32| u64::from(visit) << 32 | u64::from(index);
-    let mut written: Vec<u64> = (all.iter().zip(0..))
+    let mut visit_keys: Vec<u64> = (all.iter().zip(0..))
         .map(|(it, index)| key(it.pos, index))
         .collect();
     for &(index, visit) in moved {
-        if let Some(it) = written.get_mut(index as usize) {
+        if let Some(it) = visit_keys.get_mut(index as usize) {
             *it = key(visit, index);
         }
     }
-    let was_in_order = written.is_sorted();
-    references::sort_what_is_nearly_in_order(&mut written);
-    let mut visits: Vec<u32> = written.iter().map(|it| (it >> 32) as u32).collect();
+    let was_in_order = visit_keys.is_sorted();
+    references::sort_nearly_sorted(&mut visit_keys);
+    let mut visits: Vec<u32> = visit_keys.iter().map(|it| (it >> 32) as u32).collect();
     let mut moves = Moves {
         file,
         visits: &visits,
@@ -317,10 +323,10 @@ pub(super) fn as_made<'a>(
     let found = moves.found;
     if found.is_empty() {
         // `moved` has more than went into `References::visiting_order`.
-        let order = || written.iter().map(|&it| it as u32).collect();
+        let order = || visit_keys.iter().map(|&it| it as u32).collect();
         return (!was_in_order).then(order);
     }
-    // What is inside first: it stays in its part of what is around it.
+    // Inner ones first: each stays within its part of the enclosing one.
     let length = |it: &Parts| match it.bounds[..] {
         [start, .., end] => end - start,
         _ => 0,
@@ -330,8 +336,8 @@ pub(super) fn as_made<'a>(
         .collect();
     inside_first.sort();
     let first_at = {
-        let written_at = visits.clone();
-        move |pos: u32| written_at.partition_point(|&it| it < pos)
+        let original_visits = visits.clone();
+        move |pos: u32| original_visits.partition_point(|&it| it < pos)
     };
     for parts in inside_first.iter().map(|&it| &found[it as u32 as usize]) {
         let [start, ends @ .., end] = &parts.bounds[..] else {
@@ -343,9 +349,9 @@ pub(super) fn as_made<'a>(
         }
     }
     let mut made: Vec<u64> = (visits.iter().zip(0..))
-        .map(|(&visit, place)| key(visit, place))
+        .map(|(&visit, key_index)| key(visit, key_index))
         .collect();
-    references::sort_what_is_nearly_in_order(&mut made);
-    let index = |place: &u64| written[*place as u32 as usize] as u32;
+    references::sort_nearly_sorted(&mut made);
+    let index = |key_index: &u64| visit_keys[*key_index as u32 as usize] as u32;
     Some(made.iter().map(index).collect())
 }

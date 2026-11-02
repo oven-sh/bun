@@ -243,6 +243,7 @@ where
             let (relative_path, depth) =
                 tree::relative_path_and_depth::<{ IteratorPathStyle::NodeModules }>(
                     this.buffers.trees.as_slice(),
+                    hoisted_deps,
                     this.buffers.dependencies.as_slice(),
                     this.buffers.string_bytes.as_slice(),
                     u32::try_from(tree_id).expect("int cast"),
@@ -381,6 +382,13 @@ where
                     }
                 }
 
+                let _ = w.end_array();
+            }
+
+            if let Some(libc) = pkg.meta.libc.single_name() {
+                w.object_field(b"libc")?;
+                w.begin_array()?;
+                w.write(libc)?;
                 let _ = w.end_array();
             }
 
@@ -631,7 +639,7 @@ pub struct WriteStreamOptions {
 }
 
 /// JSON write stream over an in-memory `Vec<u8>`, sufficient for
-/// `bun_install_js_bindings::jsParseLockfile`.
+/// `bun_install_jsc::install_binding::parse_lockfile`.
 pub struct WriteStream {
     pub(crate) out: Vec<u8>,
     opts: WriteStreamOptions,

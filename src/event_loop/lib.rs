@@ -45,6 +45,7 @@ pub use bun_io::PipeReadScratch;
 // `bun_jsc::event_loop` provides the `Jsc` arm.
 bun_dispatch::link_interface! {
     pub JsEventLoop[Jsc] {
+        // Changes when the loop runs a task, a timer, or I/O, but not when it drains microtasks.
         fn iteration_number() -> u64;
         fn file_polls() -> *mut bun_io::file_poll::Store;
         fn put_file_poll(poll: *mut bun_io::FilePoll, was_ever_registered: bool);

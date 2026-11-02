@@ -1,5 +1,5 @@
-//! The values that [`get_static_value`](super::get_static_value) computes, and the conversions and
-//! comparisons that ECMAScript defines on them.
+//! The values that [`get_static_value`](super::get_static_value) computes, and ECMAScript's conversions and comparisons
+//! on them.
 
 use super::builtins::Builtin;
 use crate::utils::text::number_to_string;
@@ -10,16 +10,16 @@ use std::cmp::Ordering;
 /// Why an expression has no static value.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) enum Stop {
-    /// Upstream's `null`: the value of this expression is not known.
+    /// Upstream's `null`: this expression's value isn't known.
     NotStatic,
-    /// Evaluating it throws, which upstream catches around the whole evaluation, or the value
-    /// cannot be computed or represented here.
+    /// Evaluating it throws, which upstream catches around the whole evaluation, or the value can't be computed or
+    /// represented here.
     Abort,
 }
 
 pub(super) type Eval<T> = Result<T, Stop>;
 
-/// The longest string that JavaScript has. Upstream computes with JavaScript, and has no value where that throws.
+/// JavaScript's maximum string length. Upstream computes with JavaScript, so it has no value where that throws.
 pub(super) const MAX_LEN: usize = crate::fix::MAX_STRING_LENGTH as usize;
 
 /// A symbol whose identity is known.
@@ -41,7 +41,7 @@ impl StaticSymbol<'_> {
     }
 }
 
-/// The name of a property.
+/// A property's name.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum PropertyKey<'a> {
     String(Cow<'a, [u8]>),
@@ -57,7 +57,7 @@ impl PropertyKey<'_> {
         }
     }
 
-    /// The index, if it is the name of an element of an array: `"0"`, `"1"`, ..
+    /// The index, if it's the name of an array element: `"0"`, `"1"`, ..
     pub(super) fn as_index(&self) -> Option<usize> {
         let digits = self.as_str()?;
         let is_canonical = matches!(digits, [b'0'] | [b'1'..=b'9', ..]) && digits.len() <= 10;
@@ -71,7 +71,7 @@ impl PropertyKey<'_> {
     }
 }
 
-/// What made an iterator.
+/// The kind of collection an iterator comes from.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum IteratorKind {
     Array,
@@ -79,42 +79,40 @@ pub enum IteratorKind {
     Set,
 }
 
-/// eslint-utils' `StaticValue["value"]`: the value of an expression that is known without running
-/// the program.
+/// eslint-utils' `StaticValue["value"]`: an expression's value that's known without running the program.
 ///
-/// `==` compares the structure, and is not JavaScript's `===`: two arrays with equal elements are
-/// equal, `NaN` is not equal to itself.
+/// `==` compares the structure and isn't JavaScript's `===`: two arrays with equal elements are equal, and `NaN` isn't
+/// equal to itself.
 #[derive(Clone, PartialEq, Debug)]
 pub enum StaticValue<'a> {
     Undefined,
     Null,
     Bool(bool),
     Number(f64),
-    /// UTF-8. Half a surrogate pair is the three bytes that its code point would have.
+    /// UTF-8. A lone surrogate is encoded as the three bytes its code point would take.
     String(Cow<'a, [u8]>),
-    /// One that does not fit has no static value.
+    /// A `bigint` that doesn't fit has no static value.
     BigInt(i128),
     Symbol(StaticSymbol<'a>),
-    /// `value instanceof RegExp`. `pattern` is `value.source`, `flags` is `value.flags`, in the
-    /// order of that property: `dgimsuvy`.
+    /// `value instanceof RegExp`. `pattern` is `value.source`, and `flags` is `value.flags`, in that property's order:
+    /// `dgimsuvy`.
     Regex {
         pattern: Cow<'a, [u8]>,
         flags: Cow<'a, [u8]>,
     },
     Array(Vec<StaticValue<'a>>),
-    /// What is missing from a sparse array: the first element of `[, 1]`. It is only ever an
-    /// element of an `Array`, and reads as `undefined`.
+    /// A missing element of a sparse array, like the first element of `[, 1]`. It only ever occurs as an element of an
+    /// `Array`, and it reads as `undefined`.
     Hole,
     /// A plain object: its own properties, in the order of `Reflect.ownKeys`.
     Object(Vec<(PropertyKey<'a>, StaticValue<'a>)>),
     Map(Vec<(StaticValue<'a>, StaticValue<'a>)>),
     Set(Vec<StaticValue<'a>>),
-    /// `array.values()`, `map.entries()`, ..: what it yields.
+    /// `array.values()`, `map.entries()`, ..: the values it yields.
     Iterator(IteratorKind, Vec<StaticValue<'a>>),
-    /// An object around a primitive value: `new String("a")`, `new Number(1)`, `Object(1n)`.
+    /// A wrapper object around a primitive value: `new String("a")`, `new Number(1)`, `Object(1n)`.
     Wrapper(Box<StaticValue<'a>>),
-    /// A function or an object of the standard library: `Math`, `Math.max`, `String`,
-    /// `"".trim`.
+    /// A standard library function or object: `Math`, `Math.max`, `String`, `"".trim`.
     Builtin(Builtin),
 }
 
@@ -195,7 +193,7 @@ impl<'a> StaticValue<'a> {
         }
     }
 
-    /// Whether it is an object or a function, as opposed to a primitive value.
+    /// True if it's an object or a function, not a primitive value.
     pub fn is_object(&self) -> bool {
         matches!(
             self,
@@ -228,27 +226,26 @@ impl<'a> StaticValue<'a> {
         }
     }
 
-    /// `a === b`. `None` if that cannot be told: two objects that are written the same.
+    /// `a === b`. `None` if that can't be determined, as for two objects with the same structure.
     #[inline]
     pub fn js_strict_equals(&self, other: &StaticValue<'a>) -> Option<bool> {
         self.strict_equals(other).ok()
     }
 
-    /// `a == b`. `None` if a conversion throws, or if it cannot be told.
+    /// `a == b`. `None` if a conversion throws, or if it can't be determined.
     #[inline]
     pub fn js_loose_equals(&self, other: &StaticValue<'a>) -> Option<bool> {
         self.loose_equals(other).ok()
     }
 
-    /// How `a` compares with `b` for `<`, `<=`, `>` and `>=`. `Some(None)` if one is `NaN`, so that
-    /// all four are false. `None` if a conversion throws.
+    /// How `a` compares with `b` for `<`, `<=`, `>` and `>=`. `Some(None)` if one is `NaN`, which makes all four false.
+    /// `None` if a conversion throws.
     #[inline]
     pub fn js_compare(&self, other: &StaticValue<'a>) -> Option<Option<Ordering>> {
         self.compare(other).ok()
     }
 
-    /// `ToPrimitive`. The objects here have no `valueOf` that returns a primitive value, so the
-    /// hint makes no difference.
+    /// `ToPrimitive`. The objects here have no `valueOf` that returns a primitive value, so the hint doesn't matter.
     pub(super) fn to_primitive(&self) -> Eval<StaticValue<'a>> {
         let text: &[u8] = match self {
             StaticValue::Hole => return Ok(StaticValue::Undefined),
@@ -279,7 +276,7 @@ impl<'a> StaticValue<'a> {
             StaticValue::Iterator(IteratorKind::Array, _) => b"[object Array Iterator]",
             StaticValue::Iterator(IteratorKind::Map, _) => b"[object Map Iterator]",
             StaticValue::Iterator(IteratorKind::Set, _) => b"[object Set Iterator]",
-            // As V8 prints it.
+            // The way V8 prints it.
             StaticValue::Builtin(builtin) if builtin.is_callable() => {
                 let name = builtin.name().as_bytes();
                 let name =
@@ -353,9 +350,9 @@ impl<'a> StaticValue<'a> {
             (BigInt(a), BigInt(b)) => a == b,
             (Symbol(a), Symbol(b)) => a == b,
             (Builtin(a), Builtin(b)) => a == b,
-            // Both may be the value of the same literal, which is one object.
+            // Both may come from the same literal, which is one object.
             (Regex { .. }, Regex { .. }) if self == other => return Err(Stop::Abort),
-            // Any other object is made anew each time its expression is evaluated.
+            // Any other object is created again each time its expression is evaluated.
             _ => false,
         })
     }
@@ -399,8 +396,8 @@ impl<'a> StaticValue<'a> {
         }
     }
 
-    /// `IsLessThan`, both ways at once: how `a` compares with `b`. `None` if one is `NaN`, so that
-    /// `<`, `<=`, `>` and `>=` are all false.
+    /// `IsLessThan` in both directions at once: how `a` compares with `b`. `None` if one is `NaN`, which makes `<`,
+    /// `<=`, `>` and `>=` all false.
     pub(super) fn compare(&self, other: &StaticValue<'a>) -> Eval<Option<Ordering>> {
         use StaticValue::*;
         Ok(match (self.to_primitive()?, other.to_primitive()?) {
@@ -420,7 +417,7 @@ fn compare_bigint_with_number(a: i128, b: f64) -> Option<Ordering> {
     if b.is_nan() {
         return None;
     }
-    // Every `i128` is between these.
+    // Every `i128` is between these bounds.
     if b >= 1.8e38 {
         return Some(Ordering::Less);
     }
@@ -435,8 +432,8 @@ fn compare_bigint_with_number(a: i128, b: f64) -> Option<Ordering> {
     }))
 }
 
-/// The value of the digits of a `bigint` literal, or of what `BigInt(text)` takes, without a sign.
-/// `Ok(None)` if they are not digits.
+/// The value of the digits of a `bigint` literal, or of the argument of `BigInt(text)`, without a sign. `Ok(None)` if
+/// they aren't digits.
 pub(super) fn parse_bigint_digits(text: &[u8]) -> Eval<Option<i128>> {
     let (radix, digits) = match text {
         [b'0', b'x' | b'X', digits @ ..] => (16, digits),
@@ -473,7 +470,7 @@ pub(super) fn string_to_bigint(text: &[u8]) -> Eval<Option<i128>> {
     }
 }
 
-/// `0x..`, `0o..`, `0b..`, which take no sign.
+/// `0x..`, `0o..`, `0b..`, which can't have a sign.
 fn is_prefixed(digits: &[u8]) -> bool {
     matches!(digits, [b'0', b'x' | b'X' | b'o' | b'O' | b'b' | b'B', ..])
 }

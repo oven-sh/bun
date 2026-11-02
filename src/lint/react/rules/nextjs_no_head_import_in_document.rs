@@ -6,7 +6,7 @@ use bun_lint::rule::Plugin;
 /// Prevents the usage of `next/head` inside a Next.js document.
 pub struct NoHeadImportInDocument;
 
-const NO_HEAD_IMPORT_IN_DOCUMENT: Message = Message::new("", "Prevent usage of `next/head` in `pages/_document.js`.");
+const NO_HEAD_IMPORT_IN_DOCUMENT: &Message = &Message::new("", "Prevent usage of `next/head` in `pages/_document.js`.");
 
 /// `_document.*`, `_document*/index*`
 fn is_document(file_path: &[u8]) -> bool {

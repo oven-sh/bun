@@ -1,6 +1,6 @@
 //! `write!`, `format_args!` and `best_fitting!`.
 
-/// Several things to write, as one. The arguments are evaluated at once and borrowed.
+/// Combines several things to write into one. The arguments are evaluated immediately and borrowed.
 ///
 /// ```ignore
 /// group(&format_args!("(", soft_block_indent(&content), ")"))
@@ -29,8 +29,8 @@ macro_rules! write {
 }
 pub(crate) use write;
 
-/// Several ways to write the same thing, from the flattest to the most expanded. The printer takes
-/// the first that fits on the line up to its first line break, or else the last.
+/// Several ways to write the same thing, from the flattest to the most expanded. The printer picks the first one that
+/// fits on the line up to its first line break, or else the last.
 ///
 /// Every variant is formatted, so what they have in common should be `memoized()`. Comments can
 /// only be written once: see `src/format/CLAUDE.md`.

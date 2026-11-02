@@ -1,4 +1,4 @@
-//! Prettier's `language-html/embed/vue-*.js`: the attributes of Vue.
+//! Formats Vue attributes. A port of Prettier's `language-html/embed/vue-*.js`.
 
 use super::ast::{Attribute, Id, Kind};
 use super::js::{self, Binding, Hug, Syntax};
@@ -8,7 +8,7 @@ use crate::text;
 
 /// `v-for="left operator right"`
 struct VFor<'v> {
-    /// The alias and the iterators.
+    /// The alias, then `iterator1` and `iterator2`. A missing one is empty.
     left: [&'v [u8]; 3],
     operator: &'v [u8],
     right: &'v [u8],
@@ -20,20 +20,20 @@ fn parse_vue_v_for_directive(value: &[u8]) -> Option<VFor<'_>> {
     let mut at = 0;
     let (alias, operator, right) = loop {
         let rest = value.get(at..).filter(|rest| !rest.is_empty())?;
-        let blank_len = text::leading_white_space_len(rest);
-        if let [b'i', b'n', right @ ..] | [b'o', b'f', right @ ..] = &rest[blank_len..]
-            && blank_len > 0
+        let whitespace_len = text::leading_white_space_len(rest);
+        if let [b'i', b'n', right @ ..] | [b'o', b'f', right @ ..] = &rest[whitespace_len..]
+            && whitespace_len > 0
             && text::starts_with_white_space(right)
         {
-            let operator = &rest[blank_len..blank_len + 2];
+            let operator = &rest[whitespace_len..whitespace_len + 2];
             break (
                 &value[..at],
                 operator,
                 bun_core::strings::trim_js_whitespace(right),
             );
         }
-        // From anywhere else in the white space, the same follows it.
-        at += blank_len.max(1);
+        // Skip the whole whitespace run, since a match can't start later in it either.
+        at += whitespace_len.max(1);
     };
     if right.is_empty() {
         return None;
@@ -42,7 +42,7 @@ fn parse_vue_v_for_directive(value: &[u8]) -> Option<VFor<'_>> {
     let alias = bun_core::strings::trim_js_whitespace(alias);
     let alias = alias.strip_prefix(b"(").unwrap_or(alias);
     let alias = alias.strip_suffix(b")").unwrap_or(alias);
-    // `/,([^,\]}]*)(?:,([^,\]}]*))?$/`: the first of the last two commas that no bracket follows.
+    // `/,([^,\]}]*)(?:,([^,\]}]*))?$/`: splits at the last one or two commas that have no `]` or `}` after them.
     let mut commas = alias
         .iter()
         .enumerate()
@@ -92,7 +92,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         })
     }
 
-    /// oxfmt's `hasTsxScriptBlock`: whether a `<script>` anywhere in the file says `lang="tsx"`.
+    /// oxfmt's `hasTsxScriptBlock`. True if any `<script>` in the file has `lang="tsx"`.
     pub(crate) fn has_tsx_script(&mut self) -> bool {
         let tree = self.tree;
         *self.has_tsx_script.get_or_insert_with(|| {
@@ -140,8 +140,8 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
                 .foreign(|f| js::write_expression(f, right, is_typescript, in_html, Hug::Always))
     }
 
-    /// The printers of `embed/vue-attributes.js`. `value`: without the entities for quotes. Returns whether the
-    /// attribute has been written.
+    /// The printers in `embed/vue-attributes.js`. `value` has its quote entities already decoded. Returns true if it
+    /// printed the attribute.
     pub(crate) fn embed_vue_attribute(
         &mut self,
         element: Id,

@@ -1,7 +1,7 @@
 //! Every occurrence of a name that refers to something: ESLint's `Reference`s.
 //!
-//! What is derived here: whether each is read or written, the scope it is in, what it resolves to,
-//! and all of it grouped by variable and by scope.
+//! This derives whether each one is read or written, the scope it's in and what it resolves to, and
+//! groups all of them by variable and by scope.
 
 use super::order;
 use super::scopes::{self, Cursor, NONE, ScopeTree, Step};
@@ -14,14 +14,14 @@ use bun_sema::hir::{self, ExprId, ExprKind, PatKind, PropKind, StmtKind, TypeNod
 use smallvec::SmallVec;
 use std::cell::OnceCell;
 
-/// Where a reference is written.
+/// Where a reference appears in the syntax.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum ReferenceSite {
-    /// An identifier that is an expression.
+    /// An identifier expression.
     Expr(ExprId),
     /// The name of a declaration that gives it a value.
     Pat(hir::PatId),
-    /// The first name of the entity name of a type reference.
+    /// The first name in a type reference's entity name.
     TypeName(hir::TypeNodeId),
     /// The `x` of `x is T`.
     Predicate(hir::TypeNodeId),
@@ -31,10 +31,9 @@ pub(crate) enum ReferenceSite {
     ExportSpec(hir::ExportSpecId),
     /// The `N` of `export as namespace N`.
     ExportAsNamespace(hir::StmtId),
-    /// The tag `A-b`, or a part of the tag `a:b`, which the HIR stores as a string. The tag `this`.
+    /// The tag `A-b`, or part of the tag `a:b`, which the HIR stores as a string. Also the tag `this`.
     JsxName(ExprId),
-    /// The name of the first declaration of the variable at this index, for the use that JSX makes
-    /// of `React`.
+    /// The name in the first declaration of the variable at this index, for JSX's implicit use of `React`.
     Declaration(u32),
 }
 
@@ -55,48 +54,49 @@ pub(crate) struct RawReference {
 pub(crate) struct References {
     /// In source order.
     pub(crate) all: Vec<RawReference>,
-    /// Indices into `all`, with the names of each destructuring pattern before what else is in it. Empty if that is the source
-    /// order.
+    /// Indices into `all`, with each destructuring pattern's names before everything else in it.
+    /// Empty if that's the same as source order.
     visiting_order: Vec<u32>,
-    /// Those of `all` that are not visited where they are: the index, and the position that it is visited at.
+    /// The references in `all` that aren't visited at their source position: the index, and the
+    /// position it's visited at.
     moved: Vec<(u32, u32)>,
-    /// Indices into `all` in the order the scope manager makes the references. `None`: that of `visiting_order`. Computed on
-    /// demand.
-    as_made: OnceCell<Option<Vec<u32>>>,
-    /// Indices into `all`, variable by variable, in the order of `visiting_order`. After the last variable: what resolves to
-    /// nothing.
+    /// Indices into `all` in the order the scope manager creates the references. `None` means the
+    /// same as `visiting_order`. Computed on demand.
+    in_creation_order: OnceCell<Option<Vec<u32>>>,
+    /// Indices into `all`, variable by variable, in `visiting_order` order. The unresolved
+    /// references come after the last variable.
     by_variable: Vec<u32>,
-    /// For each variable, where its references start in `by_variable`. Two more than there are
-    /// variables.
+    /// For each variable, the start of its references in `by_variable`. It has two more entries
+    /// than there are variables.
     variable_starts: Vec<u32>,
     /// For each variable: `HAS_READ`, `HAS_WRITE`, `HAS_MODIFYING_WRITE`.
     marks: Vec<u32>,
-    /// For each expression that is an identifier, the index in `Variables::list` of the value that the
-    /// name stands for where it is written.
-    of_expr: Vec<u32>,
-    /// Indices into `all`, scope by scope, in the order of `as_made`, and where those of each scope start.
-    /// Computed on demand.
+    /// For each identifier expression, the index in `Variables::list` of the value that the name
+    /// resolves to at that position.
+    expr_variables: Vec<u32>,
+    /// Indices into `all`, scope by scope, in `in_creation_order` order, and the start of each scope's
+    /// references. Computed on demand.
     by_scope: OnceCell<(Vec<u32>, Vec<u32>)>,
-    /// The same in the order of `visiting_order`, as long as nothing has asked for `by_scope`.
+    /// The same in `visiting_order` order, used as long as nothing has requested `by_scope`.
     by_scope_in_some_order: OnceCell<(Vec<u32>, Vec<u32>)>,
     scope_count: usize,
-    /// What resolves to nothing, by name and then in that order. Computed on demand.
+    /// The unresolved references, by name and then in that order. Computed on demand.
     unresolved_by_name: OnceCell<Vec<u32>>,
 }
 
 const READ: ReferenceFlags = ReferenceFlags::READ.union(ReferenceFlags::VALUE);
 const WRITE: ReferenceFlags = ReferenceFlags::WRITE.union(ReferenceFlags::VALUE);
 
-/// How an identifier that is an expression is used.
+/// How an identifier expression is used.
 enum Access {
     Read,
     /// `a += value`, `a++`
     ReadWrite(ExprId),
-    /// The values that are assigned to it are listed, in the order of ESLint's references.
+    /// The assigned values are written to `access`'s `values` argument, in the order of ESLint's references.
     Write {
-        /// Where the array or the object starts that it is destructured from. Where it is itself, without one.
+        /// The start of the array or object it's destructured from, or its own start if there is none.
         start: u32,
-        /// `PatternVisitor` comes to it.
+        /// True if `PatternVisitor` visits it.
         is_in_pattern: bool,
     },
 }
@@ -109,8 +109,9 @@ pub(crate) const HAS_WRITE: u32 = 1 << 30;
 pub(crate) const HAS_MODIFYING_WRITE: u32 = 1 << 31;
 const COUNT: u32 = HAS_READ - 1;
 
-/// By where they are. Those at the same place keep their order. What is sorted is the position and the place in the list of
-/// each, in one number: the sort of such numbers is compiled for other lists too.
+/// Sorts by position. References at the same position keep their order. The sort runs on numbers
+/// that pack each one's position and list index, because that `u64` sort is already compiled for
+/// other lists.
 #[inline(never)]
 fn sort_by_pos(found: &mut [RawReference]) {
     if found.is_sorted_by_key(|it| it.pos) {
@@ -125,9 +126,9 @@ fn sort_by_pos(found: &mut [RawReference]) {
     found.copy_from_slice(&sorted);
 }
 
-/// Sorts numbers of which each is near its place: it is moved there past the few that are greater. Where that turns out to be
-/// many, the rest is left to the standard library.
-pub(super) fn sort_what_is_nearly_in_order(numbers: &mut [u64]) {
+/// Sorts numbers that are each close to their final position, with an insertion sort. If that turns
+/// out to take many moves, it falls back to the standard library's sort.
+pub(super) fn sort_nearly_sorted(numbers: &mut [u64]) {
     let mut moves = 0;
     for at in 1..numbers.len() {
         let (number, mut to) = (numbers[at], at);
@@ -147,22 +148,22 @@ pub(super) fn sort_what_is_nearly_in_order(numbers: &mut [u64]) {
 struct Collector<'f, 'a> {
     file: &'f File<'a>,
     is_javascript: bool,
-    /// All but the identifiers that are expressions and `type_names`.
+    /// Everything except identifier expressions and `type_names`.
     found: Vec<RawReference>,
-    /// The type references: where the first name is, then the `TypeNodeId`.
+    /// The type references: the position of the first name, then the `TypeNodeId`.
     type_names: Vec<u64>,
 }
 
-/// What each name stands for at a position that goes through the file.
+/// Tracks what each name resolves to at a position that advances through the file.
 struct Visible<'t> {
     tree: &'t ScopeTree,
     variables: &'t Variables,
-    /// For each `Variable::slot`: the variable of the innermost scope around the position that declares
-    /// the name.
+    /// For each `Variable::slot`: the variable in the innermost scope enclosing the position that
+    /// declares the name.
     innermost: Vec<u32>,
-    /// For each variable of a scope around the position: what `innermost` had before.
+    /// For each variable of a scope enclosing the position: the previous value of `innermost`.
     hidden: Vec<u32>,
-    /// For each scope: the position is in a part of it that is evaluated in the scope around it.
+    /// For each scope: true if the position is in a part of it that's evaluated in the enclosing scope.
     is_suspended: Vec<bool>,
     suspended: u32,
 }
@@ -174,14 +175,14 @@ impl Visible<'_> {
             // Half of the scopes declare nothing.
             Step::Enter(scope) | Step::Leave(scope)
                 if self.variables.range_of_scope(scope).is_empty() => {}
-            _ => self.take_what_changes_something(step),
+            _ => self.take_effective_step(step),
         }
     }
 
     #[inline(never)]
-    fn take_what_changes_something(&mut self, step: Step) {
+    fn take_effective_step(&mut self, step: Step) {
         match step {
-            // `WithScope#__close` leaves every reference to the scope around it.
+            // `WithScope#__close` passes every reference on to the enclosing scope.
             Step::Enter(scope) | Step::Leave(scope)
                 if self
                     .tree
@@ -218,12 +219,12 @@ impl Visible<'_> {
         }
     }
 
-    /// `Variables::resolve` for a reference at `pos`, which is the position.
+    /// `Variables::resolve` for a reference at `pos`, which must be the current position.
     #[inline(always)]
-    fn resolve(&self, name: Atom, pos: u32, wants: u8) -> u32 {
+    fn resolve(&self, name: Atom, pos: u32, wanted_flags: u8) -> u32 {
         let mut index = self.innermost[self.variables.slot_of(name)];
         while let Some(it) = self.variables.list.get(index as usize) {
-            if it.flags & wants != 0
+            if it.flags & wanted_flags != 0
                 && !(pos < it.body_start
                     && (it.first_pos >= it.body_start || Variables::is_implicit(it)))
                 && (self.suspended == 0 || !self.is_suspended[it.scope as usize])
@@ -236,30 +237,30 @@ impl Visible<'_> {
     }
 }
 
-/// Takes the references in source order, and finds the scope that each is in and what it resolves
-/// to.
+/// Takes the references in source order and finds each one's scope and what it resolves to.
 struct Resolver<'t> {
     variables: &'t Variables,
     visible: Visible<'t>,
-    /// Ranges of the text in which nothing is a reference.
+    /// Text ranges in which nothing is a reference.
     unvisited: &'t [(u32, u32)],
     cursor: Cursor<'t>,
     all: Vec<RawReference>,
-    /// `References::of_expr`
-    of_expr: Vec<u32>,
-    /// How many resolve to each variable, at the index after that of the variable. The last: to
-    /// nothing. In the highest bits: `HAS_READ`, `HAS_WRITE`, `HAS_MODIFYING_WRITE`.
+    /// `References::expr_variables`
+    expr_variables: Vec<u32>,
+    /// The number of references that resolve to each variable, at the variable's index plus one.
+    /// The last entry counts the unresolved ones. The highest bits are `HAS_READ`, `HAS_WRITE`,
+    /// `HAS_MODIFYING_WRITE`.
     counts: Vec<u32>,
-    /// There are no `unvisited`.
+    /// True if `unvisited` is empty.
     is_plain: bool,
-    /// Those of `all` that are not visited where they are: the index, and the position that it is
-    /// visited at.
+    /// The references in `all` that aren't visited at their source position: the index, and the
+    /// position it's visited at.
     moved: Vec<(u32, u32)>,
-    /// The last position among `moved`.
+    /// The highest position in `moved`.
     last_moved_to: u32,
-    /// So far the references are visited in the order of `all`.
+    /// True if the references so far are visited in `all`'s order.
     is_visiting_order: bool,
-    /// The same as `moved`, for what only `References::as_made` moves.
+    /// Like `moved`, for the ones that only `References::in_creation_order` moves.
     moved_on_demand: Vec<(u32, u32)>,
 }
 
@@ -287,7 +288,7 @@ impl<'t> Resolver<'t> {
             },
             cursor: tree.cursor(),
             all: Vec::with_capacity(capacity),
-            of_expr: vec![NONE; file.hir.exprs.len()],
+            expr_variables: vec![NONE; file.hir.exprs.len()],
             counts: vec![0; variables.list.len() + 2],
             moved: Vec::new(),
             last_moved_to: 0,
@@ -297,22 +298,22 @@ impl<'t> Resolver<'t> {
         }
     }
 
-    /// The scope that what is written at `pos` belongs to. `pos` is not less than in the call before.
+    /// The scope that the text at `pos` belongs to. `pos` must not be lower than in the previous call.
     #[inline(always)]
     fn go_to(&mut self, pos: u32) -> u32 {
         let visible = &mut self.visible;
         self.cursor.seek_by_steps(pos, |step| visible.take(step))
     }
 
-    /// For an identifier that is an expression and no reference.
+    /// For an identifier expression that isn't a reference.
     fn add_name(&mut self, id: ExprId, pos: u32, name: Atom) {
         self.go_to(pos);
-        if let Some(slot) = self.of_expr.get_mut(id.idx()) {
+        if let Some(slot) = self.expr_variables.get_mut(id.idx()) {
             *slot = self.visible.resolve(name, pos, VALUE);
         }
     }
 
-    /// `add` for an identifier that is an expression and is read.
+    /// `add` for an identifier expression that's read.
     #[inline]
     fn add_read(&mut self, id: ExprId, pos: u32, name: Atom) {
         if self.is_plain {
@@ -329,7 +330,7 @@ impl<'t> Resolver<'t> {
         });
     }
 
-    /// The same where there is nothing `unvisited`.
+    /// Same, if `unvisited` is empty.
     #[inline(always)]
     fn add_simple_read(&mut self, id: ExprId, pos: u32, name: Atom) {
         if pos < self.last_moved_to {
@@ -339,7 +340,7 @@ impl<'t> Resolver<'t> {
         let variable = self.visible.resolve(name, pos, VALUE);
         let count = &mut self.counts[(variable as usize).min(self.variables.list.len()) + 1];
         *count = (*count + 1) | HAS_READ;
-        if let Some(slot) = self.of_expr.get_mut(id.idx()) {
+        if let Some(slot) = self.expr_variables.get_mut(id.idx()) {
             *slot = variable;
         }
         self.all.push(RawReference {
@@ -390,7 +391,7 @@ impl<'t> Resolver<'t> {
         *count = (*count + 1) | marks;
     }
 
-    /// `it.from`: see `Collector::push_write`.
+    /// For `it.from`, see `Collector::push_write`.
     #[inline(never)]
     fn add(&mut self, mut it: RawReference) {
         if !self.unvisited.is_empty()
@@ -416,21 +417,21 @@ impl<'t> Resolver<'t> {
             self.last_moved_to = self.last_moved_to.max(it.from);
         }
         it.from = self.go_to(it.pos);
-        let wants = u8::from(it.flags.contains(ReferenceFlags::VALUE)) * VALUE
+        let wanted_flags = u8::from(it.flags.contains(ReferenceFlags::VALUE)) * VALUE
             + u8::from(it.flags.contains(ReferenceFlags::TYPE)) * TYPE;
         it.variable = match it.site {
             ReferenceSite::Declaration(index) => {
                 it.from = self.variables.list[index as usize].scope;
                 self.variables
-                    .resolve(self.visible.tree, it.from, it.name, it.pos, wants)
+                    .resolve(self.visible.tree, it.from, it.name, it.pos, wanted_flags)
                     .unwrap_or(NONE)
             }
-            _ => self.visible.resolve(it.name, it.pos, wants),
+            _ => self.visible.resolve(it.name, it.pos, wanted_flags),
         };
         if let ReferenceSite::Expr(e) = it.site
-            && let Some(slot) = self.of_expr.get_mut(e.idx())
+            && let Some(slot) = self.expr_variables.get_mut(e.idx())
         {
-            *slot = if wants == VALUE {
+            *slot = if wanted_flags == VALUE {
                 it.variable
             } else {
                 self.visible.resolve(it.name, it.pos, VALUE)
@@ -441,19 +442,19 @@ impl<'t> Resolver<'t> {
     }
 }
 
-/// What `Collector::identifier` keeps from one identifier to the next.
+/// The state that `Collector::identifier` carries from one identifier to the next.
 struct Merge<'t> {
     into: Resolver<'t>,
-    /// How many of `Collector::found` and of `Collector::type_names` have been passed on.
+    /// The number of entries in `Collector::found` and `Collector::type_names` passed on so far.
     passed: usize,
     passed_type_names: usize,
-    /// Where the next of them is.
+    /// The position of the next one.
     next_found: u32,
-    /// Where the last identifier is.
+    /// The position of the last identifier.
     last: u32,
-    /// Up to here from `last` there is no JSDoc comment of a JavaScript file.
+    /// There's no JSDoc comment of a JavaScript file between `last` and this position.
     next_jsdoc: u32,
-    /// Up to this expression from the last identifier none is the operand of a `typeof` in a type.
+    /// No expression between the last identifier and this one is the operand of a `typeof` in a type.
     next_operand: u32,
     values: SmallVec<[ExprId; 4]>,
 }
@@ -470,9 +471,9 @@ impl<'f> Collector<'f, '_> {
         self.push_write(site, (pos, pos), name, flags, write);
     }
 
-    /// `Referencer.visitPattern` makes the references of all the names of a pattern before it
-    /// visits the defaults and the computed keys in it. `at`: where the name is, and the position
-    /// that it is visited at. That is kept in `from` until the references are in order.
+    /// `Referencer.visitPattern` creates the references for all of a pattern's names before it
+    /// visits the defaults and computed keys in it. `at` is the name's position and the position
+    /// it's visited at. The latter is stored in `from` until the references are sorted.
     fn push_write(
         &mut self,
         site: ReferenceSite,
@@ -509,7 +510,7 @@ impl<'f> Collector<'f, '_> {
         }
     }
 
-    /// `/** @type {T} */ (e)` in JavaScript is `e` in parentheses to ESLint.
+    /// To ESLint, `/** @type {T} */ (e)` in JavaScript is just `e` in parentheses.
     fn without_casts(&self, mut e: ExprId) -> ExprId {
         while self.file.is_javascript()
             && let Some(ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. }) =
@@ -520,10 +521,10 @@ impl<'f> Collector<'f, '_> {
         e
     }
 
-    /// The right side, if the expression statement `s` is the left side of a `for`-`in` or a
+    /// The right side, if the expression statement `s` is the left side of a `for`-`in` or
     /// `for`-`of`.
     fn iterated_by(&self, s: hir::StmtId) -> Option<ExprId> {
-        let Some(&Parent::Stmt(owner)) = self.file.bound.stmt_parent.get(s.idx()) else {
+        let Parent::Stmt(owner) = self.file.bound.parent_of_stmt(s) else {
             return None;
         };
         match self.file.hir.stmts.get(owner.idx())?.kind {
@@ -542,31 +543,31 @@ impl<'f> Collector<'f, '_> {
         let (hir, bound) = (&self.file.hir, &self.file.bound);
         values.clear();
         let mut at = e;
-        // `a!`, `a as T`, `<T>a` and `a satisfies T` since the last part of a pattern.
+        // The number of `a!`, `a as T`, `<T>a` and `a satisfies T` wrappers since the last part of a pattern.
         let (mut wrappers, mut has_satisfies) = (0, false);
-        // A bit for each of `values`: the assignment can be one of its own. Any can be a default
-        // in a pattern.
+        // One bit per entry in `values`: set if it can be a standalone assignment. Any of them can
+        // be a default in a pattern.
         let mut is_assignment = 0u32;
-        // What each of `values` is assigned to.
+        // The target of each entry in `values`.
         let mut targets: SmallVec<[ExprId; 4]> = SmallVec::new();
         let mut iterated = None;
         loop {
-            match bound.expr_parent.get(at.idx()) {
-                Some(&Parent::Expr(parent)) => {
+            match bound.parent_of_expr(at) {
+                Parent::Expr(parent) => {
                     match hir.exprs.get(parent.idx()).map(|it| it.kind) {
                         Some(ExprKind::Assign {
                             op: None,
                             target,
                             value,
                         }) if target == at => {
-                            // typescript-estree makes no pattern of a literal in parentheses.
+                            // typescript-estree doesn't turn a parenthesized literal into a pattern.
                             let is_literal_in_parentheses = !self.is_javascript
                                 && matches!(
                                     hir.exprs.get(at.idx()).map(|it| it.kind),
                                     Some(ExprKind::Array(_) | ExprKind::Object(_))
                                 )
                                 && hir.parens.binary_search_by_key(&at.0, |it| it.0.0).is_ok();
-                            // `visitExpressionTarget` looks through one.
+                            // `visitExpressionTarget` looks through one wrapper.
                             if wrappers <= 1
                                 && !has_satisfies
                                 && !is_literal_in_parentheses
@@ -608,7 +609,7 @@ impl<'f> Collector<'f, '_> {
                         _ => break,
                     }
                 }
-                Some(&Parent::Prop(p)) => {
+                Parent::Prop(p) => {
                     let owner = bound
                         .prop_owner
                         .get(p.idx())
@@ -626,7 +627,7 @@ impl<'f> Collector<'f, '_> {
                     }
                     (at, wrappers, has_satisfies) = (owner, 0, false);
                 }
-                Some(&Parent::Stmt(s)) => {
+                Parent::Stmt(s) => {
                     iterated = self.iterated_by(s);
                     break;
                 }
@@ -652,7 +653,7 @@ impl<'f> Collector<'f, '_> {
             .or_else(|| hir.exprs.get(e.idx()))
             .map_or(0, |it| it.pos);
         let is_in_pattern = literal.is_some() || iterated.is_some();
-        // The values so far are innermost first. All but the outermost are defaults, which ESLint
+        // So far the values are innermost first. All but the outermost are defaults, which ESLint
         // lists outermost first, before the value itself.
         match (iterated, values.len()) {
             (Some(iterated), _) => {
@@ -670,7 +671,7 @@ impl<'f> Collector<'f, '_> {
         }
     }
 
-    /// Whether `at` is `e`, or `e` in what `visitExpressionTarget` looks through.
+    /// True if `at` is `e`, or `e` inside a wrapper that `visitExpressionTarget` looks through.
     fn is_identifier(&self, at: ExprId, e: ExprId) -> bool {
         at == e
             || matches!(
@@ -679,12 +680,11 @@ impl<'f> Collector<'f, '_> {
             )
     }
 
-    /// The closing tags, which `eslint-scope` does not visit. Before ESLint 10 it visits no tags.
-    /// Sorted.
+    /// The closing tags, which `eslint-scope` doesn't visit. Before ESLint 10 it doesn't visit any tags. Sorted.
     fn unvisited_tags(&self) -> Vec<ExprId> {
         let hir = &self.file.hir;
         let mut skipped: Vec<ExprId> = Vec::new();
-        if self.is_javascript && !self.file.has_scopes_of_oxc() {
+        if self.is_javascript && !self.file.has_oxc_scopes() {
             let skips_opening_tags = self.file.language().eslint_major < 10;
             for jsx in hir.jsx {
                 let tags = [Some(jsx.close_tag), skips_opening_tags.then_some(jsx.tag)];
@@ -708,10 +708,7 @@ impl<'f> Collector<'f, '_> {
         for &id in file.bound.type_query_operands {
             if let Some(e) = file.hir.exprs.get(id.idx())
                 && let ExprKind::Ident(name) = e.kind
-                && !matches!(
-                    file.bound.expr_parent.get(id.idx()),
-                    None | Some(Parent::None)
-                )
+                && !matches!(file.bound.parent_of_expr(id), Parent::None)
                 && name != known::empty
                 && !(file.has_synthetic_nodes() && file.is_in_jsdoc(e.pos))
             {
@@ -720,7 +717,7 @@ impl<'f> Collector<'f, '_> {
         }
     }
 
-    /// Where the first of `found` and `type_names` is that has not been passed on.
+    /// The positions of the first entries in `found` and `type_names` that haven't been passed on.
     #[inline]
     fn next_found(&self, merge: &Merge) -> (u32, u32) {
         let (found, type_name) = (
@@ -733,7 +730,7 @@ impl<'f> Collector<'f, '_> {
         )
     }
 
-    /// Passes on those of `found` and of `type_names` that are before `pos`, in the order of the source.
+    /// Passes on the entries of `found` and `type_names` before `pos`, in source order.
     #[inline(never)]
     fn pass_on_before(&self, pos: u32, merge: &mut Merge) {
         let hir = &self.file.hir;
@@ -761,65 +758,64 @@ impl<'f> Collector<'f, '_> {
         }
     }
 
-    /// Whether what is around an identifier is enough to tell that it is a reference that reads a
+    /// True if an identifier's surroundings are enough to tell that it's a reference that reads a
     /// value.
     #[inline(never)]
     fn is_only_read(&self, id: ExprId) -> bool {
         let (hir, bound) = (&self.file.hir, &self.file.bound);
-        match bound.expr_parent.get(id.idx()) {
-            Some(&Parent::Expr(parent)) => match hir.exprs.get(parent.idx()).map(|it| it.kind) {
+        match bound.parent_of_expr(id) {
+            Parent::Expr(parent) => match hir.exprs.get(parent.idx()).map(|it| it.kind) {
                 None | Some(ExprKind::Jsx(_)) => false,
                 Some(ExprKind::Assign { target, .. }) => target != id,
                 Some(ExprKind::Unary { op, .. }) => !matches!(
                     op,
                     UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec
                 ),
-                Some(kind) if can_be_part_of_target(kind) => {
-                    match bound.expr_parent.get(parent.idx()) {
-                        Some(&Parent::Expr(around)) => hir
-                            .exprs
-                            .get(around.idx())
-                            .is_some_and(|it| !can_be_part_of_target(it.kind)),
-                        None | Some(Parent::None | Parent::Prop(_) | Parent::Stmt(_)) => false,
-                        Some(_) => true,
-                    }
-                }
+                Some(kind) if can_be_part_of_target(kind) => match bound.parent_of_expr(parent) {
+                    Parent::Expr(grandparent) => hir
+                        .exprs
+                        .get(grandparent.idx())
+                        .is_some_and(|it| !can_be_part_of_target(it.kind)),
+                    Parent::None | Parent::Prop(_) | Parent::Stmt(_) => false,
+                    _ => true,
+                },
                 Some(_) => true,
             },
-            Some(&Parent::Stmt(s)) => !matches!(
+            Parent::Stmt(s) => !matches!(
                 hir.stmts.get(s.idx()).map(|it| it.kind),
                 None | Some(
                     StmtKind::ExportDefault(_) | StmtKind::ExportAssign(_) | StmtKind::Expr(_)
                 )
             ),
-            // The value of a property of an object literal that is an argument, is returned, or
-            // is what a variable is initialized with. The value of an attribute.
-            Some(&Parent::Prop(p)) => {
+            // The value of a property in an object literal that's an argument, a return value or a
+            // variable's initializer. Or an attribute's value.
+            Parent::Prop(p) => {
                 let owner = bound
                     .prop_owner
                     .get(p.idx())
                     .copied()
                     .unwrap_or(ExprId::NONE);
-                match bound.expr_parent.get(owner.idx()) {
-                    Some(&Parent::Expr(around)) => matches!(
-                        hir.exprs.get(around.idx()).map(|it| it.kind),
+                match bound.parent_of_expr(owner) {
+                    Parent::Expr(owner_parent) => matches!(
+                        hir.exprs.get(owner_parent.idx()).map(|it| it.kind),
                         Some(ExprKind::Call(_) | ExprKind::New(_) | ExprKind::Jsx(_))
                     ),
-                    Some(&Parent::Stmt(s)) => matches!(
+                    Parent::Stmt(s) => matches!(
                         hir.stmts.get(s.idx()).map(|it| it.kind),
                         Some(StmtKind::Return(_))
                     ),
-                    Some(Parent::VarInit(_) | Parent::FnBody(_) | Parent::MemberInit(_)) => true,
+                    Parent::VarInit(_) | Parent::FnBody(_) | Parent::MemberInit(_) => true,
                     _ => false,
                 }
             }
-            None | Some(Parent::None) => false,
-            Some(_) => true,
+            Parent::None => false,
+            _ => true,
         }
     }
 
-    /// Passes on the references that the identifier `e` is, after those of `found`, which is
-    /// sorted, that are before it. `false`, and nothing is done: it is before the last identifier.
+    /// Passes on the references for the identifier `e`, after the entries of `found` (which is
+    /// sorted) that come before it. Returns false without doing anything if it's before the last
+    /// identifier.
     #[inline(never)]
     fn identifier(
         &self,
@@ -832,9 +828,9 @@ impl<'f> Collector<'f, '_> {
         let file = self.file;
         let (hir, bound) = (&file.hir, &file.bound);
         let (mut flags, mut is_reference) = (READ, true);
-        let access = match bound.expr_parent.get(id.idx()) {
-            None | Some(Parent::None) => return true,
-            Some(&Parent::Expr(parent)) => match hir.exprs.get(parent.idx()).map(|it| it.kind) {
+        let access = match bound.parent_of_expr(id) {
+            Parent::None => return true,
+            Parent::Expr(parent) => match hir.exprs.get(parent.idx()).map(|it| it.kind) {
                 Some(
                     ExprKind::Assign { .. }
                     | ExprKind::Unary {
@@ -858,8 +854,8 @@ impl<'f> Collector<'f, '_> {
                 }
                 _ => Access::Read,
             },
-            Some(Parent::Prop(_)) => self.access(id, &mut merge.values),
-            Some(&Parent::Stmt(s)) => match hir.stmts.get(s.idx()).map(|it| it.kind) {
+            Parent::Prop(_) => self.access(id, &mut merge.values),
+            Parent::Stmt(s) => match hir.stmts.get(s.idx()).map(|it| it.kind) {
                 // "this could be a type or a variable"
                 Some(StmtKind::ExportDefault(_) | StmtKind::ExportAssign(_))
                     if !self.is_javascript =>
@@ -922,7 +918,7 @@ impl<'f> Collector<'f, '_> {
         true
     }
 
-    /// All the references, in source order and resolved. `found` is sorted.
+    /// Returns all the references, in source order and resolved. `found` must be sorted.
     fn merge<'t>(&self, tree: &'t ScopeTree, variables: &'t Variables) -> Resolver<'t>
     where
         'f: 't,
@@ -962,12 +958,13 @@ impl<'f> Collector<'f, '_> {
         };
         let mut merge = start();
         let is_simple = merge.into.is_plain && skipped.is_empty();
-        // Which are identifiers, if the binder has noted the kinds.
+        // Which expressions are identifiers, if the binder recorded the kinds.
         const IDENT: u8 = 2 * hir::ExprTag::Ident as u8;
-        let (kinds, parents) = (self.file.bound.expr_kinds, self.file.bound.expr_parent);
-        // They are grouped already if the groups are made of these kinds. Where it has not noted them, each can be one.
+        let (kinds, bound) = (self.file.bound.expr_kinds, &self.file.bound);
+        // They're already grouped if the groups are built from these kinds. Where the binder didn't
+        // record them, any expression could be one.
         let is_grouped =
-            self.file.groups_exprs_as_the_binder() && exprs.len() == self.file.hir.exprs.len();
+            self.file.uses_binder_expr_kinds() && exprs.len() == self.file.hir.exprs.len();
         let not_grouped: Vec<u32> = match is_grouped {
             true => Vec::new(),
             false => (0..exprs.len() as u32)
@@ -985,17 +982,17 @@ impl<'f> Collector<'f, '_> {
                     .filter(|it| *it.1 == IDENT)
                     .map(|it| it.0))
         );
-        // `false`: the expression at `i` is an identifier that is before the last one.
+        // Returns false if the expression at `i` is an identifier that comes before the previous one.
         let take = |i: usize| {
-            let (Some(e), Some(parent)) = (exprs.get(i), parents.get(i)) else {
+            let Some(e) = exprs.get(i) else {
                 return true;
             };
             let ExprKind::Ident(name) = e.kind else {
                 return true;
             };
             let id = ExprId(i as u32);
-            // In most places nothing but a value that is read can be.
-            let is_only_read = match *parent {
+            // In most positions an identifier can only be a value that's read.
+            let is_only_read = match bound.parent_of_expr(id) {
                 Parent::Expr(parent) => exprs.get(parent.idx()).is_some_and(|it| {
                     !can_be_part_of_target(it.kind)
                         && !matches!(it.kind, ExprKind::Unary { .. } | ExprKind::Jsx(_))
@@ -1043,7 +1040,7 @@ impl<'f> Collector<'f, '_> {
     }
 
     /// `Referencer.VariableDeclaration`, `visitFunction`, `CatchClause`: a declaration writes the
-    /// values that it gives to its names.
+    /// values it gives to its names.
     fn patterns(&mut self, tree: &ScopeTree, deep_patterns: &DeepPatterns) {
         let file = self.file;
         let (hir, bound) = (&file.hir, &file.bound);
@@ -1065,7 +1062,7 @@ impl<'f> Collector<'f, '_> {
             // Innermost first.
             let (mut at, mut steps) = (hir::PatId(i as u32), 0);
             let root = loop {
-                // Up to there nothing has a default value.
+                // Nothing up to there has a default value.
                 if steps >= DeepPatterns::PLAIN_STEPS
                     && let Some(above) = deep_patterns.get(at)
                 {
@@ -1094,8 +1091,8 @@ impl<'f> Collector<'f, '_> {
                     values.extend(declaration.init.some());
                     if let Some(&statement) = bound.var_stmt.get(d.idx())
                         && !matches!(
-                            bound.stmt_parent.get(statement.idx()),
-                            Some(Parent::FnBody(_) | Parent::File)
+                            bound.parent_of_stmt(statement),
+                            Parent::FnBody(_) | Parent::File
                         )
                     {
                         last = self.iterated_by(statement).unwrap_or(ExprId::NONE);
@@ -1108,7 +1105,7 @@ impl<'f> Collector<'f, '_> {
                         .copied()
                         .unwrap_or(hir::FnId::NONE);
                     let scope = tree
-                        .of_fn
+                        .scope_of_fn
                         .get(function.idx())
                         .and_then(|&it| tree.scopes.get(it as usize));
                     if scope.is_none_or(|it| it.kind != ScopeKind::Function) {
@@ -1138,7 +1135,7 @@ impl<'f> Collector<'f, '_> {
             for &value in &values {
                 self.push_write(site, (pat.pos, start), name, flags, value);
             }
-            // `visitForIn` visits the declaration first, and then its names once more.
+            // `visitForIn` visits the declaration first, and then its names again.
             if last.is_some() {
                 self.push_write(site, (pat.pos, end.max(pat.pos)), name, flags, last);
             }
@@ -1183,7 +1180,7 @@ impl<'f> Collector<'f, '_> {
         }
         // A type is stored after its parts.
         sort_by_pos(&mut self.found[start..]);
-        sort_what_is_nearly_in_order(&mut self.type_names);
+        sort_nearly_sorted(&mut self.type_names);
         for &id in &tree.namespace_exports {
             if let Some(stmt) = hir.stmts.get(id.idx())
                 && let StmtKind::ExportAsNamespace(name) = stmt.kind
@@ -1214,16 +1211,16 @@ impl<'f> Collector<'f, '_> {
         }
     }
 
-    /// `visitJSXElement`, for the tags that are not expressions outside JSX.
+    /// `visitJSXElement`, for the tags that aren't expressions outside JSX.
     fn jsx_names(&mut self) {
         let file = self.file;
-        // `eslint-scope` knows them since ESLint 10.
+        // `eslint-scope` supports them since ESLint 10.
         if self.is_javascript && file.language().eslint_major < 10 {
             return;
         }
         let start = self.found.len();
         for jsx in file.hir.jsx {
-            // `eslint-scope` does not visit closing elements.
+            // `eslint-scope` doesn't visit closing elements.
             let tags = [
                 Some(jsx.tag),
                 (!self.is_javascript).then_some(jsx.close_tag),
@@ -1254,7 +1251,7 @@ impl<'f> Collector<'f, '_> {
                 };
                 let text = file.atoms.bytes(*name);
                 match bun_core::strings::index_of_char_usize(text, b':') {
-                    // `eslint-scope` takes a name with a namespace for no component.
+                    // `eslint-scope` doesn't treat a namespaced name as a component.
                     Some(_) if self.is_javascript => {}
                     Some(colon) => {
                         let parts = [(0, &text[..colon]), (colon + 1, &text[colon + 1..])];
@@ -1286,10 +1283,7 @@ impl<'f> Collector<'f, '_> {
             let Some(export) = hir.exports.get(spec.export.idx()) else {
                 continue;
             };
-            let is_bound = matches!(
-                self.file.bound.stmt_parent.get(export.stmt.idx()),
-                Some(parent) if *parent != Parent::None
-            );
+            let is_bound = self.file.bound.parent_of_stmt(export.stmt) != Parent::None;
             // The name can be a string only before `from`.
             if export.has_module_specifier || !is_bound || spec.local.is_none() {
                 continue;
@@ -1322,12 +1316,13 @@ impl<'f> Collector<'f, '_> {
                 .filter(|(i, e)| {
                     matches!(e.kind, ExprKind::Jsx(jsx)
                         if !only_fragments || file.hir.jsx.get(jsx.idx()).is_some_and(|it| it.tag.is_none()))
-                        && !matches!(file.bound.expr_parent.get(*i), None | Some(Parent::None))
+                        && !matches!(file.bound.parent_of_expr(hir::ExprId(*i as u32)), Parent::None)
                 })
                 .map(|(_, e)| e.pos)
                 .collect();
             elements.sort_unstable();
-            // The name of a class is declared before its decorators are visited, which are before it.
+            // A class's name is declared before its decorators are visited, even though they come
+            // before it in the source.
             let classes = file.hir.classes.iter().filter(|it| it.name == name);
             let mut decorators: Vec<(u32, u32)> =
                 classes.map(|it| (it.start, it.name_pos)).collect();
@@ -1337,11 +1332,11 @@ impl<'f> Collector<'f, '_> {
                 let class = after.checked_sub(1).and_then(|at| decorators.get(at));
                 class.is_some_and(|it| pos < it.1)
             };
-            // `Some(None)`: the variable that a class declaration has for its name in its own scope.
+            // `Some(None)` is the variable that a class declaration has for its name in its own scope.
             let found = elements.iter().find_map(|&pos| {
                 let mut scope = tree.scope_at(pos);
                 while let Some(data) = tree.scopes.get(scope as usize) {
-                    // It is in the `set` of its scope from where the Referencer has visited its declaration.
+                    // It's in its scope's `set` from the point where the Referencer has visited its declaration.
                     let declared = |index: &u32| {
                         variables.list[*index as usize].first_pos < pos || is_in_decorators(pos)
                     };
@@ -1374,7 +1369,8 @@ impl<'f> Collector<'f, '_> {
     }
 }
 
-/// Whether `PatternVisitor` comes to `e`: a destructuring pattern, a `for`-`in` or a `for`-`of` assigns to it.
+/// True if `PatternVisitor` visits `e`, i.e. a destructuring pattern, a `for`-`in` or a `for`-`of`
+/// assigns to it.
 pub(super) fn is_in_pattern(file: &File, e: ExprId) -> bool {
     let collector = Collector {
         file,
@@ -1391,7 +1387,7 @@ pub(super) fn is_in_pattern(file: &File, e: ExprId) -> bool {
     )
 }
 
-/// Whether what is directly in an expression of this kind can be what an assignment writes to.
+/// True if a direct child of an expression of this kind can be an assignment target.
 #[inline(always)]
 fn can_be_part_of_target(kind: ExprKind) -> bool {
     matches!(
@@ -1421,18 +1417,18 @@ fn is_component_name(name: &[u8]) -> bool {
     }
 }
 
-/// What `group_by` groups by.
+/// The key that `group_by` groups by.
 #[derive(Copy, Clone)]
 enum Key {
-    /// `RawReference::variable`, or else this.
+    /// `RawReference::variable`, or this value if it's unresolved.
     Variable(usize),
     /// `RawReference::from`
     Scope,
 }
 
-/// The groups of `all` by `key`: the indices group by group, and where each group starts.
-/// `counts`: how many are in each group, at the index after its key. Within a group they are in
-/// `order`, which is empty if that is the order of `all`.
+/// Groups `all` by `key`. Returns the indices group by group, and the start of each group. `counts`
+/// has the size of each group, at the index after its key. Within a group they're in `order`, which
+/// is empty to mean `all`'s order.
 fn group_by(
     all: &[RawReference],
     order: &[u32],
@@ -1448,14 +1444,16 @@ fn group_by(
         Key::Variable(unresolved) => (it.variable as usize).min(unresolved),
         Key::Scope => it.from as usize,
     };
-    let mut place = |i: u32, it: &RawReference| {
+    let mut push_to_group = |i: u32, it: &RawReference| {
         let slot = &mut next[key(it)];
         indices[*slot as usize] = i;
         *slot += 1;
     };
     match order.is_empty() {
-        true => (0..).zip(all).for_each(|(i, it)| place(i, it)),
-        false => order.iter().for_each(|&i| place(i, &all[i as usize])),
+        true => (0..).zip(all).for_each(|(i, it)| push_to_group(i, it)),
+        false => order
+            .iter()
+            .for_each(|&i| push_to_group(i, &all[i as usize])),
     }
     (indices, counts)
 }
@@ -1486,9 +1484,9 @@ impl References {
                 collector.jsx_pragmas(tree, variables);
             }
         }
-        // Each part is nearly in order already. References at the same place keep their order.
+        // Each part is already nearly sorted. References at the same position keep their order.
         sort_by_pos(&mut collector.found);
-        // More would not fit beside the marks in `Resolver::counts`.
+        // More wouldn't fit next to the marks in `Resolver::counts`.
         let found = collector.found.len() + collector.type_names.len();
         if hir.exprs.len() + found >= COUNT as usize {
             collector.found.clear();
@@ -1496,7 +1494,7 @@ impl References {
         }
         let Resolver {
             all,
-            of_expr,
+            expr_variables,
             mut counts,
             mut moved,
             is_visiting_order,
@@ -1525,11 +1523,11 @@ impl References {
             all,
             visiting_order,
             moved,
-            as_made: OnceCell::new(),
+            in_creation_order: OnceCell::new(),
             by_variable,
             variable_starts,
             marks,
-            of_expr,
+            expr_variables,
             by_scope: OnceCell::new(),
             by_scope_in_some_order: OnceCell::new(),
             scope_count: tree.scopes.len(),
@@ -1546,7 +1544,7 @@ impl References {
         }
     }
 
-    /// The references to the variable at `index` of `Variables::list`.
+    /// The references to the variable at `index` in `Variables::list`.
     #[inline]
     pub(crate) fn of_variable(&self, index: u32) -> &[u32] {
         Self::group(
@@ -1557,28 +1555,31 @@ impl References {
         )
     }
 
-    /// The index in `Variables::list` of the value that the identifier `e` stands for.
+    /// The index in `Variables::list` of the value that the identifier `e` resolves to.
     #[inline]
-    pub(crate) fn of_expr(&self, e: ExprId) -> Option<u32> {
-        self.of_expr.get(e.idx()).copied().filter(|it| *it != NONE)
+    pub(crate) fn variable_of_expr(&self, e: ExprId) -> Option<u32> {
+        self.expr_variables
+            .get(e.idx())
+            .copied()
+            .filter(|it| *it != NONE)
     }
 
-    /// Indices into `all`, with the names of each destructuring pattern before what else is in it. Empty if that is the order
-    /// of `all`.
+    /// Indices into `all`, with each destructuring pattern's names before everything else in it.
+    /// Empty if that's `all`'s order.
     #[inline]
     pub(crate) fn visiting_order(&self) -> &[u32] {
         &self.visiting_order
     }
 
-    /// Indices into `all` in the order the scope manager makes the references. Empty if that is the order of `all`.
-    pub(crate) fn as_made<'a>(&self, file: &'a File<'a>) -> &[u32] {
+    /// Indices into `all` in the order the scope manager creates the references. Empty if that's `all`'s order.
+    pub(crate) fn in_creation_order<'a>(&self, file: &'a File<'a>) -> &[u32] {
         let made = self
-            .as_made
-            .get_or_init(|| order::as_made(file, &self.all, &self.moved));
+            .in_creation_order
+            .get_or_init(|| order::in_creation_order(file, &self.all, &self.moved));
         made.as_deref().unwrap_or(&self.visiting_order)
     }
 
-    /// Whether the variable at `index` of `Variables::list` has one of `marks`.
+    /// True if the variable at `index` in `Variables::list` has one of `marks`.
     #[inline]
     pub(crate) fn has_mark(&self, index: u32, marks: u32) -> bool {
         self.marks
@@ -1592,11 +1593,11 @@ impl References {
         Self::group(&self.by_variable, &self.variable_starts, last, last)
     }
 
-    /// The references to `name` that resolve to nothing.
+    /// The unresolved references to `name`.
     pub(crate) fn unresolved_named(&self, name: Atom) -> &[u32] {
         let sorted = self.unresolved_by_name.get_or_init(|| {
-            // The name and the place in the list in one number: those with one name keep their order, and the sort of such
-            // numbers is compiled for other lists too.
+            // The name and the list index are packed into one number. That way references with the
+            // same name keep their order, and this `u64` sort is already compiled for other lists.
             let unresolved = self.unresolved();
             let keys = unresolved.iter().enumerate();
             let keys =
@@ -1621,16 +1622,16 @@ impl References {
         group_by(&self.all, order, counts, Key::Scope)
     }
 
-    /// The references that are written in the scopes `first..=last`, those of each scope in the order they are made.
+    /// The references in the scopes `first..=last`, with each scope's in creation order.
     #[inline]
     pub(crate) fn in_scopes<'a>(&self, file: &'a File<'a>, first: u32, last: u32) -> &[u32] {
         let (by_scope, starts) = self
             .by_scope
-            .get_or_init(|| self.group_by_scope(self.as_made(file)));
+            .get_or_init(|| self.group_by_scope(self.in_creation_order(file)));
         Self::group(by_scope, starts, first as usize, last as usize)
     }
 
-    /// The same for who does not care about the order, which then is not worked out.
+    /// Same, for callers that don't care about the order, which then isn't computed.
     #[inline]
     pub(crate) fn in_scopes_in_some_order(&self, first: u32, last: u32) -> &[u32] {
         let (by_scope, starts) = match self.by_scope.get() {
@@ -1642,7 +1643,7 @@ impl References {
         Self::group(by_scope, starts, first as usize, last as usize)
     }
 
-    /// The same in the order of `visiting_order`, whatever else has been asked.
+    /// Same, in `visiting_order` order, regardless of what else has been requested.
     #[inline]
     pub(crate) fn in_scope_as_visited(&self, scope: u32) -> &[u32] {
         let (by_scope, starts) = self
@@ -1651,7 +1652,7 @@ impl References {
         Self::group(by_scope, starts, scope as usize, scope as usize)
     }
 
-    /// The first reference that is written at `pos`.
+    /// The first reference at `pos`.
     pub(crate) fn at(&self, pos: u32) -> Option<&RawReference> {
         self.all
             .get(self.all.partition_point(|it| it.pos < pos))

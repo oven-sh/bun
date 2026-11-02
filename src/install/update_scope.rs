@@ -15,6 +15,7 @@ use crate::package_manager::Options::LogLevel;
 use crate::package_manager::UpdateTargetWorkspace;
 use crate::package_manager::workspace_selection::{self, RootSelection};
 use crate::package_manager_real::command_line_arguments::UpdateGroups;
+use crate::package_manager_real::install_with_manager::loaded_lockfile_name;
 use crate::resolution::Tag as ResolutionTag;
 use crate::{DependencyID, PackageID, PackageManager, PackageNameHash, invalid_package_id};
 
@@ -23,7 +24,9 @@ pub struct UpdateScope<'a> {
     pub targets: Option<&'a [UpdateTargetWorkspace]>,
     pub invoking: Option<PackageNameHash>,
     whole_workspace: bool,
-    /// Walked by `plan_named` before the differ invalidates rows; otherwise `reachable()` walks the lockfile it is given.
+    /// `--depth 0`: only the dependencies of the root and of workspaces are in scope.
+    direct_only: bool,
+    /// Walked by `plan_named` before rows are invalidated; otherwise `reachable()` walks the lockfile it is given.
     planned: Option<&'a DynamicBitSet>,
     lazy: OnceCell<DynamicBitSet>,
 }
@@ -34,6 +37,7 @@ impl<'a> UpdateScope<'a> {
             manager.update_target_workspaces.as_deref(),
             manager.workspace_name_hash,
             manager.options.filter_patterns.is_empty(),
+            manager.options.do_.update_direct_only(),
             manager.named_update_reachable.as_ref(),
         )
     }
@@ -42,6 +46,7 @@ impl<'a> UpdateScope<'a> {
         targets: Option<&'a [UpdateTargetWorkspace]>,
         invoking: Option<PackageNameHash>,
         no_filter: bool,
+        direct_only: bool,
         planned: Option<&'a DynamicBitSet>,
     ) -> UpdateScope<'a> {
         UpdateScope {
@@ -51,13 +56,14 @@ impl<'a> UpdateScope<'a> {
                 Some(_) => no_filter,
                 None => invoking.is_none(),
             },
+            direct_only,
             planned,
             lazy: OnceCell::new(),
         }
     }
 }
 
-/// Runs on the loaded lockfile before the differ invalidates the rows it re-enqueues, like `TransitiveUpdate::plan`.
+/// Runs before rows are invalidated: by the differ on the loaded lockfile, like `TransitiveUpdate::plan`, and by `reresolve_rows_outside_overrides` on the cleaned one.
 pub fn plan_named(manager: &mut PackageManager) {
     let reachable = {
         let scope = UpdateScope::of(manager);
@@ -138,9 +144,11 @@ impl UpdateScope<'_> {
                 lockfile.packages.items_name_hash()[id],
                 lockfile.packages.items_name()[id].slice(lockfile.buffers.string_bytes.as_slice()),
             ),
-            // Packages appended after the walk (ids past its end) were resolved for an in-scope row.
+            // Packages appended after the walk (ids past its end) count as in scope.
             _ => {
-                self.whole_workspace || self.reachable(lockfile).is_set_allow_out_of_bound(id, true)
+                !self.direct_only
+                    && (self.whole_workspace
+                        || self.reachable(lockfile).is_set_allow_out_of_bound(id, true))
             }
         }
     }
@@ -250,12 +258,13 @@ fn matches(glob: &bun_glob::Prepared<&[u8]>, name: &[u8]) -> bool {
     }
 }
 
-fn describe_groups(groups: UpdateGroups) -> Vec<u8> {
+fn describe_selectors(groups: UpdateGroups, direct_only: bool) -> Vec<u8> {
     let mut out: Vec<u8> = Vec::new();
     for (on, flag) in [
         (groups.dev, &b"--dev"[..]),
         (groups.prod, b"--prod"),
         (groups.no_optional, b"--no-optional"),
+        (direct_only, b"--depth 0"),
     ] {
         if on {
             if !out.is_empty() {
@@ -295,38 +304,26 @@ fn exit_on_lockfile_load_failure(manager: &mut PackageManager, subject: &[u8]) -
         missing(silent, subject);
     }
     let load_result = manager.load_lockfile_from_cwd::<true>();
-    let from_binary = load_result.loaded_from_binary_lockfile();
+    let lockfile_name = loaded_lockfile_name(&load_result);
     match load_result {
-        crate::lockfile::LoadResult::Ok(_) => {
-            if from_binary {
-                "bun.lockb"
-            } else {
-                "bun.lock"
-            }
-        }
+        crate::lockfile::LoadResult::Ok(_) => lockfile_name,
         crate::lockfile::LoadResult::NotFound => missing(silent, subject),
         crate::lockfile::LoadResult::Err(cause) => {
-            if !silent && !crate::migration::reported_unsupported_lockfile_version(&cause) {
-                Output::err_generic(
-                    "failed to {s} lockfile: {s}",
-                    (cause.step.verb(), cause.value.name()),
-                );
-                if manager.log_mut().has_errors() {
-                    let _ = manager
-                        .log_mut()
-                        .print(std::ptr::from_mut(Output::error_writer()));
-                }
+            if !silent {
+                cause.report(manager.log_mut());
             }
             Global::exit(1);
         }
     }
 }
 
-/// Turns `bun update` patterns and `--dev`/`--prod`/`--no-optional` into the concrete names the named path expects; a plain `bun update [name]` returns before doing anything.
+/// Turns patterns and group selectors into the concrete names the named path expects.
 pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], groups: UpdateGroups) {
     let positionals = manager.options.positionals;
     let args = positionals.get(1..).unwrap_or(&[]);
-    let selecting = !groups.is_default();
+    // `--depth 0` selects every group, of the root and workspace rows only.
+    let direct_only = manager.options.do_.update_direct_only();
+    let selecting = !groups.is_default() || direct_only;
     if !selecting && !args.iter().any(|a| is_pattern(a)) {
         return;
     }
@@ -337,8 +334,8 @@ pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], gro
         if selecting {
             if has_version_suffix(arg) {
                 Output::err_generic(
-                    "a version cannot be combined with --dev, --prod or --no-optional: {}",
-                    (BStr::new(arg),),
+                    "a version cannot be combined with --dev, --prod, --no-optional or --depth 0: {}",
+                    (bun_core::fmt::for_terminal(BStr::new(arg)),),
                 );
                 Global::exit(1);
             }
@@ -347,7 +344,7 @@ pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], gro
             if has_version_suffix(arg) {
                 Output::err_generic(
                     "a version cannot be combined with a pattern: {}",
-                    (BStr::new(arg),),
+                    (bun_core::fmt::for_terminal(BStr::new(arg)),),
                 );
                 Global::exit(1);
             }
@@ -358,7 +355,7 @@ pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], gro
     }
 
     let subject = if patterns.is_empty() {
-        describe_groups(groups)
+        describe_selectors(groups, direct_only)
     } else {
         describe_patterns(&patterns)
     };
@@ -400,6 +397,7 @@ pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], gro
         selection.as_deref(),
         manager.workspace_name_hash,
         manager.options.filter_patterns.is_empty(),
+        direct_only,
         None,
     );
 
@@ -483,9 +481,14 @@ pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], gro
     let mut failed = false;
     for pattern in patterns.iter().filter(|p| !p.negated && !p.hit) {
         failed = true;
-        if selecting {
+        if !groups.is_default() {
             Output::err_generic(
                 "no dependencies in the selected groups match \"{}\"",
+                (BStr::new(pattern.raw),),
+            );
+        } else if direct_only {
+            Output::err_generic(
+                "no direct dependencies match \"{}\"",
                 (BStr::new(pattern.raw),),
             );
         } else {
@@ -506,7 +509,10 @@ pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], gro
                 if checked == 1 { "y" } else { "ies" }
             );
             if selecting {
-                pretty!("selected by {}", BStr::new(&describe_groups(groups)));
+                pretty!(
+                    "selected by {}",
+                    BStr::new(&describe_selectors(groups, direct_only))
+                );
             }
             if !patterns.is_empty() {
                 pretty!(

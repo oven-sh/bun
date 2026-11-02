@@ -20,7 +20,7 @@ fn to_numeric(value: &StaticValue<'_>) -> Eval<Numeric> {
     }
 }
 
-/// `op operand`, for the operators that ESTree calls a `UnaryExpression`, but for `delete` and
+/// `op operand`, for the operators that ESTree calls a `UnaryExpression`, except `delete` and
 /// `void`.
 pub(super) fn unary<'a>(op: UnOp, operand: &StaticValue<'a>) -> Eval<StaticValue<'a>> {
     Ok(match op {
@@ -58,7 +58,7 @@ fn number_operation(op: BinOp, a: f64, b: f64) -> Eval<f64> {
     })
 }
 
-/// `None` if it throws, or if the result does not fit.
+/// `None` if it throws, or if the result doesn't fit.
 fn bigint_operation(op: BinOp, a: i128, b: i128) -> Option<i128> {
     // `a << b` for `b >= 0`
     let shift_left = |a: i128, b: i128| {
@@ -84,7 +84,7 @@ fn bigint_operation(op: BinOp, a: i128, b: i128) -> Option<i128> {
     }
 }
 
-/// `left op right`, for the operators that ESTree calls a `BinaryExpression`, but for `in` and
+/// `left op right`, for the operators that ESTree calls a `BinaryExpression`, except `in` and
 /// `instanceof`.
 pub(super) fn binary<'a>(
     op: BinOp,

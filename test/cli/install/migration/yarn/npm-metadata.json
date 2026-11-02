@@ -1,0 +1,194 @@
+{
+  "@esbuild/android-arm64": {
+    "0.17.19": { "os": ["android"], "cpu": ["arm64"] }
+  },
+  "@esbuild/darwin-arm64": {
+    "0.17.19": { "os": ["darwin"], "cpu": ["arm64"] }
+  },
+  "@esbuild/darwin-x64": {
+    "0.17.19": { "os": ["darwin"], "cpu": ["x64"] }
+  },
+  "@esbuild/linux-arm64": {
+    "0.17.19": { "os": ["linux"], "cpu": ["arm64"] }
+  },
+  "@esbuild/linux-x64": {
+    "0.17.19": { "os": ["linux"], "cpu": ["x64"] }
+  },
+  "acorn": {
+    "8.11.3": { "bin": { "acorn": "bin/acorn" } },
+    "5.7.1": { "bin": { "acorn": "./bin/acorn" } },
+    "4.0.13": { "bin": { "acorn": "./bin/acorn" } },
+    "3.3.0": { "bin": { "acorn": "./bin/acorn" } }
+  },
+  "atob": {
+    "2.1.1": { "bin": { "atob": "bin/atob.js" } }
+  },
+  "babylon": {
+    "6.18.0": { "bin": { "babylon": "./bin/babylon.js" } },
+    "6.16.1": { "bin": { "babylon": "./bin/babylon.js" } }
+  },
+  "browserslist": {
+    "3.2.8": { "bin": { "browserslist": "./cli.js" } }
+  },
+  "color-support": {
+    "1.1.3": { "bin": { "color-support": "bin.js" } }
+  },
+  "commitizen": {
+    "2.10.1": { "bin": { "git-cz": "./bin/git-cz", "commitizen": "./bin/commitizen" } }
+  },
+  "detect-libc": {
+    "1.0.3": { "bin": { "detect-libc": "./bin/detect-libc.js" } }
+  },
+  "errno": {
+    "0.1.7": { "bin": { "errno": "./cli.js" } }
+  },
+  "esbuild": {
+    "0.17.19": { "bin": { "esbuild": "bin/esbuild" } }
+  },
+  "escodegen": {
+    "1.11.0": { "bin": { "esgenerate": "./bin/esgenerate.js", "escodegen": "./bin/escodegen.js" } }
+  },
+  "eslint": {
+    "8.35.0": { "bin": { "eslint": "bin/eslint.js" } },
+    "4.3.0": { "bin": { "eslint": "./bin/eslint.js" } }
+  },
+  "esprima": {
+    "4.0.1": { "bin": { "esparse": "./bin/esparse.js", "esvalidate": "./bin/esvalidate.js" } },
+    "3.1.3": { "bin": { "esparse": "./bin/esparse.js", "esvalidate": "./bin/esvalidate.js" } }
+  },
+  "flow-bin": {
+    "0.66.0": { "bin": { "flow": "cli.js" } }
+  },
+  "fsevents": {
+    "2.3.3": { "os": ["darwin"] },
+    "2.3.2": { "os": ["darwin"] },
+    "1.2.4": { "os": ["darwin"] }
+  },
+  "git-release-notes": {
+    "3.0.0": { "bin": { "git-release-notes": "./cli.js" } }
+  },
+  "gulp": {
+    "4.0.0": { "bin": { "gulp": "./bin/gulp.js" } }
+  },
+  "gulp-cli": {
+    "2.0.1": { "bin": { "gulp": "bin/gulp.js" } }
+  },
+  "gunzip-maybe": {
+    "1.4.1": { "bin": { "gunzip-maybe": "./bin.js" } }
+  },
+  "handlebars": {
+    "4.0.11": { "bin": { "handlebars": "bin/handlebars" } }
+  },
+  "import-local": {
+    "1.0.0": { "bin": { "import-local-fixture": "fixtures/cli.js" } }
+  },
+  "is-ci": {
+    "1.1.0": { "bin": { "is-ci": "bin.js" } }
+  },
+  "jest": {
+    "29.7.0": { "bin": { "jest": "bin/jest.js" } },
+    "22.4.4": { "bin": { "jest": "./bin/jest.js" } }
+  },
+  "jest-cli": {
+    "22.4.4": { "bin": { "jest": "./bin/jest.js" } }
+  },
+  "jest-runtime": {
+    "22.4.4": { "bin": { "jest-runtime": "./bin/jest-runtime.js" } }
+  },
+  "js-yaml": {
+    "3.13.1": { "bin": { "js-yaml": "bin/js-yaml.js" } },
+    "3.12.0": { "bin": { "js-yaml": "bin/js-yaml.js" } }
+  },
+  "jsesc": {
+    "1.3.0": { "bin": { "jsesc": "bin/jsesc" } },
+    "0.5.0": { "bin": { "jsesc": "bin/jsesc" } }
+  },
+  "jsinspect": {
+    "0.12.7": { "bin": { "jsinspect": "./bin/jsinspect" } }
+  },
+  "json5": {
+    "0.5.1": { "bin": { "json5": "lib/cli.js" } },
+    "1.0.1": { "bin": { "json5": "lib/cli.js" } }
+  },
+  "loose-envify": {
+    "1.4.0": { "bin": { "loose-envify": "cli.js" } }
+  },
+  "miller-rabin": {
+    "4.0.1": { "bin": { "miller-rabin": "bin/miller-rabin" } }
+  },
+  "mime": {
+    "1.6.0": { "bin": { "mime": "cli.js" } }
+  },
+  "mkdirp": {
+    "0.5.1": { "bin": { "mkdirp": "bin/cmd.js" } },
+    "1.0.4": { "bin": { "mkdirp": "bin/cmd.js" } }
+  },
+  "needle": {
+    "2.2.1": { "bin": { "needle": "./bin/needle" } }
+  },
+  "node-pre-gyp": {
+    "0.10.3": { "bin": { "node-pre-gyp": "./bin/node-pre-gyp" } }
+  },
+  "nopt": {
+    "4.0.1": { "bin": { "nopt": "./bin/nopt.js" } }
+  },
+  "opencollective": {
+    "1.0.3": { "bin": { "opencollective": "./dist/bin/opencollective.js", "oc": "./dist/bin/opencollective.js" } }
+  },
+  "prettier": {
+    "1.5.2": { "bin": { "prettier": "./bin/prettier.js" } }
+  },
+  "rc": {
+    "1.2.8": { "bin": { "rc": "./cli.js" } }
+  },
+  "regjsparser": {
+    "0.1.5": { "bin": { "regjsparser": "bin/parser" } }
+  },
+  "rimraf": {
+    "2.6.2": { "bin": { "rimraf": "./bin.js" } },
+    "2.2.8": { "bin": { "rimraf": "./bin.js" } }
+  },
+  "sane": {
+    "2.5.2": { "bin": { "sane": "./src/cli.js" } }
+  },
+  "semver": {
+    "6.3.0": { "bin": { "semver": "./bin/semver.js" } },
+    "5.5.0": { "bin": { "semver": "./bin/semver" } }
+  },
+  "sha.js": {
+    "2.4.11": { "bin": { "sha.js": "./bin.js" } }
+  },
+  "shelljs": {
+    "0.7.6": { "bin": { "shjs": "./bin/shjs" } }
+  },
+  "sshpk": {
+    "1.14.2": { "bin": { "sshpk-conv": "bin/sshpk-conv", "sshpk-sign": "bin/sshpk-sign", "sshpk-verify": "bin/sshpk-verify" } }
+  },
+  "strip-indent": {
+    "1.0.1": { "bin": { "strip-indent": "cli.js" } }
+  },
+  "strip-json-comments": {
+    "1.0.2": { "bin": { "strip-json-comments": "cli.js" } }
+  },
+  "typescript": {
+    "5.3.3": { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } },
+    "4.9.5": { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }
+  },
+  "uglify-js": {
+    "2.8.29": { "bin": { "uglifyjs": "bin/uglifyjs" } }
+  },
+  "uuid": {
+    "3.3.2": { "bin": { "uuid": "./bin/uuid" } }
+  },
+  "watch": {
+    "0.18.0": { "bin": { "watch": "./cli.js" } }
+  },
+  "webpack": {
+    "5.89.0": { "bin": { "webpack": "bin/webpack.js" } },
+    "5.76.0": { "bin": { "webpack": "bin/webpack.js" } },
+    "2.7.0": { "bin": { "webpack": "./bin/webpack.js" } }
+  },
+  "which": {
+    "1.3.1": { "bin": { "which": "./bin/which" } }
+  }
+}

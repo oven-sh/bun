@@ -448,7 +448,8 @@ describe.concurrent.skipIf(isWindows)(
         .map(line => line + "\n")
         .join("");
 
-    async function flagsAround(targetFd: 1 | 2, ...steps: string[]) {
+    // A step is JS for `bun -e`, or the arguments of one bun command.
+    async function flagsAround(targetFd: 1 | 2, ...steps: (string | { args: string[] })[]) {
       const otherFd = targetFd === 1 ? 2 : 1;
       const script = [
         // No core file from the process.abort() step: CI reports every core it finds.
@@ -456,7 +457,10 @@ describe.concurrent.skipIf(isWindows)(
         `probe() { PROBE_OUT_FD=${otherFd} "$0" "$PROBE" ${targetFd}; }`,
         `PROBE="$1"`,
         "probe",
-        ...steps.map(step => `"$0" -e ${JSON.stringify(step)} </dev/null; echo "exit=$?" >&${otherFd}; probe`),
+        ...steps.map(step => {
+          const args = typeof step === "string" ? ["-e", step] : step.args;
+          return `"$0" ${args.map(arg => JSON.stringify(arg)).join(" ")} </dev/null; echo "exit=$?" >&${otherFd}; probe`;
+        }),
       ].join("\n");
       await using proc = spawn({
         cmd: ["sh", "-c", script, bunExe(), probe],
@@ -484,6 +488,46 @@ describe.concurrent.skipIf(isWindows)(
       expect(await flagsAround(1, `void process.stdout.isTTY; process.kill(process.pid, "SIGTERM")`)).toEqual({
         probe: "1:blocking\nexit=143\n1:blocking\n",
         shellExit: 0,
+      });
+    });
+
+    test("fd is blocking again after SIGTERM when the last listener was removed", async () => {
+      const step = `const f = () => {}; process.on("SIGTERM", f); process.off("SIGTERM", f); void process.stdout.isTTY; process.kill(process.pid, "SIGTERM")`;
+      expect(await flagsAround(1, step)).toEqual({ probe: "1:blocking\nexit=143\n1:blocking\n", shellExit: 0 });
+    });
+
+    test("fd is blocking again after SIGINT ends a --watch run", async () => {
+      using dir = tempDir("watch-sigint", {
+        "main.js": `void process.stdout.isTTY; process.kill(process.pid, "SIGINT");`,
+      });
+      expect(await flagsAround(1, { args: ["--watch", path.join(String(dir), "main.js")] })).toEqual({
+        probe: "1:blocking\nexit=0\n1:blocking\n",
+        shellExit: 0,
+      });
+    });
+
+    // The restore runs before execve(2). When that fails, the script goes on with the flags it had.
+    test.skipIf(!isLinux)("a failed process.execve() leaves the script's nonblocking fd 1 as it was", async () => {
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const fs = require("node:fs");
+           void process.stdout.isTTY;
+           try { process.execve("/nonexistent/bin", ["x"]); } catch {}
+           const flags = parseInt(/^flags:\\s*([0-7]+)/m.exec(fs.readFileSync("/proc/self/fdinfo/1", "utf8"))[1], 8);
+           fs.writeSync(2, (flags & 0o4000) !== 0 ? "1:nonblocking\\n" : "1:blocking\\n");`,
+        ],
+        env: bunEnv,
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr: probeLines(stderr), exitCode }).toEqual({
+        stdout: "",
+        stderr: "1:nonblocking\n",
+        exitCode: 0,
       });
     });
 
@@ -529,9 +573,12 @@ describe.concurrent.skipIf(isWindows)(
         // The FIFO read waits for the grandchild, so skip it when the step failed and nothing will write.
         `"$0" -e "$1" </dev/null; rc=$?; echo "exit=$rc"; [ "$rc" = 0 ] && cat "$2"`,
       ].join("\n");
+      // The ASAN lane sets BUN_FEATURE_FLAG_NO_ORPHANS, which would kill the grandchild with its parent.
+      const env = { ...bunEnv };
+      delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
       await using proc = spawn({
         cmd: ["sh", "-c", script, bunExe(), reopen, fifo],
-        env: bunEnv,
+        env,
         stdout: "pipe",
         stderr: "pipe",
       });

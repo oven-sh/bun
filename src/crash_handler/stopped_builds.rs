@@ -141,7 +141,8 @@ unsafe extern "C" {
     fn onExitSignal(signal: c_int);
 }
 
-/// Which signals had `onExitSignal` before the reporter replaced it.
+/// Which signals had `onExitSignal` before the reporter replaced it. `Relaxed` is enough: the SeqCst
+/// counter on `BUILDS_UNDER_WAY` orders the enable and the disable.
 #[cfg(unix)]
 static REPLACED_EXIT_HANDLER: [AtomicBool; INTERRUPTIONS.len()] =
     [const { AtomicBool::new(false) }; INTERRUPTIONS.len()];

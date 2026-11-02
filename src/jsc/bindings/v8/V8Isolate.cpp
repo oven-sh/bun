@@ -7,6 +7,8 @@
 #include "v8_compatibility_assertions.h"
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/ErrorInstance.h>
+#include <JavaScriptCore/Exception.h>
+#include <JavaScriptCore/StrongInlines.h>
 
 static_assert(offsetof(v8::Isolate, m_roots) == real_v8::internal::Internals::kIsolateRootsOffset, "Isolate roots array is at wrong offset");
 
@@ -141,22 +143,49 @@ void Isolate::RequestInterrupt(InterruptCallback callback, void* data)
     });
 }
 
+namespace {
+struct UncaughtThrow {
+    Zig::GlobalObject* globalObject;
+    JSC::Strong<JSC::Unknown> value;
+};
+}
+
+// No JavaScript is below the addon, so no frame takes the value: V8 drops it when the addon's next call starts, and
+// Node never reports it. Bun keeps it off the VM, so that the addon's next calls work, and reports it as uncaught
+// after the addon's callback. No JavaScript runs inside ThrowException.
+static COLD NEVER_INLINE void reportAfterCallback(Zig::GlobalObject* globalObject, JSC::JSValue value)
+{
+    auto* uncaught = new UncaughtThrow { globalObject, { globalObject->vm(), value } };
+    JSC__JSGlobalObject__queueMicrotaskCallback(globalObject, uncaught, [](void* ptr) {
+        std::unique_ptr<UncaughtThrow> uncaught { static_cast<UncaughtThrow*>(ptr) };
+        auto* globalObject = uncaught->globalObject;
+        globalObject->reportUncaughtExceptionAtEventLoop(globalObject, JSC::Exception::create(globalObject->vm(), uncaught->value.get()));
+    });
+}
+
+static ALWAYS_INLINE void throwToCaller(Zig::GlobalObject* globalObject, JSC::JSValue value)
+{
+    JSC::VM& vm = globalObject->vm();
+    if (!vm.entryScope) [[unlikely]]
+        return reportAfterCallback(globalObject, value);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::throwException(globalObject, scope, value);
+}
+
 Local<Value> Isolate::ThrowException(Local<Value> exception)
 {
-    auto scope = DECLARE_THROW_SCOPE(vm());
-    JSC::throwException(m_globalObject, scope, exception->localToJSValue());
+    throwToCaller(m_globalObject, exception->localToJSValue());
     return exception;
 }
 
 Local<Value> Isolate::ThrowError(Local<String> message)
 {
     JSC::VM& vm = this->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
     WTF::String wtfMessage = message->localToJSString()->value(m_globalObject);
     // JSC::createError asserts that the message is not empty.
     JSC::JSObject* error = JSC::ErrorInstance::create(vm, m_globalObject->errorStructure(), wtfMessage, JSC::JSValue());
     Local<Value> handle = currentHandleScope()->createLocal<Value>(vm, error);
-    JSC::throwException(m_globalObject, scope, error);
+    throwToCaller(m_globalObject, error);
     return handle;
 }
 

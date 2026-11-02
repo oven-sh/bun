@@ -4,7 +4,7 @@
 #include "V8EscapableHandleScope.h"
 #include "V8Context.h"
 #include "v8_compatibility_assertions.h"
-#include "napi.h"
+#include "shim/UngatedConstructor.h"
 #include "JavaScriptCore/JSArray.h"
 #include "JavaScriptCore/ArrayConstructor.h"
 #include "JavaScriptCore/ObjectConstructor.h"
@@ -29,44 +29,31 @@ namespace v8 {
 Local<Array> Array::New(Isolate* isolate, Local<Value>* elements, size_t length)
 {
     Zig::GlobalObject* globalObject = isolate->globalObject();
-    auto& vm = isolate->vm();
-    NapiUngatedScope ungated { vm };
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    return shim::constructUngated<Array>(isolate, [&]() -> JSArray* {
+        if (length == 0)
+            return JSC::constructEmptyArray(globalObject, nullptr);
 
-    if (length == 0) {
-        JSArray* array = JSC::constructEmptyArray(globalObject, nullptr);
-        RETURN_IF_EXCEPTION(scope, Local<Array>());
-        return isolate->currentHandleScope()->createLocal<Array>(vm, array);
-    }
+        MarkedArgumentBuffer args;
 
-    MarkedArgumentBuffer args;
+        // Add each element to the arguments buffer
+        for (size_t i = 0; i < length; i++) {
+            JSValue elementValue = elements[i]->localToJSValue();
+            args.append(elementValue);
+        }
 
-    // Add each element to the arguments buffer
-    for (size_t i = 0; i < length; i++) {
-        JSValue elementValue = elements[i]->localToJSValue();
-        args.append(elementValue);
-    }
-
-    // Construct array using the buffer
-    JSArray* array = JSC::constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), args);
-    RETURN_IF_EXCEPTION(scope, Local<Array>());
-
-    return isolate->currentHandleScope()->createLocal<Array>(vm, array);
+        // Construct array using the buffer
+        return JSC::constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), args);
+    });
 }
 
 // Array::New with just length
 Local<Array> Array::New(Isolate* isolate, int length)
 {
     Zig::GlobalObject* globalObject = isolate->globalObject();
-    auto& vm = isolate->vm();
-    NapiUngatedScope ungated { vm };
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-
     int realLength = length > 0 ? length : 0;
-    JSArray* array = JSC::constructEmptyArray(globalObject, nullptr, static_cast<unsigned>(realLength));
-    RETURN_IF_EXCEPTION(scope, Local<Array>());
-
-    return isolate->currentHandleScope()->createLocal<Array>(vm, array);
+    return shim::constructUngated<Array>(isolate, [&] {
+        return JSC::constructEmptyArray(globalObject, nullptr, static_cast<unsigned>(realLength));
+    });
 }
 
 // Array::New with callback
@@ -88,6 +75,7 @@ MaybeLocal<Array> Array::New(Local<Context> context, size_t length,
         Local<v8::Value> value;
         if (!maybeValue.ToLocal(&value)) {
             // Callback signaled error/exception
+            V8_RETURN_IF_EXCEPTION(scope, MaybeLocal<Array>());
             return MaybeLocal<Array>();
         }
 
@@ -97,7 +85,7 @@ MaybeLocal<Array> Array::New(Local<Context> context, size_t length,
 
     // Construct array using the buffer
     JSArray* array = JSC::constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), args);
-    RETURN_IF_EXCEPTION(scope, MaybeLocal<Array>());
+    V8_RETURN_IF_EXCEPTION(scope, MaybeLocal<Array>());
 
     Local<Array> result = isolate->currentHandleScope()->createLocal<Array>(vm, array);
     return handleScope.Escape(result);
@@ -137,11 +125,11 @@ Maybe<void> Array::Iterate(Local<Context> context, IterationCallback callback, v
     // Manual iteration to support early exit
     for (unsigned index = 0; index < jsArray->length(); ++index) {
         JSValue element = jsArray->getIndex(globalObject, index);
-        RETURN_IF_EXCEPTION(scope, Nothing<void>());
+        V8_RETURN_IF_EXCEPTION(scope, Nothing<void>());
 
         Local<Value> localElement = handleScope.createLocal<Value>(vm, element);
         CallbackResult result = callback(index, localElement, callback_data);
-        RETURN_IF_EXCEPTION(scope, Nothing<void>());
+        V8_RETURN_IF_EXCEPTION(scope, Nothing<void>());
 
         switch (result) {
         case CallbackResult::kException:

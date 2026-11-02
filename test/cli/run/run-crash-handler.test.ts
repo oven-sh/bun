@@ -14,6 +14,7 @@ import {
 } from "harness";
 import { rmSync } from "node:fs";
 import { constants as osConstants } from "node:os";
+import { inflateSync } from "node:zlib";
 import path from "path";
 const { getMachOImageZeroOffset } = crash_handler;
 
@@ -753,6 +754,12 @@ describe.if(isLinux && isASAN)("crash report when malloc returns NULL", () => {
 
       expect(report).toContain(message);
       expect(report).toMatch(linkOfReport);
+      if (approach === "panic" || approach === "rustPanic") {
+        // zlib has no memory to compress the message with, so the link holds it in a block that is not compressed.
+        const link = linkOfReport.exec(report)![0];
+        const stream = Buffer.from(link.slice(link.lastIndexOf("0eAEB") + 1), "base64");
+        expect(inflateSync(stream).toString()).toBe(message);
+      }
       expect(signalCode).toBe(signal);
     });
   });

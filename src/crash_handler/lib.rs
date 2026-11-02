@@ -2910,7 +2910,7 @@ mod draft {
                     }
                     // Insufficient memory.
                     r if r == bun_zlib::ReturnCode::MemError as i32 => {
-                        return Err(crate::Error::Alloc(bun_alloc::AllocError));
+                        stored_zlib_stream(&mut compressed_bytes, message)
                     }
                     // The buffer dest was not large enough to hold the compressed data.
                     r if r == bun_zlib::ReturnCode::BufError as i32 => {
@@ -2970,6 +2970,27 @@ mod draft {
             writer.write_all(b"/view")?;
         }
         Ok(())
+    }
+
+    /// The start of `message` as a zlib stream of one block that is not compressed. zlib needs about 350 KB to compress.
+    fn stored_zlib_stream<'a>(stream: &'a mut [u8], message: &[u8]) -> &'a [u8] {
+        // As base64 it fits the 1024 bytes of a link beside the addresses.
+        const MESSAGE_MAX: usize = 256;
+        let message = &message[..message.len().min(MESSAGE_MAX)];
+        let length = message.len() as u16;
+        let mut end = 0;
+        for part in [
+            // Deflate with no dictionary, then a last block of the type "stored".
+            &[0x78, 0x01, 0x01][..],
+            &length.to_le_bytes(),
+            &(!length).to_le_bytes(),
+            message,
+            &bun_hash::Adler32::hash(message).to_be_bytes(),
+        ] {
+            stream[end..end + part.len()].copy_from_slice(part);
+            end += part.len();
+        }
+        &stream[..end]
     }
 
     pub fn write_u64_as_two_vlqs(writer: &mut impl Write, addr: usize) -> crate::Result<()> {
@@ -3961,7 +3982,7 @@ mod draft {
         use core::cell::Cell;
         use std::alloc::{GlobalAlloc, Layout, System};
 
-        use super::{BoundedArray, StackLine, Write};
+        use super::{BoundedArray, StackLine, Write, stored_zlib_stream};
         use crate::compiled_frames::tests::{COMPILED_ADDRESS, COMPILED_OFFSET};
 
         /// Counts what the calling thread asks the heap for. What the crash report runs may ask for nothing.
@@ -4110,6 +4131,22 @@ mod draft {
                 encoded(Some(&compiled_names_build)).const_slice(),
                 b"CmBaot1b26ec90d595fba2mB"
             );
+        }
+
+        #[test]
+        fn message_without_memory_is_a_stored_zlib_stream() {
+            let mut buffer = [0u8; 2048];
+            let message = b"invoked crashByPanic() handler";
+            let stream = stored_zlib_stream(&mut buffer, message);
+            assert_eq!(stream[..7], [0x78, 0x01, 0x01, 0x1e, 0x00, 0xe1, 0xff]);
+            assert_eq!(stream[7..37], message[..]);
+            assert_eq!(stream[37..], [0xaf, 0xcb, 0x0b, 0x17]);
+
+            let long = [b'a'; 300];
+            let stream = stored_zlib_stream(&mut buffer, &long);
+            assert_eq!(stream[..7], [0x78, 0x01, 0x01, 0x00, 0x01, 0xff, 0xfe]);
+            assert_eq!(stream[7..263], long[..256]);
+            assert_eq!(stream[263..], [0xb4, 0x50, 0x61, 0x01]);
         }
     }
 } // end mod draft

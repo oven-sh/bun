@@ -3011,6 +3011,84 @@ describe.concurrent("a mocked module's exports are read from the object the fact
   });
 });
 
+describe.concurrent("util.inspect() of a mocked module", () => {
+  test("prints an export that it cannot read", async () => {
+    await expectFixturesToPass(
+      {
+        "dep.ts": `export const value = "real-value"; export const plain = "real-plain";`,
+        "star.ts": `export * from "./dep";`,
+        "named.ts": `export { value as renamed, plain } from "./dep";`,
+        "unreadable.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          import util from "node:util";
+          import * as ns from "./dep";
+          import * as star from "./star";
+          import * as named from "./named";
+
+          vi.mock("./dep", () => ({
+            get value() {
+              throw new Error("from the factory getter");
+            },
+            get later() {
+              throw new ReferenceError("later is not defined");
+            },
+            plain: 1,
+          }));
+          const print = value => util.inspect(value, { breakLength: Infinity });
+
+          test("the mocked module", () => {
+            expect(print(ns)).toEndWith("{ value: <Inspection threw (from the factory getter)>, later: <uninitialized>, plain: 1 }");
+            expect(print([ns])).toEndWith("{ value: <Inspection threw (from the factory getter)>, later: <uninitialized>, plain: 1 } ]");
+            expect(util.format("%O", ns)).toContain("value: <Inspection threw (from the factory getter)>,");
+          });
+
+          test("a module that re-exports from it", () => {
+            expect(print(star)).toEndWith("{ later: <uninitialized>, plain: 1, value: <Inspection threw (from the factory getter)> }");
+            expect(print(named)).toEndWith("{ plain: 1, renamed: <Inspection threw (from the factory getter)> }");
+          });
+        `,
+      },
+      2,
+    );
+  });
+
+  test("does not read an export named constructor", async () => {
+    await expectFixturesToPass(
+      {
+        "dep.ts": `export const a = "real-a";`,
+        "other.ts": `export const a = "other-a";`,
+        "cycle.ts": `import { printed } from "./prints-cycle"; export const a = "real-a"; export { printed };`,
+        "prints-cycle.ts": `
+          import util from "node:util";
+          import * as ns from "./cycle";
+          export const printed = util.inspect(ns, { breakLength: Infinity });
+        `,
+        "constructor.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          import util from "node:util";
+          import * as ns from "./dep";
+          import * as cycle from "./cycle";
+
+          vi.mock("./dep", () => import("./other"));
+          vi.mock("./cycle", async importOriginal => ({ ...(await importOriginal()) }));
+
+          test("a mocked module whose factory did not return it", () => {
+            expect(() => ns.constructor).toThrow('No "constructor" export is defined on the mock of "./dep".');
+            expect(util.inspect(ns)).toEndWith("{ a: 'other-a' }");
+            expect(util.inspect([ns])).toEndWith("{ a: 'other-a' } ]");
+            expect(util.inspect({ ns }, { depth: 0 })).toStartWith("{ ns: [Module");
+          });
+
+          test("a mocked module that is printed before its factory has returned", () => {
+            expect(cycle.printed).toEndWith("{  }");
+          });
+        `,
+      },
+      2,
+    );
+  });
+});
+
 describe.concurrent("a factory that returns a module namespace object", () => {
   const files = {
     "a.ts": `export const a = "real-a";`,

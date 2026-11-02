@@ -6306,8 +6306,26 @@ export const c: PgTextBuilder<{ name: string; data: string }> = t1;
 
       test.each([1, 8])("accepts widening the name of a column builder, on %d threads", async threads => {
         using dir = project({ "a.ts": builders + widening });
-        const { stdout } = await check(dir, ["--threads", String(threads)]);
-        expect(stdout).toBe("");
+        const { stdout, exitCode } = await check(dir, ["--threads", String(threads)]);
+        expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
+      });
+
+      // The symptom of #47707: `ReturnType` takes the false branch of its conditional type, `any`, when the last
+      // overload's return type is not assignable to the widened one.
+      test("resolves ReturnType of an overloaded function that returns a column builder", async () => {
+        using dir = project({
+          "a.ts":
+            builders +
+            `
+declare function text(): PgTextBuilder<{ name: ""; data: string }>;
+declare function text<N extends string>(name: N): PgTextBuilder<{ name: N; data: string }>;
+type IsAny<T> = 0 extends 1 & T ? true : false;
+export const notAny: IsAny<ReturnType<typeof text>> = false;
+export const column: PgTextBuilder<{ name: string; data: string }> = text("id");
+`,
+        });
+        const { stdout, exitCode } = await check(dir);
+        expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
       });
 
       // The classes come from another file, so their instantiations are shared between tasks.
@@ -6316,8 +6334,8 @@ export const c: PgTextBuilder<{ name: string; data: string }> = t1;
           "builders.ts": builders.replaceAll("declare class", "export declare class"),
           "a.ts": `import type { PgTextBuilder } from "./builders";` + widening,
         });
-        const { stdout } = await check(dir);
-        expect(stdout).toBe("");
+        const { stdout, exitCode } = await check(dir);
+        expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
       });
 
       // A comparison of two PgArrayBuilder instantiations measures PgArrayBuilder first, as the outermost measurement.
@@ -6335,8 +6353,8 @@ export const x: PgArrayBuilder<{ name: string; data: unknown }, { name: string; 
 
         test("no error when the PgTextBuilder file is checked first", async () => {
           using dir = project({ ...files, "a.ts": text, "b.ts": array });
-          const { stdout } = await check(dir, ["--threads", "1"]);
-          expect(stdout).toBe("");
+          const { stdout, exitCode } = await check(dir, ["--threads", "1"]);
+          expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
         });
 
         test("both assignments are rejected when the PgArrayBuilder file is checked first", async () => {

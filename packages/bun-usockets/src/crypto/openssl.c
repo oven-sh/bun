@@ -2494,8 +2494,7 @@ struct us_socket_t *us_internal_ssl_on_end(struct us_socket_t *s) {
        * responses still flush and the app's own end() completes the
        * shutdown. With SENT_SHUTDOWN both directions are closed; fall
        * through so a deferred graceful close completes (mirrors the
-       * ZERO_RETURN path; loop.c raw-closes this case first on the
-       * epoll/kqueue backend, the libuv one reaches here). */
+       * ZERO_RETURN path). */
       return s;
     }
   }
@@ -3062,12 +3061,7 @@ int us_internal_ssl_fatal_write_error(struct us_socket_t *s) {
   if (!us_internal_socket_can_raw_write(s)) {
     return ((struct loop_ssl_data *)s->group->loop->data.ssl_data)->ssl_send_error;
   }
-  if (!s->ssl_fatal_error) return 0;
-#ifdef _WIN32
-  return -UV_EPROTO;
-#else
-  return EPROTO;
-#endif
+  return s->ssl_fatal_error ? LIBUS_EPROTO : 0;
 }
 
 void us_internal_ssl_shutdown(struct us_socket_t *s) {

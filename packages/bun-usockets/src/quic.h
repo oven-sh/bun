@@ -1,7 +1,7 @@
 /*
  * QUIC / HTTP/3 transport for usockets, backed by lsquic.
  *
- * One us_quic_socket_context_t per server (engine + UDP socket + timer + SSL).
+ * One us_quic_socket_context_t per server (engine + UDP socket + SSL).
  * No global state — multiple contexts can coexist on the same loop.
  *
  * The header-set API is per-stream: incoming headers are owned by the stream
@@ -50,8 +50,8 @@ us_quic_socket_context_t *us_create_quic_socket_context(
     struct us_loop_t *loop, struct us_bun_socket_context_options_t options,
     unsigned int ext_size, unsigned int idle_timeout_s);
 
-/* Send GOAWAY on every connection and stop accepting new ones; the engine and
- * timer keep running so in-flight streams drain. */
+/* Send GOAWAY on every connection and stop accepting new ones; the engine
+ * keeps running so in-flight streams drain. */
 void us_quic_socket_context_shutdown(us_quic_socket_context_t *ctx);
 void us_quic_socket_context_free(us_quic_socket_context_t *ctx);
 
@@ -160,8 +160,8 @@ void *us_quic_stream_ext(us_quic_stream_t *s);
 us_quic_socket_t *us_quic_stream_socket(us_quic_stream_t *s);
 us_quic_socket_context_t *us_quic_stream_context(us_quic_stream_t *s);
 
-/* Drive every QUIC engine on `loop` and re-arm the per-loop fallthrough
- * timer to the soonest earliest_adv_tick. Called from us_internal_loop_post
+/* Drive every QUIC engine on `loop` and set quic_next_tick_us to the soonest
+ * earliest_adv_tick. Called from us_internal_loop_post
  * and from drainMicrotasks; cheap when quic_head is NULL. */
 void us_quic_loop_process(struct us_loop_t *loop);
 /* Flush only if a stream wrote since the last process_conns. */

@@ -30,6 +30,8 @@ pub const LIBUS_LISTEN_REUSE_PORT: core::ffi::c_int = 4;
 pub const LIBUS_SOCKET_IPV6_ONLY: core::ffi::c_int = 8;
 pub const LIBUS_LISTEN_REUSE_ADDR: core::ffi::c_int = 16;
 pub const LIBUS_SOCKET_OPEN_PAUSED: core::ffi::c_int = 256;
+#[cfg(windows)]
+pub(crate) const LIBUS_SOCKET_CRT_DESCRIPTOR: core::ffi::c_int = 2048;
 
 /// BoringSSL `SSL_CTX` (alias so callers don't need a direct boringssl dep).
 pub type SslCtx = bun_boringssl_sys::SSL_CTX;
@@ -181,19 +183,27 @@ pub use bun_core::Timespec;
 // `UnsafeCell<[u8;0]>` / `!Freeze` rationale; with UnsafeCell the reference is
 // ABI-identical to a non-null pointer, which lets us declare value-typed shims
 // as `safe fn` and drop per-call-site `unsafe { }`.
-bun_core::opaque_extern!(pub UpgradedDuplex, pub WindowsNamedPipe);
+bun_core::opaque_extern!(pub UpgradedDuplex);
 
 pub mod socket_transfer {
     use super::LIBUS_SOCKET_DESCRIPTOR;
-    use core::ffi::{c_char, c_int, c_uint, c_void};
+    use core::ffi::{c_char, c_int, c_uint};
+
+    /// A `WSAPROTOCOL_INFOW`: what one process tells another so that it can open a socket of the first.
+    #[repr(C, align(4))]
+    pub struct SocketInfo(pub [u8; 628]);
+
     unsafe extern "C" {
-        pub safe fn bsd_socket_export_size() -> c_int;
-        pub fn bsd_socket_export(
+        /// Returns 0 or the Winsock error. Only the process `target_pid` can open `info_out`, once.
+        pub safe fn bsd_socket_export(
             fd: LIBUS_SOCKET_DESCRIPTOR,
             target_pid: c_uint,
-            info_out: *mut c_void,
+            info_out: &mut SocketInfo,
         ) -> c_int;
-        pub fn bsd_socket_import(info: *mut c_void, err: *mut c_int) -> LIBUS_SOCKET_DESCRIPTOR;
+        pub safe fn bsd_socket_import(
+            info: &mut SocketInfo,
+            err: &mut c_int,
+        ) -> LIBUS_SOCKET_DESCRIPTOR;
         pub safe fn bsd_close_socket(fd: LIBUS_SOCKET_DESCRIPTOR);
         pub fn bsd_create_bound_socket(
             host: *const c_char,
@@ -320,105 +330,6 @@ impl UpgradedDuplex {
     }
 }
 
-// ── WindowsNamedPipe (cycle-break shim) ─────────────────────────────────────
-// Same link-time-dispatch as `UpgradedDuplex` above: the real
-// `WindowsNamedPipe` lives in `bun_runtime::socket`; this opaque handle
-// forwards to `extern "C"` symbols that the runtime crate exports with
-// `#[no_mangle]`.
-#[cfg(windows)]
-unsafe extern "C" {
-    safe fn WindowsNamedPipe__ssl_error(this: &WindowsNamedPipe) -> us_bun_verify_error_t;
-    safe fn WindowsNamedPipe__is_established(this: &WindowsNamedPipe) -> bool;
-    safe fn WindowsNamedPipe__is_closed(this: &WindowsNamedPipe) -> bool;
-    safe fn WindowsNamedPipe__is_shutdown(this: &WindowsNamedPipe) -> bool;
-    safe fn WindowsNamedPipe__ssl(this: &WindowsNamedPipe) -> *mut bun_boringssl_sys::SSL;
-    safe fn WindowsNamedPipe__set_inline_reject(this: &WindowsNamedPipe);
-    safe fn WindowsNamedPipe__latest_session(
-        this: &WindowsNamedPipe,
-    ) -> *mut bun_boringssl_sys::SSL_SESSION;
-    safe fn WindowsNamedPipe__set_timeout(this: &mut WindowsNamedPipe, seconds: core::ffi::c_uint);
-    safe fn WindowsNamedPipe__flush(this: &mut WindowsNamedPipe);
-    fn WindowsNamedPipe__encode_and_write(
-        this: *mut WindowsNamedPipe,
-        ptr: *const u8,
-        len: usize,
-    ) -> i32;
-    fn WindowsNamedPipe__raw_write(this: *mut WindowsNamedPipe, ptr: *const u8, len: usize) -> i32;
-    safe fn WindowsNamedPipe__shutdown(this: &mut WindowsNamedPipe);
-    safe fn WindowsNamedPipe__shutdown_read(this: &mut WindowsNamedPipe);
-    safe fn WindowsNamedPipe__close(this: &mut WindowsNamedPipe);
-    safe fn WindowsNamedPipe__pause_stream(this: &mut WindowsNamedPipe) -> bool;
-    safe fn WindowsNamedPipe__resume_stream(this: &mut WindowsNamedPipe) -> bool;
-}
-#[cfg(windows)]
-impl WindowsNamedPipe {
-    #[inline]
-    pub(crate) fn ssl_error(&self) -> us_bun_verify_error_t {
-        WindowsNamedPipe__ssl_error(self)
-    }
-    #[inline]
-    pub(crate) fn is_established(&self) -> bool {
-        WindowsNamedPipe__is_established(self)
-    }
-    #[inline]
-    pub(crate) fn is_closed(&self) -> bool {
-        WindowsNamedPipe__is_closed(self)
-    }
-    #[inline]
-    pub(crate) fn is_shutdown(&self) -> bool {
-        WindowsNamedPipe__is_shutdown(self)
-    }
-    #[inline]
-    pub(crate) fn ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {
-        let p = WindowsNamedPipe__ssl(self);
-        if p.is_null() { None } else { Some(p) }
-    }
-    #[inline]
-    pub(crate) fn set_inline_reject(&self) {
-        WindowsNamedPipe__set_inline_reject(self)
-    }
-    #[inline]
-    pub(crate) fn latest_session(&self) -> *mut bun_boringssl_sys::SSL_SESSION {
-        WindowsNamedPipe__latest_session(self)
-    }
-    #[inline]
-    pub(crate) fn set_timeout(&mut self, seconds: core::ffi::c_uint) {
-        WindowsNamedPipe__set_timeout(self, seconds)
-    }
-    #[inline]
-    pub(crate) fn flush(&mut self) {
-        WindowsNamedPipe__flush(self)
-    }
-    #[inline]
-    pub(crate) fn encode_and_write(&mut self, data: &[u8]) -> i32 {
-        unsafe { WindowsNamedPipe__encode_and_write(self, data.as_ptr(), data.len()) }
-    }
-    #[inline]
-    pub(crate) fn raw_write(&mut self, data: &[u8]) -> i32 {
-        unsafe { WindowsNamedPipe__raw_write(self, data.as_ptr(), data.len()) }
-    }
-    #[inline]
-    pub(crate) fn shutdown(&mut self) {
-        WindowsNamedPipe__shutdown(self)
-    }
-    #[inline]
-    pub(crate) fn shutdown_read(&mut self) {
-        WindowsNamedPipe__shutdown_read(self)
-    }
-    #[inline]
-    pub(crate) fn close(&mut self) {
-        WindowsNamedPipe__close(self)
-    }
-    #[inline]
-    pub(crate) fn pause_stream(&mut self) -> bool {
-        WindowsNamedPipe__pause_stream(self)
-    }
-    #[inline]
-    pub(crate) fn resume_stream(&mut self) -> bool {
-        WindowsNamedPipe__resume_stream(self)
-    }
-}
-
 // ───────────────────────────── module map ────────────────────────────────────
 // Snake-case names are what `bun_uws` imports; `#[path]` points at the
 // PascalCase source files on disk.
@@ -442,6 +353,9 @@ pub mod internal_loop_data;
 pub mod listen_socket;
 #[path = "Loop.rs"]
 pub mod loop_;
+#[cfg(windows)]
+#[path = "Poll.rs"]
+pub mod poll;
 #[path = "quic.rs"]
 pub mod quic;
 #[path = "Request.rs"]
@@ -456,10 +370,6 @@ pub mod socket_group;
 pub mod socket_kind;
 #[path = "thunk.rs"]
 pub mod thunk;
-// libuv only — use `bun_event_loop::EventLoopTimer` elsewhere.
-#[cfg(windows)]
-#[path = "Timer.rs"]
-pub mod timer;
 #[path = "udp.rs"]
 pub mod udp;
 #[path = "us_socket_t.rs"]
@@ -487,9 +397,7 @@ pub mod fault_inject {
     /// Not a syscall: the per-loop TLS plaintext buffer allocation in
     /// `us_internal_init_loop_ssl_data`.
     pub const SSL_LOOP_BUFFER: c_int = 10;
-    /// Not a syscall: poll registration in `us_poll_start_rc`
-    /// (`uv_poll_init_socket` on Windows, `EPOLL_CTL_ADD` / `kevent` on
-    /// epoll/kqueue).
+    /// Not a syscall: poll registration in `us_poll_start_rc`.
     pub const POLL_START: c_int = 11;
     /// Not a syscall: the JS `Buffer` allocated for a TLS session/keylog
     /// payload in the `on_session`/`on_keylog` dispatch.
@@ -527,12 +435,8 @@ pub use socket::{
 // ───────────────────────────── re-exports ────────────────────────────────────
 
 pub use internal_loop_data::InternalLoopData;
-#[cfg(windows)]
-pub use loop_::WindowsLoop;
 pub use loop_::{Loop, NOW_NS_UNKNOWN};
 pub use socket_kind::SocketKind;
-#[cfg(windows)]
-pub use timer::Timer;
 
 pub use body_reader_mixin::BodyReaderMixin;
 pub use connecting_socket::ConnectingSocket;

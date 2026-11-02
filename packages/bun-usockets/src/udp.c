@@ -177,11 +177,7 @@ struct us_udp_socket_t *us_create_udp_socket_from_fd(
 ) {
     if (bsd_prepare_adopted_udp_socket(fd)) {
         if (err != NULL) {
-#ifdef _WIN32
-            *err = WSAGetLastError();
-#else
-            *err = errno;
-#endif
+            *err = LIBUS_ERR;
         }
         return 0;
     }
@@ -210,10 +206,10 @@ struct us_udp_socket_t *us_create_udp_socket_from_fd(
     udp->next = NULL;
 
     if (us_poll_start_rc((struct us_poll_t *) udp, udp->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE) != 0) {
-        int saved_errno = errno;
+        int saved_errno = LIBUS_ERR;
         us_poll_free(p, loop);
         if (err) *err = saved_errno;
-        errno = saved_errno;
+        LIBUS_SET_ERR(saved_errno);
         return 0;
     }
 
@@ -248,11 +244,11 @@ struct us_udp_socket_t *us_create_udp_socket(
     struct us_poll_t *p = us_create_poll(loop, fallthrough, sizeof(struct us_udp_socket_t) + ext_size);
     us_poll_init(p, fd, POLL_TYPE_UDP);
     if (us_poll_start_rc(p, loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE) != 0) {
-        int saved_errno = errno;
+        int saved_errno = LIBUS_ERR;
         bsd_close_socket(fd);
         us_poll_free(p, loop);
         if (err) *err = saved_errno;
-        errno = saved_errno;
+        LIBUS_SET_ERR(saved_errno);
         return 0;
     }
 

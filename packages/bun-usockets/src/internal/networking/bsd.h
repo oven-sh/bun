@@ -168,6 +168,10 @@ char *bsd_udp_packet_buffer_payload(struct udp_recvbuf *msgvec, int index);
 char *bsd_udp_packet_buffer_peer(struct udp_recvbuf *msgvec, int index);
 int bsd_udp_packet_buffer_truncated(struct udp_recvbuf *msgvec, int index);
 
+#ifdef _WIN32
+void bsd_winsock_ensure(void);
+int bsd_socket_peer_reset_probe(LIBUS_SOCKET_DESCRIPTOR fd);
+#endif
 LIBUS_SOCKET_DESCRIPTOR apple_no_sigpipe(LIBUS_SOCKET_DESCRIPTOR fd);
 LIBUS_SOCKET_DESCRIPTOR bsd_set_nonblocking(LIBUS_SOCKET_DESCRIPTOR fd);
 void bsd_socket_nodelay(LIBUS_SOCKET_DESCRIPTOR fd, int enabled);
@@ -244,7 +248,6 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr,
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket_unix(const char *server_path, size_t pathlen, int options);
 
-int bsd_socket_export_size(void);
 int bsd_socket_export(LIBUS_SOCKET_DESCRIPTOR fd, unsigned int target_pid, void *info_out);
 LIBUS_SOCKET_DESCRIPTOR bsd_socket_import(void *info, int *err);
 int bsd_socket_listen_error_is_benign(LIBUS_SOCKET_DESCRIPTOR fd);

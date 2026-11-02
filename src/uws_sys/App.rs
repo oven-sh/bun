@@ -481,6 +481,15 @@ impl<const SSL: bool> ListenSocket<SSL> {
             .get_local_port()
     }
 
+    /// A named pipe server (Windows). It has no descriptor, and its name is not a file.
+    #[inline]
+    pub fn is_pipe(&mut self) -> bool {
+        // S008: opaque ZST cast as above.
+        bun_opaque::opaque_deref_mut(std::ptr::from_mut::<Self>(self).cast::<UwsListenSocket>())
+            .get_socket()
+            .is_pipe()
+    }
+
     pub fn socket(&mut self) -> crate::socket::NewSocketHandler<SSL> {
         // SAFETY: ListenSocket<SSL> is layout-identical to us_socket_t on the C side
         // (a listen socket IS a us_socket_t).

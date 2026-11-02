@@ -2,8 +2,9 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="annotated"
 // CHECK: [[annotatedCall]] = Call
-// CHECK-NOT: ReturnCall
-// CHECK: Return [[annotatedValue]]
+// CHECK-NEXT: [[annotatedExpected]] = Convert [[annotatedCall]] declared={type=number flags=[IsExpected]}
+// CHECK-NEXT: [[annotatedValue]] = Convert [[annotatedExpected]] declared={type=number site=[[annotation]]}
+// CHECK-NEXT: Return [[annotatedValue]]
 // CHECK-LABEL: function {{*}}name="beforeUnreachableStatement"
 // CHECK-NOT: ReturnCall
 // CHECK: Return [[unreachableValue]]

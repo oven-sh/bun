@@ -942,6 +942,15 @@ impl Reader<'_, '_> {
     fn number(&mut self) -> Result<u32> {
         let start = self.at;
         let text = self.text;
+        // Most numbers are a few digits without a leading zero, and then comes what ends a value.
+        if matches!(text.get(start), Some(b'1'..=b'9')) {
+            let rest = text.get(start..).unwrap_or_default();
+            let len = rest.iter().take_while(|byte| byte.is_ascii_digit()).count();
+            if matches!(rest.get(len), Some(b',' | b']' | b'}' | b' ' | b'\n')) {
+                self.at = start + len;
+                return Ok(self.push(Kind::Number, start, len as u32, 0));
+            }
+        }
         // How many digits are at `at`, including the `_`s between them. A `_` has to be between two digits.
         let digits = |at: usize, is_digit: fn(&u8) -> bool| {
             let (mut len, mut previous) = (0, b'_');

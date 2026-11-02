@@ -49,8 +49,14 @@ impl Parser {
 
 /// The parser that Prettier infers from a file name. `None` if it isn't JSON.
 pub fn parser_for_path(path: &[u8]) -> Option<Parser> {
-    let basename = file_name(path).to_ascii_lowercase();
-    let basename = &basename[..];
+    let name = file_name(path);
+    // Every name and extension below is shorter than this, so the end of a longer name is enough.
+    let mut lowered = [0; 32];
+    let end = &name[name.len().saturating_sub(lowered.len() - 1)..];
+    let basename = &mut lowered[..end.len()];
+    basename.copy_from_slice(end);
+    basename.make_ascii_lowercase();
+    let basename = &*basename;
     if matches!(
         basename,
         b"package.json" | b"package-lock.json" | b"composer.json"
@@ -120,7 +126,7 @@ pub fn parser_for_path(path: &[u8]) -> Option<Parser> {
     }
     EXTENSIONS
         .iter()
-        .find(|(extension, _)| basename.ends_with(extension))
+        .find(|(extension, _)| extension.last() == basename.last() && basename.ends_with(extension))
         .map(|(_, parser)| *parser)
 }
 
@@ -145,6 +151,8 @@ struct Config {
     name_quote: QuoteStyle,
     /// How many columns all lines are indented by, when formatting part of a document.
     alignment: u32,
+    /// See `writer.rs`.
+    compares_with_source: bool,
 }
 
 impl Config {
@@ -174,6 +182,7 @@ impl Config {
                 options.quote_style
             },
             alignment: 0,
+            compares_with_source: !options.no_short_cuts,
         }
     }
 

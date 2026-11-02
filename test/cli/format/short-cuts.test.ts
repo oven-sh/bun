@@ -214,3 +214,49 @@ describe("YAML", () => {
     });
   });
 });
+
+describe("JSON", () => {
+  const texts = [
+    '{\n  "a": 1,\n  "b": [1, 2, 3],\n  "c": { "d": null },\n  "e": {\n    "f": true\n  }\n}\n',
+    '{"a":1,"b":[1,2,3],"c":{"d":null},\n"e":{\n"f":true}}',
+    '{\n    "a": 1,\n    "b": {\n        "c": 2\n    }\n}\n',
+    '{\n\t"a": 1,\n\t"b": {\n\t\t"c": 2\n\t}\n}\n',
+    '{\n  "a" : 1 ,\n  "b":  2\n}\n',
+    '{\n  "a": 1,\n\n\n  "b": 2,\n\n  "c": 3\n}\n',
+    "[" + Array.from({ length: 60 }, (_, i) => i).join(", ") + "]\n",
+    "[\n  " + Array.from({ length: 60 }, (_, i) => i).join(",\n  ") + "\n]\n",
+    "[[1, 2], [3, 4]]\n",
+    '[{"a": 1, "b": 2}, {"a": 3, "b": 4}]\n',
+    "[1,,2,]\n",
+    "{a: 1, 'b': 'c', 2: 1.50, d: +1, e: .5, f: 0XAB, g: `h`, i: NaN}\n",
+    '{"a": "b\\\nc", "d": "\\u00e9", "e": "é", "f": "漢字"}\n',
+    '{"a": 1} ',
+    '{"a": 1}\r\n',
+    '{\r\n  "a": 1,\r\n  "b": [\r\n    {}\r\n  ]\r\n}\r\n',
+    '\ufeff{"a": 1}\n',
+    '// a\n{"a": 1 /* b */}\n',
+    "[]",
+    "{}",
+    "1",
+    '"a"',
+    "",
+    "\n",
+    '{"a": 1,}',
+    '{"a" 1}',
+    '{"a": 1',
+    '{"version": "1", "name": "a", "dependencies": {"b": "1", "a": "2"}, "scripts": {"test": "x", "build": "y"}}\n',
+  ];
+  const options = [
+    [],
+    ["--tab-width=4"],
+    ["--use-tabs"],
+    ["--tab-width=0", "--print-width=1"],
+    ["--print-width=20", "--no-bracket-spacing"],
+    ["--end-of-line=crlf"],
+    ["--end-of-line=auto"],
+    ["--object-wrap=collapse", "--trailing-comma=none"],
+    ["--quote-props=consistent", "--single-quote"],
+  ];
+  describe.each(["a.json", "package.json", "a.json5", "a.jsonc"])("%s", name => expectSame(name, texts, options));
+  describe("sorted", () => expectSame("package.json", texts, [["--sort-package-json"]]));
+});

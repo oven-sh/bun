@@ -75,6 +75,10 @@ With `proseWrap: "preserve"` nothing in a block mapping or sequence of one-line 
 - Only three things are measured, and only for ASCII: a flow collection on one line, `key: |`, and the key of `key: # comment`.
 - `FormatOptions::no_short_cuts` turns it off. `test/cli/format/short-cuts.test.ts` compares the two ways. Fixtures and real files find little here. What found the mistakes: damaged files, stretches of files and made-up documents with comments in every column, formatted both ways in one process, some million cases per minute.
 
+## JSON: what is written is compared with the source
+
+`json/writer.rs` writes a document without comments from the tree. Before it copies anything it looks whether the source goes on with the same bytes (`Writer::goes_on_with`, `put_source`), and only moves the end of the stretch that is still to be copied. A document that is formatted is copied once, at the end. One that is indented differently costs two copies per line. `no_short_cuts` makes every comparison fail.
+
 ## Syntax errors
 
 `[error] a.css: SyntaxError: Unclosed string (3:6)`, and under it the lines around the place as Prettier shows them. `syntax_error.rs`:

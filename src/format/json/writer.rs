@@ -8,6 +8,9 @@
 //! - An array of numbers that doesn't fit on one line gets as many per line as fit.
 //!
 //! The widths are known from parsing, so nothing is measured here and nothing is written twice.
+//!
+//! What's written is compared with the source first. As long as the source goes on with the same bytes, nothing is
+//! copied. A document that's already formatted is copied as a whole at the end.
 
 use super::Config;
 use super::parser::{
@@ -44,6 +47,9 @@ struct Writer<'t, 'o> {
     text: &'t [u8],
     config: &'o Config,
     out: &'o mut Vec<u8>,
+    /// `text[from..to]` comes after `out` and hasn't been copied yet.
+    from: usize,
+    to: usize,
     /// How many enclosing containers aren't on one line.
     level: u32,
     /// The column of the next byte.
@@ -71,6 +77,8 @@ pub(super) fn write(
         text,
         config,
         out,
+        from: 0,
+        to: 0,
         level: 0,
         column: config.alignment,
         line_start,
@@ -100,11 +108,11 @@ pub(super) fn write(
             let is_first = std::mem::take(&mut frame.is_first);
             let is_after_blank = std::mem::take(&mut frame.is_after_blank);
             if !is_first {
-                writer.put(b",", 1);
+                writer.put_byte(b',');
             }
             if is_flat {
                 if !is_first || (frame.is_object && config.bracket_spacing) {
-                    writer.put(b" ", 1);
+                    writer.put_byte(b' ');
                 }
             } else if frame.is_concise && !is_first && !is_after_blank {
                 let comma = if node.next == frame.end {
@@ -118,12 +126,12 @@ pub(super) fn write(
                     .saturating_add(node.width)
                     <= config.print_width
                 {
-                    true => writer.put(b" ", 1),
+                    true => writer.put_byte(b' '),
                     false => writer.new_line(),
                 }
             } else {
                 if is_after_blank {
-                    writer.out.extend_from_slice(config.line_ending);
+                    writer.put(config.line_ending, 0);
                 }
                 writer.new_line();
             }
@@ -176,7 +184,7 @@ pub(super) fn write(
                     .saturating_add(node.width)
                     .saturating_add(rest)
                     <= config.print_width);
-        writer.put(if is_object { b"{" } else { b"[" }, 1);
+        writer.put_byte(if is_object { b'{' } else { b'[' });
         writer.level += u32::from(!is_flat);
         frames.push(Frame {
             end: node.next,
@@ -188,7 +196,8 @@ pub(super) fn write(
             is_after_hole: false,
         });
     }
-    writer.out.extend_from_slice(config.line_ending);
+    writer.put(config.line_ending, 0);
+    writer.flush();
     match writer.is_too_long {
         true => Err(FormatError::TooLong),
         false => Ok(()),
@@ -198,12 +207,60 @@ pub(super) fn write(
 impl Writer<'_, '_> {
     #[inline]
     fn put(&mut self, bytes: &[u8], width: u32) {
-        self.out.extend_from_slice(bytes);
         self.column = self.column.saturating_add(width);
+        match self.goes_on_with(bytes) {
+            true => self.to += bytes.len(),
+            false => self.flushed().extend_from_slice(bytes),
+        }
+    }
+
+    /// `put` for one byte that's one column wide.
+    #[inline]
+    fn put_byte(&mut self, byte: u8) {
+        self.column = self.column.saturating_add(1);
+        match self.config.compares_with_source && self.text.get(self.to) == Some(&byte) {
+            true => self.to += 1,
+            false => self.flushed().push(byte),
+        }
+    }
+
+    /// True if `bytes` are what comes next in the source.
+    #[inline]
+    fn goes_on_with(&self, bytes: &[u8]) -> bool {
+        self.config.compares_with_source
+            && self.text.get(self.to..self.to + bytes.len()) == Some(bytes)
+    }
+
+    /// Writes `text[start..end]`.
+    #[inline]
+    fn put_source(&mut self, start: usize, end: usize) {
+        if start != self.to {
+            self.flush();
+            self.from = start;
+        }
+        self.to = end;
+    }
+
+    fn flush(&mut self) {
+        self.out
+            .extend_from_slice(self.text.get(self.from..self.to).unwrap_or_default());
+        self.from = self.to;
+    }
+
+    /// The output, with everything in it that has been written.
+    #[inline(never)]
+    fn flushed(&mut self) -> &mut Vec<u8> {
+        self.flush();
+        self.out
+    }
+
+    /// The length of the output.
+    fn len(&self) -> usize {
+        self.out.len() + self.to.saturating_sub(self.from)
     }
 
     fn new_line(&mut self) {
-        if crate::is_too_long(self.out.len()) {
+        if crate::is_too_long(self.len()) {
             self.is_too_long = true;
             return;
         }
@@ -225,8 +282,9 @@ impl Writer<'_, '_> {
                     alignment % indent_width.max(1),
                 );
                 if tabs == 0 {
-                    self.out.extend_from_slice(line_ending);
-                    self.out.resize(self.out.len() + spaces as usize, b' ');
+                    let out = self.flushed();
+                    out.extend_from_slice(line_ending);
+                    out.resize(out.len() + spaces as usize, b' ');
                     self.column = spaces;
                     return;
                 }
@@ -236,46 +294,53 @@ impl Writer<'_, '_> {
             }
         };
         let len = line_ending.len() + count as usize;
-        if crate::is_too_long(self.out.len() + len) {
+        if crate::is_too_long(self.len() + len) {
             self.is_too_long = true;
             return;
         }
         if self.line_start.len() < len {
             self.line_start.resize(len, byte);
         }
-        self.out.extend_from_slice(&self.line_start[..len]);
+        match self.goes_on_with(&self.line_start[..len]) {
+            true => self.to += len,
+            false => {
+                self.flush();
+                self.out.extend_from_slice(&self.line_start[..len]);
+            }
+        }
     }
 
     fn close(&mut self, frame: &Frame) {
         // The comma after a hole is what makes it an element.
         if frame.is_after_hole && !self.config.is_stringify() {
-            self.put(b",", 1);
+            self.put_byte(b',');
         }
         if frame.is_flat {
             if frame.is_object && self.config.bracket_spacing {
-                self.put(b" ", 1);
+                self.put_byte(b' ');
             }
         } else {
             if self.config.trailing_comma && !frame.is_after_hole {
-                self.put(b",", 1);
+                self.put_byte(b',');
             }
             self.level = self.level.saturating_sub(1);
             self.new_line();
         }
-        self.put(if frame.is_object { b"}" } else { b"]" }, 1);
+        self.put_byte(if frame.is_object { b'}' } else { b']' });
     }
 
     fn name(&mut self, node: &Node) {
         if node.has(UNQUOTED) {
-            let source = self
-                .text
-                .get(node.start as usize + 1..(node.end as usize).saturating_sub(1));
-            self.put(source.unwrap_or_default(), node.width);
+            self.column = self.column.saturating_add(node.width);
+            self.put_source(
+                node.start as usize + 1,
+                (node.end as usize).saturating_sub(1),
+            );
         } else if node.has(QUOTED) {
             let quote = [self.config.name_quote.as_byte()];
-            self.out.extend_from_slice(&quote);
+            self.put(&quote, 0);
             self.scalar(node);
-            self.out.extend_from_slice(&quote);
+            self.put(&quote, 0);
         } else {
             self.scalar(node);
         }
@@ -285,23 +350,24 @@ impl Writer<'_, '_> {
     #[inline]
     fn scalar(&mut self, node: &Node) {
         self.column = self.column.saturating_add(node.width);
-        let source = self
-            .text
-            .get(node.start as usize..node.end as usize)
-            .unwrap_or_default();
         if matches!(node.kind, Kind::String | Kind::Number | Kind::Identifier)
             && !node.has(REWRITTEN)
             && node.width != MUST_BREAK
         {
-            self.out.extend_from_slice(source);
+            self.put_source(node.start as usize, node.end as usize);
         } else {
-            self.rare_scalar(node, source);
+            self.rare_scalar(node);
         }
     }
 
-    /// A scalar that isn't, or isn't always, copied from `source`, its source text.
+    /// A scalar that isn't, or isn't always, copied from its source text.
     #[inline(never)]
-    fn rare_scalar(&mut self, node: &Node, source: &[u8]) {
+    fn rare_scalar(&mut self, node: &Node) {
+        let source = self
+            .text
+            .get(node.start as usize..node.end as usize)
+            .unwrap_or_default();
+        self.flush();
         // Whatever follows a multi-line name comes after its last line.
         if node.width == MUST_BREAK
             && let Some(line_break) = bun_core::strings::last_index_of_char(source, b'\n')

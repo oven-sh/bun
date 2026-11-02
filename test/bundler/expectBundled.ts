@@ -1117,6 +1117,19 @@ function expectBundled(
       const stdout = Buffer.from(stdoutBytes);
       const stderr = Buffer.from(stderrBytes);
       const success = exitCode === 0;
+      const checkCliWarnings = () => {
+        if (ESBUILD) return;
+        const warningText = stderr!.toUnixString();
+        const allWarnings = warnParser(warningText)
+          .map(([error, source]) => {
+            if (!source) return;
+            const [_str2, fullFilename, line, col] = source.match(/bun-build-tests[\/\\](.*):(\d+):(\d+)/)!;
+            const file = fullFilename.slice(id.length + path.basename(tempDirectory).length + 1).replaceAll("\\", "/");
+            return { error, file, line, col };
+          })
+          .filter(Boolean) as ErrorMeta[];
+        checkWarnings(allWarnings);
+      };
       if (buildProc.signalCode) {
         throw new Error(
           `[${id}] 'bun build' subprocess killed by ${buildProc.signalCode}\n` +
@@ -1213,6 +1226,7 @@ function expectBundled(
               throw new Error("Errors were expected while bundling:\n" + errorsLeft.map(formatError).join("\n"));
             }
 
+            checkCliWarnings();
             return testRef(id, opts);
           }
           if (allErrors.length === 0) {
@@ -1227,19 +1241,7 @@ function expectBundled(
         throw new Error("Errors were expected while bundling:\n" + expectedErrors.map(formatError).join("\n"));
       }
 
-      // Check for warnings
-      if (!ESBUILD) {
-        const warningText = stderr!.toUnixString();
-        const allWarnings = warnParser(warningText)
-          .map(([error, source]) => {
-            if (!source) return;
-            const [_str2, fullFilename, line, col] = source.match(/bun-build-tests[\/\\](.*):(\d+):(\d+)/)!;
-            const file = fullFilename.slice(id.length + path.basename(tempDirectory).length + 1).replaceAll("\\", "/");
-            return { error, file, line, col };
-          })
-          .filter(Boolean) as ErrorMeta[];
-        checkWarnings(allWarnings);
-      }
+      checkCliWarnings();
     } else {
       const pluginArray = typeof plugins === "function" ? [{ name: "plugin", setup: plugins }] : plugins;
       if (!ESBUILD) {
@@ -1408,6 +1410,7 @@ for (const [key, blob] of build.outputs) {
           };
         };
 
+        const allWarnings = build.logs.filter(x => x.level === "warn").map(logToErrorMeta);
         const buildLogs = build.logs.filter(x => x.level === "error");
         if (buildLogs.length) {
           const allErrors: ErrorMeta[] = [];
@@ -1464,6 +1467,7 @@ for (const [key, blob] of build.outputs) {
               throw new Error("Errors were expected while bundling:\n" + errorsLeft.map(formatError).join("\n"));
             }
 
+            checkWarnings(allWarnings);
             return testRef(id, opts);
           }
 
@@ -1471,7 +1475,6 @@ for (const [key, blob] of build.outputs) {
         } else if (expectedErrors && expectedErrors.length > 0) {
           throw new Error("Errors were expected while bundling:\n" + expectedErrors.map(formatError).join("\n"));
         }
-        const allWarnings = build.logs.filter(x => x.level === "warn").map(logToErrorMeta);
         checkWarnings(allWarnings);
       } else {
         await esbuild.build({

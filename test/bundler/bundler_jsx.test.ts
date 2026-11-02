@@ -148,6 +148,59 @@ function itBundledDevAndProd(
 }
 
 describe("bundler", () => {
+  describe.each(["cli", "api"] as const)("warnings with build errors (%s)", backend => {
+    const warning = '"key" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.';
+    test.concurrent.each([
+      ["matching", "automatic", [warning], null],
+      ["missing", "classic", [warning], "Warnings were expected while bundling"],
+      ["unexpected", "automatic", [], "Unexpected warnings reported while bundling"],
+    ] as const)("checks %s warnings", async (_, runtime, warnings, diagnostic) => {
+      using dir = tempDir("jsx-warnings-with-errors", {
+        "test/bundler/warnings.test.ts": `
+          import { itBundled } from ${JSON.stringify(join(import.meta.dir, "expectBundled.ts"))};
+          itBundled("jsx/WarningsWithErrors", {
+            files: ${JSON.stringify({
+              "/in.jsx":
+                'import { missing } from "./dep"; export const element = <div {...props} key="k" />; console.log(missing);',
+              "/dep.js": "export const present = 1;",
+            })},
+            backend: ${JSON.stringify(backend)},
+            jsx: { runtime: ${JSON.stringify(runtime)} },
+            external: ["react", "react/*"],
+            bundleErrors: { "/in.jsx": ['for import "missing"'] },
+            bundleWarnings: { "/in.jsx": ${JSON.stringify(warnings)} },
+          });
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", join(String(dir), "test/bundler/warnings.test.ts")],
+        env: {
+          ...bunEnv,
+          BUN_BUNDLER_TEST_USE_ESBUILD: undefined,
+          BUN_BUNDLER_TEST_AOT: undefined,
+          BUN_BUNDLER_TEST_FILTER: undefined,
+          BUN_BUNDLER_TEST_DEBUG: undefined,
+          BUN_EXE: undefined,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const stdoutPromise = proc.stdout.text();
+      const stderrPromise = proc.stderr.text();
+      const exitCodePromise = proc.exited;
+      const [stdout, stderr, exitCode] = await Promise.all([stdoutPromise, stderrPromise, exitCodePromise]);
+      expect(stdout).toBe(`bun test ${Bun.version_with_sha}\n`);
+      if (diagnostic != null) {
+        expect(stderr).toContain(diagnostic);
+        expect(stderr).toContain(warning);
+        expect(exitCode).toBe(1);
+        return;
+      }
+      expect(stderr).toContain("1 pass");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("jsx preserve", () => {
     describe.each(["cli", "api"] as const)("defined JSX tags (%s)", backend => {
       describe.each(

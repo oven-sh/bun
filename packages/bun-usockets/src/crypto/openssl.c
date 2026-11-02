@@ -1401,6 +1401,12 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
    * leaf-only `cert` presents the intermediates found in the context's store
    * (crypto_context.cc#L1640). It only runs when the configured chain is 1. */
   SSL_CTX_clear_mode(ssl_context, SSL_MODE_NO_AUTO_CHAIN);
+  /* BoringSSL's SSL_OP_ALL default lets a client finish a TLS <= 1.2 handshake
+   * with a server that omits renegotiation_info (RFC 5746). OpenSSL 3 and
+   * Node reject such a server (RFC 9325 s3.5, alert handshake_failure,
+   * ERR_SSL_UNSAFE_LEGACY_RENEGOTIATION_DISABLED). The user's `secureOptions`
+   * OR below re-enables it, like Node's SSL_OP_LEGACY_SERVER_CONNECT opt-in. */
+  SSL_CTX_clear_options(ssl_context, SSL_OP_LEGACY_SERVER_CONNECT);
   /* Honor explicit minVersion/maxVersion (Node's secureProtocol/min/maxVersion);
    * default to a TLS1.2 floor when no minimum is requested. */
   SSL_CTX_set_min_proto_version(ssl_context, options.ssl_min_version ? options.ssl_min_version : TLS1_2_VERSION);

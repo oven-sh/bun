@@ -783,8 +783,7 @@ public:
         return std::move(*this);
     }
 
-    /* node:http `server.listen(handle)`: accept on `ls`, a listen socket that its creator keeps
-     * and closes. See HttpContext::attachListenSocket. */
+    /* node:http `server.listen(handle)`. See HttpContext::attachListenSocket. */
     void attachListenSocket(us_listen_socket_t *ls, us_socket_group_t *ownerGroup, void *user) {
         httpContext->attachListenSocket(ls, ownerGroup, sslCtxOrNull(), user);
         if constexpr (SSL) {

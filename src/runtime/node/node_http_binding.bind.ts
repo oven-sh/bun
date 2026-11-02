@@ -20,11 +20,7 @@ export const BunServer = b.union({
   debugHttp: DebugHTTPServer,
   debugHttps: DebugHTTPSServer,
 });
-/**
- * `server.listen(handle)`: `Bun.serve(options)` that takes the connections of `handle`, the `_handle` of a `net.Server`,
- * and binds no listen socket of its own. `handle` keeps the socket, and either server closes it. `undefined` if node
- * finds no handle in it (no `Listener`, or a Windows named pipe).
- */
+/** node:http `server.listen(handle)`: `Bun.serve(options)` on the listen socket of `handle`. `undefined` if it is no handle. */
 export const serveOnListenHandle = b.fn({
   args: { options: b.any, handle: Listener.otherAsNull },
   returns: b.any,

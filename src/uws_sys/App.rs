@@ -305,16 +305,7 @@ impl<const SSL: bool> App<SSL> {
         }
     }
 
-    /// node:http `server.listen(handle)`: this app takes the connections of `ls`, a listen
-    /// socket that its creator keeps and closes. `ls` gets this app's accept parameters, and
-    /// `owner_group` (the group `ls` accepts into) a vtable that moves each accepted socket
-    /// here as it opens. `user` comes back from [`SocketGroup::listen_forward_user`]. The
-    /// creator ends it with [`SocketGroup::detach_listen_forward`] before this app is
-    /// destroyed.
-    ///
-    /// # Safety
-    /// `owner_group` is the group that `ls` was created in, and it has no vtable. The app is
-    /// a node:http one.
+    /// A node:http app takes the connections of `ls`. `owner_group` must be the group of `ls`, with no vtable.
     pub unsafe fn attach_listen_socket(
         &mut self,
         ls: &mut UwsListenSocket,

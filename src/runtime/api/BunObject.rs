@@ -1044,8 +1044,7 @@ pub(crate) fn serve_on_listen_handle(
     }
 }
 
-/// `Bun.serve(options)`. With `handle`, the server takes the connections of that listener's
-/// listen socket (node:http `server.listen(handle)`) and binds none.
+/// `Bun.serve(options)`. With `handle` it serves the connections of that listener and binds no socket.
 fn serve_on(
     cx: &mut JsScope<'_>,
     options: JsLocal<'_>,

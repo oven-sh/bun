@@ -61,9 +61,7 @@ impl ListenSocket {
         us_listen_socket_group(self)
     }
 
-    /// What each socket accepted from now on gets: its kind, its `SSL_CTX` (`None` is plain
-    /// TCP), the size of its ext block, and whether it starts paused. They still land in
-    /// [`Self::accept_group`]. C up-refs `ssl_ctx` and drops the previous one with its SNI names.
+    /// The kind, `SSL_CTX` (`None` is plain TCP), ext size and paused state of each socket accepted from now on.
     pub fn set_accept(
         &mut self,
         kind: SocketKind,

@@ -299,24 +299,14 @@ impl SocketGroup {
         }
     }
 
-    /// The `user` of [`crate::NewApp::attach_listen_socket`], for the group of a listen socket
-    /// whose connections a uWS app takes (node:http `server.listen(handle)`).
-    ///
-    /// # Safety
-    /// `vtable` is what `attach_listen_socket` put there.
+    /// The `user` of [`crate::NewApp::attach_listen_socket`], which must have put `vtable` there.
     pub unsafe fn listen_forward_user(&self) -> *mut c_void {
         debug_assert!(self.vtable.is_some());
         // SAFETY: caller contract. C++ reads the `uWS::ListenForward` that starts with the vtable.
         unsafe { uws_listen_forward_user(self) }
     }
 
-    /// Ends what [`crate::NewApp::attach_listen_socket`] began: the group has no vtable again.
-    /// Returns its `user`. The listen socket keeps the accept parameters of the app until its
-    /// owner gives it others or closes it.
-    ///
-    /// # Safety
-    /// `vtable` is what `attach_listen_socket` put there, and no socket of this group is being
-    /// opened.
+    /// Ends [`crate::NewApp::attach_listen_socket`] and returns its `user`. No socket of the group may be opening.
     pub unsafe fn detach_listen_forward(&mut self) -> *mut c_void {
         debug_assert!(self.vtable.is_some());
         // SAFETY: caller contract. C++ frees the `uWS::ListenForward` and clears `vtable`.

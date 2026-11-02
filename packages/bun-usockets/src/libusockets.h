@@ -413,11 +413,7 @@ struct us_listen_socket_t *us_socket_group_listen_fd(us_socket_group_r group,
     LIBUS_SOCKET_DESCRIPTOR fd, int backlog, int options, int socket_ext_size, int *error)
     __attribute__((nonnull(1, 8)));  /* ssl_ctx nullable */
 void us_listen_socket_close(struct us_listen_socket_t *ls) nonnull_fn_decl;
-/* Another server takes the connections of `ls` (node's `handle[owner_symbol] = server`):
- * the sockets accepted from now on get `kind`, `ssl_ctx` (NULL is plain TCP) and
- * `socket_ext_size`, and start paused or not. They still land in the group `ls` was
- * created with, whose on_open moves each one to its server (us_socket_adopt). The SNI
- * names of the previous SSL_CTX go with it. No-op on a closed listen socket. */
+/* What sockets accepted from now on get. They still land in the group of `ls`. No-op on a closed listen socket. */
 void us_listen_socket_set_accept(struct us_listen_socket_t *ls, unsigned char kind,
     struct ssl_ctx_st *ssl_ctx, int socket_ext_size, int paused)
     __attribute__((nonnull(1)));  /* ssl_ctx nullable */

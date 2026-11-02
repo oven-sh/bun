@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 2e4ec2a5da444717a96ba15f028b2820787ce9cd121323e6aea9ac14b8a16d51.
+// Written against that file with the SHA-256 0f01653c9c6ec50cf2f6d53dc52b6f0d9c847862021535698ec39389bb4c2242.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -974,8 +974,7 @@ Server.prototype.close = function (this: $Node.HttpServer, optionalCallback?: (e
   server.stop();
   const listenHandle = generation?.listenHandle;
   if (listenHandle !== undefined) {
-    // `listen(handle)`: as in node, close() closes the handle for every server that has it, also when one of them
-    // listened on it later and got its connections.
+    // As in node, close() closes the handle for every server that listens on it.
     this._handle = null;
     listenHandle.stop(false);
     // The listener has reported its end already if another server closed or took the handle: nothing reports it again.
@@ -1025,8 +1024,7 @@ Server.prototype.address = function (this: $Node.HttpServer) {
   if (!this[serverSymbol]) return null;
   const handle = this._handle;
   if (handle) {
-    // `listen(handle)`: as in node, the address is the handle's, whichever server has its connections now, and
-    // EBADF once a server that has the handle closed it: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2289-L2299
+    // As in node, the address is the handle's, and EBADF once a server that has the handle closed it.
     const out: $Node.SocketName = {};
     const err = handle.getsockname(out);
     if (err) throw new ErrnoException(err, "address");
@@ -1050,8 +1048,7 @@ Server.prototype.listen = function (this: $Node.HttpServer) {
     const arg0 = arguments[0];
     if (($isObject(arg0) || $isCallable(arg0)) && arg0 !== null) {
       if (typeof arg0 === "object") {
-        // (handle[, backlog][, cb]): the `_handle` of a listening server, one level down like node.
-        // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2127-L2136
+        // (handle[, backlog][, cb]), one level down: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2127-L2136
         const handle = arg0._handle || arg0.handle || arg0;
         if (typeof handle.onconnection === "function") {
           let listening: void | false = undefined;
@@ -1154,9 +1151,7 @@ Server.prototype.listen = function (this: $Node.HttpServer) {
   return this;
 };
 
-// With `listenHandle`, the `_handle` of a server that listens: this server takes the connections of that handle and binds
-// nothing. `false` if it is no `Bun.listen` listener, which says nothing about where to listen. Its default keeps the
-// `length` of the function at 5, which a program can read.
+// `listenHandle`, whose default keeps `length` at 5: serve that `_handle` and bind nothing. `false` if it is no listener.
 Server.prototype[kRealListen] = function (
   this: $Node.HttpServer,
   tls: $Node.HttpServerTLSOptions | null,

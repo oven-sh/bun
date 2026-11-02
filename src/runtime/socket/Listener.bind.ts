@@ -45,11 +45,7 @@ export const setSecureContext = b.fn({
 
 /** `closed` and `pipe` are what node reports as `listen EINVAL` and `listen EEXIST`. `tls` decrypts what it accepts, where node's handle is raw TCP. */
 export const ListenHandleState = b.enumeration(["taken", "closed", "pipe", "tls"]);
-/**
- * node:net `server.listen(handle)`: `handle` is the `_handle` of another server, and the caller's server gets its
- * connections from now on, through `handle.onconnection`. If a node:http server had them, it loses them here.
- * `undefined` if node finds no handle in it (no `Listener`, or a Windows named pipe), and only `taken` changes anything.
- */
+/** node:net `server.listen(handle)`: the caller's server gets the connections of `handle`. Only `taken` changes anything. */
 export const takeListenHandle = b.fn({
   args: { handle: Listener.otherAsNull },
   returns: ListenHandleState.optional,

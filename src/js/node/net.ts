@@ -4374,8 +4374,7 @@ Server.prototype.listen = function listen(this: $Node.NetServer, port, hostname,
       onListen = port;
       port = 0;
     } else if (port !== null && typeof port === "object") {
-      // (handle[, backlog][, cb]): the `_handle` of a listening server, one level down like node.
-      // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2127-L2136
+      // (handle[, backlog][, cb]), one level down: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2127-L2136
       const handle = port._handle || port.handle || port;
       if (typeof handle.onconnection === "function") {
         if (this._handle) throw $ERR_SERVER_ALREADY_LISTEN();
@@ -4652,9 +4651,7 @@ Server.prototype[kRealListen] = function (
   process.nextTick(emitListeningNextTick, this);
 };
 
-// `server.listen(handle)` with the `_handle` of a listening TCP server. As in node, both servers have the one handle
-// from here on, either of them closes it, and the one that listened on it last gets its connections.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L1997-L2034
+// listen(handle): as in node, both servers have the one handle, and the one that listened last gets its connections.
 function listenOnHandle(server: $Node.NetServer, handle: ListenerHandle, state: "taken" | "closed" | "pipe") {
   if (state !== "taken") {
     process.nextTick(emitErrorNextTick, server, listenHandleError(state === "closed"));

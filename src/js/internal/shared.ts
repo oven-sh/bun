@@ -85,8 +85,7 @@ class ExceptionWithHostPort extends Error {
   }
 }
 
-// ERR_INVALID_ARG_VALUE for what `server.listen()` was given. Like node, the message has at most 128 characters
-// of it: a server that was passed as a handle has its key and its passphrase further in.
+// Like node, the message shows at most 128 characters of what `server.listen()` received.
 function invalidListenOptions(received: unknown, reason = "is invalid") {
   let message = `The argument 'options' ${reason}`;
   try {
@@ -98,8 +97,7 @@ function invalidListenOptions(received: unknown, reason = "is invalid") {
   return error;
 }
 
-// What node's `server.listen(handle)` emits when its `handle.listen()` fails: EINVAL for a handle that is closed,
-// EEXIST for a pipe, which the loop has already. https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2006-L2020
+// What node's `server.listen(handle)` emits: EINVAL for a handle that is closed, EEXIST for a pipe.
 function listenHandleError(closed: boolean) {
   const { UV_EINVAL, UV_EEXIST } = process.binding("uv");
   const ex = new ExceptionWithHostPort(

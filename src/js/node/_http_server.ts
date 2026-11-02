@@ -581,8 +581,7 @@ Server.prototype.close = function (optionalCallback?) {
   server.stop();
   const listenHandle = generation?.listenHandle;
   if (listenHandle !== undefined) {
-    // `listen(handle)`: as in node, close() closes the handle for every server that has it, also when one of them
-    // listened on it later and got its connections.
+    // As in node, close() closes the handle for every server that listens on it.
     this._handle = null;
     listenHandle.stop(false);
     // The listener has reported its end already if another server closed or took the handle: nothing reports it again.
@@ -627,8 +626,7 @@ Server.prototype.address = function () {
   if (!this[serverSymbol]) return null;
   const handle = this._handle;
   if (handle) {
-    // `listen(handle)`: as in node, the address is the handle's, whichever server has its connections now, and
-    // EBADF once a server that has the handle closed it: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2289-L2299
+    // As in node, the address is the handle's, and EBADF once a server that has the handle closed it.
     const out = {};
     const err = handle.getsockname(out);
     if (err) throw new ErrnoException(err, "address");
@@ -652,8 +650,7 @@ Server.prototype.listen = function () {
     const arg0 = arguments[0];
     if (($isObject(arg0) || $isCallable(arg0)) && arg0 !== null) {
       if (typeof arg0 === "object") {
-        // (handle[, backlog][, cb]): the `_handle` of a listening server, one level down like node.
-        // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2127-L2136
+        // (handle[, backlog][, cb]), one level down: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2127-L2136
         const handle = arg0._handle || arg0.handle || arg0;
         if (typeof handle.onconnection === "function") {
           let listening;
@@ -754,9 +751,7 @@ Server.prototype.listen = function () {
   return this;
 };
 
-// With `listenHandle`, the `_handle` of a server that listens: this server takes the connections of that handle and binds
-// nothing. `false` if it is no `Bun.listen` listener, which says nothing about where to listen. Its default keeps the
-// `length` of the function at 5, which a program can read.
+// `listenHandle`, whose default keeps `length` at 5: serve that `_handle` and bind nothing. `false` if it is no listener.
 Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort, listenHandle = undefined) {
   {
     // What the first connection and the first request need, so that neither waits for it.

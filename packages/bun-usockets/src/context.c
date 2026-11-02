@@ -502,9 +502,7 @@ void us_listen_socket_set_accept(struct us_listen_socket_t *ls, unsigned char ki
     if (us_socket_is_closed(&ls->s)) {
         return;
     }
-    /* The accept loop reads each of these again for every socket, so a call from an open
-     * handler of this listen socket applies to the next socket of the same drain. It caches
-     * accept_group, which does not change here. */
+    /* The accept loop reads these again for every socket: a call from an open handler applies to the next accept. */
     if (ssl_ctx) us_internal_ssl_ctx_up_ref(ssl_ctx);
     us_internal_listen_socket_ssl_free(ls);
     ls->ssl_ctx = ssl_ctx;

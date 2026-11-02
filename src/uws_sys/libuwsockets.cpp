@@ -554,8 +554,7 @@ extern "C"
     }
   }
 
-  /* node:http `server.listen(handle)`: `app` takes the connections of `ls`, which its creator
-   * keeps and closes. `owner_group` is the group that `ls` accepts into. */
+  /* node:http `server.listen(handle)`: `app` takes the connections of `ls`, which its creator keeps and closes. */
   void uws_app_attach_listen_socket(int ssl, uws_app_t *app, struct us_listen_socket_t *ls, struct us_socket_group_t *owner_group, void *user)
   {
     if (ssl)

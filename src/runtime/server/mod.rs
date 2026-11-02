@@ -182,8 +182,7 @@ bitflags::bitflags! {
         /// See [`NewServer::hold_open_ref`].
         const OPEN_REF_HELD               = 1 << 0;
         const TERMINATED                  = 1 << 1;
-        /// node:http `server.listen(handle)`: `listener` is the listen socket of a `Bun.listen`
-        /// listener, which owns and closes it. See [`NewServer::attach_to_listener`].
+        /// `listener` is borrowed from a `Bun.listen` listener. See [`NewServer::attach_to_listener`].
         const BORROWED_LISTENER           = 1 << 2;
     }
 }
@@ -1909,10 +1908,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
     }
 
-    /// node:http `server.listen(handle)`: serve what the listen socket of `handle` accepts, in
-    /// place of a listen socket of our own. `handle` keeps the socket and closes it, and
-    /// `listener` only borrows its pointer: `stop_listening` and `deinit` stop `handle`, and
-    /// `handle` calls [`Self::on_listener_gone`] before the socket goes for any other reason.
+    /// node:http `server.listen(handle)`: serve what the listen socket of `handle` accepts. `handle` keeps and closes it.
     fn attach_to_listener(
         &self,
         handle: &crate::socket::Listener,
@@ -1963,9 +1959,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         owner.stop_from_http();
     }
 
-    /// The `Bun.listen` listener that `listener` was borrowed from closed it, or gave its
-    /// connections to another server. As in node, where such a server keeps a closed handle:
-    /// nothing is closed here, the connections stay, and `stop()` has no listener to close.
+    /// The owner of the borrowed listen socket closed it, or gave its connections to another server.
     pub(crate) fn on_listener_gone(&self) {
         if !self.release_borrowed_listener() {
             return;
@@ -2901,9 +2895,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// [`Self::init`], with no ref on it but the caller's for the duration
     /// of this call. On listen failure `this` is freed (via [`Self::deinit`])
     /// and must not be used after a `JSValue::ZERO` return.
-    ///
-    /// With `handle` (node:http `server.listen(handle)`) no listen socket is
-    /// bound: the server takes the connections of that listener's.
+    /// With `handle` (node:http `server.listen(handle)`) it binds nothing and serves that listener's connections.
     pub(crate) fn listen(this: *mut Self, handle: Option<&crate::socket::Listener>) -> JSValue
     where
         Self: ServerPools<SSL, DEBUG>,
@@ -3969,13 +3961,7 @@ impl AnyServer {
         bun_ptr::TaggedPtr::init(self.ptr, tag).to() as u64
     }
 
-    /// Unpack the `AnyServer` tagged-pointer u64 handed across FFI from C++. Inverse of
-    /// [`Self::to_packed`].
-    ///
-    /// The packed repr is bits 0..49 = ptr,
-    /// bits 49..64 = tag, with tag = `1024 - index` (see `bun_ptr::tagged_pointer`).
-    /// The Rust `AnyServer` stores `(tag, ptr)` unpacked, so map the wire tag back
-    /// to `AnyServerTag` here.
+    /// Inverse of [`Self::to_packed`], for the tagged-pointer u64 that C++ hands across FFI.
     #[inline]
     pub(crate) fn from_packed(packed: u64) -> AnyServer {
         let repr = bun_ptr::TaggedPtr::from(packed);

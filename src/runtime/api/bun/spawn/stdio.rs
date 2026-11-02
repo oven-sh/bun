@@ -245,10 +245,10 @@ impl Stdio {
     }
 
     pub(crate) fn is_piped(&self) -> bool {
-        match self {
-            Self::Capture(_) | Self::Blob(_) | Self::Pipe | Self::ReadableStream(_) => true,
-            _ => false,
-        }
+        matches!(
+            self,
+            Self::Capture(_) | Self::Blob(_) | Self::Pipe | Self::ReadableStream(_)
+        )
     }
 
     pub(crate) fn borrows_caller_fd(&self) -> bool {

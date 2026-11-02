@@ -1,6 +1,6 @@
 //! The Windows console as a terminal descriptor: input a [`FilePoll`] can wait for and read as UTF-8, output that takes UTF-8.
 
-use core::cell::{Cell, UnsafeCell};
+use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU8, AtomicU32, Ordering};
@@ -19,6 +19,7 @@ use bun_sys::windows::{
     HANDLE, INVALID_HANDLE_VALUE, Win32Error,
 };
 use bun_sys::{self as sys, Fd};
+use bun_threading::Guarded;
 
 use crate::FilePoll;
 
@@ -369,8 +370,7 @@ impl Reader {
 
     /// Moves the line that the worker read to `pending`. `false` at the end of the input.
     fn take_line(&mut self) -> Result<bool, Win32Error> {
-        // SAFETY: the worker does not touch `result` in this state.
-        let result = unsafe { &mut *self.line.result.get() };
+        let mut result = self.line.result.lock();
         self.line.state.store(IDLE, Ordering::Relaxed);
         if let Some(error) = result.error {
             return Err(error);
@@ -595,10 +595,10 @@ struct LineRead {
     exit: AtomicBool,
     /// Lines are read from a handle of their own because of what [`LineRead::cancel`] does to it.
     input: AtomicPtr<c_void>,
-    result: UnsafeCell<LineResult>,
+    result: Guarded<LineResult>,
 }
 
-// SAFETY: `state` says which thread `result` belongs to. Everything else is atomic or never changes.
+// SAFETY: the two events never change, and any thread may use them.
 unsafe impl Send for LineRead {}
 // SAFETY: as above.
 unsafe impl Sync for LineRead {}
@@ -612,7 +612,7 @@ impl LineRead {
             cancel_requested: AtomicBool::new(false),
             exit: AtomicBool::new(false),
             input: AtomicPtr::new(ptr::null_mut()),
-            result: UnsafeCell::new(LineResult {
+            result: Guarded::new(LineResult {
                 units: [0; 1 + LINE_UNITS],
                 len: 0,
                 error: None,
@@ -636,8 +636,7 @@ impl LineRead {
             {
                 continue;
             }
-            // SAFETY: `result` is this thread's in this state.
-            self.read(unsafe { &mut *self.result.get() });
+            self.read(&mut self.result.lock());
             // In this order, so that `cancel` resets the event after this has set it.
             SetEvent(self.ready);
             self.state.store(DONE, Ordering::Release);
@@ -770,8 +769,7 @@ impl LineRead {
         }
         ResetEvent(self.wake);
         self.cancel_requested.store(false, Ordering::Relaxed);
-        // SAFETY: the worker is done with `result`.
-        let result = unsafe { &*self.result.get() };
+        let result = self.result.lock();
         if result.canceled {
             if result.asked {
                 // The console goes on editing a cancelled line, and throws it away, until the handle that asked is closed, which blocks during the read.

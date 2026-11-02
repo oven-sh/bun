@@ -23,6 +23,26 @@ pub(crate) struct Builder<'t, 'f, 'a> {
     pub(crate) is_in_template: bool,
 }
 
+/// Appends what's printed for `raw`, a string in `"` with escape sequences. They're decoded, and of the decoded
+/// characters only three are escaped again.
+pub(crate) fn write_string_with_escapes(raw: &[u8], value: &mut Vec<u8>) {
+    value.push(b'"');
+    let mut rest = raw.get(1..raw.len().saturating_sub(1)).unwrap_or_default();
+    while let Some(at) = bun_core::strings::index_of_char_usize(rest, b'\\') {
+        value.extend_from_slice(&rest[..at]);
+        let (character, len) = read_escape(&rest[at..]).unwrap_or(('\\', 1));
+        match character {
+            '"' => value.extend_from_slice(b"\\\""),
+            '\\' => value.extend_from_slice(b"\\\\"),
+            '\n' => value.extend_from_slice(b"\\n"),
+            _ => value.extend_from_slice(character.encode_utf8(&mut [0; 4]).as_bytes()),
+        }
+        rest = rest.get(at + len..).unwrap_or_default();
+    }
+    value.extend_from_slice(rest);
+    value.push(b'"');
+}
+
 /// The children of a node that haven't been written yet.
 struct Children<'t> {
     tree: &'t Tree,
@@ -143,7 +163,7 @@ impl<'t> Builder<'t, '_, '_> {
     // ───────────────────────────── comments ─────────────────────────────
 
     fn comments_of(&self, id: NodeId) -> &'t [Attached] {
-        if self.attached.is_empty() {
+        if !self.tree.node(id).is_some_and(|node| node.has_comments) {
             return &[];
         }
         let start = self.attached.partition_point(|it| it.node < id);
@@ -446,23 +466,8 @@ impl<'t> Builder<'t, '_, '_> {
         if !bun_core::strings::contains_char(raw, b'\\') {
             return self.source(span);
         }
-        // Of the decoded characters, only three are escaped again.
         let mut value = Vec::with_capacity(raw.len());
-        value.push(b'"');
-        let mut rest = raw.get(1..raw.len().saturating_sub(1)).unwrap_or_default();
-        while let Some(at) = bun_core::strings::index_of_char_usize(rest, b'\\') {
-            value.extend_from_slice(&rest[..at]);
-            let (character, len) = read_escape(&rest[at..]).unwrap_or(('\\', 1));
-            match character {
-                '"' => value.extend_from_slice(b"\\\""),
-                '\\' => value.extend_from_slice(b"\\\\"),
-                '\n' => value.extend_from_slice(b"\\n"),
-                _ => value.extend_from_slice(character.encode_utf8(&mut [0; 4]).as_bytes()),
-            }
-            rest = rest.get(at + len..).unwrap_or_default();
-        }
-        value.extend_from_slice(rest);
-        value.push(b'"');
+        write_string_with_escapes(raw, &mut value);
         self.text(&value);
     }
 

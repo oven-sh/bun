@@ -126,7 +126,7 @@ fn parse_part<'a>(template: Template<'a>, index: usize) -> Option<Part<'a>> {
     let content = if !has_only_comments {
         let (mut tree, mut attached) = (Tree::default(), Vec::new());
         parser::parse(text, &mut tree).ok()?;
-        comments::attach(text, &tree, &mut attached);
+        comments::attach(text, &mut tree, &mut attached);
         Content::Document(tree, attached)
     } else if bun_core::strings::is_all_js_whitespace(text) {
         Content::Nothing

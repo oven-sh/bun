@@ -83,6 +83,8 @@ pub(crate) type NodeId = u32;
 pub(crate) struct Node {
     pub(crate) kind: Kind,
     pub(crate) flags: u8,
+    /// Set by `comments::attach`.
+    pub(crate) has_comments: bool,
     pub(crate) span: Span,
     first_child: u32,
     child_count: u32,
@@ -137,6 +139,12 @@ impl Tree {
 
     pub(crate) fn span(&self, id: NodeId) -> Span {
         self.node(id).map_or_else(Span::default, |node| node.span)
+    }
+
+    pub(crate) fn mark_as_commented(&mut self, id: NodeId) {
+        if let Some(node) = self.nodes.get_mut(id as usize) {
+            node.has_comments = true;
+        }
     }
 }
 
@@ -227,6 +235,33 @@ pub(crate) fn read_escape(text: &[u8]) -> Option<(char, usize)> {
     }
 }
 
+pub(crate) fn is_directive_location(name: &[u8]) -> bool {
+    const LOCATIONS: [&[u8]; 21] = [
+        b"QUERY",
+        b"MUTATION",
+        b"SUBSCRIPTION",
+        b"FIELD",
+        b"FRAGMENT_DEFINITION",
+        b"FRAGMENT_SPREAD",
+        b"INLINE_FRAGMENT",
+        b"VARIABLE_DEFINITION",
+        b"FRAGMENT_VARIABLE_DEFINITION",
+        b"SCHEMA",
+        b"SCALAR",
+        b"OBJECT",
+        b"FIELD_DEFINITION",
+        b"ARGUMENT_DEFINITION",
+        b"INTERFACE",
+        b"UNION",
+        b"ENUM",
+        b"ENUM_VALUE",
+        b"INPUT_OBJECT",
+        b"INPUT_FIELD_DEFINITION",
+        b"DIRECTIVE_DEFINITION",
+    ];
+    LOCATIONS.contains(&name)
+}
+
 struct Parser<'t> {
     text: &'t [u8],
     tree: &'t mut Tree,
@@ -240,29 +275,28 @@ struct Parser<'t> {
 }
 
 pub(crate) fn parse(text: &[u8], tree: &mut Tree) -> std::result::Result<(), SyntaxError> {
-    tree.nodes.clear();
-    tree.children.clear();
-    tree.comments.clear();
-    tree.pending.clear();
-    if u32::try_from(text.len()).is_err() {
-        return Err(SyntaxError(Message::TooLarge, 0));
-    }
-    let mut parser = Parser {
-        text,
-        tree,
-        rejection: Rejection::default(),
-        token: Token {
-            kind: TokenKind::StartOfFile,
-            start: 0,
-            end: 0,
-        },
-        next: None,
-        last_end: 0,
-        stack_check: crate::stack::check_for_tree(),
-    };
+    let mut parser = Parser::new(text, 0, tree)?;
     parser
         .parse_document()
         .map_err(|_| parser.rejection.reason())
+}
+
+/// Parses only the definition whose first token is at `start`. It becomes the root of `tree`, which gets the comments
+/// inside it and no others. Returns the definition's end.
+pub(crate) fn parse_definition(
+    text: &[u8],
+    start: u32,
+    tree: &mut Tree,
+) -> std::result::Result<u32, SyntaxError> {
+    let mut parser = Parser::new(text, start, tree)?;
+    parser
+        .advance()
+        .and_then(|()| parser.parse_definition())
+        .map_err(|_| parser.rejection.reason())?;
+    let end = tree.span(tree.root()).end;
+    let inside = tree.comments.partition_point(|it| it.start < end);
+    tree.comments.truncate(inside);
+    Ok(end)
 }
 
 /// The error for a missing token of `kind`.
@@ -277,7 +311,35 @@ fn expected(kind: TokenKind) -> Message {
     }
 }
 
-impl Parser<'_> {
+impl<'t> Parser<'t> {
+    /// The first token it reads is the one at or after `start`.
+    fn new(
+        text: &'t [u8],
+        start: u32,
+        tree: &'t mut Tree,
+    ) -> std::result::Result<Self, SyntaxError> {
+        tree.nodes.clear();
+        tree.children.clear();
+        tree.comments.clear();
+        tree.pending.clear();
+        if u32::try_from(text.len()).is_err() {
+            return Err(SyntaxError(Message::TooLarge, 0));
+        }
+        Ok(Parser {
+            text,
+            tree,
+            rejection: Rejection::default(),
+            token: Token {
+                kind: TokenKind::StartOfFile,
+                start,
+                end: start,
+            },
+            next: None,
+            last_end: start,
+            stack_check: crate::stack::check_for_tree(),
+        })
+    }
+
     // ───────────────────────────── the lexer ─────────────────────────────
 
     fn byte(&self, position: usize) -> Option<u8> {
@@ -540,6 +602,7 @@ impl Parser<'_> {
         tree.nodes.push(Node {
             kind,
             flags,
+            has_comments: false,
             span: Span::new(start, self.last_end.max(start)),
             first_child,
             child_count: tree.children.len() as u32 - first_child,
@@ -1194,30 +1257,7 @@ impl Parser<'_> {
     }
 
     fn parse_directive_location(&mut self) -> Result<()> {
-        const LOCATIONS: [&[u8]; 21] = [
-            b"QUERY",
-            b"MUTATION",
-            b"SUBSCRIPTION",
-            b"FIELD",
-            b"FRAGMENT_DEFINITION",
-            b"FRAGMENT_SPREAD",
-            b"INLINE_FRAGMENT",
-            b"VARIABLE_DEFINITION",
-            b"FRAGMENT_VARIABLE_DEFINITION",
-            b"SCHEMA",
-            b"SCALAR",
-            b"OBJECT",
-            b"FIELD_DEFINITION",
-            b"ARGUMENT_DEFINITION",
-            b"INTERFACE",
-            b"UNION",
-            b"ENUM",
-            b"ENUM_VALUE",
-            b"INPUT_OBJECT",
-            b"INPUT_FIELD_DEFINITION",
-            b"DIRECTIVE_DEFINITION",
-        ];
-        match LOCATIONS.contains(&self.text_of(self.token)) {
+        match is_directive_location(self.text_of(self.token)) {
             true => self.parse_name(),
             false => Err(self.unexpected(Message::ExpectedDirectiveLocation)),
         }

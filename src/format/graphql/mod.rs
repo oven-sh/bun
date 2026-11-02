@@ -5,8 +5,11 @@
 //! ```text
 //! text ─ parser::parse ─→ Tree ─ comments::attach ─→ [Attached] ─ printer::Builder ─→ `crate::ir` document
 //! ```
+//!
+//! `direct.rs` is the short cut for a file: it writes while it reads, and leaves to the above what it isn't sure about.
 
 mod comments;
+mod direct;
 pub(crate) mod embed;
 mod parser;
 mod printer;
@@ -34,6 +37,12 @@ pub struct Scratch {
     tree: parser::Tree,
     attached: Vec<comments::Attached>,
     document: crate::Scratch,
+    /// The rest is `direct`'s.
+    stops: bun_highway::ScannerStopsBuffer,
+    elements: crate::css::doc::Elements,
+    lines: Vec<(u32, u32)>,
+    buffer: Vec<u8>,
+    with_line_feeds: Vec<u8>,
 }
 
 /// Appends the formatted `text` to `out`: Prettier's `formatWithCursor`, without the cursor.
@@ -139,10 +148,19 @@ fn format_normalized(
     if bun_core::strings::is_all_js_whitespace(text) {
         return Ok(());
     }
+    // In Markdown the printer marks the line breaks that are part of a text.
+    if alignment == 0
+        && !options.no_short_cuts
+        && !options.is_in_markdown
+        && direct::format(text, options, scratch, out)
+    {
+        return Ok(());
+    }
     let Scratch {
         tree,
         attached,
         document,
+        ..
     } = scratch;
     parser::parse(text, tree).map_err(to_format_error)?;
     comments::attach(text, tree, attached);

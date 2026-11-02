@@ -865,12 +865,14 @@ it("timer heap clock is monotonic, not wall-clock", () => {
 
 describe("a delay of 0", () => {
   it("does not wait for Node's minimum of 1 ms in bun test", async () => {
-    let fired = false;
-    const timer = setTimeout(() => (fired = true), 350);
-    // With the minimum these take 400 ms or more.
-    for (let i = 0; i < 400; i++) await new Promise(resolve => setTimeout(resolve, 0));
-    clearTimeout(timer);
-    expect(fired).toBe(false);
+    // The fastest, not the sum: a busy machine stretches some of them, and the minimum stretches all of them.
+    let fastest = Infinity;
+    for (let i = 0; i < 100; i++) {
+      const start = performance.now();
+      await new Promise(resolve => setTimeout(resolve, 0));
+      fastest = Math.min(fastest, performance.now() - start);
+    }
+    expect(fastest).toBeLessThan(1);
   });
 
   // Tests start a request or a write, wait for a few delays of 0, and expect it to have ended by then.
@@ -967,27 +969,50 @@ describe("a delay of 0", () => {
     else expect(seen.toSorted()).toEqual(["immediate", "message", "timer"]);
   });
 
+  it("set in an immediate, it does not wait", async () => {
+    let fastest = Infinity;
+    for (let i = 0; i < 100; i++) {
+      const start = await new Promise(resolve => setImmediate(() => setTimeout(resolve, 0, performance.now())));
+      fastest = Math.min(fastest, performance.now() - start);
+    }
+    expect(fastest).toBeLessThan(1);
+  });
+
   it("set in an immediate, it does not wait, and still runs after the next immediate", async () => {
     const orders = new Set();
-    let fired = false;
-    const timer = setTimeout(() => (fired = true), 350);
-    // With the minimum these take 400 ms or more.
-    for (let i = 0; i < 400; i++) {
+    let fastest = Infinity;
+    for (let i = 0; i < 100; i++) {
       await new Promise(resolve =>
         setImmediate(() => {
           const order = [];
           const see = name => order.push(name) === 2 && (orders.add(order.join(" < ")), resolve());
           const start = performance.now();
-          setTimeout(() => see(performance.now() - start < 1 ? "timer" : "due timer"), 0);
+          setTimeout(() => {
+            const waited = performance.now() - start;
+            fastest = Math.min(fastest, waited);
+            see(waited < 1 ? "timer" : "due timer");
+          }, 0);
           setImmediate(see, "immediate");
         }),
       );
     }
-    clearTimeout(timer);
-    expect(fired).toBe(false);
-    orders.delete("due timer < immediate");
-    orders.delete("immediate < due timer");
-    expect([...orders]).toEqual(["immediate < timer"]);
+    // After its 1 ms the timer is due, on a slow machine also before the immediate.
+    expect(orders).not.toContain("timer < immediate");
+    expect(fastest).toBeLessThan(1);
+  });
+
+  it("runs with the timers that were set with it, before an immediate that the first of them queues", async () => {
+    const seen = [];
+    const { promise, resolve } = Promise.withResolvers();
+    setTimeout(() => {
+      seen.push("first");
+      setTimeout(() => (seen.push("set by the first"), resolve()), 0);
+      setImmediate(() => seen.push("immediate"));
+    }, 0);
+    setTimeout(() => seen.push("second"), 0);
+    setTimeout(() => seen.push("third"), 0);
+    await promise;
+    expect(seen).toEqual(["first", "second", "third", "immediate", "set by the first"]);
   });
 
   it("keeps its place among the timers, as in Node", async () => {

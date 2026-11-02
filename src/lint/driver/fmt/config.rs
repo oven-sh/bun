@@ -1731,6 +1731,19 @@ impl<'c> Configs<'c> {
         (self.config_of(scope).ok().flatten()).map(|config| &config.path[..])
     }
 
+    /// The options of Prettier's that the `[[fmt.overrides]]` set for the file at `path`, in the order they apply.
+    /// They're flags to Prettier, like `[fmt]` and the command line, so they take the same precedence.
+    pub(crate) fn bunfig_overrides_for(&self, path: &[u8]) -> Vec<(&[u8], &[u8])> {
+        if self.overrides.is_empty() {
+            return Vec::new();
+        }
+        let relative = paths::relative(&self.bunfig_base_directory, path);
+        (self.overrides.iter().filter(|it| it.matches(&relative)))
+            .flat_map(|it| it.settings.iter().map(|it| (&it.0[..], &it.1[..])))
+            .filter(|it| is_prettier_option(it.0))
+            .collect()
+    }
+
     /// True if `--no-svelte` or `svelte = false` in `[fmt]` keeps a component in `directory`, whose scope is `scope`,
     /// from being formatted: it's set, and `--config-precedence` lets it win. An override can still turn it on for some
     /// files.

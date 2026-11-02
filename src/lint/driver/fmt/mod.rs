@@ -1345,7 +1345,7 @@ impl Run<'_> {
         };
         if language == Language::Plugin && !is_ignored && not_installed.is_empty() {
             let config = configs.config_file_path(&scope);
-            return self.format_stdin_with_prettier((Some(&path), config), (name, &text));
+            return self.format_stdin_with_prettier(configs, (Some(&path), config), (name, &text));
         }
         let mut options = match configs.options_for(&scope, &path) {
             Ok(options) => options,
@@ -1443,7 +1443,7 @@ impl Run<'_> {
             let not_installed = self.not_installed(configs, &scope, None);
             if not_installed.is_empty() {
                 let config = configs.config_file_path(&scope);
-                return self.format_stdin_with_prettier((None, config), (b"stdin", &text));
+                return self.format_stdin_with_prettier(configs, (None, config), (b"stdin", &text));
             }
             self.report_unsupported(&mut [(&parser, 1)], &not_installed);
             if self.options.allow_unsupported && !is_read_only {
@@ -1491,13 +1491,15 @@ impl Run<'_> {
     /// Formats standard input in a plugin's language. See `prettier.rs`. `display_name` is its name in error messages.
     fn format_stdin_with_prettier(
         mut self,
+        configs: &Configs,
         (path, config): (Option<&[u8]>, Option<&[u8]>),
         (display_name, text): (&[u8], &[u8]),
     ) -> Outcome {
         let is_read_only = self.options.check || self.options.list_different;
         let size = (1, text.len() as u64);
         let bridge = prettier::Prettier::new(self.environment, self.options, size, 1);
-        match bridge.format(path, config, text) {
+        let overrides = path.map_or_else(Vec::new, |path| configs.bunfig_overrides_for(path));
+        match bridge.format((path, &overrides), config, text) {
             // Prettier's `listDifferent` prints the `error.message` of what `check` throws and does nothing else.
             Err(Unformatted::Message(message)) if is_read_only => {
                 self.error(&message);
@@ -1914,9 +1916,11 @@ impl Run<'_> {
                 let began = Instant::now();
                 let display_name = paths::relative(cwd, &target.path);
                 let config = configs.config_file_path(&target.scope);
+                let overrides = configs.bunfig_overrides_for(&target.path);
                 let file = (&target.path[..], &display_name[..]);
                 let writes = !is_read_only && !is_partly_staged(target);
-                let formatted = bridge.format_file(file, config, writes, only.as_ref());
+                let formatted =
+                    bridge.format_file(file, (config, &overrides), writes, only.as_ref());
                 results.lock()[index] = Some(match formatted {
                     Ok(true) if !is_read_only && !writes => Done::PartlyStaged,
                     Ok(true) => Done::Different(began.elapsed()),

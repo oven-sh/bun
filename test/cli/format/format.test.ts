@@ -4412,6 +4412,32 @@ exports.format = async (text, options) => {
       timeout,
     );
 
+    // The override is a flag to Prettier, so it takes a flag's precedence.
+    test(
+      "a parser that a [[fmt.overrides]] sets is passed to Prettier with the file",
+      async () => {
+        const bunfig = '[[fmt.overrides]]\nfiles = "hooks/*"\noptions = { parser = "astro" }\n';
+        const project = { ...files, "bunfig.toml": bunfig, "hooks/pre-commit": "<p   >hook</p>\n" };
+        const reads = ["hooks/pre-commit", "node_modules/prettier/calls.txt"];
+        const result = await format(project, ["hooks"], { reads });
+        expect(result.files["hooks/pre-commit"]).toBe("<p >hook</p>\n");
+        const calls = result.files[reads[1]]!.trim().split("\n");
+        expect(calls.map(it => JSON.parse(it))).toEqual([
+          { ...config, parser: "astro", filepath: expect.stringMatching(/[\\/]hooks[\\/]pre-commit$/) },
+        ]);
+        expect(result.exitCode).toBe(0);
+        const piped = await format(project, ["--stdin-filepath", "hooks/pre-push"], { stdin: "<p   >c</p>\n" });
+        expect(piped).toMatchObject({ raw: "<p >c</p>\n", stderr: "", exitCode: 0 });
+        // With `prefer-file`, a configuration file wins over every flag, so the file has no parser and a directory
+        // walk skips it.
+        const prefers = await format(project, ["--config-precedence", "prefer-file", "hooks"], { reads });
+        expect(prefers.files["hooks/pre-commit"]).toBe("<p   >hook</p>\n");
+        expect(prefers.files[reads[1]]).toBeNull();
+        expect(prefers.exitCode).toBe(0);
+      },
+      timeout,
+    );
+
     test(
       "--parser with the plugin's parser: piped code goes to Prettier without a file name",
       async () => {

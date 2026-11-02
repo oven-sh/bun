@@ -7,7 +7,7 @@
 //   - a compiled executable runs them
 //   - `Bun.build` says where the programs that do not build are wrong
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, nodeExeAtLeast, tempDir, type DirectoryTree } from "harness";
 import { mkfifo } from "mkfifo";
 import { readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { SourceMap } from "node:module";
@@ -664,12 +664,45 @@ describe.concurrent("a loaded file with its own source map", () => {
     stdout: result.stdout && JSON.parse(result.stdout),
   });
 
+  // The Node.js on the PATH, if it reads a source map when a stack first needs it (v26.9.0, nodejs/node#65490).
+  const node = nodeExeAtLeast("26.9.0");
+  /**
+   * Expects that Node.js prints `want` for `args` too. Without such a Node.js it does nothing. Node.js runs in a
+   * folder of its own, which has `files` or is a copy of the folder `files`: a program can change its files.
+   * `labels` name the frames of a `stdout` that is a list.
+   */
+  async function expectNodeToPrint(
+    files: DirectoryTree | string,
+    args: string[],
+    want: { stdout: any; stderr: string; exitCode: number },
+    labels?: string[],
+  ) {
+    if (!node) return;
+    using dir = tempDir("own-source-map-in-node", files);
+    const said = printed(await run(String(dir), args, bunEnv, node));
+    // Only file and line are compared: V8 has another column, `Object.` before some names and a URL for an ES module.
+    const fileAndLine = (frame: string) =>
+      frame
+        .replace(/^(at )?Object\./, "$1")
+        .replace(/file:\/\/\/?(?=<dir>)/, "")
+        .replace(/:(\d+):\d+(\)?)$/, ":$1$2");
+    const compared = ({ stdout, ...rest }: typeof want) =>
+      JSON.parse(
+        JSON.stringify({
+          stdout: labels ? Object.fromEntries(labels.map((label, i) => [label, stdout[i]])) : stdout,
+          ...rest,
+        }),
+        (_, value) => (typeof value === "string" ? fileAndLine(value) : value),
+      );
+    expect(compared(said)).toEqual(compared(want));
+  }
+
   // Each line is what node v26.13.0 does, with the position that JavaScriptCore reports. It keeps the URL of a
   // module's map when the module loads, if source maps are on then. It reads the map when a stack first needs it, if
   // they are on then (nodejs/node#65490: before v26.9.0 it read the map when the module loaded).
   test("Error.stack follows the switch as it is when the module loads and when the stack is read", async () => {
     const names = ["a", "b", "c", "d", "e", "f", "g", "h", "i"];
-    using dir = tempDir("own-source-map-switch", {
+    const files = {
       ...Object.assign({}, ...names.map(name => withMap(`${name}.js`))),
       "main.cjs": `
         ${firstFrame}
@@ -710,10 +743,11 @@ describe.concurrent("a loaded file with its own source map", () => {
 
         console.log(JSON.stringify(out));
       `,
-    });
+    };
+    using dir = tempDir("own-source-map-switch", files);
     const loaded = (name: string) => `at boom (<dir>/${name}.js:${transpiled.cjs.boom})`;
     const mapped = (name: string) => `at boom (<dir>/${name}.ts:${inOriginal.boom})`;
-    expect(printed(await run(String(dir), ["main.cjs"]))).toEqual({
+    const want = {
       stdout: {
         "enable, load": mapped("a"),
         "load, enable": loaded("b"),
@@ -729,14 +763,16 @@ describe.concurrent("a loaded file with its own source map", () => {
       },
       stderr: "",
       exitCode: 0,
-    });
+    };
+    expect(printed(await run(String(dir), ["main.cjs"]))).toEqual(want);
+    await expectNodeToPrint(files, ["main.cjs"], want);
   });
 
   // node v26.13.0 prints the same files with the position that V8 reports: `file://<dir>/a.mjs:2:11` and
   // `<dir>/b.ts:4:9`. Each module is large enough for the transpiler cache, and the second run takes both from it.
   test("Error.stack of an ES module follows the switch as it is when import() is called", async () => {
     const padding = `// ${Buffer.alloc(5 * 1024, "f").toString()}\n`;
-    using dir = tempDir("own-source-map-switch-esm", {
+    const files = {
       ...withMap("a.mjs", "esm", undefined, padding),
       ...withMap("b.mjs", "esm", undefined, padding),
       "main.mjs": `
@@ -753,7 +789,8 @@ describe.concurrent("a loaded file with its own source map", () => {
 
         console.log(JSON.stringify(out));
       `,
-    });
+    };
+    using dir = tempDir("own-source-map-switch-esm", files);
     const cache = join(String(dir), ".cache");
     const env = {
       ...bunEnv,
@@ -777,6 +814,7 @@ describe.concurrent("a loaded file with its own source map", () => {
     expect({ cold, warm }).toEqual({ cold: frames, warm: frames });
     expect(written).toHaveLength(2);
     expect(entries()).toEqual(written);
+    await expectNodeToPrint(files, ["main.mjs"], frames);
   });
 
   // A module that `import()` reaches through a static import is asked for after its importer is transpiled, which is
@@ -823,7 +861,7 @@ describe.concurrent("a loaded file with its own source map", () => {
       ${firstFrame}
       console.log(JSON.stringify(firstFrame(boom)));
     `;
-    using dir = tempDir("own-source-map-switch-preload", {
+    const files = {
       ...withMap("required.cjs", "cjs"),
       ...withMap("imported.mjs", "esm"),
       "enable.cjs": `process.setSourceMapsEnabled(true);\n`,
@@ -831,7 +869,8 @@ describe.concurrent("a loaded file with its own source map", () => {
       "main.cjs": `const { boom } = require("./required.cjs");\n${printsTheFrame}`,
       "main.mjs": `import { boom } from "./imported.mjs";\n${printsTheFrame}`,
       "imports-enable.mjs": `import "./enable.mjs";\nimport { boom } from "./imported.mjs";\n${printsTheFrame}`,
-    });
+    };
+    using dir = tempDir("own-source-map-switch-preload", files);
     const ways = [
       ["--preload", "./enable.cjs", "main.cjs"],
       ["-r", "./enable.cjs", "main.cjs"],
@@ -840,12 +879,15 @@ describe.concurrent("a loaded file with its own source map", () => {
     ];
     const results = await Promise.all(ways.map(args => run(String(dir), args)));
     const prints = (frame: string) => ({ stdout: frame, stderr: "", exitCode: 0 });
-    expect(Object.fromEntries(ways.map((args, i) => [args.join(" "), printed(results[i])]))).toEqual({
+    const want: Record<string, ReturnType<typeof prints>> = {
       "--preload ./enable.cjs main.cjs": prints(`at boom (<dir>/required.ts:${inOriginal.boom})`),
       "-r ./enable.cjs main.cjs": prints(`at boom (<dir>/required.ts:${inOriginal.boom})`),
       "--import ./enable.mjs main.mjs": prints(`at boom (<dir>/imported.ts:${inOriginal.boom})`),
       "imports-enable.mjs": prints(`at boom (<dir>/imported.mjs:${transpiled.esm.boom})`),
-    });
+    };
+    expect(Object.fromEntries(ways.map((args, i) => [args.join(" "), printed(results[i])]))).toEqual(want);
+    // The ways that Node.js has.
+    for (const args of ways.slice(1)) await expectNodeToPrint(files, args, want[args.join(" ")]);
   });
 
   /** The lines that an error is printed under, when it is at `line:column` of `text`. */
@@ -1058,16 +1100,25 @@ describe.concurrent("a loaded file with its own source map", () => {
       (Object.keys(made) as (keyof typeof made)[]).map(cells),
     );
     // Each is [without the switch, with --enable-source-maps].
-    expect({ forBun, forNode, forNodeWithoutAComment }).toEqual({
+    const want = {
       forBun: [inSource, inSource],
       forNode: [inOutput("for-node"), prints("at boom (<dir>/entry.ts:4:13)", "<dir>/for-node/entry.js:3")],
       forNodeWithoutAComment: [inOutput("for-node-without-a-comment"), inOutput("for-node-without-a-comment")],
-    });
+    };
+    expect({ forBun, forNode, forNodeWithoutAComment }).toEqual(want);
+    // Node.js runs what is built for it, in a copy of the folder.
+    for (const [name, [without, withTheFlag]] of Object.entries({
+      "for-node": want.forNode,
+      "for-node-without-a-comment": want.forNodeWithoutAComment,
+    })) {
+      await expectNodeToPrint(String(dir), [`${name}/entry.js`], without);
+      await expectNodeToPrint(String(dir), ["--enable-source-maps", `${name}/entry.js`], withTheFlag);
+    }
   });
 
   // node v26.13.0: `/[\\/]node_modules[\\/]/` on the path, when the module loads and again when a stack is read.
   test("a module in node_modules is left out unless nodeModules is set", async () => {
-    using dir = tempDir("own-source-map-node-modules", {
+    const files = {
       ...withMap("node_modules/dep/a.js"),
       ...withMap("node_modules/dep/b.js"),
       ...withMap("node_modules/dep/c.js"),
@@ -1095,10 +1146,11 @@ describe.concurrent("a loaded file with its own source map", () => {
         out["process.setSourceMapsEnabled(true)"] = firstFrame(require("./node_modules/dep/c.js").boom);
         console.log(JSON.stringify(out));
       `,
-    });
+    };
+    using dir = tempDir("own-source-map-node-modules", files);
     const loaded = (file: string) => `at boom (<dir>/${file}.js:${transpiled.cjs.boom})`;
     const mapped = (file: string) => `at boom (<dir>/${file}.ts:${inOriginal.boom})`;
-    expect(printed(await run(String(dir), ["main.cjs"]))).toEqual({
+    const want = {
       stdout: {
         "setSourceMapsSupport(true)": loaded("node_modules/dep/a"),
         "in my_node_modules": mapped("my_node_modules/dep/e"),
@@ -1111,13 +1163,15 @@ describe.concurrent("a loaded file with its own source map", () => {
       },
       stderr: "",
       exitCode: 0,
-    });
+    };
+    expect(printed(await run(String(dir), ["main.cjs"]))).toEqual(want);
+    await expectNodeToPrint(files, ["main.cjs"], want);
   });
 
   // What is about the loaded file stays there. In node v26.13.0 a CallSite answers for the loaded file too, and
   // `error.stack` inside `Error.prepareStackTrace` is the loaded file's.
   test("a CallSite is in the loaded file while Error.stack is in the original", async () => {
-    using dir = tempDir("own-source-map-call-site", {
+    const files = {
       ...withMap("lib.js"),
       "main.cjs": `
         const lib = require("./lib.js");
@@ -1140,9 +1194,10 @@ describe.concurrent("a loaded file with its own source map", () => {
         out["the result of prepareStackTrace"] = lib.call(() => new Error("read by a callback").stack)[0];
         console.log(JSON.stringify(out));
       `,
-    });
+    };
+    using dir = tempDir("own-source-map-call-site", files);
     const [line, column] = transpiled.cjs.call.split(":").map(Number);
-    expect(printed(await run(String(dir), ["--enable-source-maps", "main.cjs"]))).toEqual({
+    const want = {
       stdout: {
         "Error.stack": `at call (<dir>/lib.ts:${inOriginal.call})`,
         "CallSite": {
@@ -1157,7 +1212,10 @@ describe.concurrent("a loaded file with its own source map", () => {
       },
       stderr: "",
       exitCode: 0,
-    });
+    };
+    expect(printed(await run(String(dir), ["--enable-source-maps", "main.cjs"]))).toEqual(want);
+    // `getColumnNumber` is compared too: V8 puts a call where JavaScriptCore puts it.
+    await expectNodeToPrint(files, ["--enable-source-maps", "main.cjs"], want);
   });
 
   /** The `mappings` of a map where line `i + 1` of the generated text is line `lines[i]` of the original. */
@@ -1579,6 +1637,14 @@ describe.concurrent("a loaded file with its own source map", () => {
       "file:": [root => comment(`${pathToFileURL(root)}/forms/n.js.map`), { "n.js.map": map }, ""],
       "http:": [comment("http://127.0.0.1:1/o.js.map"), { "o.js.map": map }, ""],
       "https:": [comment("https://127.0.0.1:1/p.js.map"), { "p.js.map": map }, ""],
+      // `C:` is a scheme on every platform, so a path with a drive names nothing. POSIX can have a file with such a
+      // path beside the module, and it is not read.
+      "a drive and slashes": [comment("C:/x/y.js.map"), isWindows ? {} : { "C:/x/y.js.map": map }, ""],
+      "a drive and backslashes": [comment("C:\\x\\y.js.map"), isWindows ? {} : { "C:\\x\\y.js.map": map }, ""],
+      // A backslash in a relative URL is a slash, also where the name of a file can have one.
+      "a backslash in a relative path": [comment("maps\\am.js.map"), { "maps/am.js.map": map }, "maps/original.ts"],
+      // Two slashes are before a host. On Windows the URL is then a UNC path, and an address needs no lookup there.
+      "a host and a share": [comment("//127.0.0.1/nope/y.js.map"), {}, ""],
       // A path with a drive letter is a URL with a scheme.
       ...(!isWindows && {
         "an absolute path": [
@@ -1597,7 +1663,7 @@ describe.concurrent("a loaded file with its own source map", () => {
       files[module] = ({ root }) => code + (typeof end === "function" ? end(root) : end);
       for (const [name, text] of Object.entries(beside)) files[`forms/${name}`] = text;
     }
-    using dir = tempDir("own-source-map-url", {
+    const fixture = {
       ...files,
       "main.cjs": `
         ${firstFrame}
@@ -1605,7 +1671,8 @@ describe.concurrent("a loaded file with its own source map", () => {
         for (const [label, module] of ${JSON.stringify(modules)}) out[label] = firstFrame(require("./" + module).boom);
         console.log(JSON.stringify(out));
       `,
-    });
+    };
+    using dir = tempDir("own-source-map-url", fixture);
     const want: Record<string, string> = {};
     for (const [label, module] of modules) {
       const source = forms[label][2];
@@ -1618,6 +1685,7 @@ describe.concurrent("a loaded file with its own source map", () => {
       stderr: "",
       exitCode: 0,
     });
+    await expectNodeToPrint(fixture, ["--enable-source-maps", "main.cjs"], { stdout: want, stderr: "", exitCode: 0 });
   });
 
   // node v26.13.0 puts `sourceRoot` before the source with nothing between them, and resolves the result as a URL
@@ -1638,6 +1706,10 @@ describe.concurrent("a loaded file with its own source map", () => {
       ["", "a b.ts", "<dir>/maps/a b.ts"],
       ["", "original.ts?query#fragment", "<dir>/maps/original.ts"],
       ["", "ünï.ts", "<dir>/maps/ünï.ts"],
+      // A backslash in a relative source is a slash.
+      ["", "..\\src\\original.ts", "<dir>/src/original.ts"],
+      // Two slashes start a path from the root on POSIX, and a UNC path on Windows: `\\host\share\x.ts`.
+      ["", "//host/share/x.ts", isWindows ? "//host/share/x.ts" : "/host/share/x.ts"],
       // A path from the root has a drive on Windows. Node.js keeps an absolute path as it is written: no `%20` is
       // a space, and a `?` does not end it.
       ...((isWindows
@@ -1655,7 +1727,7 @@ describe.concurrent("a loaded file with its own source map", () => {
       files[`s${i}.js`] = `${transpiled.cjs.code}//# sourceMappingURL=maps/s${i}.js.map\n`;
       files[`maps/s${i}.js.map`] = mapOf("cjs", source, { sourceRoot });
     });
-    using dir = tempDir("own-source-map-sources", {
+    const fixture = {
       ...files,
       // The source of a `data:` URL is beside the module.
       ...withUrl("inline.js", dataUrl(mapOf("cjs", "src/original.ts"))),
@@ -1666,14 +1738,18 @@ describe.concurrent("a loaded file with its own source map", () => {
         out.push(firstFrame(require("./inline.js").boom));
         console.log(JSON.stringify(out));
       `,
-    });
-    expect(printed(await run(String(dir), ["--enable-source-maps", "main.cjs"]))).toEqual({
+    };
+    using dir = tempDir("own-source-map-sources", fixture);
+    const want = {
       stdout: [...named.map(([, , name]) => name), "<dir>/src/original.ts"].map(
         name => `at boom (${name}:${inOriginal.boom})`,
       ),
       stderr: "",
       exitCode: 0,
-    });
+    };
+    expect(printed(await run(String(dir), ["--enable-source-maps", "main.cjs"]))).toEqual(want);
+    const labels = [...named.map(([sourceRoot, source]) => `${sourceRoot} + ${source}`), "in a data: URL"];
+    await expectNodeToPrint(fixture, ["--enable-source-maps", "main.cjs"], want, labels);
   });
 
   // A module that returns errors nothing has read. The functions of their stacks are garbage once `make` returns, so

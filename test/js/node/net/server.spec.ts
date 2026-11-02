@@ -104,9 +104,7 @@ describe("net.Server.prototype", () => {
 
   it("has EventEmitter methods", () => {
     expect((net.Server.prototype as any).__proto__).toBe(EventEmitter.prototype);
-    // `constructor` is enumerable on EventEmitter.prototype here, and net.Server.prototype has its own.
-    const { constructor, ...methods } = EventEmitter.prototype as any;
-    expect(net.Server.prototype).toMatchObject(methods);
+    expect(net.Server.prototype).toMatchObject(EventEmitter.prototype);
   });
 }); // </net.Server.prototype>
 

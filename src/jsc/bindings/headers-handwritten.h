@@ -484,8 +484,8 @@ struct DeepMatchState {
     }
 
     // A member of a Set or an entry of a Map is tried against one candidate after another. The
-    // pairs that enter `seen` during a trial are listed in `seenInTrials`, so that a candidate that
-    // does not match leaves nothing behind in `seen` and `gcBuffer`.
+    // pairs that enter `seen` during a trial are listed in `seenInTrials`. A candidate that does
+    // not match then leaves nothing behind in `seen`, `gcBuffer` and the records.
     unsigned openTrials { 0 };
     WTF::Vector<std::pair<JSC::EncodedJSValue, JSC::EncodedJSValue>> seenInTrials;
 
@@ -493,12 +493,14 @@ struct DeepMatchState {
         DeepMatchState& state;
         size_t seenBegin;
         size_t gcBegin;
+        size_t recordsBegin;
         bool matched { false };
 
         Trial(DeepMatchState& state)
             : state(state)
             , seenBegin(state.seenInTrials.size())
             , gcBegin(state.gcBuffer.size())
+            , recordsBegin(state.recordedNames.size())
         {
             state.openTrials++;
         }
@@ -510,9 +512,11 @@ struct DeepMatchState {
                     state.seen.erase(state.seenInTrials[i]);
                 state.seenInTrials.shrink(seenBegin);
                 state.gcBuffer.shrink(gcBegin);
+                state.recorded.shrink(recordsBegin * 4);
+                state.recordedNames.shrink(recordsBegin);
             }
             if (!--state.openTrials)
-                state.seenInTrials.clear();
+                state.seenInTrials.shrink(0);
         }
     };
 };

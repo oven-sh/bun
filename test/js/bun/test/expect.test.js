@@ -84,6 +84,136 @@ describe("expect()", () => {
       expect(a).not.toBe(b);
       expect(b).not.toBe(a);
     });
+
+    if (isBun) {
+      describe("failure message", () => {
+        const message = (/** @type {() => unknown} */ fn) => {
+          try {
+            fn();
+          } catch (e) {
+            return stripVTControlCharacters(/** @type {any} */ (e).message);
+          }
+          throw new Error("the matcher did not throw");
+        };
+
+        test("has a hint, and says so when deep-equal values print the same", () => {
+          expect(message(() => expect({ a: 1 }).toBe({ a: 1 }))).toMatchInlineSnapshot(`
+            "expect(received).toBe(expected)
+
+            If this test should pass, replace "toBe" with "toStrictEqual"
+
+            Expected: {
+              a: 1,
+            }
+            Received: serializes to the same string
+            "
+          `);
+        });
+
+        test("has the received value when deep-equal values print differently", () => {
+          expect(message(() => expect(5).toBe(expect.any(Number)))).toMatchInlineSnapshot(`
+            "expect(received).toBe(expected)
+
+            If this test should pass, replace "toBe" with "toStrictEqual"
+
+            Expected: Any<Number>
+            Received: 5
+            "
+          `);
+          expect(message(() => expect(1).toBe(ANY({ asymmetricMatch: () => true })))).toMatchInlineSnapshot(`
+            "expect(received).toBe(expected)
+
+            If this test should pass, replace "toBe" with "toStrictEqual"
+
+            Expected: {
+              asymmetricMatch: [Function: asymmetricMatch],
+            }
+            Received: 1
+            "
+          `);
+          expect(message(() => expect({ a: 1, b: 2 }).toBe({ b: 2, a: 1 }))).toMatchInlineSnapshot(`
+            "expect(received).toBe(expected)
+
+            If this test should pass, replace "toBe" with "toStrictEqual"
+
+            Expected: {
+              b: 2,
+              a: 1,
+            }
+            Received: {
+              a: 1,
+              b: 2,
+            }
+            "
+          `);
+        });
+
+        test("names toEqual in the hint when toStrictEqual rejects the values", () => {
+          expect(message(() => expect({ a: undefined }).toBe(ANY({})))).toMatchInlineSnapshot(`
+            "expect(received).toBe(expected)
+
+            If this test should pass, replace "toBe" with "toEqual"
+
+            Expected: {}
+            Received: {
+              a: undefined,
+            }
+            "
+          `);
+          class Point {
+            x = 1;
+          }
+          expect(message(() => expect(new Point()).toBe({ x: 1 }))).toMatchInlineSnapshot(`
+            "expect(received).toBe(expected)
+
+            If this test should pass, replace "toBe" with "toEqual"
+
+            Expected: {
+              x: 1,
+            }
+            Received: Point {
+              x: 1,
+            }
+            "
+          `);
+        });
+
+        test("says that two equal Errors print the same, and prints one of them", () => {
+          const expected = new Error("boom");
+          const received = new Error("boom");
+          const text = message(() => expect(received).toBe(expected));
+          expect(text).toStartWith(
+            'expect(received).toBe(expected)\n\nIf this test should pass, replace "toBe" with "toStrictEqual"\n\nExpected: ',
+          );
+          expect(text).toEndWith("Received: serializes to the same string\n");
+          // An Error prints the source lines around it, and then this line.
+          expect(text.split("\n").filter(line => line === "error: boom")).toHaveLength(1);
+        });
+
+        test("has no hint when the values are not deep-equal", () => {
+          expect(message(() => expect({ a: 1 }).toBe({ a: 2 }))).toMatchInlineSnapshot(`
+            "expect(received).toBe(expected)
+
+            Expected: {
+              a: 2,
+            }
+            Received: {
+              a: 1,
+            }
+            "
+          `);
+        });
+
+        test("is the error that a deep-equal received value throws when it prints", () => {
+          const received = {
+            [Bun.inspect.custom]() {
+              throw new Error("thrown by inspect.custom");
+            },
+          };
+          expect(() => expect(received).toBe(expect.anything())).toThrow("thrown by inspect.custom");
+        });
+      });
+    }
   });
 
   test("rejects", async () => {

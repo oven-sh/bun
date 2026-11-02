@@ -1221,7 +1221,8 @@ export class BunTestController implements vscode.Disposable {
       case "expect(received).toMatchSnapshot(expected)":
       case "expect(received).toEqual(expected)":
       case "expect(received).toBe(expected)": {
-        const regex = /^Expected:\s*([\s\S]*?)\nReceived:\s*([\s\S]*?)$/;
+        // toBe prints a hint line first when toStrictEqual or toEqual accepts the two values.
+        const regex = /^(?:If this test should pass,[^\n]*\n)?Expected:\s*([\s\S]*?)\nReceived:\s*([\s\S]*?)$/;
         let testMessage = vscode.TestMessage.diff(
           errorLine,
           messageLines.trim().match(regex)?.[1].trim() || "",

@@ -1998,13 +1998,13 @@ declare module "bun:test" {
      * Asserts that a value equals what is expected.
      *
      * - For non-primitive values, like objects and arrays,
-     * use `toEqual()` instead.
+     * use `toStrictEqual()` or `toEqual()` instead.
      * - For floating-point numbers, use `toBeCloseTo()` instead.
      *
      * @example
      * expect(100 + 23).toBe(123);
      * expect("d" + "og").toBe("dog");
-     * expect([123]).toBe([123]); // fail, use toEqual()
+     * expect([123]).toBe([123]); // fail, use toStrictEqual() or toEqual()
      * expect(3 + 0.14).toBe(3.14); // fail, use toBeCloseTo()
      *
      * // TypeScript errors:

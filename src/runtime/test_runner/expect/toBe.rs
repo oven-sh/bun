@@ -1,5 +1,5 @@
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
-use bun_jsc::{JSValue, JsResult};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
 use super::throw;
 use super::DiffFormatter;
@@ -31,9 +31,6 @@ impl Expect {
         let mut formatter = super::make_formatter(global_this);
         // formatter cleanup handled by Drop
 
-        // The bool is only used to select a literal format string.
-        let has_custom_label = this.custom_label.is_empty();
-
         if not {
             let signature = Expect::get_signature("toBe", "<green>expected<r>", true);
             return throw!(
@@ -45,33 +42,16 @@ impl Expect {
         }
 
         let signature = Expect::get_signature("toBe", "<green>expected<r>", false);
-        if left.jest_deep_equals(right, global_this)? || left.jest_strict_deep_equals(right, global_this)? {
-            // Rust format strings must be literals, so branch the call on
-            // `has_custom_label` instead.
-            if !has_custom_label {
-                return throw!(
-                    this,
-                    global_this,
-                    signature,
-                    concat!(
-                        "\n\n<d>If this test should pass, replace \"toBe\" with \"toEqual\" or \"toStrictEqual\"<r>",
-                        "\n\nExpected: <green>{}<r>\n",
-                        "Received: serializes to the same string\n",
-                    ),
-                    right.to_fmt(&mut formatter),
-                );
-            } else {
-                return throw!(
-                    this,
-                    global_this,
-                    signature,
-                    concat!(
-                        "\n\nExpected: <green>{}<r>\n",
-                        "Received: serializes to the same string\n",
-                    ),
-                    right.to_fmt(&mut formatter),
-                );
-            }
+        // Like Jest, the hint names the strictest check that passes.
+        let passing_matcher = if left.jest_strict_deep_equals(right, global_this)? {
+            Some("toStrictEqual")
+        } else if left.jest_deep_equals(right, global_this)? {
+            Some("toEqual")
+        } else {
+            None
+        };
+        if let Some(matcher) = passing_matcher {
+            return this.throw_to_be_deep_equal(global_this, signature, matcher, right, left);
         }
 
         if right.is_string() && left.is_string() {
@@ -93,5 +73,62 @@ impl Expect {
             left.to_fmt(&mut formatter2),
         );
     }
+
+    /// Deep-equal values can print differently: an asymmetric matcher, a hole against `undefined`.
+    #[cold]
+    #[inline(never)]
+    #[optimize(size)]
+    fn throw_to_be_deep_equal(
+        &self,
+        global_this: &JSGlobalObject,
+        signature: &'static str,
+        matcher: &'static str,
+        expected: JSValue,
+        received: JSValue,
+    ) -> JsResult<JSValue> {
+        let expected_text = print_for_message(global_this, expected)?;
+        // An Error prints the source frame and stack of where it was made, which deep equality ignores.
+        let printed_differently = if expected.is_error() && received.is_error() {
+            None
+        } else {
+            Some(print_for_message(global_this, received)?).filter(|text| *text != expected_text)
+        };
+
+        let Some(received_text) = printed_differently else {
+            return throw!(
+                self,
+                global_this,
+                signature,
+                concat!(
+                    "\n\n<d>If this test should pass, replace \"toBe\" with \"{}\"<r>",
+                    "\n\nExpected: <green>{}<r>\n",
+                    "Received: serializes to the same string\n",
+                ),
+                matcher,
+                expected_text,
+            );
+        };
+        throw!(
+            self,
+            global_this,
+            signature,
+            concat!(
+                "\n\n<d>If this test should pass, replace \"toBe\" with \"{}\"<r>",
+                "\n\nExpected: <green>{}<r>\n",
+                "Received: <red>{}<r>\n",
+            ),
+            matcher,
+            expected_text,
+            received_text,
+        )
+    }
+}
+
+/// The text of `value` as a failure message shows it.
+fn print_for_message(global_this: &JSGlobalObject, value: JSValue) -> JsResult<String> {
+    let mut text = String::new();
+    super::make_formatter(global_this)
+        .format_value::<false>(value, &mut bun_io::FmtAdapter::new(&mut text))?;
+    Ok(text)
 }
 

@@ -4117,7 +4117,7 @@ console.log(resolve.length)
     expectPrinted_(cls("return (1)[0].#x"), printed("return 1[0].#x"));
   });
 
-  it("private name of a number literal loads under bun run", async () => {
+  it.concurrent("private name of a number literal loads under bun -e", async () => {
     // Node prints the same line for this source.
     const src = `
       const k = 1;

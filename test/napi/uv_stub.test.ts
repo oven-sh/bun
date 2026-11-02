@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, makeTree, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, makeTree, tempDirWithFiles } from "harness";
 import path from "node:path";
 import { symbols, test_skipped } from "../../src/jsc/bindings/libuv/generate_uv_stubs_constants";
 import goodSource from "./uv-stub-stuff/good_plugin.c";
@@ -73,7 +73,10 @@ describe("uv stubs", () => {
 
     const libuvDir = path.join(__dirname, "../../src/jsc/bindings/libuv");
     await Bun.$`cp -R ${libuvDir} ${path.join(tempdir, "libuv")}`;
-    await Bun.$`${bunExe()} i && ${bunExe()} build:napi`.env(bunEnv).cwd(tempdir);
+    // On Windows node-gyp runs under Bun, for the reason that test/v8/v8.test.ts gives.
+    await Bun.$`${bunExe()} i --ignore-scripts && ${bunExe()} ${isWindows ? ["--bun"] : []} build:napi`
+      .env(bunEnv)
+      .cwd(tempdir);
     console.log("tempdir:", tempdir);
   });
 

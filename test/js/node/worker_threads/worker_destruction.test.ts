@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun } from "harness";
+import { bunEnv, bunExe, bunRun, isWindows } from "harness";
 import { join } from "path";
 
 describe("Worker destruction", () => {
@@ -46,7 +46,9 @@ describe("Worker destruction", () => {
   });
 
   // On Windows a pipe handle takes one synchronous read at a time, so each read waits behind the one before it.
-  test.concurrent.each([1, 2, 3])("terminate() a Worker with %d pending reads of a silent stdin", async count => {
+  // Elsewhere a second read of a descriptor that is being polled fails (EEXIST from epoll_ctl).
+  const reads = isWindows ? [1, 2, 3] : [1];
+  test.concurrent.each(reads)("terminate() a Worker with %d pending reads of a silent stdin", async count => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),

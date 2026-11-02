@@ -62,7 +62,10 @@ describe("uv stubs", () => {
     await Bun.$`cp -R ${libuvDir} ${path.join(tempdir, "libuv")}`;
     // --ignore-scripts skips the implicit `node-gyp rebuild` bun install runs for a
     // root binding.gyp package; build:napi below is the single, explicit gyp build.
-    await Bun.$`${bunExe()} i --ignore-scripts && ${bunExe()} build:napi`.env(bunEnv).cwd(tempdir);
+    // On Windows node-gyp runs under Bun, for the reason that test/v8/v8.test.ts gives.
+    await Bun.$`${bunExe()} i --ignore-scripts && ${bunExe()} ${isWindows ? ["--bun"] : []} build:napi`
+      .env(bunEnv)
+      .cwd(tempdir);
 
     // Forward slashes: some scripts below quote the path twice.
     addonPath = path.join(tempdir, "./build/Release/uv_test.node").replaceAll("\\", "/");

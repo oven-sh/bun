@@ -2238,8 +2238,11 @@ describe.skipIf(!isWindows)("Bun.connect named-pipe client Handlers lifecycle", 
       const src = /* js */ `
         const { sslCtxLiveCount } = require("bun:internal-for-testing");
         const { heapStats } = require("bun:jsc");
-        const liveSockets = () => heapStats().objectTypeCounts.${socketType} ?? 0;
         const sslCtxBefore = sslCtxLiveCount();
+        const leaked = () => ({
+          sockets: heapStats().objectTypeCounts.${socketType} ?? 0,
+          sslCtx: sslCtxLiveCount() - sslCtxBefore,
+        });
 
         let connectErrors = 0;
         let closes = 0;
@@ -2270,7 +2273,8 @@ describe.skipIf(!isWindows)("Bun.connect named-pipe client Handlers lifecycle", 
           }
         }
 
-        for (let i = 0; i < 100 && (Bun.gc(true), liveSockets() > 0); i++) {
+        // This runs inside the last attempt's connectError, and uSockets frees that attempt's SSL once it returns.
+        for (let i = 0; i < 100 && (Bun.gc(true), Object.values(leaked()).some(Boolean)); i++) {
           await new Promise(resolve => setImmediate(resolve));
         }
 
@@ -2279,10 +2283,7 @@ describe.skipIf(!isWindows)("Bun.connect named-pipe client Handlers lifecycle", 
           closes,
           outcomes: [...outcomes].sort(),
           firstAttempt,
-          leaked: {
-            sockets: liveSockets(),
-            sslCtx: sslCtxLiveCount() - sslCtxBefore,
-          },
+          leaked: leaked(),
         }));
       `;
 

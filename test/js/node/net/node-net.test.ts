@@ -542,10 +542,14 @@ describe("net.Socket write", () => {
       });
     }
 
-    for (let i = 0; i < 10; i++) {
-      await run();
+    try {
+      for (let i = 0; i < 10; i++) {
+        await run();
+      }
+    } finally {
+      socket.destroy();
+      server.close();
     }
-    server.close();
   });
 
   // Client-mode `Handlers.markInactive()` frees the per-connection Handlers

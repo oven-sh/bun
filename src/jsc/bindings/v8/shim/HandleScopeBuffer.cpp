@@ -1,4 +1,5 @@
 #include "HandleScopeBuffer.h"
+#include "GlobalHandleRegistry.h"
 #include "GlobalInternals.h"
 #include "../v8_handle_scope_data.h"
 #include <wtf/TZoneMallocInlines.h>
@@ -186,6 +187,14 @@ TaggedPointer* HandleScopeBuffer::createHandleFromExistingObject(TaggedPointer a
                     reinterpret_cast<Oddball*>(v8_object)->kind());
             }
         }
+        if (v8_object->map()->m_instanceType == InstanceType::HeapNumber) {
+            if (reuseHandle) {
+                *reuseHandle = Handle(v8_object->asDouble());
+                return reuseHandle->slot();
+            } else {
+                return createDoubleHandle(v8_object->asDouble());
+            }
+        }
         if (reuseHandle) {
             *reuseHandle = Handle(v8_object->map(), v8_object->asCell(), vm(), m_owner);
             return reuseHandle->slot();
@@ -210,6 +219,9 @@ void HandleScopeBuffer::close(Bun::HandleScopeImpl* parent)
     // the frame is read.
     if (parent && !internals->activeReturnValueSlots().isEmpty()) {
         evacuateActiveReturnValues(parent);
+    }
+    if (internals->hasDisposedGlobalHandles()) [[unlikely]] {
+        GlobalHandleRegistry::didCloseScope(vm());
     }
     // The owner detaches this buffer and then frees it, along with every handle.
 }

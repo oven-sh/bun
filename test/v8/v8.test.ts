@@ -48,6 +48,13 @@ if (process.platform == "win32") {
   bunEnv.__FAKE_PLATFORM__ = "linux";
 }
 
+// ASAN sees a read of what a destroyed VM freed only with Malloc set. Its report outlasts a test's timeout unless symbolize=0.
+const asanEnv = {
+  ...bunEnv,
+  Malloc: "1",
+  ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":"),
+};
+
 const srcDir = join(__dirname, "v8-module");
 const directories = {
   bunRelease: "",
@@ -498,6 +505,289 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
     it("can create, modify, and read the value from global handles", async () => {
       await checkSameOutput("test_v8_global");
     });
+
+    it("lets go of its value when it is reset", async () => {
+      const output = await checkSameOutput("test_v8_global_reset_releases_value");
+      // Node and Bun agree by now. This rules out that neither of them collected the values.
+      expect(output.split(/\r?\n/)).toEqual([
+        "values of Globals reset in the call that created them: collected",
+        "values of Globals not reset yet: alive",
+        "values of Globals reset in a later call: collected",
+      ]);
+    });
+
+    it("does not change the Locals and return values that were read from it when it is reset", async () => {
+      const output = await checkSameOutput("test_v8_global_reset_keeps_locals_and_return_values");
+      expect(output.split(/\r?\n/)).toEqual([
+        'local after Reset = "first"',
+        'local after other Globals were created = "first", its copy = "first"',
+        "returned local = first",
+        'global_return_local_then_reset returned {"name":"second"}, "a string", 12.5, 7, undefined, null, true, false',
+        'global_return_global_then_reset returned {"name":"second"}, "a string", 12.5, 7, undefined, null, true, false',
+        'local after nested calls reset the Global = "third"',
+        "returned after nested calls reset the Global = third",
+        'the Global then held {"name":"fifth"}',
+        "the other Globals held their values = true",
+      ]);
+    });
+
+    it("can be reset while it holds undefined, null, a boolean or a number", async () => {
+      const output = await checkSameOutput("test_v8_global_reset_primitives");
+      // Each round prints the values that the Globals of the round before held, and then undefined, null, true and false.
+      expect(output.split(/\r?\n/)).toEqual([
+        "round 0: | undefined null true false",
+        'round 1: undefined undefined null true false 0.000000 0.500000 "string 0" | undefined null true false',
+        'round 2: "string 1" undefined undefined null true false 1.000000 1.500000 | undefined null true false',
+        'round 3: 2.500000 "string 2" undefined undefined null true false 2.000000 | undefined null true false',
+        'round 4: 3.000000 3.500000 "string 3" undefined undefined null true false | undefined null true false',
+        'round -1: false 4.000000 4.500000 "string 4" undefined undefined null true | undefined null true false',
+        "Globals of undefined, undefined, null, true and false have 5 handles",
+      ]);
+    });
+
+    it("takes the handle that a reset Global gave back", async () => {
+      const output = await checkSameOutput("test_v8_global_reuses_handles");
+      expect(output).toBe("handles for 1000 Globals, one at a time: at most 16");
+    });
+
+    it("can be reset, made weak and made strong again on a thread that has no isolate", async () => {
+      const output = await checkSameOutput("test_v8_global_on_another_thread");
+      expect(output.split(/\r?\n/)).toEqual([
+        "the Global that the other thread reset is empty = true",
+        'the Global that the other thread made weak and strong again = "made on the JS thread"',
+      ]);
+    });
+
+    // Not run on Windows, where no test of this file has used libuv from an addon yet.
+    it.skipIf(isWindows)("lets go of its value when a libuv callback that creates no Local resets it", async () => {
+      const output = await checkSameOutput("test_v8_global_reset_in_uv_timer");
+      expect(output).toBe("values of Globals reset in a uv_timer callback that creates no Local: collected");
+    });
+
+    it("keeps its value when the Globals that exited Workers left are reset", async () => {
+      const expected = [
+        "Globals that Workers left when they exited: 2048",
+        "Globals with the handle address of one of them: 0",
+        "Globals with a wrong value after those that the Workers left were reset: 0",
+      ].join("\n");
+      expect(await runOnBun("test_v8_global_left_by_workers")).toEqual([expected, expected]);
+    });
+
+    it("keeps its handle when a Worker resets it", async () => {
+      const expected = [
+        "the Worker's Globals held their values: true",
+        "a Global of the Worker took the handle of the main thread's Global: false",
+        "the values of the main thread's Globals that the Worker reset: held, stored",
+      ].join("\n");
+      expect(await runOnBun("test_v8_global_of_another_isolate")).toEqual([expected, expected]);
+    });
+
+    it("does not give the parameter of SetWeak to the next Global that takes its handle", async () => {
+      const output = await checkSameOutput("test_v8_global_weak_parameter_after_reuse");
+      expect(output.split(/\r?\n/)).toEqual([
+        "ClearWeak() of a weak Global returned the parameter of SetWeak",
+        "the next Global took the handle of the weak one: true",
+        "ClearWeak() of the next Global returned null",
+        "the objects are first and second",
+      ]);
+    });
+
+    it("gives its handle back once when a copy of it is reset too", async () => {
+      const expected = "handles of the next 8 Globals: 8\nvalues that those Globals held: 8";
+      expect(await runOnBun("test_v8_global_reset_twice")).toEqual([expected, expected]);
+    });
+
+    it(
+      "keeps and lets go of the values of Globals that take a handle again while the collector runs all the time",
+      async () => {
+        // A debug or ASAN build needs 20 times as long for a round as a release build.
+        const rounds = isDebug || isASAN ? 5_000 : 100_000;
+        const env = { ...bunEnv, BUN_JSC_collectContinuously: "1" };
+        const output = await checkSameOutput("test_v8_global_churn", `[${rounds}]`, undefined, env);
+        expect(output.split(/\r?\n/)).toEqual([
+          "handles that the Globals of all rounds took: at most 16",
+          "values read back from the Global of their round: intact",
+          "values of the Globals of earlier rounds: collected",
+        ]);
+      },
+      isDebug || isASAN ? 60_000 : 30_000,
+    );
+
+    it(
+      "frees the handles of a Worker that exits with one Global set",
+      async () => {
+        // Each Worker has 250,000 Globals at once and leaves one. As below, a debug or ASAN build runs 4 Workers where a release build runs 30.
+        const workers = isDebug || isASAN ? 4 : 30;
+        const main = join(directories.bunRelease, "main.js");
+        await expectRssDeltaBelow([main, "test_v8_global_left_after_peak_leak", `[${workers}, 250000]`, "null"], {
+          release: 60,
+          debug: 8,
+        });
+      },
+      isDebug || isASAN ? 120_000 : 30_000,
+    );
+
+    // Bun only: each file of `bun test --isolate` runs in a realm of its own, which is a v8::Isolate of its own here. Every file loads the addon.
+    async function runIsolatedFiles(...sources: string[]) {
+      const addon = JSON.stringify(join(directories.bunRelease, "build", "Release", "v8tests.node"));
+      const names = sources.map((_, i) => `file-${i + 1}.test.js`);
+      using dir = tempDir(
+        "v8-global-isolate",
+        Object.fromEntries(sources.map((source, i) => [names[i], `const addon = require(${addon});\n${source}`])),
+      );
+      await using proc = spawn({
+        cmd: [bunExe(), "test", "--isolate", ...names.map(name => `./${name}`)],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // What the files and the addon printed: not the debug logs, and not the line with the version of bun test.
+      const lines = stdout
+        .replaceAll(/^\[\w+\].+$/gm, "")
+        .split(/\r?\n/)
+        .filter(line => line && !line.startsWith("bun test v"));
+      return { lines, stderr, exitCode };
+    }
+
+    // A Global keeps its value alive once the file that made it is done: the second file reads an object of the first one from a Global.
+    const holdAnObjectOfThisFile = `
+      addon.global_hold({ name: "an object of the first file" });
+      Bun.gc(true);`;
+    const takeTheObjectOfTheFirstFile = `
+      const [ofTheFirstFile] = addon.global_held();
+      expect(ofTheFirstFile.name).toBe("an object of the first file");`;
+
+    it("lets go of its value when the next file of bun test --isolate resets it", async () => {
+      const { lines, stderr, exitCode } = await runIsolatedFiles(
+        `import { test } from "bun:test";
+        test("gives a Global an instance of a function of the addon", () => {
+          addon.global_store(new addon.test_v8_native_call());${holdAnObjectOfThisFile}
+        });`,
+        `import { heapStats } from "bun:jsc";
+        import { expect, test } from "bun:test";
+        test("resets the Global of the first file", () => {${takeTheObjectOfTheFirstFile}
+          // Only an instance of a function of a V8 addon is an InternalFieldObject.
+          const instances = () => (Bun.gc(true), heapStats().objectTypeCounts.InternalFieldObject ?? 0);
+          const before = instances();
+          addon.global_reset_stored();
+          console.log("instances before and after their Global is reset:", before, instances());
+          expect(ofTheFirstFile.name).toBe("an object of the first file");
+        });`,
+      );
+      expect(lines, stderr).toEqual(["instances before and after their Global is reset: 1 0"]);
+      expect(exitCode).toBe(0);
+    });
+
+    it("does not change a Local of the next file of bun test --isolate when that file resets it", async () => {
+      const { lines, stderr, exitCode } = await runIsolatedFiles(
+        `import { test } from "bun:test";
+        test("gives a Global an object", () => {
+          addon.global_store({ name: "stored by the first file" });${holdAnObjectOfThisFile}
+        });`,
+        `import { expect, test } from "bun:test";
+        test("reads a Local from the Global of the first file, resets the Global and uses the Local", () => {${takeTheObjectOfTheFirstFile}
+          expect(addon.global_local_outlives_reset().name).toBe("stored by the first file");
+          expect(ofTheFirstFile.name).toBe("an object of the first file");
+        });`,
+      );
+      expect(lines, stderr).toEqual([
+        'local after Reset = "stored by the first file"',
+        'local after other Globals were created = "stored by the first file", its copy = "stored by the first file"',
+      ]);
+      expect(exitCode).toBe(0);
+    });
+
+    // On a debug build the realm of the first file is never collected: a listener of its process object is a root.
+    // So the second file makes the Globals. Its marker, an instance of a function of the addon, lives as long as its realm.
+    const loadTheAddon = `import { test } from "bun:test";
+        test("loads the addon", () => {});`;
+    const collect = `import { test } from "bun:test";
+        test("collects", () => {
+          Bun.gc(true);
+        });`;
+    const markers = `const markers = () => (Bun.gc(true), heapStats().objectTypeCounts.InternalFieldObject ?? 0);`;
+
+    it.each([
+      [
+        "global_local_outlives_reset",
+        [
+          "local after Reset = not an object: 1.500000",
+          "local after other Globals were created = not an object: 1.500000, its copy = not an object: 1.500000",
+        ],
+      ],
+      ["global_return_global_then_reset", []],
+    ])(
+      "keeps its value for a later file of bun test --isolate once the realm that made it is collected (%s)",
+      async (name, printed) => {
+        const { lines, stderr, exitCode } = await runIsolatedFiles(
+          loadTheAddon,
+          `import { test } from "bun:test";
+          test("gives Globals a string and a number", () => {
+            globalThis.marker = new addon.test_v8_native_call();
+            // Only the Global refers to the string.
+            addon.global_hold(["a string", "of the second file"].join(" "));
+            addon.global_store(1.5);
+          });`,
+          collect,
+          `import { heapStats } from "bun:jsc";
+          import { expect, test } from "bun:test";
+          ${markers}
+          test("reads and resets the Globals of the second file", () => {
+            expect(markers()).toBe(0);
+            // Each of the four files made one when it loaded the addon.
+            expect(heapStats().objectTypeCounts.GlobalInternals).toBeLessThan(4);
+            expect(addon.global_held()).toEqual(["a string of the second file"]);
+            expect(addon.global_stored()).toBe(1.5);
+            addon.global_reset_held();
+            // One of the Globals that the native function creates for these could take the handle that the stored Global gave back.
+            const others = Array.from({ length: 200 }, (_, i) => ({ name: "other " + i }));
+            expect(addon.${name}(...others)).toBe(1.5);
+            addon.global_reset_held();
+          });`,
+        );
+        expect(lines, stderr).toEqual(printed);
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    it("keeps an object and the realm of its file for a later file of bun test --isolate until it is reset", async () => {
+      const { lines, stderr, exitCode } = await runIsolatedFiles(
+        loadTheAddon,
+        `import { test } from "bun:test";
+        test("gives a Global an object", () => {
+          globalThis.marker = new addon.test_v8_native_call();
+          addon.global_hold({ name: "an object of the second file" });
+        });`,
+        collect,
+        `import { heapStats } from "bun:jsc";
+        import { expect, test } from "bun:test";
+        ${markers}
+        test("reads and resets the Global of the second file", () => {
+          const before = markers();
+          // Returns before the next collection, so that only the Global refers to the object.
+          const nameOfHeld = () => addon.global_held()[0].name;
+          expect(nameOfHeld()).toBe("an object of the second file");
+          addon.global_reset_held();
+          console.log("realms of the second file before and after its Global is reset:", before, markers());
+        });`,
+      );
+      expect(lines, stderr).toEqual(["realms of the second file before and after its Global is reset: 1 0"]);
+      expect(exitCode).toBe(0);
+    });
+
+    it("can be reset when the thread of its Worker exits, after the Worker's VM is destroyed", async () => {
+      const expected = "a destructor reset its Globals\nthe thread of the Worker has exited";
+      expect(await runOnBun("test_v8_global_reset_by_destructor", "[true]", asanEnv)).toEqual([expected, expected]);
+    });
+
+    // Only an ASAN build on Linux runs the destructors of statics when it exits: a release build ends with quick_exit.
+    it.skipIf(!isASAN)("can be reset when the process exits, after the main thread's VM is destroyed", async () => {
+      const expected = "the main thread is done\na destructor reset its Globals";
+      const env = { ...asanEnv, BUN_DESTRUCT_VM_ON_EXIT: "1" };
+      expect(await runOnBun("test_v8_global_reset_by_destructor", "[false]", env)).toEqual([expected, expected]);
+    });
   });
 
   describe("HandleScope", () => {
@@ -701,11 +991,11 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
   });
 });
 
-async function checkSameOutput(testName: string, args?: string, thisValue?: any) {
+async function checkSameOutput(testName: string, args?: string, thisValue?: any, env = bunEnv) {
   const [nodeResultResolution, bunReleaseResultResolution, bunDebugResultResolution] = await Promise.allSettled([
-    runOn(Runtime.node, BuildMode.release, testName, args, thisValue),
-    runOn(Runtime.bun, BuildMode.release, testName, args, thisValue),
-    runOn(Runtime.bun, BuildMode.debug, testName, args, thisValue),
+    runOn(Runtime.node, BuildMode.release, testName, args, thisValue, env),
+    runOn(Runtime.bun, BuildMode.release, testName, args, thisValue, env),
+    runOn(Runtime.bun, BuildMode.debug, testName, args, thisValue, env),
   ]);
   const errors = [nodeResultResolution, bunReleaseResultResolution, bunDebugResultResolution]
     .filter(r => r.status === "rejected")
@@ -731,10 +1021,10 @@ async function checkSameOutput(testName: string, args?: string, thisValue?: any)
 
 // For a fixture that only Bun can run. Returns its output with the addon built in release mode and in debug mode. The
 // lines end with "\n" on every platform.
-function runOnBun(testName: string, jsArgs?: string) {
+function runOnBun(testName: string, jsArgs?: string, env = bunEnv) {
   return Promise.all(
     [BuildMode.release, BuildMode.debug].map(async buildMode =>
-      (await runOn(Runtime.bun, buildMode, testName, jsArgs))
+      (await runOn(Runtime.bun, buildMode, testName, jsArgs, undefined, env))
         .replaceAll("\r\n", "\n")
         .replaceAll(/^\[\w+\].+$/gm, "")
         .trim(),
@@ -746,7 +1036,14 @@ function runOnBun(testName: string, jsArgs?: string) {
  * @param jsArgs should eval() to an array
  * @param thisValue will be JSON stringified
  */
-async function runOn(runtime: Runtime, buildMode: BuildMode, testName: string, jsArgs?: string, thisValue?: any) {
+async function runOn(
+  runtime: Runtime,
+  buildMode: BuildMode,
+  testName: string,
+  jsArgs?: string,
+  thisValue?: any,
+  env = bunEnv,
+) {
   if (runtime == Runtime.node) {
     assert(buildMode == BuildMode.release);
   }
@@ -773,7 +1070,7 @@ async function runOn(runtime: Runtime, buildMode: BuildMode, testName: string, j
   const proc = spawn({
     cmd,
     cwd: baseDir,
-    env: bunEnv,
+    env,
     stdio: ["inherit", "pipe", "pipe"],
   });
   const [exitCode, out, err] = await Promise.all([proc.exited, proc.stdout.text(), proc.stderr.text()]);
@@ -785,7 +1082,18 @@ async function runOn(runtime: Runtime, buildMode: BuildMode, testName: string, j
   return out.trim();
 }
 
-function standaloneAddonFiles(targetName: string, addonCpp: string, runJs: string) {
+// With `experimentalTargetName`, the addon is built a second time under that name with NAPI_EXPERIMENTAL defined.
+function standaloneAddonFiles(targetName: string, addonCpp: string, runJs: string, experimentalTargetName?: string) {
+  const target = {
+    target_name: targetName,
+    sources: ["addon.cpp"],
+    cflags: ["-Wno-deprecated-declarations"],
+    cflags_cc: ["-Wno-deprecated-declarations"],
+    xcode_settings: {
+      OTHER_CFLAGS: ["-Wno-deprecated-declarations"],
+      OTHER_CPLUSPLUSFLAGS: ["-Wno-deprecated-declarations"],
+    },
+  };
   return {
     "package.json": JSON.stringify({
       name: `${targetName}-test`,
@@ -793,18 +1101,9 @@ function standaloneAddonFiles(targetName: string, addonCpp: string, runJs: strin
       devDependencies: { "node-gyp": "~11.2.0" },
     }),
     "binding.gyp": JSON.stringify({
-      targets: [
-        {
-          target_name: targetName,
-          sources: ["addon.cpp"],
-          cflags: ["-Wno-deprecated-declarations"],
-          cflags_cc: ["-Wno-deprecated-declarations"],
-          xcode_settings: {
-            OTHER_CFLAGS: ["-Wno-deprecated-declarations"],
-            OTHER_CPLUSPLUSFLAGS: ["-Wno-deprecated-declarations"],
-          },
-        },
-      ],
+      targets: experimentalTargetName
+        ? [target, { ...target, target_name: experimentalTargetName, defines: ["NAPI_EXPERIMENTAL"] }]
+        : [target],
     }),
     "addon.cpp": addonCpp,
     "run.js": runJs,
@@ -1035,26 +1334,38 @@ for (const [hi, lo] of [
 // from one doesn't need to open its own scope. With the Node 26 headers, an addon's
 // v8::HandleScope is inlined and never calls into Bun either.
 describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("V8 API from Node-API callbacks", () => {
-  it(
-    "creates handles in the Node-API scope, keeps them alive, and releases them when it closes",
+  // The addon is built once. Each test runs a script of its own.
+  let dir: ReturnType<typeof tempDir> | undefined;
+  let cwd = "";
+
+  beforeAll(
     async () => {
-      using dir = tempDir(
-        "v8-api-from-napi",
-        standaloneAddonFiles(
+      dir = tempDir("v8-api-from-napi", {
+        ...standaloneAddonFiles(
           "hybridnapi",
           `// A Node-API addon whose callbacks also use the V8 C++ API. Node runs every Node-API callback
 // inside a v8::HandleScope, so the callbacks below only open one when that's what they test.
 // Each callback returns its result as a string so run.js can print everything in order.
+#ifndef NAPI_EXPERIMENTAL
+// For node_api_create_external_string_latin1. The second target is built with NAPI_EXPERIMENTAL, which has it too.
+#define NAPI_VERSION 10
+#endif
 #include <node.h>
 #include <node_api.h>
+#include <atomic>
 #include <cstdio>
 #include <cstring>
+#include <vector>
 
 namespace hybrid_test {
 
 using namespace v8;
 
 Global<Array> stashed_array;
+Global<String> stashed_name;
+std::atomic<int> globals_destroyed_by_finalizers{0};
+// One thread at a time fills it or takes from it.
+std::vector<Global<Value>*> globals_for_finalizers;
 
 napi_value to_napi_string(napi_env env, const char* text) {
   napi_value result;
@@ -1205,6 +1516,239 @@ napi_value read_stashed_array(napi_env env, napi_callback_info info) {
   return to_napi_string(env, result);
 }
 
+// Creates a V8 handle, so its scope has V8 handles.
+napi_value stash_name(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value name;
+  napi_get_cb_info(env, info, &argc, &name, nullptr, nullptr);
+  char text[64];
+  napi_get_value_string_utf8(env, name, text, sizeof text, nullptr);
+  Isolate* isolate = Isolate::GetCurrent();
+  stashed_name.Reset(isolate, String::NewFromUtf8(isolate, text, NewStringType::kNormal).ToLocalChecked());
+  return nullptr;
+}
+
+// Creates no V8 handle, so its scope has none.
+napi_value reset_stashed_name(napi_env env, napi_callback_info info) {
+  stashed_name.Reset();
+  return nullptr;
+}
+
+// Creates no V8 handle either.
+napi_value call_without_v8_handles(napi_env env, napi_callback_info info) {
+  napi_value ignored;
+  call_argument(env, info, &ignored);
+  return nullptr;
+}
+
+// The Local points into the handle of the Global, which the argument resets from callbacks nested in one without V8 handles.
+napi_value read_stashed_name_around(napi_env env, napi_callback_info info) {
+  Isolate* isolate = Isolate::GetCurrent();
+  Local<String> local = stashed_name.Get(isolate);
+  napi_value ignored;
+  call_argument(env, info, &ignored);
+  isolate->LowMemoryNotification();
+  char text[64];
+  local->WriteUtf8V2(isolate, text, sizeof text, String::WriteFlags::kNullTerminate);
+  return to_napi_string(env, text);
+}
+
+void destroy_global(node_api_basic_env env, void* data, void* hint) {
+  delete static_cast<Global<Value>*>(data);
+  globals_destroyed_by_finalizers++;
+}
+
+// The Globals are in the isolate of the thread that calls this.
+napi_value create_globals_for_finalizers(napi_env env, napi_callback_info info) {
+  Isolate* isolate = Isolate::GetCurrent();
+  for (int i = 0; i < 8; i++) {
+    globals_for_finalizers.push_back(new Global<Value>(isolate, Object::New(isolate)));
+  }
+  return nullptr;
+}
+
+// Uses no V8 API. The finalizer of an object that is alive when a Worker exits runs while the Worker's heap shuts down.
+napi_value add_finalizer_that_destroys_a_global(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value object;
+  napi_get_cb_info(env, info, &argc, &object, nullptr, nullptr);
+  napi_add_finalizer(env, object, globals_for_finalizers.back(), destroy_global, nullptr, nullptr);
+  globals_for_finalizers.pop_back();
+  return object;
+}
+
+napi_value count_globals_destroyed_by_finalizers(napi_env env, napi_callback_info info) {
+  napi_value count;
+  napi_create_int32(env, globals_destroyed_by_finalizers, &count);
+  return count;
+}
+
+struct WeakGlobal {
+  // Keeps the value alive: V8 resets a weak Global once nothing else holds its value.
+  Global<Value> strong;
+  Global<Value> weak;
+};
+std::atomic<int> parameters_returned_by_clear_weak{0};
+
+void weak_callback_that_never_runs(const WeakCallbackInfo<WeakGlobal>& info) {}
+
+// The finalizer of the argument asks a weak Global for the parameter that SetWeak got.
+napi_value add_finalizer_that_clears_weak(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value object;
+  napi_get_cb_info(env, info, &argc, &object, nullptr, nullptr);
+  Isolate* isolate = Isolate::GetCurrent();
+  Local<Value> value = Object::New(isolate);
+  auto* global = new WeakGlobal{Global<Value>(isolate, value), Global<Value>(isolate, value)};
+  global->weak.SetWeak(global, weak_callback_that_never_runs, WeakCallbackType::kParameter);
+  napi_add_finalizer(
+      env, object, global,
+      [](node_api_basic_env env, void* data, void* hint) {
+        auto* global = static_cast<WeakGlobal*>(data);
+        parameters_returned_by_clear_weak += global->weak.ClearWeak<WeakGlobal>() == global;
+        delete global;
+      },
+      nullptr, nullptr);
+  return object;
+}
+
+napi_value count_parameters_returned_by_clear_weak(napi_env env, napi_callback_info info) {
+  napi_value count;
+  napi_create_int32(env, parameters_returned_by_clear_weak, &count);
+  return count;
+}
+
+napi_value create_external(napi_env env, napi_callback_info info) {
+  napi_value external;
+  napi_create_external(env, nullptr, nullptr, nullptr, &external);
+  return external;
+}
+
+// As many Globals of one object as the argument says.
+std::vector<Global<Value>>* create_globals(napi_env env, napi_value count_value) {
+  uint32_t count = 0;
+  napi_get_value_uint32(env, count_value, &count);
+  Isolate* isolate = Isolate::GetCurrent();
+  Local<Value> value = Object::New(isolate);
+  auto* globals = new std::vector<Global<Value>>();
+  globals->reserve(count);
+  for (uint32_t i = 0; i < count; i++) {
+    globals->emplace_back(isolate, value);
+  }
+  return globals;
+}
+
+// The finalizer of the first argument destroys as many Globals as the second argument says.
+napi_value add_finalizer_that_destroys_globals(napi_env env, napi_callback_info info) {
+  size_t argc = 2;
+  napi_value arguments[2];
+  napi_get_cb_info(env, info, &argc, arguments, nullptr, nullptr);
+  napi_add_finalizer(
+      env, arguments[0], create_globals(env, arguments[1]),
+      [](node_api_basic_env env, void* data, void* hint) {
+        delete static_cast<std::vector<Global<Value>>*>(data);
+      },
+      nullptr, nullptr);
+  return arguments[0];
+}
+
+std::atomic<int> cleanup_hooks_run{0};
+
+// A cleanup hook of the env destroys as many Globals as the argument says.
+napi_value add_cleanup_hook_that_destroys_globals(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value count;
+  napi_get_cb_info(env, info, &argc, &count, nullptr, nullptr);
+  napi_add_env_cleanup_hook(
+      env,
+      [](void* data) {
+        delete static_cast<std::vector<Global<Value>>*>(data);
+        cleanup_hooks_run++;
+      },
+      create_globals(env, count));
+  return nullptr;
+}
+
+napi_value count_cleanup_hooks_run(napi_env env, napi_callback_info info) {
+  napi_value count;
+  napi_create_int32(env, cleanup_hooks_run, &count);
+  return count;
+}
+
+std::atomic<int> external_string_finalizers_run{0};
+char external_string_characters[] = "a property key of an external string";
+
+// The string uses the characters above, and its finalizer runs when the engine lets go of them.
+napi_value create_external_string_that_destroys_a_global(napi_env env, napi_callback_info info) {
+  Isolate* isolate = Isolate::GetCurrent();
+  auto* global = new Global<Value>(isolate, Object::New(isolate));
+  napi_value string = nullptr;
+  bool copied = false;
+  node_api_create_external_string_latin1(
+      env, external_string_characters, NAPI_AUTO_LENGTH,
+      [](node_api_basic_env env, void* data, void* hint) {
+        delete static_cast<Global<Value>*>(hint);
+        external_string_finalizers_run++;
+      },
+      global, &string, &copied);
+  return string;
+}
+
+napi_value count_external_string_finalizers_run(napi_env env, napi_callback_info info) {
+  napi_value count;
+  napi_create_int32(env, external_string_finalizers_run, &count);
+  return count;
+}
+
+// The env stays allocated after its VM is destroyed, because nothing deletes the strong reference.
+napi_value keep_env_allocated(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value object;
+  napi_get_cb_info(env, info, &argc, &object, nullptr, nullptr);
+  napi_ref reference;
+  napi_create_reference(env, object, 1, &reference);
+  return nullptr;
+}
+
+std::atomic<int> array_buffer_globals_destroyed{0};
+Global<Value>* array_buffer_global_of_last_owner = nullptr;
+
+// The finalizer of the argument destroys a Global of a new ArrayBuffer, which nothing else refers to.
+napi_value add_finalizer_that_destroys_a_global_of_an_array_buffer(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value owner;
+  napi_get_cb_info(env, info, &argc, &owner, nullptr, nullptr);
+  Isolate* isolate = Isolate::GetCurrent();
+  Local<ArrayBuffer> buffer = ArrayBuffer::New(isolate, 8);
+  memcpy(buffer->GetBackingStore()->Data(), "a value", 8);
+  auto* global = new Global<Value>(isolate, buffer);
+  array_buffer_global_of_last_owner = global;
+  napi_add_finalizer(
+      env, owner, global,
+      [](node_api_basic_env env, void* data, void* hint) {
+        delete static_cast<Global<Value>*>(data);
+        array_buffer_globals_destroyed++;
+      },
+      nullptr, nullptr);
+  return nullptr;
+}
+
+napi_value count_array_buffer_globals_destroyed(napi_env env, napi_callback_info info) {
+  napi_value count;
+  napi_create_int32(env, array_buffer_globals_destroyed, &count);
+  return count;
+}
+
+// The Local points into the handle of the Global of the last owner. The argument makes the finalizer of that owner run.
+napi_value read_array_buffer_global_around(napi_env env, napi_callback_info info) {
+  Isolate* isolate = Isolate::GetCurrent();
+  Local<ArrayBuffer> local = array_buffer_global_of_last_owner->Get(isolate).As<ArrayBuffer>();
+  napi_value ignored;
+  call_argument(env, info, &ignored);
+  isolate->LowMemoryNotification();
+  return to_napi_string(env, static_cast<const char*>(local->GetBackingStore()->Data()));
+}
+
 napi_value init(napi_env env, napi_value exports) {
   struct {
     const char* name;
@@ -1218,6 +1762,25 @@ napi_value init(napi_env env, napi_value exports) {
       {"createBuffers", create_buffers},
       {"stashArray", stash_array},
       {"readStashedArray", read_stashed_array},
+      {"stashName", stash_name},
+      {"resetStashedName", reset_stashed_name},
+      {"callWithoutV8Handles", call_without_v8_handles},
+      {"readStashedNameAround", read_stashed_name_around},
+      {"createGlobalsForFinalizers", create_globals_for_finalizers},
+      {"addFinalizerThatDestroysAGlobal", add_finalizer_that_destroys_a_global},
+      {"countGlobalsDestroyedByFinalizers", count_globals_destroyed_by_finalizers},
+      {"addFinalizerThatClearsWeak", add_finalizer_that_clears_weak},
+      {"countParametersReturnedByClearWeak", count_parameters_returned_by_clear_weak},
+      {"createExternal", create_external},
+      {"addFinalizerThatDestroysGlobals", add_finalizer_that_destroys_globals},
+      {"addCleanupHookThatDestroysGlobals", add_cleanup_hook_that_destroys_globals},
+      {"countCleanupHooksRun", count_cleanup_hooks_run},
+      {"createExternalStringThatDestroysAGlobal", create_external_string_that_destroys_a_global},
+      {"countExternalStringFinalizersRun", count_external_string_finalizers_run},
+      {"keepEnvAllocated", keep_env_allocated},
+      {"addFinalizerThatDestroysAGlobalOfAnArrayBuffer", add_finalizer_that_destroys_a_global_of_an_array_buffer},
+      {"countArrayBufferGlobalsDestroyed", count_array_buffer_globals_destroyed},
+      {"readArrayBufferGlobalAround", read_array_buffer_global_around},
   };
   for (auto& function : functions) {
     napi_value value;
@@ -1254,26 +1817,266 @@ console.log("per-iteration napi_handle_scope:", addon.napiScopesRelease(liveArra
 addon.createBuffers();
 console.log("no scope:", liveArrayBuffers() < 100 ? "released when the callback returned" : "still alive after the callback returned");
 addon.stashArray();
-console.log("global handle:", addon.readStashedArray());`,
+console.log("global handle:", addon.readStashedArray());
+addon.stashName("held");
+const shown = addon.readStashedNameAround(() =>
+  addon.callWithoutV8Handles(() => {
+    addon.resetStashedName();
+    addon.stashName("nested 1");
+    addon.stashName("nested 2");
+  }),
+);
+console.log("local read around nested callbacks that reset its Global:", shown);
+addon.resetStashedName();
+const { Worker } = require("node:worker_threads");
+// Resolves once the Worker has exited. A Worker has one GlobalInternals once it has used the V8 API.
+function runWorker(createsGlobals) {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  let internals;
+  new Worker(require.resolve("./worker.js"), { workerData: createsGlobals })
+    .on("message", count => (internals = count))
+    .on("error", reject)
+    .on("exit", () => resolve(internals + " GlobalInternals, " + addon.countGlobalsDestroyedByFinalizers() + " Globals destroyed by finalizers so far"));
+  return promise;
+}
+(async () => {
+  console.log("Worker that creates the Globals:", await runWorker(true));
+  addon.createGlobalsForFinalizers();
+  console.log("Worker that gets the Globals of the main thread:", await runWorker(false));
+})();`,
+          // A finalizer of this one runs inside the collection that finds its object dead.
+          "hybridnapi_experimental",
         ),
-      );
-      const cwd = String(dir);
+        "worker.js": `const addon = require("./build/Release/hybridnapi");
+const { parentPort, workerData } = require("node:worker_threads");
+if (workerData) addon.createGlobalsForFinalizers();
+globalThis.kept = Array.from({ length: 8 }, () => addon.addFinalizerThatDestroysAGlobal({}));
+parentPort.postMessage(require("bun:jsc").heapStats().objectTypeCounts.GlobalInternals ?? 0);`,
+        // Node runs the finalizers of a Worker's live objects when the Worker exits too, before its isolate is disposed.
+        "clear-weak.js": `const addon = require("./build/Release/hybridnapi");
+const { Worker } = require("node:worker_threads");
+new Worker(require.resolve("./clear-weak-worker.js")).on("exit", () => {
+  const returned = addon.countParametersReturnedByClearWeak();
+  console.log("finalizers that got the parameter of SetWeak back from ClearWeak:", returned, "of 8");
+});`,
+        "clear-weak-worker.js": `const addon = require("./build/Release/hybridnapi");
+globalThis.kept = Array.from({ length: 8 }, () => addon.addFinalizerThatClearsWeak({}));`,
+        "rss.js": `// Runs Workers one after another and prints how far the highest RSS of the process grows after the first four.
+module.exports = async function printRssGrowth(runWorker, workers) {
+  // The highest RSS that the process has after one of the Workers has exited.
+  async function highestRssAfter(workers) {
+    let highest = 0;
+    for (let i = 0; i < workers; i++) {
+      await runWorker(i);
+      highest = Math.max(highest, process.memoryUsage.rss());
+    }
+    return highest;
+  }
+  // The first four Workers bring the process to the size that it keeps.
+  const before = await highestRssAfter(4);
+  const after = await highestRssAfter(workers);
+  console.log(JSON.stringify({ deltaMiB: (after - before) / 1024 / 1024 }));
+};`,
+        "leak.js": `const { Worker } = require("node:worker_threads");
+const [workers, globals] = process.argv.slice(2).map(Number);
+// Resolves once the Worker has exited.
+function runWorker(index) {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const worker = new Worker(require.resolve("./leak-worker.js"), { workerData: { index, globals } });
+  worker.on("error", reject).on("exit", resolve);
+  return promise;
+}
+require("./rss.js")(runWorker, workers);`,
+        "leak-worker.js": `const addon = require("./build/Release/hybridnapi");
+const { index, globals } = require("node:worker_threads").workerData;
+let kept = {};
+if (index % 2) {
+  // When a VM ends, JSC destroys the first eight cells of each kind after all others. This external is one of them,
+  // so its finalizer runs at the end of the heap's shutdown, and that of the plain object at its start.
+  kept = addon.createExternal();
+}
+// The object is alive when the Worker exits, so its finalizer runs while the Worker's heap shuts down.
+globalThis.kept = addon.addFinalizerThatDestroysGlobals(kept, globals);`,
+        "hook-leak.js": `const addon = require("./build/Release/hybridnapi");
+const { Worker } = require("node:worker_threads");
+const [end, workers, globals] = process.argv.slice(2);
+// Resolves once the Worker has exited. What a Worker writes about its uncaught error is not the output of this script.
+function runWorker() {
+  const { promise, resolve } = Promise.withResolvers();
+  const workerData = { end, globals: Number(globals) };
+  const worker = new Worker(require.resolve("./hook-leak-worker.js"), { workerData, stderr: true });
+  worker.stderr.resume();
+  worker.on("message", () => worker.terminate());
+  worker.on("error", () => {}).on("exit", resolve);
+  return promise;
+}
+require("./rss.js")(runWorker, Number(workers)).then(() => {
+  const hooks = addon.countCleanupHooksRun();
+  if (hooks !== Number(workers) + 4) console.error("cleanup hooks that ran:", hooks);
+});`,
+        "hook-leak-worker.js": `const addon = require("./build/Release/hybridnapi");
+const { parentPort, workerData } = require("node:worker_threads");
+addon.addCleanupHookThatDestroysGlobals(workerData.globals);
+switch (workerData.end) {
+  case "process.exit()":
+    process.exit(0);
+  case "worker.terminate()":
+    parentPort.postMessage("ready");
+    setInterval(() => {}, 1000);
+    break;
+  case "an uncaught error":
+    throw new Error("the Worker ends with this error");
+}`,
+        "external-string.js": `const addon = require("./build/Release/hybridnapi");
+const { Worker } = require("node:worker_threads");
+new Worker(require.resolve("./external-string-worker.js")).on("exit", code => {
+  console.log("the Worker exited with code", code);
+  console.log("finalizers of external strings that destroyed a Global:", addon.countExternalStringFinalizersRun());
+});`,
+        "external-string-worker.js": `const addon = require("./build/Release/hybridnapi");
+addon.keepEnvAllocated({});
+const object = {};
+// A VM lets go of the last string that it used as a property key after its heap, and after what belongs to the heap.
+object[addon.createExternalStringThatDestroysAGlobal()] = 1;`,
+        "experimental.js": `const addon = require("./build/Release/hybridnapi_experimental");
+const { heapStats } = require("bun:jsc");
+const { Worker } = require("node:worker_threads");
+const count = 1000;
+const liveArrayBuffers = () => (Bun.gc(true), heapStats().objectTypeCounts.ArrayBuffer ?? 0);
+const others = liveArrayBuffers();
+// Each owner has a Global of a new ArrayBuffer. Returns before a collection can run, so that nothing refers to the owners.
+function makeOwners() {
+  for (let i = 0; i < count; i++) addon.addFinalizerThatDestroysAGlobalOfAnArrayBuffer({});
+}
+let finalizersBefore = 0;
+function finalizersSince() {
+  const finalizers = addon.countArrayBufferGlobalsDestroyed() - finalizersBefore;
+  finalizersBefore += finalizers;
+  return finalizers;
+}
+// Leaves room for a few objects that something other than an owner or a Global keeps alive.
+function report(what, number, state) {
+  console.log(what + ":", number >= count - 10 ? state : "only " + number + " of " + count + " " + state);
+}
+
+makeOwners();
+Bun.gc(true);
+report("finalizers of owners that had run when the collection returned", finalizersSince(), "all");
+report("values of their Globals after one more collection", count - (liveArrayBuffers() - others), "collected");
+
+makeOwners();
+let finalizersInTheCall, aliveInTheCall;
+const local = addon.readArrayBufferGlobalAround(() => {
+  Bun.gc(true);
+  finalizersInTheCall = finalizersSince();
+  aliveInTheCall = liveArrayBuffers() - others;
+});
+report("finalizers of owners that had run under a native call with a Local of one of their Globals", finalizersInTheCall, "all");
+report("values of their Globals while that call ran", aliveInTheCall, "alive");
+console.log("the Local after the collections:", local);
+report("values of their Globals once the call had returned", count - (liveArrayBuffers() - others), "collected");
+
+new Worker(require.resolve("./experimental-worker.js"), { workerData: count }).on("exit", code => {
+  console.log("the Worker exited with code", code);
+  report("finalizers of the owners that the Worker left as garbage", finalizersSince(), "all");
+});`,
+        "experimental-worker.js": `const addon = require("./build/Release/hybridnapi_experimental");
+for (let i = 0; i < require("node:worker_threads").workerData; i++) addon.addFinalizerThatDestroysAGlobalOfAnArrayBuffer({});`,
+      });
+      cwd = String(dir);
       await buildStandaloneAddon(cwd);
-      const { lines, err, exitCode } = await runStandaloneAddon(cwd);
-      expect(lines, `stderr:\n${err}`).toEqual([
-        "function without scope: arrays of length 3 and 4, 'string from v8'",
-        "function with scope: arrays of length 3 and 4, 'string from v8'",
-        "function with escapable scope: escaped string",
-        "class constructor: arrays of length 3 and 4, 'string from v8'",
-        "survives gc: 500 of 500 strings intact after gc",
-        "per-iteration napi_handle_scope: released before the callback returned",
-        "no scope: released when the callback returned",
-        "global handle: stashed array of length 5, 5000 in total over 1000 inline scopes",
-      ]);
-      expect(exitCode).toBe(0);
     },
     10 * 60 * 1000,
   );
+
+  afterAll(() => dir?.[Symbol.dispose]());
+
+  it("creates handles in the Node-API scope, keeps them alive, and releases them when it closes", async () => {
+    const { lines, err, exitCode } = await runStandaloneAddon(cwd);
+    expect(lines, `stderr:\n${err}`).toEqual([
+      "function without scope: arrays of length 3 and 4, 'string from v8'",
+      "function with scope: arrays of length 3 and 4, 'string from v8'",
+      "function with escapable scope: escaped string",
+      "class constructor: arrays of length 3 and 4, 'string from v8'",
+      "survives gc: 500 of 500 strings intact after gc",
+      "per-iteration napi_handle_scope: released before the callback returned",
+      "no scope: released when the callback returned",
+      "global handle: stashed array of length 5, 5000 in total over 1000 inline scopes",
+      "local read around nested callbacks that reset its Global: held",
+      "Worker that creates the Globals: 1 GlobalInternals, 8 Globals destroyed by finalizers so far",
+      "Worker that gets the Globals of the main thread: 0 GlobalInternals, 16 Globals destroyed by finalizers so far",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  it("returns the parameter of SetWeak to a finalizer that runs when a Worker exits", async () => {
+    const runs = await Promise.all(
+      [bunExe(), await nodeExeMatchingAbi()].map(exe => runStandaloneAddon(cwd, "clear-weak.js", exe)),
+    );
+    for (const { lines, err, exitCode } of runs) {
+      expect(lines, `stderr:\n${err}`).toEqual([
+        "finalizers that got the parameter of SetWeak back from ClearWeak: 8 of 8",
+      ]);
+      expect(exitCode).toBe(0);
+    }
+  });
+
+  // Each Worker of the RSS tests has 250,000 Globals, whose handles take 7 MB. A debug or ASAN build needs 20 times as
+  // long for a Global as a release build, so it runs 4 Workers where a release build runs 30.
+  const leakWorkers = isDebug || isASAN ? "4" : "30";
+  const leakTimeout = isDebug || isASAN ? 120_000 : 30_000;
+
+  it(
+    "frees the handles of the Globals that a finalizer destroys when a Worker exits",
+    async () => {
+      await expectRssDeltaBelow([join(cwd, "leak.js"), leakWorkers, "250000"], { release: 60, debug: 8 });
+    },
+    leakTimeout,
+  );
+
+  it(
+    "frees the handles of the Globals that a cleanup hook destroys when a Worker exits",
+    async () => {
+      const ends = ["the script ends", "process.exit()", "worker.terminate()", "an uncaught error"];
+      const results = await Promise.allSettled(
+        ends.map(end =>
+          expectRssDeltaBelow([join(cwd, "hook-leak.js"), end, leakWorkers, "250000"], { release: 60, debug: 8 }),
+        ),
+      );
+      expect(
+        results.map((result, i) => `${ends[i]}: ${result.status === "rejected" ? result.reason : "freed"}`),
+      ).toEqual(ends.map(end => `${end}: freed`));
+    },
+    leakTimeout,
+  );
+
+  it("can be reset by the finalizer of an external string that a Worker's VM lets go of last", async () => {
+    const runs = await Promise.all(
+      [bunExe(), await nodeExeMatchingAbi()].map(exe => runStandaloneAddon(cwd, "external-string.js", exe, asanEnv)),
+    );
+    for (const { lines, err, exitCode } of runs) {
+      expect(lines, `stderr:\n${err}`).toEqual([
+        "the Worker exited with code 0",
+        "finalizers of external strings that destroyed a Global: 1",
+      ]);
+      expect(exitCode).toBe(0);
+    }
+  });
+
+  it("can be reset by a finalizer that runs inside a collection", async () => {
+    const { lines, err, exitCode } = await runStandaloneAddon(cwd, "experimental.js");
+    expect(lines, `stderr:\n${err}`).toEqual([
+      "finalizers of owners that had run when the collection returned: all",
+      "values of their Globals after one more collection: collected",
+      "finalizers of owners that had run under a native call with a Local of one of their Globals: all",
+      "values of their Globals while that call ran: alive",
+      "the Local after the collections: a value",
+      "values of their Globals once the call had returned: collected",
+      "the Worker exited with code 0",
+      "finalizers of the owners that the Worker left as garbage: all",
+    ]);
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("String::Utf8Length bounds", () => {

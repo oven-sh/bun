@@ -176,11 +176,12 @@ pub fn debug_warn(payload: impl PrettyFmtInput) {
     }
 }
 
-/// `bun.Output.warn` — yellow `warn:` prefix to stderr.
+/// `bun.Output.warn` — yellow `warn:` prefix to stderr, flushed.
 #[inline]
 pub fn warn(payload: impl PrettyFmtInput) {
     let buf = payload.into_pretty_buf(enable_ansi_colors_stderr());
     pretty_errorln!("<r><yellow>warn<r><d>:<r> {}", buf);
+    flush();
 }
 
 /// `Output.prettyErrorln` — function form. Performs `<tag>` → ANSI rewrite on
@@ -622,6 +623,8 @@ pub mod stdio {
         pub(crate) safe static bun_is_stdio_null: [AtomicI32; 3];
         /// No preconditions; one-shot stdio fixup at process startup.
         pub(crate) safe fn bun_initialize_process();
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        pub(crate) safe fn bun_remember_inherited_file_descriptors();
         /// No preconditions; restores TTY state on the standard streams.
         #[cfg(not(windows))]
         pub(crate) safe fn bun_restore_stdio();
@@ -645,7 +648,21 @@ pub mod stdio {
         stdio_null_flag(0)
     }
 
+    /// With one of these flags `bun run` and `bun test` compile the program and then replace this process with one that runs it (`exec_self`).
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn compiles_in_place(arg: &[u8]) -> bool {
+        matches!(
+            arg,
+            b"--aot" | b"--debug-aot" | b"--aot-log-type-mismatches"
+        )
+    }
+
     pub fn init() {
+        // `bun_initialize_process` marks every inherited descriptor close-on-exec, as Bun's own are.
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        if super::argv().any(compiles_in_place) {
+            bun_remember_inherited_file_descriptors();
+        }
         bun_initialize_process();
 
         #[cfg(windows)]
@@ -1037,6 +1054,7 @@ pub fn reset_terminal_all() {
 /// Write buffered stdout & stderr to the terminal.
 /// Must be called before the process exits or the buffered output will be lost.
 /// Bun automatically calls this function in Global.exit().
+#[inline(never)]
 pub fn flush() {
     if Environment::IS_NATIVE && SOURCE_SET.get() {
         // Same re-entrancy hazard as with_dest_writer: drop the RefCell borrow
@@ -1145,6 +1163,22 @@ impl fmt::Display for ElapsedFormatter {
 // template can't be deferred through an `fmt::Arguments`-taking printer without
 // either leaking raw escapes or stripping color, so callers must use
 // `print_elapsed` / `print_elapsed_stdout` (or `ElapsedFormatter` directly).
+
+/// What [`print_elapsed`] prints, for a caller that formats into a buffer.
+pub struct Elapsed {
+    pub colors: bool,
+    pub ms: f64,
+}
+
+impl fmt::Display for Elapsed {
+    fn fmt(&self, w: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (colors, ms) = (self.colors, self.ms);
+        match ms.round() as i64 {
+            0..=1500 => crate::write_pretty!(w, colors, "<r><d>[<b>{:>.2}ms<r><d>]<r>", ms),
+            _ => crate::write_pretty!(w, colors, "<r><d>[<b>{:>.2}s<r><d>]<r>", ms / 1000.0),
+        }
+    }
+}
 
 pub fn print_elapsed(elapsed: f64) {
     match elapsed.round() as i64 {
@@ -1801,7 +1835,7 @@ impl_fmt_tuple!(0 A, 1 B, 2 C, 3 D, 4 E, 5 F, 6 G, 7 H);
 /// braces. The spec inside any other `{...}` is ignored.
 fn substitute_template(
     template: &[u8],
-    args: &impl FmtTuple,
+    args: &dyn FmtTuple,
     f: &mut dyn fmt::Write,
 ) -> fmt::Result {
     let t = template;
@@ -1821,8 +1855,9 @@ fn substitute_template(
                 j += 1;
             }
             if j < t.len() {
-                // consume placeholder
-                let filled = args.write_nth(argi, f)?;
+                // Only the template colors a message, so control characters in a value are escaped.
+                let mut value = crate::fmt::EscapeControlCharsWriter(&mut *f, true);
+                let filled = args.write_nth(argi, &mut value)?;
                 debug_assert!(
                     filled,
                     "template has more placeholders than the {} arg(s) passed with it (a format_args! counts as one; pass a tuple): {:?}",
@@ -1860,29 +1895,29 @@ fn substitute_template(
 }
 
 /// `Display` adapter pairing a runtime template with a [`FmtTuple`].
-pub struct TemplateDisplay<'a, A: FmtTuple> {
-    template: std::borrow::Cow<'a, [u8]>,
-    args: A,
+pub struct TemplateDisplay<'a> {
+    template: Vec<u8>,
+    args: &'a dyn FmtTuple,
 }
-impl<A: FmtTuple> fmt::Display for TemplateDisplay<'_, A> {
+impl fmt::Display for TemplateDisplay<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        substitute_template(&self.template, &self.args, f)
+        substitute_template(&self.template, self.args, f)
     }
 }
 
 /// Runtime `<tag>` → ANSI rewrite *with* a positional-argument tuple
 /// substituted at each `{}` / `{s}` / `{d}` placeholder. Returns a `Display`
-/// impl so callers can `write!(w, "{}", pretty_fmt_args(fmt, true, (a, b)))`.
+/// impl so callers can `write!(w, "{}", pretty_fmt_args(fmt, true, &(a, b)))`.
 ///
 /// Port of `Output.prettyFmt` + `print` fused for the dynamic-template case
 /// (crash_handler builds the template at runtime).
-pub(crate) fn pretty_fmt_args<A: FmtTuple>(
+pub(crate) fn pretty_fmt_args<'a>(
     fmt: &str,
     is_enabled: bool,
-    args: A,
-) -> TemplateDisplay<'static, A> {
+    args: &'a dyn FmtTuple,
+) -> TemplateDisplay<'a> {
     TemplateDisplay {
-        template: std::borrow::Cow::Owned(pretty_fmt_runtime(fmt.as_bytes(), is_enabled)),
+        template: pretty_fmt_runtime(fmt.as_bytes(), is_enabled),
         args,
     }
 }
@@ -2182,6 +2217,7 @@ pub enum CommandArgv<'a> {
 }
 
 fn print_command(argv: CommandArgv<'_>, destination: Destination) {
+    use crate::fmt::escape_control_chars_multiline as shown;
     macro_rules! pretty_d {
         ($f:literal $(, $a:expr)*) => {
             match destination {
@@ -2195,16 +2231,16 @@ fn print_command(argv: CommandArgv<'_>, destination: Destination) {
     match argv {
         CommandArgv::List(argv) => {
             pretty_d!("<r><d><magenta>$<r> <d><b>");
-            printf(format_args!("{}", crate::fmt::s(argv[0])));
+            printf(format_args!("{}", shown(argv[0])));
             if argv.len() > 1 {
                 for arg in &argv[1..] {
-                    printf(format_args!(" {}", crate::fmt::s(arg)));
+                    printf(format_args!(" {}", shown(arg)));
                 }
             }
             pretty_d!("<r>\n");
         }
         CommandArgv::Single(argv) => {
-            pretty_d!("<r><d><magenta>$<r> <d><b>{}<r>\n", crate::fmt::s(argv));
+            pretty_d!("<r><d><magenta>$<r> <d><b>{}<r>\n", shown(argv));
         }
     }
     flush();
@@ -2304,12 +2340,13 @@ macro_rules! note {
     };
 }
 
-/// Print a yellow warning message to stderr
+/// Print a yellow warning message to stderr and flush it.
 #[macro_export]
 macro_rules! warn {
-    ($fmt:expr $(, $arg:expr)* $(,)?) => {
-        $crate::pretty_errorln!(concat!("<yellow>warn<r><d>:<r> ", $fmt) $(, $arg)*)
-    };
+    ($fmt:expr $(, $arg:expr)* $(,)?) => {{
+        $crate::pretty_errorln!(concat!("<yellow>warn<r><d>:<r> ", $fmt) $(, $arg)*);
+        $crate::output::flush();
+    }};
 }
 
 /// Print a yellow warning message, only in debug mode
@@ -2336,18 +2373,19 @@ macro_rules! debug_warn {
 // `bun_core::Error` (Copy) and `bun_sys::Error` (non-Copy, consumed). Taking
 // `&impl ErrName` would force `&"literal"` at every site.
 #[allow(clippy::needless_pass_by_value)] // by-value for call-site ergonomics; see above
+#[inline]
 pub fn err(error_name: impl ErrName, fmt: &str, args: impl FmtTuple) {
-    // `fmt` is rendered into a `{}` arg, so strip a trailing \n and let
-    // pretty_errorln! add exactly one.
-    let fmt = fmt.strip_suffix('\n').unwrap_or(fmt);
-    let body = pretty_fmt_args(fmt, enable_ansi_colors_stderr(), args);
-    err_with_body(&error_name, &body);
+    err_erased(&error_name, fmt, &args);
 }
 
-/// The type-independent tail of [`err`], so its several format sites are not
+/// The type-independent body of [`err`], so its several format sites are not
 /// re-instantiated for every `(ErrName, FmtTuple)` pair.
 #[inline(never)]
-fn err_with_body(error_name: &dyn ErrName, body: &dyn fmt::Display) {
+fn err_erased(error_name: &dyn ErrName, fmt: &str, args: &dyn FmtTuple) {
+    // Rendered into a `{}` arg: strip a trailing \n, pretty_errorln! adds exactly one.
+    let fmt = fmt.strip_suffix('\n').unwrap_or(fmt);
+    let body = &pretty_fmt_args(fmt, enable_ansi_colors_stderr(), args);
+
     if let Some(e) = error_name.as_sys_err_info() {
         // MOVE_DOWN: bun_sys::coreutils_error_map → bun_core (move-in pass).
         if let Some(label) = crate::coreutils_error_map::get(e.errno) {
@@ -2387,8 +2425,14 @@ pub fn err_tag(tag: &str, body: core::fmt::Arguments<'_>) {
 
 /// `Output.errGeneric` — function form. `<red>error<r>:` prefix to stderr with
 /// a `<tag>`-rewritten template + positional args.
+#[allow(clippy::needless_pass_by_value)] // by-value for call-site ergonomics, as `err`
 #[inline]
 pub fn err_generic(fmt: &str, args: impl FmtTuple) {
+    err_generic_erased(fmt, &args);
+}
+
+#[inline(never)]
+fn err_generic_erased(fmt: &str, args: &dyn FmtTuple) {
     let fmt = fmt.strip_suffix('\n').unwrap_or(fmt);
     pretty_errorln!(
         "<r><red>error<r><d>:<r> {}",
@@ -2631,12 +2675,6 @@ pub struct BufferedStdin {
 }
 
 impl BufferedStdin {
-    /// Hands back `&mut Self` (which already exposes `read`/`read_byte`).
-    #[inline]
-    pub fn reader(&mut self) -> &mut Self {
-        self
-    }
-
     /// Fill `dest` from the buffer, refilling from
     /// the underlying fd until `dest` is full or EOF. Returns `Ok(0)` on EOF.
     ///
@@ -2934,12 +2972,12 @@ mod pretty_fmt_tests {
     fn pretty_fmt_args_preserves_multibyte_utf8() {
         let s = format!(
             "{}",
-            super::pretty_fmt_args("<r><cyan>↑<r> {s} →<r> {s}\n", false, ("a", "b"))
+            super::pretty_fmt_args("<r><cyan>↑<r> {s} →<r> {s}\n", false, &("a", "b"))
         );
         assert_eq!(s, "↑ a → b\n");
         let s = format!(
             "{}",
-            super::pretty_fmt_args("<cyan>↑<r> {s} →<r>", true, ("a",))
+            super::pretty_fmt_args("<cyan>↑<r> {s} →<r>", true, &("a",))
         );
         assert_eq!(s, "\x1b[36m↑\x1b[0m a →\x1b[0m");
     }

@@ -1,0 +1,31 @@
+------------------
+{ printWidth: 40 }
+------------------
+<template>
+  <p><b>a</b><textarea> </textarea></p>
+  <p>{{ a }}<textarea> </textarea></p>
+  <p><A /><textarea> </textarea></p>
+  <p><textarea> </textarea><b>a</b></p>
+</template>
+
+------------------
+{ printWidth: 80 }
+------------------
+<template>
+  <p><b>a</b><textarea> </textarea></p>
+  <p>{{ a }}<textarea> </textarea></p>
+  <p><A /><textarea> </textarea></p>
+  <p><textarea> </textarea><b>a</b></p>
+</template>
+
+-------------------
+{ printWidth: 100 }
+-------------------
+<template>
+  <p><b>a</b><textarea> </textarea></p>
+  <p>{{ a }}<textarea> </textarea></p>
+  <p><A /><textarea> </textarea></p>
+  <p><textarea> </textarea><b>a</b></p>
+</template>
+
+===================== End =====================

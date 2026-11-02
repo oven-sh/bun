@@ -7,22 +7,20 @@
 //!
 //! Ported from TypeScript `src/Utils/DisjointSet.ts`.
 
-use std::hash::Hash;
-
-use crate::collections::IndexMap;
+use crate::collections::IdMap;
 
 /// A Union-Find data structure for grouping items into disjoint sets.
 ///
 /// Corresponds to TS `DisjointSet<T>` in `src/Utils/DisjointSet.ts`.
-/// Uses `IndexMap` to preserve insertion order (matching TS `Map` behavior).
-pub(crate) struct DisjointSet<K: Copy + Eq + Hash> {
-    entries: IndexMap<K, K>,
+/// Uses `IdMap` to preserve insertion order (matching TS `Map` behavior).
+pub(crate) struct DisjointSet<K> {
+    entries: IdMap<K, K>,
 }
 
-impl<K: Copy + Eq + Hash> DisjointSet<K> {
+impl<K: Copy + Eq + Into<u32> + From<u32>> DisjointSet<K> {
     pub(crate) fn new() -> Self {
         DisjointSet {
-            entries: IndexMap::new(),
+            entries: IdMap::new(),
         }
     }
 
@@ -49,18 +47,26 @@ impl<K: Copy + Eq + Hash> DisjointSet<K> {
     /// Note: callers that need null/None semantics for missing items should
     /// use `find_opt()` instead.
     pub(crate) fn find(&mut self, item: K) -> K {
-        let parent = match self.entries.get(&item) {
-            Some(&p) => p,
-            None => {
-                self.entries.insert(item, item);
-                return item;
+        let mut root = item;
+        let mut child_of_root = item;
+        loop {
+            match self.entries.get(root) {
+                Some(&parent) if parent != root => {
+                    child_of_root = root;
+                    root = parent;
+                }
+                Some(_) => break,
+                None => {
+                    self.entries.insert(root, root);
+                    break;
+                }
             }
-        };
-        if parent == item {
-            return item;
         }
-        let root = self.find(parent);
-        self.entries.insert(item, root);
+        let mut current = item;
+        while current != child_of_root {
+            let parent = self.entries.insert(current, root);
+            current = parent.unwrap_or(child_of_root);
+        }
         root
     }
 
@@ -69,7 +75,7 @@ impl<K: Copy + Eq + Hash> DisjointSet<K> {
     ///
     /// Corresponds to TS `find(item: T): T | null`.
     pub(crate) fn find_opt(&mut self, item: K) -> Option<K> {
-        if !self.entries.contains_key(&item) {
+        if !self.entries.contains_key(item) {
             return None;
         }
         Some(self.find(item))
@@ -83,7 +89,7 @@ impl<K: Copy + Eq + Hash> DisjointSet<K> {
     where
         F: FnMut(K, K),
     {
-        let keys: Vec<K> = self.entries.keys().copied().collect();
+        let keys: Vec<K> = self.entries.keys().collect();
         for item in keys {
             let group = self.find(item);
             f(item, group);

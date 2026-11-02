@@ -166,13 +166,13 @@ test.failing("more functions called after delayed done", done => {
 });
 test("another test", async () => {});
 
-// === timing failure case. if this is fixed in the future, update the test ===
+// === an error of an earlier test is not the failure that test.failing expects ===
 test("misattributed error", () => {
   setTimeout(() => {
     expect(true).toBe(false);
   }, 10);
 });
-test.failing("passes because it catches the misattributed error", done => {
+test.failing("does not pass because of the misattributed error", done => {
   setTimeout(done, 50);
 });
 

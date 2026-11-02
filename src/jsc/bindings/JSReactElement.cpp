@@ -108,7 +108,7 @@ extern "C" JSC::EncodedJSValue JSReactElement__createFragment(
         vm.symbolRegistry().symbolForKey("react.fragment"_s));
 
     JSObject* props = constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
-    props->putDirect(vm, JSC::Identifier::fromString(vm, "children"_s), JSValue::decode(children));
+    Bun::putDirectNamed(vm, props, "children"_s, JSValue::decode(children));
 
     JSObject* element = constructEmptyObject(vm, global->JSReactElementStructure());
     element->putDirectOffset(vm, Bun::JSReactElement::typeofOffset, createTypeofSymbol(vm, reactVersion));

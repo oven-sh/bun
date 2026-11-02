@@ -1,0 +1,26 @@
+# a variable starts as a function only with a function and only in a module with code of the program or of the library, and its owner is a class that lists it as a static field
+# FORM: AsRead
+# RUN: verify
+# DIAGNOSTIC: InvalidVariable 6
+
+layout L0 kind=Instance name="class" staticFields=[{key="s" variable=g1}]
+layout L1 name="record"
+variable g0 name="goodFunction" module=m0 declared={type=function} initialization=Function function=f0
+variable g1 name="goodStaticField" module=m0 declared={type=anything} owner=L0
+variable g2 name="goodFunctionInRuntimeSource" module=m3 declared={type=function} initialization=Function function=f0
+variable g3 name="badFunctionStateWithoutFunction" module=m0 declared={type=function} initialization=Function
+variable g4 name="badFunctionWithOtherState" module=m0 declared={type=function} initialization=Undefined function=f0
+variable g5 name="goodFunctionInCommonJs" module=m1 declared={type=function} initialization=Function function=f0
+variable g6 name="badFunctionInData" module=m2 declared={type=function} initialization=Function function=f0
+variable g7 name="badFunctionInExternal" module=m4 declared={type=function} initialization=Function function=f0
+variable g8 name="badOwnerIsRecord" module=m0 declared={type=anything} owner=L1
+variable g9 name="badOwnerDoesNotListIt" module=m0 declared={type=anything} owner=L0
+module m0 path="main" displayPath="main"
+module m1 path="commonjs" displayPath="commonjs" kind=CommonJs exportRule=CommonJs body=f1
+module m2 path="data" displayPath="data" kind=Data
+module m3 path="runtime" displayPath="runtime" kind=RuntimeSource exportRule=RuntimeModule runtimeModule=BunSqlite body=f2
+module m4 path="external" displayPath="external" kind=External referrer=m0
+entry module=m0
+function f0 name="hoisted" results=[{type=anything}]
+function f1 name="" kind=CommonJsModule results=[{type=anything}]
+function f2 name="" results=[{type=anything}]

@@ -129,7 +129,7 @@ describe("AsyncLocalStorage", () => {
     als.disable();
     expect(snap(() => als.exit(() => als.getStore()))).toBeUndefined();
 
-    const withDefault = new AsyncLocalStorage<string>({ defaultValue: "D" });
+    const withDefault = new AsyncLocalStorage<string | undefined>({ defaultValue: "D" });
     let snap2!: <T>(fn: () => T) => T;
     withDefault.run("Y", () => {
       snap2 = AsyncLocalStorage.snapshot();
@@ -915,7 +915,7 @@ describe("async context passes through", () => {
     const s = new AsyncLocalStorage<string>();
     const server = http2.createServer();
     server.on("stream", stream => {
-      stream.respond({ ":status": 200 });
+      (stream as http2.ServerHttp2Stream).respond({ ":status": 200 });
       stream.end("ok");
     });
     await new Promise<void>(r => server.listen(0, r));
@@ -1337,7 +1337,7 @@ describe("async context passes through", () => {
 
   test("Bun.build plugin", async () => {
     const s = new AsyncLocalStorage<string>();
-    let a = undefined;
+    let a = undefined as string | undefined;
     await s.run("value", async () => {
       return Bun.build({
         entrypoints: [import.meta.path],
@@ -1389,7 +1389,7 @@ describe("async generators", () => {
       yield 1;
       yield 2;
     }
-    const seen: unknown[] = [];
+    const seen: unknown[][] = [];
     await Promise.all([
       als.run("A", async () => {
         for await (const x of gen()) seen.push(["A-loop", x, als.getStore()]);

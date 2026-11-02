@@ -1,0 +1,24 @@
+# `new Worker("./w.js"); new globalThis[process.argv[2]](text)`: the second callee is read from the global object under a key that flow does not know, so it may be the constructor.
+# FORM: AsRead
+# RUN: valueflow-results
+# CHECK: worker-start-without-name f0:v11
+
+module m0 path="/$bunfs/root/main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Worker" [isFreeName]
+    v2 = Convert v1 declared={type=builtin(Worker) flags=[IsExpected]}
+    v3 = String string="./w.js"
+    v4 = Construct v2, -, v3
+    v5 = Builtin builtin=Process
+    v6 = PropGet v5 key="argv"
+    v7 = Integer integer=2
+    v8 = ElemGet v6, v7
+    v9 = PropGet v0 key="globalThis" [isFreeName]
+    v10 = Convert v9 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v11 = ElemGet v10, v8
+    v12 = Construct v11, -, v8
+    Return
+}

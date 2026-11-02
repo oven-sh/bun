@@ -20,7 +20,7 @@ impl InstallCompletionsCommand {
     };
 
     #[cfg(not(windows))]
-    fn install_bunx_symlink_posix(cwd: &[u8]) -> Result<(), crate::Error> {
+    fn install_bunx_symlink(cwd: &[u8]) -> Result<(), crate::Error> {
         let mut buf = bun_paths::path_buffer_pool::get();
 
         // don't install it if it's already there
@@ -50,47 +50,17 @@ impl InstallCompletionsCommand {
             return Ok(());
         }
 
-        'outer: {
-            if let Some(install_dir) = env_var::BUN_INSTALL.get() {
-                let link_path = buf_print_z(
-                    &mut link_buf,
-                    format_args!("{}/bin/{}", bstr::BStr::new(install_dir), Self::BUNX_NAME),
-                );
-                if bun_sys::symlink(exe, link_path).is_err() {
-                    break 'outer;
-                }
-                return Ok(());
-            }
-        }
-
-        // if that fails, try $HOME/.bun/bin
-        'outer: {
-            if let Some(home_dir) = env_var::HOME.get() {
-                let link_path = buf_print_z(
-                    &mut link_buf,
-                    format_args!("{}/.bun/bin/{}", bstr::BStr::new(home_dir), Self::BUNX_NAME),
-                );
-                if bun_sys::symlink(exe, link_path).is_err() {
-                    break 'outer;
-                }
-                return Ok(());
-            }
-        }
-
-        // if that fails, try $HOME/.local/bin
-        'outer: {
-            if let Some(home_dir) = env_var::HOME.get() {
-                let link_path = buf_print_z(
-                    &mut link_buf,
-                    format_args!(
-                        "{}/.local/bin/{}",
-                        bstr::BStr::new(home_dir),
-                        Self::BUNX_NAME
-                    ),
-                );
-                if bun_sys::symlink(exe, link_path).is_err() {
-                    break 'outer;
-                }
+        for (dir, bin_dir) in [
+            (env_var::BUN_INSTALL.get(), "bin"),
+            (env_var::HOME.get(), ".bun/bin"),
+            (env_var::HOME.get(), ".local/bin"),
+        ] {
+            let Some(dir) = dir else { continue };
+            let link_path = buf_print_z(
+                &mut link_buf,
+                format_args!("{}/{}/{}", bstr::BStr::new(dir), bin_dir, Self::BUNX_NAME),
+            );
+            if bun_sys::symlink(exe, link_path).is_ok() {
                 return Ok(());
             }
         }
@@ -99,14 +69,24 @@ impl InstallCompletionsCommand {
         Ok(())
     }
 
+    /// fish makes `<config>/fish/completions` on demand. Without the parent (no fish) nothing is made.
+    #[cfg(not(windows))]
+    fn open_fish_user_completions(completions_dir: &[u8]) -> Option<bun_sys::Fd> {
+        bun_sys::open_dir_absolute(completions_dir)
+            .ok()
+            .or_else(|| {
+                bun_sys::mkdir(&bun_core::ZBox::from_bytes(completions_dir), 0o755).ok()?;
+                bun_sys::open_dir_absolute(completions_dir).ok()
+            })
+    }
+
     #[cfg(windows)]
-    fn install_bunx_symlink_windows(_cwd: &[u8]) -> Result<(), crate::Error> {
+    fn install_bunx_symlink(_cwd: &[u8]) -> Result<(), crate::Error> {
         use bun_core::{WStr, w};
         use bun_sys::windows;
 
-        // Because symlinks are not always allowed on windows,
-        // `bunx.exe` on windows is a hardlink to `bun.exe`
-        // for this to work, we need to delete and recreate the hardlink every time
+        // Symlinks aren't always allowed, so `bunx.exe` is a hard link to `bun.exe` that's
+        // recreated every time.
         let image_path: &[u16] = windows::exe_path_w();
         let last_sep =
             strings::last_index_of_char_t(image_path, u16::from(b'\\')).expect("unreachable");
@@ -135,7 +115,6 @@ impl InstallCompletionsCommand {
             &mut bunx_path_buf,
             &[&windows::NT_OBJECT_PREFIX, image_dirname, exe_suffix_z],
         )?;
-        // SAFETY: exe_suffix_z ends in NUL, so bunx_path_with_z[len-1] == 0
         let bunx_path = WStr::from_slice_with_nul(&bunx_path_with_z[..]);
         let _ = windows::DeleteFileBun(bunx_path.as_slice(), windows::DeleteFileOptions::default());
 
@@ -143,27 +122,14 @@ impl InstallCompletionsCommand {
             // if hard link fails, use a cmd script
             const SCRIPT: &[u8] = b"@%~dp0bun.exe x %*\n";
 
-            let bunx_cmd_with_z = strings::concat_buf_t::<u16>(
+            let bunx_cmd = strings::concat_buf_t::<u16>(
                 &mut bunx_path_buf,
-                &[&windows::NT_OBJECT_PREFIX, image_dirname, exe_suffix_z],
+                &[&windows::NT_OBJECT_PREFIX, image_dirname, cmd_suffix],
             )?;
-            // SAFETY: exe_suffix_z ends in NUL
-            let bunx_cmd = WStr::from_slice_with_nul(&bunx_cmd_with_z[..]);
-            let file = File::create_w(bun_sys::Fd::cwd(), bunx_cmd.as_slice())?;
+            let file = File::create_w(bun_sys::Fd::cwd(), bunx_cmd)?;
             file.write_all(SCRIPT)?;
         }
         Ok(())
-    }
-
-    fn install_bunx_symlink(cwd: &[u8]) -> Result<(), crate::Error> {
-        #[cfg(windows)]
-        {
-            Self::install_bunx_symlink_windows(cwd)
-        }
-        #[cfg(not(windows))]
-        {
-            Self::install_bunx_symlink_posix(cwd)
-        }
     }
 
     #[cfg(windows)]
@@ -171,10 +137,7 @@ impl InstallCompletionsCommand {
         use bun_core::w;
         use bun_sys::windows;
 
-        // This uninstaller file is only written if the current exe is within a path
-        // like `bun\bin\<whatever>.exe` so that it probably only runs when the
-        // powershell `install.ps1` was used to install.
-
+        // Only for an exe at `bun\bin\<whatever>.exe`, which `install.ps1` has probably installed.
         let image_path: &[u16] = windows::exe_path_w();
         let last_sep =
             strings::last_index_of_char_t(image_path, u16::from(b'\\')).expect("unreachable");
@@ -209,22 +172,25 @@ impl InstallCompletionsCommand {
         Output::print_errorln("See https://github.com/oven-sh/bun/issues/8939");
     }
 
+    /// Exits, unless the write fails on something else than a closed pipe.
+    fn write_and_exit(stdout: &File, completions: &[u8]) -> Result<(), crate::Error> {
+        match stdout.write_all(completions) {
+            Err(err) if err.get_errno() != E::EPIPE => Err(err.into()),
+            _ => Global::exit(0),
+        }
+    }
+
     pub(crate) fn exec() -> Result<(), crate::Error> {
         // Fail silently on auto-update.
-        let fail_exit_code: u32 = if !env_var::IS_BUN_AUTO_UPDATE.get().unwrap_or(false) {
-            1
-        } else {
-            0
-        };
+        let fail_exit_code = u32::from(!env_var::IS_BUN_AUTO_UPDATE.get().unwrap_or(false));
 
         let mut cwd_buf = bun_paths::path_buffer_pool::get();
 
         let stdout = File::stdout();
 
-        let mut shell = Shell::Unknown;
-        if let Some(shell_name) = env_var::SHELL.platform_get() {
-            shell = Shell::from_env(shell_name);
-        }
+        let shell = env_var::SHELL
+            .platform_get()
+            .map_or(Shell::Unknown, Shell::from_env);
 
         let cwd_len = match bun_sys::getcwd(&mut cwd_buf) {
             Ok(len) => len,
@@ -233,14 +199,7 @@ impl InstallCompletionsCommand {
                 if fail_exit_code == 1 && !bun_sys::isatty(stdout.handle) {
                     let completions = shell.completions();
                     if !completions.is_empty() {
-                        if let Err(err) = stdout.write_all(completions) {
-                            if err.get_errno() == E::EPIPE {
-                                Global::exit(0);
-                            } else {
-                                return Err(err.into());
-                            }
-                        }
-                        Global::exit(0);
+                        return Self::write_and_exit(&stdout, completions);
                     }
                 }
 
@@ -255,10 +214,6 @@ impl InstallCompletionsCommand {
         #[cfg(windows)]
         {
             let _ = Self::install_uninstaller_windows();
-        }
-
-        #[cfg(windows)]
-        {
             Self::print_powershell_completions_unsupported();
             return Ok(());
         }
@@ -283,17 +238,10 @@ impl InstallCompletionsCommand {
                 Shell::Bash => b"bun.completion.bash",
             };
 
-            if !env_var::IS_BUN_AUTO_UPDATE.get().unwrap_or(false) {
-                if !bun_sys::isatty(stdout.handle) {
-                    if let Err(err) = stdout.write_all(shell.completions()) {
-                        if err.get_errno() == E::EPIPE {
-                            Global::exit(0);
-                        } else {
-                            return Err(err.into());
-                        }
-                    }
-                    Global::exit(0);
-                }
+            if !env_var::IS_BUN_AUTO_UPDATE.get().unwrap_or(false)
+                && !bun_sys::isatty(stdout.handle)
+            {
+                return Self::write_and_exit(&stdout, shell.completions());
             }
 
             let mut completions_dir: &[u8];
@@ -338,62 +286,42 @@ impl InstallCompletionsCommand {
 
                 match shell {
                     Shell::Fish => {
-                        if let Some(config_dir) = env_var::XDG_CONFIG_HOME.get() {
-                            let paths: [&[u8]; 2] = [config_dir, b"./fish/completions"];
+                        let (fish, config_fish): (&[u8], &[u8]) =
+                            (b"./fish/completions", b"./.config/fish/completions");
+                        for (base, dir, is_config) in [
+                            (env_var::XDG_CONFIG_HOME.get(), fish, true),
+                            (env_var::XDG_DATA_HOME.get(), fish, false),
+                            (env_var::HOME.get(), config_fish, true),
+                        ] {
+                            let Some(base) = base else { continue };
                             completions_dir =
-                                resolve_path::join_abs_string::<platform::Auto>(cwd, &paths);
-                            if let Ok(d) = bun_sys::open_dir_absolute(completions_dir) {
-                                break 'found d;
-                            }
-                        }
-
-                        if let Some(data_dir) = env_var::XDG_DATA_HOME.get() {
-                            let paths: [&[u8]; 2] = [data_dir, b"./fish/completions"];
-                            completions_dir =
-                                resolve_path::join_abs_string::<platform::Auto>(cwd, &paths);
-                            if let Ok(d) = bun_sys::open_dir_absolute(completions_dir) {
-                                break 'found d;
-                            }
-                        }
-
-                        if let Some(home_dir) = env_var::HOME.get() {
-                            let paths: [&[u8]; 2] = [home_dir, b"./.config/fish/completions"];
-                            completions_dir =
-                                resolve_path::join_abs_string::<platform::Auto>(cwd, &paths);
-                            if let Ok(d) = bun_sys::open_dir_absolute(completions_dir) {
+                                resolve_path::join_abs_string::<platform::Auto>(cwd, &[base, dir]);
+                            let opened = if is_config {
+                                Self::open_fish_user_completions(completions_dir)
+                            } else {
+                                bun_sys::open_dir_absolute(completions_dir).ok()
+                            };
+                            if let Some(d) = opened {
                                 break 'found d;
                             }
                         }
 
                         #[cfg(target_os = "macos")]
                         {
-                            #[cfg(not(target_arch = "aarch64"))]
-                            {
-                                // homebrew fish
-                                completions_dir = b"/usr/local/share/fish/completions";
-                                if let Ok(d) =
-                                    bun_sys::open_dir_absolute(b"/usr/local/share/fish/completions")
-                                {
-                                    break 'found d;
-                                }
-                            }
-                            #[cfg(target_arch = "aarch64")]
-                            {
-                                // homebrew fish
-                                completions_dir = b"/opt/homebrew/share/fish/completions";
-                                if let Ok(d) = bun_sys::open_dir_absolute(
-                                    b"/opt/homebrew/share/fish/completions",
-                                ) {
-                                    break 'found d;
-                                }
+                            // homebrew fish
+                            completions_dir = if cfg!(target_arch = "aarch64") {
+                                b"/opt/homebrew/share/fish/completions"
+                            } else {
+                                b"/usr/local/share/fish/completions"
+                            };
+                            if let Ok(d) = bun_sys::open_dir_absolute(completions_dir) {
+                                break 'found d;
                             }
                         }
 
-                        {
-                            completions_dir = b"/etc/fish/completions";
-                            if let Ok(d) = bun_sys::open_dir_absolute(b"/etc/fish/completions") {
-                                break 'found d;
-                            }
+                        completions_dir = b"/etc/fish/completions";
+                        if let Ok(d) = bun_sys::open_dir_absolute(completions_dir) {
+                            break 'found d;
                         }
                     }
                     Shell::Zsh => {
@@ -423,17 +351,8 @@ impl InstallCompletionsCommand {
                         }
 
                         if let Some(home_dir) = env_var::HOME.get() {
-                            {
-                                let paths: [&[u8]; 2] = [home_dir, b"./.oh-my-zsh/completions"];
-                                completions_dir =
-                                    resolve_path::join_abs_string::<platform::Auto>(cwd, &paths);
-                                if let Ok(d) = bun_sys::open_dir_absolute(completions_dir) {
-                                    break 'found d;
-                                }
-                            }
-
-                            {
-                                let paths: [&[u8]; 2] = [home_dir, b"./.bun"];
+                            for dir in [b"./.oh-my-zsh/completions".as_slice(), b"./.bun"] {
+                                let paths: [&[u8]; 2] = [home_dir, dir];
                                 completions_dir =
                                     resolve_path::join_abs_string::<platform::Auto>(cwd, &paths);
                                 if let Ok(d) = bun_sys::open_dir_absolute(completions_dir) {
@@ -457,41 +376,26 @@ impl InstallCompletionsCommand {
                         }
                     }
                     Shell::Bash => {
-                        if let Some(data_dir) = env_var::XDG_DATA_HOME.get() {
-                            let paths: [&[u8]; 2] = [data_dir, b"./bash-completion/completions"];
+                        for (base, dir) in [
+                            (
+                                env_var::XDG_DATA_HOME.get(),
+                                b"./bash-completion/completions".as_slice(),
+                            ),
+                            (
+                                env_var::XDG_CONFIG_HOME.get(),
+                                b"./bash-completion/completions".as_slice(),
+                            ),
+                            (
+                                env_var::HOME.get(),
+                                b"./.oh-my-bash/custom/completions".as_slice(),
+                            ),
+                            (env_var::HOME.get(), b"./.bash_completion.d".as_slice()),
+                        ] {
+                            let Some(base) = base else { continue };
                             completions_dir =
-                                resolve_path::join_abs_string::<platform::Auto>(cwd, &paths);
+                                resolve_path::join_abs_string::<platform::Auto>(cwd, &[base, dir]);
                             if let Ok(d) = bun_sys::open_dir_absolute(completions_dir) {
                                 break 'found d;
-                            }
-                        }
-
-                        if let Some(config_dir) = env_var::XDG_CONFIG_HOME.get() {
-                            let paths: [&[u8]; 2] = [config_dir, b"./bash-completion/completions"];
-                            completions_dir =
-                                resolve_path::join_abs_string::<platform::Auto>(cwd, &paths);
-                            if let Ok(d) = bun_sys::open_dir_absolute(completions_dir) {
-                                break 'found d;
-                            }
-                        }
-
-                        if let Some(home_dir) = env_var::HOME.get() {
-                            {
-                                let paths: [&[u8]; 2] =
-                                    [home_dir, b"./.oh-my-bash/custom/completions"];
-                                completions_dir =
-                                    resolve_path::join_abs_string::<platform::Auto>(cwd, &paths);
-                                if let Ok(d) = bun_sys::open_dir_absolute(completions_dir) {
-                                    break 'found d;
-                                }
-                            }
-                            {
-                                let paths: [&[u8]; 2] = [home_dir, b"./.bash_completion.d"];
-                                completions_dir =
-                                    resolve_path::join_abs_string::<platform::Auto>(cwd, &paths);
-                                if let Ok(d) = bun_sys::open_dir_absolute(completions_dir) {
-                                    break 'found d;
-                                }
                             }
                         }
 
@@ -561,88 +465,29 @@ impl InstallCompletionsCommand {
                 let mut zshrc_filepath = bun_paths::path_buffer_pool::get();
                 let needs_to_tell_them_to_add_completions_file: bool = 'brk: {
                     let dot_zshrc: File = 'zshrc: {
-                        'first: {
-                            // https://zsh.sourceforge.io/Intro/intro_3.html
-                            // There are five startup files that zsh will read commands from:
-                            // $ZDOTDIR/.zshenv
-                            // $ZDOTDIR/.zprofile
-                            // $ZDOTDIR/.zshrc
-                            // $ZDOTDIR/.zlogin
-                            // $ZDOTDIR/.zlogout
-
-                            if let Some(zdot_dir) = env_var::ZDOTDIR.get() {
-                                zshrc_filepath[..zdot_dir.len()].copy_from_slice(zdot_dir);
-                                zshrc_filepath[zdot_dir.len()..zdot_dir.len() + b"/.zshrc".len()]
-                                    .copy_from_slice(b"/.zshrc");
-                                zshrc_filepath[zdot_dir.len() + b"/.zshrc".len()] = 0;
-                                // SAFETY: NUL written at zdot_dir.len() + "/.zshrc".len() above
-                                let filepath = unsafe {
-                                    bun_core::ZStr::from_raw(
-                                        zshrc_filepath.as_ptr(),
-                                        zdot_dir.len() + b"/.zshrc".len(),
-                                    )
-                                };
-                                match bun_sys::open_file_absolute_z(
-                                    filepath,
-                                    bun_sys::OpenFlags::READ_WRITE,
-                                ) {
-                                    Ok(f) => break 'zshrc f,
-                                    Err(_) => break 'first,
-                                }
-                            }
-                        }
-
-                        'second: {
-                            if let Some(zdot_dir) = env_var::HOME.get() {
-                                zshrc_filepath[..zdot_dir.len()].copy_from_slice(zdot_dir);
-                                zshrc_filepath[zdot_dir.len()..zdot_dir.len() + b"/.zshrc".len()]
-                                    .copy_from_slice(b"/.zshrc");
-                                zshrc_filepath[zdot_dir.len() + b"/.zshrc".len()] = 0;
-                                // SAFETY: NUL written at zdot_dir.len() + "/.zshrc".len() above
-                                let filepath = unsafe {
-                                    bun_core::ZStr::from_raw(
-                                        zshrc_filepath.as_ptr(),
-                                        zdot_dir.len() + b"/.zshrc".len(),
-                                    )
-                                };
-                                match bun_sys::open_file_absolute_z(
-                                    filepath,
-                                    bun_sys::OpenFlags::READ_WRITE,
-                                ) {
-                                    Ok(f) => break 'zshrc f,
-                                    Err(_) => break 'second,
-                                }
-                            }
-                        }
-
-                        'third: {
-                            if let Some(zdot_dir) = env_var::HOME.get() {
-                                zshrc_filepath[..zdot_dir.len()].copy_from_slice(zdot_dir);
-                                zshrc_filepath[zdot_dir.len()..zdot_dir.len() + b"/.zshenv".len()]
-                                    .copy_from_slice(b"/.zshenv");
-                                zshrc_filepath[zdot_dir.len() + b"/.zshenv".len()] = 0;
-                                // SAFETY: NUL written at zdot_dir.len() + "/.zshenv".len() above
-                                let filepath = unsafe {
-                                    bun_core::ZStr::from_raw(
-                                        zshrc_filepath.as_ptr(),
-                                        zdot_dir.len() + b"/.zshenv".len(),
-                                    )
-                                };
-                                match bun_sys::open_file_absolute_z(
-                                    filepath,
-                                    bun_sys::OpenFlags::READ_WRITE,
-                                ) {
-                                    Ok(f) => break 'zshrc f,
-                                    Err(_) => break 'third,
-                                }
+                        // https://zsh.sourceforge.io/Intro/intro_3.html
+                        for (dir, name) in [
+                            (env_var::ZDOTDIR.get(), b"/.zshrc".as_slice()),
+                            (env_var::HOME.get(), b"/.zshrc".as_slice()),
+                            (env_var::HOME.get(), b"/.zshenv".as_slice()),
+                        ] {
+                            let Some(dir) = dir else { continue };
+                            let len = dir.len() + name.len();
+                            zshrc_filepath[..dir.len()].copy_from_slice(dir);
+                            zshrc_filepath[dir.len()..len].copy_from_slice(name);
+                            zshrc_filepath[len] = 0;
+                            if let Ok(f) = bun_sys::open_file_absolute_z(
+                                bun_core::ZStr::from_buf(&zshrc_filepath[..], len),
+                                bun_sys::OpenFlags::READ_WRITE,
+                            ) {
+                                break 'zshrc f;
                             }
                         }
 
                         break 'brk true;
                     };
 
-                    // Sometimes, stat() lies to us and says the file is 0 bytes
-                    // Let's not trust it and read the whole file
+                    // Sometimes stat() says the file is 0 bytes, so read at least 64 KB.
                     let Ok(end_pos) = dot_zshrc.get_end_pos() else {
                         break 'brk true;
                     };
@@ -658,7 +503,8 @@ impl InstallCompletionsCommand {
 
                     // Do they possibly have it in the file already?
                     if strings::contains(contents, completions_path)
-                        || strings::contains(contents, b"# bun completions\n")
+                        || strings::contains(contents, b"# bun completions")
+                        || strings::contains(contents, b"/.bun/_bun")
                     {
                         break 'brk false;
                     }

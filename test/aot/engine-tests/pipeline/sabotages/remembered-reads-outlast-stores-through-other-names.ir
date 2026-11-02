@@ -1,0 +1,6 @@
+# sabotage=RememberedReadsOutlastStoresThroughOtherNames: the program answers something else
+# FORM: AsRead
+# RUN: run-in-shell
+# OPTIONS: sabotage=RememberedReadsOutlastStoresThroughOtherNames
+# CHECK-NOT: one 2,4,5,7,7/8
+# PROGRAM-OF: remembered-reads-outlast-stores-through-other-names-left-alone.ir

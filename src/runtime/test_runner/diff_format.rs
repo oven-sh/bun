@@ -17,6 +17,7 @@ pub(crate) struct DiffFormatter<'a> {
 }
 
 impl<'a> DiffFormatter<'a> {
+    #[optimize(size)]
     pub(crate) fn new(
         global_this: &JSGlobalObject,
         received: JSValue,
@@ -74,6 +75,7 @@ fn trim_one_newline(mut buf: Vec<u8>) -> Vec<u8> {
 }
 
 impl<'a> fmt::Display for DiffFormatter<'a> {
+    #[optimize(size)]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let diff_config =
             DiffConfig::default(Output::is_ai_agent(), Output::enable_ansi_colors_stderr());

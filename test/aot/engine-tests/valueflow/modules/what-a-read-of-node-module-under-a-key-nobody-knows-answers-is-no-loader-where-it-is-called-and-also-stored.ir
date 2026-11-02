@@ -1,0 +1,25 @@
+# import imported from "node:module"; let Module = imported; const make = Module[globalThis.key]; ({})[globalThis.key] = make; make("/app/main.js")(globalThis.name)
+# Nothing names createRequire, the read takes the module out of a variable, and what the read answers also goes into an object, so the call returns no require function and nothing is loaded by name.
+# RUN: valueflow-solve unseen
+# CHECK-NOT: unseen LoadsCodeByName
+
+module m0 path="/app/main.js" displayPath="main.js" kind=SourceText body=f0 requests=[{target=m1 completes=true}]
+module m1 path="node:module" displayPath="node:module" kind=Runtime exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeModule
+entry module=m0
+variable g0 name="Module" module=m0 declared={type=anything} initialization=Undefined
+layout L0 module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="key" [isFreeName]
+    v2 = PropGet v0 key="name" [isFreeName]
+    v3 = Builtin builtin=NodeModule
+    PutModuleVariable v3 variable=g0
+    v5 = GetModuleVariable variable=g0
+    v6 = ElemGet v5, v1
+    v7 = NewObject layout=L0
+    ElemSet v7, v1, v6 mode=Strict
+    v9 = String string="/app/main.js"
+    v10 = Call v6, -, v9
+    v11 = Call v10, -, v2
+    Return v11
+}

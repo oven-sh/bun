@@ -1,0 +1,6 @@
+class A {
+  "\x63onstructor"() {}
+  "constructor"() {}
+  "a"() {}
+}
+x = { "\x61": 1, "b": 2 };

@@ -1,6 +1,7 @@
 import { createTest } from "node-harness";
 import { once } from "node:events";
 import http from "node:http";
+import type { AddressInfo } from "node:net";
 const { expect } = createTest(import.meta.path);
 
 await using server = http.createServer().listen(0);
@@ -11,7 +12,7 @@ server.setTimeout(100, () => {
   console.log("Called timeout");
 });
 
-fetch(`http://localhost:${server.address().port}`, { verbose: true })
+fetch(`http://localhost:${(server.address() as AddressInfo).port}`, { verbose: true })
   .then(res => res.text())
   .catch(err => {
     console.log(err);

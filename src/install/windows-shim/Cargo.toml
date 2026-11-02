@@ -17,7 +17,7 @@
 # A separate crate keeps the dep graph at `bun_core` + `bun_sys` + `strum`.
 #
 # Dependencies are deliberately tiny: `bun_windows_sys` (leaf Win32 externs,
-# no native C, no `#[no_mangle]` exports) and `bun_opaque` (zero-dep,
+# no native C, no `#[no_mangle]` exports), `bun_opaque` and `bun_pod` (both
 # `#![no_std]`, zero `#[no_mangle]`) are the ONLY workspace crates. Pulling
 # `bun_core` / `bun_sys` / `bun_string` would drag in their `#[no_mangle]`
 # C-ABI surface (`Bun__*`, `__bun_dispatch__*`), which references
@@ -50,16 +50,11 @@ required-features = ["shim_standalone"]
 [features]
 shim_standalone = []
 
-# Almost no crates.io dependencies: `bstr` / `strum` would defeat `#![no_std]`
+# No crates.io dependencies: `bstr` / `strum` would defeat `#![no_std]`
 # (they pull `alloc`/`std` into the link). The shared source's two former uses
 # of them — `strum::IntoStaticStr` on `FailReason` (never consumed) and
 # `bstr::BStr` for byte-slice display — are handled with `core`-only code
 # under `cfg(feature = "shim_standalone")`.
-#
-# `bytemuck` is the one exception: it is `#![no_std]` with no `alloc`, exports
-# no `#[no_mangle]` symbols, and inlines to the same (ptr, len*2) arithmetic
-# the hand-written `from_raw_parts` casts compiled to — so it adds zero link
-# roots and lets the shared source's `&[u16] → &[u8]` views stay safe.
 
 [lints]
 workspace = true
@@ -69,4 +64,4 @@ workspace = true
 [target.'cfg(windows)'.dependencies]
 bun_windows_sys.workspace = true
 bun_opaque.workspace = true
-bytemuck = { version = "1", default-features = false }
+bun_pod.workspace = true

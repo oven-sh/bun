@@ -152,6 +152,10 @@ declare var ReadableStream: Bun.__internal.UseLibDomIfAvailable<
     prototype: ReadableStream;
     new <R = any>(underlyingSource?: Bun.UnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;
     new <R = any>(underlyingSource?: Bun.DirectUnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;
+    new <R extends Uint8Array = Uint8Array<ArrayBuffer>>(
+      underlyingSource: import("node:stream/web").UnderlyingByteSource,
+      strategy?: { highWaterMark?: number },
+    ): ReadableStream<R>;
   }
 >;
 
@@ -1236,11 +1240,15 @@ interface Console {
    * @param data something to display
    */
   error(...data: any[]): void;
-  /** Does nothing currently */
+  /**
+   * Start a group. Logs `data` as the label of the group, if there is any,
+   * then indents later `log`, `info`, `debug`, `warn`, `error`, `dir` and
+   * `trace` output by two more spaces.
+   */
   group(...data: any[]): void;
-  /** Does nothing currently */
+  /** An alias for {@link group}. */
   groupCollapsed(...data: any[]): void;
-  /** Does nothing currently */
+  /** End the most recent group that is still open, and remove its indent. */
   groupEnd(): void;
   info(...data: any[]): void;
   log(...data: any[]): void;
@@ -1329,7 +1337,79 @@ interface ImportMetaEnv {
   [key: string]: string | undefined;
 }
 
-interface ImportMeta {
+declare module "bun" {
+  /** Options for {@link ImportMeta.glob} */
+  interface ImportMetaGlobOptions {
+    /**
+     * Import the modules with `import` statements instead of `() => import()`
+     *
+     * @default false
+     */
+    eager?: boolean;
+    /**
+     * Import this export, such as `"default"`, instead of the module namespace object
+     */
+    import?: string;
+    /**
+     * Query string to append to each import path
+     */
+    query?: string | Record<string, string | number | boolean>;
+    /**
+     * The directory that relative patterns and the result's keys are relative
+     * to. It starts with `./` or `../` (from the importing file) or `/` (from the
+     * project root).
+     */
+    base?: string;
+    /**
+     * Also match dotfiles and files in `node_modules`
+     *
+     * @default false
+     */
+    exhaustive?: boolean;
+  }
+
+  namespace __internal {
+    // `ImportMeta` inherits `glob` so that another package's `ImportMeta.glob`, such as
+    // the one in `vite/client`, overrides it no matter which of the two is loaded first.
+    interface ImportMetaGlob {
+      /**
+       * Import every module that matches a glob pattern. Compatible with
+       * [Vite's `import.meta.glob`](https://vite.dev/guide/features#glob-import).
+       *
+       * Bun's transpiler and bundler replace the call with an object literal, so
+       * the arguments must be literals.
+       *
+       * @example
+       * ```ts
+       * const pages = import.meta.glob("./pages/*.tsx");
+       * // {
+       * //   "./pages/about.tsx": () => import("./pages/about.tsx"),
+       * //   "./pages/home.tsx": () => import("./pages/home.tsx"),
+       * // }
+       * ```
+       */
+      glob<TModule = unknown>(
+        pattern: string | string[],
+        options?: Bun.ImportMetaGlobOptions & { eager?: false },
+      ): Record<string, () => Promise<TModule>>;
+      /**
+       * @example
+       * ```ts
+       * const pages = import.meta.glob("./pages/*.tsx", { eager: true });
+       * // import * as about from "./pages/about.tsx";
+       * // import * as home from "./pages/home.tsx";
+       * // { "./pages/about.tsx": about, "./pages/home.tsx": home }
+       * ```
+       */
+      glob<TModule = unknown>(
+        pattern: string | string[],
+        options: Bun.ImportMetaGlobOptions & { eager: true },
+      ): Record<string, TModule>;
+    }
+  }
+}
+
+interface ImportMeta extends Bun.__internal.ImportMetaGlob {
   /**
    * `file://` url string for the current module.
    *
@@ -1359,6 +1439,9 @@ interface ImportMeta {
    * ```ts
    * import.meta.env === process.env
    * ```
+   *
+   * Under `bun test`, it's a view of `process.env` that also has Vite's `MODE`,
+   * `DEV`, `PROD`, `SSR` and `BASE_URL`.
    */
   readonly env: Bun.Env & NodeJS.ProcessEnv & ImportMetaEnv;
 
@@ -1501,6 +1584,16 @@ interface Blob {
    * The MIME type of this Blob
    */
   readonly type: string;
+
+  /**
+   * Returns a new `Blob` with the bytes from `start` up to but not including
+   * `end`. Negative indices count from the end.
+   *
+   * @param start byte offset to start at. Defaults to 0.
+   * @param end byte offset to stop at. Defaults to `size`.
+   * @param contentType the `type` of the new `Blob`.
+   */
+  slice(start?: number, end?: number, contentType?: string): Blob;
 
   /**
    * Read the data from the blob as a JSON object.
@@ -1822,7 +1915,10 @@ declare var ReadableStreamBYOBRequest: Bun.__internal.UseLibDomIfAvailable<
 interface TextDecoderStream extends Bun.__internal.LibEmptyOrNodeStreamWebTextDecoderStream {}
 declare var TextDecoderStream: Bun.__internal.UseLibDomIfAvailable<
   "TextDecoderStream",
-  { prototype: TextDecoderStream; new (): TextDecoderStream }
+  {
+    prototype: TextDecoderStream;
+    new (encoding?: Bun.Encoding, options?: { fatal?: boolean; ignoreBOM?: boolean }): TextDecoderStream;
+  }
 >;
 
 interface TextEncoderStream extends Bun.__internal.LibEmptyOrNodeStreamWebTextEncoderStream {}
@@ -2126,12 +2222,7 @@ interface BunFetchRequestInit extends RequestInit {
    * ```
    */
   compress?:
-    | boolean
-    | "gzip"
-    | "deflate"
-    | "br"
-    | "zstd"
-    | { encoding: "gzip" | "deflate" | "br" | "zstd"; level?: number };
+    boolean | "gzip" | "deflate" | "br" | "zstd" | { encoding: "gzip" | "deflate" | "br" | "zstd"; level?: number };
 
   /**
    * The maximum number of redirects to follow when `redirect` is `"follow"`.

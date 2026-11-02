@@ -85,14 +85,10 @@ pub fn uv_getrusage(process: &mut bun_libuv_sys::uv_process_t) -> WinRusage {
     let mut usage_info = Rusage::default();
     let process_pid: *mut c_void = process.process_handle;
     type WinTime = bun_sys::windows::FILETIME;
-    // SAFETY: all-zero is a valid FILETIME (POD C struct)
-    let mut starttime: WinTime = unsafe { bun_core::ffi::zeroed_unchecked() };
-    // SAFETY: all-zero is a valid FILETIME (POD C struct)
-    let mut exittime: WinTime = unsafe { bun_core::ffi::zeroed_unchecked() };
-    // SAFETY: all-zero is a valid FILETIME (POD C struct)
-    let mut kerneltime: WinTime = unsafe { bun_core::ffi::zeroed_unchecked() };
-    // SAFETY: all-zero is a valid FILETIME (POD C struct)
-    let mut usertime: WinTime = unsafe { bun_core::ffi::zeroed_unchecked() };
+    let mut starttime: WinTime = bun_core::ffi::zeroed();
+    let mut exittime: WinTime = bun_core::ffi::zeroed();
+    let mut kerneltime: WinTime = bun_core::ffi::zeroed();
+    let mut usertime: WinTime = bun_core::ffi::zeroed();
     // We at least get process times
     // SAFETY: FFI call with valid out-pointers
     if unsafe {
@@ -143,8 +139,7 @@ pub type Rusage = WinRusage;
 #[cfg(unix)]
 pub type Rusage = libc::rusage;
 
-// SAFETY: `i64`/`u64` only (via `WinTimeval`); all-zero matches `Default`.
-unsafe impl bun_core::ffi::Zeroable for WinRusage {}
+bun_core::impl_zeroable!(WinRusage);
 
 #[inline]
 pub fn rusage_zeroed() -> Rusage {

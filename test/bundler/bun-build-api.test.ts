@@ -8,12 +8,14 @@ import {
   isASAN,
   isDebug,
   isWindows,
+  MAX_PATH_BYTES,
   tempDir,
   tempDirWithFiles,
   tempDirWithFilesAnon,
 } from "harness";
 import path, { join } from "path";
 import { SourceMapConsumer } from "source-map";
+import { unsupported } from "../aot/harness/commands";
 import { buildNoThrow } from "./buildNoThrow";
 
 describe("Bun.build", () => {
@@ -325,9 +327,15 @@ describe("Bun.build", () => {
 
   // A pool thread holds a build's ASTs until it tears its worker down; macOS and Windows read files on a second pool.
   // The 250ms load outlasts an idle pool thread's first park (100ms, timed), so they are all parked for good at the end.
-  test.concurrent.each([{}, { BUN_FEATURE_FLAG_FORCE_IO_POOL: "1" }])(
+  // With `aot` the compiler's own front end loads the files. It parses each file that may hold components on a worker of the bundler,
+  // which runs the React Compiler as a bundle does.
+  test.concurrent.each([
+    { env: {}, options: {} },
+    { env: { BUN_FEATURE_FLAG_FORCE_IO_POOL: "1" }, options: {} },
+    ...(unsupported ? [] : [{ env: {}, options: { compile: { aot: true, outfile: "./out" }, reactCompiler: true } }]),
+  ])(
     "every pool thread a build ran on tears its worker down once the build is done %j",
-    async env => {
+    async ({ env, options }) => {
       const files: Record<string, string> = { "entry.js": `export * from "slow";\n` };
       for (let i = 0; i < 32; i++) {
         files[`m${i}.js`] =
@@ -336,34 +344,107 @@ describe("Bun.build", () => {
       }
       files["worker-teardown-fixture.ts"] = /* ts */ `
         import { bundlerWorkerLiveCount } from "bun:internal-for-testing";
+        let hadWorkers = false;
         const slow = {
           name: "slow",
           setup(build) {
             build.onResolve({ filter: /^slow$/ }, () => ({ path: "slow", namespace: "slow" }));
             build.onLoad({ filter: /.*/, namespace: "slow" }, async () => {
               await Bun.sleep(250);
+              hadWorkers = bundlerWorkerLiveCount() > 0;
               return { contents: "export const slow = 1;", loader: "js" };
             });
           },
         };
-        if (!(await Bun.build({ entrypoints: ["./entry.js"], target: "bun", plugins: [slow] })).success) throw new Error("build failed");
+        const options = JSON.parse(process.argv[2]);
+        if (!(await Bun.build({ entrypoints: ["./entry.js"], target: "bun", plugins: [slow], ...options })).success) throw new Error("build failed");
         const deadline = Date.now() + 5000;
         while (bundlerWorkerLiveCount() > 0 && Date.now() < deadline) await Bun.sleep(5);
-        console.log(bundlerWorkerLiveCount());
+        console.log(hadWorkers, bundlerWorkerLiveCount());
       `;
       using dir = tempDir("bun-build-api-worker-teardown", files);
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "worker-teardown-fixture.ts"],
+        cmd: [bunExe(), "worker-teardown-fixture.ts", JSON.stringify(options)],
         env: { ...bunEnv, ...env },
         cwd: String(dir),
         stdout: "pipe",
         stderr: "inherit",
       });
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      expect(stdout).toBe("0\n");
+      expect(stdout).toBe("true 0\n");
       expect(exitCode).toBe(0);
     },
+    60_000,
   );
+
+  test("ignores a corrupted or truncated .jsc sidecar", async () => {
+    using dir = tempDir("bun-build-api-bytecode-corrupt", {
+      "app.ts": `
+        const K: number = 83;
+        function f(x: number) { let s = 0; for (let j = 0; j < x; j++) s += (j * K) % 7; return s; }
+        class C { v = K; m() { return this.v * 3 + "-72"; } }
+        console.log("PROG", K, f(20), new C().m(), [1, 2, 3].map(n => n + K).join(","));
+      `,
+    });
+    const build = await Bun.build({
+      entrypoints: [join(dir, "app.ts")],
+      outdir: join(dir, "out"),
+      target: "bun",
+      bytecode: true,
+    });
+    expect(build.success).toBe(true);
+    const js = join(dir, "out", "app.js");
+    const jsc = js + ".jsc";
+    const pristine = readFileSync(jsc);
+    expect(pristine.length).toBeGreaterThan(256);
+
+    const run = async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), js],
+        env: { ...bunEnv, BUN_JSC_verboseDiskCache: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    };
+    const expected = "PROG 83 62 249-72 84,85,86\n";
+
+    // Sanity check: the intact sidecar is used.
+    let result = await run();
+    expect(result.stdout).toBe(expected);
+    expect(result.stderr).toContain("[Disk Cache] Cache hit");
+    expect(result.exitCode).toBe(0);
+
+    const variants: Array<[string, Buffer]> = [
+      ["truncated to 32 bytes", pristine.subarray(0, 32)],
+      ["truncated by one byte", pristine.subarray(0, pristine.length - 1)],
+      [
+        "one flipped byte",
+        (() => {
+          const b = Buffer.from(pristine);
+          b[pristine.length >> 1] ^= 0xff;
+          return b;
+        })(),
+      ],
+      [
+        "header smashed",
+        (() => {
+          const b = Buffer.from(pristine);
+          b.fill(0xff, 48, 160);
+          return b;
+        })(),
+      ],
+      ["trailing garbage", Buffer.concat([pristine, Buffer.from("garbage")])],
+    ];
+    for (const [name, bytes] of variants) {
+      writeFileSync(jsc, bytes);
+      result = await run();
+      expect({ name, stdout: result.stdout }).toEqual({ name, stdout: expected });
+      expect(result.stderr).not.toContain("[Disk Cache] Cache hit");
+      expect(result.exitCode).toBe(0);
+    }
+  });
 
   test("passing undefined doesnt segfault", () => {
     try {
@@ -445,6 +526,39 @@ describe("Bun.build", () => {
       sourcemap: "external",
       external: ["@minecraft"],
     });
+  });
+
+  test.skipIf(isWindows)("fails the build when the bundler thread can't start", async () => {
+    const script = `
+      const fs = require("fs");
+      const fds = [];
+      const options = { entrypoints: ["/entry.js"], files: { "/entry.js": "console.log(1)" }, throw: false };
+      const failed = await Bun.build({
+        ...options,
+        // Bun.build reads this option after it opens the root directory, so run out of fds here.
+        get throw() {
+          try {
+            while (true) fds.push(fs.openSync("/dev/null", "r"));
+          } catch (e) {
+            if (e.code !== "EMFILE") throw e;
+          }
+          return false;
+        },
+      });
+      for (const fd of fds) fs.closeSync(fd);
+      const retried = await Bun.build(options);
+      console.log(JSON.stringify([failed.success, failed.logs.map(log => log.message), retried.success]));
+    `;
+    await using proc = Bun.spawn({
+      cmd: ["sh", "-c", 'ulimit -n 256 && exec "$0" -e "$1"', bunExe(), script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([false, ["Failed to start the bundler thread: EMFILE"], true]);
+    expect(exitCode).toBe(0);
   });
 
   test("invalid options throws", async () => {
@@ -1044,6 +1158,90 @@ describe("Bun.build", () => {
     expect(x.logs[0].message).toContain("Maximum call stack size exceeded while generating code for this file");
   });
 
+  // The linker walks the graph on the bundler thread, which has a 2 MiB stack.
+  // Run Bun.build() in a child process so a stack overflow shows up as a signal exit.
+  const deepGraphTimeout = 60_000;
+  async function buildDeepGraphInChild(files: Record<string, string>, entrypoint: string) {
+    using dir = tempDir("build-api-deep-graph", {
+      ...files,
+      "build-deep-graph.ts": `
+        const result = await Bun.build({
+          entrypoints: [import.meta.dir + "/" + process.argv[2]],
+          outdir: import.meta.dir + "/out",
+          throw: false,
+        });
+        console.log(
+          JSON.stringify({
+            success: result.success,
+            logs: result.logs.map(log => log.message),
+            entryText: result.success ? await result.outputs[0].text() : undefined,
+          }),
+        );
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build-deep-graph.ts", entrypoint],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout) as { success: boolean; logs: string[]; entryText: string | undefined };
+  }
+
+  test.concurrent(
+    "bundles a chain of 3000 CSS @imports or fails with a build error",
+    async () => {
+      // The depth limit depends on the build, so accept either result.
+      const length = 3000;
+      const files: Record<string, string> = {};
+      for (let i = 0; i < length; i++) {
+        files[`c${i}.css`] = (i + 1 < length ? `@import "./c${i + 1}.css";\n` : "") + `.c${i} { color: red; }\n`;
+      }
+      const result = await buildDeepGraphInChild(files, "c0.css");
+      if (result.success) {
+        expect(result.logs).toEqual([]);
+        const order = Array.from(result.entryText!.matchAll(/\.c(\d+) \{/g), match => Number(match[1]));
+        expect(order).toEqual(Array.from({ length }, (_, i) => length - 1 - i));
+      } else {
+        expect(result.logs).toEqual(['Maximum call stack size exceeded while following this "@import" chain']);
+      }
+    },
+    deepGraphTimeout,
+  );
+
+  test.concurrent("bundles a `composes` cycle that doesn't include the exported class", async () => {
+    const result = await buildDeepGraphInChild(
+      {
+        "styles.module.css": `.x { composes: b; }\n.b { composes: c; }\n.c { composes: b; }\n`,
+        "entry.js": `import styles from "./styles.module.css";\nconsole.log(styles.x);\n`,
+      },
+      "entry.js",
+    );
+    expect(result.logs).toEqual([]);
+    expect(result.entryText).toMatch(/x: "c_[\w-]+ b_[\w-]+ x_[\w-]+"/);
+    expect(result.entryText).toMatch(/b: "c_[\w-]+ b_[\w-]+"/);
+    expect(result.entryText).toMatch(/c: "b_[\w-]+ c_[\w-]+"/);
+  });
+
+  test.concurrent(
+    "bundles a chain of 2500 `export *` re-exports that ends in a CommonJS module",
+    async () => {
+      const length = 2500;
+      const files: Record<string, string> = { "entry.js": `import { v } from "./m0.js";\nconsole.log(v);\n` };
+      for (let i = 0; i < length; i++) {
+        files[`m${i}.js`] = i + 1 < length ? `export * from "./m${i + 1}.js";\n` : `module.exports = { v: "tail" };\n`;
+      }
+      const result = await buildDeepGraphInChild(files, "entry.js");
+      expect(result.logs).toEqual([]);
+      expect(result.success).toBe(true);
+    },
+    deepGraphTimeout,
+  );
+
   test.concurrent("warnings do not fail a build", async () => {
     const x = await Bun.build({
       entrypoints: [join(import.meta.dir, "./fixtures/jsx-warning/index.jsx")],
@@ -1093,6 +1291,39 @@ describe("Bun.build", () => {
         });
       }).toThrow("Expected plugin to be an object");
     }
+  });
+
+  test.concurrent.each(["g", "y", "u", "s", "d"])("a /%s plugin filter matches every module", async flags => {
+    using dir = tempDir("plugin-filter-flags", {
+      "entry.ts": `import a from "virt:one"; import b from "virt:two"; import c from "virt:three"; console.log(a, b, c);`,
+    });
+    let resolves = 0;
+    let loads = 0;
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "entry.ts")],
+      throw: false,
+      plugins: [
+        {
+          name: "filter-flags",
+          setup(b) {
+            b.onResolve({ filter: new RegExp("^virt:", flags) }, args => {
+              resolves++;
+              return { path: args.path, namespace: "virt" };
+            });
+            b.onLoad({ filter: new RegExp("^virt:", flags), namespace: "virt" }, args => {
+              loads++;
+              return { contents: `export default ${JSON.stringify(args.path)};`, loader: "js" };
+            });
+          },
+        },
+      ],
+    });
+    expect({ success: result.success, resolves, loads, errors: result.logs.map(l => l.message) }).toEqual({
+      success: true,
+      resolves: 3,
+      loads: 3,
+      errors: [],
+    });
   });
 
   test.concurrent("hash considers cross chunk imports", async () => {
@@ -1691,6 +1922,107 @@ export { greeting };`,
     }
   });
 
+  // The file has a name that is not looked for, and says something else than those that are.
+  test("is read in place of every tsconfig.json, by that build only", async () => {
+    const paths = (to: string) => JSON.stringify({ compilerOptions: { paths: { which: [to] } } });
+    const entry = `import { which } from "which";\nexport { which };\n`;
+    using dir = tempDir("tsconfig-api-in-place", {
+      "tsconfig.json": paths("./default.ts"),
+      "custom.json": paths("./custom.ts"),
+      "configs/extending.json": JSON.stringify({ extends: "../custom.json" }),
+      "default.ts": `export const which = "default";\n`,
+      "custom.ts": `export const which = "custom";\n`,
+      "a.ts": entry,
+      "pkg/tsconfig.json": paths("./own.ts"),
+      "pkg/own.ts": `export const which = "own";\n`,
+      "pkg/b.ts": entry,
+      "build.ts": `
+        const build = async (entry: string, tsconfig?: string) => {
+          const { success, outputs, logs } = await Bun.build({ entrypoints: [entry], tsconfig, throw: false });
+          if (!success) return logs.map(log => log.message.replace(/".*[\\\\/]/, '"'));
+          return /which = "(\\w+)"/.exec(await outputs[0].text())?.[1];
+        };
+        console.log(
+          JSON.stringify({
+            // The first to see "pkg".
+            first: await build("./pkg/b.ts", "./custom.json"),
+            without: [await build("./pkg/b.ts"), await build("./a.ts")],
+            with: [await build("./a.ts", "./custom.json"), await build("./a.ts", "pkg/tsconfig.json")],
+            extending: await build("./a.ts", "./configs/extending.json"),
+            // The "tsconfig.json" in it, as for "tsc -p".
+            directory: [await build("./a.ts", "pkg"), await build("./a.ts", "./pkg/"), await build("./a.ts", "configs")],
+            atOnce: await Promise.all([
+              build("./a.ts", "./custom.json"),
+              build("./a.ts"),
+              build("./pkg/b.ts", "./custom.json"),
+              build("./pkg/b.ts"),
+            ]),
+            imported: [(await import("./pkg/b.ts")).which, (await import("./a.ts")).which],
+            missing: await build("./a.ts", "./nowhere.json"),
+          }),
+        );
+      `,
+    });
+    await using proc = Bun.spawn({ cmd: [bunExe(), "build.ts"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout && JSON.parse(stdout), stderr }).toEqual({
+      stdout: {
+        first: "custom",
+        without: ["own", "default"],
+        with: ["custom", "own"],
+        extending: "custom",
+        directory: ["own", "own", [`Cannot find tsconfig file "tsconfig.json"`]],
+        atOnce: ["custom", "default", "custom", "own"],
+        imported: ["own", "default"],
+        missing: [`Cannot find tsconfig file "nowhere.json"`],
+      },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // What is wrong with a file that is not read is not an error. Only the build sees "project".
+  test.each(["Bun.build", "bun build"])("%s: a tsconfig.json that is not read has no errors", async command => {
+    using dir = tempDir("tsconfig-api-broken", {
+      "project/tsconfig.json": `{ "compilerOptions": { "paths": `,
+      "project/custom.json": JSON.stringify({ compilerOptions: { paths: { which: ["./custom.ts"] } } }),
+      "project/custom.ts": `export const which = "custom";\n`,
+      "project/a.ts": `import { which } from "which";\nconsole.log(which);\n`,
+      "build.ts": `
+        const { outputs } = await Bun.build({ entrypoints: ["./project/a.ts"], tsconfig: "project/custom.json" });
+        console.log(await outputs[0].text());
+      `,
+    });
+    const cmd =
+      command === "Bun.build" ? ["build.ts"] : ["build", "--tsconfig-override=project/custom.json", "project/a.ts"];
+    await using proc = Bun.spawn({ cmd: [bunExe(), ...cmd], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ bundled: /which = "(\w+)"/.exec(stdout)?.[1], stderr }).toEqual({ bundled: "custom", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test.each(["5", '"text"', "[]"])("onEnd is not affected by Object.prototype.onEndCallbacks = %s", async value => {
+    using dir = tempDir("onend-object-prototype", {
+      "index.ts": `console.log("hello");`,
+      "build.ts": `
+        Object.prototype.onEndCallbacks = ${value};
+        const inherited = Object.prototype.onEndCallbacks;
+        const calls = [];
+        const plugin = name => ({ name, setup(builder) { builder.onEnd(result => { calls.push(name + ":" + result.success); }); } });
+        const withOnEnd = await Bun.build({ entrypoints: ["./index.ts"], plugins: [plugin("a"), plugin("b")] });
+        const withoutOnEnd = await Bun.build({ entrypoints: ["./index.ts"], plugins: [{ name: "c", setup() {} }] });
+        console.log(JSON.stringify({ calls, success: [withOnEnd.success, withoutOnEnd.success], inherited: inherited.length ?? null }));
+      `,
+    });
+    await using proc = Bun.spawn({ cmd: [bunExe(), "build.ts"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: JSON.parse(stdout.trim() || "null"), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+      out: { calls: ["a:true", "b:true"], success: [true, true], inherited: JSON.parse(value).length ?? null },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test("onEnd fires before promise resolves with throw: true", async () => {
     const dir = tempDirWithFiles("onend-throwonerror-true", {
       "index.ts": `
@@ -2279,3 +2611,90 @@ test.skipIf(isWindows)(
   },
   30_000,
 );
+
+describe.concurrent("Bun.build with a path longer than the path buffer", () => {
+  const components = Math.ceil((MAX_PATH_BYTES * 1.25) / 201);
+
+  async function run(script: string) {
+    using dir = tempDir("bun-build-long-path", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const long = Array(${components}).fill(Buffer.alloc(200, "a").toString()).join("/");\n${script}`,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("fails the build when an in-memory entry point's directory is too long", async () => {
+    // Windows can't look up a key this long in `files`, so it looks for the directory on disk and Bun.build() throws.
+    const message = isWindows
+      ? "ENOSYS: failed to open root directory"
+      : "ENAMETOOLONG: Failed to get full path for directory";
+    expect(
+      await run(`
+        const entry = "/" + long + "/entry.js";
+        let build;
+        try {
+          build = await Bun.build({ entrypoints: [entry], files: { [entry]: "console.log(123)" }, throw: false });
+        } catch (error) {
+          build = { success: false, logs: [error] };
+        }
+        console.log(build.success, build.logs.map(log => log.message.slice(0, ${message.length})));
+      `),
+    ).toEqual({
+      stdout: `false [ "${message}" ]\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("builds in memory when a naming template expands to a path that is too long to open", async () => {
+    expect(
+      await run(`
+        const build = await Bun.build({
+          entrypoints: ["/entry.js"],
+          files: { "/entry.js": "import('/dynamic.js')", "/dynamic.js": "console.log(123)" },
+          naming: { entry: long + "/[name].[ext]", chunk: long + "/[name]-[hash].[ext]" },
+          splitting: true,
+          throw: false,
+        });
+        console.log(build.success, build.outputs.map(output => output.path.length > long.length));
+      `),
+    ).toEqual({ stdout: "true [ true, true ]\n", stderr: "", exitCode: 0 });
+  });
+
+  test("fails the build when a naming template expands to a path that is too long to write", async () => {
+    expect(
+      await run(`
+        const build = await Bun.build({
+          entrypoints: ["/entry.js"],
+          files: { "/entry.js": "console.log(123)" },
+          naming: long + "/[name].[ext]",
+          outdir: "out",
+          throw: false,
+        });
+        console.log(build.success, build.logs.map(log => /^Output path for .* is too long/.test(log.message)));
+      `),
+    ).toEqual({ stdout: "false [ true ]\n", stderr: "", exitCode: 0 });
+  });
+
+  test("fails the build when compile.outfile is too long", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const build = await Bun.build({
+        entrypoints: ["/entry.js"],
+        files: { "/entry.js": "console.log(123)" },
+        compile: { outfile: long },
+        throw: false,
+      });
+      console.log(build.success);
+    `);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "false\n", stderr: "", exitCode: 0 });
+  });
+});

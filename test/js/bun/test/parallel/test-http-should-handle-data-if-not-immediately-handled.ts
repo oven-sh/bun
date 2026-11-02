@@ -1,6 +1,7 @@
 import { createTest } from "node-harness";
 import { once } from "node:events";
 import http from "node:http";
+import type { AddressInfo } from "node:net";
 const { expect } = createTest(import.meta.path);
 
 // Create a local server to receive data from
@@ -20,7 +21,7 @@ server.on("request", (request, res) => {
   }, 100);
 });
 await once(server.listen(0), "listening");
-const url = `http://localhost:${server.address().port}`;
+const url = `http://localhost:${(server.address() as AddressInfo).port}`;
 const payload = "Hello, world!".repeat(10).toString();
 const res = await fetch(url, {
   method: "POST",

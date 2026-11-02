@@ -166,12 +166,12 @@ JSC_DEFINE_HOST_FUNCTION(jsWritableStreamPrototype_inspectCustom, (JSGlobalObjec
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue thisValue = callFrame->thisValue();
+    JSValue thisValue = callFrame->thisValue().toThis(lexicalGlobalObject, JSC::ECMAMode::strict());
     auto* thisObject = dynamicDowncast<JSWritableStream>(thisValue);
     if (!thisObject) [[unlikely]]
         return JSValue::encode(thisValue);
     JSObject* data = constructEmptyObject(lexicalGlobalObject);
-    data->putDirect(vm, Identifier::fromString(vm, "locked"_s), jsBoolean(isWritableStreamLocked(thisObject)), 0);
+    Bun::putDirectNamed(vm, data, "locked"_s, jsBoolean(isWritableStreamLocked(thisObject)));
     ASCIILiteral state;
     switch (thisObject->m_state) {
     case WritableStreamState::Writable:
@@ -187,7 +187,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWritableStreamPrototype_inspectCustom, (JSGlobalObjec
         state = "closed"_s;
         break;
     }
-    data->putDirect(vm, Identifier::fromString(vm, "state"_s), jsNontrivialString(vm, state), 0);
+    Bun::putDirectNamed(vm, data, "state"_s, jsNontrivialString(vm, state));
     RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "WritableStream"_s, data));
 }
 

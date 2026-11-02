@@ -44,16 +44,22 @@ static constexpr int kX509NameFlagsRFC2253WithinUtf8JSON = XN_FLAG_RFC2253 & ~AS
 
 // ============================================================================
 
+// Not upstream: ERR_clear_error() resets all 16 slots even when the queue is empty, 46ns against 8ns for a peek.
+static inline void clearErrorQueue()
+{
+    if (ERR_peek_error() != 0) ERR_clear_error();
+}
+
 ClearErrorOnReturn::ClearErrorOnReturn(CryptoErrorList* errors)
     : errors_(errors)
 {
-    ERR_clear_error();
+    clearErrorQueue();
 }
 
 ClearErrorOnReturn::~ClearErrorOnReturn()
 {
     if (errors_ != nullptr) errors_->capture();
-    ERR_clear_error();
+    clearErrorQueue();
 }
 
 MarkPopErrorOnReturn::MarkPopErrorOnReturn(CryptoErrorList* errors)
@@ -393,7 +399,7 @@ bool BignumPointer::generate(const PrimeConfig& params,
     if (innerCb) {
         cb = BignumGenCallbackPointer(BN_GENCB_new());
         if (!cb) [[unlikely]]
-            return -1;
+            return false;
         BN_GENCB_set(
             cb.get(),
             [](int a, int b, BN_GENCB* ctx) mutable -> int {
@@ -402,6 +408,14 @@ bool BignumPointer::generate(const PrimeConfig& params,
             },
             &innerCb);
     }
+
+    // BoringSSL searches forever where OpenSSL refuses: candidates have the top two bits set, the safe primes 11 and 23 do not.
+    // https://github.com/nodejs/node/blob/v26.12.1/deps/openssl/openssl/crypto/bn/bn_prime.c#L137-L145
+    if (params.safe && !params.add && params.bits < 6 && params.bits != 3) {
+        OPENSSL_PUT_ERROR(BN, BN_R_BITS_TOO_SMALL);
+        return false;
+    }
+
     if (BN_generate_prime_ex(get(),
             params.bits,
             params.safe ? 1 : 0,
@@ -1032,7 +1046,9 @@ bool X509View::isCA() const
 {
     ClearErrorOnReturn clearErrorOnReturn;
     if (cert_ == nullptr) return false;
-    return X509_check_ca(const_cast<X509*>(cert_)) == 1;
+    // BoringSSL also answers 1 for a v1 root, where OpenSSL answers 2.
+    X509* cert = const_cast<X509*>(cert_);
+    return X509_check_ca(cert) == 1 && (X509_get_extension_flags(cert) & EXFLAG_BCONS);
 }
 
 bool X509View::isIssuedBy(const X509View& issuer) const
@@ -1479,17 +1495,8 @@ DataPointer DHPointer::computeSecret(const BignumPointer& peer) const
     auto dp = DataPointer::Alloc(size());
     if (!dp) return {};
 
-    int size = DH_compute_key(static_cast<uint8_t*>(dp.get()), peer.get(), dh_.get());
-    if (size < 0) return {};
-
-    // The size of the computed key can be smaller than the size of the DH key.
-    // We want to make sure that the key is correctly padded.
-    if (static_cast<size_t>(size) < dp.size()) {
-        const size_t padding = dp.size() - size;
-        uint8_t* data = static_cast<uint8_t*>(dp.get());
-        memmove(data + padding, data, size);
-        memset(data, 0, padding);
-    }
+    // Not upstream, which calls DH_compute_key and puts back the leading zeros that it strips.
+    if (DH_compute_key_padded(static_cast<uint8_t*>(dp.get()), peer.get(), dh_.get()) < 0) return {};
 
     return dp;
 }
@@ -1555,7 +1562,32 @@ DataPointer DHPointer::stateless(const EVPKeyPointer& ourKey,
 // ============================================================================
 // KDF
 
+static const EVP_MD* findDigestByName(const WTF::StringView name);
+
 const EVP_MD* getDigestByName(const WTF::StringView name)
+{
+    struct FoundLast {
+        std::array<Latin1Character, 16> name;
+        size_t length;
+        const EVP_MD* digest;
+    };
+    static thread_local constinit FoundLast last {};
+
+    if (!name.is8Bit() || !name.length() || name.length() > last.name.size())
+        return findDigestByName(name);
+    auto characters = name.span8();
+    if (characters.size() == last.length && !memcmp(characters.data(), last.name.data(), last.length))
+        return last.digest;
+    const EVP_MD* digest = findDigestByName(name);
+    if (digest) {
+        memcpy(last.name.data(), characters.data(), characters.size());
+        last.length = characters.size();
+        last.digest = digest;
+    }
+    return digest;
+}
+
+static const EVP_MD* findDigestByName(const WTF::StringView name)
 {
     // Historically, "dss1" and "DSS1" were DSA aliases for SHA-1
     // exposed through the public API.
@@ -1630,14 +1662,19 @@ const EVP_MD* getDigestByName(const WTF::StringView name)
         }
     }
 
-    auto nameUtf8 = name.utf8();
-    return EVP_get_digestbyname(nameUtf8.legacyCStringPointer());
+    // utf8() asserts on failure. A name too long to convert isn't a digest.
+    auto nameUtf8 = name.tryGetUTF8();
+    if (!nameUtf8) [[unlikely]]
+        return nullptr;
+    return EVP_get_digestbyname(nameUtf8->legacyCStringPointer());
 }
 
 const EVP_CIPHER* getCipherByName(const WTF::StringView name)
 {
-    auto nameUtf8 = name.utf8();
-    return EVP_get_cipherbyname(nameUtf8.legacyCStringPointer());
+    auto nameUtf8 = name.tryGetUTF8();
+    if (!nameUtf8) [[unlikely]]
+        return nullptr;
+    return EVP_get_cipherbyname(nameUtf8->legacyCStringPointer());
 }
 
 bool checkHkdfLength(const Digest& md, size_t length)
@@ -1829,6 +1866,142 @@ int EVPKeyPointer::id() const
 int EVPKeyPointer::base_id() const
 {
     return base_id(get());
+}
+
+namespace {
+constexpr size_t kEd25519PointSize = 32;
+constexpr size_t kEd448PointSize = 57;
+
+// Ed25519 has cofactor 8, so the first eight entries are the full
+// canonical small-order subgroup: identity, one point of order 2,
+// two points of order 4, and four points of order 8.
+constexpr unsigned char kEd25519SmallOrderPoints[][kEd25519PointSize] = {
+    // Identity.
+    { 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
+    // Order 2.
+    { 0xec, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f },
+    // Order 4.
+    { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80 },
+    { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
+    // Order 8.
+    { 0xc7, 0x17, 0x6a, 0x70, 0x3d, 0x4d, 0xd8, 0x4f, 0xba, 0x3c, 0x0b,
+        0x76, 0x0d, 0x10, 0x67, 0x0f, 0x2a, 0x20, 0x53, 0xfa, 0x2c, 0x39,
+        0xcc, 0xc6, 0x4e, 0xc7, 0xfd, 0x77, 0x92, 0xac, 0x03, 0x7a },
+    { 0xc7, 0x17, 0x6a, 0x70, 0x3d, 0x4d, 0xd8, 0x4f, 0xba, 0x3c, 0x0b,
+        0x76, 0x0d, 0x10, 0x67, 0x0f, 0x2a, 0x20, 0x53, 0xfa, 0x2c, 0x39,
+        0xcc, 0xc6, 0x4e, 0xc7, 0xfd, 0x77, 0x92, 0xac, 0x03, 0xfa },
+    { 0x26, 0xe8, 0x95, 0x8f, 0xc2, 0xb2, 0x27, 0xb0, 0x45, 0xc3, 0xf4,
+        0x89, 0xf2, 0xef, 0x98, 0xf0, 0xd5, 0xdf, 0xac, 0x05, 0xd3, 0xc6,
+        0x33, 0x39, 0xb1, 0x38, 0x02, 0x88, 0x6d, 0x53, 0xfc, 0x05 },
+    { 0x26, 0xe8, 0x95, 0x8f, 0xc2, 0xb2, 0x27, 0xb0, 0x45, 0xc3, 0xf4,
+        0x89, 0xf2, 0xef, 0x98, 0xf0, 0xd5, 0xdf, 0xac, 0x05, 0xd3, 0xc6,
+        0x33, 0x39, 0xb1, 0x38, 0x02, 0x88, 0x6d, 0x53, 0xfc, 0x85 },
+    // Non-canonical encodings of the same small-order points.
+    { 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80 },
+    { 0xec, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff },
+    { 0xee, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f },
+    { 0xee, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff },
+    { 0xed, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff },
+    { 0xed, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f },
+};
+
+// Ed448 has cofactor 4, so these four entries are the full canonical
+// small-order subgroup: identity, one point of order 2, and two points
+// of order 4.
+constexpr unsigned char kEd448SmallOrderPoints[][kEd448PointSize] = {
+    // Identity.
+    { 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
+    // Order 2.
+    { 0xfe, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xfe, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00 },
+    // Order 4.
+    { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
+    { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80 },
+};
+
+template<size_t PointSize, size_t Count>
+bool ContainsPoint(const unsigned char* candidate,
+    const unsigned char (&points)[Count][PointSize])
+{
+    for (const auto& point : points) {
+        if (memcmp(candidate, point, PointSize) == 0) return true;
+    }
+    return false;
+}
+
+bool IsSmallOrderEdDsaPoint(const EVPKeyPointer& key,
+    const unsigned char* candidate,
+    size_t size)
+{
+    if (key.id() == EVP_PKEY_ED25519) {
+        return size == kEd25519PointSize && ContainsPoint(candidate, kEd25519SmallOrderPoints);
+    }
+    if (key.id() == EVP_PKEY_ED448) {
+        return size == kEd448PointSize && ContainsPoint(candidate, kEd448SmallOrderPoints);
+    }
+    return false;
+}
+
+} // namespace
+
+bool EVPKeyPointer::hasSmallOrderEdDsaPoint(
+    const Buffer<const unsigned char>& signature) const
+{
+    const size_t point_size = id() == EVP_PKEY_ED25519 ? kEd25519PointSize
+        : id() == EVP_PKEY_ED448                       ? kEd448PointSize
+                                                       : 0;
+    if (point_size == 0) return false;
+
+    if (signature.len != point_size * 2) return false;
+
+    if (IsSmallOrderEdDsaPoint(*this, signature.data, point_size)) {
+        return true;
+    }
+
+    unsigned char raw_public_key[kEd448PointSize];
+    size_t raw_public_key_size = point_size;
+    if (EVP_PKEY_get_raw_public_key(
+            get(), raw_public_key, &raw_public_key_size)
+        != 1) {
+        return false;
+    }
+
+    return IsSmallOrderEdDsaPoint(*this, raw_public_key, raw_public_key_size);
 }
 
 size_t EVPKeyPointer::size() const
@@ -2430,8 +2603,7 @@ const Cipher Cipher::FromName(WTF::StringView name)
         if (remain == "256"_s) return Cipher::AES_256_CBC();
     }
 
-    auto nameUtf8 = name.utf8();
-    return Cipher(EVP_get_cipherbyname(nameUtf8.legacyCStringPointer()));
+    return Cipher(getCipherByName(name));
 }
 
 const Cipher Cipher::FromNid(int nid)
@@ -2946,7 +3118,7 @@ bool ECKeyPointer::setPublicKeyRaw(const BignumPointer& x,
 
 bool ECKeyPointer::setPrivateKey(const BignumPointer& priv)
 {
-    if (!key_) return false;
+    if (!key_ || !priv) return false;
     return EC_KEY_set_private_key(key_.get(), priv.get()) == 1;
 }
 
@@ -3111,6 +3283,13 @@ bool EVPKeyCtxPointer::setRsaOaepMd(const Digest& md)
     return EVP_PKEY_CTX_set_rsa_oaep_md(ctx_.get(), md_ptr) > 0;
 }
 
+bool EVPKeyCtxPointer::setRsaMgf1Md(const Digest& md)
+{
+    if (!md || !ctx_) return false;
+    const EVP_MD* md_ptr = md;
+    return EVP_PKEY_CTX_set_rsa_mgf1_md(ctx_.get(), md_ptr) > 0;
+}
+
 bool EVPKeyCtxPointer::setRsaPadding(int padding)
 {
     return setRsaPadding(ctx_.get(), padding, std::nullopt);
@@ -3239,7 +3418,7 @@ DataPointer CipherImpl(const EVPKeyPointer& key,
 {
     if (!key) return {};
     EVPKeyCtxPointer ctx = key.newCtx();
-    if (!ctx || init(ctx.get()) <= 0 || !ctx.setRsaPadding(params.padding) || (params.digest != nullptr && !ctx.setRsaOaepMd(params.digest))) {
+    if (!ctx || init(ctx.get()) <= 0 || !ctx.setRsaPadding(params.padding) || (params.digest != nullptr && !ctx.setRsaOaepMd(params.digest)) || (params.mgf1_digest != nullptr && !ctx.setRsaMgf1Md(params.mgf1_digest))) {
         return {};
     }
 
@@ -3300,6 +3479,23 @@ const Rsa::PrivateKey Rsa::getPrivateKey() const
     return key;
 }
 
+// Not upstream: there is no loop over getOtherPrimeInfos(), which is empty with BoringSSL, and nothing is multiplied
+// for a modulus that BoringSSL refuses to use or a factor that is longer than the modulus.
+bool Rsa::checkPrimeProduct() const
+{
+    const auto pub = getPublicKey();
+    const auto priv = getPrivateKey();
+    if (pub.n == nullptr || priv.p == nullptr || priv.q == nullptr) return false;
+    const unsigned bits = BN_num_bits(pub.n);
+    if (bits > OPENSSL_RSA_MAX_MODULUS_BITS || BN_num_bits(priv.p) > bits || BN_num_bits(priv.q) > bits) return false;
+    auto product = BignumPointer::New();
+    BignumCtxPointer ctx(BN_CTX_new());
+    if (!product || !ctx || BN_mul(product.get(), priv.p, priv.q, ctx.get()) != 1) {
+        return false;
+    }
+    return BN_cmp(product.get(), pub.n) == 0;
+}
+
 const std::optional<Rsa::PssParams> Rsa::getPssParams() const
 {
     if (rsa_ == nullptr) return std::nullopt;
@@ -3354,6 +3550,9 @@ bool Rsa::setPrivateKey(BignumPointer&& d,
     BignumPointer&& dq,
     BignumPointer&& qi)
 {
+    // RSA_set0_key accepts a null d once n and e are set, which would leave a "private" key without one.
+    if (!d || !q || !p || !dp || !dq || !qi) return false;
+
     if (!RSA_set0_key(const_cast<RSA*>(rsa_), nullptr, nullptr, d.get())) {
         return false;
     }
@@ -3410,11 +3609,14 @@ DataPointer Cipher::recover(const EVPKeyPointer& key,
 
 // ============================================================================
 
-int Ec::GetCurveIdFromName(const char* name)
+int Ec::GetCurveIdFromName(WTF::StringView name)
 {
-    int nid = EC_curve_nist2nid(name);
+    auto nameUtf8 = name.tryGetUTF8();
+    if (!nameUtf8) [[unlikely]]
+        return NID_undef;
+    int nid = EC_curve_nist2nid(nameUtf8->legacyCStringPointer());
     if (nid == NID_undef) {
-        nid = OBJ_sn2nid(name);
+        nid = OBJ_sn2nid(nameUtf8->legacyCStringPointer());
     }
     return nid;
 }

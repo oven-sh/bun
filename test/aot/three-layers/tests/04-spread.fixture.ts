@@ -1,0 +1,12 @@
+import { check } from "../src/show";
+import { makePoint, makeWide, argumentsOf, defaults as pkgDefaults, callTwice, Circle, mapValues, keysOf } from "fake-shapes";
+import { Vec2, config, list, table } from "fake-typed";
+import { makeUser, withDefaults, defaults, Square } from "../src/models";
+const F = "04";
+check(F, "object spread", () => [{ ...makePoint(1, 2), z: 3 }, { ...makeWide(2), a: "over" }, { ...makeUser(3), ...makePoint(0, 0) }, { ...new Vec2(1, 2) }, { ...new Square("s", 2) }, { ...new Circle("c", 1) }, { ...config, ...table }]);
+check(F, "rest", () => { const { a, d, ...rest } = makeWide(1); const { name, ...user } = makeUser(6); const { x, ...v } = new Vec2(3, 4); return [a, d, rest, name, user, x, v]; });
+check(F, "Object.assign both ways", () => [Object.assign(makePoint(1, 1), makeUser(1)), Object.assign({}, new Vec2(1, 2), { y: 9 }), Object.assign(new Vec2(0, 0), makePoint(7, 8)).parts(), Object.assign(new Square("s", 1), { side: 5 }).area()]);
+check(F, "arrays and calls", () => [[...list, ...new Vec2(8, 9)], argumentsOf(...list, ...[4, 5]), Math.max(...list), callTwice((...all: number[]) => all.length, ...list), [...makeUser(1).roles, ..."ab"]]);
+check(F, "defaults in parameters", () => [pkgDefaults(1), pkgDefaults(1, 5), pkgDefaults(1, undefined, { c: 9, extra: true }), pkgDefaults(1, 2, {}, [7, 8, 9]), withDefaults({ verbose: true }), withDefaults({}).tags === defaults.tags]);
+check(F, "entries and keys", () => [Object.entries(makeWide(4)).length, Object.keys(new Square("s", 1)), keysOf(new Square("s", 1)), keysOf(makeUser(3)), Object.values(makePoint(5, 6)), Object.fromEntries(Object.entries(makePoint(1, 2)).map(([k, v]) => [k + k, v * 2])), mapValues(table, (v, k) => k + v)]);
+check(F, "destructuring with computed names and defaults", () => { const key = "x"; const { [key]: got, missing = "default", y: { toFixed } = 0 as any } = makePoint(1, 2) as any; return [got, missing, typeof toFixed]; });

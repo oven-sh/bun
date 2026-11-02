@@ -24,7 +24,7 @@ let injected = 0;
 let bodyPulled = Promise.withResolvers<void>();
 
 // The origin answers the first request with a bare 101 and nothing else.
-using origin = Bun.listen({
+using origin = Bun.listen<{ answered: boolean } | undefined>({
   hostname: "127.0.0.1",
   port: 0,
   tls: tlsCert,
@@ -84,7 +84,7 @@ const proxy = net.createServer(client => {
 
   client.on("error", () => {});
   client.on("close", () => upstream?.destroy());
-  client.on("data", chunk => {
+  client.on("data", (chunk: Buffer) => {
     if (!upstream) {
       head = Buffer.concat([head, chunk]);
       const end = head.indexOf("\r\n\r\n");
@@ -95,7 +95,7 @@ const proxy = net.createServer(client => {
         if (leftover.length) upstream!.write(leftover);
       });
       upstream.on("error", () => {});
-      upstream.on("data", data => {
+      upstream.on("data", (data: Buffer) => {
         if (poisoned) return;
         // The first two client flights are the ClientHello and the rest of the
         // handshake; hold only what follows them.

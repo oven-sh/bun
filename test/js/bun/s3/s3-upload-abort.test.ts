@@ -220,3 +220,22 @@ test.concurrent("dropped writer with only buffered bytes lets the process exit",
     exited: 0,
   });
 });
+
+// The stream is unlocked when write() checks it. An option getter locks it before the upload starts.
+test.concurrent("an upload that rejects because the stream is locked doesn't read from the stream", async () => {
+  const body = `
+    const bytes = new TextEncoder().encode("hello");
+    const stream = new ReadableStream({ type: "bytes", pull(c) { c.enqueue(bytes.slice()); c.close(); } });
+    let reader;
+    const result = await client.file("key").write(stream, {
+      get accessKeyId() { reader ??= stream.getReader({ mode: "byob" }); return "key"; },
+    }).then(() => "resolved", e => "rejected: " + e.code);
+    const { value } = await reader.read(new Uint8Array(16));
+    console.log(result, new TextDecoder().decode(value));
+  `;
+  expect(await run({ body, waitFor: `true` })).toEqual({
+    stdout: `rejected: ERR_INVALID_STATE hello\n{"create":0,"part":0,"complete":0,"abort":0,"put":0}\n`,
+    stderr: "",
+    exited: 0,
+  });
+});

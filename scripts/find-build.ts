@@ -225,8 +225,10 @@ async function printErrors(
     compare ? mergedPRFailingContexts(excludeBranch) : Promise.resolve(null),
   ]);
 
-  const flaky = anns.filter(a => a.context === "flaky").flatMap(splitFlaky);
-  const rest = anns.filter(a => a.context !== "flaky");
+  // "flaky-new": the same, of a file that test/flaky-tests.txt does not list.
+  const isFlaky = (a: Annotation) => a.context === "flaky" || a.context === "flaky-new";
+  const flaky = anns.filter(isFlaky).flatMap(splitFlaky);
+  const rest = anns.filter(a => !isFlaky(a));
   const shown = rest.filter(a => all || a.style === "error");
 
   if (shown.length === 0 && flaky.length === 0) {

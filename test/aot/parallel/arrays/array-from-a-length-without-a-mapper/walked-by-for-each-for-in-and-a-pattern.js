@@ -1,0 +1,1 @@
+function run(x) { const r = Array.from({ length: 2 }, x); let n = 0; r.forEach(v => { n += typeof v === "undefined" ? 1 : 100; }); for (const i in r) n += 10; const [a, b] = r; return [n, typeof a, typeof b, String(a), [...r].length, 0 in [...r], 0 in r.slice(), 0 in r.concat([1]), JSON.stringify({ r })].join(" "); } console.log(run());

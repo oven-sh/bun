@@ -6321,19 +6321,19 @@ static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlob
             continue;
 
         JSC::JSValue propertyValue = jsUndefined();
-        auto pureResult = [&] {
-            return !slot.isCacheableGetter() && object->structure()->isCompiledStructure() ? JSValue(slot.getterSetter()) : slot.getPureResult();
-        };
-        if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
+        if (slot.isAccessor()) {
             if (callGetters) {
                 propertyValue = slot.getValue(globalObject, property);
                 if (scope.exception()) [[unlikely]] {
                     if (!scope.tryClearException())
                         return;
-                    propertyValue = pureResult();
+                    propertyValue = slot.getterSetter();
                 }
+            } else if (withNonEnumerable && parseIndex(property)) {
+                // Older Bun printed an accessor under an index key as null.
+                propertyValue = jsNull();
             } else {
-                propertyValue = pureResult();
+                propertyValue = slot.getterSetter();
             }
         } else {
             propertyValue = slot.getValue(globalObject, property);

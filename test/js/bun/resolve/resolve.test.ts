@@ -2415,3 +2415,28 @@ test.concurrent.each(["import", "require"])(
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "later.mjs\nlater.mjs\n", stderr: "", exitCode: 0 });
   },
 );
+
+// The resolver reads the first 16384 bytes of a package.json in one read and what is left in a second one.
+// `main` is the last key, so the last bytes that it read decide what the package resolves to.
+test.concurrent("a package.json of about 16384 bytes is read to its last byte", async () => {
+  const sizes = [16382, 16383, 16384, 16385, 16386, 40000];
+  const files: Record<string, string> = {
+    "main.js": `console.log(JSON.stringify(${JSON.stringify(sizes)}.map(size => require("pkg-" + size))));`,
+  };
+  for (const size of sizes) {
+    const head = `{"name":"pkg-${size}","description":"`;
+    const tail = `","main":"./entry-${size}.js"}`;
+    files[`node_modules/pkg-${size}/package.json`] = head + Buffer.alloc(size - head.length - tail.length, "d") + tail;
+    files[`node_modules/pkg-${size}/entry-${size}.js`] = `module.exports = ${size};`;
+  }
+  using dir = tempDir("resolve-package-json-size", files);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: JSON.stringify(sizes) + "\n", stderr: "", exitCode: 0 });
+});

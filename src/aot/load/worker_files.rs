@@ -10,14 +10,14 @@ use bun_sema::bind::{
     Parent, PatParent, SymbolId,
 };
 use bun_sema::file_analysis::FileAnalysis;
-use bun_sema::fold::{Constant, FoldedValue, TreeNode, push_children};
+use bun_sema::fold::{Constant, Decision, FoldedValue, NamedPath, TreeNode, push_children};
 use bun_sema::hir::{
     BinOp, Branches, CallId, ClassId, ExportSpecId, ExprId, ExprKind, File, Flags, FnBody, FnId,
-    FnKind, MemberId, MemberKind, NodeData, ParamId, PatId, PatKind, PropKey, PropKind, Span,
-    StmtKind,
+    FnKind, MemberId, MemberKey, MemberKind, NodeData, ParamId, PatId, PatKind, PropKey, PropKind,
+    Span, StmtKind,
 };
 use bun_sema::import_sites::{
-    ENCODERS, Encoder, ImportSiteKind, ImportSpecifier, find_values_passed_for, is_exported,
+    ENCODERS, Encoder, ImportSiteKind, ImportSpecifier, find_values_passed_to, is_exported,
 };
 use bun_sema::messages::Category;
 use bun_sema::program::{CodeAnswer, CodeView, ComputedTargets, FileId};
@@ -27,7 +27,7 @@ use bun_sema_driver::TextLocator;
 use bun_sema_driver::host::to_native;
 use smallvec::SmallVec;
 
-use crate::builtins::{BuiltinId, Intrinsic, Resolved, RuntimeModule, table};
+use crate::builtins::{BuiltinId, BuiltinName, Intrinsic, Resolved, RuntimeModule, table};
 use crate::compile::{CodeOfWorkers, EntryPointPaths};
 use crate::diagnostics::{ShownPosition, new_driver_diagnostic, position_of_diagnostic};
 use crate::ir::parallel::{InParallel, map_each};
@@ -360,7 +360,7 @@ struct Walk<'a, 's> {
     parameters_left: u64,
     /// Where each name is written in a file, made when a parameter of the file is first followed.
     places_of_names: RefCell<FxHashMap<FileId, Rc<FxHashMap<Atom, Vec<ExprId>>>>>,
-    /// What `find_values_passed_for` answers for a parameter. Every start comes by the same parameters.
+    /// What `find_values_passed_to` answers for a parameter. Every start comes by the same parameters.
     values_of_parameters: FxHashMap<(FileId, SymbolId), Option<Vec<ExprId>>>,
     pending: Vec<Pending>,
     /// What has been in `pending` since the `start`, with its `is_behind_property`.
@@ -804,6 +804,9 @@ fn find_sites_of_file(
             sites
                 .stored
                 .extend(stored.map(|(name, value)| (name, make(file, value))));
+            let stored = find_name_stored_through_define(files, file, expression);
+            let stored = stored.map(|(name, value)| (name, Stored::Value(file, value)));
+            sites.stored.extend(stored);
             continue;
         };
         let passes_nothing = hir.ids(hir[call].args).next().is_none();
@@ -863,6 +866,24 @@ fn find_module_answered(
     }
 }
 
+/// The member of a built-in object under that name, on whatever platform it exists. The global object has its members under each of its names.
+fn find_member_of_builtin(holder: BuiltinId, name: BuiltinName) -> Option<BuiltinId> {
+    let holder = match table::has_flag(holder, table::BuiltinFlags::IS_GLOBAL_OBJECT) {
+        true => BuiltinId::GlobalThis,
+        false => holder,
+    };
+    match table::member(holder, name) {
+        table::MemberLookup::Found(member)
+            if !table::has_flag(member, table::BuiltinFlags::IS_DEFAULT_EXPORT) =>
+        {
+            Some(table::canonical_id(member))
+        }
+        table::MemberLookup::Found(_)
+        | table::MemberLookup::Unknown
+        | table::MemberLookup::Absent => None,
+    }
+}
+
 pub(crate) fn may_start_workers(
     files: &dyn CodeView<'_>,
     file: FileId,
@@ -873,11 +894,24 @@ pub(crate) fn may_start_workers(
         return false;
     };
     let is_constructor = |&id: &BuiltinId| Some(table::canonical_id(id)) == constructor;
-    let mut sites = 0..files.analysis(file).import_sites.len();
+    let analysis = files.analysis(file);
+    let mut sites = 0..analysis.import_sites.len();
+    // The resolver mentions no member that the file reads off a variable whose name a define puts there.
+    let mut heads = analysis.decisions.applied_define_heads();
+    let holds_constructor = |holder: SymbolId| {
+        let held = source.builtins.of_symbol(holder);
+        let held = held.zip(table::find_name(b"Worker"));
+        let member = held.and_then(|(held, name)| find_member_of_builtin(held.id, name));
+        member.is_some() && member == constructor
+    };
     source.builtins.mentioned().iter().any(is_constructor)
         || sites.any(|site| {
             let module = find_module_answered(files, file, Some(site));
             module.is_some() && module == worker_threads
+        })
+        || heads.any(|head| match head.binding() {
+            Binding::Symbol(holder) => holds_constructor(holder),
+            _ => false,
         })
 }
 
@@ -1017,6 +1051,7 @@ impl Walk<'_, '_> {
             };
             let callee = hir.skip_type_assertions(hir[call].callee);
             let constructor = source.builtins.builtin_of_expression(callee);
+            let constructor = constructor.or_else(|| self.find_builtin_put(file, callee));
             let starts_worker = match constructor {
                 Some(constructor) => Some(table::canonical_id(constructor)) == self.constructor,
                 None => self.is_worker_of_node(file, callee),
@@ -1359,11 +1394,31 @@ impl Walk<'_, '_> {
         }
         let is_global = |expression| {
             let id = match source.builtins.of_expr(expression) {
-                Some(Resolved::Builtin(path) | Resolved::DynamicGlobal(path)) => path.id,
-                Some(Resolved::Intrinsic(Intrinsic::Builtin(id))) => id,
-                Some(Resolved::Intrinsic(_)) | None => return false,
+                Some(Resolved::Builtin(path) | Resolved::DynamicGlobal(path)) => Some(path.id),
+                Some(Resolved::Intrinsic(Intrinsic::Builtin(id))) => Some(id),
+                Some(Resolved::Intrinsic(_)) => None,
+                None => self.find_builtin_put(file, expression),
             };
-            Some(table::canonical_id(id)) == self.constructor
+            id.is_some_and(|id| Some(table::canonical_id(id)) == self.constructor)
+        };
+        let variables_left = self.limits.get(LimitId::MaxVariablesFollowedToLoader);
+        // A path of a define that reads below a constructor of Workers or below a member of the module: nobody follows what the code does with it.
+        let is_unfollowed_path = |expression: ExprId| {
+            let Some(named) = self.find_path_put(file, expression) else {
+                return false;
+            };
+            let (Binding::Symbol(holder), &[_, _, ..]) = (named.head.binding, named.names) else {
+                return false;
+            };
+            let reads_constructor = |end: usize| {
+                let members = &named.names[1..end];
+                let read = self.find_builtin_below(file, holder, members, variables_left);
+                read.is_some_and(|read| Some(table::canonical_id(read)) == self.constructor)
+            };
+            self.is_worker_member(self.find_member_held_by(file, holder))
+                || (self.find_member_put(file, expression).is_none()
+                    && is_threads(self.find_module_held_by(file, holder)))
+                || (1..named.names.len()).any(reads_constructor)
         };
         (0..hir.exprs.len() as u32).map(ExprId).all(|expression| {
             let is_evaluated = bound.parent_of_expr(expression) != Parent::None
@@ -1373,6 +1428,7 @@ impl Walk<'_, '_> {
             }
             !is_global(expression)
                 && !self.is_worker_of_node(file, expression)
+                && !is_unfollowed_path(expression)
                 && (!is_threads(self.find_module(file, expression))
                     || self.is_read_by_names(file, expression))
         })
@@ -1418,41 +1474,52 @@ impl Walk<'_, '_> {
 
     // `import { Worker } from "node:worker_threads"`, `const { Worker } = require("node:worker_threads")` and `threads.Worker`
     fn is_worker_of_node(&self, file: FileId, callee: ExprId) -> bool {
-        self.find_member_of_module(file, callee)
-            .is_some_and(|(module, name)| {
-                Some(module) == self.modules[0] && self.files.atoms().bytes(name) == b"Worker"
-            })
+        self.is_worker_member(self.find_member_of_module(file, callee))
+    }
+
+    fn is_worker_member(&self, member: Option<(RuntimeModule, Atom)>) -> bool {
+        member.is_some_and(|(module, name)| {
+            Some(module) == self.modules[0] && self.files.atoms().bytes(name) == b"Worker"
+        })
     }
 
     /// The module of Bun's own and the name of its export that the expression reads.
     fn find_member_of_module(&self, file: FileId, member: ExprId) -> Option<(RuntimeModule, Atom)> {
+        if let Some((holder, name)) = self.find_member_put(file, member) {
+            return Some((self.find_module_held_by(file, holder)?, name));
+        }
+        match self.kind_of(file, member) {
+            ExprKind::Dot { obj, name, .. } => Some((self.find_module(file, obj)?, name)),
+            ExprKind::Ident(_) => match self.find_binding(file, member) {
+                Binding::Symbol(symbol) => self.find_member_held_by(file, symbol),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// `find_member_of_module` of an identifier that names the variable.
+    fn find_member_held_by(&self, file: FileId, symbol: SymbolId) -> Option<(RuntimeModule, Atom)> {
         let files = self.files;
         let (hir, bound) = (files.hir(file), files.bound(file));
-        match hir[member].kind {
-            ExprKind::Dot { obj, name, .. } => Some((self.find_module(file, obj)?, name)),
-            ExprKind::Ident(_) => {
-                let Binding::Symbol(symbol) = bound.binding(member) else {
-                    return None;
-                };
-                if let &[Decl::ImportSpec(specifier)] = bound.symbol(symbol).decls {
-                    let specifier = hir[specifier];
-                    let kind = ImportSiteKind::Import(specifier.import);
-                    let site = files.analysis(file).import_site_index(kind);
-                    return Some((self.find_module_answered(file, site)?, specifier.imported));
-                }
-                match bound.binding_initializer(hir, symbol) {
-                    BindingInitializer::PatternProperty { source, path } => match path[..] {
-                        [name] => Some((self.find_module(file, source)?, name)),
-                        _ => None,
-                    },
-                    BindingInitializer::Expression(source) => {
-                        let source = hir.skip_type_assertions(source);
-                        match hir[source].kind {
-                            ExprKind::Dot { .. } => self.find_member_of_module(file, source),
-                            _ => None,
-                        }
-                    }
-                    _ => None,
+        if let &[Decl::ImportSpec(specifier)] = bound.symbol(symbol).decls {
+            let specifier = hir[specifier];
+            let kind = ImportSiteKind::Import(specifier.import);
+            let site = files.analysis(file).import_site_index(kind);
+            return Some((self.find_module_answered(file, site)?, specifier.imported));
+        }
+        match bound.binding_initializer(hir, symbol) {
+            BindingInitializer::PatternProperty { source, path } => match path[..] {
+                [name] => Some((self.find_module(file, source)?, name)),
+                _ => None,
+            },
+            BindingInitializer::Expression(source) => {
+                let source = hir.skip_type_assertions(source);
+                let is_member = matches!(self.kind_of(file, source), ExprKind::Dot { .. })
+                    || self.find_member_put(file, source).is_some();
+                match is_member {
+                    true => self.find_member_of_module(file, source),
+                    false => None,
                 }
             }
             _ => None,
@@ -1461,32 +1528,36 @@ impl Walk<'_, '_> {
 
     fn find_module(&self, file: FileId, module: ExprId) -> Option<RuntimeModule> {
         let files = self.files;
-        let (hir, bound) = (files.hir(file), files.bound(file));
-        let module = hir.skip_type_assertions(module);
-        match hir[module].kind {
+        let module = files.hir(file).skip_type_assertions(module);
+        match self.kind_of(file, module) {
             ExprKind::Call(_) => {
                 let site = files.analysis(file).import_site_of_call(module);
                 self.find_module_answered(file, site)
             }
-            ExprKind::Ident(_) => {
-                let Binding::Symbol(symbol) = bound.binding(module) else {
-                    return None;
-                };
-                if let &[Decl::ImportNamespace(import) | Decl::ImportDefault(import)] =
-                    bound.symbol(symbol).decls
-                {
-                    let kind = ImportSiteKind::Import(import);
-                    let site = files.analysis(file).import_site_index(kind);
-                    return self.find_module_answered(file, site);
-                }
-                match bound.binding_initializer(hir, symbol) {
-                    BindingInitializer::Expression(source) => {
-                        let source = hir.skip_type_assertions(source);
-                        match hir[source].kind {
-                            ExprKind::Call(_) => self.find_module(file, source),
-                            _ => None,
-                        }
-                    }
+            ExprKind::Ident(_) => match self.find_binding(file, module) {
+                Binding::Symbol(symbol) => self.find_module_held_by(file, symbol),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// `find_module` of an identifier that names the variable.
+    fn find_module_held_by(&self, file: FileId, symbol: SymbolId) -> Option<RuntimeModule> {
+        let files = self.files;
+        let (hir, bound) = (files.hir(file), files.bound(file));
+        if let &[Decl::ImportNamespace(import) | Decl::ImportDefault(import)] =
+            bound.symbol(symbol).decls
+        {
+            let kind = ImportSiteKind::Import(import);
+            let site = files.analysis(file).import_site_index(kind);
+            return self.find_module_answered(file, site);
+        }
+        match bound.binding_initializer(hir, symbol) {
+            BindingInitializer::Expression(source) => {
+                let source = hir.skip_type_assertions(source);
+                match hir[source].kind {
+                    ExprKind::Call(_) => self.find_module(file, source),
                     _ => None,
                 }
             }
@@ -1496,6 +1567,140 @@ impl Walk<'_, '_> {
 
     fn find_module_answered(&self, file: FileId, site: Option<usize>) -> Option<RuntimeModule> {
         find_module_answered(self.files, file, site)
+    }
+
+    /// The path that a define puts in place of the expression, with its first name as the binder recorded it there.
+    fn find_path_put(&self, file: FileId, expression: ExprId) -> Option<NamedPath<'_>> {
+        let decisions = &self.files.analysis(file).decisions;
+        if !decisions.is_named_path(expression) {
+            return None;
+        }
+        match decisions.decision(expression) {
+            Decision::NamedPath(named) => Some(*named),
+            _ => None,
+        }
+    }
+
+    /// The variable and the member that a define puts there as a path of two names. As for a spelled member, `with` and eval are not considered.
+    fn find_member_put(&self, file: FileId, expression: ExprId) -> Option<(SymbolId, Atom)> {
+        let named = self.find_path_put(file, expression)?;
+        match (named.head.binding, named.names) {
+            (Binding::Symbol(holder), &[_, member]) => Some((holder, member)),
+            _ => None,
+        }
+    }
+
+    fn kind_of(&self, file: FileId, expression: ExprId) -> ExprKind {
+        kind_of(self.files, file, expression)
+    }
+
+    /// `Bound::binding` of an identifier of `kind_of`. The fold answers first, for the one name that a define puts there.
+    fn find_binding(&self, file: FileId, name: ExprId) -> Binding {
+        let files = self.files;
+        let decisions = &files.analysis(file).decisions;
+        decisions.binding_named_at(files.bound(file), name)
+    }
+
+    /// The built-in there if identifiers spelled the names that defines put. The resolver has no answer at such a name, its members or its copies.
+    fn find_builtin_put(&self, file: FileId, expression: ExprId) -> Option<BuiltinId> {
+        let variables_left = self.limits.get(LimitId::MaxVariablesFollowedToLoader);
+        self.find_builtin_behind_defines(file, expression, variables_left)
+    }
+
+    fn find_builtin_behind_defines(
+        &self,
+        file: FileId,
+        expression: ExprId,
+        variables_left: u64,
+    ) -> Option<BuiltinId> {
+        let files = self.files;
+        let (hir, bound) = (files.hir(file), files.bound(file));
+        let decisions = &files.analysis(file).decisions;
+        let expression = hir.skip_type_assertions(expression);
+        if !decisions.has_define_paths() || decisions.is_dead_expr(expression) {
+            return None;
+        }
+        if let Some(named) = self.find_path_put(file, expression) {
+            let (Binding::Symbol(holder), Some((_, members))) =
+                (named.head.binding, named.names.split_first())
+            else {
+                return None;
+            };
+            return self.find_builtin_below(file, holder, members, variables_left);
+        }
+        if !matches!(decisions.decision(expression), Decision::Unknown) {
+            return None;
+        }
+        match hir[expression].kind {
+            ExprKind::Ident(_) if bound.is_evaluated_ident(expression) => {
+                match bound.binding(expression) {
+                    Binding::Symbol(copy) => {
+                        self.find_builtin_copied_to(file, copy, variables_left)
+                    }
+                    _ => None,
+                }
+            }
+            ExprKind::Binary {
+                op: BinOp::Comma,
+                right,
+                ..
+            } => self.find_builtin_behind_defines(file, right, variables_left),
+            _ => match hir.member_key(expression) {
+                Some((object, MemberKey::Name(name))) => {
+                    let holder = self.find_builtin_behind_defines(file, object, variables_left)?;
+                    self.find_member_of_builtin(holder, name)
+                }
+                _ => None,
+            },
+        }
+    }
+
+    /// The built-in that the variable holds, then the members below it that a path names.
+    fn find_builtin_below(
+        &self,
+        file: FileId,
+        holder: SymbolId,
+        members: &[Atom],
+        variables_left: u64,
+    ) -> Option<BuiltinId> {
+        let builtins = &parsed_source(self.files, file)?.builtins;
+        let held = builtins.of_symbol(holder).map(|path| path.id);
+        let held = held.or_else(|| self.find_builtin_copied_to(file, holder, variables_left));
+        let mut members = members.iter();
+        members.try_fold(held?, |object, &member| {
+            self.find_member_of_builtin(object, member)
+        })
+    }
+
+    /// The built-in that a variable is initialized with by way of a name that a define puts there. The resolver has no answer for such a variable.
+    fn find_builtin_copied_to(
+        &self,
+        file: FileId,
+        copy: SymbolId,
+        variables_left: u64,
+    ) -> Option<BuiltinId> {
+        let (hir, bound) = (self.files.hir(file), self.files.bound(file));
+        let variables_left = variables_left.checked_sub(1)?;
+        if !bound.is_stable_binding(copy) {
+            return None;
+        }
+        match bound.binding_initializer(hir, copy) {
+            BindingInitializer::Expression(source) => {
+                self.find_builtin_behind_defines(file, source, variables_left)
+            }
+            BindingInitializer::PatternProperty { source, path } => {
+                let object = self.find_builtin_behind_defines(file, source, variables_left)?;
+                let mut members = path.iter();
+                members.try_fold(object, |object, &member| {
+                    self.find_member_of_builtin(object, member)
+                })
+            }
+            _ => None,
+        }
+    }
+
+    fn find_member_of_builtin(&self, holder: BuiltinId, name: Atom) -> Option<BuiltinId> {
+        find_member_of_builtin(holder, table::find_name(self.files.atoms().bytes(name))?)
     }
 
     fn follow(&mut self, file: FileId, argument: ExprId) {
@@ -1540,7 +1745,15 @@ impl Walk<'_, '_> {
             // A path under which the executable holds no code starts no Worker, whatever else the expression leads to.
             let is_path = text.is_some_and(|text| !is_name_of_text(&text));
             let had_unseen_start = self.has_unseen_start;
-            match hir[expression].kind {
+            // No identifier spells the member that the path of a define reads there: it is followed as that member.
+            if let Some(named) = find_member_path_put(files, file, expression) {
+                self.follow_member_put(file, named);
+                if is_path {
+                    self.has_unseen_start = had_unseen_start;
+                }
+                continue;
+            }
+            match self.kind_of(file, expression) {
                 ExprKind::Call(call) if !self.is_evaluated => {
                     if self.follow_object_url(file, call).is_none() {
                         // A helper mostly hands on what it is given, so that is code that the Worker may start from.
@@ -1597,6 +1810,25 @@ impl Walk<'_, '_> {
             if is_path {
                 self.has_unseen_start = had_unseen_start;
             }
+        }
+    }
+
+    /// `follow` for the member that the path of a define reads: what is stored under its last name, and for `href` the URL that has it.
+    fn follow_member_put(&mut self, file: FileId, named: &NamedPath<'_>) {
+        let &[.., holder, name] = named.names else {
+            return;
+        };
+        self.follow_property(file, name, false);
+        if self.files.atoms().bytes(name) != b"href" {
+            return;
+        }
+        match (named.head.binding, named.names) {
+            (Binding::Symbol(url), &[_, _]) => {
+                let lookup = self.files.bound(file).dynamic_scope_of(&named.head);
+                self.follow_binding(file, url, lookup.is_some());
+            }
+            (_, &[_, _]) => {}
+            _ => self.follow_property(file, holder, false),
         }
     }
 
@@ -1688,7 +1920,7 @@ impl Walk<'_, '_> {
 
     fn find_text_of_parts(&mut self, file: FileId, expression: ExprId) -> Option<Vec<u8>> {
         let files = self.files;
-        let (hir, bound) = (files.hir(file), files.bound(file));
+        let hir = files.hir(file);
         // `sep` of node:path, also under a name of its own.
         if let Some((module, name)) = self.find_member_of_module(file, expression)
             && self.modules[1] == Some(module)
@@ -1696,7 +1928,14 @@ impl Walk<'_, '_> {
         {
             return Some(self.as_seen(b"/"));
         }
-        match hir[expression].kind {
+        if let Some((holder, name)) = self.find_member_put(file, expression) {
+            return self.find_text_of_member_held_by(file, holder, name);
+        }
+        // Any other path with members that a define puts there is read when the program runs: the text spells something else.
+        if find_member_path_put(files, file, expression).is_some() {
+            return None;
+        }
+        match self.kind_of(file, expression) {
             ExprKind::Binary {
                 op: BinOp::Add,
                 left,
@@ -1734,7 +1973,7 @@ impl Walk<'_, '_> {
             }
             ExprKind::Call(call) => self.find_text_of_call(file, expression, call),
             ExprKind::Dot { obj, name, .. } => self.find_text_of_member(file, obj, name),
-            ExprKind::Ident(_) => match bound.binding(expression) {
+            ExprKind::Ident(_) => match self.find_binding(file, expression) {
                 Binding::CommonJs(CommonJsVariable::Filename) => self.find_source_path(file, false),
                 Binding::CommonJs(CommonJsVariable::Dirname) => self.find_source_path(file, true),
                 Binding::Symbol(symbol) if self.variables_left > 0 => {
@@ -1757,9 +1996,9 @@ impl Walk<'_, '_> {
 
     fn find_builtin(&self, file: FileId, expression: ExprId) -> Option<BuiltinId> {
         let builtins = &parsed_source(self.files, file)?.builtins;
-        builtins
-            .builtin_of_expression(expression)
-            .map(table::canonical_id)
+        let builtin = builtins.builtin_of_expression(expression);
+        let builtin = builtin.or_else(|| self.find_builtin_put(file, expression));
+        builtin.map(table::canonical_id)
     }
 
     fn as_seen(&self, path: &[u8]) -> Vec<u8> {
@@ -1838,12 +2077,34 @@ impl Walk<'_, '_> {
         }
     }
 
+    /// `find_text_of_member` for a member of what the variable holds: the `href` of a URL that it is initialized with.
+    fn find_text_of_member_held_by(
+        &mut self,
+        file: FileId,
+        holder: SymbolId,
+        name: Atom,
+    ) -> Option<Vec<u8>> {
+        if self.files.atoms().bytes(name) != b"href" || self.variables_left == 0 {
+            return None;
+        }
+        self.variables_left -= 1;
+        let BindingInitializer::Expression(source) = self.find_initializer_of(file, holder) else {
+            return None;
+        };
+        let source = self.files.hir(file).skip_type_assertions(source);
+        let is_name = matches!(self.kind_of(file, source), ExprKind::Ident(_));
+        match !is_name && self.is_url(file, source) {
+            true => self.find_text(file, source),
+            false => None,
+        }
+    }
+
     // `new URL(..)` and `pathToFileURL(..)`, also in a variable.
     fn is_url(&self, file: FileId, expression: ExprId) -> bool {
         let files = self.files;
         let (hir, bound) = (files.hir(file), files.bound(file));
         let expression = hir.skip_type_assertions(expression);
-        match hir[expression].kind {
+        match self.kind_of(file, expression) {
             ExprKind::New(call) => {
                 let callee = hir.skip_type_assertions(hir[call].callee);
                 let constructor = self.find_builtin(file, callee);
@@ -1855,11 +2116,12 @@ impl Walk<'_, '_> {
                     Some(module) == self.modules[2] && files.atoms().bytes(name) == b"pathToFileURL"
                 })
             }
-            ExprKind::Ident(_) => match bound.binding(expression) {
+            ExprKind::Ident(_) => match self.find_binding(file, expression) {
                 Binding::Symbol(symbol) => match bound.binding_initializer(hir, symbol) {
                     BindingInitializer::Expression(source) => {
                         let source = hir.skip_type_assertions(source);
-                        !matches!(hir[source].kind, ExprKind::Ident(_)) && self.is_url(file, source)
+                        let is_name = matches!(self.kind_of(file, source), ExprKind::Ident(_));
+                        !is_name && self.is_url(file, source)
                     }
                     _ => false,
                 },
@@ -2104,11 +2366,11 @@ impl Walk<'_, '_> {
 
     /// What a variable that is never assigned again was declared with, or the expression itself.
     fn find_initializer(&mut self, file: FileId, expression: ExprId) -> ExprId {
-        let (hir, bound) = (self.files.hir(file), self.files.bound(file));
-        let expression = hir.skip_type_assertions(expression);
-        let (ExprKind::Ident(_), Binding::Symbol(symbol)) =
-            (hir[expression].kind, bound.binding(expression))
-        else {
+        let expression = self.files.hir(file).skip_type_assertions(expression);
+        let (ExprKind::Ident(_), Binding::Symbol(symbol)) = (
+            self.kind_of(file, expression),
+            self.find_binding(file, expression),
+        ) else {
             return expression;
         };
         match self.find_initializer_of(file, symbol) {
@@ -2408,12 +2670,23 @@ impl Walk<'_, '_> {
     }
 
     fn follow_name(&mut self, file: FileId, mention: ExprId) {
-        let files = self.files;
-        let bound = files.bound(file);
-        let Binding::Symbol(symbol) = bound.binding(mention) else {
+        let bound = self.files.bound(file);
+        let Binding::Symbol(symbol) = self.find_binding(file, mention) else {
             self.has_unseen_start = true;
             return;
         };
+        // The lookup of the name that a define puts there starts where the binder recorded that name.
+        let is_looked_up_at_run_time = match self.find_path_put(file, mention) {
+            Some(named) => bound.dynamic_scope_of(&named.head).is_some(),
+            None => (bound.dynamic_lookup_scope(NodeData::Expr(mention))).is_some(),
+        };
+        self.follow_binding(file, symbol, is_looked_up_at_run_time);
+    }
+
+    /// `follow_name` of a name that `symbol` binds. `is_looked_up_at_run_time`: a `with` object or evaluated text may declare it where it is read.
+    fn follow_binding(&mut self, file: FileId, symbol: SymbolId, is_looked_up_at_run_time: bool) {
+        let files = self.files;
+        let bound = files.bound(file);
         let &[Decl::Param(pattern)] = bound.symbol(symbol).decls else {
             return self.follow_symbol(file, symbol);
         };
@@ -2424,19 +2697,18 @@ impl Walk<'_, '_> {
         }
         self.parameters_left -= 1;
         let (hir, decisions) = (files.hir(file), &files.analysis(file).decisions);
-        // Under `with` the answer is that of the mention, and it is none.
-        let is_of_parameter = (bound.dynamic_lookup_scope(NodeData::Expr(mention))).is_none();
-        let known = (self.values_of_parameters.get(&(file, symbol))).filter(|_| is_of_parameter);
+        let known =
+            (self.values_of_parameters.get(&(file, symbol))).filter(|_| !is_looked_up_at_run_time);
         let values = match known {
             Some(values) => values.clone(),
+            // Under `with` the answer is that of the mention, and it is none.
+            None if is_looked_up_at_run_time => None,
             None => {
                 let places = self.find_places_of_names(file);
                 let find_written = |name: Atom| places.get(&name).cloned().unwrap_or_default();
-                let values = find_values_passed_for(hir, bound, decisions, mention, &find_written)
+                let values = find_values_passed_to(hir, bound, decisions, symbol, &find_written)
                     .map(|values| values.to_vec());
-                if is_of_parameter {
-                    (self.values_of_parameters).insert((file, symbol), values.clone());
-                }
+                (self.values_of_parameters).insert((file, symbol), values.clone());
                 values
             }
         };
@@ -2658,6 +2930,11 @@ impl Walk<'_, '_> {
                 self.add_ways_to_value(file, mention, ways);
             }
         }
+        // The value of a define that is the name alone puts what the variable holds where no identifier spells it.
+        let decisions = &self.files.analysis(file).decisions;
+        for mention in (decisions.mentions_by_defines(Binding::Symbol(variable))).flatten() {
+            self.add_ways_to_value(file, mention, ways);
+        }
     }
 
     fn find_places_of_names(&self, file: FileId) -> Rc<FxHashMap<Atom, Vec<ExprId>>> {
@@ -2669,6 +2946,7 @@ impl Walk<'_, '_> {
     /// Where the value of the expression is put: `const start = ..`, `{ start: .. }`, `exports.start = ..`, `module.exports = ..`, `export default ..`.
     fn add_ways_to_value(&self, file: FileId, mut value: ExprId, ways: &mut Vec<Declaration>) {
         let (hir, bound) = (self.files.hir(file), self.files.bound(file));
+        let decisions = &self.files.analysis(file).decisions;
         let mut add = |way: Declaration| {
             if !ways.contains(&way) {
                 ways.push(way);
@@ -2685,23 +2963,31 @@ impl Walk<'_, '_> {
                     value: assigned,
                 } if assigned == value => {
                     let target = hir.skip_type_assertions(target);
-                    match hir[target].kind {
-                        ExprKind::Dot { obj, name, .. } => {
+                    let module = Binding::CommonJs(CommonJsVariable::Module);
+                    // A store through the path of a define is a store to the member that the path spells.
+                    let put = find_member_path_put(self.files, file, target);
+                    let is_below_module = put.is_some_and(|named| named.head.binding == module);
+                    match (put.map(|named| named.names), hir[target].kind) {
+                        (Some(&[_, known::exports]), _) if is_below_module => {
+                            add(Declaration::Whole(file));
+                        }
+                        (Some(&[.., name]), _) => add(Declaration::Member(name)),
+                        (Some(&[]), _) => {}
+                        (None, ExprKind::Dot { obj, name, .. }) => {
                             let holder = bound.binding(hir.skip_type_assertions(obj));
-                            let is_whole = name == known::exports
-                                && holder == Binding::CommonJs(CommonJsVariable::Module);
-                            add(match is_whole {
+                            add(match name == known::exports && holder == module {
                                 true => Declaration::Whole(file),
                                 false => Declaration::Member(name),
                             });
                         }
-                        ExprKind::Ident(_) => {
-                            if let Binding::Symbol(variable) = bound.binding(target) {
+                        (None, ExprKind::Ident(_)) => {
+                            let stored_to = decisions.binding_named_at(bound, target);
+                            if let Binding::Symbol(variable) = stored_to {
                                 self.add_ways_to_variable(file, variable, ways);
                                 return self.add_ways_to_value(file, parent, ways);
                             }
                         }
-                        _ => {}
+                        (None, _) => {}
                     }
                 }
                 _ if hir.type_assertion_operand(parent) == Some(value) => {}
@@ -3058,9 +3344,13 @@ fn find_declaration_behind(
     let variables_left = variables_left.checked_sub(1)?;
     let (hir, bound) = (files.hir(file), files.bound(file));
     let expression = hir.skip_type_assertions(expression);
-    match hir[expression].kind {
+    if let Some(named) = find_member_path_put(files, file, expression) {
+        return find_declaration_of_member_put(files, file, named, is_sought_below);
+    }
+    match kind_of(files, file, expression) {
         ExprKind::Ident(_) => {
-            let Binding::Symbol(symbol) = bound.binding(expression) else {
+            let decisions = &files.analysis(file).decisions;
+            let Binding::Symbol(symbol) = decisions.binding_named_at(bound, expression) else {
                 return None;
             };
             if let Some(&found) = known.get(&(file, symbol)) {
@@ -3147,26 +3437,95 @@ fn find_site_of_object(files: &dyn CodeView<'_>, file: FileId, object: ExprId) -
     let (hir, bound) = (files.hir(file), files.bound(file));
     let object = hir.skip_type_assertions(object);
     match (hir[object].kind, bound.binding(object)) {
-        (ExprKind::Ident(_), Binding::Symbol(holder)) => {
-            let mut declarations = bound.symbol(holder).decls.iter();
-            let namespace = declarations.find_map(|&declaration| match declaration {
-                Decl::ImportNamespace(import) => Some(import),
-                _ => None,
-            });
-            match (namespace, bound.binding_initializer(hir, holder)) {
-                (Some(import), _) => {
-                    let kind = ImportSiteKind::Import(import);
-                    files.analysis(file).import_site_index(kind)
-                }
-                (None, BindingInitializer::Expression(source)) => {
-                    find_site_that_loads(files, file, hir.skip_type_assertions(source))
-                }
-                _ => None,
-            }
-        }
+        (ExprKind::Ident(_), Binding::Symbol(holder)) => find_site_of_holder(files, file, holder),
         (ExprKind::Ident(_), _) => None,
         _ => find_site_that_loads(files, file, object),
     }
+}
+
+/// `find_site_of_object` of an identifier that names the variable.
+fn find_site_of_holder(files: &dyn CodeView<'_>, file: FileId, holder: SymbolId) -> Option<usize> {
+    let (hir, bound) = (files.hir(file), files.bound(file));
+    let mut declarations = bound.symbol(holder).decls.iter();
+    let namespace = declarations.find_map(|&declaration| match declaration {
+        Decl::ImportNamespace(import) => Some(import),
+        _ => None,
+    });
+    match (namespace, bound.binding_initializer(hir, holder)) {
+        (Some(import), _) => {
+            let kind = ImportSiteKind::Import(import);
+            files.analysis(file).import_site_index(kind)
+        }
+        (None, BindingInitializer::Expression(source)) => {
+            find_site_that_loads(files, file, hir.skip_type_assertions(source))
+        }
+        _ => None,
+    }
+}
+
+/// The kind of the expression as the search reads it: an identifier where a define puts one name, whatever the text spells there.
+fn kind_of(files: &dyn CodeView<'_>, file: FileId, expression: ExprId) -> ExprKind {
+    let decisions = &files.analysis(file).decisions;
+    if decisions.is_named_path(expression)
+        && let Decision::NamedPath(&NamedPath { names: &[name], .. }) =
+            decisions.decision(expression)
+    {
+        return ExprKind::Ident(name);
+    }
+    files.hir(file)[expression].kind
+}
+
+/// The path with members behind its first name that a define puts in place of the expression.
+fn find_member_path_put<'s>(
+    files: &dyn CodeView<'s>,
+    file: FileId,
+    expression: ExprId,
+) -> Option<&'s NamedPath<'s>> {
+    let decisions = &files.analysis(file).decisions;
+    if !decisions.is_named_path(expression) {
+        return None;
+    }
+    match decisions.decision(expression) {
+        Decision::NamedPath(named) if named.names.len() > 1 => Some(named),
+        _ => None,
+    }
+}
+
+/// `find_declaration_of_member` for the member that the path of a define reads: its last name, off the variable that has the first or off a member.
+fn find_declaration_of_member_put(
+    files: &dyn CodeView<'_>,
+    file: FileId,
+    named: &NamedPath<'_>,
+    is_sought_below: &IsSoughtBelow<'_>,
+) -> Option<Declaration> {
+    let (&name, holders) = named.names.split_last()?;
+    let site = match (named.head.binding, holders) {
+        (Binding::Symbol(holder), &[_]) => find_site_of_holder(files, file, holder),
+        _ => None,
+    };
+    match site {
+        Some(site) => find_declaration_loaded(files, file, site, Some(name), is_sought_below),
+        None => Some(Declaration::Member(name)),
+    }
+}
+
+/// `find_names_stored_by` for an assignment to a name that a define replaces with a path: the last name of the path, with the value.
+fn find_name_stored_through_define(
+    files: &dyn CodeView<'_>,
+    file: FileId,
+    expression: ExprId,
+) -> Option<(Atom, ExprId)> {
+    let hir = files.hir(file);
+    let ExprKind::Assign {
+        op: None | Some(BinOp::Or | BinOp::And | BinOp::Nullish),
+        target,
+        value,
+    } = hir[expression].kind
+    else {
+        return None;
+    };
+    let named = find_member_path_put(files, file, hir.skip_type_assertions(target))?;
+    Some((*named.names.last()?, value))
 }
 
 /// What a file gets from the module that an import site loads: an export, or without a name what `require()` answers.

@@ -1,5 +1,6 @@
 // `bun build --minify-identifiers` renames functions, classes, variables, parameters and imports. An executable built with --aot has no text to rename, and it shows such a name in `name`, in a stack trace and in a message:
 // under the flag it shows a short one, and the executable does not hold what was written. Keys, strings, names of globals and what a direct eval can ask for stay. --keep-names keeps everything.
+// A call through a `--define` whose value is such a name, or a path that begins with one, shows the name as a call that spells it does.
 import { afterAll, expect } from "bun:test";
 import { readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
@@ -16,8 +17,8 @@ export class DeclaredClassB1 {
     return new Error("keptTextB3").stack!.split("\\n")[1].trim().split(" ")[1];
   }
 }
-export function declaredFunctionB4(parameterB5: any): unknown {
-  return parameterB5();
+export function declaredFunctionB4(calledParameterB5: any): unknown {
+  return calledParameterB5();
 }
 export enum DeclaredEnumB6 {
   keptMemberB7 = 1,
@@ -40,6 +41,8 @@ import { TwinB18 as FirstB19 } from "./first";
 import { TwinB18 as SecondB20 } from "./second";
 import { DeclaredClassB1, declaredFunctionB4 as importedFunctionB8, DeclaredEnumB6 } from "./library";
 declare const freeNameB9: () => void;
+declare const DEFINED_NAME: () => void;
+declare const DEFINED_PATH: () => void;
 function message(run: () => unknown): string {
   try {
     return String(run());
@@ -65,13 +68,18 @@ console.log("eval", holdsEvalB15(1), holdsEvalB15.name);
 const variableB11 = { keptKeyB17: 1 };
 console.log("key", Object.keys(arrowB10()).join());
 console.log("twins", FirstB19.name === SecondB20.name);
+const callsName = (definedNameB21: any) => DEFINED_NAME();
+const callsPath = (definedHolderB22: any) => DEFINED_PATH();
+console.log("defined name", message(() => callsName(undefined)));
+console.log("defined path", message(() => callsPath({})));
 `,
 };
 
+// Bun itself holds none of these. `parameterB5` would not do: a Bun with its table of symbols has one that ends in `is_type_parameterB5_`.
 const shortened = [
   "DeclaredClassB1",
   "declaredFunctionB4",
-  "parameterB5",
+  "calledParameterB5",
   "DeclaredEnumB6",
   "importedFunctionB8",
   "arrowB10",
@@ -82,6 +90,8 @@ const shortened = [
   "TwinB18",
   "FirstB19",
   "SecondB20",
+  "definedNameB21",
+  "definedHolderB22",
 ];
 const neverShown = ["importedFunctionB8", "expressionB12", "FirstB19", "SecondB20"];
 const kept = [
@@ -92,7 +102,9 @@ const kept = [
   "holdsEvalB15",
   "seenByEvalB16",
   "keptKeyB17",
+  "keptMemberB23",
 ];
+const defines = ["--define=DEFINED_NAME=definedNameB21", "--define=DEFINED_PATH=definedHolderB22.keptMemberB23"];
 
 describe.each([
   ["by default", [], false],
@@ -112,6 +124,7 @@ describe.each([
       ...compileCommand,
       ...withoutDebugInformation,
       buildFlags.withoutFunctionSource,
+      ...defines,
       ...flags,
     ];
     built(await spawned([...command, "./main.ts", "--outfile", executable], folder, bunEnv));
@@ -136,13 +149,15 @@ describe.each([
     "expression": name("ownNameB13"),
     "method": "keptMethodB2",
     "frame": "keptMethodB2",
-    "callee": within("", "parameterB5", " is not a function"),
+    "callee": within("", "calledParameterB5", " is not a function"),
     "dead zone": within("Cannot access '", "variableB11", "' before initialization"),
     "free": expect.stringContaining("freeNameB9"),
     "enum": "1,keptMemberB7",
     "eval": "2 holdsEvalB15",
     "key": "keptKeyB17",
     "twins": String(!shortens),
+    "defined name": within("", "definedNameB21", " is not a function"),
+    "defined path": within("", "definedHolderB22", "\\.keptMemberB23 is not a function"),
   };
 
   test("the program shows the names", () => {

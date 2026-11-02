@@ -22,6 +22,7 @@ use crate::ir::{BlockId, DeclaredType, ValueId};
 
 pub(in crate::lower) use self::assignment::AssignmentTarget;
 pub(in crate::lower) use self::chain::ShortCircuit;
+pub(in crate::lower) use self::global_path::DefineStop;
 
 #[derive(Copy, Clone)]
 pub(in crate::lower) struct TailCast<'t> {
@@ -98,7 +99,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.record_read_of_builtin_path(expression);
             }
             Decision::Constant(_) | Decision::Data(_) | Decision::DeferredData => {}
-            Decision::GlobalPath(_) => {
+            Decision::GlobalPath(_) | Decision::NamedPath(_) => {
                 self.lower_by_decision(expression, Evaluation::PLAIN);
             }
             Decision::Unknown
@@ -268,6 +269,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 return self.lower_decided_data(expression);
             }
             Decision::GlobalPath(path) => return self.lower_global_path(expression, path),
+            Decision::NamedPath(named) => return self.lower_named_path(expression, named),
             Decision::Unknown => {}
         }
         if let Some(value) = self.try_lower_mention(expression) {

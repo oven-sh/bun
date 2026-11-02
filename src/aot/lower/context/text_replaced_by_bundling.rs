@@ -1,7 +1,10 @@
+#[cfg(test)]
+mod tests;
+
 use bun_sema::atom::Interner;
 use bun_sema::bind::{Bound, Parent};
 use bun_sema::erasure::ReplacedText;
-use bun_sema::fold::{Constant, Decision, Decisions};
+use bun_sema::fold::{Constant, Decision, Decisions, NamedPath};
 use bun_sema::hir::{
     BinOp, Branches, ExprId, ExprKind, File, PropKind, StmtKind, UnOp, end_of_expr,
     start_inside_parentheses, start_of,
@@ -174,6 +177,9 @@ impl Finder<'_, '_> {
 
     // `!DEFINED` is printed as its value too.
     fn add_defined(&mut self, mut expression: ExprId, mut decision: Decision<'_>) {
+        if let Decision::NamedPath(named) = decision {
+            return self.add_named_path(expression, named);
+        }
         while let Decision::Constant(constant) = decision
             && let Parent::Expr(parent) = self.bound.parent_of_expr(expression)
             && let ExprKind::Unary { op: UnOp::Not, .. } = self.hir[parent].kind
@@ -189,6 +195,24 @@ impl Finder<'_, '_> {
             && written.is_some_and(|written| written != &printed[..])
         {
             self.replace(start, end, printed.into_boxed_slice());
+        }
+    }
+
+    // `bun run` may print an initializer in place of the name: that covers what a longer value adds only where the part ends inside the name.
+    #[cold]
+    fn add_named_path(&mut self, expression: ExprId, named: &NamedPath<'_>) {
+        let start = start_inside_parentheses(self.hir, expression);
+        let end = self.hir[expression].end;
+        let written = self.hir.text.get(start as usize..end as usize);
+        if let Some(printed) = self.print(Decision::NamedPath(named))
+            && written.is_some_and(|written| written != &printed[..])
+        {
+            let ends_inside_name = matches!(self.hir[expression].kind, ExprKind::Ident(_))
+                && start + 1 < end
+                && printed.len() > (end - start) as usize;
+            let end_of_part = end - u32::from(ends_inside_name);
+            self.replace(start, end_of_part, printed.into_boxed_slice());
+            self.leave_out(end_of_part, end);
         }
     }
 
@@ -210,7 +234,7 @@ impl Finder<'_, '_> {
                 self.print_data(constant.to_data_value(), &mut printed)?;
             }
             Decision::Data(data) => self.print_data(*data, &mut printed)?,
-            Decision::GlobalPath(path) => {
+            Decision::GlobalPath(path) | Decision::NamedPath(&NamedPath { names: path, .. }) => {
                 let names: Vec<&[u8]> = path.iter().map(|&name| self.atoms.bytes(name)).collect();
                 printed = names.join(&b'.');
             }

@@ -1,9 +1,9 @@
 use super::evaluate::Value;
 use super::folder::{Effects, Folded, Folder};
 use super::inputs::RuntimeValueKind;
-use super::{Constant, Decision, literal_constant};
+use super::{Constant, Decision, NamedPath, literal_constant};
 use crate::atom::{Atom, known};
-use crate::bind::CommonJsVariable;
+use crate::bind::{Binding, CommonJsVariable, ScopeKind};
 use crate::hir::{BinOp, Branches, ExprId, ExprKind, IdList, UnOp};
 use crate::import_sites::is_free_common_js;
 
@@ -82,9 +82,36 @@ impl<'s> Folder<'_, 's> {
         addends
     }
 
+    // A define puts the one name `require` in place of `e`, and it is the file's `require` there, as `is_free_common_js` says of the identifier.
+    fn is_given_require_by_define(&self, e: ExprId) -> bool {
+        let heads = &self.applied_heads;
+        let Ok(applied) = heads.binary_search_by_key(&e, |entry| entry.0) else {
+            return false;
+        };
+        let &NamedPath { head, names: &[_] } = heads[applied].1 else {
+            return false;
+        };
+        if head.binding != Binding::CommonJs(CommonJsVariable::Require) {
+            return false;
+        }
+        let mut scope = self
+            .bound
+            .dynamic_scope_of(&head)
+            .map(|lookup| lookup.scope);
+        while let Some(at) = scope {
+            let data = &self.bound.scopes[at.idx()];
+            if matches!(data.kind, ScopeKind::With(_)) {
+                return false;
+            }
+            scope = data.parent.some();
+        }
+        true
+    }
+
     fn fold_unary(&self, op: UnOp, operand: ExprId) -> Folded {
         if op == UnOp::Typeof
-            && is_free_common_js(self.hir, self.bound, operand, CommonJsVariable::Require)
+            && (is_free_common_js(self.hir, self.bound, operand, CommonJsVariable::Require)
+                || self.is_given_require_by_define(operand))
         {
             return Folded::constant(Constant::String(known::function));
         }

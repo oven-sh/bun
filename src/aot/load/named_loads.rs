@@ -623,6 +623,9 @@ impl Scan<'_, '_> {
     fn is_read_by_name_alone(&self, symbol: SymbolId) -> bool {
         let bound = self.request.bound;
         let redeclared = bound.runtime.redeclared_commonjs_variables();
+        // The value of a define may begin with the name where no identifier spells it.
+        let decisions = &self.request.analysis.decisions;
+        let mut unspelled = decisions.mentions_by_defines(Binding::Symbol(symbol));
         matches!(
             bound.binding_kind(symbol),
             BindingKind::Var | BindingKind::Let | BindingKind::Const
@@ -634,6 +637,7 @@ impl Scan<'_, '_> {
         ) && !bound.is_visible_to_eval(symbol)
             && !redeclared.iter().any(|it| it.0 == symbol)
             && !is_exported(self.request.hir, bound, symbol)
+            && unspelled.next().is_none()
     }
 
     fn way_of_mention(&self, mention: ExprId, holder: &Holder) -> Way {

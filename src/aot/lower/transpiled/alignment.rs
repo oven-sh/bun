@@ -4,7 +4,7 @@ use bun_ast::{AssignTarget, E, Expr, Loc, OpCode, Stmt, StmtOrExpr};
 use bun_core::strings;
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::bind::{Binding, Bound, Decl, PatParent};
-use bun_sema::fold::{Constant, TreeNode, push_children};
+use bun_sema::fold::{Constant, Decision, Decisions, TreeNode, push_children};
 use bun_sema::hir::{
     self, BinOp, ExprId, ExprKind, FnBody, IdList, PatId, PropKey, StmtId, StmtKind, UnOp,
 };
@@ -65,6 +65,9 @@ enum SearchFrom {
 pub(super) struct Alignment<'a, 's> {
     hir: &'a hir::File<'s>,
     bound: &'a Bound<'s>,
+    decisions: &'a Decisions<'s>,
+    /// `Decisions::has_define_heads`. Where it is false, a name is an identifier and what the binder says of it.
+    has_define_heads: bool,
     atoms: &'a Interner<'s>,
     max_steps: u64,
     printed: PrintedTree<'a>,
@@ -141,6 +144,17 @@ fn is_equality(op: BinOp) -> bool {
         op,
         BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq
     )
+}
+
+/// An identifier, or what a define replaces with one name, whatever the text spells there.
+pub(in crate::lower) fn is_name(
+    hir: &hir::File<'_>,
+    decisions: &Decisions<'_>,
+    expression: ExprId,
+) -> bool {
+    matches!(hir[expression].kind, ExprKind::Ident(_))
+        || decisions.is_named_path(expression)
+            && matches!(decisions.decision(expression), Decision::NamedPath(named) if named.names.len() == 1)
 }
 
 pub(in crate::lower) fn find_written_literal(
@@ -243,6 +257,8 @@ impl<'a, 's> Alignment<'a, 's> {
         Alignment {
             hir: parsed.hir,
             bound: parsed.bound,
+            decisions: parsed.decisions,
+            has_define_heads: parsed.decisions.has_define_heads(),
             atoms: parsed.atoms,
             max_steps: parsed.max_steps,
             printed,
@@ -447,7 +463,7 @@ impl<'a, 's> Alignment<'a, 's> {
         let hir = self.hir;
         let mut current = hir.skip_type_assertions(value);
         while let Some(&Rewrite::Operand(operand)) = self.rewrites.get(&current) {
-            if let ExprKind::Ident(_) = hir[current].kind {
+            if self.is_name(current) {
                 self.returned_initializers.insert(operand, position);
             }
             current = hir.skip_type_assertions(operand);
@@ -485,10 +501,15 @@ impl<'a, 's> Alignment<'a, 's> {
 
     fn find_initializer_of_replaced_name(&self, name: ExprId) -> Option<ExprId> {
         let hir = self.hir;
-        if self.printed.identifiers.contains(hir[name].pos) {
+        // The name that a define puts in place of a path is printed where the path begins.
+        let printed_position = match self.has_define_heads && self.is_name(name) {
+            true => self.parsed_position(name),
+            false => hir[name].pos,
+        };
+        if self.printed.identifiers.contains(printed_position) {
             return None;
         }
-        let Binding::Symbol(symbol) = self.bound.binding(name) else {
+        let Binding::Symbol(symbol) = self.binding_named_at(name) else {
             return None;
         };
         let [Decl::Var(pattern) | Decl::Require(pattern)] = *self.bound.symbol(symbol).decls else {
@@ -532,9 +553,28 @@ impl<'a, 's> Alignment<'a, 's> {
         }
     }
 
+    // An identifier, or what a define replaces with one name. Only a file with a define head asks the fold.
+    fn is_name(&self, expression: ExprId) -> bool {
+        matches!(self.hir[expression].kind, ExprKind::Ident(_))
+            || (self.has_define_heads && is_name(self.hir, self.decisions, expression))
+    }
+
+    // `Bound::binding` of a name. In a file with a define head the fold answers first: `Decisions::binding_named_at`.
+    fn binding_named_at(&self, name: ExprId) -> Binding {
+        match self.has_define_heads {
+            true => self.decisions.binding_named_at(self.bound, name),
+            false => self.bound.binding(name),
+        }
+    }
+
     /// The operands that may be printed in place of the expression.
     fn operands_printed_alone(&self, expression: ExprId) -> SmallVec<[ExprId; 4]> {
         let hir = self.hir;
+        // A define may put one name in place of what is no identifier.
+        if self.has_define_heads && self.is_name(expression) {
+            let initializer = self.find_initializer_of_replaced_name(expression);
+            return initializer.into_iter().collect();
+        }
         match hir[expression].kind {
             ExprKind::Ident(_) => self
                 .find_initializer_of_replaced_name(expression)
@@ -792,7 +832,7 @@ impl<'a, 's> Alignment<'a, 's> {
                 break;
             };
             self.rewrites.insert(current, Rewrite::Operand(operand));
-            if let ExprKind::Ident(_) = hir[current].kind {
+            if self.is_name(current) {
                 self.replaced_names.insert(operand, current);
             }
             current = hir.skip_type_assertions(operand);

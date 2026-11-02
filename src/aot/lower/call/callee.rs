@@ -7,7 +7,7 @@ use bun_core::strings::contains_char;
 use bun_sema::atom::{Atom, known, written_name};
 use bun_sema::bind::{Binding, FnOwner, Parent};
 use bun_sema::check::spans::skip_trivia;
-use bun_sema::fold::{Constant, Decision, TreeNode, push_children};
+use bun_sema::fold::{Constant, Decision, NamedPath, TreeNode, push_children};
 use bun_sema::hir::{
     BinOp, Call, Chain, ExprFlags, ExprId, ExprKind, FnBody, FnId, FnKind, IdList, MemberKey,
     NameKind, PropKey, PropKind, UnOp, end_of_expr, start_of,
@@ -20,6 +20,7 @@ use super::Callee;
 use crate::builtins::Resolved;
 use crate::builtins::id::BuiltinId;
 use crate::ir::{BlockId, StringId, ValueId};
+use crate::lower::expression::DefineStop;
 use crate::lower::member::{self, KeyConversion, PropertyName};
 use crate::lower::operator::needs_parentheses;
 use crate::lower::statement::Printed;
@@ -62,8 +63,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             Decision::Unknown => self.lower_callee_with_exit(callee, inner, exit, expected),
             Decision::GlobalPath(path) => {
                 self.set_position(hir[inner].pos);
+                self.report_eval_called_through_define(inner, path);
                 self.lower_global_path_callee(inner, path)
             }
+            Decision::NamedPath(named) => self.lower_named_path_callee(inner, named),
             Decision::Constant(_) | Decision::Data(_) | Decision::DeferredData => {
                 Callee::without_key(self.lower_expression(inner), None, None)
             }
@@ -104,6 +107,32 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             function: self.expect_resolved_path(inner, function),
             this: last.holder,
             key,
+            name,
+        }
+    }
+
+    // One name is called without a receiver, or on the `with` object that has it when the code runs. The last name of a path is called on its holder.
+    fn lower_named_path_callee(&mut self, inner: ExprId, named: &NamedPath<'_>) -> Callee {
+        let stop = self.find_define_stop(inner, named, DefineStop::Called);
+        if stop.is_some() {
+            self.report_define_without_support(inner, named, DefineStop::Called);
+            return Callee::without_key(self.builder.undefined(), None, None);
+        }
+        self.set_position(self.file.hir[inner].pos);
+        let last = self.lower_named_path_holder(named);
+        let name = Some(self.file.intern_named_path(named));
+        let Some(holder) = last.holder else {
+            let (function, this) = match self.lower_dynamic_define_head_callee(&named.head) {
+                Some((function, this)) => (function, Some(this)),
+                None => (self.get_define_head(named), None),
+            };
+            return Callee::without_key(function, this, name);
+        };
+        let key = self.file.atom_key(last.name);
+        Callee {
+            function: self.emit_get(holder, PropertyName::Constant(key)),
+            this: Some(holder),
+            key: Some(key),
             name,
         }
     }
@@ -300,6 +329,9 @@ pub(in crate::lower) struct PrintedOperators {
     // The functions printed in place of a name whose last position is being looked for.
     entered_functions: RefCell<SmallVec<[FnId; 4]>>,
 }
+
+// The longest path of names that an executable holds to quote a callee in a message.
+const LONGEST_PATH: usize = 80;
 
 impl FileLowering<'_, '_, '_, '_> {
     // JSC reports a call at the end of its callee, which the source map takes back to this token. A text that runs as written has no source map.
@@ -1031,6 +1063,29 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
+    /// The name of a callee to which a define gives `named`: plain Bun quotes all of the path in "a.b.c is not a function".
+    fn intern_named_path(&mut self, named: &NamedPath<'_>) -> StringId {
+        let (&first, members) = named
+            .names
+            .split_first()
+            .expect("a named path has a first name");
+        let Some(&last) = members.last() else {
+            return self.intern_binding_name(named.head.binding, first);
+        };
+        let mut path = Vec::new();
+        if !self.append_short_binding_name(named.head.binding, &mut path) {
+            path.extend_from_slice(self.queries.atom_bytes(first));
+        }
+        for &member in members {
+            path.push(b'.');
+            path.extend_from_slice(self.queries.atom_bytes(member));
+        }
+        match path.len() <= LONGEST_PATH {
+            true => self.intern_bytes(&path),
+            false => self.intern_atom(last),
+        }
+    }
+
     /// `value instanceof a.b`, as plain Bun quotes it in "a.b is not a function. (evaluating 'value instanceof a.b')", where both operands consist of names.
     pub(in crate::lower) fn find_written_instanceof(
         &mut self,
@@ -1077,7 +1132,6 @@ impl FileLowering<'_, '_, '_, '_> {
     /// `a.b.c`, `this.#x`, `a?.b[key]`: a callee that consists of names, as plain Bun quotes it in "a.b.c is not a function".
     /// Answers false, with `path` in any state, for anything else and for what is too long to be worth its bytes in the executable.
     fn append_written_path(&self, expression: ExprId, path: &mut Vec<u8>) -> bool {
-        const LONGEST_PATH: usize = 80;
         let hir = self.hir;
         let inner = self.skip_type_syntax(expression);
         if self.is_literal_operand(inner) {

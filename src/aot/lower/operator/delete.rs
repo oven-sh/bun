@@ -1,10 +1,10 @@
 use bun_sema::atom::Atom;
-use bun_sema::fold::Decision;
+use bun_sema::fold::{Decision, NamedPath};
 use bun_sema::hir::{ExprId, ExprKind, MemberKey};
 
 use crate::ir::generated::RuntimeErrorKind;
 use crate::ir::{BlockId, ValueId};
-use crate::lower::expression::ShortCircuit;
+use crate::lower::expression::{DefineStop, ShortCircuit};
 use crate::lower::member::PropertyName;
 use crate::lower::{FileLowering, FunctionLowering};
 
@@ -19,6 +19,7 @@ pub(super) fn lower_delete(
             return lowering.builder.boolean(true);
         }
         Decision::GlobalPath(path) => return lowering.delete_global_path(path),
+        Decision::NamedPath(named) => return lowering.delete_named_path(target, named),
         Decision::Unknown => {}
     }
     if matches!(hir[target].kind, ExprKind::Ident(_)) {
@@ -58,6 +59,22 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let last = self.lower_global_path_holder(path);
         let Some(holder) = last.holder else {
             return self.emit_free_name_delete(last.name);
+        };
+        let key = self.file.atom_key(last.name);
+        self.emit_delete(holder, PropertyName::Constant(key))
+    }
+
+    // `bun run` prints the name or the path of a define in place of `target`, so `delete` removes what that text names there.
+    fn delete_named_path(&mut self, target: ExprId, named: &NamedPath<'_>) -> ValueId {
+        let stop = self.find_define_stop_at_target(target, named, DefineStop::Deleted);
+        if stop.is_some() {
+            self.report_define_without_support(target, named, DefineStop::Deleted);
+            return self.builder.boolean(true);
+        }
+        self.set_position(self.file.hir[target].pos);
+        let last = self.lower_named_path_holder(named);
+        let Some(holder) = last.holder else {
+            return self.delete_define_head(&named.head);
         };
         let key = self.file.atom_key(last.name);
         self.emit_delete(holder, PropertyName::Constant(key))

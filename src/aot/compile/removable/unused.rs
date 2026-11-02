@@ -71,7 +71,9 @@ impl Removable<'_, '_> {
         }
         match decisions.decision(expression) {
             Decision::Constant(_) | Decision::Data(_) => return true,
-            Decision::GlobalPath(_) | Decision::DeferredData => return false,
+            Decision::GlobalPath(_) | Decision::NamedPath(_) | Decision::DeferredData => {
+                return false;
+            }
             Decision::Unknown => {}
         }
         if !decisions.reads_member(expression) && self.find_constant(expression).is_some() {
@@ -110,7 +112,7 @@ impl Removable<'_, '_> {
                 UnOp::Typeof => {
                     let name = hir.skip_type_assertions(operand);
                     if matches!(hir[name].kind, ExprKind::Ident(_)) {
-                        return self.is_name_initialized(name);
+                        return self.is_typeof_operand_initialized(name);
                     }
                     simplified.push(expression);
                     self.simplify_unused(operand, simplified)

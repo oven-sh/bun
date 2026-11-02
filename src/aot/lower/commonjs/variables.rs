@@ -130,6 +130,16 @@ impl FileLowering<'_, '_, '_, '_> {
                     Binding::CommonJs(CommonJsVariable::Filename | CommonJsVariable::Dirname)
                 ) && !self.decisions().is_dead_expr(name)
             });
+        // The value of a define may begin with one of the five names where no identifier spells it.
+        let decisions = self.decisions();
+        let is_named_by_define = |variable| {
+            let mut unspelled = decisions.mentions_by_defines(Binding::CommonJs(variable));
+            self.has_define_heads && unspelled.next().is_some()
+        };
+        let names_source_path = names_source_path
+            || (has_source_path
+                && (is_named_by_define(CommonJsVariable::Filename)
+                    || is_named_by_define(CommonJsVariable::Dirname)));
         if !self.is_commonjs_module() {
             return CommonJsState {
                 has_source_path,
@@ -174,6 +184,9 @@ impl FileLowering<'_, '_, '_, '_> {
                 | Binding::Free => {}
             }
         }
+        // Nobody looks at what the code does with `module` where a define puts that name.
+        names_exports |= is_named_by_define(CommonJsVariable::Exports);
+        replaces_exports |= is_named_by_define(CommonJsVariable::Module);
         CommonJsState {
             form: BodyForm::Plain,
             keeps_first_exports: replaces_exports && names_exports,
@@ -742,6 +755,16 @@ pub(super) fn emit_entry_value(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compile::testing::{default_settings, lower_program_with_provider};
+    use crate::load::source_provider::{
+        DeferredLoad, Failed, LoadRequest, Loaded, ModuleName, Resolution, ResolveRequest,
+        SourceFile, SourceProvider, WithoutServices,
+    };
+    use bun_ast::Log;
+    use bun_sema::atom::Interner;
+    use bun_sema::fold::{Define, DefinePath, DefineRoot, DefineValue, FoldOptions};
+    use bun_sema::hir_from_data::DataModule;
+    use bun_sema::session::Arena;
 
     #[test]
     fn path_and_folder_of_a_module_are_texts_of_the_build() {
@@ -777,5 +800,109 @@ mod tests {
             find_text_in_path(b"blob:1", true, BuiltinId::ImportMetaDir),
             text(b"")
         );
+    }
+
+    /// `--define HERE=__dirname`
+    struct DirnameByDefine;
+
+    impl SourceProvider for DirnameByDefine {
+        fn fold_options<'s>(
+            &self,
+            arena: &'s Arena,
+            atoms: &Interner<'s>,
+            log: &mut Log,
+        ) -> FoldOptions<'s> {
+            let define = Define {
+                path: DefinePath {
+                    root: DefineRoot::Global(atoms.intern(b"HERE")),
+                    members: &[],
+                },
+                value: DefineValue::GlobalPath(
+                    arena.alloc_slice_copy(&[atoms.intern(b"__dirname")]),
+                ),
+            };
+            FoldOptions {
+                defines: arena.alloc_slice_copy(&[define]),
+                ..WithoutServices.fold_options(arena, atoms, log)
+            }
+        }
+
+        fn resolve(
+            &self,
+            request: &ResolveRequest<'_>,
+            log: &mut Log,
+        ) -> Result<Resolution, Failed> {
+            WithoutServices.resolve(request, log)
+        }
+
+        fn load(&self, request: &LoadRequest<'_>, log: &mut Log) -> Result<Loaded, Failed> {
+            WithoutServices.load(request, log)
+        }
+
+        fn has_load_plugin(&self, module: ModuleName<'_>) -> bool {
+            WithoutServices.has_load_plugin(module)
+        }
+
+        fn finish_deferred_loads(&self, log: &mut Log) -> Vec<DeferredLoad> {
+            WithoutServices.finish_deferred_loads(log)
+        }
+
+        fn parse_data<'s>(
+            &self,
+            file: &SourceFile<'_>,
+            arena: &'s Arena,
+            atoms: &Interner<'s>,
+            log: &mut Log,
+        ) -> Result<DataModule<'s>, Failed> {
+            WithoutServices.parse_data(file, arena, atoms, log)
+        }
+
+        fn check_embedded_files(&self, log: &mut Log) -> Result<(), Failed> {
+            WithoutServices.check_embedded_files(log)
+        }
+    }
+
+    fn holds_text(files: &[(&str, &str)], wanted: &[u8]) -> bool {
+        let lowered = lower_program_with_provider(files, &default_settings(), &DirnameByDefine);
+        let mut tables = lowered.iter().map(|file| &file.1.fragment.strings);
+        tables.any(|strings| strings.ids().any(|text| strings.get(text) == wanted))
+    }
+
+    // Whether the code of `main.cjs` holds the folder where the file lay. The store to `exports` keeps the function that is passed `__dirname`.
+    fn holds_folder_of_source(statement: &str) -> bool {
+        let source = format!("exports = {{}};\n{statement}\n");
+        let files = [("main.cjs", source.as_str())];
+        holds_text(&files, &with_separators_of_host(b"/project", cfg!(windows)))
+    }
+
+    #[test]
+    fn folder_that_only_a_define_names_is_the_folder_of_the_source() {
+        assert!(holds_folder_of_source("console.log(__dirname);"));
+        assert!(holds_folder_of_source("console.log(HERE);"));
+        assert!(!holds_folder_of_source("console.log(1);"));
+    }
+
+    // Whether the code of a program holds the URL of where its `a.cjs` lay. `main.cjs` imports it or `b.cjs` by the URL of a path below `folder`.
+    fn holds_url_of_source(folder: &str) -> bool {
+        let main = format!(
+            "const {{ pathToFileURL }} = require(\"node:url\");\n\
+             const path = require(\"node:path\");\n\
+             const name = process.argv.length > 9 ? \"b\" : \"a\";\n\
+             console.log(import(pathToFileURL(path.join({folder}, name + \".cjs\")).href));\n"
+        );
+        let files = [
+            ("main.cjs", main.as_str()),
+            ("a.cjs", "module.exports = 1;\n"),
+            ("b.cjs", "module.exports = 2;\n"),
+        ];
+        holds_text(&files, b"file:///project/a.cjs")
+    }
+
+    #[test]
+    fn url_of_a_file_below_a_folder_that_only_a_define_names_is_the_url_of_its_source() {
+        // `write_file_url` makes nothing of a path that has the separators of Windows.
+        let has_url = !cfg!(windows);
+        assert_eq!(holds_url_of_source("__dirname"), has_url);
+        assert_eq!(holds_url_of_source("HERE"), has_url);
     }
 }

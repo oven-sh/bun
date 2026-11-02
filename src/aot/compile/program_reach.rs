@@ -1212,9 +1212,10 @@ impl<'a, 's> FileScan<'a, 's> {
                 self.add_name_that_is_no_expression(symbol);
             }
         }
-        // The factory of a JSX element, and a class that the metadata of a decorator names.
+        // The factory of a JSX element, a class that the metadata of a decorator names, and the first name of the value of a define.
         for reference in bound.runtime.implicit_references() {
-            if let Binding::Symbol(symbol) = reference.binding {
+            let is_read = decisions.is_read(reference);
+            if is_read && let Binding::Symbol(symbol) = reference.binding {
                 self.add_name_that_is_no_expression(symbol);
             }
         }
@@ -1664,7 +1665,10 @@ impl<'a, 's> FileScan<'a, 's> {
         loop {
             match decisions.decision(node) {
                 Decision::Constant(_) | Decision::Data(_) => return true,
-                Decision::Unknown | Decision::GlobalPath(_) | Decision::DeferredData => {}
+                Decision::Unknown
+                | Decision::GlobalPath(_)
+                | Decision::NamedPath(_)
+                | Decision::DeferredData => {}
             }
             let Parent::Expr(parent) = self.bound.parent_of_expr(node) else {
                 return false;

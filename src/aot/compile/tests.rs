@@ -10,14 +10,14 @@ use crate::link::ModuleOrigin;
 use crate::load::read_file_bytes;
 use crate::load::runtime_modules::RuntimeModules;
 use crate::load::source_provider::{
-    DeferredLoad, Failed, LoadRequest, Loaded, MacroCall, Resolution, ResolveRequest, SourceFile,
-    WithoutServices,
+    DeferredLoad, Failed, LoadRequest, Loaded, MacroCall, ModuleName, Resolution, ResolveRequest,
+    SourceFile, WithoutServices,
 };
 use crate::statistics::LimitId;
 use bstr::{BStr, ByteSlice};
 use bun_ast::{Kind, Loader};
 use bun_builtin_sources::Archive;
-use bun_sema::fold::FoldOptions;
+use bun_sema::fold::{Define, DefinePath, DefineRoot, DefineValue, FoldOptions};
 use bun_sema::hir_from_data::{DataModule, DataValue};
 use bun_sema::program::FileRole;
 use bun_sema::session::Arena;
@@ -1303,4 +1303,153 @@ fn engine_that_analyzed_nothing_says_nothing_about_module_objects() {
     assert!(!reads_main_module(&found, false));
     assert!(find_ways_read_out_of_sight(&found, both).is_empty());
     assert_eq!(find_ways_named_that_nobody_reads(&found, both), both);
+}
+
+/// `--define W=<value>`: the names of the path that is the value.
+struct WorkerByDefine<'a>(&'a [&'a str]);
+
+impl SourceProvider for WorkerByDefine<'_> {
+    fn fold_options<'s>(
+        &self,
+        arena: &'s Arena,
+        atoms: &Interner<'s>,
+        log: &mut Log,
+    ) -> FoldOptions<'s> {
+        let names = self.0.iter().map(|name| atoms.intern(name.as_bytes()));
+        let value: Vec<_> = names.collect();
+        let define = Define {
+            path: DefinePath {
+                root: DefineRoot::Global(atoms.intern(b"W")),
+                members: &[],
+            },
+            value: DefineValue::GlobalPath(arena.alloc_slice_copy(&value)),
+        };
+        FoldOptions {
+            defines: arena.alloc_slice_copy(&[define]),
+            ..WithoutServices.fold_options(arena, atoms, log)
+        }
+    }
+
+    fn resolve(&self, request: &ResolveRequest<'_>, log: &mut Log) -> Result<Resolution, Failed> {
+        WithoutServices.resolve(request, log)
+    }
+
+    fn has_resolve_plugins(&self) -> bool {
+        WithoutServices.has_resolve_plugins()
+    }
+
+    fn load(&self, request: &LoadRequest<'_>, log: &mut Log) -> Result<Loaded, Failed> {
+        WithoutServices.load(request, log)
+    }
+
+    fn has_load_plugin(&self, module: ModuleName<'_>) -> bool {
+        WithoutServices.has_load_plugin(module)
+    }
+
+    fn finish_deferred_loads(&self, log: &mut Log) -> Vec<DeferredLoad> {
+        WithoutServices.finish_deferred_loads(log)
+    }
+
+    fn parse_data<'s>(
+        &self,
+        file: &SourceFile<'_>,
+        arena: &'s Arena,
+        atoms: &Interner<'s>,
+        log: &mut Log,
+    ) -> Result<DataModule<'s>, Failed> {
+        WithoutServices.parse_data(file, arena, atoms, log)
+    }
+
+    fn check_embedded_files(&self, log: &mut Log) -> Result<(), Failed> {
+        WithoutServices.check_embedded_files(log)
+    }
+}
+
+// With `W` defined as `value`: what code the Workers of `statements` start from, and whether the file calls `new` on the `Worker` of node.
+fn code_of_workers(value: &[&str], statements: &str) -> (CodeOfWorkers, bool) {
+    let main = format!(
+        "import {{ Worker }} from \"node:worker_threads\";\n\
+         import * as threads from \"node:worker_threads\";\n{statements}\n"
+    );
+    let files = [("main.mjs", main.as_str()), ("w.mjs", "export {};")];
+    let project = TestProject::new(&files, &default_settings());
+    run_build(&project, BUNDLED_LIBS, &WorkerByDefine(value), |build| {
+        build.with_loaded_projects(|build, _| {
+            let started = &build.started_workers;
+            Ok((started.code, started.constructs_node_workers))
+        })
+    })
+}
+
+#[test]
+fn constructor_of_workers_that_a_define_names_may_start_code_nobody_has_compiled() {
+    let compiled = code_of_workers(&["Worker"], "new Worker(\"./w.mjs\");");
+    assert_eq!(compiled, (CodeOfWorkers::Compiled, true));
+    let held_by_name = code_of_workers(&["Worker"], "const C = Worker; new C(\"./w.mjs\");");
+    assert_eq!(held_by_name, (CodeOfWorkers::Unseen, false));
+    let held_by_define = code_of_workers(&["Worker"], "const C = W; new C(\"./w.mjs\");");
+    assert_eq!(held_by_define, held_by_name);
+    let started_by_define = code_of_workers(&["Worker"], "new W(\"./w.mjs\");");
+    assert_eq!(started_by_define, compiled);
+}
+
+#[test]
+fn define_that_reaches_the_constructor_of_workers_through_the_module_is_read_as_spelled() {
+    let path = ["threads", "Worker"];
+    let started = code_of_workers(&path, "new threads.Worker(\"./w.mjs\");");
+    assert_eq!(started, (CodeOfWorkers::Compiled, true));
+    let started_by_path = code_of_workers(&path, "new W(\"./w.mjs\");");
+    assert_eq!(started_by_path, started);
+    let held = code_of_workers(&path, "const C = threads.Worker; new C(\"./w.mjs\");");
+    assert_eq!(held, (CodeOfWorkers::Unseen, true));
+    let held_by_path = code_of_workers(&path, "const C = W; new C(\"./w.mjs\");");
+    assert_eq!(held_by_path, held);
+    let held_off_name = code_of_workers(&["threads"], "const C = W.Worker; new C(\"./w.mjs\");");
+    assert_eq!(held_off_name, held);
+}
+
+#[test]
+fn path_of_a_define_below_the_constructor_of_workers_may_start_code_nobody_has_compiled() {
+    let spelled = "new Worker.prototype.constructor(\"./w.mjs\");";
+    let below_name = code_of_workers(&["Worker"], spelled);
+    assert_eq!(below_name, (CodeOfWorkers::Unseen, false));
+    let path = ["Worker", "prototype", "constructor"];
+    let by_path = code_of_workers(&path, "new W(\"./w.mjs\");");
+    assert_eq!(by_path, below_name);
+    let path = ["Worker", "prototype"];
+    let below_path = code_of_workers(&path, "new W.constructor(\"./w.mjs\");");
+    assert_eq!(below_path, below_name);
+
+    let path = ["threads", "Worker", "prototype", "constructor"];
+    let spelled = "new threads.Worker.prototype.constructor(\"./w.mjs\");";
+    let below_member = code_of_workers(&path, spelled);
+    assert_eq!(below_member, (CodeOfWorkers::Unseen, false));
+    let by_path = code_of_workers(&path, "new W(\"./w.mjs\");");
+    assert_eq!(by_path, below_member);
+}
+
+// With `W` defined as `value`: whether lowering is told that `main.cjs`, which is `statement`, reads a path of the machine that builds.
+fn reads_source_paths(value: &[&str], statement: &str) -> bool {
+    let project = TestProject::new(&[("main.cjs", statement)], &default_settings());
+    run_build(&project, BUNDLED_LIBS, &WorkerByDefine(value), |build| {
+        with_bound_build(build, |build, loaded, bound| {
+            let application = ProjectId::Application;
+            let roles = decide_project_roles(loaded.project(application));
+            build.with_lowering_inputs(loaded, bound, application, &roles, |inputs| {
+                inputs.reads_source_paths
+            })
+        })
+    })
+}
+
+#[test]
+fn program_reads_source_paths_where_only_a_define_names_them() {
+    let dirname = ["__dirname"];
+    assert!(reads_source_paths(&dirname, "console.log(__dirname);"));
+    assert!(reads_source_paths(&dirname, "console.log(W);"));
+    assert!(reads_source_paths(&["__filename"], "console.log(W);"));
+    let below_dirname = ["__dirname", "length"];
+    assert!(reads_source_paths(&below_dirname, "console.log(W);"));
+    assert!(!reads_source_paths(&dirname, "console.log(1);"));
+    assert!(!reads_source_paths(&dirname, "if (false) console.log(W);"));
 }

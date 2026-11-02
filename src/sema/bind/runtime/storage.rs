@@ -1,8 +1,8 @@
 use super::{
     AnnexBFunction, Binding, BindingKind, BindingStability, CodeUnit, CommonJsVariable,
-    EarlyRedeclaration, EvalScope, FunctionFlags, ImplicitReference, ImplicitReferenceKind,
-    ParameterVarCopy, PrivateName, PrivateNameId, RuntimeBindings, RuntimeBindingsIn, StoreKind,
-    SymbolStore,
+    DynamicLookup, EarlyRedeclaration, EvalScope, FunctionFlags, ImplicitReference,
+    ImplicitReferenceKind, ParameterVarCopy, PrivateName, PrivateNameId, RuntimeBindings,
+    RuntimeBindingsIn, StoreKind, SymbolStore,
 };
 use crate::bind::decorator_metadata::MetadataReference;
 use crate::bind::{Decl, ScopeId, SymbolId};
@@ -10,18 +10,26 @@ use crate::hir::*;
 use crate::session::{Arena, ArenaBox};
 use crate::util::SharedSort;
 
+// Several define heads at one root keep the order in which the binder looked them up, so that nothing depends on the number of an atom.
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
-enum ImplicitReferenceOrder {
+pub(super) enum ImplicitReferenceOrder {
+    DefineHead { root: ExprId },
     Jsx { element: ExprId, is_fragment: bool },
     DecoratorMetadata(MetadataReference),
 }
 
-fn implicit_reference_order(reference: &ImplicitReference) -> ImplicitReferenceOrder {
+pub(super) fn implicit_reference_order(reference: &ImplicitReference) -> ImplicitReferenceOrder {
     let is_fragment = match reference.kind {
         ImplicitReferenceKind::JsxFactory => false,
         ImplicitReferenceKind::JsxFragment => true,
         ImplicitReferenceKind::DecoratorMetadata(recorded) => {
             return ImplicitReferenceOrder::DecoratorMetadata(recorded);
+        }
+        ImplicitReferenceKind::DefineHead => {
+            let NodeData::Expr(root) = reference.node else {
+                unreachable!("a define head is recorded at the root of its define");
+            };
+            return ImplicitReferenceOrder::DefineHead { root };
         }
     };
     let NodeData::Expr(element) = reference.node else {
@@ -177,6 +185,9 @@ define_tables! {
         sorted {
             stores: S::List<SymbolStore> = |store| (store.symbol, store.target),
             implicit_references: S::Few<ImplicitReference> = implicit_reference_order,
+            // `Bound::dynamic_scope_of`: references whose name a `with` object or evaluated text may declare. Those that sort alike differ by name.
+            dynamic_implicit_lookups: S::Few<(ImplicitReference, DynamicLookup)> =
+                |entry| implicit_reference_order(&entry.0),
         }
         lists {
             // For each run of `IDENTS_IN_RUN` expression ids, how many entries of `ident_bindings` lie in front of it. One more at the end.

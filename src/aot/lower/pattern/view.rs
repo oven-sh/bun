@@ -226,10 +226,21 @@ impl FileLowering<'_, '_, '_, '_> {
             }
             PatternNode::Assignment(target) => {
                 let (identifier, name) = self.identifier_target(target)?;
-                let binding = self.bound.binding(identifier);
+                let binding = self.binding_named_at(identifier);
                 Some((binding, name, self.hir[identifier].pos))
             }
         }
+    }
+
+    // What a store to `target` goes to, a name with no `[` and no `{` around it. `name` is the target without its type syntax.
+    pub(super) fn lone_target_binding(&self, target: ExprId, name: ExprId) -> Binding {
+        if self.has_define_heads
+            && self.decisions().is_named_path(name)
+            && let Some((identifier, _)) = self.identifier_target(target)
+        {
+            return self.binding_named_at(identifier);
+        }
+        self.bound.binding(target)
     }
 
     pub(super) fn property_name(&self, property: &PatternProperty) -> Option<Atom> {

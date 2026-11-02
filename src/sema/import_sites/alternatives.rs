@@ -2,9 +2,9 @@
 //! function of the file returns, a variable that grows by a part in one arm of a condition. Every such text is followed like a constant.
 //! Nothing is run. A value is what folding says, or the values of the expressions that a binding leads to.
 
-use super::call_sites::{expr_kind, is_free_common_js, is_free_name, is_process};
-use super::made_requires::{find_imported_export, may_be_modified, names_own_file};
-use super::parameters::{find_values_passed_for, is_exported};
+use super::call_sites::{expr_kind, is_free_name, is_process};
+use super::made_requires::{Text as FileText, find_imported_export, may_be_modified};
+use super::parameters::{find_values_passed_to, is_exported};
 use super::{
     ImportSiteKind, ImportSpecifier, ResolvedForm, ScanInputs, call_site_arguments, call_site_kind,
 };
@@ -14,8 +14,9 @@ use crate::bind::{
     Parent, PatParent, StoreKind, SymbolId, UNREACHABLE,
 };
 use crate::fold::{
-    Constant, FoldedValue, PathBelowFolder, apply_binary, apply_template, find_export_of_module,
-    trim_lead_surrogate_at_end, trim_to_last_segment, trim_trail_surrogate_at_start,
+    Constant, Decision, Decisions, FoldedValue, NamedPath, PathBelowFolder, apply_binary,
+    apply_template, find_export_of_module, trim_lead_surrogate_at_end, trim_to_last_segment,
+    trim_trail_surrogate_at_start,
 };
 use crate::hir::{
     BinOp, Branches, Call, Chain, ExprId, ExprKind, File, Flags, FnBody, FnId, IdList, MemberKey,
@@ -116,6 +117,24 @@ fn add(values: &mut Values, value: Held) {
     if !values.contains(&value) {
         values.push(value);
     }
+}
+
+/// What a member is read off: an expression, or the names in front of the last one of a path that a define puts.
+#[derive(Copy, Clone)]
+enum MemberObject<'s> {
+    Written(ExprId),
+    Put(&'s NamedPath<'s>),
+}
+
+/// The sites where a define puts a path with members behind a first name that `symbol` binds, each with the path.
+fn paths_below<'s>(
+    decisions: &Decisions<'s>,
+    symbol: SymbolId,
+) -> Vec<(ExprId, &'s NamedPath<'s>)> {
+    let heads = decisions.applied_define_heads();
+    let below = heads.filter(|head| head.binding() == Binding::Symbol(symbol));
+    let below = below.filter(|head| head.name_site().is_none());
+    below.map(|head| (head.site, head.path)).collect()
 }
 
 /// Where each name is written in a file, by name. Made for the first site that asks, and read by all the sites of the file.
@@ -285,7 +304,7 @@ pub(super) fn find_alternatives(
     })
 }
 
-impl Follower<'_, '_, '_> {
+impl<'s> Follower<'_, '_, 's> {
     fn values_of_argument(&mut self, argument: ExprId) -> Option<Values> {
         loop {
             let values = self.values_of(argument)?;
@@ -372,7 +391,12 @@ impl Follower<'_, '_, '_> {
                 ..Text::whole(b".")
             })]);
         }
-        if is_process(hir, bound, e, &[known::globalThis, known::global]) {
+        // The path that a define puts there is followed as the name or the member that it spells, whatever the text has in its place.
+        let text = FileText::of(hir, bound, Some(decisions));
+        if let Some(named) = text.path_put_at(e) {
+            return self.values_of_path(named, named.names.len());
+        }
+        if is_process(text, e, &[known::globalThis, known::global]) {
             return Some(vec![Held::Process]);
         }
         if self.follows_key && is_free_name(hir, bound, e, &[known::undefined]) {
@@ -415,8 +439,14 @@ impl Follower<'_, '_, '_> {
     }
 
     fn names_own_directory(&self, e: ExprId) -> bool {
-        let &ScanInputs { hir, bound, .. } = self.inputs;
-        if is_free_common_js(hir, bound, e, CommonJsVariable::Dirname) {
+        let &ScanInputs {
+            hir,
+            bound,
+            decisions,
+            ..
+        } = self.inputs;
+        let text = FileText::of(hir, bound, Some(decisions));
+        if text.names_common_js(e, CommonJsVariable::Dirname) {
             return !may_be_modified(hir, bound, CommonJsVariable::Dirname);
         }
         if let Some(ExprKind::Call(call)) = expr_kind(hir, e) {
@@ -425,12 +455,18 @@ impl Follower<'_, '_, '_> {
             return call.args.len() == 1
                 && self.find_export_of(call.callee, &[b"path", b"node:path"])
                     == Some(known::meta_dirname)
-                && names_own_file(hir, bound, hir.id_at(call.args, 0));
+                && text.names_own_file(hir.id_at(call.args, 0));
         }
         matches!(expr_kind(hir, e), Some(ExprKind::Dot { obj, name, chain: Chain::No, .. })
             if (name == known::meta_dir || name == known::meta_dirname)
                 && matches!(expr_kind(hir, hir.skip_type_assertions(obj)), Some(ExprKind::ImportMeta)))
+            && !self.is_replaced(e)
             && !bound.import_meta_may_be_modified()
+    }
+
+    /// The fold puts something in place of `e`, the path of a define for one: the program reads nothing of what the text spells there.
+    fn is_replaced(&self, e: ExprId) -> bool {
+        !matches!(self.inputs.decisions.decision(e), Decision::Unknown)
     }
 
     /// Every text that is made of one value of each part.
@@ -576,13 +612,14 @@ impl Follower<'_, '_, '_> {
         let &ScanInputs { hir, bound, .. } = self.inputs;
         let written = self.written_names.find(hir, bound.symbol(symbol).name);
         let written = written.iter().map(|it| it.1);
-        written
-            .filter(|&e| {
-                bound.is_evaluated_ident(e)
-                    && bound.binding(e) == Binding::Symbol(symbol)
-                    && !self.is_dead(e)
-            })
-            .collect()
+        let written = written.filter(|&e| {
+            bound.is_evaluated_ident(e)
+                && bound.binding(e) == Binding::Symbol(symbol)
+                && !self.is_dead(e)
+        });
+        let decisions = self.inputs.decisions;
+        let defined = decisions.mentions_by_defines(Binding::Symbol(symbol));
+        written.chain(defined.flatten()).collect()
     }
 
     fn outermost_cast(&self, mut e: ExprId) -> ExprId {
@@ -596,13 +633,48 @@ impl Follower<'_, '_, '_> {
     }
 
     fn values_of_name(&mut self, name: ExprId) -> Option<Values> {
-        let &ScanInputs { hir, bound, .. } = self.inputs;
-        let Binding::Symbol(symbol) = bound.binding(name) else {
+        let &ScanInputs {
+            hir,
+            bound,
+            decisions,
+            ..
+        } = self.inputs;
+        let text = FileText::of(hir, bound, Some(decisions));
+        let is_looked_up_at_run_time = text.dynamic_scope(name).is_some();
+        self.values_of_binding(text.binding(name), is_looked_up_at_run_time)
+    }
+
+    /// What the first `length` names of a path of a define hold: the first through its recorded binding, each further one as a member.
+    fn values_of_path(&mut self, named: &NamedPath<'_>, length: usize) -> Option<Values> {
+        let bound = self.inputs.bound;
+        let is_looked_up_at_run_time = bound.dynamic_scope_of(&named.head).is_some();
+        let mut values = self.values_of_binding(named.head.binding, is_looked_up_at_run_time)?;
+        for &member in named.names.get(1..length)? {
+            if values.len() > MOST_ALTERNATIVES {
+                return None;
+            }
+            let key = self.inputs.atoms.bytes(member).to_vec();
+            values = self.read_member(&values, Some(&[key]), Chain::No)?;
+        }
+        Some(values)
+    }
+
+    /// What a name with that binding holds. `is_looked_up_at_run_time`: a `with` object or evaluated text may declare it where it is read.
+    fn values_of_binding(
+        &mut self,
+        binding: Binding,
+        is_looked_up_at_run_time: bool,
+    ) -> Option<Values> {
+        let &ScanInputs {
+            hir,
+            bound,
+            decisions,
+            ..
+        } = self.inputs;
+        let Binding::Symbol(symbol) = binding else {
             return None;
         };
-        if bound.dynamic_lookup_scope(NodeData::Expr(name)).is_some()
-            || bound.is_visible_to_eval(symbol)
-        {
+        if is_looked_up_at_run_time || bound.is_visible_to_eval(symbol) {
             return None;
         }
         if self.variables_in_progress.contains(&symbol) {
@@ -619,8 +691,7 @@ impl Follower<'_, '_, '_> {
                     let written = written_names.find(hir, name).iter();
                     written.map(|it| it.1).collect()
                 };
-                match find_values_passed_for(hir, bound, self.inputs.decisions, name, &find_written)
-                {
+                match find_values_passed_to(hir, bound, decisions, symbol, &find_written) {
                     Some(passed) => self.values_of_any(passed),
                     None => self.values_handed_by_walk(symbol),
                 }
@@ -747,18 +818,36 @@ impl Follower<'_, '_, '_> {
     }
 
     fn values_of_elements(&mut self, list: ExprId) -> Option<Values> {
-        let mut elements = Values::new();
-        for value in self.values_of(list)? {
-            let held = match value {
-                Held::List(places) => places.into_iter().flatten().collect(),
-                Held::ListOf(held) => held,
-                _ => return None,
-            };
-            for value in held {
-                add(&mut elements, value);
-            }
+        elements_of(self.values_of(list)?)
+    }
+
+    /// `File::member_key` of `e`. Where a define puts a path with members there, the member that the path spells.
+    fn member_key_of(&self, e: ExprId) -> Option<(MemberObject<'s>, MemberKey)> {
+        let &ScanInputs {
+            hir,
+            bound,
+            decisions,
+            ..
+        } = self.inputs;
+        let Some(named) = FileText::of(hir, bound, Some(decisions)).path_put_at(e) else {
+            let (object, key) = hir.member_key(e)?;
+            return Some((MemberObject::Written(object), key));
+        };
+        match named.names {
+            &[_, .., name] => Some((MemberObject::Put(named), MemberKey::Name(name))),
+            _ => None,
         }
-        Some(elements)
+    }
+
+    fn values_of_object(&mut self, object: MemberObject<'s>) -> Option<Values> {
+        match object {
+            MemberObject::Written(object) => self.values_of(object),
+            MemberObject::Put(named) => self.values_of_path(named, named.names.len() - 1),
+        }
+    }
+
+    fn elements_of_object(&mut self, list: MemberObject<'s>) -> Option<Values> {
+        elements_of(self.values_of_object(list)?)
     }
 
     /// `list.forEach((name, index, all) => ..)`: what `name` or `all` holds.
@@ -791,17 +880,17 @@ impl Follower<'_, '_, '_> {
             return None;
         }
         match position {
-            0 => self.values_of_elements(list),
-            2 => self.values_of(list),
+            0 => self.elements_of_object(list),
+            2 => self.values_of_object(list),
             _ => None,
         }
     }
 
     /// The list, where the call hands each element of a list to its first argument, which leaves the list as it is. A program cannot replace these members of a list.
-    fn find_walk_of_list(&mut self, call: Call) -> Option<(ExprId, Atom)> {
+    fn find_walk_of_list(&mut self, call: Call) -> Option<(MemberObject<'s>, Atom)> {
         let hir = self.inputs.hir;
         let (list, MemberKey::Name(name)) =
-            hir.member_key(hir.skip_type_assertions(call.callee))?
+            self.member_key_of(hir.skip_type_assertions(call.callee))?
         else {
             return None;
         };
@@ -850,9 +939,9 @@ impl Follower<'_, '_, '_> {
     fn values_of_walk(&mut self, call: Call) -> Option<Values> {
         let (list, name) = self.find_walk_of_list(call)?;
         match self.inputs.atoms.bytes(name) {
-            b"filter" => Some(vec![Held::ListOf(self.values_of_elements(list)?)]),
+            b"filter" => Some(vec![Held::ListOf(self.elements_of_object(list)?)]),
             b"find" | b"findLast" => {
-                let mut elements = self.values_of_elements(list)?;
+                let mut elements = self.elements_of_object(list)?;
                 add(&mut elements, Held::Primitive(Constant::Undefined));
                 Some(elements)
             }
@@ -973,6 +1062,18 @@ impl Follower<'_, '_, '_> {
         (object == mention && call.chain == Chain::No && is_statement).then_some((pushing, call))
     }
 
+    /// `find_push` where a define puts the path `list.push` at `site`.
+    fn find_push_put(&self, site: ExprId, named: &NamedPath<'_>) -> Option<(ExprId, Call)> {
+        let &ScanInputs { hir, bound, .. } = self.inputs;
+        let &[_, known::push] = named.names else {
+            return None;
+        };
+        let (pushing, call) = self.find_call_of_member(site)?;
+        let is_statement = matches!(bound.parent_of_expr(pushing), Parent::Stmt(statement)
+            if matches!(hir[statement].kind, StmtKind::Expr(_)));
+        (call.chain == Chain::No && is_statement).then_some((pushing, call))
+    }
+
     fn is_initialized_with_list(&self, symbol: SymbolId) -> bool {
         let &ScanInputs { hir, bound, .. } = self.inputs;
         bound.is_stable_binding(symbol)
@@ -989,28 +1090,63 @@ impl Follower<'_, '_, '_> {
         if !self.is_initialized_with_list(symbol) {
             return Some(values);
         }
+        let paths = paths_below(self.inputs.decisions, symbol);
+        if !paths.is_empty() {
+            return self.add_values_pushed_through_paths(symbol, pattern, values, &paths);
+        }
         for mention in self.mentions_of(symbol) {
-            let Some((pushing, call)) = self.find_push(mention) else {
+            let Some(push) = self.find_push(mention) else {
                 continue;
             };
-            if !self.runs_once_for_each_binding(pushing, symbol, pattern) {
-                return None;
-            }
-            let Held::List(pushed) = self.values_of_list(call.args)?.pop()? else {
-                return None;
-            };
-            for index in 0..values.len() {
-                let Held::List(places) = &values[index] else {
-                    return None;
-                };
-                let longer = places.iter().chain(&pushed).cloned().collect();
-                add(&mut values, Held::List(longer));
-            }
-            if values.len() > MOST_ALTERNATIVES {
-                return None;
-            }
+            self.add_values_of_push(push, symbol, pattern, &mut values)?;
         }
         Some(values)
+    }
+
+    /// `add_pushed_values` where defines put `paths` behind the name of the list: each push is read where it lies among the others.
+    fn add_values_pushed_through_paths(
+        &mut self,
+        symbol: SymbolId,
+        pattern: PatId,
+        mut values: Values,
+        paths: &[(ExprId, &NamedPath<'_>)],
+    ) -> Option<Values> {
+        let mut pushes: Vec<(ExprId, Call)> = Vec::new();
+        for mention in self.mentions_of(symbol) {
+            pushes.extend(self.find_push(mention));
+        }
+        for &(site, named) in paths {
+            pushes.extend(self.find_push_put(site, named));
+        }
+        pushes.shared_sort_unstable_by_key(|push| push.0);
+        for push in pushes {
+            self.add_values_of_push(push, symbol, pattern, &mut values)?;
+        }
+        Some(values)
+    }
+
+    /// Adds each list of `values` once more with what the push appends. `None`: the push may run more than once, or a value is no list.
+    fn add_values_of_push(
+        &mut self,
+        (pushing, call): (ExprId, Call),
+        symbol: SymbolId,
+        pattern: PatId,
+        values: &mut Values,
+    ) -> Option<()> {
+        if !self.runs_once_for_each_binding(pushing, symbol, pattern) {
+            return None;
+        }
+        let Held::List(pushed) = self.values_of_list(call.args)?.pop()? else {
+            return None;
+        };
+        for index in 0..values.len() {
+            let Held::List(places) = &values[index] else {
+                return None;
+            };
+            let longer = places.iter().chain(&pushed).cloned().collect();
+            add(values, Held::List(longer));
+        }
+        (values.len() <= MOST_ALTERNATIVES).then_some(())
     }
 
     fn is_exported(&self, symbol: SymbolId) -> bool {
@@ -1030,14 +1166,41 @@ impl Follower<'_, '_, '_> {
     }
 
     fn is_kept_as_written(&mut self, symbol: SymbolId) -> bool {
-        let bound = self.inputs.bound;
+        let (bound, decisions) = (self.inputs.bound, self.inputs.decisions);
         let mentions = self.mentions_of(symbol);
+        let paths = paths_below(decisions, symbol);
         !self.is_exported(symbol)
             && mentions.into_iter().all(|mention| {
                 bound.is_store_target(mention)
                     || self.find_push(mention).is_some() && self.is_initialized_with_list(symbol)
                     || self.keeps_as_written(mention)
             })
+            && paths.into_iter().all(|(site, named)| {
+                self.find_push_put(site, named).is_some() && self.is_initialized_with_list(symbol)
+                    || self.keeps_path_as_written(site, named)
+            })
+    }
+
+    /// `keeps_as_written` for the first name of the path that a define puts at `site`: what the code does with the members that the path reads.
+    fn keeps_path_as_written(&mut self, site: ExprId, named: &NamedPath<'_>) -> bool {
+        let &ScanInputs { hir, bound, .. } = self.inputs;
+        // A member in front of the last one is read and nothing else: what it holds cannot be changed, or the member behind it decides.
+        for length in 2..named.names.len() {
+            let held = self.values_of_path(named, length);
+            if held.is_some_and(|held| !held.iter().any(Held::can_be_changed)) {
+                return true;
+            }
+        }
+        let member = self.outermost_cast(site);
+        let is_deleted = matches!(bound.parent_of_expr(member), Parent::Expr(user)
+            if matches!(hir[user].kind, ExprKind::Unary { op: UnOp::Delete, .. }));
+        if is_deleted || bound.get_assignment_target(hir, member).is_some() {
+            return false;
+        }
+        match self.find_call_of_member(site) {
+            Some(_) => self.asks_list_without_changing_it(site),
+            None => self.holds_what_cannot_be_changed(site) || self.keeps_as_written(site),
+        }
     }
 
     fn holds_what_cannot_be_changed(&mut self, e: ExprId) -> bool {
@@ -1123,8 +1286,7 @@ impl Follower<'_, '_, '_> {
 
     /// The object of `member`, which is called, is a list, and a program cannot replace these members of a list.
     fn asks_list_without_changing_it(&mut self, member: ExprId) -> bool {
-        let hir = self.inputs.hir;
-        let Some((object, MemberKey::Name(name))) = hir.member_key(member) else {
+        let Some((object, MemberKey::Name(name))) = self.member_key_of(member) else {
             return false;
         };
         let asks = name == known::join
@@ -1136,7 +1298,7 @@ impl Follower<'_, '_, '_> {
             Some((_, call)) => self.find_walk_of_list(call).is_some(),
             None => false,
         };
-        let elements = self.values_of_elements(object);
+        let elements = self.elements_of_object(object);
         elements.is_some_and(|elements| {
             asks || hands_elements_on && !elements.iter().any(Held::can_be_changed)
         })
@@ -1337,8 +1499,8 @@ impl Follower<'_, '_, '_> {
                 below_folder => below_folder,
             };
         }
-        if let Some((list, MemberKey::Name(known::join))) = hir.member_key(callee)
-            && let Some(lists) = self.values_of(list)
+        if let Some((list, MemberKey::Name(known::join))) = self.member_key_of(callee)
+            && let Some(lists) = self.values_of_object(list)
             && lists.iter().all(|value| matches!(value, Held::List(_)))
         {
             return self.values_of_joined_lists(&lists, call.args);
@@ -1417,7 +1579,9 @@ impl Follower<'_, '_, '_> {
             FoldedValue::Unknown => None,
         };
         let is_module = |specifier: Atom| names.contains(&atoms.bytes(specifier));
+        let text = FileText::of(hir, bound, Some(decisions));
         find_export_of_module(hir, bound, callee, &find_constant, &is_module)
+            .or_else(|| text.find_export_behind_define(callee, &is_module))
     }
 
     // `new URL("./lib/" + name + ".js", import.meta.url)` is the URL that `import.meta.resolve` answers with for a file that is written out with its extension.
@@ -1488,6 +1652,7 @@ impl Follower<'_, '_, '_> {
         matches!(expr_kind(hir, e), Some(ExprKind::Dot { obj, name, chain: Chain::No, .. })
             if name == known::url
                 && matches!(expr_kind(hir, hir.skip_type_assertions(obj)), Some(ExprKind::ImportMeta)))
+            && !self.is_replaced(e)
             && !bound.import_meta_may_be_modified()
     }
 
@@ -1495,7 +1660,7 @@ impl Follower<'_, '_, '_> {
     /// a text. But for `concat`, of one that is known whole and has ASCII alone: there a place in the text is a byte, and so is a letter.
     fn values_of_method_of_text(&mut self, callee: ExprId, args: IdList<ExprId>) -> Option<Values> {
         let &ScanInputs { hir, atoms, .. } = self.inputs;
-        let (object, MemberKey::Name(method)) = hir.member_key(callee)? else {
+        let (object, MemberKey::Name(method)) = self.member_key_of(callee)? else {
             return None;
         };
         let method = atoms.bytes(method);
@@ -1515,7 +1680,7 @@ impl Follower<'_, '_, '_> {
         if !is_known {
             return None;
         }
-        let texts = self.values_of(object)?;
+        let texts = self.values_of_object(object)?;
         if texts.is_empty() || !texts.iter().all(|value| matches!(value, Held::Text(_))) {
             return None;
         }
@@ -1559,14 +1724,14 @@ impl Follower<'_, '_, '_> {
             hir, bound, atoms, ..
         } = self.inputs;
         use ResolvedForm::{Path, Url, UrlObject};
-        if let Some((object, MemberKey::Name(method))) = hir.member_key(callee)
+        if let Some((object, MemberKey::Name(method))) = self.member_key_of(callee)
             && args.len() == 0
             && matches!(atoms.bytes(method), b"toString" | b"toJSON" | b"trim")
         {
             let is_trim = atoms.bytes(method) == b"trim";
             let is_of_text = atoms.bytes(method) != b"toJSON";
             let converted = self
-                .values_of(object)?
+                .values_of_object(object)?
                 .into_iter()
                 .map(|value| match value {
                     Held::Resolved(name, UrlObject) if !is_trim => Some(Held::Resolved(name, Url)),
@@ -1819,6 +1984,22 @@ impl Follower<'_, '_, '_> {
         self.functions_in_progress.pop();
         values
     }
+}
+
+/// What the lists hold in any of their places. `None`: one of the values is no list.
+fn elements_of(lists: Values) -> Option<Values> {
+    let mut elements = Values::new();
+    for value in lists {
+        let held = match value {
+            Held::List(places) => places.into_iter().flatten().collect(),
+            Held::ListOf(held) => held,
+            _ => return None,
+        };
+        for value in held {
+            add(&mut elements, value);
+        }
+    }
+    Some(elements)
 }
 
 /// The texts that the answers of resolvers are converted to. `None`: one of the values is something else.

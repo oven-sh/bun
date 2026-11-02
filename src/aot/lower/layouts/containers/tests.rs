@@ -1,8 +1,19 @@
+use bun_ast::Log;
+use bun_sema::atom::Interner;
+use bun_sema::fold::{Define, DefinePath, DefineRoot, DefineValue, FoldOptions};
+use bun_sema::hir_from_data::DataModule;
 use bun_sema::program::FileId;
+use bun_sema::session::Arena;
 
-use crate::compile::testing::lower_program_with_limits;
-use crate::ir::generated::{FieldForm, LayoutKind};
-use crate::ir::{Id, LayoutKey};
+use crate::compile::testing::{
+    default_settings, lower_program_with_limits, lower_program_with_provider,
+};
+use crate::ir::generated::{FieldForm, LayoutKind, visit_value_fields};
+use crate::ir::{FieldWord, Id, LayoutKey, Opcode, Reference, ValueView};
+use crate::load::source_provider::{
+    DeferredLoad, Failed, LoadRequest, Loaded, ModuleName, Resolution, ResolveRequest, SourceFile,
+    SourceProvider, WithoutServices,
+};
 use crate::lower::{Fragment, LoweredFile};
 use crate::statistics::{LimitId, LimitValues};
 
@@ -249,4 +260,102 @@ fn whoever_requires_a_module_names_its_layout() {
         !defined_keys.any(names_layout_of_module),
         "only its own file defines the layout"
     );
+}
+
+/// `--define EXP=exports`
+struct ExportsByDefine;
+
+impl SourceProvider for ExportsByDefine {
+    fn fold_options<'s>(
+        &self,
+        arena: &'s Arena,
+        atoms: &Interner<'s>,
+        log: &mut Log,
+    ) -> FoldOptions<'s> {
+        let define = Define {
+            path: DefinePath {
+                root: DefineRoot::Global(atoms.intern(b"EXP")),
+                members: &[],
+            },
+            value: DefineValue::GlobalPath(arena.alloc_slice_copy(&[atoms.intern(b"exports")])),
+        };
+        FoldOptions {
+            defines: arena.alloc_slice_copy(&[define]),
+            ..WithoutServices.fold_options(arena, atoms, log)
+        }
+    }
+
+    fn resolve(&self, request: &ResolveRequest<'_>, log: &mut Log) -> Result<Resolution, Failed> {
+        WithoutServices.resolve(request, log)
+    }
+
+    fn load(&self, request: &LoadRequest<'_>, log: &mut Log) -> Result<Loaded, Failed> {
+        WithoutServices.load(request, log)
+    }
+
+    fn has_load_plugin(&self, module: ModuleName<'_>) -> bool {
+        WithoutServices.has_load_plugin(module)
+    }
+
+    fn finish_deferred_loads(&self, log: &mut Log) -> Vec<DeferredLoad> {
+        WithoutServices.finish_deferred_loads(log)
+    }
+
+    fn parse_data<'s>(
+        &self,
+        file: &SourceFile<'_>,
+        arena: &'s Arena,
+        atoms: &Interner<'s>,
+        log: &mut Log,
+    ) -> Result<DataModule<'s>, Failed> {
+        WithoutServices.parse_data(file, arena, atoms, log)
+    }
+
+    fn check_embedded_files(&self, log: &mut Log) -> Result<(), Failed> {
+        WithoutServices.check_embedded_files(log)
+    }
+}
+
+// The variable of the module that the operation reads or stores.
+fn variable_of(value: ValueView<'_>) -> Option<Reference> {
+    let fields = value.fields;
+    let mut variable = None;
+    visit_value_fields(value.opcode, fields, 0, &mut |field, at| match field {
+        FieldWord::Operand => {}
+        FieldWord::Reference(kind) => variable = Reference::from_word(kind, fields[at]),
+    });
+    variable
+}
+
+#[test]
+fn a_body_that_names_its_first_object_through_a_define_makes_the_object() {
+    let source = "module.exports = { b: 2 };
+EXP.c = 3;
+console.log(Object.keys(module.exports).join(), Object.keys(EXP).join());
+";
+    let files = [("main.cjs", source)];
+    let lowered = lower_program_with_provider(&files, &default_settings(), &ExportsByDefine);
+    assert_eq!(lowered.len(), 1);
+    let fragment = &lowered[0].1.fragment;
+    let body = fragment.module.body.expect("the module has a body");
+    let mut functions = fragment.functions.iter();
+    let (_, function) = functions
+        .find(|(function, _)| *function == body)
+        .expect("the fragment defines the body of its module");
+    let values = function.body.blocks().flat_map(|block| block.values());
+    let values: Vec<ValueView<'_>> = values.collect();
+    let is_read = |value: &ValueView<'_>| value.opcode == Opcode::GetModuleVariable;
+    let read = values.iter().position(is_read);
+    let read = read.expect("the body reads the object through the define");
+    let first_object = variable_of(values[read]);
+    let in_front = &values[..read];
+    let is_made = |value: &ValueView<'_>| value.opcode == Opcode::NewObject;
+    let is_stored = |value: &ValueView<'_>| {
+        value.opcode == Opcode::PutModuleVariable && variable_of(*value) == first_object
+    };
+    let made = in_front.iter().position(is_made);
+    let made = made.expect("the body makes the object that it begins with");
+    let stored = in_front.iter().position(is_stored);
+    let stored = stored.expect("the body stores the object where the define reads it");
+    assert!(made < stored);
 }

@@ -1567,3 +1567,692 @@ fn name_that_a_loop_takes_out_of_an_object_is_known_by_its_start_and_end() {
         assert_eq!(describe_alternatives(s, site), ["./lib/*.js"], "{text}");
     });
 }
+
+const NAMES_OF_THE_FILE: Fold<'static> = Fold {
+    defines: &[
+        (Path::Global(&["LOAD"]), Defined::GlobalPath(&["load"])),
+        (
+            Path::Global(&["process", "env", "LOAD"]),
+            Defined::GlobalPath(&["load"]),
+        ),
+        (
+            Path::Global(&["CALL"]),
+            Defined::GlobalPath(&["load", "call"]),
+        ),
+        (Path::Global(&["SELF"]), Defined::GlobalPath(&["inner"])),
+        (Path::Global(&["LIST"]), Defined::GlobalPath(&["names"])),
+        (
+            Path::Global(&["PUSH"]),
+            Defined::GlobalPath(&["names", "push"]),
+        ),
+        (
+            Path::Global(&["LIB"]),
+            Defined::GlobalPath(&["paths", "lib"]),
+        ),
+        (
+            Path::Global(&["OPT"]),
+            Defined::GlobalPath(&["opts", "name"]),
+        ),
+    ],
+    ..Fold::NONE
+};
+
+/// The value of the define is the name alone: the function is called there, or the list is pushed to, as where the name is spelled.
+const NAMES_BEHIND_A_DEFINE_THAT_IS_A_NAME: &[(&str, &[&str])] = &[
+    (
+        "function load(name) { return require(name); } LOAD('./a');",
+        &["./a"],
+    ),
+    (
+        "function load(name) { return require(name); } LOAD('./a'); load('./b');",
+        &["./a", "./b"],
+    ),
+    (
+        "function load(name) { return require(name); } process.env.LOAD('./a');",
+        &["./a"],
+    ),
+    (
+        "const names = ['./a']; LIST.push('./b'); for (const name of names) require(name);",
+        &["./a", "./b"],
+    ),
+];
+
+/// The value of the define is a member of what a variable holds: the member is read, or the list is pushed to, as where the path is spelled.
+const NAMES_BEHIND_A_DEFINE_THAT_IS_A_MEMBER: &[(&str, &[&str])] = &[
+    (
+        "const names = ['./a']; PUSH('./b'); for (const name of names) require(name);",
+        &["./a", "./b"],
+    ),
+    ("const paths = { lib: './a' }; require(LIB);", &["./a"]),
+    (
+        "function load(opts) { return require(OPT); } load({ name: './a' });",
+        &["./a"],
+    ),
+];
+
+/// The value of the define hands the function, the list or the object to code that nobody follows.
+const NAMES_BEHIND_A_DEFINE_THAT_ARE_NOT_FOLLOWED: &[&str] = &[
+    "function load(name) { return require(name); } const held = LOAD; held('./a');",
+    "function load(name) { return require(name); } CALL(null, './a');",
+    "const load = function inner(name, again) { return again ? require(name) : SELF('./a', true); }; load('./b');",
+    "const names = ['./a']; change(LIST); for (const name of names) require(name);",
+    "const paths = { lib: './a' }; change(paths); require(LIB);",
+];
+
+fn with_last_site_behind_a_define(
+    text: &str,
+    test: impl for<'s> FnOnce(&Analyzed<'s>, &ImportSite) + Send,
+) {
+    with_workspace(|w| {
+        let inputs = w.fold_inputs(&NAMES_OF_THE_FILE);
+        let s = w.analyze(&Source::new("a.cjs", text), &inputs);
+        let site = s.analysis.import_sites.last();
+        test(&s, site.unwrap_or_else(|| panic!("{text}: no import site")));
+    });
+}
+
+#[test]
+fn name_of_the_file_that_a_define_spells_is_followed_as_the_name_is() {
+    let followed = NAMES_BEHIND_A_DEFINE_THAT_IS_A_NAME.iter();
+    for &(text, names) in followed.chain(NAMES_BEHIND_A_DEFINE_THAT_IS_A_MEMBER) {
+        with_last_site_behind_a_define(text, |s, site| {
+            assert_eq!(describe_alternatives(s, site), names, "{text}");
+        });
+    }
+    for &text in NAMES_BEHIND_A_DEFINE_THAT_ARE_NOT_FOLLOWED {
+        with_last_site_behind_a_define(text, |_, site| {
+            assert_eq!(site.specifier, ImportSpecifier::Unknown, "{text}");
+        });
+    }
+}
+
+const NAMES_OF_AN_IMPORT: Fold<'static> = Fold {
+    defines: &[
+        (
+            Path::Global(&["LIB"]),
+            Defined::GlobalPath(&["paths", "lib"]),
+        ),
+        (Path::Global(&["ONE"]), Defined::GlobalPath(&["lib"])),
+        (Path::Global(&["ALL"]), Defined::GlobalPath(&["paths"])),
+    ],
+    ..Fold::NONE
+};
+
+/// The text, and the export and the member that it reads of the file behind its import where a define names the import. `""`: none.
+const NAMES_BEHIND_A_DEFINE_BELOW_AN_IMPORT: &[(&str, &str, &str)] = &[
+    ("import * as paths from './paths'; import(LIB);", "", "lib"),
+    (
+        "import * as paths from './paths'; const name = LIB; import(name);",
+        "",
+        "lib",
+    ),
+    (
+        "import * as paths from './paths'; import(LIB + '');",
+        "",
+        "lib",
+    ),
+    (
+        "import * as paths from './paths'; import(ALL.lib);",
+        "",
+        "lib",
+    ),
+    ("import { lib } from './paths'; import(ONE);", "lib", ""),
+    (
+        "import { lib } from './paths'; function load(name) { return import(name); } load(ONE);",
+        "lib",
+        "",
+    ),
+];
+
+#[test]
+fn constant_of_another_file_is_read_where_a_define_names_its_import() {
+    for &(text, export, member) in NAMES_BEHIND_A_DEFINE_BELOW_AN_IMPORT {
+        with_workspace(|w| {
+            let inputs = w.fold_inputs(&NAMES_OF_AN_IMPORT);
+            let source = Source::new("a.mjs", text);
+            let atom = |name: &str| match name {
+                "" => Atom::NONE,
+                name => w.atom(name),
+            };
+            let name = ImportedName {
+                import: ImportId(0),
+                export: atom(export),
+                member: atom(member),
+            };
+            let asked = w.analyze(&source, &inputs);
+            assert!(asked.analysis.imported_names.contains(&name), "{text}");
+            let mut hir = w.parse(&source);
+            let given = ImportedConstant {
+                name,
+                value: Constant::String(w.atom("./a")),
+            };
+            hir.imported_constants = ArenaFew::from_iter_in([given].into_iter(), w.arena);
+            let (bound, analysis) = w.analyze_tree(&mut hir, &source, &inputs, &[]);
+            let s = Analyzed {
+                workspace: *w,
+                hir,
+                bound,
+                analysis,
+            };
+            let site = s.analysis.import_sites.last();
+            let site = site.unwrap_or_else(|| panic!("{text}: no import site"));
+            assert_eq!(describe_alternatives(&s, site), ["./a"], "{text}");
+        });
+    }
+}
+
+const FOLDER_OF_THE_MODULE_IS_A_MEMBER: Fold<'static> = Fold {
+    defines: &[(
+        Path::ImportMeta(&["dir"]),
+        Defined::GlobalPath(&["cfg", "dir"]),
+    )],
+    ..Fold::NONE
+};
+
+const FOLDER_OF_THE_MODULE_IS_A_NAME: Fold<'static> = Fold {
+    defines: &[(Path::ImportMeta(&["dir"]), Defined::GlobalPath(&["dir"]))],
+    ..Fold::NONE
+};
+
+const URL_OF_THE_MODULE_IS_A_MEMBER: Fold<'static> = Fold {
+    defines: &[(
+        Path::ImportMeta(&["url"]),
+        Defined::GlobalPath(&["cfg", "base"]),
+    )],
+    ..Fold::NONE
+};
+
+/// A define puts a path where the text spells the folder or the URL of the module: the path is followed, and the text names nothing.
+const NAMES_BEHIND_A_DEFINE_OF_WHAT_THE_MODULE_SAYS_OF_ITSELF: &[(Fold<'static>, &str)] = &[
+    (
+        FOLDER_OF_THE_MODULE_IS_A_MEMBER,
+        "const cfg = { dir: import.meta.dirname + '/sub' }; import(import.meta.dir + '/lib.js');",
+    ),
+    (
+        FOLDER_OF_THE_MODULE_IS_A_NAME,
+        "const dir = import.meta.dirname + '/sub'; import(import.meta.dir + '/lib.js');",
+    ),
+    (
+        URL_OF_THE_MODULE_IS_A_MEMBER,
+        "const cfg = { base: import.meta.resolve('./sub/x.js') }; import(new URL('./lib.js', import.meta.url));",
+    ),
+];
+
+#[test]
+fn path_of_a_define_is_followed_where_the_text_spells_the_folder_or_the_url_of_the_module() {
+    for &(fold, text) in NAMES_BEHIND_A_DEFINE_OF_WHAT_THE_MODULE_SAYS_OF_ITSELF {
+        with_workspace(|w| {
+            let inputs = w.fold_inputs(&fold);
+            let s = w.analyze(&Source::new("a.mjs", text), &inputs);
+            let site = s.analysis.import_sites.last();
+            let site = site.unwrap_or_else(|| panic!("{text}: no import site"));
+            assert_eq!(describe_alternatives(&s, site), ["./sub/lib.js"], "{text}");
+        });
+    }
+}
+
+const LOADERS_OF_THE_FILE: Fold<'static> = Fold {
+    defines: &[
+        (Path::Global(&["REQ"]), Defined::GlobalPath(&["require"])),
+        (Path::Global(&["MADE"]), Defined::GlobalPath(&["made"])),
+        (
+            Path::Global(&["CR"]),
+            Defined::GlobalPath(&["createRequire"]),
+        ),
+        (Path::Global(&["M"]), Defined::GlobalPath(&["m"])),
+        (
+            Path::Global(&["MCR"]),
+            Defined::GlobalPath(&["m", "createRequire"]),
+        ),
+        (Path::Global(&["PROC"]), Defined::GlobalPath(&["proc"])),
+        (
+            Path::Global(&["GBM"]),
+            Defined::GlobalPath(&["proc", "getBuiltinModule"]),
+        ),
+        (
+            Path::Global(&["PGBM"]),
+            Defined::GlobalPath(&["process", "getBuiltinModule"]),
+        ),
+        (
+            Path::Global(&["HERE"]),
+            Defined::GlobalPath(&["__filename"]),
+        ),
+        (Path::Global(&["LOADER"]), Defined::GlobalPath(&["load"])),
+        (
+            Path::Global(&["CALL"]),
+            Defined::GlobalPath(&["require", "call"]),
+        ),
+        (Path::Global(&["LIST"]), Defined::GlobalPath(&["names"])),
+        (Path::Global(&["DIR"]), Defined::GlobalPath(&["__dirname"])),
+        (Path::Global(&["PATH"]), Defined::GlobalPath(&["path"])),
+    ],
+    ..Fold::NONE
+};
+
+/// The define's value is one name, or the path of a `createRequire`: a call there, or of what it makes or fills, loads what the spelled text loads.
+const REQUIRES_BEHIND_A_DEFINE: &[(&str, &str, &[&str])] = &[
+    ("a.cjs", r#"const load = REQ; load("a");"#, &["a"]),
+    (
+        "a.cjs",
+        r#"REQ.call(null, "a"); REQ.apply(null, ["b"]);"#,
+        &["a", "b"],
+    ),
+    (
+        "a.cjs",
+        r#"const load = typeof REQ === "function" ? REQ : require; load("a");"#,
+        &["a"],
+    ),
+    (
+        "a.cjs",
+        r#"const load = typeof REQ === "function" ? REQ : null; load("a");"#,
+        &["a"],
+    ),
+    (
+        "a.cjs",
+        r#"(function (load) { LOADER("a"); })(require);"#,
+        &["a"],
+    ),
+    (
+        "a.cjs",
+        r#"(function (load) { LOADER(require); })(function (r) { r("a"); });"#,
+        &["a"],
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "node:module"; const made = createRequire(import.meta.url); MADE("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "node:module"; const load = CR(import.meta.url); load("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mjs",
+        r#"import m from "node:module"; const load = M.createRequire(import.meta.url); load("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mjs",
+        r#"import m from "node:module"; const load = MCR(import.meta.url); load("a");"#,
+        &["a"],
+    ),
+    (
+        "a.cjs",
+        r#"const { createRequire } = require("module"); const load = createRequire(HERE); load("a");"#,
+        &["module", "a"],
+    ),
+    (
+        "a.cjs",
+        r#"const load = REQ; const { createRequire } = load("module"); const made = createRequire(__filename); made("a");"#,
+        &["module", "a"],
+    ),
+    (
+        "a.cjs",
+        r#"REQ.call(null, "module").createRequire(__filename)("a");"#,
+        &["module", "a"],
+    ),
+    (
+        "a.mjs",
+        r#"const { createRequire } = process.getBuiltinModule("node:module"); const load = CR(import.meta.url); load("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mjs",
+        r#"const m = process.getBuiltinModule("node:module"); const { createRequire } = M; const load = createRequire(import.meta.url); load("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mjs",
+        r#"const proc = process; const { createRequire } = PROC.getBuiltinModule("node:module"); createRequire(import.meta.url)("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mjs",
+        r#"const proc = process; const { createRequire } = GBM("node:module"); createRequire(import.meta.url)("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mjs",
+        r#"import process from "node:process"; const { createRequire } = PGBM("node:module"); createRequire(import.meta.url)("a");"#,
+        &["a"],
+    ),
+    // The lowering tests the receiver of `call`, and a path in place of the callee has none: the build stops at this call.
+    ("a.cjs", r#"CALL(null, "a");"#, &[]),
+];
+
+/// The one name that a define puts where a file is named is followed as where the name is spelled.
+const NAMES_OF_FILES_BEHIND_A_DEFINE: &[(&str, &[&str])] = &[
+    (
+        "const names = ['./a', './b']; for (const name of LIST) require(name);",
+        &["./a", "./b"],
+    ),
+    (
+        "const name = c ? 'a' : 'b'; require(`${DIR}/lib/${name}.js`);",
+        &["./lib/a.js", "./lib/b.js"],
+    ),
+    (
+        "const path = c ? './a' : './b'; require(PATH);",
+        &["./a", "./b"],
+    ),
+    (
+        "function load(path) { return require(PATH); } load('./a'); load('./b');",
+        &["./a", "./b"],
+    ),
+    (
+        "const path = require('path'); const name = c ? 'a' : 'b'; require(PATH.join(__dirname, 'lib', name + '.js'));",
+        &["./lib/a.js", "./lib/b.js"],
+    ),
+];
+
+const REQUIRE_OF_THE_FILE: Fold<'static> = Fold {
+    defines: &[(Path::Global(&["require"]), Defined::GlobalPath(&["load"]))],
+    ..Fold::NONE
+};
+
+const REQUIRE_BELOW_A_VARIABLE: Fold<'static> = Fold {
+    defines: &[(
+        Path::Global(&["require"]),
+        Defined::GlobalPath(&["loader", "load"]),
+    )],
+    ..Fold::NONE
+};
+
+/// Where the text spells `require`, what a define names there is called: no file is loaded, and what the call hands out makes no `require`.
+const TEXTS_WITHOUT_THE_REQUIRE_OF_THE_FILE: &[(Fold<'static>, &str, &str)] = &[
+    (
+        REQUIRE_OF_THE_FILE,
+        "a.cjs",
+        r#"function load(name) { return name; } require("a");"#,
+    ),
+    (
+        REQUIRE_OF_THE_FILE,
+        "a.mjs",
+        r#"function load(name) { return { createRequire: () => load }; } const { createRequire } = require("node:module"); const made = createRequire(import.meta.url); made("a");"#,
+    ),
+    (
+        REQUIRE_BELOW_A_VARIABLE,
+        "a.cjs",
+        r#"const loader = { load(name) { return name; } }; require("a");"#,
+    ),
+];
+
+#[test]
+fn loader_that_a_define_names_is_followed_as_the_spelled_name_is() {
+    for &(path, text, specifiers) in REQUIRES_BEHIND_A_DEFINE {
+        with_workspace(|w| {
+            let inputs = w.fold_inputs(&LOADERS_OF_THE_FILE);
+            let s = w.analyze(&Source::new(path, text), &inputs);
+            let sites = s.analysis.import_sites.iter();
+            let required = sites.filter_map(|site| match (site.kind, site.specifier) {
+                (ImportSiteKind::Require(_), ImportSpecifier::Constant(name)) => {
+                    Some(s.workspace.text(name))
+                }
+                _ => None,
+            });
+            assert_eq!(required.collect::<Vec<&str>>(), specifiers, "{text}");
+        });
+    }
+    for &(text, names) in NAMES_OF_FILES_BEHIND_A_DEFINE {
+        with_workspace(|w| {
+            let inputs = w.fold_inputs(&LOADERS_OF_THE_FILE);
+            let s = w.analyze(&Source::new("a.cjs", text), &inputs);
+            let site = s.analysis.import_sites.last();
+            let site = site.unwrap_or_else(|| panic!("{text}: no import site"));
+            assert_eq!(describe_alternatives(&s, site), names, "{text}");
+        });
+    }
+    for &(fold, path, text) in TEXTS_WITHOUT_THE_REQUIRE_OF_THE_FILE {
+        with_workspace(|w| {
+            let inputs = w.fold_inputs(&fold);
+            let s = w.analyze(&Source::new(path, text), &inputs);
+            assert!(s.analysis.import_sites.is_empty(), "{text}");
+        });
+    }
+}
+
+#[test]
+fn binding_that_holds_import_meta_require_is_followed_where_a_define_names_it() {
+    with_workspace(|w| {
+        let inputs = w.fold_inputs(&LOADERS_OF_THE_FILE);
+        let text = r#"const made = import.meta.require; MADE("a"); const same = MADE; same("b");"#;
+        let s = w.analyze(&Source::new("a.mjs", text), &inputs);
+        let sites = s.analysis.import_sites.iter();
+        let required = sites.filter_map(|site| match (site.kind, site.specifier) {
+            (ImportSiteKind::ImportMetaRequire(_), ImportSpecifier::Constant(name)) => {
+                Some(s.workspace.text(name))
+            }
+            _ => None,
+        });
+        assert_eq!(required.collect::<Vec<&str>>(), ["a", "b"], "{text}");
+    });
+}
+
+const ROUTES_OF_THE_FILE: Fold<'static> = Fold {
+    defines: &[
+        (Path::Global(&["REQ"]), Defined::GlobalPath(&["require"])),
+        (Path::Global(&["MOD"]), Defined::GlobalPath(&["module"])),
+        (Path::Global(&["FILE"]), Defined::GlobalPath(&["file"])),
+        (
+            Path::Global(&["TO_PATH"]),
+            Defined::GlobalPath(&["fileURLToPath"]),
+        ),
+        (Path::Global(&["PATH"]), Defined::GlobalPath(&["path"])),
+        (
+            Path::Global(&["HERE"]),
+            Defined::GlobalPath(&["__filename"]),
+        ),
+        (Path::Global(&["HELD"]), Defined::GlobalPath(&["held"])),
+        (Path::Global(&["W"]), Defined::GlobalPath(&["Worker"])),
+        (
+            Path::Global(&["LOAD"]),
+            Defined::GlobalPath(&["module", "require"]),
+        ),
+        (Path::Global(&["FS"]), Defined::GlobalPath(&["fs"])),
+        (
+            Path::Global(&["PUT"]),
+            Defined::GlobalPath(&["writeFileSync"]),
+        ),
+        (
+            Path::Global(&["PUT2"]),
+            Defined::GlobalPath(&["fs", "writeFileSync"]),
+        ),
+        (Path::Global(&["MOCK"]), Defined::GlobalPath(&["mock"])),
+        (Path::Global(&["MODULE"]), Defined::GlobalPath(&["Module"])),
+        (
+            Path::Global(&["CACHE"]),
+            Defined::GlobalPath(&["require", "cache"]),
+        ),
+    ],
+    ..Fold::NONE
+};
+
+/// The finder follows each text where its names are spelled. Here a define puts a name of it, or the path `module.require`.
+const REQUIRES_BY_A_ROUTE_BEHIND_A_DEFINE: &[(&str, &str, &[&str])] = &[
+    ("a.cjs", r#"(0, REQ)("a"); (c && REQ)("b");"#, &["a", "b"]),
+    ("a.cjs", r#"const load = MOD.require; load("a");"#, &["a"]),
+    (
+        "a.cjs",
+        r#"const load = MOD && MOD.require; load.call(MOD, "a");"#,
+        &["a"],
+    ),
+    (
+        "a.cjs",
+        r#"(0, LOAD)("a"); LOAD.call(module, "b"); const load = LOAD; load("c");"#,
+        &["a", "b", "c"],
+    ),
+    ("a.cjs", r#"LOAD("a"); MOD.require("b");"#, &["a", "b"]),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "node:module"; import { fileURLToPath } from "node:url"; const file = fileURLToPath(import.meta.url); createRequire(FILE)("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "node:module"; import { fileURLToPath } from "node:url"; createRequire(TO_PATH(import.meta.url))("a");"#,
+        &["a"],
+    ),
+];
+
+fn analyzed_with_routes_behind_defines(
+    path: &str,
+    text: &str,
+    test: impl for<'s> FnOnce(&Analyzed<'s>) + Send,
+) {
+    with_workspace(|w| {
+        let inputs = w.fold_inputs(&ROUTES_OF_THE_FILE);
+        test(&w.analyze(&Source::new(path, text), &inputs));
+    });
+}
+
+#[test]
+fn route_to_a_loader_is_followed_where_a_define_puts_a_name_on_it() {
+    for &(path, text, specifiers) in REQUIRES_BY_A_ROUTE_BEHIND_A_DEFINE {
+        analyzed_with_routes_behind_defines(path, text, |s| {
+            let sites = s.analysis.import_sites.iter();
+            let required = sites.filter_map(|site| match (site.kind, site.specifier) {
+                (ImportSiteKind::Require(_), ImportSpecifier::Constant(name)) => {
+                    Some(s.workspace.text(name))
+                }
+                _ => None,
+            });
+            assert_eq!(required.collect::<Vec<&str>>(), specifiers, "{text}");
+        });
+    }
+}
+
+#[test]
+fn own_folder_is_known_where_defines_name_the_module_of_paths_and_the_file() {
+    let text = "const path = require('path'); const name = c ? 'a' : 'b'; require(PATH.join(PATH.dirname(HERE), 'lib', name + '.js'));";
+    analyzed_with_routes_behind_defines("a.cjs", text, |s| {
+        let site = s.analysis.import_sites.last();
+        let site = site.unwrap_or_else(|| panic!("{text}: no import site"));
+        let names = ["./lib/a.js", "./lib/b.js"];
+        assert_eq!(describe_alternatives(s, site), names, "{text}");
+    });
+}
+
+/// The table is `require.cache` or the `_cache` of the module `module`. A define names the object that has it, or the path `require.cache`.
+const STORES_TO_THE_CACHE_BEHIND_A_DEFINE: &[&str] = &[
+    r#"const key = c ? "./a.js" : "./b.js"; REQ.cache[key] = entry;"#,
+    r#"const key = c ? "./a.js" : "./b.js"; CACHE[key] = entry;"#,
+    r#"const Module = require("module"); const key = c ? "./a.js" : "./b.js"; MODULE._cache[key] = entry;"#,
+];
+
+fn describe_keys_stored_in_caches(s: &Analyzed<'_>) -> Vec<String> {
+    let entries = find_exprs(&s.hir, |kind| matches!(kind, ExprKind::Index { .. }));
+    let keys = entries
+        .into_iter()
+        .filter_map(|entry| match s.hir.member_key(entry) {
+            Some((_, MemberKey::Computed(key))) => s.analysis.find_key_stored_in_cache(key),
+            _ => None,
+        });
+    keys.flat_map(|key| describe_specifier(s, key)).collect()
+}
+
+#[test]
+fn key_stored_in_the_cache_of_a_require_that_a_define_names_is_known() {
+    for &text in STORES_TO_THE_CACHE_BEHIND_A_DEFINE {
+        analyzed_with_routes_behind_defines("a.cjs", text, |s| {
+            let described = describe_keys_stored_in_caches(s);
+            assert_eq!(described, ["./a.js", "./b.js"], "{text}");
+        });
+    }
+}
+
+/// The function that changes the file is read off `Bun` or off a module of files. A define puts a name on the way to it, or the path of the function.
+const PATHS_OF_FILES_CHANGED_BEHIND_A_DEFINE: &[(&str, &str, &[&str])] = &[
+    (
+        "a.mjs",
+        "export {}; const held = Bun; await HELD.write('/p/a.js', text);",
+        &["/p/a.js"],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; FS.writeFileSync('/p/a.js', text);",
+        &["/p/a.js"],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; await FS.promises.writeFile('/p/a.js', text);",
+        &["/p/a.js"],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; FS.renameSync('/p/a.js', '/p/b.js');",
+        &["/p/a.js", "/p/b.js"],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; const same = FS; same.writeFileSync('/p/a.js', text);",
+        &["/p/a.js"],
+    ),
+    (
+        "a.mjs",
+        "import { writeFileSync } from 'node:fs'; PUT('/p/a.js', text);",
+        &["/p/a.js"],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; PUT2('/p/a.js', text);",
+        &["/p/a.js"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'); FS.unlinkSync('/p/a.js');",
+        &["/p/a.js"],
+    ),
+];
+
+#[test]
+fn path_of_a_file_that_a_call_on_a_defined_name_changes_is_known() {
+    for &(path, text, paths) in PATHS_OF_FILES_CHANGED_BEHIND_A_DEFINE {
+        analyzed_with_routes_behind_defines(path, text, |s| {
+            let changed = s.analysis.paths_of_changed_files.iter();
+            let described: Vec<String> = changed
+                .flat_map(|(_, specifier)| describe_specifier(s, specifier))
+                .collect();
+            assert_eq!(described, paths, "{text}");
+        });
+    }
+}
+
+#[test]
+fn mock_of_a_module_is_a_site_where_a_define_names_the_mock_of_the_test_runner() {
+    let text = r#"import { mock } from "bun:test"; MOCK.module("./a", f);"#;
+    analyzed_with_routes_behind_defines("a.mjs", text, |s| {
+        let sites = s.analysis.import_sites.iter();
+        let mocked = sites.filter_map(|site| match (site.kind, site.specifier) {
+            (ImportSiteKind::MockModule(_), ImportSpecifier::Constant(name)) => {
+                Some(s.workspace.text(name))
+            }
+            _ => None,
+        });
+        assert_eq!(mocked.collect::<Vec<&str>>(), ["./a"], "{text}");
+    });
+}
+
+/// `Worker` is what the file takes out of `node:worker_threads`, or the global.
+const WORKERS_BEHIND_A_DEFINE: &[&str] = &[
+    "const { Worker } = require('node:worker_threads'); new W('./a/' + x + '.js', options);",
+    "new W('./a/' + x + '.js');",
+];
+
+#[test]
+fn name_of_a_worker_is_known_in_part_where_a_define_names_its_constructor() {
+    for &text in WORKERS_BEHIND_A_DEFINE {
+        analyzed_with_routes_behind_defines("a.cjs", text, |s| {
+            let constructions = find_exprs(&s.hir, |kind| matches!(kind, ExprKind::New(_)));
+            let names = constructions.into_iter().filter_map(|construction| {
+                let ExprKind::New(call) = s.hir[construction].kind else {
+                    return None;
+                };
+                let argument = s.hir.ids(s.hir[call].args).next()?;
+                s.analysis.find_name_of_worker(argument)
+            });
+            let described: Vec<String> =
+                names.flat_map(|name| describe_specifier(s, name)).collect();
+            assert_eq!(described, ["./a/*.js"], "{text}");
+        });
+    }
+}

@@ -1,3 +1,4 @@
+mod applied_define_heads;
 mod children;
 mod data_literals;
 mod dead_code;
@@ -16,11 +17,13 @@ mod removed_by_bun_run;
 mod run_order;
 mod string_affixes;
 
+pub use applied_define_heads::AppliedDefineHead;
 pub use children::{TreeNode, push_children};
 pub use data_literals::data_value_of;
 pub(crate) use dead_code::mark_nodes_below;
 pub(crate) use evaluate::is_exact_power;
 use evaluate::{Evaluator, Value};
+pub use inputs::DefineHead;
 pub use inputs::{
     Define, DefinePath, DefineRoot, DefineValue, FoldInputs, FoldOptions, RuntimeValueKind,
     StoredByMocks,
@@ -32,7 +35,7 @@ pub(crate) use string_affixes::{
 };
 
 use crate::atom::{Atom, Interner};
-use crate::bind::Bound;
+use crate::bind::{Bound, ImplicitReference};
 use crate::file_analysis::FileInputs;
 use crate::hir::{BinOp, ExprId, ExprKind, File, FnId, ImportedName, NodeData, StmtId, UnOp};
 use crate::hir_from_data::DataValue;
@@ -78,14 +81,24 @@ pub enum FoldedData<'s> {
     Known(DataValue<'s>),
 }
 
+/// The path of a define whose first name the binder recorded there (`Bound::define_head`). `names` is the whole path and begins with `head.name`.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct NamedPath<'s> {
+    pub head: ImplicitReference,
+    pub names: &'s [Atom],
+}
+
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub enum Decision<'s> {
     Unknown,
     Constant(Constant),
     GlobalPath(&'s [Atom]),
+    NamedPath(&'s NamedPath<'s>),
     Data(&'s DataValue<'s>),
     DeferredData,
 }
+
+const _: () = assert!(size_of::<Decision<'static>>() == 24);
 
 impl<'s> Decision<'s> {
     pub fn of_data(data: &'s DataValue<'s>) -> Decision<'s> {
@@ -133,6 +146,10 @@ struct FoldedConstant {
 #[derive(Copy, Clone, Default, Debug)]
 pub struct Decisions<'s> {
     decided: &'s [(ExprId, Decision<'s>)],
+    /// Whether `decided` has a `Decision::GlobalPath` or `Decision::NamedPath`. Only a fold with a define whose value is a name or a path has one.
+    has_define_paths: bool,
+    /// The expressions with a `Decision::NamedPath` below no other decided one, with their paths, by the node of the head. No two heads share one.
+    applied_heads: &'s [(ExprId, &'s NamedPath<'s>)],
     constants: &'s [FoldedConstant],
     specifiers: &'s [(ExprId, ImportSpecifier)],
     paths_from_own_directory: &'s [ExprId],
@@ -155,6 +172,12 @@ impl<'s> Decisions<'s> {
             Ok(index) => self.decided[index].1,
             Err(_) => Decision::Unknown,
         }
+    }
+
+    /// Whether a define puts a name or a path in place of an expression of the file. Whoever looks for such expressions asks here first.
+    #[inline]
+    pub fn has_define_paths(&self) -> bool {
+        self.has_define_paths
     }
 
     pub fn constant(&self, hir: &File<'_>, expr: ExprId) -> FoldedValue {
@@ -211,14 +234,32 @@ impl<'s> Decisions<'s> {
         self.dead_stmts.has(stmt.idx())
     }
 
-    /// Whether both remove the same code and know the same specifiers. Whoever looks for the import sites of a file, for its format and
-    /// for what it asks of other files reads nothing else of them.
+    /// Where the fold applied the define whose first name `reference` records: the expression, dead code or not, and the path. `None`: nowhere.
+    pub fn site_of_define_head(
+        &self,
+        reference: &ImplicitReference,
+    ) -> Option<(ExprId, &'s NamedPath<'s>)> {
+        let heads = self.applied_heads;
+        let root = root_of_head(reference);
+        let found = heads.binary_search_by_key(&root, |entry| root_of_head(&entry.1.head));
+        let applied = heads[found.ok()?];
+        (applied.1.head.name == reference.name).then_some(applied)
+    }
+
+    /// Whether code that `is_dead_expr` leaves reads the first name of a define that `reference` records. `bun run` may remove more code.
+    pub fn reads_define_head(&self, reference: &ImplicitReference) -> bool {
+        let applied = self.site_of_define_head(reference);
+        applied.is_some_and(|(site, _)| !self.is_dead_expr(site))
+    }
+
+    /// Whether both remove the same code, know the same specifiers and apply the same defines. Import sites, format and requests read nothing else.
     pub(crate) fn has_same_code_and_specifiers(&self, other: &Decisions<'_>) -> bool {
         self.dead_exprs.0 == other.dead_exprs.0
             && self.dead_stmts.0 == other.dead_stmts.0
             && self.dead_exprs_in_bun_run.0 == other.dead_exprs_in_bun_run.0
             && self.dead_stmts_in_bun_run.0 == other.dead_stmts_in_bun_run.0
             && self.specifiers == other.specifiers
+            && self.applied_heads == other.applied_heads
     }
 
     /// `bun run` folds less than a build does. In the result, only the code that `bun run` removes too is dead.
@@ -354,4 +395,12 @@ fn literal_constant(hir: &File<'_>, kind: ExprKind) -> Option<Constant> {
         ExprKind::BigInt(digits) => Constant::BigInt(digits),
         _ => return None,
     })
+}
+
+// The binder records a define's first name at the identifier or the `import.meta` that the define names. Other records may be at other nodes.
+fn root_of_head(reference: &ImplicitReference) -> Option<ExprId> {
+    match reference.node {
+        NodeData::Expr(root) => Some(root),
+        _ => None,
+    }
 }

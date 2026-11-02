@@ -222,3 +222,61 @@ for (const [title, words] of Object.entries(forms)) {
     expect(compiled.scan).toEndWith("spies on objects from somewhere false");
   });
 }
+
+// `--define NS=math` puts the object of a module where no identifier spells the name that holds it: the import of a namespace, or a variable
+// with what `import()` answered. The file hands the module on there as with the spelled name, so flow finds no export that was left closed.
+const besideDefine = {
+  "src/math.js": `
+export function add(a, b) { return a + b; }
+export function twice(n) { return add(n, n); }
+`,
+  "helpers/watch.js": `
+import { spyOn } from "bun:test";
+export function watch(object, name) { return spyOn(object, name); }
+`,
+};
+const handedOnByDefine: Record<string, string> = {
+  "the import of a namespace": `
+import { test } from "bun:test";
+import * as math from "./src/math.js";
+import { watch } from "./helpers/watch.js";
+test("a spy in a helper that is handed the namespace by a define", () => {
+  const spy = watch(NS, "add").mockReturnValue(7);
+  console.log("spied", math.twice(3));
+  spy.mockRestore();
+  console.log("restored", math.twice(3));
+});
+`,
+  "a variable with what import() answered": `
+import { test } from "bun:test";
+import { watch } from "./helpers/watch.js";
+import { twice } from "./src/math.js";
+test("a spy in a helper that is handed what a load answered", async () => {
+  const math = await import("./src/math.js");
+  const spy = watch(NS, "add").mockReturnValue(7);
+  console.log("spied", twice(3));
+  spy.mockRestore();
+  console.log("restored", twice(3));
+});
+`,
+};
+
+for (const [title, testFile] of Object.entries(handedOnByDefine)) {
+  test(`a spy in a helper that a --define hands the object of a module: ${title}`, async () => {
+    using dir = tempDir("spies-on-what-a-define-hands-on", { ...besideDefine, "one.test.js": testFile });
+    const lines = async (...flags: string[]) => {
+      const env = { ...bunEnv, ...forms["one program"], BUN_JSC_logAOTPhaseTimes: "1" };
+      const command = [bunExe(), "test", ...flags, "--define", "NS=math"];
+      const { stdout, stderr, exitCode } = await run(command, String(dir), env);
+      expect({ stderr: exitCode ? stderr : "", exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      return {
+        printed: stdout.split("\n").filter(line => /^(spied|restored) /.test(line)),
+        startsOver: stderr.split("\n").filter(line => line.startsWith("AOT build starts over")),
+      };
+    };
+    const [plain, compiled] = [await lines(), await lines("--aot")];
+    expect(plain.printed).toHaveLength(2);
+    expect(compiled.printed).toEqual(plain.printed);
+    expect(compiled.startsOver).toEqual([]);
+  });
+}

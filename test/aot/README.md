@@ -70,7 +70,7 @@ last section.
   imports calls `import()`: without the variable the text comes in a later turn of the event loop, under `bun run` and in an
   executable. Plain Bun is steady there only while no two texts are being read at once: otherwise the program stores its lines.
 - **What changes code is a flag.** No environment variable changes the code that a build generates. A program asks for a flag, hidden
-  `--aot-<word>` flags included, with `// Flags:`.
+  `--aot-<word>` flags included, with `// Flags:`. Plain Bun is started with the `--define` flags of that line, and with no other.
 - **A declaration file anywhere under `parallel/` is read for every program there**, because `parallel/tsconfig.json` includes it, as
   a project's `tsconfig.json` would. What a `.d.ts` of a test declares needs names of its own: no `declare function require`, no
   class with a method `m`.
@@ -119,7 +119,7 @@ The cheapest kind that still asks the question.
 | The smallest program for something the compiler once got wrong             | the same, in the folder of its topic or in `parallel/edge-cases/`                                                                                                                                         |
 | A closed program whose answers the shell of the engine checks by itself    | IR text that runs: `tools/answers-test-from-source.ts <program>` makes it. `aot/tests/answers/` in WebKit, `engine-tests/answers/` here where it needs the library. No build of Bun, 0.03 s               |
 | That a fault made on purpose (`--aot-sabotage=<name>`) changes an answer   | such a closed program, and a row for the name in `engine/programs-that-notice-a-sabotage.ts`: `engine/answers-under-a-sabotage.test.ts` builds it with the fault                                          |
-| A program that differs from plain Bun on purpose                           | the same, with `/* Output: .. */` or `/* Build errors: .. */` at its end; most are in `parallel/type-rules/`                                                                                              |
+| A program that differs from plain Bun on purpose                           | the same, with `/* Output: .. */` or `/* Build errors: .. */` at its end; most are in `parallel/type-rules/`. An error TS100050 needs `/* Plain Bun prints: .. */` directly above Build errors            |
 | That an optimization ran on a whole program                                | the same, with `// STATISTIC: <name> (= \| >= \| <=) <n>`                                                                                                                                                 |
 | That a program takes no slow path when it runs                             | the same, with `// COUNT: <name> (= \| >= \| <=) <n>`: calls into the run time, lookups by name, branches and cells, counted exactly. No program reads a clock. `// COUNTER:` is the same                 |
 | That one part of a program takes no slow path                              | the same. It asks `aotOperationCount("<operation>")` before and after the part, if there is such a function, and prints what it prints for 0. Only the `jsc` shell has one: `run-parallel.ts`, `shell/expectations.py` and `shell/quick.py` each run such a program there too, and `counts-pinned-by-programs.test.ts` runs all of them |

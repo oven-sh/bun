@@ -364,6 +364,47 @@ fn define_values_keep_their_kind() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
+fn define_heads_say_where_a_define_renames_its_root() {
+    let session = Session::new();
+    let workspace = Workspace::new(&session);
+    let define = |root: DefineRoot, members: &[&str], names: &[&str]| {
+        let names: Vec<Atom> = names.iter().map(|name| workspace.atom(name)).collect();
+        Define {
+            path: workspace.path(root, members),
+            value: DefineValue::GlobalPath(slice_in(&names, workspace.arena)),
+        }
+    };
+    let [key, path, twice] = ["KEY", "PATH", "TWICE"].map(|name| workspace.global(name));
+    let defines = [
+        define(key, &["member"], &["target", "member"]),
+        define(key, &[], &["target"]),
+        define(key, &["other"], &["holder"]),
+        define(path, &[], &["target", "member"]),
+        define(path, &["member"], &["target"]),
+        define(DefineRoot::ImportMeta, &["env"], &["holder"]),
+        define(twice, &[], &["target"]),
+        define(twice, &[], &["holder"]),
+        workspace.define(key, &["count"], 1.0),
+    ];
+    let inputs = workspace.inputs(&defines, &[]);
+    let head = |root: DefineRoot, head: &str, renames_root: bool| DefineHead {
+        root,
+        head: workspace.atom(head),
+        renames_root,
+    };
+    let expected = [
+        head(key, "target", true),
+        head(key, "holder", false),
+        head(path, "target", false),
+        head(DefineRoot::ImportMeta, "holder", false),
+        head(twice, "target", false),
+        head(twice, "holder", true),
+    ];
+    assert_eq!(inputs.define_heads(), expected);
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
 fn state_below_dropped_path_has_no_node() {
     let session = Session::new();
     let workspace = Workspace::new(&session);

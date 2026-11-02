@@ -3,7 +3,7 @@
 
 use super::ScanInputs;
 use super::call_sites::is_free_name;
-use super::made_requires::follow_settled_bindings;
+use super::made_requires::{Text, follow_settled_bindings};
 use crate::atom::Atom;
 use crate::fold::{Constant, FoldedValue, find_members_below_module};
 use crate::hir::{ExprId, ExprKind, IdList, MemberKey};
@@ -48,8 +48,9 @@ fn find_function(inputs: &ScanInputs<'_, '_>, callee: ExprId) -> Option<(Holder,
     let &ScanInputs {
         hir, bound, atoms, ..
     } = inputs;
+    let text = Text::of(hir, bound, Some(inputs.decisions));
     if let Some((object, MemberKey::Name(name))) = hir.member_key(callee) {
-        let object = follow_settled_bindings(hir, bound, hir.skip_type_assertions(object));
+        let object = follow_settled_bindings(text, hir.skip_type_assertions(object));
         if is_free_name(hir, bound, object, &[atoms.intern(b"Bun")]) {
             return Some((Holder::Bun, name));
         }
@@ -65,7 +66,11 @@ fn find_function(inputs: &ScanInputs<'_, '_>, callee: ExprId) -> Option<(Holder,
         true
     };
     let find_constant = |e| find_constant(inputs, e);
-    let members = find_members_below_module(hir, bound, callee, &find_constant, &is_module)?;
+    let members = find_members_below_module(hir, bound, callee, &find_constant, &is_module)
+        .or_else(|| {
+            let (specifier, members) = text.find_members_behind_define(callee)?;
+            is_module(specifier).then_some(members)
+        })?;
     match (holder.get(), &members[..]) {
         (holder, &[name]) => Some((holder, name)),
         (Holder::Fs, &[name, promises]) if atoms.bytes(promises) == b"promises" => {
@@ -80,7 +85,8 @@ fn find_path_of_file_object(inputs: &ScanInputs<'_, '_>, file: ExprId) -> Option
     let &ScanInputs {
         hir, bound, atoms, ..
     } = inputs;
-    let file = follow_settled_bindings(hir, bound, hir.skip_type_assertions(file));
+    let text = Text::of(hir, bound, Some(inputs.decisions));
+    let file = follow_settled_bindings(text, hir.skip_type_assertions(file));
     let ExprKind::Call(call) = hir[file].kind else {
         return None;
     };
@@ -104,14 +110,21 @@ pub(super) fn find_operands_that_name_changed_files(
     callee: ExprId,
     args: IdList<ExprId>,
 ) -> SmallVec<[ExprId; 2]> {
-    let &ScanInputs { hir, atoms, .. } = inputs;
+    let &ScanInputs {
+        hir, bound, atoms, ..
+    } = inputs;
     let callee = hir.skip_type_assertions(callee);
     let mut found = SmallVec::new();
-    // Most calls are calls of a member, and most members go by another name.
-    let written_name = match hir.member_key(callee) {
-        Some((_, MemberKey::Name(name))) => Some(atoms.bytes(name)),
-        Some(_) => return found,
-        None => None,
+    let text = Text::of(hir, bound, Some(inputs.decisions));
+    // Most calls are calls of a member, and most members go by another name. A path that a define puts in place of the callee goes by its last name.
+    let written_name = match text.path_put_at(callee).map(|named| named.names) {
+        Some(&[_]) => None,
+        Some(names) => names.last().map(|&name| atoms.bytes(name)),
+        None => match hir.member_key(callee) {
+            Some((_, MemberKey::Name(name))) => Some(atoms.bytes(name)),
+            Some(_) => return found,
+            None => None,
+        },
     };
     let may_be_named = |name: &[u8]| {
         !operands_changed_by_function_of_fs(name).is_empty()
@@ -119,7 +132,7 @@ pub(super) fn find_operands_that_name_changed_files(
             || matches!(name, b"open" | b"openSync")
     };
     if written_name.is_some_and(|name| !may_be_named(name))
-        || written_name.is_none() && !matches!(hir[callee].kind, ExprKind::Ident(_))
+        || written_name.is_none() && !text.is_name(callee)
     {
         return found;
     }

@@ -1,11 +1,11 @@
 use super::bits::has_bit;
 use super::declaration_kinds::declaration_symbol;
-use super::storage::RuntimeDeclarationsIn;
+use super::storage::{RuntimeDeclarationsIn, implicit_reference_order};
 use super::{
     AnnexBFunction, Binding, BindingInitializer, BindingKind, BindingStability, CodeUnit,
-    CommonJsVariable, EarlyRedeclaration, EvalScope, FunctionFlags, ImplicitReference,
-    InitialState, ParameterVarCopy, PrivateName, PrivateNameId, RuntimeBindings, RuntimeBindingsIn,
-    StoreKind, SymbolStore, stability,
+    CommonJsVariable, DynamicLookup, EarlyRedeclaration, EvalScope, FunctionFlags,
+    ImplicitReference, ImplicitReferenceKind, InitialState, ParameterVarCopy, PrivateName,
+    PrivateNameId, RuntimeBindings, RuntimeBindingsIn, StoreKind, SymbolStore, stability,
 };
 use crate::atom::Atom;
 use crate::bind::{
@@ -26,6 +26,23 @@ pub(super) const IDENTS_IN_RUN: usize = 16;
 #[inline]
 pub(super) fn find_symbol<K: Ord + Copy>(list: &[(K, SymbolId)], key: K) -> Option<SymbolId> {
     find_entry(list, key).copied()
+}
+
+/// The entry of `reference` in `RuntimeReferencesIn::dynamic_implicit_lookups`. What the name is bound to does not tell two references apart.
+pub(super) fn find_reference_lookup(
+    lookups: &[(ImplicitReference, DynamicLookup)],
+    reference: &ImplicitReference,
+) -> Option<DynamicLookup> {
+    if lookups.is_empty() {
+        return None;
+    }
+    let order = implicit_reference_order(reference);
+    let first = lookups.partition_point(|entry| implicit_reference_order(&entry.0) < order);
+    let mut in_place = lookups[first..]
+        .iter()
+        .take_while(|entry| implicit_reference_order(&entry.0) == order);
+    let found = in_place.find(|entry| entry.0.name == reference.name)?;
+    Some(found.1)
 }
 
 #[inline]
@@ -291,6 +308,35 @@ impl Bound<'_> {
         }
     }
 
+    /// The record of `head` at `root`. `None`: `root` is not evaluated, or `head` is free and no `with` object or evaluated text may declare it.
+    pub fn define_head(&self, root: ExprId, head: Atom) -> Option<&ImplicitReference> {
+        let references = self.runtime.implicit_references();
+        let root_of = |reference: &ImplicitReference| match (reference.kind, reference.node) {
+            (ImplicitReferenceKind::DefineHead, NodeData::Expr(recorded)) => Some(recorded),
+            _ => None,
+        };
+        // The define heads are the first records, in the order of their roots.
+        let first = references.partition_point(|reference| {
+            root_of(reference).is_some_and(|recorded| recorded < root)
+        });
+        let mut at_root = references[first..]
+            .iter()
+            .take_while(|&reference| root_of(reference) == Some(root));
+        at_root.find(|reference| reference.name == head)
+    }
+
+    /// The records that `define_head` answers with, also where the fold applies no define. `Decisions::applied_define_heads` has those it applied.
+    pub(crate) fn define_heads(&self) -> &[ImplicitReference] {
+        let references = self.runtime.implicit_references();
+        let is_define_head =
+            |reference: &ImplicitReference| reference.kind == ImplicitReferenceKind::DefineHead;
+        // The define heads are the first records, so a file without one is known by its first record and searches nothing.
+        if !references.first().is_some_and(is_define_head) {
+            return &[];
+        }
+        &references[..references.partition_point(is_define_head)]
+    }
+
     pub fn declared_symbol(&self, decl: Decl) -> SymbolId {
         self.declared_binding_symbol(decl)
             .unwrap_or_else(|| self.symbol_of_declaration(decl))
@@ -374,6 +420,11 @@ impl Bound<'_> {
             true => self.scopes[declaring_scope.idx()].parent,
             false => declaring_scope,
         }
+    }
+
+    /// Where the name of a define head is looked for when the program runs. `None`: no `with` object or evaluated text may declare it there.
+    pub fn dynamic_scope_of(&self, reference: &ImplicitReference) -> Option<DynamicLookup> {
+        find_reference_lookup(&self.runtime.references.dynamic_implicit_lookups, reference)
     }
 
     pub fn own_scope(&self, stmt: StmtId) -> ScopeId {
@@ -539,8 +590,11 @@ impl Bound<'_> {
             return false;
         }
         let own_name = Binding::Symbol(self.declared_symbol(Decl::Fn(function)));
+        // A define whose value begins with the name reads it where no identifier spells it.
+        let mut define_heads = self.define_heads().iter();
         let mut idents = (0..hir.exprs.len() as u32).map(ExprId);
-        idents.any(|ident| self.is_evaluated_ident(ident) && self.binding(ident) == own_name)
+        define_heads.any(|head| head.binding == own_name)
+            || idents.any(|ident| self.is_evaluated_ident(ident) && self.binding(ident) == own_name)
     }
 
     pub fn is_called_only_where_written(&self, hir: &File, function: FnId) -> bool {

@@ -342,12 +342,10 @@ impl Summary<'_, '_> {
         }
         let entity_roots = (0..hir.import_equals.len() as u32)
             .map(|import| bound.entity_root_binding(ImportEqualsId(import)));
-        let implicit = bound
-            .runtime
-            .implicit_references()
-            .iter()
-            .map(|it| it.binding);
-        for binding in entity_roots.chain(implicit) {
+        let decisions = &self.analysis.decisions;
+        let implicit = bound.runtime.implicit_references().iter();
+        let implicit = implicit.filter(|reference| decisions.is_read(reference));
+        for binding in entity_roots.chain(implicit.map(|reference| reference.binding)) {
             if let Binding::Symbol(symbol) = binding {
                 uses.used_otherwise.insert(symbol);
             }

@@ -137,6 +137,15 @@ impl FileBinder<'_, '_> {
                 && let Ok(position) = roots.binary_search_by_key(&symbol, |root| root.symbol)
             {
                 self.look_at_root(roots[position], holders);
+                // The value of a define that is the name alone hands the object to code that nobody looks at.
+                let mut unspelled = analysis.decisions.mentions_by_defines(binding).flatten();
+                if let (
+                    Some(_),
+                    StandsFor::ImportedNamespace(module) | StandsFor::RequiredNamespace(module),
+                ) = (unspelled.next(), roots[position].stands_for)
+                {
+                    self.imports.namespaces_handed_out.push(module);
+                }
             }
         }
         let mut references: Vec<(usize, ExprId)> = Vec::new();
@@ -296,6 +305,14 @@ impl FileBinder<'_, '_> {
             let is_read = matches!(bound.parent_of_expr(object), Parent::Expr(user)
                 if hir.member_key(user).is_some_and(|(accessed, _)| accessed == object));
             if !is_read {
+                self.imports.namespaces_handed_out.push(module);
+            }
+        }
+        // The value of a define that is the name of a holder alone hands the object to code that nobody looks at.
+        let decisions = &analysis.decisions;
+        for &(symbol, module) in &held {
+            let unspelled = decisions.mentions_by_defines(Binding::Symbol(symbol));
+            if unspelled.flatten().next().is_some() {
                 self.imports.namespaces_handed_out.push(module);
             }
         }
@@ -1141,5 +1158,126 @@ fn is_callee(hir: &hir::File<'_>, bound: &Bound<'_>, member: ExprId) -> bool {
     match hir[user].kind {
         ExprKind::Call(call) | ExprKind::TaggedTemplate(call) => hir[call].callee == outermost,
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::compile::testing::{default_settings, with_bind_input_and_provider};
+    use crate::load::source_provider::{
+        DeferredLoad, Failed, LoadRequest, Loaded, ModuleName, Resolution, ResolveRequest,
+        SourceFile, SourceProvider, WithoutServices,
+    };
+    use crate::modules::testing::file_named;
+    use crate::modules::{BindInput, bind_modules};
+    use bun_ast::Log;
+    use bun_sema::atom::Interner;
+    use bun_sema::fold::{Define, DefinePath, DefineRoot, DefineValue, FoldOptions};
+    use bun_sema::hir_from_data::DataModule;
+    use bun_sema::program::Sym;
+    use bun_sema::session::Arena;
+
+    /// `--define NS=ns`
+    struct NamespaceByDefine;
+
+    impl SourceProvider for NamespaceByDefine {
+        fn fold_options<'s>(
+            &self,
+            arena: &'s Arena,
+            atoms: &Interner<'s>,
+            log: &mut Log,
+        ) -> FoldOptions<'s> {
+            let define = Define {
+                path: DefinePath {
+                    root: DefineRoot::Global(atoms.intern(b"NS")),
+                    members: &[],
+                },
+                value: DefineValue::GlobalPath(arena.alloc_slice_copy(&[atoms.intern(b"ns")])),
+            };
+            FoldOptions {
+                defines: arena.alloc_slice_copy(&[define]),
+                ..WithoutServices.fold_options(arena, atoms, log)
+            }
+        }
+
+        fn resolve(
+            &self,
+            request: &ResolveRequest<'_>,
+            log: &mut Log,
+        ) -> Result<Resolution, Failed> {
+            WithoutServices.resolve(request, log)
+        }
+
+        fn has_resolve_plugins(&self) -> bool {
+            WithoutServices.has_resolve_plugins()
+        }
+
+        fn load(&self, request: &LoadRequest<'_>, log: &mut Log) -> Result<Loaded, Failed> {
+            WithoutServices.load(request, log)
+        }
+
+        fn has_load_plugin(&self, module: ModuleName<'_>) -> bool {
+            WithoutServices.has_load_plugin(module)
+        }
+
+        fn finish_deferred_loads(&self, log: &mut Log) -> Vec<DeferredLoad> {
+            WithoutServices.finish_deferred_loads(log)
+        }
+
+        fn parse_data<'s>(
+            &self,
+            file: &SourceFile<'_>,
+            arena: &'s Arena,
+            atoms: &Interner<'s>,
+            log: &mut Log,
+        ) -> Result<DataModule<'s>, Failed> {
+            WithoutServices.parse_data(file, arena, atoms, log)
+        }
+
+        fn check_embedded_files(&self, log: &mut Log) -> Result<(), Failed> {
+            WithoutServices.check_embedded_files(log)
+        }
+    }
+
+    // Whether `main.mjs` hands the object of `es.mjs` on: a spy of a test run that takes an object from somewhere may then replace what it exports.
+    fn hands_module_on(main: &str) -> bool {
+        let files = [("main.mjs", main), ("es.mjs", "export const x = 1;")];
+        with_bind_input_and_provider(&files, &default_settings(), &NamespaceByDefine, |input| {
+            let graph = bind_modules(&BindInput {
+                runs_tests: true,
+                spies_on_unknown_objects: true,
+                ..*input
+            })
+            .graph;
+            let file = file_named(input, "es.mjs");
+            let bound = input.files.bound(file);
+            let exports = bound.symbol(bound.file_symbol).exports;
+            let id = bound.lookup(exports, input.files.atoms.intern(b"x"));
+            let id = id.expect("es.mjs does not export x");
+            graph.is_replaceable(Sym { file, id })
+        })
+    }
+
+    #[test]
+    fn name_of_a_define_hands_a_namespace_on_as_the_spelled_name_does() {
+        let imported = |statement: &str| {
+            hands_module_on(&format!("import * as ns from './es.mjs';\n{statement}\n"))
+        };
+        assert!(imported("console.log(ns);"));
+        assert!(imported("console.log(NS);"));
+        assert!(!imported("console.log(ns.x);"));
+        assert!(!imported("if (false) console.log(NS);"));
+    }
+
+    #[test]
+    fn name_of_a_define_hands_on_what_a_load_answered_as_the_spelled_name_does() {
+        let loaded = |statement: &str| {
+            hands_module_on(&format!(
+                "const ns = await import('./es.mjs');\n{statement}\n"
+            ))
+        };
+        assert!(loaded("console.log(ns);"));
+        assert!(loaded("console.log(NS);"));
+        assert!(!loaded("console.log(ns.x);"));
     }
 }

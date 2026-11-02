@@ -1257,14 +1257,21 @@ fn reads_source_paths(files: &Files<'_>, sources: &Sources) -> bool {
         let decisions = &files.analysis(file).decisions;
         let mut names = files.bound(file).ident_bindings().iter();
         let mut sites = files.analysis(file).import_sites.iter();
+        // The value of a define may begin with either name where no identifier spells it.
+        let is_named_by_define = |variable| {
+            let mut unspelled = decisions.mentions_by_defines(Binding::CommonJs(variable));
+            unspelled.next().is_some()
+        };
         names.any(|&(name, binding)| {
             matches!(
                 binding,
                 Binding::CommonJs(CommonJsVariable::Filename | CommonJsVariable::Dirname)
             ) && !decisions.is_dead_expr(name)
-        }) || sites.any(|site| {
-            matches!(site.kind, ImportSiteKind::RequireResolve(call) if !decisions.is_dead_expr(call))
-        })
+        }) || is_named_by_define(CommonJsVariable::Filename)
+            || is_named_by_define(CommonJsVariable::Dirname)
+            || sites.any(|site| {
+                matches!(site.kind, ImportSiteKind::RequireResolve(call) if !decisions.is_dead_expr(call))
+            })
     })
 }
 

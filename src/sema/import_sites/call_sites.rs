@@ -2,13 +2,15 @@ use super::alternatives::{WrittenNames, find_alternatives, find_texts_of_key};
 use super::changed_files::find_operands_that_name_changed_files;
 use super::made_requires::{
     OwnRequire, StepsLeft, Text, find_imported_export, find_own_require, follow_settled_bindings,
-    follow_to_own_require, holds_import_meta_require, may_be_modified, may_require_get_members,
-    settled_symbol,
+    follow_to_own_require, holds_import_meta_require, may_be_modified, settled_symbol,
 };
 use super::{Alternatives, ImportSite, ImportSiteKind, ImportSpecifier, ResolvedForm, ScanInputs};
 use crate::atom::{Atom, Interner, known};
-use crate::bind::{Binding, Bound, CommonJsVariable, Decl, FnOwner, Parent, PatParent, ScopeKind};
-use crate::fold::{Decisions, FoldedValue, find_export_of_module};
+use crate::bind::{
+    Binding, BindingInitializer, BindingStability, Bound, CommonJsVariable, Decl, FnOwner, Parent,
+    PatParent, ScopeId, ScopeKind,
+};
+use crate::fold::{Decision, Decisions, FoldedValue, NamedPath, find_export_of_module};
 use crate::hir::{
     ExprFlags, ExprId, ExprKind, File, IdList, MemberKey, NodeData, PropKey, PropKind,
 };
@@ -65,20 +67,51 @@ fn has_fixed_callee(
                 Some((_, MemberKey::Name(name))) if name == known::require => holds_require(),
                 Some((object, _)) => {
                     let object = hir.skip_type_assertions(object);
-                    is_free_common_js(hir, bound, object, CommonJsVariable::Require)
+                    text.names_common_js(object, CommonJsVariable::Require)
                         && holds_require()
-                        && !may_require_get_members(hir, bound)
+                        && !text.may_require_get_members()
                 }
                 None => false,
             },
         },
         ImportSiteKind::ImportMetaRequire(_) => !bound.import_meta_may_be_modified(),
-        ImportSiteKind::GetBuiltinModule(_) => {
-            left.passes_get_builtin_module
-                && matches!(hir.member_key(callee), Some((object, _))
-                if is_process(hir, bound, hir.skip_type_assertions(object), &[known::globalThis]))
+        ImportSiteKind::GetBuiltinModule(_) if left.passes_get_builtin_module => {
+            let global_objects = [known::globalThis];
+            let is_spelled = matches!(hir.member_key(callee), Some((object, _))
+                if is_process(text, hir.skip_type_assertions(object), &global_objects));
+            let is_put = |named| reads_get_builtin_module(text, named, &global_objects);
+            is_spelled || text.path_put_at(callee).is_some_and(is_put)
         }
         _ => false,
+    }
+}
+
+// `named` is `getBuiltinModule` below a `process` of the file: a define puts the path in place of a callee, where no identifier spells either name.
+fn reads_get_builtin_module(
+    text: Text<'_, '_, '_, '_>,
+    named: &NamedPath<'_>,
+    global_objects: &[Atom],
+) -> bool {
+    let Text { hir, bound, .. } = text;
+    let (Binding::Symbol(holder), &[_, known::getBuiltinModule]) =
+        (named.head.binding, named.names)
+    else {
+        return false;
+    };
+    let is_settled = matches!(
+        bound.binding_stability(holder),
+        BindingStability::Stable | BindingStability::Linked
+    ) && bound.dynamic_scope_of(&named.head).is_none();
+    if !is_settled {
+        return false;
+    }
+    // As `is_process` reads a name that binds `holder`: what a variable is initialized with, or the module that an import names.
+    match bound.binding_initializer(hir, holder) {
+        BindingInitializer::Expression(source) => {
+            is_process(text, hir.skip_type_assertions(source), global_objects)
+        }
+        _ => matches!(find_imported_export(hir, bound, holder), Some((specifier, None))
+            if specifier == known::process || specifier == known::node_process),
     }
 }
 
@@ -152,6 +185,10 @@ fn follow_to_require_call(
         (object, MemberKey::Name(name)) => (hir.skip_type_assertions(object), name),
         (_, MemberKey::PrivateName(_) | MemberKey::Computed(_)) => return None,
     };
+    // The lowering tests the receiver of the call, and a path that a define puts in place of the member may have none.
+    if text.replaces_member(callee, require) {
+        return None;
+    }
     follow_to_own_require(text, require, left)?;
     if name == known::call && args.len() > 1 {
         return Some(RequireCall {
@@ -216,8 +253,12 @@ fn find_call_site(
             module_require_object: find_module_printed_as_require(hir, bound, callee),
         });
     }
-    if holds_import_meta_require(hir, bound, callee) {
+    if holds_import_meta_require(hir, bound, text.decisions, callee) {
         return Some(create_site(ImportSiteKind::ImportMetaRequire(call), args));
+    }
+    let is_put = |named| reads_get_builtin_module(text, named, &[known::globalThis, known::global]);
+    if text.path_put_at(callee).is_some_and(is_put) {
+        return Some(create_site(ImportSiteKind::GetBuiltinModule(call), args));
     }
     let (object, name) = match hir.member_key(callee)? {
         (object, MemberKey::Name(name)) => (hir.skip_type_assertions(object), name),
@@ -240,7 +281,7 @@ fn find_call_site(
         return is_require.then(|| create_site(ImportSiteKind::RequireResolve(call), args));
     }
     if name == known::getBuiltinModule {
-        let on_process = is_process(hir, bound, object, &[known::globalThis, known::global]);
+        let on_process = is_process(text, object, &[known::globalThis, known::global]);
         return on_process.then(|| create_site(ImportSiteKind::GetBuiltinModule(call), args));
     }
     // A name that is made at run time says nothing of the modules that the build knows, unlike that of a mock.
@@ -248,7 +289,7 @@ fn find_call_site(
         expr_kind(hir, hir.id_at(args, 0)),
         Some(ExprKind::String(_))
     );
-    if is_mock_module(hir, bound, object, name)
+    if is_mock_module(text, object, name)
         || (is_written_out && is_module_of_plugin(hir, bound, object, name))
     {
         return Some(create_site(ImportSiteKind::MockModule(call), args));
@@ -294,13 +335,15 @@ fn is_module_of_plugin(hir: &File<'_>, bound: &Bound<'_>, object: ExprId, name: 
 }
 
 // `object.name` is `mock.module`, `jest.mock` or `vi.mock`, where the object is imported from the test runner.
-fn is_mock_module(hir: &File<'_>, bound: &Bound<'_>, object: ExprId, name: Atom) -> bool {
+fn is_mock_module(text: Text<'_, '_, '_, '_>, object: ExprId, name: Atom) -> bool {
+    let Text { hir, bound, .. } = text;
     let holders: &[Atom] = match name {
         _ if name == known::module => &[known::mock],
         _ if name == known::mock => &[known::jest, known::vi],
         _ => return false,
     };
-    let imported = settled_symbol(hir, bound, object)
+    let imported = text
+        .settled_symbol(object)
         .and_then(|symbol| find_imported_export(hir, bound, symbol));
     matches!(imported, Some((specifier, Some(export)))
         if [known::bun_test, known::jest_globals, known::vitest].contains(&specifier)
@@ -313,28 +356,29 @@ pub(super) fn is_free_name(hir: &File<'_>, bound: &Bound<'_>, e: ExprId, names: 
         && bound.dynamic_lookup_scope(NodeData::Expr(e)).is_none()
 }
 
-pub(super) fn is_process(
-    hir: &File<'_>,
-    bound: &Bound<'_>,
-    e: ExprId,
-    global_objects: &[Atom],
-) -> bool {
-    let e = follow_settled_bindings(hir, bound, e);
+pub(super) fn is_process(text: Text<'_, '_, '_, '_>, e: ExprId, global_objects: &[Atom]) -> bool {
+    let Text { hir, bound, .. } = text;
+    let e = follow_settled_bindings(text, e);
     if is_free_name(hir, bound, e, &[known::process]) {
         return true;
     }
-    let imported =
-        settled_symbol(hir, bound, e).and_then(|symbol| find_imported_export(hir, bound, symbol));
+    let imported = text
+        .settled_symbol(e)
+        .and_then(|symbol| find_imported_export(hir, bound, symbol));
     if let Some((specifier, None)) = imported {
         return specifier == known::process || specifier == known::node_process;
     }
     matches!(hir.member_key(e), Some((object, MemberKey::Name(name)))
         if name == known::process
-            && is_free_name(hir, bound, follow_settled_bindings(hir, bound, object), global_objects))
+            && is_free_name(hir, bound, follow_settled_bindings(text, object), global_objects))
 }
 
 pub(crate) fn is_in_with_scope(bound: &Bound<'_>, ident: ExprId) -> bool {
-    let mut scope = bound.dynamic_lookup_scope(NodeData::Expr(ident));
+    has_with_scope(bound, bound.dynamic_lookup_scope(NodeData::Expr(ident)))
+}
+
+// Whether a lookup that starts in `scope` when the program runs asks a `with` object for the name.
+pub(super) fn has_with_scope(bound: &Bound<'_>, mut scope: Option<ScopeId>) -> bool {
     while let Some(at) = scope {
         let data = &bound.scopes[at.idx()];
         if matches!(data.kind, ScopeKind::With(_)) {
@@ -351,9 +395,7 @@ pub(crate) fn is_free_common_js(
     e: ExprId,
     variable: CommonJsVariable,
 ) -> bool {
-    matches!(expr_kind(hir, e), Some(ExprKind::Ident(_)))
-        && bound.binding(e) == Binding::CommonJs(variable)
-        && !is_in_with_scope(bound, e)
+    Text::of(hir, bound, None).names_common_js(e, variable)
 }
 
 /// The `module` of `module.require(..)`. Bun's transpiler prints `require(..)` there: the callee is the `require` of the file, and nothing reads `module`.
@@ -543,12 +585,11 @@ fn names_module_cache(inputs: &ScanInputs<'_, '_>, table: ExprId) -> bool {
         atoms,
         ..
     } = inputs;
-    let table = follow_settled_bindings(hir, bound, table);
-    if let Some((object, MemberKey::Name(name))) = hir.member_key(table)
-        && atoms.bytes(name) == b"cache"
-    {
-        let object = hir.skip_type_assertions(object);
-        return is_free_common_js(hir, bound, object, CommonJsVariable::Require);
+    let text = Text::of(hir, bound, Some(decisions));
+    let table = follow_settled_bindings(text, table);
+    let is_cache = |member: Atom| atoms.bytes(member) == b"cache";
+    if text.reads_member_of_common_js(table, CommonJsVariable::Require, is_cache) {
+        return true;
     }
     let find_constant = |e| match decisions.constant(hir, e) {
         FoldedValue::Constant(constant) | FoldedValue::ConstantOutsideDeadZone(constant) => {
@@ -558,6 +599,7 @@ fn names_module_cache(inputs: &ScanInputs<'_, '_>, table: ExprId) -> bool {
     };
     let is_module = |specifier: Atom| matches!(atoms.bytes(specifier), b"module" | b"node:module");
     find_export_of_module(hir, bound, table, &find_constant, &is_module)
+        .or_else(|| text.find_export_behind_define(table, &is_module))
         .is_some_and(|name| atoms.bytes(name) == b"_cache")
 }
 
@@ -619,10 +661,19 @@ fn find_name_of_worker(
     let ExprKind::New(call) = expr_kind(hir, construction)? else {
         return None;
     };
-    let (ExprKind::Ident(name) | ExprKind::Dot { name, .. }) =
-        expr_kind(hir, hir.skip_type_assertions(hir[call].callee))?
-    else {
+    let callee = hir.skip_type_assertions(hir[call].callee);
+    let (ExprKind::Ident(name) | ExprKind::Dot { name, .. }) = expr_kind(hir, callee)? else {
         return None;
+    };
+    // Where a define puts a path in place of the callee, what is called there goes by the last name of the path, whether its first name is bound or free.
+    let put = match decisions.has_define_paths() {
+        true => decisions.decision(callee),
+        false => Decision::Unknown,
+    };
+    let name = match put {
+        Decision::NamedPath(named) => *named.names.last()?,
+        Decision::GlobalPath(path) => *path.last()?,
+        _ => name,
     };
     let is_evaluated =
         bound.parent_of_expr(construction) != Parent::None && !decisions.is_dead_expr(construction);

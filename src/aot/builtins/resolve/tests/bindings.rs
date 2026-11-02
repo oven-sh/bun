@@ -88,3 +88,144 @@ fn direct_eval_in_other_function() {
         assert_builtin(case, "Math.floor", BuiltinId::MathFloor);
     });
 }
+
+const BUILTIN_PATHS: &[DefinedPath] = &[
+    (&["PROBE_FLOOR"], &["Math", "floor"]),
+    (&["PROBE_SYMBOL"], &["Symbol"]),
+    (&["process", "env", "PROBE"], &["Symbol"]),
+    (&["settle"], &["Symbol", "for"]),
+];
+
+#[test]
+fn defined_path_of_a_builtin_below_a_binding_is_no_builtin() {
+    let setup = Setup {
+        defines: BUILTIN_PATHS,
+        ..SCRIPT
+    };
+    let sites = [
+        ("function f(Math) { return PROBE_FLOOR; }", "PROBE_FLOOR"),
+        (
+            "function f(Symbol) { return typeof PROBE_SYMBOL; }",
+            "PROBE_SYMBOL",
+        ),
+        (
+            "function f(Symbol) { return process.env.PROBE; }",
+            "process.env.PROBE",
+        ),
+        ("function f(Symbol) { return settle(1); }", "settle"),
+    ];
+    for (source, site) in sites {
+        with_case(setup, source, |case| {
+            assert_unresolved(case, site);
+            assert!(case.resolved.mentioned().is_empty(), "{source}");
+        });
+    }
+}
+
+#[test]
+fn defined_name_after_a_direct_eval_resolves_as_the_name_written_there() {
+    let setup = Setup {
+        defines: BUILTIN_PATHS,
+        ..SCRIPT
+    };
+    let source = "function f(s) { eval(s); return [PROBE_SYMBOL, process.env.PROBE, Symbol]; }";
+    with_case(setup, source, |case| {
+        let written = case.dynamic_global_at(case.expr("Symbol"));
+        assert_eq!(written.map(|path| path.id), Some(BuiltinId::Symbol));
+        for defined in ["PROBE_SYMBOL", "process.env.PROBE"] {
+            let site = case.expr(defined);
+            assert_eq!(case.dynamic_global_at(site), written, "{defined}");
+        }
+    });
+    // The text of the eval may declare `Math`, so nothing is known of a member below that name.
+    let source = "function f(s) { eval(s); return PROBE_FLOOR; }";
+    with_case(setup, source, |case| {
+        assert_unresolved(case, "PROBE_FLOOR");
+        assert!(case.mentions(BuiltinId::Math));
+    });
+    // The text of an eval in strict code declares nothing in the function.
+    let source = r#""use strict"; function f(s) { eval(s); return PROBE_FLOOR; }"#;
+    with_case(setup, source, |case| {
+        assert_builtin(case, "PROBE_FLOOR", BuiltinId::MathFloor);
+    });
+}
+
+const PATHS_BELOW_AN_ALIAS: &[DefinedPath] = &[
+    (&["PROBE_ALIAS"], &["h"]),
+    (&["PROBE_MEMBER"], &["h", "floor"]),
+];
+
+#[test]
+fn defined_path_below_an_alias_of_a_builtin_is_no_builtin() {
+    let setup = Setup {
+        defines: PATHS_BELOW_AN_ALIAS,
+        ..PROGRAM
+    };
+    // An identifier that names the variable is the built-in that it holds. No expression names it at a define, so the built-in is handed on.
+    let source = "const h = Math; f(PROBE_ALIAS, PROBE_MEMBER);";
+    with_case(setup, source, |case| {
+        assert_unresolved(case, "PROBE_ALIAS");
+        assert_unresolved(case, "PROBE_MEMBER");
+        assert!(case.exposes(BuiltinId::Math));
+    });
+}
+
+const PATHS_BELOW_COMMONJS_NAMES: &[DefinedPath] = &[
+    (&["LOAD"], &["require"]),
+    (&["FIND"], &["require", "resolve"]),
+    (&["OWN"], &["module"]),
+    (&["OUT"], &["module", "exports"]),
+    (&["HERE"], &["__filename"]),
+];
+
+#[test]
+fn defined_path_below_a_name_of_commonjs_is_no_builtin() {
+    let setup = Setup {
+        defines: PATHS_BELOW_COMMONJS_NAMES,
+        ..SCRIPT
+    };
+    let source = "f(LOAD, FIND, OWN, OUT, HERE); require.resolve;";
+    with_case(setup, source, |case| {
+        for defined in ["LOAD", "FIND", "OWN", "OUT", "HERE"] {
+            assert_unresolved(case, defined);
+        }
+        // The text spells the path of FIND behind the call, and there it is the built-in.
+        assert_builtin(case, "require.resolve", BuiltinId::ModuleRequireResolve);
+        assert!(case.exposes(BuiltinId::ModuleRequire));
+        assert!(case.exposes(BuiltinId::ModuleObject));
+    });
+}
+
+const PATHS_BELOW_ARGUMENTS: &[DefinedPath] = &[
+    (&["ARGS"], &["arguments"]),
+    (&["COUNT"], &["arguments", "length"]),
+];
+
+#[test]
+fn defined_path_below_arguments_is_no_builtin() {
+    let setup = Setup {
+        defines: PATHS_BELOW_ARGUMENTS,
+        ..SCRIPT
+    };
+    // The `arguments` of a CommonJS file hold its five values, so a define that reads them there hands the values on.
+    with_case(setup, "f(ARGS, COUNT);", |case| {
+        assert_unresolved(case, "ARGS");
+        assert_unresolved(case, "COUNT");
+        assert!(case.exposes(BuiltinId::ModuleRequire));
+    });
+    with_case(setup, "function g() { return f(ARGS, COUNT); }", |case| {
+        assert_unresolved(case, "ARGS");
+        assert_unresolved(case, "COUNT");
+        assert!(!case.exposes(BuiltinId::ModuleRequire));
+    });
+    // Nothing declares `arguments` at the top of an ES module, and no global has the name.
+    let module = Setup {
+        defines: PATHS_BELOW_ARGUMENTS,
+        ..PROGRAM
+    };
+    with_case(module, "export {}; f(ARGS, COUNT);", |case| {
+        assert_unresolved(case, "ARGS");
+        assert_unresolved(case, "COUNT");
+        assert!(case.resolved.mentioned().is_empty());
+    });
+}

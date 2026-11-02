@@ -1,13 +1,14 @@
 use super::call_sites::{
-    expr_kind, find_module_printed_as_require, find_request_of_exports, is_free_common_js,
+    expr_kind, find_module_printed_as_require, find_request_of_exports, has_with_scope,
     is_free_name,
 };
 use crate::atom::{Atom, known};
 use crate::bind::{
     Binding, BindingInitializer, BindingStability, Bound, CodeUnit, CommonJsVariable, Decl,
-    FnOwner, InitialState, Parent, PatParent, SymbolId, has_mapped_arguments,
+    FnOwner, ImplicitReference, InitialState, Parent, PatParent, ScopeId, SymbolId,
+    has_mapped_arguments,
 };
-use crate::fold::Decisions;
+use crate::fold::{Decision, Decisions, NamedPath};
 use crate::hir::{
     BinOp, Branches, Call, Chain, ExprId, ExprKind, File, Flags, FnBody, FnId, FnKind, IdList,
     MemberKey, NodeData, PatKind, StmtKind, UnOp,
@@ -19,19 +20,7 @@ fn is_node_module(specifier: Atom) -> bool {
 }
 
 pub(crate) fn settled_symbol(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> Option<SymbolId> {
-    let Some(ExprKind::Ident(_)) = expr_kind(hir, e) else {
-        return None;
-    };
-    let Binding::Symbol(symbol) = bound.binding(e) else {
-        return None;
-    };
-    if bound.dynamic_lookup_scope(NodeData::Expr(e)).is_some() {
-        return None;
-    }
-    match bound.binding_stability(symbol) {
-        BindingStability::Stable | BindingStability::Linked => Some(symbol),
-        _ => None,
-    }
+    Text::of(hir, bound, None).settled_symbol(e)
 }
 
 /// The module that an import names, and the export it takes, or none for the whole module.
@@ -93,6 +82,10 @@ pub(super) struct Text<'a, 'h, 'b, 'd> {
     pub(super) hir: &'a File<'h>,
     pub(super) bound: &'a Bound<'b>,
     pub(super) decisions: Option<&'a Decisions<'d>>,
+    // `decisions` where the fold applied a define head. Without one no define puts a name, and a name is what the binder says of its identifier.
+    defines: Option<&'a Decisions<'d>>,
+    // A request for the module that makes a `require` is followed without what the fold settles: only the names that defines put are read.
+    reads_names_alone: bool,
 }
 
 impl<'a, 'h, 'b, 'd> Text<'a, 'h, 'b, 'd> {
@@ -105,6 +98,131 @@ impl<'a, 'h, 'b, 'd> Text<'a, 'h, 'b, 'd> {
             hir,
             bound,
             decisions,
+            defines: decisions.filter(|decisions| decisions.has_define_heads()),
+            reads_names_alone: false,
+        }
+    }
+
+    // What the fold settles besides those names: the only arm of a `?:` that runs, and the calls that never run.
+    fn settled_code(self) -> Option<&'a Decisions<'d>> {
+        self.decisions.filter(|_| !self.reads_names_alone)
+    }
+
+    // The path that a define puts in place of `e`, with its first name as the binder recorded it there.
+    pub(super) fn path_put_at(self, e: ExprId) -> Option<&'d NamedPath<'d>> {
+        match self.defines?.decision(e) {
+            Decision::NamedPath(named) => Some(named),
+            _ => None,
+        }
+    }
+
+    // The one name that a define puts in place of `e`.
+    fn name_put_at(self, e: ExprId) -> Option<ImplicitReference> {
+        match self.path_put_at(e) {
+            Some(&NamedPath { head, names: &[_] }) => Some(head),
+            _ => None,
+        }
+    }
+
+    pub(super) fn is_name_put(self, e: ExprId) -> bool {
+        self.name_put_at(e).is_some()
+    }
+
+    // Whether a define puts a path in place of `access`, a member of `object`, with a first name that the binder recorded there or for `object`.
+    pub(super) fn replaces_member(self, access: ExprId, object: ExprId) -> bool {
+        let Some(decisions) = self.defines else {
+            return false;
+        };
+        decisions.is_named_path(access)
+            || self.is_name_put(object)
+                && matches!(decisions.decision(access), Decision::GlobalPath(_))
+    }
+
+    // An identifier, or what a define replaces with one name. An identifier that a define replaces with a longer path is not the name it spells.
+    pub(super) fn is_name(self, e: ExprId) -> bool {
+        match self.path_put_at(e) {
+            Some(named) => named.names.len() == 1,
+            None => matches!(expr_kind(self.hir, e), Some(ExprKind::Ident(_))),
+        }
+    }
+
+    // `Bound::binding` of the name at `e`. The fold answers first, for the one name that a define puts there.
+    pub(super) fn binding(self, e: ExprId) -> Binding {
+        match self.defines {
+            Some(decisions) => decisions.binding_named_at(self.bound, e),
+            None => self.bound.binding(e),
+        }
+    }
+
+    // `Bound::dynamic_lookup_scope` of the name at `e`.
+    #[inline]
+    pub(super) fn dynamic_scope(self, e: ExprId) -> Option<ScopeId> {
+        let bound = self.bound;
+        match self.name_put_at(e) {
+            Some(head) => bound.dynamic_scope_of(&head).map(|lookup| lookup.scope),
+            None => bound.dynamic_lookup_scope(NodeData::Expr(e)),
+        }
+    }
+
+    // `is_free_common_js` of the name at `e`.
+    pub(super) fn names_common_js(self, e: ExprId, variable: CommonJsVariable) -> bool {
+        self.is_name(e)
+            && self.binding(e) == Binding::CommonJs(variable)
+            && !has_with_scope(self.bound, self.dynamic_scope(e))
+    }
+
+    // `module.require` or `require.cache` at `e`: the member that the text spells off the name, or the path of these two names that a define puts there.
+    pub(super) fn reads_member_of_common_js(
+        self,
+        e: ExprId,
+        variable: CommonJsVariable,
+        is_member: impl Fn(Atom) -> bool,
+    ) -> bool {
+        if let Some(named) = self.path_put_at(e) {
+            let lookup = self.bound.dynamic_scope_of(&named.head);
+            return named.head.binding == Binding::CommonJs(variable)
+                && matches!(named.names, &[_, member] if is_member(member))
+                && !has_with_scope(self.bound, lookup.map(|lookup| lookup.scope));
+        }
+        let Some((object, MemberKey::Name(member))) = self.hir.member_key(e) else {
+            return false;
+        };
+        let object = self.hir.skip_type_assertions(object);
+        is_member(member)
+            && self.names_common_js(object, variable)
+            && !self.replaces_member(e, object)
+    }
+
+    pub(super) fn settled_symbol(self, e: ExprId) -> Option<SymbolId> {
+        if !self.is_name(e) {
+            return None;
+        }
+        self.settled_symbol_of(self.binding(e), || self.dynamic_scope(e))
+    }
+
+    // `settled_symbol` of a name with that binding, whose lookup starts in the scope that `dynamic_scope` finds when the program runs.
+    fn settled_symbol_of(
+        self,
+        binding: Binding,
+        dynamic_scope: impl FnOnce() -> Option<ScopeId>,
+    ) -> Option<SymbolId> {
+        let Binding::Symbol(symbol) = binding else {
+            return None;
+        };
+        if dynamic_scope().is_some() {
+            return None;
+        }
+        match self.bound.binding_stability(symbol) {
+            BindingStability::Stable | BindingStability::Linked => Some(symbol),
+            _ => None,
+        }
+    }
+
+    fn settled_initializer(self, e: ExprId) -> Option<ExprId> {
+        let Text { hir, bound, .. } = self;
+        match bound.binding_initializer(hir, self.settled_symbol(e)?) {
+            BindingInitializer::Expression(source) => Some(hir.skip_type_assertions(source)),
+            _ => None,
         }
     }
 
@@ -117,7 +235,10 @@ impl<'a, 'h, 'b, 'd> Text<'a, 'h, 'b, 'd> {
             },
             ExprKind::Call(_) => {
                 let requests = left.requests.checked_sub(1)?;
-                let text = Text::of(hir, self.bound, None);
+                let text = Text {
+                    reads_names_alone: true,
+                    ..self
+                };
                 let argument = find_request_of_exports(text, e, StepsLeft { requests, ..left });
                 (argument, ModuleFace::Exports)
             }
@@ -140,7 +261,9 @@ impl<'a, 'h, 'b, 'd> Text<'a, 'h, 'b, 'd> {
         let mut e = e;
         for _ in 0..=LONGEST_CHAIN_OF_BINDINGS {
             e = hir.skip_type_assertions(e);
-            while let Some((object, key)) = hir.member_key(e) {
+            while self.path_put_at(e).is_none()
+                && let Some((object, key)) = hir.member_key(e)
+            {
                 let MemberKey::Name(name) = key else {
                     return None;
                 };
@@ -151,7 +274,16 @@ impl<'a, 'h, 'b, 'd> Text<'a, 'h, 'b, 'd> {
                 e = returned;
                 continue;
             }
-            let Some(symbol) = settled_symbol(hir, bound, e) else {
+            let symbol = match self.path_put_at(e) {
+                // The names behind the first name of the path are read as the members that they spell.
+                Some(named) => {
+                    names.extend(named.names.iter().skip(1).rev().copied());
+                    let dynamic_scope = || Some(bound.dynamic_scope_of(&named.head)?.scope);
+                    self.settled_symbol_of(named.head.binding, dynamic_scope)
+                }
+                None => self.settled_symbol(e),
+            };
+            let Some(symbol) = symbol else {
                 let (specifier, face) = self.find_requested_module(e, left)?;
                 return Some((specifier, face, names));
             };
@@ -212,6 +344,81 @@ impl<'a, 'h, 'b, 'd> Text<'a, 'h, 'b, 'd> {
             && last == known::createRequire
             && before.iter().all(|&name| name == known::Module)
     }
+
+    // The module and the one name that `e` reads off it: "node:path" and `join` for `path.join` behind `const path = require("node:path")`.
+    fn find_member_of_module(self, e: ExprId) -> Option<(Atom, Atom)> {
+        let (specifier, _, names) = self.find_names_read_off_module(e, StepsLeft::ALL)?;
+        match names[..] {
+            [name] => Some((specifier, name)),
+            _ => None,
+        }
+    }
+
+    // What `read` finds through a name or a path that a define puts: in the text as it is spelled, `read` finds nothing.
+    fn find_behind_define<T>(self, read: impl Fn(Self) -> Option<T>) -> Option<T> {
+        if !self.decisions?.has_define_paths() {
+            return None;
+        }
+        let found = read(self)?;
+        match read(Text::of(self.hir, self.bound, None)) {
+            Some(_) => None,
+            None => Some(found),
+        }
+    }
+
+    // The export that `e` is of a module whose name `is_module` accepts, read through a name or a path that a define puts.
+    pub(super) fn find_export_behind_define(
+        self,
+        e: ExprId,
+        is_module: &dyn Fn(Atom) -> bool,
+    ) -> Option<Atom> {
+        let (specifier, export) = self.find_behind_define(|text| text.find_member_of_module(e))?;
+        is_module(specifier).then_some(export)
+    }
+
+    // `find_export_behind_define` for a function below a member of the module: "node:fs" with `writeFile` and `promises`, the last name first.
+    pub(super) fn find_members_behind_define(
+        self,
+        e: ExprId,
+    ) -> Option<(Atom, SmallVec<[Atom; 4]>)> {
+        self.find_behind_define(|text| {
+            let (specifier, _, names) = text.find_names_read_off_module(e, StepsLeft::ALL)?;
+            Some((specifier, names))
+        })
+    }
+
+    pub(super) fn may_require_get_members(self) -> bool {
+        let Text { hir, bound, .. } = self;
+        let own_require = Binding::CommonJs(CommonJsVariable::Require);
+        let mut names = bound.ident_bindings().iter();
+        let is_handed_on =
+            |e: ExprId| !is_only_called_or_read(hir, bound, e, LONGEST_CHAIN_OF_BINDINGS);
+        // Where a define puts `require`: the name alone is judged as the identifier is, a path reads a member. Without the fold any record counts.
+        let is_handed_on_by_define = || match self.decisions {
+            Some(decisions) => {
+                let mut sites = decisions.mentions_by_defines(own_require);
+                sites.any(|site| match site {
+                    Some(site) => is_handed_on(site),
+                    None => true,
+                })
+            }
+            None => {
+                let mut define_heads = bound.define_heads().iter();
+                define_heads.any(|head| head.binding == own_require)
+            }
+        };
+        bound.import_meta_may_be_modified()
+            || !bound.runtime.eval_scopes().is_empty()
+            || is_handed_on_by_define()
+            || names.any(|&(name, binding)| binding == own_require && is_handed_on(name))
+            || (0..hir.exprs.len() as u32)
+                .map(ExprId)
+                .any(|e| is_import_meta_require(hir, e) && is_handed_on(e))
+    }
+
+    pub(super) fn names_own_file(self, e: ExprId) -> bool {
+        names_own_file_behind(self, e, LONGEST_CHAIN_OF_BINDINGS, StepsLeft::ALL)
+    }
 }
 
 pub(crate) fn may_be_modified(
@@ -260,9 +467,11 @@ fn is_only_called_or_read(
         Parent::VarInit(declaration) if bindings_left > 0 => {
             let pattern = hir[declaration].pat;
             let holder = bound.declared_symbol(Decl::Var(pattern));
+            let mut define_heads = bound.define_heads().iter();
             return matches!(hir[pattern].kind, PatKind::Ident(_))
                 && bound.binding_stability(holder) == BindingStability::Stable
                 && !is_exported(bound, holder)
+                && !define_heads.any(|head| head.binding == Binding::Symbol(holder))
                 && (0..hir.exprs.len() as u32).map(ExprId).all(|e| {
                     !bound.is_evaluated_ident(e)
                         || bound.binding(e) != Binding::Symbol(holder)
@@ -287,24 +496,12 @@ fn is_only_called_or_read(
 }
 
 pub fn may_require_get_members(hir: &File<'_>, bound: &Bound<'_>) -> bool {
-    let own_require = Binding::CommonJs(CommonJsVariable::Require);
-    let mut names = bound.ident_bindings().iter();
-    bound.import_meta_may_be_modified()
-        || !bound.runtime.eval_scopes().is_empty()
-        || names.any(|&(name, binding)| {
-            binding == own_require
-                && !is_only_called_or_read(hir, bound, name, LONGEST_CHAIN_OF_BINDINGS)
-        })
-        || (0..hir.exprs.len() as u32).map(ExprId).any(|e| {
-            is_import_meta_require(hir, e)
-                && !is_only_called_or_read(hir, bound, e, LONGEST_CHAIN_OF_BINDINGS)
-        })
+    Text::of(hir, bound, None).may_require_get_members()
 }
 
 // Also in a variable: `const __filename = fileURLToPath(import.meta.url)`, as an ES module makes itself the name that a CommonJS file has.
 pub(crate) fn names_own_file(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
-    let text = Text::of(hir, bound, None);
-    names_own_file_behind(text, e, LONGEST_CHAIN_OF_BINDINGS, StepsLeft::ALL)
+    Text::of(hir, bound, None).names_own_file(e)
 }
 
 // Two variables may name each other: `const a = fileURLToPath(b), b = new URL(a)`.
@@ -314,8 +511,7 @@ fn names_own_file_behind(
     conversions_left: usize,
     left: StepsLeft,
 ) -> bool {
-    settled_chain(text.hir, text.bound, e)
-        .any(|e| is_written_as_own_file(text, e, conversions_left, left))
+    settled_chain(text, e).any(|e| is_written_as_own_file(text, e, conversions_left, left))
 }
 
 fn is_written_as_own_file(
@@ -325,7 +521,7 @@ fn is_written_as_own_file(
     left: StepsLeft,
 ) -> bool {
     let Text { hir, bound, .. } = text;
-    if is_free_common_js(hir, bound, e, CommonJsVariable::Filename) {
+    if text.names_common_js(e, CommonJsVariable::Filename) {
         return !may_be_modified(hir, bound, CommonJsVariable::Filename);
     }
     let is_import_meta_member = matches!(hir.member_key(e), Some((object, MemberKey::Name(name)))
@@ -425,11 +621,12 @@ pub fn find_result_expression(
     live_branch(hir, decisions, e).or_else(|| iife_return_value(hir, e))
 }
 
-fn find_settled_parameter(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> Option<(FnId, usize)> {
-    let Some(ExprKind::Ident(_)) = expr_kind(hir, e) else {
+fn find_settled_parameter(text: Text<'_, '_, '_, '_>, e: ExprId) -> Option<(FnId, usize)> {
+    let Text { hir, bound, .. } = text;
+    if !text.is_name(e) {
         return None;
-    };
-    let Binding::Symbol(symbol) = bound.binding(e) else {
+    }
+    let Binding::Symbol(symbol) = text.binding(e) else {
         return None;
     };
     let &[Decl::Param(pattern)] = bound.symbol(symbol).decls else {
@@ -440,7 +637,7 @@ fn find_settled_parameter(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> Optio
     };
     let is_settled = bound.stores_to(symbol).is_empty()
         && !bound.is_visible_to_eval(symbol)
-        && bound.dynamic_lookup_scope(NodeData::Expr(e)).is_none()
+        && text.dynamic_scope(e).is_none()
         && !hir[id].flags.contains(Flags::REST)
         && hir[id].default.is_none();
     let function = bound.param_fn[id.idx()];
@@ -475,11 +672,7 @@ fn is_given_require_of_file(
     (function, index): (FnId, usize),
     left: StepsLeft,
 ) -> bool {
-    let Text {
-        hir,
-        bound,
-        decisions,
-    } = text;
+    let Text { hir, bound, .. } = text;
     let Some((expression, call)) = find_call_around(hir, bound, function) else {
         return false;
     };
@@ -508,14 +701,17 @@ fn is_given_require_of_file(
         return false;
     }
     let held_by = Binding::Symbol(bound.declared_symbol(Decl::Param(held_by.pat)));
+    let settled_code = text.settled_code();
     (0..hir.exprs.len() as u32).map(ExprId).any(|e| {
         let ExprKind::Call(inner) = hir[e].kind else {
             return false;
         };
         let inner = hir[inner];
-        matches!(expr_kind(hir, inner.callee), Some(ExprKind::Ident(it)) if it == name)
-            && bound.binding(inner.callee) == held_by
-            && !decisions.is_some_and(|decisions| decisions.is_dead_expr(e))
+        let is_spelled =
+            matches!(expr_kind(hir, inner.callee), Some(ExprKind::Ident(it)) if it == name);
+        (is_spelled || text.is_name_put(inner.callee))
+            && text.binding(inner.callee) == held_by
+            && !settled_code.is_some_and(|decisions| decisions.is_dead_expr(e))
             && is_require_of_file(inner.args)
     })
 }
@@ -534,30 +730,27 @@ pub(super) fn follow_to_own_require(
     e: ExprId,
     left: StepsLeft,
 ) -> Option<OwnRequire> {
-    let Text {
-        hir,
-        bound,
-        decisions,
-    } = text;
+    let Text { hir, bound, .. } = text;
     if !bound.may_name_own_require() && hir.imported_requires.is_empty() {
         return None;
     }
+    let settled_code = text.settled_code();
     let is_parameter_with_require_of_file = |e: ExprId| {
         left.parameters.checked_sub(1).is_some_and(|parameters| {
-            find_settled_parameter(hir, bound, e).is_some_and(|parameter| {
+            find_settled_parameter(text, e).is_some_and(|parameter| {
                 is_given_require_of_file(text, parameter, StepsLeft { parameters, ..left })
             })
         })
     };
     let mut e = hir.skip_type_assertions(e);
     for _ in 0..LONGEST_CHAIN_OF_BINDINGS {
-        if is_free_common_js(hir, bound, e, CommonJsVariable::Require)
+        if text.names_common_js(e, CommonJsVariable::Require)
             || find_module_printed_as_require(hir, bound, e).is_some()
         {
             return Some(OwnRequire::OfFile);
         }
         if let Some(result) =
-            decisions.and_then(|decisions| find_result_expression(hir, decisions, e))
+            settled_code.and_then(|decisions| find_result_expression(hir, decisions, e))
         {
             e = hir.skip_type_assertions(result);
             continue;
@@ -573,22 +766,17 @@ pub(super) fn follow_to_own_require(
             continue;
         }
         // `const load = module.require; load.call(module, "a")`
-        if let Some((object, MemberKey::Name(known::require))) = hir.member_key(e)
-            && is_free_common_js(
-                hir,
-                bound,
-                hir.skip_type_assertions(object),
-                CommonJsVariable::Module,
-            )
+        let is_require = |member: Atom| member == known::require;
+        if text.reads_member_of_common_js(e, CommonJsVariable::Module, is_require)
             && !may_be_modified(hir, bound, CommonJsVariable::Module)
         {
             return Some(OwnRequire::OfFile);
         }
-        let Some(source) = settled_initializer(hir, bound, e) else {
+        let Some(source) = text.settled_initializer(e) else {
             if is_made_for_own_file(text, e, left) {
                 return Some(OwnRequire::Made);
             }
-            if let Some(path) = find_imported_require(hir, bound, e) {
+            if let Some(path) = find_imported_require(text, e) {
                 return Some(OwnRequire::OfOtherFile(path));
             }
             return is_parameter_with_require_of_file(e).then_some(OwnRequire::OfFile);
@@ -619,14 +807,16 @@ fn find_require_imported_as(hir: &File<'_>, bound: &Bound<'_>, symbol: SymbolId)
     }
 }
 
-fn find_imported_require(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> Option<Atom> {
+fn find_imported_require(text: Text<'_, '_, '_, '_>, e: ExprId) -> Option<Atom> {
+    let Text { hir, bound, .. } = text;
     if hir.imported_requires.is_empty() {
         return None;
     }
-    let Some((object, MemberKey::Name(export))) = hir.member_key(e) else {
-        return find_require_imported_as(hir, bound, settled_symbol(hir, bound, e)?);
+    let member = hir.member_key(e).filter(|_| !text.is_name_put(e));
+    let Some((object, MemberKey::Name(export))) = member else {
+        return find_require_imported_as(hir, bound, text.settled_symbol(e)?);
     };
-    let namespace = settled_symbol(hir, bound, hir.skip_type_assertions(object))?;
+    let namespace = text.settled_symbol(hir.skip_type_assertions(object))?;
     let mut declarations = bound.symbol(namespace).decls.iter();
     let import = declarations.find_map(|&declaration| match declaration {
         Decl::ImportNamespace(import) => (!hir[import].type_only).then_some(import),
@@ -743,34 +933,32 @@ pub fn find_exported_requires(
     found
 }
 
-fn settled_initializer(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> Option<ExprId> {
-    match bound.binding_initializer(hir, settled_symbol(hir, bound, e)?) {
-        BindingInitializer::Expression(source) => Some(hir.skip_type_assertions(source)),
-        _ => None,
-    }
-}
-
-fn settled_chain(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> impl Iterator<Item = ExprId> {
-    let first = hir.skip_type_assertions(e);
-    let chain = std::iter::successors(Some(first), move |&e| settled_initializer(hir, bound, e));
+fn settled_chain(text: Text<'_, '_, '_, '_>, e: ExprId) -> impl Iterator<Item = ExprId> {
+    let first = text.hir.skip_type_assertions(e);
+    let chain = std::iter::successors(Some(first), move |&e| text.settled_initializer(e));
     chain.take(LONGEST_CHAIN_OF_BINDINGS + 1)
 }
 
-pub(super) fn follow_settled_bindings(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> ExprId {
-    settled_chain(hir, bound, e).last().unwrap_or(e)
+pub(super) fn follow_settled_bindings(text: Text<'_, '_, '_, '_>, e: ExprId) -> ExprId {
+    settled_chain(text, e).last().unwrap_or(e)
 }
 
-pub fn holds_import_meta_require(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
+pub fn holds_import_meta_require(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    decisions: Option<&Decisions<'_>>,
+    e: ExprId,
+) -> bool {
     if !bound.may_name_own_require() {
         return false;
     }
-    let mut held = settled_chain(hir, bound, e).skip(1);
+    let mut held = settled_chain(Text::of(hir, bound, decisions), e).skip(1);
     held.any(|e| is_import_meta_require(hir, e))
 }
 
 pub fn is_made_require(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
     let text = Text::of(hir, bound, None);
-    let chain = settled_chain(hir, bound, e).take(LONGEST_CHAIN_OF_BINDINGS);
+    let chain = settled_chain(text, e).take(LONGEST_CHAIN_OF_BINDINGS);
     let written = chain.last().and_then(|e| expr_kind(hir, e));
     matches!(written, Some(ExprKind::Call(call))
         if text.is_create_require(hir[call].callee, StepsLeft::ALL))
@@ -779,9 +967,10 @@ pub fn is_made_require(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
 pub fn is_create_require_behind_get_builtin_module(
     hir: &File<'_>,
     bound: &Bound<'_>,
+    decisions: Option<&Decisions<'_>>,
     callee: ExprId,
 ) -> bool {
-    let text = Text::of(hir, bound, None);
+    let text = Text::of(hir, bound, decisions);
     let without = StepsLeft {
         passes_get_builtin_module: false,
         ..StepsLeft::ALL
@@ -790,7 +979,8 @@ pub fn is_create_require_behind_get_builtin_module(
 }
 
 pub fn may_still_be_undefined(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
-    let mut chain = settled_chain(hir, bound, e).take(LONGEST_CHAIN_OF_BINDINGS);
+    let text = Text::of(hir, bound, None);
+    let mut chain = settled_chain(text, e).take(LONGEST_CHAIN_OF_BINDINGS);
     chain.any(|e| {
         let symbol = settled_symbol(hir, bound, e);
         symbol.is_some_and(|symbol| bound.initial_state(symbol) == InitialState::Undefined)

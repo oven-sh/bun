@@ -3,10 +3,10 @@
 pub(crate) use bun_sema::atom::{Atom, Interner, known};
 pub(crate) use bun_sema::bind::*;
 pub(crate) use bun_sema::erasure::find_type_ranges;
-pub(crate) use bun_sema::file_analysis::{FileAnalysis, FileInputs, analyze_file};
+pub(crate) use bun_sema::file_analysis::{FileAnalysis, FileInputs, analyze_file, fold_file_again};
 pub(crate) use bun_sema::fold::{
     Constant, Decision, Decisions, Define, DefinePath, DefineRoot, DefineValue, FoldError,
-    FoldErrorKind, FoldInputs, FoldOptions, FoldedData, FoldedValue, RuntimeValueKind,
+    FoldErrorKind, FoldInputs, FoldOptions, FoldedData, FoldedValue, NamedPath, RuntimeValueKind,
     data_value_of,
 };
 pub(crate) use bun_sema::hir::*;

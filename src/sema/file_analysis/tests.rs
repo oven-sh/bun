@@ -1,7 +1,10 @@
 use super::*;
 use crate::atom::{Atom, known};
 use crate::bind::RuntimeBindOptions;
-use crate::fold::{Constant, Decision, FoldErrorKind, FoldOptions, FoldedValue};
+use crate::fold::{
+    Constant, Decision, Define, DefinePath, DefineRoot, DefineValue, FoldErrorKind, FoldOptions,
+    FoldedValue,
+};
 use crate::hir::{
     BinOp, Call, Chain, ExportId, ExprKind, FileBuilder, Flags, FnBody, FnKind, Func, Import,
     ImportId, ImportSpec, ImportSpecId, ListAt, NameKind, NodeData, ParamId, PatKind, Prop,
@@ -222,6 +225,16 @@ fn add_constant(file: &mut FileBuilder, name: Atom, init: ExprId) -> StmtId {
         loc: TextRange::default(),
     }]);
     file.stmt(StmtKind::Var(declarations), 0)
+}
+
+fn add_path_statement(file: &mut FileBuilder, root: Atom, members: &[Atom]) -> (ExprId, StmtId) {
+    let root = file.expr(ExprKind::Ident(root), 0, 0);
+    let mut path = root;
+    for &member in members {
+        let access = file.dot((path, Chain::No), (member, 0), 0);
+        path = file.expr(access, 0, 0);
+    }
+    (root, file.stmt(StmtKind::Expr(path), 0))
 }
 
 fn add_await_statement(file: &mut FileBuilder) -> StmtId {
@@ -635,4 +648,44 @@ fn dead_top_level_await_decides_format_only() {
         &Decisions::default()
     ));
     assert_eq!(analyzed.analysis.module_format, ModuleFormat::Esm);
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn define_head_is_read_without_expression_where_its_define_is_applied() {
+    let session = Session::new();
+    let workspace = Workspace::new(&session);
+    let (atoms, arena) = (&workspace.atoms, workspace.arena);
+    let (process, env) = (atoms.intern(b"process"), atoms.intern(b"env"));
+    let (alias, other) = (atoms.intern(b"ALIAS"), atoms.intern(b"OTHER"));
+    let target = atoms.intern(b"target");
+    let define = Define {
+        path: DefinePath {
+            root: DefineRoot::Global(process),
+            members: arena.alloc_slice_copy(&[env, alias]),
+        },
+        value: DefineValue::GlobalPath(arena.alloc_slice_copy(&[target])),
+    };
+    let options = FoldOptions {
+        defines: arena.alloc_slice_copy(&[define]),
+        ..FoldOptions::default()
+    };
+    let fold = FoldInputs::new(options, arena);
+    for (member, is_applied) in [(alias, true), (other, false)] {
+        let mut file = FileBuilder::default();
+        let init = file.expr(ExprKind::Null, 0, 0);
+        let declaration = add_constant(&mut file, target, init);
+        let (root, statement) = add_path_statement(&mut file, process, &[env, member]);
+        let hir = workspace.finish_tree(file, &[declaration, statement]);
+        let analyzed = workspace.analyze_tree(hir, &fold, FILE_INPUTS);
+        let head = analyzed.bound.define_head(root, target);
+        let head = head.expect("the binder records the name at the root of the define");
+        assert!(matches!(head.binding, Binding::Symbol(_)), "{is_applied}");
+        let analysis = &analyzed.analysis;
+        // The root is dead code below the access that the define replaces, and runs where no define is applied.
+        assert_eq!(analysis.decisions.is_dead_expr(root), is_applied);
+        let read = analysis.bindings_read_without_expression(&analyzed.hir, &analyzed.bound);
+        let expected = is_applied.then_some(head.binding);
+        assert_eq!(read.collect::<Vec<_>>(), Vec::from_iter(expected));
+    }
 }

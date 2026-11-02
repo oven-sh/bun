@@ -33,7 +33,7 @@ pub use made_requires::{
 pub(crate) use made_requires::{
     find_imported_export, may_be_modified, names_own_file, settled_symbol,
 };
-pub use parameters::{find_values_of_parameter, find_values_passed_for, is_exported};
+pub use parameters::{find_values_of_parameter, find_values_passed_to, is_exported};
 pub(crate) use scan::collect_import_sites;
 pub(crate) use statements::is_runtime_import;
 

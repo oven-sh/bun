@@ -1,6 +1,6 @@
 use core::fmt;
 
-use bstr::BStr;
+use bstr::{BStr, BString};
 use bun_ast::Log;
 use bun_core::strings;
 use bun_sema::atom::{Atom, Interner};
@@ -11,6 +11,7 @@ use bun_sema::session::Arena;
 use self::DefinedValue::GlobalPath;
 use crate::builtins::id::BuiltinId;
 use crate::compile::testing::{default_settings, lower_program_with_provider};
+use crate::diagnostic_codes::Code;
 use crate::ir::generated::{ECMAMode, EntryParameter, Function, TerminatorKind};
 use crate::ir::ids::optional_id_from_word;
 use crate::ir::{
@@ -355,11 +356,15 @@ impl Probe {
     }
 
     #[track_caller]
-    fn expect_parameter(&self, value: ValueId) {
+    fn first_parameter(&self) -> ValueId {
         let position = EntryPosition::new(EntryParameter::Parameter, 0);
         let index = self.function().entry_parameter_index(position);
-        let parameter = ValueId::new(index.expect("the function declares the parameter"));
-        assert_eq!(self.skip_requests(value), parameter, "{self}");
+        ValueId::new(index.expect("the function declares the parameter"))
+    }
+
+    #[track_caller]
+    fn expect_parameter(&self, value: ValueId) {
+        assert_eq!(self.skip_requests(value), self.first_parameter(), "{self}");
     }
 
     #[track_caller]
@@ -439,6 +444,22 @@ impl Probe {
         path
     }
 
+    // The members that are read one below the other, from the first parameter down to `value`.
+    #[track_caller]
+    fn path_below_parameter(&self, value: ValueId) -> Vec<&BStr> {
+        let parameter = self.first_parameter();
+        let mut path = Vec::new();
+        let mut value = self.skip_requests(value);
+        while value != parameter {
+            let read = self.read_of(value);
+            assert!(!read.is_free_name, "{self}");
+            path.push(self.key_text(read.key));
+            value = self.skip_requests(read.object);
+        }
+        path.reverse();
+        path
+    }
+
     fn names_text(&self, text: &str) -> bool {
         let mut is_named = false;
         self.function().body.for_each_reference(&mut |reference| {
@@ -477,6 +498,36 @@ fn lower_sloppy_body(defines: &[(&str, DefinedValue)], body: &str) -> Probe {
     lower_file(defines, "main.cjs", &source)
 }
 
+fn lower_with_parameter(defines: &[(&str, DefinedValue)], parameter: &str, body: &str) -> Probe {
+    let source = format!("export function probe({parameter}, a) {{ {body} }}");
+    lower_file(defines, "main.js", &source)
+}
+
+#[track_caller]
+fn offset_of(source: &str, text: &str) -> u32 {
+    let offset = strings::index_of(source.as_bytes(), text.as_bytes());
+    offset.expect("the source has the text") as u32
+}
+
+// Where lowering stops the build for a define, and what it says that --aot does not support.
+fn collect_stops(defines: &[(&str, DefinedValue)], files: &[(&str, &str)]) -> Vec<(u32, BString)> {
+    let provider = Defines(defines);
+    let lowered = lower_program_with_provider(files, &default_settings(), &provider);
+    let diagnostics = lowered.iter().flat_map(|(_, file)| file.diagnostics.iter());
+    let stops = diagnostics.filter(|diagnostic| diagnostic.code == Code::UnsupportedOption);
+    stops
+        .map(|diagnostic| {
+            let start = diagnostic.span.map_or(0, |span| span.start);
+            (start, BString::from(diagnostic.arguments[0].as_slice()))
+        })
+        .collect()
+}
+
+// The sentences are those of the `/* Build errors: */` lines under test/aot/parallel/bundler.
+fn stop_text(key: &str, value: &str, reason: &str) -> BString {
+    BString::from(format!("--define {key}={value} where {reason}"))
+}
+
 #[test]
 fn global_path_define() {
     let rows: [(&str, &[&str]); 3] = [
@@ -504,6 +555,45 @@ fn local_binding_is_not_the_defined_name() {
     probe.expect_parameter(probe.returned());
     assert_eq!(probe.count(Opcode::PropGet), 0, "{probe}");
     assert_eq!(probe.count(Opcode::Builtin), 0, "{probe}");
+}
+
+#[test]
+fn defined_name_is_the_binding_in_scope() {
+    let probe = lower_with_parameter(PATHS, "probeTarget", "return PROBE_NAME;");
+    probe.expect_parameter(probe.returned());
+    assert_eq!(probe.count(Opcode::PropGet), 0, "{probe}");
+    assert_eq!(probe.count(Opcode::Builtin), 0, "{probe}");
+
+    let tested = lower_with_parameter(PATHS, "probeTarget", "return typeof PROBE_NAME;");
+    let operand = ValueId::from_word(tested.only(Opcode::TypeOf).fields[0]);
+    tested.expect_parameter(operand);
+    assert_eq!(tested.count(Opcode::PropGet), 0, "{tested}");
+
+    let constant = lower_body(PATHS, "const probeTarget = a; return PROBE_NAME;");
+    constant.expect_parameter(constant.returned());
+    assert_eq!(constant.count(Opcode::PropGet), 0, "{constant}");
+}
+
+#[test]
+fn defined_path_is_read_below_the_binding_of_its_first_name() {
+    let rows: [(&str, &[&str]); 2] = [
+        ("PROBE_PATH", &["inner", "member"]),
+        ("process.env.PROBE_ALIAS", &["member"]),
+    ];
+    for (expression, members) in rows {
+        let body = format!("return {expression};");
+        let probe = lower_with_parameter(PATHS, "probeHolder", &body);
+        let path = probe.path_below_parameter(probe.returned());
+        assert_eq!(path, members, "{probe}");
+        assert_eq!(probe.count(Opcode::PropGet), members.len(), "{probe}");
+        assert_eq!(probe.count(Opcode::Builtin), 0, "{probe}");
+    }
+
+    let source =
+        "const probeHolder = JSON.parse(\"{}\"); export function probe(a) { return ALIAS_PATH; }";
+    let of_file = lower_file(RENAMED, "main.js", source);
+    assert_eq!(of_file.reads_of("member").len(), 1, "{of_file}");
+    assert!(of_file.free_name_reads().is_empty(), "{of_file}");
 }
 
 #[test]
@@ -556,6 +646,30 @@ fn global_path_define_resolves_builtin() {
 }
 
 #[test]
+fn defined_path_of_a_builtin_below_a_binding_is_no_builtin() {
+    let read = lower_with_parameter(BUILTINS, "Math", "return PROBE_FLOOR;");
+    let path = read.path_below_parameter(read.returned());
+    assert_eq!(path, ["floor"], "{read}");
+    assert_eq!(read.count(Opcode::Builtin), 0, "{read}");
+    for conversion in read.all(Opcode::Convert) {
+        assert!(read.expected_builtins(conversion).is_empty(), "{read}");
+    }
+
+    let tested = lower_with_parameter(BUILTINS, "Symbol", "return typeof PROBE_SYMBOL;");
+    let operand = ValueId::from_word(tested.only(Opcode::TypeOf).fields[0]);
+    tested.expect_parameter(operand);
+    assert_eq!(tested.count(Opcode::Builtin), 0, "{tested}");
+
+    let defines = [("settle", GlobalPath("Symbol.for"))];
+    let called = lower_with_parameter(&defines, "Symbol", "return settle(1);");
+    let call = decode_call(called.only(Opcode::Call));
+    let path = called.path_below_parameter(call.callee);
+    assert_eq!(path, ["for"], "{called}");
+    called.expect_parameter(call.this.expect("the parameter is the receiver"));
+    assert_eq!(called.count(Opcode::Builtin), 0, "{called}");
+}
+
+#[test]
 fn store_to_defined_name_goes_to_global() {
     let rows = [
         ("ALIAS_NAME = 1;", 0),
@@ -592,6 +706,29 @@ fn store_to_defined_name_goes_to_global() {
 }
 
 #[test]
+fn store_to_defined_name_goes_to_the_binding_in_scope() {
+    let rows = [
+        "ALIAS_NAME = a;",
+        "ALIAS_NAME++;",
+        "ALIAS_NAME += a;",
+        "[ALIAS_NAME] = a;",
+        "({ x: ALIAS_NAME } = a);",
+    ];
+    for statement in rows {
+        let body = format!("{statement} return probeTarget;");
+        let probe = lower_with_parameter(RENAMED, "probeTarget", &body);
+        let returned = probe.skip_requests(probe.returned());
+        assert_ne!(returned, probe.first_parameter(), "{body}\n{probe}");
+        assert_eq!(probe.count(Opcode::PropSet), 0, "{body}\n{probe}");
+        assert!(probe.free_name_reads().is_empty(), "{body}\n{probe}");
+        assert!(!probe.names_text("ALIAS_NAME"), "{body}\n{probe}");
+    }
+    let body = "ALIAS_NAME = 1; return probeTarget;";
+    let plain = lower_with_parameter(RENAMED, "probeTarget", body);
+    assert_eq!(plain.integer_of(plain.returned()), Some(1), "{plain}");
+}
+
+#[test]
 fn store_to_defined_path_sets_member() {
     let rows = [
         ("ALIAS_PATH = 1;", 0),
@@ -618,6 +755,32 @@ fn store_to_defined_path_sets_member() {
         for read in member_reads {
             assert_eq!(read.object, store.object, "{body}\n{probe}");
             assert!(!read.is_free_name, "{body}\n{probe}");
+        }
+    }
+}
+
+#[test]
+fn store_to_defined_path_sets_member_of_the_binding_in_scope() {
+    let rows = [
+        ("ALIAS_PATH = 1;", 0),
+        ("ALIAS_PATH++;", 1),
+        ("ALIAS_PATH += a;", 1),
+        ("[ALIAS_PATH] = a;", 0),
+        ("({ x: ALIAS_PATH } = a);", 0),
+    ];
+    for (body, read_count) in rows {
+        let probe = lower_with_parameter(RENAMED, "probeHolder", body);
+        let store = probe.only_store();
+        assert!(!store.is_free_name, "{body}\n{probe}");
+        assert_eq!(probe.key_text(store.key), "member", "{body}\n{probe}");
+        probe.expect_parameter(store.object);
+        assert!(probe.free_name_reads().is_empty(), "{body}\n{probe}");
+        assert!(!probe.names_text("ALIAS_PATH"), "{body}\n{probe}");
+
+        let member_reads = probe.reads_of("member");
+        assert_eq!(member_reads.len(), read_count, "{body}\n{probe}");
+        for read in member_reads {
+            assert_eq!(read.object, store.object, "{body}\n{probe}");
         }
     }
 }
@@ -796,6 +959,40 @@ fn delete_defined_path() {
     assert_eq!(deleted.mode, ECMAMode::Sloppy, "{sloppy}");
 }
 
+#[test]
+fn delete_defined_path_below_a_binding() {
+    let defines = [
+        ("process.env.ALIAS", GlobalPath("probeHolder.inner.member")),
+        ("process.env.RENAMED", GlobalPath("probeTarget")),
+    ];
+    let body = "return delete process.env.ALIAS;";
+    let path = lower_with_parameter(&defines, "probeHolder", body);
+    let deleted = decode_delete(path.definition(path.returned()));
+    assert_eq!(path.key_text(deleted.key), "member", "{path}");
+    let holder = path.path_below_parameter(deleted.object);
+    assert_eq!(holder, ["inner"], "{path}");
+    assert!(!deleted.is_free_name, "{path}");
+    assert_eq!(path.count(Opcode::PropGet), 1, "{path}");
+
+    let source =
+        "module.exports = function probe(probeTarget) { return delete process.env.RENAMED; };";
+    let sloppy = lower_file(&defines, "main.cjs", source);
+    let returned = sloppy.definition(sloppy.returned());
+    assert_eq!(
+        (returned.opcode, returned.fields),
+        (Opcode::Boolean, &[0][..]),
+        "{sloppy}"
+    );
+    assert_eq!(sloppy.count(Opcode::PropDelete), 0, "{sloppy}");
+
+    let source = "export function probe(probeTarget) { return delete process.env.RENAMED; }";
+    let found = collect_stops(&defines, &[("main.js", source)]);
+    let texts: Vec<BString> = found.into_iter().map(|(_, text)| text).collect();
+    let reason = "process.env.RENAMED is deleted in strict mode";
+    let expected = stop_text("process.env.RENAMED", "probeTarget", reason);
+    assert_eq!(texts, [expected]);
+}
+
 #[track_caller]
 fn lower_defined_callee(path: &'static str) -> (Probe, CallOperation) {
     let defines = [("settle", GlobalPath(path))];
@@ -863,6 +1060,33 @@ fn defined_builtin_callee() {
 }
 
 #[test]
+fn defined_callee_is_the_binding_in_scope() {
+    let defines = [
+        ("settle", GlobalPath("probeTarget")),
+        ("settleBelow", GlobalPath("probeHolder.inner.member")),
+    ];
+    let name = lower_with_parameter(&defines, "probeTarget", "return settle(1);");
+    let call = decode_call(name.only(Opcode::Call));
+    name.expect_parameter(call.callee);
+    assert_eq!((call.this, call.key), (None, None), "{name}");
+    assert_eq!(
+        call.name.map(|text| name.string_text(text)),
+        Some(BStr::new("probeTarget"))
+    );
+    assert!(!name.names_text("settle"), "{name}");
+    assert_eq!(name.count(Opcode::PropGet), 0, "{name}");
+
+    let member = lower_with_parameter(&defines, "probeHolder", "return settleBelow(1);");
+    let call = decode_call(member.only(Opcode::Call));
+    let path = member.path_below_parameter(call.callee);
+    assert_eq!(path, ["inner", "member"], "{member}");
+    let this = call.this.expect("the holder of the member is the receiver");
+    assert_eq!(member.read_of(call.callee).object, this, "{member}");
+    assert_eq!(member.path_below_parameter(this), ["inner"], "{member}");
+    assert_eq!(member.count(Opcode::PropGet), 2, "{member}");
+}
+
+#[test]
 fn free_name_is_property_of_global_object() {
     let read = lower_body(&[], "return probeFree;");
     read.expect_path(read.returned(), &["probeFree"]);
@@ -889,4 +1113,207 @@ fn free_name_is_property_of_global_object() {
 
     let member = lower_body(&[], "return a.probeFree;");
     assert!(!member.read_of(member.returned()).is_free_name, "{member}");
+}
+
+#[test]
+fn call_of_eval_through_a_define_stops_the_build() {
+    let defines = [
+        ("RUN", GlobalPath("eval")),
+        ("process.env.RUN", GlobalPath("eval")),
+    ];
+    let called = stop_text("RUN", "eval", "RUN is called");
+    let body = "return [RUN(a), (0, RUN)(a), RUN?.(a), RUN, typeof RUN, process.env.RUN(a)];";
+    let source = format!("export function probe(a) {{ {body} }}");
+    let expected = (offset_of(&source, "RUN(a)"), called.clone());
+    let found = collect_stops(&defines, &[("main.js", source.as_str())]);
+    assert_eq!(found, [expected]);
+
+    // Where a parameter named eval holds the function eval, a call of that name is a direct eval.
+    let source = "module.exports = function probe(eval, a) { return RUN(a); };";
+    let expected = (offset_of(source, "RUN(a)"), called);
+    assert_eq!(collect_stops(&defines, &[("main.cjs", source)]), [expected]);
+}
+
+#[test]
+fn call_of_require_through_a_define_loads_what_its_argument_names() {
+    let defines = [("REQ", GlobalPath("require"))];
+    let source = "module.exports = function probe(a) { return [typeof REQ, REQ(a)]; };";
+    assert_eq!(collect_stops(&defines, &[("main.cjs", source)]), []);
+
+    let probe = lower_sloppy_body(&defines, "return REQ(a);");
+    let load = probe.only(Opcode::RequireDynamic);
+    probe.expect_parameter(ValueId::from_word(load.fields[0]));
+}
+
+#[test]
+fn require_behind_a_path_of_a_define_stops_the_build_where_it_takes_a_file() {
+    let defines = [
+        ("LOAD", GlobalPath("module.require")),
+        ("BIND", GlobalPath("module.require.bind")),
+        ("MOD", GlobalPath("module")),
+        ("CALL", GlobalPath("held.call")),
+        ("FIND", GlobalPath("held.resolve")),
+        ("PATHS", GlobalPath("require.resolve.paths")),
+    ];
+    let body = "const held = require; const load = LOAD; return [load, LOAD(a), MOD.require(a), \
+                BIND(module), CALL(null, a), FIND(a), typeof LOAD, MOD.id, FIND(\"node:fs\"), \
+                PATHS(a)];";
+    let source = format!("module.exports = function probe(a) {{ {body} }};");
+    let stop = |text: &str, key: &str, value: &str, reason: &str| {
+        (offset_of(&source, text), stop_text(key, value, reason))
+    };
+    let expected = [
+        stop(
+            "BIND(module)",
+            "BIND",
+            "module.require.bind",
+            "BIND is called",
+        ),
+        stop("CALL(null, a)", "CALL", "held.call", "CALL is called"),
+        stop("FIND(a)", "FIND", "held.resolve", "FIND is called"),
+    ];
+    let found = collect_stops(&defines, &[("main.cjs", source.as_str())]);
+    assert_eq!(found, expected);
+}
+
+#[test]
+fn store_to_a_name_of_commonjs_through_a_define_stops_the_build() {
+    let defines = [("EXP", GlobalPath("exports"))];
+    let source = "module.exports = function probe(a) { EXP = a; };";
+    let stored = stop_text("EXP", "exports", "EXP is stored to");
+    let expected = (offset_of(source, "EXP = a"), stored);
+    assert_eq!(collect_stops(&defines, &[("main.cjs", source)]), [expected]);
+
+    let source = "module.exports = function probe(exports) { EXP = 1; return exports; };";
+    assert_eq!(collect_stops(&defines, &[("main.cjs", source)]), []);
+    let parameter = lower_file(&defines, "main.cjs", source);
+    let returned = parameter.integer_of(parameter.returned());
+    assert_eq!(returned, Some(1), "{parameter}");
+}
+
+#[test]
+fn defined_path_is_read_below_a_variable_of_the_function() {
+    for keyword in ["const", "let", "var"] {
+        let body = format!("{keyword} probeHolder = a; return ALIAS_PATH;");
+        let source = format!("export function probe(a) {{ {body} }}");
+        let found = collect_stops(RENAMED, &[("main.js", source.as_str())]);
+        assert_eq!(found, [], "{source}");
+        let probe = lower_file(RENAMED, "main.js", &source);
+        let path = probe.path_below_parameter(probe.returned());
+        assert_eq!(path, ["member"], "{probe}");
+    }
+}
+
+#[test]
+fn defined_path_below_an_import_is_a_use_of_the_import() {
+    let library = ("lib.ts", "export const probeHolder = { member: 1 };");
+    let source = "import { probeHolder } from \"./lib\"; declare const ALIAS_PATH: number; \
+                  export function probe() { return ALIAS_PATH; }";
+    assert_eq!(collect_stops(RENAMED, &[("main.ts", source), library]), []);
+}
+
+#[test]
+fn defined_name_of_a_declaration_behind_a_return_is_read_through_its_binding() {
+    let rows = [
+        ("return ALIAS_NAME; const probeTarget = a;", true),
+        ("return ALIAS_NAME; let probeTarget = a;", true),
+        ("return ALIAS_NAME; class probeTarget {}", true),
+        ("return ALIAS_NAME; var probeTarget = a;", false),
+        ("return ALIAS_NAME; function probeTarget() {}", false),
+        ("return ALIAS_PATH; class probeHolder {}", true),
+        ("return ALIAS_PATH; const probeHolder = a;", true),
+        (
+            "if (typeof a) return ALIAS_NAME; const probeTarget = a;",
+            true,
+        ),
+    ];
+    for (body, has_dead_zone) in rows {
+        let source = format!("export function probe(a) {{ {body} }}");
+        let found = collect_stops(RENAMED, &[("main.js", source.as_str())]);
+        assert_eq!(found, [], "{source}");
+        let probe = lower_file(RENAMED, "main.js", &source);
+        let tests_dead_zone = probe.count(Opcode::CheckInitialized) != 0;
+        assert_eq!(tests_dead_zone, has_dead_zone, "{probe}");
+        assert!(probe.free_name_reads().is_empty(), "{probe}");
+    }
+}
+
+#[test]
+fn defined_name_after_a_direct_eval_is_looked_up_as_the_name_written_there() {
+    let rows = [
+        ("a", "return PROBE_NAME;", "return probeTarget;"),
+        (
+            "a",
+            "return typeof PROBE_NAME;",
+            "return typeof probeTarget;",
+        ),
+        ("a", "return PROBE_NAME(a);", "return probeTarget(a);"),
+        ("a", "PROBE_NAME = a;", "probeTarget = a;"),
+        // Beside a parameter with a default value, the variables of text evaluated in the body lie inside the parameters.
+        (
+            "a, probeTarget = 1",
+            "return PROBE_NAME;",
+            "return probeTarget;",
+        ),
+    ];
+    for (parameters, defined, written) in rows {
+        let lower = |body: &str| {
+            let head = format!("module.exports = function probe({parameters})");
+            lower_file(PATHS, "main.cjs", &format!("{head} {{ eval(a); {body} }};"))
+        };
+        let (defined, written) = (lower(defined), lower(written));
+        assert_ne!(defined.count(Opcode::ScopeHasBinding), 0, "{defined}");
+        let lookups = [
+            Opcode::ScopeHasBinding,
+            Opcode::PropGet,
+            Opcode::PropHas,
+            Opcode::PropSet,
+        ];
+        for opcode in lookups {
+            let (found, expected) = (defined.count(opcode), written.count(opcode));
+            assert_eq!(found, expected, "{defined}\n{written}");
+        }
+    }
+}
+
+// `TARGET` is as long as `target`, so `probe` prints the same text in both forms where the store is the one that the name written by hand makes.
+#[test]
+fn store_to_defined_name_is_the_store_to_the_name_written_there() {
+    const STORED: &[(&str, DefinedValue)] = &[("TARGET", GlobalPath("target"))];
+    let rows = [
+        (
+            "let target = 0; for (let i = 0; i < a; i++) { TARGET += i; } return target;",
+            "let target = 0; for (let i = 0; i < a; i++) { target += i; } return target;",
+        ),
+        (
+            "let target = 0; for (const item of a) { TARGET++; } return target;",
+            "let target = 0; for (const item of a) { target++; } return target;",
+        ),
+        (
+            "let target = 0; while (target < 3) { TARGET = target + 1; } return target;",
+            "let target = 0; while (target < 3) { target = target + 1; } return target;",
+        ),
+        (
+            "let target = 0; try { TARGET = 1; a(); } catch { return target; } return target;",
+            "let target = 0; try { target = 1; a(); } catch { return target; } return target;",
+        ),
+        (
+            "let target = 0; function inner() { TARGET = a; } inner(); return target;",
+            "let target = 0; function inner() { target = a; } inner(); return target;",
+        ),
+        (
+            "let target = 0; const write = () => { TARGET = a; }; const read = () => target; write(); return read();",
+            "let target = 0; const write = () => { target = a; }; const read = () => target; write(); return read();",
+        ),
+        // The update is reported at the last position that was recorded, and the leaf of a pattern records none for a variable in a register.
+        (
+            "let target = 0; ({ x: TARGET } = a); target++; return target;",
+            "let target = 0; ({ x: target } = a); target++; return target;",
+        ),
+    ];
+    for (defined, written) in rows {
+        let defined = lower_sloppy_body(STORED, defined);
+        let written = lower_sloppy_body(&[], written);
+        assert_eq!(defined.to_string(), written.to_string());
+    }
 }

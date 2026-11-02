@@ -189,17 +189,34 @@ impl Removable<'_, '_> {
     }
 
     pub(super) fn reads_only_initialized_names(&self, expression: ExprId) -> bool {
+        // A file in which no define puts a name or a path pays this one test for the question, and asks for no decision below `expression`.
+        match self.analysis.decisions.has_define_paths() {
+            true => self.finds_every_name_initialized::<true>(expression),
+            false => self.finds_every_name_initialized::<false>(expression),
+        }
+    }
+
+    fn finds_every_name_initialized<const HAS_DEFINE_PATHS: bool>(
+        &self,
+        expression: ExprId,
+    ) -> bool {
         let hir = self.hir;
+        let decisions = &self.analysis.decisions;
+        // What a define reads in place of an expression may not be initialized yet, and a member below the name may run code.
+        let is_named_path = |site: ExprId| HAS_DEFINE_PATHS && decisions.is_named_path(site);
         if matches!(hir[expression].kind, ExprKind::Ident(_)) {
-            return self.is_name_initialized(expression);
+            return !is_named_path(expression) && self.is_name_initialized(expression);
         }
         let mut stack = vec![TreeNode::Expr(expression)];
         while let Some(node) = stack.pop() {
             let TreeNode::Expr(expression) = node else {
                 continue;
             };
-            if self.analysis.decisions.is_dead_expr(expression) {
+            if decisions.is_dead_expr(expression) {
                 continue;
+            }
+            if is_named_path(expression) {
+                return false;
             }
             let is_initialized = match hir[expression].kind {
                 ExprKind::Ident(_) => {
@@ -220,8 +237,26 @@ impl Removable<'_, '_> {
     }
 
     pub(super) fn is_name_initialized(&self, name: ExprId) -> bool {
-        match self.bound.binding(name) {
-            Binding::Symbol(symbol) => self.is_initialized_at(name, symbol),
+        self.is_binding_initialized(name, self.bound.binding(name))
+    }
+
+    // The name under `typeof`. Where a define reads one name in its place, the answer is for that name. A longer path reads a member: code may run.
+    pub(super) fn is_typeof_operand_initialized(&self, name: ExprId) -> bool {
+        let decisions = &self.analysis.decisions;
+        if !decisions.is_named_path(name) {
+            return self.is_name_initialized(name);
+        }
+        match decisions.decision(name) {
+            Decision::NamedPath(named) if named.names.len() == 1 => {
+                self.is_binding_initialized(name, named.head.binding)
+            }
+            _ => false,
+        }
+    }
+
+    fn is_binding_initialized(&self, read: ExprId, binding: Binding) -> bool {
+        match binding {
+            Binding::Symbol(symbol) => self.is_initialized_at(read, symbol),
             Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => true,
         }
     }

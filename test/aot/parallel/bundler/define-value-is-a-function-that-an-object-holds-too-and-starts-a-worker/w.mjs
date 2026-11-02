@@ -1,0 +1,1 @@
+postMessage("the worker ran");

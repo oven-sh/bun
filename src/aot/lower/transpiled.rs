@@ -19,13 +19,14 @@ use bun_js_parser::Runtime::Features;
 use bun_js_parser::{Define, Parser, ParserOptions, Result as Parsed};
 use bun_sema::atom::Interner;
 use bun_sema::bind::Bound;
+use bun_sema::fold::Decisions;
 use bun_sema::hir::{self, ExprId, FnId};
 use bun_sema::util::SharedSort;
 use bun_threading::Guarded;
 use smallvec::{SmallVec, smallvec};
 
 use self::alignment::{Alignment, PrintedTree, Rewrites};
-pub(super) use self::alignment::{Rewrite, find_written_literal};
+pub(super) use self::alignment::{Rewrite, find_written_literal, is_name};
 use self::first_recorded_position::{
     Variables, find_first_recorded_position, find_first_recorded_position_of_class,
 };
@@ -66,6 +67,7 @@ impl<'b> RuntimeTranspiler<'b> {
 pub(super) struct ParsedText<'a, 's> {
     pub(super) hir: &'a hir::File<'s>,
     pub(super) bound: &'a Bound<'s>,
+    pub(super) decisions: &'a Decisions<'s>,
     pub(super) atoms: &'a Interner<'s>,
     pub(super) max_steps: u64,
 }

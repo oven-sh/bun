@@ -483,7 +483,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 form: found.form,
                 require: find_own_require(hir, bound, decisions, found.require)?,
             }
-        } else if holds_import_meta_require(hir, bound, callee) {
+        } else if holds_import_meta_require(hir, bound, decisions, callee) {
             match bound.import_meta_may_be_modified() {
                 true => CalleeTest::Expected(BuiltinId::ModuleRequire),
                 false => CalleeTest::IsFilled,
@@ -521,8 +521,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     ) -> Option<ValueId> {
         let hir = self.file.hir;
         let (written, arguments) = (hir[id].callee, hir[id].args);
+        let (bound, decisions) = (self.file.bound, Some(self.file.decisions()));
         if has_spread_argument(hir, arguments)
-            || !is_create_require_behind_get_builtin_module(hir, self.file.bound, written)
+            || !is_create_require_behind_get_builtin_module(hir, bound, decisions, written)
         {
             return None;
         }

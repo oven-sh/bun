@@ -27,6 +27,8 @@
 //
 // A program may begin with comment lines that say how it is built and run:
 //   // Flags: --aot-validate           more flags for the build. A word that begins with ./ or ../ is a path from the folder of the program
+//                                      Plain Bun runs the file with the --define flags among them (--define K=V or --define=K=V) and no other flag
+//                                      In the shell (stage `count`, below) neither run has a --define: shell/quick.py drops every flag of the bundler
 //                                      With --aot-log-type-mismatches what the executable logs about the files of the program counts as printed: plain Bun logs nothing
 //   // Entry points: ./child.cjs       further entry points, for what the program loads under a computed name. The program is built alone and starts
 //   // Alone: <why>                    what it prints depends on what else the executable holds: it is built alone
@@ -64,6 +66,7 @@
 // It may end with a comment that says what is expected where that is not what plain Bun does:
 //   /* Output: .. */                   what the executable prints. Behind a line `exit code <n>` stands the line that names the error
 //   /* Build errors: .. */             the build ends with exit code 1 and these `error:` lines
+//   /* Plain Bun prints: .. */         directly above Build errors: what plain Bun must print, written as Output is. An error TS100050 needs it
 //   // Erased types: as plain Bun      the build with --aot-erase-types is not held to Output
 //   // Erased types: not built: <why>  there is no second build: without its types the program means something else
 // A program that is built alone is built as anybody builds it: in its folder, with nothing but --compile --aot, a number of threads and its flags.
@@ -125,6 +128,8 @@ type Program = {
   asksTheShell: boolean;
   output?: string;
   buildErrors?: string;
+  plainPrints?: string;
+  plainPrintsIsElsewhere: boolean;
   way: "compiled" | "erased";
 };
 
@@ -438,7 +443,7 @@ function noteProcess(cmd: string[], cwd: string, startsAt: string | undefined, m
   const entryPoints = cmd.filter(word => /^\.\.?\//.test(word) || word.startsWith(root));
   const what = isBuild
     ? `${entryPoints.length} entry points from ${relative(root, resolve(cwd, entryPoints[0] ?? "."))}`
-    : (startsAt ?? (cmd[1] === quick ? cmd[2] : relative(root, cmd[0] === process.execPath ? cmd[1] : cwd)));
+    : (startsAt ?? (cmd[1] === quick ? cmd[2] : relative(root, cmd[0] === process.execPath ? cmd.at(-1)! : cwd)));
   const kind =
     processes[
       isBuild
@@ -630,7 +635,11 @@ function readBound(line: string) {
 
 function read(file: string): Program {
   const path = resolve(file);
-  const text = readFileSync(path, "utf8");
+  const whole = readFileSync(path, "utf8");
+  // What plain Bun prints is said directly above `Build errors`. All else is read in the text without that comment.
+  const saysWhatPlainBunPrints =
+    /(?<=^|\n)\/\* Plain Bun prints:\r?\n((?:(?!\*\/)[^])*)\*\/\r?\n(?=\/\* Build errors:\r?\n(?:(?!\*\/)[^])*\*\/\s*$)/;
+  const text = whole.replace(saysWhatPlainBunPrints, "");
   const head =
     /^(?:#!.*\r?\n)?(?:\/\/.*\r?\n)*/.exec(text)![0] +
     (/\n((?:\/\/.*\r?\n)+)\/\* (?:Output|Build errors):\r?\n(?:(?!\*\/)[^])*\*\/\s*$/.exec(text)?.[1] ?? "");
@@ -693,6 +702,8 @@ function read(file: string): Program {
     asksTheShell: texts.some(text => namesFunctionThatCounts.test(text)),
     output: last("Output"),
     buildErrors: last("Build errors"),
+    plainPrints: saysWhatPlainBunPrints.exec(whole)?.[1].replaceAll("*\\/", "*/").replaceAll("\r\n", "\n"),
+    plainPrintsIsElsewhere: /^\/\* Plain Bun prints:/m.test(text),
     way: "compiled",
   };
 }
@@ -863,8 +874,39 @@ async function askTheShell(program: Program): Promise<Asked> {
   return /^same \(\d+ lines\)$/.test(verdict) ? { shellMs: ms } : { failure: `in the jsc shell: ${verdict}`, output };
 }
 
+/** The defines among the flags of a build, as they are written: `--define K=V` is two words, `--define=K=V` one. */
+const definesOf = (flags: string[]) =>
+  flags.filter((flag, index) => flag.startsWith("--define=") || flag === "--define" || flags[index - 1] === "--define");
+/** The command of plain Bun for a program: its file behind the defines of its build. */
+const plainBun = (program: Program) => [process.execPath, ...definesOf(program.flags), program.path];
+
 /** Both ways to build a file are held to one run of the reference. */
 const references = new Map<string, ReturnType<typeof start>>();
+
+/** The build has stopped as the program says: plain Bun runs the file and is held to the comment `Plain Bun prints`. */
+async function judgeByPlainBun(program: Program, compileMs: number) {
+  const stored = program.plainPrints;
+  const withSlotOfRun = program.runsByItself ? withEverySlot : withSlot;
+  const plain = await withSlotOfRun(() =>
+    start(plainBun(program), dirname(program.path), { ...environment, ...program.env }),
+  );
+  if (stored === undefined)
+    return fail(
+      program,
+      "reference",
+      "the build stops with TS100050 and no `/* Plain Bun prints: .. */` directly above `/* Build errors: .. */` says what plain Bun prints",
+      plain.output,
+    );
+  const endedByItself = !plain.output.signal && !plain.output.overLimit;
+  if (endedByItself && asText(compared(plain.output)) === stored)
+    return settle(program, { state: "pass", compileMs, plainMs: plain.ms });
+  fail(program, "reference", "plain Bun does not exit and print as the comment `Plain Bun prints` says", plain.output, {
+    exitCode: null,
+    signal: null,
+    stdout: stored,
+    stderr: "",
+  });
+}
 
 async function run(programs: Program[]): Promise<void> {
   if (programs.length === 0) return;
@@ -883,6 +925,12 @@ async function run(programs: Program[]): Promise<void> {
       first,
       "read",
       `not of the form \`// STATISTIC | COUNT | COUNTER: <name> (= | >= | <=) <n>\`: ${first.boundsNotRead.join("; ")}`,
+    );
+  if (first.plainPrintsIsElsewhere)
+    return fail(
+      first,
+      "read",
+      "the comment `Plain Bun prints` is not directly above a comment `Build errors` that ends the file",
     );
   const isAlone = isBuiltAlone(first);
   const buildsIn = isAlone ? dirname(first.path) : root;
@@ -938,8 +986,12 @@ async function run(programs: Program[]): Promise<void> {
       // Each distinct error counts once. A Bun built with assertions names the token behind some of the messages of the parser.
       const lines = build.output.stderr.split(/\r?\n/).filter(line => line.startsWith("error: "));
       const errors = [...new Set(lines.map(line => line.replace(/ \(token: T\w+\)$/, "")))].join("\n") + "\n";
-      if (errors === first.buildErrors && build.output.exitCode === 1)
-        return settle(first, { state: "pass", compileMs: build.ms });
+      if (errors === first.buildErrors && build.output.exitCode === 1) {
+        // TS100050 names what --aot does not support. Plain Bun runs such a program, so the program says what it prints.
+        if (first.plainPrints === undefined && !/^error: TS100050: /m.test(errors))
+          return settle(first, { state: "pass", compileMs: build.ms });
+        return await judgeByPlainBun(first, build.ms);
+      }
       return fail(
         first,
         "compile",
@@ -985,8 +1037,7 @@ async function run(programs: Program[]): Promise<void> {
         const stored = program.way === "erased" && program.erasedIsAsPlain ? undefined : program.output;
         const withSlotOfRun = program.runsByItself ? withEverySlot : withSlot;
         const runReference = async () => {
-          if (!program.comparesWithCompiled)
-            return withSlotOfRun(() => start([process.execPath, program.path], cwd, env));
+          if (!program.comparesWithCompiled) return withSlotOfRun(() => start(plainBun(program), cwd, env));
           const other = nextExecutable("reference");
           let remove = () => {};
           try {
@@ -1190,6 +1241,7 @@ const isBuiltAlone = (program: Program) =>
   program.buildPrints.length > 0 ||
   Object.keys(program.envOfBuild).length > 0 ||
   program.buildErrors !== undefined ||
+  program.plainPrintsIsElsewhere ||
   program.flags.some(flag => !flag.startsWith("--aot")) ||
   startsWorkers(program) ||
   declaresForOthers(program);

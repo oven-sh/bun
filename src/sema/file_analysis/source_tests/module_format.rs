@@ -1722,3 +1722,183 @@ fn top_level_await() {
         });
     }
 }
+
+const NAMES_OF_COMMONJS: Fold<'static> = Fold {
+    defines: &[
+        (Path::Global(&["M"]), Defined::GlobalPath(&["module"])),
+        (Path::Global(&["MA"]), Defined::GlobalPath(&["module", "a"])),
+        (Path::Global(&["E"]), Defined::GlobalPath(&["exports"])),
+        (Path::Global(&["R"]), Defined::GlobalPath(&["require"])),
+        (
+            Path::Global(&["RR"]),
+            Defined::GlobalPath(&["require", "resolve"]),
+        ),
+        (Path::Global(&["D"]), Defined::GlobalPath(&["__dirname"])),
+        (Path::Global(&["F"]), Defined::GlobalPath(&["__filename"])),
+        (
+            Path::Global(&["process", "env", "M"]),
+            Defined::GlobalPath(&["module"]),
+        ),
+    ],
+    ..Fold::NONE
+};
+
+/// What `bun run --define M=module --define MA=module.a` makes of each.
+const FORMATS_WITH_A_DEFINE_THAT_NAMES_A_VARIABLE: &[(&str, ModuleFormat)] = &[
+    ("var module = { a: 1 }; console.log(typeof M);", CommonJs),
+    ("var module = { a: 1 }; console.log(typeof MA);", Esm),
+    (
+        "var module = { a: 1 }; if (false) console.log(typeof M);",
+        Esm,
+    ),
+    ("var module = { a: 1 };", Esm),
+    // `bun run` leaves out a statement whose value nothing uses, and the name with it.
+    ("var module = { a: 1 }; M;", Esm),
+    ("var module = { a: 1 }; void M;", Esm),
+    ("var module = { a: 1 }; if (M) {}", Esm),
+];
+
+#[test]
+fn variable_named_module_that_a_define_names_alone_is_evidence() {
+    for &(text, format) in FORMATS_WITH_A_DEFINE_THAT_NAMES_A_VARIABLE {
+        with_workspace(|workspace| {
+            let fold = workspace.fold_inputs(&NAMES_OF_COMMONJS);
+            let analyzed = workspace.analyze(&Source::new("a.js", text), &fold);
+            assert_eq!(analyzed.analysis.module_format, format, "{text}");
+        });
+    }
+}
+
+/// What `bun run` makes of each with `NAMES_OF_COMMONJS`: `module` and `exports` make CommonJS of `a.mjs` too, the other three of `a.js` alone.
+const FORMATS_WITH_A_DEFINE_THAT_NAMES_COMMONJS: &[(&str, &str, ModuleFormat)] = &[
+    ("a.mjs", "console.log(typeof M);", CommonJs),
+    ("a.mjs", "console.log(typeof E);", CommonJs),
+    ("a.mjs", "console.log(typeof process.env.M);", CommonJs),
+    ("a.mjs", "E.a = 1;", CommonJs),
+    ("a.mjs", "function f() { return M; }", CommonJs),
+    ("a.mjs", "M + 1;", CommonJs),
+    ("a.mjs", "M.a;", CommonJs),
+    ("a.mjs", "var x = M;", CommonJs),
+    ("a.js", "console.log(typeof R);", CommonJs),
+    ("a.mjs", "console.log(typeof R);", Esm),
+    ("a.js", "console.log(typeof D);", CommonJs),
+    ("a.mjs", "console.log(typeof D);", Esm),
+    ("a.js", "console.log(typeof F);", CommonJs),
+    ("a.mjs", "console.log(typeof F);", Esm),
+    // `bun run` counts no use of the first name of a value that has members behind it.
+    ("a.js", "console.log(typeof MA);", Esm),
+    ("a.js", "console.log(typeof RR);", Esm),
+    ("a.js", "if (false) console.log(typeof M);", Esm),
+    ("a.js", "function f(module) { return M; }", Esm),
+    // `bun run` leaves out a statement whose value nothing uses, and the name with it.
+    ("a.js", "M;", Esm),
+    ("a.js", "E;", Esm),
+    ("a.js", "MA;", Esm),
+    ("a.js", "process.env.M;", Esm),
+    ("a.js", "typeof M;", Esm),
+    ("a.js", "typeof process.env.M;", Esm),
+    ("a.js", "void M;", Esm),
+    ("a.js", "!M;", Esm),
+    ("a.js", "M, 1;", Esm),
+    ("a.js", "if (M) {}", Esm),
+];
+
+#[test]
+fn name_of_commonjs_that_a_define_names_alone_is_evidence_as_where_it_is_spelled() {
+    for &(path, text, format) in FORMATS_WITH_A_DEFINE_THAT_NAMES_COMMONJS {
+        with_workspace(|workspace| {
+            let fold = workspace.fold_inputs(&NAMES_OF_COMMONJS);
+            let analyzed = workspace.analyze(&Source::new(path, text), &fold);
+            assert_eq!(analyzed.analysis.module_format, format, "{path}: {text}");
+        });
+    }
+}
+
+/// `bun run` leaves each statement out and makes an ES module of `a.js`. The build keeps the name there, as where an identifier spells it.
+const UNUSED_STATEMENTS_THAT_THE_BUILD_KEEPS: &[&str] = &["R;", "D;", "void R;", "if (R) {}"];
+
+#[test]
+fn name_of_commonjs_that_a_define_names_in_an_unused_statement_is_evidence_to_the_build_alone() {
+    for &text in UNUSED_STATEMENTS_THAT_THE_BUILD_KEEPS {
+        with_workspace(|workspace| {
+            let fold = workspace.fold_inputs(&NAMES_OF_COMMONJS);
+            let analyzed = workspace.analyze(&Source::new("a.js", text), &fold);
+            assert_eq!(analyzed.analysis.module_format, CommonJs, "{text}");
+        });
+    }
+}
+
+/// `bun run` stops at an `import` beside `module` or `exports`, also where a define names either. Each with the evidence that the error names.
+const IMPORTS_BESIDE_A_DEFINE_THAT_NAMES_COMMONJS: &[(&str, Option<CommonJsEvidence>)] = &[
+    ("console.log(typeof M);", Some(CommonJsEvidence::MODULE)),
+    ("console.log(typeof E);", Some(CommonJsEvidence::EXPORTS)),
+    ("console.log(typeof R);", None),
+    ("M;", None),
+];
+
+fn errors_at_import(s: &Analyzed<'_>, evidence: Option<CommonJsEvidence>) -> Vec<FoldError> {
+    let imports = find_stmts(&s.hir, |kind| matches!(kind, StmtKind::Import(_)));
+    let error = evidence.map(|evidence| FoldError {
+        kind: FoldErrorKind::ImportStatementInCommonJs(evidence),
+        node: NodeData::Stmt(imports[0]),
+    });
+    error.into_iter().collect()
+}
+
+#[test]
+fn import_statement_beside_a_name_of_commonjs_that_a_define_names() {
+    for &(suffix, evidence) in IMPORTS_BESIDE_A_DEFINE_THAT_NAMES_COMMONJS {
+        let text = format!(r#"import a from "m"; a; {suffix}"#);
+        with_workspace(|workspace| {
+            let fold = workspace.fold_inputs(&NAMES_OF_COMMONJS);
+            let s = workspace.analyze(&Source::new("a.js", &text), &fold);
+            assert_eq!(s.analysis.errors, errors_at_import(&s, evidence), "{text}");
+        });
+    }
+}
+
+/// The name that a define puts is looked up past a namespace member of that name: `M` is the file's `module`. `bun run` counts the member instead.
+const FORMATS_WITH_COMMONJS_BEHIND_A_MEMBER: &[(&str, ModuleFormat, Option<CommonJsEvidence>)] = &[
+    (
+        "namespace N { export const module = 1; console.log(typeof M); }",
+        CommonJs,
+        None,
+    ),
+    (
+        "namespace N { export const module = 1; console.log(typeof module); }",
+        Esm,
+        None,
+    ),
+    (
+        "var module = { a: 1 }; namespace N { export const module = 2; console.log(typeof M); }",
+        CommonJs,
+        None,
+    ),
+    (
+        "var module = { a: 1 }; namespace N { export const module = 2; console.log(typeof module); }",
+        Esm,
+        None,
+    ),
+    (
+        r#"import a from "m"; a; namespace N { export const module = 1; console.log(typeof M); }"#,
+        CommonJs,
+        Some(CommonJsEvidence::MODULE),
+    ),
+    (
+        r#"import a from "m"; a; namespace N { export const module = 1; console.log(typeof module); }"#,
+        Esm,
+        None,
+    ),
+];
+
+#[test]
+fn name_of_commonjs_that_a_define_names_behind_a_member_is_evidence_unlike_where_it_is_spelled() {
+    for &(text, format, evidence) in FORMATS_WITH_COMMONJS_BEHIND_A_MEMBER {
+        with_workspace(|workspace| {
+            let fold = workspace.fold_inputs(&NAMES_OF_COMMONJS);
+            let s = workspace.analyze(&Source::new("a.ts", text), &fold);
+            assert_eq!(s.analysis.module_format, format, "{text}");
+            assert_eq!(s.analysis.errors, errors_at_import(&s, evidence), "{text}");
+        });
+    }
+}

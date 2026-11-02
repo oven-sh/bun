@@ -383,7 +383,9 @@ impl<'a, 's> Removable<'a, 's> {
         }
         match decisions.decision(expression) {
             Decision::Constant(_) | Decision::Data(_) => return true,
-            Decision::GlobalPath(_) | Decision::DeferredData => return false,
+            Decision::GlobalPath(_) | Decision::NamedPath(_) | Decision::DeferredData => {
+                return false;
+            }
             Decision::Unknown => {}
         }
         if !decisions.reads_member(expression) && self.find_constant(expression).is_some() {
@@ -461,7 +463,7 @@ impl<'a, 's> Removable<'a, 's> {
     fn constructs_without_effects(&self, call: &hir::Call) -> bool {
         let hir = self.hir;
         let callee = hir.skip_type_assertions(call.callee);
-        if self.find_static_binding(callee) != Some(Binding::Free) {
+        if !self.is_free_name(callee) {
             return false;
         }
         let Some(constructor) = self.builtins.builtin_of_expression(callee) else {
@@ -691,7 +693,7 @@ impl<'a, 's> Removable<'a, 's> {
             UnOp::Typeof => {
                 let name = self.hir.skip_type_assertions(operand);
                 match self.find_static_binding(name) {
-                    Some(_) => self.is_name_initialized(name),
+                    Some(_) => self.is_typeof_operand_initialized(name),
                     None => self.expression(operand),
                 }
             }
@@ -770,12 +772,18 @@ impl<'a, 's> Removable<'a, 's> {
         is_static.then(|| self.bound.binding(name))
     }
 
+    // A name that nothing declares where it is evaluated, and in whose place no define reads a name of the file.
+    fn is_free_name(&self, name: ExprId) -> bool {
+        self.find_static_binding(name) == Some(Binding::Free)
+            && !self.analysis.decisions.is_named_path(name)
+    }
+
     fn find_free_name(&self, expression: ExprId) -> Option<Atom> {
         let name = self.hir.skip_type_assertions(expression);
         let ExprKind::Ident(text) = self.hir[name].kind else {
             return None;
         };
-        (self.find_static_binding(name) == Some(Binding::Free)).then_some(text)
+        self.is_free_name(name).then_some(text)
     }
 
     // `a.b` and `a["b"]` outside an optional chain: `a` without its casts.
@@ -914,7 +922,7 @@ impl<'a, 's> Removable<'a, 's> {
         if let Some(constant) = self.find_constant(expression) {
             return Some(Primitive::of_constant(constant));
         }
-        if self.find_static_binding(expression) == Some(Binding::Free) {
+        if self.is_free_name(expression) {
             return match self.builtins.builtin_of_expression(expression)? {
                 BuiltinId::Undefined => Some(Primitive::Undefined),
                 BuiltinId::NaN | BuiltinId::Infinity => Some(Primitive::Number),

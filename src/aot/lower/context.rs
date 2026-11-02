@@ -180,6 +180,8 @@ pub(crate) struct FileLowering<'a, 'c, 'p, 's> {
     shown_names: ShownNames,
     has_bundled_positions: bool,
     runs_as_written: bool,
+    /// `Decisions::has_define_heads`. Where it is false, a name is what the binder says of its identifier.
+    pub(in crate::lower) has_define_heads: bool,
     pub(in crate::lower) transpiled: Option<TranspiledFile>,
     pub(in crate::lower) const_local_prefixes: ConstLocalPrefixes,
     pub(in crate::lower) inlined_constants: FxHashMap<VarDeclId, Option<Constant>>,
@@ -234,6 +236,7 @@ fn transpile_file(
         parsed: Some(ParsedText {
             hir,
             bound: &module.bound,
+            decisions: &files.analysis(file).decisions,
             atoms: &files.atoms,
             max_steps: inputs.limits.get(LimitId::MaxStepsToPrintedInitializer),
         }),
@@ -452,6 +455,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             ),
             has_bundled_positions: inputs.sources.bundled_positions(file).is_some(),
             runs_as_written,
+            has_define_heads: compiled.analysis.decisions.has_define_heads(),
             transpiled,
             const_local_prefixes: ConstLocalPrefixes::default(),
             inlined_constants: FxHashMap::default(),
@@ -533,6 +537,14 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
     pub(crate) fn decisions(&self) -> &'p Decisions<'s> {
         let compiled = self.compiled;
         &compiled.analysis.decisions
+    }
+
+    /// `Bound::binding` of a name. In a file with a define head the fold answers first: `Decisions::binding_named_at`.
+    pub(in crate::lower) fn binding_named_at(&self, name: ExprId) -> Binding {
+        match self.has_define_heads {
+            true => self.decisions().binding_named_at(self.bound, name),
+            false => self.bound.binding(name),
+        }
     }
 
     pub(crate) fn is_in_dependency(&self) -> bool {

@@ -1,3 +1,4 @@
+use super::made_requires::Text;
 use crate::atom::Atom;
 use crate::bind::{
     Binding, BindingStability, Bound, Decl, FnOwner, FunctionFlags, Parent, PatParent, SymbolId,
@@ -24,6 +25,7 @@ type FindWritten<'a> = &'a dyn Fn(Atom) -> Vec<ExprId>;
 fn finds_itself(
     hir: &File<'_>,
     bound: &Bound<'_>,
+    decisions: &Decisions<'_>,
     function: FnId,
     find_written: FindWritten<'_>,
 ) -> bool {
@@ -39,19 +41,23 @@ fn finds_itself(
     }
     let own_name = Binding::Symbol(bound.declared_symbol(Decl::Fn(function)));
     let mut written = find_written(hir[function].name).into_iter();
-    written.any(|ident| bound.is_evaluated_ident(ident) && bound.binding(ident) == own_name)
+    // A define whose value begins with the name reads it where no identifier spells it.
+    let mut defined = decisions.mentions_by_defines(own_name);
+    defined.next().is_some()
+        || written.any(|ident| bound.is_evaluated_ident(ident) && bound.binding(ident) == own_name)
 }
 
 fn find_name_of(
     hir: &File<'_>,
     bound: &Bound<'_>,
+    decisions: &Decisions<'_>,
     function: FnId,
     find_written: FindWritten<'_>,
 ) -> Option<SymbolId> {
     match (hir[function].kind, bound.fns[function.idx()].owner) {
         (FnKind::Decl, _) => Some(bound.declared_symbol(Decl::Fn(function))),
         (FnKind::Expr | FnKind::Arrow, FnOwner::Expr(expression))
-            if !finds_itself(hir, bound, function, find_written) =>
+            if !finds_itself(hir, bound, decisions, function, find_written) =>
         {
             let Parent::VarInit(declaration) = bound.parent_of_expr(expression) else {
                 return None;
@@ -73,10 +79,11 @@ fn find_name_of(
 fn find_only_name_of(
     hir: &File<'_>,
     bound: &Bound<'_>,
+    decisions: &Decisions<'_>,
     function: FnId,
     find_written: FindWritten<'_>,
 ) -> Option<SymbolId> {
-    let name = find_name_of(hir, bound, function, find_written)?;
+    let name = find_name_of(hir, bound, decisions, function, find_written)?;
     let mut hoisted = bound.runtime.annex_b_functions().iter();
     // `arguments.callee` and evaluated text hand the function on without its name.
     let other_ways = FunctionFlags::USES_ARGUMENTS | FunctionFlags::HAS_DIRECT_EVAL;
@@ -96,24 +103,29 @@ pub fn find_values_of_parameter(
     decisions: &Decisions<'_>,
     mention: ExprId,
 ) -> Option<SmallVec<[ExprId; 4]>> {
-    find_values_passed_for(hir, bound, decisions, mention, &|name| {
+    // An identifier spells the name at `mention`, or a define puts it there.
+    let text = Text::of(hir, bound, Some(decisions));
+    let Binding::Symbol(parameter) = text.binding(mention) else {
+        return None;
+    };
+    if text.dynamic_scope(mention).is_some() {
+        return None;
+    }
+    find_values_passed_to(hir, bound, decisions, parameter, &|name| {
         let all = (0..hir.exprs.len() as u32).map(ExprId);
         all.filter(|&e| matches!(hir[e].kind, ExprKind::Ident(it) if it == name))
             .collect()
     })
 }
 
-/// `find_written` answers with the places where a name is written.
-pub fn find_values_passed_for(
+/// What the calls pass for `parameter`, where neither `with` nor evaluated text may declare its name. `find_written`: where a name is written.
+pub fn find_values_passed_to(
     hir: &File<'_>,
     bound: &Bound<'_>,
     decisions: &Decisions<'_>,
-    mention: ExprId,
+    parameter: SymbolId,
     find_written: FindWritten<'_>,
 ) -> Option<SmallVec<[ExprId; 4]>> {
-    let Binding::Symbol(parameter) = bound.binding(mention) else {
-        return None;
-    };
     let &[Decl::Param(pattern)] = bound.symbol(parameter).decls else {
         return None;
     };
@@ -127,23 +139,24 @@ pub fn find_values_passed_for(
         BindingStability::Stable | BindingStability::NotInitializedOnce
     ) && bound.stores_to(parameter).is_empty()
         && !bound.is_visible_to_eval(parameter)
-        && bound
-            .dynamic_lookup_scope(NodeData::Expr(mention))
-            .is_none()
         && !hir[id].flags.contains(Flags::REST);
-    let name = find_only_name_of(hir, bound, function, find_written).filter(|_| is_settled)?;
+    let name =
+        find_only_name_of(hir, bound, decisions, function, find_written).filter(|_| is_settled)?;
     let text = bound.symbol(name).name;
     let mut values: SmallVec<[ExprId; 4]> = SmallVec::new();
     if hir[id].default.is_some() {
         values.push(hir[id].default);
     }
-    for callee in find_written(text) {
-        let is_mention = bound.is_evaluated_ident(callee)
-            && !decisions.is_dead_expr(callee)
-            && bound.binding(callee) == Binding::Symbol(name);
-        if !is_mention {
-            continue;
-        }
+    let is_mention = |callee: &ExprId| {
+        bound.is_evaluated_ident(*callee)
+            && !decisions.is_dead_expr(*callee)
+            && bound.binding(*callee) == Binding::Symbol(name)
+    };
+    let written = find_written(text).into_iter().filter(is_mention).map(Some);
+    // The value of a define that is the name alone is a mention. A value with members behind the name hands the function on.
+    let defined = decisions.mentions_by_defines(Binding::Symbol(name));
+    for callee in written.chain(defined) {
+        let callee = callee?;
         let Parent::Expr(above) = bound.parent_of_expr(callee) else {
             return None;
         };

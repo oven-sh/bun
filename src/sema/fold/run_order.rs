@@ -1,8 +1,9 @@
 use super::children::{TreeNode, push_children};
 use crate::bind::{
-    Binding, BindingInitializer, BindingKind, BindingStability, Bound, Decl, SymbolId,
+    Binding, BindingInitializer, BindingKind, BindingStability, Bound, Decl, ImplicitReference,
+    SymbolId,
 };
-use crate::hir::{ExprId, ExprKind, File, FnId, StmtKind};
+use crate::hir::{ExprId, ExprKind, File, FnId, NodeData, StmtKind};
 use crate::util::{FxHashMap, SharedSort};
 use std::cell::OnceCell;
 
@@ -53,6 +54,8 @@ impl Places {
 struct Walk<'a, 's> {
     hir: &'a File<'s>,
     bound: &'a Bound<'s>,
+    /// `Bound::define_heads`, in the order of their roots.
+    define_heads: &'a [ImplicitReference],
     order: Places,
     is_declared: Vec<bool>,
     function_of_symbol: FxHashMap<SymbolId, Option<FnId>>,
@@ -79,20 +82,43 @@ impl Walk<'_, '_> {
         })
     }
 
+    fn visit_function_name(&mut self, symbol: SymbolId, place: Place) {
+        match self.find_declared_function(symbol) {
+            Some(function) => self.can_run_at(function, place),
+            None => self.order.first_run.fill(0),
+        }
+    }
+
     fn visit_name(&mut self, name: ExprId, place: Place) {
         let Binding::Symbol(symbol) = self.bound.binding(name) else {
             return;
         };
         match self.bound.binding_kind(symbol) {
             BindingKind::Var => self.order.note_variable_read(name, place),
-            BindingKind::Function => match self.find_declared_function(symbol) {
-                Some(function) => self.can_run_at(function, place),
-                None => self.order.first_run.fill(0),
-            },
+            BindingKind::Function => self.visit_function_name(symbol, place),
             _ => {}
         }
     }
 
+    // A define may put the name of a function at `root`. The walk runs while the file is folded, so every record there counts, applied or not.
+    fn visit_define_heads(&mut self, root: ExprId, place: Place) {
+        let heads = self.define_heads;
+        let is_in_front = |head: &ImplicitReference| match head.node {
+            NodeData::Expr(recorded) => recorded < root,
+            _ => false,
+        };
+        let at_root = heads[heads.partition_point(is_in_front)..].iter();
+        for head in at_root.take_while(|head| head.node == NodeData::Expr(root)) {
+            if let Binding::Symbol(symbol) = head.binding
+                && self.bound.binding_kind(symbol) == BindingKind::Function
+            {
+                self.visit_function_name(symbol, place);
+            }
+        }
+    }
+
+    // Inlined by force. `visit_body` has two copies, and with two callers this would be a call in the one that a file without a define head runs.
+    #[inline(always)]
     fn visit_declaration(&mut self, function: FnId) {
         let symbol = self.bound.declared_symbol(Decl::Fn(function));
         let stability = self.bound.binding_stability(symbol);
@@ -102,7 +128,7 @@ impl Walk<'_, '_> {
         }
     }
 
-    fn visit_body(&mut self) {
+    fn visit_body<const HAS_DEFINE_HEADS: bool>(&mut self) {
         let hir = self.hir;
         // All of `stack` is in one place. What a function holds waits in `functions` until the place around it is through.
         let mut stack = Vec::new();
@@ -128,6 +154,9 @@ impl Walk<'_, '_> {
                         TreeNode::Expr(e) => {
                             if let ExprKind::Ident(_) = hir[e].kind {
                                 self.visit_name(e, place);
+                            }
+                            if HAS_DEFINE_HEADS {
+                                self.visit_define_heads(e, place);
                             }
                         }
                         TreeNode::Class(_) | TreeNode::Pattern(_) => {}
@@ -169,6 +198,7 @@ impl Places {
         let mut walk = Walk {
             hir,
             bound,
+            define_heads: bound.define_heads(),
             order: Places {
                 place_of_variable_read: vec![0; hir.exprs.len()],
                 first_run: vec![NEVER; hir.fns.len()],
@@ -177,7 +207,12 @@ impl Places {
             function_of_symbol: FxHashMap::default(),
             reached_from: Vec::new(),
         };
-        walk.visit_body();
+        // A file without a define head pays this one test, and its walk looks for none at any expression.
+        if walk.define_heads.is_empty() {
+            walk.visit_body::<false>();
+        } else {
+            walk.visit_body::<true>();
+        }
         walk.spread_to_reached_functions();
         walk.order
     }

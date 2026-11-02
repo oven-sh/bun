@@ -274,7 +274,8 @@ impl ScopeAnalysis {
         self.find_function(function)?.half_to_stand_behind
     }
 
-    /// The name holds a required module that is only read by members, so it holds no value, and every run of the function comes behind its initialization.
+    /// The name holds a required module that is only read by members: no value, and each run comes behind its initialization. Inlined by force.
+    #[inline(always)]
     pub(in crate::lower) fn is_initialized_holder(
         &self,
         function: FunctionKey,

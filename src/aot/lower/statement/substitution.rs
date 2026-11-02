@@ -8,7 +8,7 @@ use smallvec::{SmallVec, smallvec};
 
 use crate::lower::FileLowering;
 use crate::lower::scope::{BindingRef, Storage};
-use crate::lower::transpiled::{Rewrite, TranspiledFile};
+use crate::lower::transpiled::{Rewrite, TranspiledFile, is_name};
 
 // What Bun's transpiler prints in place of a name.
 #[derive(Copy, Clone)]
@@ -33,9 +33,14 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    fn reads_variable(&self, expression: ExprId) -> bool {
+    // An identifier, or what a define replaces with one name. Only a file with a define head asks the fold.
+    fn is_name(&self, expression: ExprId) -> bool {
         matches!(self.hir[expression].kind, ExprKind::Ident(_))
-            && matches!(self.bound.binding(expression), Binding::Symbol(_))
+            || (self.has_define_heads && is_name(self.hir, self.decisions(), expression))
+    }
+
+    fn reads_variable(&self, expression: ExprId) -> bool {
+        self.is_name(expression) && matches!(self.binding_named_at(expression), Binding::Symbol(_))
     }
 
     // Evaluating the expression does nothing. `bun run` leaves such an expression out where nothing takes its value.
@@ -104,10 +109,10 @@ impl FileLowering<'_, '_, '_, '_> {
         let mut current = expression;
         loop {
             current = self.skip_type_syntax(current);
+            if self.is_name(current) {
+                return self.binding_named_at(current) == Binding::Symbol(symbol);
+            }
             let next = match hir[current].kind {
-                ExprKind::Ident(_) => {
-                    return self.bound.binding(current) == Binding::Symbol(symbol);
-                }
                 ExprKind::Binary { op, left, right } => {
                     let is_right_the_value = match op {
                         BinOp::Comma => self.does_nothing(left),
@@ -269,7 +274,7 @@ impl FileLowering<'_, '_, '_, '_> {
         let hir = self.hir;
         let decl = hir[declaration];
         // In a row of variables that are each named after the one before, only the first is asked about the rest of the row.
-        if let ExprKind::Ident(_) = hir[self.skip_type_syntax(decl.init)].kind {
+        if self.is_name(self.skip_type_syntax(decl.init)) {
             return false;
         }
         let Binding::Symbol(symbol) = self.bound.initialized_binding(decl.pat) else {
@@ -307,7 +312,7 @@ impl FileLowering<'_, '_, '_, '_> {
         if transpiled.has_identifier_at(hir[name].pos) {
             return None;
         }
-        let Binding::Symbol(symbol) = self.bound.binding(name) else {
+        let Binding::Symbol(symbol) = self.binding_named_at(name) else {
             return None;
         };
         match *self.bound.symbol(symbol).decls {

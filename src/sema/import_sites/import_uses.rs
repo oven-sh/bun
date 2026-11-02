@@ -171,6 +171,17 @@ pub(super) fn compute_import_uses(
                 !matches!(reference.node, NodeData::Expr(e) if decisions.is_dead_expr(e))
             }
             ImplicitReferenceKind::DecoratorMetadata(_) => true,
+            ImplicitReferenceKind::DefineHead => {
+                // The binder records the name wherever the fold may apply the define. Code reads it only where the fold did.
+                if decisions.site_of_define_head(reference).is_none() {
+                    continue;
+                }
+                let is_live = decisions.is_read(reference);
+                if is_live {
+                    uses.read_live.insert(symbol.idx());
+                }
+                is_live
+            }
         };
         uses.add_use(symbol, is_live);
     }

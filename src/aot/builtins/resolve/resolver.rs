@@ -13,7 +13,7 @@ use crate::builtins::table::{
 };
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, CommonJsVariable, Decl, Parent, SymbolId};
-use bun_sema::fold::Decision;
+use bun_sema::fold::{Decision, NamedPath};
 use bun_sema::hir::{self, BinOp, ExprId, ExprKind, Flags, MemberKey, PatKind, StmtKind, VarKind};
 use bun_sema::import_sites::find_module_printed_as_require;
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
@@ -577,10 +577,26 @@ impl<'a, 's> Resolver<'a, 's> {
                 | Decision::Data(_)
                 | Decision::DeferredData => ExprState::Unresolved,
                 Decision::GlobalPath(path) => self.resolve_global_path(path),
+                Decision::NamedPath(named) => self.resolve_named_path(named),
             };
             self.set_state(expr, state);
         }
         self.evaluated = evaluated;
+    }
+
+    // No expression spells the first name of a define path. A bound one is no built-in here: `mentions.rs` hands on what it holds.
+    fn resolve_named_path(&mut self, named: &NamedPath<'_>) -> ExprState {
+        match named.head.binding {
+            Binding::Symbol(_) | Binding::Arguments(_) | Binding::CommonJs(_) => {
+                ExprState::Unresolved
+            }
+            // The binder records a free name only where a `with` object or evaluated text may declare it. Nobody knows a member of theirs.
+            Binding::Free if named.names.len() > 1 => ExprState::Unresolved,
+            Binding::Free => match self.resolve_global_path(named.names) {
+                ExprState::Builtin(global) => ExprState::DynamicGlobal(global.predicted().path),
+                state => state,
+            },
+        }
     }
 
     pub(super) fn evaluated_calls(&self) -> &[ExprId] {

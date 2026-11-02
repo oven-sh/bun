@@ -1,8 +1,9 @@
-use bun_sema::fold::Decision;
+use bun_sema::fold::{Decision, NamedPath};
 use bun_sema::hir::{ExprId, ExprKind};
 
 use crate::builtins::{Mutability, Resolved};
 use crate::ir::ValueId;
+use crate::lower::expression::DefineStop;
 use crate::lower::{FileLowering, FunctionLowering};
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
@@ -18,6 +19,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let value = self.emit_free_name_get(name, true);
                 self.expect_resolved_path(target, value)
             }
+            Decision::NamedPath(named) if named.names.len() == 1 => {
+                self.lower_named_typeof_operand(target, named)
+            }
             Decision::Unknown => {
                 if !matches!(hir[target].kind, ExprKind::Ident(_)) {
                     return self.lower_expression(operand);
@@ -28,6 +32,19 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             _ => return self.lower_expression(operand),
         };
         self.convert_through_assertions(operand, value)
+    }
+
+    // The operand of `typeof` where a define gives `target` one name.
+    fn lower_named_typeof_operand(&mut self, target: ExprId, named: &NamedPath<'_>) -> ValueId {
+        let stop = self.find_define_stop(target, named, DefineStop::TypeOf);
+        if stop.is_some() {
+            self.report_define_without_support(target, named, DefineStop::TypeOf);
+            return self.builder.undefined();
+        }
+        let hir = self.file.hir;
+        self.set_position(hir[target].pos);
+        let is_name = matches!(hir[target].kind, ExprKind::Ident(_));
+        self.get_define_head_for_typeof(&named.head, is_name)
     }
 }
 

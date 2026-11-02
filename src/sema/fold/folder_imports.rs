@@ -1,8 +1,8 @@
-use super::Constant;
 use super::evaluate::Value;
 use super::folder::{Effects, Folded, Folder};
+use super::{Constant, NamedPath};
 use crate::atom::{Atom, known};
-use crate::bind::{BindingKind, Decl, SymbolId};
+use crate::bind::{Binding, BindingKind, Decl, SymbolId};
 use crate::hir::{ExprId, ImportedName};
 use crate::util::FxHashMap;
 
@@ -25,7 +25,8 @@ impl ImportedNames {
 }
 
 impl<'s> Folder<'_, 's> {
-    /// What an import binds. Without an `export`: the namespace object of the other file.
+    /// What an import binds. Without an `export`: the namespace object of the other file. Inlined by force: each name that a symbol binds asks.
+    #[inline(always)]
     fn find_imported_name(&self, symbol: SymbolId) -> Option<ImportedName> {
         if self.bound.binding_kind(symbol) != BindingKind::Import {
             return None;
@@ -99,5 +100,32 @@ impl<'s> Folder<'_, 's> {
         let &holder = self.imported_names.holders.get(&object)?;
         let is_read = !self.is_assignment_target(access) && !self.is_delete_operand(access);
         is_read.then(|| self.fold_imported_name(access, ImportedName { member, ..holder }))
+    }
+
+    /// The path that a define puts at `site`, read as the text reads `holder` and `holder.member` where an import binds the first name.
+    pub(super) fn fold_imported_path(
+        &mut self,
+        site: ExprId,
+        named: &NamedPath<'_>,
+    ) -> Option<Folded> {
+        let Binding::Symbol(symbol) = named.head.binding else {
+            return None;
+        };
+        let holder = self.find_imported_name(symbol)?;
+        if self.bound.dynamic_scope_of(&named.head).is_some() {
+            return None;
+        }
+        let name = match *named.names {
+            [_] => {
+                self.imported_names.holders.insert(site, holder);
+                holder
+            }
+            [_, member] => ImportedName { member, ..holder },
+            _ => return None,
+        };
+        let is_read = (name.export.is_some() || name.member.is_some())
+            && !self.is_assignment_target(site)
+            && !self.is_delete_operand(site);
+        is_read.then(|| self.fold_imported_name(site, name))
     }
 }

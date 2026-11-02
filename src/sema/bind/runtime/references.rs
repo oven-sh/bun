@@ -7,15 +7,17 @@ use super::queries::IDENTS_IN_RUN;
 use super::storage::RuntimeReferencesIn;
 use super::type_only_code::TypeOnlyCode;
 use super::{
-    Binding, CodeUnit, CommonJsVariable, FunctionFlags, RuntimeBindOptions, RuntimeInput,
-    RuntimeScopes,
+    Binding, CodeUnit, CommonJsVariable, FunctionFlags, ImplicitReferenceKind, RuntimeBindOptions,
+    RuntimeInput, RuntimeScopes,
 };
 use crate::atom::{Atom, Intern, known};
 use crate::bind::{BoundBuilder, Decl, Parent, ScopeId, ScopeKind, SymbolId};
+use crate::fold::DefineHead;
 use crate::hir::*;
 
 pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &RuntimeScopes) {
     let (hir, idents, options, atoms) = (input.hir, input.idents, input.options, input.atoms);
+    let (import_metas, define_heads) = (input.import_metas, input.define_heads);
     let arguments_variables = find_arguments_variables(hir, input.bound, scopes);
     for &(_, binding) in &arguments_variables {
         if let Binding::Arguments(CodeUnit::Function(function)) = binding {
@@ -37,7 +39,9 @@ pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &Runt
             dynamic,
         },
         idents,
+        import_metas,
         options,
+        define_heads,
         atoms,
         type_only,
         direct_evals,
@@ -61,6 +65,8 @@ pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &Runt
     pass.resolve_entity_roots();
     pass.resolve_classic_jsx();
     pass.resolve_decorator_metadata();
+    pass.resolve_define_heads();
+    pass.collect_stores_through_defines();
     pass.collect_jump_targets();
     pass.finish_results();
     let ReferencePass {
@@ -73,7 +79,7 @@ pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &Runt
         ..
     } = pass;
     let bound = &mut *input.bound;
-    let names_require_or_own_path = |&(_, binding): &(ExprId, Binding)| {
+    let names_require_or_own_path = |binding: Binding| {
         matches!(
             binding,
             Binding::CommonJs(
@@ -81,8 +87,14 @@ pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &Runt
             )
         )
     };
-    let mut named = references.ident_bindings.iter();
-    bound.runtime.may_name_own_require = has_import_meta || named.any(names_require_or_own_path);
+    let mut named = references.ident_bindings.iter().map(|entry| entry.1);
+    // The define heads are the first implicit references.
+    let heads = references.implicit_references.iter();
+    let heads = heads.take_while(|reference| reference.kind == ImplicitReferenceKind::DefineHead);
+    let mut heads = heads.map(|reference| reference.binding);
+    bound.runtime.may_name_own_require = has_import_meta
+        || named.any(names_require_or_own_path)
+        || heads.any(names_require_or_own_path);
     bound.runtime.references = references;
     exported_block_bindings.record(&mut bound.runtime.declarations);
     bound.runtime.depends_on_sloppy_mode |= has_sloppy_eval;
@@ -137,7 +149,9 @@ fn find_arguments_variables(
 pub(super) struct ReferencePass<'a, 's> {
     pub(super) lookup: Lookup<'a, 's>,
     pub(super) idents: &'a [(ExprId, ScopeId)],
+    pub(super) import_metas: &'a [(ExprId, ScopeId)],
     pub(super) options: RuntimeBindOptions,
+    pub(super) define_heads: &'a [DefineHead],
     pub(super) atoms: &'a dyn Intern,
     pub(super) type_only: TypeOnlyCode,
     pub(super) direct_evals: Vec<DirectEval>,

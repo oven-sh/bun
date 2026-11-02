@@ -118,6 +118,9 @@ impl Folder<'_, '_> {
     fn push_parts_of_unused_value(&self, e: ExprId, rule: Rule, removal: &mut Removal) -> bool {
         let hir = self.hir;
         let e = hir.skip_type_assertions(e);
+        if let Some(binding) = self.find_binding_named_by_define(e) {
+            return self.removes_unused_name(e, binding, &mut removal.reads_module_or_exports);
+        }
         let parts = &mut removal.parts;
         let mut push = |operands: &[ExprId]| {
             let present = operands.iter().filter_map(|operand| operand.some());
@@ -140,18 +143,10 @@ impl Folder<'_, '_> {
             | ExprKind::Regex { .. }
             | ExprKind::Fn(_)
             | ExprKind::ImportMeta => true,
-            ExprKind::Ident(_) => match self.bound.binding(e) {
-                Binding::Symbol(symbol) => self.bound.binding_kind(symbol) != BindingKind::Import,
-                Binding::Free => {
-                    matches!(self.folded(e).value, Value::Known(_)) && self.is_folded_by_bun_run(e)
-                }
-                // `bun run` declares these two in every file. The other names of CommonJS are free names to it.
-                Binding::CommonJs(CommonJsVariable::Module | CommonJsVariable::Exports) => {
-                    removal.reads_module_or_exports = true;
-                    true
-                }
-                Binding::Arguments(_) | Binding::CommonJs(_) => false,
-            },
+            ExprKind::Ident(_) => {
+                let binding = self.bound.binding(e);
+                self.removes_unused_name(e, binding, &mut removal.reads_module_or_exports)
+            }
             ExprKind::Unary { op, operand } => {
                 let is_type_of_name =
                     op == UnOp::Typeof && matches!(hir[operand].kind, ExprKind::Ident(_));
@@ -237,6 +232,44 @@ impl Folder<'_, '_> {
                 prop.kind != PropKind::Spread && !is_key_computed
             }),
             _ => false,
+        }
+    }
+
+    // The binding that a define names at `e` with one name, or with a path below `module` or `exports`. Any other path is kept as a member read is.
+    fn find_binding_named_by_define(&self, e: ExprId) -> Option<Binding> {
+        let heads = &self.applied_heads;
+        if heads.is_empty() {
+            return None;
+        }
+        let applied = heads.binary_search_by_key(&e, |entry| entry.0).ok()?;
+        let named = heads[applied].1;
+        let head = named.head.binding;
+        // A path below either name makes no CommonJS file, and an ES module has neither: the statement goes as where the name is alone.
+        let begins_with_module_or_exports = matches!(
+            head,
+            Binding::CommonJs(CommonJsVariable::Module | CommonJsVariable::Exports)
+        );
+        (named.names.len() == 1 || begins_with_module_or_exports).then_some(head)
+    }
+
+    // Whether `bun run` removes an unused identifier at `e` that names `binding`. A define's name is judged as one, though `bun run` removes each.
+    fn removes_unused_name(
+        &self,
+        e: ExprId,
+        binding: Binding,
+        reads_module_or_exports: &mut bool,
+    ) -> bool {
+        match binding {
+            Binding::Symbol(symbol) => self.bound.binding_kind(symbol) != BindingKind::Import,
+            Binding::Free => {
+                matches!(self.folded(e).value, Value::Known(_)) && self.is_folded_by_bun_run(e)
+            }
+            // `bun run` declares these two in every file. The other names of CommonJS are free names to it.
+            Binding::CommonJs(CommonJsVariable::Module | CommonJsVariable::Exports) => {
+                *reads_module_or_exports = true;
+                true
+            }
+            Binding::Arguments(_) | Binding::CommonJs(_) => false,
         }
     }
 

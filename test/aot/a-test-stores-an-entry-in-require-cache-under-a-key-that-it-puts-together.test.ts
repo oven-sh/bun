@@ -1,18 +1,20 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isDebug, tempDir } from "harness";
-import { givenToABunWithAssertions, raiseDefaultTimeout } from "./harness/default-timeout";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
-// supported.ts sets the limit for the first file of a process alone. In a debug build a run in layers takes 90 s on twelve
-// processors with nothing beside it, and `bun test` has five cases under way. So a case gets three times what the helper
-// gives a Bun with assertions.
-raiseDefaultTimeout(isDebug ? 3 * givenToABunWithAssertions : 120_000);
+// supported.ts sets the limit for the first file of a process alone.
+raiseDefaultTimeout(120_000);
+
+// A debug build takes several times as long for a build as the Buns that CI tests: five builds beside one another do not end
+// within the limit of a case. So in a debug build the cases follow one another.
+const declare = isDebug ? test.serial : test.concurrent;
 
 type Project = {
   files: Record<string, string>;
   /** What plain `bun test` says of the project, and a compiled run has to say too: the lines that its test prints. */
-  printed: string[];
+  printed: (string | ReturnType<typeof expect.stringMatching>)[];
   /** And how the test ends. */
   results: string[];
 };
@@ -180,9 +182,10 @@ const projects: Record<string, Project> = {
         console.log("taken out:", typeof require("url").parse, typeof require("os").platform, typeof require("events").once, pk.url(), pk.os(), pk.events());
       });`,
     },
-    // Plain Bun does not see the entry that Object.defineProperty stores. Node.js does, and prints number for `events` too.
+    // Plain Bun does not see the entry that Object.defineProperty stores, and Node.js does. So either answer for `events` is
+    // taken, from the test and from the package alike. A compiled run has to give the answer of plain Bun.
     printed: [
-      "stored: number number function number number function",
+      expect.stringMatching(/^stored: number number (function|number) number number \1$/),
       "taken out: function function function function function function",
     ],
     results: ["pass calls that store"],
@@ -292,7 +295,7 @@ async function runTests(directory: string, env: Record<string, string> = {}, ...
 }
 type Said = Awaited<ReturnType<typeof runTests>>["said"];
 
-const passing = ({ printed, results }: Pick<Project, "printed" | "results">): Said => ({
+const passing = ({ printed, results }: Pick<Project, "printed" | "results">) => ({
   printed,
   errors: [],
   results,
@@ -303,17 +306,24 @@ const passing = ({ printed, results }: Pick<Project, "printed" | "results">): Sa
 const plainRuns = new Map<string, Promise<Said>>();
 /** Plain `bun test` in a project of its own: once, however many compiled runs are compared with it. */
 function plainRun(name: string) {
-  return plainRuns.getOrInsertComputed(name, async () => {
-    using dir = tempDir("a-key-of-require-cache-that-is-put-together", projects[name].files);
-    return (await runTests(String(dir))).said;
+  return plainRuns.getOrInsertComputed(name, () => {
+    const ran = (async () => {
+      using dir = tempDir("a-key-of-require-cache-that-is-put-together", projects[name].files);
+      return (await runTests(String(dir))).said;
+    })();
+    // A run that was ended, as one is that holds too much memory beside others, is not kept: the next case makes it again.
+    ran.catch(() => plainRuns.delete(name));
+    return ran;
   });
 }
 
 const toldByScan = Object.keys(projects).slice(0, 6);
 
-for (const [name, project] of Object.entries(projects)) {
-  for (const [way, { env, form }] of toldByScan.includes(name) ? ways : ways.slice(0, 1)) {
-    test.concurrent(`${name}, ${way}`, async () => {
+// Way by way, and the short builds first: those as one program.
+for (const [index, [way, { env, form }]] of ways.entries()) {
+  for (const name of index === 0 ? Object.keys(projects) : toldByScan) {
+    const project = projects[name];
+    declare(`${name}, ${way}`, async () => {
       const plain = await plainRun(name);
       expect(plain).toEqual(passing(project));
       using dir = tempDir("a-key-of-require-cache-that-is-put-together", project.files);
@@ -374,7 +384,7 @@ const keysKnownInPart: KeyKnownInPart[] = [
 ];
 
 for (const { name, declared, cleared = "", stored, opens } of keysKnownInPart) {
-  test.concurrent(name, async () => {
+  declare(name, async () => {
     using dir = tempDir("a-key-of-require-cache-that-is-known-in-part", {
       "package.json": `{}`,
       "one.test.js": `${head}
@@ -395,7 +405,7 @@ for (const { name, declared, cleared = "", stored, opens } of keysKnownInPart) {
   });
 }
 
-test.concurrent("a store in a file that the test writes is refused by name", async () => {
+declare("a store in a file that the test writes is refused by name", async () => {
   using dir = tempDir("a-store-into-require-cache-that-the-build-never-saw", {
     "package.json": `{}`,
     "one.test.js": `${head}

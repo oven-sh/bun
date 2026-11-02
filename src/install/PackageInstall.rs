@@ -62,6 +62,9 @@ pub struct Summary {
     /// might have a different number of scripts
     pub(crate) packages_with_blocked_scripts: ArrayHashMap<TruncatedPackageNameHash, usize>,
 
+    /// The dependency of each blocked package, when the command names packages. For the note that names the blocked ones among them.
+    pub(crate) blocked_dependencies: Vec<DependencyID>,
+
     /// Set when this install replaced the tree of the other linker.
     pub(crate) old_modules: Option<crate::prune::OldModules>,
 

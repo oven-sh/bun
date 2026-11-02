@@ -1930,8 +1930,8 @@ impl Run<'_> {
         let formatting = started.elapsed();
 
         let (mut different, mut unchanged, mut failed) = (0usize, 0usize, 0usize);
-        let mut partly_staged = Vec::new();
-        // An error that Prettier stops at. Its files were written before it was seen, so they're staged all the same.
+        // The first error that Prettier stops at. It's printed last, after the files that were written before it was
+        // seen are staged.
         let mut stopped = None;
         let mut warnings = std::mem::take(warnings.get_mut());
         sort_slice_by(&mut warnings[..], |a, b| a.0.cmp(&b.0));
@@ -1958,16 +1958,21 @@ impl Run<'_> {
                 }
             }
         }
-        let written_paths: Vec<Vec<u8>> = (expanded.iter().zip(&results))
-            .filter_map(|(it, done)| match (it, done) {
-                (Expanded::File(target), Some(Done::Different(_)))
-                    if !is_read_only && only.is_some() =>
-                {
-                    Some(target.path.clone())
-                }
-                _ => None,
-            })
-            .collect();
+        let paths_with = |wanted: fn(&Done) -> bool| -> Vec<Vec<u8>> {
+            (expanded.iter().zip(&results))
+                .filter_map(|(it, done)| match (it, done) {
+                    (Expanded::File(target), Some(done)) if wanted(done) => {
+                        Some(target.path.clone())
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+        let written_paths = match !is_read_only && only.is_some() {
+            true => paths_with(|it| matches!(it, Done::Different(_))),
+            false => Vec::new(),
+        };
+        let mut partly_staged = paths_with(|it| matches!(it, Done::PartlyStaged));
         for (index, (it, done)) in expanded.iter().zip(results).enumerate() {
             let target = match it {
                 Expanded::Error(error) => {
@@ -1996,14 +2001,12 @@ impl Run<'_> {
                     failed += 1;
                     self.report(&display_name, &failure);
                 }
-                // Prettier stops at this error.
+                // Prettier stops at this error. The other files were written already, so they're still listed.
                 Some(Done::Stopped(error)) => {
-                    stopped = Some(error);
-                    break;
+                    stopped.get_or_insert(error);
                 }
                 Some(Done::Failed(error)) if config::is_invalid_value(&error) => {
-                    stopped = Some(error);
-                    break;
+                    stopped.get_or_insert(error);
                 }
                 Some(Done::Failed(error)) => {
                     failed += 1;
@@ -2014,10 +2017,7 @@ impl Run<'_> {
                     let text = unknown_class_order_error(&display_name);
                     self.error(&[&text[..], b" It was not formatted."].concat());
                 }
-                Some(Done::PartlyStaged) => {
-                    failed += 1;
-                    partly_staged.push(target.path.clone());
-                }
+                Some(Done::PartlyStaged) => failed += 1,
                 Some(Done::Different(took)) => {
                     different += 1;
                     match (is_oxfmt, options.check) {
@@ -2040,17 +2040,21 @@ impl Run<'_> {
                 }
             }
         }
+        let mut is_staged = true;
         if let Some(only) = &only {
             if !partly_staged.is_empty() {
                 self.error(&only.partly_staged_error(&mut partly_staged, "formatted"));
             }
             if let Err(Fatal(error)) = only.stage(&written_paths) {
                 self.error(&error);
+                is_staged = false;
             }
         }
         if let Some(error) = stopped {
             self.error(&error);
-            self.out.exit_code = 1;
+            if is_staged {
+                self.out.exit_code = 1;
+            }
             return self.out;
         }
         for warning in std::mem::take(&mut *configs.warnings.lock()) {

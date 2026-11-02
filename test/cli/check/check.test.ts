@@ -23796,6 +23796,7 @@ describe.concurrent("--check", () => {
         "node_modules/.bin/checker-argv": `#!/usr/bin/env node\nrequire("../@scope/checker-argv/index.js");\n`,
         "node_modules/.bin/checker-argv.cmd": `@echo off\r\nnode "%~dp0..\\@scope\\checker-argv\\index.js" %*\r\n`,
       });
+      chmodSync(join(String(dir), "node_modules/@scope/checker-argv/index.js"), 0o755);
       chmodSync(join(String(dir), "node_modules/.bin/checker-argv"), 0o755);
       const args = ["--check", "--threads", "2", "--project", "x"];
       const result = await run(String(dir), ["x", "--no-install", "@scope/checker-argv", ...args]);

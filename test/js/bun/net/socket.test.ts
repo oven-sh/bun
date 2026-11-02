@@ -378,6 +378,22 @@ describe.concurrent("socket", () => {
     expect(await bunRun(fileURLToPath(new URL("./tls-handshake-pause-spin-fixture.ts", import.meta.url)))).toSpawn();
   });
 
+  it.skipIf(!isLinux).each(["tls", "udp"])(
+    "the loop's receive buffers give their memory back once large reads stop (%s)",
+    async mode => {
+      const { stdout, stderr, exitCode } = await bunRun([
+        join(import.meta.dir, "recv-buffer-release-fixture.ts"),
+        mode,
+      ]);
+      expect(stderr).toBe("");
+      const { peak, settled } = JSON.parse(stdout);
+      expect(peak.recv).toBeGreaterThan(0);
+      if (mode === "tls") expect(peak.tls).toBeGreaterThan(0);
+      expect(settled).toEqual({ recv: 0, tls: 0 });
+      expect(exitCode).toBe(0);
+    },
+  );
+
   it("reload() should preserve active_connections (no UAF / counter underflow)", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), fileURLToPath(new URL("./socket-reload-fixture.ts", import.meta.url))],

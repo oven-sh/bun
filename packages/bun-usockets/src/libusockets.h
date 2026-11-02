@@ -93,6 +93,8 @@
 
 /* 512kb shared receive buffer */
 #define LIBUS_RECV_BUFFER_LENGTH 524288
+/* What a receive buffer keeps resident once its loop stops getting larger reads (Linux) */
+#define LIBUS_RECV_BUFFER_RESIDENT_LENGTH 65536
 
 /* Small 16KB shared send buffer for UDP packet metadata */
 #define LIBUS_SEND_BUFFER_LENGTH (1 << 14)
@@ -358,6 +360,12 @@ void us_socket_group_close_all_ex(us_socket_group_r group, int also_listeners) n
  * connections, 0 if the loop was already idle. Listen sockets are NOT closed
  * (see close_all_ex). */
 int us_loop_close_all_groups(us_loop_r loop) nonnull_fn_decl;
+#ifdef __linux__
+/* The whole pages past LIBUS_RECV_BUFFER_RESIDENT_LENGTH of the socket receive buffer and of the
+ * TLS plaintext buffer, which is empty before the loop's first TLS socket. */
+struct iovec;
+void us_loop_recv_buffer_tails(us_loop_r loop, struct iovec *tails /* [2] */) nonnull_fn_decl;
+#endif
 
 unsigned short us_socket_group_timestamp(us_socket_group_r group) nonnull_fn_decl;
 struct us_loop_t *us_socket_group_loop(us_socket_group_r group) nonnull_fn_decl __attribute((returns_nonnull));

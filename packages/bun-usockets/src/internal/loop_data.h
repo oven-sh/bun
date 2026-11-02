@@ -104,6 +104,10 @@ struct us_internal_loop_data_t {
     /* Filled by us_socket_resume(), closed by us_internal_loop_post(). */
     int num_unresumable_sockets;
     struct us_internal_unresumable_socket_t *unresumable_sockets;
+    /* Absolute monotonic ns at which the receive buffers give the pages past
+     * LIBUS_RECV_BUFFER_RESIDENT_LENGTH back to the system, or 0. Folded into
+     * the poll timeout. Only Linux sets it. */
+    long long recv_buf_release_at_ns;
 };
 
 #endif // LOOP_DATA_H

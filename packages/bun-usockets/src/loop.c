@@ -30,6 +30,8 @@
 #ifdef __linux__
 #include <netinet/in.h>
 #include <linux/errqueue.h>
+#include <sys/mman.h>
+#include <sys/uio.h>
 #endif
 
 #if __has_include("wtf/Platform.h")
@@ -95,13 +97,19 @@ void us_internal_disable_sweep_timer(struct us_loop_t *loop) {
     }
 }
 
-long long us_internal_sweep_timeout_ns(struct us_loop_t *loop) {
-    if (loop->data.sweep_next_tick_ns < 0) {
+long long us_internal_loop_timeout_ns(struct us_loop_t *loop) {
+    long long deadline = loop->data.sweep_next_tick_ns;
+    /* A nested tick does not release, so a deadline it cannot clear must not wake it. */
+    long long release_at = loop->data.tick_depth <= 1 ? loop->data.recv_buf_release_at_ns : 0;
+    if (release_at && (deadline < 0 || release_at < deadline)) {
+        deadline = release_at;
+    }
+    if (deadline < 0) {
         return -1;
     }
     /* Its own reading, deliberately: this bounds the poll so the sweep is not
      * starved, and a caller's older reading would round the deadline up. */
-    long long diff = loop->data.sweep_next_tick_ns - (long long) us_internal_monotonic_ns();
+    long long diff = deadline - (long long) us_internal_monotonic_ns();
     return diff > 0 ? diff : 0;
 }
 
@@ -116,6 +124,54 @@ void us_internal_sweep_if_due(struct us_loop_t *loop) {
     /* Re-arm first: a timeout handler may unlink the last socket and disarm. */
     loop->data.sweep_next_tick_ns = now + LIBUS_TIMEOUT_GRANULARITY_NS;
     us_internal_timer_sweep(loop);
+}
+
+#endif
+
+#ifdef __linux__
+
+#define LIBUS_RECV_BUFFER_RELEASE_DELAY_NS 1000000000LL
+
+static struct iovec us_internal_recv_buffer_tail(char *buf) {
+    struct iovec tail = {0};
+    if (!buf) return tail;
+    uintptr_t page_size = (uintptr_t) sysconf(_SC_PAGESIZE);
+    uintptr_t begin = ((uintptr_t) buf + LIBUS_RECV_BUFFER_PADDING + LIBUS_RECV_BUFFER_RESIDENT_LENGTH + page_size - 1) & ~(page_size - 1);
+    uintptr_t end = ((uintptr_t) buf + LIBUS_RECV_BUFFER_LENGTH + LIBUS_RECV_BUFFER_PADDING * 2) & ~(page_size - 1);
+    if (end > begin) {
+        tail.iov_base = (void *) begin;
+        tail.iov_len = end - begin;
+    }
+    return tail;
+}
+
+void us_loop_recv_buffer_tails(struct us_loop_t *loop, struct iovec *tails) {
+    tails[0] = us_internal_recv_buffer_tail(loop->data.recv_buf);
+#ifndef LIBUS_NO_SSL
+    tails[1] = us_internal_recv_buffer_tail(us_internal_loop_ssl_read_output(loop));
+#else
+    tails[1] = us_internal_recv_buffer_tail(NULL);
+#endif
+}
+
+void us_internal_schedule_recv_buffer_release(struct us_loop_t *loop) {
+    loop->data.recv_buf_release_at_ns = (long long) us_internal_monotonic_ns() + LIBUS_RECV_BUFFER_RELEASE_DELAY_NS;
+}
+
+void us_internal_release_recv_buffers_if_due(struct us_loop_t *loop) {
+    /* The data callback that a nested tick runs under may still be reading its buffer. */
+    if (!loop->data.recv_buf_release_at_ns || loop->data.tick_depth > 1) {
+        return;
+    }
+    if ((long long) us_internal_monotonic_ns() < loop->data.recv_buf_release_at_ns) {
+        return;
+    }
+    loop->data.recv_buf_release_at_ns = 0;
+    struct iovec tails[2];
+    us_loop_recv_buffer_tails(loop, tails);
+    for (int i = 0; i < 2; i++) {
+        if (tails[i].iov_len) madvise(tails[i].iov_base, tails[i].iov_len, MADV_DONTNEED);
+    }
 }
 
 #endif
@@ -136,6 +192,8 @@ int us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct 
     /* Every read on this loop writes into recv_buf; a NULL here makes each one
      * fail with EFAULT for the life of the process. */
     if (!loop->data.recv_buf || !loop->data.send_buf) Bun__outOfMemory();
+    /* The allocator may have handed out pages that an earlier owner left resident. */
+    us_internal_schedule_recv_buffer_release(loop);
     loop->data.pre_cb = pre_cb;
     loop->data.post_cb = post_cb;
     loop->data.wakeup_async = us_internal_create_async(loop, 1, 0);
@@ -808,6 +866,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     #endif
 
                     if (length > 0) {
+                        if (length > LIBUS_RECV_BUFFER_RESIDENT_LENGTH) us_internal_schedule_recv_buffer_release(loop);
                         s = s->ssl ? us_internal_ssl_on_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length)
                                    : us_dispatch_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length);
                         /* After socket adoption, track the new socket; the old one becomes invalid */
@@ -1099,6 +1158,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     bsd_udp_setup_recvbuf(&recvbuf, u->loop->data.recv_buf, LIBUS_RECV_BUFFER_LENGTH);
                     int npackets = bsd_recvmmsg(us_poll_fd(p), &recvbuf, MSG_DONTWAIT, u->shared_fd ? 1 : LIBUS_UDP_RECV_COUNT);
                     if (npackets > 0) {
+                        /* Each packet has a LIBUS_UDP_MAX_SIZE slot of its own. */
+                        if (npackets > 1) us_internal_schedule_recv_buffer_release(u->loop);
                         u->on_data(u, &recvbuf, npackets);
                     } else {
                         if (npackets == LIBUS_SOCKET_ERROR) {

@@ -1502,7 +1502,7 @@ pub mod waiter_thread_posix {
 /// Event-loop-aware extension on the raw [`SpawnResult`] from
 /// `bun_spawn_sys`. The result type itself lives in the leaf `-sys` crate (no
 /// `Process`/`EventLoopHandle` dependency); `to_process` is added here as a
-/// trait method so callers keep the `.to_process(loop_, sync)` spelling.
+/// trait method so callers keep the `.to_process(loop_)` spelling.
 pub trait SpawnResultExt: Sized {
     fn to_process(self, event_loop: EventLoopHandle) -> RefPtr<Process>;
 

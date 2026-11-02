@@ -252,7 +252,7 @@ bun_jsc::impl_abort_handle_owner!(Subprocess<'static>, abort_handle, |this, caus
     if !this.has_exited() {
         this.update_flags(|f| f.insert(Flags::ABORT_SIGNAL_KILLED));
     }
-    let _ = this.try_kill(signal);
+    let _ = this.must_kill(signal);
 });
 
 bun_spawn::link_impl_ProcessExit! {
@@ -521,7 +521,7 @@ impl Subprocess<'_> {
         self.stdout.with_mut(|s| s.unref());
         self.stderr.with_mut(|s| s.unref());
 
-        match self.try_kill(self.kill_signal) {
+        match self.must_kill(self.kill_signal) {
             bun_sys::Result::Ok(()) => {}
             bun_sys::Result::Err(err) => {
                 // Signal 9 should always be fine, but just in case that somehow fails.
@@ -560,12 +560,12 @@ impl Subprocess<'_> {
         }
         self.event_loop_timer
             .with_mut(|t| t.state = EventLoopTimerState::FIRED);
-        let _ = self.try_kill(self.kill_signal);
+        let _ = self.must_kill(self.kill_signal);
     }
 
     pub(crate) fn on_max_buffer(&self, kind: MaxBuf::Kind) {
         self.exited_due_to_maxbuf.set(Some(kind));
-        let _ = self.try_kill(self.kill_signal);
+        let _ = self.must_kill(self.kill_signal);
     }
 
     /// `MaxBuf::Owner::on_overflow` target. Routes straight from the `MaxBuf`
@@ -642,6 +642,12 @@ impl Subprocess<'_> {
             return bun_sys::Result::Ok(());
         }
         self.process_mut().kill(sig.0)
+    }
+
+    /// For a timeout and the like. As in Node.js, a child that cannot be sent `sig` (most signals on Windows) is ended nevertheless.
+    pub(crate) fn must_kill(&self, sig: SignalCode) -> bun_sys::Result<()> {
+        self.try_kill(sig)
+            .or_else(|_| self.try_kill(SignalCode::SIGKILL))
     }
 
     fn has_called_getter(&self, getter: ObservableGetter) -> bool {

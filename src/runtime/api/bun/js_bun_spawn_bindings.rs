@@ -1770,7 +1770,7 @@ fn spawn_maybe_sync(
 
                     if did_user_timeout {
                         did_timeout = true;
-                        let _ = subprocess.try_kill(subprocess.kill_signal);
+                        let _ = subprocess.must_kill(subprocess.kill_signal);
                     }
 
                     // Support bun:test timeouts AND spawnSync() timeout.
@@ -1793,7 +1793,7 @@ fn spawn_maybe_sync(
                                 .execution
                                 .kill_dangling_processes_on_timeout(cx.global());
                         }
-                        let _ = subprocess.try_kill(subprocess.kill_signal);
+                        let _ = subprocess.must_kill(subprocess.kill_signal);
                     }
                 }
             }

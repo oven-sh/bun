@@ -149,6 +149,24 @@ describe("ChildProcess.spawn()", () => {
     },
   );
 
+  // The child ends by itself, so that a timeout that does not end it is a failure and not a hang.
+  it.skipIf(!isWindows).each(["SIGHUP", 28])(
+    "the timeout of spawnSync with killSignal %p ends the child as SIGKILL does",
+    killSignal => {
+      const { status, signal, error } = spawnSync(bunExe(), ["-e", "setTimeout(() => {}, 4000)"], {
+        stdio: "ignore",
+        env: bunEnv,
+        timeout: 1,
+        killSignal: killSignal as NodeJS.Signals,
+      });
+      expect({ status, signal, code: (error as NodeJS.ErrnoException)?.code }).toEqual({
+        status: null,
+        signal: "SIGKILL",
+        code: "ETIMEDOUT",
+      });
+    },
+  );
+
   it("kill() after the process has exited returns false and does not set .killed", async () => {
     const child = spawn(bunExe(), ["-e", ""], { stdio: "ignore", env: bunEnv });
     const errors: unknown[] = [];

@@ -245,14 +245,6 @@ impl ParsedSourceMap {
         self.mappings.find(line, column)
     }
 
-    /// `find_mapping`, except that a position in a segment that has no source finds the row of that segment.
-    pub fn find_segment(&self, line: Ordinal, column: Ordinal) -> Option<Mapping> {
-        if let Some(ism) = &self.internal {
-            return ism.find(line, column);
-        }
-        self.mappings.find_segment(line, column)
-    }
-
     /// Every mapping, in generated order.
     pub fn for_each_mapping(&self, mut each: impl FnMut(Mapping)) {
         if let Some(ism) = &self.internal {

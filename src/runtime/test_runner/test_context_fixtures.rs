@@ -697,14 +697,16 @@ impl ActiveFixture {
             Kind::Use | Kind::Value => bound(global, this_value, "use", generated::Bun__ActiveFixture__useFixture)?,
         };
         let returned = function.call(global, JSValue::UNDEFINED, &[context, second])?;
-        active::returned_set_cached(this_value, global, returned);
-        match if returned.is_object() { returned.get(global, "then")?.filter(|then| then.is_callable()) } else { None } {
+        // The runner gets this promise again at teardown, and it calls no second `then()` on a native promise.
+        let awaited = bun_test::BunTest::promise_of_thenable(global, returned)?;
+        active::returned_set_cached(this_value, global, awaited);
+        match if awaited.as_promise().is_some() { awaited.get(global, "then")?.filter(|then| then.is_callable()) } else { None } {
             Some(then) => {
                 let reactions = [
                     bound(global, this_value, "", generated::Bun__ActiveFixture__onFulfilled)?,
                     bound(global, this_value, "", generated::Bun__ActiveFixture__onRejected)?,
                 ];
-                then.call(global, returned, &reactions)?;
+                then.call(global, awaited, &reactions)?;
                 Ok(())
             }
             None => self.on_returned(this_value, global, returned),

@@ -1387,10 +1387,13 @@ impl BunTest {
                 global_this,
                 JSValue::UNDEFINED,
                 args_slice,
-                move || drop(on_stack),
+                // Before the drain: `then()` runs one microtask turn after the callback returns, as with `await`.
+                move |returned| {
+                    drop(on_stack);
+                    // A callback that takes `done` ends through it: `then()` of what it also returns is not called.
+                    if cfg_done_parameter { returned } else { Self::promise_of_thenable(global_this, returned?) }
+                },
             )
-            // A callback that takes `done` ends through it: `then()` of what it also returns is not called.
-            .and_then(|returned| if cfg_done_parameter { Ok(returned) } else { Self::promise_of_thenable(global_this, returned) })
         {
             Ok(v) => v,
             Err(_) => {
@@ -1522,7 +1525,7 @@ impl BunTest {
     }
 
     /// A promise that follows `returned` if it's a thenable other than a promise. Otherwise `returned`.
-    fn promise_of_thenable(global_this: &JSGlobalObject, returned: JSValue) -> JsResult<JSValue> {
+    pub(crate) fn promise_of_thenable(global_this: &JSGlobalObject, returned: JSValue) -> JsResult<JSValue> {
         if !returned.is_object() || returned.as_promise().is_some() {
             return Ok(returned);
         }

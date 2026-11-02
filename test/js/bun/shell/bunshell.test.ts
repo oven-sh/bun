@@ -496,6 +496,237 @@ describe("bunshell", () => {
         .stdout('["hi","id/region"]\n')
         .ensureTempDir()
         .runAsTest("make sure its two separate arguments");
+
+      // The arguments that each word gives, from one command. The `$(...)` output comes from the `echo` builtin.
+      const fieldsOf = async (words: string[], cwd = process.cwd()) => {
+        const { stdout, stderr } = await $`${BUN} -e ${printArgv} ${{ raw: words.join(" @@ ") }}`
+          .cwd(cwd)
+          .env({ ...bunEnv, HOME: "/home/user", USERPROFILE: "/home/user" })
+          .quiet();
+        expect(stderr.toString()).toBe("");
+        const fields: string[][] = [[]];
+        for (const arg of JSON.parse(stdout.toString())) arg === "@@" ? fields.push([]) : fields.at(-1)!.push(arg);
+        return Object.fromEntries(words.map((word, i) => [word, fields[i]]));
+      };
+      const r = String.raw;
+
+      test.concurrent("whitespace at the start or the end of the output ends a field", async () => {
+        const rows = {
+          "x$(echo ' a')": ["x", "a"],
+          "$(echo 'a ')y": ["a", "y"],
+          "x$(echo ' a ')y": ["x", "a", "y"],
+          "x$(echo ' ')y": ["x", "y"],
+          [r`x$(echo -e ' a\n b')`]: ["x", "a", "b"],
+          [r`x$(echo -n -e '\n\na')`]: ["x", "a"],
+          [r`$(echo -n -e 'a\n \n')y`]: ["a", "y"],
+          "x$(echo ' a')$(echo ' b')": ["x", "a", "b"],
+          "$(echo 'a ')$(echo b)": ["a", "b"],
+          // Quoted text next to the `$(...)` is in the field that the whitespace ends or starts.
+          [`"x y"$(echo ' a')`]: ["x y", "a"],
+          [`x$(echo ' a')"$(echo ' b')"`]: ["x", "a b"],
+          "pre${U:-$(echo ' a ')}post": ["pre", "a", "post"],
+          "~/x$(echo ' y')": ["/home/user/x", "y"],
+        };
+        expect(await fieldsOf(Object.keys(rows))).toEqual(rows);
+      });
+
+      test.concurrent("a tab in the output ends a field", async () => {
+        const rows = {
+          [r`$(echo -e 'a\tb')`]: ["a", "b"],
+          [r`$(echo -e 'a \t\n b')`]: ["a", "b"],
+          [r`x$(echo -e '\ta\t')y`]: ["x", "a", "y"],
+          "${U:-$(echo -e 'a\\tb')}": ["a", "b"],
+        };
+        expect(await fieldsOf(Object.keys(rows))).toEqual(rows);
+      });
+
+      test.concurrent("a field with no bytes is no argument, and a quoted empty string is one", async () => {
+        const rows = {
+          "$(echo ' ')": [],
+          "x$(echo ' ')": ["x"],
+          "$(echo ' ')y": ["y"],
+          "$(echo ' a')y": ["ay"],
+          "x$(echo 'a ')": ["xa"],
+          "x$(echo 'a b')y": ["xa", "by"],
+          "x$(echo '')y": ["xy"],
+          // The newlines at the end of the output end no field.
+          [r`$(echo -n -e 'a\n\n')y`]: ["ay"],
+          [`""$(echo ' a')`]: ["", "a"],
+          [`$(echo 'a ')""`]: ["a", ""],
+          [`$(echo 'a ')""$(echo ' b')`]: ["a", "", "b"],
+        };
+        expect(await fieldsOf(Object.keys(rows))).toEqual(rows);
+      });
+
+      // bash and dash keep this `\r`. A Windows program ends a line with `\r\n`.
+      test.concurrent("a \\r before a newline is a part of that line end", async () => {
+        const rows = {
+          [r`x$(echo -n -e 'a\r\n')y`]: ["xay"],
+          [r`$(echo -n -e 'A=1\r\nB=2\r\n')`]: ["A=1", "B=2"],
+          [r`$(echo -n -e '\r\nv1\r\n')`]: ["v1"],
+          [r`$(echo -n -e '\r\r\n\r\r\nCaption=Win10\r\r\n\r\r\n')`]: ["Caption=Win10"],
+          [r`x$(echo -n -e ' \t\n\r\na')`]: ["x", "a"],
+          [r`$(echo -n -e 'a\r\r\n\t \n')y`]: ["a", "y"],
+          // Every other `\r` is data, as in sh.
+          [r`x$(echo -n -e 'a\rb')y`]: ["xa\rby"],
+          [r`x$(echo -n -e 'a\r')y`]: ["xa\ry"],
+          [r`x$(echo -n -e '\ra')`]: ["x\ra"],
+          [r`$(echo -n -e 'a\r b')`]: ["a\r", "b"],
+        };
+        expect(await fieldsOf(Object.keys(rows))).toEqual(rows);
+      });
+
+      test.concurrent("a quoted $(...) and an assignment value are not split", async () => {
+        const rows = {
+          [`x"$(echo ' a')"y`]: ["x ay"],
+          [r`"$(echo -e 'a\tb')"`]: ["a\tb"],
+        };
+        expect(await fieldsOf(Object.keys(rows))).toEqual(rows);
+        expect(await $`A=x$(echo ' a b')y; echo "[$A]"`.text()).toBe("[x a by]\n");
+        expect(await $`${{ raw: r`A=$(echo -e 'a\tb'); echo "[$A]"` }}`.text()).toBe("[a\tb]\n");
+      });
+
+      test.concurrent(
+        "the word of a ${NAME:-word} and the output of a $(...) end a field at the same bytes",
+        async () => {
+          const bytes = { " ": " ", "\t": r`\t`, "\n": r`\n`, "\r": r`\r` };
+          const inWord = Object.keys(bytes).map(byte => `\${U:-a${byte}b}`);
+          const inOutput = Object.values(bytes).map(escape => `$(echo -n -e 'a${escape}b')`);
+          const fields = await fieldsOf([...inWord, ...inOutput]);
+          expect(inOutput.map(word => fields[word])).toEqual(inWord.map(word => fields[word]));
+          expect(inWord.map(word => fields[word])).toEqual([["a", "b"], ["a", "b"], ["a", "b"], ["a\rb"]]);
+        },
+      );
+
+      // The rule as a model: the arguments that PREFIX$(...)SUFFIX gives for an output. `""` is a quoted empty string.
+      const fieldsModel = (prefix: string, stdout: string, suffix: string) => {
+        const output = stdout.endsWith("\n") ? stdout.replace(/[\r\n]+$/, "") : stdout;
+        const fields: string[] = [];
+        let field = prefix === '""' ? "" : prefix;
+        let quoted = prefix === '""';
+        const endField = () => {
+          if (field !== "" || quoted) fields.push(field);
+          field = "";
+          quoted = false;
+        };
+        output.split(/(?:[ \t\n]|\r+\n)+/).forEach((data, i) => {
+          if (i > 0) endField();
+          field += data;
+        });
+        if (suffix === '""') quoted = true;
+        else field += suffix;
+        endField();
+        return fields;
+      };
+      // Runs `echo [ PREFIX$(echo -n -e 'OUTPUT')SUFFIX ]` for every output of up to `max` bytes over `alphabet`.
+      // Gives the first rows that differ from the model.
+      const differencesFromModel = async (alphabet: string[], max: number, contexts: [string, string][]) => {
+        const outputs = [""];
+        for (let level = [""], n = 1; n <= max; n++)
+          outputs.push(...(level = level.flatMap(output => alphabet.map(byte => output + byte))));
+        const escapes: Record<string, string> = { "\t": r`\t`, "\r": r`\r`, "\n": r`\n` };
+        const rows = outputs.flatMap(output =>
+          contexts.map(([prefix, suffix]) => ({
+            word: `${prefix}$(echo -n -e '${output.replace(/[\t\r\n]/g, byte => escapes[byte])}')${suffix}`,
+            want: fieldsModel(prefix, output, suffix),
+          })),
+        );
+        const { stdout } = await $`${{ raw: rows.map(({ word }) => `echo [ ${word} ]`).join("\n") }}`.quiet();
+        // A field has no space and no newline, so each line is `[`, the fields and `]` with one space between them.
+        const lines = stdout.toString().split("\n");
+        return rows
+          .map(({ word, want }, i) => ({ word, want, got: lines[i]?.split(" ").slice(1, -1) }))
+          .filter(({ want, got }) => JSON.stringify(got) !== JSON.stringify(want))
+          .slice(0, 10);
+      };
+
+      // sh gives the same arguments for each of these 3,069 rows.
+      test.concurrent(
+        "every output of up to 4 bytes over a, space, tab and newline, next to text and to a quoted empty string",
+        async () => {
+          const contexts = ["", "x", '""'].flatMap(prefix =>
+            ["", "y", '""'].map((suffix): [string, string] => [prefix, suffix]),
+          );
+          expect(await differencesFromModel(["a", " ", "\t", "\n"], 4, contexts)).toEqual([]);
+        },
+      );
+
+      test.concurrent("every output of up to 5 bytes over a, space, tab, \\r and newline", async () => {
+        expect(
+          await differencesFromModel(["a", " ", "\t", "\r", "\n"], 5, [
+            ["", ""],
+            ["x", "y"],
+          ]),
+        ).toEqual([]);
+      });
+
+      test.concurrent("a glob after the whitespace is in its own field", async () => {
+        using dir = tempDir("shell-subst-glob", { "f.txt": "" });
+        expect(await fieldsOf(["$(echo 'a ')*"], String(dir))).toEqual({ "$(echo 'a ')*": ["a", "f.txt"] });
+      });
+
+      // A `{a,b}` or a `*` expands only in the last field of a word, as in "a brace group or a glob in a field that whitespace of a word ends is text".
+      test.concurrent("a brace group or a glob in a field that whitespace of the output ends is text", async () => {
+        using dir = tempDir("shell-subst-text", { "a.txt": "" });
+        const rows = {
+          "{a,b}$(echo 'c ')": ["{a,b}c"],
+          "{a,b}$(echo ' c')": ["{a,b}", "c"],
+          "{a,$(echo ' c')}": ["{a,", "c}"],
+          "*.txt$(echo ' ')": ["*.txt"],
+        };
+        expect(await fieldsOf(Object.keys(rows), String(dir))).toEqual(rows);
+      });
+      // The last field of a word with a `*` and no `${NAME<op>word}` goes to the glob walk, also with no `*` in it.
+      TestBuilder.command`echo x*$(echo ' a')`
+        .ensureTempDir()
+        .exitCode(1)
+        .stderr("bun: no matches found: a\n")
+        .runAsTest("a field after the whitespace, in a word with a glob before it");
+      // bash gives these. The branch robobun/954767e1/shell-field-glob expands a brace group and a glob in each field.
+      for (const [word, fields] of Object.entries({
+        "{a,b}$(echo 'c ')": ["ac", "bc"],
+        "{a,b}$(echo ' c')": ["a", "c", "b", "c"],
+        "{a,$(echo ' c')}": ["a", "c"],
+        "*.txt$(echo ' ')": ["a.txt"],
+      })) {
+        test.failing(`${word} gives ${fields.join(" ")}`, async () => {
+          using dir = tempDir("shell-subst-fields", { "a.txt": "" });
+          expect(await fieldsOf([word], String(dir))).toEqual({ [word]: fields });
+        });
+      }
+      // sh gives these. No open pull request covers them: a `~` is `$HOME` or nothing here, and it is not only the start of a word.
+      for (const [word, fields] of Object.entries({ "~$(echo ' a')": ["~", "a"], "$(echo 'a ')~": ["a", "~"] })) {
+        test.failing(`${word} gives ${fields.join(" ")}`, async () => {
+          expect(await fieldsOf([word])).toEqual({ [word]: fields });
+        });
+      }
+      // sh does not split a `[[ ]]` operand. Here its fields are joined, so the tab goes as a space does (#45968 makes an operand one word).
+      test.failing("a tab in the output of a $(...) in a [[ ]] operand", async () => {
+        const { stdout } = await $`${{ raw: r`[[ $(echo -e 'a\tb') == "$(echo -e 'a\tb')" ]] && echo same` }}`;
+        expect(stdout.toString()).toBe("same\n");
+      });
+
+      TestBuilder.command`$(echo 'echo ')hi`.stdout("hi\n").runAsTest("whitespace after the command name");
+      TestBuilder.command`${{ raw: r`export $(echo -e 'A=1\tB=2'); echo "[$A][$B]"` }}`
+        .stdout("[1][2]\n")
+        .runAsTest("an export operand of two fields");
+
+      TestBuilder.command`echo hi > $(echo ' foo ')`
+        .ensureTempDir()
+        .fileEquals("foo", "hi\n")
+        .runAsTest("whitespace around a redirect target");
+      TestBuilder.command`echo hi > x$(echo ' foo')`
+        .ensureTempDir()
+        .exitCode(1)
+        .stderr("bun: ambiguous redirect: at `echo`\n")
+        .doesNotExist("xfoo")
+        .runAsTest("a redirect target of two fields is ambiguous");
+      TestBuilder.command`${{ raw: r`echo hi > $(echo -e 'a\tb')` }}`
+        .ensureTempDir()
+        .exitCode(1)
+        .stderr("bun: ambiguous redirect: at `echo`\n")
+        .doesNotExist("a\tb")
+        .runAsTest("a redirect target with a tab is ambiguous");
     });
   });
 

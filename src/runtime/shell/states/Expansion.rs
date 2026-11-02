@@ -499,7 +499,8 @@ impl Expansion {
         let cwd: Vec<u8>;
         {
             let me = interp.as_expansion_mut(this);
-            if Self::is_text_of_form(me) {
+            // A field with no bytes is no pattern.
+            if me.current_out.is_empty() || Self::is_text_of_form(me) {
                 if matches!(me.state, ExpansionState::Glob) {
                     // `do_brace_expand` added the variants.
                     me.current_out.clear();
@@ -861,52 +862,51 @@ impl Expansion {
         }
     }
 
-    /// Newlines→spaces, trim, then split on whitespace runs into separate
-    /// argv words.
-    fn post_subshell_expansion(me: &mut Expansion, mut stdout: Vec<u8>) {
-        // Strip a single trailing newline, then convert remaining newlines
-        // to spaces.
+    /// POSIX 2.6.3: a command substitution ends before its trailing newlines.
+    fn strip_trailing_line_ends(stdout: &mut Vec<u8>) {
         if stdout.last() == Some(&b'\n') {
-            stdout.pop();
-        }
-        for b in stdout.iter_mut() {
-            if *b == b'\n' {
-                *b = b' ';
+            // bash keeps a CR before a trailing LF. It goes here so CRLF output gives a clean word.
+            while matches!(stdout.last(), Some(b'\n' | b'\r')) {
+                stdout.pop();
             }
         }
-        // Trim leading/trailing whitespace.
-        let s: &[u8] = {
-            let mut lo = 0usize;
-            let mut hi = stdout.len();
-            while lo < hi && matches!(stdout[lo], b' ' | b'\n' | b'\r' | b'\t') {
-                lo += 1;
-            }
-            while hi > lo && matches!(stdout[hi - 1], b' ' | b'\n' | b'\r' | b'\t') {
-                hi -= 1;
-            }
-            &stdout[lo..hi]
-        };
-        if s.is_empty() {
-            return;
-        }
-        // Split on runs of spaces — each run is a word boundary.
-        let mut prev_ws = false;
-        let mut a = 0usize;
-        for (i, &c) in s.iter().enumerate() {
-            if prev_ws {
-                if c != b' ' {
-                    a = i;
-                    prev_ws = false;
+    }
+
+    /// Splits the output of an unquoted `$(...)` as sh does: each run of whitespace ends a field, at both ends of the output too.
+    fn post_subshell_expansion(me: &mut Expansion, mut stdout: Vec<u8>) {
+        Self::strip_trailing_line_ends(&mut stdout);
+        let mut field_start = 0;
+        let mut in_whitespace = false;
+        let mut at = 0;
+        while at < stdout.len() {
+            let (len, is_whitespace) = match stdout[at] {
+                b' ' | b'\t' | b'\n' => (1, true),
+                b'\r' => {
+                    let mut next = at + 1;
+                    while stdout.get(next) == Some(&b'\r') {
+                        next += 1;
+                    }
+                    // The CRs directly before a newline are a part of that line end. Any other CR is data, as in sh.
+                    match stdout.get(next) {
+                        Some(b'\n') => (next + 1 - at, true),
+                        _ => (next - at, false),
+                    }
                 }
-                continue;
+                _ => (1, false),
+            };
+            if is_whitespace {
+                if !in_whitespace {
+                    me.current_out.extend_from_slice(&stdout[field_start..at]);
+                    Self::end_field(me);
+                }
+                field_start = at + len;
             }
-            if c == b' ' {
-                prev_ws = true;
-                me.current_out.extend_from_slice(&s[a..i]);
-                Self::end_field(me);
-            }
+            in_whitespace = is_whitespace;
+            at += len;
         }
-        me.current_out.extend_from_slice(&s[a..]);
+        if field_start < stdout.len() {
+            me.current_out.extend_from_slice(&stdout[field_start..]);
+        }
     }
 
     pub(crate) fn child_done(

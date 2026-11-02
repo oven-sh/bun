@@ -2887,6 +2887,21 @@ describe("bundler", () => {
       },
       out: `@import "https://example.com/a.css" layer(a) print;@import "https://example.com/b.css" layer(b);@import "https://example.com/a.css" layer(a) print;`,
     },
+    // The middle copy loses its media condition, and must not print between the two imports.
+    ThreeCopiesUnderALayerAndMedia: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./a.css";
+          @import "./b.css";
+          @import "./c.css";
+        `,
+        "/a.css": /* css */ `@import "./theme.css" layer(theme); .a { color: red }`,
+        "/b.css": /* css */ `@import "./theme.css" layer(theme); .b { color: red }`,
+        "/c.css": /* css */ `@import "./theme.css" layer(theme); .c { color: red }`,
+        "/theme.css": /* css */ `@import "https://example.com/x.css" screen;`,
+      },
+      out: `@import "data:text/css,@import \\"https://example.com/x.css\\" screen;" layer(theme);@import "data:text/css,@import \\"https://example.com/x.css\\" screen;" layer(theme);@layer theme;.a{color:red}.b{color:red}@layer theme;.c{color:red}`,
+    },
     // A statement is not valid between two "@import" rules.
     DuplicateExternalImportAfterOtherImport: {
       files: {

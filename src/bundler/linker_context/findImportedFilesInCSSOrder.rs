@@ -537,6 +537,20 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
             match &mut entry.kind {
                 // Simplify the conditions since we know they only wrap "@layer"
                 CssImportOrderKind::Layers(layers) => {
+                    // An external import with these exact conditions already
+                    // declares what this entry would.
+                    if layers.inner().is_empty()
+                        && wip_order.slice().iter().any(|kept| {
+                            matches!(kept.kind, CssImportOrderKind::ExternalPath(_))
+                                && import_conditions_are_equal(
+                                    kept.conditions.slice_const(),
+                                    entry.conditions.slice_const(),
+                                )
+                        })
+                    {
+                        continue 'next_forward;
+                    }
+
                     // Truncate the conditions at the first anonymous layer
                     for (i, conditions) in entry.conditions.slice().iter().enumerate() {
                         // The layer is anonymous if it's a "layer" token without any

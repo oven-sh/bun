@@ -451,6 +451,8 @@ describe.concurrent.skipIf(isWindows)(
     async function flagsAround(targetFd: 1 | 2, ...steps: string[]) {
       const otherFd = targetFd === 1 ? 2 : 1;
       const script = [
+        // No core file from the process.abort() step: CI reports every core it finds.
+        "ulimit -c 0",
         `probe() { PROBE_OUT_FD=${otherFd} "$0" "$PROBE" ${targetFd}; }`,
         `PROBE="$1"`,
         "probe",

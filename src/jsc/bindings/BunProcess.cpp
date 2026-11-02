@@ -168,6 +168,7 @@ extern "C" void Bun__writeProfilesBeforeSelfKill(bool signalEndsProcess);
 #if !OS(WINDOWS)
 extern "C" void onExitSignal(int);
 extern "C" void bun_restore_stdio();
+extern "C" void bun_install_exit_signal_handler(int);
 #endif
 extern "C" int32_t bun_stdio_tty[3];
 
@@ -1624,6 +1625,8 @@ static void uninstallForwardSignalHandler(int signalNumber)
     if (void (*oldHandler)(int) = Bun::setSignalHandler(signalNumber, SIG_DFL); oldHandler != forwardSignal) {
         // Don't uninstall the old handler if it's not the one we installed.
         Bun::setSignalHandler(signalNumber, oldHandler);
+    } else if (signalNumber == SIGINT || signalNumber == SIGTERM) {
+        bun_install_exit_signal_handler(signalNumber);
     }
 }
 
@@ -2126,6 +2129,30 @@ extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigne
 // Records the stdio fds whose FD_CLOEXEC bit execve() clears so a failed
 // execve(2) can put them back: the failure now throws back to JS, and Node
 // likewise restores exactly the flags it changed.
+// What bun_restore_stdio() changes on fds 0-2, so a failed execve(2) can put it back for the script that goes on.
+struct ExecveStdioRestorer {
+    int flags[3] = { -1, -1, -1 };
+    termios tio[3];
+    bool hasTio[3] = { false, false, false };
+
+    void save()
+    {
+        for (int fd = 0; fd < 3; fd++) {
+            flags[fd] = fcntl(fd, F_GETFL);
+            hasTio[fd] = bun_stdio_tty[fd] && tcgetattr(fd, &tio[fd]) == 0;
+        }
+    }
+    void restore()
+    {
+        for (int fd = 0; fd < 3; fd++) {
+            if (flags[fd] != -1)
+                fcntl(fd, F_SETFL, flags[fd]);
+            if (hasTio[fd])
+                tcsetattr(fd, TCSANOW, &tio[fd]);
+        }
+    }
+};
+
 struct ExecveCloexecRestorer {
     WTF::Vector<std::pair<int, int>, 8> changed; // (fd, original flags)
 
@@ -2322,6 +2349,8 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionExecve, __attribute__((
     }
 
     // The replacement program inherits fds 0-2: put their startup flags back first.
+    ExecveStdioRestorer stdioRestorer;
+    stdioRestorer.save();
     bun_restore_stdio();
 
     int savedErrno;
@@ -2395,6 +2424,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionExecve, __attribute__((
     // execve(2) failed and the original image is still running. Restore the
     // FD_CLOEXEC flags we cleared on stdio, then throw back to JS so the
     // caller can handle it and recover. Node does the same (nodejs/node#62878).
+    stdioRestorer.restore();
     cloexecRestorer.restore();
 
     // Match Node's ErrnoException: a plain Error with errno/code/syscall/path.

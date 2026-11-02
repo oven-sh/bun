@@ -151,7 +151,8 @@ static REPLACED_EXIT_HANDLER: [AtomicBool; INTERRUPTIONS.len()] =
 extern "C" fn handle_interruption(signal: c_int) {
     write_what_threads_are_compiling();
     bun_core::output::source::stdio::restore();
-    raise_with_default_action(signal);
+    // Ends the process when the kernel drops the re-raised signal too, as it does for PID 1.
+    bun_core::Global::raise_default_action(signal);
 }
 
 /// A signal that the program handles or ignores stays as it is. Bun's own exit handler is replaced and put back.

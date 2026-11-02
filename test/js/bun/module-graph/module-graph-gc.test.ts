@@ -1,5 +1,6 @@
 // Bun.ModuleGraph and the garbage collector: what keeps a graph (its loader, module
 // records, CommonJS modules and its context) alive, and that nothing else does.
+import { exposedInternals } from "bun:internal-for-testing";
 import { heapStats } from "bun:jsc";
 import { afterAll, describe, expect, jest, test } from "bun:test";
 import { rmSync, writeFileSync } from "fs";
@@ -12,6 +13,7 @@ import { collect, heapFromTimer, Lifetimes } from "./module-graph-lifetimes";
 
 const ModuleGraph = Bun.ModuleGraph;
 type Graph = InstanceType<typeof ModuleGraph>;
+const { kStateSymbol } = exposedInternals["internal/dgram"];
 
 const dir = String(
   tempDir("module-graph-gc-", {
@@ -489,30 +491,32 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
   // A send() that waits behind backpressure keeps the async context of its call for its callback. With no callback
   // it keeps nothing: the queue of a socket of the host's does not keep the graph whose script sent.
   test("a queued node:dgram send() with no callback does not keep the graph that sent it", async () => {
-    const { kStateSymbol } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
     const lifetimes = new Lifetimes();
     const socket = dgram.createSocket("udp4");
-    socket.bind(0, "127.0.0.1");
-    await once(socket, "listening");
-    socket.connect(socket.address().port, "127.0.0.1");
-    await once(socket, "connect");
-    const handle = socket[kStateSymbol].handle;
-    const realSocket = handle.socket;
     const refusesEverySend = { send: () => false };
     try {
-      await (async () => {
-        const graph = lifetimes.track("graph", new ModuleGraph({ globals: { TAG: "sends", control: control() } }));
-        const io = await graph.import(file("io.mjs"));
-        // With a queue, every send() waits behind it, and a drain that is refused leaves it there: backpressure.
-        handle.socket = refusesEverySend;
-        handle.sendQueue = [];
-        graph.run(() => io.dgramSend(socket));
-        graph.dispose();
-      })();
-      expect(await lifetimes.stillAlive("graph")).toEqual([]);
-      expect(handle.sendQueue).toHaveLength(1);
+      socket.bind(0, "127.0.0.1");
+      await once(socket, "listening");
+      socket.connect(socket.address().port, "127.0.0.1");
+      await once(socket, "connect");
+      const handle = socket[kStateSymbol].handle;
+      const realSocket = handle.socket;
+      try {
+        await (async () => {
+          const graph = lifetimes.track("graph", new ModuleGraph({ globals: { TAG: "sends", control: control() } }));
+          const io = await graph.import(file("io.mjs"));
+          // With a queue, every send() waits behind it, and a drain that is refused leaves it there: backpressure.
+          handle.socket = refusesEverySend;
+          handle.sendQueue = [];
+          graph.run(() => io.dgramSend(socket));
+          graph.dispose();
+        })();
+        expect(await lifetimes.stillAlive("graph")).toEqual([]);
+        expect(handle.sendQueue).toHaveLength(1);
+      } finally {
+        handle.socket = realSocket;
+      }
     } finally {
-      handle.socket = realSocket;
       socket.close();
     }
   });

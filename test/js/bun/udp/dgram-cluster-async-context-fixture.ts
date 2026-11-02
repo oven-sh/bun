@@ -2,14 +2,14 @@
 // A bind that goes through the primary gives the socket the handle the primary sent: node swaps it in
 // (replaceHandle() in lib/dgram.js), so the store of createSocket() is not that handle's. An exclusive bind keeps the
 // socket's own handle.
+import { exposedInternals } from "bun:internal-for-testing";
 import { AsyncLocalStorage } from "node:async_hooks";
 import cluster from "node:cluster";
 import dgram from "node:dgram";
 
 if (cluster.isPrimary) {
   // A bound descriptor of the primary's for the worker's bind({ fd }).
-  const { _createSocketHandle } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
-  const wrap = _createSocketHandle("127.0.0.1", 0, "udp4");
+  const wrap = exposedInternals["internal/dgram"]._createSocketHandle("127.0.0.1", 0, "udp4");
   const worker = cluster.fork();
   // Fail fast instead of hanging the harness.
   const watchdog = setTimeout(() => {

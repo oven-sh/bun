@@ -140,10 +140,17 @@ describe("jest-extended", () => {
   if (isBun) {
     test("toBeOneOf() rejects a list that is not an array or an iterable object", () => {
       const message = "Expected value must be an array or an iterable object: ";
+      const errorOf = fn => {
+        try {
+          fn();
+        } catch (e) {
+          return { name: e.constructor.name, message: e.message };
+        }
+      };
       // A string is not a list, also when the received value is a string.
-      expect(() => expect("a").toBeOneOf("abc")).toThrow(message + '"abc"');
-      expect(() => expect("a").not.toBeOneOf("abc")).toThrow(message + '"abc"');
-      expect(() => expect(1).toBeOneOf(1)).toThrow(message + "1");
+      expect(errorOf(() => expect("a").toBeOneOf("abc"))).toEqual({ name: "Error", message: message + '"abc"' });
+      expect(errorOf(() => expect("a").not.toBeOneOf("abc"))).toEqual({ name: "Error", message: message + '"abc"' });
+      expect(errorOf(() => expect(1).toBeOneOf(1))).toEqual({ name: "Error", message: message + "1" });
     });
   }
 

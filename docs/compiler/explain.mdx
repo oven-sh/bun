@@ -321,6 +321,8 @@ The analysis hit a compiler limit and gave up. The `limit` line of the entry nam
 
 The report ends with every limit the build hit. `left nothing untyped` means that no access, call or operator is slower because of that limit.
 
+Two limits are about parameters. The analysis follows up to 32 positional parameters of a function one by one through a call, when every function the call can reach is a function of the program. A parameter behind them receives every later argument of every call, so its type is wider than what the calls pass. The report names that under `MaxGroupedArguments`. A call that may also reach a built-in or an unknown value (through `.call`, `.apply`, `bind` or a callback handed to a built-in), a call that spreads a rest parameter, or one that may reach more than 64 functions follows only the first eight. The report names that under `MaxGroupedArgumentsOfOtherCalls`. In both cases, move some of the parameters into one object.
+
 ### lost-track
 
 The compiler stopped tracking the objects that reach this access. Give the value a declared type, or split the function.

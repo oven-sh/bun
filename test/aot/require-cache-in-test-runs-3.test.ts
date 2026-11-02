@@ -332,15 +332,26 @@ const ways = {
 
 /** What a run tells of one case. */
 type Told = { printed: string[]; reported: string[]; exitCode: number };
+type Ran = { of: (it: Case) => Told; form: string | undefined; everyFileMayLoadAgain: string[] };
 
 const folderOf = (it: Case) => `c${cases.indexOf(it) + 1}`;
 const folders = new Map<string, ReturnType<typeof tempDir>>();
-afterAll(() => folders.forEach(folder => folder[Symbol.dispose]()));
-const runs = new Map<string, Promise<{ of: (it: Case) => Told; everyFileMayLoadAgain: string[] }>>();
+const runs = new Map<string, Promise<Ran>>();
+// A run that no test waits for any longer still reads its folder.
+afterAll(async () => {
+  await Promise.allSettled(runs.values());
+  folders.forEach(folder => folder[Symbol.dispose]());
+});
+
+/** Of the stage log only what it says of the run as a whole, and not the warnings that come with it: one for each `console` and `require` of a test file. */
+const withoutStageLog = (stderr: string) =>
+  stderr
+    .replace(/^(?:AOT (?!test run \|)|  \w+: wall ).*\n/gm, "")
+    .replace(/^ *\d+ \| .*\n *\^\nwarn: TS25(?:84|91): .*\n +at .*\n\n?/gm, "");
 
 /**
  * `bun test --isolate` in one project, once for each way. One case is the project as it is written. Several are the folders c1, c2 .. of one project:
- * `--isolate` gives each test file a realm of its own, and the test files print to one stdout, so there a line says first which folder it is of.
+ * `--isolate` gives each test file a realm of its own, and the test files print to one stdout, so there a line says first which test file it is of.
  */
 function ran(together: Case[], way: keyof typeof ways) {
   const project = together.map(folderOf).join();
@@ -348,51 +359,63 @@ function ran(together: Case[], way: keyof typeof ways) {
     const inFolders = together.length > 1;
     const folder = folders.getOrInsertComputed(project, () => {
       const files = together.flatMap(it =>
-        Object.entries(it.files).map(([path, text]) =>
-          inFolders
-            ? [`${folderOf(it)}/${path}`, text.replaceAll("console.log(", `console.log("${folderOf(it)}|", `)]
-            : [path, text],
-        ),
+        Object.entries(it.files).map(([path, text]) => {
+          const name = inFolders ? `${folderOf(it)}/${path}` : path;
+          const saysItsName = inFolders && path.endsWith(".test.ts");
+          return [name, saysItsName ? text.replaceAll("console.log(", `console.log("${name}|", `) : text];
+        }),
       );
       return tempDir("require-cache-in-test-runs", Object.fromEntries(files));
     });
     const { flags, env } = ways[way];
     const cmd = [bunExe(), "test", "--isolate", ...flags];
     const { stdout, stderr, exitCode } = await run(cmd, String(folder), { ...bunEnv, ...env });
-    // Of the stage log, only what it says of the run as a whole.
-    if (exitCode !== 0) console.error(stderr.replace(/^(?:AOT (?!test run \|)|  \w+: wall ).*\n/gm, ""));
-    // run() asks a run in layers for its form.
-    if (way === "one program") expect(stderr).toMatch(/^AOT test run \| one program\b/m);
+    if (exitCode !== 0) console.error(withoutStageLog(stderr));
+    // As harness/layers.ts reads it. run() asks a run in layers for its form.
+    const form = stderr.match(/^AOT test run \| ((?:layers|one program|programs without layers)\b.*)$/m)?.[1];
+    if (way === "one program") expect(form).toStartWith("one program");
 
-    // Under "": what names no case, which is told of every case. A line of stdout without a folder in front, and what stderr says ahead of the first test file.
+    // By test file. Under "": what names none, which is told of every case.
     const printed = new Map<string, string[]>([["", []]]);
-    for (const line of stdout.split("\n")) {
-      if (!line || line.startsWith("bun test v")) continue;
-      const named = inFolders ? line.match(/^(c\d+)\| ?(.*)$/) : null;
-      const [from, text] = named ? [named[1], named[2]] : [inFolders ? "" : project, line];
-      printed.getOrInsertComputed(from, () => []).push(text);
+    const lines = stdout.split("\n");
+    if (lines[0].startsWith("bun test v")) lines.shift();
+    if (lines.at(-1) === "") lines.pop();
+    for (const line of lines) {
+      const named = inFolders ? line.match(/^(c\d+\/\S+\.test\.ts)\| ?(.*)$/) : null;
+      printed.getOrInsertComputed(named?.[1] ?? "", () => []).push(named ? named[2] : line);
     }
     const reported = new Map<string, string[]>([["", []]]);
     const failed = new Set<string>();
-    let from = "";
+    let file = "";
     for (const line of stderr.split("\n")) {
-      const file = line.match(/^(\S+\.test\.ts):$/)?.[1].split(/[\\/]/);
-      if (file) from = inFolders ? file.shift()! : project;
-      const said = file
-        ? `${file.join("/")}:`
+      const begun = line.match(/^(\S+\.test\.ts):$/)?.[1].replaceAll("\\", "/");
+      if (begun) file = begun;
+      const said = begun
+        ? `${begun.slice(inFolders ? begun.indexOf("/") + 1 : 0)}:`
         : /^(?:\((?:pass|fail|skip|todo)\) |error)/.test(line) && line.replace(/ \[[\d.]+m?s\]$/, "");
       if (!said) continue;
-      if (said.startsWith("(fail) ")) failed.add(from);
-      reported.getOrInsertComputed(from, () => []).push(said);
+      // A test file that does not load has an error and no test.
+      if (/^(?:\(fail\) |error)/.test(said)) failed.add(file);
+      reported.getOrInsertComputed(file, () => []).push(said);
     }
     const why = stderr.matchAll(/^AOT test run \| every file may load again: (?:.*[\\/])?(.*)$/gm);
     return {
-      of: (it: Case): Told => ({
-        printed: [...printed.get("")!, ...(printed.get(folderOf(it)) ?? [])],
-        reported: [...reported.get("")!, ...(reported.get(folderOf(it)) ?? [])],
-        // A run ends with 1 where a test has failed: that is held against the case of the test alone.
-        exitCode: exitCode === 1 && failed.size > 0 && !failed.has(folderOf(it)) ? 0 : exitCode,
-      }),
+      of: (it: Case): Told => {
+        // Its test files by name: `bun test` runs the files of a folder under its own in the order in which the file system lists them.
+        const isOfCase = (file: string) => file === "" || !inFolders || file.startsWith(`${folderOf(it)}/`);
+        const told = (lines: Map<string, string[]>) =>
+          [...lines.keys()]
+            .filter(isOfCase)
+            .sort()
+            .flatMap(file => lines.get(file)!);
+        return {
+          printed: told(printed),
+          reported: told(reported),
+          // A run ends with 1 where a test has failed or a test file has not loaded: that is held against the case of the file alone.
+          exitCode: exitCode === 1 && failed.size > 0 && ![...failed].some(isOfCase) ? 0 : exitCode,
+        };
+      },
+      form,
       everyFileMayLoadAgain: [...new Set(Array.from(why, match => match[1]))].sort(),
     };
   });
@@ -422,7 +445,9 @@ for (const it of [...cases.filter(it => it.everyFileMayLoadAgain), ...shareLayer
     const together = it.everyFileMayLoadAgain ? [it] : shareLayers;
     const compiled = await expectToRunAsPlain(it, together, "two layers");
     // A case that lets every file load again and does not say so would change what the others of its run are compiled to.
-    expect(compiled.everyFileMayLoadAgain).toEqual(it.everyFileMayLoadAgain ?? []);
+    // A Bun that loads one program a realm builds no layers, and run() lets its runs pass: there nothing is shared.
+    if (compiled.form?.startsWith("layers "))
+      expect(compiled.everyFileMayLoadAgain).toEqual(it.everyFileMayLoadAgain ?? []);
   });
 }
 

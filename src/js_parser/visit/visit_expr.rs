@@ -433,16 +433,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let mut tag_initializer = None;
                 let tag: Expr = 'tagger: {
                     if let Some(mut tag) = e_.tag {
+                        let was_string = matches!(tag.data, Data::EString(_));
                         p.visit_expr(&mut tag);
                         if p.options.jsx.runtime == options::JSX::Runtime::Preserve {
                             let mut root = tag;
                             while let Data::EDot(dot) = root.data {
                                 root = dot.target;
                             }
-                            let valid_tag = matches!(
-                                root.data,
-                                Data::EIdentifier(_) | Data::EImportIdentifier(_) | Data::EThis(_)
-                            ) || matches!(tag.data, Data::EString(_));
+                            let valid_tag = match &tag.data {
+                                Data::EString(str_) => str_.is_jsx_name(p.arena),
+                                _ => matches!(
+                                    root.data,
+                                    Data::EIdentifier(_)
+                                        | Data::EImportIdentifier(_)
+                                        | Data::EThis(_)
+                                ),
+                            };
                             if !valid_tag {
                                 p.log().add_error(
                                     Some(p.source),
@@ -452,9 +458,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 *e = p.new_expr(E::Missing {}, expr.loc);
                                 return;
                             }
-                            if matches!(root.data, Data::EImportIdentifier(_)) {
-                                // Capturing the live import at each use; linking can turn it into
-                                // a computed property access, which JSX tag syntax cannot contain.
+                            let is_defined_string =
+                                !was_string && matches!(tag.data, Data::EString(_));
+                            if matches!(root.data, Data::EImportIdentifier(_)) || is_defined_string
+                            {
+                                // Capturing tag values at each use; linking can require computed access,
+                                // and JSX names can treat defined strings as bindings.
                                 let ref_ = p.generate_temp_var(b"JSXTag");
                                 let binding = p.b(js_ast::B::Identifier { r#ref: ref_ }, tag.loc);
                                 let decl = p.s(

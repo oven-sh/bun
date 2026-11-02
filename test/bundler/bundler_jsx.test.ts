@@ -150,6 +150,60 @@ function itBundledDevAndProd(
 describe("bundler", () => {
   describe("jsx preserve", () => {
     describe.each(["cli", "api"] as const)("defined JSX tags (%s)", backend => {
+      describe.each(
+        [
+          "",
+          "two words",
+          "1name",
+          "name:",
+          "name::part",
+          "name.part",
+          "name/><other",
+          "\uD800",
+          "name\npart",
+          "-name",
+        ].map((name, index) => [index, name] as const),
+      )("invalid string tag %i: %j", (index, name) => {
+        itBundled(`jsx/PreserveInvalidStringTag-${backend}-${index}`, {
+          files: { "/in.jsx": "export default <Comp />;" },
+          backend,
+          jsx: { runtime: "preserve" },
+          define: { Comp: JSON.stringify(name) },
+          // The diagnostic and define handling belong to Bun.
+          skipOnEsbuild: true,
+          bundleErrors: { "/in.jsx": ["Cannot preserve JSX tag after it resolves to an invalid JSX tag expression"] },
+        });
+      });
+
+      describe.each([false, true])("defined string tag values, minify=%s", minify => {
+        itBundled(`jsx/PreserveDefinedStringTagValues-${backend}-${minify}`, {
+          files: {
+            "/in.jsx": `console.log(JSON.stringify([<Lower />, <Upper />, <Unicode />, <Astral />, <Namespaced />, <Dashed />]));`,
+          },
+          backend,
+          jsx: { runtime: "preserve" },
+          define: {
+            Lower: '"section"',
+            Upper: '"Widget"',
+            Unicode: '"résumé"',
+            Astral: '"𐐀"',
+            Namespaced: '"svg:path"',
+            Dashed: '"X-name"',
+          },
+          minifyIdentifiers: minify,
+          minifySyntax: minify,
+          minifyWhitespace: minify,
+          // The esbuild API harness does not forward defines.
+          skipOnEsbuild: true,
+          onAfterBundle(api) {
+            const out = api.readFile("/out.js");
+            const { code } = transformSync(out, { loader: "jsx", jsxFactory: "h", charset: "utf8" });
+            api.writeFile("/out.js", `const h = type => type;\n${code}`);
+          },
+          run: { stdout: JSON.stringify(["section", "Widget", "résumé", "𐐀", "svg:path", "X-name"]) },
+        });
+      });
+
       describe.each(["Comp", "Comp.Member"])("tag %s", tag => {
         itBundled(`jsx/PreserveInvalidDefinedTag-${backend}-${tag}`, {
           files: { "/in.jsx": `export default <${tag} />;` },

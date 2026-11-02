@@ -2685,27 +2685,7 @@ pub(crate) mod __gated_printer {
             let ExprData::EString(str_) = &key.data else {
                 return true;
             };
-            let str_ = str_.flattened(self.bump);
-            let text = str_.string(self.bump);
-            let text = bun_core::handle_oom(text);
-            let iter = CodepointIterator::init(text);
-            let mut cursor = strings::Cursor::default();
-            let mut needs_start = true;
-            let mut has_namespace = false;
-            while iter.next(&mut cursor) {
-                if needs_start {
-                    if !bun_core::identifier::is_identifier_start(cursor.c) {
-                        return false;
-                    }
-                    needs_start = false;
-                } else if cursor.c == 0x3A && !has_namespace {
-                    needs_start = true;
-                    has_namespace = true;
-                } else if cursor.c != 0x2D && !lexer::is_identifier_continue(cursor.c) {
-                    return false;
-                }
-            }
-            !needs_start
+            str_.is_jsx_name(self.bump)
         }
 
         pub(crate) fn print_clause_alias(&mut self, alias: &[u8]) {

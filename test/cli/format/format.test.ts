@@ -7293,7 +7293,8 @@ try {
     ],
     [
       "yaml",
-      'name: value\nlist:\n  - one\n  - two: "three"\nmap: { a: 1, b: [2, 3] }\n# a comment\n',
+      // The explicit key sends the text through the parser and the printer, like most of the units.
+      'name: value\nlist:\n  - one\n  - two: "three"\nmap: { a: 1, b: [2, 3] }\n# a comment\n? key\n: value\n',
       [
         ..."a: b\n¦- a\n¦a:\n¦- ¦- - ¦? a\n¦: a\n¦? ¦a: ¦[¦]¦{¦}¦[a,¦{a: b,¦\"a\" ¦\"¦'¦'a' ¦# a\n¦#¦&a ¦*a ¦!a ".split(
           "¦",

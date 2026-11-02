@@ -157,8 +157,7 @@ pub(crate) enum Problem {
     Stops(Vec<u8>),
 }
 
-/// The message of a `ConfigError` that Prettier threw, such as for a parser that no plugin provides, without the
-/// stack.
+/// The message of a `ConfigError` that Prettier threw (a parser that no plugin provides), without the stack.
 pub(crate) fn config_error(why: &Unformatted) -> Option<&[u8]> {
     let Unformatted::Thrown(why) = why else {
         return None;

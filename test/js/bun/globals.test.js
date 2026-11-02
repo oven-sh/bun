@@ -231,6 +231,33 @@ it("self getter checks its receiver", () => {
   expect(() => new Proxy(globalThis, {}).self).toThrow(TypeError);
 });
 
+it("self setter checks its receiver", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { set } = Object.getOwnPropertyDescriptor(globalThis, "self");
+       const results = [];
+       for (const receiver of [{}, 0, new Proxy(globalThis, {})]) {
+         try { set.call(receiver, "replaced"); results.push("set"); }
+         catch (error) { results.push(error.name); }
+       }
+       results.push(self === globalThis);
+       set.call(null, "from null");
+       results.push(self);
+       set.call(globalThis, "from globalThis");
+       results.push(self);
+       console.log(JSON.stringify(results));`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual(["TypeError", "TypeError", "TypeError", true, "from null", "from globalThis"]);
+  expect(exitCode).toBe(0);
+});
+
 it("self getter checks its receiver inside a Worker", async () => {
   const { promise, resolve, reject } = Promise.withResolvers();
   const worker = new Worker(

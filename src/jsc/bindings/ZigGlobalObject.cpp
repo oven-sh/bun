@@ -109,6 +109,7 @@
 #include "JSCommonJSExtensions.h"
 #include "streams/JSCountQueuingStrategy.h"
 #include "JSCustomEvent.h"
+#include "JSDOMCastThisValue.h"
 #include "JSDOMConvertBase.h"
 #include "JSDOMConvertUnion.h"
 #include "JSDOMException.h"
@@ -1769,22 +1770,24 @@ WEBCORE_GENERATED_CONSTRUCTOR_GETTER(WritableStream);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(WritableStreamDefaultController);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(WritableStreamDefaultWriter);
 
-// Web IDL attribute getter: a nullish receiver means the getter's own global.
-// Any other receiver must be the global object (or the JSGlobalProxy that
-// `globalThis` is from JS), or the getter throws a TypeError.
+// The Web IDL receiver rule for the `self` accessor: a nullish receiver means
+// the accessor's own global, the global object (or the JSGlobalProxy that
+// `globalThis` is from JS) is accepted, and any other receiver is a TypeError.
+static Zig::GlobalObject* selfAccessorThisObject(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue thisValue, ASCIILiteral accessorName)
+{
+    auto* thisObject = WebCore::castThisValue<Zig::GlobalObject>(*globalObject, thisValue);
+    if (!thisObject) [[unlikely]]
+        Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_THIS, makeString("The self "_s, accessorName, " can only be used on the global object"_s));
+    return thisObject;
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionGetSelf,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSValue thisValue = callFrame->thisValue();
-    if (thisValue.isUndefinedOrNull())
-        return JSValue::encode(globalObject->globalThis());
-
     auto& vm = JSC::getVM(globalObject);
-    auto* thisObject = WebCore::toJSDOMGlobalObject<Zig::GlobalObject>(vm, thisValue);
-    if (!thisObject) [[unlikely]] {
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_THIS, "The self getter can only be used on the global object"_s);
-    }
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* thisObject = selfAccessorThisObject(globalObject, scope, callFrame->thisValue(), "getter"_s);
+    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(thisObject->globalThis());
 }
 
@@ -1792,6 +1795,9 @@ JSC_DEFINE_HOST_FUNCTION(functionSetSelf,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* thisObject = selfAccessorThisObject(globalObject, scope, callFrame->thisValue(), "setter"_s);
+    RETURN_IF_EXCEPTION(scope, {});
     JSC::JSValue value = callFrame->argument(0);
     // Chrome DevTools:
     //   > Object.getOwnPropertyDescriptor(globalThis, "self")
@@ -1803,12 +1809,11 @@ JSC_DEFINE_HOST_FUNCTION(functionSetSelf,
     // A compiled program whose build saw nothing that replaces `self` has locked the name, and putDirect() of a locked name does nothing and says nothing.
     // The definition does the same to a name that is not locked, and throws what `globalThis.self = 123` throws for one that is.
     if (Bun::hasCompiledModules()) [[unlikely]] {
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        globalObject->methodTable()->defineOwnProperty(globalObject, globalObject, WebCore::builtinNames(vm).selfPublicName(), JSC::PropertyDescriptor(value, 0), true);
+        thisObject->methodTable()->defineOwnProperty(thisObject, thisObject, WebCore::builtinNames(vm).selfPublicName(), JSC::PropertyDescriptor(value, 0), true);
         RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(value);
     }
-    globalObject->putDirect(vm, WebCore::builtinNames(vm).selfPublicName(), value, 0);
+    thisObject->putDirect(vm, WebCore::builtinNames(vm).selfPublicName(), value, 0);
     return JSValue::encode(value);
 }
 

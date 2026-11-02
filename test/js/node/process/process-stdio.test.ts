@@ -437,5 +437,133 @@ describe.concurrent.skipIf(isWindows)(
         await expectDrainOverPipe(afterInheritSpawn, "{}", { drained: true }, 1 + (1 << 20));
       },
     );
+
+    // The flag is on the open file description, so it outlives the process that set it. Like Node (ResetStdio), bun puts the
+    // startup value back at exit and on SIGINT/SIGTERM. The probe reports the shell's fd before and after, on the other fd.
+    // The shell reports a child killed by a signal ("Terminated") on stderr; keep only the probe and exit lines.
+    const probeLines = (text: string) =>
+      text
+        .split("\n")
+        .filter(line => /^(\d:(non)?blocking|exit=\d+)$/.test(line))
+        .map(line => line + "\n")
+        .join("");
+
+    async function flagsAround(targetFd: 1 | 2, ...steps: string[]) {
+      const otherFd = targetFd === 1 ? 2 : 1;
+      const script = [
+        `probe() { PROBE_OUT_FD=${otherFd} "$0" "$PROBE" ${targetFd}; }`,
+        `PROBE="$1"`,
+        "probe",
+        ...steps.map(step => `"$0" -e ${JSON.stringify(step)} </dev/null; echo "exit=$?" >&${otherFd}; probe`),
+      ].join("\n");
+      await using proc = spawn({
+        cmd: ["sh", "-c", script, bunExe(), probe],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { probe: probeLines(targetFd === 1 ? stderr : stdout), shellExit: exitCode };
+    }
+
+    test.each([
+      ["process.stdout.isTTY", 1, `void process.stdout.isTTY`],
+      ["process.stdout.write", 1, `process.stdout.write("x")`],
+      ["process.stderr.write", 2, `process.stderr.write("x")`],
+      ["Bun.stdout.writer()", 1, `const w = Bun.stdout.writer(); w.write("x"); await w.end()`],
+    ] as const)("fd is blocking again after exit: %s", async (_name, targetFd, trigger) => {
+      expect(await flagsAround(targetFd, trigger)).toEqual({
+        probe: `${targetFd}:blocking\nexit=0\n${targetFd}:blocking\n`,
+        shellExit: 0,
+      });
+    });
+
+    test("fd is blocking again after SIGTERM with no TTY on any fd", async () => {
+      expect(await flagsAround(1, `void process.stdout.isTTY; process.kill(process.pid, "SIGTERM")`)).toEqual({
+        probe: "1:blocking\nexit=143\n1:blocking\n",
+        shellExit: 0,
+      });
+    });
+
+    test("a fd that was already nonblocking at startup stays nonblocking", async () => {
+      // SIGKILL skips the restore, so the first step leaves the flag set for the second.
+      expect(
+        await flagsAround(
+          1,
+          `void process.stdout.isTTY; process.kill(process.pid, "SIGKILL")`,
+          `void process.stdout.isTTY`,
+        ),
+      ).toEqual({ probe: "1:blocking\nexit=137\n1:nonblocking\nexit=0\n1:nonblocking\n", shellExit: 0 });
+    });
+
+    // The restore is for the description bun started with. A script that closes fd 1 and opens a file there gets a new
+    // description, which the exit leaves alone (Node checks st_dev and st_ino the same way). A child that inherits it and
+    // outlives bun reports its flags: the child's stdin is a pipe that only bun holds, so EOF there means bun has exited.
+    test("a fd reopened by the script is left alone at exit", async () => {
+      using dir = tempDir("stdout-reopened", {});
+      const reopen = `
+        const fs = require("node:fs");
+        fs.closeSync(1);
+        if (fs.openSync(${JSON.stringify(path.join(String(dir), "out.txt"))}, "w") !== 1) throw new Error("fd 1 expected");
+        Bun.spawn(["sh", "-c", 'cat >/dev/null; PROBE_OUT_FD=2 "$0" "$1" 1', process.execPath, ${JSON.stringify(probe)}], {
+          stdin: "pipe",
+          stdout: "inherit",
+          stderr: "inherit",
+        });
+        process.exit(0);`;
+      const script = [
+        // Leaves the shell's fd 1 nonblocking: a restore that ignored the identity would set that bit on the file.
+        `"$0" -e 'void process.stdout.isTTY; process.kill(process.pid, "SIGKILL")' </dev/null`,
+        `"$0" -e "$1" </dev/null; echo "exit=$?" >&2`,
+      ].join("\n");
+      await using proc = spawn({
+        cmd: ["sh", "-c", script, bunExe(), reopen],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr: probeLines(stderr), exitCode }).toEqual({
+        stdout: "",
+        stderr: "exit=0\n1:blocking\n",
+        exitCode: 0,
+      });
+    });
+
+    test("a SIGTERM inherited as ignored stays ignored with no TTY", async () => {
+      await using proc = spawn({
+        cmd: [
+          "sh",
+          "-c",
+          `trap "" TERM; exec "$0" -e 'process.kill(process.pid, "SIGTERM"); console.log("alive")'`,
+          bunExe(),
+        ],
+        env: bunEnv,
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "alive\n", stderr: "", exitCode: 0 });
+    });
+
+    // The symptom from the shell's point of view: a plain tool that writes more than the pipe holds after bun exits, into a
+    // consumer that is slow to start. The sleep is that slow consumer, not a wait for a condition.
+    test("a plain tool can write more than a pipe holds after bun exited", async () => {
+      await using proc = spawn({
+        cmd: [
+          "sh",
+          "-c",
+          `{ "$0" -e 'process.stdout.write("go\\n")'; head -c 1000000 /dev/zero; echo "head=$?" >&2; } | { read -r line; sleep 1; cat >/dev/null; }`,
+          bunExe(),
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: "", stderr: "head=0\n" });
+      expect(exitCode).toBe(0);
+    });
   },
 );

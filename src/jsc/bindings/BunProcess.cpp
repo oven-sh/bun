@@ -5927,8 +5927,8 @@ static bool selfSentSignalEndsProcess(int pid, int ownPid, int signal)
     sigset_t blocked;
     if (pthread_sigmask(SIG_SETMASK, nullptr, &blocked) || sigismember(&blocked, signal))
         return false;
-    // The default action, or Bun's own handler for SIGINT and SIGTERM when stdio is a terminal, which restores the
-    // terminal and raises the signal again with the default action.
+    // The default action, or Bun's own handler for SIGINT and SIGTERM, which restores the stdio fds and raises the
+    // signal again with the default action.
     struct sigaction current;
     if (sigaction(signal, nullptr, &current) || (current.sa_flags & SA_SIGINFO))
         return false;

@@ -900,6 +900,14 @@ extern "C" void Bun__onExit();
 extern "C" int32_t bun_stdio_tty[3];
 #if !OS(WINDOWS)
 static termios termios_to_restore_later[3];
+// F_GETFL and identity (st_dev, st_ino) of each stdio fd at startup (flags -1
+// = not captured). O_NONBLOCK lives on the open file description, which the
+// parent shell and pipeline siblings share, so a bit Bun sets outlives the
+// process unless the exit path puts it back. Same as Node's ResetStdio(),
+// including the identity check: a script that closes fd 1 and opens another
+// file gets a description Bun never snapshotted, and that one is left alone.
+static int stdio_flags_to_restore[3] = { -1, -1, -1 };
+static struct stat stdio_stat_at_start[3];
 // Whether Bun itself has modified the termios of each stdio fd during this
 // process's lifetime (e.g. via process.stdin.setRawMode). Used to decide
 // whether the exit-time termios restore should fire when Bun is acting as a
@@ -933,6 +941,34 @@ extern "C" void bun_restore_stdio()
     // the state the user expects back.
     const bool pipeline_producer = bun_stdio_tty[1] == 0;
 
+    // Put the O_NONBLOCK bit back to its startup value. Only that bit: other
+    // flags are left as they are now. fcntl and fstat are async-signal-safe.
+    for (int32_t fd = 0; fd < 3; fd++) {
+        if (stdio_flags_to_restore[fd] == -1)
+            continue;
+
+        int flags;
+        do
+            flags = fcntl(fd, F_GETFL);
+        while (flags == -1 && errno == EINTR);
+        if (flags == -1)
+            continue;
+
+        const int nonblock = stdio_flags_to_restore[fd] & O_NONBLOCK;
+        if ((flags & O_NONBLOCK) == nonblock)
+            continue;
+
+        // The script reopened this fd onto another file.
+        struct stat now;
+        if (fstat(fd, &now) != 0 || now.st_dev != stdio_stat_at_start[fd].st_dev || now.st_ino != stdio_stat_at_start[fd].st_ino)
+            continue;
+
+        int err;
+        do
+            err = fcntl(fd, F_SETFL, (flags & ~O_NONBLOCK) | nonblock);
+        while (err == -1 && errno == EINTR);
+    }
+
     // restore stdio
     for (int32_t fd = 0; fd < 3; fd++) {
         if (!bun_stdio_tty[fd])
@@ -965,6 +1001,19 @@ extern "C" void onExitSignal(int sig)
 {
     bun_restore_stdio();
     Bun__raiseDefaultAction(sig);
+}
+
+static void installExitSignalHandler(int sig)
+{
+    struct sigaction sa;
+    if (sigaction(sig, nullptr, &sa) != 0 || sa.sa_handler != SIG_DFL)
+        return;
+
+    memset(&sa, 0, sizeof(sa));
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESETHAND;
+    sa.sa_handler = onExitSignal;
+    sigaction(sig, &sa, nullptr);
 }
 #endif
 
@@ -1064,8 +1113,6 @@ extern "C" void bun_initialize_process()
 
 #if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)
 
-    bool anyTTYs = false;
-
     for (int fd = 0; fd < 3; fd++) {
         int result = isatty(fd);
         if (result == 0) {
@@ -1079,25 +1126,23 @@ extern "C" void bun_initialize_process()
             do {
                 err = tcgetattr(fd, &termios_to_restore_later[fd]);
             } while (err == -1 && errno == EINTR);
+        }
 
-            if (err == 0) [[likely]] {
-                anyTTYs = true;
-            }
+        if (fstat(fd, &stdio_stat_at_start[fd]) == 0) {
+            do {
+                stdio_flags_to_restore[fd] = fcntl(fd, F_GETFL);
+            } while (stdio_flags_to_restore[fd] == -1 && errno == EINTR);
         }
     }
 
-    // Restore TTY state on exit
-    if (anyTTYs) {
-        struct sigaction sa;
-        memset(&sa, 0, sizeof(sa));
-        sigemptyset(&sa.sa_mask);
-
-        sa.sa_flags = SA_RESETHAND;
-        sa.sa_handler = onExitSignal;
-
-        sigaction(SIGTERM, &sa, nullptr);
-        sigaction(SIGINT, &sa, nullptr);
-    }
+    // Restore stdio state (termios, O_NONBLOCK) when SIGINT or SIGTERM kills
+    // the process, as Node does. The O_NONBLOCK restore matters with no TTY at
+    // all, so this does not depend on one. A disposition inherited as SIG_IGN
+    // (nohup, `trap '' INT`, a shell background job) is left alone: that
+    // signal cannot kill the process, so there is nothing to restore. Other
+    // fatal signals and SIGKILL do not restore, same as Node.
+    installExitSignalHandler(SIGTERM);
+    installExitSignalHandler(SIGINT);
 #elif OS(WINDOWS)
     for (int fd = 0; fd <= 2; ++fd) {
         auto handle = reinterpret_cast<HANDLE>(uv_get_osfhandle(fd));

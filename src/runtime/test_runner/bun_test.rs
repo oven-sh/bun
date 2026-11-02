@@ -1379,8 +1379,6 @@ impl BunTest {
         let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { cfg_args };
         // SAFETY: `this_strong` keeps the cell alive and in place for the whole call.
         let on_stack = unsafe { OnStack::enter(&raw const (*this).execution.on_stack, &cfg_data) };
-        let mut is_followed = false;
-        let is_followed_out = &mut is_followed;
         let result: JSValue = match vm
             .event_loop_mut()
             .run_callback_with_result_and_forcefully_drain_microtasks(
@@ -1392,10 +1390,8 @@ impl BunTest {
                 // Before the drain: `then()` runs one microtask turn after the callback returns, as with `await`.
                 move |returned| {
                     drop(on_stack);
-                    let returned = returned?;
-                    let awaited = Self::promise_of_thenable(global_this, returned)?;
-                    *is_followed_out = awaited != returned;
-                    Ok(awaited)
+                    // A callback that takes `done` ends through it: `then()` of what it also returns is not called.
+                    if cfg_done_parameter { returned } else { Self::promise_of_thenable(global_this, returned?) }
                 },
             )
         {
@@ -1498,10 +1494,7 @@ impl BunTest {
                         let value = bun_jsc::JSPromise::opaque_mut(promise).result(global_this.vm());
                         // SAFETY: as in the `Rejected` arm.
                         unsafe { (*this).adopt_teardown(&cfg_data, value) };
-                        // A thenable that settled in the drain does not end a callback that still waits for done().
-                        if !is_followed || dcb_ref.is_none() {
-                            return Some(cfg_data);
-                        }
+                        return Some(cfg_data);
                     }
                     PromiseStatus::Rejected => {
                         let value = bun_jsc::JSPromise::opaque_mut(promise).result(global_this.vm());

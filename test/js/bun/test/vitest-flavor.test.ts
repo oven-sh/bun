@@ -2601,21 +2601,6 @@ describe.concurrent.each(["vitest", "bun:test", "@jest/globals"])("a Promise sub
   });
 
   test("fails the test if it rejects, and is awaited through then() when it is already settled", async () => {
-    const withDone =
-      module !== "vitest" &&
-      `
-        test("waits for done() and for the promise", done => {
-          setImmediate(() => { console.log("done()"); done(); });
-          return new Lazy("with done", resolve => { console.log("with done: resolves"); resolve(); });
-        });
-        // The returned value settles before the runner looks at it. The test still waits for done().
-        test("done() is never called, and a thenable settles at once", done => ({ then(resolve) { resolve(); } }), 10);
-        test("done() is never called, and a Promise subclass settles in then()", done => new Settled(() => Promise.resolve()), 10);
-        test("done(error) is called later, and a thenable settles at once", done => {
-          setImmediate(() => done(new Error("from done()")));
-          return { then(resolve) { resolve(); } };
-        });
-      `;
     const { log, results, errors, exitCode } = await runTests({
       "a.test.js": `
         import { test } from "${module}";
@@ -2643,7 +2628,6 @@ describe.concurrent.each(["vitest", "bun:test", "@jest/globals"])("a Promise sub
         // A promise whose then is not a function is awaited by its state.
         test("pending, and then is not a function", () => Object.assign(new Plain(() => {}), { then: 1 }), 10);
         test("already rejected, and then is not a function", () => Object.assign(Plain.reject(new Error("rejected, and then is 1")), { then: 1 }));
-        ${withDone || ""}
         test("the next test", () => console.log("the next test"));
       `,
     });
@@ -2654,7 +2638,6 @@ describe.concurrent.each(["vitest", "bun:test", "@jest/globals"])("a Promise sub
         "settled: then()",
         "settled: resolves",
         "settled: then()",
-        ...(withDone ? ["with done: then()", "done()", "with done: resolves", "settled: then()"] : []),
         "the next test",
       ],
       results: [
@@ -2669,14 +2652,6 @@ describe.concurrent.each(["vitest", "bun:test", "@jest/globals"])("a Promise sub
         "(fail) reading constructor throws",
         "(fail) pending, and then is not a function",
         "(fail) already rejected, and then is not a function",
-        ...(withDone
-          ? [
-              "(pass) waits for done() and for the promise",
-              "(fail) done() is never called, and a thenable settles at once",
-              "(fail) done() is never called, and a Promise subclass settles in then()",
-              "(fail) done(error) is called later, and a thenable settles at once",
-            ]
-          : []),
         "(pass) the next test",
       ],
       // Each error once: a rejection that then() handles is not also an unhandled error.
@@ -2689,7 +2664,6 @@ describe.concurrent.each(["vitest", "bun:test", "@jest/globals"])("a Promise sub
         "TypeError: executor did not take a resolve function",
         "error: the constructor getter threw",
         "error: rejected, and then is 1",
-        ...(withDone ? ["error: from done()"] : []),
       ],
       exitCode: 1,
     });
@@ -2751,7 +2725,7 @@ describe.concurrent("a value that a test returns", () => {
           }
         });
         test("after then was replaced", () => new Promise(resolve => setImmediate(resolve)));
-        // Not a subclass, and not this realm's Promise either: it is followed without a then() call.
+        // Not a subclass, and not this realm's Promise either: a new promise follows it.
         test("a promise of another realm", () => {
           const OtherPromise = runInNewContext("Promise");
           return new OtherPromise(resolve => setImmediate(() => { console.log("the other realm's promise resolves"); resolve(); }));
@@ -2877,6 +2851,48 @@ describe.concurrent("a value that a test returns", () => {
       exitCode: 0,
     });
   });
+
+  test.each(["bun:test", "@jest/globals"])(
+    "then() of what a callback with a done parameter returns is not called: %s",
+    async module => {
+      const { log, results, errors, exitCode } = await runTests({
+        "a.test.js": `
+          import { test, describe, beforeEach } from "${module}";
+          // The shape of a supertest request: end() sends it, and then() calls end() too.
+          const request = name => ({
+            end(callback) {
+              if (this.sent) throw new Error(name + ": end() was called twice");
+              this.sent = true;
+              setImmediate(() => { console.log(name + ": sent"); callback(); });
+              return this;
+            },
+            then(resolve, reject) { console.log(name + ": then()"); this.end(error => (error ? reject(error) : resolve())); },
+          });
+          class Sub extends Promise {
+            then(onFulfilled, onRejected) { console.log("a Promise subclass: then()"); return super.then(onFulfilled, onRejected); }
+          }
+          describe("a hook", () => {
+            beforeEach(done => request("beforeEach").end(done));
+            test("a thenable", done => request("test").end(done));
+          });
+          test("a Promise subclass", done => { done(); return Sub.resolve(); });
+          test("done() is never called", done => request("never sent"), 10);
+          test("done(error) is called later", done => { setImmediate(() => done(new Error("from done()"))); return request("never sent"); });
+        `,
+      });
+      expect({ log, results, errors, exitCode }).toEqual({
+        log: ["beforeEach: sent", "test: sent"],
+        results: [
+          "(pass) a hook > a thenable",
+          "(pass) a Promise subclass",
+          "(fail) done() is never called",
+          "(fail) done(error) is called later",
+        ],
+        errors: ["error: from done()"],
+        exitCode: 1,
+      });
+    },
+  );
 });
 
 describe.concurrent("behavior depends on the module a function is imported from", () => {

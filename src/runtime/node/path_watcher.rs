@@ -1761,7 +1761,7 @@ impl Default for WindowsWatch {
 struct WindowsRequest {
     /// First: a packet has the address of this.
     overlapped: w::OVERLAPPED,
-    /// Null once the watcher is done. Only the reader thread frees it: the kernel writes to it until the packet is off the port.
+    /// Null once the watcher is done. Once armed, only the reader thread frees it: the kernel writes to it until the packet is off the port.
     owner: *mut PathWatcher,
     /// `u32` for the alignment of the records.
     buffer: Box<[u32]>,
@@ -2055,7 +2055,7 @@ impl Windows {
         let units: &[u16] = bun_core::cast_slice(buffer);
         let mut utf8 = path::path_buffer_pool::get();
         let mut long_buf = path::w_path_buffer_pool::get();
-        let mut parent: &[u16] = &[];
+        let mut parent = None;
         let mut at: usize = 0;
         loop {
             // `FILE_NOTIFY_INFORMATION`: NextEntryOffset, Action, FileNameLength, FileName.
@@ -2092,7 +2092,7 @@ impl Windows {
         watcher: &PathWatcher,
         action: u32,
         name: &'a [u16],
-        parent: &mut &'a [u16],
+        parent: &mut Option<&'a [u16]>,
         utf8: &mut [u8],
         long_buf: &mut [u16],
     ) {
@@ -2126,13 +2126,12 @@ impl Windows {
     }
 
     /// NTFS holds back the record about a directory with a new entry until somebody opens that directory.
-    fn look_at_parent<'a>(dir: Fd, name: &'a [u16], last: &mut &'a [u16]) {
+    fn look_at_parent<'a>(dir: Fd, name: &'a [u16], last: &mut Option<&'a [u16]>) {
         let parent = &name[..name.len() - Windows::last_component(name).len()];
-        // There are no records about `dir` itself.
-        if let Some((_, path)) = parent.split_last()
-            && parent != *last
-        {
-            *last = parent;
+        if *last != Some(parent) {
+            *last = Some(parent);
+            // No name at all is `dir` itself. Its record goes to a watcher of the directory that it is in.
+            let path = parent.split_last().map_or(parent, |(_, path)| path);
             let _ = sys::directory_exists_at_w(dir, path);
         }
     }

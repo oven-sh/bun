@@ -290,6 +290,33 @@ describe("fs.watch", () => {
     }
   });
 
+  test.skipIf(!isWindows)("a watched directory that got a new file is reported to its parent's watcher", async () => {
+    using dir = tempDir("watch-parent-of-watched", { "sub": {} });
+    let wanted = "";
+    let seen = Promise.withResolvers<void>();
+    const watchers = [
+      fs.watch(String(dir), (event, filename) => {
+        if (`${event} ${filename}` === wanted) seen.resolve();
+      }),
+      fs.watch(path.join(String(dir), "sub"), () => {}),
+    ];
+    for (const watcher of watchers) watcher.on("error", error => seen.reject(error));
+    try {
+      const reported: string[] = [];
+      // The files next to "sub" are there because a watcher takes two equal events within a millisecond for one.
+      for (const name of ["sub\\a.txt", "a.txt", "sub\\b.txt", "b.txt", "sub\\c.txt"]) {
+        wanted = name.startsWith("sub") ? "change sub" : `rename ${name}`;
+        seen = Promise.withResolvers<void>();
+        fs.writeFileSync(path.join(String(dir), name), "");
+        await seen.promise;
+        reported.push(wanted);
+      }
+      expect(reported).toEqual(["change sub", "rename a.txt", "change sub", "rename b.txt", "change sub"]);
+    } finally {
+      for (const watcher of watchers) watcher.close();
+    }
+  });
+
   test.skipIf(!isWindows).each([
     ["the flat one first", [false, true]],
     ["the recursive one first", [true, false]],

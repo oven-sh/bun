@@ -312,7 +312,7 @@ interface QueuedSend {
   port: number | undefined;
   address: string | null | undefined;
   req: SendRequest;
-  // The async context of the send(), where node makes the request that it completes: https://github.com/nodejs/node/blob/v26.3.0/lib/dgram.js#L738
+  // The async context of a send() that has a callback, where node makes the request that it completes: https://github.com/nodejs/node/blob/v26.3.0/lib/dgram.js#L738
   frame: unknown;
 }
 
@@ -472,7 +472,14 @@ function handleQueueSend(
   // same way.
   const length = data.byteLength;
   handle.sendQueue ??= [];
-  handle.sendQueue.push({ data, length, port, address, req, frame: $getInternalField($asyncContext, 0) });
+  handle.sendQueue.push({
+    data,
+    length,
+    port,
+    address,
+    req,
+    frame: req.callback ? $getInternalField($asyncContext, 0) : undefined,
+  });
   handle.queueCount += 1;
   handle.queueSize += length;
   return 0;
@@ -531,7 +538,8 @@ function completeQueuedSend(handle: UDPHandle, entry: QueuedSend, err: unknown) 
     const sent = err === undefined ? entry.length : 0;
     const frame = entry.frame;
     // Queued inside the frame of the send(), so that what the callback throws is reported in it too. The frames are equal in every program without AsyncLocalStorage and Bun.ModuleGraph, which never loads the helper.
-    if (frame === $getInternalField($asyncContext, 0)) process.nextTick(runQueuedSendComplete, req, err, sent);
+    if (!req.callback || frame === $getInternalField($asyncContext, 0))
+      process.nextTick(runQueuedSendComplete, req, err, sent);
     else {
       const run = require("internal/async_context_frame").run;
       run(frame, process.nextTick, process, runQueuedSendComplete, req, err, sent);

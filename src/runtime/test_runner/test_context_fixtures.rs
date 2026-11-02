@@ -697,20 +697,14 @@ impl ActiveFixture {
             Kind::Use | Kind::Value => bound(global, this_value, "use", generated::Bun__ActiveFixture__useFixture)?,
         };
         let returned = function.call(global, JSValue::UNDEFINED, &[context, second])?;
-        // The runner gets this promise again at teardown, and it calls no second `then()` on a native promise.
-        let awaited = bun_test::BunTest::promise_of_thenable(global, returned)?;
-        active::returned_set_cached(this_value, global, awaited);
-        match if awaited.as_promise().is_some() { awaited.get(global, "then")?.filter(|then| then.is_callable()) } else { None } {
-            Some(then) => {
-                let reactions = [
-                    bound(global, this_value, "", generated::Bun__ActiveFixture__onFulfilled)?,
-                    bound(global, this_value, "", generated::Bun__ActiveFixture__onRejected)?,
-                ];
-                then.call(global, awaited, &reactions)?;
-                Ok(())
-            }
-            None => self.on_returned(this_value, global, returned),
-        }
+        let awaited = bun_test::BunTest::awaited_promise(global, returned)?;
+        // The runner gets this value again at teardown, and it calls no second `then()` on a native promise.
+        active::returned_set_cached(this_value, global, awaited.unwrap_or(returned));
+        let Some(awaited) = awaited else {
+            return self.on_returned(this_value, global, returned);
+        };
+        awaited.then_with_value(global, this_value, generated::Bun__ActiveFixture__onFulfilled, generated::Bun__ActiveFixture__onRejected);
+        Ok(())
     }
 
     #[optimize(size)]
@@ -744,7 +738,7 @@ pub(crate) fn set_up(cx: &mut JsScope<'_>, this_value: JsLocal<'_>) -> JsResult<
 }
 
 #[optimize(size)]
-pub(crate) fn on_fulfilled(cx: &mut JsScope<'_>, this_value: JsLocal<'_>, returned: JsLocal<'_>) -> JsResult<()> {
+pub(crate) fn on_fulfilled(cx: &mut JsScope<'_>, returned: JsLocal<'_>, this_value: JsLocal<'_>) -> JsResult<()> {
     let global = cx.global();
     let (this, _) = ActiveFixture::of_call(global, this_value)?;
     this.on_returned(this_value.to_js(), global, returned.to_js())
@@ -752,7 +746,7 @@ pub(crate) fn on_fulfilled(cx: &mut JsScope<'_>, this_value: JsLocal<'_>, return
 
 /// The teardown entry awaits the same promise, so it reports a rejection that comes after `use()`.
 #[optimize(size)]
-pub(crate) fn on_rejected(cx: &mut JsScope<'_>, this_value: JsLocal<'_>, reason: JsLocal<'_>) -> JsResult<()> {
+pub(crate) fn on_rejected(cx: &mut JsScope<'_>, reason: JsLocal<'_>, this_value: JsLocal<'_>) -> JsResult<()> {
     let global = cx.global();
     let (this, _) = ActiveFixture::of_call(global, this_value)?;
     if this.state.get() == State::SettingUp {

@@ -125,6 +125,8 @@ impl<'a> Format<'a> for FormatObjectMember<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let property = self.0;
         let write = |f: &mut Formatter<'a>| match property.kind() {
+            _ if f.context().short_cuts.properties_start_lines
+                && crate::js::flat::write_property(property, f) => {}
             PropKind::Spread => write!(f, ["...", property.value()]),
             _ => write_object_property(property, f),
         };

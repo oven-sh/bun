@@ -6,6 +6,7 @@ use super::program::FormatStatements;
 use super::semicolon::OptionalSemicolon;
 use super::type_parameters::{FormatTSTypeParametersOptions, type_arguments, type_parameters};
 use crate::js::attach::Marker;
+use crate::js::flat::{CertainIf, Deeper, Mode, write_class_member};
 use crate::js::format::{
     FormatTypeAnnotation, format_name, format_node, identifier,
     ignored_node_terminator_follows_semi, name_without_comments,
@@ -65,6 +66,9 @@ fn write_class_body<'a>(class: Class<'a>, f: &mut Formatter<'a>) {
             );
         }
     });
+    // A class that's an expression can be indented by what's around it.
+    let members = Deeper(&members);
+    let members = CertainIf(matches!(class.owner(), Node::Stmt(_)), &members);
     write!(f, ["{", block_indent(&members), "}"]);
 
     if is_consistent {
@@ -96,6 +100,12 @@ fn has_empty_line_before<'a>(element: Member<'a>, f: &Formatter<'a>) -> bool {
 
 /// A member of a class, an interface or a type literal.
 pub(crate) fn write_member<'a>(member: Member<'a>, f: &mut Formatter<'a>) {
+    if f.context().short_cuts.mode != Mode::Off
+        && matches!(member.parent(), Node::Class(_))
+        && write_class_member(member, f)
+    {
+        return;
+    }
     match member.as_ast_nodes() {
         AstNodes::MethodDefinition(_) => write_method_definition(member, f),
         AstNodes::PropertyDefinition(_) => AssignmentLike::PropertyDefinition(member).fmt(f),
@@ -267,7 +277,7 @@ fn write_static_block<'a>(member: Member<'a>, f: &mut Formatter<'a>) {
                 ]
             );
         }
-        Some(body) => write!(f, block_indent(&FormatStatements(body))),
+        Some(body) => write!(f, block_indent(&Deeper(&FormatStatements(body)))),
         None => write!(
             f,
             dangling_comments(AstNodes::StaticBlock(member)).with_block_indent()
@@ -552,11 +562,16 @@ impl<'a> Format<'a> for FormatClass<'a> {
             write!(f, [head, format_heritage_clauses]);
         }
 
-        write_space_before_body(AstNodes::ClassBody(class), f);
-        format_node(AstNodes::ClassBody(class), f, |f| {
-            write_class_body(class, f)
-        });
+        write_class_body_after_head(class, f);
     }
+}
+
+/// ` { .. }`
+pub(crate) fn write_class_body_after_head<'a>(class: Class<'a>, f: &mut Formatter<'a>) {
+    write_space_before_body(AstNodes::ClassBody(class), f);
+    format_node(AstNodes::ClassBody(class), f, |f| {
+        write_class_body(class, f)
+    });
 }
 
 /// `class A extends B /* comment */⏎<C> {}` is `B<C> /* comment */` for Prettier and `B /* comment */<C>` for oxfmt.

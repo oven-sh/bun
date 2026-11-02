@@ -1,4 +1,5 @@
 use super::program::{FormatStatements, is_next_line_empty};
+use crate::js::flat::Deeper;
 use crate::js::trivia::comments_stay_between_head_and_body;
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::utils::statement_body::{write_comments_before_token, write_space_before_body};
@@ -49,7 +50,7 @@ pub(crate) fn write_switch_statement<'a>(
             previous = Some(case);
         }
     });
-    write!(f, [block_indent(&format_cases), "}"]);
+    write!(f, [block_indent(&Deeper(&format_cases)), "}"]);
 }
 
 /// `case a: ..`, `default: ..`
@@ -87,7 +88,7 @@ pub(crate) fn write_switch_case<'a>(case: Case<'a>, f: &mut Formatter<'a>) {
             f,
             indent(&format_args!(
                 hard_line_break(),
-                FormatStatements(consequent)
+                Deeper(&FormatStatements(consequent))
             ))
         ),
     }

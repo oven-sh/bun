@@ -1,5 +1,6 @@
 use super::expressions::FormatObjectMember;
 use super::parameters::should_hug_function_parameters;
+use crate::js::flat::{CertainIf, Deeper};
 use crate::prelude::*;
 use crate::write;
 
@@ -89,7 +90,15 @@ impl<'a> Format<'a> for ObjectLike<'a> {
                     true => f.source_text().contains_newline(before_first),
                     false => f.source_text().has_newline_in_range(before_first),
                 };
-            let members = format_with(|f| self.write_members(f));
+            let follows_line = std::mem::take(&mut f.context_mut().short_cuts.follows_line);
+            let members = format_with(|f| {
+                let outer = f.context().short_cuts.properties_start_lines;
+                f.context_mut().short_cuts.properties_start_lines = should_expand;
+                self.write_members(f);
+                f.context_mut().short_cuts.properties_start_lines = outer;
+            });
+            let members = Deeper(&members);
+            let members = CertainIf(follows_line, &members);
             let inner =
                 soft_block_indent_with_maybe_space(&members, f.options().bracket_spacing.value());
             match self.should_hug(f) {

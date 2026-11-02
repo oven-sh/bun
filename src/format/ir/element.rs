@@ -190,11 +190,31 @@ pub(crate) struct TextWidth(u32);
 impl TextWidth {
     const MULTILINE: u32 = 1 << 31;
     const ONE_STRING: u32 = 1 << 30;
-    const FLAGS: u32 = Self::MULTILINE | Self::ONE_STRING;
+    /// See [`TextWidth::short_cut`].
+    const SHORT_CUT: u32 = 1 << 29;
+    const AFTER_SHIFT: u32 = 26;
+    const FLAGS: u32 =
+        Self::MULTILINE | Self::ONE_STRING | Self::SHORT_CUT | (7 << Self::AFTER_SHIFT);
 
     #[inline]
     pub(crate) const fn single(width: u32) -> Self {
         Self(width & !Self::FLAGS)
+    }
+
+    /// A text that stands for a document that's printed like this only if it fits on the line, together with the
+    /// `after` (at most 7) columns that follow it. The printer checks that. See `js/flat.rs`.
+    #[inline]
+    pub(crate) const fn short_cut(width: u32, after: u32) -> Self {
+        Self(width & !Self::FLAGS | Self::SHORT_CUT | (after & 7) << Self::AFTER_SHIFT)
+    }
+
+    /// For a [`TextWidth::short_cut`], the columns that have to be free after it.
+    #[inline]
+    pub(crate) const fn room_needed_after(self) -> Option<u32> {
+        match self.0 & Self::SHORT_CUT != 0 {
+            true => Some(self.0 >> Self::AFTER_SHIFT & 7),
+            false => None,
+        }
     }
 
     /// `width` is measured up to the first line break. Prettier sees the lines as strings joined by `literalline`.
@@ -207,7 +227,7 @@ impl TextWidth {
     /// character, so the fit check covers the whole string and what follows it.
     #[inline]
     pub(crate) const fn multiline_string(width: u32) -> Self {
-        Self(width & !Self::FLAGS | Self::FLAGS)
+        Self(width & !Self::FLAGS | Self::MULTILINE | Self::ONE_STRING)
     }
 
     #[inline]

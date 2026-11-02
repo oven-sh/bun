@@ -152,6 +152,7 @@ impl<'a> Format<'a> for FormatStatements<'a> {
             }
             imports.before_statement(statement, f);
             write_semicolon_before_type_cast_comment(statement, f);
+            f.context_mut().short_cuts.next_in_list = statement.span().start + 1;
             write!(f, statement);
         }
         imports.finish(f);

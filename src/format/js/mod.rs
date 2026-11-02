@@ -6,6 +6,7 @@ pub(crate) mod builders;
 pub(crate) mod comments;
 pub(crate) mod context;
 pub(crate) mod fields;
+pub(crate) mod flat;
 pub(crate) mod format;
 pub(crate) mod jsdoc;
 pub(crate) mod owners;

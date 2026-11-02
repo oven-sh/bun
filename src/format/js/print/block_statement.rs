@@ -1,4 +1,5 @@
 use super::program::FormatStatements;
+use crate::js::flat::Deeper;
 use crate::prelude::*;
 use crate::write;
 
@@ -24,7 +25,7 @@ pub(crate) fn write_block_statement<'a>(
             write!(f, hard_line_break());
         }
     } else {
-        write!(f, block_indent(&FormatStatements(body)));
+        write!(f, block_indent(&Deeper(&FormatStatements(body))));
     }
     write!(f, "}");
 }

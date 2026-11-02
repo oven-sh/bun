@@ -13,6 +13,7 @@ use super::union_type::{
 };
 use crate::cursor::with_node_marks;
 use crate::js::comments::OwnedComments;
+use crate::js::flat::Deeper;
 use crate::js::format::{
     format_ignorable_name, format_name, format_node, identifier, name_without_comments,
     write_ignored_node,
@@ -574,7 +575,10 @@ pub(crate) fn write_ts_module_declaration<'a>(
                 write!(f, hard_line_break());
             }
             true => write!(f, dangling_comments(body).with_block_indent()),
-            false => write!(f, block_indent(&FormatStatements(innermost.body()))),
+            false => write!(
+                f,
+                block_indent(&Deeper(&FormatStatements(innermost.body())))
+            ),
         }
         write!(f, "}");
     });

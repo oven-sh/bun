@@ -998,6 +998,14 @@ impl Spanned for FormatDeclaration<'_> {
 
 /// Step 5 for a statement.
 pub(crate) fn write_statement<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) {
+    let starts_line =
+        std::mem::take(&mut f.context_mut().short_cuts.next_in_list) == statement.span().start + 1;
+    if starts_line
+        && f.context().short_cuts.mode != super::flat::Mode::Off
+        && super::flat::write_statement(statement, f)
+    {
+        return;
+    }
     let is_declaration = !matches!(
         statement.tag(),
         StmtTag::ExportNamed | StmtTag::ExportDefault | StmtTag::ExportStar

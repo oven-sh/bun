@@ -35,14 +35,17 @@ pub(crate) enum PrintError {
     NestedTooDeeply,
     /// See [`crate::is_too_long`].
     TooLong,
+    /// A text that was written in place of a document doesn't fit on its line. See `js/flat.rs`.
+    ShortCutTooWide,
 }
 
 impl From<PrintError> for FormatError {
     fn from(error: PrintError) -> FormatError {
         match error {
-            PrintError::InvalidDocument | PrintError::MeasureAgain | PrintError::StaysExpanded => {
-                FormatError::InvalidDocument
-            }
+            PrintError::InvalidDocument
+            | PrintError::MeasureAgain
+            | PrintError::StaysExpanded
+            | PrintError::ShortCutTooWide => FormatError::InvalidDocument,
             PrintError::NestedTooDeeply => FormatError::NestedTooDeeply,
             PrintError::TooLong => FormatError::TooLong,
         }
@@ -468,7 +471,12 @@ impl<'d> Printer<'d> {
                     self.print_text(self.source, text.range(), text.width)
                 }
                 FormatElement::OwnedText(text) => {
-                    self.print_text(self.text, text.range(), text.width)
+                    self.print_text(self.text, text.range(), text.width);
+                    if let Some(after) = text.width.room_needed_after()
+                        && self.line_width + after as usize > self.options.print_width
+                    {
+                        return Err(PrintError::ShortCutTooWide);
+                    }
                 }
                 FormatElement::Line(line_mode) => self.print_line(*line_mode),
                 FormatElement::IndentedLineGroup(id) => {

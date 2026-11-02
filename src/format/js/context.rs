@@ -56,6 +56,8 @@ pub(crate) struct JsFormatContext<'a> {
     pub(crate) is_vue_filter_sequence: Cell<bool>,
     /// Parses the code in HTML, overriding `FormatOptions::parse_javascript`.
     pub(crate) parse_javascript: Option<JavaScriptParser<'a>>,
+    /// See `flat.rs`.
+    pub(crate) short_cuts: super::flat::ShortCuts,
 }
 
 impl<'a> JsFormatContext<'a> {
@@ -67,6 +69,7 @@ impl<'a> JsFormatContext<'a> {
         Self {
             file: Some(file),
             has_babel_tree: has_babel_tree(file, &options),
+            short_cuts: super::flat::ShortCuts::for_file(file, &options),
             comments: Comments::new(Some(file), options.flavor, comments),
             ..Self::without_file(options, comments)
         }
@@ -95,6 +98,7 @@ impl<'a> JsFormatContext<'a> {
             long_member_chain: Cell::new(None),
             is_vue_filter_sequence: Cell::new(false),
             parse_javascript: None,
+            short_cuts: Default::default(),
         }
     }
 

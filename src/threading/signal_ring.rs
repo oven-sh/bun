@@ -373,14 +373,16 @@ mod tests {
         let (result, (views, bad)) = std::thread::scope(|scope| {
             let viewer = scope.spawn(|| {
                 let (mut views, mut bad) = (0usize, 0usize);
-                while finished.load(Ordering::Acquire) == 0 {
+                loop {
                     let view = queued(&ring);
                     views += 1;
                     bad += usize::from(view.len() > CAPACITY);
                     bad += view.iter().filter(|&&s| s == 0 || s > PRODUCERS).count();
+                    if finished.load(Ordering::Acquire) != 0 {
+                        break (views, bad);
+                    }
                     std::thread::yield_now();
                 }
-                (views, bad)
             });
             let result = stress(&ring, usize::MAX);
             finished.store(1, Ordering::Release);

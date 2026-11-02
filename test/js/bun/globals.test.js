@@ -215,6 +215,49 @@ it("self is a getter", () => {
   expect(globalThis.self).toBe(globalThis);
 });
 
+it("self getter checks its receiver", () => {
+  const { get } = Object.getOwnPropertyDescriptor(globalThis, "self");
+  expect(get.call(globalThis)).toBe(globalThis);
+  expect(get.call(null)).toBe(globalThis);
+  expect(get.call(undefined)).toBe(globalThis);
+  expect(get.call()).toBe(globalThis);
+  expect(Reflect.get(globalThis, "self", globalThis)).toBe(globalThis);
+  expect(self).toBe(globalThis);
+
+  for (const receiver of [{}, 0, "", Symbol(), Object.create(globalThis), new Proxy(globalThis, {})]) {
+    expect(() => get.call(receiver)).toThrow(TypeError);
+  }
+  expect(() => Reflect.get(globalThis, "self", {})).toThrow(TypeError);
+  expect(() => new Proxy(globalThis, {}).self).toThrow(TypeError);
+});
+
+it("self getter checks its receiver inside a Worker", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const worker = new Worker(
+    URL.createObjectURL(
+      new Blob(
+        [
+          `const { get } = Object.getOwnPropertyDescriptor(globalThis, "self");
+           const results = [];
+           for (const receiver of [null, undefined, globalThis, self, {}, 0]) {
+             try { results.push(get.call(receiver) === globalThis ? "global" : "other"); }
+             catch (error) { results.push(error.name); }
+           }
+           postMessage(results);`,
+        ],
+        { type: "application/javascript" },
+      ),
+    ),
+  );
+  worker.onmessage = event => resolve(event.data);
+  worker.onerror = reject;
+  try {
+    expect(await promise).toEqual(["global", "global", "global", "global", "TypeError", "TypeError"]);
+  } finally {
+    worker.terminate();
+  }
+});
+
 it("errors thrown by native code should be TypeError", async () => {
   expect(() => Bun.dns.prefetch()).toThrowError(TypeError);
   expect(async () => await fetch("http://localhost", { body: "123" })).toThrowError(TypeError);

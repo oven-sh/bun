@@ -1769,10 +1769,23 @@ WEBCORE_GENERATED_CONSTRUCTOR_GETTER(WritableStream);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(WritableStreamDefaultController);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(WritableStreamDefaultWriter);
 
+// Web IDL attribute getter: a nullish receiver means the getter's own global.
+// Any other receiver must be the global object (or the JSGlobalProxy that
+// `globalThis` is from JS), or the getter throws a TypeError.
 JSC_DEFINE_HOST_FUNCTION(functionGetSelf,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    return JSValue::encode(globalObject->globalThis());
+    JSValue thisValue = callFrame->thisValue();
+    if (thisValue.isUndefinedOrNull())
+        return JSValue::encode(globalObject->globalThis());
+
+    auto& vm = JSC::getVM(globalObject);
+    auto* thisObject = WebCore::toJSDOMGlobalObject<Zig::GlobalObject>(vm, thisValue);
+    if (!thisObject) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_THIS, "The self getter can only be used on the global object"_s);
+    }
+    return JSValue::encode(thisObject->globalThis());
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionSetSelf,

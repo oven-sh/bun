@@ -1,9 +1,10 @@
 // Port of Node.js lib/internal/fs/glob.js (v26.3.0):
 //   https://github.com/nodejs/node/blob/50c35fea9e64d50ab3bb5f359e8523de89d6c798/lib/internal/fs/glob.js
-// plus nodejs/node 74dcdbb5f1, ab7f4c88b7, 54a1311d9e: the walker of v24.22.1 (v26.12.1 adds only `maxDepth`),
+// plus nodejs/node 74dcdbb5f1, ab7f4c88b7, 54a1311d9e and 34b38235c3 (`maxDepth`, nodejs/node#64003): the walker of v26.12.1,
 // backed by a vendored copy of minimatch (Node's deps/minimatch/index.js, ISC license):
 //   https://github.com/nodejs/node/blob/50c35fea9e64d50ab3bb5f359e8523de89d6c798/deps/minimatch/index.js
 // embedded below lazyMinimatch(); the vendored block is third-party and not edited but for types — the port above it follows bun's style.
+// `maxDepth` is not all Node's text: the limit on a match is in LimitedResultSet, and DepthLimiter is in internal/fs/glob-depth-limiter.
 //
 // This is not backed by Bun.Glob: the vendored test-fs-glob.mjs (448 cases at v26.3.0)
 // exercises minimatch-specific semantics — withFileTypes Dirents, the
@@ -11,12 +12,20 @@
 // Bun.Glob.scan does not implement (328/448 fail with the Bun.Glob-backed
 // version on main). Replace this with Bun.Glob once those gaps are closed
 // natively.
-const { validateObject, validateString, validateBoolean, validateArray } = require("internal/validators");
-const { join, resolve, basename, dirname, isAbsolute } = require("node:path");
+const {
+  validateObject,
+  validateString,
+  validateBoolean,
+  validateArray,
+  validateInteger,
+} = require("internal/validators");
+const { join, resolve, basename, dirname, isAbsolute, sep } = require("node:path");
 const { kEmptyObject } = require("internal/shared");
 
 const isWindows = process.platform === "win32";
 const isMacOS = process.platform === "darwin";
+// DepthLimiter asks the file system about a spelling of `cwd` on these two only. Elsewhere the async walk calls its sync methods.
+const limiterAsksFileSystem = isWindows || isMacOS;
 
 // node:fs and node:fs/promises cannot be required at module scope:
 // node:fs/promises requires this module at its top level.
@@ -30,6 +39,7 @@ interface GlobOptions {
   cwd?: string | URL;
   exclude?: string[] | ((entry: Dirent | string) => boolean);
   followSymlinks?: boolean;
+  maxDepth?: number | null;
   withFileTypes?: boolean;
 }
 
@@ -301,6 +311,17 @@ class Cache {
   }
 }
 
+type DepthLimiter = InstanceType<(typeof import("./glob-depth-limiter").default)["DepthLimiter"]>;
+
+function createDepthLimiter(root: string, maxDepth: number | null | undefined): DepthLimiter | null {
+  if (maxDepth == null || maxDepth === Infinity) {
+    return null;
+  }
+  validateInteger(maxDepth, "options.maxDepth", 0);
+  // A walk with no limit does not load the module of the limiter.
+  return new (require("internal/fs/glob-depth-limiter").DepthLimiter)(root, maxDepth);
+}
+
 class Pattern {
   #pattern: PatternPart[];
   #globStrings: string[];
@@ -338,6 +359,11 @@ class Pattern {
       if (!this.symlinks.has(i)) return true;
     }
     return false;
+  }
+  // A field in Node's text. Only a walk with `maxDepth` reads it, and the first part says what the joined parts say.
+  get isAbsolute() {
+    const parts = this.#globStrings;
+    return parts.length > 1 && isAbsolute(parts[0] + sep);
   }
   at(index: number) {
     return this.#pattern.at(index);
@@ -392,6 +418,34 @@ class ResultSet extends Set<string> {
   }
 }
 
+// The result set of a walk with `maxDepth`. Node's text tests the limit at each of the 16 places that add a match, and all of them call add().
+class LimitedResultSet extends ResultSet {
+  #limiter: DepthLimiter;
+  // #globLimited() sets this: the async walk cannot wait for the file system in add(), and it makes no sync call to it.
+  isAsync = false;
+  // The path that the async walk gave when only the file system can say its depth. #globLimited() awaits addPending() for it.
+  pending: string | undefined = undefined;
+
+  constructor(limiter: DepthLimiter) {
+    super();
+    this.#limiter = limiter;
+  }
+
+  add(value: string): any {
+    const limiter = this.#limiter;
+    const included = this.isAsync ? limiter.includesNow(value) : limiter.includes(value);
+    if (included === undefined) {
+      this.pending = value;
+      return true;
+    }
+    return included && super.add(value);
+  }
+
+  async addPending(value: string) {
+    return (await this.#limiter.includesAsync(value)) && super.add(value);
+  }
+}
+
 class Glob {
   #root: string;
   #exclude: ((entry: Dirent | string) => boolean) | undefined;
@@ -402,15 +456,20 @@ class Glob {
   #patterns: Pattern[];
   #withFileTypes: boolean;
   #followSymlinks = false;
+  #depthLimiter: DepthLimiter | null;
   #isExcluded: (path: string) => boolean = excludeNothing;
   matchers: Minimatch[];
   constructor(pattern: string | string[], options: GlobOptions = kEmptyObject) {
     validateObject(options, "options");
-    const { exclude, cwd, followSymlinks, withFileTypes } = options;
+    const { exclude, cwd, followSymlinks, maxDepth, withFileTypes } = options;
     this.#root = toPathIfFileURL(cwd) ?? process.cwd();
     if (followSymlinks != null) {
       validateBoolean(followSymlinks, "options.followSymlinks");
       this.#followSymlinks = followSymlinks;
+    }
+    this.#depthLimiter = createDepthLimiter(this.#root, maxDepth);
+    if (this.#depthLimiter !== null) {
+      this.#results = new LimitedResultSet(this.#depthLimiter);
     }
     this.#withFileTypes = !!withFileTypes;
     if (exclude != null) {
@@ -618,7 +677,12 @@ class Glob {
       this.#results.add(path);
     }
 
-    if (!isDirectory || this.#isCyclicSync(fullpath, isDirectory, pattern)) {
+    const limiter = this.#depthLimiter;
+    if (
+      !isDirectory ||
+      (limiter !== null && !limiter.canTraverse(path, pattern.isAbsolute)) ||
+      this.#isCyclicSync(fullpath, isDirectory, pattern)
+    ) {
       return;
     }
 
@@ -754,7 +818,26 @@ class Glob {
     }
   }
 
-  async *glob() {
+  // Only a walk with `maxDepth` on Windows or macOS pays for the second generator.
+  glob() {
+    const results = this.#results;
+    return limiterAsksFileSystem && results instanceof LimitedResultSet ? this.#globLimited(results) : this.#glob();
+  }
+  // The walker stays at its match while this waits for the file system, as it does at Node's `await` there.
+  async *#globLimited(results: LimitedResultSet) {
+    results.isAsync = true;
+    for await (const match of this.#glob()) {
+      const pending = results.pending;
+      if (pending !== undefined) {
+        results.pending = undefined;
+        if (!(await results.addPending(pending))) {
+          continue;
+        }
+      }
+      yield match;
+    }
+  }
+  async *#glob() {
     this.#queue.push({ __proto__: null, path: ".", patterns: this.#patterns });
     while (this.#queue.length > 0) {
       const item = this.#queue.pop()!;
@@ -832,7 +915,16 @@ class Glob {
       }
     }
 
-    if (!isDirectory || (await this.#isCyclic(fullpath, isDirectory, pattern))) {
+    // The only `await` for `maxDepth` in this body: Node's one at each match puts it over JSC's maximumInliningCallerBytecodeCost.
+    const limiter = this.#depthLimiter;
+    if (
+      !isDirectory ||
+      (limiter !== null &&
+        !(limiterAsksFileSystem
+          ? await limiter.canTraverseAsync(path, pattern.isAbsolute)
+          : limiter.canTraverse(path, pattern.isAbsolute))) ||
+      (await this.#isCyclic(fullpath, isDirectory, pattern))
+    ) {
       return;
     }
 

@@ -1,5 +1,6 @@
 //! Tested in test/js/bun/test/printing/diffexample.test.ts. If modified, the snapshots will need to be updated.
 
+use std::borrow::Cow;
 use std::fmt::Write;
 
 use bstr::BStr;
@@ -35,6 +36,8 @@ pub(crate) fn print_diff_main(
     writer: &mut impl Write,
     config: &DiffConfig,
 ) -> std::fmt::Result {
+    let expected = with_visible_carriage_returns(expected_slice);
+    let expected_slice: &[u8] = &expected;
     if not {
         match config.enable_ansi_colors {
             true => write!(
@@ -48,6 +51,8 @@ pub(crate) fn print_diff_main(
         }
         return Ok(());
     }
+    let received = with_visible_carriage_returns(received_slice);
+    let received_slice: &[u8] = &received;
 
     let mut p = Printer {
         out: Vec::with_capacity(
@@ -71,6 +76,28 @@ pub(crate) fn print_diff_main(
     }
     p.flush();
     p.result
+}
+
+/// Every `\r` as `␍` (U+240D). A terminal draws what follows a raw `\r` over the start of the row, and a
+/// GitHub Actions annotation drops it. The value printer writes a backslash as it is, so the two
+/// characters `\r` could also be a backslash and an `r`.
+#[optimize(size)]
+fn with_visible_carriage_returns(text: &[u8]) -> Cow<'_, [u8]> {
+    const VISIBLE: &[u8] = "\u{240D}".as_bytes();
+    let Some(first) = strings::index_of_char_usize(text, b'\r') else {
+        return Cow::Borrowed(text);
+    };
+    let count = strings::count_char(&text[first..], b'\r');
+    let mut shown = Vec::with_capacity(text.len() + count * (VISIBLE.len() - 1));
+    let (mut rest, mut next) = (text, Some(first));
+    while let Some(i) = next {
+        shown.extend_from_slice(&rest[..i]);
+        shown.extend_from_slice(VISIBLE);
+        rest = &rest[i + 1..];
+        next = strings::index_of_char_usize(rest, b'\r');
+    }
+    shown.extend_from_slice(rest);
+    Cow::Owned(shown)
 }
 
 /// Rendered output is handed to the writer in chunks of about this size, cut

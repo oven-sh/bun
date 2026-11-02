@@ -316,6 +316,9 @@ pub(crate) struct Formatter<'a> {
     pub global_this: &'a JSGlobalObject,
     pub(crate) indent: u32,
     pub(crate) quote_strings: bool,
+    /// jest-snapshot's `normalizeNewlines`: `\r\n` and `\r` in a string or in DOM text print as `\n`.
+    /// Set only for the text that a Bun-format snapshot stores. A failure message keeps each `\r`, so its diff shows a line-ending difference.
+    pub(crate) normalize_newlines: bool,
     pub(crate) failed: bool,
     pub(crate) estimated_line_length: usize,
     pub(crate) always_newline_scope: bool,
@@ -352,6 +355,7 @@ impl<'a> Formatter<'a> {
             global_this: global,
             indent: 0,
             quote_strings: false,
+            normalize_newlines: false,
             failed: false,
             estimated_line_length: 0,
             always_newline_scope: false,
@@ -1191,9 +1195,12 @@ impl<'a> Formatter<'a> {
 
                         let mut has_newline = false;
 
-                        if str.index_of_any(b"\n\r").is_some() {
-                            has_newline = true;
-                            writer.write_all(b"\n");
+                        if let Some(first) = str.index_of_any(b"\n\r") {
+                            // A `\r` that prints as itself does not break the line.
+                            if self.normalize_newlines || str.substring(first).index_of_any(b"\n").is_some() {
+                                has_newline = true;
+                                writer.write_all(b"\n");
+                            }
                         }
 
                         writer.write_all(b"\"");
@@ -1213,7 +1220,12 @@ impl<'a> Formatter<'a> {
                                     remaining = remaining.substring(i + 1);
                                 }
                                 CR => {
-                                    if i + 1 < remaining.len
+                                    if !self.normalize_newlines {
+                                        writer.print(format_args!(
+                                            "{}\r",
+                                            remaining.substring_with_len(0, i)
+                                        ));
+                                    } else if i + 1 < remaining.len
                                         && remaining.char_at(i + 1) == LF
                                     {
                                         writer.print(format_args!(
@@ -3534,6 +3546,7 @@ impl JestPrettyFormat {
         let mut expected = ExpectedText { rest: saved, differs: &differs };
         let mut formatter = Formatter::new(global);
         formatter.quote_strings = true;
+        formatter.normalize_newlines = true;
         formatter.like_older_bun = Some(&differs);
         let tag = Tag::get(value, global)?;
         let mut bridge = AsFmt::new(&mut expected);
@@ -3556,6 +3569,7 @@ impl JestPrettyFormat {
         formatter.serializers = Self::serializers(global)?;
         if !format.is_pretty_format() {
             formatter.quote_strings = true;
+            formatter.normalize_newlines = true;
             let tag = Tag::get(value, global)?;
             let mut bridge = AsFmt::new(out);
             formatter.format::<_, false>(tag, &mut bun_io::write::FmtAdapter::new(&mut bridge), value, global)?;

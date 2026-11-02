@@ -91,6 +91,8 @@ private:
 JSC_DECLARE_HOST_FUNCTION(jsFunctionIsFrameOfStoppedModuleGraph);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionModuleGraphOfFrame);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionModuleGraphFrameOfFrame);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionAsyncContextWithoutModuleGraphs);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionAsyncContextInCurrentModuleGraph);
 
 // Per-global state that is not a GC object (Zig::GlobalObject::m_moduleGraphs).
 struct ModuleGraphState {

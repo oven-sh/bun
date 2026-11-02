@@ -66,6 +66,9 @@ const SymbolDispose = Symbol.dispose;
 const SymbolAsyncDispose = Symbol.asyncDispose;
 const ObjectDefineProperty = Object.defineProperty;
 const FunctionPrototypeBind = Function.prototype.bind;
+const SafeWeakMap = WeakMap;
+const WeakMapPrototypeGet = WeakMap.prototype.get;
+const WeakMapPrototypeSet = WeakMap.prototype.set;
 
 // Mirrors Node's SystemError shape for ERR_SOCKET_BUFFER_SIZE: name
 // "SystemError", an enumerable `info` object, errno/syscall accessors that
@@ -309,6 +312,8 @@ interface QueuedSend {
   port: number | undefined;
   address: string | null | undefined;
   req: SendRequest;
+  // The async context of the send(), where node makes the request that it completes: https://github.com/nodejs/node/blob/v26.3.0/lib/dgram.js#L738
+  frame: unknown;
 }
 
 interface UDPHandle {
@@ -325,6 +330,25 @@ interface UDPHandle {
   lookup?: (address: string | null | undefined, callback: LookupCallback) => void;
   onmessage?: typeof onMessage;
   [kOwnerSymbol]?: $Node.DgramSocket;
+}
+
+// The AsyncLocalStorage stores of createSocket(), by handle. node makes the UDP handle there, and what that handle delivers ('message', a receive error) runs in them: https://github.com/nodejs/node/blob/v26.3.0/lib/dgram.js#L143
+let handleStores: WeakMap<UDPHandle, object> | undefined;
+// Made on first use: a program without AsyncLocalStorage and Bun.ModuleGraph has neither these nor the table.
+let withoutModuleGraphs: ((frame: unknown) => object | undefined) | undefined;
+let inCurrentModuleGraph: ((stores: unknown) => unknown) | undefined;
+
+// Without the frames of a Bun.ModuleGraph: a socket that the host keeps does not keep the graph that made it.
+function saveStoresOfHandle(handle: UDPHandle, frame: unknown) {
+  withoutModuleGraphs ??= $newCppFunction("ModuleGraph.cpp", "jsFunctionAsyncContextWithoutModuleGraphs", 1);
+  const stores = withoutModuleGraphs!(frame);
+  if (stores !== undefined) WeakMapPrototypeSet.$call((handleStores ??= new SafeWeakMap()), handle, stores);
+}
+
+// Bun.udpSocket() takes the socket's Bun.ModuleGraph from the async context: the socket opens in the graph of the caller, entered over the stores of createSocket().
+function openInStoresOfHandle(stores: unknown, udpOptions: any) {
+  inCurrentModuleGraph ??= $newCppFunction("ModuleGraph.cpp", "jsFunctionAsyncContextInCurrentModuleGraph", 1);
+  return require("internal/async_context_frame").run(inCurrentModuleGraph!(stores), Bun.udpSocket, Bun, udpOptions);
 }
 
 function newHandle(type: string, lookup: LookupFunction | undefined) {
@@ -362,6 +386,9 @@ function newHandle(type: string, lookup: LookupFunction | undefined) {
   }
 
   handle.onmessage = onMessage;
+
+  const frame = $getInternalField($asyncContext, 0);
+  if (frame !== undefined) saveStoresOfHandle(handle, frame);
 
   return handle;
 }
@@ -453,7 +480,7 @@ function handleQueueSend(
   // same way.
   const length = data.byteLength;
   handle.sendQueue ??= [];
-  handle.sendQueue.push({ data, length, port, address, req });
+  handle.sendQueue.push({ data, length, port, address, req, frame: $getInternalField($asyncContext, 0) });
   handle.queueCount += 1;
   handle.queueSize += length;
   return 0;
@@ -509,7 +536,14 @@ function completeQueuedSend(handle: UDPHandle, entry: QueuedSend, err: unknown) 
   // callback cannot skip a sibling entry or run inside close()/drain.
   const req = entry.req;
   if (req && typeof req.oncomplete === "function") {
-    process.nextTick(runQueuedSendComplete, req, err, err === undefined ? entry.length : 0);
+    const sent = err === undefined ? entry.length : 0;
+    const frame = entry.frame;
+    // Queued inside the frame of the send(), so that what the callback throws is reported in it too. The frames are equal in every program without AsyncLocalStorage and Bun.ModuleGraph, which never loads the helper.
+    if (frame === $getInternalField($asyncContext, 0)) process.nextTick(runQueuedSendComplete, req, err, sent);
+    else {
+      const run = require("internal/async_context_frame").run;
+      run(frame, process.nextTick, process, runQueuedSendComplete, req, err, sent);
+    }
   }
 }
 
@@ -911,7 +945,13 @@ function startBunSocket(
     };
     // Private name: a cluster-shared descriptor is read one datagram at a time so workers share the load.
     if (sharedHandle) $putByIdDirectPrivate(udpOptions, "sharedFd", true);
-    (Bun.udpSocket(udpOptions) as Promise<$Node.UDPSocketHandle>).$then(
+    // Not for a shared bind: its handle is the one the cluster primary sent (node's replaceHandle(): https://github.com/nodejs/node/blob/v26.3.0/lib/dgram.js#L213).
+    const stores = handleStores && WeakMapPrototypeGet.$call(handleStores, state.handle!);
+    const opened =
+      sharedHandle !== undefined || stores === $getInternalField($asyncContext, 0)
+        ? Bun.udpSocket(udpOptions)
+        : openInStoresOfHandle(stores, udpOptions);
+    (opened as Promise<$Node.UDPSocketHandle>).$then(
       (socket: $Node.UDPSocketHandle) => {
         if (!state.handle) {
           // Closed while the bind was in flight.

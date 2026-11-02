@@ -4,6 +4,8 @@ import { afterAll, describe, expect, test } from "bun:test";
 import fs, { rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir, tls } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
+import dgram from "node:dgram";
+import { once } from "node:events";
 import net from "node:net";
 import nodeTls from "node:tls";
 import { promisify } from "node:util";
@@ -633,6 +635,259 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
       bound: "pending",
       lateClients: 0,
     });
+  });
+
+  // node:dgram opens a socket in bind(), inside the AsyncLocalStorage stores of createSocket(): 'message' then reads
+  // the stores node reads, whoever binds. The socket is still of the graph whose script binds it, because
+  // Bun.udpSocket() takes the owner from the async context: bind() enters its graph over the stores of
+  // createSocket() and over nothing else. Not the stores of bind(), and not those the host entered the graph in.
+  test("a node:dgram socket is of the graph that binds it, and 'message' reads the stores of createSocket()", async () => {
+    const { kStateSymbol } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
+    const storage = new AsyncLocalStorage<string>();
+    // What the host is in when it enters the graph that binds.
+    const request = new AsyncLocalStorage<string>();
+    type Where = "A" | "B" | "the host";
+    async function layout(madeIn: Where, boundIn: Where, { disposeMakerFirst = false, createInStore = true } = {}) {
+      const graphs = { A: new Bun.ModuleGraph(), B: new Bun.ModuleGraph() };
+      const enter = <T>(where: Where, fn: () => T): T => (where === "the host" ? fn() : graphs[where].run(fn));
+      const nameOf = (graph: unknown) => (graph === graphs.A ? "A" : graph === graphs.B ? "B" : "the host");
+      const create = () => dgram.createSocket("udp4");
+      const socket = enter(madeIn, () => (createInStore ? storage.run("createSocket()", create) : create()));
+      const sender = dgram.createSocket("udp4");
+      try {
+        if (disposeMakerFirst) graphs.A.dispose();
+        request.run("the request", () =>
+          enter(boundIn, () => storage.run("bind()", () => socket.bind(0, "127.0.0.1"))),
+        );
+        await once(socket, "listening");
+        const message = Promise.withResolvers<{ stores: string; graph: string }>();
+        socket.on("error", message.reject);
+        sender.on("error", message.reject);
+        socket.on("message", () =>
+          message.resolve({
+            stores: `${storage.getStore()}, ${request.getStore()}`,
+            graph: nameOf(Bun.ModuleGraph.current),
+          }),
+        );
+        // dispose() closes the sockets of its graph at once, and the native socket says so.
+        const native = socket[kStateSymbol].handle.socket;
+        sender.send("x", socket.address().port, "127.0.0.1");
+        const { stores, graph } = await message.promise;
+        graphs.A.dispose();
+        const closedByA: boolean = native.closed;
+        graphs.B.dispose();
+        const closedBy = closedByA ? "A" : native.closed ? "B" : "nobody";
+        return { "'message' reads": stores, "'message' runs in": graph, "closed by the dispose() of": closedBy };
+      } finally {
+        graphs.A.dispose();
+        graphs.B.dispose();
+        socket.close();
+        sender.close();
+      }
+    }
+    const ofCreateSocket = "createSocket(), undefined";
+    expect({
+      "made and bound in one graph": await layout("A", "A"),
+      "made in one graph, bound in another": await layout("A", "B"),
+      "made in a graph, bound by the host": await layout("A", "the host"),
+      "made by the host, bound in a graph": await layout("the host", "A"),
+      "made by the host in no store, bound in a graph": await layout("the host", "A", { createInStore: false }),
+    }).toEqual({
+      "made and bound in one graph": {
+        "'message' reads": ofCreateSocket,
+        "'message' runs in": "A",
+        "closed by the dispose() of": "A",
+      },
+      "made in one graph, bound in another": {
+        "'message' reads": ofCreateSocket,
+        "'message' runs in": "B",
+        "closed by the dispose() of": "B",
+      },
+      "made in a graph, bound by the host": {
+        "'message' reads": ofCreateSocket,
+        "'message' runs in": "the host",
+        "closed by the dispose() of": "nobody",
+      },
+      "made by the host, bound in a graph": {
+        "'message' reads": ofCreateSocket,
+        "'message' runs in": "A",
+        "closed by the dispose() of": "A",
+      },
+      "made by the host in no store, bound in a graph": {
+        "'message' reads": "undefined, undefined",
+        "'message' runs in": "A",
+        "closed by the dispose() of": "A",
+      },
+    });
+    // What a disposed graph's code opens never settles: the bind of a socket that such a graph made is the host's.
+    expect(await layout("A", "the host", { disposeMakerFirst: true })).toEqual({
+      "'message' reads": ofCreateSocket,
+      "'message' runs in": "the host",
+      "closed by the dispose() of": "nobody",
+    });
+  });
+
+  // disable() is noted on the newest frame, and a lookup reads only the note of the frame it starts at. node:dgram
+  // keeps the stores of createSocket() without the frames of graphs, so 'message' starts one frame lower when the
+  // newest frame was a graph's. It still reads what createSocket() read, with the note and without it.
+  test("a node:dgram 'message' reads what createSocket() read when a store is disabled around a graph", async () => {
+    type Graph = InstanceType<typeof Bun.ModuleGraph>;
+    async function seenIn(arrange: (storage: AsyncLocalStorage<string>, graph: Graph, create: () => void) => void) {
+      const storage = new AsyncLocalStorage<string>();
+      const graph = new Bun.ModuleGraph();
+      const sender = dgram.createSocket("udp4");
+      const seen: Record<string, unknown> = {};
+      const created = Promise.withResolvers<dgram.Socket>();
+      arrange(storage, graph, () => {
+        seen["at createSocket()"] = storage.getStore();
+        created.resolve(dgram.createSocket("udp4"));
+      });
+      const socket = await created.promise;
+      try {
+        graph.run(() => storage.run("bind()", () => socket.bind(0, "127.0.0.1")));
+        await once(socket, "listening");
+        const message = Promise.withResolvers<unknown>();
+        socket.on("error", message.reject);
+        sender.on("error", message.reject);
+        socket.on("message", () => message.resolve(storage.getStore()));
+        sender.send("x", socket.address().port, "127.0.0.1");
+        seen["in 'message'"] = await message.promise;
+        return seen;
+      } finally {
+        socket.close();
+        sender.close();
+        graph.dispose();
+      }
+    }
+    const store = "entered by the host";
+    expect({
+      "disabled inside the graph, before createSocket()": await seenIn((storage, graph, create) =>
+        storage.run(store, () =>
+          graph.run(() => {
+            storage.disable();
+            create();
+          }),
+        ),
+      ),
+      "disabled by the host, after the graph's script queued createSocket()": await seenIn((storage, graph, create) =>
+        storage.run(store, () => {
+          graph.run(() => void Promise.resolve().then(create));
+          storage.disable();
+        }),
+      ),
+    }).toEqual({
+      "disabled inside the graph, before createSocket()": { "at createSocket()": undefined, "in 'message'": undefined },
+      "disabled by the host, after the graph's script queued createSocket()": {
+        "at createSocket()": store,
+        "in 'message'": store,
+      },
+    });
+  });
+
+  // A send() that waited behind backpressure is completed by the socket's drain or by close(). Its callback still
+  // runs where that send() was made: in the caller's graph and store, as the callback of a ws send() does. With a
+  // queue, every send() waits behind it, which is what backpressure does.
+  test("a queued send() on a node:dgram socket completes in the graph and the store of its own call", async () => {
+    const { kStateSymbol } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
+    const storage = new AsyncLocalStorage<string>();
+    type Who = "the graph" | "the host";
+    async function completions(socketOf: Who, completedBy: "the drain" | "close()") {
+      const graph = new Bun.ModuleGraph();
+      const enter = <T>(who: Who, fn: () => T): T => (who === "the graph" ? graph.run(fn) : fn());
+      const socket = enter(socketOf, () => dgram.createSocket("udp4"));
+      let closed = false;
+      try {
+        enter(socketOf, () => socket.bind(0, "127.0.0.1"));
+        await once(socket, "listening");
+        enter(socketOf, () => socket.connect(socket.address().port, "127.0.0.1"));
+        await once(socket, "connect");
+        const handle = socket[kStateSymbol].handle;
+        const realSocket = handle.socket;
+        handle.sendQueue = [];
+        const queued = (["the graph", "the host"] as const).map(who => {
+          const completed = Promise.withResolvers<[string, string]>();
+          enter(who, () =>
+            storage.run(`the send() of ${who}`, () =>
+              socket.send("x", () =>
+                completed.resolve([
+                  `the send() of ${who}`,
+                  `runs as ${Bun.ModuleGraph.current === graph ? "the graph" : "the host"}, in the store of ${storage.getStore()}`,
+                ]),
+              ),
+            ),
+          );
+          return completed.promise;
+        });
+        // The socket's native handlers, and whoever closes it, run in the context of the socket's owner.
+        if (completedBy === "the drain") {
+          handle.socket = { send: () => true };
+          enter(socketOf, () => storage.run("the drain", () => handle.drain()));
+          handle.socket = realSocket;
+        } else {
+          closed = true;
+          enter(socketOf, () => storage.run("close()", () => socket.close()));
+        }
+        return Object.fromEntries(await Promise.all(queued));
+      } finally {
+        if (!closed) socket.close();
+        graph.dispose();
+      }
+    }
+    const own = {
+      "the send() of the graph": "runs as the graph, in the store of the send() of the graph",
+      "the send() of the host": "runs as the host, in the store of the send() of the host",
+    };
+    expect({
+      "the graph's socket drains": await completions("the graph", "the drain"),
+      "the graph's socket closes": await completions("the graph", "close()"),
+      "the host's socket drains": await completions("the host", "the drain"),
+      "the host's socket closes": await completions("the host", "close()"),
+    }).toEqual({
+      "the graph's socket drains": own,
+      "the graph's socket closes": own,
+      "the host's socket drains": own,
+      "the host's socket closes": own,
+    });
+  });
+
+  // As for anything a disposed graph left behind: the callback is still called, once, inside the disposed graph,
+  // and what it starts there does not start.
+  test("a queued send() of a graph that is disposed before a node:dgram socket of the host's drains", async () => {
+    const { kStateSymbol } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
+    const storage = new AsyncLocalStorage<string>();
+    const socket = dgram.createSocket("udp4");
+    socket.bind(0, "127.0.0.1");
+    await once(socket, "listening");
+    socket.connect(socket.address().port, "127.0.0.1");
+    await once(socket, "connect");
+    const handle = socket[kStateSymbol].handle;
+    const realSocket = handle.socket;
+    const graph = new Bun.ModuleGraph();
+    try {
+      handle.sendQueue = [];
+      const seen = { calls: 0, context: "", timerFired: false };
+      const called = Promise.withResolvers<void>();
+      graph.run(() =>
+        storage.run("the graph's send()", () =>
+          socket.send("x", () => {
+            seen.calls++;
+            seen.context = `${Bun.ModuleGraph.current === graph ? "the graph" : "the host"}, in the store of ${storage.getStore()}`;
+            setTimeout(() => (seen.timerFired = true), 1);
+            called.resolve();
+          }),
+        ),
+      );
+      graph.dispose();
+      handle.socket = { send: () => true };
+      handle.drain();
+      await called.promise;
+      await hostTimerTurns();
+      expect(seen).toEqual({ calls: 1, context: "the graph, in the store of the graph's send()", timerFired: false });
+    } finally {
+      handle.socket = realSocket;
+      socket.close();
+      graph.dispose();
+    }
   });
 
   test("code of the graph the host calls directly runs in the host's context; run() enters the graph's", async () => {

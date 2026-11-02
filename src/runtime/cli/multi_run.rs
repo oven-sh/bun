@@ -315,16 +315,24 @@ impl<'a> State<'a> {
             Output::writer()
         };
 
+        // SAFETY: pipe.handle backref set in ProcessHandle::start()
+        let config = unsafe { (*pipe.handle).config };
         // Process complete lines
-        while let Some(newline_pos) = strings::index_of_char_usize(&pipe.line_buffer, b'\n') {
-            let line = &pipe.line_buffer[0..newline_pos + 1];
-            // SAFETY: pipe.handle backref set in ProcessHandle::start()
-            let config = unsafe { (*pipe.handle).config };
-            self.write_line_with_prefix(config, line, writer)?;
-            // Remove processed line from buffer
-            pipe.line_buffer.drain_front(newline_pos + 1);
+        let mut printed = 0;
+        let mut result = Ok(());
+        while let Some(newline_pos) =
+            strings::index_of_char_usize(&pipe.line_buffer[printed..], b'\n')
+        {
+            let end = printed + newline_pos + 1;
+            result = self.write_line_with_prefix(config, &pipe.line_buffer[printed..end], writer);
+            if result.is_err() {
+                break;
+            }
+            printed = end;
         }
-        Ok(())
+        // Remove processed lines from buffer
+        pipe.line_buffer.drain_front(printed);
+        result
     }
 
     fn write_line_with_prefix(

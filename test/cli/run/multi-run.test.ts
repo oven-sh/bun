@@ -1664,6 +1664,22 @@ describe.concurrent("unusual output", () => {
     expect(r.exitCode).toBe(0);
   });
 
+  test("lines that the end of a chunk cuts in two come out whole and in order", async () => {
+    const line = (i: number) => `${i} ${Buffer.alloc(i % 200, "x")}`;
+    using dir = tempDir("mr-cut-lines", {
+      "burst.js": `
+        const line = ${line};
+        const data = Buffer.from(Array.from({ length: 5000 }, (_, i) => line(i) + "\\n").join(""));
+        for (let at = 0; at < data.length; ) at += require("fs").writeSync(1, data, at);
+      `,
+      "package.json": JSON.stringify({ scripts: { burst: `${bunExe()} burst.js` } }),
+    });
+    const r = await runMulti(["run", "--parallel", "burst"], String(dir));
+    const printed = r.stdout.split("\n").flatMap(l => /^burst\s+\| (.*)$/.exec(l)?.[1] ?? []);
+    expect(printed).toEqual(Array.from({ length: 5000 }, (_, i) => line(i)));
+    expect(r.exitCode).toBe(0);
+  });
+
   test("output with unicode characters", async () => {
     using dir = tempDir("mr-unicode", {
       "package.json": JSON.stringify({

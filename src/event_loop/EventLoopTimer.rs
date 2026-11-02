@@ -199,7 +199,6 @@ pub enum Tag {
     UpgradedDuplex,
     DNSResolver,
     DnsSdConnection,
-    WindowsNamedPipe,
     WTFTimer,
     PostgresSQLConnectionTimeout,
     PostgresSQLConnectionMaxLifetime,
@@ -219,7 +218,7 @@ pub enum Tag {
     QuicEndpoint,
     FakeTimersTick,
     ViWait,
-    /// An N-API addon's `uv_timer_t` (POSIX, where Bun emulates libuv).
+    /// An N-API addon's `uv_timer_t`, which Bun emulates.
     UvTimer,
     WorkerWaitsForRoom,
 }
@@ -253,7 +252,6 @@ impl Tag {
             | Tag::UpgradedDuplex
             | Tag::DNSResolver
             | Tag::DnsSdConnection
-            | Tag::WindowsNamedPipe
             | Tag::PostgresSQLConnectionTimeout
             | Tag::PostgresSQLConnectionMaxLifetime
             | Tag::MySQLConnectionTimeout

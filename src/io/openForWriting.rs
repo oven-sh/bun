@@ -1,4 +1,5 @@
 use bun_core::ZStr;
+#[cfg(unix)]
 use bun_sys::FdExt;
 use bun_sys::{self, Fd, Mode};
 
@@ -27,8 +28,10 @@ impl OpenForWritingInput for crate::PathOrFileDescriptor<'_> {
         use crate::PathOrFileDescriptor::*;
         match self {
             Path(path) => {
+                debug_assert!(dir == bun_sys::Fd::cwd());
                 *is_nonblocking = true;
-                bun_sys::openat_a(dir, path, input_flags, mode)
+                // The path is one for Win32.
+                bun_sys::open(path, input_flags, mode)
             }
             Fd(fd_) => bun_sys::dup_with_flags(*fd_, 0),
         }
@@ -99,9 +102,9 @@ where
 {
     #[cfg(windows)]
     {
-        let _ = (is_socket, out_nonblocking, ctx, on_tty, is_pollable);
+        let _ = (is_socket, out_nonblocking, is_pollable);
     }
-    // `O_NONBLOCK` opens an asynchronous handle, and `uv_fs_write` fails on those with EINVAL.
+    // `O_NONBLOCK` opens an asynchronous handle, which `bun_sys::write` cannot write to.
     #[cfg(windows)]
     let input_flags = input_flags & !bun_sys::O::NONBLOCK;
     // TODO: this should be concurrent.
@@ -169,11 +172,12 @@ where
 
     #[cfg(windows)]
     {
-        *pollable = (bun_sys::windows::GetFileType(fd.native()) & bun_sys::windows::FILE_TYPE_PIPE)
-            != 0
+        // A write to anything else, a console included, is done when it returns.
+        *pollable = bun_sys::windows::GetFileType(fd.native()) == bun_sys::windows::FILE_TYPE_PIPE
             && !force_sync;
-        // The libuv writer needs a CRT fd. `Fd::uv()` panics on a HANDLE.
-        return fd
-            .make_lib_uv_owned_for_syscall(bun_sys::Tag::open, bun_sys::ErrorCase::CloseOnFail);
+        if bun_sys::windows::is_console(fd.native()) {
+            on_tty(ctx);
+        }
+        return Ok(fd);
     }
 }

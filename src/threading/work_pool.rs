@@ -131,6 +131,7 @@ macro_rules! owned_task {
 }
 
 static POOL: OnceLock<ThreadPool> = OnceLock::new();
+static WAITING_POOL: OnceLock<ThreadPool> = OnceLock::new();
 
 #[cold]
 fn create() -> ThreadPool {
@@ -148,6 +149,19 @@ impl WorkPool {
 
     pub fn schedule(task: *mut Task) {
         Self::get().schedule(Batch::from(task));
+    }
+
+    /// For a task that blocks until somebody outside the process acts (a pipe read): threads of their own, so the others still run.
+    pub fn schedule_waiting(task: *mut Task) {
+        WAITING_POOL
+            .get_or_init(|| {
+                ThreadPool::init(crate::thread_pool::Config {
+                    max_threads: u32::from(bun_core::get_thread_count()).max(4),
+                    stack_size: crate::thread_pool::POOL_THREAD_STACK_SIZE,
+                })
+                .named("Bun I/O")
+            })
+            .schedule(Batch::from(task));
     }
 
     /// Schedule a heap-allocated task by value. The pool takes ownership of

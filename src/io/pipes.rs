@@ -1,7 +1,6 @@
 use core::ffi::c_void;
 
 use bun_sys::Fd;
-#[cfg(not(windows))]
 use bun_sys::FdExt;
 
 #[cfg(target_os = "macos")]
@@ -44,13 +43,6 @@ impl PollOrFd {
         }
     }
 
-    pub(crate) fn get_poll_mut(&mut self) -> Option<FilePollRef> {
-        match self {
-            PollOrFd::Poll(poll) => Some(*poll),
-            _ => None,
-        }
-    }
-
     pub fn close_impl<F>(
         &mut self,
         ctx: Option<*mut c_void>,
@@ -60,9 +52,11 @@ impl PollOrFd {
         F: FnOnce(*mut c_void),
     {
         let fd = self.get_fd();
+        #[cfg(windows)]
+        let mut close_fd = close_fd;
         #[cfg(target_os = "macos")]
         let mut close_async = true;
-        #[cfg(all(not(target_os = "macos"), not(windows)))]
+        #[cfg(not(target_os = "macos"))]
         let close_async = true;
         if matches!(self, PollOrFd::Poll(_)) {
             // workaround kqueue bug.
@@ -87,6 +81,10 @@ impl PollOrFd {
                         close_async = false;
                     }
                 }
+                #[cfg(windows)]
+                if close_fd && poll.close_fd_on_deinit() {
+                    close_fd = false;
+                }
                 // Consumes the underlying allocation.
                 poll.deinit_force_unregister();
             }
@@ -95,22 +93,10 @@ impl PollOrFd {
         if fd != Fd::INVALID {
             *self = PollOrFd::Closed;
 
-            // TODO: We should make this call compatible using bun.FD
-            #[cfg(windows)]
-            {
-                if close_fd {
-                    crate::closer::Closer::close(fd, bun_sys::windows::libuv::Loop::get());
-                }
-            }
-            #[cfg(not(windows))]
-            {
-                if close_async && close_fd {
-                    crate::closer::Closer::close(fd, ());
-                } else {
-                    if close_fd {
-                        let _ = fd.close_allowing_bad_file_descriptor(None);
-                    }
-                }
+            if close_async && close_fd {
+                crate::closer::Closer::close(fd);
+            } else if close_fd {
+                let _ = fd.close_allowing_bad_file_descriptor(None);
             }
             if let Some(f) = on_close_fn {
                 // SAFETY: caller guarantees ctx is Some and properly aligned
@@ -137,7 +123,7 @@ impl PollOrFd {
 
 // Sunk to `bun_io` so `FilePoll::file_type()` needs no aio→io edge; re-export
 // keeps the historical `bun_io::FileType` / `bun_io::pipes::FileType` paths.
-pub use crate::posix_event_loop::FileType;
+pub use crate::file_poll::FileType;
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum ReadState {

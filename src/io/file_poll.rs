@@ -1,19 +1,15 @@
-#[cfg(unix)]
 use core::ffi::c_int;
-#[cfg(not(windows))]
 use core::ffi::c_void;
-#[cfg(not(windows))]
 use core::fmt;
-#[cfg(unix)]
 use core::ptr;
 
-#[cfg(not(windows))]
 use bun_sys::{self as sys, Fd};
 use bun_uws_sys::Loop as UwsLoop;
+#[cfg(windows)]
+use bun_uws_sys::poll::{Kind as NativeKind, Poll as NativePoll, READABLE, WRITABLE};
 
 pub type Loop = UwsLoop;
 
-#[cfg(not(windows))]
 use bun_sys::syslog;
 
 /// Local `errno_sys` helper. `bun_sys`
@@ -117,9 +113,6 @@ pub fn js_vm_ctx() -> EventLoopCtx {
     get_vm_ctx(AllocatorType::Js)
 }
 
-// `KeepAlive` (struct + 14-method impl) was duplicated here and in
-// `windows_event_loop.rs`; both copies now live in `crate::keep_alive`.
-
 // ──────────────────────────────────────────────────────────────────────────
 // FilePoll
 // ──────────────────────────────────────────────────────────────────────────
@@ -127,7 +120,7 @@ pub fn js_vm_ctx() -> EventLoopCtx {
 // `KQueueGenerationNumber` is `usize` on macOS-debug, else a zero-size sentinel.
 #[cfg(all(target_os = "macos", debug_assertions))]
 type KQueueGenerationNumber = usize;
-#[cfg(all(unix, not(all(target_os = "macos", debug_assertions))))]
+#[cfg(not(all(target_os = "macos", debug_assertions)))]
 type KQueueGenerationNumber = u8; // Note: conceptually zero-width; smallest Rust int is u8. Gated by cfg below.
 
 // Debug-only diagnostic; `Relaxed` (no synchronization implied).
@@ -230,7 +223,6 @@ pub struct Owner {
 }
 
 impl Owner {
-    #[cfg(not(windows))]
     pub(crate) const NULL: Owner = Owner {
         tag: PollTag::Null,
         ptr: core::ptr::null_mut(),
@@ -244,7 +236,6 @@ impl Owner {
         self.ptr.is_null()
     }
     #[inline]
-    #[cfg(not(windows))]
     pub(crate) fn clear(&mut self) {
         *self = Self::NULL;
     }
@@ -268,11 +259,6 @@ pub enum AllocatorType {
     SpawnSync,
 }
 
-// `FilePoll`/`Store` here are POSIX-specific (kqueue/epoll registration,
-// generation_number, allocator_type). On Windows the variants live in
-// `windows_event_loop`; the shared `EventLoopCtxVTable` above names
-// `crate::FilePoll`/`crate::Store` so the right one is picked.
-#[cfg(not(windows))]
 pub struct FilePoll {
     pub fd: Fd,
     pub flags: FlagsSet,
@@ -287,9 +273,18 @@ pub struct FilePoll {
     pub(crate) next_to_free: *mut FilePoll,
 
     pub(crate) allocator_type: AllocatorType,
+
+    /// What the loop has for `fd`. No handle until [`FilePoll::native`] has worked out what `fd` is.
+    #[cfg(windows)]
+    native: NativePoll,
+    /// Console input is not read from `fd` as it is: see [`crate::console::Reader`].
+    #[cfg(windows)]
+    console: *mut crate::console::Reader,
+    /// See [`FilePoll::close_fd_on_deinit`].
+    #[cfg(windows)]
+    closes_fd: bool,
 }
 
-#[cfg(not(windows))]
 impl FilePoll {
     fn update_flags(&mut self, updated: FlagsSet) {
         let mut flags = self.flags;
@@ -313,7 +308,8 @@ impl FilePoll {
         if flags.contains(Flags::Tty) {
             return FileType::File;
         }
-        if flags.contains(Flags::Nonblocking) {
+        // On Windows `FilePoll::read` and `FilePoll::write` stand in for the system calls, and they do not wait.
+        if cfg!(windows) || flags.contains(Flags::Nonblocking) {
             return FileType::NonblockingPipe;
         }
         FileType::Pipe
@@ -378,6 +374,8 @@ impl FilePoll {
         // deref in `EventLoopCtx`); the `&mut Loop` is consumed by `unregister`
         // and dropped before any `&mut Store` is materialised.
         let _ = self.unregister(vm.loop_mut(), force_unregister);
+        #[cfg(windows)]
+        self.release_native();
 
         self.owner.clear();
         let was_ever_registered = self.flags.contains(Flags::WasEverRegistered);
@@ -447,10 +445,6 @@ impl FilePoll {
     }
 
     pub fn enable_keeping_process_alive(&mut self, event_loop_ctx: EventLoopCtx) {
-        if self.flags.contains(Flags::Closed) {
-            return;
-        }
-
         event_loop_ctx
             .loop_add_active((!self.flags.contains(Flags::HasIncrementedActiveCount)) as u32);
 
@@ -472,8 +466,6 @@ impl FilePoll {
 
     /// Only intended to be used from EventLoop.Pollable
     fn activate(&mut self, loop_: &mut Loop) {
-        self.flags.remove(Flags::Closed);
-
         if !self.flags.contains(Flags::HasIncrementedPollCount) {
             loop_.inc();
         }
@@ -508,6 +500,12 @@ impl FilePoll {
                 .wrapping_add(1),
             #[cfg(not(all(target_os = "macos", debug_assertions)))]
             generation_number: 0,
+            #[cfg(windows)]
+            native: NativePoll::init(ptr::null_mut(), NativeKind::Socket),
+            #[cfg(windows)]
+            console: ptr::null_mut(),
+            #[cfg(windows)]
+            closes_fd: false,
         }
     }
 
@@ -545,38 +543,7 @@ impl FilePoll {
         one_shot: OneShotFlag,
         fd: Fd,
     ) -> sys::Result<()> {
-        #[cfg(any(
-            target_os = "linux",
-            target_os = "android",
-            target_os = "macos",
-            target_os = "freebsd"
-        ))]
-        return self.register_with_fd_impl(loop_, flag, one_shot, fd);
-        #[cfg(not(any(
-            target_os = "linux",
-            target_os = "android",
-            target_os = "macos",
-            target_os = "freebsd"
-        )))]
-        {
-            let _ = (loop_, flag, one_shot, fd);
-            sys::Result::Ok(())
-        }
-    }
-
-    #[cfg(any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "macos",
-        target_os = "freebsd"
-    ))]
-    fn register_with_fd_impl(
-        &mut self,
-        loop_: &mut Loop,
-        flag: Flags,
-        one_shot: OneShotFlag,
-        fd: Fd,
-    ) -> sys::Result<()> {
+        #[cfg(not(windows))]
         let watcher_fd = loop_.fd();
 
         syslog!(
@@ -816,6 +783,36 @@ impl FilePoll {
                 return err;
             }
         }
+        #[cfg(windows)]
+        {
+            debug_assert!(fd == self.fd);
+            let mut events = match flag {
+                Flags::Process | Flags::Readable => READABLE,
+                Flags::Writable => WRITABLE,
+                Flags::Machport | Flags::MemoryPressure => {
+                    return sys::Result::Err(sys::Error::from_code(
+                        sys::E::ENOTSUP,
+                        sys::Tag::poll,
+                    ));
+                }
+                _ => unreachable!(),
+            };
+            // One poll has both directions, as with epoll.
+            if flag == Flags::Readable && self.flags.contains(Flags::PollWritable) {
+                debug_assert!(!self.flags.contains(Flags::OneShot));
+                events |= WRITABLE;
+            }
+            if flag == Flags::Writable && self.flags.contains(Flags::PollReadable) {
+                debug_assert!(!self.flags.contains(Flags::OneShot));
+                events |= READABLE;
+            }
+
+            self.flags.insert(Flags::WasEverRegistered);
+            if let Err(err) = self.set_native_events(loop_, flag, events) {
+                self.deactivate(loop_);
+                return sys::Result::Err(err);
+            }
+        }
 
         self.activate(loop_);
         self.flags.insert(match flag {
@@ -852,40 +849,20 @@ impl FilePoll {
     ) -> sys::Result<()> {
         // Note: compute the syscall result first, then unconditionally
         // deactivate. Avoids a raw-pointer scopeguard.
-        #[cfg(any(
-            target_os = "linux",
-            target_os = "android",
-            target_os = "macos",
-            target_os = "freebsd"
-        ))]
         let result = self.unregister_with_fd_impl(loop_, fd, force_unregister);
-        #[cfg(not(any(
-            target_os = "linux",
-            target_os = "android",
-            target_os = "macos",
-            target_os = "freebsd"
-        )))]
-        let result: sys::Result<()> = {
-            let _ = (fd, force_unregister);
-            sys::Result::Ok(())
-        };
         self.deactivate(loop_);
         result
     }
 
-    #[cfg(any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "macos",
-        target_os = "freebsd"
-    ))]
     fn unregister_with_fd_impl(
         &mut self,
         loop_: &mut Loop,
         fd: Fd,
         force_unregister: bool,
     ) -> sys::Result<()> {
-        debug_assert!(fd.native() >= 0 && fd != INVALID_FD);
+        #[cfg(not(windows))]
+        debug_assert!(fd.native() >= 0);
+        debug_assert!(fd != INVALID_FD);
 
         let registered = self.flags.contains(Flags::PollReadable)
             || self.flags.contains(Flags::PollWritable)
@@ -898,6 +875,7 @@ impl FilePoll {
             return sys::Result::Ok(());
         }
 
+        #[cfg(not(windows))]
         let watcher_fd = loop_.fd();
         let both_directions = disarmed_only
             || (self.flags.contains(Flags::PollReadable)
@@ -921,6 +899,8 @@ impl FilePoll {
             return sys::Result::Ok(());
         };
 
+        // Windows: the read that found a pipe empty left a thread waiting in it, which holds up everybody who shares the handle.
+        #[cfg(not(windows))]
         if self.flags.contains(Flags::NeedsRearm) && !force_unregister {
             syslog!(
                 "unregister: {} ({}) skipped due to needs_rearm",
@@ -1119,6 +1099,13 @@ impl FilePoll {
                 e => return sys::Result::Err(sys::Error::from_code(e, sys::Tag::kevent)),
             }
         }
+        #[cfg(windows)]
+        {
+            self.native.stop(loop_);
+            if let Some(console) = self.console_mut() {
+                console.stop();
+            }
+        }
 
         self.flags.remove(Flags::NeedsRearm);
         self.flags.remove(Flags::OneShot);
@@ -1132,7 +1119,128 @@ impl FilePoll {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(windows)]
+impl FilePoll {
+    /// The flags say what `fd` is (`Socket`; `Nonblocking`: a pipe Bun made; else from outside), because asking the handle can block.
+    fn native(&mut self, flag: Flags) -> &mut NativePoll {
+        if self.native.handle().is_null() {
+            let handle = self.fd.native();
+            let kind = if flag == Flags::Process {
+                NativeKind::Waitable
+            } else if self.flags.contains(Flags::Socket) {
+                NativeKind::Socket
+            } else if self.flags.contains(Flags::Nonblocking) {
+                NativeKind::Pipe
+            } else if bun_sys::windows::is_console(handle) {
+                self.console = crate::console::Reader::create(handle, ptr::from_mut(self));
+                NativeKind::Waitable
+            } else {
+                NativeKind::ForeignPipe
+            };
+            self.native = NativePoll::init(handle, kind);
+        }
+        &mut self.native
+    }
+
+    #[inline]
+    fn console_mut(&mut self) -> Option<&mut crate::console::Reader> {
+        // SAFETY: null, or what `native` made, which lives until `release_native`.
+        unsafe { self.console.as_mut() }
+    }
+
+    fn set_native_events(&mut self, loop_: &Loop, flag: Flags, events: c_int) -> sys::Result<()> {
+        self.native(flag);
+        let mut event_on_wait = None;
+        if let Some(console) = self.console_mut() {
+            // Which handle says that there is something to read depends on the mode of the console.
+            let handle = console.start();
+            event_on_wait = console.event_that_starts_a_line();
+            if handle != self.native.handle() {
+                self.native.detach();
+                self.native = NativePoll::init(handle, NativeKind::Waitable);
+            }
+        }
+        self.native
+            .set_events(loop_, events)
+            .map_err(|code| sys::Error::from_win32(code, sys::Tag::poll).with_fd(self.fd))?;
+        if let Some(event) = event_on_wait {
+            self.native.set_event_on_wait(event);
+        }
+        Ok(())
+    }
+
+    /// The mode of the console changed while this poll was waiting for input.
+    pub(crate) fn restart_console(&mut self) {
+        let loop_ = get_vm_ctx(self.allocator_type).loop_mut();
+        let _ = self.set_native_events(loop_, Flags::Readable, READABLE);
+    }
+
+    fn release_native(&mut self) {
+        if self.closes_fd {
+            self.native.close();
+        } else {
+            self.native.detach();
+        }
+        self.native = NativePoll::init(ptr::null_mut(), NativeKind::Socket);
+        if !self.console.is_null() {
+            // SAFETY: made by `native`, and not used after this.
+            unsafe { crate::console::Reader::destroy(self.console) };
+            self.console = ptr::null_mut();
+        }
+    }
+
+    /// `true`: the loop closes `fd` when the poll goes away, because the helper thread of a pipe may be using it.
+    pub(crate) fn close_fd_on_deinit(&mut self) -> bool {
+        // The C runtime has to close its own descriptors, and a console reader waits on a handle that is not `fd`.
+        if self.fd.kind() != bun_core::FdKind::System
+            || self.fd.stdio_tag().is_some()
+            || self.native.handle().is_null()
+            || !self.console.is_null()
+        {
+            return false;
+        }
+        self.closes_fd = true;
+        true
+    }
+
+    /// As `read` on a non-blocking descriptor.
+    pub(crate) fn read(&mut self, buf: &mut [u8]) -> sys::Result<usize> {
+        let fd = self.fd;
+        match self.native(Flags::Readable).kind() {
+            NativeKind::Socket => sys::recv_non_block(fd, buf),
+            NativeKind::Waitable => match self.console_mut() {
+                Some(console) => console.read(buf),
+                None => sys::Result::Err(
+                    sys::Error::from_code(sys::E::EINVAL, sys::Tag::read).with_fd(fd),
+                ),
+            },
+            NativeKind::Pipe | NativeKind::ForeignPipe => {
+                let loop_ = get_vm_ctx(self.allocator_type).loop_mut();
+                self.native
+                    .read(loop_, buf)
+                    .map_err(|code| sys::Error::from_win32(code, sys::Tag::read).with_fd(fd))
+            }
+        }
+    }
+
+    /// As `write` on a non-blocking descriptor.
+    pub(crate) fn write(&mut self, buf: &[u8]) -> sys::Result<usize> {
+        let fd = self.fd;
+        match self.native(Flags::Writable).kind() {
+            NativeKind::Socket => sys::send_non_block(fd, buf),
+            NativeKind::Waitable => {
+                sys::Result::Err(sys::Error::from_code(sys::E::EINVAL, sys::Tag::write).with_fd(fd))
+            }
+            NativeKind::Pipe | NativeKind::ForeignPipe => {
+                let loop_ = get_vm_ctx(self.allocator_type).loop_mut();
+                self.native
+                    .write(loop_, buf)
+                    .map_err(|code| sys::Error::from_win32(code, sys::Tag::write).with_fd(fd))
+            }
+        }
+    }
+}
+
 impl fmt::Display for FilePoll {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -1181,7 +1289,6 @@ pub enum Flags {
 
     HasIncrementedPollCount,
     HasIncrementedActiveCount,
-    Closed,
 
     KeepsEventLoopAlive,
 
@@ -1197,6 +1304,13 @@ pub enum Flags {
 pub type FlagsSet = enumset::EnumSet<Flags>;
 
 impl Flags {
+    /// This process's end of what a child has for `Stdio::Buffer`: a socket, or on Windows a pipe.
+    pub const CHILD_STDIO: Flags = if cfg!(windows) {
+        Flags::Nonblocking
+    } else {
+        Flags::Socket
+    };
+
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     pub(crate) fn from_kqueue_event(kqueue_event: &KQueueEvent) -> FlagsSet {
         #[cfg(target_os = "macos")]
@@ -1252,10 +1366,8 @@ impl Flags {
     }
 }
 
-#[cfg(not(windows))]
 pub(crate) struct FlagsFormatter(pub FlagsSet);
 
-#[cfg(not(windows))]
 impl fmt::Display for FlagsFormatter {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut is_first = true;
@@ -1277,21 +1389,17 @@ impl fmt::Display for FlagsFormatter {
 // `bun_alloc::heap_breakdown` is a no-op outside macOS Instruments
 // heap-breakdown builds, so the 128-slot hive is unconditional here (same
 // choice as `RuntimeTranspilerStore`'s TranspilerJob hive).
-#[cfg(not(windows))]
 const HIVE_SIZE: usize = 128;
-#[cfg(not(windows))]
 type FilePollHive = bun_collections::hive_array::Fallback<FilePoll, HIVE_SIZE>;
 
 /// We defer freeing FilePoll until the end of the next event loop iteration
 /// This ensures that we don't free a FilePoll before the next callback is called
-#[cfg(not(windows))]
 pub struct Store {
     hive: FilePollHive,
     pending_free_head: *mut FilePoll,
     pending_free_tail: *mut FilePoll,
 }
 
-#[cfg(not(windows))]
 impl Store {
     pub fn init() -> Store {
         Store {
@@ -1403,7 +1511,6 @@ impl Store {
 
 /// Polls whose free is still deferred may be heap slots of the hive's fallback,
 /// which only the pending list names.
-#[cfg(not(windows))]
 impl Drop for Store {
     fn drop(&mut self) {
         self.process_deferred_frees();
@@ -1462,15 +1569,7 @@ impl Pollable {
     }
 }
 
-// `current_ready_poll`/`ready_polls` only exist on the POSIX uws loop layout;
-// on Windows the libuv loop drives readiness, so this entry point is never
-// linked there. Restrict to the platforms where the fields are present.
-#[cfg(any(
-    target_os = "linux",
-    target_os = "android",
-    target_os = "macos",
-    target_os = "freebsd"
-))]
+#[cfg(not(windows))]
 #[unsafe(no_mangle)]
 /// # Safety
 /// uWS C callback: `loop_` is the live per-thread `us_loop_t`; `tagged_pointer`
@@ -1506,6 +1605,51 @@ unsafe extern "C" fn Bun__internal_dispatch_ready_poll(
     file_poll.on_epoll_event(&ev);
 }
 
+#[cfg(windows)]
+#[unsafe(no_mangle)]
+/// # Safety
+/// uSockets callback: `loop_` is the live loop of this thread, `poll` the `native` field of a
+/// live `FilePoll`.
+unsafe extern "C" fn Bun__internal_dispatch_ready_poll(
+    loop_: *mut Loop,
+    poll: *mut NativePoll,
+    events: c_int,
+    error: c_int,
+    eof: c_int,
+) {
+    // SAFETY: caller contract.
+    let file_poll: &mut FilePoll =
+        unsafe { &mut *bun_core::from_field_ptr!(FilePoll, native, poll) };
+    if file_poll.flags.contains(Flags::IgnoreUpdates) {
+        return;
+    }
+
+    let mut flags = FlagsSet::empty();
+    if events & READABLE != 0 {
+        flags.insert(if file_poll.flags.contains(Flags::PollProcess) {
+            Flags::Process
+        } else {
+            Flags::Readable
+        });
+    }
+    if events & WRITABLE != 0 {
+        flags.insert(Flags::Writable);
+    }
+    if error != 0 {
+        flags.insert(Flags::Eof);
+    }
+    if eof != 0 {
+        flags.insert(Flags::Hup);
+    }
+    file_poll.update_flags(flags);
+
+    if file_poll.flags.contains(Flags::OneShot) {
+        // SAFETY: caller contract; the borrow ends before the handler can make its own.
+        let _ = file_poll.native.set_events(unsafe { &*loop_ }, 0);
+    }
+    file_poll.on_update(0);
+}
+
 #[cfg(target_os = "macos")]
 static TIMEOUT: bun_sys::posix::timespec = bun_sys::posix::timespec {
     tv_sec: 0,
@@ -1520,7 +1664,6 @@ pub enum OneShotFlag {
     None,
 }
 
-#[cfg(not(windows))]
 const INVALID_FD: Fd = Fd::INVALID;
 
 #[cfg(all(test, not(windows)))]

@@ -88,8 +88,15 @@ export const aroundSetUp = b.fn({
   args: { aroundHook: b.any, hook: b.any, context: b.any, suite: b.any },
   returns: b.any,
 });
-export const aroundOnFulfilled = b.fn(ofAround("onFulfilled", "on_fulfilled"));
-export const aroundOnRejected = b.fn({ ...ofAround("onRejected", "on_rejected"), args: { reason: b.any } });
+/** Reactions of the promise that the hook returned. The engine passes the `AroundHook` as their last argument. */
+export const aroundOnFulfilled = b.fn({
+  ...around("onFulfilled", "on_fulfilled"),
+  args: { value: b.any, aroundHook: b.any },
+});
+export const aroundOnRejected = b.fn({
+  ...around("onRejected", "on_rejected"),
+  args: { reason: b.any, aroundHook: b.any },
+});
 /** `runTest()` or `runSuite()` */
 export const aroundRun = b.fn({ ...ofAround("run", "run"), returns: b.any });
 /** The teardown entry's callback. */
@@ -103,17 +110,24 @@ export const adoptAsyncContext = b.fn({
   capability: "js",
 });
 
-/** What it is a bound function of: `this` is the `ActiveFixture`. */
-const ofFixture = (name: string, rustName: string) =>
+const fixture = (name: string, rustName: string) =>
   ({
     export: `Bun__ActiveFixture__${name}`,
     rustPath: `crate::test_runner::test_context_fixtures::${rustName}`,
-    passThis: true,
     ...js,
   }) as const;
+/** What it is a bound function of: `this` is the `ActiveFixture`. */
+const ofFixture = (name: string, rustName: string) => ({ ...fixture(name, rustName), passThis: true }) as const;
 export const fixtureSetUp = b.fn({ ...ofFixture("setUp", "set_up"), returns: b.any });
-export const fixtureOnFulfilled = b.fn({ ...ofFixture("onFulfilled", "on_fulfilled"), args: { returned: b.any } });
-export const fixtureOnRejected = b.fn({ ...ofFixture("onRejected", "on_rejected"), args: { reason: b.any } });
+/** Reactions of the promise that the fixture function returned. The engine passes the `ActiveFixture` as their last argument. */
+export const fixtureOnFulfilled = b.fn({
+  ...fixture("onFulfilled", "on_fulfilled"),
+  args: { returned: b.any, activeFixture: b.any },
+});
+export const fixtureOnRejected = b.fn({
+  ...fixture("onRejected", "on_rejected"),
+  args: { reason: b.any, activeFixture: b.any },
+});
 export const useFixture = b.fn({ ...ofFixture("useFixture", "use_fixture"), args: { value: b.any }, returns: b.any });
 export const fixtureOnCleanup = b.fn({ ...ofFixture("onCleanup", "on_cleanup"), args: { cleanup: b.any } });
 export const fixtureTearDown = b.fn({ ...ofFixture("tearDown", "tear_down"), returns: b.any });

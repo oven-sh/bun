@@ -1524,14 +1524,20 @@ impl BunTest {
         Some(cfg_data)
     }
 
-    /// What `await returned` waits on: a native promise as is, any other thenable through a promise that follows its `then()`. Otherwise `returned`.
+    /// The promise of `awaited_promise`, or `returned` itself when `await` does not wait on it.
     pub(crate) fn promise_of_thenable(global_this: &JSGlobalObject, returned: JSValue) -> JsResult<JSValue> {
+        Ok(Self::awaited_promise(global_this, returned)?.unwrap_or(returned))
+    }
+
+    /// What `await returned` waits on: a native promise as is, any other thenable through a new promise that follows its `then()`. `None`: `await` gives `returned` itself.
+    pub(crate) fn awaited_promise(global_this: &JSGlobalObject, returned: JSValue) -> JsResult<Option<JSValue>> {
         if !returned.is_object() {
-            return Ok(returned);
+            return Ok(None);
         }
-        // Reads `then` once. Only a value without a callable `then` fulfills a new promise right away.
         let promise = bun_jsc::JSPromise::promise_resolve(global_this, returned)?;
-        Ok(if promise.status() == PromiseStatus::Fulfilled { returned } else { promise.to_js() })
+        let awaited = promise.to_js();
+        // A new promise that is fulfilled at once: `returned` has no callable `then`.
+        Ok((awaited == returned || promise.status() != PromiseStatus::Fulfilled).then_some(awaited))
     }
 
     /// Vitest runs a function returned by `beforeEach` / `beforeAll` after the matching after-hooks.

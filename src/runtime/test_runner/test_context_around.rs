@@ -15,7 +15,7 @@ use bun_jsc::{
 };
 
 use super::bun_test::{
-    Around, AroundPhase, BunTestPtr, BunTestPtrWeak, DescribeScope, RefDataValue,
+    Around, AroundPhase, BunTest, BunTestPtr, BunTestPtrWeak, DescribeScope, RefDataValue,
 };
 use super::execution::ExecutionSequence;
 use super::test_context::{self, Deferred, TestContext, bound};
@@ -169,35 +169,16 @@ impl AroundHook {
             generated::Bun__AroundHook__run,
         )?;
         let returned = hook.call(global, JSValue::UNDEFINED, &[run, context, suite])?;
-        match if returned.is_object() {
-            returned
-                .get(global, "then")?
-                .filter(|then| then.is_callable())
-        } else {
-            None
-        } {
-            Some(then) => {
-                let reactions = [
-                    bound(
-                        global,
-                        this_value,
-                        "",
-                        1,
-                        generated::Bun__AroundHook__onFulfilled,
-                    )?,
-                    bound(
-                        global,
-                        this_value,
-                        "",
-                        1,
-                        generated::Bun__AroundHook__onRejected,
-                    )?,
-                ];
-                then.call(global, returned, &reactions)?;
-                Ok(())
-            }
-            None => self.on_settled(this_value, global, Ok(())),
-        }
+        let Some(awaited) = BunTest::awaited_promise(global, returned)? else {
+            return self.on_settled(this_value, global, Ok(()));
+        };
+        awaited.then_with_value(
+            global,
+            this_value,
+            generated::Bun__AroundHook__onFulfilled,
+            generated::Bun__AroundHook__onRejected,
+        );
+        Ok(())
     }
 
     /// The hook returned or threw, or the promise it returned settled.
@@ -275,15 +256,19 @@ pub(crate) fn set_up(
     Ok(ready)
 }
 
-pub(crate) fn on_fulfilled(cx: &mut JsScope<'_>, this_value: JsLocal<'_>) -> JsResult<()> {
+pub(crate) fn on_fulfilled(
+    cx: &mut JsScope<'_>,
+    _value: JsLocal<'_>,
+    this_value: JsLocal<'_>,
+) -> JsResult<()> {
     let global = cx.global();
     AroundHook::of_call(global, this_value)?.on_settled(this_value.to_js(), global, Ok(()))
 }
 
 pub(crate) fn on_rejected(
     cx: &mut JsScope<'_>,
-    this_value: JsLocal<'_>,
     reason: JsLocal<'_>,
+    this_value: JsLocal<'_>,
 ) -> JsResult<()> {
     let global = cx.global();
     AroundHook::of_call(global, this_value)?.on_settled(

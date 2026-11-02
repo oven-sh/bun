@@ -4,12 +4,12 @@
 // uses no more of the built-ins than it names. JSON.stringify asks a proxy by get, ownKeys and getOwnPropertyDescriptor in the same way.
 // console.log prints the target of a proxy and asks nothing. Each scene has a proxy and a handler of its own.
 import { afterAll, expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { locksEnvironment } from "./hardened";
 import { readBuildReport } from "./harness/build-report";
-import { built, slot, spawned, told } from "./harness/commands";
+import { built, limitWithASAN, slot, spawned, told } from "./harness/commands";
 import { withReport } from "./harness/flags";
 import { test } from "./supported";
 
@@ -482,63 +482,68 @@ let startsWhereTold: Promise<boolean> | undefined;
 // A build compiles its programs one after another, so it holds five scenes at the most, and the builds run beside one another.
 const buildCount = Math.ceil(alone.length / 5);
 type Run = Awaited<ReturnType<typeof spawned>>;
-const runs: Promise<Map<string, Run>>[] = [];
+const runs: Promise<Map<string, Run> | undefined>[] = [];
 /**
- * How each scene of build `number` ran as a program of that build's executable. The build starts with the first test that asks
- * for it. Its executable is as large as Bun, and is gone when its scenes have run.
+ * How each scene of build `number` ran as a program of that build's executable, or nothing where this Bun does not start an
+ * executable where it is told. The build starts with the first test that asks for it. Its executable is as large as Bun, and
+ * is gone when its scenes have run.
  */
 const runsOfBuild = (number: number) =>
-  (runs[number] ??= slot(async () => {
-    const folder = aloneFolder();
-    const files = alone.filter((_, index) => index % buildCount === number).map(({ file }) => file);
-    const executable = join(folder, isWindows ? `build-${number}.exe` : `build-${number}`);
-    const ran = new Map<string, Run>();
-    try {
-      if (mayStartWhereTold) {
+  mayStartWhereTold
+    ? (runs[number] ??= slot(async () => {
+        const folder = aloneFolder();
+        const files = alone.filter((_, index) => index % buildCount === number).map(({ file }) => file);
+        const executable = join(folder, isWindows ? `build-${number}.exe` : `build-${number}`);
         const report = join(folder, `build-${number}.json`);
         const flags = ["--aot-separate-programs", "--root=.", ...withReport(report, "summary")];
         const entryPoints = files.map(file => `./${file}`);
-        built(
-          await spawned(
-            [bunExe(), "build", "--compile", "--aot", ...flags, ...entryPoints, "--outfile", executable],
-            folder,
-            bunEnv,
-          ),
-        );
-        // Scenes that a build had joined into one program would still print what they print in plain Bun.
-        expect(readBuildReport(report).statistics.WholeEngineRuns).toBe(files.length);
-        // The first executable is asked too: a Bun that reads the variable refuses a name that no entry point has.
-        startsWhereTold ??= spawned([executable], folder, { ...bunEnv, BUN_AOT_START_AT: "no-scene.mjs" }).then(
-          refused => refused.stderr.includes("BUN_AOT_START_AT names no entry point"),
-        );
-        if (await startsWhereTold) {
+        try {
+          built(
+            await spawned(
+              [bunExe(), "build", "--compile", "--aot", ...flags, ...entryPoints, "--outfile", executable],
+              folder,
+              bunEnv,
+              // A debug build is as slow without a sanitizer, and the harness gives the longer limit only to a Bun with one.
+              isDebug ? limitWithASAN : undefined,
+            ),
+          );
+          // Scenes that a build had joined into one program would still print what they print in plain Bun.
+          expect(readBuildReport(report).statistics.WholeEngineRuns).toBe(files.length);
+          // The first executable is asked too: a Bun that reads the variable refuses a name that no entry point has.
+          startsWhereTold ??= spawned([executable], folder, { ...bunEnv, BUN_AOT_START_AT: "no-scene.mjs" }).then(
+            refused => refused.stderr.includes("BUN_AOT_START_AT names no entry point"),
+          );
+          if (!(await startsWhereTold)) return;
+          const ran = new Map<string, Run>();
           for (const file of files)
             ran.set(file, await spawned([executable], folder, { ...bunEnv, BUN_AOT_START_AT: file }));
           return ran;
+        } finally {
+          rmSync(executable, { force: true });
         }
-      }
-      // Any other Bun starts an executable at its first entry point, so there each scene is built alone.
-      for (const file of files) {
-        built(
-          await spawned(
-            [bunExe(), "build", "--compile", "--aot", `./${file}`, "--outfile", executable],
-            folder,
-            bunEnv,
-          ),
-        );
-        ran.set(file, await spawned([executable], folder, bunEnv));
-      }
-      return ran;
+      }))
+    : undefined;
+
+/** How a scene ran as the one program of an executable: for a Bun that starts an executable at its first entry point alone. */
+const ranAlone = (file: string) =>
+  slot(async () => {
+    const folder = aloneFolder();
+    const executable = join(folder, file.replace(".mjs", isWindows ? ".exe" : ""));
+    try {
+      built(
+        await spawned([bunExe(), "build", "--compile", "--aot", `./${file}`, "--outfile", executable], folder, bunEnv),
+      );
+      return await spawned([executable], folder, bunEnv);
     } finally {
       rmSync(executable, { force: true });
     }
-  }));
+  });
 
 test.concurrent.each(alone.map(({ name }, index): [string, number] => [name, index]))(
   "alone: %s",
   async (_name, index) => {
     const { file } = alone[index];
-    const compiled = (await runsOfBuild(index % buildCount)).get(file)!;
+    const compiled = (await runsOfBuild(index % buildCount))?.get(file) ?? (await ranAlone(file));
     const plain = await slot(() => spawned([bunExe(), `./${file}`], aloneFolder(), bunEnv));
     // Two runs that fail alike, or print nothing, would agree and show nothing.
     expect(plain.stdout).not.toBe("");

@@ -24,7 +24,7 @@ pub use model::{
     OptionRequirement, RetainReason, Retained, TrimInput, TrimPlan, TrimSummary, UnseenCode,
     UnseenCodeCause, UsedFeature, UsedFeatures, UsedLocales, WitnessIndex,
 };
-pub use plan::{plan, read_feature_edges};
+pub use plan::{can_run_unseen_code, plan, read_feature_edges};
 pub use settings::collect_requirements;
 pub use summary::{write_log_lines, write_warning_lines};
 

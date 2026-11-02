@@ -99,6 +99,8 @@ pub enum VariableKey {
         state: Sym,
         part: PrivateStatePart,
     },
+    /// What `require` answered in the initializer of a name that holds it in place of the copy that a bundler's helper makes. Nothing is stored where the helper made the copy.
+    RequiredAnswer(Sym),
 }
 
 impl FunctionKey {
@@ -161,6 +163,7 @@ impl VariableKey {
             VariableKey::ModuleExports(file) | VariableKey::ModulePath { file, .. } => Some(file),
             VariableKey::InnerModuleExports(callback) => Some(callback.file),
             VariableKey::PrivateState { state, .. } => Some(state.file),
+            VariableKey::RequiredAnswer(holder) => Some(holder.file),
             VariableKey::SyntheticExport(_) | VariableKey::Copy(_) => None,
         }
     }

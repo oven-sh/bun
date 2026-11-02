@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""class-members-any-lookup-order.py <seed> [ts|js]: EVERY CLASS IS FRESH AND IS ASKED IN ANOTHER ORDER. Classes with methods, getters, setters, pairs, static ones, async | generator methods, methods called toString valueOf toJSON then constructor-like names, symbols, private ones, heirs one and two deep that override some. Steps, in a random order, each printing what it sees: read a method off an instance | off the prototype | off an heir's instance, call it, call it with another this, ask `in`, hasOwn, the descriptor, the names and keys of the prototype, for-in, typeof, name and length, read and store through an accessor, super calls, String(o) `${o}` o + "" JSON.stringify(o) await o (the engine's own looks by name), instanceof, the constructor, Object.getPrototypeOf chains, try to replace | delete | define a member. EVERY FUNCTION EVER SEEN IS KEPT, AND AT THE END THE TABLE OF WHICH IS THE SAME AS WHICH IS PRINTED: a member must be one function however and whenever it was first asked for. As plain or throws."""
+"""class-members-any-lookup-order.py <seed> [ts|js]: Every class is fresh and its members are accessed in a different
+order. Classes with methods, getters, setters, pairs, statics, async and generator methods, and methods named
+toString, valueOf, toJSON, then, constructor.
+"""
 import random, sys
 seed = int(sys.argv[1]) if len(sys.argv) > 1 else 1
 TS = (sys.argv[2] if len(sys.argv) > 2 else 'js') == 'ts'

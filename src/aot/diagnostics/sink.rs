@@ -43,9 +43,14 @@ impl Diagnostics {
         Diagnostics {
             entries: Vec::new(),
             internal_errors: Vec::new(),
+            files_of_internal_errors: Vec::new(),
             int32_flows: FxHashMap::default(),
             error_count: 0,
             early_error_count: 0,
+            files_of_early_errors: Vec::new(),
+            files_nested_too_deeply: Vec::new(),
+            missing_at_load: FxHashSet::default(),
+            places_of_type_errors: None,
         }
     }
 
@@ -61,25 +66,138 @@ impl Diagnostics {
         !self.has_internal_errors() && self.early_error_count > 0
     }
 
+    /// `None`: an error names no file, so it may be about any of them.
     pub(crate) fn paths_of_errors(&self) -> Option<Vec<&[u8]>> {
-        if self.has_internal_errors() {
+        if self.files_of_internal_errors.len() != self.internal_errors.len() {
             return None;
         }
-        let errors = self
-            .entries
-            .iter()
-            .filter(|entry| entry.message.kind == Kind::Err);
+        let names_file_in_text = Code::FileNestedTooDeeply.number();
+        let errors = (self.entries.iter())
+            .filter(|entry| entry.message.kind == Kind::Err && entry.key.4 != names_file_in_text);
         errors
-            .map(|entry| Some(entry.key.1.as_slice()).filter(|path| !path.is_empty()))
+            .map(|entry| entry.key.1.as_slice())
+            .chain(self.files_of_internal_errors.iter().map(Vec::as_slice))
+            .chain(self.files_nested_too_deeply.iter().map(Vec::as_slice))
+            .map(|path| Some(path).filter(|path| !path.is_empty()))
             .collect()
+    }
+
+    /// The files that no run gets past either: JavaScript finds one of their errors before it runs them. And the files with errors that hold no code.
+    pub(crate) fn files_that_fail_at_load(
+        &self,
+        holds_code: impl Fn(&[u8]) -> bool,
+    ) -> Vec<Vec<u8>> {
+        if self.has_internal_errors() {
+            return Vec::new();
+        }
+        // JavaScript finds these when it parses or links the file, and the compiler has words of its own for them.
+        let is_found_at_load = |entry: &Entry| {
+            let code = entry.key.4;
+            [
+                Code::ExportNotFound,
+                Code::AmbiguousExport,
+                Code::InvalidRegExp,
+                Code::InvalidRegExpFlags,
+                Code::ImportStatementInCommonJs,
+                Code::MacroInExportStar,
+                Code::MacroInExportFrom,
+                Code::UnknownBundleExport,
+                Code::FeatureArgumentCount,
+                Code::FeatureArgumentNotString,
+                Code::FeatureFlagNotAscii,
+                Code::FeatureOutsideCondition,
+                Code::FeatureImportedTwice,
+                // The compiler cannot hold it. Whether the loader can is the loader's to say.
+                Code::NestedTooDeeply,
+            ]
+            .iter()
+            .any(|it| it.number() == code)
+                // What a loader says of the text that it was given: `add_load_messages`. `import("./notes", { with: { type: "json" } })`: the path says nothing of the loader.
+                || code == 0
+                || self.files_of_early_errors.contains(&entry.key.1)
+        };
+        let errors = || {
+            let errors = self.entries.iter();
+            errors.filter(|entry| entry.message.kind == Kind::Err)
+        };
+        let mut files: Vec<Vec<u8>> = errors()
+            .map(|entry| &entry.key.1)
+            .filter(|path| !path.is_empty())
+            .filter(|path| {
+                !holds_code(path)
+                    || errors()
+                        .filter(|entry| entry.key.1 == **path)
+                        .any(is_found_at_load)
+            })
+            .cloned()
+            .collect();
+        files.extend_from_slice(&self.files_nested_too_deeply);
+        files.shared_sort_unstable();
+        files.dedup();
+        files
+    }
+
+    /// `LoadOptions::left_to_loader`: the loader says what is wrong with them, where a test loads them.
+    pub(crate) fn forget_errors_in(&mut self, files: &[Vec<u8>]) {
+        if files.is_empty() {
+            return;
+        }
+        let is_left = |path: &[u8]| files.binary_search_by(|file| file[..].cmp(path)).is_ok();
+        let errors_before = self.entries.len();
+        let named = Code::FileNestedTooDeeply;
+        let texts_that_name_them: FxHashSet<Vec<u8>> = (self.files_nested_too_deeply.iter())
+            .filter(|path| is_left(path))
+            .map(|path| {
+                let diagnostic = Diagnostic::new(named, None, &[path.as_slice()]);
+                to_message(None, &diagnostic, None).data.text.to_vec()
+            })
+            .collect();
+        self.files_nested_too_deeply.retain(|path| !is_left(path));
+        self.entries.retain(|entry| {
+            entry.message.kind != Kind::Err
+                || !(is_left(&entry.key.1)
+                    || (entry.key.4 == named.number()
+                        && texts_that_name_them.contains(&entry.key.5)))
+        });
+        self.error_count -= (errors_before - self.entries.len()) as u32;
+        let early_before = self.files_of_early_errors.len();
+        self.files_of_early_errors.retain(|path| !is_left(path));
+        self.early_error_count -= (early_before - self.files_of_early_errors.len()) as u32;
     }
 
     pub(crate) fn merge(&mut self, other: Diagnostics) {
         self.entries.extend(other.entries);
         self.internal_errors.extend(other.internal_errors);
+        self.files_of_internal_errors
+            .extend(other.files_of_internal_errors);
         self.int32_flows.extend(other.int32_flows);
         self.error_count += other.error_count;
         self.early_error_count += other.early_error_count;
+        self.files_of_early_errors
+            .extend(other.files_of_early_errors);
+        self.files_nested_too_deeply
+            .extend(other.files_nested_too_deeply);
+        self.missing_at_load.extend(other.missing_at_load);
+        if let Some(places) = other.places_of_type_errors {
+            self.places_of_type_errors
+                .get_or_insert_default()
+                .extend(places);
+        }
+    }
+
+    /// All that the checker says of the files of a project.
+    pub(crate) fn note_places_of_type_errors(&mut self, checked: &[driver::BuildDiagnostic]) {
+        let in_files = checked.iter().filter(|it| it.diagnostic.file.is_some());
+        self.places_of_type_errors
+            .get_or_insert_default()
+            .extend(in_files.map(|it| (it.diagnostic.path.clone(), it.diagnostic.start)));
+    }
+
+    pub(crate) fn take_places_of_type_errors(&mut self) -> Option<Vec<(Vec<u8>, u32)>> {
+        let mut places = self.places_of_type_errors.take()?;
+        places.shared_sort_unstable();
+        places.dedup();
+        Some(places)
     }
 
     pub(super) fn add_message(&mut self, code: u32, message: Msg) {
@@ -92,11 +210,25 @@ impl Diagnostics {
     pub(super) fn add_early_error(&mut self, code: u32, message: Msg) {
         debug_assert!(message.kind == Kind::Err);
         self.early_error_count += 1;
+        let location = message.data.location.as_ref();
+        self.files_of_early_errors
+            .push(location.map_or(Vec::new(), |location| location.file.to_vec()));
         self.add_message(code, message);
     }
 
     pub(super) fn report_internal_error(&mut self, stage: Stage, message: Vec<u8>) {
         self.internal_errors.push(InternalError { stage, message });
+    }
+
+    /// A test run goes on without the test files that import `path`, as it does for an error of the user's in that file.
+    pub(super) fn report_internal_error_in_file(
+        &mut self,
+        stage: Stage,
+        message: Vec<u8>,
+        path: Vec<u8>,
+    ) {
+        self.report_internal_error(stage, message);
+        self.files_of_internal_errors.push(path);
     }
 
     pub(crate) fn add(&mut self, view: Option<ProgramView<'_, '_>>, diagnostic: Diagnostic) {
@@ -214,9 +346,21 @@ impl Diagnostics {
         });
     }
 
+    /// An import that fails at load has its warning. The checker's warning of the same import says nothing more.
+    fn drop_second_error_of_import(&mut self) {
+        let missing = std::mem::take(&mut self.missing_at_load);
+        self.entries.retain(|entry| {
+            let (_, file, _, _, code, text) = &entry.key;
+            *code != 2307
+                || entry.message.kind != Kind::Warn
+                || !missing.contains(&(file.clone(), text.clone()))
+        });
+    }
+
     pub(crate) fn write_to(mut self, log: &mut Log) {
         self.drop_files_whose_nesting_is_shown();
         self.drop_what_another_error_says();
+        self.drop_second_error_of_import();
         self.entries.shared_sort_by(|a, b| a.key.cmp(&b.key));
         self.entries
             .dedup_by(|next, previous| next.key == previous.key);

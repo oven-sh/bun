@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""tail-calls.py <seed>: random strict TypeScript programs about calls in tail position: a web of functions with 0 to 13 parameters of mixed kinds (doubles, integers, strings,
-records, closures, arrays, booleans, optional numbers) that tail call each other and themselves with their arguments permuted, with locals, with records | closures | arrays made in the frame, directly, through
-?: && || ?? the comma, `as` and `!`, through tables of functions, methods, call and apply; result types that need work behind the call; calls that are not in tail position in between; try | finally around some;
-run 0, 1, 2, 7, 60 and 30,000 deep; the bottom prints every argument, and sometimes the frames that are left."""
+"""tail-calls.py <seed>: Random strict TypeScript programs about calls in tail position: a web of functions with 0 to 13
+parameters of mixed types (doubles, integers, strings, records, closures, arrays, booleans, optional numbers) that
+tail-call each other.
+"""
 import random, sys, os
 
 HEAD = r'''const G: any = globalThis;

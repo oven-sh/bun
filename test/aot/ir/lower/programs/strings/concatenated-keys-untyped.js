@@ -142,8 +142,8 @@ console.log(rows + " rows");
 // CHECK-NEXT: Return v7
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="beyond"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_4]] flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_4]], v1: i32):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|[[L_4]] flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] {
+// CHECK-NEXT: b0(v0: undefined|null|[[L_4]], v1: i32):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: Jump -> next b2()
@@ -154,38 +154,39 @@ console.log(rows + " rows");
 // CHECK-NEXT: v5 = PropGet v4 key="get"
 // CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|[[f_6]] flags=[IsExpected]}
 // CHECK-NEXT: v7 = PropGet v0 key="name"
-// CHECK-NEXT: v8 = String string=","
-// CHECK-NEXT: v9 = Add v7, v8
-// CHECK-NEXT: v10 = GetModuleVariable variable=[[g_7]]
-// CHECK-NEXT: v11 = CheckInitialized v10 name="nothing"
-// CHECK-NEXT: v12 = ElemGet v11, v1
-// CHECK-NEXT: v13 = Convert v12 declared={type=undefined|null|number|string|symbol|bigint|[[L_4]] flags=[IsExpected]}
-// CHECK-NEXT: v14 = PropGet v13 key="name"
-// CHECK-NEXT: v15 = Add v9, v14
-// CHECK-NEXT: v16 = Call v6, v4, v15 calleeKey="get" calleeName="map.get"
-// CHECK-NEXT: v17 = Call v2, -, v16 calleeName="String"
-// CHECK-NEXT: v18 = Convert v17 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: Return v18
+// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|string flags=[IsExpected]}
+// CHECK-NEXT: v9 = String string=","
+// CHECK-NEXT: v10 = Add v8, v9
+// CHECK-NEXT: v11 = GetModuleVariable variable=[[g_7]]
+// CHECK-NEXT: v12 = CheckInitialized v11 name="nothing"
+// CHECK-NEXT: v13 = ElemGet v12, v1
+// CHECK-NEXT: v14 = Convert v13 declared={type=undefined|null|number|string|symbol|bigint|[[L_8]] flags=[IsExpected]}
+// CHECK-NEXT: v15 = PropGet v14 key="name"
+// CHECK-NEXT: v16 = Add v10, v15
+// CHECK-NEXT: v17 = Call v6, v4, v16 calleeKey="get" calleeName="map.get"
+// CHECK-NEXT: v18 = Call v2, -, v17 calleeName="String"
+// CHECK-NEXT: v19 = Convert v18 declared={type=undefined|null|string flags=[IsExpected]}
+// CHECK-NEXT: Return v19
 // CHECK-NEXT: b3() role=CatchHandler:
-// CHECK-NEXT: v19 = CatchValue
-// CHECK-NEXT: v20 = String string="throws "
-// CHECK-NEXT: v21 = PropGet v19 key="name"
-// CHECK-NEXT: v22 = Add v20, v21
-// CHECK-NEXT: v23 = Convert v22 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: Return v23
+// CHECK-NEXT: v20 = CatchValue
+// CHECK-NEXT: v21 = String string="throws "
+// CHECK-NEXT: v22 = PropGet v20 key="name"
+// CHECK-NEXT: v23 = Add v21, v22
+// CHECK-NEXT: v24 = Convert v23 declared={type=undefined|null|string flags=[IsExpected]}
+// CHECK-NEXT: Return v24
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Holder"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=object flags=[IsFromCompiler]}] {
 // CHECK-NEXT: b0(v0: anything, v1: anything, v2: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = GetConstructPrototype v0 layout=[[L_8]]
-// CHECK-NEXT: v4 = NewObject v3 layout=[[L_8]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_8]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: v6 = CallDirect v5 function=[[f_9]]
-// CHECK-NEXT: v7 = Convert v5 declared={type=undefined|null|[[L_8]] flags=[IsExpected]}
+// CHECK-NEXT: v3 = GetConstructPrototype v0 layout=[[L_9]]
+// CHECK-NEXT: v4 = NewObject v3 layout=[[L_9]]
+// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_9]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v6 = CallDirect v5 function=[[f_10]]
+// CHECK-NEXT: v7 = Convert v5 declared={type=undefined|null|[[L_9]] flags=[IsExpected]}
 // CHECK-NEXT: PropSet v7, v1 key="tag"
-// CHECK-NEXT: v9 = Convert v5 declared={type=undefined|null|[[L_8]] flags=[IsExpected]}
+// CHECK-NEXT: v9 = Convert v5 declared={type=undefined|null|[[L_9]] flags=[IsExpected]}
 // CHECK-NEXT: PropSet v9, v2 key="v"
 // CHECK-NEXT: v11 = Undefined
 // CHECK-NEXT: v12 = TypeTest v11 testedType=object
@@ -198,14 +199,14 @@ console.log(rows + " rows");
 // CHECK-NEXT: Return v15
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="valueOf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] captures=[{type=anything}, {type=anything}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_10]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] captures=[{type=anything variableName="tag"}, {type=anything variableName="v"}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_11]]] {
 // CHECK-NEXT: b0(v0: anything, v1: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_11]]
+// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_12]]
 // CHECK-NEXT: v3 = CheckInitialized v2 name="seen"
 // CHECK-NEXT: v4 = PropGet v3 key="push"
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|[[f_12]] flags=[IsExpected]}
+// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|[[f_13]] flags=[IsExpected]}
 // CHECK-NEXT: v6 = String string=".valueOf"
 // CHECK-NEXT: v7 = Add v0, v6
 // CHECK-NEXT: v8 = Call v5, v3, v7 calleeKey="push" calleeName="seen.push"

@@ -125,7 +125,7 @@ fn ask(families: &str, main: &str) -> Asked {
         let inputs = QueryInputs {
             roles: &roles,
             checked_elsewhere: &[],
-            builtin_types: &BuiltinTypeSymbols::compute(all, &[], &[]),
+            builtin_types: &BuiltinTypeSymbols::compute(all, &[], Box::new(|| &[])),
             named_values: &NoNamedValues,
             max_inference_nodes: 0,
         };
@@ -262,18 +262,18 @@ fn write_member_past_instantiation_limit(length: usize) -> String {
 }
 
 #[test]
-fn question_that_hits_instantiation_limit_gives_up() {
+fn question_that_hits_instantiation_limit_is_asked_again_and_answered() {
     assert_answered(
         &ask(&write_member_past_instantiation_limit(10), ASKS_ONLY),
         false,
     );
+    // A visit that meets the limit gives up. Then a part of the type is computed from nothing and the file is visited again.
+    // What stands is the answer of the last visit, which is that of the short tuple.
     let asked = ask(&write_member_past_instantiation_limit(200), ASKS_ONLY);
-    assert!(!asked.answers.is_empty());
-    assert!(
-        asked
-            .answers
-            .iter()
-            .all(|&answer| answer == Err(GaveUp::ErrorType)),
+    assert_eq!(asked.answers.first(), Some(&Err(GaveUp::ErrorType)));
+    assert_eq!(
+        asked.answers.last(),
+        Some(&Ok(false)),
         "{:?}",
         asked.answers
     );

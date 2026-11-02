@@ -95,7 +95,7 @@ export type WithNext<E, O> = {
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="next"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsAsync, HasRestParameter, IsChecked] length=1 syntax=[HasWrittenAwait] captures=[{type=undefined|null|[[f_1]] site=[[w_14]] flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} parameters=[{type=undefined|null|string site=[[w_15]] flags=[OmitsNull, OmitsUndefined]}, {type=Array site=[[w_16]] flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Promise<undefined|null|string> flags=[IsExpected, OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_6]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsAsync, HasRestParameter, IsChecked] length=1 syntax=[HasWrittenAwait] captures=[{type=undefined|null|[[f_1]] site=[[w_14]] flags=[OmitsNull, OmitsUndefined] variableName="next"}] thisType={type=anything} parameters=[{type=undefined|null|string site=[[w_15]] flags=[OmitsNull, OmitsUndefined]}, {type=Array site=[[w_16]] flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Promise<undefined|null|string> flags=[IsExpected, OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_6]]] {
 // CHECK-NEXT: b0(v0: undefined|null|[[f_1]], v1: undefined|null|string, v2: Array):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

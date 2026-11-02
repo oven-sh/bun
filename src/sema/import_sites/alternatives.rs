@@ -3,7 +3,7 @@
 //! Nothing is run. A value is what folding says, or the values of the expressions that a binding leads to.
 
 use super::call_sites::{expr_kind, is_free_common_js, is_free_name, is_process};
-use super::made_requires::{find_imported_export, may_be_modified};
+use super::made_requires::{find_imported_export, may_be_modified, names_own_file};
 use super::parameters::{find_values_passed_for, is_exported};
 use super::{
     ImportSiteKind, ImportSpecifier, ResolvedForm, ScanInputs, call_site_arguments, call_site_kind,
@@ -14,8 +14,8 @@ use crate::bind::{
     Parent, PatParent, StoreKind, SymbolId, UNREACHABLE,
 };
 use crate::fold::{
-    Constant, FoldedValue, PathBelowFolder, apply_binary, apply_template,
-    find_path_joining_function, trim_lead_surrogate_at_end, trim_trail_surrogate_at_start,
+    Constant, FoldedValue, PathBelowFolder, apply_binary, apply_template, find_export_of_module,
+    trim_lead_surrogate_at_end, trim_to_last_segment, trim_trail_surrogate_at_start,
 };
 use crate::hir::{
     BinOp, Branches, Call, Chain, ExprId, ExprKind, File, Flags, FnBody, FnId, IdList, MemberKey,
@@ -98,6 +98,10 @@ enum Held {
     FunctionOfOs(Atom),
     /// Something else that is no text.
     Other,
+    /// Whatever the variable holds, whose values are being looked for: a function hands it to itself.
+    Itself(SymbolId),
+    /// Such a value with a slash and more behind it.
+    BelowItself(SymbolId),
 }
 
 impl Held {
@@ -148,6 +152,7 @@ struct Follower<'i, 'a, 's> {
     functions_in_progress: Vec<FnId>,
     expressions_left: u32,
     depth: u32,
+    follows_key: bool,
 }
 
 pub(super) struct Found {
@@ -158,22 +163,68 @@ pub(super) struct Found {
     pub(super) resolved_form: Option<ResolvedForm>,
 }
 
+impl<'i, 'a, 's> Follower<'i, 'a, 's> {
+    fn new(
+        inputs: &'i ScanInputs<'a, 's>,
+        written_names: &'i WrittenNames,
+        follows_key: bool,
+    ) -> Follower<'i, 'a, 's> {
+        Follower {
+            inputs,
+            written_names,
+            kept_as_written: FxHashSet::default(),
+            unchecked: Vec::new(),
+            not_kept_as_written: FxHashSet::default(),
+            variables_in_progress: Vec::new(),
+            functions_in_progress: Vec::new(),
+            expressions_left: MOST_EXPRESSIONS_FOLLOWED,
+            depth: 0,
+            follows_key,
+        }
+    }
+}
+
+pub(super) fn find_texts_of_key(
+    inputs: &ScanInputs<'_, '_>,
+    written_names: &WrittenNames,
+    key: ExprId,
+) -> Option<Vec<ImportSpecifier>> {
+    let values = Follower::new(inputs, written_names, true).values_of_argument(key)?;
+    let mut texts: Vec<(Vec<u8>, Option<Vec<u8>>)> = Vec::with_capacity(values.len());
+    for value in values {
+        let mut text = match value {
+            Held::Text(text) | Held::Resolved(text, _) => text,
+            Held::Primitive(_) => continue,
+            _ => return None,
+        };
+        if let Some(end) = &mut text.end {
+            trim_lead_surrogate_at_end(&mut text.start);
+            trim_trail_surrogate_at_start(end);
+            if text.start.is_empty() && end.is_empty() {
+                return None;
+            }
+        }
+        texts.push((text.start, text.end));
+    }
+    texts.shared_sort_unstable();
+    texts.dedup();
+    let atoms = inputs.atoms;
+    let texts = texts.iter().map(|(start, end)| match end {
+        None => ImportSpecifier::Constant(atoms.intern(start)),
+        Some(end) => ImportSpecifier::Pattern {
+            prefix: atoms.intern(start),
+            suffix: atoms.intern(end),
+        },
+    });
+    Some(texts.collect())
+}
+
 pub(super) fn find_alternatives(
     inputs: &ScanInputs<'_, '_>,
     written_names: &WrittenNames,
     argument: ExprId,
 ) -> Option<Found> {
-    let mut follower = Follower {
-        inputs,
-        written_names,
-        kept_as_written: FxHashSet::default(),
-        unchecked: Vec::new(),
-        not_kept_as_written: FxHashSet::default(),
-        variables_in_progress: Vec::new(),
-        functions_in_progress: Vec::new(),
-        expressions_left: MOST_EXPRESSIONS_FOLLOWED,
-        depth: 0,
-    };
+    let mut follower = Follower::new(inputs, written_names, false);
     let values = follower.values_of_argument(argument)?;
     let mut texts: Vec<Text> = Vec::with_capacity(values.len());
     let mut forms: Vec<Option<ResolvedForm>> = Vec::with_capacity(values.len());
@@ -274,8 +325,16 @@ impl Follower<'_, '_, '_> {
         match value {
             Held::Text(text) => Some(text.clone()),
             Held::Primitive(constant) => self.text_of(*constant),
+            Held::Itself(_) | Held::BelowItself(_) => None,
             _ => Some(Text::unknown()),
         }
+    }
+
+    /// `None` also where a value is written in terms of a variable whose values are being looked for.
+    fn values_apart_from_itself(&mut self, e: ExprId) -> Option<Values> {
+        let is_itself = |value: &Held| matches!(value, Held::Itself(_) | Held::BelowItself(_));
+        self.values_of(e)
+            .filter(|values| !values.iter().any(is_itself))
     }
 
     fn is_dead(&self, e: ExprId) -> bool {
@@ -316,6 +375,9 @@ impl Follower<'_, '_, '_> {
         if is_process(hir, bound, e, &[known::globalThis, known::global]) {
             return Some(vec![Held::Process]);
         }
+        if self.follows_key && is_free_name(hir, bound, e, &[known::undefined]) {
+            return Some(vec![Held::Primitive(Constant::Undefined)]);
+        }
         match expr_kind(hir, e)? {
             ExprKind::Template { exprs } => self.values_of_template(exprs),
             ExprKind::Binary { op, left, right } => self.values_of_binary(op, left, right),
@@ -331,6 +393,7 @@ impl Follower<'_, '_, '_> {
                 self.values_of_member(e, chain)
             }
             ExprKind::Call(call) => self.values_of_call(e, hir[call]),
+            ExprKind::New(call) => self.values_of_new_url(hir[call]),
             ExprKind::Array(items) => self.values_of_list(items),
             ExprKind::Object(_) => Some(vec![Held::Object(e)]),
             ExprKind::Fn(function) => Some(vec![Held::Function(function)]),
@@ -356,6 +419,14 @@ impl Follower<'_, '_, '_> {
         if is_free_common_js(hir, bound, e, CommonJsVariable::Dirname) {
             return !may_be_modified(hir, bound, CommonJsVariable::Dirname);
         }
+        if let Some(ExprKind::Call(call)) = expr_kind(hir, e) {
+            // `dirname(fileURLToPath(import.meta.url))`, as an ES module makes itself a `__dirname`.
+            let call = hir[call];
+            return call.args.len() == 1
+                && self.find_export_of(call.callee, &[b"path", b"node:path"])
+                    == Some(known::meta_dirname)
+                && names_own_file(hir, bound, hir.id_at(call.args, 0));
+        }
         matches!(expr_kind(hir, e), Some(ExprKind::Dot { obj, name, chain: Chain::No, .. })
             if (name == known::meta_dir || name == known::meta_dirname)
                 && matches!(expr_kind(hir, hir.skip_type_assertions(obj)), Some(ExprKind::ImportMeta)))
@@ -365,6 +436,13 @@ impl Follower<'_, '_, '_> {
     /// Every text that is made of one value of each part.
     fn join_parts(&self, parts: &[Values]) -> Option<Values> {
         let max_bytes = self.inputs.fold.max_string_bytes();
+        let is_empty = |part: &&Values| matches!(&part[..], [Held::Text(text)] if text.len() == 0 && text.end.is_none());
+        let mut written = parts.iter().filter(|part| !is_empty(part));
+        if let (Some(only), None) = (written.next(), written.next())
+            && let Some(texts) = texts_of_answers(only)
+        {
+            return Some(texts);
+        }
         let mut joined = vec![Text::whole(b"")];
         for (index, part) in parts.iter().enumerate() {
             let mut longer: Vec<Text> = Vec::with_capacity(joined.len() * part.len());
@@ -403,7 +481,10 @@ impl Follower<'_, '_, '_> {
         let mut parts: Vec<Values> = Vec::with_capacity(2 * exprs.len() + 1);
         parts.extend(texts.next().map(written));
         for (substitution, text) in hir.ids(exprs).zip(texts) {
-            parts.push(self.values_of(substitution).unwrap_or_else(some_text));
+            parts.push(
+                self.values_apart_from_itself(substitution)
+                    .unwrap_or_else(some_text),
+            );
             parts.push(written(text));
         }
         self.join_parts(&parts)
@@ -413,7 +494,8 @@ impl Follower<'_, '_, '_> {
         match op {
             BinOp::Add => {
                 let is_text = |values: &Values| values.iter().all(|it| matches!(it, Held::Text(_)));
-                match (self.values_of(left), self.values_of(right)) {
+                let operands = [left, right].map(|it| self.values_apart_from_itself(it));
+                match operands.into() {
                     (Some(left), Some(right)) => self.add_values(&left, &right),
                     (Some(left), None) if is_text(&left) => self.add_values(&left, &some_text()),
                     (None, Some(right)) if is_text(&right) => self.add_values(&some_text(), &right),
@@ -443,6 +525,7 @@ impl Follower<'_, '_, '_> {
             Held::Text(text) => (true, text.len() == 0, false),
             Held::Primitive(Constant::Undefined | Constant::Null) => (false, true, true),
             Held::Primitive(_) | Held::Other => (true, true, false),
+            Held::Itself(_) | Held::BelowItself(_) => (true, true, true),
             _ => (true, false, false),
         };
         match op {
@@ -481,7 +564,9 @@ impl Follower<'_, '_, '_> {
             places.push(match expr_kind(hir, item)? {
                 ExprKind::Missing => vec![Held::Primitive(Constant::Undefined)],
                 ExprKind::Spread(_) => return None,
-                _ => self.values_of(item).unwrap_or_else(some_text),
+                _ => self
+                    .values_apart_from_itself(item)
+                    .unwrap_or_else(some_text),
             });
         }
         Some(vec![Held::List(places)])
@@ -517,9 +602,11 @@ impl Follower<'_, '_, '_> {
         };
         if bound.dynamic_lookup_scope(NodeData::Expr(name)).is_some()
             || bound.is_visible_to_eval(symbol)
-            || self.variables_in_progress.contains(&symbol)
         {
             return None;
+        }
+        if self.variables_in_progress.contains(&symbol) {
+            return Some(vec![Held::Itself(symbol)]);
         }
         self.variables_in_progress.push(symbol);
         let values = match bound.binding_kind(symbol) {
@@ -558,7 +645,7 @@ impl Follower<'_, '_, '_> {
             _ => None,
         };
         self.variables_in_progress.pop();
-        let values = values?;
+        let values = close_over_itself(symbol, values?)?;
         let is_as_written =
             !values.iter().any(Held::can_be_changed) || self.take_as_kept_as_written(symbol);
         is_as_written.then_some(values)
@@ -1063,7 +1150,7 @@ impl Follower<'_, '_, '_> {
             MemberKey::PrivateName(_) => return None,
             MemberKey::Computed(computed) => computed,
         };
-        let Some(values) = self.values_of(computed) else {
+        let Some(values) = self.values_apart_from_itself(computed) else {
             return Some(None);
         };
         let mut keys = Vec::with_capacity(values.len());
@@ -1103,6 +1190,15 @@ impl Follower<'_, '_, '_> {
                     names.map(Held::FunctionOfOs).collect()
                 }
                 Held::Process => self.read_member_of_process(keys?)?,
+                Held::Resolved(name, ResolvedForm::UrlObject) => match keys? {
+                    [key] if key == b"href" => {
+                        vec![Held::Resolved(name.clone(), ResolvedForm::Url)]
+                    }
+                    [key] if key == b"pathname" => {
+                        vec![Held::Resolved(name.clone(), ResolvedForm::Path)]
+                    }
+                    _ => return None,
+                },
                 Held::Primitive(Constant::Undefined | Constant::Null) => match chain {
                     Chain::No => Values::new(),
                     Chain::Start | Chain::Continue => vec![Held::Primitive(Constant::Undefined)],
@@ -1228,8 +1324,18 @@ impl Follower<'_, '_, '_> {
             return Some(values);
         }
         let callee = hir.skip_type_assertions(call.callee);
+        if let Some(values) = self.values_of_conversion(callee, call.args) {
+            return Some(values);
+        }
+        if let Some(values) = self.values_of_method_of_text(callee, call.args) {
+            return Some(values);
+        }
         if let Some(function) = self.find_path_joining_function(callee) {
-            return self.values_of_path_below_folder(call.args, function == known::join);
+            let below_folder = self.values_of_path_below_folder(call.args, function == known::join);
+            return match below_folder {
+                None if self.follows_key => self.values_of_path_below_some_folder(call.args),
+                below_folder => below_folder,
+            };
         }
         if let Some((list, MemberKey::Name(known::join))) = hir.member_key(callee)
             && let Some(lists) = self.values_of(list)
@@ -1267,8 +1373,12 @@ impl Follower<'_, '_, '_> {
     fn values_answered_by_resolver(&mut self, name: ExprId, form: ResolvedForm) -> Option<Values> {
         let mut values = Values::new();
         for name in self.values_of(name)? {
-            if let Held::Text(name) | Held::Resolved(name, _) = name {
-                add(&mut values, Held::Resolved(name, form));
+            match name {
+                Held::Text(name) | Held::Resolved(name, _) => {
+                    add(&mut values, Held::Resolved(name, form));
+                }
+                Held::Itself(_) | Held::BelowItself(_) => return None,
+                _ => {}
             }
         }
         Some(values)
@@ -1287,37 +1397,268 @@ impl Follower<'_, '_, '_> {
     }
 
     fn find_path_joining_function(&self, callee: ExprId) -> Option<Atom> {
+        let joins_paths = |member: &Atom| *member == known::join || *member == known::resolve;
+        (self.find_export_of(callee, &[b"path", b"node:path"])).filter(joins_paths)
+    }
+
+    /// The name of the export that `callee` is, of the module that goes by `names`.
+    fn find_export_of(&self, callee: ExprId, names: &[&[u8]]) -> Option<Atom> {
         let &ScanInputs {
             hir,
             bound,
             decisions,
+            atoms,
             ..
         } = self.inputs;
-        find_path_joining_function(hir, bound, callee, &|e| match decisions.constant(hir, e) {
+        let find_constant = |e| match decisions.constant(hir, e) {
             FoldedValue::Constant(constant) | FoldedValue::ConstantOutsideDeadZone(constant) => {
                 Some(constant)
             }
             FoldedValue::Unknown => None,
-        })
+        };
+        let is_module = |specifier: Atom| names.contains(&atoms.bytes(specifier));
+        find_export_of_module(hir, bound, callee, &find_constant, &is_module)
     }
 
-    /// `path.join(__dirname, "lib", name)`. Only the last text may be known in part.
+    // `new URL("./lib/" + name + ".js", import.meta.url)` is the URL that `import.meta.resolve` answers with for a file that is written out with its extension.
+    fn values_of_new_url(&mut self, call: Call) -> Option<Values> {
+        let &ScanInputs {
+            hir, bound, atoms, ..
+        } = self.inputs;
+        let callee = hir.skip_type_assertions(call.callee);
+        if !is_free_name(hir, bound, callee, &[atoms.intern(b"URL")]) {
+            return None;
+        }
+        let mut arguments = hir.ids(call.args);
+        let (written, base) = (arguments.next()?, arguments.next());
+        let is_spread = |e| matches!(expr_kind(hir, e), Some(ExprKind::Spread(_)) | None);
+        if is_spread(written) || base.is_some_and(is_spread) {
+            return None;
+        }
+        let written = self
+            .values_apart_from_itself(written)
+            .unwrap_or_else(some_text);
+        let as_object = |name: &Text| Held::Resolved(name.clone(), ResolvedForm::UrlObject);
+        let Some(base) = base else {
+            let urls = written.iter().map(|value| match value {
+                Held::Resolved(name, ResolvedForm::Url | ResolvedForm::UrlObject) => {
+                    Some(as_object(name))
+                }
+                _ => None,
+            });
+            return urls.collect();
+        };
+        let folders = match self.names_own_url(base) {
+            true => vec![b"./".to_vec()],
+            false => self.folders_of_urls(base)?,
+        };
+        let urls = folders
+            .iter()
+            .flat_map(|folder| written.iter().map(move |value| (folder, value)));
+        let urls = urls.map(|(folder, value)| match value {
+            Held::Text(text) => name_from_url_of_folder(folder, text)
+                .as_ref()
+                .map(as_object),
+            // A whole URL takes nothing from the base.
+            Held::Resolved(name, ResolvedForm::Url | ResolvedForm::UrlObject) => {
+                Some(as_object(name))
+            }
+            _ => None,
+        });
+        urls.collect()
+    }
+
+    /// For each URL that the expression may be, a whole one: the name of the folder that a relative URL is read against, `./lib/`.
+    fn folders_of_urls(&mut self, base: ExprId) -> Option<Vec<Vec<u8>>> {
+        let folders = self.values_of(base)?.into_iter().map(|value| match value {
+            Held::Resolved(name, ResolvedForm::Url | ResolvedForm::UrlObject)
+                if name.end.is_none() =>
+            {
+                let end = strings::last_index_of_char(&name.start, b'/')?;
+                Some(name.start[..=end].to_vec())
+            }
+            _ => None,
+        });
+        folders.collect()
+    }
+
+    fn names_own_url(&self, e: ExprId) -> bool {
+        let &ScanInputs { hir, bound, .. } = self.inputs;
+        let e = hir.skip_type_assertions(e);
+        matches!(expr_kind(hir, e), Some(ExprKind::Dot { obj, name, chain: Chain::No, .. })
+            if name == known::url
+                && matches!(expr_kind(hir, hir.skip_type_assertions(obj)), Some(ExprKind::ImportMeta)))
+            && !bound.import_meta_may_be_modified()
+    }
+
+    /// `" ./a.js ".trim()`, `"./x.js".replace("x", "a")`, `"./".concat("a", ".js")`, `"x./a.js".slice(1)`: what a method of texts makes of
+    /// a text. But for `concat`, of one that is known whole and has ASCII alone: there a place in the text is a byte, and so is a letter.
+    fn values_of_method_of_text(&mut self, callee: ExprId, args: IdList<ExprId>) -> Option<Values> {
+        let &ScanInputs { hir, atoms, .. } = self.inputs;
+        let (object, MemberKey::Name(method)) = hir.member_key(callee)? else {
+            return None;
+        };
+        let method = atoms.bytes(method);
+        let is_known = matches!(
+            method,
+            b"trim"
+                | b"trimStart"
+                | b"trimEnd"
+                | b"toLowerCase"
+                | b"toUpperCase"
+                | b"concat"
+                | b"replace"
+                | b"replaceAll"
+                | b"slice"
+                | b"substring"
+        );
+        if !is_known {
+            return None;
+        }
+        let texts = self.values_of(object)?;
+        if texts.is_empty() || !texts.iter().all(|value| matches!(value, Held::Text(_))) {
+            return None;
+        }
+        let mut given: Vec<Values> = Vec::with_capacity(args.len());
+        for argument in hir.ids(args) {
+            if matches!(expr_kind(hir, argument), None | Some(ExprKind::Spread(_))) {
+                return None;
+            }
+            given.push(self.values_of(argument)?);
+        }
+        if method == b"concat" {
+            let is_joined = |value: &Held| matches!(value, Held::Text(_) | Held::Primitive(_));
+            if !given.iter().flatten().all(is_joined) {
+                return None;
+            }
+            given.insert(0, texts);
+            return self.join_parts(&given);
+        }
+        // One value for each argument: the answers are as many as the texts.
+        let mut arguments: Vec<&Held> = Vec::with_capacity(given.len());
+        for values in &given {
+            let [value] = &values[..] else {
+                return None;
+            };
+            arguments.push(value);
+        }
+        let mut values = Values::new();
+        for text in &texts {
+            let Held::Text(text) = text else {
+                return None;
+            };
+            let made = call_method_of_text(whole_ascii(text)?, method, &arguments)?;
+            add(&mut values, Held::Text(Text::whole(&made)));
+        }
+        Some(values)
+    }
+
+    /// What a call makes of the answer of a resolver where it names the same file in another form, or in the same.
+    fn values_of_conversion(&mut self, callee: ExprId, args: IdList<ExprId>) -> Option<Values> {
+        let &ScanInputs {
+            hir, bound, atoms, ..
+        } = self.inputs;
+        use ResolvedForm::{Path, Url, UrlObject};
+        if let Some((object, MemberKey::Name(method))) = hir.member_key(callee)
+            && args.len() == 0
+            && matches!(atoms.bytes(method), b"toString" | b"toJSON" | b"trim")
+        {
+            let is_trim = atoms.bytes(method) == b"trim";
+            let is_of_text = atoms.bytes(method) != b"toJSON";
+            let converted = self
+                .values_of(object)?
+                .into_iter()
+                .map(|value| match value {
+                    Held::Resolved(name, UrlObject) if !is_trim => Some(Held::Resolved(name, Url)),
+                    Held::Resolved(_, Path | Url) if is_of_text => Some(value),
+                    Held::Text(ref text) if is_of_text && !is_changed_by_trim(text) => Some(value),
+                    _ => None,
+                });
+            return converted.collect();
+        }
+        if args.len() != 1 {
+            return None;
+        }
+        let argument = hir.id_at(args, 0);
+        if is_free_name(hir, bound, callee, &[known::String]) {
+            let values = self.values_of(argument)?;
+            let is_text = |value: &Held| matches!(value, Held::Text(_));
+            return match values.iter().all(is_text) {
+                true => Some(values),
+                false => texts_of_answers(&values),
+            };
+        }
+        let of_url = self.find_export_of(callee, &[b"url", b"node:url"]);
+        let of_path = || self.find_export_of(callee, &[b"path", b"node:path"]);
+        let function = atoms.bytes(of_url.or_else(of_path)?);
+        let convert: fn(Held) -> Option<Held> = match (of_url.is_some(), function) {
+            (true, b"fileURLToPath") => |value| match value {
+                Held::Resolved(name, Url | UrlObject) => Some(Held::Resolved(name, Path)),
+                _ => None,
+            },
+            (true, b"pathToFileURL") => |value| match value {
+                Held::Resolved(name, Path) => Some(Held::Resolved(name, UrlObject)),
+                Held::Text(name) if name.starts_at_own_directory => {
+                    Some(Held::Resolved(name, UrlObject))
+                }
+                _ => None,
+            },
+            (false, b"normalize" | b"resolve") => |value| match value {
+                Held::Resolved(_, Path) => Some(value),
+                _ => None,
+            },
+            _ => return None,
+        };
+        self.values_of(argument)?.into_iter().map(convert).collect()
+    }
+
+    /// `path.join(__dirname, "lib", name)`. What stands in front of the first text that is known in part is joined as `node:path` joins it. From there on the texts follow one another, each behind a slash.
     fn values_of_path_below_folder(
         &mut self,
         args: IdList<ExprId>,
         is_join: bool,
     ) -> Option<Values> {
         let mut arguments = self.inputs.hir.ids(args);
-        let folder = self.values_of(arguments.next()?)?;
-        let [Held::Text(folder)] = &folder[..] else {
-            return None;
+        let mut folders = self.values_of(arguments.next()?)?;
+        let mut below_themselves = Values::new();
+        folders.retain(|folder| match *folder {
+            Held::Itself(symbol) | Held::BelowItself(symbol) => {
+                add(&mut below_themselves, Held::BelowItself(symbol));
+                false
+            }
+            _ => true,
+        });
+        let own_directory = Text {
+            starts_at_own_directory: true,
+            ..Text::whole(b".")
         };
-        if !folder.starts_at_own_directory || folder.end.is_some() || folder.start != b"." {
-            return None;
+        let mut paths: Vec<Vec<Text>> = Vec::with_capacity(folders.len());
+        for folder in &folders {
+            let Held::Text(folder) = folder else {
+                return None;
+            };
+            if !folder.starts_at_own_directory {
+                return None;
+            }
+            // `./lib`, a folder below that of the file, is that folder and `lib`.
+            paths.push(vec![Text {
+                start: match &folder.start[..] {
+                    b"." => Vec::new(),
+                    start => start.strip_prefix(b"./")?.to_vec(),
+                },
+                end: folder.end.clone(),
+                starts_at_own_directory: false,
+            }]);
         }
-        let mut paths: Vec<Vec<Text>> = vec![Vec::new()];
+        // Where the folder is only what the variable itself holds, the parts are looked at all the same.
+        let has_folder = !paths.is_empty();
+        if !has_folder {
+            paths.push(vec![Text::whole(b"")]);
+        }
         for argument in arguments {
-            let values = self.values_of(argument).unwrap_or_else(some_text);
+            let values = self
+                .values_apart_from_itself(argument)
+                .unwrap_or_else(some_text);
             let mut longer = Vec::with_capacity(paths.len() * values.len());
             for (path, value) in paths
                 .iter()
@@ -1333,28 +1674,63 @@ impl Follower<'_, '_, '_> {
             }
             paths = longer;
         }
-        let mut values = Values::new();
+        let steps_back = |texts: &Vec<Text>| texts[1..].iter().any(may_step_back);
+        if !below_themselves.is_empty() && paths.iter().any(steps_back) {
+            return None;
+        }
+        if !has_folder {
+            return (!below_themselves.is_empty()).then_some(below_themselves);
+        }
+        let mut values = below_themselves;
         for texts in &paths {
-            let (whole, last) = match texts.split_last() {
-                Some((last, whole)) if last.end.is_some() => (whole, Some(last)),
-                _ => (&texts[..], None),
-            };
+            let whole = texts.iter().take_while(|text| text.end.is_none()).count();
+            let (whole, rest) = texts.split_at(whole);
             let mut path = PathBelowFolder::default();
-            for text in whole {
-                if text.end.is_some() || text.starts_at_own_directory {
+            for (index, text) in whole.iter().enumerate() {
+                if text.starts_at_own_directory {
                     return None;
                 }
-                path.push(&text.start, is_join)?;
+                path.push(&text.start, is_join || index == 0)?;
             }
-            if last.is_some_and(|last| path.leaves_folder() || last.starts_at_own_directory) {
+            if !rest.is_empty() && path.leaves_folder() {
                 return None;
             }
-            let mut joined = folder.clone();
-            joined.start.extend(path.write(is_join, last.is_some()));
-            if let Some(last) = last {
-                joined.push(last);
+            let mut joined = own_directory.clone();
+            joined.start.extend(path.write(is_join, !rest.is_empty()));
+            for (index, text) in rest.iter().enumerate() {
+                if text.starts_at_own_directory || index > 0 && may_step_back(text) {
+                    return None;
+                }
+                if index > 0 {
+                    joined.push(&Text::whole(b"/"));
+                }
+                joined.push(text);
             }
             add(&mut values, Held::Text(joined));
+        }
+        Some(values)
+    }
+
+    fn values_of_path_below_some_folder(&mut self, args: IdList<ExprId>) -> Option<Values> {
+        let last = self.inputs.hir.ids(args).next_back()?;
+        let mut values = Values::new();
+        for part in self.values_apart_from_itself(last)? {
+            let Held::Text(part) = part else {
+                return None;
+            };
+            let mut end = part.end.unwrap_or(part.start);
+            trim_to_last_segment(&mut end);
+            if strings::count_char(&end, b'.') == end.len() {
+                end.clear();
+            }
+            add(
+                &mut values,
+                Held::Text(Text {
+                    start: Vec::new(),
+                    end: Some(end),
+                    starts_at_own_directory: false,
+                }),
+            );
         }
         Some(values)
     }
@@ -1443,6 +1819,149 @@ impl Follower<'_, '_, '_> {
         self.functions_in_progress.pop();
         values
     }
+}
+
+/// The texts that the answers of resolvers are converted to. `None`: one of the values is something else.
+fn texts_of_answers(values: &Values) -> Option<Values> {
+    let texts = values.iter().map(|value| match value {
+        Held::Resolved(name, ResolvedForm::UrlObject) => {
+            Some(Held::Resolved(name.clone(), ResolvedForm::Url))
+        }
+        Held::Resolved(..) => Some(value.clone()),
+        _ => None,
+    });
+    texts.collect()
+}
+
+/// The values of a variable, where some of them are written in terms of the values of the variable. `None`: they are not all texts.
+fn close_over_itself(symbol: SymbolId, mut values: Values) -> Option<Values> {
+    let holds_longer_ones = values.contains(&Held::BelowItself(symbol));
+    values.retain(|value| *value != Held::Itself(symbol) && *value != Held::BelowItself(symbol));
+    if !holds_longer_ones {
+        return Some(values);
+    }
+    // Whatever follows a text and a slash follows the text, a slash, something and a slash too.
+    for index in 0..values.len() {
+        let Held::Text(text) = &values[index] else {
+            return None;
+        };
+        let mut below = text.clone();
+        below.push(&Text::whole(b"/"));
+        below.push(&Text::unknown());
+        add(&mut values, Held::Text(below));
+    }
+    Some(values)
+}
+
+/// What is known of the text holds `..`, which takes away what stands in front of it, or a backslash.
+fn may_step_back(text: &Text) -> bool {
+    let mut known = [Some(&text.start), text.end.as_ref()].into_iter().flatten();
+    known.any(|part| {
+        strings::contains_char(part, b'\\') || strings::split(part, b"/").any(|it| it == b"..")
+    })
+}
+
+fn whole_ascii(text: &Text) -> Option<&[u8]> {
+    let is_whole = text.end.is_none() && !text.starts_at_own_directory;
+    (is_whole && text.start.is_ascii()).then_some(&text.start[..])
+}
+
+/// As the language has it for a text of ASCII. `None` where the answer hangs on more than is looked at here.
+fn call_method_of_text(text: &[u8], method: &[u8], arguments: &[&Held]) -> Option<Vec<u8>> {
+    let is_space = |byte: &u8| matches!(byte, b'\t' | b'\n' | 0x0b | 0x0c | b'\r' | b' ');
+    let first_kept = || {
+        text.iter()
+            .position(|byte| !is_space(byte))
+            .unwrap_or(text.len())
+    };
+    let end_of_kept = || {
+        text.iter()
+            .rposition(|byte| !is_space(byte))
+            .map_or(0, |last| last + 1)
+    };
+    let text_at = |index: usize| match arguments.get(index) {
+        Some(Held::Text(text)) => whole_ascii(text),
+        _ => None,
+    };
+    // `undefined` stands for an argument that is left out.
+    let place_at = |index: usize, left_out: f64| match arguments.get(index) {
+        None | Some(Held::Primitive(Constant::Undefined)) => Some(left_out),
+        Some(Held::Primitive(Constant::Number(place))) if place.fract() == 0.0 => Some(*place),
+        _ => None,
+    };
+    let length = text.len() as f64;
+    match (method, arguments.len()) {
+        (b"trim", 0) => Some(text[first_kept().min(end_of_kept())..end_of_kept()].to_vec()),
+        (b"trimStart", 0) => Some(text[first_kept()..].to_vec()),
+        (b"trimEnd", 0) => Some(text[..end_of_kept()].to_vec()),
+        (b"toLowerCase", 0) => Some(text.to_ascii_lowercase()),
+        (b"toUpperCase", 0) => Some(text.to_ascii_uppercase()),
+        (b"replace" | b"replaceAll", 2) => {
+            let (pattern, replacement) = (text_at(0)?, text_at(1)?);
+            // `$&` and its like in the replacement stand for parts of the text.
+            if pattern.is_empty() || strings::contains_char(replacement, b'$') {
+                return None;
+            }
+            let mut made = Vec::with_capacity(text.len());
+            let mut rest = text;
+            while let Some(at) = strings::index_of(rest, pattern) {
+                made.extend_from_slice(&rest[..at]);
+                made.extend_from_slice(replacement);
+                rest = &rest[at + pattern.len()..];
+                if method == b"replace" {
+                    break;
+                }
+            }
+            made.extend_from_slice(rest);
+            Some(made)
+        }
+        (b"slice", 0..=2) => {
+            let from_end = |place: f64| match place < 0.0 {
+                true => (length + place).max(0.0),
+                false => place.min(length),
+            };
+            let (start, end) = (from_end(place_at(0, 0.0)?), from_end(place_at(1, length)?));
+            Some(text[start as usize..end.max(start) as usize].to_vec())
+        }
+        (b"substring", 0..=2) => {
+            let within = |place: f64| place.clamp(0.0, length);
+            let (one, other) = (within(place_at(0, 0.0)?), within(place_at(1, length)?));
+            Some(text[one.min(other) as usize..one.max(other) as usize].to_vec())
+        }
+        _ => None,
+    }
+}
+
+fn is_changed_by_trim(text: &Text) -> bool {
+    let last = text
+        .end
+        .as_ref()
+        .map_or_else(|| text.start.last(), |end| end.last());
+    let is_kept = |byte: Option<&u8>| byte.is_some_and(|byte| byte.is_ascii_graphic());
+    !is_kept(text.start.first()) || !(is_kept(last) || text.end.as_ref().is_some_and(Vec::is_empty))
+}
+
+/// The name of the file from the folder of the module, for a text that is read as a URL against the URL of something in `folder`, which is such a name too, `./` or `./lib/`. `None`: the URL may be written otherwise than the text.
+fn name_from_url_of_folder(folder: &[u8], text: &Text) -> Option<Text> {
+    let is_kept = |byte: &u8| {
+        byte.is_ascii_alphanumeric()
+            || matches!(byte, b'.' | b'/' | b'-' | b'_' | b'~' | b'@' | b'+')
+    };
+    let mut bytes = text.start.iter().chain(text.end.iter().flatten());
+    if text.starts_at_own_directory || text.start.starts_with(b"/") || !bytes.all(is_kept) {
+        return None;
+    }
+    // What nothing is known of may be a whole URL. Against the folder of the module itself it would be any file of the program.
+    if text.start.is_empty() && folder == b"./" {
+        return None;
+    }
+    let mut name = text.clone();
+    if folder == b"./" && name.start.starts_with(b"../") {
+        return Some(name);
+    }
+    let below = name.start.strip_prefix(b"./").map(<[u8]>::to_vec);
+    name.start = [folder, &below.unwrap_or(name.start)].concat();
+    Some(name)
 }
 
 fn some_text() -> Values {

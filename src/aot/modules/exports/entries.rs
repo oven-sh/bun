@@ -9,7 +9,7 @@ use crate::modules::module_set::ModuleSet;
 use crate::modules::requests::{FileScan, ScannedSite, Scans, import_phase, is_replaced_by_object};
 use crate::modules::{BindInput, ExportStatement, ModuleRef, find_library_files};
 use bun_sema::atom::{Atom, known};
-use bun_sema::bind::{Binding, Bound, Decl, SymbolId};
+use bun_sema::bind::{Binding, BindingKind, Bound, Decl, SymbolId};
 use bun_sema::file_analysis::FileAnalysis;
 use bun_sema::hir::{self, ExportSpecId, ImportId, StmtId};
 use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier};
@@ -38,6 +38,8 @@ pub(in crate::modules) struct ExportEntries {
     pub stars: Vec<u32>,
     /// The names that the file imports, or exports again, of CommonJS files.
     pub commonjs_imports: Vec<WrittenImport>,
+    /// `BindInput::typescript_drops_absent_exports`, of a TypeScript module: a link leaves out what the module exports of another module that lacks the name.
+    pub drops_absent_exports: bool,
 }
 
 /// A name of a CommonJS file, where an ES module writes it.
@@ -47,6 +49,8 @@ pub(in crate::modules) struct WrittenImport {
     pub written: WrittenPart,
     /// The module exports the name.
     pub asked_by: Option<ExportStatement>,
+    /// `ExportEntries::drops_absent_exports` of a module that exports the name.
+    pub is_dropped_if_absent: bool,
 }
 
 pub(in crate::modules) struct CollectedEntries {
@@ -93,11 +97,13 @@ pub(in crate::modules) fn collect_export_entries(
     let files = input.files;
     let is_library = find_library_files(input);
     let create_entries = |&file: &FileId| {
+        let file = modules.table_file(ModuleRef::File(file))?;
         Some(ExportEntries {
-            file: modules.table_file(ModuleRef::File(file))?,
+            file,
             own: Vec::new(),
             stars: Vec::new(),
             commonjs_imports: Vec::new(),
+            drops_absent_exports: input.typescript_drops_absent_exports && !files.hir(file).is_js,
         })
     };
     let record_files = modules.record_files.iter();
@@ -115,6 +121,7 @@ pub(in crate::modules) fn collect_export_entries(
             analysis: files.analysis(file),
             scan: scans.of(file),
             modules,
+            drops_absent_exports: module.drops_absent_exports,
         };
         module.own = collector.collect_own_entries();
         module.stars = collector.collect_stars();
@@ -142,6 +149,7 @@ struct EntryCollector<'a, 's> {
     analysis: &'a FileAnalysis<'s>,
     scan: &'a FileScan,
     modules: &'a ModuleSet,
+    drops_absent_exports: bool,
 }
 
 impl EntryCollector<'_, '_> {
@@ -181,6 +189,7 @@ impl EntryCollector<'_, '_> {
                     },
                     written: WrittenPart::new(site, part, site_kind, range),
                     asked_by: None,
+                    is_dropped_if_absent: false,
                 });
             }
         }
@@ -217,6 +226,7 @@ impl EntryCollector<'_, '_> {
                 });
                 if let Some(import) = import {
                     import.asked_by = asked_by;
+                    import.is_dropped_if_absent = self.drops_absent_exports;
                 }
                 continue;
             };
@@ -229,6 +239,7 @@ impl EntryCollector<'_, '_> {
                 },
                 written,
                 asked_by,
+                is_dropped_if_absent: self.drops_absent_exports,
             }));
         }
         imports
@@ -302,6 +313,10 @@ impl EntryCollector<'_, '_> {
     }
 
     fn find_import_declaration(&self, local: SymbolId) -> Option<(ImportId, ImportedName)> {
+        // `/** @import { f } from "./types" */ function f() {}`: the name has both declarations, and is the function.
+        if self.bound.binding_kind(local) != BindingKind::Import {
+            return None;
+        }
         let mut declarations = self.bound.symbol(local).decls.iter();
         declarations.find_map(|&declaration| {
             let import = match declaration {

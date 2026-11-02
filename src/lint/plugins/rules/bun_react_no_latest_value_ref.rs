@@ -6,11 +6,11 @@ use bun_lint::rule::Plugin;
 /// See "Do not write or read `ref.current` during rendering" in React's `useRef` reference, and `useEffectEvent`.
 pub struct ReactNoLatestValueRef;
 
-const DURING_RENDER: Message = Message::new(
+const DURING_RENDER: &Message = &Message::new(
     "duringRender",
     "`{{name}}.current` is set during render. React may render more than once, or throw the result away.",
 );
-const IN_EFFECT: Message = Message::new(
+const IN_EFFECT: &Message = &Message::new(
     "inEffect",
     "This effect only copies a value into `{{name}}.current`. Use `useEffectEvent()` to read the latest values without a ref.",
 );

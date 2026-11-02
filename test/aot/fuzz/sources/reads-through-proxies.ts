@@ -1,3 +1,4 @@
+// A list of programs from ../generators/reads-through-proxies.ts, which describes them.
 import { answers, program } from "../generators/reads-through-proxies";
 import { family } from "../family";
 

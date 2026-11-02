@@ -48,6 +48,5 @@ function f1 name="sumOf" module=m0 position=714 flags=[IsChecked, HasExplicitNam
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: LoopHint
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: }

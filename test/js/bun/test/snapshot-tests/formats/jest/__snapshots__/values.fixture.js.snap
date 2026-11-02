@@ -1,0 +1,1286 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`property matchers any 1`] = `
+{
+  "at": Any<Date>,
+  "id": Any<Number>,
+  "name": "n",
+}
+`;
+
+exports[`property matchers array of matchers 1`] = `
+{
+  "list": [
+    {
+      "id": Any<Number>,
+    },
+    {
+      "id": Any<Number>,
+    },
+  ],
+}
+`;
+
+exports[`property matchers class instance 1`] = `
+{
+  "x": Any<Number>,
+  "y": 2,
+}
+`;
+
+exports[`property matchers empty properties 1`] = `
+{
+  "a": 1,
+}
+`;
+
+exports[`property matchers literal properties 1`] = `
+{
+  "a": 1,
+  "b": 2,
+}
+`;
+
+exports[`property matchers nested 1`] = `
+{
+  "list": [
+    1,
+    2,
+  ],
+  "user": {
+    "id": Any<Number>,
+    "name": "n",
+  },
+}
+`;
+
+exports[`property matchers string matchers 1`] = `
+{
+  "s": StringContaining "abc",
+  "t": StringMatching /\\^x/,
+}
+`;
+
+exports[`values -Infinity 1`] = `-Infinity`;
+
+exports[`values AbortController 1`] = `AbortController {}`;
+
+exports[`values AggregateError 1`] = `[AggregateError: many]`;
+
+exports[`values Array iterator 1`] = `Iterator {}`;
+
+exports[`values ArrayBuffer 1`] = `
+ArrayBuffer [
+  1,
+  2,
+  3,
+]
+`;
+
+exports[`values BigInt object 1`] = `BigInt {}`;
+
+exports[`values BigInt64Array 1`] = `
+BigInt64Array {
+  "0": -1n,
+  "1": 5n,
+}
+`;
+
+exports[`values BigUint64Array 1`] = `
+BigUint64Array {
+  "0": 5n,
+}
+`;
+
+exports[`values Boolean object 1`] = `Boolean {}`;
+
+exports[`values Buffer 1`] = `
+{
+  "data": [
+    104,
+    105,
+  ],
+  "type": "Buffer",
+}
+`;
+
+exports[`values DataView 1`] = `
+DataView [
+  0,
+  0,
+]
+`;
+
+exports[`values Date 1`] = `2020-01-02T03:04:05.678Z`;
+
+exports[`values Date in object 1`] = `
+{
+  "when": 1970-01-02T00:00:00.000Z,
+}
+`;
+
+exports[`values Date subclass 1`] = `1970-01-01T00:00:00.000Z`;
+
+exports[`values Error 1`] = `[Error: boom]`;
+
+exports[`values Error subclass 1`] = `[Error: mine]`;
+
+exports[`values Error subclass with name 1`] = `[Renamed: n]`;
+
+exports[`values Error with cause 1`] = `[Error: outer]`;
+
+exports[`values Error with extra properties 1`] = `[Error: extra]`;
+
+exports[`values Error with multi-line message 1`] = `
+[Error: line 1
+line 2]
+`;
+
+exports[`values Error without message 1`] = `[Error]`;
+
+exports[`values Float16Array 1`] = `
+Float16Array {
+  "0": 1.5,
+}
+`;
+
+exports[`values Float32Array 1`] = `
+Float32Array [
+  1.5,
+  -0,
+  NaN,
+]
+`;
+
+exports[`values Float64Array 1`] = `
+Float64Array [
+  0.1,
+  Infinity,
+]
+`;
+
+exports[`values Headers 1`] = `Headers {}`;
+
+exports[`values Infinity 1`] = `Infinity`;
+
+exports[`values Int8Array 1`] = `
+Int8Array [
+  -1,
+  0,
+  1,
+]
+`;
+
+exports[`values Int16Array 1`] = `
+Int16Array [
+  -300,
+  300,
+]
+`;
+
+exports[`values Int32Array 1`] = `
+Int32Array [
+  -70000,
+]
+`;
+
+exports[`values Intl.NumberFormat 1`] = `NumberFormat {}`;
+
+exports[`values JSON 1`] = `{}`;
+
+exports[`values Map 1`] = `
+Map {
+  "a" => 1,
+  "b" => {
+    "c": 2,
+  },
+  {
+    "k": 1,
+  } => [
+    1,
+  ],
+  1 => "n",
+  null => undefined,
+}
+`;
+
+exports[`values Map is not sorted 1`] = `
+Map {
+  "z" => 1,
+  "a" => 2,
+}
+`;
+
+exports[`values Map iterator 1`] = `Iterator {}`;
+
+exports[`values Map subclass 1`] = `
+Map {
+  "a" => 1,
+}
+`;
+
+exports[`values NaN 1`] = `NaN`;
+
+exports[`values Number object 1`] = `Number {}`;
+
+exports[`values Proxy of a class instance 1`] = `
+Point {
+  "x": 1,
+  "y": 2,
+}
+`;
+
+exports[`values Proxy of a function 1`] = `[Function]`;
+
+exports[`values Proxy of an array 1`] = `
+[
+  1,
+  2,
+]
+`;
+
+exports[`values Proxy of an object 1`] = `
+{
+  "a": 1,
+}
+`;
+
+exports[`values Proxy with traps 1`] = `
+{
+  "v": 1,
+}
+`;
+
+exports[`values RangeError in object 1`] = `
+{
+  "e": [RangeError: out],
+}
+`;
+
+exports[`values RegExp 1`] = `/ab\\+c/gi`;
+
+exports[`values RegExp in object 1`] = `
+{
+  "re": /x\\\\d/y,
+}
+`;
+
+exports[`values RegExp with backslashes 1`] = `/\\\\d\\+\\\\\\.\\\\w\\*\\\\\\\\/u`;
+
+exports[`values RegExp with backtick 1`] = `/\`/`;
+
+exports[`values RegExp with slash 1`] = `/a\\\\/b/`;
+
+exports[`values RegExp with special chars 1`] = `/\\^\\[a-z\\]\\+\\(foo\\|bar\\)\\?\\\\s\\*\\$/m`;
+
+exports[`values Set 1`] = `
+Set {
+  1,
+  "two",
+  {
+    "three": 3,
+  },
+  [
+    4,
+  ],
+  null,
+  undefined,
+}
+`;
+
+exports[`values Set iterator 1`] = `Iterator {}`;
+
+exports[`values Set subclass 1`] = `
+Set {
+  1,
+}
+`;
+
+exports[`values SharedArrayBuffer 1`] = `SharedArrayBuffer {}`;
+
+exports[`values String object 1`] = `
+String {
+  "0": "b",
+  "1": "o",
+  "2": "x",
+  "3": "e",
+  "4": "d",
+}
+`;
+
+exports[`values TextEncoder 1`] = `TextEncoder {}`;
+
+exports[`values TypeError 1`] = `[TypeError: bad type]`;
+
+exports[`values URL 1`] = `"https://example.com/a?b=c#d"`;
+
+exports[`values URLSearchParams 1`] = `URLSearchParams {}`;
+
+exports[`values Uint8Array 1`] = `
+Uint8Array [
+  1,
+  2,
+  255,
+]
+`;
+
+exports[`values Uint8ClampedArray 1`] = `
+Uint8ClampedArray [
+  255,
+  0,
+]
+`;
+
+exports[`values Uint16Array 1`] = `
+Uint16Array [
+  65535,
+]
+`;
+
+exports[`values Uint32Array 1`] = `
+Uint32Array [
+  4294967295,
+]
+`;
+
+exports[`values WeakMap 1`] = `WeakMap {}`;
+
+exports[`values WeakRef 1`] = `WeakRef {}`;
+
+exports[`values WeakSet 1`] = `WeakSet {}`;
+
+exports[`values anonymous class 1`] = `[Function]`;
+
+exports[`values anonymous class instance 1`] = `{}`;
+
+exports[`values anonymous class instance with members 1`] = `
+{
+  "a": 1,
+}
+`;
+
+exports[`values anonymous function 1`] = `[Function]`;
+
+exports[`values arguments 1`] = `
+Arguments [
+  1,
+  "b",
+]
+`;
+
+exports[`values array 1`] = `
+[
+  1,
+  "two",
+  null,
+  undefined,
+  true,
+]
+`;
+
+exports[`values array of holes 1`] = `
+[
+  ,
+  ,
+  ,
+]
+`;
+
+exports[`values array subclass 1`] = `Stack []`;
+
+exports[`values array subclass with items 1`] = `
+Stack [
+  1,
+  2,
+]
+`;
+
+exports[`values array with extra property 1`] = `
+[
+  1,
+  2,
+]
+`;
+
+exports[`values array with symbol property 1`] = `
+[
+  1,
+]
+`;
+
+exports[`values array with undefined members 1`] = `
+[
+  undefined,
+  undefined,
+]
+`;
+
+exports[`values arrow 1`] = `[Function]`;
+
+exports[`values asymmetric matchers inside each other 1`] = `
+ObjectContaining {
+  "list": ArrayContaining [
+    Any<String>,
+    ObjectContaining {
+      "a": StringMatching /x\\+/,
+    },
+  ],
+}
+`;
+
+exports[`values async function 1`] = `[Function]`;
+
+exports[`values async generator function 1`] = `[Function]`;
+
+exports[`values bigint 1`] = `123n`;
+
+exports[`values bound function 1`] = `[Function]`;
+
+exports[`values circular array 1`] = `
+[
+  1,
+  [Circular],
+]
+`;
+
+exports[`values circular map 1`] = `
+Map {
+  "self" => [Circular],
+}
+`;
+
+exports[`values circular object 1`] = `
+{
+  "list": [
+    [Circular],
+    {
+      "back": [Circular],
+    },
+  ],
+  "name": "c",
+  "self": [Circular],
+}
+`;
+
+exports[`values class 1`] = `[Function]`;
+
+exports[`values class in object 1`] = `
+{
+  "Empty": [Function],
+  "Point": [Function],
+}
+`;
+
+exports[`values class instance 1`] = `
+Point {
+  "x": 1,
+  "y": 2,
+}
+`;
+
+exports[`values class instance with toJSON 1`] = `
+{
+  "json": true,
+}
+`;
+
+exports[`values custom asymmetric matcher 1`] = `
+[
+  toBeBetween<1, 5>,
+  not.toBeBetween<a, [object Object]>,
+  toBeBetween<>,
+]
+`;
+
+exports[`values deep 1`] = `
+{
+  "o": {
+    "o": {
+      "o": {
+        "o": {
+          "o": {
+            "o": {
+              "o": {
+                "o": {
+                  "o": {
+                    "o": {
+                      "o": {
+                        "o": {
+                          "o": {
+                            "o": {
+                              "o": {
+                                "o": {
+                                  "o": {
+                                    "o": {
+                                      "o": {
+                                        "o": {
+                                          "o": {
+                                            "o": {
+                                              "o": {
+                                                "o": {
+                                                  "o": {
+                                                    "o": {
+                                                      "o": {
+                                                        "o": {
+                                                          "o": {
+                                                            "o": {
+                                                              "leaf": true,
+                                                            },
+                                                          },
+                                                        },
+                                                      },
+                                                    },
+                                                  },
+                                                },
+                                              },
+                                            },
+                                          },
+                                        },
+                                      },
+                                    },
+                                  },
+                                },
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+}
+`;
+
+exports[`values empty ArrayBuffer 1`] = `ArrayBuffer []`;
+
+exports[`values empty Map 1`] = `Map {}`;
+
+exports[`values empty RegExp 1`] = `/\\(\\?:\\)/`;
+
+exports[`values empty Set 1`] = `Set {}`;
+
+exports[`values empty Uint8Array 1`] = `Uint8Array []`;
+
+exports[`values empty arguments 1`] = `Arguments []`;
+
+exports[`values empty array 1`] = `[]`;
+
+exports[`values empty class instance 1`] = `Empty {}`;
+
+exports[`values empty containing 1`] = `
+[
+  ObjectContaining {},
+  ArrayContaining [],
+]
+`;
+
+exports[`values empty object 1`] = `{}`;
+
+exports[`values empty string 1`] = `""`;
+
+exports[`values epoch 1`] = `1970-01-01T00:00:00.000Z`;
+
+exports[`values error-like object 1`] = `
+{
+  "message": "not really",
+  "name": "Error",
+  "stack": "s",
+}
+`;
+
+exports[`values errors in array 1`] = `
+[
+  [Error: one],
+  [SyntaxError: two],
+]
+`;
+
+exports[`values expect.any 1`] = `
+{
+  "a": Any<Number>,
+  "b": Any<String>,
+  "c": Any<Point>,
+}
+`;
+
+exports[`values expect.anything 1`] = `
+[
+  Anything,
+]
+`;
+
+exports[`values expect.arrayContaining 1`] = `
+ArrayContaining [
+  1,
+  "a",
+]
+`;
+
+exports[`values expect.closeTo 1`] = `NumberCloseTo 1.23 (1 digit)`;
+
+exports[`values expect.not.arrayContaining 1`] = `
+ArrayNotContaining [
+  1,
+]
+`;
+
+exports[`values expect.not.objectContaining 1`] = `
+ObjectNotContaining {
+  "z": 1,
+}
+`;
+
+exports[`values expect.not.stringContaining 1`] = `StringNotContaining "z"`;
+
+exports[`values expect.objectContaining 1`] = `
+ObjectContaining {
+  "a": 1,
+}
+`;
+
+exports[`values expect.stringContaining 1`] = `StringContaining "abc"`;
+
+exports[`values expect.stringMatching 1`] = `StringMatching /x\\\\d/`;
+
+exports[`values false 1`] = `false`;
+
+exports[`values float 1`] = `1.5`;
+
+exports[`values frozen array 1`] = `
+[
+  1,
+]
+`;
+
+exports[`values frozen object 1`] = `
+{
+  "a": 1,
+}
+`;
+
+exports[`values function 1`] = `[Function]`;
+
+exports[`values function with properties 1`] = `[Function]`;
+
+exports[`values functions in array 1`] = `
+[
+  [Function],
+  [Function],
+  [Function],
+]
+`;
+
+exports[`values generator function 1`] = `[Function]`;
+
+exports[`values generator object 1`] = `{}`;
+
+exports[`values globalThis.Math 1`] = `{}`;
+
+exports[`values huge bigint 1`] = `1208925819614629174706176n`;
+
+exports[`values integer 1`] = `42`;
+
+exports[`values invalid Date 1`] = `Date { NaN }`;
+
+exports[`values keys are sorted 1`] = `
+{
+  "10": 6,
+  "1a": 8,
+  "9": 7,
+  "B": 4,
+  "_u": 5,
+  "a": 2,
+  "m": 3,
+  "z": 1,
+}
+`;
+
+exports[`values large 1`] = `1e+21`;
+
+exports[`values long array 1`] = `
+[
+  0,
+  1,
+  2,
+  3,
+  4,
+  5,
+  6,
+  7,
+  8,
+  9,
+  10,
+  11,
+  12,
+  13,
+  14,
+  15,
+  16,
+  17,
+  18,
+  19,
+  20,
+  21,
+  22,
+  23,
+  24,
+  25,
+  26,
+  27,
+  28,
+  29,
+  30,
+  31,
+  32,
+  33,
+  34,
+  35,
+  36,
+  37,
+  38,
+  39,
+  40,
+  41,
+  42,
+  43,
+  44,
+  45,
+  46,
+  47,
+  48,
+  49,
+  50,
+  51,
+  52,
+  53,
+  54,
+  55,
+  56,
+  57,
+  58,
+  59,
+  60,
+  61,
+  62,
+  63,
+  64,
+  65,
+  66,
+  67,
+  68,
+  69,
+  70,
+  71,
+  72,
+  73,
+  74,
+  75,
+  76,
+  77,
+  78,
+  79,
+  80,
+  81,
+  82,
+  83,
+  84,
+  85,
+  86,
+  87,
+  88,
+  89,
+  90,
+  91,
+  92,
+  93,
+  94,
+  95,
+  96,
+  97,
+  98,
+  99,
+  100,
+  101,
+  102,
+  103,
+  104,
+  105,
+  106,
+  107,
+  108,
+  109,
+  110,
+  111,
+  112,
+  113,
+  114,
+  115,
+  116,
+  117,
+  118,
+  119,
+]
+`;
+
+exports[`values long string 1`] = `"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"`;
+
+exports[`values max safe 1`] = `9007199254740991`;
+
+exports[`values mixed 1`] = `
+{
+  "big": 10n,
+  "fn": [Function],
+  "list": [
+    1,
+    {
+      "a": [
+        Map {
+          "k" => Set {
+            1970-01-01T00:00:00.000Z,
+          },
+        },
+      ],
+    },
+  ],
+  "nested": {
+    "empty": {},
+    "none": [],
+    "nul": null,
+  },
+  "re": /r/,
+  "text": "multi
+line",
+  Symbol(desc): Symbol(desc),
+}
+`;
+
+exports[`values module namespace like 1`] = `
+{
+  "__esModule": true,
+  "default": 1,
+}
+`;
+
+exports[`values multi-line string 1`] = `
+"line one
+line two
+line three"
+`;
+
+exports[`values named arrow in object 1`] = `
+{
+  "f": [Function],
+}
+`;
+
+exports[`values native function 1`] = `[Function]`;
+
+exports[`values negative bigint 1`] = `-5n`;
+
+exports[`values negative zero 1`] = `-0`;
+
+exports[`values nested Map 1`] = `
+Map {
+  "m" => Map {
+    "n" => Set {
+      1,
+    },
+  },
+}
+`;
+
+exports[`values nested arrays 1`] = `
+[
+  [
+    1,
+    [
+      2,
+      [
+        3,
+        [
+          4,
+        ],
+      ],
+    ],
+  ],
+  [],
+]
+`;
+
+exports[`values nested objects 1`] = `
+{
+  "a": {
+    "b": {
+      "c": {
+        "d": {
+          "e": 1,
+        },
+      },
+    },
+  },
+  "f": {},
+}
+`;
+
+exports[`values null 1`] = `null`;
+
+exports[`values null prototype 1`] = `{}`;
+
+exports[`values null prototype with members 1`] = `
+{
+  "a": 1,
+  "b": {
+    "c": 2,
+  },
+}
+`;
+
+exports[`values object 1`] = `
+{
+  "a": 1,
+  "b": "two",
+  "c": null,
+  "d": undefined,
+  "e": true,
+}
+`;
+
+exports[`values object with __proto__ key 1`] = `
+{
+  "__proto__": {
+    "a": 1,
+  },
+}
+`;
+
+exports[`values object with Symbol.toStringTag 1`] = `
+{
+  "a": 1,
+  Symbol(Symbol.toStringTag): "Tagged",
+}
+`;
+
+exports[`values object with a method 1`] = `
+{
+  "am": [Function],
+  "arrow": [Function],
+  "gen": [Function],
+  "m": [Function],
+}
+`;
+
+exports[`values object with a prototype object 1`] = `{}`;
+
+exports[`values object with a prototype object and own 1`] = `
+{
+  "own": 2,
+}
+`;
+
+exports[`values object with constructor named 1`] = `
+{
+  "constructor": {
+    "name": "Fake",
+  },
+}
+`;
+
+exports[`values object with constructor property 1`] = `
+{
+  "constructor": "not a function",
+}
+`;
+
+exports[`values object with getter 1`] = `
+{
+  "a": 1,
+  "g": 5,
+}
+`;
+
+exports[`values object with getter and setter 1`] = `
+{
+  "gs": "v",
+}
+`;
+
+exports[`values object with non-enumerable 1`] = `
+{
+  "a": 1,
+}
+`;
+
+exports[`values object with non-enumerable symbol 1`] = `
+{
+  "a": 1,
+}
+`;
+
+exports[`values object with numeric keys 1`] = `
+{
+  "-1": "d",
+  "1": "a",
+  "1.5": "e",
+  "10": "c",
+  "2": "b",
+}
+`;
+
+exports[`values object with odd keys 1`] = `
+{
+  "": 5,
+  "\${x}": 8,
+  "back\\slash": 7,
+  "back\`tick": 4,
+  "new
+line": 6,
+  "quo"te": 3,
+  "with space": 1,
+  "with-dash": 2,
+}
+`;
+
+exports[`values object with setter only 1`] = `
+{
+  "s": undefined,
+}
+`;
+
+exports[`values object with symbol keys 1`] = `
+{
+  "a": 0,
+  Symbol(desc): 1,
+  Symbol(reg): 2,
+  Symbol(): 3,
+}
+`;
+
+exports[`values object with toJSON 1`] = `
+{
+  "replaced": true,
+}
+`;
+
+exports[`values object with toJSON not a function 1`] = `
+{
+  "toJSON": 5,
+}
+`;
+
+exports[`values object with toJSON that returns a string 1`] = `"as string"`;
+
+exports[`values object with toString 1`] = `
+{
+  "toString": [Function],
+}
+`;
+
+exports[`values object with undefined members 1`] = `
+{
+  "u": undefined,
+}
+`;
+
+exports[`values old style constructor 1`] = `
+OldStyle {
+  "a": 1,
+}
+`;
+
+exports[`values pending promise 1`] = `Promise {}`;
+
+exports[`values react element 1`] = `
+<div
+  className="a"
+>
+  text
+  <span />
+</div>
+`;
+
+exports[`values react element with function type 1`] = `
+<Comp
+  b={true}
+  f={[Function]}
+  n={1}
+  o={
+    {
+      "a": 1,
+    }
+  }
+  s="str"
+/>
+`;
+
+exports[`values react test json 1`] = `
+<a
+  href="#"
+>
+  link
+</a>
+`;
+
+exports[`values react transitional element 1`] = `
+<p
+  id="x"
+>
+  t
+</p>
+`;
+
+exports[`values registered symbol 1`] = `Symbol(reg)`;
+
+exports[`values resolved promise 1`] = `Promise {}`;
+
+exports[`values shared reference is not circular 1`] = `
+{
+  "a": {
+    "s": 1,
+  },
+  "b": {
+    "s": 1,
+  },
+  "c": [
+    {
+      "s": 1,
+    },
+    {
+      "s": 1,
+    },
+  ],
+}
+`;
+
+exports[`values small float 1`] = `1e-7`;
+
+exports[`values sparse array 1`] = `
+[
+  1,
+  ,
+  3,
+]
+`;
+
+exports[`values sparse array with trailing hole 1`] = `
+[
+  1,
+  ,
+  ,
+]
+`;
+
+exports[`values string 1`] = `"hello"`;
+
+exports[`values string of a newline 1`] = `
+"
+"
+`;
+
+exports[`values string of two newlines 1`] = `
+"
+
+"
+`;
+
+exports[`values string that ends with a newline 1`] = `
+"ends
+"
+`;
+
+exports[`values string that looks like a snapshot 1`] = `"exports[\`x 1\`] = \`y\`;"`;
+
+exports[`values string that starts with a newline 1`] = `
+"
+starts"
+`;
+
+exports[`values string with backslash 1`] = `"a\\b"`;
+
+exports[`values string with backslash backtick 1`] = `"\\\`"`;
+
+exports[`values string with backslash dollar brace 1`] = `"\\\${x}"`;
+
+exports[`values string with backtick 1`] = `"a\`b"`;
+
+exports[`values string with bom 1`] = `"﻿bom"`;
+
+exports[`values string with control chars 1`] = `" [31mred[0m"`;
+
+exports[`values string with cr 1`] = `
+"a
+b"
+`;
+
+exports[`values string with crlf 1`] = `
+"a
+b"
+`;
+
+exports[`values string with dollar 1`] = `"cost $5"`;
+
+exports[`values string with dollar brace 1`] = `"a\${b}c"`;
+
+exports[`values string with double quotes 1`] = `"say "hi""`;
+
+exports[`values string with line separator 1`] = `"a b c"`;
+
+exports[`values string with nbsp 1`] = `"a b"`;
+
+exports[`values string with single quotes 1`] = `"it's"`;
+
+exports[`values string with spaces around 1`] = `"  padded  "`;
+
+exports[`values string with tab 1`] = `"a	b"`;
+
+exports[`values string with trailing spaces on lines 1`] = `
+"a  
+b  
+"
+`;
+
+exports[`values string with two backslashes 1`] = `"a\\\\b"`;
+
+exports[`values string with unicode 1`] = `"é ü 日本語 😀"`;
+
+exports[`values subclass instance 1`] = `
+Child {
+  "x": 1,
+  "y": 2,
+  "z": 3,
+}
+`;
+
+exports[`values symbol 1`] = `Symbol(s)`;
+
+exports[`values symbol with empty description 1`] = `Symbol()`;
+
+exports[`values symbol without description 1`] = `Symbol()`;
+
+exports[`values tagged class instance 1`] = `
+Tagged {
+  "a": 1,
+}
+`;
+
+exports[`values true 1`] = `true`;
+
+exports[`values typed array in object 1`] = `
+{
+  "bytes": Uint8Array [
+    9,
+  ],
+}
+`;
+
+exports[`values undefined 1`] = `undefined`;
+
+exports[`values well-known symbol 1`] = `Symbol(Symbol.iterator)`;
+
+exports[`values zero 1`] = `0`;

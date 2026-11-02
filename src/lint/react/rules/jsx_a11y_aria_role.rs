@@ -11,7 +11,7 @@ pub struct AriaRole {
     allowed_invalid_roles: Vec<String>,
 }
 
-const ARIA_ROLE: Message = Message::new("", "Elements with ARIA roles must use a valid, non-abstract ARIA role.");
+const ARIA_ROLE: &Message = &Message::new("", "Elements with ARIA roles must use a valid, non-abstract ARIA role.");
 const HELP: &str = "Set a valid, non-abstract ARIA role for element with ARIA";
 
 impl Rule for AriaRole {

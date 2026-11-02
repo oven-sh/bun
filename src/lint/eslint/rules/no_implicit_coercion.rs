@@ -22,12 +22,12 @@ pub struct NoImplicitCoercion {
     checks_strings: bool,
 }
 
-const IMPLICIT_COERCION: Message = Message::new(
+const IMPLICIT_COERCION: &Message = &Message::new(
     "implicitCoercion",
     "Unexpected implicit coercion encountered. Use `{{recommendation}}` instead.",
 );
-const USE_RECOMMENDATION: Message =
-    Message::new("useRecommendation", "Use `{{recommendation}}` instead.");
+const USE_RECOMMENDATION: &Message =
+    &Message::new("useRecommendation", "Use `{{recommendation}}` instead.");
 
 /// The kind of change offered along with the message.
 #[derive(Copy, Clone)]

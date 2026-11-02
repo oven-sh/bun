@@ -46,7 +46,7 @@ JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject& lexicalGlobalObject, J
     result->putDirect(vm, vm.propertyNames->name, nameValue);
     auto namedCurveValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, dictionary.namedCurve);
     RETURN_IF_EXCEPTION(throwScope, {});
-    result->putDirect(vm, JSC::Identifier::fromString(vm, "namedCurve"_s), namedCurveValue);
+    Bun::putDirectNamed(vm, result, "namedCurve"_s, namedCurveValue);
     return result;
 }
 

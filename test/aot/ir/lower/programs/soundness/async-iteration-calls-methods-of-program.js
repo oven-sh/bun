@@ -58,8 +58,8 @@ main().catch(e => print("failed", String(e)));
 
 // GENERATED: source fromSync [Symbol.iterator] throw
 // CHECK-LABEL: function {{*}}name="source"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=undefined|null|[[L_1]] flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: undefined|null|string|Array):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|number|string> flags=[IsExpected]}] results=[{type=undefined|null|[[L_1]] flags=[IsExpected]}] {
+// CHECK-NEXT: b0(v0: undefined|null|Array<undefined|null|number|string>):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = NewClosure v0 function=[[f_2]]

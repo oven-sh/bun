@@ -51,6 +51,7 @@ impl<'s> Checker<'_, 's> {
 
         self.order_dependent.clear();
         self.fixed_length_asked_last = None;
+        self.refused_instantiations_tried.clear();
     }
 
     /// Call after `check_file`. Returns true if the native stack ran out in that file, and resets

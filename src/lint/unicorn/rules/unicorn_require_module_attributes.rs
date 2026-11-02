@@ -5,8 +5,8 @@ use bun_lint::rule::Plugin;
 /// This rule enforces a non-empty attribute list in `import`/`export` statements and `import()` expressions.
 pub struct RequireModuleAttributes;
 
-const REQUIRE_MODULE_ATTRIBUTES: Message = Message::new("", "{{import_type}} with empty attribute list is not allowed.");
-const REMOVE: Message = Message::new("", "Remove the unused import attribute.");
+const REQUIRE_MODULE_ATTRIBUTES: &Message = &Message::new("", "{{import_type}} with empty attribute list is not allowed.");
+const REMOVE: &Message = &Message::new("", "Remove the unused import attribute.");
 
 impl Rule for RequireModuleAttributes {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "require-module-attributes", Kind::Suggestion).has_suggestions();

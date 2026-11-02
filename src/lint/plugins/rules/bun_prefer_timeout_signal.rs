@@ -9,7 +9,7 @@ pub struct PreferTimeoutSignal {
     factories: Box<[Box<[u8]>]>,
 }
 
-const ONLY_A_TIMER: Message = Message::new(
+const ONLY_A_TIMER: &Message = &Message::new(
     "onlyATimer",
     "Only a timer aborts this controller. Use `AbortSignal.timeout(ms)` instead.",
 );

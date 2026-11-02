@@ -6,8 +6,8 @@ use bun_lint::utils::ancestor_memo::AncestorMemo;
 /// Forbid AMD `require` and `define` calls.
 pub struct NoAmd;
 
-const EXPECTED_IMPORTS: Message = Message::new("", "Expected imports instead of AMD {{name}}().");
-const OXLINT: Message = Message::new("", "Do not use AMD `require` and `define` calls.");
+const EXPECTED_IMPORTS: &Message = &Message::new("", "Expected imports instead of AMD {{name}}().");
+const OXLINT: &Message = &Message::new("", "Do not use AMD `require` and `define` calls.");
 
 impl Rule for NoAmd {
     const META: Meta = Meta::plugin(Plugin::Import, "no-amd", Kind::Suggestion);

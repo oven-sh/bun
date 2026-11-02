@@ -177,7 +177,8 @@ pub fn is_glob(text: &[u8]) -> bool {
                 Some(b'[') => Some(&mut squares),
                 _ => None,
             };
-            // The `\\` and one UTF-16 unit: the byte after it, and as many bytes as follow of its character.
+            // The `\\` and one UTF-16 unit, as in the package: the byte after it and its continuation bytes. That's
+            // half of a character of four bytes. Only continuation bytes that are there count.
             let more = match at(index + 1) {
                 None | Some(0..0xC0) => 0,
                 Some(0xE0..0xF0) => 2,
@@ -279,6 +280,8 @@ mod tests {
         // A whole character is one step, as it is for the package.
         assert!(is_glob("\\\u{e9}*".as_bytes()));
         assert!(is_glob("\\\u{9000}!".as_bytes()));
+        // The package steps over one UTF-16 unit, so the `!` isn't right after the escape.
+        assert!(!is_glob("\\\u{1f600}!".as_bytes()));
         assert!(!is_glob("\\\u{9000}\\*".as_bytes()));
         assert!(!is_glob("\\\u{1f600}\\*".as_bytes()));
     }

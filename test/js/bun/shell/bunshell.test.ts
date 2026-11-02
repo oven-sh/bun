@@ -1251,7 +1251,7 @@ booga"
       });
 
       // A folder asks one pattern once for each name. After 32 names another part of the matcher answers.
-      test("echo *$(echo -e '\\xe9')*$(echo -e '\\x81') over a folder of 64 names", async () => {
+      test.concurrent("echo *$(echo -e '\\xe9')*$(echo -e '\\x81') over a folder of 64 names", async () => {
         const ends = ["\u9000\u9001", "\u9001", "\u9000", "\u9001\u9000"];
         const all = Array.from({ length: 64 }, (_, index) => String(index).padStart(2, "0") + ends[index % 4]);
         using dir = tempDir("bunshell-glob-bytes-64", Object.fromEntries(all.map(name => [name, ""])));

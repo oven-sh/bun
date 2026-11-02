@@ -708,7 +708,7 @@ describe("bundler", () => {
     },
   });
   // `\xe9` is one byte of a package.json in Latin-1: it announces a character that is not there. What follows it in the
-  // pattern is still syntax.
+  // pattern is still syntax. The byte is a literal byte, and U+9000 is the bytes e9 80 80.
   itBundled("dce/PackageJsonSideEffectsGlobBraceAfterByteThatIsNotUTF8", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
@@ -716,12 +716,14 @@ describe("bundler", () => {
         import "demo-pkg/x1b.js";
         import "demo-pkg/zb.js";
         import "demo-pkg/wb.js";
+        import "demo-pkg/y\u9000b.js";
         console.log("done");
       `,
       "/Users/user/project/node_modules/demo-pkg/xa.js": /* js */ `console.log("xa effect");`,
       "/Users/user/project/node_modules/demo-pkg/x1b.js": /* js */ `console.log("x1b effect");`,
       "/Users/user/project/node_modules/demo-pkg/zb.js": /* js */ `console.log("zb effect");`,
       "/Users/user/project/node_modules/demo-pkg/wb.js": /* js */ `console.log("wb effect");`,
+      "/Users/user/project/node_modules/demo-pkg/y\u9000b.js": /* js */ `console.log("y\u9000b effect");`,
       "/Users/user/project/node_modules/demo-pkg/package.json": Buffer.from(
         '{ "sideEffects": ["./{x,y\xe9}{a,*b}.js"] }',
         "latin1",
@@ -729,7 +731,7 @@ describe("bundler", () => {
     },
     dce: true,
     run: {
-      stdout: "xa effect\nx1b effect\ndone",
+      stdout: "xa effect\nx1b effect\ny\u9000b effect\ndone",
     },
   });
   itBundled("dce/PackageJsonSideEffectsGlobMixedPatterns", {

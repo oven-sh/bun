@@ -324,6 +324,25 @@ describe("ReadStream.prototype.setRawMode", () => {
     expect(seen).toEqual(["setRawMode EPERM", "EPERM", -4048, "setRawMode", true, false]);
   });
 
+  test("setRawMode on a destroyed stream only takes note of the flag", async () => {
+    const seen = await seenOnConsole(`
+      const { once } = require("node:events");
+      const open = () => {
+        const stream = new tty.ReadStream(require("node:fs").openSync("${isWindows ? "CONIN$" : "/dev/fd/0"}", "r+"));
+        return stream.on("error", error => seen.push(String(error)));
+      };
+      const stream = open();
+      await once(stream.destroy(), "close");
+      seen.push(stream.setRawMode(true) === stream, stream.isRaw, stream.setRawMode(false) === stream, stream.isRaw);
+      const input = open();
+      const lines = require("node:readline").createInterface({ input, terminal: true });
+      await once(input.destroy(), "close");
+      lines.close();
+      seen.push(input.isRaw);
+    `);
+    expect(seen).toEqual([true, true, true, false, false]);
+  });
+
   // The mode stays with the console when the process that set it is gone.
   test.skipIf(!isWindows).each([
     ["process.kill(process.pid)", "process.kill(process.pid)"],
@@ -568,6 +587,8 @@ describe.skipIf(!isWindows)("process.stdin on a console that reads lines", () =>
       });
       const ProcessConsoleHostProcess = 49, host = new BigUint64Array(1);
       ntdll.NtQueryInformationProcess(-1n, ProcessConsoleHostProcess, host, 8, null);
+      // The host passes the text on before it answers the write, so it may be gone by then.
+      process.stdout.on("error", () => {});
       setImmediate(() => process.stdout.write("HOST " + (host[0] & ~3n) + ";"));
     `;
     let output = "";

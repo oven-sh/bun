@@ -101,7 +101,8 @@ const prototypeOfReadStream = {
       flag = !!flag;
 
       const state = (this[kRawModeState] ??= new Uint8Array(rawModeStateSize));
-      const err = ttySetMode(this.fd, flag, state);
+      // A destroyed stream has no descriptor, and as in Node.js only takes note of the flag.
+      const err = this.fd == null ? 0 : ttySetMode(this.fd, flag, state);
       if (err) {
         // POSIX hands out an errno, Windows what `err.errno` is.
         this.emit("error", new (require("internal/shared").ErrnoException)(err > 0 ? -err : err, "setRawMode"));

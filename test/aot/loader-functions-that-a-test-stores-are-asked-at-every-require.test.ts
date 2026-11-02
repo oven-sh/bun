@@ -8,6 +8,7 @@ raiseDefaultTimeout(240_000);
 
 // module-alias and tsconfig-paths store `Module._resolveFilename`, require-in-the-middle stores `Module.prototype.require`. From then on
 // plain Bun asks them at every `require`, also where the name is a constant that the build has bound to a file of the program.
+// @expressots/core stores its resolver with `Object.defineProperty`.
 const head = `
 const { test } = require("bun:test");
 const Module = require("node:module");
@@ -21,6 +22,14 @@ const files = {
     ["a", "b", "c", "d", "h", "i", "j"].map(name => [`src/late-${name}.js`, `exports.name = "late-${name}";\n`]),
   ),
   "src/typed.ts": `export const name: string = "typed";\n`,
+  "node_modules/defined-resolver/package.json": `{ "name": "defined-resolver", "main": "index.js" }`,
+  "node_modules/defined-resolver/index.js": `
+const Module = require("module");
+const original = Module._resolveFilename;
+const data = value => ({ value, writable: true, configurable: true, enumerable: true });
+exports.install = asked => void Object.defineProperty(Module, "_resolveFilename", data(function (request, ...rest) { asked(request); return original.call(this, request, ...rest); }));
+exports.remove = () => void Object.defineProperty(Module, "_resolveFilename", data(original));
+`,
   "src/user.js": `
 exports.load = () => require("./late-h.js").name;
 exports.loadOther = () => require("./late-i.js").name;
@@ -76,6 +85,33 @@ test("a function round every require", () => {
   say("restored:", require("./src/late-b.js").name, seen.join());
 });
 `,
+  "defined-resolver.test.cjs": `${head}
+const data = value => ({ value, writable: true, configurable: true, enumerable: true });
+const user = require("./src/user.js");
+test("a resolver that Object.defineProperty stores", () => {
+  const original = Module._resolveFilename;
+  const asked = function (request, ...rest) { say("resolver asked:", short(request)); return original.call(this, request, ...rest); };
+  Object.defineProperty(Module, "_resolveFilename", data(asked));
+  say("in the test file:", require("./src/late-a.js").name);
+  say("in a file of the project:", user.load());
+  Object.defineProperty(Module, "_resolveFilename", data(original));
+  say("restored:", user.loadOther());
+  Module._resolveFilename = asked;
+  say("stored again:", require("./src/late-b.js").name);
+  Module._resolveFilename = original;
+});
+`,
+  "defined-by-a-package.test.cjs": `${head}
+const resolver = require("defined-resolver");
+const user = require("./src/user.js");
+test("a resolver that a package stores with Object.defineProperty", () => {
+  resolver.install(request => say("resolver asked:", short(request)));
+  say("in the test file:", require("./src/late-a.js").name);
+  say("in a file of the project:", user.load());
+  resolver.remove();
+  say("restored:", require("./src/late-b.js").name);
+});
+`,
   "setup.cjs": `
 const Module = require("node:module");
 const path = require("node:path");
@@ -101,6 +137,8 @@ test.each([
   ["alias.test.cjs", 3, []],
   ["wrapper.test.cjs", 7, []],
   ["behind-a-preload.test.cjs", 2, ["--preload", "./setup.cjs"]],
+  ["defined-resolver.test.cjs", 7, []],
+  ["defined-by-a-package.test.cjs", 5, []],
 ] as const)("%s prints what it prints under plain bun test", async (file, lines, flags) => {
   using dir = tempDir("aot-loader-functions-of-a-test", files);
   const [plain, oneProgram, layers] = await Promise.all([

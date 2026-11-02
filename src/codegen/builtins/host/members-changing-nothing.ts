@@ -155,6 +155,13 @@ export const bindingsChangingNothing: Readonly<Record<string, Binding>> = {
     taken: [],
     refused: [],
   },
+  "native:NewCppFunction:NodeModuleModule.cpp:jsFunctionLoaderHookWatchpoints": {
+    functions: 1,
+    sets: 192,
+    returned: 192,
+    taken: [],
+    refused: [],
+  },
   "native:NewCppFunction:NodeTLS.cpp:loadExtraCACertificates": {
     functions: 1,
     sets: 192,

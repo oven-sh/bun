@@ -742,6 +742,7 @@
     "aot/libraries-known-not-to-work.test.ts",
     "aot/library-from-npm.test.ts",
     "aot/library-modules-by-computed-name.test.ts",
+    "aot/loader-functions-that-a-test-stores-are-asked-at-every-require.test.ts",
     "aot/loader/code-and-types-answers.test.ts",
     "aot/long-literals-build-time.test.ts",
     "aot/long-try-blocks-build-memory.test.ts",

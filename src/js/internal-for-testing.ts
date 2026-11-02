@@ -227,6 +227,12 @@ export const isModuleResolveFilenameSlowPathEnabled: () => boolean = $newCppFunc
   0,
 );
 
+/** What the watch on `Module._resolveFilename` and on `Module.prototype.require` does. `undefined`: nothing has made the holder of the hook yet. */
+export const loaderHookWatchpoints: () => Record<
+  "_resolveFilename" | "require",
+  "armed" | "fired" | "not watched" | undefined
+> = $newCppFunction("NodeModuleModule.cpp", "jsFunctionLoaderHookWatchpoints", 0);
+
 export const frameworkRouterInternals = {
   parseRoutePattern: $bindgen("FrameworkRouter.bind.ts", "parseRoutePattern"),
   FrameworkRouter: $bindgen("filesystem_router.bind.ts", "FrameworkFileSystemRouter"),

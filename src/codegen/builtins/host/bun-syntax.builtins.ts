@@ -117,7 +117,9 @@ export default b.declarations(
 
   privateGlobalFunctions.flatMap(name => b.intrinsic(name, "Call", privateGlobal)),
   privateGlobalValues.flatMap(name => b.intrinsic(name, "Value", privateGlobal)),
-  b.intrinsic("overridableRequire", "Value", { intrinsic: "ReplaceablePrivateGlobal" }),
+  ["nodeModulePrototype", "overridableRequire"].flatMap(name =>
+    b.intrinsic(name, "Value", { intrinsic: "ReplaceablePrivateGlobal" }),
+  ),
 
   operation("arrayStorageKind", "ArrayStorageKind"),
   b.intrinsic("call", "Call", inlinableCall),

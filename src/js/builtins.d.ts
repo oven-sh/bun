@@ -369,6 +369,10 @@ declare function $evaluateCommonJSModule(
 declare function $evictIsolationSourceProviderCache(key?: string): void;
 
 declare function $overridableRequire(this: JSCommonJSModule, id: string): any;
+/** `Module.prototype` of node:module, from when a program first reads it. Its `require` is whatever the program puts there. */
+declare const $nodeModulePrototype: { require: any };
+/** `Reflect.get(target, key, receiver)` */
+declare function $getByValWithThis(target: object, receiver: unknown, key: PropertyKey): any;
 
 // The following I cannot find any definitions of, but they are functional.
 declare function $toLength(length: number): number;

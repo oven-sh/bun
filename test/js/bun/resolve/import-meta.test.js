@@ -193,7 +193,9 @@ it("Module._resolveFilename()", () => {
   Module._resolveFilename = () => {};
   expect(isModuleResolveFilenameSlowPathEnabled()).toBe(true);
   Module._resolveFilename = original;
-  expect(isModuleResolveFilenameSlowPathEnabled()).toBe(false);
+  // The first change of the property puts the realm on the slow path for good: require() reads the property, finds
+  // the original and resolves natively.
+  expect(isModuleResolveFilenameSlowPathEnabled()).toBe(true);
 });
 
 it("Module.createRequire(file://url).resolve(file://url)", () => {

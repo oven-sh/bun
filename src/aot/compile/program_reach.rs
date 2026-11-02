@@ -1770,6 +1770,44 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
+    // `Module._resolveFilename = f`, `delete Module._resolveFilename`, `Object.defineProperty(Module, "_resolveFilename", d)`
+    fn find_member_stored_by(
+        &self,
+        source: &ParsedSource,
+        expression: ExprId,
+    ) -> Option<BuiltinId> {
+        let hir = self.hir;
+        let seen = &mut SmallVec::new();
+        match hir[expression].kind {
+            ExprKind::Assign { target, .. } => self.find_builtin_behind(source, target, seen),
+            ExprKind::Unary {
+                op: UnOp::Delete,
+                operand,
+            } => self.find_builtin_behind(source, operand, seen),
+            ExprKind::Call(call) => {
+                let callee = self.find_builtin_behind(source, hir[call].callee, seen)?;
+                if !matches!(
+                    table::canonical_id(callee),
+                    BuiltinId::ObjectDefineProperty | BuiltinId::ReflectDefineProperty
+                ) {
+                    return None;
+                }
+                let mut operands = hir.ids(hir[call].args);
+                let (object, key) = (operands.next()?, operands.next()?);
+                let ExprKind::String(name) = hir[hir.skip_type_assertions(key)].kind else {
+                    return None;
+                };
+                let holder = self.find_builtin_behind(source, object, &mut SmallVec::new())?;
+                let name = table::find_name(self.input.files.atoms.bytes(name))?;
+                match table::member(table::canonical_id(holder), name) {
+                    MemberLookup::Found(member) => Some(member),
+                    MemberLookup::Unknown | MemberLookup::Absent => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
     fn add_stores_of_loader_functions(&mut self) {
         let (files, hir) = (self.input.files, self.hir);
         if self.input.stores_loader_functions {
@@ -1783,10 +1821,7 @@ impl<'a, 's> FileScan<'a, 's> {
             return;
         }
         for expression in (0..hir.exprs.len() as u32).map(ExprId) {
-            let ExprKind::Assign { target, .. } = hir[expression].kind else {
-                continue;
-            };
-            let stored = self.find_builtin_behind(source, target, &mut SmallVec::new());
+            let stored = self.find_member_stored_by(source, expression);
             if stored.is_some_and(is_loader_function) && !self.is_folded_away(expression) {
                 self.add_interest(hir[expression].pos, Interest::StoreOfLoaderFunction);
             }

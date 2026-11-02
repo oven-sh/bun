@@ -187,6 +187,42 @@ describe.concurrent(".resolves and .rejects", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("a settled Promise subclass is not checked at once: the matcher waits on its then()", async () => {
+    const { stdout, results, exitCode } = await runTests(`
+      // The shape of the openai SDK's APIPromise: the promise is fulfilled with null at once, and each then() does the work.
+      class Settled extends Promise {
+        #work;
+        constructor(work) { super(resolve => resolve(null)); this.#work = work; }
+        then(onFulfilled, onRejected) { return this.#work().then(onFulfilled, onRejected); }
+      }
+      test("not awaited, and then() resolves", () => {
+        const matcher = expect(new Settled(() => later("parsed"))).resolves.toBe("parsed");
+        console.log("returned", matcher);
+        matcher.then(() => console.log("checked"));
+      });
+      test("not awaited, and then() rejects", () => {
+        expect(new Settled(() => laterReject(new Error("HTTP 500")))).resolves.toBeNull();
+      });
+      test("expect.poll()", async () => {
+        let polls = 0;
+        // The third poll gives a plain value, so a build that reads the state of the promise ends this test too.
+        await expect.poll(() => (++polls < 3 ? new Settled(() => later("polled")) : "polled"), { timeout: 60_000, interval: 1 }).toBe("polled");
+        console.log("polls:", polls);
+      });
+      test("next", () => {});
+    `);
+    expect({ stdout, results, exitCode }).toEqual({
+      stdout: ["returned Promise { <pending> }", "checked", "polls: 1"],
+      results: [
+        "(pass) not awaited, and then() resolves",
+        "(fail) not awaited, and then() rejects",
+        "(pass) expect.poll()",
+        "(pass) next",
+      ],
+      exitCode: 1,
+    });
+  });
+
   // Expected values measured on Vitest 5.0.3.
   test('in a "vitest" test, a settled promise still gives a promise', async () => {
     const { stdout, results, exitCode } = await run(["test"], {

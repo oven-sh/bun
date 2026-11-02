@@ -184,6 +184,7 @@ pub mod coreutils_error_map {
         "ENOTRECOVERABLE" => "State not recoverable",
         "ERFKILL" => "Operation not possible due to RF-kill",
         "EHWPOISON" => "Memory page has hardware error",
+        "EFTYPE" => "Inappropriate file type or format",
     };
     }
 

@@ -63,6 +63,7 @@ mod windows {
 
     impl_zeroable!(
         w::FILE_BASIC_INFORMATION,
+        w::FILE_STANDARD_INFORMATION,
         w::FILE_ALL_INFORMATION,
         w::FILE_FS_DEVICE_INFORMATION,
         w::FILE_FS_VOLUME_INFORMATION,
@@ -86,6 +87,8 @@ mod windows {
         w::SECURITY_ATTRIBUTES,
         w::OVERLAPPED,
         w::PROCESS_INFORMATION,
+        w::STARTUPINFOW,
+        w::STARTUPINFOEXW,
         ws2_32::addrinfo,
     );
 }

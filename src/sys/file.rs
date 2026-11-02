@@ -264,47 +264,12 @@ impl File {
         lseek(self.handle, 0, libc::SEEK_CUR).map(|p| p as u64)
     }
     /// The file's size in bytes.
-    /// On Windows that's `GetFileSizeEx` directly on the HANDLE (NOT via
-    /// libuv `fstat`, which would require a uv-kind fd).
+    /// On Windows that's `GetFileSizeEx`.
     pub fn get_end_pos(&self) -> Maybe<usize> {
         get_file_size(self.handle).map(|n| n as usize)
     }
     pub fn stat(&self) -> Maybe<Stat> {
         fstat(self.handle)
-    }
-    /// Be careful about using this on Linux or macOS — calls `fstat()`
-    /// internally there. On Windows it routes through `GetFileType`.
-    pub fn kind(&self) -> Maybe<FileKind> {
-        #[cfg(windows)]
-        {
-            let rt = windows::GetFileType(self.handle.native());
-            if rt == windows::FILE_TYPE_UNKNOWN {
-                let err = windows::Win32Error::get();
-                if err != windows::Win32Error::SUCCESS {
-                    return Err(Error::from_win32(err, Tag::fstat));
-                }
-            }
-            Ok(match rt {
-                windows::FILE_TYPE_CHAR => FileKind::CharacterDevice,
-                windows::FILE_TYPE_REMOTE | windows::FILE_TYPE_DISK => FileKind::File,
-                windows::FILE_TYPE_PIPE => FileKind::NamedPipe,
-                windows::FILE_TYPE_UNKNOWN => FileKind::Unknown,
-                _ => FileKind::File,
-            })
-        }
-        #[cfg(not(windows))]
-        {
-            let st = self.stat()?;
-            // An unrecognized `st_mode & IFMT` falls back to `File`, not
-            // `Unknown`. `kind_from_mode` returns `Unknown` for that case, so
-            // post-process here.
-            let k = kind_from_mode(st.st_mode as Mode);
-            Ok(if matches!(k, FileKind::Unknown) {
-                FileKind::File
-            } else {
-                k
-            })
-        }
     }
     /// Close now. Equivalent to dropping `self` but the syscall result is
     /// observable. Skips the same sentinels as `Drop`.

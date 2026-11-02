@@ -891,15 +891,9 @@ impl Archiver {
                         }
                     };
 
-                    let mut output = match file_handle_native.make_lib_uv_owned() {
-                        Ok(fd) => OutputFile {
-                            fd,
-                            close: options.close_handles,
-                        },
-                        Err(err) => {
-                            file_handle_native.close();
-                            return Err(err.into());
-                        }
+                    let mut output = OutputFile {
+                        fd: file_handle_native,
+                        close: options.close_handles,
                     };
 
                     let size: usize = usize::try_from(entry.size().max(0)).unwrap();

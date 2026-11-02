@@ -491,6 +491,25 @@ pub mod windows_stdio {
     static CONSOLE_CODEPAGE: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
     static CONSOLE_OUTPUT_CODEPAGE: core::sync::atomic::AtomicU32 =
         core::sync::atomic::AtomicU32::new(0);
+    /// [`console_input_mode_to_restore`] if stdin is not the console. Bit 32 says that it is set.
+    static CONSOLE_INPUT_MODE: core::sync::atomic::AtomicU64 =
+        core::sync::atomic::AtomicU64::new(0);
+
+    /// The console input mode from before Bun touched it, which [`restore`] puts back. `current`: the mode right now.
+    pub fn console_input_mode_to_restore(current: u32) -> u32 {
+        if let Some([Some(mode), ..]) = CONSOLE_MODE.get() {
+            return *mode;
+        }
+        match CONSOLE_INPUT_MODE.compare_exchange(
+            0,
+            1 << 32 | u64::from(current),
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => current,
+            Err(saved) => saved as u32,
+        }
+    }
 
     #[unsafe(no_mangle)]
     extern "C" fn Bun__restoreWindowsStdio() {
@@ -515,6 +534,29 @@ pub mod windows_stdio {
             }
         }
 
+        let input_mode = CONSOLE_INPUT_MODE.load(Ordering::Relaxed);
+        if input_mode != 0 {
+            // SAFETY: the name is NUL-terminated, and the null arguments are optional.
+            let input = unsafe {
+                bun_windows_sys::externs::CreateFileW(
+                    crate::wstr!("CONIN$").as_ptr(),
+                    bun_windows_sys::externs::GENERIC_READ
+                        | bun_windows_sys::externs::GENERIC_WRITE,
+                    bun_windows_sys::externs::FILE_SHARE_READ
+                        | bun_windows_sys::externs::FILE_SHARE_WRITE,
+                    core::ptr::null_mut(),
+                    bun_windows_sys::externs::OPEN_EXISTING,
+                    0,
+                    core::ptr::null_mut(),
+                )
+            };
+            if input != w::INVALID_HANDLE_VALUE {
+                let _ = SetConsoleMode(input, input_mode as u32);
+                // SAFETY: opened above.
+                let _ = unsafe { bun_windows_sys::externs::CloseHandle(input) };
+            }
+        }
+
         let out_cp = CONSOLE_OUTPUT_CODEPAGE.load(Ordering::Relaxed);
         let in_cp = CONSOLE_CODEPAGE.load(Ordering::Relaxed);
         if out_cp != 0 {
@@ -526,7 +568,7 @@ pub mod windows_stdio {
     }
 
     pub(crate) fn init() {
-        w::libuv::uv_disable_stdio_inheritance();
+        w::disable_stdio_inheritance();
 
         let stdin = w::GetStdHandle(w::STD_INPUT_HANDLE).unwrap_or(w::INVALID_HANDLE_VALUE);
         let stdout = w::GetStdHandle(w::STD_OUTPUT_HANDLE).unwrap_or(w::INVALID_HANDLE_VALUE);
@@ -567,42 +609,25 @@ pub mod windows_stdio {
         CONSOLE_CODEPAGE.store(c::GetConsoleCP(), Ordering::Relaxed);
         let _ = c::SetConsoleCP(CP_UTF8);
 
-        let mut mode: w::DWORD = 0;
         // Build the snapshot locally, then publish via `Once::set` — no
         // long-lived `&mut` into a shared static (cell-get reduction).
         let mut console_mode: [Option<u32>; 3] = [None; 3];
-        if GetConsoleMode(stdin, &mut mode) != 0 {
-            console_mode[0] = Some(mode);
-            bun_stdio_tty[0].store(1, Ordering::Relaxed);
-            // There are no flags to set on standard in, but just in case something
-            // later modifies the mode, we can still reset it at the end of program run
-            //
-            // In the past, Bun would set ENABLE_VIRTUAL_TERMINAL_INPUT, which was not
-            // intentionally set for any purpose, and instead only caused problems.
+        for (i, handle) in [stdin, stdout, stderr].into_iter().enumerate() {
+            let mut mode: w::DWORD = 0;
+            if GetConsoleMode(handle, &mut mode) != 0 {
+                console_mode[i] = Some(mode);
+                bun_stdio_tty[i].store(1, Ordering::Relaxed);
+            }
         }
 
-        if GetConsoleMode(stdout, &mut mode) != 0 {
-            console_mode[1] = Some(mode);
-            bun_stdio_tty[1].store(1, Ordering::Relaxed);
-            let _ = SetConsoleMode(
-                stdout,
-                w::ENABLE_PROCESSED_OUTPUT
+        // Nothing is set on stdin. The other two are mostly one screen buffer, which has one mode, so both are saved by now.
+        for (handle, mode) in [(stdout, console_mode[1]), (stderr, console_mode[2])] {
+            if let Some(mode) = mode {
+                let wanted = w::ENABLE_PROCESSED_OUTPUT
                     | w::ENABLE_VIRTUAL_TERMINAL_PROCESSING
-                    | w::ENABLE_WRAP_AT_EOL_OUTPUT
-                    | mode,
-            );
-        }
-
-        if GetConsoleMode(stderr, &mut mode) != 0 {
-            console_mode[2] = Some(mode);
-            bun_stdio_tty[2].store(1, Ordering::Relaxed);
-            let _ = SetConsoleMode(
-                stderr,
-                w::ENABLE_PROCESSED_OUTPUT
-                    | w::ENABLE_VIRTUAL_TERMINAL_PROCESSING
-                    | w::ENABLE_WRAP_AT_EOL_OUTPUT
-                    | mode,
-            );
+                    | w::ENABLE_WRAP_AT_EOL_OUTPUT;
+                let _ = SetConsoleMode(handle, (mode | wanted) & !w::DISABLE_NEWLINE_AUTO_RETURN);
+            }
         }
         let _ = CONSOLE_MODE.set(console_mode);
     }
@@ -2579,7 +2604,6 @@ fn init_scoped_debug_writer_at_startup() {
                 let _ = output_sink().make_path(Fd::cwd(), dir);
             }
 
-            // do not use libuv through this code path, since it might not be initialized yet.
             use std::io::Write as _;
             let mut pid = Vec::new();
             write!(&mut pid, "{}", getpid()).expect("failed to allocate path");

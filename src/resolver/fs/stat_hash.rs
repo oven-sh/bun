@@ -17,20 +17,10 @@ pub struct StatHash {
 #[inline]
 fn stat_mtime(s: &Stat) -> Timespec {
     // The `libc` crate flattens BSD/Darwin `st_mtimespec` into
-    // `st_mtime`/`st_mtime_nsec` so the access is uniform on all `unix`.
-    #[cfg(unix)]
-    {
-        Timespec {
-            sec: s.st_mtime,
-            nsec: s.st_mtime_nsec,
-        }
-    }
-    #[cfg(windows)]
-    {
-        Timespec {
-            sec: s.mtim.sec as i64,
-            nsec: s.mtim.nsec as i64,
-        }
+    // `st_mtime`/`st_mtime_nsec` so the access is uniform.
+    Timespec {
+        sec: s.st_mtime,
+        nsec: s.st_mtime_nsec,
     }
 }
 

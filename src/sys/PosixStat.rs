@@ -30,7 +30,6 @@ bun_core::impl_zeroable!(PosixStat);
 
 /// C's implicit integer → `uint64_t` conversion, i.e. what libuv does
 /// when copying platform `struct stat` fields into `uv_stat_t`.
-#[cfg(not(windows))]
 mod to_u64_impl {
     pub(super) trait ToU64: Copy {
         fn to_u64(self) -> u64;
@@ -57,7 +56,6 @@ mod to_u64_impl {
     impl_to_u64_signed!(i8, i16, i32, i64, isize);
     impl_to_u64_unsigned!(u8, u16, u32, u64, usize);
 }
-#[cfg(not(windows))]
 #[inline]
 fn to_u64<T: to_u64_impl::ToU64>(value: T) -> u64 {
     to_u64_impl::ToU64::to_u64(value)
@@ -70,72 +68,36 @@ fn to_u64<T: to_u64_impl::ToU64>(value: T) -> u64 {
 /// names.
 // NOTE: the `libc` crate flattens Darwin/BSD `st_*timespec` into `st_*time` +
 // `st_*time_nsec` (matching Linux), so the field access is uniform across all
-// `unix` targets.
+// targets.
 #[inline]
 pub fn stat_atime(s: &Stat) -> Timespec {
-    #[cfg(unix)]
-    {
-        Timespec {
-            sec: s.st_atime,
-            nsec: s.st_atime_nsec,
-        }
-    }
-    #[cfg(windows)]
-    {
-        Timespec {
-            sec: s.atim.sec as i64,
-            nsec: s.atim.nsec as i64,
-        }
+    Timespec {
+        sec: s.st_atime,
+        nsec: s.st_atime_nsec,
     }
 }
 #[inline]
 pub fn stat_mtime(s: &Stat) -> Timespec {
-    #[cfg(unix)]
-    {
-        Timespec {
-            sec: s.st_mtime,
-            nsec: s.st_mtime_nsec,
-        }
-    }
-    #[cfg(windows)]
-    {
-        Timespec {
-            sec: s.mtim.sec as i64,
-            nsec: s.mtim.nsec as i64,
-        }
+    Timespec {
+        sec: s.st_mtime,
+        nsec: s.st_mtime_nsec,
     }
 }
 #[inline]
 pub fn stat_ctime(s: &Stat) -> Timespec {
-    #[cfg(unix)]
-    {
-        Timespec {
-            sec: s.st_ctime,
-            nsec: s.st_ctime_nsec,
-        }
-    }
-    #[cfg(windows)]
-    {
-        Timespec {
-            sec: s.ctim.sec as i64,
-            nsec: s.ctim.nsec as i64,
-        }
+    Timespec {
+        sec: s.st_ctime,
+        nsec: s.st_ctime_nsec,
     }
 }
 #[inline]
 pub fn stat_birthtime(s: &Stat) -> Timespec {
     // Linux `struct stat` has no birthtime (only `statx` does), so it gets the
     // ctime arm like libuv's `uv__to_stat`; everything else reads the real
-    // birthtime. Windows `Stat` is `uv_stat_t` and libuv fills `birthtim` from
+    // birthtime. On Windows it comes from
     // NTFS CreationTime, so it must NOT fall into the ctime arm.
-    #[cfg(windows)]
-    {
-        Timespec {
-            sec: s.birthtim.sec as i64,
-            nsec: s.birthtim.nsec as i64,
-        }
-    }
     #[cfg(any(
+        windows,
         target_os = "macos",
         target_os = "ios",
         target_os = "freebsd",
@@ -171,45 +133,21 @@ impl PosixStat {
         let ctime_val = stat_ctime(stat_);
         let birthtime_val = stat_birthtime(stat_);
 
-        #[cfg(unix)]
-        {
-            PosixStat {
-                dev: to_u64(stat_.st_dev),
-                ino: to_u64(stat_.st_ino),
-                mode: to_u64(stat_.st_mode),
-                nlink: to_u64(stat_.st_nlink),
-                uid: to_u64(stat_.st_uid),
-                gid: to_u64(stat_.st_gid),
-                rdev: to_u64(stat_.st_rdev),
-                size: to_u64(stat_.st_size),
-                blksize: to_u64(stat_.st_blksize),
-                blocks: to_u64(stat_.st_blocks),
-                atim: atime_val,
-                mtim: mtime_val,
-                ctim: ctime_val,
-                birthtim: birthtime_val,
-            }
-        }
-        #[cfg(windows)]
-        {
-            // Windows `Stat` is libuv `uv_stat_t` — `st_*`-named u64 fields
-            // (matches uv.h; see libuv.rs `uv_stat_t`).
-            PosixStat {
-                dev: stat_.st_dev,
-                ino: stat_.st_ino,
-                mode: stat_.st_mode,
-                nlink: stat_.st_nlink,
-                uid: stat_.st_uid,
-                gid: stat_.st_gid,
-                rdev: stat_.st_rdev,
-                size: stat_.st_size,
-                blksize: stat_.st_blksize,
-                blocks: stat_.st_blocks,
-                atim: atime_val,
-                mtim: mtime_val,
-                ctim: ctime_val,
-                birthtim: birthtime_val,
-            }
+        PosixStat {
+            dev: to_u64(stat_.st_dev),
+            ino: to_u64(stat_.st_ino),
+            mode: to_u64(stat_.st_mode),
+            nlink: to_u64(stat_.st_nlink),
+            uid: to_u64(stat_.st_uid),
+            gid: to_u64(stat_.st_gid),
+            rdev: to_u64(stat_.st_rdev),
+            size: to_u64(stat_.st_size),
+            blksize: to_u64(stat_.st_blksize),
+            blocks: to_u64(stat_.st_blocks),
+            atim: atime_val,
+            mtim: mtime_val,
+            ctim: ctime_val,
+            birthtim: birthtime_val,
         }
     }
 

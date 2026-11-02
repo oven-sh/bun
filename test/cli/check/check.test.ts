@@ -8229,6 +8229,54 @@ export const r: A1<[Z, Z]> = [{ v: 1 }, { v: 1 }];
       expect(exitCode).toBe(0);
     });
 
+    // The target's members are those of its apparent type, as `getPropertiesOfType` returns them. For a mapped type
+    // over `NoInfer<[string]>`, that's the tuple `[string]`. The mapped type's own members are wrong for a tuple: the
+    // key `"toString"` meets the constraint `number | \`${number}\`` that the array constraint on `T` adds to `K`.
+    test("relates a tuple to a mapped type over `NoInfer` of the tuple through the apparent type", async () => {
+      using dir = project({
+        "a.ts": `type Mapped<T extends unknown[]> = { [K in keyof T]: T[K] };
+type ReadonlyMapped<T extends readonly unknown[]> = { readonly [K in keyof T]: T[K] };
+type Optional<T extends unknown[]> = { [K in keyof T]: T[K] | undefined };
+type Strings<T extends string[]> = { [K in keyof T]: T[K] };
+type Keys<T extends unknown[]> = { [K in keyof T]: K };
+type Keys2<T extends unknown[]> = { [K in keyof T]: K };
+declare const tup: [string];
+declare const list: string[];
+export const t1: Mapped<NoInfer<[string]>> = tup;
+export const t2: ReadonlyMapped<NoInfer<readonly [string]>> = tup;
+export const t3: Optional<NoInfer<[string]>> = tup;
+export const t4: Strings<NoInfer<[string]>> = tup;
+export const t5: Mapped<NoInfer<string[]>> = list;
+export const t6: Mapped<NoInfer<[string]>> = ['x'];
+export const t7: Keys<NoInfer<[string]>> = null! as Omit<["0"], "length"> & { length: 1 };
+export const yes: 'yes' = null! as [string] extends Mapped<NoInfer<[string]>> ? 'yes' : 'no';
+declare function g<T extends unknown[]>(x: Mapped<NoInfer<T>>, ...y: T): void;
+g(['x'], 'x');
+declare var k: Keys<NoInfer<[string]>>;
+declare var k: Keys2<NoInfer<[string]>>;
+declare const u: ((x: Keys<NoInfer<[string]>>) => void) | ((x: Keys2<NoInfer<[string]>>) => void);
+u(null!);
+export const bad1: Mapped<NoInfer<[string]>> = [1];
+export const bad2: Mapped<NoInfer<[string]>> = null! as readonly [string];
+export const bad3: Mapped<NoInfer<string[]>> = tup.length;
+export const bad4: Mapped<NoInfer<string[] | number[]>> = null! as boolean[];
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(23,49): error TS2322: Type 'number' is not assignable to type 'string'.
+        a.ts(24,14): error TS2322: Type 'readonly [string]' is not assignable to type 'Mapped<NoInfer<[string]>>'.
+        a.ts(25,14): error TS2322: Type 'number' is not assignable to type 'Mapped<NoInfer<string[]>>'.
+        a.ts(26,14): error TS2322: Type 'boolean[]' is not assignable to type 'Mapped<NoInfer<string[] | number[]>>'.
+          Types of property 'pop' are incompatible.
+            Type '() => boolean | undefined' is not assignable to type '(() => string | undefined) | (() => number | undefined)'.
+              Type '() => boolean | undefined' is not assignable to type '() => string | undefined'.
+                Type 'boolean | undefined' is not assignable to type 'string | undefined'.
+                  Type 'boolean' is not assignable to type 'string'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("doesn't report an unknown compiler option set to `null`", async () => {
       using dir = project({
         "tsconfig.json": `{

@@ -6022,6 +6022,34 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// The members of `target` that `propertiesRelatedTo`, `signaturesRelatedTo` and `indexSignaturesRelatedTo`
+    /// compare: those of `getReducedApparentType(target)`, which `getPropertiesOfType`, `getSignaturesOfType` and
+    /// `getIndexInfosOfType` read. An object type other than a mapped one is its own reduced apparent type. A
+    /// homomorphic mapped type over a type with an array or tuple base constraint, like `NoInfer<[string]>`, has that
+    /// array or tuple as its apparent type, and its own members are wrong for it: the key `"toString"` meets the
+    /// constraint `number | `${number}`` that the array constraint adds to the key parameter. Returns the type whose
+    /// members they are, and them. `structured` selects `structured_members`. Under the identity relation, both sides
+    /// are compared raw, so the target is returned as it is.
+    fn relation_target_members(
+        &mut self,
+        target: TypeId,
+        td: &TypeData<'p>,
+        relation: Relation,
+        structured: bool,
+    ) -> Option<(TypeId, Members<'p>)> {
+        let holder = if is_mapped_kind(td) && relation != Relation::Identity {
+            self.reduced_apparent_type_as_object(target)
+        } else {
+            target
+        };
+        let members = if structured {
+            self.structured_members(holder)?
+        } else {
+            self.members(holder)?
+        };
+        Some((holder, members))
+    }
+
     pub(super) fn is_mutable_array_or_tuple(&self, t: TypeId) -> bool {
         self.is_reference_to_global(t, known::Array, 1)
             || matches!(
@@ -6295,7 +6323,8 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `propertiesRelatedTo`. `properties` is an object type with the properties that `getPropertiesOfType(source)`
     /// returns, for when `members(source)` lacks them, or a union in which each property is looked up by name.
-    /// `both` is set to the `members` of `source` and `target`, if they were requested and are final.
+    /// `both` is set to the `members` of `source` and of `target`'s holder (`relation_target_members`), if they were
+    /// requested and are final.
     fn properties_related_to_ex<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
@@ -6305,7 +6334,7 @@ impl<'p, 's> Checker<'p, 's> {
         excluded: &[Atom],
         optionals_only: bool,
         state: u8,
-        both: &mut Option<(Members<'p>, Members<'p>)>,
+        both: &mut Option<(Members<'p>, (TypeId, Members<'p>))>,
     ) -> Ternary {
         if r.relation == Relation::Identity {
             return self.properties_identical_to(r, source, target);
@@ -6481,15 +6510,18 @@ impl<'p, 's> Checker<'p, 's> {
             Some(_) => self.synth(Shape::new_in(self.arena)),
             None => properties.unwrap_or(source),
         };
-        let (Some(sm), Some(tm)) = (self.members(has_properties), self.members(target)) else {
+        let (Some(sm), Some((holder, tm))) = (
+            self.members(has_properties),
+            self.relation_target_members(target, td, r.relation, false),
+        ) else {
             return Ternary::FALSE;
         };
         // A cached shape doesn't change. An intersection has its signatures elsewhere.
         if self.provisional_shapes.len() == provisional
             && !self.is_intersection(has_properties)
-            && !self.is_intersection(target)
+            && !self.is_intersection(holder)
         {
-            *both = Some((sm, tm));
+            *both = Some((sm, (holder, tm)));
         }
         // `getPropertyOfType(source, name)`
         if !self.never_in_progress.is_empty() && !tm.shape().props.is_empty() {
@@ -6883,7 +6915,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `signaturesRelatedTo`. `sd` and `td` are the `TypeData` of `source` and `target`. `both` is
-    /// their `members`, if known.
+    /// the `members` of `source` and of `target`'s holder (`relation_target_members`), if known.
     fn signatures_related_to_among<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
@@ -6893,7 +6925,7 @@ impl<'p, 's> Checker<'p, 's> {
         td: &'p TypeData<'p>,
         construct: bool,
         state: u8,
-        both: Option<(Members<'p>, Members<'p>)>,
+        both: Option<(Members<'p>, (TypeId, Members<'p>))>,
     ) -> Ternary {
         // With respect to signatures, `anyFunctionType` is a subtype of every other function type.
         if r.relation != Relation::Identity {
@@ -6904,11 +6936,11 @@ impl<'p, 's> Checker<'p, 's> {
                 return Ternary::FALSE;
             }
         }
-        let (sm, tm) = match both {
+        let (sm, (holder, tm)) = match both {
             Some(both) => both,
             None => match (
                 self.structured_members(source),
-                self.structured_members(target),
+                self.relation_target_members(target, td, r.relation, true),
             ) {
                 (Some(sm), Some(tm)) => (sm, tm),
                 _ => return Ternary::FALSE,
@@ -6945,7 +6977,8 @@ impl<'p, 's> Checker<'p, 's> {
                     ),
                 }
             };
-        let (source_sigs, target_sigs) = (list(self, source, sd, &sm), list(self, target, td, &tm));
+        let hd = self.data(holder);
+        let (source_sigs, target_sigs) = (list(self, source, sd, &sm), list(self, holder, hd, &tm));
         if r.relation == Relation::Identity {
             let mut result = Ternary::TRUE;
             for (&s, &t) in source_sigs.iter().zip(&target_sigs) {
@@ -7805,7 +7838,8 @@ impl<'p, 's> Checker<'p, 's> {
         self.index_signatures_related_to_among::<REPORT>(r, source, target, false, state, None)
     }
 
-    /// `indexSignaturesRelatedTo`. `both` is the `members` of `source` and `target`, if known.
+    /// `indexSignaturesRelatedTo`. `both` is the `members` of `source` and of `target`'s holder
+    /// (`relation_target_members`), if known.
     fn index_signatures_related_to_among<const REPORT: bool>(
         &mut self,
         r: &mut Relater,
@@ -7813,14 +7847,17 @@ impl<'p, 's> Checker<'p, 's> {
         target: TypeId,
         source_is_primitive: bool,
         state: u8,
-        both: Option<(Members<'p>, Members<'p>)>,
+        both: Option<(Members<'p>, (TypeId, Members<'p>))>,
     ) -> Ternary {
         let tm = match both {
-            Some((_, tm)) => tm,
-            None => match self.structured_members(target) {
-                Some(tm) => tm,
-                None => return Ternary::FALSE,
-            },
+            Some((_, (_, tm))) => tm,
+            None => {
+                let td = self.data(target);
+                match self.relation_target_members(target, td, r.relation, true) {
+                    Some((_, tm)) => tm,
+                    None => return Ternary::FALSE,
+                }
+            }
         };
         if r.relation == Relation::Identity {
             // `indexSignaturesIdenticalTo`

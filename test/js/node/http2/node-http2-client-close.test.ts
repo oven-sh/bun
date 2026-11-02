@@ -740,6 +740,8 @@ async function rawConnection(
   transport: Transport,
   onStream: (stream: http2.ServerHttp2Stream, peer: RawPeer) => void,
 ): Promise<{ peer: RawPeer; until: <T>(wait: Promise<T>) => Promise<T>; close: () => void }> {
+  // Under `bun test` a test body can run outside a turn of the event loop. There the ticks run each time native code returns from a callback, between two frames of one write.
+  await waits["setImmediate"]();
   const failed = Promise.withResolvers<never>();
   failed.promise.catch(() => {});
   const until = <T>(wait: Promise<T>) => Promise.race([wait, failed.promise]);

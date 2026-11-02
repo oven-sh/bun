@@ -23439,7 +23439,390 @@ describe.concurrent("@types/bun", () => {
 });
 
 describe.concurrent("--check", () => {
-  test("`bun check` runs a package.json `check` script if there is one, and `bun --check` always type checks", async () => {
+  describe("checker controls", () => {
+    test.each(["check", "lint", "fmt", "compile"])(
+      "a project value named %s does not take the script's command boundary",
+      async command => {
+        using dir = project({
+          "actual/package.json": JSON.stringify({ scripts: { [command]: `echo script-${command}` } }),
+          "actual/app.ts": `export const n: number = 1;\n`,
+          "actual/console.d.ts": `declare var console: { log(...args: unknown[]): void };\n`,
+          [`actual/${command}/tsconfig.json`]: JSON.stringify({
+            ...JSON.parse(tsconfig),
+            files: ["../app.ts", "../console.d.ts"],
+          }),
+        });
+        const results = await Promise.all(
+          ["--project", "--tsconfig-override"].flatMap(option => [
+            run(String(dir), ["--check", option, command, "--cwd", "actual", command]),
+            run(String(dir), ["--cwd", "actual", "--check", option, command, command]),
+          ]),
+        );
+        expect(results.map(it => [it.stdout, it.exitCode])).toEqual(results.map(() => [`script-${command}`, 0]));
+      },
+    );
+
+    test.each(["fmt", "lint"])("a project value named %s does not hide the working directory", async command => {
+      using dir = project({
+        "actual/x.ts": `export const n: number = 1;\n`,
+        [`${command}/tsconfig.json`]: JSON.stringify({ files: ["../actual/x.ts"] }),
+        // Kept unformatted: --check must not select this configuration as a formatter input.
+        [`actual/${command}/tsconfig.json`]: `{ "compilerOptions": { "strict": true } }`,
+      });
+      const tail = command === "lint" ? ["x.ts", "--rule", "no-undef: error"] : ["x.ts"];
+      const results = await Promise.all([
+        run(String(dir), ["--check", "--tsconfig-override", command, "--cwd", "actual", command, ...tail]),
+        run(String(dir), ["--check", "--tsconfig-override", command, command, "--cwd", "actual", ...tail]),
+      ]);
+      const summary = command === "fmt" ? "1 file is formatted." : "✓ No problems in 1 file [time]";
+      expect(results.map(it => [it.stdout, it.stderr, it.exitCode])).toEqual(results.map(() => ["", summary, 0]));
+      expect(readFileSync(join(String(dir), `actual/${command}/tsconfig.json`), "utf8")).toBe(
+        `{ "compilerOptions": { "strict": true } }`,
+      );
+    });
+
+    test.each(["fmt", "lint"])("a project value named %s does not hide a later bunfig", async command => {
+      using dir = project({
+        "x.ts": `export const n: number = 1;\n`,
+        [`${command}/tsconfig.json`]: JSON.stringify({ files: ["../x.ts"] }),
+        "chosen.toml": "[unterminated\n",
+      });
+      const { stderr, exitCode } = await run(String(dir), [
+        "--check",
+        "--project",
+        command,
+        "--config=chosen.toml",
+        command,
+        "x.ts",
+      ]);
+      expect(stderr).toContain("chosen.toml");
+      expect(exitCode).toBe(2);
+    });
+
+    test.each(["fmt", "lint"])("%s applies only real code-generation flags before the command", async command => {
+      const strict = "--disallow-code-generation-from-strings=strict";
+      const flag = "--disallow-code-generation-from-strings";
+      const value = command === "fmt" ? "({ semi: true })" : "[]";
+      using dir = project({
+        "x.ts": `export const n: number = 1;\n`,
+        [`${command}/tsconfig.json`]: JSON.stringify({ files: ["../x.ts"] }),
+        [`${strict}/tsconfig.json`]: JSON.stringify({ files: ["../x.ts"] }),
+        [command === "fmt" ? ".prettierrc.cjs" : "eslint.config.cjs"]:
+          `module.exports = new (require("node:vm").Script)(${JSON.stringify(value)}).runInThisContext();\n`,
+      });
+      const results = await Promise.all(
+        [[], [strict], [strict, flag]].map(flags =>
+          run(String(dir), ["--check", "--project", command, ...flags, command, "x.ts"]),
+        ),
+      );
+      expect(results[0].exitCode).toBe(0);
+      for (const result of results.slice(1)) {
+        expect(result.stderr).toContain("Code generation from strings disallowed for this context");
+        expect(result.exitCode).toBe(2);
+      }
+      const consumed = await Promise.all(
+        [[strict], [strict, "--project", command]].map(projects =>
+          run(String(dir), ["--check", "--project", ...projects, command, "x.ts"]),
+        ),
+      );
+      expect(consumed.map(it => it.exitCode)).toEqual([0, 0]);
+    });
+
+    test.each(["--help", "-h"])("a project value named %s does not request formatter help", async value => {
+      using dir = project({
+        "actual/x.ts": `export const n: number = 1;\n`,
+        [`actual/${value}/tsconfig.json`]: `{ "compilerOptions": { "strict": true } }`,
+        "actual/valid/tsconfig.json": `{ "compilerOptions": { "strict": true } }`,
+      });
+      const results = await Promise.all(
+        ["--project", "--tsconfig-override"].flatMap(option => [
+          run(String(dir), ["--check", option, value, "--cwd", "actual", "fmt", "x.ts"]),
+          run(String(dir), ["--check", option, value, option, "valid", "--cwd", "actual", "fmt", "x.ts"]),
+        ]),
+      );
+      expect(results.map(it => [it.stdout, it.stderr, it.exitCode])).toEqual(
+        results.map(() => ["", "1 file is formatted.", 0]),
+      );
+    });
+
+    test.each(["check", "lint", "fmt", "compile"])(
+      "a consumed --no-script value preserves the %s script",
+      async command => {
+        using dir = project({
+          "package.json": JSON.stringify({ scripts: { [command]: `echo script-${command}` } }),
+          "app.ts": `export const n: number = 1;\n`,
+          "--no-script/tsconfig.json": JSON.stringify({ ...JSON.parse(tsconfig), files: ["../app.ts"] }),
+        });
+        const results = await Promise.all(
+          [[], ["--project", "tsconfig.json"]].map(overwrite =>
+            run(String(dir), ["--check", "--project", "--no-script", ...overwrite, command]),
+          ),
+        );
+        expect(results.map(it => [it.stdout, it.stderr, it.exitCode])).toEqual(
+          results.map(() => [`script-${command}`, `$ echo script-${command}`, 0]),
+        );
+      },
+    );
+
+    test.each(["check", "build", "test", "compile"])(
+      "checked eval and print keep a trailing %s as a program argument",
+      async word => {
+        using dir = project({ "process.d.ts": "declare var process: { argv: string[] };" });
+        const expression = "JSON.stringify(process.argv.slice(1))";
+        const results = await Promise.all([
+          run(String(dir), ["--check", "-e", `console.log(${expression})`, word]),
+          run(String(dir), ["--check", "-p", expression, word]),
+        ]);
+        expect(results.map(it => [it.stdout, it.stderr, it.exitCode])).toEqual(
+          results.map(() => [JSON.stringify([word]), "", 0]),
+        );
+      },
+    );
+
+    test("standalone aliases consume and forward controls while a check script keeps its name", async () => {
+      const selected = JSON.stringify({ ...JSON.parse(tsconfig), files: ["selected.ts"] });
+      using dir = project({
+        "package.json": JSON.stringify({ scripts: { check: "echo the script ran" } }),
+        "unselected.ts": `export const unselected: string = 1;\n`,
+        "selected.ts": `export const selected: number = "1";\n`,
+        "selected.json": selected,
+        "build/tsconfig.json": JSON.stringify({ ...JSON.parse(tsconfig), files: ["../selected.ts"] }),
+        "--check/tsconfig.json": JSON.stringify({ ...JSON.parse(tsconfig), files: ["../selected.ts"] }),
+      });
+      const spellings = [
+        ["--check", "--threads", "1", "--project", "selected.json", "--no-pretty", "--all"],
+        ["--threads=2", "--project=selected.json", "--check", "--no-pretty", "--all"],
+        ["run", "--check", "--threads=1", "--project", "selected.json", "--no-pretty", "--all"],
+        ["--check", "run", "--threads", "1", "--project=selected.json", "--no-pretty", "--all"],
+        // A project named like a subcommand is still a value.
+        ["--check", "--project", "build", "--threads", "1"],
+        ["--project", "build", "--check", "--threads=1"],
+        // Both spellings share one option, so the last value wins.
+        ["--check", "--project", "missing", "--tsconfig-override", "selected.json"],
+        ["--check", "--tsconfig-override", "missing", "--project", "selected.json"],
+        ["--check", "--project", "--check"],
+      ];
+      const results = await Promise.all(spellings.map(args => run(String(dir), args)));
+      expect(
+        results.map(it => [
+          it.stdout,
+          /^Found 1 error in 1 file, checked [\d,]+ files? \[time\]$/.test(it.stderr),
+          it.exitCode,
+        ]),
+      ).toEqual(
+        results.map(() => [
+          `selected.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.`,
+          true,
+          1,
+        ]),
+      );
+      const script = await run(String(dir), ["check", "--threads", "0"]);
+      expect([script.stdout, script.exitCode]).toEqual(["the script ran --threads 0", 0]);
+      const missing = await run(String(dir), ["--project", "--check"]);
+      expect([missing.stdout, missing.stderr.split("\n")[0], missing.exitCode]).toEqual([
+        "",
+        "error: an option is missing its value before --check",
+        1,
+      ]);
+    });
+
+    test("pretty controls preserve boolean values, paths, and no-pretty precedence", async () => {
+      using dir = project({ "app.ts": `export const n: number = "1";\n` });
+      const forms = [
+        ["--pretty", "false"],
+        ["--pretty=false"],
+        ["--pretty", "--no-pretty"],
+        ["--no-pretty", "--pretty", "true"],
+        ["--pretty=true"],
+        ["--pretty"],
+      ];
+      const results = await Promise.all(forms.map(args => run(String(dir), ["--check", ...args, "app.ts"])));
+      expect(
+        results.map(it => [
+          it.stderr.includes("app.ts(1,14): error TS2322"),
+          it.stderr.includes("error: TS2322"),
+          it.exitCode,
+        ]),
+      ).toEqual([
+        [true, false, 1],
+        [true, false, 1],
+        [true, false, 1],
+        [true, false, 1],
+        [false, true, 1],
+        [false, true, 1],
+      ]);
+      const invalid = await Promise.all(
+        [["--pretty=maybe"], ["--no-pretty", "--pretty=maybe"], ["--pretty=maybe", "--no-pretty"]].map(args =>
+          run(String(dir), ["--check", ...args]),
+        ),
+      );
+      expect(invalid.map(it => [it.stdout, it.stderr.split("\n")[0], it.exitCode])).toEqual(
+        invalid.map(() => ["", `error: --pretty does not take "maybe"`, 1]),
+      );
+    });
+
+    test("invalid thread controls fail before checking or running", async () => {
+      using dir = project({ "app.ts": `console.log("the app ran");\n` });
+      const commands = [[], ["run"], ["test"], ["build"]];
+      const results = await Promise.all(
+        commands.flatMap(command => [
+          run(String(dir), [...command, "--check", "--threads", "0"]),
+          run(String(dir), [...command, "--check", "--threads=many"]),
+          run(String(dir), [...command, "--check", "--threads"]),
+        ]),
+      );
+      expect(
+        results.map((it, i) => [i % 3 === 2 ? it.stdout.includes("Usage:") : it.stdout === "", it.exitCode]),
+      ).toEqual(results.map(() => [true, 1]));
+      expect(results.map(it => it.stderr.split("\n")[0])).toEqual(
+        commands.flatMap(() => [
+          `error: --threads takes a number above zero, not "0"`,
+          `error: --threads takes a number above zero, not "many"`,
+          `error: The argument '--threads' requires a value but none was supplied.`,
+        ]),
+      );
+    });
+
+    test("runtime and test controls reach checks without becoming entrypoints", async () => {
+      using dir = project({
+        "app.ts": `export const n: number = "1";\nconsole.log("the app ran");\n`,
+        "app.test.ts": `import { n } from "./app";\nvoid n;\n`,
+      });
+      const commands = [["--check"], ["run", "--check"], ["test", "--check"]];
+      const results = await Promise.all(
+        commands.map((command, i) =>
+          run(String(dir), [
+            ...command,
+            "--threads",
+            "1",
+            "--no-pretty",
+            "--timing",
+            i === 2 ? "app.test.ts" : "app.ts",
+          ]),
+        ),
+      );
+      expect(
+        results.map((it, i) => [
+          i === 2 ? /^bun test v[^\n]+$/.test(it.stdout) : it.stdout === "",
+          it.stderr.includes(`app.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.`),
+          /\d+ files loaded in [\d.]+ms, \d+ checked in [\d.]+ms/.test(it.stderr),
+          it.exitCode,
+        ]),
+      ).toEqual(commands.map(() => [true, true, true, 1]));
+    });
+
+    test("successful runtime controls keep program output and execArgv", async () => {
+      using dir = project({
+        "app.ts": `declare var process: { argv: string[]; execArgv: string[] };\nconsole.log(JSON.stringify({ args: process.argv.slice(2), exec: process.execArgv }));\n`,
+        "run/tsconfig.json": JSON.stringify({ ...JSON.parse(tsconfig), files: ["../app.ts", "../console.d.ts"] }),
+      });
+      const controls = ["--check", "--threads", "1", "--project", "tsconfig.json", "--timing"];
+      const namedRun = ["--check", "--project", "run", "--threads", "1", "--pretty", "false", "--timing"];
+      const cases = [controls, ["run", ...controls], namedRun];
+      const results = await Promise.all(cases.map(args => run(String(dir), [...args, "app.ts", "--threads", "9"])));
+      expect(results.map(it => [it.stdout, /files loaded in/.test(it.stderr), it.exitCode])).toEqual(
+        [controls, controls, namedRun].map(exec => [
+          JSON.stringify({
+            args: ["--threads", "9"],
+            exec,
+          }),
+          true,
+          0,
+        ]),
+      );
+    });
+
+    test.each(["--aot-checked=not-a-descriptor", "--aot-graph-fd=not-a-descriptor", "--project"])(
+      "execArgv preserves the consumed value %s byte for byte",
+      async value => {
+        using dir = project({
+          "app.ts": `declare var process: { execArgv: string[] };\nconsole.log(JSON.stringify(process.execArgv));\n`,
+          [`${value}/tsconfig.json`]: JSON.stringify({
+            ...JSON.parse(tsconfig),
+            files: ["../app.ts", "../console.d.ts"],
+          }),
+        });
+        const controls = ["--check", "--project", value];
+        const result = await run(String(dir), [...controls, "app.ts"]);
+        expect(result).toEqual({ stdout: JSON.stringify(controls), stderr: "", exitCode: 0 });
+      },
+    );
+
+    test("ordinary runtime and script arguments retain their ownership", async () => {
+      const app = `console.log(JSON.stringify({ args: process.argv.slice(2), exec: process.execArgv }));\n`;
+      const bun = `"${bunExe().replaceAll("\\", "/")}"`;
+      using dir = project({
+        "app.ts": app,
+        "package.json": JSON.stringify({ scripts: { argv: `${bun} app.ts` } }),
+        "preload.js": `globalThis.check = 2;\n`,
+      });
+      const cases: [string[], string[], string[]][] = [
+        [["app.ts", "--threads", "2", "--project", "x"], ["--threads", "2", "--project", "x"], []],
+        [["run", "app.ts", "--threads", "2"], ["--threads", "2"], []],
+        [["run", "argv", "--threads", "2", "--project", "x"], ["--threads", "2", "--project", "x"], []],
+        [["app.ts", "--check", "--threads", "2"], ["--check", "--threads", "2"], []],
+        [["--", "app.ts", "--check", "--threads", "2"], ["--check", "--threads", "2"], ["--"]],
+        [["--threads", "app.ts", "--project", "x"], ["--project", "x"], ["--threads"]],
+        [["--project", "app.ts", "--threads", "2"], ["--threads", "2"], ["--project"]],
+        [["--pretty=false", "app.ts", "--check"], ["--check"], ["--pretty=false"]],
+      ];
+      const results = await Promise.all(cases.map(([args]) => run(String(dir), args)));
+      expect(results.map(it => [JSON.parse(it.stdout), it.exitCode])).toEqual(
+        cases.map(([, args, exec]) => [{ args, exec }, 0]),
+      );
+      const [print, value] = await Promise.all([
+        run(String(dir), ["-p", "1 + 1"]),
+        // A token that is the value of --print is not the --check flag.
+        run(String(dir), ["--preload", "./preload.js", "-p", "--check"]),
+      ]);
+      expect([print.stdout, print.stderr, print.exitCode, value.stdout, value.stderr, value.exitCode]).toEqual([
+        "2",
+        "",
+        0,
+        "1",
+        "",
+        0,
+      ]);
+    });
+
+    test("bunx keeps checker-shaped package arguments", async () => {
+      using dir = project({
+        "node_modules/@scope/checker-argv/package.json": JSON.stringify({
+          name: "@scope/checker-argv",
+          version: "1.0.0",
+          bin: { "checker-argv": "./index.js" },
+        }),
+        "node_modules/@scope/checker-argv/index.js": `#!/usr/bin/env node\nconsole.log(JSON.stringify(process.argv.slice(2)));\n`,
+        "node_modules/.bin/checker-argv": `#!/usr/bin/env node\nrequire("../@scope/checker-argv/index.js");\n`,
+        "node_modules/.bin/checker-argv.cmd": `@echo off\r\nnode "%~dp0..\\@scope\\checker-argv\\index.js" %*\r\n`,
+      });
+      chmodSync(join(String(dir), "node_modules/@scope/checker-argv/index.js"), 0o755);
+      chmodSync(join(String(dir), "node_modules/.bin/checker-argv"), 0o755);
+      const args = ["--check", "--threads", "2", "--project", "x"];
+      const result = await run(String(dir), ["x", "--no-install", "@scope/checker-argv", ...args]);
+      expect([result.stdout, result.exitCode]).toEqual([JSON.stringify(args), 0]);
+    });
+
+    test.skipIf(isWindows)("the Node alias keeps script arguments", async () => {
+      using dir = project({
+        "app.js": `console.log(JSON.stringify(process.argv.slice(2)));\n`,
+      });
+      const node = join(String(dir), "node");
+      symlinkSync(bunExe(), node);
+      const args = ["--check", "--threads", "2", "--project", "x"];
+      await using proc = spawn({
+        cmd: [node, "app.js", ...args],
+        cwd: String(dir),
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect([stdout.trim(), stderr, exitCode]).toEqual([JSON.stringify(args), "", 0]);
+    });
+  });
+
+  test("a `check` script keeps `bun check`, and `bun --check` is the type checker everywhere", async () => {
     const files = { "a.ts": `export const a: number = "1";\n`, "src/empty.txt": "" };
     using scripted = project({
       ...files,
@@ -24439,24 +24822,38 @@ describe.concurrent("--check", () => {
         workspaces: ["packages/*"],
         scripts: { one: "echo one ran", two: "echo two ran" },
       }),
-      "packages/a/package.json": JSON.stringify({ name: "a", scripts: { build: "echo a ran" } }),
+      "packages/a/package.json": JSON.stringify({
+        name: "a",
+        scripts: { build: "echo a ran", test: "echo a ran", run: "echo a ran" },
+      }),
       "a.ts": `export const a: number = "1";\n`,
+      "a.test.ts": `import { a } from "./a";\nvoid a;\n`,
     });
+    const filtered = ["build", "test", "run"].flatMap(script => [
+      ["--check", "--filter", "*", script],
+      ["--filter=*", "--check", script],
+    ]);
     const results = await Promise.all([
-      run(String(dir), ["--check", "--filter", "*", "build"]),
+      ...filtered.map(args => run(String(dir), args)),
       run(String(dir), ["run", "--check", "--parallel", "one", "two"]),
       run(String(dir), ["run", "--check", "--sequential", "one", "two"]),
     ]);
-    const outcomes = results.map(it => [
+    const direct = await Promise.all([
+      run(String(dir), ["test", "--check", "a.test.ts"]),
+      run(String(dir), ["test", "--check", "--timeout", "1000", "a.test.ts"]),
+    ]);
+    writeFileSync(join(String(dir), "a.ts"), `export const a: number = 1;\n`);
+    const checked = await Promise.all(filtered.map(args => run(String(dir), args)));
+    expect(checked.map(it => [it.stdout.includes("a ran"), it.exitCode])).toEqual(checked.map(() => [true, 0]));
+    const seen = results.map(it => [
       it.exitCode,
       it.stderr.includes("TS2322"),
       (it.stdout + it.stderr).includes("ran"),
     ]);
-    expect(outcomes).toEqual([
-      [1, true, false],
-      [1, true, false],
-      [1, true, false],
-    ]);
+    expect(seen).toEqual(results.map(() => [1, true, false]));
+    expect(direct.map(it => [/^bun test v[^\n]+$/.test(it.stdout), it.stderr.includes("TS2322"), it.exitCode])).toEqual(
+      direct.map(() => [true, true, 1]),
+    );
   });
 
   test("bun test --watch --check watches the tsconfig.json of every project", async () => {

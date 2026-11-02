@@ -11,7 +11,7 @@ use bun_sys::File;
 
 use super::check_command::working_directory;
 use super::command::{ContextData, Tag};
-use super::script_or_command::{arguments_before, directory_of_cwd, place_of_command};
+use super::script_or_command::{arguments_before, directory_of_cwd};
 use bun_bunfig::Above;
 
 pub(crate) struct LintCommand;
@@ -37,6 +37,9 @@ fn change_directory(cwd: &[u8]) {
 
 /// Returns `--cwd` from `bun`'s own flags, which precede `command`.
 fn cwd_before(command: &[u8]) -> Option<&'static [u8]> {
+    if let Some(args) = super::arguments::checked_command_arguments(command) {
+        return args.option(b"--cwd");
+    }
     let mut found = None;
     let mut args = arguments_before(command).into_iter();
     while let Some(arg) = args.next() {
@@ -53,6 +56,9 @@ fn cwd_before(command: &[u8]) -> Option<&'static [u8]> {
 /// Returns `--config=<path>` from `bun`'s own flags, which precede `command`. Without the `=`, the path is parsed as
 /// the command.
 fn bunfig_before(command: &[u8]) -> Option<&'static [u8]> {
+    if let Some(args) = super::arguments::checked_command_arguments(command) {
+        return args.option(b"--config");
+    }
     (arguments_before(command).into_iter())
         .filter_map(|arg| {
             arg.strip_prefix(b"--config=")
@@ -93,12 +99,8 @@ pub(crate) fn read_bunfigs(
 /// Applies `--disallow-code-generation-from-strings` from `bun`'s own flags, which precede `command`. It also covers
 /// the plugins and the configuration files.
 fn disallow_code_generation_before(command: &[u8]) {
-    let argv = bun_core::argv().to_vec();
-    let flags = argv
-        .iter()
-        .take(place_of_command(command).unwrap_or(argv.len()));
     super::arguments::disallow_code_generation_from_strings_as_compiled(
-        &flags.copied().collect::<Vec<_>>(),
+        &super::script_or_command::flags_before(command),
     );
 }
 

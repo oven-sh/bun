@@ -1144,7 +1144,7 @@ pub(crate) fn scan_imports_and_exports(
                             // nor does a split `require()` (`import.meta.require`).
                             if kind != ImportKind::Dynamic
                                 && !is_external_dyn
-                                && should_call_runtime_require(output_format)
+                                && options::should_call_runtime_require(output_format)
                             {
                                 runtime_require_uses += 1;
                             }
@@ -1438,11 +1438,6 @@ pub(crate) fn scan_imports_and_exports(
     }
 
     Ok(())
-}
-
-#[inline]
-fn should_call_runtime_require(format: options::Format) -> bool {
-    format != Format::Cjs
 }
 
 // ──────────────────────────────────────────────────────────────────────────

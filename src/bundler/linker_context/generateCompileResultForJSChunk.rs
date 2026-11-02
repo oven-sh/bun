@@ -7,7 +7,7 @@ use bun_threading::thread_pool as ThreadPoolLib;
 
 use crate::analyze_transpiled_module::ModuleInfo;
 use crate::linker_context_mod::LinkerContext;
-use crate::options::OutputFormat;
+use crate::options::should_call_runtime_require;
 use crate::thread_pool::Worker;
 use crate::{Chunk, CompileResult, Index, PartRange};
 
@@ -100,15 +100,11 @@ fn generate_compile_result_for_js_chunk_impl(
         .graph
         .symbols
         .follow(runtime_members.get(b"__toESM".as_slice()).unwrap().ref_);
-    let runtime_require_ref = if c.options.output_format == OutputFormat::Cjs {
-        None
-    } else {
-        Some(
-            c.graph
-                .symbols
-                .follow(runtime_members.get(b"__require".as_slice()).unwrap().ref_),
-        )
-    };
+    let runtime_require_ref = should_call_runtime_require(c.options.output_format).then(|| {
+        c.graph
+            .symbols
+            .follow(runtime_members.get(b"__require".as_slice()).unwrap().ref_)
+    });
 
     // `worker.arena` (= `BackRef` to `worker.heap`) is a disjoint field from
     // `worker.temporary_arena` / `worker.stmt_list` borrowed `&mut` above, so

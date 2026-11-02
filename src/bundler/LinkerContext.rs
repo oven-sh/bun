@@ -2416,10 +2416,7 @@ impl<'a> LinkerContext<'a> {
             } else {
                 Ref::NONE
             },
-            require_ref: match self.options.output_format {
-                Format::Cjs => None, // use unbounded global
-                _ => runtime_require_ref,
-            },
+            require_ref: runtime_require_ref,
             require_or_import_meta_for_source_callback: Some(
                 js_printer::RequireOrImportMetaCallback::init(self),
             ),

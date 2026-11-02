@@ -144,15 +144,6 @@ pub(crate) fn post_process_js_chunk(
         .graph
         .symbols
         .follow(runtime_members.get(&b"__toESM"[..]).unwrap().ref_);
-    let runtime_require_ref = if c.options.output_format == options::OutputFormat::Cjs {
-        None
-    } else {
-        Some(
-            c.graph
-                .symbols
-                .follow(runtime_members.get(&b"__require"[..]).unwrap().ref_),
-        )
-    };
 
     // The chunk's module record, assembled in output order: the printer records
     // the cross-chunk prefix imports below, then the per-part-range results
@@ -200,7 +191,6 @@ pub(crate) fn post_process_js_chunk(
             indent: Default::default(),
             has_run_symbol_renamer: true,
 
-            require_ref: runtime_require_ref,
             minify_whitespace: c.options.minify_whitespace,
             minify_identifiers: c.options.minify_identifiers,
             minify_syntax: c.options.minify_syntax,

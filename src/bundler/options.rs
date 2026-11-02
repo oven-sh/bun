@@ -321,6 +321,14 @@ impl TargetExt for Target {
 pub use bun_options_types::Format;
 pub use bun_options_types::WindowsOptions;
 
+/// Whether an unbundled `require` is the runtime's `__require`, for the parser and the linker.
+pub(crate) fn should_call_runtime_require(format: Format) -> bool {
+    match format {
+        Format::Esm | Format::Iife => true,
+        Format::Cjs | Format::InternalBakeDev => false,
+    }
+}
+
 // Re-export of `bun_ast::Loader`.
 // There is exactly ONE `Loader`; re-export so the bundler's
 // `BundleOptions.loaders` and the resolver's `Path::loader()` operate on the

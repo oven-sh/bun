@@ -203,6 +203,31 @@ describe("bundler", () => {
 
   describe("jsx preserve", () => {
     describe.each(["cli", "api"] as const)("defined JSX tags (%s)", backend => {
+      test.concurrent.each([
+        ["arrow attribute", "<Comp fn={() => 1} />; export const after = () => 2;"],
+        ["arrow child", "<Comp>{() => 1}</Comp>; export const after = () => 2;"],
+        ["function attribute", "<Comp fn={function () { return 1; }} />; export function after() {}"],
+        ["class child", "<Comp>{class Inner { method() {} }}</Comp>; export class After {}"],
+      ])("invalid tags consume nested scopes: %s", async (_, source) => {
+        using dir = tempDir("jsx-invalid-tag-scopes", { "in.jsx": `export const bad = ${source}` });
+        const entrypoint = join(String(dir), "in.jsx");
+        const cmd =
+          backend === "cli"
+            ? [bunExe(), "build", entrypoint, "--jsx-runtime=preserve", "--define=Comp:1"]
+            : [
+                bunExe(),
+                "-e",
+                `const result = await Bun.build({ entrypoints: [${JSON.stringify(entrypoint)}], jsx: { runtime: "preserve" }, define: { Comp: "1" }, throw: false });
+                 for (const log of result.logs) console.error(log.message);
+                 process.exit(result.success ? 0 : 1);`,
+              ];
+        await using proc = Bun.spawn({ cmd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stdout).toBe("");
+        expect(stderr).toContain("Cannot preserve JSX tag after it resolves to an invalid JSX tag expression");
+        expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 1, signalCode: null });
+      });
+
       describe.each(
         [
           "",

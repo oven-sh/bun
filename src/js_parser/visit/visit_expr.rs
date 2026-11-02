@@ -440,6 +440,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         match p.jsx_transform {
             JSXTransformType::React => {
                 let mut tag_initializer = None;
+                let mut invalid_tag = false;
                 let tag: Expr = 'tagger: {
                     if let Some(mut tag) = e_.tag {
                         let was_string = matches!(tag.data, Data::EString(_));
@@ -464,8 +465,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     tag.loc,
                                     b"Cannot preserve JSX tag after it resolves to an invalid JSX tag expression",
                                 );
-                                *e = p.new_expr(E::Missing {}, expr.loc);
-                                return;
+                                invalid_tag = true;
+                                break 'tagger tag;
                             }
                             let is_defined_string =
                                 !was_string && matches!(tag.data, Data::EString(_));
@@ -831,9 +832,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     e_.children.truncate(last_child as usize);
 
-                    *e = match tag_initializer {
-                        Some(initializer) => initializer.join_with_comma(expr),
-                        None => expr,
+                    // Draining nested scopes before discarding an invalid tag.
+                    *e = if invalid_tag {
+                        p.new_expr(E::Missing {}, expr.loc)
+                    } else {
+                        match tag_initializer {
+                            Some(initializer) => initializer.join_with_comma(expr),
+                            None => expr,
+                        }
                     };
                     return;
                 } else {

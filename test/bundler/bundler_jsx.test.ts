@@ -401,6 +401,66 @@ describe("bundler", () => {
       }
     });
 
+    describe.each(["cli", "api"] as const)("imported tag evaluation order (%s)", backend => {
+      describe.each([false, true])("external=%s", external => {
+        describe.each([false, true])("minify=%s", minify => {
+          itBundled(`jsx/PreserveImportedTagOrder-${backend}-${external}-${minify}`, {
+            files: {
+              "/in.jsx": `
+                import { Comp, "odd-component" as Odd, Namespace, update } from "components";
+                import "./early.js";
+                export function render(value = <Comp />) {
+                  return [value, <Odd />, <Namespace.Component />];
+                }
+                export { update };
+              `,
+              "/early.js": `
+                import { render, update } from "./in.jsx";
+                const events = [];
+                globalThis.factory = {
+                  get h() {
+                    events.push("factory");
+                    update();
+                    return type => { events.push(type); return type; };
+                  }
+                };
+                console.log(JSON.stringify(render()));
+                console.log(JSON.stringify(events));
+              `,
+              "/node_modules/components/index.js": `
+                let count = 0;
+                function update() {
+                  exports.Comp = "component:" + count;
+                  exports["odd-component"] = "odd:" + count;
+                  exports.Namespace = { Component: "member:" + count };
+                  count++;
+                }
+                exports.update = update;
+                update();
+              `,
+            },
+            backend,
+            jsx: { runtime: "preserve" },
+            target: "node",
+            format: "cjs",
+            external: external ? ["components"] : [],
+            minifyIdentifiers: minify,
+            minifySyntax: minify,
+            minifyWhitespace: minify,
+            onAfterBundle(api) {
+              const out = api.readFile("/out.js");
+              const { code } = transformSync(out, { loader: "jsx", jsxFactory: "globalThis.factory.h" });
+              api.writeFile("/out.js", code);
+            },
+            run: {
+              stdout:
+                '["component:1","odd:2","member:3"]\n["factory","component:1","factory","odd:2","factory","member:3"]',
+            },
+          });
+        });
+      });
+    });
+
     describe.each([false, true])("string-named imports, external=%s", external => {
       describe.each([false, true])("minifyIdentifiers=%s", minifyIdentifiers => {
         itBundled(`jsx/PreserveStringNamedImport-${external}-${minifyIdentifiers}`, {

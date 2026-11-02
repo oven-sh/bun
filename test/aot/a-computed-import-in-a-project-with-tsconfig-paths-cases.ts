@@ -58,12 +58,23 @@ test("the files run as they were compiled", async () => {
   "other.test.ts": `import { expect, test } from "bun:test";\ntest("another file", () => { expect(1).toBe(1); });\n`,
 });
 
-// One file of a bundle stands where --aot has the importer's own name.
-const linesIn = (stdout: string, kind: string) =>
+type Ran = Awaited<ReturnType<typeof run>>;
+
+// One file of a bundle stands where --aot has the importer's own name. What an executable advises about code that isn't in it is left out.
+const linesIn = (stdout: string, kind?: string) =>
   stdout
     .split("\n")
-    .filter(line => line.startsWith(kind + " "))
-    .map(line => line.replace(/ imported from .*| from '.*/, ""));
+    .filter(line => (kind ? line.startsWith(kind + " ") : line !== ""))
+    .map(line => line.replace(/ imported from .*| from '.*|(?<=: it isn't in this executable).*/, ""));
+
+/** The lines that a program printed, all of them or those of one kind, and how it ended. */
+const told = (ran: Ran, kind?: string) => ({
+  lines: linesIn(ran.stdout, kind),
+  stderr: ran.stderr,
+  exitCode: ran.exitCode,
+});
+/** A program that printed these lines, nothing on stderr, and ended well. */
+const quietly = (lines: string[]) => ({ lines, stderr: "", exitCode: 0 });
 
 const compiledSpecs = ["SPEC a | compiled spec a", "SPEC deep/b | compiled spec b"];
 const compiledPlugins = [
@@ -71,27 +82,75 @@ const compiledPlugins = [
   "PLUGIN one.ts | compiled plugin one",
   "PLUGIN deep/two | compiled plugin two",
 ];
+const specsFromDisk = ["SPEC a | read from disk when the program ran", "SPEC deep/b | compiled spec b"];
+const specsOfNoPackage = [
+  "SPEC a | THROWS Cannot find package 'specs'",
+  "SPEC deep/b | THROWS Cannot find package 'specs'",
+];
+// What every executable says of code that isn't in it, unless it's built to load code from disk: docs/compiler/compatibility.mdx.
+const specsNotInTheExecutable = (dir: string) =>
+  ["a", "deep/b"].map(
+    name =>
+      `SPEC ${name} | THROWS Cannot load '${join(dir, "node_modules/specs/build", `${name}.js`)}': it isn't in this executable`,
+  );
 
-async function build(dir: string, name: string, flags: string[]) {
+/** What a command reports of the project: the level, the code, the file and the line of each. */
+const reportsIn = (stderr: string, dir: string) =>
+  [...stderr.matchAll(/^(\w+): (TS\d+): .*\n +at (.+):(\d+):\d+$/gm)].map(
+    ([, level, code, file, line]) =>
+      `${level} ${code} ${file.replace(dir, "").replaceAll("\\", "/").replace(/^\//, "")}:${line}`,
+  );
+// Where the import path isn't a constant, and the executable may not load code from disk.
+const bothImportsMayThrow = ["warn TS100064 src/registry.ts:2", "warn TS100064 src/registry.ts:3"];
+
+async function build(dir: string, name: string, flags: string[], reports: string[] = []) {
   const executable = join(dir, "elsewhere", isWindows ? name + ".exe" : name);
   const built = await run([bunExe(), "build", "--compile", ...flags, "--outfile", executable, "main.ts"], dir, bunEnv);
-  expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  expect({
+    reports: reportsIn(built.stderr, dir),
+    stderr: built.exitCode ? built.stderr : "",
+    exitCode: built.exitCode,
+  }).toEqual({ reports, stderr: "", exitCode: 0 });
   return executable;
 }
+
+/** What a test run printed, what it reports and what it says of its tests. The folder, the version of Bun and the times are left out. All of stderr where the run fails. */
+const toldOfTests = (ran: Ran, dir: string) => ({
+  printed: ran.stdout
+    .replaceAll(dir, "")
+    .split("\n")
+    .filter(line => line !== "" && !line.startsWith("bun test ")),
+  reports: reportsIn(ran.stderr, dir),
+  tests: [...ran.stderr.matchAll(/^\((pass|fail|skip|todo)\) (.*?)(?: \[[\d.]+m?s\])?$/gm)]
+    .map(([, result, title]) => `${result}: ${title}`)
+    .sort(),
+  ran: /^Ran \d+ tests? across \d+ files?/m.exec(ran.stderr)?.[0],
+  stderr: ran.exitCode ? ran.stderr : "",
+  exitCode: ran.exitCode,
+});
+const bothFilesPass = {
+  reports: [] as string[],
+  tests: ["pass: another file", "pass: the files run as they were compiled"],
+  ran: "Ran 2 tests across 2 files",
+  stderr: "",
+  exitCode: 0,
+};
 
 /** One test file for each config: all four in one took longer than CI gives a file on the lane with assertions. */
 export function casesUnder(name: keyof typeof configs) {
   const config = configs[name];
+  /** The lines of the package's files: where the config makes the name uncertain, what becomes of files that stay on disk. */
+  const specs = (leftOnDisk: string[]) => (config.isPackageUncertain ? leftOnDisk : compiledSpecs);
+
   test(`an executable under ${name}`, async () => {
     using folder = tempDir("aot-computed-import-tsconfig-paths", filesOf(config));
     const dir = String(folder);
     const elsewhere = join(dir, "elsewhere");
     mkdirSync(elsewhere);
     const plain = await run([bunExe(), "main.ts"], dir, bunEnv);
-    expect(linesIn(plain.stdout, "SPEC")).toEqual(compiledSpecs);
-    expect(linesIn(plain.stdout, "PLUGIN")).toEqual(compiledPlugins);
+    expect(told(plain)).toEqual(quietly([...compiledSpecs, ...compiledPlugins]));
 
-    const compiled = await build(dir, "compiled", ["--aot"]);
+    const compiled = await build(dir, "compiled", ["--aot"], bothImportsMayThrow);
     const open = await build(dir, "open", ["--aot", "--aot-allow-code-from-disk"]);
     const bundled = await build(dir, "bundled", []);
     writeFileSync(join(dir, "node_modules/specs/build/a.js"), fromDisk);
@@ -101,61 +160,62 @@ export function casesUnder(name: keyof typeof configs) {
     const [compiledHere, openHere, bundledHere] = await Promise.all(
       [compiled, open, bundled].map(executable => run([executable], dir, bunEnv)),
     );
-    expect(linesIn(bundledHere.stdout, "SPEC")).toEqual([
-      "SPEC a | read from disk when the program ran",
-      "SPEC deep/b | compiled spec b",
-    ]);
-    expect(linesIn(compiledHere.stdout, "PLUGIN")).toEqual(compiledPlugins);
-    expect(linesIn(openHere.stdout, "PLUGIN")).toEqual(compiledPlugins);
-    if (config.isPackageUncertain) {
-      expect(linesIn(openHere.stdout, "SPEC")).toEqual(linesIn(bundledHere.stdout, "SPEC"));
-      // What every executable says of code that isn't in it, unless it's built to load code from disk: docs/compiler/compatibility.mdx.
-      for (const line of linesIn(compiledHere.stdout, "SPEC")) expect(line).toContain("it isn't in this executable");
-    } else {
-      expect(linesIn(compiledHere.stdout, "SPEC")).toEqual(compiledSpecs);
-      expect(linesIn(openHere.stdout, "SPEC")).toEqual(compiledSpecs);
-    }
+    // A bundle does not hold the plugins: only what it says of the package is compared.
+    expect(told(bundledHere, "SPEC")).toEqual(quietly(specsFromDisk));
+    expect(told(compiledHere)).toEqual(quietly([...specs(specsNotInTheExecutable(dir)), ...compiledPlugins]));
+    expect(told(openHere)).toEqual(quietly([...specs(specsFromDisk), ...compiledPlugins]));
 
     // It isn't.
     renameSync(join(dir, "node_modules"), join(dir, "moved-away"));
     const [compiledAway, bundledAway] = await Promise.all(
       [compiled, bundled].map(executable => run([executable], elsewhere, bunEnv)),
     );
-    expect(linesIn(bundledAway.stdout, "SPEC")).toEqual([
-      "SPEC a | THROWS Cannot find package 'specs'",
-      "SPEC deep/b | THROWS Cannot find package 'specs'",
-    ]);
-    expect(linesIn(compiledAway.stdout, "PLUGIN")).toEqual(compiledPlugins);
-    expect(linesIn(compiledAway.stdout, "SPEC")).toEqual(
-      config.isPackageUncertain ? linesIn(bundledAway.stdout, "SPEC") : compiledSpecs,
-    );
+    expect(told(bundledAway, "SPEC")).toEqual(quietly(specsOfNoPackage));
+    expect(told(compiledAway)).toEqual(quietly([...specs(specsOfNoPackage), ...compiledPlugins]));
   }, 240_000);
+
+  const withoutThePackage = Object.fromEntries(
+    Object.entries(filesOf(config)).filter(([path]) => !path.startsWith("node_modules/")),
+  );
+  // The words are for the compiler: what plain Bun says is asked once for both.
+  let saidByPlainBun: Promise<ReturnType<typeof toldOfTests>> | undefined;
+  const plainBunWithoutThePackage = () =>
+    (saidByPlainBun ??= (async () => {
+      using dir = tempDir("aot-computed-import-tsconfig-paths", withoutThePackage);
+      return toldOfTests(await run([bunExe(), "test", "--isolate"], String(dir), bunEnv), String(dir));
+    })());
 
   for (const words of ["TestRunLayers:0", "TestRunLayers:2,TestRunPartFiles:1"]) {
     // A file that runs from its text trips the wire. A file that the run itself writes anew is read from disk, as in plain Bun, so writing over it tells nothing.
     const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words, BUN_JSC_crashIfInterpreterIsUsed: "1" };
+    /** run() holds a run that is asked for layers to them. One that is asked for none says that it is one program. */
+    async function expectCompiledRun(dir: string, expected: ReturnType<typeof toldOfTests>) {
+      const ran = await run([bunExe(), "test", "--aot", "--isolate"], dir, env);
+      expect(toldOfTests(ran, dir)).toEqual(expected);
+      if (words === "TestRunLayers:0")
+        expect(/^AOT test run \| (.*)$/m.exec(ran.stderr)?.[1]).toMatch(/^one program\b.* \| test files 2$/);
+    }
+
     test(`a test run under ${name} runs the files compiled (${words})`, async () => {
       using dir = tempDir("aot-computed-import-tsconfig-paths", filesOf(config));
-      const ran = await run([bunExe(), "test", "--aot", "--isolate"], String(dir), env);
-      expect({
-        specs: linesIn(ran.stdout, "SPEC"),
-        plugins: linesIn(ran.stdout, "PLUGIN"),
-        exitCode: ran.exitCode,
-      }).toEqual({ specs: ["SPEC a | compiled spec a"], plugins: ["PLUGIN one | compiled plugin one"], exitCode: 0 });
+      await expectCompiledRun(String(dir), {
+        printed: ["SPEC a | compiled spec a", "PLUGIN one | compiled plugin one"],
+        ...bothFilesPass,
+      });
     }, 120_000);
 
     test(`a test run under ${name} without the package says what bun test says (${words})`, async () => {
-      const files = Object.entries(filesOf(config)).filter(([path]) => !path.startsWith("node_modules/"));
-      using dir = tempDir("aot-computed-import-tsconfig-paths", Object.fromEntries(files));
-      const plain = await run([bunExe(), "test", "--isolate"], String(dir), bunEnv);
-      expect(linesIn(plain.stdout, "SPEC")).toEqual(["SPEC a | THROWS Cannot find package 'specs'"]);
-      using again = tempDir("aot-computed-import-tsconfig-paths", Object.fromEntries(files));
-      const ran = await run([bunExe(), "test", "--aot", "--isolate"], String(again), env);
-      expect({
-        specs: linesIn(ran.stdout, "SPEC"),
-        plugins: linesIn(ran.stdout, "PLUGIN"),
-        exitCode: ran.exitCode,
-      }).toEqual({ specs: linesIn(plain.stdout, "SPEC"), plugins: ["PLUGIN one | compiled plugin one"], exitCode: 0 });
+      const plain = await plainBunWithoutThePackage();
+      expect(plain).toEqual({
+        printed: [
+          expect.stringMatching(/^SPEC a \| THROWS Cannot find package 'specs' (imported )?from /),
+          "PLUGIN one | compiled plugin one",
+        ],
+        ...bothFilesPass,
+      });
+      using dir = tempDir("aot-computed-import-tsconfig-paths", withoutThePackage);
+      // The importer too: the files of a test run keep their paths.
+      await expectCompiledRun(String(dir), plain);
     }, 120_000);
   }
 }

@@ -1455,6 +1455,173 @@ describe("printing the global of a node:vm context", () => {
     });
   });
 
+  // bun:test prints what a read gives: its snapshots, diffs and matcher messages call getters on purpose.
+  describe("bun:test snapshots, diffs and matcher messages", () => {
+    const messageOf = fn => {
+      try {
+        fn();
+      } catch (error) {
+        return Bun.stripANSI(error.message);
+      }
+    };
+
+    it("a getter of the sandbox gets the sandbox as its receiver, and a getter that throws leaves the accessor", () => {
+      const sandbox = {
+        data: 1,
+        get receiver() {
+          return this === sandbox ? "the sandbox" : "another object";
+        },
+        get throws() {
+          throw new Error("from the getter");
+        },
+      };
+      const contextGlobal = runInContext("this", createContext(sandbox));
+      expect(contextGlobal).toMatchInlineSnapshot(`
+        JSGlobalProxy {
+          "data": 1,
+          "receiver": "the sandbox",
+          "throws": [native code],
+        }
+      `);
+      expect(messageOf(() => expect(contextGlobal).toEqual({}))).toBe(
+        'expect(received).toEqual(expected)\n\n- {}\n+ JSGlobalProxy {\n+   "data": 1,\n+   "receiver": "the sandbox",\n+   "throws": [native code],\n+ }\n\n- Expected  - 1\n+ Received  + 5\n',
+      );
+      expect(messageOf(() => expect(contextGlobal).toBeNull())).toBe(
+        'expect(received).toBeNull()\n\nReceived: {\n  data: 1,\n  receiver: "the sandbox",\n  throws: [Getter],\n}\n',
+      );
+    });
+
+    it.each([
+      [
+        "a name that a script declares and the sandbox only inherits",
+        () => {
+          const inherited = {
+            get other() {
+              return "from the inherited getter";
+            },
+          };
+          const context = createContext(Object.create(inherited));
+          runInContext("var other;", context);
+          return context;
+        },
+        "from the inherited getter",
+      ],
+      [
+        "the get trap of a sandbox that is a Proxy",
+        () => {
+          const get = (target, key, receiver) =>
+            key === "other" ? "from the get trap" : Reflect.get(target, key, receiver);
+          return createContext(new Proxy({ other: "of the target" }, { get }));
+        },
+        "from the get trap",
+      ],
+    ])("prints what a read gives: %s", (_, makeContext, read) => {
+      const contextGlobal = runInContext("this", makeContext());
+      expect(contextGlobal.other).toBe(read);
+      expect(messageOf(() => expect(contextGlobal).toEqual({}))).toBe(
+        `expect(received).toEqual(expected)\n\n- {}\n+ JSGlobalProxy {\n+   "other": "${read}",\n+ }\n\n- Expected  - 1\n+ Received  + 3\n`,
+      );
+      expect(messageOf(() => expect(contextGlobal).toBeNull())).toBe(
+        `expect(received).toBeNull()\n\nReceived: {\n  other: "${read}",\n}\n`,
+      );
+    });
+
+    // This context has no sandbox. A getter of its global throws when it is called, not when it is looked up.
+    it("a getter of a context made with DONT_CONTEXTIFY that throws leaves the accessor, also under an index key", () => {
+      const symbol = Symbol("symbol");
+      const contextGlobal = Object.defineProperties(createContext(constants.DONT_CONTEXTIFY), {
+        ok: { get: () => 1, enumerable: true },
+        throws: {
+          get() {
+            throw new Error("from the getter");
+          },
+          enumerable: true,
+        },
+        [symbol]: { get: () => "of the symbol", enumerable: true },
+        7: { get: () => "seven", enumerable: true },
+        8: {
+          get() {
+            throw new Error("from the index getter");
+          },
+          enumerable: true,
+        },
+      });
+      expect(contextGlobal).toMatchInlineSnapshot(`
+        JSGlobalProxy {
+          "7": "seven",
+          "8": [native code],
+          "ok": 1,
+          [Symbol(symbol)]: "of the symbol",
+          "throws": [native code],
+        }
+      `);
+      expect(messageOf(() => expect(contextGlobal).toBeNull())).toBe(
+        'expect(received).toBeNull()\n\nReceived: {\n  "7": "seven",\n  "8": [Getter],\n  ok: 1,\n  throws: [Getter],\n  [Symbol(symbol)]: "of the symbol",\n}\n',
+      );
+    });
+
+    it("a key that an earlier getter deletes is left out", () => {
+      const make = () => {
+        const sandbox = {
+          get a() {
+            delete sandbox.b;
+            return 1;
+          },
+          b: 2,
+          c: 3,
+        };
+        return runInContext("this", createContext(sandbox));
+      };
+      expect(make()).toMatchInlineSnapshot(`
+        JSGlobalProxy {
+          "a": 1,
+          "c": 3,
+        }
+      `);
+      expect(messageOf(() => expect(make()).toBeNull())).toBe(
+        "expect(received).toBeNull()\n\nReceived: {\n  a: 1,\n  c: 3,\n}\n",
+      );
+    });
+
+    // The global's own slot holds the value of `var other`. No read gives that value, so the print does not show it.
+    it("a read that throws where the global has no accessor of its own leaves the key out", () => {
+      const inherited = {
+        get other() {
+          throw new Error("from the inherited getter");
+        },
+      };
+      const context = createContext(Object.create(inherited));
+      runInContext("var other; var fine = 1;", context);
+      const contextGlobal = runInContext("this", context);
+      expect(() => contextGlobal.other).toThrow("from the inherited getter");
+      expect(contextGlobal).toMatchInlineSnapshot(`
+        JSGlobalProxy {
+          "fine": 1,
+        }
+      `);
+      expect(messageOf(() => expect(contextGlobal).toBeNull())).toBe(
+        "expect(received).toBeNull()\n\nReceived: {\n  fine: 1,\n}\n",
+      );
+    });
+
+    it("a vm timeout in a getter ends the print and the script", () => {
+      const sandbox = {
+        a: 1,
+        get spins() {
+          for (;;);
+        },
+        z: 2,
+      };
+      Object.defineProperty(sandbox, "check", { value: contextGlobal => expect(contextGlobal).toBeNull() });
+      expect(() => runInContext("check(this)", createContext(sandbox), { timeout: 20 })).toThrow(
+        expect.objectContaining({ code: "ERR_SCRIPT_EXECUTION_TIMEOUT" }),
+      );
+      expect(messageOf(() => expect(runInNewContext("this", { after: 1 })).toBeNull())).toBe(
+        "expect(received).toBeNull()\n\nReceived: {\n  after: 1,\n}\n",
+      );
+    });
+  });
+
   it("an error message that prints the global", () => {
     const { descriptor, calls } = counter();
     const contextGlobal = runInContext(

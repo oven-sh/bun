@@ -5264,7 +5264,7 @@ fn set_type_from_options(
     blob: &Blob,
     options: JSValue,
 ) -> JsResult<()> {
-    if let Some(content_type) = options.get(global_this, "type")? {
+    if let Some(content_type) = options.fast_get(global_this, jsc::BuiltinName::Type)? {
         let content_type_str = content_type.to_utf8(global_this)?;
         let slice = content_type_str.slice();
         if is_valid_blob_type(slice) {

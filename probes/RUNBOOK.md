@@ -11,6 +11,22 @@ BASE below is the tree without the fix: `origin/main` after #46528 merged
 (`origin/claude/http-consolidated` before that). A fresh container needs
 `git fetch origin main claude/http-consolidated` first.
 
+## Status of 2026-11-02
+
+#46528 merged main (3f3a9ff87c: the WebKit upgrade, the AOT change, the bun test rework of #44833,
+the libspng removal) and its head moved from 001958b155 to edb9ce8f7a. None of the 8 files of the
+cut changed in that range. The cut is rebased: 9f090eea57 and 4f0e5ee46a on edb9ce8f7a, with the
+same patch-ids as 7749f49591 and 524abcc7e3.
+
+Run again on edb9ce8f7a (debug build): quic-stream.test.ts 128 pass in 3 of 3 runs, and 114 pass /
+14 fail (the same 14, no timeout) with the base's src/ and packages/. test/js/node/quic/ 194 pass,
+serve-http3.test.ts 117 pass, fetch-http3-client.test.ts 107 pass and 1 skip. The titles of the
+test.each rows and describe.concurrent are as before under the new runner.
+
+NOT run again on edb9ce8f7a: the probes of section 2, the vendored files, the release builds and
+the gdb counts of section 3. Their numbers below are of 2026-10-30 on 001958b155. Section 1 to 3
+run in full on main after the merge.
+
 Pitfalls:
 - Never put `&` after a `cmd1 && cmd2 && ...` chain: the tool kills what still runs when the call
   returns. Run the steps in the foreground. Only a build goes to the background, as
@@ -20,7 +36,8 @@ Pitfalls:
   `--build-dir=build/release-measure`.
 - A debug binary is 1.6 GB. Copies: /tmp/bun-debug-pr, /tmp/bun-debug-base. Check `df -h /`.
 - In the container of 2026-10-30 a debug build took 5 min, a release build 7 min, an incremental
-  one 2 min. Earlier containers needed 40 min for a debug build.
+  one 2 min. Earlier containers needed 40 min for a debug build. On 2026-11-02 the first debug
+  build after the merge of main with the WebKit upgrade took 8 min and 10 GB of disk.
 
 ## 1. Debug builds and tests
 
@@ -45,7 +62,7 @@ test-quic-session-initial-rtt.mjs, test-quic-stream-idle-timeout.mjs.
 
 ## 2. Probes (debug binaries, `export BUN_DEBUG_QUIET_LOGS=1`, run from /tmp/probes)
 
-Numbers of 2026-10-30 on base 001958b155 / cut 524abcc7e3 (the src/ tree of 92d12d2992 plus one comment):
+Numbers of 2026-10-30 on base 001958b155 / cut 524abcc7e3 (the src/ tree of 92d12d2992 plus one comment; the same patches as 4f0e5ee46a):
 
 | command | base | PR |
 |---|---|---|
@@ -85,7 +102,7 @@ Executed instructions per call (gdb single-step, about 20 s each):
 Odd calls are the client's request block (it ends the stream), even calls the server's response
 block. Take the lowest "total" of each kind. Some calls have noise from the allocator.
 
-Numbers of 2026-10-30 (base 001958b155 / cut 92d12d2992, same code as 524abcc7e3):
+Numbers of 2026-10-30 (base 001958b155 / cut 92d12d2992, same code as 524abcc7e3 and 4f0e5ee46a):
 - .text 108,770,713 -> 108,771,481 (+768). bun-profile 317,970,008 -> 317,971,136. Stripped bun
   138,238,072 in both.
 - us_nq_stream_send_headers 109 -> 122 instructions in the binary, us_quic_stream_send_headers 212 -> 211.

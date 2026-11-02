@@ -291,7 +291,7 @@ describe.concurrent("a SyntaxError from JavaScriptCore's parser in a file with a
   });
 });
 
-test("an object with the properties of an error is printed at the line of the error", async () => {
+test.concurrent("an object with the properties of an error is printed at the line of the error", async () => {
   // The lines of types are not in the text that runs. The error is on line 6, which is line 2 before the source map.
   using dir = tempDir("error-properties-location", {
     "thrower.ts": `type A = { a: number };

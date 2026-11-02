@@ -619,6 +619,11 @@ impl FileSink {
             PathOrFileDescriptor::Path(slice) => {
                 path_like = PathLike::borrowed(slice.slice());
                 let path_buf = path_buf.insert(bun_paths::path_buffer_pool::get());
+                // `slice_z` makes the empty path of one that does not fit.
+                if slice.slice().len() >= path_buf.len() {
+                    let err = sys::Error::from_code(sys::E::ENAMETOOLONG, sys::Tag::open);
+                    return sys::Result::Err(err.with_path(slice.slice()));
+                }
                 bun_io::PathOrFileDescriptor::Path(path_like.slice_z(path_buf))
             }
         };

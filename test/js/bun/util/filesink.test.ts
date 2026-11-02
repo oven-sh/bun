@@ -1870,6 +1870,32 @@ describe.concurrent("start() on an open writer", () => {
     expect(result).toEqual({ child: "to the child", target: "to the pipe", closed: "all" });
   });
 
+  // What a path buffer holds. Windows itself stops at 32767 units.
+  const pathBuffer = isWindows ? 98302 : isLinux ? 4096 : 1024;
+  it.each([pathBuffer - 1, pathBuffer, pathBuffer + 1, pathBuffer * 4])(
+    "start({ path }) with a path of %d bytes works or is ENAMETOOLONG",
+    async length => {
+      const result = await run(`
+        const initial = join(dir, "initial.txt");
+        const writer = Bun.file(initial).writer();
+        const filler = ${length} - dir.length - 2;
+        const path = dir + "/" + Buffer.alloc(filler & ~1, "./").toString() + (filler & 1 ? "/" : "") + "f";
+        let failed = null;
+        try {
+          writer.start({ path });
+        } catch (e) {
+          failed = [e.code, e.syscall, e.path === path];
+        }
+        writer.write("short");
+        await writer.end();
+        const target = failed ? initial : join(dir, "f");
+        console.log(JSON.stringify({ length: path.length, failed, written: read(target), closed: await closed() }));
+      `);
+      const failed = isWindows || length >= pathBuffer ? ["ENAMETOOLONG", "open", true] : null;
+      expect(result).toEqual({ length, failed, written: "short", closed: "all" });
+    },
+  );
+
   it("start({ path }) settles a queued write and flushes it to the new path", async () => {
     // On Windows the first chunk is in flight and the second waits in the writer's queue.
     const result = await run(`

@@ -4653,7 +4653,10 @@ impl<'p, 's> Checker<'p, 's> {
     fn plain_recursion_identity(&self, t: TypeId) -> RecursionId {
         let data = self.data(t);
         if is_mapped_kind(data)
-            || matches!(data, TypeData::Intersection(_) | TypeData::IndexedAccess { .. })
+            || matches!(
+                data,
+                TypeData::Intersection(_) | TypeData::IndexedAccess { .. }
+            )
         {
             NOT_PLAIN
         } else {

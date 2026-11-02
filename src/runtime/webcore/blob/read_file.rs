@@ -257,18 +257,17 @@ pub(crate) struct BlockingIo(bun_threading::Guarded<BlockingIoState>);
 #[cfg(windows)]
 #[derive(Default)]
 struct BlockingIoState {
-    /// The thread inside `run`, and what it reads or writes.
-    running: Option<(u32, Fd)>,
+    /// The thread inside `run`.
+    running: Option<u32>,
     cancelled: bool,
 }
 
 #[cfg(windows)]
 impl BlockingIo {
-    /// Pool thread: `io` is one read or write of `fd`. It fails with ECANCELED once `cancel` was called.
+    /// Pool thread: `io` is one read or write. It fails with ECANCELED once `cancel` was called.
     pub(crate) fn run<R>(
         &self,
         tag: bun_sys::Tag,
-        fd: Fd,
         io: impl FnOnce() -> bun_sys::Result<R>,
     ) -> bun_sys::Result<R> {
         {
@@ -276,37 +275,32 @@ impl BlockingIo {
             if state.cancelled {
                 return Err(bun_sys::Error::from_code(bun_sys::E::ECANCELED, tag));
             }
-            state.running = Some((bun_sys::windows::kernel32::GetCurrentThreadId(), fd));
+            state.running = Some(bun_sys::windows::kernel32::GetCurrentThreadId());
         }
         let result = io();
         self.0.lock().running = None;
         result
     }
 
-    /// Any thread, any number of times. The lock keeps the pool thread from moving on to unrelated I/O meanwhile.
+    /// Any thread, any number of times. The lock keeps the pool thread out of its next call, which the system's cancel would wait for.
     pub(crate) fn cancel(&self) {
-        use bun_sys::windows::{Win32Error, cancel_io, cancel_synchronous_io};
-        const YIELDS: u32 = 100;
-        const SLEEPS: u32 = 3;
-        for attempt in 0..YIELDS + SLEEPS {
+        use bun_sys::windows::{Win32Error, cancel_blocking_io};
+        let start = std::time::Instant::now();
+        loop {
             let mut state = self.0.lock();
             state.cancelled = true;
-            let Some((thread_id, fd)) = state.running else {
+            let Some(thread_id) = state.running else {
                 return;
             };
-            // On an overlapped handle the system call has returned, and the thread waits for the operation.
-            if cancel_synchronous_io(thread_id) != Err(Win32Error::NOT_FOUND)
-                || cancel_io(fd.native()) != Err(Win32Error::NOT_FOUND)
-            {
+            if cancel_blocking_io(thread_id) != Err(Win32Error::NOT_FOUND) {
                 return;
             }
             drop(state);
-            // In no call: about to enter one, just out of one, or queued behind another thread's call on the handle.
-            if attempt < YIELDS {
-                std::thread::yield_now();
-            } else {
-                std::thread::sleep(core::time::Duration::from_millis(1));
+            // About to enter the call, just out of it, or queued behind another thread's call on the handle, which can last.
+            if start.elapsed() > core::time::Duration::from_millis(2) {
+                return;
             }
+            std::thread::yield_now();
         }
     }
 }
@@ -557,9 +551,7 @@ impl ReadFile {
             #[cfg(windows)]
             break 'brk self
                 .blocking_io
-                .run(bun_sys::Tag::read, self.opened_fd, || {
-                    bun_sys::read(self.opened_fd, buf)
-                });
+                .run(bun_sys::Tag::read, || bun_sys::read(self.opened_fd, buf));
             #[cfg(not(windows))]
             break 'brk bun_sys::read(self.opened_fd, buf);
         };

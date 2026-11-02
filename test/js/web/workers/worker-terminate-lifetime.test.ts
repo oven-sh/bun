@@ -1353,3 +1353,51 @@ for (const [call, works] of [
     });
   });
 }
+
+// Elsewhere two reads of one descriptor cannot be polled at a time.
+describe.skipIf(!isWindows)("terminate() with a read of a descriptor that the main thread uses too", () => {
+  test.concurrent.each([
+    ["Bun.file(fd).text()", `fs.writeSync(3, "hello")`, "hello"],
+    [
+      "Bun.write(Bun.file(fd), Buffer.alloc(8 << 20))",
+      "for (let left = 8 << 20; left > 0; ) left -= fs.readSync(3, Buffer.alloc(1 << 16))",
+      String(8 << 20),
+    ],
+  ])("leaves the main thread's %s alone", async (call, answer, result) => {
+    // The child does nothing with its descriptor 3 until it is told to, which is after terminate().
+    const child = `const fs = require("node:fs"); fs.readSync(0, Buffer.alloc(1)); ${answer};`;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const child = Bun.spawn({
+          cmd: [process.execPath, "-e", ${JSON.stringify(child)}],
+          stdio: ["pipe", "ignore", "inherit", "pipe"],
+        });
+        const fd = child.stdio[3];
+        const mine = ${call};
+        const worker = new Worker(
+          \`
+          Bun.file(\${fd}).text().catch(() => {});
+          require("node:worker_threads").parentPort.postMessage("reading");
+          \`,
+          { eval: true },
+        );
+        worker.once("message", async () => {
+          await worker.terminate();
+          child.stdin.write("x");
+          child.stdin.end();
+          console.log(String(await mine));
+        });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: result + "\n", stderr: "", exitCode: 0 });
+  });
+});

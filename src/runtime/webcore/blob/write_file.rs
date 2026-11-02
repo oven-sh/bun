@@ -298,7 +298,7 @@ impl WriteFile {
             #[cfg(windows)]
             let result = self
                 .blocking_io
-                .run(sys::Tag::write, fd, || sys::write(fd, bytes));
+                .run(sys::Tag::write, || sys::write(fd, bytes));
             #[cfg(not(windows))]
             let result = sys::write(fd, bytes);
             match result {

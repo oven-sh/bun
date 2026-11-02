@@ -600,8 +600,8 @@ pub fn parent_pid() -> DWORD {
     unsafe { info.assume_init() }.InheritedFromUniqueProcessId as DWORD
 }
 
-/// `CancelSynchronousIo` for thread `thread_id`. `ERROR_NOT_FOUND`: it is blocked in no call.
-pub fn cancel_synchronous_io(thread_id: DWORD) -> Result<(), Win32Error> {
+/// Ends the read or write that holds thread `thread_id`. `ERROR_NOT_FOUND`: none does, or it waits for its turn on a synchronous handle.
+pub fn cancel_blocking_io(thread_id: DWORD) -> Result<(), Win32Error> {
     const THREAD_TERMINATE: DWORD = 0x0001;
     unsafe extern "system" {
         safe fn OpenThread(access: DWORD, inherit_handle: BOOL, thread_id: DWORD) -> HANDLE;
@@ -617,16 +617,10 @@ pub fn cancel_synchronous_io(thread_id: DWORD) -> Result<(), Win32Error> {
     };
     // SAFETY: opened above, and not used after this.
     unsafe { CloseHandle(thread) };
-    result
-}
-
-/// `CancelIoEx` for all that this process has under way on `handle`. `ERROR_NOT_FOUND`: nothing.
-#[allow(clippy::not_unsafe_ptr_arg_deref)] // a HANDLE is not an address
-pub fn cancel_io(handle: HANDLE) -> Result<(), Win32Error> {
-    // SAFETY: without an `OVERLAPPED` the call reads no memory, and what is no handle is an error.
-    match unsafe { kernel32::CancelIoEx(handle, core::ptr::null_mut()) } {
-        0 => Err(Win32Error::get()),
-        _ => Ok(()),
+    match result {
+        // On an overlapped handle the system call has returned, and the thread waits for the operation.
+        Err(Win32Error::NOT_FOUND) => fs::cancel_transfer(thread_id),
+        result => result,
     }
 }
 

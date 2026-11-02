@@ -5,7 +5,7 @@ use core::ffi::c_void;
 use core::mem::size_of;
 use core::ptr::{from_mut, from_ref, null, null_mut};
 use core::sync::atomic::{AtomicU32, Ordering};
-use std::sync::OnceLock;
+use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 
 use bun_core::ffi::zeroed;
 use bun_core::{S, WStr, ZStr, strings, w};
@@ -580,6 +580,70 @@ fn wait_on_handle(handle: HANDLE, io: &UnsafeCell<IO_STATUS_BLOCK>) -> NTSTATUS 
     status()
 }
 
+/// An operation on an overlapped handle that its thread waits for in [`transfer_once`].
+struct PendingTransfer {
+    thread_id: DWORD,
+    handle: HANDLE,
+    io: *mut IO_STATUS_BLOCK,
+    cancelled: bool,
+}
+
+// SAFETY: only the system follows the pointers, under the lock that their thread takes to remove the entry.
+unsafe impl Send for PendingTransfer {}
+
+static PENDING_TRANSFERS: Mutex<Vec<PendingTransfer>> = Mutex::new(Vec::new());
+
+fn pending_transfers() -> MutexGuard<'static, Vec<PendingTransfer>> {
+    PENDING_TRANSFERS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+}
+
+/// This thread's entry in [`PENDING_TRANSFERS`].
+struct PendingTransferEntry;
+
+impl PendingTransferEntry {
+    fn new(handle: HANDLE, io: *mut IO_STATUS_BLOCK) -> Self {
+        pending_transfers().push(PendingTransfer {
+            thread_id: kernel32::GetCurrentThreadId(),
+            handle,
+            io,
+            cancelled: false,
+        });
+        Self
+    }
+
+    /// Starts the operation once more with `issue`, unless [`cancel_transfer`] has ended it.
+    fn issue_again(&self, issue: impl FnOnce() -> NTSTATUS) -> NTSTATUS {
+        let thread_id = kernel32::GetCurrentThreadId();
+        let pending = pending_transfers();
+        let mut mine = pending.iter().filter(|it| it.thread_id == thread_id);
+        if mine.any(|it| it.cancelled) {
+            return NTSTATUS::CANCELLED;
+        }
+        issue()
+    }
+}
+
+impl Drop for PendingTransferEntry {
+    fn drop(&mut self) {
+        let thread_id = kernel32::GetCurrentThreadId();
+        pending_transfers().retain(|it| it.thread_id != thread_id);
+    }
+}
+
+/// Ends the read or write on an overlapped handle that thread `thread_id` waits for. `ERROR_NOT_FOUND`: it waits for none.
+pub(super) fn cancel_transfer(thread_id: DWORD) -> Win32Result<()> {
+    let mut pending = pending_transfers();
+    let Some(transfer) = pending.iter_mut().find(|it| it.thread_id == thread_id) else {
+        return Err(Win32Error::NOT_FOUND);
+    };
+    transfer.cancelled = true;
+    // SAFETY: `io` is valid for as long as its entry is there, and an `OVERLAPPED` starts with an `IO_STATUS_BLOCK`.
+    unsafe { kernel32::CancelIoEx(transfer.handle, transfer.io.cast()) };
+    Ok(())
+}
+
 /// [`transfer_once`], and again for as long as a pipe takes nothing of a write without saying why.
 fn transfer(
     handle: HANDLE,
@@ -647,6 +711,7 @@ fn transfer_once(
     let mut status = issue(null_mut());
     // The answer of an overlapped handle, such as a pipe for the event loop that `fs` is used on.
     if status == NTSTATUS::PENDING {
+        let entry = PendingTransferEntry::new(handle, io);
         // A read is taken back and issued again with an event to wait on. Not a write: part of it may have been read.
         let taken_back = direction == Direction::Read
             // SAFETY: an `OVERLAPPED` starts with an `IO_STATUS_BLOCK`, which is all that names the operation.
@@ -660,7 +725,7 @@ fn transfer_once(
                 return (0, Some(Win32Error::get()));
             }
             let event = Handle(event);
-            status = issue(event.0);
+            status = entry.issue_again(|| issue(event.0));
             if status == NTSTATUS::PENDING {
                 kernel32::WaitForSingleObject(event.0, INFINITE);
                 status = wait_on_handle(handle, &cell);

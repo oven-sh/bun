@@ -283,6 +283,14 @@ impl ChainedSourceMap {
     }
 }
 
+/// Whether `url` is a `file:` URL of a file on this machine. On POSIX one with a host is not, and Node.js refuses it. On Windows it is a UNC path.
+fn names_a_local_file(url: &bun_core::String) -> bool {
+    url.starts_with_ascii(b"file:")
+        && (cfg!(windows)
+            || bun_url::whatwg::Parsed::from_string(url)
+                .is_none_or(|parsed| parsed.host().is_empty()))
+}
+
 /// The file that `url` names beside the module at `module_url`, as its URL and its path. `None`: `url` has a scheme, as a `data:` or an `http:` URL has.
 fn file_of_url(
     module_url: &bun_core::String,
@@ -292,7 +300,7 @@ fn file_of_url(
         return None;
     }
     let map_url = bun_url::join(module_url, &StringView::from_bytes(url));
-    if !map_url.starts_with_ascii(b"file:") {
+    if !names_a_local_file(&map_url) {
         return None;
     }
     let map_path = bun_url::path_from_file_url(&map_url);
@@ -317,8 +325,10 @@ fn shown_source_name(base: &bun_core::String, source: &[u8]) -> Box<[u8]> {
         return Box::from(normalized.unwrap_or(source));
     }
     let url = bun_url::join(base, &StringView::from_bytes(source));
-    let shown = if url.starts_with_ascii(b"file:") {
+    let shown = if names_a_local_file(&url) {
         bun_url::path_from_file_url(&url)
+    } else if url.starts_with_ascii(b"file:") {
+        return Box::default();
     } else {
         url
     };

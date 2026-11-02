@@ -1397,6 +1397,7 @@ describe.concurrent("a loaded file with its own source map", () => {
       "a JSON array": { "array.js.map": "[]" },
       "no mappings": { "no-mappings.js.map": JSON.stringify({ version: 3, sources: ["a.ts"] }) },
       "no sources": { "no-sources.js.map": JSON.stringify({ version: 3, mappings: transpiled.cjs.mappings }) },
+      // Node.js reads these as mappings, and puts the frame at the start of `a.ts`.
       "mappings that are no VLQ": { "not-vlq.js.map": mapOf("cjs", "a.ts", { mappings: ";;;;;!!!!" }) },
       "an index map": {
         "index-map.js.map": JSON.stringify({
@@ -1652,6 +1653,8 @@ describe.concurrent("a loaded file with its own source map", () => {
           { "../elsewhere/q.js.map": map },
           "../elsewhere/original.ts",
         ],
+        // The URL of a file on another host names no file on POSIX. On Windows it is a UNC path.
+        "a host before an absolute path": [root => comment(`//host${root}/forms/ao.js.map`), { "ao.js.map": map }, ""],
       }),
     };
     const files: Record<string, string | ((at: { root: string }) => string)> = {};
@@ -1691,8 +1694,8 @@ describe.concurrent("a loaded file with its own source map", () => {
   // node v26.13.0 puts `sourceRoot` before the source with nothing between them, and resolves the result as a URL
   // beside the map. A `file:` URL is shown as a path.
   test("a source is named the way Node.js names it", async () => {
-    // [sourceRoot, source, the name in the frame]
-    const named: [string | null | undefined, string, string][] = [
+    // [sourceRoot, source, the name in the frame, or null where the frame stays in the loaded file]
+    const named: [string | null | undefined, string, string | null][] = [
       [undefined, "original.ts", "<dir>/maps/original.ts"],
       ["", "../src/./original.ts", "<dir>/src/original.ts"],
       ["src", "original.ts", "<dir>/maps/srcoriginal.ts"],
@@ -1720,7 +1723,10 @@ describe.concurrent("a loaded file with its own source map", () => {
             ["", "/abs/src/../original.ts", "/abs/original.ts"],
             ["", "/abs/a%20b.ts?query", "/abs/a%20b.ts?query"],
             ["", "file:///abs/src/original.ts", "/abs/src/original.ts"],
-          ]) as [string, string, string][]),
+            // A `file:` URL with a host names no file on POSIX. On Windows it is a UNC path.
+            ["", "file://host/share/x.ts", null],
+            ["", "\\\\host\\share\\x.ts", null],
+          ]) as [string, string, string | null][]),
     ];
     const files: Record<string, string> = {};
     named.forEach(([sourceRoot, source], i) => {
@@ -1741,9 +1747,12 @@ describe.concurrent("a loaded file with its own source map", () => {
     };
     using dir = tempDir("own-source-map-sources", fixture);
     const want = {
-      stdout: [...named.map(([, , name]) => name), "<dir>/src/original.ts"].map(
-        name => `at boom (${name}:${inOriginal.boom})`,
-      ),
+      stdout: [
+        ...named.map(([, , name], i) =>
+          name === null ? `at boom (<dir>/s${i}.js:${transpiled.cjs.boom})` : `at boom (${name}:${inOriginal.boom})`,
+        ),
+        `at boom (<dir>/src/original.ts:${inOriginal.boom})`,
+      ],
       stderr: "",
       exitCode: 0,
     };

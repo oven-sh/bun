@@ -297,6 +297,11 @@ fn lift_max_path(buf: &mut [u16], len: usize) -> Win32Result<usize> {
     if len + base < LONG_PATH || strings::has_prefix_comptime_utf16(&buf[..len], b"\\\\?\\") {
         return Ok(len);
     }
+    // The object manager's spelling of that prefix, which `CreateDirectoryW` for one does not know.
+    if strings::has_prefix_comptime_utf16(&buf[..len], b"\\??\\") {
+        buf[1] = u16::from(b'\\');
+        return Ok(len);
+    }
     let mut full = w_path_buffer_pool::get();
     let capacity = full.0.len();
     // SAFETY: `buf` is NUL-terminated, `full` has room for `capacity` units, and the last out-param is optional.
@@ -315,6 +320,8 @@ fn lift_max_path(buf: &mut [u16], len: usize) -> Win32Result<usize> {
         return Err(Win32Error::FILENAME_EXCED_RANGE);
     }
     let (prefix, rest): (&[u16], &[u16]) = match &full.0[..full_len] {
+        // It was `//?/`.
+        lifted if strings::has_prefix_comptime_utf16(lifted, b"\\\\?\\") => (&[], lifted),
         device if strings::has_prefix_comptime_utf16(device, b"\\\\.\\") => {
             (w!("\\\\?\\"), &device[4..])
         }
@@ -573,8 +580,29 @@ fn wait_on_handle(handle: HANDLE, io: &UnsafeCell<IO_STATUS_BLOCK>) -> NTSTATUS 
     status()
 }
 
-/// One `NtReadFile` or `NtWriteFile` (`None`: at the file position), over when this returns, and unseen by a completion port.
+/// [`transfer_once`], and again for as long as a pipe takes nothing of a write without saying why.
 fn transfer(
+    handle: HANDLE,
+    direction: Direction,
+    buf: PlatformIoVec,
+    offset: Option<i64>,
+) -> (usize, Option<Win32Error>) {
+    loop {
+        let (transferred, error) = transfer_once(handle, direction, buf, offset);
+        // A pipe write that does not fit succeeds with 0 bytes in `PIPE_NOWAIT` mode, or if the reader takes a read back just then.
+        let again = direction == Direction::Write
+            && transferred == 0
+            && error.is_none()
+            && buf.len != 0
+            && super::pipe::make_writes_wait(handle);
+        if !again {
+            return (transferred, error);
+        }
+    }
+}
+
+/// One `NtReadFile` or `NtWriteFile` (`None`: at the file position), over when this returns, and unseen by a completion port.
+fn transfer_once(
     handle: HANDLE,
     direction: Direction,
     buf: PlatformIoVec,
@@ -647,15 +675,6 @@ fn transfer(
         unsafe { (*io).Information }
     };
     let error = (!NT_SUCCESS(status)).then(|| Win32Error::from_ntstatus(status));
-    // `PIPE_NOWAIT`: a write that does not fit succeeds with 0 bytes, and nothing tells when it would fit.
-    if direction == Direction::Write
-        && transferred == 0
-        && error.is_none()
-        && buf.len != 0
-        && super::pipe::make_writes_wait(handle)
-    {
-        return transfer(handle, direction, buf, offset);
-    }
     (transferred, error)
 }
 
@@ -668,7 +687,7 @@ fn for_each_buffer(
 ) -> Win32Result<usize> {
     let positional = position != -1;
     let mut original_position: i64 = 0;
-    // SAFETY: `original_position` is a valid out-param. It fails on an overlapped handle, which has no position.
+    // SAFETY: `original_position` is a valid out-param. It fails on what has no position, such as a pipe.
     let restore_position = positional
         && unsafe { SetFilePointerEx(handle, 0, &raw mut original_position, FILE_CURRENT) } != 0;
 
@@ -829,7 +848,7 @@ fn stat_of_nul_device() -> Stat {
 fn stat_from_info(info: &FileStatBasicInformation, do_lstat: bool) -> Stat {
     let mut stat: Stat = zeroed();
     stat.st_dev = u64::from(info.VolumeSerialNumber as u32);
-    // Only `lstat` reports a reparse point as a link, and its callers have checked that it is one.
+    // Only `lstat` reports a reparse point as a link.
     if do_lstat && info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
         stat.st_mode = S::IFLNK as u64;
         stat.st_size = info.EndOfFile as u64;

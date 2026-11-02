@@ -817,7 +817,8 @@ static void us_internal_watch_for_resume(void) {
     if (__atomic_exchange_n(&started, 1, __ATOMIC_RELAXED)) {
         return;
     }
-    HANDLE thread = CreateThread(NULL, LIBUS_HELPER_STACK_SIZE, us_internal_watch_for_resume_thread, NULL, STACK_SIZE_PARAM_IS_A_RESERVATION, NULL);
+    /* The default stack: loading a library runs code of others. */
+    HANDLE thread = CreateThread(NULL, 0, us_internal_watch_for_resume_thread, NULL, 0, NULL);
     if (thread) {
         CloseHandle(thread);
     }

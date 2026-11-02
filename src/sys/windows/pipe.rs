@@ -23,7 +23,9 @@ const OBJ_CASE_INSENSITIVE: ULONG = 0x40;
 const FILE_PIPE_BYTE_STREAM_TYPE: ULONG = 0;
 const FILE_PIPE_BYTE_STREAM_MODE: ULONG = 0;
 const FILE_PIPE_QUEUE_OPERATION: ULONG = 0;
-const DUPLEX: ULONG = GENERIC_READ | GENERIC_WRITE | SYNCHRONIZE;
+const WRITE_DAC: ULONG = 0x40000;
+/// What libuv asks for, so a child finds the rights that it finds under Node.js.
+const DUPLEX: ULONG = GENERIC_READ | GENERIC_WRITE | SYNCHRONIZE | WRITE_DAC;
 
 /// How much either side can write before the other has read any of it.
 const BUFFER_SIZE: ULONG = 65536;
@@ -55,7 +57,7 @@ unsafe extern "system" {
     ) -> BOOL;
 }
 
-/// Clears `PIPE_NOWAIT` for everybody who has this end, as libuv does. `false`: not a pipe, or the mode is as it was.
+/// Clears `PIPE_NOWAIT` for everybody who has this end, as libuv does. `false`: not a pipe, or it stays in that mode.
 pub(super) fn make_writes_wait(handle: HANDLE) -> bool {
     /// `FILE_PIPE_INFORMATION`
     #[repr(C)]
@@ -74,8 +76,11 @@ pub(super) fn make_writes_wait(handle: HANDLE) -> bool {
     // SAFETY: `io` and `information` are valid for the call, and the size is that of the latter.
     let status =
         unsafe { ntdll::NtQueryInformationFile(handle, &raw mut io, pointer, SIZE, CLASS) };
-    if status != NTSTATUS::SUCCESS || information.completion_mode == FILE_PIPE_QUEUE_OPERATION {
+    if status != NTSTATUS::SUCCESS {
         return false;
+    }
+    if information.completion_mode == FILE_PIPE_QUEUE_OPERATION {
+        return true;
     }
     let mut information = Information {
         completion_mode: FILE_PIPE_QUEUE_OPERATION,

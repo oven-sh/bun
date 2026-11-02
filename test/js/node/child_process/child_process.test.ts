@@ -746,6 +746,32 @@ describe("spawn()", () => {
       },
     );
 
+    it.skipIf(!isWindows).each(["pipe", "overlapped"] as const)(
+      "stdio %j: the child has the rights that it has under Node.js",
+      async kind => {
+        const script = `
+        const { dlopen, ptr } = require("bun:ffi");
+        const { GetStdHandle } = dlopen("kernel32.dll", { GetStdHandle: { args: ["i32"], returns: "ptr" } }).symbols;
+        const { NtQueryInformationFile } = dlopen("ntdll.dll", {
+          NtQueryInformationFile: { args: ["ptr", "ptr", "ptr", "u32", "u32"], returns: "i32" },
+        }).symbols;
+        const FileAccessInformation = 8;
+        const rights = which => {
+          const [status, access] = [new BigUint64Array(2), new Uint32Array(1)];
+          if (NtQueryInformationFile(GetStdHandle(which), ptr(status), ptr(access), 4, FileAccessInformation) !== 0) return null;
+          return access[0].toString(16);
+        };
+        console.log(JSON.stringify([-10, -11, -12].map(rights)));
+      `;
+        const child = spawn(bunExe(), ["-e", script], { env: bunEnv, stdio: [kind, kind, kind] });
+        const closed = once(child, "close");
+        child.stderr!.resume();
+        // GENERIC_READ | GENERIC_WRITE | SYNCHRONIZE | WRITE_DAC
+        expect(JSON.parse(await text(child.stdout!))).toEqual(["16019f", "16019f", "16019f"]);
+        expect(await closed).toEqual([0, null]);
+      },
+    );
+
     describe("a socket as a stdio entry", () => {
       // Both ends of an established loopback connection: the socket `connect` returns and the one `server`
       // accepts for it.

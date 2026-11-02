@@ -929,6 +929,7 @@ int us_internal_pipe_writev(struct us_loop_t *loop, struct us_poll_t *p, const s
                 pipe->staging = NULL;
                 pipe->staging_capacity = 0;
             }
+            us_internal_pipe_release_loop(pipe);
             return written;
         }
         NTSTATUS status;
@@ -973,6 +974,8 @@ int us_internal_pipe_writev(struct us_loop_t *loop, struct us_poll_t *p, const s
     }
     if (pipe->write.is_armed || us_internal_pipe_cursor_left(cursor, 1)) {
         us_internal_pipe_hold_loop(pipe);
+    } else {
+        us_internal_pipe_release_loop(pipe);
     }
     return written ? written : us_internal_pipe_would_block();
 }

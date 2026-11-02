@@ -7334,6 +7334,13 @@ describe.skipIf(!isWindows)("a path that only Windows' long form can name", () =
     ));
   it("a name relative to the drive", () => run((cwd, name) => `${cwd.slice(2)}\\${name}`));
   it("an absolute name with slashes", () => run((cwd, name) => `${cwd}/${name}`.replaceAll("\\", "/")));
+  // TODO: a recursive `fs.rmSync` does not know this prefix, whatever the length.
+  it("the long form with slashes", () =>
+    run(
+      (cwd, name) => `//?/${cwd}/${name}`.replaceAll("\\", "/"),
+      (_, name) => name,
+    ));
+  it("the long form as the object manager spells it", () => run((cwd, name) => `\\??\\${cwd}\\${name}`));
 
   const share = (path: string) => `\\\\localhost\\${path[0]}$${path.slice(2)}`;
   it.skipIf(!isWindows || !existsSync(share(tmpdir())))("a name on a share", () =>

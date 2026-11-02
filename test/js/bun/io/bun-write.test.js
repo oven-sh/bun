@@ -1,3 +1,4 @@
+import { dlopen, ptr } from "bun:ffi";
 import { describe, expect, it, test } from "bun:test";
 import fs, { mkdirSync } from "fs";
 import {
@@ -16,6 +17,7 @@ import { once } from "node:events";
 import http from "node:http";
 import { devNull } from "node:os";
 import { finished } from "node:stream/promises";
+import { promisify } from "node:util";
 import path, { join } from "path";
 import { asyncIterableBodyShapes, settled as settledBody } from "../../web/streams/async-iterable-body-shapes";
 
@@ -511,6 +513,68 @@ const IS_COPYFILEW_DISABLED = process.platform === "win32" && process.env.BUN_FE
       await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script(data)], env: bunEnv, [stream]: file });
       expect({ exitCode: await proc.exited, content: await file.text() }).toEqual({ exitCode: 0, content: "written" });
     });
+  });
+
+  // libuv's reader does that, so a Bun whose stdout Node.js reads has it at the other end. A blocking write that is
+  // larger than the pipe and meets a read that is then taken back is answered with "success, 0 bytes".
+  it.skipIf(!isWindows).each([
+    ["Bun.write(Bun.file(fd), data)", (fd, data) => Bun.write(Bun.file(fd), data)],
+    ["fs.promises.writeFile(fd, data)", (fd, data) => fs.promises.writeFile(fd, data).then(() => data.length)],
+    ["fs.write(fd, data, callback)", (fd, data) => promisify(fs.write)(fd, data).then(result => result.bytesWritten)],
+  ])("%s writes all of it to a pipe whose reader takes reads back", async (_, write) => {
+    const { symbols: kernel32 } = dlopen("kernel32.dll", {
+      CreateNamedPipeW: { args: ["ptr", "u32", "u32", "u32", "u32", "u32", "u32", "ptr"], returns: "ptr" },
+      ReadFile: { args: ["ptr", "ptr", "u32", "ptr", "ptr"], returns: "i32" },
+      CancelIoEx: { args: ["ptr", "ptr"], returns: "i32" },
+      GetOverlappedResult: { args: ["ptr", "ptr", "ptr", "i32"], returns: "i32" },
+      CloseHandle: { args: ["ptr"], returns: "i32" },
+    });
+    const [PIPE_ACCESS_INBOUND, FILE_FLAG_OVERLAPPED, capacity] = [1, 0x40000000, 65536];
+    const name = `\\\\.\\pipe\\bun-write-reads-taken-back-${crypto.randomUUID()}`;
+    const server = kernel32.CreateNamedPipeW(
+      ptr(Buffer.from(name + "\0", "utf16le")),
+      PIPE_ACCESS_INBOUND | FILE_FLAG_OVERLAPPED,
+      0,
+      1,
+      capacity,
+      capacity,
+      0,
+      null,
+    );
+    const fd = fs.openSync(name, "w");
+    try {
+      const [buffer, overlapped, transferred] = [new Uint8Array(capacity), new Uint8Array(32), new Uint32Array(1)];
+      const read = () => {
+        overlapped.fill(0);
+        if (!kernel32.ReadFile(server, ptr(buffer), buffer.length, null, ptr(overlapped))) {
+          kernel32.CancelIoEx(server, ptr(overlapped));
+        }
+        return kernel32.GetOverlappedResult(server, ptr(overlapped), ptr(transferred), 1) ? transferred[0] : 0;
+      };
+      const block = new Uint8Array(capacity * 1.5);
+      const results = [];
+      let received = 0;
+      for (let i = 0; i < 200; i++) {
+        let result;
+        write(fd, block).then(
+          written => (result = written),
+          error => (result = error),
+        );
+        while (result === undefined) {
+          for (let j = 0; j < 64; j++) received += read();
+          await new Promise(setImmediate);
+        }
+        results.push(result);
+      }
+      for (let length; (length = read());) received += length;
+      expect({ short: results.filter(result => result !== block.length), received }).toEqual({
+        short: [],
+        received: results.length * block.length,
+      });
+    } finally {
+      fs.closeSync(fd);
+      kernel32.CloseHandle(server);
+    }
   });
 
   // These tests pass by not throwing:

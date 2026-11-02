@@ -722,6 +722,34 @@ describe("spawn unref and kill should not hang", () => {
     await proc.exited;
     expect().pass();
   });
+
+  // The child's read is large enough for a write to be over when it returns, and the write is too large for one call.
+  it("should not hang after unref if a large write to stdin was taken at once", async () => {
+    const child = `
+      const fs = require("fs");
+      const buffer = Buffer.alloc(4 << 20);
+      fs.writeSync(1, "ready");
+      while (fs.readSync(0, buffer)) {}
+    `;
+    const parent = `
+      const child = Bun.spawn({
+        cmd: [process.execPath, "-e", ${JSON.stringify(child)}],
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const reader = child.stdout.getReader();
+      await reader.read();
+      await reader.cancel();
+      child.stdin.write(Buffer.alloc((1 << 20) + 10000));
+      await child.stdin.flush();
+      child.unref();
+      console.log("nothing left to do");
+    `;
+    await using proc = spawn({ cmd: [bunExe(), "-e", parent], env: bunEnv, stdout: "pipe", stderr: "inherit" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ stdout, exitCode }).toEqual({ stdout: "nothing left to do\n", exitCode: 0 });
+  });
 });
 
 async function runTest(sleep: string, order = ["sleep", "kill", "unref", "exited"]) {

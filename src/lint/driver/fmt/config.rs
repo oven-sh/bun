@@ -292,7 +292,7 @@ fn oxc_among<'p>(plugins: impl Iterator<Item = &'p [u8]>) -> Oxc {
 
 /// True if the plugin `name` is a package, as opposed to a path.
 fn is_package(name: &[u8]) -> bool {
-    !name.starts_with(b".") && !name.starts_with(b"/") && !name.starts_with(b"file:")
+    !name.starts_with(b".") && !paths::is_absolute(name) && !name.starts_with(b"file:")
 }
 
 fn is_tailwind_plugin(name: &[u8]) -> bool {

@@ -776,8 +776,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             return None;
         }
 
-        // A byte that isn't UTF-8 has no UTF-16 form. The matcher takes it as the byte it is, which can be part of a
-        // character of a name, and no filter selects those names.
+        // The matcher takes a byte that isn't UTF-8 as part of a character of a name, which no filter can say.
         if !strings::is_valid_utf8(slice) {
             return None;
         }

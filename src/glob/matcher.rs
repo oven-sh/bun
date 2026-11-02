@@ -182,10 +182,7 @@ struct Wildcard {
 /// Parentheses without a "?*+@!" prefix are literal, and so is an unclosed "[",
 /// "{" or "(".
 ///
-/// The pattern doesn't have to be valid UTF-8. Outside of "[...]" a byte that isn't ASCII
-/// is a literal byte: it matches the same byte of the path. A wildcard and a class take a
-/// whole character of the path from where the match stands, so "*\x80" doesn't match the
-/// last byte of a character. In "[...]" bytes that aren't a character are U+FFFD.
+/// Outside of "[...]" a byte that isn't ASCII is one literal byte. The pattern doesn't have to be valid UTF-8.
 ///
 /// Groups can nest to any depth. Matching takes `O(glob.len() * path.len())` time and
 /// a constant amount of stack. See [`Program`].
@@ -1956,12 +1953,7 @@ fn run<const STRICT: bool>(
     Outcome::Yes
 }
 
-/// Returns true if the literal bytes before `end` stop inside the character that a lead byte among them announces, and a token
-/// that isn't a literal follows them. In a path that character may go on where those bytes stop. The token then starts inside
-/// the character, and from there the steps of a `*` depend on where the literal was found: the first place isn't as good as a
-/// later one, which is what [`run`] relies on.
-///
-/// It's never true after a whole character. It's also true after some bytes that no character starts with, which only costs time.
+/// Whether the literal before `end` can end inside a character, before a token: a later place for it can match more.
 #[inline(always)]
 fn is_cut_off(glob: &[u8], end: usize) -> bool {
     if glob
@@ -4769,7 +4761,7 @@ impl Program {
                     }
                     to.at(i - start);
                     i += 1;
-                    // The bytes after it that aren't ASCII are literal bytes, which is what a node is unless something says otherwise.
+                    // Bytes after it that aren't ASCII are literal, which a node is unless something says otherwise.
                     while glob.get(i).is_some_and(|it| *it >= 128) {
                         i += 1;
                     }
@@ -5669,8 +5661,7 @@ impl Cache {
     }
 }
 
-// Run with `bun run rust:test -p bun_glob`. A JavaScript string has no byte that isn't UTF-8, so these rows have no
-// place in test/js/bun/glob.
+// A JavaScript string has no byte that isn't UTF-8, so these rows can't be in test/js/bun/glob.
 #[cfg(test)]
 mod tests {
     use bstr::BStr;
@@ -5678,8 +5669,7 @@ mod tests {
 
     use super::*;
 
-    /// Asks with no shape, and then on one shape until a walk has answered often, for each way to treat dots. The paths
-    /// have no dot segment, so all of that has to give one answer.
+    /// The answer with no shape. 40 calls on one shape have to give the same one, for each way to treat dots.
     fn matches(glob: &[u8], path: &[u8]) -> bool {
         let answer = match_on::<false>(glob, path).matches();
         for dots in [Dots::Match, Dots::Hide, Dots::SkipTraversal] {
@@ -5714,8 +5704,7 @@ mod tests {
         }
     }
 
-    // `\xc3` announces a character of two bytes, `\xe9` one of three and `\xf0` one of four. U+00E9 is c3 a9, U+00E8 is
-    // c3 a8, U+9000 is e9 80 80, U+9001 is e9 80 81, U+1F600 is f0 9f 98 80 and U+1F601 is f0 9f 98 81.
+    // U+00E9 is c3 a9, U+00E8 is c3 a8, U+9000 is e9 80 80, U+9001 is e9 80 81 and U+1F600 is f0 9f 98 80.
 
     #[test]
     fn what_follows_a_byte_that_is_not_utf8_is_still_syntax() {

@@ -177,8 +177,7 @@ pub fn is_glob(text: &[u8]) -> bool {
                 Some(b'[') => Some(&mut squares),
                 _ => None,
             };
-            // The `\\` and one UTF-16 unit, as in the package: the byte after it and its continuation bytes. That's
-            // half of a character of four bytes. Only continuation bytes that are there count.
+            // The `\\` and one UTF-16 unit. Only the continuation bytes that are there count.
             let more = match at(index + 1) {
                 None | Some(0..0xC0) => 0,
                 Some(0xE0..0xF0) => 2,

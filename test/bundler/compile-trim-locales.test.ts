@@ -329,7 +329,7 @@ if (!built.success) throw new AggregateError(built.logs);`,
             })),
           }).toMatchObject({ how, exitCode: 0 });
           const months = await Promise.all(
-            ["de", "de-AT", "en", "fr", "ja"].map(async tag => {
+            ["de", "de-AT", "en", "en-US", "fr", "ja"].map(async tag => {
               const { stdout, exitCode } = await run([executable, tag], folder);
               return [tag, exitCode === 0 ? stdout.trim() : exitCode];
             }),
@@ -341,7 +341,8 @@ if (!built.success) throw new AggregateError(built.logs);`,
         const removed = { fr: 70, ja: 70 };
         const fromTheSystemsIcu = { fr: "janvier", ja: "1月" };
         // en is not in the list, and en-US is never removed.
-        const months = { de: "Januar", "de-AT": "Jänner", en: "January", ...(isMacOS ? fromTheSystemsIcu : removed) };
+        const kept = { de: "Januar", "de-AT": "Jänner", en: "January", "en-US": "January" };
+        const months = { ...kept, ...(isMacOS ? fromTheSystemsIcu : removed) };
         expect(executables).toEqual(ways.map(way => ({ how: way.join(" "), size: executables[0].size, months })));
       },
     );

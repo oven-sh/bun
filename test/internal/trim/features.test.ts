@@ -8,7 +8,7 @@ import { readAt } from "../../../scripts/build/trim/binary-reader.ts";
 import { checkBuiltinUses } from "../../../scripts/build/trim/builtin-uses.ts";
 import { openElf } from "../../../scripts/build/trim/elf-file.ts";
 import { featureNamed, loadFeatures } from "../../../scripts/build/trim/features.ts";
-import { icuItemClasses, storedItemsOf } from "../../../scripts/build/trim/icu-data.ts";
+import { icuItemClasses, itemsOf } from "../../../scripts/build/trim/icu-data.ts";
 import { icuLinksOf } from "../../../scripts/build/trim/icu-links.ts";
 import { joinLanguages, languageOfIcuItem } from "../../../scripts/build/trim/icu-locales.ts";
 import { type BuiltinUses } from "../../../scripts/build/trim/types.ts";
@@ -110,7 +110,7 @@ test.skipIf(icuData === undefined)(
   () => {
     const { dataPackage, dictionary } = icuData!;
     // The other trees repeat the links of these. Their 2,800 bundles are 2 seconds more in a debug build.
-    const items = storedItemsOf(dataPackage).filter(({ name }) => /^(coll\/|brkitr\/|[^/]+$)/.test(name));
+    const items = itemsOf(dataPackage).filter(({ name }) => /^(coll\/|brkitr\/|[^/]+$)/.test(name));
     const links = icuLinksOf(items, dictionary);
     const dependencies = links.filter(({ key }) => key === "%%DEPENDENCY");
     const languages = new Set(items.flatMap(({ name }) => languageOfIcuItem(name) ?? []));

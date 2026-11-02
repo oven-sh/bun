@@ -592,16 +592,17 @@ describe("the texts of the built-in modules", () => {
 describe("the items of ICU's data package", () => {
   const createItems = (...names: string[]) => names.map(name => ({ name, size: 16 }));
 
-  test("an item's name follows the first slash, and its size reaches the next item or the end of the package", () => {
+  test("an item's name follows the first slash, and its bytes reach the next item or the end of the package", () => {
     const items: [string, number][] = [
       ["icudt75l/af.res", 48],
       ["icudt75l/coll/de.res", 40],
       ["icudt75l/zoneinfo64.res", 33],
     ];
+    // packageOf fills an item with 0xaa, and so does what aligns the next item.
     expect(itemsOf(packageOf(items))).toEqual([
-      { name: "af.res", size: 48 },
-      { name: "coll/de.res", size: 48 },
-      { name: "zoneinfo64.res", size: 33 },
+      { name: "af.res", size: 48, bytes: Buffer.alloc(48, 0xaa) },
+      { name: "coll/de.res", size: 48, bytes: Buffer.alloc(48, 0xaa) },
+      { name: "zoneinfo64.res", size: 33, bytes: Buffer.alloc(33, 0xaa) },
     ]);
     expect(itemsOf(packageOf(items, 144)).map(item => item.name)).toEqual(["af.res", "coll/de.res", "zoneinfo64.res"]);
     expect(itemsOf(packageOf([]))).toEqual([]);

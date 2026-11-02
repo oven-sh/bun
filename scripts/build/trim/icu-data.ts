@@ -116,7 +116,7 @@ export interface IcuItem {
   size: number;
 }
 
-export function storedItemsOf(dataPackage: Buffer): (IcuItem & StoredIcuItem)[] {
+export function itemsOf(dataPackage: Buffer): (IcuItem & StoredIcuItem)[] {
   const malformed = (): never => {
     throw new BuildError("ICU's data package is malformed");
   };
@@ -141,10 +141,6 @@ export function storedItemsOf(dataPackage: Buffer): (IcuItem & StoredIcuItem)[] 
   });
 }
 
-export function itemsOf(dataPackage: Buffer): IcuItem[] {
-  return storedItemsOf(dataPackage).map(({ name, size }) => ({ name, size }));
-}
-
 export interface IcuRun {
   firstItem: number;
   itemCount: number;
@@ -155,10 +151,10 @@ export interface IcuRun {
 
 type RemovableClasses = Map<IcuItemClass, { features: number[]; byLocale: boolean }>;
 
-// en_US is ICU's default locale where `--trim-locales` removes the host's (bun_icu_default_locale.cpp), and the engine's
-// locale for a tag that it has no data for (tl, ars, sh). ICU opens the bundles of its default locale for other locales
-// too: each number format that it makes from a pattern starts with the symbols and the currency of the default locale
-// (decimfmt.cpp), and the spelled-out numbers of a calendar (ja-JP-u-ca-japanese) need one.
+// en_US is ICU's default locale where the top-level bundle of the host's locale is removed (bun_icu_default_locale.cpp),
+// and the engine's locale for a tag that it has no data for (tl, ars, sh). ICU opens the bundles of its default locale for
+// other locales too: each number format that it makes from a pattern starts with the symbols and the currency of the
+// default locale (decimfmt.cpp), and the spelled-out numbers of a calendar (ja-JP-u-ca-japanese) need one.
 const bundleOfDefaultLocale = /^([a-z]+\/)?en(_US)?\.res$/;
 
 function removalOf(
@@ -258,7 +254,7 @@ function findPackages(
       graph.address[node]! + graph.size[node]!,
     );
     const bytes = linked.image.bytes(start, end - start) ?? fail("ICU's data package lies in no section");
-    return { start, end, items: storedItemsOf(bytes) };
+    return { start, end, items: itemsOf(bytes) };
   });
 }
 

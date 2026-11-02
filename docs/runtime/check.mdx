@@ -684,7 +684,7 @@ These differences are intentional:
 
 ### Selected checker fixes
 
-Bun includes two checker fixes from TypeScript after the 7.0.2 baseline:
+Bun includes selected TypeScript 7.1 checker behavior after the 7.0.2 baseline, including these fixes:
 
 - **Primitive literal unions retain narrowing in mutable objects.** A value narrowed from a uniform primitive union keeps the selected member when copied into an object. Assigning a different member to that property remains an error.
 - **Recursive mapped and indexed types preserve compatible relationships.** Assertions and comparisons follow the underlying recursive type identities.

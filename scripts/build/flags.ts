@@ -2109,13 +2109,14 @@ export function computeHardeningFlags(cfg: Config): string[] {
   if (!cfg.hardened) return [];
   return [
     ...hardeningFlags.filter(flag => (cfg.release && !cfg.asan) || !flag.startsWith("-D_FORTIFY_SOURCE")),
-    ...(signsReturnAddresses(cfg) ? [`-mbranch-protection=pac-ret${cfg.aot ? "" : "+bti"}`] : []),
+    ...(signsReturnAddresses(cfg) ? ["-mbranch-protection=pac-ret"] : []),
   ];
 }
 
 /**
  * `SIGNED_RETURN_ADDRESSES` in oven-sh/WebKit's .github/scripts/lanes.mjs: arm64's "lto-hardened", which has no compiler
- * and has `LANDING_PADS` too, and with oven-sh/WebKit#968 its "lto-hardened-aot", which has not.
+ * and has `LANDING_PADS` too, and with oven-sh/WebKit#968 its "lto-hardened-aot", which has not. Landing pads are for LLInt
+ * and what the JITs generate, and ask for no flag here.
  */
 export function signsReturnAddresses(
   cfg: Pick<Config, "hardened" | "arm64" | "linux" | "aot" | "webkitVersion">,

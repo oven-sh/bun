@@ -88,3 +88,57 @@ test.if(hasBranchTargetIdentification)("an indirect branch past a landing pad tr
   expect(results.pastLandingPad.stdout).not.toContain("returned");
   expect(results.pastLandingPad.signalCode ?? results.pastLandingPad.exitCode).toBeOneOf(["SIGILL", 132]);
 });
+
+// Why neither JavaScriptCore's C++ nor Bun is compiled with +bti: which register holds the target of a jump counts only for a
+// jump that is in a guarded page itself. From any other page it may land where a call may.
+const jump = `
+const { dlopen, CFunction, toArrayBuffer } = require("bun:ffi");
+const { mmap, mprotect } = dlopen("libc.so.6", {
+  mmap: { args: ["ptr", "usize", "i32", "i32", "i32", "i64"], returns: "ptr" },
+  mprotect: { args: ["ptr", "usize", "i32"], returns: "i32" },
+}).symbols;
+const { __clear_cache } = dlopen("libgcc_s.so.1", { __clear_cache: { args: ["ptr", "ptr"], returns: "void" } }).symbols;
+const size = 65536;
+function page(guarded, instructions) {
+  const address = mmap(null, size, 3, 0x22, -1, 0); // PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS
+  new Uint32Array(toArrayBuffer(address, 0, instructions.length * 4)).set(instructions);
+  if (mprotect(address, size, 5 | (guarded ? 0x10 : 0))) throw new Error("mprotect"); // PROT_READ | PROT_EXEC, PROT_BTI
+  __clear_cache(address, address + size);
+  return address;
+}
+const [register, from, to] = process.argv.slice(2);
+const ret = 0xd65f03c0;
+const target = page(true, { "bti c": [0xd503245f, ret], "bti j": [0xd503249f, ret], "nop": [0xd503201f, ret] }[to]);
+// bti c; mov register, x0; br register
+const jumper = page(from === "guarded", { x2: [0xd503245f, 0xaa0003e2, 0xd61f0040], x16: [0xd503245f, 0xaa0003f0, 0xd61f0200] }[register]);
+new CFunction({ ptr: jumper, args: ["ptr"], returns: "void" })(target);
+require("fs").writeSync(1, "landed\\n");
+`;
+
+test.if(hasBranchTargetIdentification)("only a jump in a guarded page needs its target in x16 or x17", async () => {
+  using dir = tempDir("branch-target-identification", { "script.js": jump });
+  const rows: string[][] = [];
+  for (const from of ["unguarded", "guarded"])
+    for (const register of ["x2", "x16"]) for (const to of ["bti c", "bti j", "nop"]) rows.push([register, from, to]);
+  const results = await Promise.all(
+    rows.map(async row => {
+      const { stdout, stderr, exitCode, signalCode } = await run(String(dir), row);
+      const trapped = signalCode === "SIGILL" || exitCode === 132;
+      return `br ${row[0]} in a page that is ${row[1]}, to ${row[2]}: ${stdout.includes("landed") && exitCode === 0 ? "lands" : trapped ? "traps" : `exit ${exitCode} ${signalCode} ${stderr.slice(0, 300)}`}`;
+    }),
+  );
+  expect(results).toEqual([
+    "br x2 in a page that is unguarded, to bti c: lands",
+    "br x2 in a page that is unguarded, to bti j: lands",
+    "br x2 in a page that is unguarded, to nop: traps",
+    "br x16 in a page that is unguarded, to bti c: lands",
+    "br x16 in a page that is unguarded, to bti j: lands",
+    "br x16 in a page that is unguarded, to nop: traps",
+    "br x2 in a page that is guarded, to bti c: traps",
+    "br x2 in a page that is guarded, to bti j: lands",
+    "br x2 in a page that is guarded, to nop: traps",
+    "br x16 in a page that is guarded, to bti c: lands",
+    "br x16 in a page that is guarded, to bti j: lands",
+    "br x16 in a page that is guarded, to nop: traps",
+  ]);
+});

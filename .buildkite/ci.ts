@@ -286,10 +286,6 @@ const buildPlatforms: Platform[] = [
   // Links bun-webkit-linux-arm64-lto-hardened, which signs return addresses (oven-sh/WebKit#945) and has landing pads
   // (oven-sh/WebKit#965).
   { os: "linux", arch: "aarch64", profile: "hardened", distro: "debian", release: "13" },
-  // Link bun-webkit-linux-arm64-lto-hardened-aot: of oven-sh/WebKit#968, which signs return addresses, and of
-  // WEBKIT_VERSION, which does not.
-  { os: "linux", arch: "aarch64", profile: "hardened", aot: "signed", distro: "debian", release: "13" },
-  { os: "linux", arch: "aarch64", profile: "hardened", aot: "unsigned", distro: "debian", release: "13" },
   { os: "linux", arch: "aarch64", abi: "musl", distro: "debian", release: "13" },
   { os: "linux", arch: "x64", abi: "musl", distro: "debian", release: "13" },
   // Android: cross-compiled from the debian-13 aarch64 host via NDK sysroot.
@@ -351,16 +347,6 @@ const testPlatforms: Platform[] = [
     ],
   },
   { os: "linux", arch: "aarch64", profile: "hardened", distro: "debian", release: "13", tier: "latest" },
-  { os: "linux", arch: "aarch64", profile: "hardened", aot: "signed", distro: "debian", release: "13", tier: "latest" },
-  {
-    os: "linux",
-    arch: "aarch64",
-    profile: "hardened",
-    aot: "unsigned",
-    distro: "debian",
-    release: "13",
-    tier: "latest",
-  },
   { os: "linux", arch: "aarch64", distro: "ubuntu", release: "25.04", tier: "latest" },
   { os: "linux", arch: "x64", distro: "ubuntu", release: "25.04", tier: "latest" },
   { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.23", tier: "latest" },

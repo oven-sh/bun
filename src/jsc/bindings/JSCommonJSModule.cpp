@@ -1757,7 +1757,71 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
     this->evaluate(globalObject, key, source, false);
 }
 
-static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sourceOrigin, const WTF::String& sourceURL, JSModuleGraph*);
+// What a load keeps of its fetch until the loader runs the generator: the program source, and what the fetch decided about its module.
+struct FetchedCommonJSModule {
+    RefPtr<JSC::SourceProvider> source;
+    bool isRoot { false };
+    bool isMain { false };
+    bool ignoreESModuleAnnotation { false };
+};
+
+static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sourceOrigin, const WTF::String& sourceURL, JSModuleGraph*, FetchedCommonJSModule&&);
+
+static ALWAYS_INLINE FetchedCommonJSModule fetchedCommonJSModule(Zig::GlobalObject* globalObject, JSModuleGraph* graph, JSMap* requireMap, JSString* requireMapKey, bool ignoreESModuleAnnotation)
+{
+    FetchedCommonJSModule fetched;
+    fetched.isMain = isMainModuleLoad(globalObject, graph, requireMapKey);
+    // The process's entry point is module "."; a graph has no such module.
+    fetched.isRoot = !graph && (requireMap->size() == 0 || fetched.isMain);
+    fetched.ignoreESModuleAnnotation = ignoreESModuleAnnotation;
+    return fetched;
+}
+
+// The program source of a CommonJS file, in the module wrapper that the process has now.
+static ALWAYS_INLINE Ref<Zig::SourceProvider> commonJSProgramSource(Zig::GlobalObject* globalObject, ResolvedSource& source, bool isBuiltIn)
+{
+    if (globalObject->hasOverriddenModuleWrapper) [[unlikely]] {
+        auto concat = makeString(
+            globalObject->m_moduleWrapperStart,
+            source.source_code.transferToWTFString(),
+            globalObject->m_moduleWrapperEnd);
+        source.source_code = Bun::toStringRef(concat);
+        // The wrapper is a JavaScript value.
+        source.is_static = false;
+    }
+
+    return Zig::SourceProvider::create(globalObject, source, JSC::SourceProviderSourceType::Program, isBuiltIn);
+}
+
+// Makes the module of `filename` from its program source and puts it in the require map. `isRoot`: its id is ".".
+static JSCommonJSModule* createModuleInRequireMap(Zig::GlobalObject* globalObject, JSModuleGraph* graph, JSMap* requireMap, JSString* filename, Ref<JSC::SourceProvider>&& source, bool isRoot, bool isMain)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    const WTF::String& sourceURL = source->sourceURL();
+    size_t index = sourceURL.reverseFind(PLATFORM_SEP, sourceURL.length());
+    JSString* dirname;
+    if (index != WTF::notFound) {
+        dirname = JSC::jsSubstring(globalObject, filename, 0, index);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    } else {
+        dirname = jsEmptyString(vm);
+    }
+
+    auto* moduleObject = JSCommonJSModule::create(
+        vm,
+        globalObject->CommonJSModuleObjectStructure(),
+        isRoot ? JSC::jsString(vm, WTF::String("."_s)) : filename, filename, dirname, JSC::SourceCode(WTF::move(source)), graph);
+    moduleObject->loadedAsMain = isMain;
+
+    moduleObject->putDirect(vm,
+        WebCore::clientData(vm)->builtinNames().exportsPublicName(),
+        JSC::constructEmptyObject(globalObject, globalObject->objectPrototype()), 0);
+
+    requireMap->set(globalObject, filename, moduleObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return moduleObject;
+}
 
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
@@ -1774,7 +1838,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     JSMap* requireMap = requireMapOf(globalObject, graph);
     JSValue entry = requireMap->get(globalObject, requireMapKey);
     RETURN_IF_EXCEPTION(scope, {});
-    bool ignoreESModuleAnnotation = source.tag == ResolvedSourceTagPackageJSONTypeModule;
+    FetchedCommonJSModule fetched = fetchedCommonJSModule(globalObject, graph, requireMap, requireMapKey, source.tag == ResolvedSourceTagPackageJSONTypeModule);
     SourceOrigin sourceOrigin;
 
     if (entry) {
@@ -1782,70 +1846,43 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     }
 
     if (!moduleObject) {
-        size_t index = sourceURL.reverseFind(PLATFORM_SEP, sourceURL.length());
-        JSString* dirname;
-        JSString* filename = requireMapKey;
-        if (index != WTF::notFound) {
-            dirname = JSC::jsSubstring(globalObject, requireMapKey, 0, index);
-            RETURN_IF_EXCEPTION(scope, {});
-        } else {
-            dirname = jsEmptyString(vm);
-        }
-        // The process's entry point is module "."; a graph has no such module.
-        bool isMain = isMainModuleLoad(globalObject, graph, requireMapKey);
-        if (!graph && (requireMap->size() == 0 || isMain)) {
-            requireMapKey = JSC::jsString(vm, WTF::String("."_s));
-        }
-
-        if (globalObject->hasOverriddenModuleWrapper) [[unlikely]] {
-            auto concat = makeString(
-                globalObject->m_moduleWrapperStart,
-                source.source_code.transferToWTFString(),
-                globalObject->m_moduleWrapperEnd);
-            source.source_code = Bun::toStringRef(concat);
-            // The wrapper is a JavaScript value.
-            source.is_static = false;
-        }
-
-        auto sourceProvider = Zig::SourceProvider::create(globalObject, source, JSC::SourceProviderSourceType::Program, isBuiltIn);
+        auto sourceProvider = commonJSProgramSource(globalObject, source, isBuiltIn);
         if (!isBuiltIn && !globalObject->hasOverriddenModuleWrapper && Bun::IsolatedModuleCache::canUse(vm, globalObject->bunVM())) {
             Bun::IsolatedModuleCache::insertIfAbsent(vm, sourceURL, sourceProvider.get());
         }
         sourceOrigin = sourceProvider->sourceOrigin();
-        moduleObject = JSCommonJSModule::create(
-            vm,
-            globalObject->CommonJSModuleObjectStructure(),
-            requireMapKey, filename, dirname, JSC::SourceCode(WTF::move(sourceProvider)), graph);
-        moduleObject->loadedAsMain = isMain;
-
-        moduleObject->putDirect(vm,
-            WebCore::clientData(vm)->builtinNames().exportsPublicName(),
-            JSC::constructEmptyObject(globalObject, globalObject->objectPrototype()), 0);
-
-        requireMap->set(globalObject, filename, moduleObject);
+        fetched.source = sourceProvider.ptr();
+        moduleObject = createModuleInRequireMap(globalObject, graph, requireMap, requireMapKey, WTF::move(sourceProvider), fetched.isRoot, fetched.isMain);
         RETURN_IF_EXCEPTION(scope, {});
     } else {
         sourceOrigin = Zig::toSourceOrigin(sourceURL, isBuiltIn);
+        // The module that a load of Module.runMain() adopts has run, so the load keeps a source of its own.
+        if (fetched.isMain) [[unlikely]]
+            fetched.source = commonJSProgramSource(globalObject, source, isBuiltIn);
+        else
+            fetched.source = moduleObject->sourceCode.provider();
     }
 
-    moduleObject->ignoreESModuleAnnotation = ignoreESModuleAnnotation;
+    moduleObject->ignoreESModuleAnnotation = fetched.ignoreESModuleAnnotation;
 
-    return commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL, graph);
+    return commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL, graph, WTF::move(fetched));
 }
 
 // The module is the entry for the record's key in the require cache of the loader that fetched
 // it: `graph`'s, or the global object's.
-static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sourceOrigin, const WTF::String& sourceURL, JSModuleGraph* graph)
+// A load whose module left that cache after the fetch makes the module again, from `fetched`.
+static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sourceOrigin, const WTF::String& sourceURL, JSModuleGraph* graph, FetchedCommonJSModule&& fetched)
 {
     return JSC::SourceCode(
         JSC::SyntheticSourceProvider::create(
-            [graph = JSC::Weak<JSModuleGraph>(graph)](JSC::JSGlobalObject* lexicalGlobalObject,
+            [graph = JSC::Weak<JSModuleGraph>(graph), fetched = WTF::move(fetched)](JSC::JSGlobalObject* lexicalGlobalObject,
                 const JSC::Identifier& moduleKey,
                 Vector<JSC::Identifier, 4>& exportNames,
-                JSC::MarkedArgumentBuffer& exportValues) -> void {
+                JSC::MarkedArgumentBuffer& exportValues) mutable -> void {
                 auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
                 auto& vm = JSC::getVM(globalObject);
                 auto scope = DECLARE_THROW_SCOPE(vm);
+                RefPtr<JSC::SourceProvider> source = std::exchange(fetched.source, nullptr);
 
                 JSValue keyValue = identifierToJSValue(vm, moduleKey);
                 // Nothing evaluates in a disposed Bun.ModuleGraph: a module that had not run yet never does.
@@ -1859,36 +1896,40 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
                 JSValue entry = requireMap->get(globalObject, keyValue);
                 RETURN_IF_EXCEPTION(scope, void());
 
-                if (entry) {
-                    if (auto* moduleObject = dynamicDowncast<JSCommonJSModule>(entry)) {
-                        if (!moduleObject->hasEvaluated) {
-                            evaluateCommonJSModuleOnce(
-                                vm,
-                                globalObject,
-                                moduleObject,
-                                moduleObject->m_dirname.get(),
-                                moduleObject->m_filename.get());
-                            if (auto exception = scope.exception()) {
-                                if (vm.hasPendingTerminationException()) [[unlikely]]
-                                    return;
-                                (void)scope.tryClearException();
-
-                                // On error, remove the module from the require map
-                                // so that it can be re-evaluated on the next require.
-                                JSC__JSMap__remove(requireMap, globalObject, JSValue::encode(moduleObject->filename()));
-                                RETURN_IF_EXCEPTION(scope, void());
-
-                                scope.throwException(globalObject, exception);
-                                return;
-                            }
-                        }
-
-                        moduleObject->toSyntheticSource(globalObject, moduleKey, exportNames, exportValues);
-                        RETURN_IF_EXCEPTION(scope, void());
-                    }
-                } else {
-                    // require map was cleared of the entry
+                auto* moduleObject = entry ? dynamicDowncast<JSCommonJSModule>(entry) : nullptr;
+                if (!moduleObject && source && keyValue.isString()) {
+                    moduleObject = createModuleInRequireMap(globalObject, graph.get(), requireMap, asString(keyValue), source.releaseNonNull(), fetched.isRoot, fetched.isMain);
+                    RETURN_IF_EXCEPTION(scope, void());
+                    moduleObject->ignoreESModuleAnnotation = fetched.ignoreESModuleAnnotation;
                 }
+                if (!moduleObject)
+                    return;
+                // The module has its own source, and releases it when it starts to run.
+                source = nullptr;
+
+                if (!moduleObject->hasEvaluated) {
+                    evaluateCommonJSModuleOnce(
+                        vm,
+                        globalObject,
+                        moduleObject,
+                        moduleObject->m_dirname.get(),
+                        moduleObject->m_filename.get());
+                    if (auto exception = scope.exception()) {
+                        if (vm.hasPendingTerminationException()) [[unlikely]]
+                            return;
+                        (void)scope.tryClearException();
+
+                        // On error, remove the module from the require map so that it can be re-evaluated on the next require.
+                        JSC__JSMap__remove(requireMap, globalObject, JSValue::encode(moduleObject->filename()));
+                        RETURN_IF_EXCEPTION(scope, void());
+
+                        scope.throwException(globalObject, exception);
+                        return;
+                    }
+                }
+
+                moduleObject->toSyntheticSource(globalObject, moduleKey, exportNames, exportValues);
+                RETURN_IF_EXCEPTION(scope, void());
             },
             sourceOrigin,
             sourceURL));
@@ -1910,44 +1951,21 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     JSMap* requireMap = requireMapOf(globalObject, graph);
     JSValue entry = requireMap->get(globalObject, requireMapKey);
     RETURN_IF_EXCEPTION(scope, {});
+    FetchedCommonJSModule fetched = fetchedCommonJSModule(globalObject, graph, requireMap, requireMapKey, ignoreESModuleAnnotation);
+    fetched.source = sourceProvider.ptr();
 
     if (entry) {
         moduleObject = dynamicDowncast<JSCommonJSModule>(entry);
     }
 
     if (!moduleObject) {
-        size_t index = sourceURL.reverseFind(PLATFORM_SEP, sourceURL.length());
-        JSString* dirname;
-        JSString* filename = requireMapKey;
-        if (index != WTF::notFound) {
-            dirname = JSC::jsSubstring(globalObject, requireMapKey, 0, index);
-            RETURN_IF_EXCEPTION(scope, {});
-        } else {
-            dirname = jsEmptyString(vm);
-        }
-        // The process's entry point is module "."; a graph has no such module.
-        bool isMain = isMainModuleLoad(globalObject, graph, requireMapKey);
-        if (!graph && (requireMap->size() == 0 || isMain)) {
-            requireMapKey = JSC::jsString(vm, WTF::String("."_s));
-        }
-
-        moduleObject = JSCommonJSModule::create(
-            vm,
-            globalObject->CommonJSModuleObjectStructure(),
-            requireMapKey, filename, dirname, JSC::SourceCode(WTF::move(sourceProvider)), graph);
-        moduleObject->loadedAsMain = isMain;
-
-        moduleObject->putDirect(vm,
-            WebCore::clientData(vm)->builtinNames().exportsPublicName(),
-            JSC::constructEmptyObject(globalObject, globalObject->objectPrototype()), 0);
-
-        requireMap->set(globalObject, filename, moduleObject);
+        moduleObject = createModuleInRequireMap(globalObject, graph, requireMap, requireMapKey, WTF::move(sourceProvider), fetched.isRoot, fetched.isMain);
         RETURN_IF_EXCEPTION(scope, {});
     }
 
     moduleObject->ignoreESModuleAnnotation = ignoreESModuleAnnotation;
 
-    return commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL, graph);
+    return commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL, graph, WTF::move(fetched));
 }
 
 JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString, JSModuleGraph* graph, JSCommonJSModule* requestingModule)

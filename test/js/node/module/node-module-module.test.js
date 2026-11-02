@@ -1501,6 +1501,22 @@ console.log("survived", require("./late.js"));`,
       import { Worker } from "node:worker_threads";
       new Worker(new URL("./${entry}", import.meta.url));
     `;
+    // A launcher that starts target.cjs and then runs `after`, which has the path of the script in `target`.
+    const startThen = after => `
+      const target = require("node:path").resolve("target.cjs");
+      require("node:module").runMain(target);
+      ${after}
+    `;
+    const mainTarget = { "target.cjs": print("target.cjs", isMain, isMainModule) };
+    const targetIsMain = ["target.cjs: require.main===module true | process.mainModule===module true"];
+    // A script that counts its runs.
+    const countedTarget = {
+      "target.cjs": `
+        globalThis.runs = (globalThis.runs ?? 0) + 1;
+        console.log("target.cjs:", "run", globalThis.runs, "|", ${isMain});
+        module.exports = { run: globalThis.runs };
+      `,
+    };
 
     each([
       [
@@ -2051,6 +2067,212 @@ console.log("survived", require("./late.js"));`,
         ["other.cjs: require.main===module false", "host.mjs: import.meta.main true | process.mainModule undefined"],
         { bunOnly: true },
       ],
+      // In the rows below require.cache loses the script after the call. Node ran the script inside the call. Here
+      // the script starts after the launcher's turn, and it still runs.
+      [
+        "the script runs after the launcher deleted it from require.cache",
+        { ...mainTarget, "wrapper.cjs": startThen(`delete require.cache[target];`) },
+        ["wrapper.cjs"],
+        targetIsMain,
+      ],
+      [
+        "the script runs after the launcher deleted every module from require.cache",
+        {
+          ...mainTarget,
+          "wrapper.cjs": startThen(`for (const key of Object.keys(require.cache)) delete require.cache[key];`),
+        },
+        ["wrapper.cjs"],
+        targetIsMain,
+      ],
+      [
+        "the script runs after a process.nextTick callback deleted it from require.cache",
+        { ...mainTarget, "wrapper.cjs": startThen(`process.nextTick(() => delete require.cache[target]);`) },
+        ["wrapper.cjs"],
+        targetIsMain,
+      ],
+      [
+        "the script runs after a microtask deleted it from require.cache",
+        { ...mainTarget, "wrapper.cjs": startThen(`queueMicrotask(() => delete require.cache[target]);`) },
+        ["wrapper.cjs"],
+        targetIsMain,
+      ],
+      [
+        "the script runs after the launcher put a value that is not a module in its place in require.cache",
+        { ...mainTarget, "wrapper.cjs": startThen(`require.cache[target] = 1;`) },
+        ["wrapper.cjs"],
+        targetIsMain,
+      ],
+      [
+        "the script runs after a process.nextTick callback started it and deleted it from require.cache",
+        { ...mainTarget, "wrapper.cjs": `process.nextTick(() => { ${startThen(`delete require.cache[target];`)} });` },
+        ["wrapper.cjs"],
+        targetIsMain,
+      ],
+      [
+        "the script runs after a setImmediate callback started it and deleted it from require.cache",
+        { ...mainTarget, "wrapper.cjs": `setImmediate(() => { ${startThen(`delete require.cache[target];`)} });` },
+        ["wrapper.cjs"],
+        targetIsMain,
+      ],
+      [
+        "the script runs after an ES module launcher deleted it from require.cache",
+        {
+          ...mainTarget,
+          "wrapper.mjs": `
+            import { runMain, createRequire } from "node:module";
+            import path from "node:path";
+            const target = path.resolve("target.cjs");
+            runMain(target);
+            delete createRequire(import.meta.url).cache[target];
+          `,
+        },
+        ["wrapper.mjs"],
+        targetIsMain,
+      ],
+      [
+        "a --require preload starts other.cjs and deletes it from require.cache: it runs first, and then the entry point",
+        {
+          "preload.cjs": `
+            const other = require("node:path").resolve("other.cjs");
+            require("node:module").runMain(other);
+            delete require.cache[other];
+          `,
+          "other.cjs": print("other.cjs", isMain, id),
+          "entry.cjs": print("entry.cjs", isMain, id),
+        },
+        ["--require", "./preload.cjs", "./entry.cjs"],
+        ["other.cjs: require.main===module true | id .", "entry.cjs: require.main===module true | id ."],
+      ],
+      [
+        "a started script starts another script and deletes it from require.cache",
+        {
+          "wrapper.cjs": start("a.cjs"),
+          "a.cjs": `
+            const b = require("node:path").resolve("b.cjs");
+            ${print("a.cjs", isMain)}
+            require("node:module").runMain(b);
+            delete require.cache[b];
+          `,
+          "b.cjs": print("b.cjs", isMain),
+        },
+        ["wrapper.cjs"],
+        ["a.cjs: require.main===module true", "b.cjs: require.main===module true"],
+      ],
+      [
+        "the first of two started scripts runs after the launcher deleted it from require.cache",
+        {
+          "wrapper.cjs": `
+            const path = require("node:path");
+            const a = path.resolve("a.cjs");
+            process.on("exit", () => { ${print("wrapper.cjs", mainModule)} });
+            require("node:module").runMain(a);
+            require("node:module").runMain(path.resolve("b.cjs"));
+            delete require.cache[a];
+          `,
+          "a.cjs": print("a.cjs", isMain),
+          "b.cjs": print("b.cjs", isMain),
+        },
+        ["wrapper.cjs"],
+        [
+          "a.cjs: require.main===module true",
+          "b.cjs: require.main===module true",
+          "wrapper.cjs: process.mainModule b.cjs",
+        ],
+      ],
+      // Node ran the script before the delete, so require.cache does not have it.
+      [
+        "a script that runs after it left require.cache is in require.cache again",
+        {
+          ...mainTarget,
+          "wrapper.cjs": startThen(`
+            delete require.cache[target];
+            process.on("exit", () => console.log("in require.cache:", target in require.cache));
+          `),
+        },
+        ["wrapper.cjs"],
+        [...targetIsMain, "in require.cache: true"],
+        { bunOnly: true },
+      ],
+      [
+        "the script runs after it left require.cache and the garbage collector ran",
+        { ...mainTarget, "wrapper.cjs": startThen(`delete require.cache[target]; Bun.gc(true);`) },
+        ["wrapper.cjs"],
+        targetIsMain,
+        { bunOnly: true },
+      ],
+      // Node runs the script once, inside the call. Its second copy is what the later require() makes, and it is
+      // not a main module.
+      [
+        "a script that require() ran before the start, and that then left require.cache, runs again as a main module",
+        {
+          ...countedTarget,
+          "wrapper.cjs": startThen(`
+            require(target);
+            delete require.cache[target];
+            setImmediate(() => console.log("later require:", JSON.stringify(require(target))));
+          `),
+        },
+        ["wrapper.cjs"],
+        [
+          "target.cjs: run 1 | require.main===module true",
+          "target.cjs: run 2 | require.main===module true",
+          `later require: {"run":2}`,
+        ],
+        { bunOnly: true },
+      ],
+      // Node does not run a module that is already loaded, so only the later require() runs it again.
+      [
+        "a loaded module that is started, and that then left require.cache, runs again as a main module",
+        {
+          ...countedTarget,
+          "wrapper.cjs": `
+            require("./target.cjs");
+            ${startThen(`
+              delete require.cache[target];
+              setImmediate(() => console.log("later require:", JSON.stringify(require(target))));
+            `)}
+          `,
+        },
+        ["wrapper.cjs"],
+        [
+          "target.cjs: run 1 | require.main===module false",
+          "target.cjs: run 2 | require.main===module true",
+          `later require: {"run":2}`,
+        ],
+        { bunOnly: true },
+      ],
+      // In Node the call throws what the script throws.
+      [
+        "a script that throws in a require() before the start runs again at the start, and a later import() rejects",
+        {
+          "wrapper.cjs": startThen(`
+            try {
+              require(target);
+            } catch (error) {
+              console.log("require throws:", error.message);
+            }
+            setImmediate(() => {
+              import(require("node:url").pathToFileURL(target)).then(
+                () => console.log("later import resolves"),
+                error => console.log("later import rejects:", error.message),
+              );
+            });
+          `),
+          "target.cjs": `
+            globalThis.runs = (globalThis.runs ?? 0) + 1;
+            console.log("target.cjs:", "run", globalThis.runs, "|", ${isMain});
+            throw new Error("from target.cjs");
+          `,
+        },
+        ["wrapper.cjs"],
+        [
+          "target.cjs: run 1 | require.main===module true",
+          "require throws: from target.cjs",
+          "target.cjs: run 2 | require.main===module true",
+          "later import rejects: from target.cjs",
+        ],
+        { bunOnly: true },
+      ],
     ]);
 
     // Runs `entry` under --hot. Each run is [the files to save before it, the lines that it prints].
@@ -2186,6 +2408,28 @@ console.log("survived", require("./late.js"));`,
       },
     );
 
+    test.each(["jest", "vi"])(
+      "bun test: the script runs after %s.resetModules() in the turn of the call",
+      async api => {
+        const files = {
+          "a.test.cjs": `
+          test("starts x.cjs", async () => {
+            const ran = new Promise(resolve => process.once("x-ran", resolve));
+            ${start("x.cjs")}
+            ${api}.resetModules();
+            await ran;
+          });
+        `,
+          "x.cjs": `${print("x.cjs", isMain)} process.emit("x-ran");`,
+        };
+        expect(await linesOfBunTest(files, ["./a.test.cjs"])).toEqual({
+          lines: ["x.cjs: require.main===module true"],
+          exitCode: 0,
+          stderr: "",
+        });
+      },
+    );
+
     test("bun test --preload: a script that the preload starts is not the main module of a test file", async () => {
       const files = {
         "preload.cjs": start("x.cjs"),
@@ -2199,6 +2443,79 @@ console.log("survived", require("./late.js"));`,
         ],
         exitCode: 0,
         stderr: "",
+      });
+    });
+  });
+
+  // The ES loader makes the module object of a CommonJS file when it fetches the file, and runs the module later.
+  // A file that leaves require.cache in between still runs: the load runs the source that it fetched.
+  describe.concurrent("a CommonJS module that the ES loader has not run yet runs after it left require.cache", () => {
+    async function run(files, entry) {
+      using dir = tempDir("require-cache-delete-fetched-cjs", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), entry],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim().split("\n"), stderr, exitCode };
+    }
+
+    // require() of an ES module fetches its whole graph before any module of the graph runs.
+    test("a CommonJS module of a require(esm) graph deletes the next one", async () => {
+      const files = {
+        "entry.cjs": `require("./main.mjs");`,
+        "main.mjs": `
+          import "./first.cjs";
+          import second from "./second.cjs";
+          console.log("main.mjs imports", JSON.stringify(second));
+        `,
+        "first.cjs": `
+          const second = require("node:path").join(__dirname, "second.cjs");
+          console.log("first.cjs runs, second.cjs in require.cache:", second in require.cache);
+          delete require.cache[second];
+        `,
+        "second.cjs": `
+          console.log("second.cjs runs");
+          module.exports = { value: 1 };
+        `,
+      };
+      expect(await run(files, "entry.cjs")).toEqual({
+        stdout: [
+          "first.cjs runs, second.cjs in require.cache: true",
+          "second.cjs runs",
+          `main.mjs imports {"value":1}`,
+        ],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // With a compile cache the thread that calls import() transpiles the file, so the module object exists after the call.
+    test("import() of a CommonJS file, then the delete in the same turn", async () => {
+      const files = {
+        "entry.cjs": `
+          const path = require("node:path");
+          require("node:module").enableCompileCache(path.resolve("compile-cache"));
+          const target = path.resolve("target.cjs");
+          import(require("node:url").pathToFileURL(target)).then(
+            namespace => console.log("import() resolves with", JSON.stringify(namespace.default)),
+            error => console.log("import() rejects with", String(error)),
+          );
+          console.log("target.cjs in require.cache:", target in require.cache);
+          delete require.cache[target];
+        `,
+        "target.cjs": `
+          console.log("target.cjs runs");
+          module.exports = { value: 1 };
+        `,
+      };
+      expect(await run(files, "entry.cjs")).toEqual({
+        stdout: ["target.cjs in require.cache: true", "target.cjs runs", `import() resolves with {"value":1}`],
+        stderr: "",
+        exitCode: 0,
       });
     });
   });

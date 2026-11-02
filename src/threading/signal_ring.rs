@@ -312,7 +312,10 @@ mod tests {
         std::thread::scope(|scope| {
             let viewer = scope.spawn(|| queued(ring));
             std::thread::sleep(std::time::Duration::from_millis(20));
-            assert!(!viewer.is_finished(), "the view returned with a slot still at 0");
+            assert!(
+                !viewer.is_finished(),
+                "the view returned with a slot still at 0"
+            );
             release();
             viewer.join().unwrap()
         })
@@ -326,7 +329,8 @@ mod tests {
         assert!(ring.enqueue(2));
         assert_eq!(ring.dequeue(), None);
 
-        let view = view_while_a_slot_is_zero(&ring, || ring.slot(claimed).store(1, Ordering::Release));
+        let view =
+            view_while_a_slot_is_zero(&ring, || ring.slot(claimed).store(1, Ordering::Release));
         assert_eq!(view, [1, 2]);
         assert_eq!(ring.dequeue(), Some(1));
         assert_eq!(ring.dequeue(), Some(2));

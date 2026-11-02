@@ -19,6 +19,7 @@ var names = [
   "a-store-through-arguments",
   "a-parameter-named-require",
   "a-require-found-by-with",
+  "a-module-found-by-with",
   "a-require-declared-by-eval",
   "a-store-to-exports",
   "a-store-to-module",

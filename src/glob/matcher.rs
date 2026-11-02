@@ -5669,6 +5669,13 @@ mod tests {
 
     /// The answer with no shape. 40 calls on one shape have to give the same one, for each way to treat dots.
     fn matches<const WINDOWS: bool>(glob: &[u8], path: &[u8]) -> bool {
+        let separators: &[u8] = if WINDOWS { b"/\\" } else { b"/" };
+        let has_dot_segment = strings::split_any(path, separators).any(|it| it.starts_with(b"."));
+        assert!(
+            !has_dot_segment,
+            "the ways to treat dots differ on {:?}",
+            BStr::new(path)
+        );
         let answer = match_on::<WINDOWS>(glob, path).matches();
         for dots in [Dots::Match, Dots::Hide, Dots::SkipTraversal] {
             let shape = Shape::of(glob);

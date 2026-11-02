@@ -885,21 +885,27 @@ pub(crate) enum Received {
 }
 
 unsafe extern "C" {
+    safe fn Bun__hasRejectedPromises(global: &JSGlobalObject) -> bool;
     safe fn Bun__holdRejectedPromises(global: &JSGlobalObject) -> usize;
     safe fn Bun__releaseRejectedPromises(global: &JSGlobalObject, mark: usize);
 }
 
 /// `toThrow()` takes a rejection that nothing handles during the call for what the function threw. What was rejected
 /// before the call isn't the function's, and can still get its handler, so it waits here until the call is over.
-/// The runner does the same around a callback of a concurrent group, for what the other tests of the group rejected.
+/// The runner does the same around the callback of a test or hook.
 pub(crate) struct EarlierRejections<'a> {
     global: &'a JSGlobalObject,
     mark: usize,
 }
 
 impl<'a> EarlierRejections<'a> {
-    pub(crate) fn hold(global: &'a JSGlobalObject) -> Self {
+    fn hold(global: &'a JSGlobalObject) -> Self {
         Self { global, mark: Bun__holdRejectedPromises(global) }
+    }
+
+    /// `None` if nothing is rejected, which is the usual case.
+    pub(crate) fn hold_any(global: &'a JSGlobalObject) -> Option<Self> {
+        Bun__hasRejectedPromises(global).then(|| Self::hold(global))
     }
 }
 

@@ -2981,6 +2981,35 @@ describe.concurrent("behavior depends on the module a function is imported from"
     });
   });
 
+  // Which test of a concurrent group left a rejection isn't known, so the order of the tests doesn't decide who gets it.
+  test.each([
+    ["bun", "vitest"],
+    ["vitest", "bun"],
+  ])("a rejection left in a concurrent group of a %s test and a %s test is the runner's", async (first, second) => {
+    const { log, results, errors, exitCode } = await runTests({
+      "a.test.js": `
+        import * as bun from "bun:test";
+        import * as vitest from "vitest";
+        process.on("unhandledRejection", error => console.log("heard", error.message));
+        ${first}.test.concurrent("leaves", async () => {
+          await new Promise(resolve => {
+            setTimeout(() => {
+              Promise.reject(new Error("left"));
+              resolve();
+            });
+          });
+        });
+        ${second}.test.concurrent("beside it", () => {});
+      `,
+    });
+    expect({ log, results: results.toSorted(), errors, exitCode }).toEqual({
+      log: [],
+      results: ["(pass) beside it", "(pass) leaves"],
+      errors: ["error: left"],
+      exitCode: 1,
+    });
+  });
+
   test(`"bun:test" and "@jest/globals" keep the done callback`, async () => {
     const { log, results, exitCode } = await runTests({
       "a.test.js": `

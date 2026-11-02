@@ -3513,30 +3513,6 @@ describe.concurrent("a rejection left by the callback that settles", () => {
       });
     });
 
-    // The runner calls the listeners of the test's abort signal itself, right before it leaves the test.
-    test.each(
-      Object.entries({
-        "times out": `
-          test("leaves", async ({ signal }) => {
-            signal.addEventListener("abort", () => void Promise.reject(new Error("left")));
-            await new Promise(() => {});
-          }, 10);
-        `,
-        "returns after its time limit": `
-          test("leaves", ({ signal }) => {
-            signal.addEventListener("abort", () => void Promise.reject(new Error("left")));
-            const end = performance.now() + 20;
-            while (performance.now() < end);
-          }, 1);
-        `,
-      }),
-    )("by an abort listener, when it %s", async (_, leaves) => {
-      const { stderr, errors, exitCode } = await runFiles({
-        "a.test.ts": `import { test } from "vitest";${leaves}${next}`,
-      });
-      expect({ results: results(stderr), errors, exitCode }).toEqual(failsThatTest);
-    });
-
     // The report calls the listener, and the test then waits for the matcher like for any other.
     test("by a matcher that a listener for the rejection calls", async () => {
       const { stderr, errors, exitCode } = await runFiles({
@@ -3632,6 +3608,31 @@ describe.concurrent("a rejection left by the callback that settles", () => {
       expect(stderr).toContain("Unhandled error between tests");
     });
 
+    // A report when a test times out could resume the code of that test, so the runner leaves it to the next callback.
+    test.each(
+      Object.entries({
+        "times out": `
+          test("leaves", async ({ signal }) => {
+            signal.addEventListener("abort", () => void Promise.reject(new Error("left")));
+            await new Promise(() => {});
+          }, 10);
+        `,
+        "returns after its time limit": `
+          test("leaves", ({ signal }) => {
+            signal.addEventListener("abort", () => void Promise.reject(new Error("left")));
+            const end = performance.now() + 20;
+            while (performance.now() < end);
+          }, 1);
+        `,
+      }),
+    )("a test that %s, from its abort listener", async (_, leaves) => {
+      const { stderr, errors, exitCode } = await runFiles({
+        "a.test.ts": `import { test } from "vitest";${leaves}${next}`,
+      });
+      expect({ results: results(stderr), errors, exitCode }).toEqual(failsThatTest);
+      expect(stderr).toContain("Unhandled error between tests");
+    });
+
     test("a describe(), whose tests don't run, and the next describe() keeps its own", async () => {
       const { stderr, errors, exitCode } = await runFiles({
         "a.test.ts": `
@@ -3690,8 +3691,8 @@ describe.concurrent("a rejection left by the callback that settles", () => {
     });
   });
 
-  // The next hook or test doesn't get the chance to handle it, as after a callback that returns without a promise.
-  describe("is reported when only a later callback handles it", () => {
+  // What a hook leaves fails no test, so the callback that runs next can still handle it before its first await.
+  describe("a hook isn't reported when the next callback handles it at once", () => {
     test.each(
       Object.entries({
         "a timer": `await new Promise(resolve => setTimeout(resolve));`,
@@ -3712,12 +3713,15 @@ describe.concurrent("a rejection left by the callback that settles", () => {
         `,
       });
       expect({ results: results(stderr), errors, exitCode }).toEqual({
-        ...failsThatTest,
         results: ["(pass) handles it"],
+        errors: [],
+        exitCode: 0,
       });
-      expect(stderr).toContain("Unhandled error between tests");
     });
+  });
 
+  // The result of a test is decided when the runner leaves it, so a later hook or callback comes too late.
+  describe("a test is reported when only a later callback handles it", () => {
     test("afterEach(), after the test", async () => {
       const { stderr, errors, exitCode } = await runFiles({
         "a.test.ts": `
@@ -3883,6 +3887,26 @@ describe.concurrent("a rejection left by the callback that settles", () => {
         exitCode: 0,
       });
     });
+
+    // As in Vitest: the hook has ended by then, so its test still runs, and what the test throws stays hidden.
+    test("and the test that beforeEach() skipped from a timer still runs", async () => {
+      const { stdout, stderr, errors, exitCode } = await runFiles({
+        "a.test.ts": `
+          import { beforeEach, test } from "vitest";
+          beforeEach(async ({ skip }) => {${skipInTimer}});
+          test("skips", () => {
+            console.log("ran");
+            throw new Error("hidden");
+          });
+        `,
+      });
+      expect({ stdout: stdout.trim().split("\n").at(-1), results: results(stderr), errors, exitCode }).toEqual({
+        stdout: "ran",
+        results: ["(skip) skips"],
+        errors: [],
+        exitCode: 0,
+      });
+    });
   });
 
   // While a test runs, the turns of the event loop are the only points at which a rejection is reported.
@@ -3899,21 +3923,20 @@ describe.concurrent("a rejection left by the callback that settles", () => {
       const { errors, counts, exitCode } = await runFiles({
         "a.test.ts": `
           ${imports}
-          const block = ms => {
-            const end = performance.now() + ms;
-            while (performance.now() < end);
-          };
           test("arms the runner's timer", () => {}, 200);
           test("handles it late", async () => {
             let rejected;
-            await new Promise<void>(resolve => {
-              setTimeout(() => block(300), 1);
+            const handled = new Promise<void>(resolve => {
               setTimeout(() => void (rejected = Promise.reject(new Error("handled late"))), ${rejectsAt});
               setTimeout(() => {
                 rejected.catch(() => {});
                 resolve();
               }, ${handlesAt});
             });
+            // All three timers are due before the event loop runs again, however slow this machine is.
+            const end = performance.now() + 300;
+            while (performance.now() < end);
+            await handled;
           });
         `,
       });
@@ -3982,7 +4005,7 @@ describe.concurrent("a rejection left by the callback that settles", () => {
 
   // The runner has moved on too when the promise jobs run that a time limit queues: what the listeners of the abort
   // signal resume, and what awaits a matcher that ends with its test.
-  test.todo("from what the time limit of the test resumes fails that test", async () => {
+  test.todo("from what the time limit of the test resumes doesn't fail the next test", async () => {
     const { stderr, errors, exitCode } = await runFiles({
       "a.test.ts": `
         import { test } from "vitest";

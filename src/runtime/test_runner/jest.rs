@@ -651,7 +651,10 @@ pub(crate) mod on_unhandled_rejection {
                 return;
             }
             // mark unhandled errors as belonging to the currently active test. note that this can be misleading.
-            let mut current_state_data = buntest.get_current_state_data();
+            let mut current_state_data = match buntest.own_report {
+                bun_test::OwnReport::Earlier => RefDataValue::Start,
+                _ => buntest.get_current_state_data(),
+            };
             // split entry()/sequence() borrows via raw-ptr capture (per-use reborrow).
             let entry_ptr: Option<*mut bun_test::ExecutionEntry> = current_state_data
                 .entry(buntest)
@@ -689,8 +692,8 @@ pub(crate) mod on_unhandled_rejection {
                 &current_state_data,
             );
             buntest.is_reporting_uncaught = false;
-            if buntest.is_leaving {
-                // The runner has the completion of what it leaves in hand.
+            if buntest.own_report != bun_test::OwnReport::None {
+                // The runner that started this report has the next step in hand.
                 return;
             }
             buntest.add_result(current_state_data);

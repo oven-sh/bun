@@ -779,8 +779,8 @@ pub(crate) struct BunTest {
     pending_phase: RefDataValue,
     /// Set while the global unhandled-error handler reports an error through `on_uncaught_exception`.
     pub(crate) is_reporting_uncaught: bool,
-    /// Set while the runner reports what the entry, group or describe() that it is about to move past left rejected.
-    pub(crate) is_leaving: bool,
+    /// Set while the runner itself starts a report of rejected promises. The error handler then queues no completion.
+    pub(crate) own_report: OwnReport,
     /// What `skip()` of a test context throws to unwind its test.
     skip_error: Option<Strong>,
     /// True until `TestCommand::run` starts the runner, because the file's module may still be registering tests.
@@ -828,7 +828,7 @@ impl BunTest {
             wants_wakeup: false,
             pending_phase: RefDataValue::Start,
             is_reporting_uncaught: false,
-            is_leaving: false,
+            own_report: OwnReport::None,
             skip_error: None,
             is_loading: true,
             file_end: None,
@@ -1384,11 +1384,12 @@ impl BunTest {
         // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point (before JS re-entry).
         unsafe { (*this).update_min_timeout(global_this, timeout) };
         let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { cfg_args };
-        // Another test of a concurrent group can still handle what it rejected before this callback, so the report
-        // below leaves that alone.
+        // What was rejected before the callback of a test or hook isn't its own, and it can still handle that.
         // SAFETY: `UnsafeCell`-derived; sole borrow at this point (before JS re-entry).
-        let earlier_rejections = unsafe { (*this).phase == Phase::Execution && (*this).execution.is_group_concurrent() }
-            .then(|| EarlierRejections::hold(global_this));
+        let earlier_rejections = match unsafe { (*this).phase } {
+            Phase::Execution => EarlierRejections::hold_any(global_this),
+            _ => None,
+        };
         // SAFETY: `this_strong` keeps the cell alive and in place for the whole call.
         let on_stack = unsafe { OnStack::enter(&raw const (*this).execution.on_stack, &cfg_data) };
         let result: JSValue = match vm
@@ -1428,7 +1429,13 @@ impl BunTest {
                 }
             }
         });
+        let had_earlier_rejections = earlier_rejections.is_some();
         drop(earlier_rejections);
+        // SAFETY: re-derive after JS callback returned; no outer `&mut` was held across it.
+        if had_earlier_rejections && unsafe { !(*this).execution.is_group_concurrent() } {
+            // This callback didn't handle it, and no other test of a concurrent group still can.
+            Self::report_as(this_strong, global_this, OwnReport::Earlier);
+        }
 
         // `dcb_ref` is a raw observer alias, NOT a
         // counted handle. The single +1 from `ref()` is owned by
@@ -1539,12 +1546,17 @@ impl BunTest {
         }
     }
 
-    /// Reports what the entry, group or describe() that is still current left rejected. Re-enters the runner: hold no `&mut`.
+    /// Reports what the test, concurrent group or describe() that is still current left rejected, and charges it.
     pub(crate) fn report_before_leaving(this_strong: &BunTestPtr, global_this: &JSGlobalObject) {
         debug_assert!(this_strong.in_run_loop);
-        this_strong.get().is_leaving = true;
+        Self::report_as(this_strong, global_this, OwnReport::Leaving);
+    }
+
+    /// The report re-enters the runner, so the caller holds no `&mut` into it.
+    fn report_as(this_strong: &BunTestPtr, global_this: &JSGlobalObject, own_report: OwnReport) {
+        let outer = core::mem::replace(&mut this_strong.get().own_report, own_report);
         Self::report_rejections(global_this, || {});
-        this_strong.get().is_leaving = false;
+        this_strong.get().own_report = outer;
     }
 
     pub(crate) fn skip_error(&mut self, global_this: &JSGlobalObject) -> JSValue {
@@ -1799,6 +1811,16 @@ pub(crate) struct EntryData {
     pub(crate) sequence_index: usize,
     pub(crate) entry: *const (),
     pub(crate) attempt: u32,
+}
+
+/// Who a report of rejected promises that the runner starts itself is charged to.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OwnReport {
+    None,
+    /// Charged to the test, concurrent group or describe() that the runner is about to move past.
+    Leaving,
+    /// Of what was rejected before the callback that just ran, and that it didn't handle. Nobody is charged.
+    Earlier,
 }
 
 // Clone/Copy: bitwise OK — `active_scope` is a non-owning borrow of a

@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 0f01653c9c6ec50cf2f6d53dc52b6f0d9c847862021535698ec39389bb4c2242.
+// Written against that file with the SHA-256 871f289fdbd5866a0785cc4cca732aa93623138d2d92e22e13685307caa4cbf6.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -1050,22 +1050,19 @@ Server.prototype.listen = function (this: $Node.HttpServer) {
       if (typeof arg0 === "object") {
         // (handle[, backlog][, cb]), one level down: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2127-L2136
         const handle = arg0._handle || arg0.handle || arg0;
-        if (typeof handle.onconnection === "function") {
-          let listening: void | false = undefined;
+        if (typeof handle.onconnection === "function" && $bindgen("Listener.bind.ts", "isListenHandle")(handle)) {
           try {
             // Exclusive, as in node: a cluster worker does not ask the primary.
-            listening = server[kRealListen](tls, 0, undefined, undefined, false, handle);
+            server[kRealListen](tls, 0, undefined, undefined, false, handle);
           } catch (err) {
             // A handle that is closed (EINVAL), or that is a pipe (EEXIST): it fails here as it fails for a net.Server.
             const { syscall, code } = (err ?? {}) as { syscall?: string; code?: string };
             const listenError = syscall === "listen" ? listenHandleError(code === "EINVAL") : err;
             process.nextTick(emitListenErrorNextTick, server, listenError);
           }
-          if (listening !== false) {
-            const lastArg = arguments[argc - 1];
-            if ($isCallable(lastArg)) this.once("listening", lastArg);
-            return this;
-          }
+          const lastArg = arguments[argc - 1];
+          if ($isCallable(lastArg)) this.once("listening", lastArg);
+          return this;
         }
         // `fd` and `tls` are bags of their own here. Any other object named no address, and got a port of its own.
         if (!("port" in arg0 || "path" in arg0 || "fd" in arg0 || "tls" in arg0)) {
@@ -1151,7 +1148,7 @@ Server.prototype.listen = function (this: $Node.HttpServer) {
   return this;
 };
 
-// `listenHandle`, whose default keeps `length` at 5: serve that `_handle` and bind nothing. `false` if it is no listener.
+// `listenHandle`, whose default keeps `length` at 5: serve the connections of that `_handle` and bind nothing.
 Server.prototype[kRealListen] = function (
   this: $Node.HttpServer,
   tls: $Node.HttpServerTLSOptions | null,
@@ -1598,15 +1595,7 @@ Server.prototype[kRealListen] = function (
       http_res.$exchange.dispatchPromise = pendingPromise;
       return pendingPromise;
     };
-    const serve =
-      listenHandle === undefined
-        ? Bun.serve
-        : (((options: Parameters<typeof Bun.serve>[0]) =>
-            $bindgen("node_http_binding.bind.ts", "serveOnListenHandle")(
-              options,
-              listenHandle,
-            )) as unknown as typeof Bun.serve);
-    this[serverSymbol] = serve<any>({
+    const serveOptions = {
       idleTimeout: 0, // nodejs dont have a idleTimeout by default
       tls: tls as any,
       port,
@@ -1664,14 +1653,16 @@ Server.prototype[kRealListen] = function (
           isPipelinedDispatch,
         );
       },
-    });
+    };
+    // Bun.serve() reads the handle under a private name, which no program can set.
+    if (listenHandle !== undefined) {
+      $putByIdDirectPrivate(serveOptions as { $listenHandle?: unknown }, "listenHandle", listenHandle);
+    }
+    this[serverSymbol] = Bun.serve<any>(serveOptions);
 
     const handle = this[serverSymbol]!;
-    if (listenHandle !== undefined) {
-      if (handle === undefined) return false;
-      // As in node, both servers have the one handle from here on, and this one gets its connections.
-      this._handle = listenHandle;
-    }
+    // As in node, both servers have the one handle from here on, and this one gets its connections.
+    if (listenHandle !== undefined) this._handle = listenHandle;
     listenerGeneration = {
       isUnix: !!socketPath,
       nativeClosed: false,

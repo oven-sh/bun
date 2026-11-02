@@ -1029,27 +1029,6 @@ pub(crate) fn index_of_line(buffer: &[u8], offset: f64) -> f64 {
 }
 
 pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSValue> {
-    serve_on(cx, options, None)
-}
-
-/// node:http `server.listen(handle)`. `undefined` if node would find no handle in `handle`.
-pub(crate) fn serve_on_listen_handle(
-    cx: &mut JsScope<'_>,
-    options: JsLocal<'_>,
-    handle: Option<&crate::socket::Listener>,
-) -> JsResult<JSValue> {
-    match handle.filter(|handle| !handle.is_named_pipe()) {
-        Some(handle) => serve_on(cx, options, Some(handle)),
-        None => Ok(JSValue::UNDEFINED),
-    }
-}
-
-/// `Bun.serve(options)`. With `handle` it serves the connections of that listener and binds no socket.
-fn serve_on(
-    cx: &mut JsScope<'_>,
-    options: JsLocal<'_>,
-    handle: Option<&crate::socket::Listener>,
-) -> JsResult<JSValue> {
     let global_object = cx.global();
     // The server is the calling script's.
     let context = global_object.bun_vm().context_of_caller();
@@ -1064,6 +1043,10 @@ fn serve_on(
             previous_routes: false,
         },
     )?;
+    let handle = match config.is_node_http_server {
+        true => crate::socket::Listener::from_serve_options(global_object, options)?,
+        false => None,
+    };
     if handle.is_some() {
         // A hot reload finds a server by its address, and this one has the address of its handle.
         config.allow_hot = false;

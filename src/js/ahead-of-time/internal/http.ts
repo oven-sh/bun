@@ -592,7 +592,7 @@ declare global {
         socketPath: string | undefined,
         reusePort: boolean,
         listenHandle?: ListenerHandle,
-      ): void | false;
+      ): void;
     }
 
     interface Agent {

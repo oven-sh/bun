@@ -652,22 +652,19 @@ Server.prototype.listen = function () {
       if (typeof arg0 === "object") {
         // (handle[, backlog][, cb]), one level down: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2127-L2136
         const handle = arg0._handle || arg0.handle || arg0;
-        if (typeof handle.onconnection === "function") {
-          let listening;
+        if (typeof handle.onconnection === "function" && $bindgen("Listener.bind.ts", "isListenHandle")(handle)) {
           try {
             // Exclusive, as in node: a cluster worker does not ask the primary.
-            listening = server[kRealListen](tls, 0, undefined, undefined, false, handle);
+            server[kRealListen](tls, 0, undefined, undefined, false, handle);
           } catch (err) {
             // A handle that is closed (EINVAL), or that is a pipe (EEXIST): it fails here as it fails for a net.Server.
             const { syscall, code } = (err ?? {}) as { syscall?: string; code?: string };
             const listenError = syscall === "listen" ? listenHandleError(code === "EINVAL") : err;
             process.nextTick(emitListenErrorNextTick, server, listenError);
           }
-          if (listening !== false) {
-            const lastArg = arguments[argc - 1];
-            if ($isCallable(lastArg)) this.once("listening", lastArg);
-            return this;
-          }
+          const lastArg = arguments[argc - 1];
+          if ($isCallable(lastArg)) this.once("listening", lastArg);
+          return this;
         }
         // `fd` and `tls` are bags of their own here. Any other object named no address, and got a port of its own.
         if (!("port" in arg0 || "path" in arg0 || "fd" in arg0 || "tls" in arg0)) {
@@ -751,7 +748,7 @@ Server.prototype.listen = function () {
   return this;
 };
 
-// `listenHandle`, whose default keeps `length` at 5: serve that `_handle` and bind nothing. `false` if it is no listener.
+// `listenHandle`, whose default keeps `length` at 5: serve the connections of that `_handle` and bind nothing.
 Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort, listenHandle = undefined) {
   {
     // What the first connection and the first request need, so that neither waits for it.
@@ -767,11 +764,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
     if (tls) {
       this.serverName = tls.serverName || host || "localhost";
     }
-    const serve =
-      listenHandle === undefined
-        ? Bun.serve
-        : options => $bindgen("node_http_binding.bind.ts", "serveOnListenHandle")(options, listenHandle);
-    this[serverSymbol] = serve<any>({
+    const serveOptions = {
       idleTimeout: 0, // nodejs dont have a idleTimeout by default
       tls,
       port,
@@ -1187,14 +1180,16 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
 
         return pendingPromise;
       },
-    });
+    };
+    // Bun.serve() reads the handle under a private name, which no program can set.
+    if (listenHandle !== undefined) {
+      $putByIdDirectPrivate(serveOptions as { $listenHandle?: unknown }, "listenHandle", listenHandle);
+    }
+    this[serverSymbol] = Bun.serve<any>(serveOptions);
 
     const handle = this[serverSymbol];
-    if (listenHandle !== undefined) {
-      if (handle === undefined) return false;
-      // As in node, both servers have the one handle from here on, and this one gets its connections.
-      this._handle = listenHandle;
-    }
+    // As in node, both servers have the one handle from here on, and this one gets its connections.
+    if (listenHandle !== undefined) this._handle = listenHandle;
     listenerGeneration = {
       isUnix: !!socketPath,
       nativeClosed: false,

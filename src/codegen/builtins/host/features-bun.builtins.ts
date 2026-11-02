@@ -381,7 +381,7 @@ export default b.declarations(
     ["Sockets"],
     "%Listener%",
     ...nativeBindings("Bindgen", "socket_body.bind.ts", "getBufferedAmount", "isNamedPipeSocket"),
-    ...nativeBindings("Bindgen", "Listener.bind.ts", "takeListenHandle"),
+    ...nativeBindings("Bindgen", "Listener.bind.ts", "isListenHandle", "takeListenHandle"),
   ),
 
   extendAll(
@@ -482,8 +482,6 @@ export default b.declarations(
       ...usesWhenOptionsHave(["app"], ...bundlerFeatures.filter(feature => feature !== "Buffer")),
     ],
     "Bun.serve",
-    // node:http `server.listen(handle)`: Bun.serve() on the listen socket of a `Bun.listen` listener.
-    ...nativeBindings("Bindgen", "node_http_binding.bind.ts", "serveOnListenHandle"),
   ),
   extendAll(["Serve"], "%HTTPServer%", "%DebugHTTPServer%", "%ServerWebSocket%"),
 

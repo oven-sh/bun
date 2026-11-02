@@ -1452,7 +1452,7 @@ impl Listener {
     }
 
     /// A Windows named pipe has no descriptor, so node finds no handle in it.
-    pub(crate) fn is_named_pipe(&self) -> bool {
+    fn is_named_pipe(&self) -> bool {
         #[cfg(windows)]
         {
             matches!(self.listener.get(), ListenerType::NamedPipe(_))
@@ -1461,6 +1461,21 @@ impl Listener {
         {
             false
         }
+    }
+
+    /// node:http `server.listen(handle)`: the listener that the options of `Bun.serve` name under `$listenHandle`.
+    pub(crate) fn from_serve_options<'a>(
+        global: &JSGlobalObject,
+        options: JsLocal<'a>,
+    ) -> JsResult<Option<&'a Listener>> {
+        let Some(value) = options
+            .to_js()
+            .fast_get(global, bun_jsc::BuiltinName::listenHandle)?
+        else {
+            return Ok(None);
+        };
+        // SAFETY: `options` holds the wrapper, which owns the listener.
+        Ok(js::from_js(value).map(|listener| unsafe { listener.as_ref() }))
     }
 
     /// `attach` is `NewApp::attach_listen_socket` of the server's app.
@@ -1736,6 +1751,11 @@ pub(crate) fn set_secure_context(handle: Option<&Listener>, context: Option<&Sec
         }
         ListenerType::None => {}
     }
+}
+
+/// Whether node finds a handle in `handle`, the `_handle` of a server.
+pub(crate) fn is_listen_handle(handle: Option<&Listener>) -> bool {
+    handle.is_some_and(|this| !this.is_named_pipe())
 }
 
 /// node:net `server.listen(handle)`: the caller's server gets the connections. `None` if node finds no handle in it.

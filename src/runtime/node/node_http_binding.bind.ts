@@ -2,7 +2,6 @@ import * as b from "../../codegen/bindgen-lib.ts";
 import { webSocketDataCell } from "../../codegen/builtins/host/native-cells.ts";
 import { NodeHTTPResponse } from "../server/NodeHTTPResponse.bind.ts";
 import { DebugHTTPSServer, DebugHTTPServer, HTTPSServer, HTTPServer, ServerWebSocket } from "../server/server.bind.ts";
-import { Listener } from "../socket/Listener.bind.ts";
 
 export default b.module({ rustPath: "crate::node::node_http_binding" });
 
@@ -19,14 +18,6 @@ export const BunServer = b.union({
   https: HTTPSServer,
   debugHttp: DebugHTTPServer,
   debugHttps: DebugHTTPSServer,
-});
-/** node:http `server.listen(handle)`: `Bun.serve(options)` on the listen socket of `handle`. `undefined` if it is no handle. */
-export const serveOnListenHandle = b.fn({
-  args: { options: b.any, handle: Listener.otherAsNull },
-  returns: b.any,
-  capability: "js",
-  throws: true,
-  rustPath: "crate::api::bun_object::serve_on_listen_handle",
 });
 export const getBunServerAllClosedPromise = b.fn({ args: { server: BunServer }, returns: b.any, capability: "js" });
 export const getBunServerOpenCount = b.fn({ args: { server: BunServer }, returns: b.f64 });

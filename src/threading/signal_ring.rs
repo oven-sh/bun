@@ -108,16 +108,18 @@ impl<const CAPACITY: usize> SignalRing<CAPACITY> {
     pub fn for_each_queued(&self, mut f: impl FnMut(u8)) {
         let (head, tail) = unpack(self.state.load(Ordering::Acquire));
         'slots: for offset in 0..tail.wrapping_sub(head) {
-            let slot = self.slot(head.wrapping_add(offset));
+            let index = head.wrapping_add(offset);
+            let slot = self.slot(index);
             loop {
                 let signal = slot.load(Ordering::Acquire);
                 if signal != 0 {
                     f(signal);
                     break;
                 }
-                // The consumer swaps a slot to 0 before it moves `head` past it.
-                let (head_now, _) = unpack(self.state.load(Ordering::Acquire));
-                if head_now.wrapping_sub(head) > offset {
+                // The consumer swaps a slot to 0 before it moves `head` past it. A 0 slot
+                // outside the live `head_now..tail_now` is taken, whatever the u16 wrap did.
+                let (head_now, tail_now) = unpack(self.state.load(Ordering::Acquire));
+                if index.wrapping_sub(head_now) >= tail_now.wrapping_sub(head_now) {
                     continue 'slots;
                 }
                 std::thread::yield_now();
@@ -350,6 +352,18 @@ mod tests {
         assert_eq!(view, [2]);
         assert_eq!(ring.dequeue(), Some(2));
         assert_eq!(ring.dequeue(), None);
+    }
+
+    /// A view that waits on a slot while the consumer takes 65536 signals sees `head` where it
+    /// started. The slot is still 0, and the live range is what says that it is taken.
+    #[test]
+    fn view_ends_when_the_consumer_drained_a_full_u16_cycle_past_its_snapshot() {
+        let ring = SignalRing::<8>::starting_at(7);
+        let (_, claimed) = unpack(ring.state.fetch_add(pack(0, 1), Ordering::AcqRel));
+        let view = view_while_a_slot_is_zero(&ring, || {
+            ring.state.store(pack(claimed, claimed), Ordering::Release);
+        });
+        assert_eq!(view, []);
     }
 
     /// A viewer beside working producers and the consumer sees only published signals.

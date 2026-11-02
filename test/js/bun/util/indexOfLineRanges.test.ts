@@ -11,6 +11,9 @@ import { join } from "node:path";
 
 const { indexOfLineRanges } = stringsInternals;
 
+// `"".repeat()` is slow in a debug build.
+const repeat = (text: string, count: number) => Buffer.alloc(Buffer.byteLength(text) * count, text).toString();
+
 const LF = 10;
 const CR = 13;
 
@@ -139,39 +142,39 @@ describe("indexOfLineRanges", () => {
 
   // Longer texts, with targets far from the first line and past the last one.
   test.each([
-    ["short lines", (short + "\n").repeat(400)],
-    ["short lines and no line break after the last line", (short + "\n").repeat(400) + short],
-    ["empty lines", "\n".repeat(400)],
-    ["lines that end in `\\r\\n`", (short + "\r\n").repeat(400)],
-    ["the first line ends in `\\r\\n`", short + "\r\n" + (short + "\n").repeat(400)],
-    ["lines that end in `\\r\\n` after 100 lines", (short + "\n").repeat(100) + (short + "\r\n").repeat(300)],
-    ["a carriage return alone in line 200", (short + "\n").repeat(199) + "a\rb\n" + (short + "\n").repeat(200)],
-    ["a carriage return alone in the last lines", (short + "\n").repeat(390) + "a\rb\n" + (short + "\n").repeat(3)],
-    ["a carriage return alone every 50 lines", ((short + "\n").repeat(49) + "a\rb\n").repeat(8)],
-    ["tabs", "\tconst value =\tcompute(input);\n".repeat(400)],
-    ["non-ASCII characters", ("// " + "é".repeat(20) + "\n").repeat(400)],
-    ["lines of 127 bytes", ("x".repeat(126) + "\n").repeat(200)],
-    ["lines of 128 bytes", ("x".repeat(127) + "\n").repeat(200)],
-    ["lines of 1,000 bytes", ("x".repeat(999) + "\n").repeat(100)],
+    ["short lines", repeat(short + "\n", 400)],
+    ["short lines and no line break after the last line", repeat(short + "\n", 400) + short],
+    ["empty lines", repeat("\n", 400)],
+    ["lines that end in `\\r\\n`", repeat(short + "\r\n", 400)],
+    ["the first line ends in `\\r\\n`", short + "\r\n" + repeat(short + "\n", 400)],
+    ["lines that end in `\\r\\n` after 100 lines", repeat(short + "\n", 100) + repeat(short + "\r\n", 300)],
+    ["a carriage return alone in line 200", repeat(short + "\n", 199) + "a\rb\n" + repeat(short + "\n", 200)],
+    ["a carriage return alone in the last lines", repeat(short + "\n", 390) + "a\rb\n" + repeat(short + "\n", 3)],
+    ["a carriage return alone every 50 lines", repeat(repeat(short + "\n", 49) + "a\rb\n", 8)],
+    ["tabs", repeat("\tconst value =\tcompute(input);\n", 400)],
+    ["non-ASCII characters", repeat("// " + repeat("é", 20) + "\n", 400)],
+    ["lines of 127 bytes", repeat(repeat("x", 126) + "\n", 200)],
+    ["lines of 128 bytes", repeat(repeat("x", 127) + "\n", 200)],
+    ["lines of 1,000 bytes", repeat(repeat("x", 999) + "\n", 100)],
     [
       "a line of 40,000 bytes in line 200",
-      (short + "\n").repeat(199) + "x".repeat(40_000) + "\n" + (short + "\n").repeat(200),
+      repeat(short + "\n", 199) + repeat("x", 40_000) + "\n" + repeat(short + "\n", 200),
     ],
-    ["a line of 40,000 bytes every 20 lines", ((short + "\n").repeat(19) + "x".repeat(40_000) + "\n").repeat(10)],
-    ["long lines after 20 short ones", (short + "\n").repeat(20) + ("x".repeat(2_000) + "\n").repeat(100)],
-    ["short lines after 20 long ones", ("x".repeat(2_000) + "\n").repeat(20) + (short + "\n").repeat(400)],
-    ["lines that get shorter", "x".repeat(100) + "\n" + (short + "\n").repeat(60) + "x\n".repeat(2_000)],
-    ["a last line of 100,000 bytes", (short + "\n").repeat(400) + "x".repeat(100_000)],
-    ["30,000 lines", (short + "\n").repeat(30_000)],
-    ["60 line feeds", "\n".repeat(60)],
-    ["a carriage return alone in 60 line feeds", "\n".repeat(40) + "\r" + "\n".repeat(19)],
-    ["lines of one byte", "a\n".repeat(300)],
-    ["long lines at the end", (short + "\n").repeat(400) + ("x".repeat(3_000) + "\n").repeat(8)],
-    ["long lines that end in `\\r\\n`", ("x".repeat(1_500) + "\r\n").repeat(120)],
-    ["long lines with tabs", ("\tdata".repeat(300) + "\n").repeat(120)],
-    ["a carriage return alone every 5 lines", ((short + "\n").repeat(4) + "a\rb\n").repeat(80)],
-    ["a carriage return alone in every line", "a\rb\n".repeat(300)],
-    ["lines that end in a carriage return alone", "one\n" + "abc\r".repeat(300)],
+    ["a line of 40,000 bytes every 20 lines", repeat(repeat(short + "\n", 19) + repeat("x", 40_000) + "\n", 10)],
+    ["long lines after 20 short ones", repeat(short + "\n", 20) + repeat(repeat("x", 2_000) + "\n", 100)],
+    ["short lines after 20 long ones", repeat(repeat("x", 2_000) + "\n", 20) + repeat(short + "\n", 400)],
+    ["lines that get shorter", repeat("x", 100) + "\n" + repeat(short + "\n", 60) + repeat("x\n", 2_000)],
+    ["a last line of 100,000 bytes", repeat(short + "\n", 400) + repeat("x", 100_000)],
+    ["30,000 lines", repeat(short + "\n", 30_000)],
+    ["60 line feeds", repeat("\n", 60)],
+    ["a carriage return alone in 60 line feeds", repeat("\n", 40) + "\r" + repeat("\n", 19)],
+    ["lines of one byte", repeat("a\n", 300)],
+    ["long lines at the end", repeat(short + "\n", 400) + repeat(repeat("x", 3_000) + "\n", 8)],
+    ["long lines that end in `\\r\\n`", repeat(repeat("x", 1_500) + "\r\n", 120)],
+    ["long lines with tabs", repeat(repeat("\tdata", 300) + "\n", 120)],
+    ["a carriage return alone every 5 lines", repeat(repeat(short + "\n", 4) + "a\rb\n", 80)],
+    ["a carriage return alone in every line", repeat("a\rb\n", 300)],
+    ["lines that end in a carriage return alone", "one\n" + repeat("abc\r", 300)],
   ])("%s", (_, text) => {
     expect(mismatches(bytes(text), randomFrom(2))).toEqual([]);
   });
@@ -180,7 +183,7 @@ describe("indexOfLineRanges", () => {
     const found: string[] = [];
     for (let after = 0; after <= 20; after++) {
       for (const last of ["", "last line"]) {
-        const text = (short + "\n").repeat(60) + "a\rb\n" + (short + "\n").repeat(after) + last;
+        const text = repeat(short + "\n", 60) + "a\rb\n" + repeat(short + "\n", after) + last;
         found.push(...mismatches(bytes(text), randomFrom(after)).map(mismatch => `${after} lines after: ${mismatch}`));
       }
     }
@@ -191,7 +194,7 @@ describe("indexOfLineRanges", () => {
     const found: string[] = [];
     for (let between = 0; between <= 8; between++) {
       for (let after = 0; after <= 8; after++) {
-        const lines = (count: number) => (short + "\n").repeat(count);
+        const lines = (count: number) => repeat(short + "\n", count);
         const text = lines(60) + "a\rb\n" + lines(between) + "c\rd\r\n" + lines(after) + (after % 2 ? "last line" : "");
         const at = `${between} lines between, ${after} lines after`;
         found.push(...mismatches(bytes(text), randomFrom(between * 9 + after)).map(mismatch => `${at}: ${mismatch}`));
@@ -264,7 +267,7 @@ describe.concurrent("the code frame of an error that is far from the first line"
     frame: [
       ...[5, 4, 3, 2, 1].map(before => `${line - before} | ${padding(line - before)}`),
       `${line} | ${errorLine}`,
-      " ".repeat(String(line).length + 13) + "^",
+      repeat(" ", String(line).length + 13) + "^",
       "error: far",
     ],
     exitCode: 1,
@@ -284,7 +287,7 @@ describe.concurrent("the code frame of an error that is far from the first line"
     ["tabs", (n: number) => `\t//\tline\t${n}`],
     ["characters that are not ASCII", (n: number) => `// línea ${n} ☃`],
     ["no characters", (n: number) => (n % 2 ? "" : `// line ${n}`)],
-    ["200 bytes", (n: number) => `// line ${n} ${"x".repeat(190)}`],
+    ["200 bytes", (n: number) => `// line ${n} ${repeat("x", 190)}`],
   ])("lines of %s", async (_, padding) => {
     expect(await frameOf(moduleOf(3_000, padding, "\n"))).toEqual(frame(3_000, padding));
   });
@@ -296,7 +299,7 @@ describe.concurrent("the code frame of an error that is far from the first line"
   });
 
   test("a long line before short lines", async () => {
-    const padding = (n: number) => (n === 100 ? `// line 100 ${"x".repeat(100_000)}` : comment(n));
+    const padding = (n: number) => (n === 100 ? `// line 100 ${repeat("x", 100_000)}` : comment(n));
     expect(await frameOf(moduleOf(3_000, padding, "\n"))).toEqual(frame(3_000, padding));
   });
 
@@ -319,7 +322,7 @@ describe.concurrent("the code frame of an error that is far from the first line"
         "2998 | // line 999",
         "2999 | // line 1000",
         "3000 | // line",
-        " ".repeat(35) + "^",
+        repeat(" ", 35) + "^",
         "error: far",
       ],
       exitCode: 0,
@@ -336,20 +339,20 @@ describe("position.lineText of a CSS error that is far from the first line", () 
   test.concurrent.each([
     [
       "lines that end in a line feed",
-      "a { color: red; }\n".repeat(399) + '@import "x";\n' + "b {}\n".repeat(50),
+      repeat("a { color: red; }\n", 399) + '@import "x";\n' + repeat("b {}\n", 50),
       '@import "x";',
     ],
     [
       "lines that end in a carriage return and a line feed",
-      "a { color: red; }\r\n".repeat(399) + '@import "x";\r\nb {}\r\n',
+      repeat("a { color: red; }\r\n", 399) + '@import "x";\r\nb {}\r\n',
       '@import "x";',
     ],
-    ["tabs", "\ta {\tcolor: red; }\n".repeat(399) + '\t@import "x";\n', '\t@import "x";'],
-    ["characters that are not ASCII", '/* é */ a { content: "☃"; }\n'.repeat(399) + '@import "x";\n', '@import "x";'],
-    ["no line break after the line", "a { color: red; }\n".repeat(399) + '@import "x";', '@import "x";'],
+    ["tabs", repeat("\ta {\tcolor: red; }\n", 399) + '\t@import "x";\n', '\t@import "x";'],
+    ["characters that are not ASCII", repeat('/* é */ a { content: "☃"; }\n', 399) + '@import "x";\n', '@import "x";'],
+    ["no line break after the line", repeat("a { color: red; }\n", 399) + '@import "x";', '@import "x";'],
     [
       "a line of 50,000 bytes before it",
-      "a { color: red; }\n".repeat(200) + `/* ${"x".repeat(50_000)} */\n` + "a {}\n".repeat(198) + '@import "x";\n',
+      repeat("a { color: red; }\n", 200) + `/* ${repeat("x", 50_000)} */\n` + repeat("a {}\n", 198) + '@import "x";\n',
       '@import "x";',
     ],
   ])("%s", async (_, source, lineText) => {

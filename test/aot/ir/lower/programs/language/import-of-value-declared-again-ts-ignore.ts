@@ -1,9 +1,9 @@
 // RUN: lower
 // OPTIONS: builtin-modules
-// DIAGNOSTIC: TS2440 9
+// DIAGNOSTIC: TS2440 8
 
 // FILE: main.ts
-// Each of these names is imported as a value and declared again. `// @ts-ignore` silences the type checker, and the name is still declared twice in one scope.
+// Each of these names is declared, and imported further down. `// @ts-ignore` silences the type checker, and `bun run` still says that the name has already been declared.
 const enum ConstantEnum {
   A = "mine",
 }
@@ -34,6 +34,7 @@ import { Class } from "./other";
 import byDefault from "./other";
 // @ts-ignore
 import * as star from "./other";
+// An import whose name is declared further down is dropped: `bun run` lets the file's own declaration win.
 // @ts-ignore
 import { below } from "./other";
 const below = "mine";

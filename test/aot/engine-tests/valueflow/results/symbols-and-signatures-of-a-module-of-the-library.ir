@@ -16,7 +16,7 @@ module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 comp
 module m1 path="node:readline" displayPath="node:readline" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeReadline body=f1
 module m2 path="internal:library" displayPath="internal:library" kind=RuntimeSource flags=[IsLibrary] exportRule=RuntimeModule
 entry module=m0
-runtimefunction id=46 function=f5
+runtimefunction id=ArrayConstructorFrom function=f5
 layout L0 name="Holder"
 variable g0 name="kState" module=m1 declared={type=anything|absent} initialization=Uninitialized
 variable g1 name="setState" module=m1 declared={type=anything} initialization=Undefined
@@ -87,7 +87,7 @@ function f4 name="readsLate" module=m1 role=Library results=[{type=anything}] {
     v1 = CheckInitialized v0 name="late"
     Return v1
 }
-function f5 name="from" module=m2 role=Library flags=[HasThis] enclosingRuntimeFunction=46 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+function f5 name="from" module=m2 role=Library flags=[HasThis] enclosingRuntimeFunction=ArrayConstructorFrom thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: anything):
     Return v1
 }

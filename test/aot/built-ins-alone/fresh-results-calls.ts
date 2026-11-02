@@ -51,6 +51,11 @@ const ofServers = (member: string, classes: string, text: string[]) =>
 
 export const calls: Record<string, string[]> = {
   "crypto > Crypto": ["crypto"],
+  "Bun.Cookie.from": ['Bun.Cookie.from("name", "value")'],
+  "Bun.Cookie.parse": ['Bun.Cookie.parse("name=value")'],
+  "Performance.prototype.timing > PerformanceTiming": ["const timing = performance.timing;\ntiming"],
+  "Performance.prototype.toJSON > PerformanceTiming": ["const timing = performance.toJSON().timing;\ntiming"],
+  "PerformanceTiming.prototype.toJSON": ["performance.timing.toJSON()"],
   "Bun.serve > ServerWebSocket": [
     handedToServer(`${upgrades}, websocket: { open: resolve, message() {} }`, dials(closes)).join("\n"),
   ],
@@ -231,6 +236,9 @@ export const calls: Record<string, string[]> = {
   ],
   "%IntlSegments%.prototype.containing": ['new Intl.Segmenter("en").segment("ab").containing(0)'],
   "Bun.dns.getCacheStats": ["Bun.dns.getCacheStats()"],
+  "Bun.FFI.ptr": ["Bun.FFI.ptr({})", "Bun.FFI.ptr(new Uint8Array(0))"],
+  "Bun.FFI.toArrayBuffer": ["const bytes = new Uint8Array(8);\nBun.FFI.toArrayBuffer(Bun.FFI.ptr(bytes), 0, 8)"],
+  "Bun.FFI.toBuffer": ["const bytes = new Uint8Array(8);\nBun.FFI.toBuffer(Bun.FFI.ptr(bytes), 0, 8)"],
   "WebAssembly.Module.exports": [
     "WebAssembly.Module.exports(new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 1, 4, 1, 96, 0, 0, 3, 2, 1, 0, 7, 5, 1, 1, 102, 0, 0, 10, 4, 1, 2, 0, 11])))",
   ],
@@ -418,6 +426,11 @@ export const linkedByLibraryCode: Record<string, string> = {
   "%EventEmitter%.prototype": "node:events puts it below its own EventEmitter.prototype",
 };
 
+/** Names that a library module puts on an object of the table when it is loaded, which the compiler sees it do. */
+export const addedByLibraryCode: Record<string, string[]> = {
+  "%NativeZlib%.prototype": ["jsref"],
+};
+
 const ofTheEngine = "a private function of the engine's own library code: no other text can name it";
 const ofTheCompiler = "the compiler puts it in the place of other calls: only compiled code calls it";
 const ofOneModule = (module: string) => `only ${module} holds it, and hands it to nobody`;
@@ -452,6 +465,7 @@ export const notCalled: Record<string, string> = {
   "%CompilerHelpers%.arrayFromLength": ofTheCompiler,
   "%CompilerHelpers%.arrayOfUndefined": ofTheCompiler,
   "%CompilerHelpers%.filledArray": ofTheCompiler,
+  "%CompilerHelpers%.importRejectedByLoader": ofTheCompiler,
   "%CompilerHelpers%.jsonSourceOfBody": ofTheCompiler,
   "%CompilerHelpers%.mappedFilledArray": ofTheCompiler,
   "%CompilerHelpers%.newResponseFromParts": ofTheCompiler,
@@ -459,6 +473,9 @@ export const notCalled: Record<string, string> = {
   "%CompilerHelpers%.plainQueryEntries": ofTheCompiler,
   "%CompilerHelpers%.plainQueryKeys": ofTheCompiler,
   "%CompilerHelpers%.plainQueryValues": ofTheCompiler,
+  "native:Bindgen:ffi.bind.ts:linkLibrary": ofOneModule("bun:ffi"),
+  "native:Bindgen:ffi.bind.ts:openLibrary": ofOneModule("bun:ffi"),
+  "native:Bindgen:ffi.bind.ts:printSource": ofOneModule("bun:ffi"),
   "native:Bindgen:node_fs_binding.bind.ts:binding": ofOneModule("internal/fs/binding"),
   "native:Bindgen:node_util_binding.bind.ts:extractedSplitNewLinesFastPathStringsOnly":
     ofOneModule("internal/util/inspect"),
@@ -467,6 +484,8 @@ export const notCalled: Record<string, string> = {
   "native:NewCppFunction:BunCompiledModules.cpp:jsFunctionCallOwnFunctionsWithoutParameters": ofOneModule(
     "ahead-of-time/internal/primordials",
   ),
+  "native:NewCppFunction:BunProcess.cpp:Process_functionWriteToStandardSink":
+    "native code hands it to a function of builtins/stdio, which hands it to nobody",
   "native:NewCppFunction:NodeTLS.cpp:parseCACertificates": ofOneModule("node:tls"),
   "native:NewCppFunction:UtilInspect.cpp:jsFunctionGetOwnNonIndexProperties": ofOneModule("internal/util/inspect"),
   "%NpmJscNpmManifestTestHelpers%.parseManifest": "it reads a manifest that `bun install` has stored",

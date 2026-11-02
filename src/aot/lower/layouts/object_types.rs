@@ -23,8 +23,8 @@ use crate::ir::generated::{
     Field, FieldFlags, Layout, LayoutKind, LimitId, NameClass, PositionFlags,
 };
 use crate::ir::{
-    DeclaredType, LayoutId, LayoutKey, PropertyKeyId, PropertyKeyKind, StringId, WellKnownSymbol,
-    classify_name,
+    DeclaredType, LayoutId, LayoutKey, PropertyKeyId, PropertyKeyKind, StringId, TypeTable,
+    WellKnownSymbol, classify_name,
 };
 use crate::lower::{CheckerTypeId, FileLowering, SourceKind, types};
 use crate::modules::ModuleRef;
@@ -168,13 +168,24 @@ impl FileLowering<'_, '_, '_, '_> {
             .iter()
             .filter_map(|&(name, member)| Some((self.describe_name(name)?, member.kind)))
             .collect();
+        let flags = describe_flags(fields.iter().map(|field| listed_member_flags(field.1)));
+        let has_other_optional_members =
+            self.queries.has_other_optional_members_than_mapped_type(ty);
+        let bytes_of_flags: Vec<u8> = match has_other_optional_members {
+            true => flags.0.iter().flat_map(|part| part.to_le_bytes()).collect(),
+            false => Vec::new(),
+        };
         let names = descriptions
             .iter()
-            .map(|(name, kind)| (name.as_slice(), *kind));
+            .map(|(name, kind)| (name.as_slice(), *kind))
+            .chain(
+                has_other_optional_members
+                    .then_some((bytes_of_flags.as_slice(), ObjectMemberKind::Field)),
+            );
         NamesOfObjectType {
             identity: TypeIdentity::of_untyped_members(names),
             is_empty: descriptions.is_empty(),
-            flags: describe_flags(fields.iter().map(|field| listed_member_flags(field.1))),
+            flags,
         }
     }
 
@@ -703,6 +714,25 @@ impl FileLowering<'_, '_, '_, '_> {
         self.untyped_layout_at(members, 0)
     }
 
+    /// The layout of a literal that is born with other names than it is written with.
+    pub(in crate::lower) fn layout_of_names(
+        &mut self,
+        literal: ExprId,
+        members: &[Member],
+    ) -> LayoutId {
+        if let Some(&layout) = self.layouts.literals.get(&literal) {
+            return layout;
+        }
+        let layout = self.untyped_layout_at(members, self.hir[literal].pos);
+        self.layouts.literals.insert(literal, layout);
+        layout
+    }
+
+    pub(in crate::lower) fn is_field_name(&mut self, name: Atom) -> bool {
+        let key = self.name_key(name);
+        can_be_field(self, key)
+    }
+
     fn collect_literal_members(&mut self, literal: ExprId) -> Members {
         let hir = self.hir;
         let mut members = Members::new();
@@ -897,8 +927,14 @@ impl FileLowering<'_, '_, '_, '_> {
         if in_either.contains(PositionFlags::IS_EXPECTED) {
             flags |= PositionFlags::IS_EXPECTED;
         }
+        let mut ty = self.fragment.types.union(left.ty, right.ty);
+        // The engine reads a type that names more functions as any function. A field that thousands of literals fill with a function each has a type for each of them.
+        let most_functions = self.inputs.limits.get(LimitId::MaxFunctionsInType);
+        if self.fragment.types.get(ty).functions.len() as u64 > most_functions {
+            ty = self.fragment.types.union(ty, TypeTable::FUNCTION);
+        }
         DeclaredType {
-            ty: self.fragment.types.union(left.ty, right.ty),
+            ty,
             site: left.site.or(right.site),
             flags,
         }

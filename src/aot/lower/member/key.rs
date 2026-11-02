@@ -1,7 +1,7 @@
 use bun_sema::atom::{Atom, number_to_string};
 use bun_sema::bind::Binding;
 use bun_sema::fold::Constant;
-use bun_sema::hir::{ExprId, MemberKey, PropKey};
+use bun_sema::hir::{ExprId, ExprKind, MemberKey, PropKey};
 
 use super::PropertyName;
 use crate::builtins::table;
@@ -31,6 +31,20 @@ impl FileLowering<'_, '_, '_, '_> {
         match self.shown_function_name(binding, position) {
             Some(name) => self.text_key(name),
             None => self.name_key(written),
+        }
+    }
+
+    /// The name that `binding` gives to the anonymous function or class `value`.
+    pub(in crate::lower) fn given_name_key(
+        &mut self,
+        value: ExprId,
+        binding: Binding,
+        written: Atom,
+        position: u32,
+    ) -> PropertyKeyId {
+        match self.hir[value].kind {
+            ExprKind::Class(class) if self.keeps_written_name(class) => self.name_key(written),
+            _ => self.function_name_key(binding, written, position),
         }
     }
 

@@ -778,6 +778,15 @@ _ZN3bun11N_AVX3_ZEN417ParseMappingsImplEPKhmPiS3_S3_S3_miS3_Pm                 [
 
 
 # ----------------------------------------------------------------------------
+# Bun PNG scanline filters (src/jsc/bindings/highway_png.cpp).
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (3 symbols)
+# ----------------------------------------------------------------------------
+_ZN3bun6N_AVX211PngUnfilterEhmPhPKhm                                           [AVX, AVX2]
+_ZN3bun6N_AVX213PngFilterRgbaEPKhS2_mPhS3_S3_S3_Pm                             [AVX, AVX2]
+_ZN3bun6N_AVX2L10UnfilterUpEPhPKhm                                             [AVX, AVX2]
+
+
+# ----------------------------------------------------------------------------
 # Bun xxHash3 (src/jsc/bindings/xxhash3.cpp). Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (6 symbols)
 # ----------------------------------------------------------------------------
 _ZN3bun4xxh36N_AVX28HashLongEPKhmS3_                                          [AVX, AVX2, BMI2]

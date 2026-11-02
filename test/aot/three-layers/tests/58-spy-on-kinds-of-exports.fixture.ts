@@ -1,0 +1,7 @@
+import { spyOn, jest, mock } from "bun:test";
+import * as kinds from "../src/spies/kinds";
+import theDefault, { Klass, settings, fetchIt, usesAll, Tools } from "../src/spies/kinds";
+import { say } from "../src/spies/say";
+const all = async () => [new Klass().value(), new kinds.Klass().value(), settings.get(), kinds.settings.get(), await fetchIt(), await kinds.fetchIt(), theDefault(), kinds.default(), [...kinds.walk()], Tools.run(), kinds.Tools.run(), await usesAll()];
+say("58", "a class, an object, an async function, a generator, the default", async () => { const before = await all(); const spies = [spyOn(Klass.prototype, "value").mockReturnValue("spied method"), spyOn(kinds.Klass, "make").mockImplementation(() => ({ value: () => "spied make" }) as any), spyOn(kinds, "fetchIt").mockResolvedValue("spied async"), spyOn(kinds, "default").mockReturnValue("spied default"), spyOn(kinds, "walk").mockImplementation(function* () { yield 9; }), spyOn(kinds.settings, "get").mockReturnValue("spied get"), jest.spyOn(kinds.Tools, "run").mockReturnValue("spied run")]; const during = await all(); mock.restore(); return [before, during, spies.map(s => s.mock.calls.length), await all()]; });
+say("58", "an export that is no function", () => { const out: unknown[] = []; for (const name of ["settings", "counter", "Color"] as const) { try { const s = spyOn(kinds, name as any); out.push([name, typeof s]); s.mockRestore(); } catch (e) { out.push([name, (e as Error).name]); } } return out; });

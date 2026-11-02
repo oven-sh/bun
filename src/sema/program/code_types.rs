@@ -98,11 +98,15 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
 
     pub(super) fn types_file_parse_options(&self, path: &[u8]) -> ParseOptions {
         if is_declaration_file_name(path) {
-            return self.options.for_parsing();
+            return ParseOptions {
+                reads_as_bun_run: true,
+                ..self.options.for_parsing()
+            };
         }
         let project = self.projects.governing(self, path);
         ParseOptions {
             module_detection: ModuleDetection::Force,
+            reads_as_bun_run: true,
             ..project.unwrap_or(self.options).for_parsing()
         }
     }

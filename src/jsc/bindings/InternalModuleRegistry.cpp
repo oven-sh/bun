@@ -11,6 +11,7 @@
 #include <utility>
 
 #include "InternalModuleRegistryConstants.h"
+#include "IsolatedModuleCache.h"
 #include "ModuleGraph.h"
 #include "ZigSourceProvider.h"
 #include "wtf/Forward.h"
@@ -60,11 +61,18 @@ static void maybeAddCodeCoverage(JSC::VM& vm, const JSC::SourceCode& code)
 // which allows reloading code without recompiling bindings.
 
 static std::atomic<unsigned> s_internalModulesFromBytecode { 0 };
+static std::atomic<unsigned> s_internalModulesFromSource { 0 };
 
 // bun:internal-for-testing: how many internal modules this process created from embedded bytecode rather than source.
 JSC_DEFINE_HOST_FUNCTION(jsInternalModulesLoadedFromBytecode, (JSC::JSGlobalObject*, JSC::CallFrame*))
 {
     return JSValue::encode(jsNumber(s_internalModulesFromBytecode.load(std::memory_order_relaxed)));
+}
+
+// bun:internal-for-testing: how many times this process made an internal module's executable from its source.
+JSC_DEFINE_HOST_FUNCTION(jsInternalModulesCompiledFromSource, (JSC::JSGlobalObject*, JSC::CallFrame*))
+{
+    return JSValue::encode(jsNumber(s_internalModulesFromSource.load(std::memory_order_relaxed)));
 }
 
 // The debugger's module is no part of the program, so Options::crashIfInterpreterIsUsed() must not report it. The debugger never starts with Options::disallowNonStaticCode().
@@ -194,22 +202,32 @@ static NEVER_INLINE JSC::JSValue generateInternalModuleFromText(JSC::JSGlobalObj
         RELEASE_AND_RETURN(throwScope, {});
     }
     String moduleName = internalModuleString(m.nameOffset, m.nameLength);
-    SourceCode source = makeInternalModuleSource(internalModuleSource(id), moduleName, internalModuleString(m.urlOffset, m.urlLength), internalModuleProvenance(id));
-    maybeAddCodeCoverage(vm, source);
-
+    SourceCode source;
     UnlinkedFunctionExecutable* executable = nullptr;
-    const uint8_t* cachedBytes = nullptr;
-    size_t cachedSize = 0;
-    uint32_t cachedEntryOffset = 0;
-    if (Bun__standaloneInternalModuleBytecode(::bunVM(globalObject), id, &cachedBytes, &cachedSize, &cachedEntryOffset)) {
-        executable = JSC::decodeBuiltinFunction(vm, embeddedBytecode({ const_cast<uint8_t*>(cachedBytes), cachedSize }, cachedEntryOffset), *source.provider(), bun_internal_modules_header.sourceStamp);
-        if (executable)
-            s_internalModulesFromBytecode.fetch_add(1, std::memory_order_relaxed);
-    }
-    if (!executable) {
-        JSC::BuiltinSourceMetadata metadata { static_cast<unsigned>(source.length()), static_cast<unsigned>(strlen("function (")), 0, static_cast<int>(strlen("})\n")), false, true };
-        executable = createBuiltinExecutable(vm, source, metadata, Identifier::fromString(vm, moduleName), ImplementationVisibility::Public, ConstructorKind::None, ConstructAbility::CannotConstruct, InlineAttribute::None);
-        prefillSourceProviderCache(vm, source, id);
+    const bool outlivesGlobal = IsolatedModuleCache::canUse(vm, ::bunVM(globalObject));
+    if (auto* cached = outlivesGlobal ? IsolatedModuleCache::lookupInternalModule(vm, id) : nullptr) {
+        source = cached->source;
+        executable = cached->executable.get();
+    } else {
+        source = makeInternalModuleSource(internalModuleSource(id), moduleName, internalModuleString(m.urlOffset, m.urlLength), internalModuleProvenance(id));
+        maybeAddCodeCoverage(vm, source);
+
+        const uint8_t* cachedBytes = nullptr;
+        size_t cachedSize = 0;
+        uint32_t cachedEntryOffset = 0;
+        if (Bun__standaloneInternalModuleBytecode(::bunVM(globalObject), id, &cachedBytes, &cachedSize, &cachedEntryOffset)) {
+            executable = JSC::decodeBuiltinFunction(vm, embeddedBytecode({ const_cast<uint8_t*>(cachedBytes), cachedSize }, cachedEntryOffset), *source.provider(), bun_internal_modules_header.sourceStamp);
+            if (executable)
+                s_internalModulesFromBytecode.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (!executable) {
+            JSC::BuiltinSourceMetadata metadata { static_cast<unsigned>(source.length()), static_cast<unsigned>(strlen("function (")), 0, static_cast<int>(strlen("})\n")), false, true };
+            executable = createBuiltinExecutable(vm, source, metadata, Identifier::fromString(vm, moduleName), ImplementationVisibility::Public, ConstructorKind::None, ConstructAbility::CannotConstruct, InlineAttribute::None);
+            prefillSourceProviderCache(vm, source, id);
+            s_internalModulesFromSource.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (outlivesGlobal)
+            IsolatedModuleCache::insertInternalModule(vm, id, source, executable);
     }
 
     JSFunction* func = JSFunction::create(vm, globalObject, executable->link(vm, nullptr, source), static_cast<JSC::JSGlobalObject*>(globalObject));
@@ -390,7 +408,8 @@ JSValue DeclaredModuleLoad::requireOnBehalfOf(Zig::GlobalObject* globalObject, I
 {
     uint32_t id = field;
     if (id < InternalModuleRegistryConstants::moduleCount && JSC::AOT::refusesLibraryText(globalObject) && !JSC::AOT::hasBuiltinModule(globalObject, id)) [[unlikely]] {
-        JSC::AOT::throwBuiltinNotCompiled(globalObject, builtin);
+        // What is loaded for a method that prints its own object is the printer of node:util.
+        JSC::AOT::throwBuiltinNotCompiled(globalObject, builtin == "Startup"_s ? "util.inspect"_s : builtin);
         return {};
     }
     return requireField(globalObject, field);

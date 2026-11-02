@@ -294,20 +294,26 @@ impl Declarations<'_, '_> {
             if scope.is_none() {
                 continue;
             }
-            let import = &hir[ImportId(index as u32)];
+            let id = ImportId(index as u32);
+            let import = &hir[id];
             let locals = bound.scopes[bound.container_scope(scope).idx()].locals;
-            let find = |name: Atom| {
+            let find = |name: Atom, decl: Decl| {
                 let symbol = name
                     .is_some()
                     .then(|| bound.find_in_table(locals, name))
                     .flatten();
-                let symbol = symbol.filter(|&it| hir.is_js || !has_local_value(hir, bound, it));
+                let symbol = symbol.filter(|&it| {
+                    hir.is_js
+                        || bound.symbols[it.idx()].decls.contains(&decl)
+                            && !has_local_value(hir, bound, it)
+                });
                 symbol.unwrap_or(SymbolId::NONE)
             };
-            defaults[index] = find(import.default);
-            namespaces[index] = find(import.namespace);
+            defaults[index] = find(import.default, Decl::ImportDefault(id));
+            namespaces[index] = find(import.namespace, Decl::ImportNamespace(id));
             for specifier in import.named.iter() {
-                specifiers[specifier.idx()] = find(hir[specifier].local);
+                specifiers[specifier.idx()] =
+                    find(hir[specifier].local, Decl::ImportSpec(specifier));
             }
         }
         let declarations = &mut self.bound.runtime.declarations;

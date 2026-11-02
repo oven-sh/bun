@@ -120,17 +120,22 @@ macro_rules! extern_crypto_job {
                     this: &mut Self,
                     done: bun_jsc::Completion<Self>,
                 ) -> Option<bun_jsc::Completion<Self>> {
+                    // Jobs report what they find on the error queue of a thread they share.
+                    boringssl::c::ERR_clear_error();
                     // SAFETY: the creating global, alive under the job's ticket; C++
                     // only threads it through to error reporting state.
                     ctx_run_task(Ctx::opaque_ref(this.ctx.0), unsafe {
                         this.global.under_ticket(done.ticket())
                     });
+                    boringssl::c::ERR_clear_error();
                     Some(done)
                 }
 
                 fn then(this: Self, callback: Strong, cx: &JsThread<'_>) -> JsResult<()> {
                     let global = cx.global();
                     let mut args = JsCallbackArgs::EMPTY;
+                    // The job ran on another thread: this one's queue is not its error stack.
+                    boringssl::c::ERR_clear_error();
                     let produced = jsc::from_js_host_call_generic(global, || {
                         ctx_run_from_js(Ctx::opaque_ref(this.ctx.0), global, &mut args);
                     });
@@ -792,7 +797,9 @@ impl Scrypt {
         };
 
         if res == 0 {
-            return Some(boringssl::c::ERR_peek_last_error());
+            let err = boringssl::c::ERR_peek_last_error();
+            boringssl::c::ERR_clear_error();
+            return Some(err);
         }
         None
     }

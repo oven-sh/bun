@@ -177,7 +177,7 @@ fn collect_views_of_literals(
         return;
     }
     listed.retain(|(literals, _)| !literals.is_empty());
-    listed.sort_by(|left, right| left.0.cmp(&right.0));
+    listed.shared_sort_by(|left, right| left.0.cmp(&right.0));
     for definitions in listed.chunk_by(|left, right| left.0 == right.0) {
         let mut view = create_view(id, definitions[0].1);
         let mut uniting = Uniting::new(views.len() as u32 + 1, &view.fields, waiting);
@@ -213,15 +213,27 @@ impl UnitedLayout<'_> {
         }
     }
 
-    fn unite_waiting_positions(&mut self, unite: &mut impl FnMut(TypeId, TypeId) -> TypeId) {
-        for position in &self.waiting {
-            let record = match position.record {
+    // The types of a field are united in one step: thousands of definitions that each name another function would leave a type for each of them in the table.
+    fn unite_waiting_positions(&mut self, unite: &mut impl FnMut(&[TypeId]) -> TypeId) {
+        self.waiting
+            .shared_sort_by_key(|position| (position.record, position.field));
+        let is_same_field = |left: &WaitingPosition, right: &WaitingPosition| {
+            (left.record, left.field) == (right.record, right.field)
+        };
+        let mut members: Vec<TypeId> = Vec::new();
+        for positions in self.waiting.chunk_by(is_same_field) {
+            let record = match positions[0].record {
                 0 => &mut *self.united,
                 view => &mut self.views[view as usize - 1],
             };
-            let first = &mut record.fields[position.field as usize].declared;
-            let ty = unite(first.ty, position.declared.ty);
-            *first = unite_positions(*first, position.declared, ty);
+            let first = &mut record.fields[positions[0].field as usize].declared;
+            members.clear();
+            members.push(first.ty);
+            members.extend(positions.iter().map(|position| position.declared.ty));
+            let ty = unite(&members);
+            for position in positions {
+                *first = unite_positions(*first, position.declared, ty);
+            }
         }
     }
 }
@@ -281,11 +293,12 @@ pub(super) fn unite_layout_definitions(
     });
     // Many files define a layout with the same few types.
     let mut known: FxHashMap<(TypeId, TypeId), TypeId> = FxHashMap::default();
-    let mut unite = |left: TypeId, right: TypeId| match left == right {
-        true => left,
-        false => *known
+    let mut unite = |members: &[TypeId]| match *members {
+        [left, right] if left == right => left,
+        [left, right] => *known
             .entry((left, right))
             .or_insert_with(|| types.union(left, right)),
+        _ => types.union_all(members.iter().copied()),
     };
     let mut views = Vec::new();
     for mut layout in united_layouts {

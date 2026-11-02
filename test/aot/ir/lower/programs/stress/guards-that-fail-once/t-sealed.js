@@ -79,8 +79,8 @@ console.log(attempt("storeToLateField", () => create(late, "later")), JSON.strin
 // CHECK-NEXT: Return v4
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="remove"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_1]] flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_1]]):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] {
+// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = PropDelete v0 key="moves"

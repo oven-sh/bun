@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""unions-of-string-literals.py <seed> [<families>]: every family a union of 2 to 40 string literals OF ITS OWN (lengths 0 to 24, 8-bit and 16-bit, some that look like numbers, some that differ in the last letter alone, some shared with other families' unions), alone or with undefined | null | number beside it, held in every kind of place (a variable, a parameter, a result, a field of a record | of a class, optional, an element, a tuple, a Map's key and value, a Set, a closure, a module variable, a default, a rest), filled from literals, from STRINGS MADE AT RUN TIME that equal a literal (sliced, joined, out of char codes, a 16-bit buffer of Latin-1, JSON, templates), from narrowing a plain string, from another union that is wider | narrower | overlaps; and USED AS A STRING in every way: === !== == < >, switch (exhaustive and with default), typeof, length, charAt, [i], +, templates, toUpperCase, includes, localeCompare, as a key of a record | an object literal | a Map, `in`, JSON.stringify (alone, in a record, in a list), String(), Object.is, sort, join, spread into characters, for-of, RegExp.test, as an argument of untyped code that keeps it and hands it back. Garbage is made in between. Lines `F.. others` hand in what is no member (as plain or a throw); every other line as plain Bun's."""
+"""unions-of-string-literals.py <seed> [<families>]: Each family has its own union of 2 to 40 string literals (lengths 0
+to 24, 8-bit and 16-bit, some numeric-looking, some differing only in the last character, some shared with other
+families).
+"""
 import random, sys, json
 seed = int(sys.argv[1]); count = int(sys.argv[2]) if len(sys.argv) > 2 else 14
 R = random.Random(seed); J = lambda s: json.dumps(s, ensure_ascii=False)

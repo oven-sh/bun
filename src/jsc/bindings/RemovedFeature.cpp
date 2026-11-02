@@ -281,6 +281,9 @@ extern "C" JSC::EncodedJSValue Bun__createStandInForRemovedBinding(JSC::JSGlobal
 
 extern "C" JSC::EncodedJSValue Bun__createModuleNotCompiledInError(JSC::JSGlobalObject* globalObject, Bun::ErrorCode code, const BunString* specifier)
 {
+    // --trim took out what reads a file, so nothing here can say why the module fails to load. The compiled program then says that it was not found.
+    if (Bun::isAskingWhyFileFailsToLoad())
+        return {};
     WTF::String name = specifier->toWTFString(BunString::ZeroCopy);
     bool isPath = name.startsWith('/') || (name.length() > 2 && name[1] == ':' && (name[2] == '/' || name[2] == '\\'));
     // Neither a file nor a text is a module that --trim could have kept.

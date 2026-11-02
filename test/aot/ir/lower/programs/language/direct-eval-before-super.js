@@ -37,7 +37,7 @@ row("no super() at all", () => new (class extends Base { constructor() { eval("1
 // CHECK-NEXT: Return v12
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="run"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow captures=[{type=env [[L_3]] flags=[IsFromCompiler]}, {type=env [[L_4]] flags=[IsFromCompiler]}, {type=anything}, {type=function flags=[IsFromCompiler]}, {type=object flags=[IsFromCompiler]}, {type=anything}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_5]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow captures=[{type=env [[L_3]] flags=[IsFromCompiler]}, {type=env [[L_4]] flags=[IsFromCompiler]}, {type=anything}, {type=function flags=[IsFromCompiler]}, {type=object flags=[IsFromCompiler] variableName="arguments"}, {type=anything}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_5]]] {
 // CHECK-NEXT: b0(v0: env [[L_3]], v1: env [[L_4]], v2: anything, v3: function, v4: object, v5: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -61,7 +61,7 @@ row("no super() at all", () => new (class extends Base { constructor() { eval("1
 // CHECK-NEXT: Return v18
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="run"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow captures=[{type=env [[L_6]] flags=[IsFromCompiler]}, {type=env [[L_7]] flags=[IsFromCompiler]}, {type=anything}, {type=function flags=[IsFromCompiler]}, {type=object flags=[IsFromCompiler]}, {type=anything}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_8]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow captures=[{type=env [[L_6]] flags=[IsFromCompiler]}, {type=env [[L_7]] flags=[IsFromCompiler]}, {type=anything}, {type=function flags=[IsFromCompiler]}, {type=object flags=[IsFromCompiler] variableName="arguments"}, {type=anything}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_8]]] {
 // CHECK-NEXT: b0(v0: env [[L_6]], v1: env [[L_7]], v2: anything, v3: function, v4: object, v5: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

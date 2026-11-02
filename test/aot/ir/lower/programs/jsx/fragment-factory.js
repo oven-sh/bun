@@ -47,7 +47,7 @@ console.log((() => <></>)());
 // CHECK-NEXT: v3 = CheckInitialized v2 name="F"
 // CHECK-NEXT: v4 = Null
 // CHECK-NEXT: v5 = Call v1, -, v3, v4 calleeName="h"
-// CHECK-NEXT: Return v5
+// CHECK-NEXT: ReturnCall v5
 // CHECK-NEXT: }
 // CHECK: function {{*}}
 // CHECK: module=[[m_0]] role=Signature thisType={type=anything} results=[{type=anything}]

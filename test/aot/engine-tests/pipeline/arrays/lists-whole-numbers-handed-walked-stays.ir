@@ -245,31 +245,24 @@ function f3 name="firstTwo" module=m0 position=519 flags=[IsChecked, HasExplicit
 # CHECK-NEXT: v4: undefined @Void = CallDirect v2 function=f7 [isNeverInlined]
 # CHECK-NEXT: v5: object @Cell = ResultAt v4
 # CHECK-NEXT: v6: anything @JSValue = ResultAt v4 index=1
-# CHECK-NEXT: v7: anything @JSValue = Call v6, v5
-# CHECK-NEXT: v8: object @JSValue = RequireObject v7 runtimeError=IteratorResultNotObject
-# CHECK-NEXT: v9: boolean @Boolean = PropGetAndTest v8 key="done"
-# CHECK-NEXT: TestAndBranch v9 -> taken b3(), notTaken b4()
+# CHECK-NEXT: v7: undefined @Void = CallDirect v5, v6 function=f8 [isNeverInlined]
+# CHECK-NEXT: Return v1
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v10: 0 @Int32 = Integer
-# CHECK-NEXT: v11: int[0, 4294967295] @Int64 = CallInline v2 inlineBuiltin=ArrayLength overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v12: boolean @Boolean = Less v10, v11 form=Integers
-# CHECK-NEXT: TestAndBranch v12 -> taken b6(), notTaken b5()
-# CHECK-NEXT: b3() frequency=Unlikely:
+# CHECK-NEXT: v8: 0 @Int32 = Integer
+# CHECK-NEXT: v9: int[0, 4294967295] @Int64 = CallInline v2 inlineBuiltin=ArrayLength overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v10: boolean @Boolean = Less v8, v9 form=Integers
+# CHECK-NEXT: TestAndBranch v10 -> taken b4(), notTaken b3()
+# CHECK-NEXT: b3():
 # CHECK-NEXT: Return v1
-# CHECK-NEXT: b4() frequency=Unlikely:
-# CHECK-NEXT: v13: anything @JSValue = PropGet v8 key="value" siteCache=2
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v11: boolean @Boolean = HasArrayStorage v2 arrayStorage=Double
+# CHECK-NEXT: TestAndBranch v11 -> taken b6(| 0), notTaken b5()
+# CHECK-NEXT: b5() frequency=Rare:
+# CHECK-NEXT: v12: anything @JSValue = ElemGet v2, v8 [keyIsIntegral, storageIsUndecided]
 # CHECK-NEXT: Jump -> next b3()
-# CHECK-NEXT: b5():
-# CHECK-NEXT: Return v1
-# CHECK-NEXT: b6():
-# CHECK-NEXT: v14: boolean @Boolean = HasArrayStorage v2 arrayStorage=Double
-# CHECK-NEXT: TestAndBranch v14 -> taken b8(| 0), notTaken b7()
-# CHECK-NEXT: b7() frequency=Rare:
-# CHECK-NEXT: v15: anything @JSValue = ElemGet v2, v10 [keyIsIntegral, storageIsUndecided]
-# CHECK-NEXT: Jump -> next b5()
-# CHECK-NEXT: b8(v16: guard @Void):
-# CHECK-NEXT: v17: boolean @Boolean = IsElementPresent v2, v10, v16 arrayStorage=Double [keyIsIntegral]
-# CHECK-NEXT: TestAndBranch v17 -> taken b5(), notTaken b7()
+# CHECK-NEXT: b6(v13: guard @Void):
+# CHECK-NEXT: v14: boolean @Boolean = IsElementPresent v2, v8, v13 arrayStorage=Double [keyIsIntegral]
+# CHECK-NEXT: TestAndBranch v14 -> taken b3(), notTaken b5()
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="firstTwo"
 # CHECK: module=m0 position=519 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

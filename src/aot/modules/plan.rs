@@ -2,10 +2,14 @@
 mod tests;
 
 use super::ApplicationGraph;
-use super::bindings::{ImportBinding, ModuleExport, ModuleRequest, SyntheticExportId};
+use super::bindings::{
+    AnswerMember, CopiedExports, Holder, ImportBinding, ModuleExport, ModuleRequest,
+    SyntheticExportId,
+};
+use super::evicted::LibraryModulesStoredInCache;
 use super::graph::{ModuleGraph, find};
 use super::imports::NamedMember;
-use super::interop::{ImportPhase, ModuleKind};
+use super::interop::ModuleKind;
 use super::order::{OrderParts, SiteKey};
 use super::reached_targets::ReachedTargets;
 use super::wrapped::InnerModuleKind;
@@ -14,6 +18,7 @@ use crate::ir::generated::ModuleRequestKind;
 use crate::ir::parallel::{InParallel, for_each_mut};
 use crate::load::sources::EntryPoint;
 use crate::options::WaysBetweenModuleObjects;
+use bun_ast::Loader;
 use bun_sema::atom::Atom;
 use bun_sema::bind::SymbolId;
 use bun_sema::hir::{ExprId, FnId, ImportEqualsId, StmtId};
@@ -38,6 +43,8 @@ pub enum ModuleRef {
     External {
         importer: FileId,
         specifier: Atom,
+        /// `import data from "./data.txt" with { type: "toml" }`: the loader of the run time is asked as the statement asks, and keeps what it answers apart from what an import without the attribute gets.
+        type_attribute: Option<Loader>,
     },
 }
 
@@ -55,9 +62,11 @@ impl ModuleRef {
             ModuleRef::External {
                 importer,
                 specifier,
+                type_attribute,
             } => ModuleRef::External {
                 importer: map(importer)?,
                 specifier,
+                type_attribute,
             },
         })
     }
@@ -125,14 +134,43 @@ pub(super) struct Plan {
     inner_callbacks: Vec<FnId>,
     keeps_module_object: Vec<bool>,
     names_way_to_module_objects: Vec<bool>,
+    is_found_by_name: Vec<bool>,
     ways_not_followed_out_of_sight: WaysBetweenModuleObjects,
     ways_followed_for_their_names: WaysBetweenModuleObjects,
     lets_process_out_of_sight: bool,
+    is_ready_for_loader_functions: bool,
+    /// A test run in which a file stores `Module._resolveFilename` or `Module.prototype.require`: plain Bun asks them at every `require`.
+    asks_loader_functions: bool,
     /// A `require` of a file may run before the loader has come to a CommonJS file, and code names a way between module objects: whether one did says which file has the id ".".
     is_first_require_seen: bool,
     is_namespace_seen: Vec<bool>,
     /// A file stores `__esModule` on what `require` of the module answers.
     is_marker_stored: Vec<bool>,
+    is_imported_as_namespace: Vec<bool>,
+    /// `mock.module` names the module.
+    may_be_mocked: Vec<bool>,
+    /// The order numbers no module of the library.
+    mocked_runtime_modules: Vec<RuntimeModule>,
+    may_mock_every_module: bool,
+    runs_tests: bool,
+    /// A test run: `require.cache` lists the files of the program that have run.
+    lists_files_in_cache: bool,
+    /// `EvictedModules::is_table_reached`
+    reaches_entries_of_cache: bool,
+    /// `delete require.cache[path]` loads the file anew: `EvictedModules`.
+    may_be_evicted: Vec<bool>,
+    /// `EvictedModules::changed_on_disk`
+    is_changed_on_disk_by_run: Vec<bool>,
+    library_modules_stored_in_cache: LibraryModulesStoredInCache,
+    may_evict_every_module: bool,
+    /// The host loads the entry point several times in one realm: `AotOptions::entry_points_run_again`.
+    runs_again: Vec<bool>,
+    /// Somebody out of sight may ask for any export of the module: `EvictedModules`.
+    is_every_export_asked_for: Vec<bool>,
+    is_every_export_of_every_module_asked_for: bool,
+    copies_name_every_module: bool,
+    /// Ascending. The test runner stores into them.
+    replaced_variables: Vec<Sym>,
     /// The statements that define inner modules, and those of modules that cannot be loaded.
     erased_statements: Vec<(FileId, StmtId)>,
     pub named_members: FxHashMap<(ModuleRef, Atom), NamedMember<ImportBinding>>,
@@ -152,12 +190,31 @@ impl Plan {
             inner_callbacks: inner_modules.map(|inner| inner.1).collect(),
             keeps_module_object: vec![false; order.numbers.len()],
             names_way_to_module_objects: vec![false; order.numbers.len()],
+            is_found_by_name: vec![false; order.numbers.len()],
             ways_not_followed_out_of_sight: WaysBetweenModuleObjects::default(),
             ways_followed_for_their_names: WaysBetweenModuleObjects::default(),
             lets_process_out_of_sight: false,
+            is_ready_for_loader_functions: false,
+            asks_loader_functions: false,
             is_first_require_seen: false,
             is_namespace_seen: vec![false; order.numbers.len()],
             is_marker_stored: vec![false; order.numbers.len()],
+            is_imported_as_namespace: vec![false; order.numbers.len()],
+            may_be_mocked: vec![false; order.numbers.len()],
+            mocked_runtime_modules: Vec::new(),
+            may_mock_every_module: false,
+            runs_tests: false,
+            lists_files_in_cache: false,
+            reaches_entries_of_cache: false,
+            may_be_evicted: vec![false; order.numbers.len()],
+            is_changed_on_disk_by_run: vec![false; order.numbers.len()],
+            library_modules_stored_in_cache: LibraryModulesStoredInCache::default(),
+            may_evict_every_module: false,
+            runs_again: vec![false; order.numbers.len()],
+            is_every_export_asked_for: vec![false; order.numbers.len()],
+            is_every_export_of_every_module_asked_for: false,
+            copies_name_every_module: false,
+            replaced_variables: Vec::new(),
             order,
             erased_statements,
             named_members: FxHashMap::default(),
@@ -182,6 +239,80 @@ impl Plan {
 
     pub(super) fn set_marker_is_stored(&mut self, module: ModuleRef) {
         self.add(|plan| &mut plan.is_marker_stored, module);
+    }
+
+    pub(super) fn set_is_imported_as_namespace(&mut self, module: ModuleRef) {
+        self.add(|plan| &mut plan.is_imported_as_namespace, module);
+    }
+
+    pub(super) fn set_may_be_mocked(&mut self, module: ModuleRef) {
+        match module {
+            ModuleRef::Runtime(module) => self.mocked_runtime_modules.push(module),
+            _ => self.add(|plan| &mut plan.may_be_mocked, module),
+        }
+    }
+
+    pub(super) fn set_runs_tests(&mut self) {
+        self.runs_tests = true;
+    }
+
+    pub(super) fn set_lists_files_in_cache(&mut self) {
+        self.lists_files_in_cache = true;
+    }
+
+    pub(super) fn set_reaches_entries_of_cache(&mut self) {
+        self.reaches_entries_of_cache = true;
+    }
+
+    pub(super) fn set_may_be_evicted(&mut self, module: ModuleRef) {
+        self.add(|plan| &mut plan.may_be_evicted, module);
+    }
+
+    pub(super) fn set_is_changed_on_disk_by_run(&mut self, module: ModuleRef) {
+        self.add(|plan| &mut plan.is_changed_on_disk_by_run, module);
+    }
+
+    pub(super) fn set_library_modules_stored_in_cache(
+        &mut self,
+        stored: LibraryModulesStoredInCache,
+    ) {
+        for file in stored.files_tracking_first_load() {
+            self.add(
+                |plan| &mut plan.names_way_to_module_objects,
+                ModuleRef::File(file),
+            );
+        }
+        self.library_modules_stored_in_cache = stored;
+    }
+
+    pub(super) fn set_runs_again(&mut self, module: ModuleRef) {
+        self.add(|plan| &mut plan.runs_again, module);
+    }
+
+    pub(super) fn set_every_module_may_be_evicted(&mut self) {
+        self.may_evict_every_module = true;
+    }
+
+    pub(super) fn set_every_export_is_asked_for(&mut self, module: ModuleRef) {
+        self.add(|plan| &mut plan.is_every_export_asked_for, module);
+    }
+
+    pub(super) fn set_every_export_of_every_module_is_asked_for(&mut self) {
+        self.is_every_export_of_every_module_asked_for = true;
+    }
+
+    pub(super) fn set_copies_name_every_module(&mut self) {
+        self.copies_name_every_module = true;
+    }
+
+    pub(super) fn set_every_module_may_be_mocked(&mut self) {
+        self.may_mock_every_module = true;
+    }
+
+    pub(super) fn set_replaced_variables(&mut self, mut variables: Vec<Sym>) {
+        variables.sort_unstable();
+        variables.dedup();
+        self.replaced_variables = variables;
     }
 
     pub(super) fn inner_modules(&self) -> &[(FileId, FnId)] {
@@ -271,7 +402,8 @@ impl ModuleGraph {
             records: shows_mark
                 || self.keeps_module_object(site.referrer)
                 || self.keeps_module_object(site.target)
-                || (self.plan.is_first_require_seen && matches!(site.target, ModuleRef::File(_))),
+                || (self.plan.is_first_require_seen && matches!(site.target, ModuleRef::File(_)))
+                || matches!(site.target, ModuleRef::File(file) if self.tracks_first_load(file)),
         }
     }
 
@@ -306,6 +438,77 @@ impl ModuleGraph {
             .binary_search_by_key(&symbol, |holder| holder.symbol)
             .ok()?;
         (!holders[at].is_needed_as_value).then_some(holders[at].view)
+    }
+
+    /// The call of `require` in the initializer of such a name. What else the initializer does makes an object that nobody looks at.
+    pub fn call_of_holder(&self, file: FileId, symbol: SymbolId) -> Option<ExprId> {
+        let holders = self.holders(file);
+        let at = holders
+            .binary_search_by_key(&symbol, |holder| holder.symbol)
+            .ok()?;
+        (!holders[at].is_needed_as_value).then_some(holders[at].call)
+    }
+
+    // A name that holds what a helper makes of an answer of which the text does not say that it has the marker, where the object of the module is there and the helper is called once.
+    fn holder_of_unmarked_copy(
+        &self,
+        file: FileId,
+        symbol: SymbolId,
+    ) -> Option<(Holder, CopiedExports)> {
+        let holders = self.holders(file);
+        let at = holders
+            .binary_search_by_key(&symbol, |holder| holder.symbol)
+            .ok()?;
+        let holder = holders[at];
+        let copy = holder.copy?;
+        (holder.is_needed_as_value && copy.runs_once && !copy.has_marker).then_some((holder, copy))
+    }
+
+    /// `const a = __toESM(require(K))`, where `a` is only read by name: `a` holds what `require` answers in place of the copy, unless the helper would not show that under `default` or the answer lacks one of the names. The call of `require` and the copy.
+    pub fn holder_of_answer(
+        &self,
+        file: FileId,
+        symbol: SymbolId,
+    ) -> Option<(ExprId, CopiedExports)> {
+        let (holder, copy) = self.holder_of_unmarked_copy(file, symbol)?;
+        let holds_answer = copy.may_hold_answer && !copy.is_looked_at && !copy.is_called_through;
+        holds_answer.then_some((holder.call, copy))
+    }
+
+    /// `const a = __importStar(require(K))` and `const a = __toESM(require(K))`, where `a` holds the copy: a name that the answer has when the copy is made is read on the answer, as the getter of the copy does. The call of `require` and the copy.
+    pub fn holder_of_copy(
+        &self,
+        file: FileId,
+        symbol: SymbolId,
+    ) -> Option<(ExprId, CopiedExports)> {
+        let (holder, copy) = self.holder_of_unmarked_copy(file, symbol)?;
+        let mut members = self.row(file).answer_members.iter();
+        let reads_answer = copy.is_of_ordinary_object
+            && self.holder_of_answer(file, symbol).is_none()
+            && members.any(|&(_, member)| member.holder == symbol && member.name.is_some());
+        reads_answer.then_some((holder.call, copy))
+    }
+
+    /// The names that are read through such a name, each once, in the order of the text.
+    pub fn names_read_on_answer(&self, file: FileId, holder: SymbolId) -> Vec<Atom> {
+        let mut names = Vec::new();
+        for &(_, member) in &self.row(file).answer_members {
+            if let Some(name) = member.name
+                && member.holder == holder
+                && !names.contains(&name)
+            {
+                names.push(name);
+            }
+        }
+        names
+    }
+
+    /// `a.default` and `a.n` of such a name, where a variable of its own holds the answer.
+    pub fn answer_member(&self, file: FileId, access: ExprId) -> Option<AnswerMember> {
+        let member = find(&self.row(file).answer_members, access)?;
+        let is_read_on_answer = self.holder_of_answer(file, member.holder).is_some()
+            || (member.name.is_some() && self.holder_of_copy(file, member.holder).is_some());
+        is_read_on_answer.then_some(member)
     }
 
     /// `E.N`, `R.N`, `d.N` and `ns.N`, where the access is bound to a name of a module.
@@ -431,12 +634,94 @@ impl ModuleGraph {
                 .has(&self.plan.order.is_required_during_load, module)
     }
 
-    /// An ES module that the CommonJS file leads to by a `require` imports the file.
+    /// An ES module that the CommonJS file leads to by a `require` or an `import()` imports the file, or such an `import()` names the file.
     pub fn may_be_imported_while_it_runs(&self, module: ModuleRef) -> bool {
         matches!(module, ModuleRef::File(_))
             && self
                 .plan
                 .has(&self.plan.order.may_be_imported_while_it_runs, module)
+    }
+
+    /// A file has `import * as` of the module.
+    pub fn is_imported_as_namespace(&self, module: ModuleRef) -> bool {
+        self.plan.has(&self.plan.is_imported_as_namespace, module)
+    }
+
+    pub fn runs_tests(&self) -> bool {
+        self.plan.runs_tests
+    }
+
+    pub fn lists_files_in_cache(&self) -> bool {
+        self.plan.lists_files_in_cache
+    }
+
+    /// A test run in which a file of the program may get at the entry of a file in `require.cache`.
+    pub fn reaches_entries_of_cache(&self) -> bool {
+        self.plan.reaches_entries_of_cache
+    }
+
+    /// `delete require.cache[path]` under a key that nobody spells: whichever file the path names, in this program or in one that is built above it.
+    pub fn may_evict_every_module(&self) -> bool {
+        self.plan.may_evict_every_module
+    }
+
+    pub fn may_be_evicted(&self, module: ModuleRef) -> bool {
+        self.plan.may_evict_every_module || self.plan.has(&self.plan.may_be_evicted, module)
+    }
+
+    /// `writeFileSync(path, text)` with the path of the file: what the run loads from there is a text that the build has not read.
+    pub fn is_changed_on_disk_by_run(&self, module: ModuleRef) -> bool {
+        (self.plan).has(&self.plan.is_changed_on_disk_by_run, module)
+    }
+
+    /// `require.cache["fs"] = { exports: fake }`: an entry of the program may stand under the name, which is one that `require` looks for there.
+    pub fn may_entry_in_cache_stand_under(&self, name: &[u8]) -> bool {
+        (self.plan.library_modules_stored_in_cache).may_stand_under(name)
+    }
+
+    /// A `require` of the program that names the module without `node:` is compiled for the module, whatever `require.cache` holds under that name.
+    pub fn is_held_under_name_without_prefix(&self, module: RuntimeModule) -> bool {
+        (self.plan.library_modules_stored_in_cache).is_held_under_name_without_prefix(module)
+    }
+
+    pub fn tracks_first_load(&self, file: FileId) -> bool {
+        (self.plan.library_modules_stored_in_cache).tracks_first_load(file)
+    }
+
+    /// The body of the ES module runs each time the host loads it. Plain Bun makes a new module of the file each time, so each run has
+    /// variables of its own. It finds a CommonJS file in `require.cache` and does not run it again.
+    pub fn runs_again(&self, file: FileId) -> bool {
+        self.kind(file) == ModuleKind::SourceText
+            && self.plan.has(&self.plan.runs_again, ModuleRef::File(file))
+    }
+
+    /// A file that is taken out of `require.cache`, or loaded under a query, runs again from disk and imports what its text names, and an
+    /// entry of `require.cache` shows all that its file exports.
+    pub fn is_every_export_asked_for(&self, module: ModuleRef) -> bool {
+        self.plan.is_every_export_of_every_module_asked_for
+            || self.plan.has(&self.plan.is_every_export_asked_for, module)
+    }
+
+    /// A copy from disk may name the file to the loader of the host. A file that reads `require.cache` names none.
+    pub fn is_named_by_copies(&self, module: ModuleRef) -> bool {
+        self.plan.copies_name_every_module
+            || self.plan.has(&self.plan.is_every_export_asked_for, module)
+    }
+
+    pub fn may_be_mocked(&self, module: ModuleRef) -> bool {
+        let plan = &self.plan;
+        // The build has to see which calls are spies. A mock of bun:test is named at its call.
+        (plan.may_mock_every_module && module != ModuleRef::Runtime(RuntimeModule::BunTest))
+            || match module {
+                ModuleRef::Runtime(module) => plan.mocked_runtime_modules.contains(&module),
+                _ => plan.has(&plan.may_be_mocked, module),
+            }
+    }
+
+    /// Whether the test runner may store another value into the variable, which an ES module exports.
+    pub fn is_replaceable(&self, variable: Sym) -> bool {
+        let replaced = &self.plan.replaced_variables;
+        replaced.binary_search(&variable).is_ok()
     }
 
     /// A later site of a module whose body threw throws the same error again.
@@ -471,6 +756,11 @@ impl ModuleGraph {
     pub fn names_way_to_module_objects(&self, module: ModuleRef) -> bool {
         let plan = &self.plan;
         plan.has(&plan.names_way_to_module_objects, module)
+    }
+
+    /// A load under a name that the build does not follow may find the file.
+    pub fn is_found_by_name(&self, module: ModuleRef) -> bool {
+        self.plan.has(&self.plan.is_found_by_name, module)
     }
 
     pub fn settled(&self, module: ModuleRef, name: Atom) -> bool {
@@ -586,9 +876,29 @@ impl ModuleGraph {
         self.plan.lets_process_out_of_sight = lets;
     }
 
+    pub fn is_ready_for_loader_functions(&self) -> bool {
+        self.plan.is_ready_for_loader_functions
+    }
+
+    pub fn set_is_ready_for_loader_functions(&mut self, is_ready: bool) {
+        self.plan.is_ready_for_loader_functions = is_ready;
+    }
+
+    pub fn asks_loader_functions(&self) -> bool {
+        self.plan.asks_loader_functions
+    }
+
+    pub fn set_asks_loader_functions(&mut self, asks: bool) {
+        self.plan.asks_loader_functions = asks;
+    }
+
     pub fn set_names_way_to_module_objects(&mut self, module: ModuleRef) {
         self.plan
             .add(|plan| &mut plan.names_way_to_module_objects, module);
+    }
+
+    pub fn set_is_found_by_name(&mut self, module: ModuleRef) {
+        self.plan.add(|plan| &mut plan.is_found_by_name, module);
     }
 
     pub fn set_namespace_is_seen(&mut self, module: ModuleRef) {
@@ -609,6 +919,9 @@ impl ModuleGraph {
             }
             if theirs.names_way_to_module_objects(their_module) {
                 self.set_names_way_to_module_objects(module);
+            }
+            if theirs.is_found_by_name(their_module) {
+                self.set_is_found_by_name(module);
             }
             if their_plan.has(&their_plan.is_namespace_seen, their_module) {
                 self.set_namespace_is_seen(module);
@@ -683,13 +996,12 @@ impl ModuleGraph {
         prefix
     }
 
-    // The file of the program that is linked with whoever makes the request.
+    // The file of the program that is linked with whoever makes the request. `import defer` puts off when the file runs, not when it is linked.
     fn find_linked_file(&self, request: &ModuleRequest) -> Option<FileId> {
         let ModuleRef::File(target) = request.target else {
             return None;
         };
         let is_followed = request.kind == ModuleRequestKind::Import
-            && request.phase == ImportPhase::Evaluation
             && (self.is_code_of_program(request.target)
                 || self.plan.order.makes_values_at_load[target.idx()])
             && (!self.is_left_out(request.target) || self.is_placeholder(target));

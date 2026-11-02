@@ -641,8 +641,8 @@ function f32 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f33 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f34 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f35 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f36 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f37 name="forEach" module=m2 position=3958 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=43 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f36 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f37 name="forEach" module=m2 position=3958 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeForEach thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything, v2: anything):
     v3 = ToObject v0 message="Array.prototype.forEach requires that |this| not be null or undefined"
     v4 = PropGet v3 key="length"
@@ -680,7 +680,7 @@ function f37 name="forEach" module=m2 position=3958 kind=Method role=Library fla
     v32 = Undefined
     Return v32
 }
-function f38 name="map" module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=64 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f38 name="map" module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeMap thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything, v2: anything):
     v3 = Undefined
     v4 = ToObject v0 message="Array.prototype.map requires that |this| not be null or undefined"
@@ -703,7 +703,7 @@ function f41 name="appendParts" module=m3 position=1242 role=Library flags=[IsCh
 function f42 name="joinedText" module=m3 position=1819 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string site=w12 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f43 name="finishJoin" module=m3 position=1934 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=undefined|null|string site=w13 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string site=w14 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w15}, {type=number site=w16}] results=[{type=undefined|null|string site=w17 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f44 name="finishReduce" module=m3 position=2116 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=boolean site=w18}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f45 name="traverseArray" module=m3 position=2337 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 enclosingRuntimeFunction=131091 thisType={type=anything} parameters=[{type=undefined|null|Array site=w19 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w20}, {type=undefined|number site=w21}, {type=number site=w22}, {type=undefined|null|Array site=w23 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f45 name="traverseArray" module=m3 position=2337 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 enclosingRuntimeFunction=ArrayTraversalTraverseArray thisType={type=anything} parameters=[{type=undefined|null|Array site=w19 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w20}, {type=undefined|number site=w21}, {type=number site=w22}, {type=undefined|null|Array site=w23 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: undefined|null|Array, v1: number, v2: undefined|number, v3: number, v4: undefined|null|Array, v5: anything):
     v6 = Integer integer=1
     v7 = Convert v6 declared={type=1 site=w32}
@@ -814,10 +814,10 @@ function f45 name="traverseArray" module=m3 position=2337 kind=Method role=Libra
   b9(v124, v125):
     Return v67
 }
-runtimefunction id=43 function=f37
-runtimefunction id=64 function=f38
-runtimefunction id=68 function=f36
-runtimefunction id=131091 function=f45 visibility=Private
+runtimefunction id=ArrayPrototypeForEach function=f37
+runtimefunction id=ArrayPrototypeMap function=f38
+runtimefunction id=ArrayIteratorPrototypeNext function=f36
+runtimefunction id=ArrayTraversalTraverseArray function=f45 visibility=Private
 # -- generated: f0 declaredInTheHead storedByACallbackBetweenTwoReadsInAList copiedFromTurnToTurn keepsTheValueOfTheTurnBefore storedByADefault
 # CHECK-LABEL: function f0 module=
 # CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
@@ -826,59 +826,35 @@ runtimefunction id=131091 function=f45 visibility=Private
 # CHECK-NEXT: PutModuleVariable v0 variable=g0
 # CHECK-NEXT: v2: 0 = Integer
 # CHECK-NEXT: PutModuleVariable v2 variable=g1
-# CHECK-NEXT: v4: Array<1> = Data data=d18 allocationSite=6
+# CHECK-NEXT: v4: Array<1> = Data data=d18 allocationSite=6 [isNeverToldApart]
 # CHECK-NEXT: v5: Array<1, proven, pristine[Storage, Names, Dense]> = AssumeType v4 provenType=Array<1, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v6: 3 = Integer integer=3
-# CHECK-NEXT: v7: undefined = CallDirect v5, v6 function=f2 accessSite=0
-# CHECK-NEXT: v8: 1 = Integer integer=1
-# CHECK-NEXT: v9: L9 = NewObject -, v8 layout=L9 fields=[0] allocationSite=7 allocationClass=0
-# CHECK-NEXT: v10: anything = CallDirect v9 function=f3 accessSite=1
-# CHECK-NEXT: v11: 1 = Integer integer=1
-# CHECK-NEXT: v12: Array<1> = NewArray v11 contents=1 allocationSite=8
-# CHECK-NEXT: v13: Array<1, proven, pristine[Storage, Names, Dense]> = AssumeType v12 provenType=Array<1, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v14: undefined = CallDirect v13 function=f5 accessSite=2
-# CHECK-NEXT: v15: "7" = String string="7"
-# CHECK-NEXT: v16: anything = CallDirect v15 function=f52 accessSite=3
-# CHECK-NEXT: v17: 1 = Integer integer=1
-# CHECK-NEXT: v18: L9 = NewObject -, v17 layout=L9 fields=[0] allocationSite=9 allocationClass=0
-# CHECK-NEXT: v19: anything = CallDirect v18 function=f9 accessSite=4
-# CHECK-NEXT: v20: 1 = Integer integer=1
-# CHECK-NEXT: v21: L9 = NewObject -, v20 layout=L9 fields=[0] allocationSite=10 allocationClass=0
-# CHECK-NEXT: v22: 6 = Integer integer=6
-# CHECK-NEXT: v23: undefined = CallDirect v21, v22 function=f16 accessSite=5
-# CHECK-NEXT: v24: undefined = Undefined
-# CHECK-NEXT: Return v24
+# CHECK-NEXT: v6: undefined = CallDirect v5 function=f52 accessSite=0
+# CHECK-NEXT: v7: 1 = Integer integer=1
+# CHECK-NEXT: v8: L9 = NewObject -, v7 layout=L9 fields=[0] allocationSite=7 allocationClass=0
+# CHECK-NEXT: v9: anything = CallDirect v8 function=f3 accessSite=1
+# CHECK-NEXT: v10: 1 = Integer integer=1
+# CHECK-NEXT: v11: Array<1> = NewArray v10 contents=1 allocationSite=8
+# CHECK-NEXT: v12: Array<1, proven, pristine[Storage, Names, Dense]> = AssumeType v11 provenType=Array<1, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v13: undefined = CallDirect v12 function=f5 accessSite=2
+# CHECK-NEXT: v14: "7" = String string="7"
+# CHECK-NEXT: v15: anything = CallDirect v14 function=f53 accessSite=3
+# CHECK-NEXT: v16: 1 = Integer integer=1
+# CHECK-NEXT: v17: L9 = NewObject -, v16 layout=L9 fields=[0] allocationSite=9 allocationClass=0
+# CHECK-NEXT: v18: anything = CallDirect v17 function=f9 accessSite=4
+# CHECK-NEXT: v19: 1 = Integer integer=1
+# CHECK-NEXT: v20: L9 = NewObject -, v19 layout=L9 fields=[0] allocationSite=10 allocationClass=0
+# CHECK-NEXT: v21: undefined = CallDirect v20 function=f54 accessSite=5
+# CHECK-NEXT: v22: undefined = Undefined
+# CHECK-NEXT: Return v22
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="declaredInTheHead"
-# CHECK: module=m0 position=573 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=Array<1, proven, pristine[Storage, Names, Dense]>}, {type=3}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: Array<1, proven, pristine[Storage, Names, Dense]>, v1: 3):
-# CHECK-NEXT: v2: 0 = Integer
-# CHECK-NEXT: Jump -> next b1(v0, v2)
-# CHECK-NEXT: b1(v3: i32|Array<1, proven, pristine[Storage, Names, Dense]> ~ Array<1, proven, pristine[Storage, Names, Dense]>, v4: int[0, 3] ~ 0):
-# CHECK-NEXT: v5: boolean ~ false = TypeTest v3 testedType=number
-# CHECK-NEXT: Branch v5 -> taken b4(), notTaken b2()
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v7: boolean = Less v4, v1
-# CHECK-NEXT: Branch v7 -> taken b3(| 0), notTaken b4()
-# CHECK-NEXT: b3(v8: int[0, 2] ~ 0) frequency=Rare:
-# CHECK-NEXT: v9: fact = Specified
-# CHECK-NEXT: v10: Array<1, proven, pristine[Storage, Names, Dense]> = AssumeType v3, v9 provenType=Array<1, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v11: int[0, 2] ~ 0 = Upcast v8 castType=int[0, 2]
-# CHECK-NEXT: v12: 0 = Integer
-# CHECK-NEXT: v13: i32 = BitOr v10, v12
-# CHECK-NEXT: v14: int[1, 3] ~ 1 = Increment v11
-# CHECK-NEXT: Jump -> next b1(v13, v14)
-# CHECK-NEXT: b4():
-# CHECK-NEXT: v15: undefined = Undefined
-# CHECK-NEXT: Return v15
-# CHECK-NEXT: }
+# CHECK: module=m0 position=573 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=Array<1, proven, pristine[Storage, Names, Dense]>}, {type=3}] results=[{type=undefined}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="storedByACallbackBetweenTwoReadsInAList"
 # CHECK: module=m0 position=751 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L9}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: L9):
 # CHECK-NEXT: v1: Array<0, Int32> = Data data=d19 allocationSite=13 arrayStorage=Int32
 # CHECK-NEXT: v2: Array<0, proven, Int32, pristine[Storage, Names, Dense]> = AssumeType v1 provenType=Array<0, proven, Int32, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v3: anything = CallDirect v2 function=f53 accessSite=7
+# CHECK-NEXT: v3: anything = CallDirect v2 function=f55 accessSite=7
 # CHECK-NEXT: v4: undefined = Undefined
 # CHECK-NEXT: v5: false = Boolean
 # CHECK-NEXT: v6: 0 = Integer
@@ -914,7 +890,7 @@ runtimefunction id=131091 function=f45 visibility=Private
 # CHECK-NEXT: Jump -> next b6(v28, v25, v27)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="storedByADefault"
-# CHECK: module=m0 position=1712 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string}, {type=3}] results=[{type=anything}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
+# CHECK: module=m0 position=1712 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type="7"}, {type=3}] results=[{type=anything}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="copiedFromTurnToTurn"
 # CHECK: module=m0 position=2167 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L9}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f37 callPosition=4294967295 module=m2}, {callee=f25 callPosition=4294967295 parent=1 calleeIsPredicted=true module=m0}] {
 # CHECK-NEXT: b0(v0: L9):
@@ -931,7 +907,7 @@ runtimefunction id=131091 function=f45 visibility=Private
 # CHECK-NEXT: v10: boolean = Less v7, v5
 # CHECK-NEXT: Branch v10 -> taken b3(| 0), notTaken b7()
 # CHECK-NEXT: b3(v11: int[0, 4294967294]):
-# CHECK-NEXT: v12: boolean = HasArrayElement v4, v11 arrayStorage=Int32 level=Proven accessSite=22 [keyIsIntegral]
+# CHECK-NEXT: v12: boolean = IsInBounds v4, v11 [isFromProgram]
 # CHECK-NEXT: Branch v12 -> taken b4(), notTaken b5()
 # CHECK-NEXT: b4():
 # CHECK-NEXT: v13: -1 = Integer integer=-1
@@ -954,8 +930,47 @@ runtimefunction id=131091 function=f45 visibility=Private
 # CHECK-NEXT: Jump -> next b6(v21)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="keepsTheValueOfTheTurnBefore"
-# CHECK: module=m0 position=3850 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L9}, {type=6}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: L9, v1: 6):
+# CHECK: module=m0 position=3850 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L9}, {type=6}] results=[{type=undefined}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
+# CHECK-LABEL: function {{*}}name="declaredInTheHead"
+# CHECK: module=m0 position=573 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=Array<1, proven, pristine[Storage, Names, Dense]>}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f2 parameterMap=[{original=0}]} {
+# CHECK-NEXT: b0(v0: Array<1, proven, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: v1: 3 = Integer integer=3
+# CHECK-NEXT: v2: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v0, v2)
+# CHECK-NEXT: b1(v3: i32|Array<1, proven, pristine[Storage, Names, Dense]> ~ Array<1, proven, pristine[Storage, Names, Dense]>, v4: int[0, 3] ~ 0):
+# CHECK-NEXT: v5: boolean ~ false = TypeTest v3 testedType=number
+# CHECK-NEXT: Branch v5 -> taken b4(), notTaken b2()
+# CHECK-NEXT: b2() frequency=Unlikely:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v7: boolean = Less v4, v1
+# CHECK-NEXT: Branch v7 -> taken b3(| 0), notTaken b4()
+# CHECK-NEXT: b3(v8: int[0, 2] ~ 0) frequency=Rare:
+# CHECK-NEXT: v9: fact = Specified
+# CHECK-NEXT: v10: Array<1, proven, pristine[Storage, Names, Dense]> = AssumeType v3, v9 provenType=Array<1, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v11: int[0, 2] ~ 0 = Upcast v8 castType=int[0, 2]
+# CHECK-NEXT: v12: 0 = Integer
+# CHECK-NEXT: v13: i32 = BitOr v10, v12
+# CHECK-NEXT: v14: int[1, 3] ~ 1 = Increment v11
+# CHECK-NEXT: Jump -> next b1(v13, v14)
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v15: undefined = Undefined
+# CHECK-NEXT: Return v15
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="storedByADefault"
+# CHECK: module=m0 position=1712 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type="7"}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f7 parameterMap=[{original=0}]} inlineFrames=[{}, {callee=f23 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0(v0: "7"):
+# CHECK-NEXT: v2: "7" = Upcast v0 castType=i32|"7"
+# CHECK-NEXT: v3: -1 = Integer integer=-1
+# CHECK-NEXT: v4: i32 = BitAnd v2, v3
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="keepsTheValueOfTheTurnBefore"
+# CHECK: module=m0 position=3850 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L9}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f16 parameterMap=[{original=0}]} {
+# CHECK-NEXT: b0(v0: L9):
+# CHECK-NEXT: v1: 6 = Integer integer=6
 # CHECK-NEXT: v2: 0 = Integer
 # CHECK-NEXT: Jump -> next b1(v0, v2)
 # CHECK-NEXT: b1(v3: int[-2147483647, 2147483648]|L9 ~ L9, v4: int[0, 6]):
@@ -963,86 +978,63 @@ runtimefunction id=131091 function=f45 visibility=Private
 # CHECK-NEXT: v6: boolean = Less v4, v1
 # CHECK-NEXT: Branch v6 -> taken b2(| 0), notTaken b17()
 # CHECK-NEXT: b2(v7: int[0, 5]):
-# CHECK-NEXT: PutModuleVariable v3 variable=g2
-# CHECK-NEXT: v9: 0 = Integer
-# CHECK-NEXT: v10: boolean ~ false = TypeTest v3 testedType=number
-# CHECK-NEXT: Branch v10 -> taken b3(| 0), notTaken b4(| 0)
-# CHECK-NEXT: b3(v11: int[-2147483647, 2147483648]):
-# CHECK-NEXT: v12: i32 = BitOr v11, v9
-# CHECK-NEXT: Jump -> next b5(v12)
-# CHECK-NEXT: b4(v13: L9) frequency=Unlikely:
-# CHECK-NEXT: v14: i32 = BitOr v13, v9
-# CHECK-NEXT: Jump -> next b5(v14)
-# CHECK-NEXT: b5(v15: i32):
-# CHECK-NEXT: v16: 1 = Integer integer=1
-# CHECK-NEXT: v17: int[-2147483647, 2147483648] = Add v15, v16
-# CHECK-NEXT: v18: anything ~ number = GetModuleVariable variable=g1
-# CHECK-NEXT: v19: anything ~ i32 = GetModuleVariable variable=g2
-# CHECK-NEXT: v20: int|L9 ~ i32 = AssumeType v19 provenType=int|L9
-# CHECK-NEXT: v21: boolean ~ true = TypeTest v18 testedType=number
-# CHECK-NEXT: Branch v21 -> taken b6(| 0), notTaken b8(v17, v18, v20, v7)
-# CHECK-NEXT: b6(v22: number):
-# CHECK-NEXT: v23: boolean ~ true = TypeTest v20 testedType=i32
-# CHECK-NEXT: Branch v23 -> taken b7(| 0), notTaken b8(v17, v18, v20, v7)
-# CHECK-NEXT: b7(v24: i32):
-# CHECK-NEXT: v25: number = Add v22, v24
-# CHECK-NEXT: PutModuleVariable v25 variable=g1
-# CHECK-NEXT: Jump -> next b9(v17, v7)
-# CHECK-NEXT: b8(v27: int[-2147483647, 2147483648], v28: anything ~ number, v29: int|L9 ~ i32, v30: int[0, 5]) frequency=Unlikely:
-# CHECK-NEXT: v31: number|string|bigint ~ number = Add v28, v29
-# CHECK-NEXT: PutModuleVariable v31 variable=g1
-# CHECK-NEXT: Jump -> next b9(v27, v30)
-# CHECK-NEXT: b9(v33: int[-2147483647, 2147483648], v34: int[0, 5]):
-# CHECK-NEXT: v35: int[1, 6] = Increment v34
-# CHECK-NEXT: v36: anything ~ number = GetModuleVariable variable=g1
-# CHECK-NEXT: v37: anything ~ i32 = GetModuleVariable variable=g2
-# CHECK-NEXT: v38: boolean ~ true = TypeTest v36 testedType=number
-# CHECK-NEXT: Branch v38 -> taken b10(| 0), notTaken b16()
-# CHECK-NEXT: b10(v39: number):
-# CHECK-NEXT: Jump -> next b11(v33, v35, v39, v37)
-# CHECK-NEXT: b11(v40: int[-2147483647, 2147483648], v41: int[1, 6], v42: number, v43: anything ~ i32):
+# CHECK-NEXT: v8: 0 = Integer
+# CHECK-NEXT: v9: boolean ~ false = TypeTest v3 testedType=number
+# CHECK-NEXT: Branch v9 -> taken b3(| 0), notTaken b4(| 0)
+# CHECK-NEXT: b3(v10: int[-2147483647, 2147483648]):
+# CHECK-NEXT: v11: i32 = BitOr v10, v8
+# CHECK-NEXT: Jump -> next b5(v11)
+# CHECK-NEXT: b4(v12: L9) frequency=Unlikely:
+# CHECK-NEXT: v13: i32 = BitOr v12, v8
+# CHECK-NEXT: Jump -> next b5(v13)
+# CHECK-NEXT: b5(v14: i32):
+# CHECK-NEXT: v15: 1 = Integer integer=1
+# CHECK-NEXT: v16: int[-2147483647, 2147483648] = Add v14, v15
+# CHECK-NEXT: v17: anything ~ number = GetModuleVariable variable=g1
+# CHECK-NEXT: v18: boolean ~ true = TypeTest v17 testedType=number
+# CHECK-NEXT: Branch v18 -> taken b6(| 0), notTaken b8(v16, v17, v7, v3)
+# CHECK-NEXT: b6(v19: number):
+# CHECK-NEXT: v20: boolean ~ false = TypeTest v3 testedType=i32
+# CHECK-NEXT: Branch v20 -> taken b7(| 0), notTaken b8(v16, v17, v7, v3)
+# CHECK-NEXT: b7(v21: int[-2147483647, 2147483647]):
+# CHECK-NEXT: v22: number = Add v19, v21
+# CHECK-NEXT: PutModuleVariable v22 variable=g1
+# CHECK-NEXT: Jump -> next b9(v16, v7)
+# CHECK-NEXT: b8(v24: int[-2147483647, 2147483648], v25: anything ~ number, v26: int[0, 5], v27: int[-2147483647, 2147483648]|L9 ~ L9) frequency=Unlikely:
+# CHECK-NEXT: v28: number|string|bigint = Add v25, v27
+# CHECK-NEXT: PutModuleVariable v28 variable=g1
+# CHECK-NEXT: Jump -> next b9(v24, v26)
+# CHECK-NEXT: b9(v30: int[-2147483647, 2147483648], v31: int[0, 5]):
+# CHECK-NEXT: v32: int[1, 6] = Increment v31
+# CHECK-NEXT: v33: anything ~ number = GetModuleVariable variable=g1
+# CHECK-NEXT: v34: boolean ~ true = TypeTest v33 testedType=number
+# CHECK-NEXT: Branch v34 -> taken b10(| 0), notTaken b16()
+# CHECK-NEXT: b10(v35: number):
+# CHECK-NEXT: Jump -> next b11(v30, v32, v35)
+# CHECK-NEXT: b11(v36: int[-2147483647, 2147483648], v37: int[1, 6], v38: number):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v45: boolean = Less v41, v1
-# CHECK-NEXT: Branch v45 -> taken b12(| 0), notTaken b15()
-# CHECK-NEXT: b12(v46: int[1, 5]):
-# CHECK-NEXT: v47: 0 = Integer
-# CHECK-NEXT: v48: i32 = BitOr v40, v47
-# CHECK-NEXT: v49: 1 = Integer integer=1
-# CHECK-NEXT: v50: int[-2147483647, 2147483648] = Add v48, v49
-# CHECK-NEXT: v51: boolean = TypeTest v40 testedType=i32
-# CHECK-NEXT: Branch v51 -> taken b13(| 0), notTaken b14()
-# CHECK-NEXT: b13(v52: int[-2147483647, 2147483647]):
-# CHECK-NEXT: v53: number = Add v42, v52
-# CHECK-NEXT: v54: int[2, 6] = Increment v46
-# CHECK-NEXT: Jump -> next b11(v50, v54, v53, v40)
+# CHECK-NEXT: v40: boolean = Less v37, v1
+# CHECK-NEXT: Branch v40 -> taken b12(| 0), notTaken b15()
+# CHECK-NEXT: b12(v41: int[1, 5]):
+# CHECK-NEXT: v42: 0 = Integer
+# CHECK-NEXT: v43: i32 = BitOr v36, v42
+# CHECK-NEXT: v44: 1 = Integer integer=1
+# CHECK-NEXT: v45: int[-2147483647, 2147483648] = Add v43, v44
+# CHECK-NEXT: v46: boolean = TypeTest v36 testedType=i32
+# CHECK-NEXT: Branch v46 -> taken b13(| 0), notTaken b14()
+# CHECK-NEXT: b13(v47: int[-2147483647, 2147483647]):
+# CHECK-NEXT: v48: number = Add v38, v47
+# CHECK-NEXT: v49: int[2, 6] = Increment v41
+# CHECK-NEXT: Jump -> next b11(v45, v49, v48)
 # CHECK-NEXT: b14() frequency=Unlikely:
-# CHECK-NEXT: PutModuleVariable v42 variable=g1
-# CHECK-NEXT: PutModuleVariable v40 variable=g2
-# CHECK-NEXT: Jump -> next b8(v50, v42, v40, v46)
+# CHECK-NEXT: PutModuleVariable v38 variable=g1
+# CHECK-NEXT: Jump -> next b8(v45, v38, v41, v36)
 # CHECK-NEXT: b15():
-# CHECK-NEXT: PutModuleVariable v42 variable=g1
-# CHECK-NEXT: PutModuleVariable v43 variable=g2
+# CHECK-NEXT: PutModuleVariable v38 variable=g1
 # CHECK-NEXT: Jump -> next b17()
 # CHECK-NEXT: b16():
-# CHECK-NEXT: Jump -> next b1(v33, v35)
+# CHECK-NEXT: Jump -> next b1(v30, v32)
 # CHECK-NEXT: b17():
-# CHECK-NEXT: v59: undefined = Undefined
-# CHECK-NEXT: Return v59
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="storedByADefault"
-# CHECK: module=m0 position=1712 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f7 parameterMap=[{original=0}]} inlineFrames=[{}, {callee=f23 callPosition=4294967295 module=m0}] {
-# CHECK-NEXT: b0(v0: string):
-# CHECK-NEXT: Jump -> next b1(v0)
-# CHECK-NEXT: b1(v2: i32|string ~ string):
-# CHECK-NEXT: v3: boolean ~ false = TypeTest v2 testedType=i32
-# CHECK-NEXT: Branch v3 -> taken b2(), notTaken b3()
-# CHECK-NEXT: b2():
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: Jump -> next b2()
-# CHECK-NEXT: b3() frequency=Rare:
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v6: i32|string ~ string = Upcast v2 castType=i32|string
-# CHECK-NEXT: v7: -1 = Integer integer=-1
-# CHECK-NEXT: v8: i32 = BitAnd v6, v7
-# CHECK-NEXT: Jump -> next b1(v8)
+# CHECK-NEXT: v52: undefined = Undefined
+# CHECK-NEXT: Return v52
 # CHECK-NEXT: }

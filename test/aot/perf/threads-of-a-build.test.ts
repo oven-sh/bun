@@ -83,11 +83,11 @@ test.skipIf(!isLinux)("a ten-line program is built by a few threads", async () =
   expect(threads["Bun Compile"]).toBeLessThanOrEqual(4);
 });
 
-test.skipIf(!isLinux || availableParallelism() < 16)("a program of a megabyte is built by all threads", async () => {
+test.skipIf(!isLinux)("a program of a megabyte is built by all threads", async () => {
   const threads = await threadsOfBuild(largeProgram(), []);
   console.log(threads);
   expect(threads["Bun Pool"] ?? 0).toBe(0);
-  expect(threads["Bun Compile"]).toBeGreaterThanOrEqual(12);
+  expect(threads["Bun Compile"]).toBeGreaterThanOrEqual(Math.min(availableParallelism(), 12));
 });
 
 test.skipIf(!isLinux)("a chosen number of threads is kept", async () => {

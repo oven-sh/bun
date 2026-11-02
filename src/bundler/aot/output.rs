@@ -6,7 +6,7 @@ use bun_aot::Compilation;
 use bun_aot::compile::{EntryPointPaths, ProgramSummary};
 use bun_ast::Loader;
 use bun_paths::is_sep_any;
-use bun_sema::util::FxHashSet;
+use bun_sema::util::{FxHashMap, FxHashSet};
 
 /// Entry point `i` is shown as `shown[i]`, the path of its source, and is a file of the executable under `embedded[i]`, the name that `bun build --compile` gives it.
 pub(crate) struct EntryPointNames<'a> {
@@ -16,15 +16,30 @@ pub(crate) struct EntryPointNames<'a> {
 }
 
 impl EntryPointNames<'_> {
+    /// `embedded[i]` by `shown[i]` as a public path spells it: there a `..` that leaves the root directory of the build is `_.._`.
+    fn embedded_by_public_name(&self) -> FxHashMap<Vec<u8>, &[u8]> {
+        let mut names = FxHashMap::default();
+        for (shown, embedded) in self.shown.iter().zip(self.embedded) {
+            let segments = bun_core::strings::split(shown, b"/").map(|segment| match segment {
+                b".." => &b"_.._"[..],
+                _ => segment,
+            });
+            let public_name = segments.collect::<Vec<&[u8]>>().join(&b"/"[..]);
+            names.entry(public_name).or_insert(&embedded[..]);
+        }
+        names
+    }
+
     /// A program that runs in place has the paths of its files on disk, and no other names.
-    fn file_name<'p>(&'p self, public_path: &'p [u8]) -> &'p [u8] {
+    fn file_name<'p>(
+        &self,
+        embedded_by_public_name: &FxHashMap<Vec<u8>, &'p [u8]>,
+        public_path: &'p [u8],
+    ) -> &'p [u8] {
         let Some(shown) = public_path.strip_prefix(self.module_prefix) else {
             return public_path;
         };
-        match self.shown.iter().position(|name| is_shown_as(name, shown)) {
-            Some(index) => &self.embedded[index],
-            None => shown,
-        }
+        embedded_by_public_name.get(shown).copied().unwrap_or(shown)
     }
 
     /// The name of each entry point's file. Below the root a path names the source there first, so an entry point whose embedded name is the path of another's source is a file under the path of its own.
@@ -32,8 +47,9 @@ impl EntryPointNames<'_> {
         let source_name = |path: &'p [u8]| path.strip_prefix(self.module_prefix).unwrap_or(path);
         let source_names = public_paths.iter().map(|path| source_name(path));
         let source_names: FxHashSet<&[u8]> = source_names.collect();
+        let embedded = self.embedded_by_public_name();
         let file_names = public_paths.iter().map(|path| {
-            let (own, name) = (source_name(path), self.file_name(path));
+            let (own, name) = (source_name(path), self.file_name(&embedded, path));
             match name != own && source_names.contains(name) {
                 true => own,
                 false => name,
@@ -41,19 +57,6 @@ impl EntryPointNames<'_> {
         });
         file_names.collect()
     }
-}
-
-/// In a public path, a `..` that leaves the root directory of the build is `_.._`.
-fn is_shown_as(name: &[u8], shown: &[u8]) -> bool {
-    let segments = bun_core::strings::split(name, b"/");
-    let segments = segments.map(|segment| {
-        if segment == b".." {
-            &b"_.._"[..]
-        } else {
-            segment
-        }
-    });
-    segments.eq(bun_core::strings::split(shown, b"/"))
 }
 
 impl AotEntryPoint {
@@ -78,6 +81,11 @@ pub(crate) fn finish_build(
         further_programs,
         starts_workers_from_unseen_code,
         names_of_worker_files: _,
+        root_folders_spelled,
+        holds_source_paths,
+        imports_file_with_query,
+        program_files: _,
+        replaced_builtins,
     } = compilation;
     let ProgramSummary {
         entry_points: entry_paths,
@@ -96,7 +104,13 @@ pub(crate) fn finish_build(
         starts_workers_from_unseen_code,
         entry_points,
         root_directory: Vec::new(),
+        root_folders_spelled,
+        holds_source_paths,
+        imports_file_with_query,
+        replaced_builtins,
+        further_package_names: Vec::new(),
         package_names: Vec::new(),
+        path_aliases: Vec::new(),
         names,
         texts,
         statistics,
@@ -228,13 +242,12 @@ mod tests {
             shown: &shown,
             embedded: &embedded,
         };
-        assert_eq!(names.file_name(b"/$bunfs/root/a.ts"), b"app");
-        assert_eq!(
-            names.file_name(b"/$bunfs/root/_.._/lib/b.mjs"),
-            b"_.._/lib/b.js"
-        );
-        assert_eq!(names.file_name(b"/$bunfs/root/a.ts?text"), b"a.ts?text");
-        assert_eq!(names.file_name(b"/project/a.ts"), b"/project/a.ts");
+        let embedded = names.embedded_by_public_name();
+        let file_name = |path: &'static [u8]| names.file_name(&embedded, path);
+        assert_eq!(file_name(b"/$bunfs/root/a.ts"), b"app");
+        assert_eq!(file_name(b"/$bunfs/root/_.._/lib/b.mjs"), b"_.._/lib/b.js");
+        assert_eq!(file_name(b"/$bunfs/root/a.ts?text"), b"a.ts?text");
+        assert_eq!(file_name(b"/project/a.ts"), b"/project/a.ts");
     }
 
     #[test]

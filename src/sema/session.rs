@@ -24,6 +24,7 @@ use crate::util::{AppendVec, FxBuild};
 use bun_threading::Guarded;
 use std::alloc::{AllocError, Allocator, Layout};
 use std::any::Any;
+use std::cell::UnsafeCell;
 use std::ptr::NonNull;
 use std::sync::OnceLock;
 use std::thread::ThreadId;
@@ -43,6 +44,13 @@ pub fn set_in<K>(arena: &Arena) -> ArenaHashSet<'_, K> {
     ArenaHashSet::with_hasher_in(FxBuild, arena)
 }
 
+/// Gives the memory of the free blocks in the calling thread's heaps back to the system. A page with one block in use
+/// otherwise stays resident as a whole. Only the thread that owns a heap can do this. The allocator does it for a
+/// thread that parks, so this is for a thread that has work for a long time.
+pub fn give_back_free_memory() {
+    bun_alloc::mimalloc::mi_on_thread_idle();
+}
+
 /// Owns the arena of every thread that has allocated for one check.
 pub struct Session {
     /// An append-only linked list. Each thread appends its own node, so each arena is created by
@@ -50,6 +58,46 @@ pub struct Session {
     first: Link,
     /// Values passed to `keep`.
     kept: AppendVec<Box<dyn Any + Send + Sync>>,
+}
+
+/// A session that its user empties once it's done with it, while others still refer to the slot.
+pub struct SessionSlot(UnsafeCell<Session>);
+
+// SAFETY: a `Session` is `Sync`, and by its contract `empty` runs while nothing else uses the slot.
+unsafe impl Sync for SessionSlot {}
+
+impl SessionSlot {
+    pub fn new() -> SessionSlot {
+        SessionSlot(UnsafeCell::new(Session::new()))
+    }
+
+    pub fn session(&self) -> &Session {
+        // SAFETY: `empty` runs only when no such reference is used again.
+        unsafe { &*self.0.get() }
+    }
+
+    /// Frees everything that was allocated in the session, on any thread. Afterwards the session is like new.
+    ///
+    /// # Safety
+    /// No reference to the session or into its arenas is used again, and no other thread uses the slot during the call.
+    pub unsafe fn empty(&self) {
+        // SAFETY: caller contract.
+        drop(unsafe { self.0.get().replace(Session::new()) });
+    }
+
+    /// `empty`, with the work of `Session::drop_in_parallel`.
+    ///
+    /// # Safety
+    /// As for `empty`.
+    pub unsafe fn empty_in_parallel(&self, in_parallel: &dyn Fn(usize, &(dyn Fn(usize) + Sync))) {
+        // SAFETY: caller contract.
+        let session = unsafe { self.0.get().replace(Session::new()) };
+        session.drop_in_parallel(in_parallel);
+    }
+
+    pub fn into_session(self) -> Session {
+        self.0.into_inner()
+    }
 }
 
 type Link = OnceLock<Box<ThreadArena>>;

@@ -6,7 +6,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::FileLowering;
 use crate::builtins::id::BuiltinId;
 use crate::diagnostic_codes::Code;
-use crate::ir::generated::{BlockFrequency, BlockRole, ECMAMode, FunctionFlags, LimitId};
+use crate::ir::generated::{BlockFrequency, BlockRole, ECMAMode, FunctionFlags};
 use crate::ir::{
     BlockId, DeclaredType, Edge, FunctionBuilder, FunctionId, FunctionKey, Handler, Type, TypeId,
     ValueId,
@@ -39,6 +39,8 @@ pub(crate) struct FunctionLowering<'f, 'a, 'c, 'p, 's> {
     pub(in crate::lower) operator_positions: FxHashMap<ExprId, u32>,
     // The last position that the initializer of a variable that is used once has recorded.
     pub(in crate::lower) records_of_initializers: FxHashMap<ExprId, u32>,
+    // By a callee that comes by two ways, read on what `require` answered or read as it is written: what was read on the answer, or nothing.
+    pub(in crate::lower) callees_read_on_answers: FxHashMap<ValueId, ValueId>,
     // The part that Bun's transpiler prints of the expression that is being lowered, where it does not print all of it.
     pub(in crate::lower) printed_part: Option<ExprId>,
     // What the sums are that stand in parentheses as operands of other sums.
@@ -47,6 +49,10 @@ pub(crate) struct FunctionLowering<'f, 'a, 'c, 'p, 's> {
     pub(in crate::lower) disposal_position: Option<Option<u32>>,
     // The call that is being lowered stands in tail position. What loads a module in its place says so.
     pub(in crate::lower) is_call_in_tail_position: bool,
+    /// How many branches with another way to the answer of a `require` stand around what is emitted: `module::loads::OtherWay`.
+    pub(in crate::lower) open_ways_around_require: u32,
+    // The counter of the expression that is being lowered, where it has one.
+    pub(in crate::lower) counted_expression: Option<u32>,
     handler: Option<Handler>,
     position: u32,
     nesting_depth: u32,
@@ -78,10 +84,13 @@ impl<'f, 'a, 'c, 'p, 's> FunctionLowering<'f, 'a, 'c, 'p, 's> {
             joined_declarations_end: None,
             operator_positions: FxHashMap::default(),
             records_of_initializers: FxHashMap::default(),
+            callees_read_on_answers: FxHashMap::default(),
             printed_part: None,
             printed_sums: FxHashMap::default(),
             disposal_position: None,
             is_call_in_tail_position: false,
+            open_ways_around_require: 0,
+            counted_expression: None,
             handler: None,
             position,
             nesting_depth: 0,
@@ -227,21 +236,18 @@ impl<'f, 'a, 'c, 'p, 's> FunctionLowering<'f, 'a, 'c, 'p, 's> {
         self.continue_in_new_block();
     }
 
+    /// Code may be nested as deeply as the stack of this thread allows. The parser ends earlier on nearly all code: it takes a part
+    /// of its stack only, so that whoever walks its tree has enough.
     pub(crate) fn enter_nesting(&mut self, position: u32) -> bool {
-        if self.file.has_chain_past_nesting_limit {
-            return false;
-        }
-        let maximum = self.file.inputs.limits.get(LimitId::MaxNestingDepth);
-        if u64::from(self.nesting_depth) < maximum && !self.file.queries.is_stack_low() {
+        if !self.file.queries.is_stack_low() && bun_core::StackCheck::init().is_safe_to_recurse() {
             self.nesting_depth += 1;
             return true;
         }
         if !self.has_reported_nesting {
             self.has_reported_nesting = true;
             self.file.queries.answer_nothing_from_now_on();
-            self.file.gave_up(LimitId::MaxNestingDepth, position);
             let span = self.file.span_at(position);
-            let depth = maximum.to_string();
+            let depth = self.nesting_depth.to_string();
             self.file
                 .diagnostics
                 .report(Code::NestedTooDeeply, span, &[depth.as_bytes()]);

@@ -15,7 +15,7 @@ const MAX_THREADS: usize = 16;
 pub fn compute(payload: &[u8]) -> [u8; SIZE] {
     let chunks: Vec<&[u8]> = payload.chunks(CHUNK_SIZE).collect();
     let mut digests = vec![[0u8; 32]; chunks.len()];
-    let threads = std::thread::available_parallelism().map_or(1, |count| count.get());
+    let threads = usize::from(bun_core::get_thread_count());
     let chunks_per_thread = chunks.len().div_ceil(threads.min(MAX_THREADS)).max(1);
     let parts = chunks
         .chunks(chunks_per_thread)

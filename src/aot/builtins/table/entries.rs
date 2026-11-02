@@ -152,6 +152,7 @@ pub struct ModuleData {
     pub namespace: BuiltinId,
     pub specifier: &'static str,
     pub flags: ModuleFlags,
+    pub exports_holding_module_object: &'static [BuiltinName],
     pub exports_held_by_namespace: &'static [BuiltinName],
 }
 

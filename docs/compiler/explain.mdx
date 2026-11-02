@@ -54,6 +54,7 @@ note: https://bun.com/docs/compiler/explain#unknown-object
 | `1 untyped operator`     | Operators on a value of unknown type   |
 | `3 indirect calls`       | Calls where the callee isn't known     |
 | `about 100% of the time` | The estimate the entries are sorted by |
+| `fix this too:`          | Another line that causes the same      |
 | `types:`                 | The types that the cause slows down    |
 | `why`                    | How the value got past TypeScript      |
 | `fix:`                   | What to change                         |
@@ -62,7 +63,9 @@ The location is where the untyped value starts, not where you use it. If `settin
 
 The estimate weighs each slow operation by how often the compiler expects it to run, so five accesses in an inner loop rank above a hundred at startup. It comes from the structure of your program. Nothing is measured.
 
-An access can have more than one cause, so a fix can uncover the next one. The report shows the first 20 entries, and `--explain=json` prints all of them.
+An access can have more than one cause, so a fix can uncover the next one. When two lines cause the same slow operations independently, for example two loggers that print the same object, the entry is at the first line, says how many of its operations `stay untyped until other entries are fixed too`, and lists the other lines under `fix this too:` (`otherOrigins` in JSON, at most three per operation). `fixedByThisAlone` in JSON counts the operations that fixing the entry's own line is enough for.
+
+The report shows the first 20 entries, and `--explain=json` prints all of them.
 
 ## What is counted
 
@@ -157,6 +160,8 @@ Anything can be thrown, so a caught value has no type. Narrow it first, with `if
 Something untyped adds to this array, `Map` or `Set`, so its elements can be anything. Write `items.push(readItem(JSON.parse(line)))`, not `items.push(JSON.parse(line))`.
 
 ## Objects you hand to other code
+
+The location is the statement that passes the object out. Everything the object leads to goes with it: the objects in its fields, their classes, and the methods of those classes. So one `console.log(state)` in a debug logger can be the location for accesses in many files. Print the fields you need, or a string.
 
 ### passed-to-untyped-code
 
@@ -313,6 +318,8 @@ A direct `eval()` in this scope can reassign the variable. Use `(0, eval)(code)`
 ### limit-reached
 
 The analysis hit a compiler limit and gave up. The `limit` line of the entry names it. Split the function or the type to get under it.
+
+The report ends with every limit the build hit. `left nothing untyped` means that no access, call or operator is slower because of that limit.
 
 ### lost-track
 

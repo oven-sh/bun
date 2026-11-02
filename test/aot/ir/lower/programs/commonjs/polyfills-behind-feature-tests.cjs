@@ -36,26 +36,27 @@ module.exports = "polyfill";
 
 // GENERATED: shadowed
 // CHECK-LABEL: function {{*}}name="shadowed"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_1]] flags=[IsExpected]}] results=[{type=undefined|null|"has"|"polyfill" flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_1]]):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|"has"|"polyfill" flags=[IsExpected]}] {
+// CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = PropGet v0 key="assign"
-// CHECK-NEXT: v2 = ToBoolean v1
-// CHECK-NEXT: Branch v2 -> taken b2(| 0), notTaken b4(| 0)
-// CHECK-NEXT: b2(v3):
+// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|number|[[f_1]] flags=[IsExpected]}
+// CHECK-NEXT: v3 = ToBoolean v2
+// CHECK-NEXT: Branch v3 -> taken b2(| 0), notTaken b4(| 0)
+// CHECK-NEXT: b2(v4):
 // CHECK-NEXT: Jump -> next b3()
 // CHECK-NEXT: b3():
-// CHECK-NEXT: v4 = String string="has"
-// CHECK-NEXT: Jump -> next b6(v4)
-// CHECK-NEXT: b4(v5):
+// CHECK-NEXT: v5 = String string="has"
+// CHECK-NEXT: Jump -> next b6(v5)
+// CHECK-NEXT: b4(v6):
 // CHECK-NEXT: Jump -> next b5()
 // CHECK-NEXT: b5():
 // CHECK-NEXT: EvaluateModule module=[[m_2]] referrer=[[m_0]] [isCallOfRequire]
-// CHECK-NEXT: v7 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|"polyfill" flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b6(v8)
-// CHECK-NEXT: b6(v9):
-// CHECK-NEXT: v10 = Convert v9 declared={type=undefined|null|"has"|"polyfill" flags=[IsExpected]}
-// CHECK-NEXT: Return v10
+// CHECK-NEXT: v8 = GetModuleVariable variable=[[g_3]]
+// CHECK-NEXT: v9 = Convert v8 declared={type=undefined|null|"polyfill" flags=[IsExpected]}
+// CHECK-NEXT: Jump -> next b6(v9)
+// CHECK-NEXT: b6(v10):
+// CHECK-NEXT: v11 = Convert v10 declared={type=undefined|null|"has"|"polyfill" flags=[IsExpected]}
+// CHECK-NEXT: Return v11
 // CHECK-NEXT: }

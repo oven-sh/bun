@@ -392,6 +392,30 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.class({ rustPath: "T", forBind: true, proto: { x: { getter: b.i32, setter: true } } })).toThrow(
     "forBind: a member is a function or a getter without a setter",
   );
+  for (const conflicting of [{ forBind: true }, { prototypeBase: "Error" }] as const) {
+    expect(() => b.class({ rustPath: "T", callInstance: {}, ...conflicting })).toThrow(
+      "callInstance has no forBind or prototypeBase: the prototype inherits from Function.prototype",
+    );
+  }
+  const calledByProtoCaller = { returns: b.any, capability: "js", throws: true } as const;
+  expect(() => b.class({ rustPath: "T", protoCaller: "caller", proto: { f: calledByProtoCaller } })).not.toThrow();
+  for (const f of [
+    { ...calledByProtoCaller, returns: b.i32 },
+    { ...calledByProtoCaller, capability: "heap" },
+    { ...calledByProtoCaller, throws: false },
+    { ...calledByProtoCaller, args: { x: b.i32 } },
+    [
+      { ...calledByProtoCaller, rustName: "f_number", args: { x: b.i32 } },
+      { ...calledByProtoCaller, rustName: "f_string", args: { x: b.string } },
+    ],
+  ] as const) {
+    expect(() => b.class({ rustPath: "T", protoCaller: "caller", proto: { f } })).toThrow(
+      'protoCaller: a function of proto has no overloads, and has capability: "js", throws: true, returns: b.any and arguments that are b.any',
+    );
+  }
+  expect(() => b.class({ rustPath: "T", protoCaller: "caller", refCounted: true })).toThrow(
+    "protoCaller is not for a refCounted class",
+  );
   expect(() => b.class({ rustPath: "T", call: {} })).toThrow("call needs a constructor object: add construct");
   // @ts-expect-error
   expect(() => b.class({ ...constructible, static: { x: { builtin: true, length: 0 } } })).toThrow(
@@ -2829,6 +2853,71 @@ describe("classes", () => {
       expect(() => plus.value.call(receiver(), 1)).toThrow(
         expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_THIS" }),
       );
+    });
+  });
+
+  describe("protoCaller", () => {
+    const { TestProtoCaller } = bindgen as any;
+
+    it("calls the functions of proto", () => {
+      const instance = new TestProtoCaller();
+      expect(instance.first("a", "b", "c")).toEqual([instance, TestProtoCaller.prototype.first, 3, "a"]);
+      expect(instance.first()).toEqual([instance, TestProtoCaller.prototype.first, 0, undefined]);
+      expect(instance.calls).toBe(2);
+    });
+
+    it("the function takes its arguments out of the list", () => {
+      const rest = (...args: unknown[]) => new TestProtoCaller().rest(...args).slice(2);
+      expect(rest()).toEqual([0, 0]);
+      expect(rest("a")).toEqual([1, 0]);
+      expect(rest("a", "b", "c")).toEqual([3, 2]);
+    });
+
+    it("gets what the function throws", () => {
+      const instance = new TestProtoCaller();
+      expect(() => instance.fail()).toThrow(new Error("fail() failed"));
+      expect(instance.calls).toBe(1);
+    });
+
+    it("doesn't call a function of static", () => {
+      expect(TestProtoCaller.second(1, 2)).toBe(2);
+    });
+
+    it("isn't called on another receiver", () => {
+      expect(() => TestProtoCaller.prototype.first.call({}, 1)).toThrow(
+        expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_THIS" }),
+      );
+    });
+  });
+
+  describe("callInstance", () => {
+    const { TestCallable } = bindgen as any;
+
+    it("an instance is a function", () => {
+      const three = new TestCallable(3);
+      expect(typeof three).toBe("function");
+      expect(three(4)).toBe(7);
+      expect(three.value).toBe(3);
+      expect(three).toBeInstanceOf(TestCallable);
+    });
+
+    it("the receiver of the call doesn't matter", () => {
+      const [three, five] = [new TestCallable(3), new TestCallable(5)];
+      expect(three.call(five, 4)).toBe(7);
+      expect(Reflect.apply(three, undefined, [4])).toBe(7);
+    });
+
+    it("converts the arguments", () => {
+      expect(() => new TestCallable(3)("4")).toThrow(TypeError);
+    });
+
+    it("an instance is not a constructor", () => {
+      const three = new TestCallable(3);
+      expect(() => new three()).toThrow(TypeError);
+    });
+
+    it("the prototype inherits from Function.prototype", () => {
+      expect(Object.getPrototypeOf(TestCallable.prototype)).toBe(Function.prototype);
     });
   });
 

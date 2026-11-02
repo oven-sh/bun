@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""undefined-sentinel-among-numbers.py <seed>: among raw numbers a marker stands for undefined (an element beyond the end, an optional member). HERE MARKER, DEED AND PLACE STAND IN ONE FUNCTION, as text: `const m = values[i + 9]; const n = m + 1;` and n is led into a place that has room for a marker again. It must read NaN there."""
+"""undefined-sentinel-among-numbers.py <seed>: Among unboxed numbers a sentinel encodes undefined (an element past the
+end, an optional member). Here the sentinel's origin, the operation on it and its destination are all in one
+function.
+"""
 import random, sys
 seed = int(sys.argv[1]) if len(sys.argv) > 1 else 1
 R = random.Random(seed)

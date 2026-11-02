@@ -54,6 +54,8 @@ interface Counts {
   runtimeOperations: Map<string, number>;
   cells: number;
   bytes: number;
+  cellsInTotal: number;
+  bytesInTotal: number;
   closures: number;
 }
 
@@ -85,6 +87,11 @@ export interface CountedWork {
   runtimeOperations: Record<string, number>;
   /** What compiled code and its stubs allocate: every cell is counted before the free list is looked at. What the run time allocates in C++ is not in it. */
   allocated: { cells: number; bytes: number };
+  /**
+   * What anybody allocates in the collector's blocks: compiled code, its stubs, the run time, Bun's native code. Each free list that was used up, and what is used of
+   * those in use at the end. Cells too large for a block are not in it.
+   */
+  allocatedInTotal: { cells: number; bytes: number };
   /** The function objects made: in a unit of work, and in the rest of a run, which is the start and what only the first units do. */
   closures: { each: number; once: number };
 }
@@ -192,12 +199,18 @@ const arrivalCounter = "operation:operationAOTRecordArrival";
 
 // Every way in which a function object comes to be: compiled code that allocates one itself, the stubs that allocate one, those that
 // copy one out of a frame for a callee that keeps it, and the functions of the run time that make one a call.
-const closureAllocations = new Set(["closure", "stub:NewSlimClosure", "stub:NewClosure", "stub:ClosureOfTable", "stub:CallValueLending", "stub:TakeOverClosure"]);
+const closureAllocations = new Set(["closure", "stub:NewSlimClosure", "stub:MakeClosureOfField", "stub:NewClosure", "stub:ClosureOfTable", "stub:CallValueLending", "stub:TakeOverClosure"]);
 const closureOperations = new Set(["operationAOTMaterializeDeferredClosure", "operationAOTSingletonClosure", "operationAOTMoveClosureToHeap"]);
 
 export function parseCounts(text: string): Counts {
-  const counts: Counts = { byCounter: new Map(), accessesByName: 0, runtimeOperations: new Map(), cells: 0, bytes: 0, closures: 0 };
+  const counts: Counts = { byCounter: new Map(), accessesByName: 0, runtimeOperations: new Map(), cells: 0, bytes: 0, cellsInTotal: 0, bytesInTotal: 0, closures: 0 };
   for (const line of text.split("\n")) {
+    if (line.startsWith("refill ")) {
+      const words = line.split(" ");
+      counts.cellsInTotal += Number(words.at(-2));
+      counts.bytesInTotal += Number(words.at(-1));
+      continue;
+    }
     if (line.startsWith("allocation ")) {
       const words = line.split(" ");
       counts.cells += Number(words.at(-2));
@@ -234,14 +247,15 @@ export async function buildCounted(folder: string, entry: string, flags: string[
  * The machine code in the image of `entry` built the way a user builds it: its bytes, and the bytes that one value of the program
  * costs. A value is an operation of a source function as the compiler first reads it; its bytes are those of every compiled function
  * made from that source function, versions, entrances and copies alike. Only source functions of 10 to 300 values count: smaller
- * ones are mostly entrance and exit, and a few huge ones would decide the number.
+ * ones are mostly entrance and exit, and a few huge ones would decide the number. `use` gets the executable before it is removed.
  */
-export async function codeOf(folder: string, entry: string, flags: string[] = []) {
+export async function codeOf(folder: string, entry: string, flags: string[] = [], use?: (executable: string) => Promise<unknown>) {
   const name = basename(entry).replace(/\.[^.]+$/, "");
   const executable = join(folder, executableName(`${name}-plain`));
   const path = join(folder, `${name}-plain.json`);
   expectBuilt(await run([bunExe(), ...compileCommand, ...withReport(path, "functions"), ...flags, entry, "--outfile", executable], folder, { ...bunEnv, NO_COLOR: "1" }));
   const report: BuildReport = JSON.parse(readFileSync(path, "utf8"));
+  await use?.(executable);
   rmSync(executable);
   rmSync(path);
   expect(report.summary.codeBytes).toBeGreaterThan(0);
@@ -261,7 +275,11 @@ export async function codeOf(folder: string, entry: string, flags: string[] = []
     values += source.values;
     bytes += source.bytes;
   }
-  return { codeBytes: report.summary.codeBytes, bytesAValue: values ? Math.round((100 * bytes) / values) / 100 : undefined };
+  return {
+    codeBytes: report.summary.codeBytes,
+    bytesAValue: values ? Math.round((100 * bytes) / values) / 100 : undefined,
+    engineRuns: report.statistics.EngineRuns,
+  };
 }
 
 /** What one unit of work costs: the run with more work less the run with less, which did `unitsOfLess`, divided by the `units` between them. */
@@ -292,6 +310,7 @@ export function tabulate({ branches, entries }: CountedBuild, less: Counts, more
     accessesByName: (more.accessesByName - less.accessesByName) / units,
     runtimeOperations: {},
     allocated: { cells: (more.cells - less.cells) / units, bytes: (more.bytes - less.bytes) / units },
+    allocatedInTotal: { cells: (more.cellsInTotal - less.cellsInTotal) / units, bytes: (more.bytesInTotal - less.bytesInTotal) / units },
     closures: { each: closures, once: Math.round(100 * (less.closures - unitsOfLess * closures)) / 100 },
   };
   for (const entry of entries) work.calls[entry.heat] += between(entry.counter) / units;
@@ -340,10 +359,19 @@ async function serveRounds(executable: string, cwd: string, exchanges: Exchange[
   return parseCounts(readFileSync(counts, "utf8"));
 }
 
+const exitsWhenTold = `process.on("SIGTERM", () => process.exit(0));\n`;
+
+/** Writes beside `entry` an entry point that imports it, as the entry point of a real program imports the application. A server also exits in the ordinary way, so that the counters are written, when it is told to end. */
+export function entryThatImports(folder: string, entry: string, { isServer = true } = {}) {
+  const name = `imports-${basename(entry)}`;
+  writeFileSync(join(folder, name), `import "./${basename(entry).replace(/\.[^.]+$/, "")}";\n${isServer ? exitsWhenTold : ""}`);
+  return "./" + name;
+}
+
 /** Writes beside `entry` a copy of it that exits in the ordinary way, so that the counters are written, when it is told to end. */
 export function entryThatExitsWhenTold(folder: string, entry: string) {
   const name = `told-to-end-${basename(entry)}`;
-  writeFileSync(join(folder, name), `${readFileSync(join(folder, entry), "utf8")}\nprocess.on("SIGTERM", () => process.exit(0));\n`);
+  writeFileSync(join(folder, name), `${readFileSync(join(folder, entry), "utf8")}\n${exitsWhenTold}`);
   return "./" + name;
 }
 

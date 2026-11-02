@@ -143,5 +143,5 @@ function f2 name="tn" module=m0 position=4698 flags=[HasRestParameter, IsChecked
 # CHECK-NEXT: end of function f1
 # CHECK-LABEL: function {{*}}name="tn"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 63, patchpoints: 10, rare instructions: 47
+# CHECK-NEXT: instructions: 62, patchpoints: 10, rare instructions: 46
 # CHECK-NEXT: end of function f2

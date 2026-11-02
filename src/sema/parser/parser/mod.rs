@@ -393,7 +393,7 @@ pub(crate) fn run<'a>(
     lx.records_html_opens =
         options.dialect.oxc || is_ecmascript && options.dialect.module_or_script;
     let is_compiled_javascript = options.compiles && is_ecmascript;
-    lx.decodes_ill_formed_text = options.compiles;
+    lx.decodes_ill_formed_text = options.compiles || options.reads_as_bun_run;
     let is_flow = options.dialect.flow && options.is_javascript && !options.is_json;
     let is_general = options.recovers || jsdoc.wanted != 0 || is_flow;
     let seed = Seed {

@@ -423,12 +423,8 @@ function f12 name="ofOptionalRead" module=m0 position=1742 flags=[IsChecked, Has
 }
 function f13 name="ofEitherRead" module=m0 position=1846 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|L0|L1 site=w37 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|"x"|"y" site=w38 flags=[OmitsNull, OmitsUndefined]}, {type=boolean site=w39}] results=[{type=i32 site=w40 flags=[IsInt32Promise]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
 function f14 name="Cell" module=m0 position=412 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0
-# -- generated: stored ofCopy
-# CHECK-LABEL: function {{*}}name="stored"
-# CHECK: role=Source
-# CHECK-NEXT: instructions: 76, patchpoints: 4, rare instructions: 90
-# CHECK-NEXT: end of function f3
+# -- generated: ofCopy
 # CHECK-LABEL: function {{*}}name="ofCopy"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 109, patchpoints: 8, rare instructions: 130
+# CHECK-NEXT: instructions: 85, patchpoints: 6, rare instructions: 142
 # CHECK-NEXT: end of function f9

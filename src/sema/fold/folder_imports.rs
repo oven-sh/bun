@@ -6,10 +6,14 @@ use crate::bind::{BindingKind, Decl, SymbolId};
 use crate::hir::{ExprId, ImportedName};
 use crate::util::FxHashMap;
 
+const MAX_SCANNED_CONSTANTS: usize = 16;
+
 #[derive(Default)]
 pub(super) struct ImportedNames {
     asked_for: Vec<ImportedName>,
     answers: FxHashMap<ImportedName, Option<Constant>>,
+    /// The constants that the file was given, once they are too many to search.
+    given: Option<FxHashMap<ImportedName, Constant>>,
     /// The names in the code that an import binds, each with what it binds.
     holders: FxHashMap<ExprId, ImportedName>,
 }
@@ -51,8 +55,18 @@ impl<'s> Folder<'_, 's> {
         let names = &mut self.imported_names;
         let answer = *names.answers.entry(name).or_insert_with(|| {
             names.asked_for.push(name);
-            let mut given = hir.imported_constants.iter();
-            Some(given.find(|constant| constant.name == name)?.value)
+            let given = &hir.imported_constants;
+            if given.len() <= MAX_SCANNED_CONSTANTS {
+                return Some(given.iter().find(|constant| constant.name == name)?.value);
+            }
+            let by_name = names.given.get_or_insert_with(|| {
+                let mut by_name = FxHashMap::default();
+                for constant in given.iter() {
+                    by_name.entry(constant.name).or_insert(constant.value);
+                }
+                by_name
+            });
+            by_name.get(&name).copied()
         });
         let Some(value) = answer else {
             return Folded::UNKNOWN;

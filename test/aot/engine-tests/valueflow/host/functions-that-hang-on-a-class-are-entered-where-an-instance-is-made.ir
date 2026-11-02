@@ -8,8 +8,8 @@
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-runtimefunction id=65574 function=f2
-runtimefunction id=65580 function=f3
+runtimefunction id=ProcessObjectInternalsCreateOnWarning function=f2
+runtimefunction id=ProcessObjectInternalsInitializeNextTickQueue function=f3
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
     v0 = NewClosure function=f1

@@ -180,7 +180,7 @@ attempt("one site, many kinds, many times", () => {
 // CHECK-NEXT: Return v6
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="valueOf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] captures=[{type=number site=[[w_23]]}] thisType={type=anything} results=[{type=number site=[[w_24]]}] functionTypes={{*}}[[f_25]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] captures=[{type=number site=[[w_23]] variableName="i"}] thisType={type=anything} results=[{type=number site=[[w_24]]}] functionTypes={{*}}[[f_25]]] {
 // CHECK-NEXT: b0(v0: number):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

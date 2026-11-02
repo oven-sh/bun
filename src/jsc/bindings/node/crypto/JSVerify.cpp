@@ -270,6 +270,7 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncUpdate, (JSGlobalObject * globalObject
             .len = byteLength,
         };
 
+        ncrypto::ClearErrorOnReturn clearErrorOnReturn;
         if (!thisObject->m_mdCtx.digestUpdate(buffer)) {
             throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to update digest");
             return {};
@@ -294,6 +295,7 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncUpdate, (JSGlobalObject * globalObject
         .len = byteLength,
     };
 
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     if (!thisObject->m_mdCtx.digestUpdate(buffer)) {
         throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to update digest");
         return {};
@@ -382,7 +384,7 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
     // Create verification context
     auto pkctx = keyPtr.newCtx();
     if (!pkctx || pkctx.initForVerify() <= 0) {
-        throwCryptoError(globalObject, scope, ERR_peek_error(), "Failed to initialize verification context"_s);
+        throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to initialize verification context"_s);
         return {};
     }
 
@@ -398,14 +400,14 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
         }
 
         if (!ncrypto::EVPKeyCtxPointer::setRsaPadding(pkctx.get(), padding, effective_salt_len)) {
-            throwCryptoError(globalObject, scope, ERR_peek_error(), "Failed to set RSA padding"_s);
+            throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to set RSA padding"_s);
             return {};
         }
     }
 
     // Set signature MD from the digest context
     if (!pkctx.setSignatureMd(mdCtx)) {
-        throwCryptoError(globalObject, scope, ERR_peek_error(), "Failed to set signature message digest"_s);
+        throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to set signature message digest"_s);
         return {};
     }
 

@@ -227,14 +227,10 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    pub(super) fn create_deferred_node(&mut self) -> DataNode {
-        match self.inputs.deferred_data.get(self.file) {
-            Some(value) => create_node(self, Part::Value(value)),
-            None => {
-                debug_assert!(false, "module binding has the manifest of every page");
-                DataNode::Undefined
-            }
-        }
+    /// `None` for a page that the build did not bundle.
+    pub(super) fn create_deferred_node(&mut self) -> Option<DataNode> {
+        let value = self.inputs.deferred_data.get(self.file)?;
+        Some(create_node(self, Part::Value(value)))
     }
 
     fn to_property_key(&mut self, constant: Constant) -> PropertyKeyId {

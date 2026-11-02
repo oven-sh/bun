@@ -1192,12 +1192,14 @@ impl<'p, 's> Checker<'p, 's> {
                     continue;
                 }
                 // A class type is removed only in favor of a class it derives from, regardless of
-                // structural similarity.
-                if self.is_strict_subtype(source, target)
-                    && (!self.is_class_instance(source)
-                        || !self.is_class_instance(target)
-                        || self.is_type_derived_from(source, target))
+                // structural similarity. That is asked first: it costs a hundredth of the comparison.
+                if self.is_class_instance(source)
+                    && self.is_class_instance(target)
+                    && !self.is_type_derived_from(source, target)
                 {
+                    continue;
+                }
+                if self.is_strict_subtype(source, target) {
                     keep[i] = false;
                     break;
                 }

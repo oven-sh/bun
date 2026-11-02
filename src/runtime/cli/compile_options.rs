@@ -5,7 +5,7 @@ use bun_aot::report;
 use bun_clap as clap;
 use bun_core::{CodeGenerationFromStrings, Global, Output, strings};
 use bun_options_types::aot_options::{
-    AotOptions, BuildReportRequest, ExplainSet, HeapSize, ReportDetail,
+    AotOptions, BuildReportRequest, ExplainSet, HeapSize, ImagesBelow, ReportDetail,
 };
 use bun_options_types::bundle_enums::Format;
 use bun_options_types::compile_target::CompileTarget;
@@ -23,10 +23,13 @@ const MAX_SUGGESTION_DISTANCE: usize = 3;
 const CODE_GENERATION_FLAG: &[u8] = b"--disallow-code-generation-from-strings";
 pub(crate) const COMPILE_AOT_KEYS: &[&str] = &[
     "aot",
+    "aotCheck",
     "aotDisable",
     "aotExplain",
     "aotHeat",
     "aotLogTypeMismatches",
+    "aotTesting",
+    "aotValidate",
 ];
 const EXPLAIN_ALLOWED: &str =
     "one of text, json, guards, guards-json, trim, missed-optimizations, allocations, statistics";
@@ -97,7 +100,11 @@ struct FlagGroup {
 }
 
 const RUN_FLAGS: FlagGroup = FlagGroup {
-    flags: &["--aot", "--aot-log-type-mismatches"],
+    flags: &[
+        "--aot",
+        "--aot-allow-code-from-disk",
+        "--aot-log-type-mismatches",
+    ],
     other_commands: "bun build",
     other_params: BUILD_ONLY_PARAMS,
 };
@@ -272,8 +279,11 @@ fn write_spelling(option: OptionName, origin: RequestOrigin, out: &mut Vec<u8>) 
         (Name::Report, _) => "--aot-report",
         (Name::ReportDetail, _) => "--aot-report-detail",
         (Name::List, _) => "--aot-list",
+        (Name::Developer("validate"), BuildApi) => "compile.aotValidate",
+        (Name::Developer("check"), BuildApi) => "compile.aotCheck",
         (Name::Developer("disable"), BuildApi) => "compile.aotDisable",
         (Name::Developer("heat"), BuildApi) => "compile.aotHeat",
+        (Name::Developer("testing"), BuildApi) => "compile.aotTesting",
         (Name::Developer(key), _) => developer_flag_name(key),
     };
     out.extend_from_slice(spelling.as_bytes());
@@ -414,7 +424,7 @@ pub(crate) fn resolve<'a>(flags: &CompileFlags<'a>) -> Result<CompileSettings, O
         trim,
         reports_type_mismatches: flags.logs_type_mismatches,
         obfuscates,
-        forbids_text_evaluation: embedded.forbids_text_evaluation,
+        code_generation_from_strings: embedded.code_generation_from_strings,
         admits_inspector,
         loads_code_from_disk: flags.allows_code_from_disk,
         runs_in_place: flags.is_in_place,
@@ -648,6 +658,8 @@ pub(crate) fn apply_developer_word<'a>(
         "symbols" => options.emits_symbols = true,
         "no-builtin-modules" => options.omits_builtin_modules = true,
         "out" => options.ir_output_path = Some(Box::from(text)),
+        // The other words of --aot-testing are the engine's.
+        "testing" if text == b"NoExecutable" => options.writes_no_executable = true,
         _ => {
             let word = option_word(key, value);
             // The engine's table of these words names every pass of the compiler. Without the compiler the build fails whatever the word is.
@@ -734,8 +746,8 @@ fn exit_with_error(error: &OptionError<'_>, origin: RequestOrigin) -> ! {
     exit_with_message(&message);
 }
 
-pub(crate) fn disallows_code_generation_from_strings(exec_argv: &[u8]) -> bool {
-    read_exec_argv(exec_argv).forbids_text_evaluation
+pub(crate) fn code_generation_from_strings(exec_argv: &[u8]) -> CodeGenerationFromStrings {
+    read_exec_argv(exec_argv).code_generation_from_strings
 }
 
 pub(crate) fn prepend_code_generation_flag<'a>(
@@ -912,12 +924,19 @@ pub(crate) fn parse_build_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Co
     options.trim = settings.trim;
 }
 
+/// `bun test --aot` runs compiled code. `bun run --aot` checks the program and runs it from its source.
+fn compiles_before_run(cmd: Tag, args: &clap::Args<clap::Help>) -> bool {
+    args.flag(b"--debug-aot")
+        || args.flag(b"--aot-log-type-mismatches")
+        || (cmd == Tag::TestCommand && args.flag(b"--aot"))
+}
+
 pub(crate) fn checks_before_each_run(cmd: Tag, args: &clap::Args<clap::Help>) -> bool {
     if cmd == Tag::RunAsNodeCommand {
         return false;
     }
-    let compiles = args.flag(b"--debug-aot") || args.flag(b"--aot-log-type-mismatches");
-    args.option(b"--aot-checked").is_some() || (args.flag(b"--aot") && !compiles)
+    args.option(b"--aot-checked").is_some()
+        || (args.flag(b"--aot") && !compiles_before_run(cmd, args))
 }
 
 #[inline]
@@ -932,6 +951,7 @@ pub(crate) fn parse_runtime_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: 
         || args.flag(b"--aot")
         || args.flag(b"--debug-aot")
         || args.flag(b"--aot-log-type-mismatches")
+        || args.flag(b"--aot-allow-code-from-disk")
         || args.flag(b"--aot-huge-heap");
     if has_aot_flag {
         apply_runtime_flags(cmd, args, ctx);
@@ -949,29 +969,88 @@ fn apply_runtime_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Context<'_>
     }
     if let Some(descriptor) = args.option(b"--aot-graph-fd") {
         run_compiled::use_graph_descriptor(descriptor);
-        ctx.test_options.coverage.enabled = false;
         return;
     }
     if let Some(check_result) = args.option(b"--aot-checked") {
         run_compiled::use_check_result(check_result);
         return;
     }
+    if let Some(descriptor) = args.option(b"--aot-build-test-part") {
+        run_compiled::use_test_part_descriptor(descriptor);
+    }
     let reports_type_mismatches = args.flag(b"--aot-log-type-mismatches");
     let has_huge_heap = args.flag(b"--aot-huge-heap");
-    let compiles = args.flag(b"--debug-aot") || reports_type_mismatches;
+    let compiles = compiles_before_run(cmd, args);
     if has_huge_heap && !compiles {
         exit_with_message(
             b"--aot-huge-heap is only valid with bun build --compile --aot and bun compile",
         );
     }
+    let loads_code_from_disk = args.flag(b"--aot-allow-code-from-disk");
     if !(args.flag(b"--aot") || compiles) {
+        if loads_code_from_disk {
+            exit_with_message(b"--aot-allow-code-from-disk requires --aot");
+        }
         return;
     }
-    check_runtime_conflicts(&ctx, compiles);
-    if cmd == Tag::TestCommand && compiles {
-        check_test_conflicts(&mut *ctx);
+    if loads_code_from_disk && cfg!(bun_hardened) {
+        exit_with_error(
+            &OptionError::HardenedBunRunsOnlyCompiledCode,
+            RequestOrigin::BuildFlag,
+        );
     }
+    check_runtime_conflicts(&ctx, compiles);
+    let test_words = bun_core::env_var::BUN_DEBUG_TEST_AOT_WORDS
+        .get_not_empty()
+        .filter(|_| compiles && cmd == Tag::TestCommand);
+    let option_words = test_words
+        .into_iter()
+        .flat_map(|words| strings::split(words, b","));
+    let (part_words, mut option_words): (Vec<&[u8]>, Vec<&[u8]>) =
+        option_words.partition(|word| word.starts_with(b"TestRun"));
+    let is_part_of_test_files = !run_compiled::images_below_test_part().is_empty()
+        && !run_compiled::builds_what_test_parts_share();
+    // The functions of a test file are handed to `test` and `describe`, which call each of them once, and what they call often is in another
+    // program. Ranked among themselves, three quarters of them would count as warm or hot, and their program is built while other tests run.
+    // So they are ranked as those of a very large program are: what has many callers is hot, a loop is warm, the rest is cold.
+    // A layer is a part of the run too: who calls its functions often is in the programs above. A run is cut into layers because it is large, and
+    // an executable of all of it ranks them that way.
+    let is_part_of_run = is_part_of_test_files || run_compiled::builds_what_test_parts_share();
+    if is_part_of_run && !option_words.iter().any(|word| word.starts_with(b"heat=")) {
+        option_words.push(b"heat=ReadOffStructure");
+    }
+    let part_limit = |name: &[u8]| {
+        (part_words.iter())
+            .find_map(|word| word.strip_prefix(name))
+            .and_then(|digits| bun_core::fmt::parse_int::<u64>(digits, 10).ok())
+    };
     ctx.bundler_options.aot = Some(Box::new(AotOptions {
+        test_run_part_files: part_limit(b"TestRunPartFiles:").map(|files| files as u32),
+        test_run_is_one_program: part_words.contains(&&b"TestRunLayers:0"[..]),
+        source_that_fits_in_memory: (cmd == Tag::TestCommand && compiles)
+            .then(|| run_compiled::source_that_fits_in_memory(ctx)),
+        is_part_of_test_files,
+        entry_points_run_again: cmd == Tag::TestCommand
+            && ctx.test_options.repeat_count > 1
+            && !run_compiled::builds_what_test_parts_share(),
+        // `VirtualMachine::use_isolation_source_provider_cache()`: there the transpiler hands the loader the record of a module, which says that it is TypeScript.
+        typescript_drops_absent_exports: cmd == Tag::TestCommand
+            && ctx.test_options.isolate
+            && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE::get()
+                .unwrap_or(false),
+        imports_are_in_other_images: !run_compiled::images_below_test_part().is_empty(),
+        shares_realms: run_compiled::builds_what_test_parts_share()
+            || !run_compiled::images_below_test_part().is_empty(),
+        runs_in_several_realms: cmd == Tag::TestCommand && ctx.test_options.isolate,
+        images_below: ImagesBelow {
+            images: run_compiled::images_below_test_part(),
+            holds_module: Some(run_compiled::is_module_below_test_part),
+            wait_for_all: run_compiled::begins_beside_build_below()
+                .then_some(run_compiled::wait_for_program_below),
+        },
+        replaced_by_tests: run_compiled::replaced_below_test_part(),
+        thread_count: run_compiled::threads_of_test_part(),
+        option_words: option_words.into_iter().map(Box::from).collect(),
         heap: if has_huge_heap {
             HeapSize::Huge
         } else {
@@ -981,6 +1060,10 @@ fn apply_runtime_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Context<'_>
         runs_in_place: true,
         checks_only: !compiles,
         runs_tests: cmd == Tag::TestCommand,
+        counts_executions: cmd == Tag::TestCommand && compiles && ctx.test_options.coverage.enabled,
+        // A test writes a module at run time and imports it, as under plain `bun test`.
+        loads_code_from_disk: loads_code_from_disk
+            || (cmd == Tag::TestCommand && compiles && !cfg!(bun_hardened)),
         ..Default::default()
     }));
 }
@@ -989,40 +1072,21 @@ fn check_runtime_conflicts(ctx: &Context<'_>, compiles: bool) {
     match (ctx.debug.hot_reload, compiles) {
         (HotReload::None, _) | (_, false) => {}
         (HotReload::Watch, true) if ctx.debug.watch_flag => exit_with_message(
-            b"--aot does not support --watch: the program is compiled once, before it starts",
+            b"--aot does not support --watch: the program is compiled once, before it starts. Watch without --aot, or run the command again after a change",
         ),
         (_, true) => exit_with_message(
-            b"--aot does not support --hot: the program is compiled once, before it starts",
+            b"--aot does not support --hot: the program is compiled once, before it starts. Use --hot without --aot, or run the command again after a change",
         ),
     }
     let has_debugger = !matches!(ctx.runtime_options.debugger, Debugger::Unspecified)
         || bun_core::env_var::BUN_INSPECT.get_not_empty().is_some();
     if compiles && has_debugger {
-        exit_with_message(b"--aot does not support the debugger (--inspect, BUN_INSPECT) for a program that is compiled");
+        exit_with_message(b"--aot does not support the debugger (--inspect, BUN_INSPECT) for a program that is compiled. Debug it without --aot");
     }
     if !ctx.runtime_options.eval.script.is_empty() || ctx.runtime_options.interactive {
         exit_with_message(
             b"--aot can't compile code passed with -e, -p or --interactive. Pass a file instead",
         );
-    }
-}
-
-fn check_test_conflicts(ctx: Context<'_>) {
-    let options = &mut ctx.test_options;
-    if options.repeat_count > 1 {
-        exit_with_message(b"--aot does not support --rerun-each (or \"rerunEach\" in bunfig.toml): a compiled module only runs once per process");
-    }
-    if options.parallel > 0 {
-        exit_with_message(
-            b"--aot does not support --parallel: a compiled program runs in one process",
-        );
-    }
-    if options.isolate {
-        exit_with_message(b"--aot does not support --isolate: a compiled module can't be loaded into a second global object");
-    }
-    if options.coverage.enabled {
-        bun_core::warn!("--coverage is ignored with --aot");
-        options.coverage.enabled = false;
     }
 }
 

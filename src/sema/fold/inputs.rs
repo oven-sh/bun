@@ -39,10 +39,12 @@ pub struct Define<'s> {
 
 /// A define gives `root`, or a path below it, a path that begins with `head`. `bun build` looks `head` up where the path is written in its place.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-pub struct DefineHead {
+pub struct DefineHead<'s> {
     pub root: DefineRoot,
+    /// The names behind `root` in the key of the define. The path is written only in place of an access that spells all of them.
+    pub members: &'s [Atom],
     pub head: Atom,
-    /// A define gives `root` itself the one name `head`, so a store to `root` is a store to what `head` names there.
+    /// The define gives `root` itself the one name `head`, so a store to `root` is a store to what `head` names there.
     pub renames_root: bool,
 }
 
@@ -82,7 +84,7 @@ pub struct FoldInputs<'s> {
     pub(super) nodes: &'s [TrieNode<'s>],
     pub(super) roots: &'s [(DefineRoot, u32)],
     pub(super) root_filter: u64,
-    pub(super) heads: &'s [DefineHead],
+    pub(super) heads: &'s [DefineHead<'s>],
     pub(super) features: &'s [Atom],
     pub(super) preserves_unused_imports: bool,
     pub(super) minifies_syntax: bool,

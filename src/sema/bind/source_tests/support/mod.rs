@@ -291,7 +291,7 @@ impl<'s> Workspace<'s> {
     pub(crate) fn bind_with_heads(
         &self,
         source: &Source<'_>,
-        heads: &[DefineHead],
+        heads: &[DefineHead<'_>],
     ) -> (File<'s>, Bound<'s>) {
         let hir = self.parse(source);
         let options = bind_options(Some(source.runtime));

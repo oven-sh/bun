@@ -16,22 +16,28 @@ use crate::hir::{
 };
 use crate::util::SharedSort;
 
+/// With `decisions`, a name or a path that a define puts in place of the callee is read there. Nothing else of what the fold settles is.
 pub(crate) fn call_site_kind(
     hir: &File<'_>,
     bound: &Bound<'_>,
+    decisions: Option<&Decisions<'_>>,
     call: ExprId,
 ) -> Option<ImportSiteKind> {
     let form = find_call_form(hir, call)?;
-    find_call_site(Text::of(hir, bound, None), call, form, StepsLeft::ALL).map(|site| site.kind)
+    let text = Text::of(hir, bound, decisions).with_names_alone();
+    find_call_site(text, call, form, StepsLeft::ALL).map(|site| site.kind)
 }
 
+/// `decisions`: `call_site_kind`.
 pub(crate) fn call_site_arguments(
     hir: &File<'_>,
     bound: &Bound<'_>,
+    decisions: Option<&Decisions<'_>>,
     call: ExprId,
 ) -> Option<IdList<ExprId>> {
     let form = find_call_form(hir, call)?;
-    find_call_site(Text::of(hir, bound, None), call, form, StepsLeft::ALL).map(|site| site.args)
+    let text = Text::of(hir, bound, decisions).with_names_alone();
+    find_call_site(text, call, form, StepsLeft::ALL).map(|site| site.args)
 }
 
 pub(super) fn find_request_of_exports(
@@ -256,9 +262,10 @@ fn find_call_site(
     if holds_import_meta_require(hir, bound, text.decisions, callee) {
         return Some(create_site(ImportSiteKind::ImportMetaRequire(call), args));
     }
-    let is_put = |named| reads_get_builtin_module(text, named, &[known::globalThis, known::global]);
-    if text.path_put_at(callee).is_some_and(is_put) {
-        return Some(create_site(ImportSiteKind::GetBuiltinModule(call), args));
+    // Where a define puts a path in place of the callee, the path is read, and the member that the text spells there is not.
+    if let Some(named) = text.path_put_at(callee) {
+        let is_loader = reads_get_builtin_module(text, named, &[known::globalThis, known::global]);
+        return is_loader.then(|| create_site(ImportSiteKind::GetBuiltinModule(call), args));
     }
     let (object, name) = match hir.member_key(callee)? {
         (object, MemberKey::Name(name)) => (hir.skip_type_assertions(object), name),
@@ -598,9 +605,16 @@ fn names_module_cache(inputs: &ScanInputs<'_, '_>, table: ExprId) -> bool {
         FoldedValue::Unknown => None,
     };
     let is_module = |specifier: Atom| matches!(atoms.bytes(specifier), b"module" | b"node:module");
-    find_export_of_module(hir, bound, table, &find_constant, &is_module)
-        .or_else(|| text.find_export_behind_define(table, &is_module))
-        .is_some_and(|name| atoms.bytes(name) == b"_cache")
+    find_export_of_module(
+        hir,
+        bound,
+        text.decisions,
+        table,
+        &find_constant,
+        &is_module,
+    )
+    .or_else(|| text.find_export_behind_define(table, &is_module))
+    .is_some_and(|name| atoms.bytes(name) == b"_cache")
 }
 
 fn find_key_stored_in_cache(

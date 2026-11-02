@@ -148,7 +148,7 @@ pub(super) struct Binder<'f, 's> {
     f: &'f File<'s>,
     options: BindOptions,
     /// `bind_with_define_heads`
-    define_heads: &'f [DefineHead],
+    define_heads: &'f [DefineHead<'f>],
     atoms: &'f dyn crate::atom::Intern,
     b: BoundBuilder,
     tables: Vec<Table>,
@@ -273,7 +273,7 @@ impl<'f, 's> Binder<'f, 's> {
     pub(super) fn run_in(
         f: &'f File<'s>,
         options: BindOptions,
-        define_heads: &'f [DefineHead],
+        define_heads: &'f [DefineHead<'f>],
         atoms: &'f dyn crate::atom::Intern,
         buffers: &mut Buffers,
     ) -> BoundBuilder {

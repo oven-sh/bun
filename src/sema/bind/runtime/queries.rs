@@ -308,7 +308,7 @@ impl Bound<'_> {
         }
     }
 
-    /// The record of `head` at `root`. `None`: `root` is not evaluated, or `head` is free and no `with` object or evaluated text may declare it.
+    /// The record of `head` at `root`. `None`: its key is not evaluated there, or it is free and no `with` object or evaluated text may declare it.
     pub fn define_head(&self, root: ExprId, head: Atom) -> Option<&ImplicitReference> {
         let references = self.runtime.implicit_references();
         let root_of = |reference: &ImplicitReference| match (reference.kind, reference.node) {

@@ -116,14 +116,22 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let inner = self.file.skip_type_syntax(site.callee);
         if bound.eval_scope(call).is_some() {
             // `bun run` writes the value of a define in place of the name `eval`, so the call evaluates no text among the variables of the caller.
-            if self.file.has_define_heads
-                && let Decision::NamedPath(named) = self.file.decisions().decision(inner)
-            {
-                self.report_define_without_support(inner, named, DefineStop::Called);
-                self.lower_arguments(site.args);
-                return self.builder.undefined();
-            }
-            return scope::lower_direct_eval(self, call);
+            let decisions = self.file.decisions();
+            let put = match decisions.has_define_paths() {
+                true => decisions.decision(inner),
+                false => Decision::Unknown,
+            };
+            let value = match put {
+                Decision::NamedPath(named) => named.names,
+                Decision::GlobalPath(path) => path,
+                Decision::Unknown
+                | Decision::Constant(_)
+                | Decision::Data(_)
+                | Decision::DeferredData => return scope::lower_direct_eval(self, call),
+            };
+            self.report_define_stop(inner, value, DefineStop::Called);
+            self.lower_arguments(site.args);
+            return self.builder.undefined();
         }
         if matches!(hir[site.callee].kind, ExprKind::Super) {
             return self.lower_super_call(call);

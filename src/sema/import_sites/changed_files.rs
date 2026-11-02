@@ -66,11 +66,18 @@ fn find_function(inputs: &ScanInputs<'_, '_>, callee: ExprId) -> Option<(Holder,
         true
     };
     let find_constant = |e| find_constant(inputs, e);
-    let members = find_members_below_module(hir, bound, callee, &find_constant, &is_module)
-        .or_else(|| {
-            let (specifier, members) = text.find_members_behind_define(callee)?;
-            is_module(specifier).then_some(members)
-        })?;
+    let members = find_members_below_module(
+        hir,
+        bound,
+        text.decisions,
+        callee,
+        &find_constant,
+        &is_module,
+    )
+    .or_else(|| {
+        let (specifier, members) = text.find_members_behind_define(callee)?;
+        is_module(specifier).then_some(members)
+    })?;
     match (holder.get(), &members[..]) {
         (holder, &[name]) => Some((holder, name)),
         (Holder::Fs, &[name, promises]) if atoms.bytes(promises) == b"promises" => {

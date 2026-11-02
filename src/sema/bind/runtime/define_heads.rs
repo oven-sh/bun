@@ -1,11 +1,13 @@
 use super::bits::has_bit;
 use super::queries::find_entry;
 use super::references::ReferencePass;
+use super::stores::find_outermost_cast;
 use super::{Binding, CodeUnit, CommonJsVariable, ImplicitReferenceKind};
 use crate::atom::Atom;
-use crate::bind::ScopeId;
+use crate::bind::{Parent, ScopeId};
 use crate::fold::DefineRoot;
 use crate::hir::*;
+use smallvec::SmallVec;
 
 #[inline]
 fn filter_bit(name: Atom) -> u64 {
@@ -60,10 +62,31 @@ impl ReferencePass<'_, '_> {
         )
     }
 
+    // Whether the accesses above `root` spell `members`, the names behind the root in the key of a define. The fold applies the define nowhere else.
+    fn is_root_of_key(&self, root: ExprId, members: &[Atom]) -> bool {
+        let (hir, bound) = (self.lookup.hir, self.lookup.bound);
+        let mut path = root;
+        members.iter().all(|&member| {
+            let object = find_outermost_cast(hir, bound, path);
+            let Parent::Expr(access) = bound.parent_of_expr(object) else {
+                return false;
+            };
+            path = access;
+            // An access whose key is a name has no operand but its object, so the path is that object.
+            matches!(hir.member_key(access), Some((_, MemberKey::Name(name))) if name == member)
+        })
+    }
+
     fn look_up_define_heads(&mut self, named: DefineRoot, root: ExprId, scope: ScopeId) {
         let position = self.lookup.hir[root].pos;
         let heads = self.define_heads;
+        let mut looked_up: SmallVec<[Atom; 4]> = SmallVec::new();
         for entry in heads.iter().filter(|entry| entry.root == named) {
+            // Two keys below one root may have values that begin with one name, and one record says what the name is there.
+            if looked_up.contains(&entry.head) || !self.is_root_of_key(root, entry.members) {
+                continue;
+            }
+            looked_up.push(entry.head);
             let found = self.lookup.find_variable(scope, entry.head, position);
             // Free, and neither a `with` object nor evaluated text may declare it: the path begins at the global object, which needs no record.
             if found.binding == Binding::Free && found.dynamic_scope.is_none() {

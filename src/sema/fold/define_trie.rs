@@ -10,20 +10,20 @@ impl<'s> FoldInputs<'s> {
     #[allow(clippy::large_types_passed_by_value)] // made for this call
     pub fn new(options: FoldOptions<'s>, arena: &'s Arena) -> FoldInputs<'s> {
         let mut trie = TrieBuilder::default();
-        let mut heads: Vec<DefineHead> = Vec::new();
+        let mut heads: Vec<DefineHead<'s>> = Vec::new();
         for define in options.defines {
             trie.ensure_path(define.path).value = Some(define.value);
-            let root = define.path.root;
-            if let DefineValue::GlobalPath(&[head, ..]) = define.value
-                && !heads
-                    .iter()
-                    .any(|listed| listed.root == root && listed.head == head)
-            {
-                heads.push(DefineHead {
+            let DefinePath { root, members } = define.path;
+            if let DefineValue::GlobalPath(&[head, ..]) = define.value {
+                let listed = DefineHead {
                     root,
+                    members,
                     head,
                     renames_root: false,
-                });
+                };
+                if !heads.contains(&listed) {
+                    heads.push(listed);
+                }
             }
         }
         for &path in options.user_defined {
@@ -47,7 +47,7 @@ impl<'s> FoldInputs<'s> {
             DefineRoot::ImportMeta => filter,
         });
         // The trie holds what the last define of a root itself gives it.
-        for listed in &mut heads {
+        for listed in heads.iter_mut().filter(|it| it.members.is_empty()) {
             let node = find_node(&trie.roots, listed.root);
             let at_root = node.and_then(|node| trie.nodes[node as usize].value);
             listed.renames_root =
@@ -86,9 +86,9 @@ impl<'s> FoldInputs<'s> {
         self.roots.is_empty()
     }
 
-    /// The first names of the paths that the defines give. The binder looks each up where the root of its define is written.
+    /// The first names of the paths that the defines give. The binder looks each up where the key of its define is written.
     #[inline]
-    pub fn define_heads(&self) -> &'s [DefineHead] {
+    pub fn define_heads(&self) -> &'s [DefineHead<'s>] {
         self.heads
     }
 

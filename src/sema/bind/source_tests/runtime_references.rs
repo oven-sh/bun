@@ -175,6 +175,27 @@ const ROOTS_OF_DEFINES: &[(&str, &str, &str, bool)] = &[
     ),
 ];
 
+// (file, root of a define whose key is `env.A` below it, text, whether the accesses above the first root spell the key)
+const KEYS_OF_DEFINES: &[(&str, &str, &str, bool)] = &[
+    ("a.cjs", "process", "process.env.A;", true),
+    ("a.cjs", "process", "process.env.A.length;", true),
+    ("a.cjs", "process", "f(process.env.A());", true),
+    ("a.cjs", "process", r#"process["env"].A;"#, true),
+    ("a.cjs", "process", r#"process.env["A"];"#, true),
+    ("a.cjs", "process", "process.env[`A`];", true),
+    ("a.ts", "process", "(process as any).env!.A;", true),
+    ("a.mjs", "import.meta", "import.meta.env.A;", true),
+    ("a.cjs", "process", "process.argv;", false),
+    ("a.cjs", "process", "process;", false),
+    ("a.cjs", "process", "process.env;", false),
+    ("a.cjs", "process", "process.env.B;", false),
+    ("a.cjs", "process", "process.A;", false),
+    ("a.cjs", "process", "process.env[A];", false),
+    ("a.cjs", "process", "f(process).env.A;", false),
+    ("a.cjs", "process", "env[process].A;", false),
+    ("a.mjs", "import.meta", "import.meta.url;", false),
+];
+
 const NAMES_THAT_ARE_NO_VARIABLES: &[(&str, &str)] = &[
     (
         "a.ts",
@@ -294,13 +315,14 @@ fn analyzed_classic_jsx(text: &str, test: impl for<'s> FnOnce(&Analyzed<'s>) + S
     });
 }
 
-fn define_head(w: &Workspace<'_>, root: &str, head: &str) -> DefineHead {
+fn define_head(w: &Workspace<'_>, root: &str, head: &str) -> DefineHead<'static> {
     let root = match root {
         "import.meta" => DefineRoot::ImportMeta,
         name => DefineRoot::Global(w.atom(name)),
     };
     DefineHead {
         root,
+        members: &[],
         head: w.atom(head),
         renames_root: false,
     }
@@ -612,6 +634,53 @@ fn first_name_of_a_define_path_is_looked_up_only_where_a_define_may_apply() {
             let (hir, bound) = w.bind_with_heads(&Source::new(path, text), &heads);
             let found = bound.define_head(w.ident(&hir, root, 0), w.atom("target"));
             assert_eq!(found.is_some(), is_looked_up, "{text}");
+        });
+    }
+}
+
+#[test]
+fn first_name_of_a_define_path_is_looked_up_only_where_the_key_of_the_define_is_written() {
+    for &(path, root, text, is_key_written) in KEYS_OF_DEFINES {
+        with_workspace(|w| {
+            let key = ["env", "A"].map(|name| w.atom(name));
+            let heads = [DefineHead {
+                members: &key,
+                ..define_head(w, root, "arguments")
+            }];
+            let (hir, bound) = w.bind_with_heads(&Source::new(path, text), &heads);
+            let root = match root {
+                "import.meta" => find_exprs(&hir, |kind| matches!(kind, ExprKind::ImportMeta))[0],
+                name => w.ident(&hir, name, 0),
+            };
+            let found = bound.define_head(root, w.atom("arguments"));
+            let expected = is_key_written.then_some(Arguments(CodeUnit::File));
+            assert_eq!(found.map(|reference| reference.binding), expected, "{text}");
+            let records = bound.runtime.implicit_references();
+            assert_eq!(records.len(), usize::from(is_key_written), "{text}");
+            assert_eq!(bound.file_uses_arguments(), is_key_written, "{text}");
+        });
+    }
+    // Two keys below one root have values that begin with one name: the name has one record where both are written, and none where neither is.
+    for (text, recorded_at) in [
+        ("process.argv; process.env.A;", Some(1)),
+        ("process.argv;", None),
+    ] {
+        with_workspace(|w| {
+            let key = ["env", "A"].map(|name| w.atom(name));
+            let heads = [&key[..1], &key[..]].map(|members| DefineHead {
+                members,
+                ..define_head(w, "process", "module")
+            });
+            let (hir, bound) = w.bind_with_heads(&Source::new("a.cjs", text), &heads);
+            let records = bound.runtime.implicit_references().iter();
+            let roots: Vec<NodeData> = records.map(|record| record.node).collect();
+            let expected = recorded_at.map(|nth| NodeData::Expr(w.ident(&hir, "process", nth)));
+            assert_eq!(roots, Vec::from_iter(expected), "{text}");
+            assert_eq!(
+                bound.may_name_own_require(),
+                recorded_at.is_some(),
+                "{text}"
+            );
         });
     }
 }

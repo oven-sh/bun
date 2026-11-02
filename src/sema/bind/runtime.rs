@@ -302,7 +302,7 @@ pub(in crate::bind) struct RuntimeInput<'a, 's> {
     pub idents: &'a [(ExprId, ScopeId)],
     pub import_metas: &'a [(ExprId, ScopeId)],
     pub options: RuntimeBindOptions,
-    pub define_heads: &'a [DefineHead],
+    pub define_heads: &'a [DefineHead<'a>],
     pub atoms: &'a dyn Intern,
 }
 

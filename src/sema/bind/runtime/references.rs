@@ -151,7 +151,7 @@ pub(super) struct ReferencePass<'a, 's> {
     pub(super) idents: &'a [(ExprId, ScopeId)],
     pub(super) import_metas: &'a [(ExprId, ScopeId)],
     pub(super) options: RuntimeBindOptions,
-    pub(super) define_heads: &'a [DefineHead],
+    pub(super) define_heads: &'a [DefineHead<'a>],
     pub(super) atoms: &'a dyn Intern,
     pub(super) type_only: TypeOnlyCode,
     pub(super) direct_evals: Vec<DirectEval>,

@@ -227,11 +227,15 @@ fn add_constant(file: &mut FileBuilder, name: Atom, init: ExprId) -> StmtId {
     file.stmt(StmtKind::Var(declarations), 0)
 }
 
-fn add_path_statement(file: &mut FileBuilder, root: Atom, members: &[Atom]) -> (ExprId, StmtId) {
+fn add_path_statement(
+    file: &mut FileBuilder,
+    root: Atom,
+    members: &[(Chain, Atom)],
+) -> (ExprId, StmtId) {
     let root = file.expr(ExprKind::Ident(root), 0, 0);
     let mut path = root;
-    for &member in members {
-        let access = file.dot((path, Chain::No), (member, 0), 0);
+    for &(chain, member) in members {
+        let access = file.dot((path, chain), (member, 0), 0);
         path = file.expr(access, 0, 0);
     }
     (root, file.stmt(StmtKind::Expr(path), 0))
@@ -671,21 +675,28 @@ fn define_head_is_read_without_expression_where_its_define_is_applied() {
         ..FoldOptions::default()
     };
     let fold = FoldInputs::new(options, arena);
-    for (member, is_applied) in [(alias, true), (other, false)] {
+    // (the last access of the path, whether the path spells the key of the define, whether the fold applies the define)
+    let rows = [
+        ((Chain::No, alias), true, true),
+        ((Chain::Start, alias), true, false),
+        ((Chain::No, other), false, false),
+    ];
+    for (last, is_key, is_applied) in rows {
         let mut file = FileBuilder::default();
         let init = file.expr(ExprKind::Null, 0, 0);
         let declaration = add_constant(&mut file, target, init);
-        let (root, statement) = add_path_statement(&mut file, process, &[env, member]);
+        let members = [(Chain::No, env), last];
+        let (root, statement) = add_path_statement(&mut file, process, &members);
         let hir = workspace.finish_tree(file, &[declaration, statement]);
         let analyzed = workspace.analyze_tree(hir, &fold, FILE_INPUTS);
         let head = analyzed.bound.define_head(root, target);
-        let head = head.expect("the binder records the name at the root of the define");
-        assert!(matches!(head.binding, Binding::Symbol(_)), "{is_applied}");
+        let is_symbol = head.map(|head| matches!(head.binding, Binding::Symbol(_)));
+        assert_eq!(is_symbol, is_key.then_some(true), "{last:?}");
         let analysis = &analyzed.analysis;
         // The root is dead code below the access that the define replaces, and runs where no define is applied.
         assert_eq!(analysis.decisions.is_dead_expr(root), is_applied);
         let read = analysis.bindings_read_without_expression(&analyzed.hir, &analyzed.bound);
-        let expected = is_applied.then_some(head.binding);
+        let expected = head.filter(|_| is_applied).map(|head| head.binding);
         assert_eq!(read.collect::<Vec<_>>(), Vec::from_iter(expected));
     }
 }

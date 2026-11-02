@@ -1,6 +1,6 @@
-use super::Constant;
 use super::evaluate::{Primitive, Value};
 use super::folder::Folder;
+use super::{Constant, Decisions};
 use crate::atom::{Atom, known};
 use crate::bind::{Binding, BindingInitializer, Bound, CommonJsVariable};
 use crate::hir::{BinOp, Branches, Call, Chain, ExprId, ExprKind, File, IdList, MemberKey};
@@ -132,7 +132,7 @@ impl<'s> Folder<'_, 's> {
     fn is_dirname_of_own_file(&self, call: Call) -> bool {
         let (hir, bound) = (self.hir, self.bound);
         let function =
-            find_export_of_module(hir, bound, call.callee, &|_| None, &is_path_specifier);
+            find_export_of_module(hir, bound, None, call.callee, &|_| None, &is_path_specifier);
         matches!(call.chain, Chain::No)
             && call.args.len() == 1
             && function == Some(known::meta_dirname)
@@ -589,27 +589,30 @@ fn find_path_joining_function(
     find_constant: &dyn Fn(ExprId) -> Option<Constant>,
 ) -> Option<Atom> {
     let joins_paths = |member: &Atom| *member == known::join || *member == known::resolve;
-    find_export_of_module(hir, bound, callee, find_constant, &is_path_specifier).filter(joins_paths)
+    let export = find_export_of_module(hir, bound, None, callee, find_constant, &is_path_specifier);
+    export.filter(joins_paths)
 }
 
-/// The name of the export that `callee` is, of a module whose name `is_module` accepts.
+/// The name of the export that `callee` is, of a module whose name `is_module` accepts. `decisions`: `find_members_below_module`.
 pub(crate) fn find_export_of_module(
     hir: &File<'_>,
     bound: &Bound<'_>,
+    decisions: Option<&Decisions<'_>>,
     callee: ExprId,
     find_constant: &dyn Fn(ExprId) -> Option<Constant>,
     is_module: &dyn Fn(Atom) -> bool,
 ) -> Option<Atom> {
-    match find_members_below_module(hir, bound, callee, find_constant, is_module)?[..] {
+    match find_members_below_module(hir, bound, decisions, callee, find_constant, is_module)?[..] {
         [member] => Some(member),
         _ => None,
     }
 }
 
-/// `fs.promises.writeFile`: the names that lead from the module to `callee`, the last one first.
+/// `fs.promises.writeFile`: the names that lead from the module to `callee`, the last one first. `decisions`: `call_site_kind`, for the request.
 pub(crate) fn find_members_below_module(
     hir: &File<'_>,
     bound: &Bound<'_>,
+    decisions: Option<&Decisions<'_>>,
     callee: ExprId,
     find_constant: &dyn Fn(ExprId) -> Option<Constant>,
     is_module: &dyn Fn(Atom) -> bool,
@@ -655,7 +658,8 @@ pub(crate) fn find_members_below_module(
                 }
             }
             ExprKind::Call(call) => {
-                break is_module_request(hir, bound, e, hir[call], find_constant, is_module);
+                let call = hir[call];
+                break is_module_request(hir, bound, decisions, e, call, find_constant, is_module);
             }
             _ => break false,
         }
@@ -666,12 +670,13 @@ pub(crate) fn find_members_below_module(
 fn is_module_request(
     hir: &File<'_>,
     bound: &Bound<'_>,
+    decisions: Option<&Decisions<'_>>,
     request: ExprId,
     call: Call,
     find_constant: &dyn Fn(ExprId) -> Option<Constant>,
     is_module: &dyn Fn(Atom) -> bool,
 ) -> bool {
-    let returns_exports = match call_site_kind(hir, bound, request) {
+    let returns_exports = match call_site_kind(hir, bound, decisions, request) {
         Some(
             ImportSiteKind::Require(_)
             | ImportSiteKind::ImportMetaRequire(_)

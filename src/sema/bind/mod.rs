@@ -3177,7 +3177,7 @@ pub fn bind<'s>(
 pub fn bind_with_define_heads<'s>(
     file: &File,
     options: BindOptions,
-    define_heads: &[DefineHead],
+    define_heads: &[DefineHead<'_>],
     atoms: &dyn crate::atom::Intern,
     arena: &'s Arena,
 ) -> Bound<'s> {

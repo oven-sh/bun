@@ -1135,6 +1135,44 @@ fn call_of_eval_through_a_define_stops_the_build() {
 }
 
 #[test]
+fn call_of_eval_under_a_define_of_that_name_stops_the_build() {
+    // (file, text, value of the define). In sloppy code the evaluated text may declare the first name of the value. In a module it is a global.
+    let rows = [
+        (
+            "main.cjs",
+            "module.exports = function probe(a) { return eval(a); };",
+            "probeTarget",
+        ),
+        (
+            "main.js",
+            "export function probe(a) { return eval(a); }",
+            "probeTarget",
+        ),
+        (
+            "main.js",
+            "export function probe(a) { return eval(a); }",
+            "probeHolder.member",
+        ),
+        (
+            "main.ts",
+            "export function probe(a: string) { return (eval as any)(a); }",
+            "probeTarget",
+        ),
+    ];
+    for (name, source, value) in rows {
+        let defines = [("eval", GlobalPath(value))];
+        let at = offset_of(source, "eval");
+        let expected = (at, stop_text("eval", value, "eval is called"));
+        let found = collect_stops(&defines, &[(name, source)]);
+        assert_eq!(found, [expected], "{source}");
+    }
+    let source =
+        "export function probe(a) { return [(0, eval)(a), eval?.(a), eval.call(null, a)]; }";
+    let defines = [("eval", GlobalPath("probeTarget"))];
+    assert_eq!(collect_stops(&defines, &[("main.js", source)]), []);
+}
+
+#[test]
 fn call_of_require_through_a_define_loads_what_its_argument_names() {
     let defines = [("REQ", GlobalPath("require"))];
     let source = "module.exports = function probe(a) { return [typeof REQ, REQ(a)]; };";

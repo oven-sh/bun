@@ -364,7 +364,7 @@ fn define_values_keep_their_kind() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn define_heads_say_where_a_define_renames_its_root() {
+fn define_heads_have_the_keys_of_their_defines_and_say_where_one_renames_its_root() {
     let session = Session::new();
     let workspace = Workspace::new(&session);
     let define = |root: DefineRoot, members: &[&str], names: &[&str]| {
@@ -384,21 +384,25 @@ fn define_heads_say_where_a_define_renames_its_root() {
         define(DefineRoot::ImportMeta, &["env"], &["holder"]),
         define(twice, &[], &["target"]),
         define(twice, &[], &["holder"]),
+        define(key, &["member"], &["target", "other"]),
         workspace.define(key, &["count"], 1.0),
     ];
     let inputs = workspace.inputs(&defines, &[]);
-    let head = |root: DefineRoot, head: &str, renames_root: bool| DefineHead {
+    let head = |root: DefineRoot, members: &[&str], head: &str, renames_root: bool| DefineHead {
         root,
+        members: workspace.path(root, members).members,
         head: workspace.atom(head),
         renames_root,
     };
     let expected = [
-        head(key, "target", true),
-        head(key, "holder", false),
-        head(path, "target", false),
-        head(DefineRoot::ImportMeta, "holder", false),
-        head(twice, "target", false),
-        head(twice, "holder", true),
+        head(key, &["member"], "target", false),
+        head(key, &[], "target", true),
+        head(key, &["other"], "holder", false),
+        head(path, &[], "target", false),
+        head(path, &["member"], "target", false),
+        head(DefineRoot::ImportMeta, &["env"], "holder", false),
+        head(twice, &[], "target", false),
+        head(twice, &[], "holder", true),
     ];
     assert_eq!(inputs.define_heads(), expected);
 }

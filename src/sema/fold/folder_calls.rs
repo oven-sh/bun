@@ -19,7 +19,7 @@ impl<'s> Folder<'_, 's> {
         if call.chain == Chain::No && self.is_feature_callee(call.callee) {
             return self.fold_feature_call(e);
         }
-        if let Some(given) = call_site_arguments(self.hir, self.bound, e) {
+        if let Some(given) = call_site_arguments(self.hir, self.bound, None, e) {
             self.record_specifier(given);
         }
         self.fold_replace_at_end_of_text(call)

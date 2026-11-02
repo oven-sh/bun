@@ -440,7 +440,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     // The message shows the define as a command line has it, `key=value`: the key is read off `site`, and `names` is the value.
-    fn report_define_stop(&mut self, site: ExprId, names: &[Atom], stop: DefineStop) {
+    pub(in crate::lower) fn report_define_stop(
+        &mut self,
+        site: ExprId,
+        names: &[Atom],
+        stop: DefineStop,
+    ) {
         let file = &mut *self.file;
         // `bun run` applies no define to evaluated text, which stays with the interpreter where the fold has replaced an expression of it.
         if file.inputs.sources.kind(file.file) == load::SourceKind::EvaluatedText {

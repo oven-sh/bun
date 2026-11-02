@@ -1615,6 +1615,14 @@ const NAMES_BEHIND_A_DEFINE_THAT_IS_A_NAME: &[(&str, &[&str])] = &[
         "const names = ['./a']; LIST.push('./b'); for (const name of names) require(name);",
         &["./a", "./b"],
     ),
+    (
+        "const names = ['.']; LIST.push('lib'); names.push('a.js'); require(names.join('/'));",
+        &[".", "./a.js", "./lib", "./lib/a.js"],
+    ),
+    (
+        "const names = ['.']; names.push('lib'); LIST.push('a.js'); require(names.join('/'));",
+        &[".", "./a.js", "./lib", "./lib/a.js"],
+    ),
 ];
 
 /// The value of the define is a member of what a variable holds: the member is read, or the list is pushed to, as where the path is spelled.
@@ -1622,6 +1630,14 @@ const NAMES_BEHIND_A_DEFINE_THAT_IS_A_MEMBER: &[(&str, &[&str])] = &[
     (
         "const names = ['./a']; PUSH('./b'); for (const name of names) require(name);",
         &["./a", "./b"],
+    ),
+    (
+        "const names = ['.']; PUSH('lib'); names.push('a.js'); require(names.join('/'));",
+        &[".", "./a.js", "./lib", "./lib/a.js"],
+    ),
+    (
+        "const names = ['.']; names.push('lib'); PUSH('a.js'); require(names.join('/'));",
+        &[".", "./a.js", "./lib", "./lib/a.js"],
     ),
     ("const paths = { lib: './a' }; require(LIB);", &["./a"]),
     (
@@ -1958,7 +1974,29 @@ const REQUIRE_BELOW_A_VARIABLE: Fold<'static> = Fold {
     ..Fold::NONE
 };
 
-/// Where the text spells `require`, what a define names there is called: no file is loaded, and what the call hands out makes no `require`.
+const FUNCTION_IN_PLACE_OF_A_MEMBER_THAT_LOADS: Fold<'static> = Fold {
+    defines: &[
+        (
+            Path::ImportMeta(&["require"]),
+            Defined::GlobalPath(&["load"]),
+        ),
+        (
+            Path::ImportMeta(&["resolve"]),
+            Defined::GlobalPath(&["load"]),
+        ),
+        (
+            Path::Global(&["require", "resolve"]),
+            Defined::GlobalPath(&["load"]),
+        ),
+        (
+            Path::Global(&["process", "getBuiltinModule"]),
+            Defined::GlobalPath(&["load"]),
+        ),
+    ],
+    ..Fold::NONE
+};
+
+/// Where the text spells `require` or a member that loads, what a define names there is called: no file is loaded or resolved.
 const TEXTS_WITHOUT_THE_REQUIRE_OF_THE_FILE: &[(Fold<'static>, &str, &str)] = &[
     (
         REQUIRE_OF_THE_FILE,
@@ -1974,6 +2012,16 @@ const TEXTS_WITHOUT_THE_REQUIRE_OF_THE_FILE: &[(Fold<'static>, &str, &str)] = &[
         REQUIRE_BELOW_A_VARIABLE,
         "a.cjs",
         r#"const loader = { load(name) { return name; } }; require("a");"#,
+    ),
+    (
+        FUNCTION_IN_PLACE_OF_A_MEMBER_THAT_LOADS,
+        "a.mjs",
+        r#"function load(name) { return name; } import.meta.require("a"); import.meta.resolve("b"); process.getBuiltinModule("node:fs");"#,
+    ),
+    (
+        FUNCTION_IN_PLACE_OF_A_MEMBER_THAT_LOADS,
+        "a.cjs",
+        r#"function load(name) { return name; } require.resolve("a");"#,
     ),
 ];
 
@@ -2025,6 +2073,98 @@ fn binding_that_holds_import_meta_require_is_followed_where_a_define_names_it() 
             _ => None,
         });
         assert_eq!(required.collect::<Vec<&str>>(), ["a", "b"], "{text}");
+    });
+}
+
+const FUNCTION_IN_PLACE_OF_REQUIRE: Fold<'static> = Fold {
+    defines: &[
+        (Path::Global(&["require"]), Defined::GlobalPath(&["load"])),
+        (
+            Path::Global(&["process", "platform"]),
+            Defined::Value(Data::String("linux")),
+        ),
+    ],
+    ..Fold::NONE
+};
+
+/// (defines, file, text, what the last import site may name). The text asks a loader for a module, and a define puts a function of the file there.
+const NAMES_BEHIND_A_FUNCTION_IN_PLACE_OF_A_LOADER: &[(Fold<'static>, &str, &str, &[&str])] = &[
+    (
+        FUNCTION_IN_PLACE_OF_REQUIRE,
+        "a.mjs",
+        "function load() { return { fileURLToPath: () => './b.js' }; } const { fileURLToPath } = require('url'); import(fileURLToPath(new URL('./a.js', import.meta.url)));",
+        &["./b.js"],
+    ),
+    (
+        FUNCTION_IN_PLACE_OF_REQUIRE,
+        "a.mjs",
+        "function load() { return { fileURLToPath: () => './b.js' }; } const { fileURLToPath } = require('node:' + 'url'); import(fileURLToPath(new URL('./a.js', import.meta.url)));",
+        &["./b.js"],
+    ),
+    (
+        FUNCTION_IN_PLACE_OF_REQUIRE,
+        "a.mjs",
+        "function load() { return { fileURLToPath: () => x }; } import(require('url').fileURLToPath(import.meta.resolve('./a.js')));",
+        &[],
+    ),
+    (
+        FUNCTION_IN_PLACE_OF_REQUIRE,
+        "a.cjs",
+        "function load() { return { platform: () => 'other' }; } const os = require('node:os'); module.require('./lib/' + os.platform() + '.js');",
+        &["./lib/*.js"],
+    ),
+    (
+        FUNCTION_IN_PLACE_OF_REQUIRE,
+        "a.cjs",
+        "function load() {} const name = c ? 'a' : 'b'; module.require(require.resolve('./lib/' + name + '.js'));",
+        &[],
+    ),
+    (
+        FUNCTION_IN_PLACE_OF_REQUIRE,
+        "a.cjs",
+        "function load() {} const names = ['./a', './b']; require(names); for (const name of names) module.require(name);",
+        &[],
+    ),
+    (
+        FUNCTION_IN_PLACE_OF_A_MEMBER_THAT_LOADS,
+        "a.mjs",
+        "function load() { return { fileURLToPath: () => './b.js' }; } import(import.meta.require('url').fileURLToPath(new URL('./a.js', import.meta.url)));",
+        &["./b.js"],
+    ),
+    (
+        FUNCTION_IN_PLACE_OF_A_MEMBER_THAT_LOADS,
+        "a.mjs",
+        "function load() { return { fileURLToPath: () => './b.js' }; } import(process.getBuiltinModule('url').fileURLToPath(new URL('./a.js', import.meta.url)));",
+        &["./b.js"],
+    ),
+    (
+        FUNCTION_IN_PLACE_OF_A_MEMBER_THAT_LOADS,
+        "a.mjs",
+        "function load() {} const name = c ? 'a' : 'b'; import(import.meta.resolve('./lib/' + name + '.js'));",
+        &[],
+    ),
+];
+
+#[test]
+fn answer_of_a_function_that_a_define_puts_in_place_of_a_loader_is_no_module() {
+    for &(fold, path, text, names) in NAMES_BEHIND_A_FUNCTION_IN_PLACE_OF_A_LOADER {
+        with_workspace(|w| {
+            let inputs = w.fold_inputs(&fold);
+            let s = w.analyze(&Source::new(path, text), &inputs);
+            let site = s.analysis.import_sites.last();
+            let site = site.unwrap_or_else(|| panic!("{text}: no import site"));
+            assert_eq!(describe_alternatives(&s, site), names, "{text}");
+        });
+    }
+    with_workspace(|w| {
+        let inputs = w.fold_inputs(&FUNCTION_IN_PLACE_OF_REQUIRE);
+        let text = r#"function load() { return { _cache: {} }; } const key = c ? "./a.js" : "./b.js"; require("module")._cache[key] = entry;"#;
+        let s = w.analyze(&Source::new("a.cjs", text), &inputs);
+        assert_eq!(describe_keys_stored_in_caches(&s), [""; 0], "{text}");
+        let text =
+            "function load() { return { unlinkSync() {} }; } require('fs').unlinkSync('/p/a.js');";
+        let s = w.analyze(&Source::new("a.cjs", text), &inputs);
+        assert!(s.analysis.paths_of_changed_files.is_empty(), "{text}");
     });
 }
 

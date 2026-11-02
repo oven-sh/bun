@@ -153,7 +153,7 @@ impl ReferencePass<'_, '_> {
             let ExprKind::Ident(name) = hir[root].kind else {
                 continue;
             };
-            let renames_root = |entry: &DefineHead| {
+            let renames_root = |entry: &DefineHead<'_>| {
                 entry.renames_root
                     && entry.root == DefineRoot::Global(name)
                     && entry.head == reference.name

@@ -103,6 +103,14 @@ impl<'a, 'h, 'b, 'd> Text<'a, 'h, 'b, 'd> {
         }
     }
 
+    // The text for whoever reads the names that defines put and nothing else of what the fold settles.
+    pub(super) fn with_names_alone(self) -> Self {
+        Text {
+            reads_names_alone: true,
+            ..self
+        }
+    }
+
     // What the fold settles besides those names: the only arm of a `?:` that runs, and the calls that never run.
     fn settled_code(self) -> Option<&'a Decisions<'d>> {
         self.decisions.filter(|_| !self.reads_names_alone)
@@ -235,10 +243,7 @@ impl<'a, 'h, 'b, 'd> Text<'a, 'h, 'b, 'd> {
             },
             ExprKind::Call(_) => {
                 let requests = left.requests.checked_sub(1)?;
-                let text = Text {
-                    reads_names_alone: true,
-                    ..self
-                };
+                let text = self.with_names_alone();
                 let argument = find_request_of_exports(text, e, StepsLeft { requests, ..left });
                 (argument, ModuleFace::Exports)
             }

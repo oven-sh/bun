@@ -619,7 +619,12 @@ impl<'s> Follower<'_, '_, 's> {
         });
         let decisions = self.inputs.decisions;
         let defined = decisions.mentions_by_defines(Binding::Symbol(symbol));
-        written.chain(defined.flatten()).collect()
+        let mut mentions: Vec<ExprId> = written.chain(defined.flatten()).collect();
+        // Where defines name the variable too, the mentions are put in the order of the text: the pushes to a list are read in that order.
+        if decisions.has_define_heads() {
+            mentions.shared_sort_unstable();
+        }
+        mentions
     }
 
     fn outermost_cast(&self, mut e: ExprId) -> ExprId {
@@ -1277,7 +1282,7 @@ impl<'s> Follower<'_, '_, 's> {
                 listed.is_some_and(|it| !it.iter().any(Held::can_be_changed))
             }
             ExprKind::Call(_) | ExprKind::ImportCall { .. } => {
-                call_site_kind(hir, bound, above).is_some()
+                call_site_kind(hir, bound, Some(self.inputs.decisions), above).is_some()
                     && !matches!(hir[above].kind, ExprKind::Call(call) if hir[call].callee == e)
             }
             _ => false,
@@ -1453,11 +1458,13 @@ impl<'s> Follower<'_, '_, 's> {
         } = self.inputs;
         let (ImportSiteKind::Require(_)
         | ImportSiteKind::ImportMetaRequire(_)
-        | ImportSiteKind::GetBuiltinModule(_)) = call_site_kind(hir, bound, call)?
+        | ImportSiteKind::GetBuiltinModule(_)) = call_site_kind(hir, bound, Some(decisions), call)?
         else {
             return None;
         };
-        let name = hir.ids(call_site_arguments(hir, bound, call)?).next()?;
+        let name = hir
+            .ids(call_site_arguments(hir, bound, Some(decisions), call)?)
+            .next()?;
         match decisions.constant(hir, name) {
             FoldedValue::Constant(Constant::String(name))
             | FoldedValue::ConstantOutsideDeadZone(Constant::String(name)) => Some(name),
@@ -1521,13 +1528,18 @@ impl<'s> Follower<'_, '_, 's> {
 
     /// `require.resolve(name)` and `import.meta.resolve(name)`.
     fn find_name_asked_of_resolver(&self, call: ExprId) -> Option<(ExprId, ResolvedForm)> {
-        let &ScanInputs { hir, bound, .. } = self.inputs;
-        let form = match call_site_kind(hir, bound, call)? {
+        let &ScanInputs {
+            hir,
+            bound,
+            decisions,
+            ..
+        } = self.inputs;
+        let form = match call_site_kind(hir, bound, Some(decisions), call)? {
             ImportSiteKind::RequireResolve(_) => ResolvedForm::Path,
             ImportSiteKind::ImportMetaResolve(_) => ResolvedForm::Url,
             _ => return None,
         };
-        let arguments = call_site_arguments(hir, bound, call)?;
+        let arguments = call_site_arguments(hir, bound, Some(decisions), call)?;
         (arguments.len() == 1).then(|| (hir.id_at(arguments, 0), form))
     }
 
@@ -1580,8 +1592,15 @@ impl<'s> Follower<'_, '_, 's> {
         };
         let is_module = |specifier: Atom| names.contains(&atoms.bytes(specifier));
         let text = FileText::of(hir, bound, Some(decisions));
-        find_export_of_module(hir, bound, callee, &find_constant, &is_module)
-            .or_else(|| text.find_export_behind_define(callee, &is_module))
+        find_export_of_module(
+            hir,
+            bound,
+            text.decisions,
+            callee,
+            &find_constant,
+            &is_module,
+        )
+        .or_else(|| text.find_export_behind_define(callee, &is_module))
     }
 
     // `new URL("./lib/" + name + ".js", import.meta.url)` is the URL that `import.meta.resolve` answers with for a file that is written out with its extension.

@@ -1732,6 +1732,33 @@ fn define_path_is_read_below_the_binding_at_its_root() {
 }
 
 #[test]
+fn first_name_of_a_define_path_is_recorded_in_each_form_of_the_key_that_the_fold_matches() {
+    let defines = [(
+        Path::Global(&["process", "env", "NODE_ENV"]),
+        Defined::GlobalPath(&["arguments", "length"]),
+    )];
+    let fold = Fold {
+        defines: &defines,
+        ..Fold::NONE
+    };
+    let minifying = Fold {
+        minifies_syntax: true,
+        ..fold
+    };
+    let matched = MATCHED_DEFINES.iter().map(|row| (row, fold));
+    let matched_when_minifying = DEFINES_MATCHED_WHEN_MINIFYING_SYNTAX.iter();
+    for (&(path, text), fold) in matched.chain(matched_when_minifying.map(|row| (row, minifying))) {
+        folded(path, text, fold, |s| {
+            let Decision::NamedPath(named) = decision(s, last_member(s)) else {
+                panic!("{path}: {text}: the first name of the path has no record");
+            };
+            let root = NodeData::Expr(s.ident("process", 0));
+            assert_eq!(named.head.node, root, "{path}: {text}");
+        });
+    }
+}
+
+#[test]
 fn define_head_is_read_where_the_define_is_applied_to_code_that_runs() {
     folded(
         "a.mjs",

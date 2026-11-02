@@ -82,8 +82,7 @@ impl<'e> Prettier<'e> {
         self.host.for_each(count, is_heavy, work);
     }
 
-    /// Formats the file at `path` with its `overrides`. With `writes`, the file is written if it changes. Returns
-    /// whether it changed. `Err` is the message to print.
+    /// Formats the file at `path` with its `overrides`. Writes it if `writes` and it changed. `Err` is the message.
     pub(crate) fn format_file(
         &self,
         (path, display_name): (&[u8], &[u8]),

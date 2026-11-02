@@ -748,8 +748,8 @@ Server.prototype.listen = function () {
   return this;
 };
 
-// `listenHandle`, whose default keeps `length` at 5: serve the connections of that `_handle` and bind nothing.
-Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort, listenHandle = undefined) {
+// With `listenHandle`, the `_handle` of a server that listens: serve its connections and bind nothing.
+Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort, listenHandle?) {
   {
     // What the first connection and the first request need, so that neither waits for it.
     getNodeHTTPServerSocket();
@@ -1183,7 +1183,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
     };
     // Bun.serve() reads the handle under a private name, which no program can set.
     if (listenHandle !== undefined) {
-      $putByIdDirectPrivate(serveOptions as { $listenHandle?: unknown }, "listenHandle", listenHandle);
+      $putByIdDirectPrivate(serveOptions as any, "listenHandle", listenHandle);
     }
     this[serverSymbol] = Bun.serve<any>(serveOptions);
 

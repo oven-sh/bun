@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 871f289fdbd5866a0785cc4cca732aa93623138d2d92e22e13685307caa4cbf6.
+// Written against that file with the SHA-256 32f5e21357524ee6c3589998560ef5113c21e185d83602a0d7bac1050555b483.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -1148,7 +1148,7 @@ Server.prototype.listen = function (this: $Node.HttpServer) {
   return this;
 };
 
-// `listenHandle`, whose default keeps `length` at 5: serve the connections of that `_handle` and bind nothing.
+// With `listenHandle`, the `_handle` of a server that listens: serve its connections and bind nothing.
 Server.prototype[kRealListen] = function (
   this: $Node.HttpServer,
   tls: $Node.HttpServerTLSOptions | null,
@@ -1156,7 +1156,7 @@ Server.prototype[kRealListen] = function (
   host: string | undefined,
   socketPath: string | undefined,
   reusePort: boolean,
-  listenHandle: $Node.ListenerHandle | undefined = undefined,
+  listenHandle?: $Node.ListenerHandle,
 ) {
   {
     // What the first connection and the first request need, so that neither waits for it.
@@ -1656,7 +1656,7 @@ Server.prototype[kRealListen] = function (
     };
     // Bun.serve() reads the handle under a private name, which no program can set.
     if (listenHandle !== undefined) {
-      $putByIdDirectPrivate(serveOptions as { $listenHandle?: unknown }, "listenHandle", listenHandle);
+      $putByIdDirectPrivate(serveOptions as any, "listenHandle", listenHandle);
     }
     this[serverSymbol] = Bun.serve<any>(serveOptions);
 

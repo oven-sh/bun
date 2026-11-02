@@ -646,9 +646,7 @@ impl Execution {
         Some((sequence, group))
     }
 
-    /// The one way past an entry. What the entry left rejected is reported first, while it is still the current one:
-    /// after the move the same report would be charged to the next entry. Returns false if the report started
-    /// matchers that the entry has to wait for: it then isn't left.
+    /// The one way past an entry: reports what it left rejected first. Returns false if it now has to wait for a matcher.
     #[optimize(size)]
     fn leave_entry(
         buntest_strong: &BunTestPtr,
@@ -1075,8 +1073,7 @@ fn step_group(
             group.pending_matchers = 0;
             ExpectDeferred::group_timed_out(buntest_strong, global_this, this.group_index);
         }
-        // The tests of a concurrent group end one by one, and `leave_entry` reports nothing for them.
-        // All of them have ended now, so what they left is reported before a test of the next group is current.
+        // The tests of a concurrent group ended one by one with no report, so what they left is reported now.
         if is_concurrent {
             BunTest::report_before_leaving(buntest_strong, global_this);
             // The report ran JS, which can have called matchers. The group waits for those like for any other.

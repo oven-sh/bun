@@ -779,8 +779,7 @@ pub(crate) struct BunTest {
     pending_phase: RefDataValue,
     /// Set while the global unhandled-error handler reports an error through `on_uncaught_exception`.
     pub(crate) is_reporting_uncaught: bool,
-    /// Set while the runner reports what the entry, concurrent group or describe() that it is moving past left
-    /// rejected.
+    /// Set while the runner reports what the entry, group or describe() that it is about to move past left rejected.
     pub(crate) is_leaving: bool,
     /// What `skip()` of a test context throws to unwind its test.
     skip_error: Option<Strong>,
@@ -1527,8 +1526,7 @@ impl BunTest {
         Some(cfg_data)
     }
 
-    /// Reports the promises that are rejected and have no handler, until a pass reports none.
-    /// `before_pass` runs before each pass, because a pass runs JS.
+    /// Reports rejected promises that have no handler until a pass reports none. A pass runs JS, so `before_pass` runs first.
     fn report_rejections(global_this: &JSGlobalObject, mut before_pass: impl FnMut()) {
         let vm = global_this.bun_vm();
         loop {
@@ -1541,9 +1539,7 @@ impl BunTest {
         }
     }
 
-    /// Reports what the entry, concurrent group or describe() that the runner is about to move past left rejected.
-    /// It is still the current one, so the report is charged to it. After the move the same report would be charged
-    /// to the next one. The report re-enters the runner, so the caller holds no `&mut` into it.
+    /// Reports what the entry, group or describe() that is still current left rejected. Re-enters the runner: hold no `&mut`.
     pub(crate) fn report_before_leaving(this_strong: &BunTestPtr, global_this: &JSGlobalObject) {
         debug_assert!(this_strong.in_run_loop);
         this_strong.get().is_leaving = true;

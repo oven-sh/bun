@@ -656,8 +656,7 @@ pub(crate) mod on_unhandled_rejection {
             let entry_ptr: Option<*mut bun_test::ExecutionEntry> = current_state_data
                 .entry(buntest)
                 .map(std::ptr::from_mut::<bun_test::ExecutionEntry>);
-            // `skip()` threw this in a callback that the test didn't await. It ends that test if its callback still
-            // runs, and is nobody's error.
+            // `skip()` threw this where its test didn't await it. It only ends that test, if its callback still runs.
             let is_skip_error = buntest.is_skip_error(rejection);
             let mut unwinds_skipped_entry = false;
             if let Some(entry) = entry_ptr {
@@ -670,8 +669,7 @@ pub(crate) mod on_unhandled_rejection {
                         && (!is_test
                             // An expected failure has to come from the test's own callback, not from a stray rejection.
                             || matches!(mode, ScopeMode::Failing | ScopeMode::Fails)
-                            // A test that marked itself skipped or todo while it ran can't fail anymore, and this
-                            // still has to fail the run. A `test.todo` body takes it as its expected failure.
+                            // Nor can a test that marked itself skipped or todo while it ran. A `test.todo` body expects the failure.
                             || sequence.result == ExecResult::Skip
                             || (sequence.result == ExecResult::Todo && mode != ScopeMode::Todo))
                     {

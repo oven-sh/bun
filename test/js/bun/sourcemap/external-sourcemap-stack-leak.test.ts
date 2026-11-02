@@ -164,7 +164,7 @@ test("prints the stack trace when a `sources` entry is longer than a path buffer
 // came back with keys missing or wrong and exit code 0, or the process crashed.
 const GC_MODULES = 4;
 // Whether a collection formats a given stack is not up to the test: on macOS arm64 it formats three of these four.
-// Two are needed. On a release build it was the second source map of one collection that damaged the value.
+// Two are needed: on a release build the value was damaged once a second source map was parsed during the load.
 const GC_MIN_REMAPPED = 2;
 // The first value is larger than what the heap may grow by before it is collected, so the collection starts in the
 // middle of the conversion. The nodes of the small values after it are the next ones in the store.
@@ -189,18 +189,23 @@ const gcDataFiles: Record<string, () => string> = {
 const gcFixture: Record<string, string> = {
   "main.cjs": /* js */ `
     const [how, file] = process.argv.slice(2);
+    const unformatted = "no collection formatted this stack";
     (async () => {
       // A collected heap, and little is allocated from here to the load: the next collection is the one that the
       // first value of the file brings on.
       Bun.gc(true);
+      // A collection that runs before the load formats this stack, and this file has no source map file to parse.
+      const canary = (function first() { const error = new Error("canary"); return error; })();
       const errors = [];
       for (let i = 0; i < ${GC_MODULES}; i++) errors.push(require("./m" + i + ".js").make());
+      Error.prepareStackTrace = () => unformatted;
+      const early = canary.stack !== unformatted;
+      Error.prepareStackTrace = undefined;
 
       let data = how === "import" ? (await import(file)).default : require(file);
-      // A stack that a collection formatted during the load is a string by now. One that it did not format is
-      // formatted by this, and is not counted. With fewer than ${GC_MIN_REMAPPED} counted, the load no longer does what
-      // this test is for.
-      Error.prepareStackTrace = () => "no collection formatted this stack";
+      // A stack that a collection formatted is a string by now. One that it did not format is formatted by this, and
+      // is not counted. With fewer than ${GC_MIN_REMAPPED} counted, the load no longer does what this test is for.
+      Error.prepareStackTrace = () => unformatted;
       let remapped = 0;
       for (let i = 0; i < ${GC_MODULES}; i++) if (errors[i].stack.includes("m" + i + ".ts:5:3")) remapped++;
       remapped = Math.min(remapped, ${GC_MIN_REMAPPED});
@@ -208,7 +213,9 @@ const gcFixture: Record<string, string> = {
       data = data.root ?? data;
       let intact = 0;
       for (let i = 0; i < ${GC_SMALL}; i++) if (data["key" + i] === "value-" + String(i).padStart(4, "0")) intact++;
-      console.log(JSON.stringify({ keys: Object.keys(data).length, big: data.big?.length, intact, remapped }));
+      // After the count: this allocation can start a collection.
+      const big = data.big === Buffer.alloc(${GC_BIG_LENGTH}, "b").toString();
+      console.log(JSON.stringify({ keys: Object.keys(data).length, big, intact, remapped, early }));
     })();
   `,
 };
@@ -246,7 +253,13 @@ describe.concurrent("a source map that a collection parses leaves the AST store 
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-      stdout: JSON.stringify({ keys: GC_SMALL + 1, big: GC_BIG_LENGTH, intact: GC_SMALL, remapped: GC_MIN_REMAPPED }),
+      stdout: JSON.stringify({
+        keys: GC_SMALL + 1,
+        big: true,
+        intact: GC_SMALL,
+        remapped: GC_MIN_REMAPPED,
+        early: false,
+      }),
       stderr: "",
       exitCode: 0,
     });

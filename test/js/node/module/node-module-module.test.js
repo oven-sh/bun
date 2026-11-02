@@ -1442,20 +1442,18 @@ console.log("survived", require("./late.js"));`,
     // Source that starts `target` as the main module.
     const start = target => `require("node:module").runMain(require("node:path").resolve("${target}"));`;
 
+    async function spawned(cmd, cwd) {
+      await using proc = Bun.spawn({ cmd, env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim().split("\n"), stderr, exitCode };
+    }
+
     async function run(exe, files, args, symlinks = {}) {
       using dir = tempDir("run-main-main-module", files);
       for (const [link, target] of Object.entries(symlinks)) {
         fs.symlinkSync(target, path.join(String(dir), link), "file");
       }
-      await using proc = Bun.spawn({
-        cmd: [exe, ...args],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      return { stdout: stdout.trim().split("\n"), stderr, exitCode };
+      return await spawned([exe, ...args], String(dir));
     }
 
     // A row is [name, files, arguments, the lines of stdout, options]. `bunOnly` is for a row that Node cannot run
@@ -2529,6 +2527,26 @@ console.log("survived", require("./late.js"));`,
       },
     );
 
+    // The second test file gets the script from the cache of --isolate, so the call makes the module with no wait.
+    test("bun test --isolate: a script that an earlier test file loaded runs after the test file that starts it deleted it from require.cache", async () => {
+      const files = {
+        "a.test.cjs": `test("loads target.cjs", () => { require("./target.cjs"); });`,
+        "b.test.cjs": `
+          test("starts target.cjs", async () => {
+            const ran = new Promise(resolve => process.once("target-ran", resolve));
+            ${startThen("delete require.cache[target];")}
+            await ran;
+          });
+        `,
+        "target.cjs": `${print("target.cjs", isMain)} process.emit("target-ran");`,
+      };
+      expect(await linesOfBunTest(files, ["--isolate", "./a.test.cjs", "./b.test.cjs"])).toEqual({
+        lines: ["target.cjs: require.main===module false", "target.cjs: require.main===module true"],
+        exitCode: 0,
+        stderr: "",
+      });
+    });
+
     test("bun test --preload: a script that the preload starts is not the main module of a test file", async () => {
       const files = {
         "preload.cjs": start("x.cjs"),
@@ -2544,6 +2562,50 @@ console.log("survived", require("./late.js"));`,
         stderr: "",
       });
     });
+
+    // A script that an executable holds. The bundler answers `require.main === module` of an entry point when it
+    // builds, so that script reads it through other names. The timeout is for a debug build of Bun, which copies more
+    // than a gigabyte into each executable.
+    test.each([
+      [
+        "an entry point of a CommonJS executable",
+        ["--format=cjs", "launch.cjs", "tool.cjs"],
+        {
+          "launch.cjs": `require("node:module").runMain(Bun.main.replace(/[^\\\\/]+$/, "tool.js"));`,
+          "tool.cjs": `
+            const self = module, load = require;
+            console.log("tool.cjs:", load.main === self, process.mainModule === self, self.id);
+          `,
+        },
+        ["tool.cjs: true true ."],
+      ],
+      [
+        "an ES module that an executable holds as a file",
+        ["launch.mjs"],
+        {
+          "launch.mjs": `
+            import Module from "node:module";
+            import tool from "./tool.mjs" with { type: "file" };
+            Module.runMain(tool);
+          `,
+          "tool.mjs": print("tool.mjs", metaMain),
+        },
+        ["tool.mjs: import.meta.main true"],
+      ],
+    ])(
+      "bun build --compile: %s is the main module when the executable starts it",
+      async (_, args, files, expected) => {
+        using dir = tempDir("run-main-main-module-compile", files);
+        const executable = path.join(String(dir), isWindows ? "launch.exe" : "launch");
+        const build = await spawned([bunExe(), "build", "--compile", ...args, "--outfile", executable], String(dir));
+        expect({ stderr: build.exitCode ? build.stderr : "", exitCode: build.exitCode }).toEqual({
+          stderr: "",
+          exitCode: 0,
+        });
+        expect(await spawned([executable], String(dir))).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
+      },
+      60_000,
+    );
   });
 
   test.each(["no args", "--access-early"])("children, %s", async arg => {

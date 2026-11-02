@@ -1568,6 +1568,12 @@ extern "C" void Bun__Console__watchSize(bool wanted);
 // One bit per signal number.
 static std::atomic<uint32_t> forwardedSignals { 0 };
 
+// "SIGINFO" stands for 255 here, which has no bit.
+static uint32_t forwardedSignalBit(int signalNumber)
+{
+    return signalNumber < 32 ? 1u << signalNumber : 0;
+}
+
 // Runs on a thread that the system starts for it.
 static BOOL WINAPI forwardConsoleControlEvent(DWORD event)
 {
@@ -1585,7 +1591,7 @@ static BOOL WINAPI forwardConsoleControlEvent(DWORD event)
     default:
         return FALSE;
     }
-    if (!(forwardedSignals.load() & (1u << signalNumber)))
+    if (!(forwardedSignals.load() & forwardedSignalBit(signalNumber)))
         return FALSE;
     Bun__onSignal(signalNumber);
     // The system ends the process when this returns, and after five seconds if it does not.
@@ -1598,14 +1604,14 @@ static void installForwardSignalHandler(int signalNumber)
 {
     static std::once_flag once;
     std::call_once(once, [] { SetConsoleCtrlHandler(forwardConsoleControlEvent, TRUE); });
-    forwardedSignals.fetch_or(1u << signalNumber);
+    forwardedSignals.fetch_or(forwardedSignalBit(signalNumber));
     if (signalNumber == SIGWINCH)
         Bun__Console__watchSize(true);
 }
 
 static void uninstallForwardSignalHandler(int signalNumber)
 {
-    forwardedSignals.fetch_and(~(1u << signalNumber));
+    forwardedSignals.fetch_and(~forwardedSignalBit(signalNumber));
     if (signalNumber == SIGWINCH)
         Bun__Console__watchSize(false);
 }

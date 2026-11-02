@@ -212,7 +212,6 @@ impl core::ops::Deref for PreparedSpawnSyncEventLoop<'_> {
 
 impl Drop for PreparedSpawnSyncEventLoop<'_> {
     fn drop(&mut self) {
-        #[cfg(unix)]
         debug_assert!(
             self.uws_loop().num_polls.get() == 0 && self.uws_loop().active.get() == 0,
             "spawnSync left num_polls={} active={} on its loop",

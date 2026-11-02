@@ -387,6 +387,31 @@ describe("expect()", () => {
     expect(promise.thenCalls).toBe(1);
   });
 
+  // The shape of the openai SDK's APIPromise: the promise is fulfilled with null at once, and each then() does the work.
+  test("resolves and rejects call then() of a Promise subclass that is already settled", async () => {
+    class Settled extends Promise {
+      thenCalls = 0;
+      #work;
+      constructor(/** @type {() => Promise<unknown>} */ work) {
+        super(resolve => resolve(null));
+        this.#work = work;
+      }
+      then(onFulfilled, onRejected) {
+        this.thenCalls++;
+        return this.#work().then(onFulfilled, onRejected);
+      }
+    }
+    const error = new Error("HTTP 500");
+    const resolved = new Settled(() => Promise.resolve("parsed"));
+    const rejected = new Settled(() => Promise.reject(error));
+    await expect(resolved).resolves.toBe("parsed");
+    await expect(rejected).rejects.toBe(error);
+    expect([resolved.thenCalls, rejected.thenCalls]).toEqual([1, 1]);
+
+    await expectFailure(() => expect(new Settled(() => Promise.reject(error))).resolves.toBeNull()).toThrow();
+    await expectFailure(() => expect(new Settled(() => Promise.resolve("parsed"))).rejects.toThrow()).toThrow();
+  });
+
   test("can call without an argument", () => {
     expect().toBe(undefined);
   });

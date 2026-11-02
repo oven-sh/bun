@@ -512,18 +512,17 @@ impl Expect {
 
     /// A promise that settles the way `await value` would, or `None` if `value` isn't thenable.
     #[optimize(size)]
+    #[inline(never)]
     fn promise_to_await(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Option<bun_jsc::AnyPromise>> {
-        if let Some(promise) = value.as_any_promise() {
-            promise.set_handled(global_this.vm());
-            if promise.status() != js_promise::Status::Pending {
-                return Ok(Some(promise));
-            }
+        let vm = global_this.vm();
+        if let Some(received) = value.as_any_promise() {
+            received.set_handled(vm);
         }
-        let adopted = bun_jsc::JSPromise::create(global_this);
-        adopted.set_handled();
-        adopted.resolve(global_this, value)?;
-        // A thenable's `then` only runs in a microtask, so `adopted` is already fulfilled only if `value` isn't thenable.
-        Ok((adopted.status() != js_promise::Status::Fulfilled).then_some(bun_jsc::AnyPromise::Normal(adopted)))
+        let promise = bun_test::BunTest::promise_of_thenable(global_this, value)?.as_any_promise();
+        if let Some(promise) = promise {
+            promise.set_handled(vm);
+        }
+        Ok(promise)
     }
 
     fn received_promise(global_this: &JSGlobalObject, received: JSValue) -> JsResult<Option<bun_jsc::AnyPromise>> {

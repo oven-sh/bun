@@ -3,7 +3,7 @@ import { transformSync } from "esbuild";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "node:path";
 import { SourceMapConsumer } from "source-map";
-import { BundlerTestInput, itBundled } from "./expectBundled";
+import { BundlerTestInput, ESBUILD, itBundled } from "./expectBundled";
 
 const helpers = {
   "/node_modules/bun-test-helpers/index.js": /* js */ `
@@ -405,6 +405,8 @@ describe("bundler", () => {
       describe.each([false, true])("external=%s", external => {
         describe.each([false, true])("minify=%s", minify => {
           itBundled(`jsx/PreserveImportedTagOrder-${backend}-${external}-${minify}`, {
+            // esbuild 0.18 emits invalid computed JSX tags for string-named imports.
+            skipOnEsbuild: true,
             files: {
               "/in.jsx": `
                 import { Comp, "odd-component" as Odd, Namespace, update } from "components";
@@ -464,6 +466,8 @@ describe("bundler", () => {
     describe.each([false, true])("string-named imports, external=%s", external => {
       describe.each([false, true])("minifyIdentifiers=%s", minifyIdentifiers => {
         itBundled(`jsx/PreserveStringNamedImport-${external}-${minifyIdentifiers}`, {
+          // esbuild 0.18 emits invalid computed JSX tags for string-named imports.
+          skipOnEsbuild: true,
           files: {
             "/in.tsx": `
               import { "some-component" as Component, "some-namespace" as Namespace, update } from "components";
@@ -1051,25 +1055,29 @@ describe("bundler", () => {
           backend,
           jsx: { runtime },
           external: ["react", "react/*"],
+          // esbuild's runtime pragmas cannot select or override preserve mode.
+          skipOnEsbuild: runtime === "preserve" || pragma === "preserve",
           bundleWarnings: warns
             ? {
                 "/in.jsx": ['"key" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.'],
               }
             : {},
           onAfterBundle(api) {
-            const warnings = api.warnings["/in.jsx"]?.map(({ error }) => error);
-            expect(warnings).toEqual(
-              warns
-                ? ['"key" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.']
-                : undefined,
-            );
+            if (!ESBUILD) {
+              const warnings = api.warnings["/in.jsx"]?.map(({ error }) => error);
+              expect(warnings).toEqual(
+                warns
+                  ? ['"key" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.']
+                  : undefined,
+              );
+            }
             const out = api.readFile("/out.js");
             if (pragma === "preserve") {
               expect(out).toContain('<div {...first} key="k" {...last} />');
               expect(out).not.toContain("createElement");
               return;
             }
-            expect(out).toContain("createElement(");
+            expect(out).toMatch(/\bcreateElement\)?\(/);
             expect(out).not.toContain("<div");
             expect(out).toMatch(/\.\.\.first,\s*key: "k",\s*\.\.\.last/);
           },

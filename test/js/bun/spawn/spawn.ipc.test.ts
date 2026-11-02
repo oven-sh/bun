@@ -436,12 +436,9 @@ describe("ipc mode advanced", () => {
   );
 });
 
-// getIPCInstance error path: on Windows, windowsConfigureClient can open the
-// pipe, set socket=.open, then fail readStart — at which point closeSocket
-// queued an _onAfterIPCClosed task holding *SendQueue, and instance.deinit()
-// (previously TrivialDeinit) freed it without cancelling. IPCInstance.deinit
-// now runs SendQueue.deinit() so the tracked after_close_task is cancelled on
-// both platforms before the allocation is released.
+// getIPCInstance error path: closing a channel that was opened and then turned
+// out to be unusable queues an _onAfterIPCClosed task that holds the SendQueue.
+// Freeing the instance has to cancel that task first.
 it("child with unusable NODE_CHANNEL_FD tears down IPC without crashing", async () => {
   await using proc = Bun.spawn({
     cmd: [

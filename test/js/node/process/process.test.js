@@ -3,6 +3,7 @@ import { CString, dlopen, ptr } from "bun:ffi";
 import { memoryUsage as jscMemoryUsage } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
+import { existsSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isRoot, isWindows, tempDir, tmpdirSync } from "harness";
 import { networkInterfaces } from "os";
 import { basename, join, resolve } from "path";
@@ -382,18 +383,21 @@ it("process.chdir() on root dir", () => {
   }
 });
 
-it.skipIf(!isWindows)("process.cwd() is a path after process.chdir() to a \\\\?\\UNC\\ path", () => {
-  const cwd = process.cwd();
-  const share = `localhost\\${cwd[0]}$\\${cwd.slice(3)}`;
-  try {
-    for (const prefix of ["\\\\?\\UNC\\", "\\\\?\\unc\\"]) {
-      process.chdir(prefix + share);
-      expect(process.cwd()).toBe("\\\\" + share);
+const cwdOnShare = `localhost\\${process.cwd()[0]}$\\${process.cwd().slice(3)}`;
+it.skipIf(!isWindows || !existsSync("\\\\" + cwdOnShare))(
+  "process.cwd() is a path after process.chdir() to a \\\\?\\UNC\\ path",
+  () => {
+    const cwd = process.cwd();
+    try {
+      for (const prefix of ["\\\\?\\UNC\\", "\\\\?\\unc\\"]) {
+        process.chdir(prefix + cwdOnShare);
+        expect(process.cwd()).toBe("\\\\" + cwdOnShare);
+      }
+    } finally {
+      process.chdir(cwd);
     }
-  } finally {
-    process.chdir(cwd);
-  }
-});
+  },
+);
 
 it("process.hrtime()", async () => {
   const start = process.hrtime();

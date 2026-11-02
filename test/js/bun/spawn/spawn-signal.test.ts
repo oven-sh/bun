@@ -142,7 +142,8 @@ test("spawnSync AbortSignal.timeout whose deadline passed before the call still 
   for (const deadline = performance.now() + 20; performance.now() < deadline;);
   expect(signal.aborted).toBeFalse();
   const subprocess = Bun.spawnSync({
-    cmd: [bunExe(), "--eval", "await Bun.sleep(100000)"],
+    // Nothing else can end this call, so a child that is left alone has to end before the test's time is up.
+    cmd: [bunExe(), "--eval", "await Bun.sleep(4000)"],
     env: bunEnv,
     stdout: "inherit",
     stderr: "inherit",

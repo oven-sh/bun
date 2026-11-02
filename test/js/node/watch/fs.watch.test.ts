@@ -25,6 +25,18 @@ function repeat(fn: any) {
   const interval = setInterval(fn, 20);
   return interval;
 }
+// Windows, for a script: from here on all threads of the process share the last processor that it may use.
+const onOneProcessor = /* js */ `{
+  const { symbols: kernel32 } = require("bun:ffi").dlopen("kernel32.dll", {
+    GetProcessAffinityMask: { args: ["i64", "ptr", "ptr"], returns: "i32" },
+    SetProcessAffinityMask: { args: ["i64", "u64"], returns: "i32" },
+  });
+  const self = -1n, allowed = new BigUint64Array(1);
+  kernel32.GetProcessAffinityMask(self, allowed, new BigUint64Array(1));
+  let last = 1n;
+  while (last << 1n <= allowed[0]) last <<= 1n;
+  kernel32.SetProcessAffinityMask(self, last);
+}`;
 const encodingFileName = `新建文夹件.txt`;
 const testDir = tempDirWithFiles("watch", {
   "watch.txt": "hello",
@@ -372,15 +384,7 @@ describe("fs.watch", () => {
       // The first watcher is ended by another thread, which is late often enough if there is one processor for both.
       const script = /* js */ `
         const fs = require("node:fs"), path = require("node:path");
-        const { symbols: kernel32 } = require("bun:ffi").dlopen("kernel32.dll", {
-          GetProcessAffinityMask: { args: ["i64", "ptr", "ptr"], returns: "i32" },
-          SetProcessAffinityMask: { args: ["i64", "u64"], returns: "i32" },
-        });
-        const self = -1n, allowed = new BigUint64Array(1);
-        kernel32.GetProcessAffinityMask(self, allowed, new BigUint64Array(1));
-        let last = 1n;
-        while (last << 1n <= allowed[0]) last <<= 1n;
-        kernel32.SetProcessAffinityMask(self, last);
+        ${onOneProcessor}
 
         const wrong = [];
         for (let i = 0; i < 25; i++) {
@@ -1703,12 +1707,14 @@ test.skipIf(!isWindows)(
     using dir = tempDir("fswatch-overflow-win", {});
     const watchDir = String(dir);
     // ~100-char names make ~210-byte FILE_NOTIFY_INFORMATION entries, so ~19
-    // fill the 4KB buffer; 100 blocked-loop writes overflow it ~5x over.
+    // fill the 4KB buffer, and 100 writes are ~5x that.
     const N = 100;
 
     const fixture = /* js */ `
       const fs = require("node:fs");
       const path = require("node:path");
+      // Another thread takes the entries out of the buffer. It keeps up if it has a processor of its own.
+      ${onOneProcessor}
 
       const dir = ${JSON.stringify(watchDir)};
       const N = ${N};
@@ -1743,9 +1749,8 @@ test.skipIf(!isWindows)(
         w.on("close", () => settle(() => reject(new Error("watcher closed before overflow or full delivery"))));
       }
 
-      // The watch is armed synchronously, so sync-writing N files now blocks
-      // the event loop while the 4KB ReadDirectoryChangesW buffer fills
-      // and overflows, forcing the lost-events notification.
+      // The watch is armed synchronously, so the 4KB ReadDirectoryChangesW
+      // buffer fills and overflows while these writes keep the processor.
       const pad = Buffer.alloc(90, "x").toString();
       for (let i = 0; i < N; i++) {
         fs.writeFileSync(path.join(dir, "f" + pad + String(i).padStart(3, "0") + ".txt"), "");

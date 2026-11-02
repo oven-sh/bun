@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { constants } from "node:os";
+import { constants, tmpdir } from "node:os";
 import path from "node:path";
 import { symbols, test_skipped } from "../../src/jsc/bindings/libuv/generate_uv_stubs_constants";
 import source from "./uv-stub-stuff/uv_impl.c";
@@ -140,7 +140,8 @@ describe("uv stubs", () => {
     });
   });
 
-  test.skipIf(!isWindows)("uv_cwd in a directory that was entered by its \\\\?\\UNC\\ name", () => {
+  const hasShare = isWindows && existsSync(`\\\\localhost\\${tmpdir()[0]}$${tmpdir().slice(2)}`);
+  test.skipIf(!hasShare)("uv_cwd in a directory that was entered by its \\\\?\\UNC\\ name", () => {
     const share = `localhost\\${tempdir[0]}$\\${tempdir.slice(3)}`;
     process.chdir("\\\\?\\UNC\\" + share);
     expect(nativeModule.testCwd()).toMatchObject({ rc: 0, cwd: "\\\\" + share });

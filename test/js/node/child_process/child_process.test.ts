@@ -1481,21 +1481,17 @@ it.skipIf(isWindows)("extra stdio pipes are not double-closed on GC", async () =
   expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "OK", stderr: "", exitCode: 0 });
 });
 
-// Windows: the extra "pipe" slots are HANDLE values that child_process wraps
-// in net.Sockets (net.connect({fd})); each socket closes its handle. The
-// Subprocess used to keep its own uv_pipe_t on the same HANDLE and close the
-// value again when it was GC'd. Windows reuses a closed handle value at once,
-// so that second close destroyed whatever owned the value by then (here the
-// files opened right after the sockets closed, in the crash reports a worker
-// thread's handle). test/js/bun/spawn/spawn.test.ts pins the exact handle
-// value down; this checks the child_process wiring on top of it.
+// child_process wraps the extra "pipe" slots in net.Sockets (net.connect({fd})),
+// and each socket closes its own. A second close when the Subprocess is GC'd
+// would hit whatever has the descriptor or its handle by then. Windows reuses
+// both at once: here for the files opened right after the sockets closed.
 it.if(isWindows)("extra stdio 'pipe' sockets deliver data and GC of the ChildProcess closes nothing else", async () => {
   const fixture = /* js */ `
     const { spawn } = require("node:child_process");
     const fs = require("node:fs");
 
     // The ChildProcess is unreachable once this returns; only the files
-    // opened into the freed handle values are kept.
+    // opened into what the sockets freed are kept.
     async function spawnAndReadThenOpenFiles(files) {
       const child = spawn(
         process.execPath,

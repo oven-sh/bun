@@ -1323,7 +1323,7 @@ for (const [call, works] of [
         const worker = new Worker(
           \`
           const child = Bun.spawn({
-            cmd: [process.execPath, "-e", "setInterval(() => {}, 1000)"],
+            cmd: [process.execPath, "-e", "setTimeout(() => {}, 30_000)"],
             stdio: ["ignore", "ignore", "ignore", "pipe"],
           });
           const fd = child.stdio[3];

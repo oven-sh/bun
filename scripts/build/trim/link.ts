@@ -593,10 +593,14 @@ function describeIcuPackage(
     const names = features.map(featureName).join(",");
     bytesByFeatures.set(names, (bytesByFeatures.get(names) ?? 0) + bytes);
   }
-  const groups = new Set(languages.map(({ group }) => group)).size;
+  const languagesOfGroup = new Map<number, string[]>();
+  for (const { name, group } of languages) languagesOfGroup.set(group, [...(languagesOfGroup.get(group) ?? []), name]);
+  const joined = [...languagesOfGroup.values()].filter(names => names.length > 1).map(names => names.join(" "));
   return (
     `ICU data: ${items} items, ${megabytes(end - start)}, removable in ${runs.length} runs, ` +
-    `${languages.length} languages in ${groups} groups: ` +
+    `${languages.length} languages in ${languagesOfGroup.size} groups` +
+    (joined.length > 0 ? ` (${joined.join(", ")})` : "") +
+    ": " +
     [...bytesByFeatures].map(([names, bytes]) => `${names} ${megabytes(bytes)}`).join(", ")
   );
 }

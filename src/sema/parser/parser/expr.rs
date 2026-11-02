@@ -2670,8 +2670,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             key = PropKey::None;
         }
         // "Disallowing of optional property assignments and definite assignment assertion happens in
-        // the grammar checker." oxc's parser doesn't accept the token, so with `Dialect::oxc` it's left to the list's
-        // recovery, which reports it like oxc.
+        // the grammar checker." oxc's parser doesn't accept the token.
         let mut postfix_token = 0;
         if kind == PropKind::Init
             && matches!(self.token(), T::Question | T::Exclamation)

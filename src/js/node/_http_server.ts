@@ -755,8 +755,9 @@ Server.prototype.listen = function () {
 };
 
 // With `listenHandle`, the `_handle` of a server that listens: this server takes the connections of that handle and binds
-// nothing. `false` if it is no `Bun.listen` listener, which says nothing about where to listen.
-Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort, listenHandle?) {
+// nothing. `false` if it is no `Bun.listen` listener, which says nothing about where to listen. Its default keeps the
+// `length` of the function at 5, which a program can read.
+Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort, listenHandle = undefined) {
   {
     // What the first connection and the first request need, so that neither waits for it.
     getNodeHTTPServerSocket();

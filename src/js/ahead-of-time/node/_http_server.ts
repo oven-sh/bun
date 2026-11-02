@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 9d053155e61f154b88dfeff481b83a82a2f1a78886d1483f0c26a6d4d1ac54d6.
+// Written against that file with the SHA-256 2e4ec2a5da444717a96ba15f028b2820787ce9cd121323e6aea9ac14b8a16d51.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -1155,7 +1155,8 @@ Server.prototype.listen = function (this: $Node.HttpServer) {
 };
 
 // With `listenHandle`, the `_handle` of a server that listens: this server takes the connections of that handle and binds
-// nothing. `false` if it is no `Bun.listen` listener, which says nothing about where to listen.
+// nothing. `false` if it is no `Bun.listen` listener, which says nothing about where to listen. Its default keeps the
+// `length` of the function at 5, which a program can read.
 Server.prototype[kRealListen] = function (
   this: $Node.HttpServer,
   tls: $Node.HttpServerTLSOptions | null,
@@ -1163,7 +1164,7 @@ Server.prototype[kRealListen] = function (
   host: string | undefined,
   socketPath: string | undefined,
   reusePort: boolean,
-  listenHandle?: $Node.ListenerHandle,
+  listenHandle: $Node.ListenerHandle | undefined = undefined,
 ) {
   {
     // What the first connection and the first request need, so that neither waits for it.

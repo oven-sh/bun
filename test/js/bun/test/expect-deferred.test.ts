@@ -1147,6 +1147,9 @@ describe.concurrent("a failing matcher whose promise only passes the rejection o
         "then": matcher => matcher.then(() => console.log("not reached")),
         "then with no function": matcher => matcher.then(),
         "a chain of them": matcher => matcher.then(() => {}).finally(() => {}).then(() => {}),
+        "a chain of 1000 of them": matcher => {
+          for (let link = 0; link < 1000; link++) matcher = link % 2 ? matcher.then(() => {}) : matcher.finally(() => {});
+        },
         "two of them": matcher => (matcher.then(() => {}), matcher.then(() => {})),
         "then beside finally": matcher => (matcher.then(() => {}), matcher.finally(() => {})),
         "then in AsyncLocalStorage.run()": matcher => new AsyncLocalStorage().run(1, () => matcher.then(() => {})),
@@ -1198,6 +1201,7 @@ describe.concurrent("a failing matcher whose promise only passes the rejection o
         "then",
         "then with no function",
         "a chain of them",
+        "a chain of 1000 of them",
         "two of them",
         "then beside finally",
         "then in AsyncLocalStorage.run()",
@@ -1439,6 +1443,44 @@ describe.concurrent("a failing matcher whose promise only passes the rejection o
       "(fail) a function that never returns",
       "error: hook",
       "(fail) a hook > test",
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("a matcher that the test calls after the failure belongs to a test that has ended", async () => {
+    const { stdout, report, exitCode } = await runTests(`
+      const bothEnded = Promise.withResolvers();
+      let ended = 0;
+      const cleanUp = async name => {
+        try {
+          await expect(later(1)).resolves.toBe(1);
+          console.log(name + ": not reached");
+        } catch (error) {
+          console.log(name + ": " + error.message);
+        } finally {
+          if (++ended === 2) bothEnded.resolve();
+        }
+      };
+      test("no reaction, and a callback of the promise that the matcher waits for", () => {
+        const subject = later(1);
+        expect(subject, "no reaction").resolves.toBe(2);
+        subject.then(() => cleanUp("no reaction"));
+      });
+      test("finally", () => {
+        expect(later(1), "finally").resolves.toBe(2).finally(() => cleanUp("finally"));
+      });
+      test("next", () => bothEnded.promise);
+    `);
+    expect(stdout.toSorted()).toEqual([
+      "finally: The test that called this matcher has ended",
+      "no reaction: The test that called this matcher has ended",
+    ]);
+    expect(report).toEqual([
+      "error: no reaction",
+      "(fail) no reaction, and a callback of the promise that the matcher waits for",
+      "error: finally",
+      "(fail) finally",
+      "(pass) next",
     ]);
     expect(exitCode).toBe(1);
   });

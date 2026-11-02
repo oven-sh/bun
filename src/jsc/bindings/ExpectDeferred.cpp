@@ -80,45 +80,61 @@ static JSPromise* passesRejectionOnTo(InternalMicrotask task, JSValue cell, JSVa
     }
 }
 
-// Whether every reaction down from `promise` only passes a rejection on. `end` gets each promise that the rejection ends up at.
+// Whether every reaction down from `first` only passes a rejection on. `end` gets each promise that the rejection ends up at.
 template<typename Functor>
-static bool onlyPassesRejectionOn(JSPromise* promise, const Functor& end, unsigned depth = 0)
+static bool onlyPassesRejectionOn(JSPromise* first, const Functor& end)
 {
-    if (promise->status() != JSPromise::Status::Pending || depth > 32)
-        return false;
-    JSPromise* next = nullptr;
-    switch (promise->inlineReactionKind()) {
-    case JSPromise::InlineReactionKind::FulfillHandler:
-        return onlyPassesRejectionOn(promise->inlineHandlerResultPromise(), end, depth + 1);
-    case JSPromise::InlineReactionKind::RejectHandler:
-        return false;
-    case JSPromise::InlineReactionKind::InternalMicrotask:
-        promise->forEachPendingReaction([&](InternalMicrotask task, JSValue cell, JSValue context) {
-            next = passesRejectionOnTo(task, cell, context);
+    Vector<JSPromise*, 8> unread { first };
+    UncheckedKeyHashSet<JSPromise*> seen;
+    // `.then()` and `.finally()` make one promise each, so a promise that two reactions lead to is not their shape.
+    auto readLater = [&](JSPromise* next) {
+        if (!next || !seen.add(next).isNewEntry)
             return false;
-        });
-        return next && onlyPassesRejectionOn(next, end, depth + 1);
-    case JSPromise::InlineReactionKind::None:
-        break;
-    }
-    auto* reaction = uncheckedDowncast<JSPromiseReaction>(promise->payloadCell());
-    if (!reaction) {
-        // Marked as handled with no reaction: whoever marked it takes the rejection, such as a matcher that got this promise.
-        if (promise->isHandled())
-            return false;
-        end(promise);
+        unread.append(next);
         return true;
-    }
-    for (; reaction; reaction = reaction->next()) {
-        // As JSPromise::triggerPromiseReactions() reads them for a rejection.
-        if (auto* full = dynamicDowncast<JSFullPromiseReaction>(reaction))
-            next = full->onRejected().isUndefined() ? dynamicDowncast<JSPromise>(full->promise()) : nullptr;
-        else if (auto* slim = uncheckedDowncast<JSSlimPromiseReaction>(reaction); slim->internalMicrotask() == InternalMicrotask::None)
-            next = slim->isFulfillHandler() ? dynamicDowncast<JSPromise>(slim->promise()) : nullptr;
-        else
-            next = passesRejectionOnTo(slim->internalMicrotask(), slim->promiseSlotIsAsyncContext() ? jsUndefined() : slim->promise(), slim->handlerOrContext());
-        if (!next || !onlyPassesRejectionOn(next, end, depth + 1))
+    };
+    while (!unread.isEmpty()) {
+        auto* promise = unread.takeLast();
+        if (promise->status() != JSPromise::Status::Pending)
             return false;
+        JSPromise* next = nullptr;
+        switch (promise->inlineReactionKind()) {
+        case JSPromise::InlineReactionKind::FulfillHandler:
+            if (!readLater(promise->inlineHandlerResultPromise()))
+                return false;
+            continue;
+        case JSPromise::InlineReactionKind::RejectHandler:
+            return false;
+        case JSPromise::InlineReactionKind::InternalMicrotask:
+            promise->forEachPendingReaction([&](InternalMicrotask task, JSValue cell, JSValue context) {
+                next = passesRejectionOnTo(task, cell, context);
+                return false;
+            });
+            if (!readLater(next))
+                return false;
+            continue;
+        case JSPromise::InlineReactionKind::None:
+            break;
+        }
+        auto* reaction = uncheckedDowncast<JSPromiseReaction>(promise->payloadCell());
+        if (!reaction) {
+            // Marked as handled with no reaction: whoever marked it takes the rejection, such as a matcher that got this promise.
+            if (promise->isHandled())
+                return false;
+            end(promise);
+            continue;
+        }
+        for (; reaction; reaction = reaction->next()) {
+            // As JSPromise::triggerPromiseReactions() reads them for a rejection.
+            if (auto* full = dynamicDowncast<JSFullPromiseReaction>(reaction))
+                next = full->onRejected().isUndefined() ? dynamicDowncast<JSPromise>(full->promise()) : nullptr;
+            else if (auto* slim = uncheckedDowncast<JSSlimPromiseReaction>(reaction); slim->internalMicrotask() == InternalMicrotask::None)
+                next = slim->isFulfillHandler() ? dynamicDowncast<JSPromise>(slim->promise()) : nullptr;
+            else
+                next = passesRejectionOnTo(slim->internalMicrotask(), slim->promiseSlotIsAsyncContext() ? jsUndefined() : slim->promise(), slim->handlerOrContext());
+            if (!readLater(next))
+                return false;
+        }
     }
     return true;
 }

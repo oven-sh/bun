@@ -4,12 +4,15 @@ import { afterEach, expect, it } from "bun:test";
 import { bunEnv, bunExe, isBroken, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import {
   copyFileSync,
+  linkSync,
+  mkdirSync,
   readdirSync,
   readFileSync,
   readlinkSync,
   realpathSync,
   renameSync,
   rmSync,
+  statSync,
   symlinkSync,
 } from "node:fs";
 import { basename, join } from "node:path";
@@ -758,3 +761,430 @@ it.skipIf(!isLinux)("watcher opens the watched directory and files with O_CLOEXE
     "/main.ts": [O_CLOEXEC],
   });
 });
+
+// The Linux watcher learns about a save that replaces the inode (write a temp
+// file and rename it over the target, or delete and recreate) from the
+// directory event only. The hot reloader used to map that event to the
+// watchlist through the cached directory entry's `abs_path`, which the
+// resolver fills in lazily. A lookup that resolves to nothing busts the
+// directory cache, so the re-read entry had an empty `abs_path` and every later
+// save of that kind in the directory was ignored.
+const replaceFile = {
+  "rename over": async (path: string, contents: string) => {
+    const tmp = `${path}.tmp`;
+    await Bun.write(tmp, contents);
+    renameSync(tmp, path);
+  },
+  "delete and recreate": async (path: string, contents: string) => {
+    rmSync(path);
+    await Bun.write(path, contents);
+  },
+};
+// A program that gets no restart runs on. It ends before the limit of its test, so the test fails on what it read.
+const watched = { timeout: 15_000, killSignal: "SIGKILL" } as const;
+// Waits for an output of `bun build --watch`. A build that does not come fails the test when that process ends.
+async function builds(proc: Subprocess, what: string, done: () => Promise<boolean>) {
+  while (!(await done())) {
+    if (proc.exitCode !== null || proc.signalCode !== null) {
+      throw new Error(`bun build --watch ended before it built ${what}`);
+    }
+    await Bun.sleep(1);
+  }
+}
+
+// On Linux the tests from here on run at once: when a restart does not come, each one waits for its limit.
+for (const [how, replace] of [
+  ...Object.entries(replaceFile),
+  // The old inode stays alive, so the watch of the file cannot report the save, whatever
+  // descriptor bun holds.
+  ["rename over, with a second hard link to the module,", replaceFile["rename over"]] as const,
+]) {
+  it.concurrentIf(isLinux).skipIf(isWindows)(
+    `--watch sees a ${how} save after a failed lookup in the same directory`,
+    async () => {
+      using dir = tempDir("watch-dir-event-after-miss", {
+        "a.js": `export const a = 1;`,
+        "entry.js": `import { a } from "./a.js";
+console.log("EVAL a =", a);
+try {
+  require("./config.local.js");
+} catch {}
+console.log("MISS done");
+setInterval(() => {}, 1e6);
+`,
+      });
+      const cwd = String(dir);
+      if (how.includes("hard link")) linkSync(join(cwd, "a.js"), join(cwd, "a.linked.js"));
+      await using proc = spawn({
+        ...watched,
+        cwd,
+        cmd: [bunExe(), "--watch", "--no-clear-screen", "entry.js"],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+        stdin: "ignore",
+      });
+      const { waitFor, release } = stdoutWaiter(proc);
+
+      // "MISS done" means the failed lookup already busted the directory cache.
+      await waitFor("EVAL a = 1\nMISS done\n");
+
+      for (const v of [2, 3]) {
+        await replace(join(cwd, "a.js"), `export const a = ${v};`);
+        await waitFor(`EVAL a = ${v}\nMISS done\n`);
+      }
+
+      release();
+      proc.kill("SIGKILL");
+      await proc.exited;
+    },
+    20_000,
+  );
+}
+
+// The same state needs no failed lookup. A program that creates an entry next
+// to its sources (a pid file, a log, a cache directory) causes a directory
+// event, and the watcher busts the directory cache for it. A module the
+// program imports lazily after that re-reads the directory.
+it.concurrentIf(isLinux).skipIf(isWindows)(
+  "--watch sees a rename over save after the program wrote into its own directory and then imported lazily",
+  async () => {
+    using dir = tempDir("watch-dir-event-after-own-write", {
+      "trace.log": "",
+      "src/a.js": `export const a = 1;`,
+      "src/lazy.js": `export const lazy = "lazy";`,
+      "src/fence/b.js": `export {};`,
+      "src/entry.js": `import { a } from "./a.js";
+import "./fence/b.js";
+import { mkdirSync, readFileSync, statSync } from "node:fs";
+const trace = process.env.BUN_WATCHER_TRACE;
+const start = statSync(trace).size;
+// The log keys each event by the watched path. kqueue does not log the changed name.
+const logged = dir => readFileSync(trace, "latin1").slice(start).includes("/" + dir + '/"');
+// A new name on every run: kqueue reports a directory only when its entries change.
+const id = crypto.randomUUID();
+mkdirSync("cache-" + id);
+while (!logged("src")) await Bun.sleep(1);
+// The watcher thread logs a batch of events, handles it, then takes the next batch. Once it
+// logs an event for another directory, it has busted the cache for this one.
+mkdirSync("fence/" + id);
+while (!logged("fence")) await Bun.sleep(1);
+const { lazy } = await import("./lazy.js");
+console.log("EVAL a =", a, lazy);
+setInterval(() => {}, 1e6);
+`,
+    });
+    const cwd = join(String(dir), "src");
+    await using proc = spawn({
+      ...watched,
+      cwd,
+      cmd: [bunExe(), "--watch", "--no-clear-screen", "entry.js"],
+      // The trace file is outside the watched directory so that writes to it cause no events.
+      env: { ...bunEnv, BUN_WATCHER_TRACE: join(String(dir), "trace.log") },
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    const { waitFor, release } = stdoutWaiter(proc);
+
+    await waitFor("EVAL a = 1 lazy\n");
+    await replaceFile["rename over"](join(cwd, "a.js"), `export const a = 2;`);
+    await waitFor("EVAL a = 2 lazy\n");
+
+    release();
+    proc.kill("SIGKILL");
+    await proc.exited;
+  },
+  20_000,
+);
+
+// inotify has one watch per inode. A folder that is reached under two
+// spellings, a symlink and its target, has one watch, and the watcher gives
+// each event to the spelling it saw first. The files are in the watchlist
+// under their real path.
+it.concurrentIf(isLinux).skipIf(isWindows)(
+  "--watch sees a rename over save in a folder that is also watched through a symlink",
+  async () => {
+    using dir = tempDir("watch-dir-event-two-spellings", {
+      "real/pages/a.js": `export const a = 1;`,
+      "entry.js": `// A lookup that fails watches the folder under the spelling of the link.
+try {
+  require("./link/pages/missing.js");
+} catch {}
+const { a } = await import("./real/pages/a.js");
+console.log("EVAL a =", a);
+setInterval(() => {}, 1e6);
+`,
+    });
+    const cwd = String(dir);
+    symlinkSync("real", join(cwd, "link"), "dir");
+    await using proc = spawn({
+      ...watched,
+      cwd,
+      cmd: [bunExe(), "--watch", "--no-clear-screen", "entry.js"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    const { waitFor, release } = stdoutWaiter(proc);
+
+    await waitFor("EVAL a = 1\n");
+    for (const v of [2, 3]) {
+      await replaceFile["rename over"](join(cwd, "real", "pages", "a.js"), `export const a = ${v};`);
+      await waitFor(`EVAL a = ${v}\n`);
+    }
+
+    release();
+    proc.kill("SIGKILL");
+    await proc.exited;
+  },
+  20_000,
+);
+
+// A workspace package is imported through its symlink in node_modules and loaded by its real
+// path. The resolver lists its folder under the spelling of the symlink, so the real path of the
+// folder has no cached listing.
+it.concurrentIf(isLinux).skipIf(isWindows)(
+  "--watch sees a rename over save of a workspace package, started at the workspace root",
+  async () => {
+    using dir = tempDir("watch-dir-event-workspace", {
+      "package.json": JSON.stringify({ name: "root", private: true, workspaces: ["packages/*"] }),
+      "packages/lib/package.json": JSON.stringify({ name: "lib", version: "1.0.0", main: "index.ts" }),
+      "packages/lib/index.ts": `export const v = 1;`,
+      "packages/app/package.json": JSON.stringify({ name: "app", dependencies: { lib: "workspace:*" } }),
+      "packages/app/entry.ts": `import { v } from "lib";
+console.log("EVAL v =", v);
+setInterval(() => {}, 1e6);
+`,
+    });
+    const cwd = String(dir);
+    mkdirSync(join(cwd, "node_modules"));
+    symlinkSync("../packages/lib", join(cwd, "node_modules", "lib"), "dir");
+    await using proc = spawn({
+      ...watched,
+      cwd,
+      cmd: [bunExe(), "--watch", "--no-clear-screen", "packages/app/entry.ts"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    const { waitFor, release } = stdoutWaiter(proc);
+
+    await waitFor("EVAL v = 1\n");
+    for (const v of [2, 3]) {
+      await replaceFile["rename over"](join(cwd, "packages", "lib", "index.ts"), `export const v = ${v};`);
+      await waitFor(`EVAL v = ${v}\n`);
+    }
+
+    release();
+    proc.kill("SIGKILL");
+    await proc.exited;
+  },
+  20_000,
+);
+
+// Returns once the watcher thread has handled every event made before the call. The watcher logs
+// a batch of events, handles it, then reads the next batch. So once it logs a batch that was made
+// after another one, it has handled the other one. `fence` is a watched folder.
+async function watcherHandled(trace: string, fence: string) {
+  for (let i = 0; i < 2; i++) {
+    const from = statSync(trace).size;
+    const name = crypto.randomUUID();
+    mkdirSync(join(fence, name));
+    // kqueue does not log the changed name, only the watched path.
+    const logged = isLinux ? name : '/fence/"';
+    while (!readFileSync(trace, "latin1").slice(from).includes(logged)) await Bun.sleep(1);
+  }
+}
+
+// A directory event names an entry of the folder. Only a watched file of that folder with that
+// name is the module to reload.
+it.concurrentIf(isLinux).skipIf(isWindows)(
+  "--watch does not restart for a folder, or for a file of another folder, with a watched name",
+  async () => {
+    using dir = tempDir("watch-dir-event-other-names", {
+      "trace.log": "",
+      "src/lib/a.js": `export const a = 1;`,
+      "src/lib/sub/x.js": `export {};`,
+      "src/other/b.js": `export {};`,
+      "src/fence/f.js": `export {};`,
+      "src/entry.js": `import { a } from "./lib/a.js";
+import "./other/b.js";
+import "./fence/f.js";
+// A lookup that fails watches the folder of the lookup.
+try {
+  require("./lib/sub/missing.js");
+} catch {}
+console.log("EVAL a =", a);
+setInterval(() => {}, 1e6);
+`,
+    });
+    const cwd = join(String(dir), "src");
+    const trace = join(String(dir), "trace.log");
+    await using proc = spawn({
+      ...watched,
+      cwd,
+      cmd: [bunExe(), "--watch", "--no-clear-screen", "entry.js"],
+      env: { ...bunEnv, BUN_WATCHER_TRACE: trace },
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    const { waitFor, release, output } = stdoutWaiter(proc);
+
+    await waitFor("EVAL a = 1\n");
+    renameSync(join(cwd, "lib", "sub"), join(cwd, "lib", "sub.away"));
+    renameSync(join(cwd, "lib", "sub.away"), join(cwd, "lib", "sub"));
+    await Bun.write(join(cwd, "other", "a.js"), `export {};`);
+    // The entry point has a shortcut of its own: a file of another folder with its name is not it.
+    await replaceFile["rename over"](join(cwd, "other", "entry.js"), `export {};`);
+    await watcherHandled(trace, join(cwd, "fence"));
+    await replaceFile["rename over"](join(cwd, "lib", "a.js"), `export const a = 2;`);
+    await waitFor("EVAL a = 2\n");
+    expect(output().slice(0, output().indexOf("EVAL a = 2\n"))).toBe("EVAL a = 1\n");
+
+    release();
+    proc.kill("SIGKILL");
+    await proc.exited;
+  },
+  20_000,
+);
+
+// `bun test --watch` and `bun build --watch` decide a directory event in the same code.
+it.concurrentIf(isLinux).skipIf(isWindows)(
+  "test --watch sees a rename over save of an import and of the test file after a failed lookup",
+  async () => {
+    const testFile = (run: number) => `import { test } from "bun:test";
+import { v } from "./dep.js";
+try {
+  require("./missing.js");
+} catch {}
+test("prints", () => console.log("RAN", v, ${run}));
+`;
+    using dir = tempDir("watch-dir-event-test-runner", {
+      "dep.js": `export const v = 1;`,
+      "a.test.js": testFile(1),
+    });
+    const cwd = String(dir);
+    await using proc = spawn({
+      ...watched,
+      cwd,
+      cmd: [bunExe(), "test", "--watch", "a.test.js"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    const { waitFor, release } = stdoutWaiter(proc);
+
+    await waitFor("RAN 1 1\n");
+    await replaceFile["rename over"](join(cwd, "dep.js"), `export const v = 2;`);
+    await waitFor("RAN 2 1\n");
+    await replaceFile["rename over"](join(cwd, "a.test.js"), testFile(2));
+    await waitFor("RAN 2 2\n");
+
+    release();
+    proc.kill("SIGKILL");
+    await proc.exited;
+  },
+  20_000,
+);
+
+it.concurrentIf(isLinux).skipIf(isWindows)(
+  "build --watch sees a rename over save of an import after a failed lookup",
+  async () => {
+    using dir = tempDir("watch-dir-event-bundler", {
+      "src/dep.js": `export const v = "first";`,
+      "src/entry.js": `import { v } from "./dep.js";
+try {
+  require("./missing.js");
+} catch {}
+console.log(v);
+`,
+    });
+    const cwd = String(dir);
+    const out = join(cwd, "out", "entry.js");
+    await using proc = spawn({
+      ...watched,
+      cwd,
+      cmd: [bunExe(), "build", "--watch", "./src/entry.js", "--outdir", "out"],
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    const output = () =>
+      Bun.file(out)
+        .text()
+        .catch(() => "");
+    const built = (text: string) =>
+      builds(proc, `the module with "${text}"`, async () => (await output()).includes(text));
+
+    await built("first");
+    for (const text of ["second", "third"]) {
+      await replaceFile["rename over"](join(cwd, "src", "dep.js"), `export const v = "${text}";`);
+      await built(text);
+    }
+
+    proc.kill("SIGKILL");
+    await proc.exited;
+  },
+  20_000,
+);
+
+// The bundler stores a descriptor for each file that it reads, so the old inode of an asset that
+// is saved by rename stays alive and the watch of the file reports nothing. inotify names the
+// file in the event of its folder. The reloader took no name without a JavaScript-like loader,
+// and no name with a leading dot.
+it.concurrent.skipIf(!isLinux)(
+  "build --watch sees a rename over save of an asset and of a dot-named module",
+  async () => {
+    using dir = tempDir("watch-dir-event-bundler-asset", {
+      "src/logo.bin": "first",
+      "src/.hidden.js": `export const hidden = "first";`,
+      "src/entry.js": `import logo from "./logo.bin";
+import { hidden } from "./.hidden.js";
+console.log(logo, hidden);
+`,
+    });
+    const cwd = String(dir);
+    await using proc = spawn({
+      ...watched,
+      cwd,
+      cmd: [bunExe(), "build", "--watch", "./src/entry.js", "--outdir", "out"],
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    const output = (name: string) =>
+      Bun.file(join(cwd, "out", name))
+        .text()
+        .catch(() => "");
+    const moduleIs = (text: string) =>
+      builds(proc, `the module with "${text}"`, async () => (await output("entry.js")).includes(`"${text}"`));
+    // The copy of the asset has a hash of its bytes in its name. `out` is there when the module is.
+    const assetIs = (text: string) =>
+      builds(proc, `the asset with "${text}"`, async () => {
+        for (const name of readdirSync(join(cwd, "out"))) {
+          if (name.endsWith(".bin") && (await output(name)) === text) return true;
+        }
+        return false;
+      });
+
+    await moduleIs("first");
+    await assetIs("first");
+    for (const text of ["second", "third"]) {
+      await replaceFile["rename over"](join(cwd, "src", "logo.bin"), text);
+      await assetIs(text);
+      await replaceFile["rename over"](join(cwd, "src", ".hidden.js"), `export const hidden = "${text}";`);
+      await moduleIs(text);
+    }
+
+    proc.kill("SIGKILL");
+    await proc.exited;
+  },
+  20_000,
+);

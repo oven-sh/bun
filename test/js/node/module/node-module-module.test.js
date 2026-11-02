@@ -1939,6 +1939,22 @@ console.log("survived", require("./late.js"));`,
         ["target.cjs: require.main===module true"],
         { bunOnly: true },
       ],
+      // With a compile cache the thread that calls import() transpiles the file, so the import() makes the module first
+      // here too. As in Node, only a module that the call makes is a main module.
+      [
+        "a script whose import() made its module before the call is not a main module",
+        {
+          "wrapper.cjs": `
+            const path = require("node:path");
+            require("node:module").enableCompileCache(path.resolve("compile-cache"));
+            import(require("node:url").pathToFileURL(path.resolve("target.cjs")));
+            ${start("target.cjs")}
+          `,
+          "target.cjs": print("target.cjs", isMain),
+        },
+        ["wrapper.cjs"],
+        ["target.cjs: require.main===module false"],
+      ],
       [
         "a script that an onLoad callback starts while another script loads: both are main modules",
         {
@@ -2448,8 +2464,9 @@ console.log("survived", require("./late.js"));`,
   });
 
   // The ES loader makes the module object of a CommonJS file when it fetches the file, and runs the module later.
-  // A file that leaves require.cache in between still runs: the load runs the source that it fetched.
-  describe.concurrent("a CommonJS module that the ES loader has not run yet runs after it left require.cache", () => {
+  // A file that leaves require.cache in between still runs: the load runs the source that it fetched. A file that
+  // ran before it left does not run again.
+  describe.concurrent("a CommonJS module that leaves require.cache before the ES loader runs it", () => {
     async function run(files, entry) {
       using dir = tempDir("require-cache-delete-fetched-cjs", files);
       await using proc = Bun.spawn({
@@ -2514,6 +2531,42 @@ console.log("survived", require("./late.js"));`,
       };
       expect(await run(files, "entry.cjs")).toEqual({
         stdout: ["target.cjs in require.cache: true", "target.cjs runs", `import() resolves with {"value":1}`],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // The plugin serves the file, so the import() finds the module that runs. The throw then takes it out of require.cache.
+    test("a file that calls import() of itself while require() runs it, and then throws, does not run again", async () => {
+      const files = {
+        "entry.cjs": `
+          Bun.plugin({
+            name: "serves self.cjs",
+            setup(build) {
+              build.onLoad({ filter: /self\\.cjs$/ }, args => ({
+                contents: require("node:fs").readFileSync(args.path, "utf8"),
+                loader: "js",
+              }));
+            },
+          });
+          try {
+            require("./self.cjs");
+          } catch (error) {
+            console.log("require() throws", error.message);
+          }
+        `,
+        "self.cjs": `
+          globalThis.runs = (globalThis.runs ?? 0) + 1;
+          console.log("self.cjs runs", globalThis.runs);
+          import(require("node:url").pathToFileURL(__filename)).then(
+            () => console.log("import() resolves"),
+            error => console.log("import() rejects with", error.message),
+          );
+          throw new Error("from self.cjs");
+        `,
+      };
+      expect(await run(files, "entry.cjs")).toEqual({
+        stdout: ["self.cjs runs 1", "require() throws from self.cjs", "import() resolves"],
         stderr: "",
         exitCode: 0,
       });

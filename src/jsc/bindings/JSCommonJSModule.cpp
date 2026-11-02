@@ -1763,6 +1763,9 @@ struct FetchedCommonJSModule {
     bool isRoot { false };
     bool isMain { false };
     bool ignoreESModuleAnnotation { false };
+
+    // A load does not run again a module that it adopted after the module ran. A load of Module.runMain() does.
+    bool keepsSourceFor(JSCommonJSModule* adopted) const { return !adopted || !adopted->hasEvaluated || isMain; }
 };
 
 static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sourceOrigin, const WTF::String& sourceURL, JSModuleGraph*, FetchedCommonJSModule&&);
@@ -1856,10 +1859,10 @@ std::optional<JSC::SourceCode> createCommonJSModule(
         RETURN_IF_EXCEPTION(scope, {});
     } else {
         sourceOrigin = Zig::toSourceOrigin(sourceURL, isBuiltIn);
-        // The module that a load of Module.runMain() adopts has run, so the load keeps a source of its own.
+        // The module that a load of Module.runMain() adopts can have run, so that load makes a source of its own.
         if (fetched.isMain) [[unlikely]]
             fetched.source = commonJSProgramSource(globalObject, source, isBuiltIn);
-        else
+        else if (fetched.keepsSourceFor(moduleObject))
             fetched.source = moduleObject->sourceCode.provider();
     }
 
@@ -1920,7 +1923,7 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
                         (void)scope.tryClearException();
 
                         // On error, remove the module from the require map so that it can be re-evaluated on the next require.
-                        JSC__JSMap__remove(requireMap, globalObject, JSValue::encode(moduleObject->filename()));
+                        JSC__JSMap__remove(requireMap, globalObject, JSValue::encode(keyValue));
                         RETURN_IF_EXCEPTION(scope, void());
 
                         scope.throwException(globalObject, exception);
@@ -1952,11 +1955,12 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     JSValue entry = requireMap->get(globalObject, requireMapKey);
     RETURN_IF_EXCEPTION(scope, {});
     FetchedCommonJSModule fetched = fetchedCommonJSModule(globalObject, graph, requireMap, requireMapKey, ignoreESModuleAnnotation);
-    fetched.source = sourceProvider.ptr();
 
     if (entry) {
         moduleObject = dynamicDowncast<JSCommonJSModule>(entry);
     }
+    if (fetched.keepsSourceFor(moduleObject))
+        fetched.source = sourceProvider.ptr();
 
     if (!moduleObject) {
         moduleObject = createModuleInRequireMap(globalObject, graph, requireMap, requireMapKey, WTF::move(sourceProvider), fetched.isRoot, fetched.isMain);

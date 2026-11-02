@@ -181,3 +181,95 @@ describe("AssertionError diff rendering", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// https://github.com/nodejs/node/pull/38215
+// Each script runs in a child: an Error that is frozen or not extensible stays that way.
+// Every expectation is what node v26.3.0 prints for the same script.
+describe("a failed assertion and Error.stackTraceLimit", () => {
+  async function runInChild(script) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+  const thrownBy = `const thrownBy = fn => { try { fn(); } catch (e) { return [e.name, e.code, e.message]; } };`;
+
+  test.concurrent.each([
+    ["the limit is read-only", `Object.defineProperty(Error, "stackTraceLimit", { value: 10, writable: false });`],
+    ["the limit is read-only and 0", `Object.defineProperty(Error, "stackTraceLimit", { value: 0, writable: false });`],
+    ["Error is frozen", `Object.freeze(Error);`],
+    ["the limit is a getter without a setter", `Object.defineProperty(Error, "stackTraceLimit", { get: () => 10 });`],
+    [
+      "the limit is deleted and Error is not extensible",
+      `delete Error.stackTraceLimit; Object.preventExtensions(Error);`,
+    ],
+    ["the limit is deleted and Error is sealed", `delete Error.stackTraceLimit; Object.seal(Error);`],
+  ])("an AssertionError is thrown when %s", async (_, makeReadOnly) => {
+    // The message of assert.ok is left out: it is not Node's, whatever the limit is.
+    const { stdout, stderr, exitCode } = await runInChild(
+      `${makeReadOnly}
+       const assert = require("node:assert");
+       ${thrownBy}
+       assert.rejects(Promise.resolve()).catch(rejection => {
+         console.log(JSON.stringify([
+           thrownBy(() => assert.strictEqual(1, 2)),
+           thrownBy(() => assert.deepStrictEqual({ a: 1 }, { a: 2 })),
+           thrownBy(() => assert.ok(false)).slice(0, 2),
+           thrownBy(() => assert.fail("boom")),
+           thrownBy(() => assert.throws(() => {})),
+           thrownBy(() => assert.ifError(new RangeError("unwanted"))),
+           thrownBy(() => { throw new assert.AssertionError({ message: "made by hand" }); }),
+           [rejection.name, rejection.code, rejection.message],
+         ]));
+       });`,
+    );
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([
+      ["AssertionError", "ERR_ASSERTION", "Expected values to be strictly equal:\n\n1 !== 2\n"],
+      [
+        "AssertionError",
+        "ERR_ASSERTION",
+        "Expected values to be strictly deep-equal:\n+ actual - expected\n\n  {\n+   a: 1\n-   a: 2\n  }\n",
+      ],
+      ["AssertionError", "ERR_ASSERTION"],
+      ["AssertionError", "ERR_ASSERTION", "boom"],
+      ["AssertionError", "ERR_ASSERTION", "Missing expected exception."],
+      ["AssertionError", "ERR_ASSERTION", "ifError got unwanted exception: unwanted"],
+      ["AssertionError", "ERR_ASSERTION", "made by hand"],
+      ["AssertionError", "ERR_ASSERTION", "Missing expected rejection."],
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  // The message is rendered by code of the program, which can lock the limit at that moment.
+  test.concurrent("an AssertionError is made when its message freezes Error as it is rendered", async () => {
+    const { stdout, stderr, exitCode } = await runInChild(
+      `const assert = require("node:assert");
+       ${thrownBy}
+       const message = { toString() { Object.freeze(Error); return "rendered"; } };
+       console.log(JSON.stringify(thrownBy(() => { throw new assert.AssertionError({ message }); })));`,
+    );
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(["AssertionError", "ERR_ASSERTION", "rendered"]);
+    expect(exitCode).toBe(0);
+  });
+
+  // With frames, the error of the getter would print its stack inside the message.
+  test.concurrent("an error made while the message is rendered has no frames, and one made after has", async () => {
+    const { stdout, stderr, exitCode } = await runInChild(
+      `const assert = require("node:assert");
+       let message;
+       try {
+         assert.deepStrictEqual({ get a() { return new Error("made while the message is rendered"); } }, { a: 2 });
+       } catch (e) {
+         message = e.message;
+       }
+       console.log(JSON.stringify([
+         message.split("\\n").filter(line => line.includes("made while")),
+         new Error("made after").stack.includes("\\n    at "),
+       ]));`,
+    );
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([["+   a: [Getter] [Error: made while the message is rendered]"], true]);
+    expect(exitCode).toBe(0);
+  });
+});

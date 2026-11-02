@@ -320,6 +320,7 @@ pub(crate) fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, 
             // pending_body[sent..] is a suffix of the original slice.
             stream.pending_body = bun_ptr::RawSlice::new(&pending.slice()[sent..]);
             if stream.pending_body.is_empty() {
+                stream.pending_body = bun_ptr::RawSlice::EMPTY;
                 stream.sent_end_stream();
                 client.state.request_stage = HTTPStage::Done;
             }

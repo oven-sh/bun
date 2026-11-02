@@ -1,6 +1,18 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tls as COMMON_CERT, gc, isASAN, isCI, isDebug } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  tls as COMMON_CERT,
+  expectRssDeltaBelow,
+  gc,
+  isASAN,
+  isCI,
+  isDebug,
+  isLinux,
+  tempDir,
+} from "harness";
 import { once } from "node:events";
+import { readdirSync, readlinkSync, realpathSync } from "node:fs";
 import { createServer } from "node:http";
 import net from "node:net";
 import { join } from "node:path";
@@ -1099,3 +1111,122 @@ test("fetch().arrayBuffer() of a large Content-Length body peaks at ~1x the payl
     server.close();
   }
 }, 60000);
+
+describe("fetch() frees a sent request body while the response is still streaming", () => {
+  // Reads the whole request, then answers with a body that never ends.
+  const serve = () =>
+    Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      async fetch(req) {
+        await req.arrayBuffer();
+        if (new URL(req.url).pathname === "/303") return Response.redirect("/", 303);
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue("data: 1\n\n");
+            },
+          }),
+          { headers: { "Content-Type": "text/event-stream" } },
+        );
+      },
+    });
+
+  const bodies = {
+    // Copied per fetch().
+    "typed array": `const body = () => ascii;`,
+    // Transcoded to UTF-8 per fetch().
+    "non-ASCII string": `const shared = ascii.latin1Slice() + "\\u00e9"; const body = () => shared;`,
+    // fetch() shares these with the JS value, so each fetch() needs a value that only it keeps.
+    "ASCII string": `const body = () => ascii.latin1Slice();`,
+    "Blob": `const body = () => new Blob([ascii]);`,
+    "typed array that a 303 redirect drops": `const body = () => ascii; path = "/303";`,
+    "typed array and its compressed copy": `const body = () => random; init.compress = { encoding: "zstd", level: 1 };`,
+  };
+  test.concurrent.each(Object.keys(bodies) as (keyof typeof bodies)[])("%s", async kind => {
+    using server = serve();
+    const code = /* js */ `
+      const ascii = Buffer.alloc(4 * 1024 * 1024, "a");
+      const random = new Uint8Array(ascii.length);
+      for (let i = 0; i < random.length; i += 65536) crypto.getRandomValues(random.subarray(i, i + 65536));
+      const init = { method: "POST" };
+      let path = "/";
+      ${bodies[kind]}
+      const responses = [];
+      async function run(count) {
+        for (let i = 0; i < count; i++) {
+          responses.push(await fetch(new URL(path, ${JSON.stringify(server.url.href)}), { ...init, body: body() }));
+        }
+        Bun.gc(true);
+        return process.memoryUsage.rss();
+      }
+      const before = await run(2);
+      const after = await run(24);
+      console.log(JSON.stringify({ deltaMiB: (after - before) / 1024 / 1024 }));
+      process.exit(0);
+    `;
+    // Unfixed: 96 MiB, the 24 bodies of 4 MiB. Fixed: about 0, but 24 to 32 MiB for the values that
+    // the GC frees on a debug build, where a loop that only makes them measures the same.
+    await expectRssDeltaBelow(["--smol", "-e", code], { release: 32, debug: 60 });
+  });
+
+  test.skipIf(!isLinux)("file sent with sendfile()", async () => {
+    using server = serve();
+    using dir = tempDir("fetch-sendfile-body", { "body.bin": Buffer.alloc(64 * 1024, "a") });
+    const path = join(realpathSync(String(dir)), "body.bin");
+    const response = await fetch(server.url, { method: "POST", body: Bun.file(path) });
+    const open = readdirSync("/proc/self/fd").filter(fd => {
+      try {
+        return readlinkSync(`/proc/self/fd/${fd}`) === path;
+      } catch {
+        return false;
+      }
+    });
+    expect(open).toEqual([]);
+    await response.body!.cancel();
+  });
+
+  // Passes without the early free too; fails if the free does not wait for the send.
+  test("but not one that is still being sent", async () => {
+    const body = Buffer.alloc(16 * 1024 * 1024, "a");
+    const head = Promise.withResolvers<void>();
+    const sockets: net.Socket[] = [];
+    const server = net.createServer(socket => {
+      sockets.push(socket);
+      let header = Buffer.alloc(0);
+      let received = -1;
+      let valid = true;
+      socket.on("error", head.reject);
+      socket.on("data", chunk => {
+        if (received === -1) {
+          header = Buffer.concat([header, chunk]);
+          const end = header.indexOf("\r\n\r\n");
+          if (end === -1) return;
+          chunk = header.subarray(end + 4);
+          received = 0;
+          // Answer with most of the body unread, and read on once fetch() has resolved.
+          socket.write("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n");
+          socket.pause();
+          head.promise.then(() => socket.resume());
+        }
+        received += chunk.length;
+        valid &&= chunk.equals(body.subarray(0, chunk.length));
+        if (received >= body.length) {
+          const result = JSON.stringify({ received, valid });
+          socket.end(`${result.length.toString(16)}\r\n${result}\r\n0\r\n\r\n`);
+        }
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const { port } = server.address() as net.AddressInfo;
+      const response = await fetch(`http://127.0.0.1:${port}/`, { method: "POST", body });
+      Bun.gc(true);
+      head.resolve();
+      expect(await response.json()).toEqual({ received: body.length, valid: true });
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      server.close();
+    }
+  });
+});

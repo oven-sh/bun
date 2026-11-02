@@ -44,3 +44,8 @@ test("arraylike", () => {
   },
 }`);
 });
+
+test("arraylike behind a Proxy", async () => {
+  const { default: _, ...named } = await import("./cjs-defineProperty-arraylike-proxy.cjs");
+  expect(named).toStrictEqual({ "0": 0, "1": 1, "2": 3, "3": 4, "4": undefined });
+});

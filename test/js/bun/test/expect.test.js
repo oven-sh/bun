@@ -4353,6 +4353,13 @@ describe("expect()", () => {
       expect({ s: new Set([{ a: 1 }, { a: 2 }]) }).toMatchObject({ s: new Set([{ a: 2 }, { a: 1 }]) });
       expect({ s: new Set([{ a: 1 }]) }).not.toMatchObject({ s: new Set([{ a: 2 }]) });
       expect({ s: new Set([[1, 2]]) }).not.toMatchObject({ s: new Set([[1]]) });
+      // as in Jest, two received members can match the same expected member
+      expect({
+        s: new Set([
+          { a: 1, b: 1 },
+          { a: 1, b: 2 },
+        ]),
+      }).toMatchObject({ s: new Set([{ a: 1 }, { c: 3 }]) });
       expect({ s: new Set([new Date(5)]) }).toMatchObject({ s: new Set([new Date(5)]) });
       expect({ s: new Set([new Date(5)]) }).not.toMatchObject({ s: new Set([new Date(6)]) });
       expect({ s: new Set([new Set([1])]) }).toMatchObject({ s: new Set([new Set([1])]) });
@@ -4402,6 +4409,25 @@ describe("expect()", () => {
       expect({ m: new Map([[{ a: 1 }, 1]]) }).not.toMatchObject({ m: new Map([[{ a: 1 }, 2]]) });
       expect({ m: new Map([["a", 1]]) }).toMatchObject({ m: new Map([[expect.any(String), 1]]) });
       expect({ m: new Map([[1, 1]]) }).not.toMatchObject({ m: new Map([[expect.any(String), 1]]) });
+      // as in Jest, two received entries can match the same expected entry
+      // prettier-ignore
+      expect({ m: new Map([[{ k: 1, x: 1 }, 1], [{ k: 1, x: 2 }, 1]]) }).toMatchObject({
+        m: new Map([[{ k: 1 }, 1], [{ z: 9 }, 2]]),
+      });
+      // the value under the same key differs, and another expected entry matches
+      // prettier-ignore
+      expect({ m: new Map([["z", 0], ["a", 1]]) }).toMatchObject({
+        m: new Map([["a", 2], [expect.any(String), expect.any(Number)]]),
+      });
+      const sameKey = { id: 1 };
+      // prettier-ignore
+      expect({ m: new Map([[sameKey, { x: 1 }], [{ id: 1 }, { x: 2 }]]) }).toMatchObject({
+        m: new Map([[sameKey, { x: 2 }], [{ id: 1 }, { x: 1 }]]),
+      });
+      // prettier-ignore
+      expect({ m: new Map([[{ id: 0 }, 0], [sameKey, { x: 1 }]]) }).not.toMatchObject({
+        m: new Map([[{ id: 0 }, 0], [sameKey, { x: 2 }]]),
+      });
       // only a Map matches an expected Map
       expect({ m: {} }).not.toMatchObject({ m: new Map() });
       expect({ m: new Set() }).not.toMatchObject({ m: new Map() });
@@ -4443,6 +4469,74 @@ describe("expect()", () => {
       expect({ m: new Map([[{ id: 1 }, { k: { v: 1 }, z: 2 }], [{ id: 1 }, { z: 1, k: { v: 1 } }]]) }).toMatchObject({
         m: new Map([[{ id: 1 }, { k: shared, z: 1 }], [{ id: 1 }, { z: 2, k: shared }]]),
       });
+    });
+
+    /** @type {<T>(items: T[]) => T[][]} */
+    const permutations = items =>
+      items.length <= 1
+        ? [items]
+        : items.flatMap((item, i) =>
+            permutations([...items.slice(0, i), ...items.slice(i + 1)]).map(rest => [item, ...rest]),
+          );
+
+    test("the order of the members of a Set or a Map does not change the result", () => {
+      const ids = [0, 1, 2, 3];
+      const members = () => ids.map(id => ({ id, extra: true }));
+      for (const order of permutations(ids)) {
+        expect({ s: new Set(members()) }).toMatchObject({ s: new Set(order.map(id => ({ id }))) });
+        expect({ m: new Map(members().map(member => [member, 1])) }).toMatchObject({
+          m: new Map(order.map(id => [{ id }, 1])),
+        });
+        for (const missing of ids) {
+          // one expected member matches no received member
+          const expected = order.map(id => ({ id: id === missing ? -1 : id }));
+          expect({ s: new Set(members()) }).not.toMatchObject({ s: new Set(expected) });
+          expect({ m: new Map(members().map(member => [member, 1])) }).not.toMatchObject({
+            m: new Map(expected.map(key => [key, 1])),
+          });
+        }
+      }
+    });
+
+    test("a Set member or a Map entry that fails a candidate leaves nothing behind, in each order", () => {
+      for (const received of permutations([0, 1, 2])) {
+        for (const expected of permutations([0, 1, 2])) {
+          for (const v of [1, 2]) {
+            // `shared` is in two candidates. { v: 2 } matches neither.
+            const shared = { v: 1 };
+            const members = [{ k: { v: 1 }, z: 1 }, { k: { v }, z: 2 }, { z: 3 }];
+            const patterns = [{ k: shared, z: 1 }, { z: 2, k: shared }, { z: 3 }];
+            const set = expect({ s: new Set(received.map(i => members[i])) });
+            (v === 1 ? set : set.not).toMatchObject({ s: new Set(expected.map(i => patterns[i])) });
+            const map = expect({ m: new Map(received.map(i => [members[i], 1])) });
+            (v === 1 ? map : map.not).toMatchObject({ m: new Map(expected.map(i => [patterns[i], 1])) });
+          }
+        }
+      }
+    });
+
+    test("a matcher that throws ends the comparison of a Set or a Map with its error", () => {
+      const only = (/** @type {number} */ n) => ({
+        asymmetricMatch: (/** @type {unknown} */ value) => {
+          if (value !== n) throw new RangeError("not my member");
+          return true;
+        },
+      });
+      for (const order of [
+        [0, 2, 1],
+        [2, 1, 0],
+      ]) {
+        expect(() =>
+          expect({ s: new Set([0, 1, 2].map(id => ({ id }))) }).toMatchObject({
+            s: new Set(order.map(id => ({ id: only(id) }))),
+          }),
+        ).toThrow(new RangeError("not my member"));
+        expect(() =>
+          expect({ m: new Map([0, 1, 2].map(id => [{ id }, 1])) }).toMatchObject({
+            m: new Map(order.map(id => [{ id: only(id) }, 1])),
+          }),
+        ).toThrow(new RangeError("not my member"));
+      }
     });
 
     test("ends on cycles through a Set or a Map", () => {
@@ -4605,6 +4699,43 @@ describe("expect()", () => {
         expect({ m: new Proxy(new Map(), {}) }).toMatchObject({ m: new Map([["a", 1]]) });
         // expect.objectContaining() still takes a Set or a Map as an object with no properties
         expect({ a: 1 }).toEqual(expect.objectContaining(new Set([1])));
+      });
+
+      test("members of a Set or a Map that follow each other in the same order take one try each", () => {
+        // Each expected member holds a matcher. One call of `tried` is one try of a candidate: [received id, candidate id].
+        const tried = jest.fn((/** @type {unknown} */ value, /** @type {number} */ id) => value === id);
+        const counted = (/** @type {number} */ id) => ({
+          id: { asymmetricMatch: (/** @type {unknown} */ value) => tried(value, id) },
+        });
+        const ids = Array.from({ length: 50 }, (_, id) => id);
+
+        // A scan from the first expected member for each received member makes 1275 tries.
+        expect({ s: new Set(ids.map(id => ({ id }))) }).toMatchObject({ s: new Set(ids.map(counted)) });
+        expect(tried).toHaveBeenCalledTimes(ids.length);
+        tried.mockClear();
+        expect({ m: new Map(ids.map(id => [{ id }, 1])) }).toMatchObject({
+          m: new Map(ids.map(id => [counted(id), 1])),
+        });
+        expect(tried).toHaveBeenCalledTimes(ids.length);
+        tried.mockClear();
+
+        // Another order: the try behind the last match fails. The scan from the start then leaves that candidate out.
+        // prettier-ignore
+        const pairs = [[0, 1], [0, 0], [1, 2], [1, 1], [2, 0], [2, 1], [2, 2]];
+        expect({ s: new Set([0, 1, 2].map(id => ({ id }))) }).toMatchObject({ s: new Set([1, 0, 2].map(counted)) });
+        expect(tried.mock.calls).toEqual(pairs);
+        tried.mockClear();
+        expect({ m: new Map([0, 1, 2].map(id => [{ id }, 1])) }).toMatchObject({
+          m: new Map([1, 0, 2].map(id => [counted(id), 1])),
+        });
+        expect(tried.mock.calls).toEqual(pairs);
+        tried.mockClear();
+
+        // A member that the expected Set holds itself does not move the first try, so the scan starts at the front again.
+        expect({ s: new Set(ids.flatMap(id => ["s" + id, { id }])) }).toMatchObject({
+          s: new Set(ids.flatMap(id => ["s" + id, counted(id)])),
+        });
+        expect(tried).toHaveBeenCalledTimes(1275);
       });
 
       test("a pair that a Set or a Map compared first still shows its matcher under a property", () => {

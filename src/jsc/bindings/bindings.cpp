@@ -2509,6 +2509,20 @@ static bool subsetValueMatches(JSGlobalObject* globalObject, ThrowScope& scope, 
 
 using SubsetValueMatches = bool (*)(JSGlobalObject*, ThrowScope&, Bun::DeepMatchState&, JSValue, JSValue);
 
+// One try of a Set member, or of the key and then the value of a Map entry, against a candidate. A try that fails takes back what it put in the state.
+static bool subsetCandidateMatches(JSGlobalObject* globalObject, ThrowScope& scope, Bun::DeepMatchState& state, SubsetValueMatches valueMatches, JSValue value, JSValue candidate, JSValue entryValue = {}, JSValue candidateValue = {})
+{
+    Bun::DeepMatchState::Trial trial(state);
+    bool matched = valueMatches(globalObject, scope, state, value, candidate);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (matched && candidateValue) {
+        matched = valueMatches(globalObject, scope, state, entryValue, candidateValue);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
+    trial.matched = matched;
+    return matched;
+}
+
 // Jest's iterableEquality: the same size, and each received member is in the expected Set or matches one of its members.
 static bool subsetSetMatches(JSGlobalObject* globalObject, ThrowScope& scope, Bun::DeepMatchState& state, JSSet* received, JSSet* expected, SubsetValueMatches valueMatches)
 {
@@ -2518,6 +2532,8 @@ static bool subsetSetMatches(JSGlobalObject* globalObject, ThrowScope& scope, Bu
 
     VM& vm = globalObject->vm();
     auto receivedIter = JSSetIterator::create(vm, globalObject->setIteratorStructure(), received, IterationKind::Keys);
+    // Sits behind the expected member that matched last. The one after it is tried first: members that are not in `expected` and follow each other in the same order take one try each.
+    JSSetIterator* candidates = nullptr;
     JSValue member;
     while (receivedIter->next(globalObject, member)) {
         bool has = expected->has(globalObject, member);
@@ -2526,14 +2542,18 @@ static bool subsetSetMatches(JSGlobalObject* globalObject, ThrowScope& scope, Bu
             continue;
         }
 
-        bool found = false;
-        auto expectedIter = JSSetIterator::create(vm, globalObject->setIteratorStructure(), expected, IterationKind::Keys);
-        JSValue candidate;
-        while (!found && expectedIter->next(globalObject, candidate)) {
-            Bun::DeepMatchState::Trial trial(state);
-            found = valueMatches(globalObject, scope, state, member, candidate);
-            RETURN_IF_EXCEPTION(scope, false);
-            trial.matched = found;
+        JSValue first;
+        bool found = candidates && candidates->next(globalObject, first) && subsetCandidateMatches(globalObject, scope, state, valueMatches, member, first);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!found) {
+            candidates = JSSetIterator::create(vm, globalObject->setIteratorStructure(), expected, IterationKind::Keys);
+            JSValue candidate;
+            while (!found && candidates->next(globalObject, candidate)) {
+                if (candidate == first)
+                    continue;
+                found = subsetCandidateMatches(globalObject, scope, state, valueMatches, member, candidate);
+                RETURN_IF_EXCEPTION(scope, false);
+            }
         }
         if (!found) {
             return false;
@@ -2551,6 +2571,8 @@ static bool subsetMapMatches(JSGlobalObject* globalObject, ThrowScope& scope, Bu
 
     VM& vm = globalObject->vm();
     auto receivedIter = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), received, IterationKind::Entries);
+    // Sits behind the expected entry that matched last, as in subsetSetMatches.
+    JSMapIterator* candidates = nullptr;
     JSValue key, value;
     while (receivedIter->nextKeyValue(globalObject, key, value)) {
         bool found = false;
@@ -2559,24 +2581,23 @@ static bool subsetMapMatches(JSGlobalObject* globalObject, ThrowScope& scope, Bu
         if (hasKey) {
             JSValue expectedValue = expected->get(globalObject, key);
             RETURN_IF_EXCEPTION(scope, false);
-            Bun::DeepMatchState::Trial trial(state);
-            found = valueMatches(globalObject, scope, state, value, expectedValue);
+            found = subsetCandidateMatches(globalObject, scope, state, valueMatches, value, expectedValue);
             RETURN_IF_EXCEPTION(scope, false);
-            trial.matched = found;
         }
 
+        JSValue firstKey, firstValue;
+        if (!found && candidates && candidates->nextKeyValue(globalObject, firstKey, firstValue)) {
+            found = subsetCandidateMatches(globalObject, scope, state, valueMatches, key, firstKey, value, firstValue);
+            RETURN_IF_EXCEPTION(scope, false);
+        }
         if (!found) {
-            auto expectedIter = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), expected, IterationKind::Entries);
+            candidates = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), expected, IterationKind::Entries);
             JSValue candidateKey, candidateValue;
-            while (!found && expectedIter->nextKeyValue(globalObject, candidateKey, candidateValue)) {
-                Bun::DeepMatchState::Trial trial(state);
-                found = valueMatches(globalObject, scope, state, key, candidateKey);
+            while (!found && candidates->nextKeyValue(globalObject, candidateKey, candidateValue)) {
+                if (candidateKey == firstKey)
+                    continue;
+                found = subsetCandidateMatches(globalObject, scope, state, valueMatches, key, candidateKey, value, candidateValue);
                 RETURN_IF_EXCEPTION(scope, false);
-                if (found) {
-                    found = valueMatches(globalObject, scope, state, value, candidateValue);
-                    RETURN_IF_EXCEPTION(scope, false);
-                }
-                trial.matched = found;
             }
         }
         if (!found) {

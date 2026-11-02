@@ -17,7 +17,7 @@ use bun_uws as uws;
 use crate::bun_string_jsc;
 use crate::counters::{Counters, Field as Counter};
 use crate::event_loop::EventLoop;
-use crate::module_loader::{self as ModuleLoader, FetchFlags};
+use crate::module_loader as ModuleLoader;
 use crate::rare_data::{CodeFrameRanges, CodeFrameSource, RareData};
 use crate::saved_source_map::SavedSourceMap;
 use crate::{
@@ -4492,6 +4492,27 @@ extern "C" fn free_ref_string(str_: *mut crate::ref_string::RefString, _: *mut c
     unsafe { crate::ref_string::RefString::destroy(str_) };
 }
 
+/// If a line that `ranges` cut from `text` is not UTF-8: the lines one after the other, each as a string shows it (U+FFFD for what is not UTF-8), and `ranges` over them.
+fn code_frame_lines_as_utf8(text: &[u8], ranges: &mut CodeFrameRanges) -> Option<Vec<u8>> {
+    use bun_core::strings::{LineRange, first_non_ascii, is_valid_utf8};
+    let line = |range: &LineRange| &text[range.start as usize..range.end as usize];
+    let is_utf8 =
+        |line: &[u8]| first_non_ascii(line).is_none_or(|at| is_valid_utf8(&line[at as usize..]));
+    if ranges.iter().all(|range| is_utf8(line(range))) {
+        return None;
+    }
+    let mut lines = Vec::new();
+    for range in ranges.slice() {
+        let start = lines.len();
+        lines.extend_from_slice(&bun_core::String::clone_utf8(line(range)).to_utf8());
+        *range = LineRange {
+            start: start as u32,
+            end: lines.len() as u32,
+        };
+    }
+    Some(lines)
+}
+
 impl VirtualMachine {
     /// Whether native addons (`process.dlopen`) are allowed (`--no-addons` disables them).
     #[unsafe(export_name = "Bun__VM__allowAddons")]
@@ -5395,31 +5416,12 @@ impl VirtualMachine {
         }
     }
 
-    // Note: `flags` is a runtime arg —
-    // `FetchFlags` would need `ConstParamTy` (unstable derive on the enum's
-    // owning module) to be a const generic; the only branches are cheap
-    // equality tests so the runtime form is fine.
-    #[inline(never)]
-    pub(crate) fn fetch_without_on_load_plugins(
+    /// Runs `body` with what the loader makes of `specifier`: its path, its loader, and its text when it is not a file.
+    fn with_loader_result<R>(
         jsc_vm: &mut VirtualMachine,
-        global_object: &JSGlobalObject,
-        specifier: &bun_core::String,
-        referrer: &bun_core::String,
-        loader: Option<bun_ast::Loader>,
-        log: &mut bun_ast::Log,
-        flags: FetchFlags,
-    ) -> crate::CrateResult<ResolvedSource> {
-        debug_assert!(VirtualMachine::is_loaded());
-
-        if let Some(resolved) =
-            ModuleLoader::__bun_fetch_builtin_module(jsc_vm, global_object, specifier)
-        {
-            return Ok(resolved);
-        }
-
-        let specifier_clone = specifier.to_utf8();
-        let referrer_clone = referrer.to_utf8();
-
+        specifier: &[u8],
+        body: impl FnOnce(&mut VirtualMachine, bun_bundler::options::LoaderResult<'_>) -> R,
+    ) -> Result<R, bun_bundler::options::GetLoaderAndVirtualSourceErr> {
         let mut virtual_source_to_use: Option<bun_ast::Source> = None;
         // The blob crosses
         // the bundler↔runtime boundary as an erased `OpaqueBlob`; deinit goes
@@ -5443,72 +5445,140 @@ impl VirtualMachine {
             )
         };
         let mut blob_to_deinit = BlobDeinit(None, loader_ctx);
-        let lr = match bun_bundler::options::get_loader_and_virtual_source(
-            specifier_clone.slice(),
+        let lr = bun_bundler::options::get_loader_and_virtual_source(
+            specifier,
             &loader_ctx,
             &mut virtual_source_to_use,
             &mut blob_to_deinit.0,
             None,
-        ) {
-            Ok(lr) => lr,
-            Err(_) => return Err(crate::CrateError::ModuleNotFound),
-        };
-        let module_type = lr
-            .package_json
-            .map(|pkg| pkg.module_type)
-            .unwrap_or(bun_bundler::options::ModuleType::Unknown);
-
-        // A drop-guard so both the normal and error paths reset the arena on
-        // the right edge.
-        struct ArenaReset<'a>(&'a mut VirtualMachine, bool);
-        impl Drop for ArenaReset<'_> {
-            fn drop(&mut self) {
-                if self.1 {
-                    let vm = std::ptr::from_mut::<VirtualMachine>(self.0);
-                    // SAFETY: `vm` is the live per-thread VM.
-                    unsafe { ModuleLoader::ModuleLoader::reset_arena(&mut *vm) };
-                }
-            }
-        }
-        let mut guard = ArenaReset(jsc_vm, flags != FetchFlags::PrintSource);
-
-        let printer = SOURCE_CODE_PRINTER
-            .get()
-            .expect("source_code_printer not initialized");
-
-        // Note: the §Dispatch shim takes path/loader/module_type/printer/
-        // promise_ptr bundled as `TranspileExtra` behind `args.extra` (see
-        // ModuleLoader.rs `TranspileArgs`).
-        let mut extra = ModuleLoader::TranspileExtra {
-            path: lr.path,
-            loader: loader.or(lr.loader).unwrap_or(if lr.is_main {
-                bun_ast::Loader::Js
-            } else {
-                bun_ast::Loader::File
-            }),
-            module_type,
-            source_code_printer: printer.as_ptr(),
-            // `fetchWithoutOnLoadPlugins` forbids the async path.
-            promise_ptr: core::ptr::null_mut(),
-        };
-        let args = ModuleLoader::TranspileArgs {
-            specifier: lr.specifier,
-            referrer: referrer_clone.slice(),
-            input_specifier: specifier,
-            log: std::ptr::from_mut::<bun_ast::Log>(log),
-            virtual_source: lr.virtual_source,
-            global_object,
-            flags,
-            extra: &raw mut extra,
-        };
-        // SAFETY: `guard.0` is the live per-thread VM; `args.extra` points at
-        // the live `extra` above.
-        let result = unsafe { ModuleLoader::__bun_transpile_source_code(guard.0, &args) };
-        if result.is_err() && flags == FetchFlags::PrintSource {
-            guard.1 = true; // errdefer
-        }
+        )?;
+        Ok(body(jsc_vm, lr))
         // `blob_to_deinit` drop guard fires here.
-        result
+    }
+
+    #[inline(never)]
+    pub(crate) fn fetch_without_on_load_plugins(
+        jsc_vm: &mut VirtualMachine,
+        global_object: &JSGlobalObject,
+        specifier: &bun_core::String,
+        referrer: &bun_core::String,
+        loader: Option<bun_ast::Loader>,
+        log: &mut bun_ast::Log,
+    ) -> crate::CrateResult<ResolvedSource> {
+        debug_assert!(VirtualMachine::is_loaded());
+
+        if let Some(resolved) =
+            ModuleLoader::__bun_fetch_builtin_module(jsc_vm, global_object, specifier)
+        {
+            return Ok(resolved);
+        }
+
+        let specifier_clone = specifier.to_utf8();
+        let referrer_clone = referrer.to_utf8();
+
+        Self::with_loader_result(jsc_vm, specifier_clone.slice(), |jsc_vm, lr| {
+            let module_type = lr
+                .package_json
+                .map(|pkg| pkg.module_type)
+                .unwrap_or(bun_bundler::options::ModuleType::Unknown);
+
+            // Both the normal and error paths reset the arena on the right edge.
+            let _reset_arena = ModuleLoader::ArenaResetGuard::new(jsc_vm);
+
+            let printer = SOURCE_CODE_PRINTER
+                .get()
+                .expect("source_code_printer not initialized");
+
+            // The §Dispatch shim takes these bundled as `TranspileExtra` behind `args.extra`.
+            let mut extra = ModuleLoader::TranspileExtra {
+                path: lr.path,
+                loader: loader.or(lr.loader).unwrap_or_else(|| lr.default_loader()),
+                module_type,
+                source_code_printer: printer.as_ptr(),
+                // `fetchWithoutOnLoadPlugins` forbids the async path.
+                promise_ptr: core::ptr::null_mut(),
+            };
+            let args = ModuleLoader::TranspileArgs {
+                specifier: lr.specifier,
+                referrer: referrer_clone.slice(),
+                input_specifier: specifier,
+                log: std::ptr::from_mut::<bun_ast::Log>(log),
+                virtual_source: lr.virtual_source,
+                global_object,
+                extra: &raw mut extra,
+            };
+            // SAFETY: `jsc_vm` is the live per-thread VM; `args.extra` points at
+            // the live `extra` above.
+            unsafe { ModuleLoader::__bun_transpile_source_code(jsc_vm, &args) }
+        })
+        .unwrap_or(Err(crate::CrateError::ModuleNotFound))
+    }
+
+    /// The text of the module at `source_url` as it was written, for the code frame of a printed error. Empty if there is none to read. Nothing is transpiled.
+    #[inline(never)]
+    pub(crate) fn original_source_text(
+        jsc_vm: &mut VirtualMachine,
+        global: &JSGlobalObject,
+        source_url: &bun_core::String,
+    ) -> bun_core::Utf8Bytes<'static> {
+        use bun_resolver::node_fallbacks;
+
+        if let Some(resolved) = ModuleLoader::__bun_fetch_builtin_module(jsc_vm, global, source_url)
+        {
+            return resolved.source_code.into_utf8();
+        }
+
+        let specifier = source_url.to_utf8();
+        let text = Self::with_loader_result(jsc_vm, specifier.slice(), |jsc_vm, lr| {
+            let loader = lr.loader.unwrap_or_else(|| lr.default_loader());
+            // A module of any other loader is not text that a frame can show.
+            if !(loader.is_javascript_like_or_json() || loader == bun_ast::Loader::Text) {
+                return None;
+            }
+            if lr.specifier.starts_with(node_fallbacks::IMPORT_PATH)
+                && let Some(code) = node_fallbacks::contents_from_path(lr.specifier)
+            {
+                return Some(code.to_vec());
+            }
+            jsc_vm.read_source_text(&lr.path, lr.virtual_source)
+        });
+        match text {
+            // A longer text is one that a string refuses, and line ranges are `u32`.
+            Ok(Some(text)) if text.len() <= bun_core::String::max_length() => {
+                bun_core::Utf8Bytes::Owned(text)
+            }
+            _ => bun_core::Utf8Bytes::EMPTY,
+        }
+    }
+
+    /// The bytes that a load of `path` parses: `virtual_source`, the body of a `data:` URL, or the file. `None` if they cannot be read.
+    fn read_source_text(
+        &mut self,
+        path: &bun_paths::fs::Path<'_>,
+        virtual_source: Option<&bun_ast::Source<'_>>,
+    ) -> Option<Vec<u8>> {
+        use bun_resolver::cache::Contents;
+        use bun_resolver::data_url::DataURL;
+
+        if let Some(source) = virtual_source {
+            return Some(source.contents.to_vec());
+        }
+        if path.text.starts_with(b"data:") {
+            return DataURL::parse_without_check(path.text)
+                .ok()?
+                .decode_data()
+                .ok();
+        }
+        let fs = &mut self.transpiler.resolver.caches.fs;
+        let mut file = fs
+            .read_file_with_allocator(path.text, bun_sys::Fd::INVALID, false, None, None)
+            .ok()?;
+        // The reader leaves the file open for a watcher. Nothing watches this read.
+        file.close_fd();
+        Some(match core::mem::take(&mut file.contents) {
+            Contents::Owned(bytes) => bytes,
+            contents => contents.as_slice().to_vec(),
+        })
     }
 
     /// Note: `is_a_file_path` is a runtime
@@ -6768,9 +6838,6 @@ impl VirtualMachine {
         if was_internal {
             if let Some(exception_) = exception {
                 let mut holder = crate::zig_exception::Holder::init();
-                // Note: `holder.deinit(self)` runs at the tail (for borrowck)
-                // — semantics unchanged because
-                // `need_to_clear_parser_arena_on_deinit` is false here.
                 let zig_exception: &mut ZigException<'_> = holder.zig_exception();
                 exception_.get_stack_trace(global_ref, &mut zig_exception.stack);
                 if zig_exception.stack.frames_len > 0 {
@@ -6780,7 +6847,6 @@ impl VirtualMachine {
                     let origin = self.is_from_devserver.then_some(&self.origin);
                     zig_exception.add_to_error_list(list, self.top_level_dir(), origin);
                 }
-                holder.deinit(self);
             }
         }
     }
@@ -7043,7 +7109,6 @@ impl VirtualMachine {
         exception: &mut ZigException<'a>,
         error_instance: JSValue,
         exception_list: Option<&mut ExceptionList>,
-        must_reset_parser_arena_later: &mut bool,
         source_code: &'a mut bun_core::Utf8Bytes<'static>,
         allow_source_code_preview: bool,
     ) {
@@ -7277,7 +7342,9 @@ impl VirtualMachine {
                 frames[top].source_url = src.into();
             }
 
-            let code: bun_core::Utf8Bytes<'static> = 'code: {
+            // Whether `code` is the text of a module that this print read. It is not known to be UTF-8.
+            let mut is_fresh_module_text = false;
+            let mut code: bun_core::Utf8Bytes<'static> = 'code: {
                 if !enable_source_code_preview.get() {
                     break 'code bun_core::Utf8Bytes::EMPTY;
                 }
@@ -7307,26 +7374,30 @@ impl VirtualMachine {
                     break 'code text;
                 }
                 self.counters.mark(Counter::CodeFrameSourceLoads);
-                let mut log = bun_ast::Log::default();
-                let Ok(original_source) = bun_removable_features::call_removable_or!(
+                is_fresh_module_text = true;
+                // Empty when the source is gone; the frames still get remapped below.
+                bun_removable_features::call_removable_or!(
                     RuntimeTranspiler,
                     ReturnDefault,
                     { break 'code bun_core::Utf8Bytes::EMPTY },
-                    VirtualMachine::fetch_without_on_load_plugins,
+                    VirtualMachine::original_source_text,
                     self,
                     global,
                     &frames[top].source_url,
-                    &bun_core::String::EMPTY,
-                    None,
-                    &mut log,
-                    FetchFlags::PrintSource,
-                ) else {
-                    // Source is gone; the frames still get remapped below.
-                    break 'code bun_core::Utf8Bytes::EMPTY;
-                };
-                *must_reset_parser_arena_later = true;
-                original_source.source_code.into_utf8()
+                )
             };
+
+            const N: usize = crate::zig_exception::SOURCE_LINES_COUNT;
+            let mut fresh_ranges: Option<CodeFrameRanges> = None;
+            if is_fresh_module_text {
+                let mut ranges =
+                    bun_core::strings::index_of_line_ranges::<N>(&code, last_line as u32);
+                if let Some(lines) = code_frame_lines_as_utf8(&code, &mut ranges) {
+                    code = bun_core::Utf8Bytes::Owned(lines);
+                }
+                fresh_ranges = Some(ranges);
+            }
+
             *source_code = code;
             let code: &'a [u8] = source_code.slice();
 
@@ -7341,10 +7412,9 @@ impl VirtualMachine {
             exception.remapped = true;
             frames[top].remapped = true;
 
-            const N: usize = crate::zig_exception::SOURCE_LINES_COUNT;
             // A kept frame and a fresh one go through the same fill below.
             let is_kept = kept_ranges.is_some();
-            let ranges = kept_ranges.unwrap_or_else(|| {
+            let ranges = kept_ranges.or(fresh_ranges).unwrap_or_else(|| {
                 bun_core::strings::index_of_line_ranges::<N>(code, last_line as u32)
             });
             if !ranges.is_empty() {
@@ -7454,17 +7524,17 @@ impl VirtualMachine {
         // carries the union of all
         // branches' locals (every `pretty_write!` expands to two `write!`s).
         // More importantly, `remap_zig_exception` below calls
-        // `fetch_without_on_load_plugins` → the transpiler for source-line
+        // `original_source_text` → the resolver and the file read for source-line
         // preview, and on Windows that call tree stack-allocates `PathBuffer`s
         // (`MAX_PATH_BYTES = 98302` vs 4096 on Linux). One cycle can therefore
         // exceed the default 256 KB headroom `is_safe_to_recurse()` leaves, so
         // re-check here with an extra `MAX_PATH_BYTES * 3` of slack on Windows
-        // to cover the transpiler's nested path buffers — same parity-level
+        // to cover the nested path buffers — same parity-level
         // protection the Object path gets from C++ `forEachProperty`'s
         // `vm.isSafeToRecurse()`.
         let extra_headroom: usize = if cfg!(windows) {
             // 3× PathBuffer ≈ 288 KB — empirically enough for the
-            // `remap_zig_exception` → `transpile_source_code` chain on the
+            // `remap_zig_exception` → `original_source_text` chain on the
             // 16K-deep Error test (`bun-inspect.test.ts`).
             bun_paths::MAX_PATH_BYTES * 3
         } else {
@@ -7500,18 +7570,12 @@ impl VirtualMachine {
         // box it to keep the per-level recursion frame small enough for the
         // 16K-deep `bun-inspect.test.ts` Error chain on Windows debug.
         let mut exception_holder = Box::new(crate::zig_exception::Holder::init());
-        // Note: reshaped for borrowck — `zig_exception()` returns a
-        // `&mut` into the holder; we need to also borrow
-        // `need_to_clear_parser_arena_on_deinit` disjointly. Route through a
-        // raw pointer (the holder is heap-pinned for the call).
-        let exception: *mut ZigException<'_> = exception_holder.zig_exception();
+        let exception = exception_holder.zig_exception();
 
         self.remap_zig_exception(
-            // SAFETY: `exception` points into stack-local `exception_holder`.
-            unsafe { &mut *exception },
+            exception,
             error_instance,
             exception_list,
-            &mut exception_holder.need_to_clear_parser_arena_on_deinit,
             &mut source_code,
             formatter.error_display_level != crate::console_object::ErrorDisplayLevel::Warn,
         );
@@ -7519,8 +7583,7 @@ impl VirtualMachine {
 
         let mut recorded = false;
         let result = self.print_error_instance_body(
-            // SAFETY: see above.
-            unsafe { &mut *exception },
+            exception,
             error_instance,
             None, // Note: `exception_list` was already
             // consumed by `remap_zig_exception` above (only writer).
@@ -7534,7 +7597,6 @@ impl VirtualMachine {
             formatter.visited_remove(error_instance);
         }
 
-        exception_holder.deinit(self);
         result
     }
 

@@ -1154,19 +1154,7 @@ pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
 
     let err = global.create_error_instance(format_args!("trace output"));
     // `remap_zig_exception` populates `holder.zig_exception()` from `err`.
-    // `exception` and `&holder.need_to_clear_parser_arena_on_deinit` would be
-    // two simultaneous `&mut` into `holder`. Capture the flag in a local and
-    // write it back after.
-    let mut need_to_clear = holder.need_to_clear_parser_arena_on_deinit;
-    vm.remap_zig_exception(
-        holder.zig_exception(),
-        err,
-        None,
-        &mut need_to_clear,
-        &mut source_code,
-        false,
-    );
-    holder.need_to_clear_parser_arena_on_deinit = need_to_clear;
+    vm.remap_zig_exception(holder.zig_exception(), err, None, &mut source_code, false);
 
     let mut adapter = DynWriteAdapter::new(writer);
     let _ = VirtualMachine::print_stack_trace(
@@ -1174,8 +1162,6 @@ pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
         &holder.zig_exception().stack,
         Output::enable_ansi_colors_stderr(),
     );
-
-    holder.deinit(vm);
 }
 
 // ───────────────────────────────────────────────────────────────────────────

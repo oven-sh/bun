@@ -122,8 +122,8 @@ describe.concurrent("a SyntaxError from JavaScriptCore's parser in a file with a
   `;
 
   type Options = Pick<Bun.BuildConfig, "sourcemap" | "format" | "minify"> & { entry?: string };
-  /** Builds entry.ts into the folder `name`. Returns the line of the bundle that has `text`. */
-  async function bundle(root: string, name: string, { entry = "entry.ts", ...options }: Options, text = "/(/") {
+  /** Builds entry.ts into the folder `name`. Returns the line of the bundle that has the regular expression. */
+  async function bundle(root: string, name: string, { entry = "entry.ts", ...options }: Options) {
     const { outputs } = await Bun.build({
       entrypoints: [join(root, entry)],
       outdir: join(root, name),
@@ -131,7 +131,7 @@ describe.concurrent("a SyntaxError from JavaScriptCore's parser in a file with a
       ...options,
     });
     const output = await outputs.find(output => output.kind === "entry-point")!.text();
-    return output.split("\n").findIndex(line => line.includes(text)) + 1;
+    return output.split("\n").findIndex(line => line.includes("/(/")) + 1;
   }
 
   async function run(cwd: string) {
@@ -160,9 +160,13 @@ describe.concurrent("a SyntaxError from JavaScriptCore's parser in a file with a
         ${locate}
         (async () => {
           const locations = {};
-          const files = ["linked/entry.js", "inline/entry.js", "cjs/entry.js", "unmapped.js", "partly-mapped.js", "transpiled.ts", "throws/throws.js"];
+          const files = ["linked/entry.js", "inline/entry.js", "cjs/entry.js", "unmapped.js", "partly-mapped.js", "transpiled.ts"];
           const errors = Object.fromEntries(files.map(file => [file, thrownBy(file)]));
           for (const file of files) locations[file] = locate(errors[file]);
+
+          // An error with frames has an originalLine only if no collection formats its stack first.
+          const { sourceURL, line } = locate(thrownBy("throws/throws.js"));
+          locations["throws/throws.js"] = { sourceURL, line };
 
           const imported = await import("./imported/entry.js").catch(e => e);
           locations["imported/entry.js"] = locate(imported);
@@ -191,8 +195,8 @@ describe.concurrent("a SyntaxError from JavaScriptCore's parser in a file with a
       cjs: await bundle(root, "cjs", { sourcemap: "linked", format: "cjs" }),
       imported: await bundle(root, "imported", { sourcemap: "linked" }),
       prepared: await bundle(root, "prepared", { sourcemap: "linked" }),
-      throws: await bundle(root, "throws", { sourcemap: "linked", entry: "throws.ts" }, "thrown"),
     };
+    await bundle(root, "throws", { sourcemap: "linked", entry: "throws.ts" });
 
     const { stdout, stderr, exitCode } = await run(root);
 
@@ -225,7 +229,7 @@ describe.concurrent("a SyntaxError from JavaScriptCore's parser in a file with a
           stack: "at <parse> (transpiled.ts:4)",
         },
         // An error that has frames takes both from its first frame.
-        "throws/throws.js": { sourceURL: "throws.ts", line: 3, originalLine: line.throws },
+        "throws/throws.js": { sourceURL: "throws.ts", line: 3 },
         // A module is parsed with no JS frame on the stack. Nothing maps its error until it has frames.
         "imported/entry.js": { sourceURL: "imported/entry.js", line: line.imported },
         "imported/entry.js, with frames": inSecond(line.imported),

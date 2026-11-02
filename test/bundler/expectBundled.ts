@@ -1480,6 +1480,9 @@ for (const [key, blob] of build.outputs) {
           ...(useOutFile ? { outfile: outfile! } : { outdir: outdir! }),
           plugins: pluginArray as any,
           jsx: jsx.runtime === "preserve" ? "preserve" : undefined,
+          minifyIdentifiers,
+          minifySyntax,
+          minifyWhitespace,
         });
       }
     }

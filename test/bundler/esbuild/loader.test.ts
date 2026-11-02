@@ -1,4 +1,5 @@
 import { describe, expect } from "bun:test";
+import { transformSync } from "esbuild";
 import { itBundled } from "../expectBundled";
 
 // Tests ported from:
@@ -192,7 +193,14 @@ describe("bundler", () => {
       const out = api.readFile("/out.js");
       expect(out).toMatch(/<[A-Z][\w$]*/);
       expect(out).not.toContain("jsx-runtime");
+      expect(out).not.toContain("RENAME_ME");
+      const { code } = transformSync(out, { loader: "jsx", jsxFactory: "h" });
+      api.writeFile(
+        "/out.js",
+        `let x, captured;\nconst capture = value => { captured = value; };\nconst h = type => type;\n${code}\nconsole.log(x() === captured);`,
+      );
     },
+    run: { stdout: "true" },
   });
   itBundled("loader/RequireCustomExtensionString", {
     files: {

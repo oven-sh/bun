@@ -2103,8 +2103,7 @@ pub struct Checker<'p, 's> {
     )]
     spare_inferences: Vec<Box<infer::Inference>>,
     variances_in_progress: Vec<Sym>,
-    /// Each type that a comparison or an inference of this task has pushed on a source stack or a target stack, or
-    /// that the key of such a type mentions, with its push serial. See `push_serial`.
+    /// The push serial of each type this task has numbered. See `push_serial`.
     first_pushed: FxHashMap<TypeId, u32>,
     /// The types whose serials `push_serial` is assigning. Kept allocated between calls.
     serial_walk: Vec<TypeId>,

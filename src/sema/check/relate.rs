@@ -4524,25 +4524,16 @@ impl<'p, 's> Checker<'p, 's> {
         false
     }
 
-    /// True if `t.id >= last.id` in tsgo, for `isDeeplyNestedType`: the entry at `to` of the stack was created no
-    /// earlier than the entry at `from`. tsgo numbers types as it creates them. Here a type's id says nothing about
-    /// when it was created, so the push serials stand in for the ids. See `push_serial`.
+    /// `t.id >= last.id` in `isDeeplyNestedType`, with the push serials for the ids. See `push_serial`.
     fn is_at_least_as_new(stack: &[(TypeId, u32)], to: usize, from: usize) -> bool {
         let ((t, serial), (last, last_serial)) = (stack[to], stack[from]);
         t == last || serial >= last_serial
     }
 
-    /// Returns the push serial of `t`, which orders the types on a comparison's stacks as tsgo's ids do.
-    ///
-    /// tsgo creates a type when a type node is resolved or a comparison first reaches it, and it creates a type
-    /// after every type its key mentions, left to right: the arguments of a reference, the members of a union or
-    /// an intersection, the types a mapper maps to. It creates the declared type of a class or an interface before
-    /// any instantiation of it. So the serial of a type is its position in the order in which this task resolved
-    /// type nodes and first pushed types on a stack, except that the first serial of a type gives the declared
-    /// type of its target and the types its key mentions, and theirs, their serials first. An entry that an earlier
-    /// comparison of the task reached is then older than one this comparison made, the types a comparison started
-    /// with are older than what it reached from them, and a part pushed after its whole, as the constituent of an
-    /// intersection, is older than the whole.
+    /// Returns the push serial of `t`: its place in the order in which tsgo creates types, as far as this task can
+    /// tell. tsgo creates a type when a type node is resolved or a comparison first reaches it, after the declared
+    /// type of its target and after the types its key mentions, left to right. The first serial of a type gives
+    /// those their serials first.
     pub(super) fn push_serial(&mut self, t: TypeId) -> u32 {
         if let Some(&serial) = self.first_pushed.get(&t) {
             return serial;

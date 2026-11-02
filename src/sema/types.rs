@@ -3798,9 +3798,7 @@ impl<'p, 's> Types<'p, 's> {
     }
 
     /// Compares the heights of `a` and `b`, for the depth limit of `aot::Queries`: a taller type is taken for a newer
-    /// instantiation, one caused by recursion. The instantiations of a recursion that steps from one literal type to
-    /// the next all have the same height, and comparing their hashes would count only about half of them. A
-    /// comparison orders the types on its stacks by when they were first pushed instead (`is_at_least_as_new`).
+    /// instantiation, one caused by recursion.
     #[inline]
     pub fn nesting_order(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
         self.rank(a).height.cmp(&self.rank(b).height)

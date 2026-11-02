@@ -210,13 +210,12 @@ delete globalThis.keptOwnName;
 // CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|"the const" flags=[IsExpected]}
 // CHECK-NEXT: v3 = NewClosure function=[[f_6]]
 // CHECK-NEXT: v4 = Convert v3 declared={type=[[f_6]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: v5 = TypeOf v2
-// CHECK-NEXT: v6 = String string="string"
-// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined" flags=[IsExpected]}
-// CHECK-NEXT: v8 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v9 = PropGet v8 key="taken" [isFreeName, isForTypeOf]
-// CHECK-NEXT: v10 = TypeOf v9
-// CHECK-NEXT: v11 = NewArray v7, v10 contents=undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined"
-// CHECK-NEXT: v12 = Convert v11 declared={type=undefined|null|Array<undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined"> flags=[IsExpected]}
-// CHECK-NEXT: Return v12
+// CHECK-NEXT: v5 = String string="string"
+// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined" flags=[IsExpected]}
+// CHECK-NEXT: v7 = Builtin builtin=GlobalThis
+// CHECK-NEXT: v8 = PropGet v7 key="taken" [isFreeName, isForTypeOf]
+// CHECK-NEXT: v9 = TypeOf v8
+// CHECK-NEXT: v10 = NewArray v6, v9 contents=undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined"
+// CHECK-NEXT: v11 = Convert v10 declared={type=undefined|null|Array<undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined"> flags=[IsExpected]}
+// CHECK-NEXT: Return v11
 // CHECK-NEXT: }

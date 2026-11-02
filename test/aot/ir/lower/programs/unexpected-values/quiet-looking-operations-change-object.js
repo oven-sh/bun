@@ -195,7 +195,7 @@ for (const [kind, make] of [["class", () => new Box(3)], ["constructor function"
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="strike"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow captures=[{type=undefined|null|string|[[f_9]] flags=[IsExpected]}, {type=anything}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_10]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow captures=[{type=undefined|null|string|[[f_9]] flags=[IsExpected] variableName="change"}, {type=anything variableName="box"}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_10]]] {
 // CHECK-NEXT: b0(v0: undefined|null|string|[[f_9]], v1: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

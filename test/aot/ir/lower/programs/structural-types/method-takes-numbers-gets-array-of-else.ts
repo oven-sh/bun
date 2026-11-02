@@ -211,11 +211,22 @@ for (const [label, values] of lists) {
 // CHECK-NEXT: b0(v0: undefined|null|Array<number>):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Builtin builtin=Array
-// CHECK-NEXT: v2 = Builtin builtin=ArrayFrom
-// CHECK-NEXT: v3 = Builtin builtin=Float64Array
-// CHECK-NEXT: v4 = Construct v3, -, v0 calleeName="Float64Array"
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|Float64Array site=[[w_22]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v6 = Call v2, v1, v5 calleeName="Array.from"
-// CHECK-NEXT: ReturnCall v6 casts=[{declared={type=undefined|null|Array<number> site=[[w_23]] flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|Array<number> site=[[w_20]] flags=[OmitsNull, OmitsUndefined]}}]
+// CHECK-NEXT: v1 = Builtin builtin=ArrayFrom
+// CHECK-NEXT: v2 = Builtin builtin=Float64Array
+// CHECK-NEXT: v3 = Construct v2, -, v0 calleeName="Float64Array"
+// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|Float64Array site=[[w_22]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: v5 = IsPristineArray v4
+// CHECK-NEXT: Branch v5 -> taken b2(), notTaken b4()
+// CHECK-NEXT: b2():
+// CHECK-NEXT: v6 = NewArray contents=anything
+// CHECK-NEXT: AppendSpread v6, v4
+// CHECK-NEXT: v8 = Convert v6 declared={type=undefined|null|Array<number> site=[[w_23]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+// CHECK-NEXT: Jump -> next b3()
+// CHECK-NEXT: b3():
+// CHECK-NEXT: Return v8
+// CHECK-NEXT: b4():
+// CHECK-NEXT: v9 = Builtin builtin=Array [isNotReadFromHolder]
+// CHECK-NEXT: v10 = Builtin builtin=ArrayFrom [isNotReadFromHolder]
+// CHECK-NEXT: v11 = Call v10, v9, v4
+// CHECK-NEXT: ReturnCall v11 casts=[{declared={type=undefined|null|Array<number> site=[[w_23]] flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|Array<number> site=[[w_20]] flags=[OmitsNull, OmitsUndefined]}}]
 // CHECK-NEXT: }

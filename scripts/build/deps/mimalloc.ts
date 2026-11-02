@@ -13,7 +13,7 @@
 import type { Config } from "../config.ts";
 import type { Dependency, DirectBuild } from "../source.ts";
 
-const MIMALLOC_COMMIT = "92ef6587c57b262f6e6abf513f7776a2f8d12aeb";
+const MIMALLOC_COMMIT = "5945551d9ea1e3c83dbf5b198b00a3ec51aee395";
 
 /**
  * macOS: src/jsc/bindings/MimallocOverrideDarwin.cpp defines the C allocation
@@ -61,6 +61,30 @@ export const replacedOperatorNewSymbols: readonly string[] = ["w", "a"].flatMap(
   ]),
 ]);
 
+/**
+ * What a build with `lockEnvironment` still reads from the environment: sizes and pace. Nothing that prints, writes a
+ * file or changes what is checked. An executable compiled ahead of time does not start with a `MIMALLOC_` name that is
+ * not here (`is_never_read` in src/jsc/compiled_program.rs).
+ */
+const namesReadFromLockedEnvironment = [
+  "mimalloc_allow_thp",
+  "mimalloc_arena_eager_commit",
+  "mimalloc_arena_purge_mult",
+  "mimalloc_arena_reserve",
+  "mimalloc_generic_collect",
+  "mimalloc_minimal_purge_size",
+  "mimalloc_page_full_retain",
+  "mimalloc_purge_decommits",
+  "mimalloc_purge_delay",
+  "mimalloc_purge_holes",
+  "mimalloc_purge_holes_eager_zero",
+  "mimalloc_purge_holes_full_every",
+  "mimalloc_purge_holes_large_floor",
+  "mimalloc_purge_holes_large_floor_epochs",
+  "mimalloc_purge_holes_min_interval",
+  "mimalloc_scavenger",
+];
+
 export const mimalloc: Dependency = {
   name: "mimalloc",
   versionMacro: "MIMALLOC",
@@ -70,29 +94,6 @@ export const mimalloc: Dependency = {
     repo: "oven-sh/mimalloc",
     commit: MIMALLOC_COMMIT,
   }),
-
-  // What the two `hand-out-` patches add is switched on only while the ahead-of-time compiler runs, and costs every
-  // free a test: a build without the compiler leaves them out.
-  patches: cfg => [
-    "patches/mimalloc/new-oom-hook.patch",
-    ...(cfg.aot
-      ? ["patches/mimalloc/hand-out-last-freed.patch", "patches/mimalloc/hand-out-resident-slices.patch"]
-      : []),
-    "patches/mimalloc/secure-guard-pages-are-protected.patch",
-    "patches/mimalloc/out-of-memory-is-no-corruption.patch",
-    "patches/mimalloc/remember-the-request-that-found-no-memory.patch",
-    "patches/mimalloc/ask-who-may-take-address-space.patch",
-    "patches/mimalloc/new-uses-address-space-kept-aside.patch",
-    "patches/mimalloc/entry-points-that-use-address-space-kept-aside.patch",
-    "patches/mimalloc/page-map-covers-the-arenas.patch",
-    "patches/mimalloc/keep-pieces-of-the-arenas-aside.patch",
-    "patches/mimalloc/no-thread-locals-for-address-space-kept-aside.patch",
-    "patches/mimalloc/tell-who-takes-small-pages.patch",
-    "patches/mimalloc/look-in-every-bin-for-what-was-kept-aside.patch",
-    "patches/mimalloc/give-a-thread-its-records-out-of-what-was-kept-aside.patch",
-    "patches/mimalloc/look-in-every-bin-of-an-exclusive-arena.patch",
-    ...(cfg.lockEnvironment ? ["patches/mimalloc/environment-sets-sizes-and-pace-only.patch"] : []),
-  ],
 
   build: cfg => {
     // ─── Override behavior (global malloc replacement) ───
@@ -149,6 +150,7 @@ export const mimalloc: Dependency = {
 
     if (cfg.abi === "musl") defines.MI_LIBC_MUSL = 1;
     if (cfg.hardened) defines.MI_SECURE = 1;
+    if (cfg.lockEnvironment) defines.MI_GETENV_ALLOWED = namesReadFromLockedEnvironment.join(",");
     if (override) defines.MI_MALLOC_OVERRIDE = true;
 
     if (cfg.debug) {
@@ -190,7 +192,7 @@ export const mimalloc: Dependency = {
 
     if (override) cflags.push("-fno-builtin-malloc");
     if (override || overridesDarwinAllocator(cfg)) {
-      // `operator new` ends in mi_new here. See patches/mimalloc/new-oom-hook.patch.
+      // `operator new` ends in mi_new here. Without exceptions it cannot throw: it calls this instead of returning NULL.
       // The value is a function name, and a `defines` entry would quote it.
       cflags.push("-DMI_NEW_OOM=Bun__outOfMemory");
     }

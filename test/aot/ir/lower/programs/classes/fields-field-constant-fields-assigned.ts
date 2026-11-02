@@ -296,11 +296,12 @@ variable = "changed";
 // CHECK-NEXT: v4 = ResolveHeritage v0
 // CHECK-NEXT: v5 = NewClosure v3 function=[[f_19]]
 // CHECK-NEXT: v6 = NewClass v5, v0, v4 layout=[[L_20]]
-// CHECK-NEXT: v7 = ToPropertyKey v2
-// CHECK-NEXT: PutEnvironmentField v3, v7 layout=[[L_18]]
-// CHECK-NEXT: v9 = FinishClass v6 layout=[[L_20]]
-// CHECK-NEXT: v10 = Convert v9 declared={type=undefined|null|[[f_1]] site=[[w_15]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v10
+// CHECK-NEXT: v7 = String string="inner"
+// CHECK-NEXT: v8 = ToPropertyKey v7
+// CHECK-NEXT: PutEnvironmentField v3, v8 layout=[[L_18]]
+// CHECK-NEXT: v10 = FinishClass v6 layout=[[L_20]]
+// CHECK-NEXT: v11 = Convert v10 declared={type=undefined|null|[[f_1]] site=[[w_15]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: Return v11
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Above"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_21]]] {

@@ -1,14 +1,19 @@
 // What the servers under ./app and ./tanstack cost, held against ./budgets.json, which only goes down.
 // This file asks nothing by itself: ./budgets-of-<name>.test.ts asks it for one server each.
 //
-// Each server is built twice: the way a user builds it, for the size of its code, and with a counter on each side of each branch
+// Each server is built the way a user builds it, for the size of its code, and with a counter on each side of each branch
 // (../harness/counted-run.ts). The counted server answers a fixed number of rounds, one request of each route of ./answers.ts a
 // round, every answer compared. All numbers are exact counts: no clock, the same on any machine at any load.
+// What a file is compiled to does not hang on whether it is the entry point: the code is sized with the server's file as the entry
+// point, the work is counted with an entry point of two lines that imports it, and one budget holds both. The server is also sized
+// in that second form, and the two sizes are within one percent of each other.
 // "typescript" is no server: ./typescript-check.ts, the type checker of the typescript package; its round is one check of a fixed text.
 //
 //   codeBytes            the machine code in the image
 //   bytesAValue          the bytes of machine code for one value of the program as the compiler first reads it, in source functions
 //                        of 10 to 300 values, with all the versions and copies that are made of them
+//   engineRuns           how often the engine runs for the one build: a build that starts over runs the front end and flow again.
+//                        Held exactly: one more fails the test
 //   tests                the tests that the compiler put in front of what it expects (a type, a layout, a filled slot ..): how many
 //                        run in a round, and how many take the side that it laid out as the less likely one. Only those that
 //                        fail are held against the budget: an access by name that becomes a tested slot adds a test and is a gain.
@@ -22,6 +27,8 @@
 //   runtimeOperations    the calls in a round out of compiled code and its stubs into functions of the run time, by function;
 //                        their sum is held against the budget
 //   allocated            the cells and bytes that compiled code and its stubs allocate in a round
+//   allocatedInTotal     those that anybody allocates in a round: the run time and Bun's native code too. Work that moves from compiled code
+//                        into the run time leaves the number above and stays in this one
 //   closures             the function objects made in a round, and those made once: by the start and by what only the first rounds do
 //   calls                the calls of compiled functions in a round, and those among them that enter a function which the compiler took
 //                        for cold, for run once, or for reachable only behind a test that fails: it gave them its slowest code
@@ -38,6 +45,9 @@
 //   AOT_BUDGETS=accept ..                                               writes every number as measured
 //   AOT_BUDGETS_TABLE=<folder> ..                                       also writes <folder>/<server>.tsv: every test by position
 //   AOT_BUDGETS_FILE=<file> ..                                          another file in place of ./budgets.json
+//   AOT_BUDGETS_FLAGS="--aot-testing=DelayFlowRules:6" ..               more flags for every build: that one is another valid order of
+//                                                                       flow's rules. Tests that fail and accesses by name hang on the
+//                                                                       order: compare two Buns over several, not one build with one
 //
 // Each server prints one line that begins with BUDGET: within, better or worse, and by which numbers; and one that begins with
 // NUMBERS: all that may only fall, as measured, for whoever compares one Bun with another.
@@ -53,6 +63,7 @@ import {
   countScript,
   countServer,
   entryThatExitsWhenTold,
+  entryThatImports,
   run,
   testsAddedByTheCompiler,
   type CountedTest,
@@ -65,6 +76,7 @@ import { filterRequested, installPackages, requestedServers } from "./run-server
 interface Budget {
   codeBytes: number;
   bytesAValue?: number;
+  engineRuns: number;
   tests: { executed: number; failed: number };
   typeTests: { executed: number; failed: number };
   /** `bunAtMost` is there where the budget is lower than the places listed: the list is that of a later Bun than the number. */
@@ -74,10 +86,12 @@ interface Budget {
   accessesByName: number;
   runtimeOperations: Record<string, number>;
   allocated: { cells: number; bytes: number };
+  allocatedInTotal: { cells: number; bytes: number };
   closures: { aRound: number; once: number };
 }
 /** A number that the file does not have yet has no budget; AOT_BUDGETS=lower writes it. */
-type Later = "calls" | "accessesByName" | "runtimeOperations" | "allocated" | "closures";
+type Later =
+  "engineRuns" | "calls" | "accessesByName" | "runtimeOperations" | "allocated" | "allocatedInTotal" | "closures";
 type StoredBudget = Omit<Budget, Later> & Partial<Pick<Budget, Later>>;
 
 const servers = filterRequested([
@@ -118,8 +132,8 @@ const sum = (tests: CountedTest[]) => ({
 const placeOf = (test: CountedTest) => `${test.kind} ${test.position}`;
 
 function measured(
-  { codeBytes, bytesAValue }: Awaited<ReturnType<typeof codeOf>>,
-  { tests, uneven, calls, accessesByName, runtimeOperations, allocated, closures }: CountedWork,
+  { codeBytes, bytesAValue, engineRuns }: Awaited<ReturnType<typeof codeOf>>,
+  { tests, uneven, calls, accessesByName, runtimeOperations, allocated, allocatedInTotal, closures }: CountedWork,
 ): Budget {
   const isAdded = (test: CountedTest) => testsAddedByTheCompiler.has(test.kind);
   const added = tests.filter(isAdded);
@@ -131,6 +145,7 @@ function measured(
   return {
     codeBytes,
     bytesAValue,
+    engineRuns,
     tests: sum(counted),
     typeTests: sum(counted.filter(test => test.kind === "TypeTest")),
     alwaysFailing: {
@@ -146,6 +161,7 @@ function measured(
     accessesByName,
     runtimeOperations,
     allocated,
+    allocatedInTotal,
     closures: { aRound: closures.each, once: closures.once },
   };
 }
@@ -159,6 +175,7 @@ const total = (counts: Record<string, number> | undefined) =>
 const numbersOf = (budget: StoredBudget) => ({
   "codeBytes": budget.codeBytes,
   "bytesAValue": budget.bytesAValue,
+  "engineRuns": budget.engineRuns,
   "tests.failed": budget.tests.failed,
   "typeTests.failed": budget.typeTests.failed,
   "alwaysFailing.bun": budget.alwaysFailing.bunAtMost ?? countOf(budget.alwaysFailing.bun),
@@ -170,6 +187,8 @@ const numbersOf = (budget: StoredBudget) => ({
   "runtimeOperations": total(budget.runtimeOperations),
   "allocated.cells": budget.allocated?.cells,
   "allocated.bytes": budget.allocated?.bytes,
+  "allocatedInTotal.cells": budget.allocatedInTotal?.cells,
+  "allocatedInTotal.bytes": budget.allocatedInTotal?.bytes,
   "closures.aRound": budget.closures?.aRound,
   "closures.once": budget.closures?.once,
 });
@@ -183,6 +202,7 @@ function lowered(budget: StoredBudget, now: Budget, onlyWhatIsMissing: boolean):
   return {
     codeBytes: lower(budget.codeBytes, now.codeBytes),
     bytesAValue: now.bytesAValue === undefined ? budget.bytesAValue : lower(budget.bytesAValue, now.bytesAValue),
+    engineRuns: lower(budget.engineRuns, now.engineRuns),
     tests: {
       executed: written(budget.tests.executed, now.tests.executed),
       failed: lower(budget.tests.failed, now.tests.failed),
@@ -214,6 +234,10 @@ function lowered(budget: StoredBudget, now: Budget, onlyWhatIsMissing: boolean):
     allocated: {
       cells: lower(budget.allocated?.cells, now.allocated.cells),
       bytes: lower(budget.allocated?.bytes, now.allocated.bytes),
+    },
+    allocatedInTotal: {
+      cells: lower(budget.allocatedInTotal?.cells, now.allocatedInTotal.cells),
+      bytes: lower(budget.allocatedInTotal?.bytes, now.allocatedInTotal.bytes),
     },
     closures: {
       aRound: lower(budget.closures?.aRound, now.closures.aRound),
@@ -261,7 +285,12 @@ describe.skipIf(skipped)("compile/aot/servers/budgets", () => {
   const app = String(tempDir("aot-servers-budgets", {}));
   const tanstack = String(tempDir("aot-servers-budgets-tanstack", {}));
   const typescript = String(tempDir("aot-servers-budgets-typescript", {}));
-  const flags = ["--define", 'process.env.NODE_ENV="production"', "--target=bun"];
+  const flags = [
+    "--define",
+    'process.env.NODE_ENV="production"',
+    "--target=bun",
+    ...(process.env.AOT_BUDGETS_FLAGS ?? "").split(" ").filter(Boolean),
+  ];
   const measuredNow: Record<string, Budget> = {};
   let somethingGotWorse = false;
   afterAll(() => {
@@ -304,10 +333,23 @@ describe.skipIf(skipped)("compile/aot/servers/budgets", () => {
     async name => {
       const folder = name === "tanstack" ? tanstack : name === "typescript" ? typescript : app;
       const source = name === "tanstack" ? "serve.ts" : name === "typescript" ? "typescript-check.ts" : `${name}.ts`;
+      // ./<name>.test.ts asks each server as a user builds it. "typescript" takes a minute to build, so it is asked here, where it is built for its size.
+      const checksItsText = async (executable: string) =>
+        expect(await run([executable, "2"], folder, bunEnv)).toEqual({
+          stdout: "2322 2345 2322\n",
+          stderr: "",
+          exitCode: 0,
+          signal: null,
+        });
       // Side by side: where one build has work for one thread only, the other has the processors.
+      // The package.json of "tanstack" says that its files have no side effects, so a file that is imported for its effects alone is dropped.
+      const importing =
+        name === "tanstack" ? undefined : entryThatImports(folder, source, { isServer: name !== "typescript" });
+      // The code is sized with the file as the entry point, the work is counted where an entry point imports it: one budget holds
+      // both forms. That both have the same code: ../a-server-gets-the-same-code-however-its-file-is-reached.test.ts.
       const [code, build] = await Promise.all([
-        codeOf(folder, `./${source}`, flags),
-        buildCounted(folder, name === "typescript" ? `./${source}` : entryThatExitsWhenTold(folder, source), flags),
+        codeOf(folder, `./${source}`, flags, name === "typescript" ? checksItsText : undefined),
+        buildCounted(folder, importing ?? entryThatExitsWhenTold(folder, source), flags),
       ]);
       const work =
         name === "typescript"
@@ -332,8 +374,10 @@ describe.skipIf(skipped)("compile/aot/servers/budgets", () => {
         keyof typeof allowed,
         number,
       ][];
-      const worse = numbers.filter(
-        ([what, value]) => value > (allowed[what] ?? Infinity) * 1.02 && value > allowed[what]! + 3,
+      const worse = numbers.filter(([what, value]) =>
+        what === "engineRuns"
+          ? value > (allowed[what] ?? Infinity)
+          : value > (allowed[what] ?? Infinity) * 1.02 && value > allowed[what]! + 3,
       );
       somethingGotWorse ||= worse.length > 0;
       const newPlaces = Object.entries(now.alwaysFailing.bun).flatMap(([path, places]) =>

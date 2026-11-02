@@ -5660,7 +5660,7 @@ pub(crate) mod __gated_printer {
                         return Ok(());
                     }
 
-                    // `ClauseItem` isn't `Clone`, so build a Vec of arena
+                    // No need to copy the items: build a Vec of arena
                     // borrows instead and swap-remove the borrows; the printer is
                     // the only consumer of the filtered list, and a re-print
                     // recomputes the identical filtering, so the AST write-back

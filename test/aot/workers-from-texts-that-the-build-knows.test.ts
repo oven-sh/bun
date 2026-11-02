@@ -57,7 +57,7 @@ new Worker(new URL("./second.ts", import.meta.url)).on("message", message => con
   );
 
   test.each([
-    ["a data: URL", `new Worker(made("data:text/javascript,postMessage(1)"))`],
+    ["a data: URL", `new Worker(made("data:text/javascript,") + made("postMessage(1)"))`],
     ["an object URL", `new Worker(URL.createObjectURL(new Blob([made("postMessage(2)")])))`],
     [
       "an object URL of a text that is compiled, with a type that reads it in another way,",
@@ -216,6 +216,9 @@ new Worker(new URL("./second.ts", import.meta.url)).on("message", message => con
             await report("its href", new Worker(new URL("../beside.ts", import.meta.url).href));
             await report("a joined path one folder above", new Worker(path.join(import.meta.dir, "../beside.ts")));
             await report("a URL from a folder below", start());
+            await report("a URL two folders above", new Worker(new URL("../../workers/job.ts", import.meta.url)));
+            await report("a joined path two folders above", new Worker(path.join(import.meta.dir, "../../workers/job.ts")));
+            await report("a URL three folders above", new Worker(new URL("../../../top.ts", import.meta.url)));
           `,
           "project/src/app/worker.ts": `postMessage("worker.ts" as string);`,
           "project/src/app/lib/inner.ts": `postMessage("lib/inner.ts" as string);`,
@@ -223,6 +226,7 @@ new Worker(new URL("./second.ts", import.meta.url)).on("message", message => con
           "project/src/beside.ts": `import { name } from "./name.ts"; postMessage("beside.ts " + name);`,
           "project/src/name.ts": `export const name: string = "and what it imports";`,
           "project/workers/job.ts": `postMessage("workers/job.ts" as string);`,
+          "top.ts": `postMessage("top.ts" as string);`,
           "project/node_modules/pool/package.json": `{ "name": "pool", "main": "lib/index.js" }`,
           "project/node_modules/pool/lib/index.js": `postMessage("pool/lib/index.js");`,
           "project/node_modules/pool/lib/job.js": `postMessage("pool/lib/job.js");`,

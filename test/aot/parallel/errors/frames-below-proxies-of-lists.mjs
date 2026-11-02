@@ -1,0 +1,42 @@
+// Prints the frames of what a trap of a proxy throws while the proxy of a list or of an object is walked, copied or read by built-ins, as the proxies of a reactive store are. next() of the iterator of a list is in no stack trace unless it throws itself.
+const frames = error => String(error && error.stack).split("\n").slice(1, 7).map(line => line.trim().replace(/^at /, "").replace(/\(?[^ (]*\.mjs:/, "(").replace(/^\((\d+:\d+)$/, "($1)")).join(" < ");
+function attempt(run) { try { const result = run(); console.log(run.name + ": nothing " + typeof result); } catch (error) { console.log(run.name + ": " + (error && error.constructor.name) + " " + frames(error)); } }
+const hide = value => [value, 0][Number(process.argv.length > 100)];
+function fail() { throw new Error("thrown"); }
+const reactive = (target, failing) => new Proxy(target, { get(object, key, receiver) { if (key === failing) fail(); return Reflect.get(object, key, receiver); }, has(object, key) { if (key === failing) fail(); return Reflect.has(object, key); }, ownKeys(object) { if (failing === "keys") fail(); return Reflect.ownKeys(object); }, set(object, key, value, receiver) { if (key === failing) fail(); return Reflect.set(object, key, value, receiver); } });
+attempt(function forOfLength() { for (const item of reactive([1, 2], "length")) hide(item); });
+attempt(function forOfElement() { for (const item of reactive([1, 2], "1")) hide(item); });
+attempt(function spreadLength() { return [...reactive([1, 2], "length")]; });
+attempt(function spreadElement() { return [...reactive([1, 2], "0")]; });
+attempt(function destructure() { const [a, b] = reactive([1, 2], "1"); return [a, b]; });
+attempt(function callSpread() { return hide(...reactive([1, 2], "1")); });
+attempt(function arrayFrom() { return Array.from(reactive([1, 2], "1")); });
+attempt(function newSet() { return new Set(reactive([1, 2], "1")); });
+attempt(function mapOver() { return reactive([1, 2], "1").map(x => x); });
+attempt(function forEachOver() { return reactive([1, 2], "1").forEach(x => x); });
+attempt(function joinOver() { return reactive([1, 2], "1").join(); });
+attempt(function includesOver() { return reactive([1, 2], "1").includes(5); });
+attempt(function pushOver() { return reactive([1, 2], "2").push(3); });
+attempt(function sliceOver() { return reactive([1, 2], "1").slice(); });
+attempt(function concatOver() { return [].concat(reactive([1, 2], "1")); });
+attempt(function keysOver() { return Object.keys(reactive({ a: 1 }, "keys")); });
+attempt(function forInOver() { for (const key in reactive({ a: 1 }, "keys")) hide(key); });
+attempt(function spreadObject() { return { ...reactive({ a: 1 }, "a") }; });
+attempt(function assignObject() { return Object.assign({}, reactive({ a: 1 }, "a")); });
+attempt(function stringify() { return JSON.stringify(reactive({ a: 1 }, "a")); });
+attempt(function stringifyList() { return JSON.stringify(reactive([1, 2], "1")); });
+attempt(function readMember() { return reactive({ a: 1 }, "a").a; });
+attempt(function storeMember() { reactive({ a: 1 }, "a").a = 2; });
+attempt(function inOperator() { return "a" in reactive({ a: 1 }, "a"); });
+attempt(function callMember() { return reactive({ a() {} }, "a").a(); });
+attempt(function entriesOver() { return [...reactive([1, 2], "1").entries()]; });
+attempt(function valuesOver() { return [...reactive([1, 2], "1").values()]; });
+attempt(function iteratorHelper() { return reactive([1, 2], "1").values().map(x => x).toArray(); });
+attempt(function mapEntries() { return new Map(reactive([[1, 2]], "0")); });
+attempt(function templateOver() { return `${reactive([1, 2], "1")}`; });
+attempt(function sortOver() { return reactive([2, 1], "1").sort(); });
+attempt(function isArray() { return Array.isArray(reactive([1], "x")); });
+attempt(function inspect() { return Bun.inspect(reactive({ a: 1 }, "a")); });
+attempt(function nextOfAnotherReceiver() { return [].values().next.call({}); });
+attempt(function nextOfListLike() { return [].values.call({ get length() { return fail(); } }).next(); });
+attempt(function nextOfDetachedView() { const view = new Uint8Array(4); const it = view.values(); view.buffer.transfer(); return it.next(); });

@@ -73,7 +73,7 @@ console.log(lines.join("\n"));
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="set"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=4 captures=[{type=undefined|null|Array flags=[IsExpected]}] thisType={type=anything} parameters=[{type=undefined|null|[[L_5]] flags=[IsExpected]}, {type=undefined|null|string|symbol flags=[IsExpected]}, {type=anything}, {type=anything}] results=[{type=boolean flags=[IsExpected]}] functionTypes={{*}}[[f_7]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=4 captures=[{type=undefined|null|Array flags=[IsExpected] variableName="log"}] thisType={type=anything} parameters=[{type=undefined|null|[[L_5]] flags=[IsExpected]}, {type=undefined|null|string|symbol flags=[IsExpected]}, {type=anything}, {type=anything}] results=[{type=boolean flags=[IsExpected]}] functionTypes={{*}}[[f_7]]] {
 // CHECK-NEXT: b0(v0: undefined|null|Array, v1: undefined|null|[[L_5]], v2: undefined|null|string|symbol, v3: anything, v4: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -91,7 +91,7 @@ console.log(lines.join("\n"));
 // CHECK-NEXT: ReturnCall v15 casts=[{declared={type=boolean flags=[IsExpected]}}]
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="defineProperty"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=3 captures=[{type=undefined|null|Array flags=[IsExpected]}] thisType={type=anything} parameters=[{type=undefined|null|[[L_5]] flags=[IsExpected]}, {type=undefined|null|string|symbol flags=[IsExpected]}, {type=undefined|null|number|string|symbol|bigint|[[L_9]] flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] functionTypes={{*}}[[f_10]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=3 captures=[{type=undefined|null|Array flags=[IsExpected] variableName="log"}] thisType={type=anything} parameters=[{type=undefined|null|[[L_5]] flags=[IsExpected]}, {type=undefined|null|string|symbol flags=[IsExpected]}, {type=undefined|null|number|string|symbol|bigint|[[L_9]] flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] functionTypes={{*}}[[f_10]]] {
 // CHECK-NEXT: b0(v0: undefined|null|Array, v1: undefined|null|[[L_5]], v2: undefined|null|string|symbol, v3: undefined|null|number|string|symbol|bigint|[[L_9]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -109,7 +109,7 @@ console.log(lines.join("\n"));
 // CHECK-NEXT: ReturnCall v14 casts=[{declared={type=boolean flags=[IsExpected]}}]
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="has"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=2 captures=[{type=undefined|null|Array flags=[IsExpected]}] thisType={type=anything} parameters=[{type=undefined|null|[[L_5]] flags=[IsExpected]}, {type=undefined|null|string|symbol flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] functionTypes={{*}}[[f_11]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=2 captures=[{type=undefined|null|Array flags=[IsExpected] variableName="log"}] thisType={type=anything} parameters=[{type=undefined|null|[[L_5]] flags=[IsExpected]}, {type=undefined|null|string|symbol flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] functionTypes={{*}}[[f_11]]] {
 // CHECK-NEXT: b0(v0: undefined|null|Array, v1: undefined|null|[[L_5]], v2: undefined|null|string|symbol):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -127,7 +127,7 @@ console.log(lines.join("\n"));
 // CHECK-NEXT: ReturnCall v13 casts=[{declared={type=boolean flags=[IsExpected]}}]
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="getPrototypeOf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=1 captures=[{type=undefined|null|Array flags=[IsExpected]}] thisType={type=anything} parameters=[{type=undefined|null|[[L_5]] flags=[IsExpected]}] results=[{type=undefined|null|object flags=[IsExpected]}] functionTypes={{*}}[[f_12]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=1 captures=[{type=undefined|null|Array flags=[IsExpected] variableName="log"}] thisType={type=anything} parameters=[{type=undefined|null|[[L_5]] flags=[IsExpected]}] results=[{type=undefined|null|object flags=[IsExpected]}] functionTypes={{*}}[[f_12]]] {
 // CHECK-NEXT: b0(v0: undefined|null|Array, v1: undefined|null|[[L_5]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

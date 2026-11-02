@@ -242,6 +242,12 @@ const MINIFY_SYNTAX_DIVERGENCE: Record<string, { compiledFunctions: number; buil
       compiledFunctions: 0,
       reason: "anonymized function expression becomes outlineable; 0 slots needed",
     },
+    // The fixture is `if (function useFoo() { "use memo"; ... }) {}`. The statement does nothing, so minify.syntax
+    // removes it, and the compiled function with it.
+    "nested-function-discovery-if-test-expr": {
+      compiledFunctions: 0,
+      reason: "the statement that holds the function is dead code",
+    },
     // minify.syntax constant-folds `const x = 0` into the `useMemo` dependency
     // array, turning `[x]` into `[0]`; the manual-memoization parser only accepts
     // identifier / member expressions as dependencies, so it errors. This is a

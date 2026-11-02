@@ -1,8 +1,5 @@
-// Programs that put constant expressions in the places where a value that was folded at build time comes out: the left of `??`, `||` and `&&`, a
-// template, `"" +`, a condition, a `const` that is then printed, and in TypeScript an enum member. The expressions are numbers as text, every
-// arithmetic and bitwise operator on unusual operands, comparisons, concatenation and `String.raw`.
-//
-// A program is a seed. The same seed always writes the same program.
+// Programs that put constant expressions where a folded value is observable: the left of `??`, `||` and `&&`, a
+// template, `"" +`, a condition, a printed `const`, and in TypeScript an enum member.
 import { randomFrom } from "./constant-expressions";
 
 // prettier-ignore
@@ -31,7 +28,7 @@ export function program(seed: number, isTypeScript: boolean): { file: string; te
   const operand = () => inParentheses(choice(unusual));
   const expressions = numbers.map(inParentheses);
   for (const operator of ["+", "-", "*", "/", "%", "**", "&", "|", "^", "<<", ">>", ">>>"]) expressions.push(...times(420, () => `(${operand()} ${operator} ${operand()})`));
-  // In TypeScript `a < ((b) > (c))` is read as type arguments.
+  // TypeScript parses `a < ((b) > (c))` as type arguments.
   for (const operator of ["<", "<=", ">", ">=", "==", "!=", "===", "!=="]) if (!isTypeScript || !operator.startsWith("<")) expressions.push(...times(60, () => `(${operand()} ${operator} ${operand()})`));
   for (const operator of ["-", "+", "~", "!", "- -", "~~", "!!"]) expressions.push(...times(40, () => `(${operator}${operand()})`));
   expressions.push(...times(300, () => inParentheses(times(upTo(2, 4), () => choice([choice(strings), operand(), choice(strings)])).join(" + "))));

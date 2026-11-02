@@ -16,23 +16,23 @@ enum Mode {
     Never,
 }
 
-const UNEXPECTED_OTHER_BLOCK: Message = Message::new(
+const UNEXPECTED_OTHER_BLOCK: &Message = &Message::new(
     "unexpectedOtherBlock",
     "Unexpected block statement surrounding arrow body.",
 );
-const UNEXPECTED_EMPTY_BLOCK: Message = Message::new(
+const UNEXPECTED_EMPTY_BLOCK: &Message = &Message::new(
     "unexpectedEmptyBlock",
     "Unexpected block statement surrounding arrow body; put a value of `undefined` immediately after the `=>`.",
 );
-const UNEXPECTED_OBJECT_BLOCK: Message = Message::new(
+const UNEXPECTED_OBJECT_BLOCK: &Message = &Message::new(
     "unexpectedObjectBlock",
     "Unexpected block statement surrounding arrow body; parenthesize the returned value and move it immediately after the `=>`.",
 );
-const UNEXPECTED_SINGLE_BLOCK: Message = Message::new(
+const UNEXPECTED_SINGLE_BLOCK: &Message = &Message::new(
     "unexpectedSingleBlock",
     "Unexpected block statement surrounding arrow body; move the returned value immediately after the `=>`.",
 );
-const EXPECTED_BLOCK: Message = Message::new(
+const EXPECTED_BLOCK: &Message = &Message::new(
     "expectedBlock",
     "Expected block statement surrounding arrow body.",
 );

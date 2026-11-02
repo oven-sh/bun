@@ -8,8 +8,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 /// Forbid use of exported name as identifier of default export.
 pub struct NoNamedAsDefault;
 
-const USING_EXPORTED_NAME: Message = Message::new("", "Using exported name '{{name}}' as identifier for default import.");
-const OXLINT: Message = Message::new("", "Module {{export_name}} has named export {{module_name}}");
+const USING_EXPORTED_NAME: &Message = &Message::new("", "Using exported name '{{name}}' as identifier for default import.");
+const OXLINT: &Message = &Message::new("", "Module {{export_name}} has named export {{module_name}}");
 
 pub struct State<'a> {
     /// `None` for oxlint, which uses its module records.

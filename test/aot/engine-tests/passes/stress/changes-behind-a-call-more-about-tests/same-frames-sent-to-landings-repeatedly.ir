@@ -391,73 +391,74 @@ function f4 module=m0 position=380 kind=Initializer flags=[HasThis, IsChecked, I
 # CHECK-NEXT: v43: anything ~ int[-2147483643, 2147483647] = PropGet v42 key="x" accessSite=3 receivers=[L0]
 # CHECK-NEXT: v44: undefined|int ~ int[-2147483643, 2147483647] = AssumeType v43 provenType=undefined|int
 # CHECK-NEXT: v45: anything ~ int = PropGet v42 key="y" accessSite=4 receivers=[L0]
-# CHECK-NEXT: v46: number|string|bigint ~ int|whole = Add v44, v45
-# CHECK-NEXT: v47: number|string|bigint ~ int|whole = Add v40, v46
-# CHECK-NEXT: v48: boolean = GetModuleVariable variable=g2
-# CHECK-NEXT: Branch v48 -> taken b14(), notTaken b28()
+# CHECK-NEXT: v46: int|"T" ~ int = AssumeType v45 provenType=int|"T"
+# CHECK-NEXT: v47: number|string|bigint ~ int|whole = Add v44, v46
+# CHECK-NEXT: v48: number|string|bigint ~ int|whole = Add v40, v47
+# CHECK-NEXT: v49: boolean = GetModuleVariable variable=g2
+# CHECK-NEXT: Branch v49 -> taken b14(), notTaken b28()
 # CHECK-NEXT: b14() frequency=Rare:
-# CHECK-NEXT: v49: 3 = Integer integer=3
-# CHECK-NEXT: v50: int[0, 2] = Mod v41, v49
-# CHECK-NEXT: v51: 0 = Integer
-# CHECK-NEXT: v52: boolean = StrictEq v50, v51
-# CHECK-NEXT: Branch v52 -> taken b15(), notTaken b16()
+# CHECK-NEXT: v50: 3 = Integer integer=3
+# CHECK-NEXT: v51: int[0, 2] = Mod v41, v50
+# CHECK-NEXT: v52: 0 = Integer
+# CHECK-NEXT: v53: boolean = StrictEq v51, v52
+# CHECK-NEXT: Branch v53 -> taken b15(), notTaken b16()
 # CHECK-NEXT: b15() frequency=Rare:
-# CHECK-NEXT: v53: boolean = PropDelete v42 key="x" accessSite=5 receivers=[L0]
+# CHECK-NEXT: v54: boolean = PropDelete v42 key="x" accessSite=5 receivers=[L0]
 # CHECK-NEXT: Jump -> next b23()
 # CHECK-NEXT: b16() frequency=Rare:
-# CHECK-NEXT: v54: 3 = Integer integer=3
-# CHECK-NEXT: v55: int[0, 2] = Mod v41, v54
-# CHECK-NEXT: v56: 1 = Integer integer=1
-# CHECK-NEXT: v57: boolean = StrictEq v55, v56
-# CHECK-NEXT: Branch v57 -> taken b17(), notTaken b18()
+# CHECK-NEXT: v55: 3 = Integer integer=3
+# CHECK-NEXT: v56: int[0, 2] = Mod v41, v55
+# CHECK-NEXT: v57: 1 = Integer integer=1
+# CHECK-NEXT: v58: boolean = StrictEq v56, v57
+# CHECK-NEXT: Branch v58 -> taken b17(), notTaken b18()
 # CHECK-NEXT: b17() frequency=Rare:
-# CHECK-NEXT: v58: "T" = String string="T"
-# CHECK-NEXT: PropSet v42, v58 key="y" accessSite=6 receivers=[L0]
+# CHECK-NEXT: v59: "T" = String string="T"
+# CHECK-NEXT: PropSet v42, v59 key="y" accessSite=6 receivers=[L0]
 # CHECK-NEXT: Jump -> next b19()
 # CHECK-NEXT: b18() frequency=Rare:
-# CHECK-NEXT: v60: L1 = NewObject -, v41 layout=L1 fields=[0] allocationSite=2 allocationClass=1
-# CHECK-NEXT: v61: L1 = FinishObject v60
-# CHECK-NEXT: v62: L0 = CallBuiltin -, v42, v61 overload=ObjectSetPrototypeOf/0 accessSite=7
+# CHECK-NEXT: v61: L1 = NewObject -, v41 layout=L1 fields=[0] allocationSite=2 allocationClass=1
+# CHECK-NEXT: v62: L1 = FinishObject v61
+# CHECK-NEXT: v63: L0 = CallBuiltin -, v42, v62 overload=ObjectSetPrototypeOf/0 accessSite=7
 # CHECK-NEXT: Jump -> next b19()
 # CHECK-NEXT: b19() frequency=Rare:
-# CHECK-NEXT: v63: boolean ~ true = TypeTest v47 testedType=int|whole
-# CHECK-NEXT: Branch v63 -> taken b20(| 0), notTaken b22()
-# CHECK-NEXT: b20(v64: int|whole) frequency=Rare:
-# CHECK-NEXT: Jump -> next b21(v64, v41)
-# CHECK-NEXT: b21(v65: int|whole, v66: int[0, 4294967294] ~ int[0, 2147483647]):
-# CHECK-NEXT: Jump -> next b25(v65, v66)
+# CHECK-NEXT: v64: boolean ~ true = TypeTest v48 testedType=int|whole
+# CHECK-NEXT: Branch v64 -> taken b20(| 0), notTaken b22()
+# CHECK-NEXT: b20(v65: int|whole) frequency=Rare:
+# CHECK-NEXT: Jump -> next b21(v65, v41)
+# CHECK-NEXT: b21(v66: int|whole, v67: int[0, 4294967294] ~ int[0, 2147483647]):
+# CHECK-NEXT: Jump -> next b25(v66, v67)
 # CHECK-NEXT: b22() frequency=Rare:
 # CHECK-NEXT: Jump -> next b23()
 # CHECK-NEXT: b23() frequency=Rare:
-# CHECK-NEXT: v67: boolean ~ true = TypeTest v47 testedType=int|whole
-# CHECK-NEXT: Branch v67 -> taken b24(| 0), notTaken b27()
-# CHECK-NEXT: b24(v68: int|whole) frequency=Rare:
-# CHECK-NEXT: Jump -> next b25(v68, v41)
-# CHECK-NEXT: b25(v69: int|whole, v70: int[0, 4294967294] ~ int[0, 2147483647]):
-# CHECK-NEXT: Jump -> next b26(v69, v70)
-# CHECK-NEXT: b26(v71: int|whole, v72: int[0, 4294967294] ~ int[0, 2147483647]):
-# CHECK-NEXT: v73: int[1, 4294967295] ~ int[1, 2147483648] = Increment v72
-# CHECK-NEXT: Jump -> next b2(v71, v73)
+# CHECK-NEXT: v68: boolean ~ true = TypeTest v48 testedType=int|whole
+# CHECK-NEXT: Branch v68 -> taken b24(| 0), notTaken b27()
+# CHECK-NEXT: b24(v69: int|whole) frequency=Rare:
+# CHECK-NEXT: Jump -> next b25(v69, v41)
+# CHECK-NEXT: b25(v70: int|whole, v71: int[0, 4294967294] ~ int[0, 2147483647]):
+# CHECK-NEXT: Jump -> next b26(v70, v71)
+# CHECK-NEXT: b26(v72: int|whole, v73: int[0, 4294967294] ~ int[0, 2147483647]):
+# CHECK-NEXT: v74: int[1, 4294967295] ~ int[1, 2147483648] = Increment v73
+# CHECK-NEXT: Jump -> next b2(v72, v74)
 # CHECK-NEXT: b27() frequency=Rare:
 # CHECK-NEXT: Jump -> next b29()
 # CHECK-NEXT: b28() frequency=Rare:
 # CHECK-NEXT: Jump -> next b29()
 # CHECK-NEXT: b29() frequency=Rare:
-# CHECK-NEXT: v74: int[1, 4294967295] ~ int[1, 2147483648] = Increment v41
-# CHECK-NEXT: v75: boolean ~ true = TypeTest v47 testedType=int|whole
-# CHECK-NEXT: Branch v75 -> taken b30(| 0), notTaken b31()
-# CHECK-NEXT: b30(v76: int|whole) frequency=Rare:
-# CHECK-NEXT: Jump -> next b1(v76, v74)
+# CHECK-NEXT: v75: int[1, 4294967295] ~ int[1, 2147483648] = Increment v41
+# CHECK-NEXT: v76: boolean ~ true = TypeTest v48 testedType=int|whole
+# CHECK-NEXT: Branch v76 -> taken b30(| 0), notTaken b31()
+# CHECK-NEXT: b30(v77: int|whole) frequency=Rare:
+# CHECK-NEXT: Jump -> next b1(v77, v75)
 # CHECK-NEXT: b31() frequency=Rare:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v78: int[1, 4294967295] ~ int[1, 2147483647] = Upcast v74 castType=int|whole
-# CHECK-NEXT: v79: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0 accessSite=1
-# CHECK-NEXT: v80: boolean = Less v78, v79
-# CHECK-NEXT: Branch v80 -> taken b32(| 0), notTaken b33()
-# CHECK-NEXT: b32(v81: int[1, 4294967294] ~ int[1, 2147483647]) frequency=Rare:
-# CHECK-NEXT: Jump -> next b12(v47, v81)
+# CHECK-NEXT: v79: int[1, 4294967295] ~ int[1, 2147483647] = Upcast v75 castType=int|whole
+# CHECK-NEXT: v80: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0 accessSite=1
+# CHECK-NEXT: v81: boolean = Less v79, v80
+# CHECK-NEXT: Branch v81 -> taken b32(| 0), notTaken b33()
+# CHECK-NEXT: b32(v82: int[1, 4294967294] ~ int[1, 2147483647]) frequency=Rare:
+# CHECK-NEXT: Jump -> next b12(v48, v82)
 # CHECK-NEXT: b33() frequency=Rare:
-# CHECK-NEXT: Return v47
+# CHECK-NEXT: Return v48
 # CHECK-NEXT: b34():
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }

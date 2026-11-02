@@ -22,7 +22,12 @@ import { listBundledNamesOfModule } from "./bundled-names";
 import {
   encodeBundledPositions,
   encodeBundledPositionsOfSecondText,
+  findModuleHeldInPart,
   formatBundledPositions,
+  listPlacesInOtherFiles,
+  readFileOfFunctions,
+  readModule,
+  type Reading,
 } from "./bundled-positions";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { getJS2NativeCPP } from "./generate-js2native";
@@ -30,7 +35,7 @@ import { checkAscii, engineStamp, sourceStamp, writeIfNotChanged, writeIfNotChan
 import { createInternalModuleRegistry, idToEnumName } from "./internal-module-registry-scanner";
 import { encodeLazyFunctionTable, findLazyFunctions } from "./lazy-function-table";
 import { recordedPointer, removableFeatures } from "./removable-entry-points.ts";
-import { define } from "./replacements";
+import { assertNoDestructuredGlobalThis, define } from "./replacements";
 
 const builtinUsesFlag = "--builtin-uses=";
 const builtinUses = process.argv.at(-1)!.startsWith(builtinUsesFlag)
@@ -273,12 +278,16 @@ mark("Bundle modules");
 
 const outputs = new Map();
 const bundledNames: string[] = [];
+/** By the name of the module: the module as it is written, what the bundler made of it with its map, and what `bun run` evaluates. */
+const textsOfModules = new Map<string, Parameters<typeof readModule>>();
 
 for (const [i, entrypoint] of bundledEntryPoints.entries()) {
   const file_path = entrypoint.slice(TMP_DIR.length + 1).replace(/\.ts$/, ".js");
   const output = fs
     .readFileSync(path.join(TMP_DIR, "modules_out", file_path), "utf8")
     .replace(/\n\/\/# debugId=\w+\n$/, "");
+  // Checks the input, since --minify-syntax turns `var a = globalThis.a; var b = globalThis.b;` into a destructuring.
+  assertNoDestructuredGlobalThis(fs.readFileSync(entrypoint, "utf8"), file_path);
   const sourceMap = JSON.parse(fs.readFileSync(path.join(TMP_DIR, "modules_out", file_path + ".map"), "utf8"));
   const written = fs.readFileSync(path.join(BASE, moduleList[i]), "utf8");
   bundledNames.push(...listBundledNamesOfModule(moduleList[i], written, output, sourceMap));
@@ -312,21 +321,7 @@ for (const [i, entrypoint] of bundledEntryPoints.entries()) {
     throw new Error(`Errors in ${entrypoint}:\n${errors.map(x => x[1]).join("\n")}`);
   }
 
-  const readByCompiler = locate(moduleList[i]);
-  bundledNames.push(
-    formatBundledPositions(
-      moduleList[i],
-      readByCompiler === path.join(BASE, moduleList[i])
-        ? encodeBundledPositions(written, output, sourceMap, captured)
-        : encodeBundledPositionsOfSecondText(
-            fs.readFileSync(readByCompiler, "utf8"),
-            written,
-            output,
-            sourceMap,
-            captured,
-          ),
-    ),
-  );
+  textsOfModules.set(moduleList[i], [written, output, sourceMap, captured]);
 
   const outputPath = path.join(JS_DIR, file_path);
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
@@ -334,10 +329,22 @@ for (const [i, entrypoint] of bundledEntryPoints.entries()) {
   outputs.set(file_path.replace(".js", ""), captured);
 }
 
-writeIfNotChanged(
-  path.join(CODEGEN_DIR, "bundled_names_of_modules.txt"),
-  bundledNames.map(line => line + "\n").join(""),
-);
+for (const [file, texts] of textsOfModules) {
+  const readByCompiler = fs.readFileSync(locate(file), "utf8");
+  // What holds a part of a module is a second text of that module, which leaves the rest out.
+  const whole = findModuleHeldInPart(readByCompiler);
+  if (whole !== undefined && !textsOfModules.has(whole))
+    throw new Error(`${file} holds a part of ${whole}: no such module`);
+  if (whole !== undefined) bundledNames.push(`part\t${file}\t${whole}`);
+  bundledNames.push(
+    formatBundledPositions(
+      file,
+      whole === undefined && locate(file) === path.join(BASE, file)
+        ? encodeBundledPositions(...texts)
+        : encodeBundledPositionsOfSecondText(readByCompiler, ...textsOfModules.get(whole ?? file)!),
+    ),
+  );
+}
 
 mark("Postprocesss modules");
 
@@ -413,12 +420,54 @@ function idToPublicSpecifierOrEnumName(id: string) {
   return idToEnumName(id);
 }
 
-const { combinedSourceCode: functionsSource, privateNames } = await bundleBuiltinFunctions({
+const {
+  combinedSourceCode: functionsSource,
+  privateNames,
+  files: filesOfFunctions,
+} = await bundleBuiltinFunctions({
   typesDir: TYPES_DIR,
   requireTransformer,
 });
 
 mark("Bundle Functions");
+
+{
+  const readings = new Map<string, Reading>();
+  for (const { basename, functions } of filesOfFunctions) {
+    const file = `builtins/${basename}.ts`;
+    // Nobody has written a second text of such a file yet.
+    if (locate(file) !== path.join(BASE, file)) continue;
+    const inOrder = functions.toSorted((a, b) => a.numberInFile - b.numberInFile);
+    const reading = readFileOfFunctions(
+      fs.readFileSync(path.join(BASE, file), "utf8"),
+      inOrder.map(fn => ({ name: fn.name, output: fn.output, map: fn.sourceMap, evaluated: fn.source })),
+    );
+    readings.set(file, reading);
+    // Where what `bun run` evaluates for each function starts and ends in the text of all of them.
+    const ranges = inOrder.flatMap(fn => [fn.sourceOffset, fn.sourceOffset + fn.source.length]);
+    bundledNames.push(
+      `evaluated-functions\t${file}\t${ranges.join(" ")}`,
+      formatBundledPositions(file, reading.corrections),
+    );
+  }
+  const read = (file: string) => {
+    const known = readings.get(file);
+    if (known) return known;
+    const texts = textsOfModules.get(file);
+    if (!texts) throw new Error(`${file} is no module and no file of functions`);
+    const reading = readModule(...texts);
+    readings.set(file, reading);
+    return reading;
+  };
+  for (const file of [...textsOfModules.keys(), ...readings.keys()]) {
+    bundledNames.push(...listPlacesInOtherFiles(file, fs.readFileSync(locate(file), "utf8"), read));
+  }
+}
+
+writeIfNotChanged(
+  path.join(CODEGEN_DIR, "bundled_names_of_modules.txt"),
+  bundledNames.map(line => line + "\n").join(""),
+);
 
 nativeCalls(typesOnlySchemas(process.argv));
 

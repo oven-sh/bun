@@ -149,8 +149,8 @@ for (const [made, make] of Object.entries(makers)) {
 
 // GENERATED: maskCount sumCounts Reflect.set Object.assign Object.defineProperty valueOf
 // CHECK-LABEL: function {{*}}name="maskCount"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_1]] flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_1]]):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] {
+// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = PropGet v0 key="count"
@@ -161,8 +161,8 @@ for (const [made, make] of Object.entries(makers)) {
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="sumCounts"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|number|string|symbol|bigint|[[L_1]]> flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: undefined|null|Array<undefined|null|number|string|symbol|bigint|[[L_1]]>):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|[[L_1]]> flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] {
+// CHECK-NEXT: b0(v0: undefined|null|Array<undefined|null|[[L_1]]>):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = Integer
@@ -180,7 +180,7 @@ for (const [made, make] of Object.entries(makers)) {
 // CHECK-NEXT: Jump -> next b4()
 // CHECK-NEXT: b4():
 // CHECK-NEXT: v12 = ElemGet v0, v11
-// CHECK-NEXT: v13 = Convert v12 declared={type=undefined|null|number|string|symbol|bigint|[[L_1]] flags=[IsExpected]}
+// CHECK-NEXT: v13 = Convert v12 declared={type=undefined|null|[[L_1]] flags=[IsExpected]}
 // CHECK-NEXT: v14 = PropGet v13 key="count"
 // CHECK-NEXT: v15 = Add v5, v14
 // CHECK-NEXT: v16 = Convert v15 declared={type=number flags=[IsExpected]}
@@ -215,17 +215,18 @@ for (const [made, make] of Object.entries(makers)) {
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v2 = Builtin builtin=Object
 // CHECK-NEXT: v3 = Builtin builtin=ObjectAssign
-// CHECK-NEXT: v4 = NewDictionary
-// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v6 = CheckInitialized v5 name="name"
-// CHECK-NEXT: v7 = ToPropertyKey v6
-// CHECK-NEXT: ElemDefine v4, v7, v1
-// CHECK-NEXT: v9 = Call v3, v2, v0, v4 calleeName="Object.assign"
-// CHECK-NEXT: v10 = Undefined
-// CHECK-NEXT: Return v10
+// CHECK-NEXT: v4 = GetModuleVariable variable=[[g_3]]
+// CHECK-NEXT: v5 = CheckInitialized v4 name="name"
+// CHECK-NEXT: v6 = ToPropertyKey v5
+// CHECK-NEXT: v7 = NewObject layout=[[L_5]]
+// CHECK-NEXT: ElemDefine v7, v6, v1
+// CHECK-NEXT: v9 = FinishObject v7
+// CHECK-NEXT: v10 = Call v3, v2, v0, v9 calleeName="Object.assign"
+// CHECK-NEXT: v11 = Undefined
+// CHECK-NEXT: Return v11
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Object.defineProperty"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] functionTypes={{*}}[[f_5]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] functionTypes={{*}}[[f_6]]] {
 // CHECK-NEXT: b0(v0: anything, v1: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -233,14 +234,14 @@ for (const [made, make] of Object.entries(makers)) {
 // CHECK-NEXT: v3 = Builtin builtin=ObjectDefineProperty
 // CHECK-NEXT: v4 = GetModuleVariable variable=[[g_3]]
 // CHECK-NEXT: v5 = CheckInitialized v4 name="name"
-// CHECK-NEXT: v6 = NewObject -, v1 layout=[[L_6]] fields=[4]
+// CHECK-NEXT: v6 = NewObject -, v1 layout=[[L_7]] fields=[4]
 // CHECK-NEXT: v7 = FinishObject v6
 // CHECK-NEXT: v8 = Call v3, v2, v0, v5, v7 calleeName="Object.defineProperty"
 // CHECK-NEXT: v9 = Undefined
 // CHECK-NEXT: Return v9
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="valueOf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes={{*}}[[f_7]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes={{*}}[[f_8]]] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

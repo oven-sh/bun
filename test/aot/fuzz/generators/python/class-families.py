@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""class-families.py <seed> [<families>]: typed classes are what the compiler lays out: families of two to four classes, each heir of the last: fields of every kind with initializers that read earlier fields, parameters, statics and `this.method()`; optional, readonly and definite fields; parameter properties; accessors (pairs, getter alone, overridden by the heir, overriding a field's name never: TypeScript forbids it); methods overridden, calling super, returning this; private #fields, #methods and `#x in o`; statics, static blocks, static inheritance; constructors that call a method the heir overrides BEFORE the heir's fields exist (plain: undefined; the type says number: AS PLAIN OR THROWS), that return early, that throw halfway; instanceof, constructor.name, Object.keys in the order of creation, JSON, spread, structured copies, `in`, hasOwn; instances read through the base type at one site (so one site sees every layout), through an interface, through any. Lines are `name: answer`; as plain Bun's or a throw, never a third answer."""
+"""class-families.py <seed> [<families>]: Families of two to four typed classes, each extending the previous one: fields
+of every kind with initializers that read earlier fields, parameters, statics and `this`, overridden methods and
+accessors, super calls.
+"""
 import random, sys
 seed = int(sys.argv[1]); count = int(sys.argv[2]) if len(sys.argv) > 2 else 24
 R = random.Random(seed)

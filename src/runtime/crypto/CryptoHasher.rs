@@ -24,7 +24,6 @@ const EVP_MAX_MD_SIZE_USIZE: usize = boring_ssl::EVP_MAX_MD_SIZE as usize;
 fn crypto_error<'a>(heap: &JsHeap<'a>, code: u32) -> bindgen::Error<'a> {
     // SAFETY: makes an `Error`.
     let error = create_crypto_error(unsafe { heap.global() }, code);
-    boring_ssl::ERR_clear_error();
     bindgen::Error::from_value(JsLocal::new(heap, error))
 }
 
@@ -170,15 +169,10 @@ impl CryptoHasher {
         }
     }
 
-    /// # Safety
-    /// `handle` must be a `Box<CryptoHasher>` raw pointer previously returned by
-    /// `Bun__CryptoHasherExtern__getByName` / `getFromOther`, with ownership
-    /// being returned to Rust (not yet destroyed).
+    /// C++ gives back a `Box` it got from `getByName` / `getFromOther`, never null.
     #[unsafe(no_mangle)]
-    pub(crate) unsafe extern "C" fn Bun__CryptoHasherExtern__destroy(handle: *mut CryptoHasher) {
-        // SAFETY: caller transfers ownership of a valid `Box<CryptoHasher>` raw
-        // pointer previously returned to C++ (see `# Safety` above).
-        drop(unsafe { Box::from_raw(handle) });
+    pub(crate) extern "C" fn Bun__CryptoHasherExtern__destroy(handle: Box<CryptoHasher>) {
+        drop(handle);
     }
 
     #[bun_uws::uws_callback(export = "Bun__CryptoHasherExtern__update")]
@@ -244,10 +238,12 @@ impl CryptoHasher {
     fn update<'a>(&mut self, heap: &JsHeap<'a>, input: &[u8]) -> bindgen::Result<'a, ()> {
         match self {
             CryptoHasher::Evp(evp) => evp.update(input),
-            CryptoHasher::Hmac(hmac) => hmac
-                .as_mut()
-                .ok_or_else(|| Self::hmac_consumed(heap))?
-                .update(input),
+            CryptoHasher::Hmac(hmac) => {
+                let hmac = hmac.as_mut().ok_or_else(|| Self::hmac_consumed(heap))?;
+                if hmac.update(input) {
+                    return Ok(());
+                }
+            }
             CryptoHasher::Zig(zig) => {
                 zig.update(input);
                 return Ok(());

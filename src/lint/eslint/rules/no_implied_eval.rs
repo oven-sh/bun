@@ -4,11 +4,11 @@ use smallvec::SmallVec;
 /// Disallow the use of `eval()`-like methods.
 pub struct NoImpliedEval;
 
-const IMPLIED_EVAL: Message = Message::new(
+const IMPLIED_EVAL: &Message = &Message::new(
     "impliedEval",
     "Implied eval. Consider passing a function instead of a string.",
 );
-const EXEC_SCRIPT: Message = Message::new("execScript", "Implied eval. Do not use execScript().");
+const EXEC_SCRIPT: &Message = &Message::new("execScript", "Implied eval. Do not use execScript().");
 
 const GLOBAL_CANDIDATES: [&str; 4] = ["global", "window", "globalThis", "self"];
 

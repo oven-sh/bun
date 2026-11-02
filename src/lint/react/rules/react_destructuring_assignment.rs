@@ -21,16 +21,16 @@ enum Configuration {
     Never,
 }
 
-const NO_DESTRUCT_PROPS_IN_SFC_ARG: Message =
-    Message::new("noDestructPropsInSFCArg", "Must never use destructuring props assignment in SFC argument");
-const NO_DESTRUCT_CONTEXT_IN_SFC_ARG: Message =
-    Message::new("noDestructContextInSFCArg", "Must never use destructuring context assignment in SFC argument");
-const NO_DESTRUCT_ASSIGNMENT: Message =
-    Message::new("noDestructAssignment", "Must never use destructuring {{type}} assignment");
-const USE_DESTRUCT_ASSIGNMENT: Message =
-    Message::new("useDestructAssignment", "Must use destructuring {{type}} assignment");
-const DESTRUCTURE_IN_SIGNATURE: Message =
-    Message::new("destructureInSignature", "Must destructure props in the function signature.");
+const NO_DESTRUCT_PROPS_IN_SFC_ARG: &Message =
+    &Message::new("noDestructPropsInSFCArg", "Must never use destructuring props assignment in SFC argument");
+const NO_DESTRUCT_CONTEXT_IN_SFC_ARG: &Message =
+    &Message::new("noDestructContextInSFCArg", "Must never use destructuring context assignment in SFC argument");
+const NO_DESTRUCT_ASSIGNMENT: &Message =
+    &Message::new("noDestructAssignment", "Must never use destructuring {{type}} assignment");
+const USE_DESTRUCT_ASSIGNMENT: &Message =
+    &Message::new("useDestructAssignment", "Must use destructuring {{type}} assignment");
+const DESTRUCTURE_IN_SIGNATURE: &Message =
+    &Message::new("destructureInSignature", "Must destructure props in the function signature.");
 
 /// The names that can follow `this.`. A `PrivateIdentifier`'s `name` doesn't include the `#`.
 const THIS_MEMBERS: [u32; 6] = [
@@ -74,7 +74,7 @@ impl<'a> EvaluatedParam<'a> {
 }
 
 /// Returns the message for a component with `func`'s parameters under the `never` option.
-fn message_about_params(func: Func<'_>) -> Option<Message> {
+fn message_about_params(func: Func<'_>) -> Option<&'static Message> {
     let mut params = func.params_with_this().map(EvaluatedParam::from_param);
     match (params.next(), params.next()) {
         (Some(EvaluatedParam::Destructuring), _) => Some(NO_DESTRUCT_PROPS_IN_SFC_ARG),

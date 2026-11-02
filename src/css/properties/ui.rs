@@ -26,7 +26,7 @@ bitflags::bitflags! {
 impl ColorScheme {
     pub(crate) fn parse(input: &mut css::Parser) -> css::Result<ColorScheme> {
         let mut res = ColorScheme::empty();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
 
         if let Some(value) = color_scheme_map_get(ident) {
             match value {
@@ -37,7 +37,7 @@ impl ColorScheme {
             }
         }
 
-        while let Ok(i) = input.try_parse(|p| p.expect_ident_cloned()) {
+        while let Ok(i) = input.try_parse(|p| p.expect_ident()) {
             if let Some(value) = color_scheme_map_get(i) {
                 match value {
                     ColorSchemeKeyword::Normal => {

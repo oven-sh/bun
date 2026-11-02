@@ -45,10 +45,10 @@ function f1 name="pass" module=m0 position=958 flags=[IsChecked, HasExplicitName
 # CHECK-LABEL: function f0 module=
 # CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f4 callPosition=958 parent=1 isTailCall=true module=m0}, {callee=f3 callPosition=958 parent=1 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: anything = GetBuiltinValue builtin=ProcessArgv overload=ProcessArgv/0
-# CHECK-NEXT: v1: anything ~ builtin(ProcessArgv) = Upcast v0 castType=anything
+# CHECK-NEXT: v0: Array<string> = GetBuiltinValue builtin=ProcessArgv overload=ProcessArgv/0
+# CHECK-NEXT: v1: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v0 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v2: 2 = Integer integer=2
-# CHECK-NEXT: v3: anything = ElemGet v1, v2 accessSite=2 [keyIsIntegral]
+# CHECK-NEXT: v3: undefined|string = ElemGet v1, v2 accessSite=2 [keyIsIntegral]
 # CHECK-NEXT: v4: "null" = String string="null"
 # CHECK-NEXT: v5: undefined = Undefined
 # CHECK-NEXT: v6: null|boolean|number|string|object = CallBuiltin -, v4, v5 overload=JSONParse/0 accessSite=3

@@ -216,6 +216,19 @@ const createdByFrom: b.FunctionField[] = [
     constructable: true,
     implementation: fromInJavaScript,
   },
+  // What is neither a string nor an object is refused.
+  {
+    args: {
+      value: b.union(b.undefined, b.null, b.bool, b.f64, b.bigint, b.symbol).optional,
+      encodingOrOffset: b.any.optional,
+      length: b.any.optional,
+    },
+    returns: b.never,
+    capability: "heap",
+    throws: true,
+    uses: { value: b.inspected, encodingOrOffset: b.inspected, length: b.inspected },
+    implementation: fromInJavaScript,
+  },
   // Whatever way it takes, it ends in `new Buffer(..)` or throws. The bytes may be those of an ArrayBuffer that valueOf of the operand answers.
   {
     args: { value: b.any.optional, encodingOrOffset: b.any.optional, length: b.any.optional },
@@ -363,27 +376,43 @@ export default b.declarations(
         uses: { this: readsBytes, target: readsBytes },
         implementation: b.hostCall,
       },
-      copy: {
-        this: uint8Array,
-        args: {
-          target: arrayBufferView,
-          targetStart: b.any.optional,
-          sourceStart: b.any.optional,
-          sourceEnd: b.any.optional,
+      copy: [
+        {
+          this: uint8Array,
+          args: {
+            target: b.instance("TypedArray"),
+            targetStart: b.f64.optional,
+            sourceStart: b.f64.optional,
+            sourceEnd: b.f64.optional,
+          },
+          returns: byteCount,
+          capability: "heap",
+          throws: true,
+          uses: { this: readsBytes, target: writesBytes },
+          implementation: b.inline("BufferCopy", { otherwise: b.hostCall }),
         },
-        returns: byteCount,
-        capability: "js",
-        throws: true,
-        runsOnlyOperandCode: true,
-        uses: {
-          this: readsBytes,
-          target: writesBytes,
-          targetStart: converted,
-          sourceStart: converted,
-          sourceEnd: converted,
+        {
+          this: uint8Array,
+          args: {
+            target: arrayBufferView,
+            targetStart: b.any.optional,
+            sourceStart: b.any.optional,
+            sourceEnd: b.any.optional,
+          },
+          returns: byteCount,
+          capability: "js",
+          throws: true,
+          runsOnlyOperandCode: true,
+          uses: {
+            this: readsBytes,
+            target: writesBytes,
+            targetStart: converted,
+            sourceStart: converted,
+            sourceEnd: converted,
+          },
+          implementation: b.hostCall,
         },
-        implementation: b.hostCall,
-      },
+      ],
       equals: {
         this: uint8Array,
         args: { otherBuffer: arrayBufferView },

@@ -9,7 +9,7 @@
 // CHECK-NEXT: [[onClick]] = Convert [[closure]] declared={type=undefined|null|f{{*}} site=w{{*}}}
 // CHECK-NEXT: PropDefine [[object]], [[onClick]] key="onClick"
 // CHECK-LABEL: function {{*}}name="onClick"
-// CHECK: captures=[{type=[[instance]] flags=[IsFromCompiler]}] thisType
+// CHECK: captures=[{type=[[instance]] flags=[IsFromCompiler] variableName="this"}] thisType
 
 // RUN(ENVIRONMENTS): lower
 // ENVIRONMENTS-NOT: env L

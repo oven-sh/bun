@@ -305,19 +305,9 @@ impl<V: CalcValue> Calc<V> {
         parse_ident: ParseIdent<'_, V>,
     ) -> CssResult<Self> {
         let location = input.current_source_location();
-        // Clone the token before reborrowing `input` so the function
-        // name slice is owned by the cloned `Token` (whose payload already
-        // carries the parser's arena lifetime) instead of being laundered to
-        // `'static` here.
-        let tok = *input.next()?;
-        let unit = match tok {
-            css::Token::Function(f) => match CalcUnit::get_any_case(f) {
-                Some(u) => u,
-                None => {
-                    return Err(location.new_unexpected_token_error(css::Token::Ident(f)));
-                }
-            },
-            other => return Err(location.new_unexpected_token_error(other)),
+        let f = input.expect_function()?;
+        let Some(unit) = CalcUnit::get_any_case(f) else {
+            return Err(location.new_unexpected_token_error(css::Token::Ident(f)));
         };
 
         match unit {
@@ -676,16 +666,7 @@ impl<V: CalcValue> Calc<V> {
         }
 
         let location = input.current_source_location();
-        // Reshaped for borrowck — clone the next token inside the
-        // try-parse so the ident slice is owned by the cloned `Token` rather
-        // than laundered to `'static` from the `&mut Parser` borrow.
-        if let Ok(ident) = input.try_parse(|p| {
-            let tok = *p.next()?;
-            match tok {
-                css::Token::Ident(s) => Ok(s),
-                other => Err(p.new_unexpected_token_error(other)),
-            }
-        }) {
+        if let Ok(ident) = input.try_parse(|p| p.expect_ident()) {
             if let Some(c) = parse_ident(ident) {
                 return Ok(c);
             }

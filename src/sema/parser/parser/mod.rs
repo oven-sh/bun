@@ -30,6 +30,7 @@ use bun_sema::util::SharedSort;
 pub(crate) use declared::Declared;
 pub(crate) use recover::ListKind;
 pub use recover::keyword_suggestion;
+use std::mem::ManuallyDrop;
 
 /// `ParserContext`, as bits.
 pub(crate) mod ctx {
@@ -143,12 +144,14 @@ macro_rules! file_lists {
             $(file.$field.truncate(lens.$field as usize);)*
         }
 
-        /// Returns an empty file that reuses the list allocations of `old`, which loses them.
+        /// Returns an empty file that reuses the list allocations of `old`, which is left as `FileBuilder::default()`.
         fn recycled_file(old: &mut FileBuilder) -> FileBuilder {
+            let FileBuilder { $(mut $field,)* .. } = std::mem::take(old);
             let mut file = FileBuilder::default();
             $(
-                old.$field.clear();
-                file.$field = std::mem::take(&mut old.$field);
+                $field.clear();
+                // A list that has never had anything in it has nothing to free, which the compiler can't know.
+                let _not_dropped = ManuallyDrop::new(std::mem::replace(&mut file.$field, $field));
             )*
             file
         }
@@ -556,7 +559,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         }
     }
 
-    /// Parses the source and stores the result in `file`.
+    /// Parses the source and stores the result in `file`, which is `FileBuilder::default()`.
     fn parse_into(mut self, file: &mut FileBuilder) -> Harvest<'a> {
         self.source_file();
         self.resolve_top_level_comments();
@@ -571,7 +574,8 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             self.f.rare_syntax |= rare::LEGACY_OCTAL;
         }
         self.note_odd_exports();
-        *file = self.f;
+        // `recycled_file` left nothing in it to drop, which the compiler can't know: it would look at every list.
+        let _not_dropped = ManuallyDrop::new(std::mem::replace(file, self.f));
         Harvest {
             lx: self.lx,
             stacks: self.s,

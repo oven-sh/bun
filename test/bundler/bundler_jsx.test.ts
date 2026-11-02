@@ -666,6 +666,32 @@ describe("bundler", () => {
       },
     });
 
+    describe.each([false, true])("imported tags stay plain, bundling=%s", bundling => {
+      itBundled(`jsx/PreserveImportedTagsStayPlain-${bundling}`, {
+        files: {
+          "/in.tsx": `
+            import { Foo, bar as Bar } from "./comp";
+            import * as ns from "./comp";
+            export const el = <div><Foo key="k" a={1} /><Bar /><ns.Foo /></div>;
+          `,
+          "/comp.tsx": `
+            export function Foo() { return null; }
+            export function bar() { return null; }
+          `,
+        },
+        outfile: "/out.js",
+        jsx: { runtime: "preserve" },
+        bundling,
+        onAfterBundle(api) {
+          const out = api.readFile("/out.js");
+          expect(out).toContain('<Foo key="k" a={1} />');
+          expect(out).toContain("<Bar />");
+          expect(out).toContain(bundling ? "<Foo />" : "<ns.Foo />");
+          expect(out).not.toContain("get value");
+        },
+      });
+    });
+
     itBundled("jsx/PreserveAttributeQuotingEdgeCases", {
       files: {
         "/in.tsx": `

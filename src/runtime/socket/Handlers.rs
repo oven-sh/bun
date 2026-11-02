@@ -15,7 +15,6 @@ use bun_uws as uws;
 use super::Listener as SocketListener;
 use super::SocketMode;
 use super::js_socket_handlers::{CALLBACK_COUNT, JSSocketHandlers};
-use super::listener::ListenerType;
 use super::{SSLConfig, SSLConfigFromJs};
 
 // ─── local shims (upstream-crate gaps) ──────────────────────────────────────
@@ -248,7 +247,7 @@ impl Handlers {
         // Let the listener's JS wrapper be GC'd once the last connection is
         // closed and it's not listening anymore.
         if let Some(listener) = self.listener() {
-            if matches!(listener.listener.get(), ListenerType::None) {
+            if listener.listener.get().is_none() {
                 listener.abort_handle.leave();
                 listener.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
                 listener.this_value.with_mut(|r| r.downgrade());
@@ -514,7 +513,7 @@ impl SocketConfig {
                     }
                     #[cfg(not(windows))]
                     {
-                        Fd::from_uv(v)
+                        Fd::from_crt(v)
                     }
                 }),
                 ssl,

@@ -56,7 +56,7 @@ pub(crate) fn worker_option_string(wtf: bun_core::WTFStringImpl) -> bun_core::St
 
 /// `process.stdout._handle.setBlocking(blocking)`. Like libuv's `uv_stream_set_blocking`, returns 0 or a negative errno.
 pub(crate) fn set_stdio_blocking(fd: i32, blocking: bool) -> i32 {
-    match bun_sys::update_nonblocking(bun_sys::Fd::from_uv(fd), !blocking) {
+    match bun_sys::update_nonblocking(bun_sys::Fd::from_crt(fd), !blocking) {
         Ok(()) => 0,
         Err(err) => -i32::from(err.errno),
     }
@@ -85,7 +85,7 @@ pub(crate) extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
         // A watch-reload kill-signal handler may call process.exit; node restarts the child
         // regardless. `process.exit()` must never return control to JS, so replace the process
         // here instead of unwinding — the 'exit' event has already been dispatched by the caller.
-        if bun_jsc::posix_signal_handle::is_emitting_watch_kill_signal() {
+        if bun_jsc::signal_handle::is_emitting_watch_kill_signal() {
             bun_removable_features::removable_body!(HotReload, Abort, {
                 let should_clear_terminal = !vm.env_loader().has_set_no_clear_terminal_on_reload(
                     !bun_core::Output::enable_ansi_colors_stdout(),
@@ -215,27 +215,19 @@ mod _impl {
 
     // ───────────────────────────── title ─────────────────────────────
 
-    // Windows `process.title` getter support: the C++ getter needs to know
-    // whether a title was explicitly set (CLI `--title` or assignment) so it
-    // can prefer the store over `uv_get_process_title` without comparing
-    // against the "bun" default string.
-    #[unsafe(export_name = "Bun__Process__hasTitle")]
-    extern "C" fn has_title() -> bool {
-        crate::cli::Bun__Node__ProcessTitle.lock().is_some()
-    }
-
     #[unsafe(export_name = "Bun__Process__getTitle")]
     extern "C" fn get_title(_global: *const JSGlobalObject) -> BunString {
         let guard = crate::cli::Bun__Node__ProcessTitle.lock();
         // Node's default process.title is argv[0] as invoked
         // (uv_setup_args/uv_get_process_title semantics), not a fixed name.
+        // On Windows it is the path of the executable.
+        #[cfg(not(windows))]
         let argv = bun_core::argv();
-        BunString::clone_utf8(
-            guard
-                .as_deref()
-                .or_else(|| argv.get(0).map(|z| z.as_bytes()))
-                .unwrap_or(b"bun"),
-        )
+        #[cfg(not(windows))]
+        let default = || argv.get(0).map(|z| z.as_bytes());
+        #[cfg(windows)]
+        let default = || bun_core::self_exe_path().ok().map(|path| path.as_bytes());
+        BunString::clone_utf8(guard.as_deref().or_else(default).unwrap_or(b"bun"))
     }
 
     // TODO: https://github.com/nodejs/node/blob/master/deps/uv/src/unix/darwin-proctitle.c
@@ -246,6 +238,19 @@ mod _impl {
 
         // Assigning into the `Option<Box<[u8]>>` static drops the previous box.
         *crate::cli::Bun__Node__ProcessTitle.lock() = Some(new_title);
+    }
+
+    // ───────────────────────────── kill ─────────────────────────────
+
+    /// `process._kill(pid, signal)` on Windows: 0, or the `UV_E*` number Node returns.
+    #[cfg(windows)]
+    #[unsafe(export_name = "Bun__Process__kill")]
+    extern "C" fn kill(pid: i32, signal: i32) -> i32 {
+        match bun_spawn_sys::windows::kill_pid(pid, signal) {
+            Ok(()) => 0,
+            Err(err) => bun_errno::e_discriminant_to_uv(err.errno)
+                .unwrap_or(bun_errno::uv_codes::UV_UNKNOWN),
+        }
     }
 
     // ───────────────────────────── execArgv ─────────────────────────────

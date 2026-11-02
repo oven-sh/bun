@@ -18,7 +18,7 @@ use bun_ptr::BackRef;
 use crate::node::validators;
 use bun_cares_sys::c_ares_draft as c_ares;
 #[cfg(windows)]
-use bun_libuv_sys::sockaddr_storage;
+use bun_sys::windows::ws2_32::sockaddr_storage;
 use bun_sys::{self, SystemErrno};
 use bun_uws as uws;
 #[cfg(not(windows))]
@@ -31,46 +31,6 @@ use crate::generated_bindgen::udp_socket::js_UDPSocket as js;
 use crate::socket::socket_address::inet::{self, INET6_ADDRSTRLEN, sockaddr_in, sockaddr_in6};
 
 bun_output::declare_scope!(UdpSocket, visible);
-
-/// Local errno-classification shim — `bun_sys::Result`
-/// is a plain `core::result::Result` alias in Rust and has no associated
-/// `errno_sys` constructor.
-///
-/// POSIX `getErrno(c_int)` semantics: only `rc == -1` is failure (any other
-/// value — including positive packet counts from `us_udp_socket_send` and
-/// negative EAI codes from `connect` — is "not a libc errno", so callers
-/// handle it themselves).
-///
-/// Windows semantics: for any non-NTSTATUS
-/// integer `rc`, `if (rc != 0) return null` — i.e. *every* non-zero rc
-/// (including `-1` / `SOCKET_ERROR`) falls through to the caller's own EAI /
-/// WSA handling rather than synthesising an errno. This matters for the
-/// `connect()` path (line ~575): `us_udp_socket_connect()` returns a Winsock
-/// status, not a CRT errno, so reading `_errno()` here would be the wrong
-/// source.
-#[inline]
-fn errno_sys(rc: c_int, tag: bun_sys::Tag) -> Option<bun_sys::Error> {
-    #[cfg(windows)]
-    {
-        if rc != 0 {
-            return None;
-        }
-        // rc == 0 → read the CRT `_errno()`;
-        // a zero errno must still yield `None`.
-        let errno_val = bun_sys::last_errno();
-        if errno_val == 0 {
-            return None;
-        }
-        return Some(bun_sys::Error::from_code_int(errno_val, tag));
-    }
-    #[cfg(not(windows))]
-    {
-        if rc != -1 {
-            return None;
-        }
-        Some(bun_sys::Error::from_code_int(bun_sys::last_errno(), tag))
-    }
-}
 
 use bun_core::ip_address;
 use bun_sys::net::Address;
@@ -708,9 +668,13 @@ impl UDPSocket {
             }
             this.closed.set(true);
             if err != 0 {
-                let code: &'static str = SystemErrno::init(err as i64)
-                    .map(Into::into)
-                    .unwrap_or("UNKNOWN");
+                let errno = SystemErrno::init(err as i64);
+                let code: &'static str = errno.map(Into::into).unwrap_or("UNKNOWN");
+                // The system's own number is a Winsock error there, which `util.getSystemErrorName` does not know.
+                #[cfg(windows)]
+                let err = errno
+                    .and_then(|errno| bun_errno::e_discriminant_to_uv(errno as u16))
+                    .unwrap_or(err);
                 // Adopting a descriptor has no meaningful address: Node throws a
                 // bare `open <code>` ErrnoException there, and `bind <code> <host>`
                 // with `.address` for hostname binds.
@@ -761,7 +725,7 @@ impl UDPSocket {
             let ret = uws::udp::Socket::opaque_mut(this.socket.get().unwrap())
                 .connect(address_z.as_ptr(), connect.port as u32);
             if ret != 0 {
-                if let Some(sys_err) = errno_sys(ret, bun_sys::Tag::connect) {
+                if let Some(sys_err) = get_us_error(ret, bun_sys::Tag::connect) {
                     return Err(cx.global().throw_value(sys_err.to_js(cx.global())));
                 }
 
@@ -872,7 +836,7 @@ impl UDPSocket {
             enabled.to_js().to_boolean(),
         );
 
-        if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
+        if let Some(err) = get_us_error(res, bun_sys::Tag::setsockopt) {
             return Err(global_this.throw_value(err.to_js(global_this)));
         }
 
@@ -922,7 +886,7 @@ impl UDPSocket {
         // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
         let res = uws::udp::Socket::opaque_mut(socket).set_membership(&addr, iface, drop);
 
-        if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
+        if let Some(err) = get_us_error(res, bun_sys::Tag::setsockopt) {
             return Err(global_this.throw_value(err.to_js(global_this)));
         }
 
@@ -1026,7 +990,7 @@ impl UDPSocket {
             drop,
         );
 
-        if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
+        if let Some(err) = get_us_error(res, bun_sys::Tag::setsockopt) {
             return Err(global_this.throw_value(err.to_js(global_this)));
         }
 
@@ -1095,7 +1059,7 @@ impl UDPSocket {
         // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
         let res = uws::udp::Socket::opaque_mut(socket).set_multicast_interface(&addr);
 
-        if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
+        if let Some(err) = get_us_error(res, bun_sys::Tag::setsockopt) {
             return Err(global_this.throw_value(err.to_js(global_this)));
         }
 
@@ -1135,7 +1099,7 @@ impl UDPSocket {
         // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
         let res = function(uws::udp::Socket::opaque_mut(socket), ttl);
 
-        if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
+        if let Some(err) = get_us_error(res, bun_sys::Tag::setsockopt) {
             return Err(global_this.throw_value(err.to_js(global_this)));
         }
 
@@ -1315,7 +1279,7 @@ impl UDPSocket {
         };
         // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
         let res = uws::udp::Socket::opaque_mut(socket).send(&payloads, &lens, &addr_ptrs);
-        if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::send) {
+        if let Some(err) = get_us_error(res, bun_sys::Tag::send) {
             return Err(global_this.throw_value(err.to_js(global_this)));
         }
         Ok(res)
@@ -1404,7 +1368,7 @@ impl UDPSocket {
             &[addr_ptr],
         );
         drop(payload_str);
-        if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::send) {
+        if let Some(err) = get_us_error(res, bun_sys::Tag::send) {
             return Err(global_this.throw_value(err.to_js(global_this)));
         }
         Ok(res > 0)
@@ -1713,8 +1677,9 @@ pub(crate) fn connect(
         return Err(global_this.throw(format_args!("Socket is closed")));
     };
     // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-    if uws::udp::Socket::opaque_mut(socket).connect(connect_host.as_ptr(), port as u32) == -1 {
-        return Err(global_this.throw(format_args!("Failed to connect socket")));
+    let rc = uws::udp::Socket::opaque_mut(socket).connect(connect_host.as_ptr(), port as u32);
+    if let Some(err) = get_us_error(rc, bun_sys::Tag::connect) {
+        return Err(global_this.throw_value(err.to_js(global_this)));
     }
     this.connect_info.set(Some(ConnectInfo { port }));
 
@@ -1758,7 +1723,7 @@ pub(crate) fn buffer_size(this: &UDPSocket, size: i32, is_recv: bool) -> bun_sys
     let mut value: c_int = 0;
     // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
     let res = uws::udp::Socket::opaque_mut(socket).buffer_size(is_recv, size, &mut value);
-    if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
+    if let Some(err) = get_us_error(res, bun_sys::Tag::setsockopt) {
         return Err(err);
     }
 
@@ -2222,31 +2187,22 @@ struct Destination {
     address: JSValue,
 }
 
-pub(crate) fn get_us_error<const USE_WSA: bool>(
-    res: c_int,
-    tag: bun_sys::Tag,
-) -> Option<bun_sys::Error> {
+/// The system's error after a uSockets call returned `res`. `None`: it succeeded, or `res` is the resolver's code.
+pub(crate) fn get_us_error(res: c_int, tag: bun_sys::Tag) -> Option<bun_sys::Error> {
     #[cfg(windows)]
     {
-        // setsockopt returns 0 on success, but errnoSys considers 0 to be failure on Windows.
-        // This applies to some other usockets functions too.
         if res >= 0 {
             return None;
         }
-
-        if USE_WSA {
-            let err = bun_sys::windows::Win32Error::get();
-            if err != bun_sys::windows::Win32Error::SUCCESS {
-                bun_sys::windows::kernel32::SetLastError(0);
-                return Some(bun_sys::Error::from_win32(err, tag));
-            }
+        let err = bun_sys::windows::Win32Error::get();
+        if err != bun_sys::windows::Win32Error::SUCCESS {
+            bun_sys::windows::kernel32::SetLastError(0);
+            return Some(bun_sys::Error::from_win32(err, tag));
         }
-
-        let errno_val = bun_sys::last_errno();
-        return Some(bun_sys::Error::from_code_int(errno_val, tag));
     }
     #[cfg(not(windows))]
-    {
-        errno_sys(res, tag)
+    if res != -1 {
+        return None;
     }
+    Some(bun_sys::Error::from_code_int(bun_sys::last_errno(), tag))
 }

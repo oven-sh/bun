@@ -342,12 +342,8 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
                 Ok(s) => s,
                 Err(e) => Output::panic(format_args!("unhandled {}", e)),
             };
-            // Note: `sys::Stat` is `libc::stat` on POSIX / `uv_stat_t` on
-            // Windows (where mtime is `mtim.sec`). Debug-only cache-bust key.
-            #[cfg(not(windows))]
+            // Debug-only cache-bust key.
             bun_core::write_any_to_hasher(&mut h, stat.st_mtime as i64);
-            #[cfg(windows)]
-            bun_core::write_any_to_hasher(&mut h, stat.mtim.sec as i64);
             h.update(crate::bake::get_hmr_runtime(bake::Side::Client).code);
             h.update(crate::bake::get_hmr_runtime(bake::Side::Server).code);
         } else {

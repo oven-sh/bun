@@ -86,9 +86,9 @@ fn slot(vm: &mut VirtualMachine) -> &mut Option<NonNull<core::ffi::c_void>> {
 mod posix {
     use core::ptr::NonNull;
 
-    use bun_io::posix_event_loop::FilePoll;
+    use bun_io::file_poll::FilePoll;
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
-    use bun_io::posix_event_loop::{Flags, Owner, poll_tag};
+    use bun_io::file_poll::{Flags, Owner, poll_tag};
     use bun_jsc::JSGlobalObject;
     use bun_jsc::virtual_machine::VirtualMachine;
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]

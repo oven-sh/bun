@@ -236,7 +236,7 @@ fn clear_remembered_cell(ctx: *mut c_void, tag: Tag) {
 ///
 /// Zero-allocation: the ctx pointer and our Tag are packed into the task's
 /// `ptr` slot (pointer in high bits, tag in low 4 bits — the target types
-/// are all 16-byte aligned, see their `#[repr(align(16))]`). See PosixSignalTask for the same trick with
+/// are all 16-byte aligned, see their `#[repr(align(16))]`). See SignalTask for the same trick with
 /// signal numbers.
 ///
 /// Layout of `Task.ptr` (read back as `usize` in dispatch):

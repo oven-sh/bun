@@ -500,7 +500,7 @@ impl Cmd {
         };
         // CreateProcessW runs `.bat`/`.cmd` files through `cmd.exe`, which
         // re-tokenizes the command line with shell metacharacter rules
-        // (BatBadBut). libuv's MSVCRT-style quoting cannot make that safe, so
+        // (BatBadBut). MSVCRT-style quoting cannot make that safe, so
         // reject arguments that cmd.exe would reinterpret.
         if cfg!(windows) && bun_which::is_batch_file(&resolved) {
             let unsafe_arg: Option<Vec<u8>> = interp
@@ -626,7 +626,14 @@ impl Cmd {
             drop(arena);
             // Revert exec so `deinit` doesn't free a null `child`.
             interp.as_cmd_mut(this).exec = Exec::None;
-            return Builtin::cmd_write_failing_error(interp, this, format_args!("{}\n", e));
+            let command = bstr::BStr::new(&first_arg);
+            return match e {
+                crate::shell::ShellErr::Sys(e) if e.path.is_empty() => {
+                    let message = format_args!("bun: {}: {}\n", e.message, command);
+                    Builtin::cmd_write_failing_error(interp, this, message)
+                }
+                e => Builtin::cmd_write_failing_error(interp, this, format_args!("{}\n", e)),
+            };
         }
 
         // Read the subprocess back via the arena instead of holding `child_out`
@@ -851,7 +858,6 @@ impl Cmd {
     /// [`Self::deinit`] for the VM-shutdown finalizer: defuses the
     /// `> ${arraybuffer}` unpins first — the heap sweep already deleted the
     /// `JSC::ArrayBuffer` impls they would write to.
-    #[cfg(not(windows))]
     pub(crate) fn deinit_from_finalizer(interp: &Interpreter, this: NodeId) {
         {
             let me = interp.as_cmd_mut(this);
@@ -912,7 +918,6 @@ impl Cmd {
                     (*child).unref::<true>();
                     // Stop any still-active stdio before the drop (only the
                     // VM-shutdown path reaches here in flight).
-                    #[cfg(not(windows))]
                     ShellSubprocess::deinit_in_flight_io(child);
                     drop(bun_core::heap::take(child));
                 }

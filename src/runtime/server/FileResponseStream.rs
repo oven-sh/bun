@@ -1,7 +1,7 @@
 //! Streams an already-open file descriptor to a uWS `AnyResponse`, handling
 //! backpressure, client aborts, and fd lifetime. Shared by `FileRoute` (static
 //! file routes) and `RequestContext` (file-blob bodies returned from `fetch`
-//! handlers) so both get the same abort-safe lifecycle and so the SSL/Windows
+//! handlers) so both get the same abort-safe lifecycle and so the SSL
 //! path streams instead of buffering the whole file.
 //!
 //! The caller writes status + headers first, then hands off body streaming by
@@ -12,11 +12,8 @@ use core::cell::Cell;
 use core::ffi::c_void;
 
 use bun_io::Closer;
-#[cfg(windows)]
-use bun_io::pipe_reader::WindowsFlags as ReaderFlags;
 use bun_io::{BufferedReader, FileType, ReadState};
-#[cfg(unix)]
-use bun_io::{FilePollFlag, PosixFlags as ReaderFlags};
+use bun_io::{FilePollFlag, ReaderFlags};
 use bun_jsc::JsCell;
 use bun_ptr::RefPtr;
 use bun_sys::{self as sys, Fd};
@@ -31,9 +28,6 @@ bun_output::declare_scope!(FileResponseStream, hidden);
 pub(crate) struct FileResponseStream {
     ref_count: Cell<u32>,
     resp: Cell<AnyResponse>,
-    // LIFETIMES.tsv: `&'static VirtualMachine`. `BackRef` keeps the struct
-    // `'static` for the uWS callback userdata slot while giving safe `Deref`.
-    vm: Cell<bun_ptr::BackRef<VirtualMachine>>,
     /// Typed enum mirror of `vm.event_loop()` for the io-layer FilePoll vtable
     /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
     event_loop_handle: Cell<EventLoopHandle>,
@@ -165,7 +159,6 @@ impl FileResponseStream {
             bun_core::heap::into_raw(Box::new(FileResponseStream {
                 ref_count: Cell::new(1),
                 resp: Cell::new(opts.resp),
-                vm: Cell::new(opts.vm),
                 event_loop_handle: Cell::new(EventLoopHandle::init(
                     opts.vm.event_loop().cast::<()>(),
                 )),
@@ -227,10 +220,11 @@ impl FileResponseStream {
         this_ref.reader.with_mut(|reader| {
             reader.flags.remove(ReaderFlags::CLOSE_HANDLE); // we own fd via auto_close
             reader.flags.set(ReaderFlags::POLLABLE, opts.pollable);
-            reader
-                .flags
-                .set(ReaderFlags::NONBLOCKING, opts.file_type != FileType::File);
-            #[cfg(unix)]
+            // On Windows the flag is for a handle that takes overlapped reads, and `open` makes none.
+            reader.flags.set(
+                ReaderFlags::NONBLOCKING,
+                cfg!(unix) && opts.file_type != FileType::File,
+            );
             if opts.file_type == FileType::Socket {
                 reader.flags.insert(ReaderFlags::SOCKET);
             }
@@ -255,7 +249,6 @@ impl FileResponseStream {
         // SAFETY: as above — `update_ref` re-enters `event_loop` through the parent pointer.
         this_ref.reader_mut().update_ref(true);
 
-        #[cfg(unix)]
         if let Some(poll) = this_ref.reader.get().handle.get_poll() {
             if this_ref
                 .reader
@@ -392,7 +385,7 @@ impl FileResponseStream {
         }
         self.resp.get().timeout(self.idle_timeout.get());
         self.hold_read_ref();
-        // A paused POSIX reader ignores `read()`.
+        // A paused reader ignores `read()`.
         self.reader_mut().unpause();
         // SAFETY: `read()` dispatches `on_read_chunk`/`on_reader_done` back
         // into this object through the parent pointer, so no cell borrow
@@ -570,8 +563,6 @@ impl FileResponseStream {
             self.state.get().contains(State::FINISHED)
         );
         // If the request aborts before the reader gets its first byte, no reader callback will release this ref.
-        // On Windows, a pending uv read needs the stream alive and releases the ref itself.
-        #[cfg(unix)]
         drop(self.take_read_ref());
         if self.state.get().contains(State::FINISHED) {
             return;
@@ -594,28 +585,9 @@ impl FileResponseStream {
         // SAFETY: `self` is live and owns the ref; nothing touches `self` after.
         unsafe { Self::deref(self.as_ptr()) };
     }
-
-    fn event_loop(&self) -> EventLoopHandle {
-        EventLoopHandle::init(self.vm.get().event_loop().cast::<()>())
-    }
-
-    fn r#loop(&self) -> *mut bun_io::Loop {
-        #[cfg(windows)]
-        {
-            // SAFETY: `r#loop()` returns the live uws WindowsLoop; its `uv_loop`
-            // is set by C `us_create_loop` and valid for the loop's lifetime.
-            return unsafe { (*self.event_loop().r#loop()).uv_loop() };
-        }
-        #[cfg(not(windows))]
-        {
-            self.event_loop().r#loop()
-        }
-    }
 }
 
-// BufferedReader vtable parent.
-// `loop_` delegates to the inherent `r#loop()` which already does the
-// cfg(windows) `.uv_loop` projection. The read/done/error arms take a ref for
+// BufferedReader vtable parent. The read/done/error arms take a ref for
 // the duration of the handler since it can end in `finish()`.
 bun_io::impl_buffered_reader_parent! {
     FileResponseStream for FileResponseStream;
@@ -633,7 +605,6 @@ bun_io::impl_buffered_reader_parent! {
         let _guard = RefPtr::init_ref(this);
         (*this).on_reader_error(err)
     };
-    loop_           = |this| (*this).r#loop();
     event_loop      = |this| (*this).event_loop_handle.get().as_event_loop_ctx();
     // The reader still uses itself (embedded here) after dispatching the `on_reader_done` that releases the owning ref.
     ref_            = |this| (*this).ref_();
@@ -644,13 +615,9 @@ impl Drop for FileResponseStream {
     fn drop(&mut self) {
         bun_output::scoped_log!(FileResponseStream, "deinit");
         // `start()` cleared CLOSE_HANDLE, so the reader's `Drop` doesn't unregister the poll.
-        #[cfg(unix)]
         self.reader_mut().handle.close_without_closing_fd();
         if self.auto_close.get() {
-            #[cfg(windows)]
-            Closer::close(self.fd.get(), bun_sys::windows::libuv::Loop::get());
-            #[cfg(not(windows))]
-            Closer::close(self.fd.get(), ());
+            Closer::close(self.fd.get());
         }
     }
 }

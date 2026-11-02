@@ -64,7 +64,7 @@ pub(crate) fn restart_process(cx: &mut JsScope<'_>) {
 /// `isRestarting()`: whether a restart is running the kill signal listeners. The process is then
 /// about to start again, so a listener must not end it.
 pub(crate) fn is_restarting() -> bool {
-    bun_jsc::posix_signal_handle::is_emitting_watch_kill_signal()
+    bun_jsc::signal_handle::is_emitting_watch_kill_signal()
 }
 
 /// `setPages(framework?)`: the next `Bun.serve()` adds the routers of `framework` (the `framework`

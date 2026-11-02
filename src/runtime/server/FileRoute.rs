@@ -300,10 +300,7 @@ impl FileRoute {
         // which branch ran.
         match route.serve(fd, path, &mut req, resp, method) {
             Serve::Done => {
-                #[cfg(windows)]
-                Closer::close(fd, bun_sys::windows::libuv::Loop::get());
-                #[cfg(not(windows))]
-                Closer::close(fd, ());
+                Closer::close(fd);
                 route.on_response_complete(resp);
             }
             Serve::Stream {

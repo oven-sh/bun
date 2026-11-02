@@ -1107,14 +1107,6 @@ impl CreateCommand {
                 stderr: spawn_sync::SyncStdio::Inherit,
                 stdout: spawn_sync::SyncStdio::Inherit,
                 stdin: spawn_sync::SyncStdio::Inherit,
-                // Default would zero `loop_` → UB.
-                #[cfg(windows)]
-                windows: spawn_sync::WindowsOptions {
-                    loop_: bun_event_loop::EventLoopHandle::init_mini(
-                        bun_event_loop::MiniEventLoop::init_global(None, None),
-                    ),
-                    ..Default::default()
-                },
                 ..Default::default()
             });
 
@@ -1222,14 +1214,6 @@ impl CreateCommand {
                     stdin: spawn_sync::SyncStdio::Inherit,
                     stdout: spawn_sync::SyncStdio::Inherit,
                     stderr: spawn_sync::SyncStdio::Inherit,
-                    // `bun.spawnSync` on Windows requires a live `loop_` — supply it.
-                    #[cfg(windows)]
-                    windows: spawn_sync::WindowsOptions {
-                        loop_: bun_event_loop::EventLoopHandle::init_mini(
-                            bun_event_loop::MiniEventLoop::init_global(None, None),
-                        ),
-                        ..Default::default()
-                    },
                     ..Default::default()
                 })?;
             }
@@ -2076,10 +2060,6 @@ impl GitHandler {
         // The git CLI: libgit2 took three times as long for this.
         // SAFETY: single-threaded CLI access to module-level static path buffer
         let bun_path_buf = unsafe { &mut *BUN_PATH_BUF.get() };
-        #[cfg(windows)]
-        let win_loop = bun_event_loop::EventLoopHandle::init_mini(
-            bun_event_loop::MiniEventLoop::init_global(None, None),
-        );
         if let Some(git) = which(bun_path_buf, path, destination, b"git") {
             let git: &[u8] = git.as_bytes();
 
@@ -2100,11 +2080,6 @@ impl GitHandler {
                     stdin: Inherit,
                     stdout: output,
                     stderr: output,
-                    #[cfg(windows)]
-                    windows: spawn_sync::WindowsOptions {
-                        loop_: win_loop,
-                        ..Default::default()
-                    },
                     ..Default::default()
                 })??)
             };

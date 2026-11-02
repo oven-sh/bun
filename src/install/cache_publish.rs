@@ -210,7 +210,7 @@ pub(crate) fn create_index_link(
             &mut link_buf[..],
             &[name, version],
         );
-        let _ = sys::sys_uv::symlink_uv(target, link, sys::windows::libuv::UV_FS_SYMLINK_JUNCTION);
+        let _ = sys::symlink_as(target, link, sys::SymlinkKind::Junction);
     }
     #[cfg(not(windows))]
     {

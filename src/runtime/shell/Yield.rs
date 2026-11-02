@@ -34,7 +34,7 @@ pub enum Yield {
         // the throw boundary.
         err: Option<bun_sys::SystemError>,
     },
-    /// Execution is waiting on async IO (epoll/kqueue/uv). The caller's task
+    /// Execution is waiting on async IO (epoll/kqueue/IOCP). The caller's task
     /// callback will resume by calling `.run()` again later.
     Suspended,
     /// The node threw a JS exception; `Interpreter::fail` winds the script down.

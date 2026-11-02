@@ -2118,11 +2118,9 @@ impl<'a> HTTPClient<'a> {
     }
 
     pub(crate) fn first_call<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
-        if FeatureFlags::IS_FETCH_PRECONNECT_SUPPORTED {
-            if self.flags.is_preconnect_only {
-                self.on_preconnect::<IS_SSL>(socket);
-                return;
-            }
+        if self.flags.is_preconnect_only {
+            self.on_preconnect::<IS_SSL>(socket);
+            return;
         }
 
         if IS_SSL {
@@ -3378,11 +3376,9 @@ impl<'a> HTTPClient<'a> {
             return;
         }
 
-        if FeatureFlags::IS_FETCH_PRECONNECT_SUPPORTED {
-            if self.flags.is_preconnect_only {
-                self.on_preconnect::<IS_SSL>(socket);
-                return;
-            }
+        if self.flags.is_preconnect_only {
+            self.on_preconnect::<IS_SSL>(socket);
+            return;
         }
 
         if let Some(proxy) = self.proxy_tunnel_ptr() {

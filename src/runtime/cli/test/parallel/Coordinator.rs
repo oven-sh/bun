@@ -383,8 +383,7 @@ impl<'a> Coordinator<'a> {
                 terminate_process_group(p.pid);
                 #[cfg(not(unix))]
                 {
-                    // SIGKILL → TerminateProcess; libuv-win ENOSYSes signals
-                    // other than SIGQUIT/SIGTERM/SIGKILL/SIGINT.
+                    // SIGKILL → TerminateProcess
                     let _ = p.kill(9);
                 }
             }
@@ -1469,8 +1468,8 @@ impl<'a> Coordinator<'a> {
                 terminate_process_group(p.pid);
                 #[cfg(not(unix))]
                 {
-                    // SIGKILL → TerminateProcess (libuv-win ENOSYSes most
-                    // signals, so e.g. kill(1) would leave the sibling running
+                    // SIGKILL → TerminateProcess (most other signals are ENOSYS,
+                    // so e.g. kill(1) would leave the sibling running
                     // past the banner); it reaps as Signaled(9) →
                     // "aborted: sibling worker panicked".
                     let _ = p.kill(9);
@@ -1861,11 +1860,11 @@ impl<'a> Coordinator<'a> {
         // After stdio and the channel to the coordinator.
         let flag = crate::cli::run_compiled::image_flag_of_test_worker(
             part.has_program,
-            file.number_in_child(4),
+            4,
             5..5 + programs_below.len(),
         );
         self.argv[parts.image_flag_slot] = crate::cli::cli_dupe_z(&flag);
-        let compiled_program = cfg!(unix).then_some(file.descriptor);
+        let compiled_program = Some(file.descriptor);
         // SAFETY: `slot < workers.len()`.
         let w = unsafe { &mut *self.workers.as_mut_ptr().add(slot) };
         w.part = index;

@@ -285,7 +285,6 @@ pub fn run_path_tests(args: &[&[u8]]) -> Option<Vec<u8>> {
                 None => b"outside".to_vec(),
             },
             b"dirname" => paths::dirname_as(style, a).to_vec(),
-            b"namespaced" => paths::namespaced(a),
             b"normalize" => paths::normalize(a),
             b"join" => paths::join_normalized(a, b),
             _ => return None,

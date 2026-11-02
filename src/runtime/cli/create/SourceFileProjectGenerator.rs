@@ -185,14 +185,6 @@ fn run_bun(argv: &mut [&[u8]], failure: &str) -> Result<(), crate::Error> {
         stderr: spawn_sync::SyncStdio::Inherit,
         stdout: spawn_sync::SyncStdio::Inherit,
         stdin: spawn_sync::SyncStdio::Inherit,
-
-        #[cfg(windows)]
-        windows: bun_process::WindowsOptions {
-            loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
-                None, None,
-            )),
-            ..Default::default()
-        },
         ..Default::default()
     }) {
         Ok(Ok(spawn_result)) => spawn_result.status,

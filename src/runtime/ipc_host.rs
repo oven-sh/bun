@@ -4,11 +4,10 @@
 //! channel itself (one per JS thread) lives here.
 
 use crate::ipc::{
-    self as IPC, DecodedIPCMessage, Handle, IsInternal, SendQueue, SerializeAndSendResult,
+    self as IPC, DecodedIPCMessage, Handle, HandleKind, IsInternal, SendQueue,
+    SerializeAndSendResult,
 };
 use bun_jsc::bindgen::{JsLocal, JsScope};
-#[cfg(windows)]
-use bun_jsc::bun_string_jsc;
 use bun_jsc::{JSGlobalObject, JSValue, JsClass, JsResult};
 use bun_ptr::RefPtr;
 
@@ -29,25 +28,6 @@ pub(crate) enum FromEnum {
     SubprocessExited,
     Subprocess,
     Process,
-}
-
-#[cfg(windows)]
-pub(crate) fn attach_windows_socket_payload(
-    global: &JSGlobalObject,
-    message: JSValue,
-    fd: bun_sys::Fd,
-    peer_pid: u32,
-) -> JsResult<Option<Box<[u8]>>> {
-    if peer_pid == 0 {
-        return Ok(None);
-    }
-    let Some(hex) = IPC::windows_export_socket_hex(fd, peer_pid) else {
-        log!("attachWindowsSocketPayload: WSADuplicateSocketW failed");
-        return Ok(None);
-    };
-    let str_js = bun_string_jsc::create_utf8_for_js(global, &hex)?;
-    message.put(global, IPC::WIN_SOCKET_INFO_KEY, str_js);
-    Ok(Some(hex))
 }
 
 pub(crate) fn emit_process_error_event<'a>(cx: &mut JsScope<'a>, error: JsLocal<'a>) {
@@ -86,9 +66,6 @@ pub(crate) fn do_send(
     from: FromEnum,
     peer_pid: u32,
 ) -> JsResult<bool> {
-    #[cfg(not(windows))]
-    let _ = peer_pid;
-
     let mut is_internal = IsInternal::External;
     if handle.is_callable() {
         callback = handle;
@@ -157,37 +134,36 @@ pub(crate) fn do_send(
 
     let mut zig_handle: Option<Handle> = None;
     let mut pause_target = JSValue::UNDEFINED;
-    #[cfg_attr(windows, allow(unused_mut, unused_variables))]
     let mut dup_err: Option<bun_sys::Error> = None;
+    let mut send_fd = |fd: bun_sys::Fd, kind: HandleKind, close_on_complete: bool| match Handle::new(
+        fd,
+        handle,
+        kind,
+        close_on_complete,
+        peer_pid,
+    ) {
+        Ok(h) => zig_handle = Some(h),
+        Err(e) => dup_err = Some(e),
+    };
     if !handle.is_undefined_or_null() {
         if let Some(listener) = Listener::from_js(handle) {
             log!("got listener");
             // SAFETY: from_js returned a non-null `*mut Listener`; the JS
             // wrapper holds it alive for the call.
-            match unsafe { (*listener).listener.get() } {
-                crate::socket::listener::ListenerType::Uws(socket_uws) => {
-                    // may need to handle ssl case
-                    // SAFETY: `socket_uws` is a live non-null `*mut ListenSocket`
-                    // owned by uSockets; `get_socket` only reinterpret-casts to
-                    // `&mut us_socket_t` and `get_fd` is a read-only FFI call.
-                    let fd = unsafe { &mut *socket_uws }.get_socket().get_fd();
-                    #[cfg(not(windows))]
-                    match Handle::init_dup(fd, handle, false) {
-                        Ok(h) => zig_handle = Some(h),
-                        Err(e) => dup_err = Some(e),
-                    }
-                    #[cfg(windows)]
-                    {
-                        zig_handle = Some(Handle::init(fd, handle));
-                    }
+            if let Some(socket_uws) = unsafe { (*listener).listener.get() } {
+                // may need to handle ssl case
+                // SAFETY: `socket_uws` is a live non-null `*mut ListenSocket`
+                // owned by uSockets; `get_socket` only reinterpret-casts to
+                // `&mut us_socket_t` and `get_fd` is a read-only FFI call.
+                let socket = unsafe { &mut *socket_uws }.get_socket();
+                if !socket.is_pipe() {
+                    send_fd(socket.get_fd(), HandleKind::Server, false);
                 }
-                #[cfg(windows)]
-                crate::socket::listener::ListenerType::NamedPipe(_named_pipe) => {}
-                crate::socket::listener::ListenerType::None => {}
             }
         } else if let Some(socket) = crate::socket::TCPSocket::from_js(handle) {
             // SAFETY: from_js returned a non-null pointer; the JS wrapper
-            let fd = unsafe { (*socket).socket.get().fd() };
+            let socket = unsafe { (*socket).socket.get() };
+            let fd = socket.fd();
             if fd != bun_sys::Fd::INVALID {
                 log!("got tcp socket fd");
                 let keep_open = !options_.is_undefined_or_null()
@@ -197,32 +173,14 @@ pub(crate) fn do_send(
                 if !keep_open {
                     pause_target = handle;
                 }
-                #[cfg(not(windows))]
-                match Handle::init_dup(fd, handle, !keep_open) {
-                    Ok(h) => zig_handle = Some(h),
-                    Err(e) => dup_err = Some(e),
-                }
-                #[cfg(windows)]
-                {
-                    zig_handle = Some(if keep_open {
-                        Handle::init(fd, handle)
-                    } else {
-                        Handle::init_close_on_complete(fd, handle)
-                    });
+                if !socket.is_pipe() {
+                    send_fd(fd, HandleKind::Connection, !keep_open);
                 }
             }
         } else if let Some(udp) = handle.as_class_ref::<crate::socket::UDPSocket>() {
             if let Some(fd) = udp.native_fd() {
                 log!("got udp socket fd");
-                #[cfg(not(windows))]
-                match Handle::init_dup(fd, handle, false) {
-                    Ok(h) => zig_handle = Some(h),
-                    Err(e) => dup_err = Some(e),
-                }
-                #[cfg(windows)]
-                {
-                    zig_handle = Some(Handle::init(fd, handle));
-                }
+                send_fd(fd, HandleKind::Datagram, false);
             }
         }
     }
@@ -245,23 +203,12 @@ pub(crate) fn do_send(
         call_handle_method(global_object, target, "close")
     };
 
-    #[cfg(not(windows))]
     if let Some(e) = dup_err {
         use bun_jsc::SysErrorJsc as _;
         close_detached(global_object, pause_target)?;
         return do_send_err(global_object, callback, e.to_js(global_object), from);
     }
 
-    #[cfg(windows)]
-    if let Some(h) = &mut zig_handle {
-        match attach_windows_socket_payload(global_object, message, h.fd, peer_pid)? {
-            Some(hex) => {
-                h.win_export_hex = Some(hex);
-                h.peer_pid = peer_pid;
-            }
-            None => zig_handle = None,
-        }
-    }
     if zig_handle.is_none() {
         message = original_message;
         close_detached(global_object, pause_target)?;
@@ -358,15 +305,7 @@ pub(crate) fn send<'a>(
     // `None`); the instance is heap-allocated, not embedded in `vm`.
     let ipc = get_ipc_instance(vm).map(|i| unsafe { (*i).data() });
     #[cfg(windows)]
-    let peer_pid = {
-        let from_pipe = ipc.as_ref().map(|i| i.ipc_peer_pid()).unwrap_or(0);
-        if from_pipe != 0 {
-            from_pipe
-        } else {
-            // SAFETY: the VM's uv loop exists, so `uv__winapi_init` has run.
-            unsafe { bun_libuv_sys::uv_os_getppid() as u32 }
-        }
-    };
+    let peer_pid = bun_sys::windows::parent_pid();
     #[cfg(not(windows))]
     let peer_pid = 0;
     do_send(
@@ -500,7 +439,6 @@ pub(crate) fn get_ipc_instance(
 
     vm.event_loop_mut().ensure_waker();
 
-    #[cfg(not(windows))]
     let instance: *mut IPCInstance = {
         let loop_ = vm.uws_loop();
         let group: *mut bun_uws::SocketGroup = vm.rare_data().spawn_ipc_group(loop_);
@@ -538,33 +476,6 @@ pub(crate) fn get_ipc_instance(
 
         // SAFETY: `send_queue` is live (owned by `instance`).
         unsafe { (*send_queue).socket.set(IPC::SocketUnion::Open(socket)) };
-
-        instance.as_ptr()
-    };
-
-    #[cfg(windows)]
-    let instance: *mut IPCInstance = {
-        let instance = IPCInstance::new(IPCInstance {
-            data: SendQueue::new(mode, None, IPC::SocketUnion::Uninitialized),
-        });
-        // SAFETY: `instance` was just boxed; `send_queue` is its live SendQueue.
-        let send_queue: *mut SendQueue = unsafe { (*instance.as_ptr()).data.as_ptr() };
-        // SAFETY: as above.
-        unsafe { (*send_queue).set_owner(IPC::SendQueueOwner::Instance(instance)) };
-        CHANNEL.set(Some(instance));
-
-        // `windows_configure_client` STORES the `*mut SendQueue` in
-        // `uv_handle_t.data` for the pipe's lifetime; `send_queue` is the
-        // allocation's root raw pointer.
-        // SAFETY: `send_queue` is the live SendQueue owned by `instance`.
-        if let Err(_) = unsafe { SendQueue::windows_configure_client(send_queue, fd) } {
-            // SAFETY: `instance` was produced by `IPCInstance::new`
-            // (heap::alloc) above and is not yet aliased.
-            unsafe { IPCInstance::deinit(instance.as_ptr()) };
-            CHANNEL.set(None);
-            bun_core::output::warn(&format_args!("Unable to start IPC pipe '{:?}'", fd));
-            return None;
-        }
 
         instance.as_ptr()
     };

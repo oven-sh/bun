@@ -116,7 +116,6 @@ export const upgradeTLSDeferred = b.fn({
 export const releaseHeldFlight = b.fn({ args: { socket: SocketHandle } });
 export const checkServerIdentityInHandshake = b.fn({ args: { socket: SocketHandle, inHandshake: b.bool } });
 export const firstFlightBeforeFin = b.fn({ args: { socket: SocketHandle } });
-export const isNamedPipeSocket = b.fn({ args: { socket: SocketHandle }, returns: b.bool });
 export const getBufferedAmount = b.fn({ args: { socket: SocketHandle }, returns: b.usize });
 /** `tls` is `true` or what `SSLConfig` takes, and can hold the `secureContext`. */
 export const DuplexTLSOptions = b.dictionary({
@@ -144,10 +143,6 @@ const testing = (name: string) => `crate::socket::socket_body::testing_apis::${n
 export const socketFaultInjectionAvailable = b.fn({
   returns: b.bool,
   rustPath: testing("socket_fault_injection_available"),
-});
-export const namedPipeContextLiveCount = b.fn({
-  returns: b.usize,
-  rustPath: testing("named_pipe_context_live_count"),
 });
 export const duplexUpgradeContextLiveCount = b.fn({
   returns: b.usize,

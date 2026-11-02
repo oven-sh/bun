@@ -3,13 +3,8 @@
 //! Every program is built by a process of its own, a layer with nothing beside it. A worker holds the layers and one part and
 //! runs the files of that part, and the coordinator reports all of them as one run.
 
-#[cfg(unix)]
-use crate::api::bun::process::PosixStdio as Stdio;
-#[cfg(unix)]
 use crate::api::bun::process::SpawnResultExt as _;
-#[cfg(not(unix))]
-use crate::api::bun::process::WindowsStdio as Stdio;
-use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Status};
+use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Status, Stdio};
 use bun_collections::StringSet;
 use bun_core::{Output, ZBox};
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -511,7 +506,7 @@ impl PartBuilder {
         // After stdio: the file, the programs below, what tells of the last of them.
         let below_in_child = 4..4 + below.len();
         let arguments = run_compiled::test_part_arguments(
-            file.number_in_child(3),
+            3,
             kind,
             below_in_child,
             is_above_library,
@@ -526,7 +521,6 @@ impl PartBuilder {
         argv.push(core::ptr::null());
         let messages_path = run_compiled::temporary_path(bun_resolver::fs::RealFS::tmpdir_path());
         let messages = Box::<[u8]>::from(messages_path.as_bytes());
-        #[cfg(unix)]
         let options = SpawnOptions {
             stdin: Stdio::Ignore,
             stdout: Stdio::Ignore,
@@ -544,33 +538,15 @@ impl PartBuilder {
             linux_pdeathsig: None,
             ..Default::default()
         };
-        #[cfg(windows)]
-        let options = SpawnOptions {
-            stdin: Stdio::Ignore,
-            stdout: Stdio::Ignore,
-            stderr: Stdio::Path(messages),
-            cwd: cwd.to_vec().into_boxed_slice(),
-            windows: spawn::WindowsOptions {
-                loop_: bun_jsc::EventLoopHandle::init(vm.event_loop().cast()),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
         // SAFETY: `argv` and `envp` are null-terminated arrays of C strings, valid for this call.
         let spawned = unsafe { spawn::spawn_process(&options, argv.as_ptr(), envp.as_ptr()) }?
             .map_err(|e| {
                 Output::err(e, "spawnProcess failed for the build of test files", ());
                 crate::Error::SpawnFailed
             })?;
-        #[cfg(unix)]
         let handle = spawned.to_process_handle(bun_event_loop::EventLoopHandle::init(
             vm.event_loop().cast(),
         ));
-        #[cfg(windows)]
-        let handle = {
-            let mut spawned = spawned;
-            spawned.to_process_handle(vm.event_loop())
-        };
         let mut builder = Box::new(PartBuilder {
             part,
             process: None,
@@ -583,8 +559,8 @@ impl PartBuilder {
         // SAFETY: just spawned, the sole owner until reaped. The box outlives the process: it is kept until the exit is taken.
         unsafe {
             #[cfg(windows)]
-            if let (Some(job), spawn::Poller::Uv(uv)) = (windows_job, &(*process).poller) {
-                let _ = bun_sys::windows::AssignProcessToJobObject(job, uv.process_handle);
+            if let Some(job) = windows_job {
+                let _ = bun_sys::windows::AssignProcessToJobObject(job, (*process).handle.native());
             }
             (*process).set_exit_handler(bun_spawn::ProcessExit::new(
                 bun_spawn::ProcessExitKind::TestPartBuilder,

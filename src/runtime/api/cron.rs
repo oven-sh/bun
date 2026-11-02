@@ -21,7 +21,7 @@ use bun_core::EncodedSlice;
 #[cfg(not(windows))]
 use bun_core::env_var;
 use bun_io::BufferedReader as OutputReader;
-use bun_io::{KeepAlive, Loop as AsyncLoop};
+use bun_io::KeepAlive;
 use bun_jsc::bindgen::{Callable, JsLocal, JsScope, JsWrapper};
 use bun_jsc::virtual_machine::{HotReload, VirtualMachine};
 use bun_jsc::{
@@ -34,7 +34,6 @@ use bun_resolver::fs::FileSystem;
 #[cfg(not(target_os = "macos"))]
 use bun_resolver::fs::RealFS;
 
-#[cfg(not(windows))]
 use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::{
     self as spawn, Process, ProcessHandle, Rusage, SpawnOptions, Status,
@@ -96,8 +95,8 @@ trait CronJobBase: Sized + bun_ptr::AnyRefCounted {
     const BOOTING_OUT: Self::State;
     #[cfg(not(windows))]
     fn set_state(&self, state: Self::State);
-    #[cfg(all(not(target_os = "macos"), not(windows)))]
-    fn stdout_reader_slot(&self) -> &JsCell<OutputReader>;
+    /// Reads the stdout of `crontab -l`; on Windows, what `schtasks` reports on stderr.
+    fn output_reader(&self) -> &JsCell<OutputReader>;
     #[cfg(target_os = "macos")]
     fn title_bytes(&self) -> &[u8];
 
@@ -107,7 +106,7 @@ trait CronJobBase: Sized + bun_ptr::AnyRefCounted {
         Self: BufferedReaderParent,
     {
         self.set_state(Self::READING_CRONTAB);
-        self.stdout_reader_slot().with_mut(|r| {
+        self.output_reader().with_mut(|r| {
             *r = OutputReader::init::<Self>();
             r.set_parent(this_ptr);
         });
@@ -171,13 +170,6 @@ trait CronJobBase: Sized + bun_ptr::AnyRefCounted {
             JobAction::Finish => Self::finish(this),
             JobAction::Advance => Self::advance_state(this),
         }
-    }
-
-    fn loop_(&self) -> *mut AsyncLoop {
-        // `VirtualMachine::uv_loop` already returns the native loop on both
-        // targets (jsc/VirtualMachine.rs:2975); the prior POSIX arm's
-        // `bun_uws::Loop::get()` named the same per-thread singleton.
-        vm_mut().uv_loop()
     }
 
     fn note_reader_done(&self) {
@@ -248,9 +240,7 @@ struct CronRegisterJob {
 
     state: Cell<RegisterState>,
     process: JsCell<Option<ProcessHandle>>,
-    stdout_reader: JsCell<OutputReader>,
-    #[cfg(windows)]
-    stderr_reader: JsCell<OutputReader>,
+    output_reader: JsCell<OutputReader>,
     remaining_fds: Cell<i8>,
     has_called_process_exit: Cell<bool>,
     exit_status: JsCell<Option<Status>>,
@@ -283,7 +273,6 @@ bun_io::impl_buffered_reader_parent! {
     on_reader_done  = |this| <Self as CronJobBase>::on_reader_done(ThisPtr::new(this));
     // SAFETY: `this` is the live heap job registered via `set_parent`.
     on_reader_error = |this, err| <Self as CronJobBase>::on_reader_error(ThisPtr::new(this), err);
-    loop_           = |this| <Self as CronJobBase>::loop_(&*this).cast();
     event_loop      = |this| (*this).event_loop_handle.as_event_loop_ctx();
 }
 
@@ -297,9 +286,8 @@ impl CronJobBase for CronRegisterJob {
     fn set_state(&self, state: RegisterState) {
         self.state.set(state);
     }
-    #[cfg(all(not(target_os = "macos"), not(windows)))]
-    fn stdout_reader_slot(&self) -> &JsCell<OutputReader> {
-        &self.stdout_reader
+    fn output_reader(&self) -> &JsCell<OutputReader> {
+        &self.output_reader
     }
     #[cfg(target_os = "macos")]
     fn title_bytes(&self) -> &[u8] {
@@ -352,7 +340,7 @@ impl CronJobBase for CronRegisterJob {
                     // no borrow of the reader outlives this statement
                     // (Windows only; POSIX ignores stderr here).
                     #[cfg(windows)]
-                    let stderr_owned: Vec<u8> = self.stderr_reader.with_mut(|r| {
+                    let stderr_owned: Vec<u8> = self.output_reader.with_mut(|r| {
                         bun_core::strings::trim(r.final_buffer().as_slice(), &ASCII_WHITESPACE)
                             .to_vec()
                     });
@@ -471,7 +459,7 @@ impl CronRegisterJob {
     #[cfg(not(target_os = "macos"))]
     fn prepare_install_crontab(&self) -> Result<(ZString, ZString), ()> {
         let mut result: Vec<u8> = Vec::new();
-        let filtered = self.stdout_reader.with_mut(|r| {
+        let filtered = self.output_reader.with_mut(|r| {
             filter_crontab(
                 r.final_buffer().as_slice(),
                 self.title.as_bytes(),
@@ -531,7 +519,7 @@ impl CronRegisterJob {
         let _ = file.close(); // close error is non-actionable
 
         self.state.set(RegisterState::InstallingCrontab);
-        self.stdout_reader
+        self.output_reader
             .set(OutputReader::init::<CronRegisterJob>());
         let Some(crontab_path) = find_crontab() else {
             self.set_err(format_args!("crontab not found in PATH"));
@@ -813,9 +801,7 @@ pub(crate) fn register_os_job(
         parsed_cron: parsed,
         state: Cell::new(RegisterState::ReadingCrontab),
         process: JsCell::new(None),
-        stdout_reader: JsCell::new(OutputReader::init::<CronRegisterJob>()),
-        #[cfg(windows)]
-        stderr_reader: JsCell::new(OutputReader::init::<CronRegisterJob>()),
+        output_reader: JsCell::new(OutputReader::init::<CronRegisterJob>()),
         remaining_fds: Cell::new(0),
         has_called_process_exit: Cell::new(false),
         exit_status: JsCell::new(None),
@@ -956,9 +942,7 @@ struct CronRemoveJob {
 
     state: Cell<RemoveState>,
     process: JsCell<Option<ProcessHandle>>,
-    stdout_reader: JsCell<OutputReader>,
-    #[cfg(windows)]
-    stderr_reader: JsCell<OutputReader>,
+    output_reader: JsCell<OutputReader>,
     remaining_fds: Cell<i8>,
     has_called_process_exit: Cell<bool>,
     exit_status: JsCell<Option<Status>>,
@@ -986,7 +970,6 @@ bun_io::impl_buffered_reader_parent! {
     on_reader_done  = |this| <Self as CronJobBase>::on_reader_done(ThisPtr::new(this));
     // SAFETY: `this` is the live heap job registered via `set_parent`.
     on_reader_error = |this, err| <Self as CronJobBase>::on_reader_error(ThisPtr::new(this), err);
-    loop_           = |this| <Self as CronJobBase>::loop_(&*this).cast();
     event_loop      = |this| (*this).event_loop_handle.as_event_loop_ctx();
 }
 
@@ -1000,9 +983,8 @@ impl CronJobBase for CronRemoveJob {
     fn set_state(&self, state: RemoveState) {
         self.state.set(state);
     }
-    #[cfg(all(not(target_os = "macos"), not(windows)))]
-    fn stdout_reader_slot(&self) -> &JsCell<OutputReader> {
-        &self.stdout_reader
+    fn output_reader(&self) -> &JsCell<OutputReader> {
+        &self.output_reader
     }
     #[cfg(target_os = "macos")]
     fn title_bytes(&self) -> &[u8] {
@@ -1055,7 +1037,7 @@ impl CronJobBase for CronRemoveJob {
                     || (cfg!(windows) && state == RemoveState::InstallingCrontab);
                 if exited.code != 0 && !is_acceptable_nonzero {
                     #[cfg(windows)]
-                    let stderr_owned: Vec<u8> = self.stderr_reader.with_mut(|r| {
+                    let stderr_owned: Vec<u8> = self.output_reader.with_mut(|r| {
                         bun_core::strings::trim(r.final_buffer().as_slice(), &ASCII_WHITESPACE)
                             .to_vec()
                     });
@@ -1170,7 +1152,7 @@ impl CronRemoveJob {
     #[cfg(not(target_os = "macos"))]
     fn prepare_filtered_crontab(&self) -> Result<(ZString, ZString), ()> {
         let mut result: Vec<u8> = Vec::new();
-        let filtered = self.stdout_reader.with_mut(|r| {
+        let filtered = self.output_reader.with_mut(|r| {
             filter_crontab(
                 r.final_buffer().as_slice(),
                 self.title.as_bytes(),
@@ -1213,7 +1195,7 @@ impl CronRemoveJob {
         let _ = file.close(); // close error is non-actionable
 
         self.state.set(RemoveState::InstallingCrontab);
-        self.stdout_reader
+        self.output_reader
             .set(OutputReader::init::<CronRemoveJob>());
         let Some(crontab_path) = find_crontab() else {
             self.set_err(format_args!("crontab not found in PATH"));
@@ -1251,9 +1233,7 @@ pub(crate) fn remove(cx: &mut JsScope<'_>, title: &[u8]) -> JsResult<JSValue> {
         title: ZString::from_bytes(title),
         state: Cell::new(RemoveState::ReadingCrontab),
         process: JsCell::new(None),
-        stdout_reader: JsCell::new(OutputReader::init::<CronRemoveJob>()),
-        #[cfg(windows)]
-        stderr_reader: JsCell::new(OutputReader::init::<CronRemoveJob>()),
+        output_reader: JsCell::new(OutputReader::init::<CronRemoveJob>()),
         remaining_fds: Cell::new(0),
         has_called_process_exit: Cell::new(false),
         exit_status: JsCell::new(None),
@@ -1897,10 +1877,6 @@ pub(crate) fn parse(
 /// Trait abstracting over CronRegisterJob/CronRemoveJob for `spawn_cmd_generic`.
 trait SpawnCmdTarget: CronJobBase + BufferedReaderParent + bun_spawn::ProcessExitOwner {
     fn process_slot(&self) -> &JsCell<Option<ProcessHandle>>;
-    #[cfg(unix)]
-    fn stdout_reader(&self) -> &JsCell<OutputReader>;
-    #[cfg(windows)]
-    fn stderr_reader(&self) -> &JsCell<OutputReader>;
 }
 
 bun_spawn::link_impl_ProcessExit! {
@@ -1923,26 +1899,10 @@ impl SpawnCmdTarget for CronRegisterJob {
     fn process_slot(&self) -> &JsCell<Option<ProcessHandle>> {
         &self.process
     }
-    #[cfg(unix)]
-    fn stdout_reader(&self) -> &JsCell<OutputReader> {
-        &self.stdout_reader
-    }
-    #[cfg(windows)]
-    fn stderr_reader(&self) -> &JsCell<OutputReader> {
-        &self.stderr_reader
-    }
 }
 impl SpawnCmdTarget for CronRemoveJob {
     fn process_slot(&self) -> &JsCell<Option<ProcessHandle>> {
         &self.process
-    }
-    #[cfg(unix)]
-    fn stdout_reader(&self) -> &JsCell<OutputReader> {
-        &self.stdout_reader
-    }
-    #[cfg(windows)]
-    fn stderr_reader(&self) -> &JsCell<OutputReader> {
-        &self.stderr_reader
     }
 }
 
@@ -1979,7 +1939,7 @@ fn spawn_cmd_generic<T: SpawnCmdTarget>(
 /// Spawns the command and wires the output readers. `Err` records the error
 /// via `set_err` (for the caller to `finish`). `this.as_ptr()` is stored as
 /// the readers' parent pointer.
-/// The `stdout_reader().start(..)` failure path synchronously re-enters this
+/// The `output_reader().start(..)` failure path synchronously re-enters this
 /// job (`on_reader_error` -> `note_reader_error` writes the `remaining_fds`/
 /// `err_msg` cells through the parent backref); it never touches the reader
 /// cell itself, so the reader's `with_mut` borrow is the only one live.
@@ -2044,57 +2004,23 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
         }
     };
 
-    // Ownership note: BOTH
-    // `Source::Pipe` and `WindowsStdioResult::Buffer` own a `Box<uv::Pipe>`,
-    // and `spawn_process_windows` `heap::take`s the raw `Stdio::Buffer`
-    // pointer into `WindowsStdioResult::Buffer` on success. Pre-stashing the
-    // Box in `stderr_reader.source` here (the original transliteration) would
-    // create TWO `Box<uv::Pipe>` over one allocation — UB under Stacked
-    // Borrows even with a `mem::forget` of the duplicate, because moving the
-    // first Box into `Source::Pipe` reasserts its `Unique` tag and kills the
-    // raw pointer's provenance before `spawn_process_windows` ever
-    // dereferences it. Instead hand the raw heap pointer to `Stdio::Buffer`
-    // alone (sole owner), let `spawn_process_windows` round-trip it through
-    // `heap::take`, and stash the returned Box in `stderr_reader.source`
-    // AFTER spawn — see the `#[cfg(windows)]` block below and
-    // `lifecycle_script_runner.rs` / `filter_run.rs` for the canonical
-    // pattern. On spawn error, `WindowsStdio` has no `Drop`; reclaim
-    // explicitly via `spawn_options.stderr.deinit()`.
-    #[cfg(windows)]
-    let stderr_pipe_ptr: *mut bun_sys::windows::libuv::Pipe =
-        bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<
-            bun_sys::windows::libuv::Pipe,
-        >()));
     let cwd = FileSystem::get().top_level_dir();
     let spawn_options = SpawnOptions {
         stdin: stdin_opt,
         stdout: stdout_opt,
-        #[cfg(windows)]
-        stderr: spawn::Stdio::Buffer(stderr_pipe_ptr),
-        #[cfg(not(windows))]
-        stderr: spawn::Stdio::Ignore,
+        stderr: if cfg!(windows) {
+            spawn::Stdio::Buffer
+        } else {
+            spawn::Stdio::Ignore
+        },
         cwd: cwd.into(),
         argv0: resolved_argv0,
-        #[cfg(windows)]
-        windows: spawn::WindowsOptions {
-            loop_: EventLoopHandle::init(vm_mut().event_loop().cast::<()>()),
-            ..Default::default()
-        },
         ..SpawnOptions::default()
     };
-    // `mut` only for the Windows error-path `spawn_options.stderr.deinit()`.
-    #[cfg(windows)]
-    let mut spawn_options = spawn_options;
 
     let spawned = match spawn::spawn_process_cstr(&spawn_options, argv, env) {
         Ok(Ok(sp)) => sp,
         Ok(Err(err)) => {
-            // `spawn_process_windows` only `heap::take`s the `Stdio::Buffer`
-            // raw `*mut uv::Pipe` on the SUCCESS path; on every error return
-            // ownership stays with the caller and `WindowsStdio` has no
-            // `Drop`. Reclaim it (uv_close + free if init'd) here.
-            #[cfg(windows)]
-            spawn_options.stderr.deinit();
             this.set_err(format_args!(
                 "Failed to spawn process: {}",
                 bstr::BStr::new(err.name())
@@ -2102,74 +2028,40 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
             return Err(());
         }
         Err(e) => {
-            #[cfg(windows)]
-            spawn_options.stderr.deinit();
             this.set_err(format_args!("Failed to spawn process: {}", e.name()));
             return Err(());
         }
     };
-    #[cfg(windows)]
-    let mut spawned = spawned;
 
-    #[cfg(unix)]
-    {
-        if let Some(stdout) = spawned.stdout {
-            if !spawned.memfds[1] {
-                this.stdout_reader().with_mut(|r| r.set_parent(this_ptr));
-                let _ = sys::set_nonblocking(stdout);
-                this.remaining_fds().set(this.remaining_fds().get() + 1);
-                let started = this.stdout_reader().with_mut(|r| {
-                    use bun_io::pipe_reader::PosixFlags;
-                    r.flags.insert(PosixFlags::NONBLOCKING | PosixFlags::SOCKET);
-                    r.flags.remove(
-                        PosixFlags::MEMFD
-                            | PosixFlags::RECEIVED_EOF
-                            | PosixFlags::CLOSED_WITHOUT_REPORTING,
-                    );
-                    r.start(stdout, true)
-                });
-                if started.is_err() {
-                    this.set_err(format_args!("Failed to start reading stdout"));
-                    return Err(());
-                }
-                this.stdout_reader().with_mut(|r| {
-                    if let Some(p) = r.handle.get_poll() {
-                        p.set_flag(bun_io::FilePollFlag::Socket);
-                    }
-                });
-            } else {
-                this.stdout_reader().with_mut(|r| {
-                    r.set_parent(this_ptr);
-                    r.start_memfd(stdout);
-                });
-            }
-        }
-    }
-    #[cfg(windows)]
-    {
-        // `spawn_process_windows` has `heap::take`n `stderr_pipe_ptr` out of
-        // `Stdio::Buffer` into `spawned.stderr` as
-        // `WindowsStdioResult::Buffer(Box<uv::Pipe>)`. Take that Box out
-        // *here* (sole owner — single `into_raw` → `from_raw` round-trip, no
-        // aliasing Box) and stash it in `stderr_reader.source` BEFORE
-        // `start_with_current_pipe` (which reads `source.?.pipe`) and BEFORE
-        // `spawned` drops — otherwise `WindowsSpawnResult::Drop` would
-        // `uv_close`+free the live, libuv-registered handle (UAF in the read
-        // callback + double-free on reader close).
-        if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stderr.take() {
-            debug_assert!(core::ptr::eq(Box::as_ref(&pipe), stderr_pipe_ptr));
-            this.stderr_reader().with_mut(|r| {
-                r.set_source(bun_io::Source::Pipe(pipe));
-                r.set_parent(this_ptr);
-            });
+    let (output, is_memfd, name) = if cfg!(windows) {
+        (spawned.stderr, spawned.memfds[2], "stderr")
+    } else {
+        (spawned.stdout, spawned.memfds[1], "stdout")
+    };
+    if let Some(output) = output {
+        if !is_memfd {
+            this.output_reader().with_mut(|r| r.set_parent(this_ptr));
+            let _ = sys::set_nonblocking(output);
             this.remaining_fds().set(this.remaining_fds().get() + 1);
-            let started = this
-                .stderr_reader()
-                .with_mut(|r| r.start_with_current_pipe());
+            let started = this.output_reader().with_mut(|r| {
+                use bun_io::pipe_reader::ReaderFlags;
+                r.flags.insert(ReaderFlags::CHILD_STDIO);
+                r.flags.remove(
+                    ReaderFlags::MEMFD
+                        | ReaderFlags::RECEIVED_EOF
+                        | ReaderFlags::CLOSED_WITHOUT_REPORTING,
+                );
+                r.start(output, true)
+            });
             if started.is_err() {
-                this.set_err(format_args!("Failed to start reading stderr"));
+                this.set_err(format_args!("Failed to start reading {name}"));
                 return Err(());
             }
+        } else {
+            this.output_reader().with_mut(|r| {
+                r.set_parent(this_ptr);
+                r.start_memfd(output);
+            });
         }
     }
 

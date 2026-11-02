@@ -2,7 +2,7 @@
 //!
 //! The full body — `Resolver` with the
 //! c-ares channel, all `resolve*`/`reverse`/`getServers`/`setServers` host
-//! functions, libinfo/libuv/system getaddrinfo backends, and the process-wide
+//! functions, libinfo/system getaddrinfo backends, and the process-wide
 //! `internal` cache used by the usockets connect path — lives in `dns.rs`
 //! (mounted here as `dns_body`). This module is the public surface: it
 //! re-exports the real types and methods so callers (`dispatch.rs`,
@@ -10,10 +10,6 @@
 
 #[path = "dns.rs"]
 mod dns_body;
-#[cfg(windows)]
-pub(crate) use dns_body::UvDnsPoll;
-#[cfg(windows)]
-pub(crate) use dns_body::lib_uv_backend::LibuvCompleteHolder;
 pub(crate) use dns_body::netc;
 
 #[path = "cares_jsc.rs"]
@@ -26,7 +22,7 @@ pub(crate) mod options_jsc; // GetAddrInfo.Options ↔ JSValue
 // `dns_body` is the real implementation (c-ares channel, request types,
 // Resolver method bodies, `internal` cache). The earlier erased "type-surface"
 // duplicates that lived here have been dissolved — there is one
-// `Resolver`, and `dispatch.rs`'s `from_field_ptr!`/`owner_as!` casts now resolve
+// `Resolver`, and `dispatch.rs`'s `from_field_ptr!` casts now resolve
 // to the same allocation `dns_body::Resolver::init` produces.
 
 #[cfg(target_os = "macos")]

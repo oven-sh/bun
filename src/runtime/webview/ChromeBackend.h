@@ -312,7 +312,7 @@ for (;;) {
 // writes go through the same fd via us_socket_write. Socketpair not two
 // pipes because usockets' bsd_recv calls recv() which fails ENOTSOCK on a
 // pipe — the error was misread as EOF and onClose fired before any data.
-// Windows has no inheritable sockets: ChromeProcess.rs drives two libuv pipes instead and everything from onData on is shared.
+// Windows: two pipes, which usockets takes there. Chrome's blocking read of the one would hold up its writes to the same one.
 //
 // pending maps CDP id → {methodTag, slot selector, weak view}. Promises
 // live in the WriteBarrier slots on JSWebView (visitChildren marks them);
@@ -414,8 +414,10 @@ public:
 
     Zig::GlobalObject* m_global = nullptr;
     TransportMode m_mode = TransportMode::None;
-    // POSIX pipe mode: the usockets-adopted socketpair fd. Null on Windows.
+    // Pipe mode: the usockets-adopted socketpair fd.
     us_socket_t* m_readSock = nullptr;
+    // The same socket, except on Windows.
+    us_socket_t* m_writeSock = nullptr;
     // WebSocket mode: RefPtr keeps the WebCore::WebSocket alive across
     // the singleton's lifetime. The WebSocket's native callbacks point
     // back at this Transport (via static trampolines, not a captured

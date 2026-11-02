@@ -56,7 +56,7 @@ pub(crate) enum S3DownloadResult<'a> {
     Failure(S3Error<'a>),
 }
 
-pub enum S3UploadResult<'a> {
+pub(crate) enum S3UploadResult<'a> {
     Success,
     /// failure error is not owned and need to be copied if used after this callback
     Failure(S3Error<'a>),
@@ -499,9 +499,8 @@ impl Drop for S3HttpSimpleTask {
         // KeepAlive::unref takes an aio EventLoopCtx; the JS-loop ctx is fetched via
         // the global hook (registered by crate::init) — same pattern as
         // `event_loop_handle_to_ctx` in process.rs.
-        self.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
-            bun_io::AllocatorType::Js,
-        ));
+        self.poll_ref
+            .unref(bun_io::file_poll::get_vm_ctx(bun_io::AllocatorType::Js));
         // Only `http.clear_data()` runs — never a full AsyncHTTP destructor —
         // so we intentionally do NOT `assume_init_drop`.
         self.release_portable();
@@ -655,9 +654,7 @@ pub(crate) fn execute_simple_s3_request(
     };
 
     let mut poll_ref = KeepAlive::init();
-    poll_ref.ref_(bun_io::posix_event_loop::get_vm_ctx(
-        bun_io::AllocatorType::Js,
-    ));
+    poll_ref.ref_(bun_io::file_poll::get_vm_ctx(bun_io::AllocatorType::Js));
     let proxy_url = resolve_proxy(options.proxy_url, &result.url);
     let task_ptr = S3HttpSimpleTask::new(S3HttpSimpleTask {
         // written below via `MaybeUninit::write` before any read.

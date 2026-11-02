@@ -148,18 +148,7 @@ impl OutKind {
                         buf: cap,
                     })
                 } else {
-                    // `IOWriter::fd()` (IOWriter.rs) returns `Fd::INVALID`
-                    // once the fd has been handed off to libuv, so the
-                    // sentinel compare here checks for that hand-off state.
-                    let fd = val.writer.fd();
-                    if fd != bun_sys::Fd::INVALID {
-                        Stdio::Fd(fd)
-                    } else {
-                        // Windows: fd was moved to libuv → inherit (libuv
-                        // already manages it). On POSIX `IOWriter::fd()` is
-                        // always the live fd, so this branch is unreachable.
-                        Stdio::Inherit
-                    }
+                    Stdio::Fd(val.writer.fd())
                 }
             }
             OutKind::Pipe => Stdio::Pipe,

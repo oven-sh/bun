@@ -417,7 +417,6 @@ impl Builtin {
     /// impl the heap sweep already deleted; see
     /// `ShellSubprocess::defuse_array_buffer_unpins`. VM-shutdown finalizer
     /// only.
-    #[cfg(not(windows))]
     pub(crate) fn defuse_array_buf_pins(&mut self) {
         if let BuiltinInput::ArrayBuf { buf, .. } = &mut self.stdin {
             buf.defuse();
@@ -605,13 +604,11 @@ impl Builtin {
                     return None;
                 }
 
-                // Honor the `pollable` computed by `open_for_writing_impl` on
-                // POSIX so a FIFO/socket target (whose fd is now O_NONBLOCK)
-                // takes the pollable path; Windows keeps the async writer.
+                // `pollable` is from `open_for_writing_impl`: a FIFO or socket target is O_NONBLOCK now.
                 let redirect_writer = IOWriter::init(
                     redirfd,
                     io_writer::Flags {
-                        pollable: if cfg!(windows) { true } else { pollable },
+                        pollable,
                         nonblock: is_nonblocking,
                         is_socket,
                         ..Default::default()

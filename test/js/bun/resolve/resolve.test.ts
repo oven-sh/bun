@@ -528,8 +528,9 @@ describe.concurrent("require.resolve() with paths", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("(pass) test");
-    expect(stdout).toContain(`${store}/chai/index.js MODULE_NOT_FOUND\n`);
-    expect(exitCode).toBe(0);
+    // `bun test` prints its version to stdout first.
+    const lines = stdout.split(/\r?\n/).filter(line => line && !line.startsWith("bun test "));
+    expect({ lines, exitCode }).toEqual({ lines: [`${store}/chai/index.js MODULE_NOT_FOUND`], exitCode: 0 });
   });
 });
 

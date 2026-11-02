@@ -1770,9 +1770,7 @@ WEBCORE_GENERATED_CONSTRUCTOR_GETTER(WritableStream);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(WritableStreamDefaultController);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(WritableStreamDefaultWriter);
 
-// The Web IDL receiver rule for the `self` accessor: a nullish receiver means
-// the accessor's own global, the global object (or the JSGlobalProxy that
-// `globalThis` is from JS) is accepted, and any other receiver is a TypeError.
+// Web IDL receiver rule: nullish means the lexical global, a non-global receiver throws.
 static Zig::GlobalObject* selfAccessorThisObject(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue thisValue, ASCIILiteral accessorName)
 {
     auto* thisObject = WebCore::castThisValue<Zig::GlobalObject>(*globalObject, thisValue);

@@ -49,7 +49,7 @@ which is the cue to diff the upstream `CMakeLists.txt`.
 
 ## Iterating on a dep from a local checkout
 
-To hack on a vendored dep (e.g. chase a bug in the mimalloc or libuv fork)
+To hack on a vendored dep (e.g. chase a bug in the mimalloc fork)
 without cutting a commit and bumping the pin each round, point the build at
 a git clone:
 
@@ -144,12 +144,11 @@ export const mydep: Dependency = {
 
 - **libdeflate.ts** — simplest direct dep
 - **mimalloc.ts** — direct build, single unity TU compiled as C++
-- **tinycc.ts** — direct build with a build-time codegen tool
+- **tinycc.ts** — direct build with a build-time codegen tool; `enabled: cfg => cfg.tinycc` for a dep only some targets have
 - **zlib.ts** — direct build with per-source SIMD `-m` flags + `.h.in` substitution
 - **cares.ts** — direct build with hand-written per-target config.h
-- **boringssl.ts** — direct build with NASM assembly (win-x64) and a large gen/ manifest; `forbidUndefined` (with libuv.ts) keeps a dep that bun points at mimalloc from calling libc's allocator behind its back
+- **boringssl.ts** — direct build with NASM assembly (win-x64) and a large gen/ manifest; `forbidUndefined` keeps a dep that bun points at mimalloc from calling libc's allocator behind its back
 - **sqlite.ts** — direct build, in-tree source (lives in `src/`, not `vendor/`)
-- **libuv.ts** — `enabled: cfg => cfg.windows` for a platform-only dep
 - **lolhtml.ts** — cargo build with rustflags
 - **webkit.ts** — `prebuilt`, and for a local checkout a direct build with
   source `groups` (bmalloc, WTF, JavaScriptCore), generator and executable

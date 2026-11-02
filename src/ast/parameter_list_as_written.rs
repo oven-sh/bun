@@ -10,13 +10,13 @@ use crate::StoreStr;
 /// The key is where the printer finds the list again: the `(` of a function, the start of an arrow function.
 pub type ParameterListsAsWritten = ArrayHashMap<i32, StoreStr, AutoContext, AstAlloc>;
 
-/// `mock.module` takes each of these, anywhere in the text of a factory, as a mention of the original module.
+/// `mentionsOriginalModule` (src/jsc/bindings/BunPlugin.cpp) takes each of these, anywhere in the text of a `mock.module` factory, as a mention of the original module.
 const READ_BY_MOCK_MODULE: [&[u8]; 3] = [b"importOriginal", b"importActual", b"requireActual"];
 
 /// The text up to the `)` of the list that starts at `after_open_paren`, if the printer is to write it: plain names and a comment.
 pub fn text_to_keep(after_open_paren: &[u8]) -> Option<&[u8]> {
     let mut names = Names::new(after_open_paren);
-    while let Ok(Some(_)) = names.next_name() {}
+    while names.next_name().ok()?.is_some() {}
     let (text, rest) = after_open_paren.split_at(names.position);
     let is_kept = names.has_comment
         && rest.first() == Some(&b')')
@@ -33,16 +33,19 @@ pub struct Name {
     pub is_rest: bool,
 }
 
-/// The text holds something other than names, commas, `...`, ASCII whitespace and ASCII comments.
+/// The text is not a list of names with a comma between them, `...` before the last at most, ASCII whitespace and ASCII comments.
 #[derive(Debug)]
 pub struct NotPlainNames;
 
 /// The names in the text between the parentheses of a parameter list.
 pub struct Names<'a> {
     text: &'a [u8],
-    /// After an error, where what is not part of a list of plain names starts.
     position: usize,
     has_comment: bool,
+    /// A name was passed, and no comma after it.
+    is_after_name: bool,
+    /// That name has `...` before it: nothing but whitespace and comments follows it.
+    is_after_rest: bool,
 }
 
 impl<'a> Names<'a> {
@@ -51,41 +54,42 @@ impl<'a> Names<'a> {
             text,
             position: 0,
             has_comment: false,
+            is_after_name: false,
+            is_after_rest: false,
         }
     }
 
-    /// `Ok(None)` at the end of the text.
+    /// `Ok(None)` at the end of the list: the end of the text, or a `)`.
     pub fn next_name(&mut self) -> Result<Option<Name>, NotPlainNames> {
         let text = self.text;
         let mut at = self.position;
         let mut is_rest = false;
         let found = loop {
-            let Some(&byte) = text.get(at) else {
-                break if is_rest {
-                    Err(NotPlainNames)
-                } else {
-                    Ok(None)
-                };
-            };
-            match byte {
-                b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C => at += 1,
-                b',' if !is_rest => at += 1,
-                b'.' if !is_rest && text[at..].starts_with(b"...") => {
-                    is_rest = true;
-                    at += 3;
-                }
-                b'/' => match end_of_comment(text, at) {
+            match text.get(at).copied() {
+                Some(b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C) => at += 1,
+                Some(b'/') => match end_of_comment(text, at) {
                     Some(end) => {
                         at = end;
                         self.has_comment = true;
                     }
                     None => break Err(NotPlainNames),
                 },
-                b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'$' => {
+                None | Some(b')') if !is_rest => break Ok(None),
+                Some(b',') if self.is_after_name && !self.is_after_rest => {
+                    self.is_after_name = false;
+                    at += 1;
+                }
+                Some(b'.') if !self.is_after_name && !is_rest && text[at..].starts_with(b"...") => {
+                    is_rest = true;
+                    at += 3;
+                }
+                Some(b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'$') if !self.is_after_name => {
                     let start = at;
                     while text.get(at).is_some_and(|&byte| is_name_byte(byte)) {
                         at += 1;
                     }
+                    self.is_after_name = true;
+                    self.is_after_rest = is_rest;
                     break Ok(Some(Name {
                         start,
                         end: at,
@@ -107,10 +111,13 @@ fn is_name_byte(byte: u8) -> bool {
 /// `text[at]` is `/`. The end of the ASCII comment that starts there, if it ends inside the text: a line comment ends before its line terminator.
 fn end_of_comment(text: &[u8], at: usize) -> Option<usize> {
     let body = text.get(at + 2..)?;
-    let length = match text[at + 1] {
-        b'*' => strings::index_of(body, b"*/")? + 2,
+    let length = match (text[at + 1], body.first()) {
+        // The printer writes a comment that starts with `!` by itself, into the body of the function.
+        (_, Some(b'!')) => return None,
+        (b'*', _) => strings::index_of(body, b"*/")? + 2,
         // JavaScriptCore reads `sourceURL=` and `sourceMappingURL=` from a comment that starts with `//#` or `//@`.
-        b'/' if !matches!(body.first(), Some(b'#' | b'@')) => strings::index_of_any(body, b"\r\n")?,
+        (b'/', Some(b'#' | b'@')) => return None,
+        (b'/', _) => strings::index_of_any(body, b"\r\n")?,
         _ => return None,
     };
     body[..length].is_ascii().then_some(at + 2 + length)
@@ -190,7 +197,12 @@ mod tests {
             "a <!-- b\n",
             "a / b",
             "1",
-            "a)",
+            "a b",
+            ",a",
+            "a,,b",
+            "a ...b",
+            "...a, b",
+            "...a,",
         ] {
             assert_eq!(names_of(text), None, "{text}");
         }
@@ -219,10 +231,24 @@ mod tests {
     }
 
     #[test]
+    fn a_comment_that_the_printer_writes_by_itself_is_not_passed() {
+        assert_eq!(names_of("/*! legal */ a"), None);
+        assert_eq!(names_of("a, //! legal\n b"), None);
+        assert_eq!(names_of("/* ! */ a"), commented(&["a"]));
+    }
+
+    #[test]
     fn a_keyword_is_a_name_here() {
-        // The parser leaves a TypeScript `this` parameter and a modifier out of the arguments, so the printer finds other names.
+        // The parser leaves a TypeScript `this` parameter out of the arguments, so the printer finds another name.
         assert_eq!(names_of("this, /* c */ a"), commented(&["this", "a"]));
-        assert_eq!(names_of("public /* c */ a"), commented(&["public", "a"]));
+        assert_eq!(names_of("public /* c */ a"), None);
+    }
+
+    #[test]
+    fn the_list_ends_at_a_close_paren() {
+        assert_eq!(names_of("a) { b }"), Some((vec!["a".into()], false)));
+        assert_eq!(names_of("a, /* c */ b,) => a"), commented(&["a", "b"]));
+        assert_eq!(names_of("a, ...) {}"), None);
     }
 
     #[test]
@@ -241,6 +267,11 @@ mod tests {
             "/* c */ a, { b }) {}",
             "/* c */ a",
             "/* c */",
+            "/* c */ ...) {}",
+            "/* c */ a b) {}",
+            "/* c */ ,a) {}",
+            "/* c */ ...a, b) {}",
+            "/*! legal */ a) {}",
             "/* importOriginal */ load) => load()",
             "load /* see vi.importActual */) => load()",
             "/* c */ requireActual) => 1",

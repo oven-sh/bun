@@ -172,8 +172,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         }
         let contents: &'a [u8] = self.lexer.contents;
-        debug_assert_eq!(contents[open_paren.start as usize], b'(');
-        let after_open_paren = &contents[open_paren.start as usize + 1..];
+        // Where the `(` is missing, `Lexer::expect` has logged that and gone on.
+        let Some((b'(', after_open_paren)) = usize::try_from(open_paren.start)
+            .ok()
+            .and_then(|at| contents.get(at..))
+            .and_then(<[u8]>::split_first)
+        else {
+            return;
+        };
         if let Some(text) = js_ast::parameter_list_as_written::text_to_keep(after_open_paren) {
             bun_core::handle_oom(
                 self.parameter_lists_as_written

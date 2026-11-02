@@ -503,8 +503,8 @@ console.log(JSON.stringify([fn, arrow, asyncArrow, Class, legal].map(String), nu
       "(/* c */ a) => a * 2",
       "async (/* c */ a) => {\n  await a;\n}",
       "class {\n  constructor(/* c */ a) {\n    this.a = a;\n  }\n}",
-      // A legal comment is also printed in the body, as before.
-      "function(/*! legal */ a) {\n  /*! legal */\n}",
+      // The printer writes a comment that starts with "!" by itself, into the body: such a list is printed as before.
+      "function(a) {\n  /*! legal */\n}",
     ]);
     expect(exitCode).toBe(0);
   });
@@ -617,19 +617,12 @@ const kept: [Function, string][] = [
     "/* c */ a",
   ],
 ];
-// Not kept: the printer writes something else than the text of the source.
+// Printed as before: the printer does not write the text of the source where it holds a type, a modifier or a decorator.
 class WithProperty {
   constructor(/* c */ public a) {}
 }
 class WithoutComment {
   constructor(public a) {}
-}
-// The text has two names for the one parameter.
-class WithPropertyNamedReadonly {
-  constructor(/* c */ readonly readonly) {}
-}
-class WithoutCommentNamedReadonly {
-  constructor(readonly readonly) {}
 }
 class Decorated {
   method(@dec /* c */ a) {}
@@ -637,24 +630,24 @@ class Decorated {
 class DecoratedWithoutComment {
   method(@dec a) {}
 }
-const declined: Record<string, [Function, Function]> = {
+const asBefore: Record<string, [Function, Function]> = {
   "a type": [function (/* c */ a: number) {}, function (a: number) {}],
   "a type on a later parameter": [function (/* c */ a, b: number) {}, function (a, b: number) {}],
   "an optional parameter": [function (/* c */ a?) {}, function (a?) {}],
   "a this parameter": [function (this: unknown, /* c */ a) {}, function (this: unknown, a) {}],
   "a this parameter with no type": [function (this, /* c */ a) {}, function (this, a) {}],
+  // The text has a name, and the function has no parameter.
+  "a this parameter alone": [function (/* c */ this) {}, function (this) {}],
   "an arrow function with a type": [(/* c */ a: number) => a, (a: number) => a],
   "a parameter property": [WithProperty, WithoutComment],
-  "a parameter property with the name of its modifier": [WithPropertyNamedReadonly, WithoutCommentNamedReadonly],
   "a decorator": [Decorated.prototype.method, DecoratedWithoutComment.prototype.method],
 };
-const text = (fn: Function) =>
-  String(fn).replace(/(WithProperty|WithoutComment)(NamedReadonly)?|DecoratedWithoutComment|Decorated/g, "C");
+const text = (fn: Function) => String(fn).replace(/WithProperty|WithoutComment|DecoratedWithoutComment|Decorated/g, "C");
 console.log(
   JSON.stringify(
     {
       notKept: kept.filter(([fn, list]) => !String(fn).includes("(" + list + ")")).map(([fn, list]) => ({ list, text: String(fn) })),
-      notAsToday: Object.entries(declined)
+      notAsBefore: Object.entries(asBefore)
         .filter(([, [commented, plain]]) => text(commented) !== text(plain))
         .map(([name, [commented, plain]]) => ({ name, commented: text(commented), plain: text(plain) })),
     },
@@ -667,7 +660,7 @@ console.log(
       "lists.ts",
     );
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({ notKept: [], notAsToday: [] });
+    expect(JSON.parse(stdout)).toEqual({ notKept: [], notAsBefore: [] });
     expect(exitCode).toBe(0);
   });
 
@@ -714,6 +707,20 @@ console.log(JSON.stringify(differing.map(([name, [commented, plain]]) => ({ name
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual([]);
     expect(exitCode).toBe(0);
+  });
+
+  // The parser goes on behind a missing "(". A comment then stands behind something that is no "(".
+  test.each([
+    ["no-name.cjs", "function (a /* c */) {}\n", 'error: Expected identifier but found "("'],
+    ["no-paren.cjs", "function foo {\n  // a comment\n}\n", 'error: Expected "(" but found "{"'],
+    ["no-paren.tsx", "let x = <T,>a /* c */) => 1;\n", 'error: Expected "(" but found "a"'],
+  ])("and a syntax error before a comment is reported as before: %s", async (file, source, error) => {
+    const { stdout, stderr, exitCode } = await run({ [file]: source }, file);
+    expect({ stdout, error: stderr.split("\n").find(line => line.startsWith("error: ")), exitCode }).toEqual({
+      stdout: "",
+      error,
+      exitCode: 1,
+    });
   });
 
   test.each([

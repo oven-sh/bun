@@ -1221,6 +1221,25 @@ export const cases: Record<string, Case> = {
  1|[...service.each(1, 2)];
 `,
   },
+  // The "(" of such a list is where its function starts: an error that the call itself throws is there.
+  "commented-parameters-start.ts": {
+    functions: "3/3",
+    lines: `
+ 1|const object = {
+ 1|  method
+ 1|  (/* none */) {
+ 1|    at();
+ -|  },
+ 1|};
+ 1|object.method();
+ 1|class Klass {
+ 1|  constructor(/* the first */ a) {}
+ -|}
+ 1|try { (Klass as any)(1); } catch (e) { caught(e, "(/* the first */ a)"); }
+ 1|export const one = (/* the first */ a, b /* the last */) => [a, b, at()].length;
+ 1|one(1, 2);
+`,
+  },
   // Columns far from the start of the line.
   "wide.js": {
     functions: "0/0",

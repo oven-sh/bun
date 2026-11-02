@@ -2164,6 +2164,10 @@ describe.concurrent("aroundEach and aroundAll", () => {
           aroundEach((/* runs it */ runTest, /* the context */ context) => runTest());
           test("extended", () => console.log("unreachable"));
         });
+        describe("the same beside a comment that the printer writes by itself", () => {
+          aroundEach((/*! runs it */ runTest, /* the context */ context) => runTest());
+          test("extended", () => console.log("unreachable"));
+        });
       `,
     });
     expect({ log, results, errors, exitCode }).toEqual({
@@ -2171,8 +2175,10 @@ describe.concurrent("aroundEach and aroundAll", () => {
       results: [
         "(pass) a list with no parameter > extended",
         "(fail) a parameter that is not a destructuring pattern > extended",
+        "(fail) the same beside a comment that the printer writes by itself > extended",
       ],
       errors: [
+        `error: The parameter that fixtures are destructured from must be an object destructuring pattern, received "context"`,
         `error: The parameter that fixtures are destructured from must be an object destructuring pattern, received "context"`,
       ],
       exitCode: 1,

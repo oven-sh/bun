@@ -157,7 +157,7 @@ pub struct LexerSnapshot<'a> {
     pub(crate) preserve_all_comments_before: bool,
     pub(crate) is_legacy_octal_literal: bool,
     pub(crate) is_log_disabled: bool,
-    pub(crate) last_comment_end: u32,
+    pub(crate) last_comment_end: Loc,
     pub(crate) code_point: CodePoint,
     pub(crate) identifier: &'a [u8],
     pub(crate) jsx_pragma: JSXPragma,
@@ -227,7 +227,7 @@ pub struct Lexer<'a> {
     pub(crate) is_legacy_octal_literal: bool,
     pub(crate) is_log_disabled: bool,
     pub(crate) comments_to_preserve_before: Vec<js_ast::G::Comment>,
-    pub(crate) last_comment_end: u32,
+    pub(crate) last_comment_end: Loc,
     pub(crate) code_point: CodePoint,
     pub(crate) identifier: &'a [u8],
     pub(crate) jsx_pragma: JSXPragma,
@@ -306,7 +306,7 @@ impl<'a> Lexer<'a> {
     /// A comment stands between the token at `loc` and the current token.
     #[inline]
     pub(crate) fn has_comment_after(&self, loc: Loc) -> bool {
-        self.last_comment_end > loc.start as u32
+        self.last_comment_end.start > loc.start
     }
 
     #[cold]
@@ -1915,7 +1915,7 @@ impl<'a> Lexer<'a> {
     }
 
     fn scan_comment_text(&mut self, for_pragma: bool) {
-        self.last_comment_end = self.end as u32;
+        self.last_comment_end = bun_ast::usize2loc(self.end);
         let text = &self.contents[self.start..self.end];
         let has_legal_annotation = text.len() > 2 && text[2] == b'!';
         let is_multiline_comment = text.len() > 1 && text[1] == b'*';
@@ -2279,7 +2279,7 @@ impl<'a> Lexer<'a> {
             is_legacy_octal_literal: false,
             is_log_disabled: false,
             comments_to_preserve_before: Vec::new(),
-            last_comment_end: 0,
+            last_comment_end: Loc::EMPTY,
             code_point: -1,
             identifier: b"",
             jsx_pragma: JSXPragma::default(),

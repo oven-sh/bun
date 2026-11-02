@@ -32,9 +32,13 @@ Checks of section 1b at 1689b23582: clippy exit 0 with no warning, source lints 
 and rustfmt clean, tsc of both scripts projects with 0 errors, 0 comment groups for Comment Cop.
 `cargo check --workspace --all-targets` had no warning at 4f0e5ee46a (same code).
 
-NOT run again on edb9ce8f7a: the probes of section 2, the vendored files, the release builds and
-the gdb counts of section 3. Their numbers below are of 2026-10-30 on 001958b155. Section 1 to 3
-run in full on main after the merge.
+Probes and vendored files on edb9ce8f7a (19:40Z, base build and the build of 1689b23582): every
+number of section 2 is as on 2026-10-30, except the curl row, which is a range on the base. The
+base loses 15 of 24 in 10 of 10 runs and 81 of 100 in 6 of 6. The 235 vendored files give the same
+exit code on both builds (the same 3 fail).
+
+NOT run again on edb9ce8f7a: the release builds and the gdb counts of section 3. Their numbers
+below are of 2026-10-30 on 001958b155. Section 1 to 3 run in full on main after the merge.
 
 Pitfalls:
 - Never put `&` after a `cmd1 && cmd2 && ...` chain: the tool kills what still runs when the call
@@ -117,7 +121,7 @@ Numbers of 2026-10-30 on base 001958b155 / cut 524abcc7e3 (the src/ tree of 92d1
 | `$B probe-burst.mjs 16 3000 hello` | 0 lost | 0 lost |
 | `$B probe-burst.mjs 100 1200 hello` | 0 lost | 0 lost |
 | `$B probe-large.mjs 54 2000 10` | lost 10 of 10 (`103 true, 200 false`) | lost 0 |
-| `./probe-curl.sh $B 60 3000` | 17 x 200, the others `reset by server (error 0x102 INTERNAL_ERROR)` | 60 x 200 |
+| `./probe-curl.sh $B 60 3000`, 10 runs on the base | 17 to 22 x 200 (17 in 7 of 10 runs), the others `reset by server (error 0x102 INTERNAL_ERROR)` or `Failed to connect` (curl tries a second connection) | 60 x 200 in every run |
 | `$B probe-destroy-direct.mjs 12 100 2000 5` | connectionLost 12 (`QPACK decompression error`) | connectionLost 12 (the case that is not fixed) |
 
 The system bun (1.4.3) on the first row: refused 15, 24 `103`s, 9 `200`s, 24 bodies, no error.

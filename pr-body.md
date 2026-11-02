@@ -25,13 +25,13 @@
 
 **What the loss looks like.** Released builds (1.4.3) drop the block with no error: for the 24 requests above the client gets 24 `103`s, 9 `200`s and 24 bodies. The reset with `H3_INTERNAL_ERROR` is the rule of #46528 for a body behind a refused block. In a debug build lsquic logs `cannot send headers while previous header block is pending`.
 
-**Counts.** Debug builds, Linux x64. `onheaders` answers each request with a `103` that has one `link` field, then a `200`.
+**Counts.** Debug builds, Linux x64. `onheaders` answers each request with a `103` that has one `link` field, then a `200`. The first two rows give the same count in every run (10 and 6 runs). The curl row is from 10 runs.
 
 | | before | with this change |
 |---|---|---|
 | 24 streams, 6 KB `link`, a body | 15 of 24 responses lost | 0 lost |
 | 100 streams, 3 KB `link` | 81 of 100 lost | 0 lost |
-| `curl --http3-only --parallel`, 60 GETs, 3 KB `link` (curl 8.19.0, ngtcp2) | 17 of 60 get the `200`, 43 get `reset by server (error 0x102 INTERNAL_ERROR)` | 60 of 60 get the `200` |
+| `curl --http3-only --parallel`, 60 GETs, 3 KB `link` (curl 8.19.0, ngtcp2) | 17 to 22 of 60 get the `200`. The others get `reset by server (error 0x102 INTERNAL_ERROR)` or, for a few, `Failed to connect` | 60 of 60 get the `200` |
 | 16 streams with a 3 KB `link`, or 100 streams with 1.2 KB | 0 lost | 0 lost |
 | one stream, a `103` with 108 KB of fields | lost in 10 of 10 runs | lost in 0 of 10 |
 

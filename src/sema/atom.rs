@@ -675,10 +675,11 @@ impl Intern for Interner<'_> {
 }
 
 /// One interner per thread, for work where atoms never cross threads. Only the thread that interns
-/// a text writes or reads it.
+/// a text writes or reads it. An interner is made by the first thread that asks for it.
 pub struct InternerPerThread<'s> {
-    all: Box<[Interner<'s>]>,
-    /// The first interner's `Interner::number`.
+    sessions: &'s [Session],
+    all: Box<[std::sync::OnceLock<Interner<'s>>]>,
+    /// Like `Interner::number`, for all of them together.
     number: u64,
     /// How many threads have been assigned an interner.
     threads: std::sync::atomic::AtomicUsize,
@@ -691,13 +692,13 @@ thread_local! {
 }
 
 impl<'s> InternerPerThread<'s> {
-    /// Creates one interner per session. `sessions` must not be empty. If there are more threads
+    /// Has one interner per session. `sessions` must not be empty. If there are more threads
     /// than sessions, threads share interners.
     pub fn new_in(sessions: &'s [Session]) -> Self {
-        let all: Box<[Interner<'s>]> = sessions.iter().map(Interner::new_in).collect();
         InternerPerThread {
-            number: all.first().map_or(0, Interner::number),
-            all,
+            sessions,
+            all: sessions.iter().map(|_| Default::default()).collect(),
+            number: next_interner_number(),
             threads: Default::default(),
         }
     }
@@ -706,7 +707,7 @@ impl<'s> InternerPerThread<'s> {
     #[inline]
     fn own(&self) -> &Interner<'s> {
         let (owner_number, at) = OWN.get();
-        match self.all.get(at) {
+        match self.all.get(at).and_then(|it| it.get()) {
             Some(own) if owner_number == self.number => own,
             _ => self.assign(),
         }
@@ -720,7 +721,7 @@ impl<'s> InternerPerThread<'s> {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let at = thread_index % self.all.len();
         OWN.set((self.number, at));
-        &self.all[at]
+        self.all[at].get_or_init(|| Interner::new_in(&self.sessions[at]))
     }
 }
 

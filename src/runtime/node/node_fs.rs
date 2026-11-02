@@ -34,6 +34,7 @@ use bun_threading::work_pool::{IntrusiveWorkTask as _, Task as WorkPoolTask, Wor
 pub(crate) trait MaybeSysResultExt<R>: Sized {
     #[cfg(not(target_os = "freebsd"))]
     fn get_errno(&self) -> E;
+    fn errno_sys<Rc: sys::GetErrno>(rc: Rc, syscall: sys::Tag) -> Option<Self>;
     fn errno_sys_fd<Rc: sys::GetErrno>(rc: Rc, syscall: sys::Tag, fd: FD) -> Option<Self>;
     fn errno_sys_p<Rc: sys::GetErrno>(
         rc: Rc,
@@ -55,6 +56,17 @@ impl<R> MaybeSysResultExt<R> for Maybe<R> {
         match self {
             Ok(_) => E::SUCCESS,
             Err(e) => e.get_errno(),
+        }
+    }
+    #[inline]
+    fn errno_sys<Rc: sys::GetErrno>(rc: Rc, syscall: sys::Tag) -> Option<Self> {
+        match sys::get_errno(rc) {
+            E::SUCCESS => None,
+            e => Some(Err(sys::Error {
+                errno: (e as u16),
+                syscall,
+                ..Default::default()
+            })),
         }
     }
     #[inline]
@@ -5308,7 +5320,21 @@ impl NodeFS {
     }
 
     pub(crate) fn fsync(&mut self, args: &args::Fsync, _: Flavor) -> Maybe<ret::Fsync> {
-        Syscall::fsync(args.fd)
+        #[cfg(windows)]
+        {
+            return Syscall::fsync(args.fd);
+        }
+        #[cfg(not(windows))]
+        {
+            // `fsync(int)` has no memory-safety preconditions (a bad fd just yields
+            // EBADF), so declare it `safe fn` instead of routing through
+            // `libc::fsync` (which is blanket-`unsafe`). Mirrors `fdatasync` above.
+            unsafe extern "C" {
+                safe fn fsync(fd: libc::c_int) -> libc::c_int;
+            }
+            Maybe::<ret::Fsync>::errno_sys(fsync(args.fd.native()), sys::Tag::fsync)
+                .unwrap_or(Ok(()))
+        }
     }
 
     pub(crate) fn ftruncate(&mut self, args: &args::FTruncate, _: Flavor) -> Maybe<ret::Ftruncate> {
@@ -7731,8 +7757,21 @@ impl NodeFS {
         if let Some(error) = change_in_executable(args.path.slice(), sys::Tag::unlink) {
             return Err(error);
         }
-        Syscall::unlink(args.path.slice_z(&mut self.sync_error_buf))
-            .map_err(|err| err.with_path(args.path.slice()))
+        #[cfg(windows)]
+        {
+            return match Syscall::unlink(args.path.slice_z(&mut self.sync_error_buf)) {
+                Err(err) => Err(err.with_path(args.path.slice())),
+                Ok(result) => Ok(result),
+            };
+        }
+        // SAFETY: path is NUL-terminated by slice_z; unlink(2) is the libc FFI
+        #[cfg(not(windows))]
+        Maybe::<ret::Unlink>::errno_sys_p(
+            unsafe { libc::unlink(args.path.slice_z(&mut self.sync_error_buf).as_ptr().cast()) },
+            sys::Tag::unlink,
+            args.path.slice(),
+        )
+        .unwrap_or(Ok(()))
     }
 
     pub(crate) fn watch_file(

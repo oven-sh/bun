@@ -306,8 +306,15 @@ describe("clearAllTimers", () => {
     vi.advanceTimersByTime(100);
     expect(order.takeOrderMessages()).toEqual([]);
   });
-  test("throws error if fake timers not active", () => {
-    expect(() => vi.clearAllTimers()).toThrow("Fake timers are not active");
+  test.each([
+    ["vi", vi],
+    ['vi of "bun:test"', bunVi],
+    ["jest", jest],
+  ])("%s: does nothing with real timers, as in Vitest and Jest", async (_, api) => {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    setTimeout(resolve, 1);
+    expect(api.clearAllTimers()).toBe(api);
+    await promise;
   });
 });
 describe("AbortSignal.timeout", () => {

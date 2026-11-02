@@ -104,9 +104,7 @@ impl<const CAPACITY: usize> SignalRing<CAPACITY> {
     }
 
     /// Any thread. Calls `f` with each queued signal, oldest first, and takes none out.
-    /// A slot of 0 in `head..tail` is claimed by a producer that is between its CAS and
-    /// its store, a few instructions apart: this waits for that store. Or the consumer
-    /// took it and has not moved `head` past it yet: then it is skipped once `head` moves.
+    /// Waits for a slot that a producer has claimed but not stored yet.
     pub fn for_each_queued(&self, mut f: impl FnMut(u8)) {
         let (head, tail) = unpack(self.state.load(Ordering::Acquire));
         'slots: for offset in 0..tail.wrapping_sub(head) {
@@ -117,6 +115,7 @@ impl<const CAPACITY: usize> SignalRing<CAPACITY> {
                     f(signal);
                     break;
                 }
+                // The consumer swaps a slot to 0 before it moves `head` past it.
                 let (head_now, _) = unpack(self.state.load(Ordering::Acquire));
                 if head_now.wrapping_sub(head) > offset {
                     continue 'slots;
@@ -305,8 +304,7 @@ mod tests {
         assert_eq!(queued(&ring), []);
     }
 
-    /// Runs the view on another thread while `slot` is 0, and `release` after that view is under way.
-    /// The view must not finish before `release`. Returns what the view reported.
+    /// Views the ring on another thread, runs `release` while that view waits on a slot of 0, and returns the view.
     fn view_while_a_slot_is_zero<const CAPACITY: usize>(
         ring: &SignalRing<CAPACITY>,
         release: impl FnOnce(),
@@ -350,8 +348,7 @@ mod tests {
         assert_eq!(ring.dequeue(), None);
     }
 
-    /// The view runs on a thread that is neither a producer nor the consumer, while both work.
-    /// It reports only published signals, never a 0, and never more than the ring holds.
+    /// A viewer beside working producers and the consumer sees only published signals.
     #[test]
     fn view_beside_producers_and_the_consumer_reports_only_published_signals() {
         const CAPACITY: usize = 64;

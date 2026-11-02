@@ -1149,46 +1149,36 @@ impl<Parent: StreamingWriterParent> StreamingWriter<Parent> {
         );
     }
 
-    /// `flags`: what the caller knows `fd` to be. On `Err` the writer holds nothing; `fd` is still the caller's to close.
+    /// `flags`: what the caller knows `fd` to be. On `Err` the writer holds what it held; `fd` is still the caller's to close.
     pub fn start(&mut self, fd: Fd, is_pollable: bool, flags: FilePollFlags) -> sys::Result<()> {
-        if !is_pollable {
-            self.close();
-            self.handle = PollOrFd::Fd(fd);
-            #[cfg(windows)]
-            {
-                self.console = crate::console::Utf8Carry::for_fd(fd);
-            }
-            return sys::Result::Ok(());
-        }
-
-        // SAFETY: parent BACKREF set via set_parent; outlives this writer.
-        let loop_ = unsafe { Parent::event_loop(self.parent()) };
-        let existing_poll = self.get_poll();
-        let poll = match existing_poll {
-            Some(p) => p,
-            None => {
-                let p = FilePollRef::init(
-                    loop_,
-                    fd,
-                    flags,
-                    Owner::new(Parent::POLL_OWNER_TAG, std::ptr::from_mut(self).cast()),
-                );
-                self.handle = PollOrFd::Poll(p);
-                p
-            }
-        };
-
-        match poll.register_with_fd(loop_.loop_(), FilePollKind::Writable, fd) {
-            sys::Result::Err(err) => {
-                // A poll from an earlier start() still holds that start's fd.
-                if existing_poll.is_none() {
-                    self.handle.close_without_closing_fd();
-                }
+        let mut handle = PollOrFd::Fd(fd);
+        if is_pollable {
+            // SAFETY: parent BACKREF set via set_parent; outlives this writer.
+            let loop_ = unsafe { Parent::event_loop(self.parent()) };
+            let poll = FilePollRef::init(
+                loop_,
+                fd,
+                flags,
+                Owner::new(Parent::POLL_OWNER_TAG, std::ptr::from_mut(self).cast()),
+            );
+            handle = PollOrFd::Poll(poll);
+            if let Err(err) = poll.register_with_fd(loop_.loop_(), FilePollKind::Writable, fd) {
+                handle.close_without_closing_fd();
                 return sys::Result::Err(err);
             }
-            sys::Result::Ok(()) => {}
         }
 
+        // What an earlier start() left.
+        self.close();
+        self.handle = handle;
+        #[cfg(windows)]
+        {
+            self.console = if is_pollable {
+                None
+            } else {
+                crate::console::Utf8Carry::for_fd(fd)
+            };
+        }
         sys::Result::Ok(())
     }
 }

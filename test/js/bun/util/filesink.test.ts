@@ -1703,6 +1703,52 @@ describe.concurrent("start() on an open writer", () => {
     function read(path) {
       return fs.readFileSync(path, "utf8");
     }
+    // A pipe that opens by path. text() is what arrived in it, once the writer has closed its end.
+    async function pipe(name) {
+      const deadline = Date.now() + 10_000;
+      let text = "";
+      if (process.platform === "win32") {
+        const path = "\\\\\\\\.\\\\pipe\\\\" + require("node:path").basename(process.argv[1]) + "-" + name;
+        let gone = false;
+        const server = require("node:net").createServer(socket => {
+          socket.setEncoding("utf8");
+          socket.on("data", chunk => (text += chunk)).on("close", () => (gone = true));
+        });
+        await new Promise(resolve => server.listen(path, resolve));
+        return {
+          path,
+          async text() {
+            while (!gone && Date.now() < deadline) await Bun.sleep(1);
+            server.close();
+            return gone ? text : "open: " + text;
+          },
+        };
+      }
+      const path = join(dir, name);
+      Bun.spawnSync(["mkfifo", path]);
+      const reader = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+      return {
+        path,
+        async text() {
+          const chunk = Buffer.alloc(4096);
+          for (;;) {
+            let length;
+            try {
+              length = fs.readSync(reader, chunk);
+            } catch (e) {
+              // It is empty, and a writer still has it open.
+              if (e.code !== "EAGAIN" || Date.now() > deadline) return "open: " + text;
+              await Bun.sleep(1);
+              continue;
+            }
+            if (length === 0) break;
+            text += chunk.toString("utf8", 0, length);
+          }
+          fs.closeSync(reader);
+          return text;
+        },
+      };
+    }
   `;
 
   async function run(script: string) {
@@ -1747,32 +1793,81 @@ describe.concurrent("start() on an open writer", () => {
     expect(result).toEqual({ buffered: "", target: "short", closed: "all" });
   });
 
-  it.skipIf(!isLinux).each([
-    ["open", `const path = join(dir, "missing", "target.txt");`],
-    [
-      "epoll_ctl",
-      // A FIFO with a reader opens for writing, but cannot take over the TTY's poll.
-      `const path = join(dir, "fifo");
-      Bun.spawnSync(["mkfifo", path]);
-      const reader = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);`,
-    ],
-  ])("a TTY writer still writes synchronously after start({ path }) fails in %s", async (syscall, setup) => {
+  it.skipIf(!isLinux)("start({ path }) moves a writer from a TTY to a pipe", async () => {
     const result = await run(`
-      ${setup}
+      const target = await pipe("target");
+      const writer = Bun.file("/dev/ptmx").writer();
+      writer.start({ path: target.path });
+      writer.write("short");
+      await writer.end();
+      console.log(JSON.stringify({ target: await target.text(), closed: await closed() }));
+    `);
+    expect(result).toEqual({ target: "short", closed: "all" });
+  });
+
+  it.skipIf(!isLinux)("a TTY writer still writes synchronously after start({ path }) fails", async () => {
+    const result = await run(`
       const writer = Bun.file("/dev/ptmx").writer();
       let failed;
       try {
-        writer.start({ path });
+        writer.start({ path: join(dir, "missing", "target.txt") });
       } catch (e) {
         failed = e.syscall;
       }
       writer.write("short");
       const buffered = writer.flush();
       await writer.end();
-      if (typeof reader === "number") fs.closeSync(reader);
       console.log(JSON.stringify({ failed, buffered, closed: await closed() }));
     `);
-    expect(result).toEqual({ failed: syscall, buffered: 0, closed: "all" });
+    expect(result).toEqual({ failed: "open", buffered: 0, closed: "all" });
+  });
+
+  it("start({ path }) moves a writer from a pipe to a pipe", async () => {
+    const result = await run(`
+      const [first, second] = [await pipe("first"), await pipe("second")];
+      const writer = Bun.file(first.path).writer();
+      writer.write("to the first");
+      await writer.flush();
+      writer.start({ path: second.path });
+      writer.write("to the second");
+      await writer.end();
+      const out = { first: await first.text(), second: await second.text() };
+      console.log(JSON.stringify({ ...out, closed: await closed() }));
+    `);
+    expect(result).toEqual({ first: "to the first", second: "to the second", closed: "all" });
+  });
+
+  it("start({ path }) moves a writer from a file to a pipe and closes the file", async () => {
+    const result = await run(`
+      const file = join(dir, "file.txt");
+      const target = await pipe("target");
+      const writer = Bun.file(file).writer();
+      writer.write("to the file");
+      await writer.flush();
+      writer.start({ path: target.path });
+      writer.write("to the pipe");
+      await writer.end();
+      const out = { file: read(file), target: await target.text() };
+      console.log(JSON.stringify({ ...out, closed: await closed() }));
+    `);
+    expect(result).toEqual({ file: "to the file", target: "to the pipe", closed: "all" });
+  });
+
+  it("start({ path }) on a child's stdin ends the child's input", async () => {
+    const result = await run(`
+      const target = await pipe("target");
+      const cmd = [process.execPath, "-e", "process.stdin.pipe(process.stdout)"];
+      const child = Bun.spawn({ cmd, stdin: "pipe", stdout: "pipe", stderr: "inherit" });
+      const writer = child.stdin;
+      writer.write("to the child");
+      await writer.flush();
+      writer.start({ path: target.path });
+      writer.write("to the pipe");
+      await writer.end();
+      const out = { child: await child.stdout.text(), target: await target.text() };
+      console.log(JSON.stringify({ ...out, closed: await closed() }));
+    `);
+    expect(result).toEqual({ child: "to the child", target: "to the pipe", closed: "all" });
   });
 
   it("start({ path }) settles a queued write and flushes it to the new path", async () => {

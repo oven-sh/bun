@@ -56,11 +56,9 @@ fn cwd_before(command: &[u8]) -> Option<&'static [u8]> {
 /// Returns `--config=<path>` from `bun`'s own flags, which precede `command`. Without the `=`, the path is parsed as
 /// the command.
 fn bunfig_before(command: &[u8]) -> Option<&'static [u8]> {
-    if let Some(args) = super::arguments::checked_command_arguments(command) {
-        return args.option(b"--config");
-    }
-    (arguments_before(command).into_iter())
+    (super::script_or_command::flags_before(command).into_iter())
         .filter_map(|arg| {
+            let arg = arg.as_bytes();
             arg.strip_prefix(b"--config=")
                 .or_else(|| arg.strip_prefix(b"-c="))
         })

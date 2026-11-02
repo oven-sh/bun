@@ -23499,6 +23499,60 @@ describe.concurrent("--check", () => {
       expect(exitCode).toBe(2);
     });
 
+    describe.each(["fmt", "lint"])("%s bunfig selection", command => {
+      test.each([
+        [["--config"], "../bunfig.toml"],
+        [["-c"], "../bunfig.toml"],
+        [["--config="], ""],
+        [["-c="], ""],
+        [["--config=first.toml", "--config"], "first.toml"],
+        [["-c=first.toml", "-c"], "first.toml"],
+        [["--config=first.toml", "-c=last.toml"], "last.toml"],
+        [["--config=first.toml", "--config="], ""],
+      ] as const)("keeps bare and explicit config semantics for %j", async (flags, expectedPath) => {
+        using dir = project({
+          "bunfig.toml": "[unterminated\n",
+          "child/x.ts": "export const n: number = 1;\n",
+          "child/first.toml": "[unterminated\n",
+          "child/last.toml": "[unterminated\n",
+        });
+        const results = await Promise.all(
+          [[], ["--check"]].map(prefix => run(String(dir), [...prefix, "--cwd", "child", ...flags, command, "x.ts"])),
+        );
+        for (const result of results) {
+          expect(result.stdout).toBe("");
+          if (expectedPath) expect(result.stderr).toContain(expectedPath);
+          expect(result.exitCode).toBe(expectedPath ? 2 : 0);
+        }
+      });
+
+      test("config-shaped project values never select a bunfig", async () => {
+        using dir = project({
+          "x.ts": "export const n: number = 1;\n",
+          "chosen.toml": "[unterminated\n",
+          "trap.toml": "[unterminated\n",
+          "--config=trap.toml/tsconfig.json": JSON.stringify({ files: ["../x.ts"] }),
+        });
+        const results = await Promise.all(
+          [[], ["--project", "tsconfig.json"]].map(overwrite =>
+            run(String(dir), [
+              "--check",
+              "--config=chosen.toml",
+              "--project",
+              "--config=trap.toml",
+              ...overwrite,
+              command,
+              "x.ts",
+            ]),
+          ),
+        );
+        for (const result of results) {
+          expect(result.stderr).toContain("chosen.toml");
+          expect(result.exitCode).toBe(2);
+        }
+      });
+    });
+
     test.each(["fmt", "lint"])("%s applies only real code-generation flags before the command", async command => {
       const strict = "--disallow-code-generation-from-strings=strict";
       const flag = "--disallow-code-generation-from-strings";
@@ -25037,12 +25091,17 @@ describe.concurrent("--check", () => {
       "good.ts": `export const good: number = 1;\nconsole.log(good);\n`,
       "bad.ts": `export const bad: number = "1";\nconsole.log(bad);\n`,
     });
-    const [good, bad] = await Promise.all([
+    const [good, bad, oneThread] = await Promise.all([
       run(String(dir), ["build", "--check", "good.ts", "--outdir", "out-good"]),
       run(String(dir), ["build", "--check", "bad.ts", "--outdir", "out-bad"]),
+      run(String(dir), ["build", "--check", "--threads", "1", "good.ts", "--outdir", "out-one"]),
     ]);
     expect(good.exitCode).toBe(0);
     expect(await Bun.file(join(String(dir), "out-good", "good.js")).exists()).toBe(true);
+    expect(await Bun.file(join(String(dir), "out-one", "good.js")).text()).toBe(
+      await Bun.file(join(String(dir), "out-good", "good.js")).text(),
+    );
+    expect(oneThread.exitCode).toBe(0);
     expect(bad.stderr).toMatchInlineSnapshot(`
       "1 | export const bad: number = "1";
                        ^

@@ -1744,15 +1744,25 @@ function serverWithoutRenegotiationInfo() {
   const handshake = Buffer.concat([Buffer.from([0x02, 0x00, 0x00, body.length]), body]);
   const serverHello = Buffer.concat([Buffer.from([0x16, 0x03, 0x03, 0x00, handshake.length]), handshake]);
   const reply = Promise.withResolvers<string>();
+  // The bytes of one complete TLS record at the start of `received`, or null while it is still incomplete.
+  const firstRecord = (received: Buffer) =>
+    received.length >= 5 && received.length >= 5 + received.readUInt16BE(3)
+      ? received.subarray(0, 5 + received.readUInt16BE(3))
+      : null;
   const server = createNetServer((socket: NetSocket) => {
+    let received = Buffer.alloc(0);
     let sentHello = false;
     socket.on("data", (chunk: Buffer) => {
+      received = Buffer.concat([received, chunk]);
+      const record = firstRecord(received);
+      if (!record) return;
       if (!sentHello) {
         sentHello = true;
+        received = received.subarray(record.length);
         socket.write(Buffer.concat([serverHello, serverHello]));
-        return;
+        if (!firstRecord(received)) return;
       }
-      reply.resolve(chunk.subarray(0, 7).toString("hex"));
+      reply.resolve(firstRecord(received)!.toString("hex"));
       socket.destroy();
     });
     socket.on("error", () => {});

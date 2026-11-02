@@ -180,9 +180,7 @@ struct Wildcard {
 ///     Used to escape any of the special characters above.
 ///
 /// Parentheses without a "?*+@!" prefix are literal, and so is an unclosed "[",
-/// "{" or "(".
-///
-/// Outside of "[...]" a byte that isn't ASCII is one literal byte. The pattern doesn't have to be valid UTF-8.
+/// "{" or "(". So is each byte that isn't ASCII outside of "[...]", in valid UTF-8 or not.
 ///
 /// Groups can nest to any depth. Matching takes `O(glob.len() * path.len())` time and
 /// a constant amount of stack. See [`Program`].

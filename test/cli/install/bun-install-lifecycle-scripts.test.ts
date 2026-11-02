@@ -2223,14 +2223,17 @@ describe("the trusted set", () => {
       });
     });
 
-    test.concurrent.each(linkers)("not with --ignore-scripts, which turns off trusted scripts too (%s)", async linker => {
-      using ctx = await project(linker, { "package.json": { name: "foo" } });
-      expect(await blockedOf(ctx, ["add", "--ignore-scripts", "lifecycle-postinstall@1.0.0"])).toEqual({
-        stdout: [counted(1)],
-        stderr: [],
-        exitCode: 0,
-      });
-    });
+    test.concurrent.each(linkers)(
+      "not with --ignore-scripts, which turns off trusted scripts too (%s)",
+      async linker => {
+        using ctx = await project(linker, { "package.json": { name: "foo" } });
+        expect(await blockedOf(ctx, ["add", "--ignore-scripts", "lifecycle-postinstall@1.0.0"])).toEqual({
+          stdout: [counted(1)],
+          stderr: [],
+          exitCode: 0,
+        });
+      },
+    );
 
     test.concurrent.skipIf(isWindows)("below the count line and above the rest of the summary", async () => {
       using ctx = await project("hoisted", {

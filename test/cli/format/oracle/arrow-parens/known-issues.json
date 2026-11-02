@@ -20,5 +20,6 @@
   "x = cond ? (q) => ({ q }) : (a, b) => (keyof) => (id): T => y;\n",
   "x = cond ? (q) => ({ q }) : (deps) => (id): T | U => y;\n",
   "x = cond ? (q) => ({ q }) : (deps) => (id): id is T => y;\n",
-  "x = cond ? (q) => ({ q }) : (x) => t ? (q, r) as U : (y) => (id): T => 1;\n"
+  "x = cond ? (q) => ({ q }) : (x) => t ? (q, r) as U : (y) => (id): T => 1;\n",
+  "class A {\n  m() {\n    return cond\n      ? // prettier-ignore\n        (q) => (this)\n      : (deps) => (id): T => y;\n  }\n}\n"
 ]

@@ -33,7 +33,7 @@
 // - `--file`: instead of generated sources, the sources in a file: a JSON array of texts.
 // - `--each`: each source of the form `x = ..;` is a cell of a `test.each` table, which Bun prints on one line:
 //   there a conditional with an element in it has no parentheses around its operands. Prettier breaks such a cell,
-//   so `pairs` is no error with this flag: `againstMain` is the count to read.
+//   so `pairs` is no error with this flag: the `pairs` of `againstMain` are the parentheses that tsc does not need.
 // - `--trailing-comma`: Prettier's option. With `all`, the default, a parameter list that breaks ends in `,`.
 // - `--always`: with the default `arrowParens: "always"` instead of "avoid".
 // - `--width`: one print width or several. The counts are summed.
@@ -76,16 +76,19 @@
 // - `asOnMain`: with `--main`, the sources that main prints as `--bun` does and that would count as `broken` or
 //   `pairs`. They are differences from Prettier that this rule does not make.
 // - `againstMain`: with `--main`, the sources that main prints in another way than `--bun`. `broken`: tsc reads
-//   main's text as the source, and not Bun's. `silenced`: it reports a syntax error for main's text, and reads Bun's
-//   as another program with no error. There must be none of either. `repaired`: it reads Bun's as the source, and
-//   not main's. These count in a cell of a table too, where Prettier prints other lines than main. With `--babel-ts`,
+//   main's text as the source, and not Bun's. `pairs`: it reads both as the source, and main's text is none of
+//   `pairsBeforeBrokenList`. `silenced`: it reports a syntax error for main's text, and reads Bun's as another
+//   program with no error. There must be none of the three. `repaired`: it reads Bun's as the source, and not
+//   main's. These count in a cell of a table too, where Prettier prints other lines than main. With `--babel-ts`,
 //   `silenced` is no error: main prints `async<U>(q)` as `async < U > q`, which is the other program, and a name
 //   that Bun keeps elsewhere in that text takes away the syntax error.
 // - `unstable`: tsc reads what Bun prints as the source, and formatting that changes it. Where Bun prints what
 //   Prettier prints, and Prettier changes that on a second run, it is not counted. There must be none.
 // - `refused`: `bun fmt` reports an error for a source, or for what it or Prettier prints for one where tsc reads
 //   that as the source. There must be none. A source that it refuses is not in the other counts. With `--main`, a
-//   source that main refuses too is in `refusedOnMainToo`: with `--oxfmt`, `(this, id): T => 1` is an error.
+//   source that main refuses too is in `refusedOnMainToo`: with `--oxfmt`, `(this, id): T => 1` is an error. With
+//   `--reader` and with `--babel-ts` the count is no error: the parser of `bun fmt` reports the syntax errors of
+//   tsc, which another reader may not report. `refusedAnew` is an error with every flag.
 // - `refusedAnew`: with `--main`, `bun fmt` reports an error for what it prints, and main reports none for what
 //   main prints. There must be none.
 // - `leftToEsbuild`: esbuild reads the source, and reports a syntax error for what Bun prints.
@@ -147,6 +150,9 @@ function readWithTypeScript(text) {
     if (ts.isJsxText(node)) return node.containsOnlyTriviaWhiteSpaces ? "" : oneLine(node.getText());
     // Prettier removes the `;` after `case a: { k: b };`.
     if (ts.isEmptyStatement(node)) return "";
+    // Prettier prints `T` for `| T`, which tsc reads as a union of one type.
+    if ((ts.isUnionTypeNode(node) || ts.isIntersectionTypeNode(node)) && node.types.length === 1)
+      return shape(node.types[0]);
     const children = [];
     node.forEachChild(child => {
       const text = shape(child);
@@ -812,6 +818,8 @@ async function judge(printWidth) {
   const byMain = named.main ? format(sources, printWidth, named.main) : [];
   // Where main prints the same text, a difference from Prettier is not from this rule.
   const isAsOnMain = index => byMain[index] != null && byMain[index] === ours[index];
+  // Parameters before a return type, on lines of their own: `(e,)` is no expression.
+  const endsListWithComma = text => /,\n\s*\): /.test(text);
   const theirs = await Promise.all(sources.map(byPrettier));
   readAll([...ours, ...theirs, ...byMain]);
   const again = format(ours, printWidth);
@@ -826,12 +834,13 @@ async function judge(printWidth) {
   Object.assign(counts, { pairsBeforeBrokenList: 0, asOnMain: { broken: 0, pairs: 0 } });
   Object.assign(counts, { left: { all: 0, anew: 0, refusedAgain: 0, changedAgain: 0, againNotAsOnMain: 0 } });
   counts.left.anewChangedAgain = 0;
-  if (named.main) Object.assign(counts, { againstMain: { broken: 0, silenced: 0, repaired: 0 }, refusedOnMainToo: 0 });
+  const againstMain = { broken: 0, pairs: 0, silenced: 0, repaired: 0 };
+  if (named.main) Object.assign(counts, { againstMain, refusedOnMainToo: 0 });
   Object.assign(counts, { unstable: 0, refusedAnew: 0, leftToEsbuild: 0 });
   const node = { broken: 0, ours: { source: 0, other: 0, error: 0 }, theirs: { source: 0, other: 0, error: 0 } };
   const shown = { broken: [], pairs: [], silenced: [], leftAnew: [], againNotAsOnMain: [], left: [], unstable: [] };
   Object.assign(shown, { pairsBeforeBrokenList: [], brokenAsOnMain: [], anewChangedAgain: [] });
-  Object.assign(shown, { brokenAgainstMain: [], silencedAgainstMain: [] });
+  Object.assign(shown, { brokenAgainstMain: [], silencedAgainstMain: [], pairsAgainstMain: [] });
   Object.assign(shown, { refusedAnew: [], leftToEsbuild: [], brokenForNode: [] });
   const refused = new Set();
   const changed = [];
@@ -849,7 +858,12 @@ async function judge(printWidth) {
     if (typeof byMain[index] === "string" && byMain[index] !== ours[index]) {
       const byTscOnMain = read(byMain[index]);
       const isSilent = !isRight && !read(ours[index]).startsWith("error: ");
-      if (isRight) counts.againstMain.repaired += byTscOnMain === tree ? 0 : 1;
+      if (isRight && byTscOnMain === tree) {
+        if (!endsListWithComma(byMain[index])) {
+          counts.againstMain.pairs++;
+          shown.pairsAgainstMain.push(`${oneLine(byMain[index])}\n    ${oneLine(ours[index])}`);
+        }
+      } else if (isRight) counts.againstMain.repaired++;
       else if (byTscOnMain === tree) {
         counts.againstMain.broken++;
         shown.brokenAgainstMain.push(`${both}\n    ${oneLine(byMain[index])}`);
@@ -893,7 +907,7 @@ async function judge(printWidth) {
       }
     } else if (!isRightByPrettier) counts.repaired++;
     else if (ours[index] !== theirs[index]) {
-      const kind = isAsOnMain(index) ? null : /,\n\s*\): /.test(theirs[index]) ? "pairsBeforeBrokenList" : "pairs";
+      const kind = isAsOnMain(index) ? null : endsListWithComma(theirs[index]) ? "pairsBeforeBrokenList" : "pairs";
       if (kind == null) counts.asOnMain.pairs++;
       else {
         counts[kind]++;
@@ -957,7 +971,7 @@ for (const printWidth of widths) {
   const isPair = pairs > 0 && !("each" in named);
   // In a `.js` file, main reads `async<U>(q)` as `async < U > q`: tsc reads another program from its text already.
   const isSilenced = againstMain?.silenced > 0 && !("babel-ts" in named);
-  const isWorseThanMain = againstMain?.broken > 0 || isSilenced;
+  const isWorseThanMain = againstMain?.broken > 0 || againstMain?.pairs > 0 || isSilenced;
   if (broken || isPair || silenced || left.againNotAsOnMain || unstable || isRefused || node?.broken || isWorseThanMain)
     process.exitCode = 1;
 }

@@ -38,6 +38,9 @@ try {
   const program = snapshot.getProjects()[0].program;
   const shape = node => {
     if (node.kind === SyntaxKind.ParenthesizedExpression) return shape(node.expression);
+    // Prettier prints `T` for `| T`, which is a union of one type.
+    const isOneType = node.kind === SyntaxKind.UnionType || node.kind === SyntaxKind.IntersectionType;
+    if (isOneType && node.types.length === 1) return shape(node.types[0]);
     const children = [];
     node.forEachChild(child => void children.push(shape(child)));
     const name = SyntaxKind[node.kind];

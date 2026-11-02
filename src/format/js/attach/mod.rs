@@ -111,8 +111,7 @@ pub(crate) struct Attached<'a> {
     /// Sorted start offsets of the owners that aren't next to their comment, or don't contain their dangling comment.
     /// If a node's span contains neither a comment nor one of these offsets, nothing inside it owns a comment.
     pub(crate) relocated_owner_starts: Vec<u32>,
-    /// The sorted start offsets of the `prettier-ignore` comments.
-    pub(crate) ignore_comments: Vec<u32>,
+    pub(crate) has_ignore_comments: bool,
 }
 
 #[derive(Copy, Clone)]
@@ -316,9 +315,7 @@ pub(crate) fn attach<'a>(
             && let Some(following_node) = nodes[id].following_node
         {
             let ignores_owner = comment.is_ignore_comment(options.flavor);
-            if ignores_owner {
-                attached.ignore_comments.push(comment.span().start);
-            }
+            attached.has_ignore_comments |= ignores_owner;
             attached.attachments[id] = Attachment {
                 ignores_owner,
                 ..Attachment::leading(following_node)
@@ -332,9 +329,7 @@ pub(crate) fn attach<'a>(
             nodes: nodes[id],
             is_last_comment: id + 1 == nodes.len(),
         };
-        if context.is_ignore_comment {
-            attached.ignore_comments.push(comment.span().start);
-        }
+        attached.has_ignore_comments |= context.is_ignore_comment;
         let mut ignored_node = None;
         // `handleClosureTypeCastComments` is the only rule that doesn't check the enclosing node.
         let has_no_rule = context.nodes.is_before_list_element
@@ -387,7 +382,7 @@ pub(crate) fn attach<'a>(
         };
     }
     break_ties(&cx, &mut ties, &nodes, &mut attached.attachments);
-    if options.flavor.is_oxfmt() && !attached.ignore_comments.is_empty() {
+    if options.flavor.is_oxfmt() && attached.has_ignore_comments {
         for (id, comment) in file.comments_by_id().enumerate() {
             let attachment = &mut attached.attachments[id];
             if attachment.ignores_owner

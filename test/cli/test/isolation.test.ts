@@ -208,10 +208,12 @@ describe.concurrent("bun test --isolate", () => {
     });
   });
 
-  test.each(["--isolate", "--isolate=modules", "--parallel=2", "--parallel=2 --isolate=modules"])("%s retains ownership after a failed file load", async mode => {
-    const callbacksRun = !mode.includes("--isolate=modules");
-    using dir = tempDir("isolate-failed-load-teardown", {
-      "preload.ts": `
+  test.each(["--isolate", "--isolate=modules", "--parallel=2", "--parallel=2 --isolate=modules"])(
+    "%s retains ownership after a failed file load",
+    async mode => {
+      const callbacksRun = !mode.includes("--isolate=modules");
+      using dir = tempDir("isolate-failed-load-teardown", {
+        "preload.ts": `
         import { beforeAll, afterAll } from "bun:test";
         import { appendFileSync } from "node:fs";
         beforeAll(() => {
@@ -221,7 +223,7 @@ describe.concurrent("bun test --isolate", () => {
         });
         afterAll(() => appendFileSync("events.txt", "afterAll " + (globalThis.isOwner ? "owner" : "observer") + "\\n"));
       `,
-      "a-owner.test.ts": `
+        "a-owner.test.ts": `
         import { test } from "bun:test";
         import { appendFileSync } from "node:fs";
         const record = message => appendFileSync("events.txt", message + "\\n");
@@ -243,51 +245,52 @@ describe.concurrent("bun test --isolate", () => {
         await accepted;
         throw new Error("module load sentinel");
       `,
-      "b-observer.test.ts": `
+        "b-observer.test.ts": `
         import { test } from "bun:test";
         import { appendFileSync } from "node:fs";
         globalThis.isOwner = false;
         test("observer passes", () => appendFileSync("events.txt", "observer\\n"));
       `,
-    });
-    const { stdout, stderr, exitCode } = await runTests(
-      String(dir),
-      [...mode.split(" "), "--preload=./preload.ts", "--reporter=junit", "--reporter-outfile=out.xml"],
-      ["./a-owner.test.ts", "./b-observer.test.ts"],
-      { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
-    );
-    expect(exitCode).toBe(1);
-    if (mode.startsWith("--parallel")) expect(stdout).toContain("PARALLEL");
-    expect(stderr).toContain("module load sentinel");
-    if (callbacksRun) expect(stderr).toContain("failed-load teardown sentinel");
-    else expect(stderr).not.toContain("failed-load teardown sentinel");
-    const events = fs
-      .readFileSync(join(String(dir), "events.txt"), "utf8")
-      .trim()
-      .split("\n");
-    expect(events.filter(event => event === "beforeAll owner")).toHaveLength(1);
-    expect(events.filter(event => event === "close owner")).toHaveLength(callbacksRun ? 1 : 0);
-    if (callbacksRun) expect(events.indexOf("beforeAll owner")).toBeLessThan(events.indexOf("close owner"));
-    expect(events.filter(event => event === "observer")).toHaveLength(1);
-    expect(events.filter(event => event === "afterAll observer")).toHaveLength(1);
-    expect(events.filter(event => event === "afterAll owner")).toHaveLength(1);
-    expect(events).not.toContain("unexpected test");
-    const report = await parseStringPromise(fs.readFileSync(join(String(dir), "out.xml"), "utf8"), {
-      strict: true,
-    });
-    const ownerSuite = report.testsuites.testsuite.find(suite => suite.$.file === "a-owner.test.ts");
-    const observerSuite = report.testsuites.testsuite.find(suite => suite.$.file === "b-observer.test.ts");
-    expect(observerSuite.$.failures).toBe("0");
-    const failures = ownerSuite.testcase.filter(testcase => testcase.failure);
-    expect(ownerSuite.$.failures).toBe(callbacksRun ? "2" : "1");
-    expect(failures).toHaveLength(callbacksRun ? 2 : 1);
-    expect(failures.map(testcase => testcase.failure[0].$.message).sort()).toEqual(
-      callbacksRun ? ["failed-load teardown sentinel", "module load sentinel"] : ["module load sentinel"],
-    );
-    for (const failure of failures) {
-      expect(failure.$).toMatchObject({ name: "(unhandled error)", file: "a-owner.test.ts" });
-    }
-  });
+      });
+      const { stdout, stderr, exitCode } = await runTests(
+        String(dir),
+        [...mode.split(" "), "--preload=./preload.ts", "--reporter=junit", "--reporter-outfile=out.xml"],
+        ["./a-owner.test.ts", "./b-observer.test.ts"],
+        { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+      );
+      expect(exitCode).toBe(1);
+      if (mode.startsWith("--parallel")) expect(stdout).toContain("PARALLEL");
+      expect(stderr).toContain("module load sentinel");
+      if (callbacksRun) expect(stderr).toContain("failed-load teardown sentinel");
+      else expect(stderr).not.toContain("failed-load teardown sentinel");
+      const events = fs
+        .readFileSync(join(String(dir), "events.txt"), "utf8")
+        .trim()
+        .split("\n");
+      expect(events.filter(event => event === "beforeAll owner")).toHaveLength(1);
+      expect(events.filter(event => event === "close owner")).toHaveLength(callbacksRun ? 1 : 0);
+      if (callbacksRun) expect(events.indexOf("beforeAll owner")).toBeLessThan(events.indexOf("close owner"));
+      expect(events.filter(event => event === "observer")).toHaveLength(1);
+      expect(events.filter(event => event === "afterAll observer")).toHaveLength(1);
+      expect(events.filter(event => event === "afterAll owner")).toHaveLength(1);
+      expect(events).not.toContain("unexpected test");
+      const report = await parseStringPromise(fs.readFileSync(join(String(dir), "out.xml"), "utf8"), {
+        strict: true,
+      });
+      const ownerSuite = report.testsuites.testsuite.find(suite => suite.$.file === "a-owner.test.ts");
+      const observerSuite = report.testsuites.testsuite.find(suite => suite.$.file === "b-observer.test.ts");
+      expect(observerSuite.$.failures).toBe("0");
+      const failures = ownerSuite.testcase.filter(testcase => testcase.failure);
+      expect(ownerSuite.$.failures).toBe(callbacksRun ? "2" : "1");
+      expect(failures).toHaveLength(callbacksRun ? 2 : 1);
+      expect(failures.map(testcase => testcase.failure[0].$.message).sort()).toEqual(
+        callbacksRun ? ["failed-load teardown sentinel", "module load sentinel"] : ["module load sentinel"],
+      );
+      for (const failure of failures) {
+        expect(failure.$).toMatchObject({ name: "(unhandled error)", file: "a-owner.test.ts" });
+      }
+    },
+  );
 
   // Windows counts a parallel worker's IPC pipe as work, so only serial runs
   // can abandon this timeout-free hook when the event loop becomes empty.
@@ -295,19 +298,17 @@ describe.concurrent("bun test --isolate", () => {
     ["--isolate", "--isolate=modules", "--parallel=2", "--parallel=2 --isolate=modules"].filter(
       mode => !isWindows || !mode.startsWith("--parallel"),
     ),
-  )(
-    "%s does not resume an abandoned hook during teardown",
-    async mode => {
-      using dir = tempDir("isolate-abandoned-hook", {
-        "node_modules/happy-dom/package.json": JSON.stringify({ name: "happy-dom", main: "index.js" }),
-        "node_modules/happy-dom/index.js": `
+  )("%s does not resume an abandoned hook during teardown", async mode => {
+    using dir = tempDir("isolate-abandoned-hook", {
+      "node_modules/happy-dom/package.json": JSON.stringify({ name: "happy-dom", main: "index.js" }),
+      "node_modules/happy-dom/index.js": `
           exports.Window = class Window {
             document = {};
             happyDOM = { async abort() {} };
             close() {}
           };
         `,
-        "a-owner.test.ts": `
+      "a-owner.test.ts": `
           import { afterAll, afterEach, test } from "bun:test";
           import { appendFileSync } from "node:fs";
           const record = message => appendFileSync("events.txt", message + "\\n");
@@ -337,30 +338,32 @@ describe.concurrent("bun test --isolate", () => {
           test("first", () => record("first owner"));
           test("must not resume", () => record("unexpected test"));
         `,
-        "b-observer.test.ts": `
+      "b-observer.test.ts": `
           import { test } from "bun:test";
           import { appendFileSync } from "node:fs";
           test("observer passes", () => appendFileSync("events.txt", "observer\\n"));
         `,
-      });
-      const { stderr, exitCode } = await runTests(
-        String(dir),
-        [...mode.split(" "), "--environment=happy-dom"],
-        ["./a-owner.test.ts", "./b-observer.test.ts"],
-        { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
-      );
-      expect(exitCode).toBe(1);
-      expect(stderr).toContain("A test or hook with no timeout never settled");
-      const events = fs.readFileSync(join(String(dir), "events.txt"), "utf8").trim().split("\n");
-      expect(events.filter(event => event === "first owner")).toHaveLength(1);
-      expect(events.filter(event => event === "environment teardown")).toHaveLength(1);
-      expect(events.filter(event => event === "close owner")).toHaveLength(1);
-      expect(events.indexOf("environment teardown")).toBeLessThan(events.indexOf("close owner"));
-      expect(events.filter(event => event === "observer")).toHaveLength(1);
-      expect(events).not.toContain("unexpected test");
-      expect(events).not.toContain("unexpected afterAll");
-    },
-  );
+    });
+    const { stderr, exitCode } = await runTests(
+      String(dir),
+      [...mode.split(" "), "--environment=happy-dom"],
+      ["./a-owner.test.ts", "./b-observer.test.ts"],
+      { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+    );
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("A test or hook with no timeout never settled");
+    const events = fs
+      .readFileSync(join(String(dir), "events.txt"), "utf8")
+      .trim()
+      .split("\n");
+    expect(events.filter(event => event === "first owner")).toHaveLength(1);
+    expect(events.filter(event => event === "environment teardown")).toHaveLength(1);
+    expect(events.filter(event => event === "close owner")).toHaveLength(1);
+    expect(events.indexOf("environment teardown")).toBeLessThan(events.indexOf("close owner"));
+    expect(events.filter(event => event === "observer")).toHaveLength(1);
+    expect(events).not.toContain("unexpected test");
+    expect(events).not.toContain("unexpected afterAll");
+  });
 
   test.each(isolateFlags)("with %s, a file's process.chdir() is undone before the next file", async isolate => {
     const cwdFixtures = {

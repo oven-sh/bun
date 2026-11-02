@@ -5694,7 +5694,9 @@ impl Drop for EnteredFile<'_> {
         if swap {
             // SAFETY: exit_file releases the old BunTest before its preload scopes.
             unsafe { (*self.bun_test_root).reset_hook_scope_for_test_isolation() };
-            crate::test_runner::Expect::reset_for_test_isolation(self.global.bun_vm().as_mut().global());
+            crate::test_runner::Expect::reset_for_test_isolation(
+                self.global.bun_vm().as_mut().global(),
+            );
         }
         if self.end_output_group {
             pretty_errorln!("<r>\n::endgroup::\n");

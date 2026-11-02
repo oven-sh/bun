@@ -1803,7 +1803,8 @@ impl BlobExt for Blob {
         }
 
         let mut blob_content_type = BlobContentType::default();
-        if content_type.is_string() {
+        // A DOMString: ToString converts every value but `undefined`.
+        if !content_type.is_undefined() {
             let content_type_view = content_type.to_js_string_view(global_this)?;
             let slicer = content_type_view.to_utf8();
             let slice = slicer.slice();
@@ -2158,15 +2159,13 @@ impl BlobExt for Blob {
             if options.is_object() {
                 if let Some(content_type) = options.get(global_this, "type")? {
                     'inner: {
-                        if content_type.is_string() {
-                            let content_type_str = content_type.to_utf8(global_this)?;
-                            let slice = content_type_str.slice();
-                            if !is_valid_blob_type(slice) {
-                                break 'inner;
-                            }
-                            blob.content_type_was_set.set(true);
-                            blob.content_type.set(BlobContentType::from_script(slice));
+                        let content_type_str = content_type.to_utf8(global_this)?;
+                        let slice = content_type_str.slice();
+                        if !is_valid_blob_type(slice) {
+                            break 'inner;
                         }
+                        blob.content_type_was_set.set(true);
+                        blob.content_type.set(BlobContentType::from_script(slice));
                     }
                 }
             }
@@ -5317,15 +5316,13 @@ pub(crate) fn jsdom_file_construct(
         // representing the media type of the Blob.
         if let Some(content_type) = options.get(global_this, "type")? {
             'inner: {
-                if content_type.is_string() {
-                    let content_type_str = content_type.to_utf8(global_this)?;
-                    let slice = content_type_str.slice();
-                    if !is_valid_blob_type(slice) {
-                        break 'inner;
-                    }
-                    blob.content_type_was_set.set(true);
-                    blob.content_type.set(BlobContentType::from_script(slice));
+                let content_type_str = content_type.to_utf8(global_this)?;
+                let slice = content_type_str.slice();
+                if !is_valid_blob_type(slice) {
+                    break 'inner;
                 }
+                blob.content_type_was_set.set(true);
+                blob.content_type.set(BlobContentType::from_script(slice));
             }
         }
 

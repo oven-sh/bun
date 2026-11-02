@@ -479,6 +479,15 @@ const mayStartWhereTold =
   /-(canary|debug)\b/.test(Bun.spawnSync([bunExe(), "--revision"], { env: bunEnv }).stdout.toString());
 let startsWhereTold: Promise<boolean> | undefined;
 
+/** Removes an executable whose runs are over: it is as large as Bun. */
+function remove(executable: string) {
+  try {
+    rmSync(executable, { force: true });
+  } catch {
+    // Windows can hold the image of a process that has just ended. The folder takes the file along when the tests are over.
+  }
+}
+
 // A build compiles its programs one after another, so it holds five scenes at the most, and the builds run beside one another.
 const buildCount = Math.ceil(alone.length / 5);
 type Run = Awaited<ReturnType<typeof spawned>>;
@@ -519,7 +528,7 @@ const runsOfBuild = (number: number) =>
             ran.set(file, await spawned([executable], folder, { ...bunEnv, BUN_AOT_START_AT: file }));
           return ran;
         } finally {
-          rmSync(executable, { force: true });
+          remove(executable);
         }
       }))
     : undefined;
@@ -535,7 +544,7 @@ const ranAlone = (file: string) =>
       );
       return await spawned([executable], folder, bunEnv);
     } finally {
-      rmSync(executable, { force: true });
+      remove(executable);
     }
   });
 

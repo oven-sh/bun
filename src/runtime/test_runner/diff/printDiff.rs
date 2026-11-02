@@ -28,8 +28,15 @@ impl DiffConfig {
     }
 }
 
+/// jest-diff's sentence for two values that print the same.
+pub(crate) const NO_VISUAL_DIFFERENCE: &str = "Compared values have no visual difference.";
+
+const CUT_NOTE: &str = "each side prints nested objects and arrays as [Object] or [Array] after its first 1,000,000 bytes. Compare one of them directly to see its diff.";
+
 pub(crate) fn print_diff_main(
     not: bool,
+    cut: bool,
+    sentence_only: bool,
     received_slice: &[u8],
     expected_slice: &[u8],
     writer: &mut impl Write,
@@ -49,24 +56,38 @@ pub(crate) fn print_diff_main(
         return Ok(());
     }
 
+    // The note of a cut pair goes above the footer, which only the line diff prints.
+    let one_line = !cut && single_line_pair(received_slice, expected_slice);
+    let hunks = match one_line {
+        true => Vec::new(),
+        false => diff::diff_lines(expected_slice, received_slice),
+    };
+    // `diff_lines` returns no hunk only for two equal inputs.
+    let same = match one_line {
+        true => received_slice == expected_slice,
+        false => hunks.is_empty(),
+    };
+
     let mut p = Printer {
-        out: Vec::with_capacity(
-            ((received_slice.len() + expected_slice.len()) * 2 + 256).min(FLUSH_AT * 2),
-        ),
+        out: Vec::with_capacity(match same {
+            // At most the rows of an unchunked value, the sentence and the note.
+            true => expected_slice.len().min(config.min_bytes_before_chunking) * 2 + 256,
+            false => ((received_slice.len() + expected_slice.len()) * 2 + 256).min(FLUSH_AT * 2),
+        }),
         writer,
         result: Ok(()),
         colors: config.enable_ansi_colors,
         limit: config.truncate_threshold.max(config.truncate_context * 2),
         config,
         chars: diff::CharDiff::default(),
+        cut,
     };
 
-    if strings::index_of_char(received_slice, b'\n').is_none()
-        && strings::index_of_char(expected_slice, b'\n').is_none()
-    {
+    if same {
+        p.same(expected_slice, sentence_only);
+    } else if one_line {
         p.modified(expected_slice, received_slice, true);
     } else {
-        let hunks = diff::diff_lines(expected_slice, received_slice);
         p.diff(expected_slice, received_slice, &hunks);
     }
     p.flush();
@@ -133,6 +154,7 @@ struct Printer<'c, W: Write> {
     limit: usize,
     config: &'c DiffConfig,
     chars: diff::CharDiff,
+    cut: bool,
 }
 
 /// One row-group of the rendered diff. `Equal` covers a whole run of
@@ -241,6 +263,24 @@ impl<'c, W: Write> Printer<'c, W> {
         self.s("\n");
         if self.out.len() >= FLUSH_AT {
             self.flush();
+        }
+    }
+
+    /// Unequal values can print the same: two symbols, two functions, two sides cut at the output budget.
+    #[cold]
+    #[optimize(size)]
+    fn same(&mut self, text: &[u8], sentence_only: bool) {
+        let one_line = strings::index_of_char(text, b'\n').is_none();
+        if !sentence_only && (one_line || text.len() <= self.config.min_bytes_before_chunking) {
+            self.rows(text, styles::EQUAL);
+            self.end_row();
+        }
+        self.color(colors::DIM);
+        self.s(NO_VISUAL_DIFFERENCE);
+        self.color(colors::RESET);
+        if self.cut {
+            self.s("\n");
+            self.cut_note();
         }
     }
 
@@ -406,6 +446,11 @@ impl<'c, W: Write> Printer<'c, W> {
         }
         self.end_row();
 
+        if self.cut {
+            self.cut_note();
+            self.s("\n\n");
+        }
+
         // Footer.
         self.color(styles::REMOVED.prefix_color);
         self.s("- Expected  - ");
@@ -416,6 +461,18 @@ impl<'c, W: Write> Printer<'c, W> {
         self.s("+ Received  + ");
         self.num(inserted_diff_lines);
         self.color(colors::RESET);
+    }
+
+    #[optimize(size)]
+    fn cut_note(&mut self) {
+        self.color(colors::BLUE);
+        self.s("note");
+        self.color(colors::RESET);
+        self.color(colors::DIM);
+        self.s(":");
+        self.color(colors::RESET);
+        self.s(" ");
+        self.s(CUT_NOTE);
     }
 
     fn hunk_header(

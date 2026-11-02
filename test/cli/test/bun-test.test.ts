@@ -3826,6 +3826,23 @@ describe.concurrent("a rejection left by the callback that settles", () => {
           test.concurrent("other", () => {});`,
           1,
         ],
+        // Vitest drops this error wherever it surfaces, and so does the runner.
+        "when a later test rejects a promise with it": [
+          `let thrown;
+          test("skips", ({ skip }) => {
+            try {
+              skip();
+            } catch (error) {
+              thrown = error;
+              throw error;
+            }
+          });
+          test("rejects a promise with it", async () => {
+            Promise.reject(thrown);
+            await new Promise(resolve => setTimeout(resolve));
+          });`,
+          1,
+        ],
         // The hook that runs then isn't the one to unwind.
         "in a timer that fires while afterEach() runs": [
           `let cleaned = 0;
@@ -3872,9 +3889,13 @@ describe.concurrent("a rejection left by the callback that settles", () => {
   describe("of a test that still runs isn't reported when a later callback of the same turn handles it", () => {
     const passes = { errors: [], exitCode: 0 };
 
-    // Timers that are due together run with no report in between. The runner's own timer is one of them here:
-    // it is still set for the time limit of the first test.
-    test("with the runner's timer due in between", async () => {
+    // Timers that are due together run with no report in between. The runner's own timer is one of them here: it is
+    // still set for the time limit of the first test. It queues a step of the runner, and that step runs with the
+    // microtasks of the next timer.
+    test.each([
+      ["timer", 50, 250],
+      ["step", 250, 251],
+    ])("with the runner's %s in between", async (_, rejectsAt, handlesAt) => {
       const { errors, counts, exitCode } = await runFiles({
         "a.test.ts": `
           ${imports}
@@ -3887,11 +3908,11 @@ describe.concurrent("a rejection left by the callback that settles", () => {
             let rejected;
             await new Promise<void>(resolve => {
               setTimeout(() => block(300), 1);
-              setTimeout(() => void (rejected = Promise.reject(new Error("handled late"))), 250);
+              setTimeout(() => void (rejected = Promise.reject(new Error("handled late"))), ${rejectsAt});
               setTimeout(() => {
                 rejected.catch(() => {});
                 resolve();
-              }, 251);
+              }, ${handlesAt});
             });
           });
         `,

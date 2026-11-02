@@ -417,19 +417,14 @@ pub(crate) fn writable_stream(
     storage_class: Option<StorageClass>,
     request_payer: bool,
 ) -> JsResult<JSValue> {
-    // Local callback wrapper. `uploaded` and `path` are read off the upload (see `MultiPartUpload::callback`).
+    // Local callback wrapper. `global`, `uploaded` and `path` are read off the upload (see `MultiPartUpload::callback`).
     fn wrapper_callback(
         result: S3UploadResult,
+        global: &bun_jsc::JSGlobalObject,
         uploaded: u64,
         path: &[u8],
         sink: &mut NetworkSink,
     ) -> JsResult<()> {
-        // `global_this` is a `BackRef` set at construction; copy it so the
-        // re-borrow does not hold `&sink` across the `&mut sink` calls below.
-        let global = sink
-            .global_this
-            .expect("NetworkSink.global_this set at construction");
-        let global = global.get();
         if sink.end_promise.has_value() || sink.flush_promise.has_value() {
             // SAFETY: `bun_vm()` returns the live per-thread VM pointer.
             let event_loop = global.bun_vm().as_mut().event_loop();
@@ -475,9 +470,13 @@ pub(crate) fn writable_stream(
         let sink = ctx.cast::<NetworkSink>();
         // SAFETY: ctx was set to `response_stream: *mut NetworkSink` below; the box is live
         // while the upload holds it.
-        let r = wrapper_callback(result, task.uploaded_bytes.get(), &task.path, unsafe {
-            &mut *sink
-        });
+        let r = wrapper_callback(
+            result,
+            &task.global_this,
+            task.uploaded_bytes.get(),
+            &task.path,
+            unsafe { &mut *sink },
+        );
         // SAFETY: the upload's hold on the box ends here; `sink` is not used afterwards.
         unsafe { NetworkSink::release_writer_holder(sink) };
         r
@@ -540,7 +539,6 @@ pub(crate) fn writable_stream(
         bun_core::heap::into_raw(NetworkSink::new(NetworkSink {
             // SAFETY: adopts one of `task_ptr`'s two initial refs (released in `detach_writable`).
             task: Some(unsafe { RefPtr::from_raw(task_ptr) }),
-            global_this: Some(bun_ptr::BackRef::new(cx.global())),
             writer_holders: Cell::new(2),
             ..Default::default()
         }));
@@ -945,7 +943,6 @@ pub(crate) fn upload_stream(
     let sink: &mut NetworkSink = Box::leak(NetworkSink::new(NetworkSink {
         // SAFETY: `task_ptr` is live; the sink's ref is released in `detach_writable`.
         task: Some(unsafe { RefPtr::init_ref(task_ptr) }),
-        global_this: Some(bun_ptr::BackRef::new(cx.global())),
         ..Default::default()
     }));
     let sink_handle = crate::webcore::SinkHandle::S3Upload(bun_ptr::BackRef::new_mut(sink));

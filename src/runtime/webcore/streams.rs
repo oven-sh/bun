@@ -2111,8 +2111,6 @@ pub struct NetworkSink {
     /// The sink's ref on the upload, released in `detach_writable`.
     pub task: Option<RefPtr<bun_s3::MultiPartUpload>>,
     pub(crate) source: SourceHandle,
-    // JSC_BORROW: process-lifetime VM global; safe `Deref` via `BackRef`.
-    pub global_this: Option<BackRef<JSGlobalObject>>,
     /// Pending `flush()` promise. Serves both the user `s3file.writer().flush()`
     /// API and the `readDirectStream` / `BunAsyncIterableSource` pump, which
     /// parks on `controller.flush(true)` (not the sink's onReady) on backpressure.
@@ -2141,7 +2139,6 @@ impl Default for NetworkSink {
         Self {
             task: None,
             source: SourceHandle::default(),
-            global_this: None,
             flush_promise: JSPromiseStrong::default(),
             pending: WritablePending::default(),
             end_promise: JSPromiseStrong::default(),
@@ -2154,18 +2151,6 @@ impl Default for NetworkSink {
 }
 
 impl NetworkSink {
-    /// Borrow the JS global stored at construction.
-    ///
-    /// Invariant: `global_this` is set at construction and the VM-owned global
-    /// outlives this sink (JSC_BORROW). Never `None` once set.
-    #[inline]
-    pub fn global_this(&self) -> &JSGlobalObject {
-        self.global_this
-            .as_ref()
-            .expect("NetworkSink.global_this used before init")
-            .get()
-    }
-
     /// Shared borrow of the upload task, if attached.
     #[inline]
     fn task_ref(&self) -> Option<&bun_s3::MultiPartUpload> {
@@ -2240,12 +2225,9 @@ impl NetworkSink {
         // before the re-entrant wake below.
         let mut source = unsafe {
             if (*this).flush_promise.has_value() {
-                let global = (*this)
-                    .global_this
-                    .expect("global_this set at construction");
                 let flushed = (*this)
                     .flush_promise
-                    .resolve(&global, JSValue::js_number(flushed as f64));
+                    .resolve(&task.global_this, JSValue::js_number(flushed as f64));
                 crate::dispatch::fold(flushed);
             }
             (*this).pending.run();
@@ -2468,12 +2450,9 @@ impl NetworkSink {
                 .cast::<crate::webcore::s3::client::S3UploadStreamWrapper>();
             if let Some(err) = &err {
                 (*this).done = true;
-                let global = (*this)
-                    .global_this
-                    .expect("NetworkSink.global_this set at construction");
-                let js_err = err.to_js(&global);
+                let js_err = err.to_js(&task.global_this);
                 if !js_err.is_empty_or_undefined_or_null() {
-                    (*this).upstream_error.set(&global, js_err);
+                    (*this).upstream_error.set(&task.global_this, js_err);
                 }
             }
             (task, wrapper)
@@ -2496,9 +2475,11 @@ impl NetworkSink {
             // we are already waiting for the end
             return bun_sys::Result::Ok(self.end_promise.value());
         }
-        if self.task.is_some() && !self.done {
+        if let Some(task) = self.task.as_deref()
+            && !self.done
+        {
             // we need to wait for the task to end
-            self.end_promise = JSPromiseStrong::init(self.global_this());
+            self.end_promise = JSPromiseStrong::init(&task.global_this);
             return bun_sys::Result::Ok(self.end_promise.value());
         }
         // task already detached

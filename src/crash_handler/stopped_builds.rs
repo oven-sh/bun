@@ -139,7 +139,6 @@ fn raise_with_default_action(signal: c_int) {
 unsafe extern "C" {
     /// Bun's SIGINT and SIGTERM handler (c-bindings.cpp): it restores stdio and re-raises with the default action.
     fn onExitSignal(signal: c_int);
-    fn bun_install_exit_signal_handler(signal: c_int);
 }
 
 /// Which signals had `onExitSignal` before the reporter replaced it.
@@ -166,30 +165,29 @@ fn set_reports_interruptions(reports: bool) {
         if unsafe { libc::sigaction(signal, core::ptr::null(), &raw mut current) } != 0 {
             continue;
         }
-        let to = if reports {
+        // One sigaction call each way, so no moment has SIG_DFL installed in between.
+        let (to, flags) = if reports {
             let replaces_exit_handler = current.sa_sigaction == exit_handler;
             if current.sa_sigaction != libc::SIG_DFL && !replaces_exit_handler {
                 continue;
             }
             REPLACED_EXIT_HANDLER[index].store(replaces_exit_handler, Ordering::Relaxed);
-            ours
+            (ours, libc::SA_RESTART)
+        } else if current.sa_sigaction != ours {
+            continue;
+        } else if REPLACED_EXIT_HANDLER[index].load(Ordering::Relaxed) {
+            // The flags bun_install_exit_signal_handler uses.
+            (exit_handler, libc::SA_RESETHAND)
         } else {
-            if current.sa_sigaction != ours {
-                continue;
-            }
-            libc::SIG_DFL
+            (libc::SIG_DFL, 0)
         };
         let mut action: libc::sigaction = bun_core::ffi::zeroed();
         action.sa_sigaction = to;
-        action.sa_flags = libc::SA_RESTART;
+        action.sa_flags = flags;
         // SAFETY: both point to valid memory, and the handler is never unloaded.
         unsafe {
             libc::sigemptyset(&raw mut action.sa_mask);
             libc::sigaction(signal, &raw const action, core::ptr::null_mut());
-        }
-        if !reports && REPLACED_EXIT_HANDLER[index].load(Ordering::Relaxed) {
-            // SAFETY: installs a handler on a signal number from the table above.
-            unsafe { bun_install_exit_signal_handler(signal) };
         }
     }
 }

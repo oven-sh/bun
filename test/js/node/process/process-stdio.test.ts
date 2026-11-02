@@ -526,8 +526,8 @@ describe.concurrent.skipIf(isWindows)(
         `mkfifo "$2"`,
         // Leaves the shell's fd 1 nonblocking: a restore that ignored the identity would set that bit on the file.
         `"$0" -e 'void process.stdout.isTTY; process.kill(process.pid, "SIGKILL")' </dev/null`,
-        `"$0" -e "$1" </dev/null; echo "exit=$?"`,
-        `cat "$2"`,
+        // The FIFO read waits for the grandchild, so skip it when the step failed and nothing will write.
+        `"$0" -e "$1" </dev/null; rc=$?; echo "exit=$rc"; [ "$rc" = 0 ] && cat "$2"`,
       ].join("\n");
       await using proc = spawn({
         cmd: ["sh", "-c", script, bunExe(), reopen, fifo],

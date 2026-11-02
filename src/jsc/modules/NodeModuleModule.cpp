@@ -816,11 +816,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionLoad, (JSGlobalObject * globalObject, JSC::Ca
 extern "C" void Bun__VM__beginRunMainLoad(void* bunVM, const BunString* key);
 extern "C" void Bun__VM__endRunMainLoad(void* bunVM);
 
-// The module that this load creates is a main module, as with Node's Module._load(request, null, true). A Bun.ModuleGraph has its own.
+// The module that this load creates is a main module, as with Node's Module._load(request, null, true). A Bun.ModuleGraph has its own, and an ahead-of-time executable names its main module when it is built.
 static JSC::JSPromise* loadAndEvaluateMainModule(JSGlobalObject* lexicalGlobalObject, const Identifier& key)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    if (Bun::currentModuleGraph(globalObject))
+    if (Bun::currentModuleGraph(globalObject) || Bun::hasCompiledModules())
         return JSC::loadAndEvaluateModule(lexicalGlobalObject, key.string(), nullptr, nullptr);
 
     void* bunVM = globalObject->bunVM();

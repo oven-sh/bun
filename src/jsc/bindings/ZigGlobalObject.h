@@ -261,9 +261,6 @@ public:
     JSC::JSFunction* wasmStreamingConsumeStreamFunction() const { return m_wasmStreamingConsumeStreamFunction.getInitializedOnMainThread(this); }
 
     JSObject* requireFunctionUnbound() const { return m_requireFunctionUnbound.getInitializedOnMainThread(this); }
-    bool hasRequireFunctionUnbound() const { return m_requireFunctionUnbound.isInitialized(); }
-    // The target of the require functions that are made from now on (Bun::becomeMainModule).
-    void setRequireFunctionUnbound(JSC::VM& vm, JSObject* function) { m_requireFunctionUnbound.set(vm, this, function); }
     JSObject* requireResolveFunctionUnbound() const { return m_requireResolveFunctionUnbound.getInitializedOnMainThread(this); }
     Bun::InternalModuleRegistry* internalModuleRegistry() const { return m_internalModuleRegistry.getInitializedOnMainThread(this); }
 
@@ -534,6 +531,8 @@ public:
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSResizableOrGrowableSharedBufferSubclassStructure)  \
     V(private, LazyPropertyOfGlobalObject<JSWeakMap>, m_vmModuleContextMap)                                  \
     V(private, WriteBarrier<JSObject>, m_lazyRequireCacheObject)                                             \
+    /* The CommonJS module that Module.runMain() made the main module, until the next entry load. */         \
+    V(public, WriteBarrier<JSObject>, m_mainModuleOfRunMain)                                                 \
     V(public, LazyPropertyOfGlobalObject<Bun::JSCommonJSExtensions>, m_lazyRequireExtensionsObject)          \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_lazyTestModuleObject)                                 \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_testMatcherUtilsObject)                                \

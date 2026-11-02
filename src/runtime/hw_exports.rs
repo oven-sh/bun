@@ -159,9 +159,10 @@ pub(crate) fn note_commonjs_evaluation(this: &mut VirtualMachine, specifier: JSV
 
 // HOST_EXPORT(Bun__VM__beginRunMainLoad, c)
 pub(crate) fn begin_run_main_load(this: &mut VirtualMachine, key: &bun_core::String) {
-    let in_preload = this.is_in_preload;
+    // A preload, or an override of `Module.runMain` that the entry load calls, starts the script before the entry module loads.
+    let before_entry = this.is_in_preload || !this.has_loaded;
     this.run_main_modules
-        .begin_load(key.to_utf8().slice(), in_preload);
+        .begin_load(key.to_utf8().slice(), before_entry);
 }
 
 // HOST_EXPORT(Bun__VM__endRunMainLoad, c)

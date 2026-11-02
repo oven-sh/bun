@@ -5678,8 +5678,8 @@ void Process::setMainModuleOfRunMain(JSGlobalObject* globalObject, JSValue modul
     auto& vm = JSC::getVM(globalObject);
     auto mainModule = Identifier::fromString(vm, "mainModule"_s);
     JSValue own = getDirect(vm, mainModule);
-    // The two accessors above give `module`. Compiled code reads the property as the table of built-ins describes it.
-    if (own ? own.isCustomGetterSetter() : !Bun::hasCompiledModules()) {
+    // The two accessors above give `module`.
+    if (!own || own.isCustomGetterSetter()) {
         if (!own)
             putDirectCustomAccessor(vm, mainModule, CustomGetterSetter::create(vm, processMainModuleAfterRunMain, setProcessMainModuleOfTestFile), PropertyAttribute::CustomAccessor | 0);
         return;

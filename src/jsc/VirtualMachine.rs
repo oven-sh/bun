@@ -155,15 +155,15 @@ pub struct RunMainModules {
     keys: bun_collections::StringSet,
     /// The keys that `Module.runMain()` is loading now. A call inside a call is last.
     loading: Vec<Box<[u8]>>,
-    /// A preload started a script: the load of the entry module makes it the main module again, as in Node.
+    /// A script started before the entry module loaded: the load of the entry module makes it the main module again, as in Node.
     entry_takes_back: bool,
 }
 
 impl RunMainModules {
-    pub fn begin_load(&mut self, key: &[u8], in_preload: bool) {
+    pub fn begin_load(&mut self, key: &[u8], before_entry: bool) {
         bun_core::handle_oom(self.keys.insert(key));
         self.loading.push(Box::from(key));
-        self.entry_takes_back |= in_preload;
+        self.entry_takes_back |= before_entry;
     }
 
     pub fn end_load(&mut self) {

@@ -1,11 +1,11 @@
 //! Schemas for rule options: ESLint's `meta.schema` and `meta.defaultOptions`.
 //!
-//! ESLint validates the options of every enabled rule, and rejects a config whose options don't
-//! match the rule's schema. Here the schemas are data, not part of the rules (200 KB for 360
-//! rules, 26 KB compressed). A rule's schema is parsed only when its options are validated.
+//! ESLint validates the options of every enabled rule and rejects a config whose options don't match the rule's schema.
+//! Here the schemas are data, not part of the rules (200 KB for 360 rules, 26 KB compressed). A rule's schema is parsed
+//! only when its options are validated.
 //!
-//! Default options are merged in only for validating and comparing. A rule is built from the
-//! options as written, and applies its own defaults.
+//! Default options are merged in only for validating and comparing. A rule is built from the options as written and
+//! applies its own defaults.
 
 mod data;
 mod plain;
@@ -25,7 +25,7 @@ use validate::{SchemaError, Validator};
 /// A typescript-eslint rule that merges its defaults itself has `[meta.schema, [], defaultOptions]`. A rule that isn't listed
 /// takes no options.
 ///
-/// Release builds embed the file compressed and inflate it here, the first time a schema is needed.
+/// Release builds embed the file compressed and decompress it here the first time a schema is needed.
 fn schemas() -> &'static [(&'static [u8], &'static [u8])] {
     static SCHEMAS: bun_core::Once<Vec<(&'static [u8], &'static [u8])>> = bun_core::Once::new();
     SCHEMAS.get_or_init(|| {
@@ -46,9 +46,10 @@ fn find(id: &[u8]) -> Option<Json> {
     crate::json::parse(schemas[at].1)
 }
 
-/// Options that only `bun lint` has, as `(rule, option)`. Each is a boolean in the rule's first options object. They're valid
-/// where there's no ESLint or oxlint config file. With one, the schema is the original's, and so is the error for these.
-const OPTIONS_OF_BUN: [(&[u8], &[u8]); 4] = [
+/// Options that only `bun lint` has, as `(rule, option)`. Each is a boolean in the rule's first options object. They're
+/// valid only when there's no ESLint or oxlint config file. With one, the original schema applies and rejects them with
+/// the original error.
+const BUN_ONLY_OPTIONS: [(&[u8], &[u8]); 4] = [
     (
         b"@typescript-eslint/no-loss-of-precision",
         b"ignoreDecimals",
@@ -58,10 +59,10 @@ const OPTIONS_OF_BUN: [(&[u8], &[u8]); 4] = [
     (b"react/jsx-key", b"checkArraysOutsideJSX"),
 ];
 
-/// [`find`], with [`OPTIONS_OF_BUN`] added to the schema.
-fn find_standing_alone(id: &[u8]) -> Option<Json> {
+/// [`find`], with [`BUN_ONLY_OPTIONS`] added to the schema.
+fn find_with_bun_options(id: &[u8]) -> Option<Json> {
     let found = find(id);
-    let mut own = OPTIONS_OF_BUN.iter().filter(|it| it.0 == id).peekable();
+    let mut own = BUN_ONLY_OPTIONS.iter().filter(|it| it.0 == id).peekable();
     if own.peek().is_none() {
         return found;
     }
@@ -110,8 +111,7 @@ pub(crate) fn deep_merge_arrays(defaults: &[Json], options: &[Json]) -> Vec<Json
         .collect()
 }
 
-/// The options of the rule with its `meta.defaultOptions` merged in: what ESLint has in
-/// `config.rules[ruleId].slice(1)`.
+/// The rule's options with its `meta.defaultOptions` merged in. Same as ESLint's `config.rules[ruleId].slice(1)`.
 pub(crate) fn with_defaults(meta: &'static Meta, options: &[Json]) -> Vec<Json> {
     match find(&RuleId::Known(meta).to_vec())
         .as_ref()
@@ -128,7 +128,7 @@ pub fn schema_and_defaults(meta: &'static Meta, options: &[Json]) -> Option<(Jso
     if meta.follows_oxlint {
         return None;
     }
-    let found = find_standing_alone(&RuleId::Known(meta).to_vec())?;
+    let found = find_with_bun_options(&RuleId::Known(meta).to_vec())?;
     let [schema, defaults @ ..] = found.as_array()? else {
         return None;
     };
@@ -138,19 +138,20 @@ pub fn schema_and_defaults(meta: &'static Meta, options: &[Json]) -> Option<(Jso
     Some((schema.clone(), merged))
 }
 
-/// Validates `options`, which are what follows the severity, as ESLint's `validateRulesConfig` does.
-/// `Err`: the lines of its message that follow `Key "rules": Key "<rule>":`. `stands_alone`: [`OPTIONS_OF_BUN`] are valid too.
+/// Validates `options` (without the severity) like ESLint's `validateRulesConfig`. Returns `Err` with the lines of
+/// ESLint's message that follow `Key "rules": Key "<rule>":`. With `has_no_foreign_config`, [`BUN_ONLY_OPTIONS`] are
+/// valid too.
 pub(crate) fn validate(
     meta: &'static Meta,
     options: &[Json],
-    stands_alone: bool,
+    has_no_foreign_config: bool,
 ) -> Result<(), Vec<u8>> {
     // Rules ported from oxlint have no schema. They ignore options they don't know.
     if meta.follows_oxlint {
         return Ok(());
     }
-    let find = if stands_alone {
-        find_standing_alone
+    let find = if has_no_foreign_config {
+        find_with_bun_options
     } else {
         find
     };
@@ -165,19 +166,19 @@ pub fn mistake_in_options(
     options: &[Json],
 ) -> Option<OptionMistake> {
     let id = RuleId::Known(meta).to_vec();
-    let needs_some = || data::NEED_OPTIONS.iter().any(|it| it.as_bytes() == id);
-    if meta.follows_oxlint || options.is_empty() && !needs_some() {
+    let requires_options = || data::NEED_OPTIONS.iter().any(|it| it.as_bytes() == id);
+    if meta.follows_oxlint || options.is_empty() && !requires_options() {
         return None;
     }
-    let found = find_standing_alone(&id);
+    let found = find_with_bun_options(&id);
     let parts = found.as_ref().and_then(Json::as_array).unwrap_or_default();
     let defaults = parts.get(1).and_then(Json::as_array).unwrap_or_default();
     let errors = errors_of(parts.first(), defaults, options).err()?;
     Some(plain::explain(rule, &errors))
 }
 
-/// What stands in `json` for something that a configuration file has and JSON has not, other than a regular expression: what
-/// it is.
+/// Finds the first placeholder in `json` for a config value that JSON can't represent, other than a regular expression.
+/// Returns the kind of value it replaces.
 pub(crate) fn placeholder(json: &Json) -> Option<&[u8]> {
     match json {
         Json::Array(items) => items.iter().find_map(placeholder),
@@ -189,7 +190,8 @@ pub(crate) fn placeholder(json: &Json) -> Option<&[u8]> {
     }
 }
 
-/// `options` as ajv sees them and as `JSON.stringify` prints them: a `Map`, a `Date` or a `RegExp` is an object without properties.
+/// `options` as Ajv sees them and as `JSON.stringify` prints them, where a `Map`, a `Date` or a `RegExp` is an object
+/// without properties.
 fn without_placeholders(json: &Json) -> Json {
     let mut copy = json.clone();
     let mut unseen = vec![&mut copy];
@@ -210,7 +212,7 @@ fn without_placeholders(json: &Json) -> Json {
     copy
 }
 
-/// The same for the rule that ESLint calls `id`, whether it is implemented or not.
+/// Like [`validate`], for the rule ESLint calls `id`, whether or not it's built in.
 pub(crate) fn validate_by_id(id: &[u8], options: &[Json]) -> Result<(), Vec<u8>> {
     validate_found(id, options, find)
 }
@@ -220,7 +222,7 @@ fn validate_found(
     options: &[Json],
     find: fn(&[u8]) -> Option<Json>,
 ) -> Result<(), Vec<u8>> {
-    // Nearly no rule needs options: `generate-schemas.mjs` lists those that do.
+    // Almost no rule requires options. `generate-schemas.mjs` lists the ones that do.
     if options.is_empty() && !data::NEED_OPTIONS.iter().any(|it| it.as_bytes() == id) {
         return Ok(());
     }
@@ -235,19 +237,19 @@ fn validate_found(
     .map(drop)
 }
 
-/// `meta.schema` of the rule that ESLint calls `id`. `None`: it takes no options, or there is no such rule.
+/// `meta.schema` of the rule ESLint calls `id`. `None` if it takes no options or there's no such rule.
 pub(crate) fn schema_of(id: &[u8]) -> Option<Json> {
     find(id)?.into_array()?.into_iter().next()
 }
 
-/// Validates `options` with `schema`, which is `meta.schema`, as ESLint 8 does: it knows no `meta.defaultOptions`.
+/// Validates `options` against `schema` (`meta.schema`) like ESLint 8, which has no `meta.defaultOptions`.
 pub(crate) fn validate_as_eslint_8(schema: Option<&Json>, options: &[Json]) -> Result<(), Vec<u8>> {
     let options = &options.iter().map(without_placeholders).collect::<Vec<_>>()[..];
     validate_with(schema, &[], options).map(drop)
 }
 
-/// The same for a rule of a JavaScript plugin. `Ok`: ESLint's `context.options`, which are `options` with the default options of
-/// the rule, and with the defaults that its schema has.
+/// Like [`validate`], for a JavaScript plugin's rule. Returns `Ok` with ESLint's `context.options`: `options` merged
+/// with the rule's default options and the schema's defaults.
 pub(crate) fn validate_js(rule: &js_plugin::Rule, options: &[Json]) -> Result<Vec<Json>, Vec<u8>> {
     match &rule.schema {
         js_plugin::Schema::Any => Ok(with_js_defaults(rule, options)),
@@ -259,19 +261,20 @@ pub(crate) fn validate_js(rule: &js_plugin::Rule, options: &[Json]) -> Result<Ve
 }
 
 impl js_plugin::Rule {
-    /// Checks `options` against `meta.schema`, as ESLint does. `Err`: ESLint's lines about what is wrong with them.
+    /// Checks `options` against `meta.schema` like ESLint. Returns `Err` with the lines of ESLint's error message.
     pub fn validate(&self, options: &[Json]) -> Result<(), Vec<u8>> {
         validate_js(self, options).map(drop)
     }
 }
 
-/// `options` with the default options of a rule of a JavaScript plugin: what ESLint has for a rule that it does not validate.
+/// `options` merged with a JavaScript plugin rule's default options. That's what ESLint uses for a rule it doesn't
+/// validate.
 pub(crate) fn with_js_defaults(rule: &js_plugin::Rule, options: &[Json]) -> Vec<Json> {
     deep_merge_arrays(&rule.default_options, options)
 }
 
-/// `schema`: `meta.schema`, if the rule has one. `defaults`: `meta.defaultOptions`. `Ok`: the options as the validation leaves
-/// them, which fills in the defaults of the schema.
+/// `schema` is `meta.schema`, if the rule has one, and `defaults` is `meta.defaultOptions`. Returns `Ok` with the
+/// options after validation, which fills in the schema's defaults.
 fn validate_with(
     schema: Option<&Json>,
     defaults: &[Json],
@@ -281,7 +284,8 @@ fn validate_with(
         Ok(options) => return Ok(options),
         Err(errors) => errors,
     };
-    // Ajv's functions call each other for every level of the options. ESLint reports the `RangeError` like any other error.
+    // Ajv's generated functions recurse once per nesting level of the options. ESLint reports the `RangeError` like any
+    // other error.
     if errors.is_empty() {
         return Err(b"\tMaximum call stack size exceeded\n".to_vec());
     }
@@ -310,7 +314,8 @@ fn validate_with(
     Err(message)
 }
 
-/// Same as [`validate_with`], but returns the raw Ajv errors. None at all means the stack was too small for the options.
+/// Same as [`validate_with`], but returns the raw Ajv errors. An empty list means the options were nested too deeply
+/// for the stack.
 fn errors_of(
     schema: Option<&Json>,
     defaults: &[Json],

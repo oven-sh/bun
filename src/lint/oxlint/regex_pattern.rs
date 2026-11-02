@@ -1,5 +1,5 @@
-//! The pattern of a regular expression as the rules of oxlint get it: `run_on_regex_node` of its `utils/regex.rs`, and the way
-//! `oxc_regular_expression` reads a pattern that is written as a string or as a template.
+//! A regular expression's pattern as oxlint's rules see it: `run_on_regex_node` from its `utils/regex.rs`, and the way
+//! `oxc_regular_expression` reads a pattern written as a string or a template.
 
 use crate::ast_util::get_inner_expression;
 use crate::regex_flags::is_regexp_callee;
@@ -12,29 +12,29 @@ use std::borrow::Cow;
 pub struct Pattern<'a> {
     text: Cow<'a, [u8]>,
     pub mode: Mode,
-    /// Where it is written: between the slashes, or with the quotes.
+    /// The pattern's span: between the slashes of a literal, or including the quotes of a string.
     span: Span,
-    /// Of a string or a template: where each UTF-16 code unit of `text` is written, from the start of `span`, and where it
-    /// starts in `text`.
+    /// For a string or a template: the source range of each UTF-16 code unit of `text`, relative to the start of
+    /// `span`, and its byte offset in `text`.
     units: Option<(Vec<CharInfo>, Vec<u32>)>,
 }
 
 impl<'a> Pattern<'a> {
-    /// Of a regular expression literal, with its flags.
-    pub fn of_literal(literal: Expr<'a>) -> Option<Pattern<'a>> {
+    /// The pattern of a regular expression literal, in the mode its flags select.
+    pub fn from_literal(literal: Expr<'a>) -> Option<Pattern<'a>> {
         let regex = literal.as_regex()?;
         let (start, pattern) = (literal.span().start + 1, regex.pattern());
         Some(Pattern {
             text: Cow::Borrowed(pattern),
-            mode: Mode::of_flags(regex.flags()),
+            mode: Mode::from_flags(regex.flags()),
             span: Span::new(start, start + pattern.len() as u32),
             units: None,
         })
     }
 
-    /// `Reader::initialize` for a string literal or a template without substitutions. It is not what JavaScript reads:
-    /// `"\n"` is an `n`, a line continuation is a line break, `"\01"` is U+0000 and a `1`, and two escapes are never one
-    /// character.
+    /// `Reader::initialize` for a string literal or a template without substitutions. It doesn't decode the string like
+    /// JavaScript: `"\n"` is an `n`, a line continuation is a line break, `"\01"` is U+0000 and a `1`, and two escapes
+    /// are never combined into one character.
     pub fn read(literal: Expr<'a>, mode: Mode) -> Option<Pattern<'a>> {
         let raw = literal.text();
         let (is_string, cooked) = match literal.kind() {
@@ -82,7 +82,8 @@ impl<'a> Pattern<'a> {
         let mut offsets: Vec<u32> = Vec::with_capacity(units.len());
         let mut before: Option<CharInfo> = None;
         for unit in &units {
-            // The halves of a character that is written as one, which is four bytes.
+            // The two surrogates of a character that's written as one character in the source. It takes four bytes in
+            // `text`.
             match (before.filter(|it| it.start == unit.start), offsets.last()) {
                 (Some(_), Some(&lead)) => {
                     offsets.push(lead + 2);
@@ -108,7 +109,7 @@ impl<'a> Pattern<'a> {
         &self.text
     }
 
-    /// Where in the file the bytes of the text from `start` to `end` are written, as oxc counts.
+    /// The span in the file of the bytes `start..end` of the text, computed like oxc does.
     pub fn span(&self, start: u32, end: u32) -> Span {
         let Some((units, offsets)) = &self.units else {
             return Span::new(self.span.start + start, self.span.start + end);
@@ -116,7 +117,7 @@ impl<'a> Pattern<'a> {
         let [first, after] = [start, end].map(|offset| offsets.partition_point(|it| *it < offset));
         let unit = |index: usize| units.get(index);
         let start = match (unit(first), first.checked_sub(1).and_then(unit)) {
-            // The second half of a character.
+            // The low surrogate of a character.
             (Some(it), Some(before)) if before.start == it.start => self.span.start + it.end,
             (Some(it), _) => self.span.start + it.start,
             (None, _) => self.span.end - 1,
@@ -129,7 +130,7 @@ impl<'a> Pattern<'a> {
     }
 }
 
-/// What is between two characters of a string or a template is line continuations.
+/// Adds the line continuations in `from..to`. Nothing else can be between two characters of a string or a template.
 fn push_line_continuations(units: &mut Vec<CharInfo>, raw: &[u8], from: u32, to: u32) {
     let mut start = from;
     while start < to {
@@ -149,23 +150,23 @@ fn push_line_continuations(units: &mut Vec<CharInfo>, raw: &[u8], from: u32, to:
     }
 }
 
-/// `FlagsParser::parse`: `None` for flags that are none.
+/// `FlagsParser::parse`: `None` for invalid flags.
 fn mode_of_flags(flags: &[u8]) -> Option<Mode> {
     let is_known = |flag: &u8| strings::contains_char(b"dgimsuvy", *flag);
     let is_repeated = |(i, flag): (usize, &u8)| strings::contains_char(&flags[..i], *flag);
-    let mode = Mode::of_flags(flags);
+    let mode = Mode::from_flags(flags);
     (flags.iter().all(is_known)
         && !flags.iter().enumerate().any(is_repeated)
         && !(mode.unicode && mode.unicode_sets))
         .then_some(mode)
 }
 
-/// `run_on_regex_node`: the pattern that oxlint parses for `e`, which is a regular expression literal or a call of `RegExp`, with
-/// or without `new`. Whether it is valid is for the caller to find out.
+/// `run_on_regex_node`: the pattern that oxlint parses for `e`, a regular expression literal or a `RegExp` call with or
+/// without `new`. The caller has to check that the pattern is valid.
 pub fn run_on_regex_node(e: Expr<'_>) -> Option<Pattern<'_>> {
     match e.kind() {
         ExprKind::Regex(_) => {
-            // What `RegExp` is called with is looked at with the call, whose flags count.
+            // A literal passed to `RegExp` is handled with the call, whose flags take precedence.
             let mut outer = e.parent();
             while let Node::Expr(it) = outer
                 && get_inner_expression(it) != it
@@ -173,8 +174,8 @@ pub fn run_on_regex_node(e: Expr<'_>) -> Option<Pattern<'_>> {
                 outer = it.parent();
             }
             match outer {
-                Node::Expr(it) if is_call_of_regexp(it) => None,
-                _ => Pattern::of_literal(e),
+                Node::Expr(it) if is_regexp_call(it) => None,
+                _ => Pattern::from_literal(e),
             }
         }
         ExprKind::Call(call) | ExprKind::New(call) if is_regexp_callee(call.callee()) => {
@@ -184,13 +185,13 @@ pub fn run_on_regex_node(e: Expr<'_>) -> Option<Pattern<'_>> {
     }
 }
 
-fn is_call_of_regexp(e: Expr) -> bool {
+fn is_regexp_call(e: Expr) -> bool {
     matches!(e.kind(), ExprKind::Call(call) | ExprKind::New(call) if is_regexp_callee(call.callee()))
 }
 
 fn run_on_arguments<'a>(args: List<'a, Expr<'a>>) -> Option<Pattern<'a>> {
     let first = args.first().filter(|it| it.tag() != ExprTag::Spread)?;
-    // As they are written, with the quotes, if that is known.
+    // The flags argument, if it's a static string. Its text includes the quotes.
     let flags = match args.get(1).map(get_inner_expression) {
         Some(flags) => match flags.kind() {
             ExprKind::String(_) => Some(flags),
@@ -200,14 +201,14 @@ fn run_on_arguments<'a>(args: List<'a, Expr<'a>>) -> Option<Pattern<'a>> {
         },
         None => None,
     };
-    if let Some(mut pattern) = Pattern::of_literal(get_inner_expression(first)) {
-        // One that is in anything is read as a string, which it is not.
+    if let Some(mut pattern) = Pattern::from_literal(get_inner_expression(first)) {
+        // oxlint tries to read a wrapped literal, like `(/a/)` or `/a/ as T`, as a string, which fails.
         if first.tag() != ExprTag::Regex || first.is_parenthesized() {
             return None;
         }
         let own = pattern.mode;
         if let Some(text) = flags.map(Expr::text)
-            && let new = Mode::of_flags(text)
+            && let new = Mode::from_flags(text)
             && (new.unicode, new.unicode_sets) != (own.unicode, own.unicode_sets)
         {
             pattern.mode = mode_of_flags(text.get(1..text.len() - 1)?)?;

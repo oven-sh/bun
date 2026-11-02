@@ -1,4 +1,4 @@
-//! Code and types in comments, which are formatted as what they are.
+//! Formats code and types embedded in comments, each in its own language.
 
 use super::text::trim_end_matches;
 use crate::options::{
@@ -6,18 +6,18 @@ use crate::options::{
 };
 use bun_core::strings;
 
-/// The widest line that oxfmt knows.
+/// oxfmt's maximum line width.
 const MAX_LINE_WIDTH: usize = 320;
 
-/// The options for something in a comment of a file that is formatted with `options`.
+/// Returns the options for content embedded in a comment of a file that's formatted with `options`.
 pub(super) fn embedded_options(options: &FormatOptions, print_width: usize) -> FormatOptions {
-    // oxfmt has 16 bits for it.
+    // oxfmt stores it in 16 bits.
     let width = u16::try_from(print_width)
         .map_or(80, usize::from)
         .clamp(1, MAX_LINE_WIDTH);
     FormatOptions {
         line_width: LineWidth(width as u32),
-        // The lines are written to the document of the file, one by one.
+        // The lines are written to the file's document one by one.
         line_ending: LineEnding::Lf,
         jsdoc: None,
         sort_imports: None,
@@ -34,7 +34,7 @@ pub(super) fn embedded_options(options: &FormatOptions, print_width: usize) -> F
     }
 }
 
-/// `code` formatted as the file at `path`, without white space at its end. `None` if it has a syntax error.
+/// Formats `code` as if it were the file at `path`, and trims trailing whitespace. Returns `None` on a syntax error.
 fn parse_and_build(path: &[u8], code: &[u8], options: &FormatOptions) -> Option<Vec<u8>> {
     let format_javascript = options.format_javascript?;
     let mut out = Vec::new();
@@ -61,8 +61,8 @@ pub(super) fn is_js_ts_lang(lang: &[u8]) -> bool {
     .any(|name| lang.eq_ignore_ascii_case(name))
 }
 
-/// Code in a description in one of the languages that prettier-plugin-jsdoc formats and that is neither JavaScript
-/// nor TypeScript. `None`: it stays as it is.
+/// Formats code in a description, for the languages other than JavaScript and TypeScript that prettier-plugin-jsdoc
+/// formats. `None` means the code stays as it is.
 pub(super) fn format_embedded_language(
     lang: &[u8],
     code: &[u8],
@@ -102,9 +102,9 @@ pub(super) fn format_embedded_language(
     Some(out)
 }
 
-/// How deep in template literals the end of `line` is, if its start is `depth` deep.
+/// Returns the template literal nesting depth at the end of `line`, given `depth` at its start.
 pub(super) fn update_template_depth(line: &[u8], mut depth: u32) -> u32 {
-    // For each `${` that is open: how many braces are open in it.
+    // For each open `${`, the number of open braces inside it.
     let mut expression_brace_depth: smallvec::SmallVec<[u32; 4]> = smallvec::SmallVec::new();
     let mut i = 0;
     while i < line.len() {
@@ -137,8 +137,8 @@ pub(super) fn update_template_depth(line: &[u8], mut depth: u32) -> u32 {
     depth
 }
 
-/// `code` formatted as JavaScript or TypeScript, in lines of at most `print_width` columns. `None` if it is
-/// neither.
+/// Formats `code` as JavaScript or TypeScript with lines of at most `print_width` columns. Returns `None` if it parses
+/// as neither.
 pub(super) fn format_embedded_js(
     code: &[u8],
     print_width: usize,
@@ -147,12 +147,12 @@ pub(super) fn format_embedded_js(
     let base_options = embedded_options(options, print_width);
     let trimmed = strings::trim_unicode_whitespace(code);
     if !trimmed.starts_with(b"{") {
-        // TSX first: `getItem<number>(..)` is something else in JSX.
+        // Try TSX first, because `getItem<number>(..)` means something else in JSX.
         return parse_and_build(TSX, code, &base_options)
             .or_else(|| parse_and_build(JSX, code, &base_options));
     }
-    // An object, which would be a block with labels. prettier-plugin-jsdoc formats it as JSON, which keeps the
-    // quotes of keys, so one with quotes is left alone.
+    // An object literal, which would parse as a block with labels. prettier-plugin-jsdoc formats it as JSON, which
+    // keeps quoted keys, so an object with quotes is left as is.
     let has_quoted_keys = strings::index_of_char_usize(trimmed, b'"').is_some_and(|quote| {
         strings::index_of_char_usize(trimmed, b'}').is_some_and(|brace| quote < brace)
     });
@@ -172,7 +172,7 @@ pub(super) fn format_embedded_js(
         else {
             return Some(formatted);
         };
-        // Something behind the object: it is a call, and the parentheses are not the ones that were added.
+        // Something follows the object, so this is a call, and the parentheses aren't the ones we added.
         strings::trim_unicode_whitespace(inner)
             .ends_with(b"}")
             .then(|| inner.to_vec())
@@ -180,8 +180,8 @@ pub(super) fn format_embedded_js(
     format_object(JSX).or_else(|| format_object(TSX))
 }
 
-/// `formatType` of prettier-plugin-jsdoc: the type is formatted as that of `type __t = ..;`. `None` if that
-/// fails or changes nothing. `options`: from [`embedded_options`].
+/// prettier-plugin-jsdoc's `formatType`: formats the type as the right side of `type __t = ..;`. Returns `None` if that
+/// fails or changes nothing. `options` come from [`embedded_options`].
 pub(super) fn format_type_via_formatter(
     type_str: &[u8],
     options: &FormatOptions,
@@ -209,7 +209,7 @@ pub(super) fn format_type_via_formatter(
     (!result.is_empty() && result != type_str).then(|| result.to_vec())
 }
 
-/// Whether there is anything in the type that the formatter could change.
+/// True if the type contains anything the formatter could change.
 fn needs_formatter_pass(type_str: &[u8]) -> bool {
     strings::index_of_any(type_str, b"|&{}()\n").is_some() || strings::contains(type_str, b"=>")
 }

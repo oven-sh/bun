@@ -1,0 +1,17 @@
+import a from "a" with // comment
+{ // comment
+};
+
+import b from "b" with { // comment
+};
+
+export * from "c" with // comment
+{ // comment
+};
+
+import d from "d" with /* comment */ { // comment
+};
+
+import e from "e" // comment
+with { // comment
+};

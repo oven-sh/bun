@@ -1,0 +1,4 @@
+const say = (...v) => console.log(...v.map(x => typeof x === "function" ? "fn:" + x.name : typeof x === "symbol" ? String(x) : typeof x === "object" && x !== null ? JSON.stringify(x) : String(x))); const tryit = f => { try { return f(); } catch (e) { return e.constructor.name; } }; import anon from "./anon.mjs"; const a = function () {}, b = () => {}, c = class {}; let d; d = function () {}; const o = { e: function () {}, f: () => {}, ["g" + 1]: () => {}, h: class {} }; const { i = () => {} } = {}; const [j = class {}] = []; function k(l = () => {}) { return l; } class M { n = () => {}; static o = function () {}; #p = () => {}; q() { return this.#p; } } const r = (0, function () {}); const s = (() => {}); const t = a; var u = u || function () {}; say([a, b, c, d, o.e, o.f, o.g1, o.h, i, j, k(), new M().n, M.o, new M().q(), r, s, t, u, anon].map(x => x.name).join("|"));
+/* Output:
+a|b|c|d|e|f|g1|h|i|j|l|n|o|#p||s|a||default
+*/

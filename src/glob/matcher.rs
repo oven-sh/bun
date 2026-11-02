@@ -3391,6 +3391,8 @@ fn take_fixed_choice(
     } = brackets_at(glob, open as usize)?;
     let is_separator = |it: u8| it == b'/' || is_windows && it == b'\\';
     let rest = &path[path_index as usize..];
+    // Each set is a u64 with one bit per byte offset from 0 to 63, so a token can only match within the first 63 bytes.
+    let window = &rest[..rest.len().min(u64::BITS as usize - 1)];
     let mut levels = [Level::default(); 4];
     let mut depth = 0;
     levels[0] = Level {
@@ -3431,7 +3433,10 @@ fn take_fixed_choice(
             while from != 0 {
                 let len = from.trailing_zeros() as usize;
                 from &= from - 1;
-                let Some(&found) = rest.get(len) else {
+                let Some(&found) = window.get(len) else {
+                    if len < rest.len() {
+                        return None;
+                    }
                     continue;
                 };
                 let is_same = match ch {
@@ -3442,7 +3447,7 @@ fn take_fixed_choice(
                     _ => found == ch,
                 };
                 if is_same {
-                    to |= 2_u64.checked_shl(len as u32)?;
+                    to |= 2_u64 << len;
                 }
             }
             ends = to;

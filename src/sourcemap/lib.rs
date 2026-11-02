@@ -167,6 +167,8 @@ impl LineColumnOffset {
             debug_assert!(i >= offset);
             debug_assert!((i as usize) < input.len());
 
+            this.columns = this.columns.add_scalar((i - offset) as i32);
+
             let iter = strings::CodepointIterator::init(input);
             let mut cursor = strings::Cursor {
                 i,
@@ -684,7 +686,13 @@ pub mod SerializedSourceMap {
         pub(crate) fn source_file_contents(&self, index: usize) -> Option<&[u8]> {
             let decompressed = self.decompressed_files[index].get_or_init(|| {
                 let sp = self.map.compressed_source_file_at(index);
-                let compressed_file = sp.slice(self.map.bytes);
+                let start = sp.offset as usize;
+                let Some(compressed_file) = start
+                    .checked_add(sp.length as usize)
+                    .and_then(|end| self.map.bytes.get(start..end))
+                else {
+                    return Vec::new();
+                };
                 bun_zstd::decompress_alloc(compressed_file).unwrap_or_else(|err| {
                     bun_core::warn!("Source map decompression error: {}", err);
                     Vec::new()
@@ -944,7 +952,6 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
             mappings_vlq,
             None,
             i32::MAX,
-            i32::MAX as usize,
             mapping::ParseOptions {
                 allow_names: matches!(
                     hint,
@@ -1126,7 +1133,7 @@ fn find_source_mapping_url_u8(source: &[u8]) -> Option<bun_core::Utf8Bytes<'_>> 
 
 fn find_source_mapping_url_u16(source: &[u16]) -> Option<bun_core::Utf8Bytes<'static>> {
     let needle: &[u16] = bun_core::w!("\n//# sourceMappingURL=");
-    let found = bun_core::strings::last_index_of_t(source, needle)?;
+    let found = bun_core::strings::last_index_of_utf16(source, needle)?;
     let start = found + needle.len();
     let end = bun_core::strings::index_of_scalar(&source[start..], u16::from(b'\n'))
         .map(|p| start + p)

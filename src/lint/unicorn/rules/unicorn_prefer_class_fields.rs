@@ -6,11 +6,11 @@ use bun_lint::rule::Plugin;
 /// Prefers class field declarations over `this` assignments in constructors for static values.
 pub struct PreferClassFields;
 
-const PREFER_CLASS_FIELDS: Message =
-    Message::new("", "Prefer class field declaration over `this` assignment in constructor for static values.");
-const SAME_NAMED_FIELD: Message =
-    Message::new("", "Encountered same-named class field declaration and `this` assignment in constructor.");
-const REPLACE_ASSIGNMENT: Message = Message::new("", "Replace `this` assignment with class field declaration");
+const PREFER_CLASS_FIELDS: &Message =
+    &Message::new("", "Prefer class field declaration over `this` assignment in constructor for static values.");
+const SAME_NAMED_FIELD: &Message =
+    &Message::new("", "Encountered same-named class field declaration and `this` assignment in constructor.");
+const REPLACE_ASSIGNMENT: &Message = &Message::new("", "Replace `this` assignment with class field declaration");
 
 fn print(before: &[u8], value: Expr, after: &[u8]) -> Vec<u8> {
     let mut codegen = Codegen::default();
@@ -31,7 +31,7 @@ impl Rule for PreferClassFields {
     }
 
     fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
-        // An overload counts: a class that has some is left alone.
+        // An overload signature counts as the constructor, so a class with overloads is skipped.
         let Some(constructor) = class.members().iter().find(|it| it.is_constructor()) else {
             return;
         };

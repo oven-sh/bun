@@ -1,5 +1,5 @@
-//! `settings["import/.."]` of eslint-plugin-import, as `ignore.js`, `getParserPath`, `importType.js`
-//! and the `ExportMap` read them. A value of a type that they throw on says nothing here.
+//! eslint-plugin-import's `settings["import/.."]`, as `ignore.js`, `getParserPath`, `importType.js` and the `ExportMap`
+//! read them. A value whose type makes upstream throw is treated as missing.
 
 use bun_core::strings;
 use bun_lint::language::Parser;
@@ -8,10 +8,10 @@ use bun_lint::prelude::*;
 use smallvec::SmallVec;
 use std::cell::OnceCell;
 
-/// What is JavaScript where `import/extensions` says nothing.
+/// The JavaScript extensions used if `import/extensions` isn't set.
 const EXTENSIONS: [&[u8]; 3] = [b".js", b".mjs", b".cjs"];
 
-/// The settings of a file.
+/// A file's settings.
 pub(crate) struct Settings<'s> {
     settings: &'s Json,
     /// `cachedSet`
@@ -39,7 +39,7 @@ impl DocStyle {
     }
 }
 
-/// `value || ..`: `None` for what is falsy.
+/// `value || ..`: `None` for a falsy value.
 fn truthy(value: Option<&Json>) -> Option<&Json> {
     value.filter(|it| it.is_truthy())
 }
@@ -49,8 +49,9 @@ fn strings_in(json: Option<&Json>) -> impl Iterator<Item = &[u8]> {
     items.iter().filter_map(Json::as_str)
 }
 
-/// Whether `require(name)` gives `package`: `name` is the package, or what `require.resolve` says, a file in it.
-pub(crate) fn is_of_package(name: &[u8], package: &[u8]) -> bool {
+/// True if `require(name)` loads `package`. `name` is either the package name or a `require.resolve` result, which is a
+/// file inside the package.
+pub(crate) fn is_package_or_file_in_it(name: &[u8], package: &[u8]) -> bool {
     let path = paths::portable(name, name);
     let inside = match strings::last_index_of(&path, b"/node_modules/") {
         Some(at) => path.get(at + b"/node_modules/".len()..).unwrap_or_default(),
@@ -60,7 +61,7 @@ pub(crate) fn is_of_package(name: &[u8], package: &[u8]) -> bool {
 }
 
 fn parser_named(name: &[u8]) -> Parser {
-    let is_in = |it: &[u8]| is_of_package(name, it);
+    let is_in = |it: &[u8]| is_package_or_file_in_it(name, it);
     if is_in(b"espree") {
         Parser::Espree
     } else if is_in(b"@typescript-eslint/parser") {
@@ -88,8 +89,8 @@ impl<'s> Settings<'s> {
         };
         let parsers = self.settings.get(b"import/parsers");
         let parsers = parsers.and_then(Json::as_object).unwrap_or_default();
-        let of_parsers = parsers.iter().flat_map(|it| strings_in(Some(&it.1)));
-        for ext in strings_in(own).chain(of_parsers) {
+        let parser_extensions = parsers.iter().flat_map(|it| strings_in(Some(&it.1)));
+        for ext in strings_in(own).chain(parser_extensions) {
             if !exts.contains(&ext) {
                 exts.push(ext);
             }
@@ -102,7 +103,7 @@ impl<'s> Settings<'s> {
             .get_or_init(|| self.make_valid_extension_set())
     }
 
-    /// `getFileExtensions`: in the order in which they are written, each once.
+    /// `getFileExtensions`: in the order written, without duplicates.
     pub(crate) fn file_extensions(&self) -> SmallVec<[&'s [u8]; 8]> {
         SmallVec::from_slice(self.valid_extensions())
     }
@@ -146,13 +147,13 @@ impl<'s> Settings<'s> {
         }
     }
 
-    /// The keys of `docStyleParsers`, in their order.
+    /// The keys of `docStyleParsers`, in order.
     pub(crate) fn docstyle(&self) -> SmallVec<[DocStyle; 2]> {
         let Some(docstyle) = truthy(self.settings.get(b"import/docstyle")) else {
             return SmallVec::from_slice(&[DocStyle::Jsdoc]);
         };
         let mut styles: SmallVec<[DocStyle; 2]> = SmallVec::new();
-        // One that is not known throws when it is asked: those after it never are.
+        // Upstream throws when it reaches an unknown style, so the styles after it are never used.
         let docstyle = docstyle.as_array().unwrap_or_default().iter();
         for style in docstyle.map_while(|it| DocStyle::named(it.as_str()?)) {
             if !styles.contains(&style) {
@@ -162,7 +163,7 @@ impl<'s> Settings<'s> {
         styles
     }
 
-    /// `getParserPath`. `None`: the parser of the file that is linted.
+    /// `getParserPath`. `None` means the linted file's own parser.
     pub(crate) fn parser_for(&self, path: &[u8]) -> Option<Parser> {
         let parsers = self.settings.get(b"import/parsers")?.as_object()?;
         let extension = paths::extname(path);
@@ -172,7 +173,7 @@ impl<'s> Settings<'s> {
         Some(parser_named(parser_path))
     }
 
-    /// `import/node-version`, whatever it is.
+    /// `import/node-version`, whatever its type.
     pub(crate) fn node_version(&self) -> Option<&'s Json> {
         self.settings.get(b"import/node-version")
     }

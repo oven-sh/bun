@@ -1,0 +1,174 @@
+# Operations that leave an integer alone meet an enum that holds a fraction.
+# FORM: AsRead
+# RUN: lower-to-b3 optimized f4
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="operations-leave-integer-alone-meet-enum.ts" displayPath="operations-leave-integer-alone-meet-enum.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+variable g0 name="bits" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="rounded" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="asked" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="compared" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+variable g4 name="unchanged" module=m0 declared={type=f5 flags=[IsFromCompiler]} initialization=Function function=f5 flags=[IsImmutable]
+variable g5 name="written" module=m0 declared={type=f6 flags=[IsFromCompiler]} initialization=Function function=f6 flags=[IsImmutable]
+variable g6 name="tested" module=m0 declared={type=f7 flags=[IsFromCompiler]} initialization=Function function=f7 flags=[IsImmutable]
+variable g7 name="placed" module=m0 declared={type=f8 flags=[IsFromCompiler]} initialization=Function function=f8 flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Integer
+    v1 = Convert v0 declared={type=number}
+    v2 = Integer
+    v3 = Convert v2 declared={type=number}
+    Jump -> next b1(v1, v3)
+  b1(v4: number, v5: number):
+    LoopHint
+    v7 = Integer integer=3
+    v8 = Mod v5, v7
+    v9 = Convert v8 declared={type=i32}
+    v10 = GetModuleVariable variable=g0
+    v11 = Call v10, -, v9 calleeName="bits"
+    v12 = Convert v11 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}
+    v13 = PropGet v12 key="length"
+    v14 = GetModuleVariable variable=g1
+    v15 = Call v14, -, v9 calleeName="rounded"
+    v16 = Convert v15 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}
+    v17 = PropGet v16 key="length"
+    v18 = Add v13, v17
+    v19 = GetModuleVariable variable=g2
+    v20 = Call v19, -, v9 calleeName="asked"
+    v21 = Convert v20 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}
+    v22 = PropGet v21 key="length"
+    v23 = Add v18, v22
+    v24 = GetModuleVariable variable=g3
+    v25 = Call v24, -, v9 calleeName="compared"
+    v26 = Convert v25 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}
+    v27 = PropGet v26 key="length"
+    v28 = Add v23, v27
+    v29 = GetModuleVariable variable=g4
+    v30 = Call v29, -, v9 calleeName="unchanged"
+    v31 = Convert v30 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}
+    v32 = PropGet v31 key="length"
+    v33 = Add v28, v32
+    v34 = GetModuleVariable variable=g5
+    v35 = Call v34, -, v9 calleeName="written"
+    v36 = Convert v35 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}
+    v37 = PropGet v36 key="length"
+    v38 = Add v33, v37
+    v39 = GetModuleVariable variable=g6
+    v40 = Call v39, -, v9 calleeName="tested"
+    v41 = Convert v40 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}
+    v42 = PropGet v41 key="length"
+    v43 = Add v38, v42
+    v44 = GetModuleVariable variable=g7
+    v45 = Call v44, -, v9 calleeName="placed"
+    v46 = Convert v45 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}
+    v47 = PropGet v46 key="length"
+    v48 = Add v43, v47
+    v49 = Add v4, v48
+    v50 = Convert v49 declared={type=number}
+    v51 = Increment v5
+    v52 = Convert v51 declared={type=number}
+    Jump -> next b1(v50, v52)
+}
+function f1 name="bits" module=m0 position=1083 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32}] results=[{type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 name="rounded" module=m0 position=1218 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32}] results=[{type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f3 name="asked" module=m0 position=1374 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32}] results=[{type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f4 name="compared" module=m0 position=1532 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32}] results=[{type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: i32):
+    v1 = StrictEq v0, v0
+    v2 = Eq v0, v0
+    v3 = StrictEq v0, v0
+    v4 = LogicalNot v3
+    v5 = Builtin builtin=Object
+    v6 = Builtin builtin=ObjectIs
+    v7 = Integer
+    v8 = Call v6, v5, v0, v7 calleeName="Object.is"
+    v9 = Convert v8 declared={type=boolean} illTypedCause=DeclarationWithoutBody
+    v10 = Builtin builtin=Object
+    v11 = Builtin builtin=ObjectIs
+    v12 = Call v11, v10, v0, v0 calleeName="Object.is"
+    v13 = Convert v12 declared={type=boolean} illTypedCause=DeclarationWithoutBody
+    v14 = Integer integer=1
+    v15 = Less v0, v14
+    v16 = Integer
+    v17 = LessEq v0, v16
+    v18 = Integer
+    v19 = GreaterEq v0, v18
+    v20 = Integer
+    v21 = GreaterEq v0, v20
+    v22 = Integer integer=2
+    v23 = LessEq v0, v22
+    v24 = Integer integer=2
+    v25 = Greater v0, v24
+    v26 = Integer integer=2
+    v27 = LessEq v0, v26
+    v28 = ToBoolean v27
+    v29 = LogicalNot v28
+    v30 = NewArray v1, v2, v4, v9, v13, v15, v17, v19, v23, v25, v29 contents=anything
+    v31 = Convert v30 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}
+    Return v31
+}
+function f5 name="unchanged" module=m0 position=1706 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32}] results=[{type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f6 name="written" module=m0 position=1859 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32}] results=[{type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f7 name="tested" module=m0 position=2031 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32}] results=[{type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f8 name="placed" module=m0 position=2160 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32}] results=[{type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+# -- generated: compared
+# CHECK-LABEL: function {{*}}name="compared"
+# CHECK: role=ResultWrapper
+# CHECK-NEXT: BB#0: ; frequency = 1.000000
+# CHECK-NEXT: Int64 b@18 = ArgumentReg(%rdi)
+# CHECK-NEXT: Int32 b@19 = Trunc(b@18)
+# CHECK-NEXT: Int32 b@77 = Const32(0, v9:Integer)
+# CHECK-NEXT: Int32 b@9 = Equal(b@19, $0(b@77), v5:CallInline)
+# CHECK-NEXT: Int32 b@23 = Const32(1, v3:LogicalNot)
+# CHECK-NEXT: Int32 b@76 = LessThan(b@19, $1(b@23), v8:Less)
+# CHECK-NEXT: Int32 b@78 = LessEqual(b@19, $0(b@77), v10:LessEq)
+# CHECK-NEXT: Int32 b@79 = GreaterEqual(b@19, $0(b@77), v12:GreaterEq)
+# CHECK-NEXT: Int32 b@80 = Const32(2, v13:Integer)
+# CHECK-NEXT: Int32 b@81 = LessEqual(b@19, $2(b@80), v14:LessEq)
+# CHECK-NEXT: Int32 b@82 = GreaterThan(b@19, $2(b@80), v16:Greater)
+# CHECK-NEXT: Int64 b@92 = ZExt32(b@9, v20:NewArray)
+# CHECK-NEXT: Int64 b@86 = Const64(6, v20:NewArray)
+# CHECK-NEXT: Int64 b@93 = BitOr(b@92, $6(b@86), v20:NewArray)
+# CHECK-NEXT: Int64 b@96 = ZExt32(b@76, v20:NewArray)
+# CHECK-NEXT: Int64 b@97 = BitOr(b@96, $6(b@86), v20:NewArray)
+# CHECK-NEXT: Int64 b@98 = ZExt32(b@78, v20:NewArray)
+# CHECK-NEXT: Int64 b@99 = BitOr(b@98, $6(b@86), v20:NewArray)
+# CHECK-NEXT: Int64 b@100 = ZExt32(b@79, v20:NewArray)
+# CHECK-NEXT: Int64 b@101 = BitOr(b@100, $6(b@86), v20:NewArray)
+# CHECK-NEXT: Int64 b@102 = ZExt32(b@81, v20:NewArray)
+# CHECK-NEXT: Int64 b@103 = BitOr(b@102, $6(b@86), v20:NewArray)
+# CHECK-NEXT: Int64 b@104 = ZExt32(b@82, v20:NewArray)
+# CHECK-NEXT: Int64 b@105 = BitOr(b@104, $6(b@86), v20:NewArray)
+# CHECK-NEXT: Int64 b@108 = Patchpoint(resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v20:NewArray)
+# CHECK-NEXT: Int64 b@109 = Load(b@108, offset = 8, ControlDependent|Reads:JSArray_butterfly, v20:NewArray)
+# CHECK-NEXT: Int64 b@3 = Const64(7, v20:NewArray)
+# CHECK-NEXT: Void b@110 = Store($7(b@3), b@109, ControlDependent|Writes:indexedContiguousProperties_0, v20:NewArray)
+# CHECK-NEXT: Void b@111 = Store($7(b@3), b@109, offset = 8, ControlDependent|Writes:indexedContiguousProperties_1, v20:NewArray)
+# CHECK-NEXT: Void b@112 = Store($6(b@86), b@109, offset = 16, ControlDependent|Writes:indexedContiguousProperties_2, v20:NewArray)
+# CHECK-NEXT: Void b@113 = Store(b@93, b@109, offset = 24, ControlDependent|Writes:indexedContiguousProperties_3, v20:NewArray)
+# CHECK-NEXT: Void b@114 = Store($7(b@3), b@109, offset = 32, ControlDependent|Writes:indexedContiguousProperties_4, v20:NewArray)
+# CHECK-NEXT: Void b@115 = Store(b@97, b@109, offset = 40, ControlDependent|Writes:indexedContiguousProperties_5, v20:NewArray)
+# CHECK-NEXT: Void b@116 = Store(b@99, b@109, offset = 48, ControlDependent|Writes:indexedContiguousProperties_6, v20:NewArray)
+# CHECK-NEXT: Void b@117 = Store(b@101, b@109, offset = 56, ControlDependent|Writes:indexedContiguousProperties_7, v20:NewArray)
+# CHECK-NEXT: Void b@118 = Store(b@103, b@109, offset = 64, ControlDependent|Writes:indexedContiguousProperties_8, v20:NewArray)
+# CHECK-NEXT: Void b@119 = Store(b@105, b@109, offset = 72, ControlDependent|Writes:indexedContiguousProperties_9, v20:NewArray)
+# CHECK-NEXT: Void b@120 = Store(b@105, b@109, offset = 80, ControlDependent|Writes:indexedContiguousProperties_A, v20:NewArray)
+# CHECK-NEXT: Void b@121 = Fence(Fence|Reads:jscRoot, v20:NewArray)
+# CHECK-NEXT: Int64 b@10 = ArgumentReg(%r13)
+# CHECK-NEXT: Int64 b@122 = Load(b@10, offset = -128, ControlDependent|Reads:AOTInstance_mutableFields, v20:NewArray)
+# CHECK-NEXT: Void b@124 = Branch(b@122, Terminal, v20:NewArray)
+# CHECK-NEXT: Successors: Then:#3, Else:Rare:#1
+# CHECK-NEXT: BB#3: ; frequency = 1.000000
+# CHECK-NEXT: Predecessors: #0, #1
+# CHECK-NEXT: Void b@129 = Return(b@108, Terminal)
+# CHECK-NEXT: BB#1: ; frequency = 0.000977
+# CHECK-NEXT: Predecessors: #0
+# CHECK-NEXT: Int64 b@126 = Const64(11, v20:NewArray)
+# CHECK-NEXT: Int64 b@127 = Patchpoint(b@108:ColdAny, $11(b@126):ColdAny, resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState}|Reads:{frameSlots, AllocatorState}, v20:NewArray)
+# CHECK-NEXT: Void b@128 = Jump(Terminal, v20:NewArray)
+# CHECK-NEXT: Successors: #3
+# CHECK-NEXT: Known properties:
+# CHECK-NEXT: b@10: dereferenceableBytes = 393216
+# CHECK-NEXT: b@108: dereferenceableBytes = 8
+# CHECK-NEXT: end of function f4

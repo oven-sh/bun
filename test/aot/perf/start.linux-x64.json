@@ -1,0 +1,51 @@
+{
+  "bun-serve": {
+    "thousandInstructions": 3086,
+    "thousandInstructionsWithMusl": 8664,
+    "pageFaults": 951,
+    "systemCalls": 267,
+    "privateKilobytes": 2008
+  },
+  "command-line-tool-of-50-modules": {
+    "thousandInstructions": 4870,
+    "thousandInstructionsWithMusl": 10607,
+    "pageFaults": 1057,
+    "systemCalls": 254
+  },
+  "data-file-required-a-thousand-times-among-200-modules": {
+    "thousandInstructions": 2814,
+    "pageFaults": 818,
+    "systemCalls": 235
+  },
+  "hello-world": {
+    "thousandInstructions": 2671,
+    "thousandInstructionsWithMusl": 8230,
+    "pageFaults": 784,
+    "systemCalls": 244
+  },
+  "lazy-exports-bound-by-the-entry-and-used-in-a-function-nobody-calls": {
+    "thousandInstructions": 7456,
+    "thousandInstructionsWithMusl": 12484,
+    "pageFaults": 1242,
+    "systemCalls": 252
+  },
+  "lazy-exports-imported-by-a-module-that-is-never-loaded": {
+    "thousandInstructions": 4148,
+    "thousandInstructionsWithMusl": 9711,
+    "pageFaults": 1089,
+    "systemCalls": 247
+  },
+  "node-http": {
+    "thousandInstructions": 10652,
+    "thousandInstructionsWithMusl": 16856,
+    "pageFaults": 1386,
+    "systemCalls": 264,
+    "privateKilobytes": 3036
+  },
+  "streams-of-the-process-imported-by-a-module-that-is-never-loaded": {
+    "thousandInstructions": 3273,
+    "thousandInstructionsWithMusl": 8678,
+    "pageFaults": 949,
+    "systemCalls": 245
+  }
+}

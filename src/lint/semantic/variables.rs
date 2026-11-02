@@ -1,7 +1,7 @@
-//! What each scope declares: ESLint's `scope.variables`.
+//! Each scope's variables: ESLint's `scope.variables`.
 //!
-//! The declarations are read off the lists of the HIR. What is derived here is which scope of
-//! [`ScopeTree`] each is in, and which of them declare one variable.
+//! The declarations come straight from the HIR's lists. This module works out which [`ScopeTree`] scope each one
+//! belongs to, and which declarations share one variable.
 
 use super::scopes::{self, Block, NONE, ScopeTree};
 use super::{DeclarationKind, ScopeKind};
@@ -20,43 +20,44 @@ pub(crate) const TYPE: u8 = 1 << 1;
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct Variable {
     pub(crate) name: Atom,
-    /// The index of the name in `NameTable::slots`.
+    /// The name's index in `NameTable::slots`.
     pub(crate) slot: u32,
     pub(crate) scope: u32,
-    /// `ScopeData::body_start` of its scope.
+    /// Its scope's `ScopeData::body_start`.
     pub(crate) body_start: u32,
-    /// Where the name of its first declaration is. 0 for the implicit `arguments`.
+    /// The position of the name in its first declaration. 0 for the implicit `arguments`.
     pub(crate) first_pos: u32,
     /// Its first declaration.
     first: Decl,
-    /// How many declarations it has. None: it is the implicit `arguments`.
+    /// Number of declarations. 0 means it's the implicit `arguments`.
     pub(crate) count: u32,
-    /// If it has several, where they start in `Variables::declarations`.
+    /// With more than one declaration, where they start in `Variables::declarations`.
     start: u32,
     pub(crate) flags: u8,
-    /// A bit for each `DeclarationKind` that one of its declarations has.
+    /// One bit per `DeclarationKind` among its declarations.
     pub(crate) kinds: u16,
 }
 
 pub(crate) struct Variables {
-    /// Sorted by scope, then by position, but for the `arguments` of a function, which is first.
+    /// Sorted by scope, then by position, except that a function's `arguments` comes first.
     pub(crate) list: Vec<Variable>,
-    /// For each scope, where its variables start in `list`. One more than there are scopes.
+    /// For each scope, where its variables start in `list`. Has one more entry than there are scopes.
     starts: Vec<u32>,
-    /// Where the name of each declaration is that is no pattern, and the index in `list` of what it declares. Sorted.
+    /// For each declaration that isn't a pattern: its name's position and the `list` index of the variable it declares.
+    /// Sorted.
     declared_at: Vec<(u32, u32)>,
-    /// For each pattern that is a name, the index in `list` of what it declares.
-    of_pat: Vec<u32>,
+    /// For each pattern that's a name, the `list` index of the variable it declares.
+    pat_variables: Vec<u32>,
     names: NameTable,
-    /// The indices in `list` name by name. Those of one name are sorted, and so by scope.
+    /// `list` indices grouped by name. Within a name they're sorted, and therefore ordered by scope.
     by_name: Vec<u32>,
-    /// The declarations of the variables that have several, in the order they are written.
+    /// The declarations of variables that have more than one, in source order.
     declarations: Vec<Decl>,
-    /// The indices in `list` of the variables that have several declarations.
+    /// The `list` indices of variables with more than one declaration.
     pub(crate) several: Vec<u32>,
-    /// A block has a declaration of what is a variable of the function around: a `var`, or a function that is not where it is
-    /// written (`scope_of_function_in_block`).
-    pub(crate) has_names_that_leave_blocks: bool,
+    /// True if some block declares a variable that belongs to the enclosing function: a `var`, or a function that's
+    /// hoisted out of its block (`hoisted_function_scope`).
+    pub(crate) has_hoisted_block_declarations: bool,
     pub(crate) deep_patterns: DeepPatterns,
 }
 
@@ -65,14 +66,14 @@ struct Entry {
     name: Atom,
     pos: u32,
     decl: Decl,
-    /// What the outermost pattern around the name is the pattern of: the `VarDeclId` for a `Decl::Var`, the `ParamId` for a
+    /// The owner of the outermost pattern around the name: the `VarDeclId` for a `Decl::Var`, the `ParamId` for a
     /// `Decl::Param`. `NONE` for the name of a `this` parameter.
     owner: u32,
     flags: u8,
     kinds: u16,
 }
 
-/// The bit of `Variable::kinds` for a declaration. `is_catch_parameter`: of a `Decl::Var`.
+/// Returns a declaration's bit in `Variable::kinds`. `is_catch_parameter` only applies to a `Decl::Var`.
 pub(crate) fn kind_bit(decl: Decl, is_catch_parameter: bool) -> u16 {
     let kind = match decl {
         Decl::Var(_) if is_catch_parameter => DeclarationKind::CatchClause,
@@ -95,58 +96,58 @@ pub(crate) fn kind_bit(decl: Decl, is_catch_parameter: bool) -> u16 {
 
 #[derive(Copy, Clone)]
 struct NameSlot {
-    /// `NONE`: the slot is free.
+    /// `NONE` if the slot is free.
     name: Atom,
-    /// While the variables are made: the last one of that name. Then: how many of them are in
-    /// `by_name` so far.
+    /// While the variables are built: the last one with this name. Afterwards: how many of them are in `by_name` so
+    /// far.
     last: u32,
-    /// How many variables have the name.
+    /// Number of variables with this name.
     count: u32,
     /// Where they start in `by_name`.
     start: u32,
 }
 
-/// The names of the variables of a file.
+/// The names of a file's variables.
 struct NameTable {
     slots: Vec<NameSlot>,
-    /// The number of a name is the index of its slot, and the last slot, which stays free, is that of all higher numbers: a file
-    /// that is linted on its own numbers its names from 0. Otherwise: a hash table with open addressing, at most half full,
-    /// with a power of two of slots.
-    is_by_number: bool,
+    /// If true, a name's atom number is its slot index, and the last slot, which stays free, covers all higher numbers.
+    /// That works because a file that's linted on its own numbers its names from 0. Otherwise it's an open-addressing
+    /// hash table, at most half full, with a power-of-two number of slots.
+    is_indexed_by_atom: bool,
 }
 
 impl NameTable {
-    /// `highest`: the highest number of a name that is going to be in it.
-    fn with_room_for(names: usize, highest: u32) -> NameTable {
+    /// `highest` is the highest atom number that will be stored.
+    fn with_capacity_for(names: usize, highest: u32) -> NameTable {
         let free = NameSlot {
             name: Atom::NONE,
             last: NONE,
             count: 0,
             start: NONE,
         };
-        let is_by_number = (highest as usize) < 8 * names + 1024;
+        let is_indexed_by_atom = (highest as usize) < 8 * names + 1024;
         NameTable {
-            slots: match is_by_number {
+            slots: match is_indexed_by_atom {
                 true => vec![free; highest as usize + 2],
                 false => vec![free; (names * 2 + 2).next_power_of_two()],
             },
-            is_by_number,
+            is_indexed_by_atom,
         }
     }
 
-    /// The index of the slot of `name`, or of the free slot where it belongs.
+    /// Returns the index of `name`'s slot, or of the free slot where it would go.
     #[inline(always)]
-    fn place(&self, name: Atom) -> usize {
-        match self.is_by_number {
+    fn slot_index(&self, name: Atom) -> usize {
+        match self.is_indexed_by_atom {
             true => (name.0 as usize).min(self.slots.len() - 1),
-            false => self.place_by_hash(name),
+            false => self.slot_index_by_hash(name),
         }
     }
 
     #[inline(never)]
-    fn place_by_hash(&self, name: Atom) -> usize {
+    fn slot_index_by_hash(&self, name: Atom) -> usize {
         let mask = self.slots.len() - 1;
-        // Atoms are numbered sequentially: Fibonacci hashing spreads them.
+        // Atoms are numbered sequentially, so Fibonacci hashing spreads them out.
         let mut at = (u64::from(name.0).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 32) as usize & mask;
         while self.slots[at].name != name && self.slots[at].name.is_some() {
             at = (at + 1) & mask;
@@ -155,24 +156,24 @@ impl NameTable {
     }
 }
 
-/// What is around a pattern that is far above a name.
+/// The ancestors recorded for a pattern that's far above a name.
 #[derive(Copy, Clone)]
-pub(crate) struct Above {
-    /// The outermost pattern around it, or itself.
+pub(crate) struct PatternAncestors {
+    /// The outermost enclosing pattern, or the pattern itself.
     pub(crate) top: hir::PatId,
-    /// The nearest pattern around it, or itself, that is a property or an element with a default
-    /// value. `NONE` if there is none.
+    /// The nearest enclosing pattern, or the pattern itself, that's a property or element with a default value. `NONE`
+    /// if there isn't one.
     pub(crate) with_default: hir::PatId,
 }
 
-/// The patterns that are far above a name, as in `let [a, [b, [c, ..`: to go up from each name
-/// takes quadratic time. Empty in a file without such patterns.
+/// Patterns that are far above a name, as in `let [a, [b, [c, ..`, where walking up from every name would be quadratic.
+/// Empty in a file without such patterns.
 #[derive(Default)]
 pub(crate) struct DeepPatterns {
-    above: FxHashMap<u32, Above>,
+    above: FxHashMap<u32, PatternAncestors>,
 }
 
-/// The pattern that `pat` is a property or an element of, and its default value there.
+/// Returns the pattern that `pat` is a property or element of, and `pat`'s default value there.
 fn outer_pattern(file: &File, pat: hir::PatId) -> Option<(hir::PatId, hir::ExprId)> {
     let hir = &file.hir;
     let (outer, default) = match *file.bound.pat_parent.get(pat.idx())? {
@@ -184,37 +185,37 @@ fn outer_pattern(file: &File, pat: hir::PatId) -> Option<(hir::PatId, hir::ExprI
 }
 
 impl DeepPatterns {
-    /// How far up from a pattern nothing is kept, and nothing is looked up.
+    /// The first this many steps up from a pattern are neither cached nor looked up.
     pub(crate) const PLAIN_STEPS: u32 = 8;
 
     #[inline]
-    pub(crate) fn get(&self, pat: hir::PatId) -> Option<Above> {
+    pub(crate) fn get(&self, pat: hir::PatId) -> Option<PatternAncestors> {
         self.above.get(&pat.0).copied()
     }
 
-    /// The outermost pattern around the name `pat`. Keeps what is far above it. `passed`: for
-    /// what it goes through.
-    fn add(&mut self, file: &File, pat: hir::PatId, passed: &mut Vec<hir::PatId>) -> hir::PatId {
+    /// Returns the outermost pattern around the name `pat`, and caches the patterns far above it. `visited` is scratch
+    /// space for the patterns visited on the way up.
+    fn add(&mut self, file: &File, pat: hir::PatId, visited: &mut Vec<hir::PatId>) -> hir::PatId {
         let (mut at, mut steps) = (pat, 0);
         let mut above = loop {
             if steps >= Self::PLAIN_STEPS {
                 if let Some(known) = self.get(at) {
                     break known;
                 }
-                passed.push(at);
+                visited.push(at);
             }
             match outer_pattern(file, at) {
                 Some((outer, _)) => (at, steps) = (outer, steps + 1),
                 None => {
-                    break Above {
+                    break PatternAncestors {
                         top: at,
                         with_default: hir::PatId::NONE,
                     };
                 }
             }
         };
-        // From the outermost one inwards.
-        while let Some(it) = passed.pop() {
+        // Pop from the outermost pattern inward.
+        while let Some(it) = visited.pop() {
             if outer_pattern(file, it).is_some_and(|(_, default)| default.is_some()) {
                 above.with_default = it;
             }
@@ -223,7 +224,7 @@ impl DeepPatterns {
         above.top
     }
 
-    /// The outermost pattern around `pat`.
+    /// Returns the outermost pattern around `pat`.
     fn top_of(known: Option<&DeepPatterns>, file: &File, pat: hir::PatId) -> hir::PatId {
         let (mut at, mut steps) = (pat, 0);
         loop {
@@ -240,18 +241,18 @@ impl DeepPatterns {
     }
 }
 
-/// What the outermost pattern `top` is the pattern of.
+/// Returns what the outermost pattern `top` belongs to.
 fn owner_of_pattern(file: &File, top: hir::PatId) -> PatParent {
     (file.bound.pat_parent.get(top.idx())).map_or(PatParent::None, |&it| it)
 }
 
-/// The declaration or the parameter that the pattern `pat` is part of.
+/// Returns the declaration or parameter that the pattern `pat` is part of.
 pub(crate) fn root_of_pattern(file: &File, pat: hir::PatId) -> PatParent {
     let known = file.semantic().variables.get().map(|it| &it.deep_patterns);
     owner_of_pattern(file, DeepPatterns::top_of(known, file, pat))
 }
 
-/// Whether `d` is the `e` of `catch (e)`.
+/// True if `d` is the `e` in `catch (e)`.
 pub(crate) fn is_catch_parameter(file: &File, d: hir::VarDeclId) -> bool {
     let statement = file
         .bound
@@ -261,7 +262,7 @@ pub(crate) fn is_catch_parameter(file: &File, d: hir::VarDeclId) -> bool {
     matches!(statement.map(|it| it.kind), Some(StmtKind::Try { .. }))
 }
 
-/// The name of a declaration that declares a variable, and where it is written.
+/// Returns the name of a declaration that declares a variable, and the name's position.
 pub(crate) fn name_of_declaration(file: &File, decl: Decl) -> Option<(Atom, u32)> {
     let hir = &file.hir;
     let (name, pos) = match decl {
@@ -291,11 +292,12 @@ pub(crate) fn name_of_declaration(file: &File, decl: Decl) -> Option<(Atom, u32)
             let m = hir.enum_members.get(m.idx())?;
             match m.name_kind {
                 NameKind::StringLiteral if m.name.is_some() => return Some((m.name, m.pos)),
-                // `["a"]`, which typescript-estree refuses. The name is the string. A template is a name for oxc alone.
+                // `["a"]`, which typescript-estree rejects. The name is the string. Only oxc accepts a template as a
+                // name.
                 NameKind::ComputedString if m.name.is_some() => {
                     let pos = skip_trivia(file.text(), m.pos + 1);
                     let is_string = matches!(file.text().get(pos as usize), Some(b'"' | b'\''));
-                    return (is_string || file.has_scopes_of_oxc()).then_some((m.name, pos));
+                    return (is_string || file.has_oxc_scopes()).then_some((m.name, pos));
                 }
                 NameKind::Identifier => (m.name, m.pos),
                 _ => return None,
@@ -304,9 +306,9 @@ pub(crate) fn name_of_declaration(file: &File, decl: Decl) -> Option<(Atom, u32)
         Decl::Module(m) => {
             let m = hir.modules.get(m.idx())?;
             match m.name {
-                // `namespace A.B { }` declares nothing that a name can refer to.
+                // `namespace A.B { }` doesn't declare anything a name can refer to.
                 hir::ModuleName::Ident(name)
-                    if file.has_scopes_of_oxc()
+                    if file.has_oxc_scopes()
                         || !scopes::is_after_dot(file, m)
                             && scopes::after_dot(file, m).is_none() =>
                 {
@@ -334,7 +336,7 @@ pub(crate) fn name_of_declaration(file: &File, decl: Decl) -> Option<(Atom, u32)
     (name.is_some() && name != known::empty).then_some((name, pos))
 }
 
-/// Every declaration of a variable, and the position and the index of each, sorted.
+/// Returns every variable declaration, plus a sorted list of each one's position and index.
 #[inline(never)]
 fn entries_in_order(
     file: &File,
@@ -348,7 +350,7 @@ fn entries_in_order(
         + hir.import_specs.len()
         + hir.classes.len();
     let mut entries: Vec<Entry> = Vec::with_capacity(room);
-    // The position and the index of each entry.
+    // Each entry's position (high half) and index (low half).
     let mut in_order: Vec<u64> = Vec::with_capacity(room);
     let mut add_named = |decl: Decl, owner: u32, name: Atom, pos: u32| {
         if !(file.has_synthetic_nodes() && file.is_in_jsdoc(pos))
@@ -366,24 +368,23 @@ fn entries_in_order(
             });
         }
     };
-    // What the parser has left behind where it backtracked is part of nothing.
-    let is_in_tree =
-        |s: hir::StmtId| !matches!(bound.stmt_parent.get(s.idx()), None | Some(Parent::None));
-    let mut passed = Vec::new();
+    // Nodes the parser left behind when it backtracked have no parent.
+    let is_in_tree = |s: hir::StmtId| !matches!(bound.parent_of_stmt(s), Parent::None);
+    let mut visited = Vec::new();
     for (i, pat) in hir.pats.iter().enumerate() {
         let PatKind::Ident(name) = pat.kind else {
             continue;
         };
         let id = hir::PatId(i as u32);
-        let owner = owner_of_pattern(file, deep_patterns.add(file, id, &mut passed));
-        // As `name_of_declaration` has it.
+        let owner = owner_of_pattern(file, deep_patterns.add(file, id, &mut visited));
+        // The same check as in `name_of_declaration`.
         if name.is_none() || name == known::empty {
             continue;
         }
         match owner {
             PatParent::Var(d) => add_named(Decl::Var(id), d.0, name, pat.pos),
             PatParent::Param(p) => add_named(Decl::Param(id), p.0, name, pat.pos),
-            // The name of a `this` parameter is part of nothing.
+            // A `this` parameter's name has no parent.
             PatParent::None if name == known::this => {
                 add_named(Decl::Param(id), NONE, name, pat.pos)
             }
@@ -458,10 +459,11 @@ fn entries_in_order(
     (entries, in_order)
 }
 
-/// Where oxc has the function `f`, which is `entries[index]` and is declared in the scope `here`, if that is elsewhere: outside
-/// strict code a plain function in a block is a variable of the function around, unless that has declared the name before. A
-/// function of the same block that is there already does not count: the two are one variable.
-fn scope_of_function_in_block<'a>(
+/// Returns the scope oxc puts function `f` in, if it isn't `here`, the scope it's declared in. `f` is `entries[index]`.
+/// Outside strict code, a plain function in a block is a variable of the enclosing function, unless that function
+/// already declared the name earlier. An earlier function from the same block that was hoisted there doesn't count,
+/// because the two are one variable.
+fn hoisted_function_scope<'a>(
     file: &'a File<'a>,
     tree: &ScopeTree,
     entries: &[Entry],
@@ -469,22 +471,24 @@ fn scope_of_function_in_block<'a>(
     f: hir::FnId,
     here: u32,
 ) -> Option<u32> {
-    let around = tree.scopes.get(here as usize)?.variable_scope;
+    let enclosing_scope = tree.scopes.get(here as usize)?.variable_scope;
     let (raw, it) = (file.hir.fns.get(f.idx())?, entries.get(index)?);
     let not_plain = hir::Flags::ASYNC.union(hir::Flags::GENERATOR);
-    let is_moved = around != here
+    let is_moved = enclosing_scope != here
         && raw.kind == FnKind::Decl
         && !raw.flags.intersects(not_plain)
         && !scopes::is_strict_for_oxc(file, tree, here)
         && (entries.iter())
-            .filter(|other| other.name == it.name && other.scope == around && other.pos < it.pos)
+            .filter(|other| {
+                other.name == it.name && other.scope == enclosing_scope && other.pos < it.pos
+            })
             .all(|other| matches!(other.decl, Decl::Fn(_)) && tree.scope_at(other.pos) == here);
-    is_moved.then_some(around)
+    is_moved.then_some(enclosing_scope)
 }
 
-/// Finds the scope that each is declared in, from the scope that its name is written in. Those
-/// that declare no variable are left without. Returns how many are declared in each scope, at the
-/// index after that of the scope, and `Variables::has_names_that_leave_blocks`.
+/// Finds the scope each entry is declared in, starting from the scope its name is written in. Entries that don't
+/// declare a variable keep `NONE`. Returns the number of entries per scope, stored at the scope's index plus 1, and
+/// `Variables::has_hoisted_block_declarations`.
 #[inline(never)]
 fn assign_scopes<'a>(
     file: &'a File<'a>,
@@ -494,9 +498,9 @@ fn assign_scopes<'a>(
 ) -> (Vec<u32>, bool) {
     let (hir, bound) = (&file.hir, &file.bound);
     let mut entry_starts = vec![0u32; tree.scopes.len() + 1];
-    let mut leaves_blocks = false;
+    let mut hoists_names = false;
     let mut cursor = tree.cursor();
-    let moves_functions = file.has_scopes_of_oxc()
+    let moves_functions = file.has_oxc_scopes()
         && file.is_javascript()
         && crate::utils::oxlint::source_type(file) != crate::language::SourceType::Module;
     for &key in in_order {
@@ -504,8 +508,8 @@ fn assign_scopes<'a>(
         let moved_to = match entries[key as u32 as usize].decl {
             Decl::Fn(f) if moves_functions => {
                 let index = key as u32 as usize;
-                let to = scope_of_function_in_block(file, tree, entries, index, f, here);
-                leaves_blocks |= to.is_some();
+                let to = hoisted_function_scope(file, tree, entries, index, f, here);
+                hoists_names |= to.is_some();
                 to
             }
             _ => None,
@@ -525,7 +529,7 @@ fn assign_scopes<'a>(
                     true => tree.scopes[here as usize].variable_scope,
                     false => here,
                 };
-                leaves_blocks |= scope != here;
+                hoists_names |= scope != here;
                 (scope, VALUE)
             }
             Decl::Param(_) => match it.owner {
@@ -534,14 +538,14 @@ fn assign_scopes<'a>(
                     let scope = bound
                         .param_fn
                         .get(param as usize)
-                        .and_then(|f| tree.of_fn.get(f.idx()));
+                        .and_then(|f| tree.scope_of_fn.get(f.idx()));
                     (scope.copied().unwrap_or(NONE), VALUE)
                 }
             },
             Decl::Fn(_) => (moved_to.unwrap_or(here), VALUE),
             Decl::Class(c) => match bound.class_owner.get(c.idx()) {
                 Some(ClassOwner::Expr(_)) => (
-                    tree.of_class.get(c.idx()).copied().unwrap_or(NONE),
+                    tree.scope_of_class.get(c.idx()).copied().unwrap_or(NONE),
                     VALUE | TYPE,
                 ),
                 _ => (here, VALUE | TYPE),
@@ -555,30 +559,30 @@ fn assign_scopes<'a>(
             *count += 1;
         }
     }
-    (entry_starts, leaves_blocks)
+    (entry_starts, hoists_names)
 }
 
-/// The variables while they are made.
-struct Made {
+/// The variables while they're being built.
+struct Builder {
     list: Vec<Variable>,
     names: NameTable,
-    /// The declarations after the first of a variable, with its index.
+    /// Each variable's declarations after the first, with the variable's index.
     later: Vec<(u32, Decl)>,
 }
 
-impl Made {
-    /// Adds a declaration, and returns the index of what it declares. All those of a scope are added in
-    /// a row, in source order. `count`: 0 for the implicit `arguments`, which comes first.
+impl Builder {
+    /// Adds a declaration and returns the index of the variable it declares. A scope's declarations are all added
+    /// consecutively, in source order. `count` is 0 for the implicit `arguments`, which comes first.
     #[inline]
     fn declare(&mut self, it: &Entry, count: u32, body_start: u32) -> u32 {
-        let at = self.names.place(it.name);
+        let at = self.names.slot_index(it.name);
         let slot = &mut self.names.slots[at];
-        // What the scope has declared under the name is the last variable of that name.
+        // If the scope already declared the name, that's the last variable with that name.
         if let Some(variable) = self.list.get_mut(slot.last as usize)
             && variable.scope == it.scope
         {
             match variable.count {
-                // ESLint has the `arguments` of a function first, declared or not.
+                // ESLint lists a function's `arguments` first, whether or not the code declares it.
                 0 => (variable.flags, variable.first_pos, variable.first) = (0, it.pos, it.decl),
                 _ => self.later.push((slot.last, it.decl)),
             }
@@ -612,10 +616,10 @@ impl Variables {
         let mut deep_patterns = DeepPatterns::default();
         let (mut entries, in_order) = entries_in_order(file, &tree.unvisited, &mut deep_patterns);
         let scope_count = tree.scopes.len();
-        let (mut entry_starts, has_names_that_leave_blocks) =
+        let (mut entry_starts, has_hoisted_block_declarations) =
             assign_scopes(file, tree, &mut entries, &in_order);
 
-        // The entries scope by scope, and in each in source order, as indices.
+        // Entry indices grouped by scope, in source order within each scope.
         for i in 0..scope_count {
             entry_starts[i + 1] += entry_starts[i];
         }
@@ -629,19 +633,19 @@ impl Variables {
         }
 
         let mut starts: Vec<u32> = Vec::with_capacity(scope_count + 1);
-        let mut made = Made {
+        let mut builder = Builder {
             list: Vec::with_capacity(by_scope.len() + hir.fns.len()),
-            names: NameTable::with_room_for(
+            names: NameTable::with_capacity_for(
                 by_scope.len() + 1,
                 (entries.iter()).fold(known::arguments.0, |highest, it| highest.max(it.name.0)),
             ),
             later: Vec::new(),
         };
-        let mut of_pat = vec![NONE; hir.pats.len()];
-        // Of what is no pattern: where the name is, the index of the entry, what it declares.
+        let mut pat_variables = vec![NONE; hir.pats.len()];
+        // For each non-pattern declaration: the name's position, the entry's index and the variable it declares.
         let mut others: Vec<(u32, u32, u32)> = Vec::new();
         for (scope, data) in tree.scopes.iter().enumerate() {
-            starts.push(made.list.len() as u32);
+            starts.push(builder.list.len() as u32);
             // "NOTE Arrow functions never have an arguments objects."
             let has_arguments = match (data.kind, data.block) {
                 (ScopeKind::Function, Block::File) => true,
@@ -661,14 +665,14 @@ impl Variables {
                     flags: VALUE | TYPE,
                     kinds: 0,
                 };
-                made.declare(&implicit, 0, data.body_start);
+                builder.declare(&implicit, 0, data.body_start);
             }
             for &i in &by_scope[entry_starts[scope] as usize..entry_starts[scope + 1] as usize] {
                 let it = &entries[i as usize];
-                let declared = made.declare(it, 1, data.body_start);
+                let declared = builder.declare(it, 1, data.body_start);
                 match it.decl {
                     Decl::Var(pat) | Decl::Param(pat) => {
-                        if let Some(slot) = of_pat.get_mut(pat.idx()) {
+                        if let Some(slot) = pat_variables.get_mut(pat.idx()) {
                             *slot = declared;
                         }
                     }
@@ -676,16 +680,16 @@ impl Variables {
                 }
             }
         }
-        let Made {
+        let Builder {
             mut list,
             mut names,
             mut later,
-        } = made;
+        } = builder;
         starts.push(list.len() as u32);
         others.sort_unstable();
         let declared_at = others.iter().map(|it| (it.0, it.2)).collect();
 
-        // The variables name by name.
+        // Group the variables by name.
         let mut by_name = vec![0u32; list.len()];
         let mut filled = 0;
         for (index, variable) in list.iter().enumerate() {
@@ -700,12 +704,12 @@ impl Variables {
         let mut declarations: Vec<Decl> = Vec::new();
         let mut several: Vec<u32> = Vec::new();
         crate::utils::sort::sort_by_key(&mut later, |it| it.0);
-        for of_one in later.chunk_by(|a, b| a.0 == b.0) {
-            several.push(of_one[0].0);
-            let variable = &mut list[of_one[0].0 as usize];
+        for group in later.chunk_by(|a, b| a.0 == b.0) {
+            several.push(group[0].0);
+            let variable = &mut list[group[0].0 as usize];
             variable.start = declarations.len() as u32;
             declarations.push(variable.first);
-            declarations.extend(of_one.iter().map(|it| it.1));
+            declarations.extend(group.iter().map(|it| it.1));
             // `Referencer.visitFunction` defines the parameters before the type parameters.
             if tree.scopes[variable.scope as usize].kind == ScopeKind::Function
                 && variable.flags == VALUE | TYPE
@@ -720,17 +724,17 @@ impl Variables {
             list,
             starts,
             declared_at,
-            of_pat,
+            pat_variables,
             names,
             by_name,
             declarations,
             several,
-            has_names_that_leave_blocks,
+            has_hoisted_block_declarations,
             deep_patterns,
         }
     }
 
-    /// The index in `list` of what the declaration whose name is at `pos`, and which is no pattern, declares.
+    /// Returns the `list` index of the variable declared by the non-pattern declaration whose name is at `pos`.
     pub(crate) fn declared_at(&self, pos: u32) -> Option<u32> {
         let found = self
             .declared_at
@@ -738,22 +742,26 @@ impl Variables {
         (found.0 == pos).then_some(found.1)
     }
 
-    /// The index in `list` of what the name `pat` declares.
+    /// Returns the `list` index of the variable that the name `pat` declares.
     #[inline]
-    pub(crate) fn of_pat(&self, pat: hir::PatId) -> Option<u32> {
-        self.of_pat.get(pat.idx()).copied().filter(|it| *it != NONE)
+    pub(crate) fn variable_of_pat(&self, pat: hir::PatId) -> Option<u32> {
+        self.pat_variables
+            .get(pat.idx())
+            .copied()
+            .filter(|it| *it != NONE)
     }
 
-    /// How many slots `slot_of` tells apart.
+    /// The number of distinct values `slot_of` can return.
     #[inline]
     pub(crate) fn slot_count(&self) -> usize {
         self.names.slots.len()
     }
 
-    /// `Variable::slot` of the variables named `name`. If there are none it is that of no variable.
+    /// Returns the `Variable::slot` of the variables named `name`. If there are none, no variable has the returned
+    /// slot.
     #[inline]
     pub(crate) fn slot_of(&self, name: Atom) -> usize {
-        self.names.place(name)
+        self.names.slot_index(name)
     }
 
     #[inline]
@@ -767,9 +775,9 @@ impl Variables {
         }
     }
 
-    /// Whether another variable has the name of `variable`.
+    /// True if another variable has the same name as `variable`.
     #[inline]
-    pub(crate) fn shares_its_name(&self, variable: &Variable) -> bool {
+    pub(crate) fn shares_name(&self, variable: &Variable) -> bool {
         (self.names.slots.get(variable.slot as usize)).is_some_and(|it| it.count > 1)
     }
 
@@ -790,10 +798,10 @@ impl Variables {
         variable.count == 0
     }
 
-    /// The variables named `name`, by scope.
+    /// Returns the variables named `name`, ordered by scope.
     #[inline]
     pub(crate) fn named(&self, name: Atom) -> &[u32] {
-        let slot = &self.names.slots[self.names.place(name)];
+        let slot = &self.names.slots[self.names.slot_index(name)];
         match slot.name.is_some() {
             true => self
                 .by_name
@@ -811,15 +819,15 @@ impl Variables {
         range.contains(&(found as usize)).then_some(found)
     }
 
-    /// What a reference to `name` that is written at `pos`, in the scope `from`, resolves to:
-    /// ESLint's `Scope#__resolve`, scope by scope. `wants`: `VALUE`, `TYPE` or both.
+    /// Returns what a reference to `name` at `pos`, in scope `from`, resolves to: ESLint's `Scope#__resolve`, scope by
+    /// scope. `wanted_flags` is `VALUE`, `TYPE` or both.
     pub(crate) fn resolve(
         &self,
         tree: &ScopeTree,
         from: u32,
         name: Atom,
         pos: u32,
-        wants: u8,
+        wanted_flags: u8,
     ) -> Option<u32> {
         let named = self.named(name);
         if named.is_empty() {
@@ -831,7 +839,7 @@ impl Variables {
             // resolved to variables which are in their function body."
             let scope = &tree.scopes[it.scope as usize];
             let body_start = scope.body_start;
-            (it.flags & wants != 0)
+            (it.flags & wanted_flags != 0)
                 && !(pos < body_start && (it.first_pos >= body_start || Self::is_implicit(it)))
                 && scope.kind != ScopeKind::With
         };
@@ -860,7 +868,7 @@ impl Variables {
     }
 }
 
-/// The scope that the type parameter at `pos`, in the scope `here`, is declared in.
+/// Returns the scope that the type parameter at `pos`, written in scope `here`, is declared in.
 fn scope_of_type_parameter(file: &File, tree: &ScopeTree, here: u32, pos: u32) -> u32 {
     let is_nested = |scope: u32| {
         matches!(

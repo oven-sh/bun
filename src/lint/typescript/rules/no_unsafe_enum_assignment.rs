@@ -4,7 +4,7 @@ use bun_lint::types::utils::{
     FunctionSignature, get_enum_types, get_enum_value_type, get_static_member_access_value,
     get_type_flags, is_number_like, is_string_like,
 };
-use bun_lint::types::{SyntaxKind, TsNode, Type, TypeFlags};
+use bun_lint::types::{IdMap, IdSet, SyntaxKind, TsNode, Type, TypeFlags};
 use bun_lint::utils::ts_utils::get_parent_function_node;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
@@ -12,27 +12,27 @@ use smallvec::SmallVec;
 /// Disallow assigning non-enum values to enum typed locations.
 pub struct NoUnsafeEnumAssignment;
 
-const UNSAFE_ENUM_ACCESS: Message = Message::new(
+const UNSAFE_ENUM_ACCESS: &Message = &Message::new(
     "unsafeEnumAccess",
     "The computed key used here does not have a shared enum type with the expected enum {{enumNames}}.",
 );
-const UNSAFE_ENUM_ARGUMENT: Message = Message::new(
+const UNSAFE_ENUM_ARGUMENT: &Message = &Message::new(
     "unsafeEnumArgument",
     "The argument passed here does not have a shared enum type with the expected enum {{enumNames}}.",
 );
-const UNSAFE_ENUM_ASSERTION: Message = Message::new(
+const UNSAFE_ENUM_ASSERTION: &Message = &Message::new(
     "unsafeEnumAssertion",
     "The value asserted here does not have a shared enum type with the expected enum {{enumNames}}.",
 );
-const UNSAFE_ENUM_ASSIGNMENT: Message = Message::new(
+const UNSAFE_ENUM_ASSIGNMENT: &Message = &Message::new(
     "unsafeEnumAssignment",
     "The value assigned here does not have a shared enum type with the expected enum {{enumNames}}.",
 );
-const UNSAFE_ENUM_MUTATION: Message = Message::new(
+const UNSAFE_ENUM_MUTATION: &Message = &Message::new(
     "unsafeEnumMutation",
     "This mutation can produce a value outside of the expected enum {{enumNames}}.",
 );
-const UNSAFE_ENUM_RETURN: Message = Message::new(
+const UNSAFE_ENUM_RETURN: &Message = &Message::new(
     "unsafeEnumReturn",
     "The value returned here does not have a shared enum type with the expected enum {{enumNames}}.",
 );
@@ -43,28 +43,27 @@ type Context<'a> = Cx<'a, NoUnsafeEnumAssignment>;
 
 #[derive(Default)]
 pub struct State<'a> {
-    /// The array and object literals inside a value that has been reported, which are not reported
-    /// element by element.
-    checked_nodes: FxHashSet<Expr<'a>>,
-    /// The array and object literals that have something to report, unless they turn out to be
-    /// among `checked_nodes`.
+    /// The array and object literals inside a reported value. They aren't reported again element by element.
+    checked_nodes: IdSet<Expr<'a>>,
+    /// The array and object literals that have something to report, unless they turn out to be in `checked_nodes`.
     pending: Vec<Expr<'a>>,
-    /// Whether what is looked at is an assignment, a mutation or an assertion.
-    is_about_itself: bool,
-    /// What is reported about those, with the names of the enums. One can also be reported, at the same place, as a part
-    /// of what is around it, which ESLint has first and which is known only at the end for a part of a literal.
-    about_themselves: Vec<(Span, Message, Vec<u8>)>,
+    /// True if the node being checked is an assignment, a mutation or an assertion.
+    defers_reports: bool,
+    /// Deferred reports about those nodes, with the enum names. Such a node can also be reported at the same location
+    /// as part of an enclosing node. ESLint puts that report first, and for a part of a literal it's only known at the
+    /// end.
+    deferred_reports: Vec<(Span, &'static Message, Vec<u8>)>,
     types: TypeCache<'a>,
-    /// [`describe_enum_types`] of one type.
-    descriptions: FxHashMap<Type<'a>, Vec<u8>>,
+    /// Caches [`describe_enum_types`] of a single type.
+    descriptions: IdMap<Type<'a>, Vec<u8>>,
 }
 
 fn get_constraint_type(ty: Type<'_>) -> Type<'_> {
     ty.get_base_constraint_of_type().unwrap_or(ty)
 }
 
-/// Nothing but `any`, `unknown`, `never`, `object` and primitive types that are not enums. The
-/// members of `String`, `Number` and the like have no enums in them, so nothing mismatches it.
+/// True for `any`, `unknown`, `never`, `object` and non-enum primitive types only. The members of `String`, `Number`
+/// and the like don't involve enums, so nothing mismatches it.
 fn is_without_enums(ty: Type) -> bool {
     const PLAIN: TypeFlags = TypeFlags::PRIMITIVE
         .union(TypeFlags::ANY_OR_UNKNOWN)
@@ -107,19 +106,18 @@ fn is_mismatched_enum_assignment_types<'a>(sender_type: Type<'a>, receiver_type:
     })
 }
 
-/// What has been found out about types, as long as the file is linted.
+/// Per-type results, cached while the file is linted.
 #[derive(Default)]
 struct TypeCache<'a> {
-    generic_types: FxHashMap<Type<'a>, bool>,
+    generic_types: IdMap<Type<'a>, bool>,
     top_level_mismatches: FxHashMap<(Type<'a>, Type<'a>), bool>,
-    /// The pairs that the comparison at hand has looked at: recursive types would be visited
-    /// endlessly.
+    /// The pairs the current comparison has visited. Without it, recursive types would be visited endlessly.
     visited: FxHashSet<(Type<'a>, Type<'a>)>,
 }
 
 impl<'a> TypeCache<'a> {
     fn is_generic_type(&mut self, ty: Type<'a>) -> bool {
-        if let Some(&generic) = self.generic_types.get(&ty) {
+        if let Some(&generic) = self.generic_types.get(ty) {
             return generic;
         }
         let parts_of = |ty: Type<'a>| {
@@ -128,8 +126,8 @@ impl<'a> TypeCache<'a> {
                 .chain(ty.alias_type_arguments())
                 .chain(ty.get_type_arguments())
         };
-        // Not by recursion: a chain of aliases makes a type as deep as the file is long.
-        // The types that are being gone through, and the parts that are left of each.
+        // Iterative, because a chain of aliases makes a type as deep as the file is long. `open` holds the types being
+        // walked, each with its remaining parts.
         let mut open = Vec::new();
         let mut entered = ty;
         loop {
@@ -139,14 +137,14 @@ impl<'a> TypeCache<'a> {
                 break;
             }
             open.push((entered, parts_of(entered)));
-            // The next part that nothing is known about.
+            // Find the next part that isn't cached yet.
             entered = loop {
                 let Some((_, parts)) = open.last_mut() else {
                     return false;
                 };
                 match parts
                     .next()
-                    .map(|part| (part, self.generic_types.get(&part).copied()))
+                    .map(|part| (part, self.generic_types.get(part).copied()))
                 {
                     None => {
                         open.pop();
@@ -155,14 +153,14 @@ impl<'a> TypeCache<'a> {
                     Some((part, None)) => break part,
                     Some((_, Some(true))) => {
                         self.generic_types
-                            .extend(open.iter().map(|&(outer, _)| (outer, true)));
+                            .extend(open.iter().map(|it| (it.0, true)));
                         return true;
                     }
                 }
             };
         }
         self.generic_types
-            .extend(open.iter().map(|&(outer, _)| (outer, true)));
+            .extend(open.iter().map(|it| (it.0, true)));
         true
     }
 
@@ -267,15 +265,15 @@ impl<'a> TypeCache<'a> {
 /// `[Fruit, Set<Vegetable>]` is `'Fruit', 'Vegetable'`.
 fn describe_enum_types(types: &[Type]) -> Vec<u8> {
     let mut enum_names: Vec<Vec<u8>> = Vec::new();
-    let mut enum_types = FxHashSet::default();
-    let mut visited = FxHashSet::default();
+    let mut enum_types = IdSet::new();
+    let mut visited = IdSet::new();
     let mut pending = types.to_vec();
     while let Some(ty) = pending.pop() {
         let constrained_type = get_constraint_type(ty);
         if !visited.insert(constrained_type) {
             continue;
         }
-        // One for each member of an enum.
+        // `get_enum_types` returns one entry per enum member.
         let new_enum_types = get_enum_types(constrained_type)
             .into_iter()
             .filter(|&enum_type| enum_types.insert(enum_type));
@@ -303,18 +301,17 @@ fn describe_enum_types(types: &[Type]) -> Vec<u8> {
     description
 }
 
-fn report<'a>(cx: &mut Context<'a>, node: Span, message: Message, receiver_types: &[Type<'a>]) {
+fn report<'a>(cx: &mut Context<'a>, node: Span, message: &'static Message, receiver_types: &[Type<'a>]) {
     let enum_names = match receiver_types {
         &[only] => cx
             .state
             .descriptions
-            .entry(only)
-            .or_insert_with(|| describe_enum_types(receiver_types))
+            .get_or_insert_with(only, || describe_enum_types(receiver_types))
             .clone(),
         _ => describe_enum_types(receiver_types),
     };
-    if cx.state.is_about_itself {
-        return cx.state.about_themselves.push((node, message, enum_names));
+    if cx.state.defers_reports {
+        return cx.state.deferred_reports.push((node, message, enum_names));
     }
     cx.report(node, message).data("enumNames", enum_names);
 }
@@ -324,7 +321,7 @@ fn is_array_or_object_literal(node: Expr) -> bool {
     matches!(node.tag(), ExprTag::Array | ExprTag::Object)
 }
 
-/// The literals inside a value that has been reported would otherwise be reported again:
+/// Without this, the literals inside a reported value would be reported again:
 /// `const value: T = [Fruit.Apple, 1] as const;`
 fn mark_checked<'a>(cx: &mut Context<'a>, node: Expr<'a>) {
     let mut pending = vec![node];
@@ -354,13 +351,13 @@ fn mark_checked<'a>(cx: &mut Context<'a>, node: Expr<'a>) {
     }
 }
 
-/// Bitwise combinations of the members of an enum are its bit flags:
-/// `const readWrite: Flags = Flags.Read | Flags.Write;`, `flags &= ~Flags.Write;`
+/// Bitwise combinations of an enum's members are its bit flags: `const readWrite: Flags = Flags.Read | Flags.Write;`,
+/// `flags &= ~Flags.Write;`
 fn is_safe_enum_bitwise_expression<'a>(node: Expr<'a>, receiver_type: Type<'a>) -> bool {
     if !bun_core::StackCheck::init().is_safe_to_recurse() {
         return true;
     }
-    // Down the first operands in a loop: `a | b | c | ..` is as deep as it is long.
+    // Walk down the first operands in a loop, because `a | b | c | ..` is as deep as it is long.
     let mut operands: SmallVec<[(Expr<'a>, Option<Expr<'a>>); 8]> = SmallVec::new();
     let mut at = node;
     loop {
@@ -383,14 +380,14 @@ fn is_safe_enum_bitwise_expression<'a>(node: Expr<'a>, receiver_type: Type<'a>) 
             _ => break,
         }
     }
-    let is_of_the_type =
+    let matches_receiver_type =
         |operand: Expr<'a>| !is_mismatched_enum_assignment_types(operand.ty(), receiver_type);
-    // The answer for `first`, and then for the expression that it is the first operand of.
+    // The result for `first`, and then for the expression whose first operand it is.
     let mut is_safe = false;
     for (first, other) in operands.into_iter().rev() {
-        is_safe = (is_safe || is_of_the_type(first))
+        is_safe = (is_safe || matches_receiver_type(first))
             && other.is_none_or(|it| {
-                is_safe_enum_bitwise_expression(it, receiver_type) || is_of_the_type(it)
+                is_safe_enum_bitwise_expression(it, receiver_type) || matches_receiver_type(it)
             });
     }
     is_safe
@@ -408,15 +405,14 @@ fn is_unsafe_assignment<'a>(
         && !is_safe_enum_bitwise_expression(sender_node, receiver_type)
 }
 
-/// Upstream's `checkAssignment`, for a `sender_node` that is known not to be an array or an object
-/// literal.
+/// Upstream's `checkAssignment`, for a `sender_node` that's known not to be an array or object literal.
 fn check_assignment_of_type<'a>(
     cx: &mut Context<'a>,
     receiver_type: Type<'a>,
     sender_node: Expr<'a>,
     sender_type: Type<'a>,
     reporting_node: Span,
-    message: Message,
+    message: &'static Message,
 ) {
     if is_unsafe_assignment(cx, sender_node, receiver_type, sender_type) {
         report(cx, reporting_node, message, &[receiver_type]);
@@ -424,13 +420,13 @@ fn check_assignment_of_type<'a>(
     }
 }
 
-/// `receiver_type` is asked only if there can be something to report.
+/// `receiver_type` is only called if there might be something to report.
 fn check_assignment<'a>(
     cx: &mut Context<'a>,
     receiver_type: impl FnOnce() -> Option<Type<'a>>,
     sender_node: Expr<'a>,
     reporting_node: Span,
-    message: Message,
+    message: &'static Message,
 ) {
     if is_array_or_object_literal(sender_node) {
         return;
@@ -447,7 +443,7 @@ fn check_assignment<'a>(
     }
 }
 
-/// `node`: a call, a `new` or a tagged template, whose substitutions are the arguments.
+/// `node` is a call, a `new`, or a tagged template, whose substitutions are the arguments.
 fn check_arguments<'a>(cx: &mut Context<'a>, node: Expr<'a>) {
     let (ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call)) = node.kind()
     else {
@@ -458,7 +454,7 @@ fn check_arguments<'a>(cx: &mut Context<'a>, node: Expr<'a>) {
     }
     let mut signature = FunctionSignature::create(node);
     if node.tag() == ExprTag::TaggedTemplate {
-        // The first parameter receives the strings of the template, not a value.
+        // The first parameter receives the template's strings, not a value.
         signature.get_next_parameter_type();
     }
 
@@ -510,7 +506,7 @@ fn check_arguments<'a>(cx: &mut Context<'a>, node: Expr<'a>) {
     }
 }
 
-/// The types that the member has in what its class extends and implements.
+/// Returns the member's types in what its class extends and implements.
 fn get_heritage_member_types(member: Member<'_>) -> SmallVec<[Type<'_>; 2]> {
     let mut found = SmallVec::new();
     let Node::Class(class) = member.parent() else {
@@ -552,7 +548,7 @@ fn check_class_member<'a>(cx: &mut Context<'a>, member: Member<'a>) {
     {
         return;
     }
-    // A member of a class is not contextually typed by the member that it implements or overrides:
+    // A class member isn't contextually typed by the member it implements or overrides:
     // `class Basket implements HasFruit { fruit = 1; }`
     let heritage_member_types = get_heritage_member_types(member);
     if !heritage_member_types.is_empty() {
@@ -622,8 +618,8 @@ fn check_return<'a>(cx: &mut Context<'a>, return_node: Expr<'a>, reporting_node:
     }
 }
 
-/// `{ [key in Fruit]: string }` is `Fruit`, `{ [Fruit.Apple]: string; [Vegetable.Asparagus]: string }`
-/// is `Fruit.Apple` and `Vegetable.Asparagus`.
+/// For `{ [key in Fruit]: string }` it's `Fruit`. For `{ [Fruit.Apple]: string; [Vegetable.Asparagus]: string }` it's
+/// `Fruit.Apple` and `Vegetable.Asparagus`.
 fn get_mapped_key_constraint_types<'a>(
     declaration: TsNode<'a>,
     found: &mut SmallVec<[Type<'a>; 2]>,
@@ -696,9 +692,8 @@ fn check_computed_member<'a>(cx: &mut Context<'a>, node: Expr<'a>) {
     }
 }
 
-/// Checks `sender_node`, which is in `literal`, against the contextual type of `receiver_node`.
-/// Unless `is_final`, what is unsafe is not reported: the literal is set aside, and the answer is
-/// that there is no need to look further.
+/// Checks `sender_node`, which is in `literal`, against `receiver_node`'s contextual type. Unless `is_final`, an unsafe
+/// part isn't reported. Instead the literal is queued, and the function returns true to stop checking its other parts.
 fn check_part_of_literal<'a>(
     cx: &mut Context<'a>,
     literal: Expr<'a>,
@@ -745,7 +740,7 @@ fn check_literal<'a>(cx: &mut Context<'a>, node: Expr<'a>, is_final: bool) {
                 let receiver_node = match property.kind() {
                     PropKind::Spread => node,
                     PropKind::Init | PropKind::Shorthand => value,
-                    // The function of a method is no expression for TypeScript, and has no contextual type.
+                    // For TypeScript a method's function isn't an expression, so it has no contextual type.
                     PropKind::Method | PropKind::Getter | PropKind::Setter => continue,
                 };
                 if check_part_of_literal(
@@ -784,7 +779,7 @@ fn check_assignment_expression<'a>(cx: &mut Context<'a>, node: Expr<'a>) {
     }
 }
 
-/// What is listened to in a file without JSX.
+/// The listeners for a file without JSX.
 const WITHOUT_JSX: On = On::new()
     .members()
     .exprs(&[ExprTag::Fn])
@@ -822,10 +817,10 @@ impl Rule for NoUnsafeEnumAssignment {
     }
 
     fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        cx.state.is_about_itself = matches!(node.tag(), ExprTag::Assign | ExprTag::Unary | ExprTag::As);
+        cx.state.defers_reports = matches!(node.tag(), ExprTag::Assign | ExprTag::Unary | ExprTag::As);
         match node.tag() {
-            // As an expression, so that it comes before its body: both can be reported at the same
-            // place, and ESLint has what is about the arrow function first.
+            // Handled as an expression so that it's visited before its body. Both can be reported at the same location,
+            // and ESLint reports the arrow function first.
             ExprTag::Fn => {
                 if let ExprKind::Fn(func) = node.kind()
                     && let FnBody::Expr(body) = func.body()
@@ -833,7 +828,7 @@ impl Rule for NoUnsafeEnumAssignment {
                     check_return(cx, body, body.span());
                 }
             }
-            // Also a default in the target of a destructuring assignment, which upstream treats alike.
+            // This includes a default in a destructuring assignment's target, which upstream treats the same way.
             ExprTag::Assign => check_assignment_expression(cx, node),
             ExprTag::Unary => {
                 if let ExprKind::Unary {
@@ -846,7 +841,7 @@ impl Rule for NoUnsafeEnumAssignment {
             }
             ExprTag::Call | ExprTag::New | ExprTag::TaggedTemplate => check_arguments(cx, node),
             ExprTag::Index => check_computed_member(cx, node),
-            // The type of `e as const` is that of `e`.
+            // `e as const` has the same type as `e`.
             ExprTag::As => {
                 if let ExprKind::As { expr, ty } = node.kind() {
                     check_assignment(
@@ -858,10 +853,10 @@ impl Rule for NoUnsafeEnumAssignment {
                     );
                 }
             }
-            // Whether a literal is reported depends on what is reported around it, so that is decided at
-            // the end, from the outside in.
+            // Whether a literal is reported depends on what's reported around it, so that's decided at the end, from
+            // the outside in.
             ExprTag::Array | ExprTag::Object => {
-                // In JavaScript a property can have a type of its own, from a JSDoc comment.
+                // In JavaScript a property can get its own type from a JSDoc comment.
                 if !node.is_assignment_target()
                     && (cx.is_javascript() || node.contextual_type().is_some())
                 {
@@ -870,7 +865,7 @@ impl Rule for NoUnsafeEnumAssignment {
             }
             _ => {}
         }
-        cx.state.is_about_itself = false;
+        cx.state.defers_reports = false;
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
@@ -963,11 +958,11 @@ impl Rule for NoUnsafeEnumAssignment {
         let mut pending = std::mem::take(&mut cx.state.pending);
         utils::sort::sort_unstable_by_key(&mut pending, |literal| literal.span().start);
         for literal in pending {
-            if !cx.state.checked_nodes.contains(&literal) {
+            if !cx.state.checked_nodes.contains(literal) {
                 check_literal(cx, literal, true);
             }
         }
-        for (node, message, enum_names) in std::mem::take(&mut cx.state.about_themselves) {
+        for (node, message, enum_names) in std::mem::take(&mut cx.state.deferred_reports) {
             cx.report(node, message).data("enumNames", enum_names);
         }
     }

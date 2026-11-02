@@ -1,7 +1,7 @@
-//! `grammar.pegjs` of `esquery`, one method for each of its rules, written the way PEG.js generates
-//! them: every alternative is tried in order, a rule that fails leaves the position where it was,
-//! and each terminal that does not match is noted. That is what the message of a syntax error
-//! lists, so no alternative is skipped because it cannot match.
+//! `esquery`'s `grammar.pegjs`, one method per rule, written the way PEG.js generates them: every
+//! alternative is tried in order, a rule that fails restores the position, and each terminal that
+//! doesn't match is recorded. A syntax error's message lists those terminals, so no alternative can
+//! be skipped just because it can't match.
 
 use super::Error;
 use super::program::{Bound, Id, JsType, Key, Literal, Op, Program, Relation, Run, Test, TypeSet};
@@ -11,7 +11,7 @@ use crate::utils::text;
 use bun_core::strings;
 use smallvec::SmallVec;
 
-/// A terminal of the grammar, in the order of their descriptions.
+/// A terminal of the grammar, ordered by description.
 #[derive(Copy, Clone)]
 #[repr(u8)]
 enum Expected {
@@ -56,7 +56,7 @@ enum Expected {
     End,
 }
 
-/// What PEG.js calls them, by `Expected as usize`. Sorted.
+/// PEG.js's descriptions, indexed by `Expected as usize`. Sorted.
 const DESCRIPTIONS: [&str; 39] = [
     "\" \"",
     "\"!\"",
@@ -107,7 +107,7 @@ enum Combinator {
     Descendant,
 }
 
-/// A position to go back to, with what has been compiled up to there.
+/// A position to backtrack to, with the sizes of what had been compiled by then.
 #[derive(Copy, Clone)]
 struct Mark {
     at: usize,
@@ -123,18 +123,19 @@ type Ids = SmallVec<[Id; 8]>;
 struct Parser<'s> {
     text: &'s [u8],
     at: usize,
-    /// The furthest position at which a terminal did not match, and which ones did not there.
+    /// The furthest position where a terminal failed to match, and which terminals failed there.
     max_fail_at: usize,
     expected: u64,
-    /// What `esquery` throws from an action, which ends the parsing.
+    /// An error that `esquery` throws from an action, which aborts parsing.
     error: Option<Error>,
     program: Program,
-    /// As much as a thread of Bun's pool has. On a larger stack the rest is for what matches the selector.
+    /// Limited to the stack size of a thread in Bun's pool. On a larger stack, the rest is left for
+    /// matching the selector.
     stack: bun_core::StackCheck,
 }
 
-/// The types of a class of ESLint's `matchesSelectorClass`, and whether an `Identifier` in a
-/// `MetaProperty` is left out.
+/// The types in one of the classes of ESLint's `matchesSelectorClass`, and whether an `Identifier`
+/// in a `MetaProperty` is excluded.
 fn class_named(name: &[u8]) -> Option<(TypeSet, bool)> {
     let ends_with = |suffix: &'static str| move |it: NodeType| it.name().ends_with(suffix);
     let declarations = TypeSet::where_(ends_with("Declaration"));
@@ -191,7 +192,7 @@ impl<'s> Parser<'s> {
         is_next
     }
 
-    /// A character that is in `set`, or that is not if it `is_inverted`.
+    /// Matches a character that's in `set`, or one that isn't if `is_inverted`.
     fn class(&mut self, set: &[u8], is_inverted: bool, expected: Expected) -> bool {
         match self.text.get(self.at) {
             Some(&first) if strings::contains_char(set, first) != is_inverted => {
@@ -218,7 +219,7 @@ impl<'s> Parser<'s> {
         self.text.get(start..self.at).unwrap_or_default()
     }
 
-    // ───────────────────────────── what is compiled ─────────────────────────────
+    // ────────────────────────────── compiled output ─────────────────────────────
 
     fn mark(&self) -> Mark {
         Mark {
@@ -231,7 +232,7 @@ impl<'s> Parser<'s> {
         }
     }
 
-    /// Always `None`.
+    /// Backtracks to `mark`. Always returns `None`.
     fn reset<T>(&mut self, mark: Mark) -> Option<T> {
         self.at = mark.at;
         self.program.ops.truncate(mark.ops);
@@ -281,7 +282,7 @@ impl<'s> Parser<'s> {
 
     // ───────────────────────────── the rules ─────────────────────────────
 
-    /// `None`: there is nothing but spaces.
+    /// `None` if there's nothing but spaces.
     fn start(&mut self) -> Option<Id> {
         let mark = self.mark();
         self.spaces();
@@ -375,7 +376,7 @@ impl<'s> Parser<'s> {
         })
     }
 
-    /// With whether it is marked as the subject by a `!`.
+    /// Also returns whether a `!` marks it as the subject.
     fn selector(&mut self) -> Option<(Id, bool)> {
         let mut memo = self.sequence()?;
         loop {
@@ -484,7 +485,7 @@ impl<'s> Parser<'s> {
             .then(|| self.since(start))
     }
 
-    /// `"!"? "="`: whether there is a `!`.
+    /// `"!"? "="`. Returns true if there's a `!`.
     fn attr_eq_ops(&mut self) -> Option<bool> {
         let start = self.at;
         let is_negated = self.literal(b"!", Expected::Bang);
@@ -588,7 +589,7 @@ impl<'s> Parser<'s> {
         })
     }
 
-    /// The value is what `strUnescape` makes of what is between the quotes.
+    /// The value is `strUnescape` applied to the text between the quotes.
     fn quoted(
         &mut self,
         quote: &[u8],
@@ -618,7 +619,7 @@ impl<'s> Parser<'s> {
                     b"r" => value.push(b'\r'),
                     b"t" => value.push(b'\t'),
                     b"v" => value.push(0x0B),
-                    // The `.` of `/\\(.)/g` does not match a line terminator.
+                    // The `.` in `/\\(.)/g` doesn't match a line terminator.
                     b"\n" | b"\r" | b"\xE2\x80\xA8" | b"\xE2\x80\xA9" => {
                         value.extend_from_slice(self.since(before))
                     }
@@ -648,7 +649,7 @@ impl<'s> Parser<'s> {
             self.at = start;
             return None;
         }
-        // `parseFloat`, of digits and at most one dot.
+        // `parseFloat` of digits with at most one dot.
         let value: f64 = std::str::from_utf8(self.since(start)).ok()?.parse().ok()?;
         Some(Literal::new(text::number_to_string(value).into(), true))
     }
@@ -807,7 +808,7 @@ impl<'s> Parser<'s> {
             Some((types, excludes_names_of_meta_properties)) => self.op(Op::Class {
                 types,
                 excludes_names_of_meta_properties,
-                is_written_function: name == b"function",
+                is_function_class: name == b"function",
             }),
             None => {
                 let start = self.program.bytes.len();
@@ -819,7 +820,7 @@ impl<'s> Parser<'s> {
 
     // ───────────────────────────── errors ─────────────────────────────
 
-    /// ESLint's message for what `peg$buildStructuredError` makes.
+    /// ESLint's message for the error that `peg$buildStructuredError` builds.
     fn syntax_error(&self) -> Error {
         let mut message = Vec::new();
         message.extend_from_slice(b"Syntax error in selector \"");
@@ -857,7 +858,7 @@ impl<'s> Parser<'s> {
     }
 }
 
-/// `literalEscape` of the first UTF-16 code unit of the character `c`.
+/// `literalEscape` for the first UTF-16 code unit of the character `c`.
 fn push_escaped(out: &mut Vec<u8>, c: u32) {
     match c {
         0x5C => out.extend_from_slice(b"\\\\"),
@@ -886,7 +887,7 @@ fn push_escaped(out: &mut Vec<u8>, c: u32) {
     }
 }
 
-/// `esquery.parse`, with the errors of ESLint's `tryParseSelector`. The second is the whole selector.
+/// `esquery.parse`, with the errors of ESLint's `tryParseSelector`. The returned `Id` is the whole selector.
 pub(super) fn parse(source: &[u8]) -> Result<(Program, Id), Error> {
     let mut parser = Parser {
         text: source,

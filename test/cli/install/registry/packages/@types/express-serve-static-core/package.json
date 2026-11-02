@@ -1,0 +1,21 @@
+{
+  "_id": "@types/express-serve-static-core",
+  "name": "@types/express-serve-static-core",
+  "dist-tags": {
+    "latest": "4.17.43"
+  },
+  "versions": {
+    "4.17.43": {
+      "name": "@types/express-serve-static-core",
+      "version": "4.17.43",
+      "main": "",
+      "types": "index.d.ts",
+      "_id": "@types/express-serve-static-core@4.17.43",
+      "dist": {
+        "integrity": "sha512-0EmGf+HG8PcZ5pICT2xJ3Jqi70lNrq7DPVsKTZoKrlVjIfsi0v2ok/b7qGtGHkeJM9R4Hf7ynn9CttGXigO3/g==",
+        "shasum": "7dde19930a63407333f2ce2dea9692a115b5393b",
+        "tarball": "http://localhost:4873/@types/express-serve-static-core/-/@types/express-serve-static-core-4.17.43.tgz"
+      }
+    }
+  }
+}

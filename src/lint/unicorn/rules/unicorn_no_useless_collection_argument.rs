@@ -6,7 +6,7 @@ use bun_lint::rule::Plugin;
 /// Disallow useless values or fallbacks in `Set`, `Map`, `WeakSet`, or `WeakMap`.
 pub struct NoUselessCollectionArgument;
 
-const NO_USELESS_COLLECTION_ARGUMENT: Message = Message::new("", "The {{expr_type}} is useless");
+const NO_USELESS_COLLECTION_ARGUMENT: &Message = &Message::new("", "The {{expr_type}} is useless");
 
 impl Rule for NoUselessCollectionArgument {
     const META: Meta =
@@ -56,7 +56,7 @@ impl Rule for NoUselessCollectionArgument {
     }
 }
 
-/// With the comma after it.
+/// Also removes the comma after it.
 fn remove_argument<'a>(fixer: Fixer<'a>, first_arg: Expr<'a>) -> Fix {
     let span = first_arg.outer_span();
     let after_arg = fixer.file().text().get(span.end as usize..).unwrap_or_default();
@@ -73,7 +73,7 @@ fn remove_fallback<'a>(fixer: Fixer<'a>, arg_expr: Expr<'a>, logical_expr: Expr<
     if arg == logical {
         return fixer.remove(Span::new(left.outer_span().end, logical.end));
     }
-    // The parentheses around it go as well.
+    // Also remove the parentheses around it.
     let before_logical = file.slice(Span::new(arg.start, logical.start));
     let after_logical = file.slice(Span::new(logical.end, arg.end));
     let open = before_logical.iter().take_while(|it| **it == b'(').count();

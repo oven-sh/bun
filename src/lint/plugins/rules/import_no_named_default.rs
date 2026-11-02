@@ -4,8 +4,8 @@ use bun_lint::rule::Plugin;
 /// Forbid named default exports.
 pub struct NoNamedDefault;
 
-const USE_DEFAULT_IMPORT: Message = Message::new("", "Use default import syntax to import '{{name}}'.");
-const OXLINT: Message = Message::new("", "Replace default import with named import.");
+const USE_DEFAULT_IMPORT: &Message = &Message::new("", "Use default import syntax to import '{{name}}'.");
+const OXLINT: &Message = &Message::new("", "Replace default import with named import.");
 
 impl Rule for NoNamedDefault {
     const META: Meta = Meta::plugin(Plugin::Import, "no-named-default", Kind::Suggestion);
@@ -20,7 +20,7 @@ impl Rule for NoNamedDefault {
         if specifier.is_type_only() || !specifier.imported().name().is("default") {
             return;
         }
-        // oxlint points at the name in the other module.
+        // oxlint reports the imported name.
         if cx.language().is_oxlint {
             cx.report(specifier.imported(), OXLINT);
         } else {

@@ -2,15 +2,15 @@ use bun_lint::prelude::*;
 
 /// Require `Reflect` methods where applicable.
 pub struct PreferReflect {
-    /// The bit `i` is set if `METHODS[i]` is among the `exceptions`.
+    /// Bit `i` is set if `METHODS[i]` is in `exceptions`.
     exceptions: u16,
     allows_delete: bool,
 }
 
-const PREFER_REFLECT: Message =
-    Message::new("preferReflect", "Avoid using {{existing}}, instead use {{substitute}}.");
+const PREFER_REFLECT: &Message =
+    &Message::new("preferReflect", "Avoid using {{existing}}, instead use {{substitute}}.");
 
-/// The name of a method, what it is, and what replaces it.
+/// A method's name, its full name, and its replacement.
 const METHODS: [(&str, &str, &str); 9] = [
     ("apply", "Function.prototype.apply", "Reflect.apply"),
     ("call", "Function.prototype.call", "Reflect.apply"),

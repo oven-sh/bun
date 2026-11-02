@@ -1,10 +1,9 @@
-//! The imports of a file the way Babel sees them.
+//! A file's imports as Babel sees them.
 //!
-//! The plugins of Prettier parse a file with `@babel/parser`, move the import declarations and the
-//! comments that Babel has attached to them around, and print them with `@babel/generator`
-//! (`generator.rs`). What comes of it depends on which nodes Babel attaches a comment to, and on
-//! the lines that nodes and comments are on. This is as much of Babel's tree as that takes: the
-//! `#!` line, the directives and the import declarations that are not in a `declare module`.
+//! Prettier's plugins parse a file with `@babel/parser`, move the import declarations and the comments Babel attached
+//! to them, and print them with `@babel/generator` (`generator.rs`). The result depends on which nodes Babel attaches
+//! each comment to, and on which lines the nodes and comments are on. This models only as much of Babel's tree as that
+//! takes: the `#!` line, the directives and the import declarations that aren't in a `declare module`.
 
 use bun_lint::ast::{File, Ident, Import, KeyKind, Prop, Stmt, StmtKind, StmtTag};
 use bun_lint::span::Span;
@@ -15,10 +14,10 @@ pub(super) type CommentId = u32;
 
 #[derive(Copy, Clone, Debug)]
 pub(super) struct Comment {
-    /// With its delimiters.
+    /// Includes the delimiters.
     pub(super) span: Span,
     pub(super) is_block: bool,
-    /// Whether it has a `loc`, which the next three fields are. The plugins change and delete it.
+    /// True if it has a `loc`, which is the next three fields. The plugins change and delete it.
     pub(super) has_loc: bool,
     pub(super) start_line: i32,
     pub(super) end_line: i32,
@@ -83,7 +82,7 @@ impl Attached {
 #[derive(Copy, Clone, Debug)]
 pub(super) struct Declaration<'a> {
     pub(super) import: Import<'a>,
-    /// `start` and `end`. `None` for a node that a plugin has made.
+    /// `start` and `end`. `None` for a node that a plugin created.
     pub(super) span: Option<Span>,
     pub(super) lines: Option<Lines>,
     /// `importKind === "type"`
@@ -92,7 +91,7 @@ pub(super) struct Declaration<'a> {
     pub(super) specifiers: (u32, u32),
     /// The module specifier, with its quotes.
     pub(super) source: Span,
-    /// A node that a plugin has made has no attributes.
+    /// A node that a plugin created has no attributes.
     pub(super) has_attributes: bool,
     pub(super) comments: Attached,
 }
@@ -110,7 +109,7 @@ pub(super) struct Specifier<'a> {
     pub(super) kind: SpecifierKind,
     /// `importKind === "type"`
     pub(super) is_type: bool,
-    /// The same as `local` unless there is an `as`.
+    /// The same as `local` unless there's an `as`.
     pub(super) imported: Ident<'a>,
     pub(super) local: Ident<'a>,
     pub(super) span: Span,
@@ -127,7 +126,7 @@ impl Specifier<'_> {
 #[derive(Copy, Clone, Debug)]
 pub(super) struct Directive {
     pub(super) span: Span,
-    /// The string.
+    /// The string literal.
     pub(super) literal: Span,
     pub(super) comments: Attached,
 }
@@ -146,12 +145,12 @@ pub(super) enum Node {
     Specifier(u32),
     Imported(u32),
     Local(u32),
-    /// By where it starts, like the next three. Two declarations can share a `source`.
+    /// Keyed by its start offset, like the next three. Two declarations can share a `source`.
     Source(u32),
     Attribute(u32),
     AttributeKey(u32),
     AttributeValue(u32),
-    /// The `EmptyStatement` that a plugin puts first, for comments.
+    /// The `EmptyStatement` that a plugin inserts first to hold comments.
     Empty,
     /// The statement that becomes an empty line, and the string in it.
     NewLine,
@@ -161,7 +160,7 @@ pub(super) enum Node {
 pub(super) struct Model<'a> {
     pub(super) file: &'a File<'a>,
     pub(super) text: &'a [u8],
-    /// Those up to [`Model::rest_start`].
+    /// The comments up to [`Model::rest_start`].
     pub(super) comments: Vec<Comment>,
     lists: Vec<CommentId>,
     pub(super) interpreter: Option<(Span, Attached)>,
@@ -170,21 +169,20 @@ pub(super) struct Model<'a> {
     pub(super) specifiers: Vec<Specifier<'a>>,
     /// Indices into `specifiers`.
     pub(super) orders: Vec<u32>,
-    /// The comments of the nodes in specifiers, of sources, of attributes and of the strings of
-    /// directives. The plugins leave them alone.
+    /// The comments on the nodes inside specifiers, on sources, on attributes and on directives' strings. The plugins
+    /// don't touch them.
     deep: Vec<(Node, Which, List)>,
-    /// Whether there is a comment in an import.
+    /// True if there's a comment inside an import.
     pub(super) has_comments_in_imports: bool,
-    /// The comments of [`Node::Empty`].
+    /// [`Node::Empty`]'s comments.
     pub(super) empty: Attached,
-    /// `program.body[0]`: where it starts, and its `leadingComments`.
+    /// `program.body[0]`: its start offset and its `leadingComments`.
     pub(super) first_statement: Option<(u32, List)>,
-    /// Whether the imports are the first statements after the directives, with nothing between
-    /// them.
+    /// True if the imports are the first statements after the directives, with nothing between them.
     pub(super) is_contiguous: bool,
-    /// Where the first token after the last import starts, or the file ends.
+    /// The start of the first token after the last import, or the end of the file.
     pub(super) rest_start: u32,
-    /// Where lines start, up to `rest_start`. Empty if there are no comments.
+    /// Line start offsets, up to `rest_start`. Empty if there are no comments.
     line_starts: Vec<u32>,
 }
 
@@ -213,9 +211,9 @@ fn skip_whitespace_back(text: &[u8], mut at: usize) -> usize {
 /// Babel's `CommentWhitespace`: the comments between two tokens.
 #[derive(Copy, Clone)]
 struct Group {
-    /// Where the token before ends.
+    /// The end of the previous token.
     start: u32,
-    /// Where the token after starts.
+    /// The start of the next token.
     end: u32,
     /// A range of [`Model::comments`].
     first: u32,
@@ -223,7 +221,7 @@ struct Group {
 }
 
 impl<'a> Model<'a> {
-    /// `None`: the file has no imports.
+    /// Returns `None` if the file has no imports.
     pub(super) fn new(file: &'a File<'a>) -> Option<Model<'a>> {
         let last_import = file
             .body()
@@ -253,12 +251,12 @@ impl<'a> Model<'a> {
         Some(model)
     }
 
-    /// Where the text starts: after a byte order mark.
+    /// The start of the text, after a byte order mark.
     pub(super) fn text_start(&self) -> u32 {
         if self.file.has_bom() { 3 } else { 0 }
     }
 
-    /// The comments up to the first token after `end`, where the last import ends.
+    /// Collects the comments up to the first token after `end`, where the last import ends.
     fn collect_comments(&mut self, end: u32) {
         let mut rest_start = skip_whitespace(self.text, end as usize) as u32;
         for token in self.file.comments() {
@@ -315,7 +313,7 @@ impl<'a> Model<'a> {
         }
     }
 
-    /// The line that `offset` is on, counted from 1. 0 if there are no comments: nothing asks.
+    /// The 1-based line that `offset` is on. Returns 0 if there are no comments, but then the result is never used.
     fn line_of(&self, offset: u32) -> i32 {
         self.line_starts.partition_point(|start| *start <= offset) as i32
     }
@@ -393,9 +391,9 @@ impl<'a> Model<'a> {
         declaration.source
     }
 
-    /// Where the module specifier of `import`, the statement at `span`, is.
+    /// The span of the module specifier of `import`, the statement at `span`.
     fn find_source(&self, import: Import<'a>, span: Span) -> Span {
-        // Nearly always it is the last thing before the `;`, and has no escapes.
+        // It's nearly always the last thing before the `;`, with no escapes.
         let text = self.file.slice(span);
         let text = text.strip_suffix(b";").unwrap_or(text).trim_ascii_end();
         if let Some((quote @ (b'"' | b'\''), before)) = text.split_last()
@@ -452,7 +450,7 @@ impl<'a> Model<'a> {
         }
     }
 
-    /// Adds `list` at the end of the comments of `node`.
+    /// Appends `list` to `node`'s comments.
     pub(super) fn attach(&mut self, node: Node, which: Which, list: List) {
         if list.is_empty() {
             return;
@@ -487,8 +485,7 @@ impl<'a> Model<'a> {
         })
     }
 
-    /// The next group of comments that starts before `end`: comments with only whitespace between
-    /// them.
+    /// The next group of comments that starts before `end`. A group is comments with only whitespace between them.
     fn next_group_before(&self, cursor: &mut u32, end: u32) -> Option<Group> {
         let first = *cursor;
         let mut group_end = self
@@ -510,7 +507,7 @@ impl<'a> Model<'a> {
 
     fn collect_statements(&mut self) {
         let mut cursor = 0;
-        // What the comments after it trail.
+        // The node that the following comments trail.
         let mut previous: Option<Node> = self.interpreter.map(|_| Node::Interpreter);
         let mut previous_end = self
             .interpreter
@@ -644,7 +641,7 @@ impl<'a> Model<'a> {
         index
     }
 
-    /// If `group` is right after or right before the node at `span`, it is attached to it.
+    /// Attaches `group` to the node at `span` if it's right after or right before it.
     fn attach_if_adjacent(&mut self, node: Node, span: Span, group: Group, list: List) -> bool {
         if span.end == group.start {
             self.attach(node, Which::Trailing, list);
@@ -655,7 +652,7 @@ impl<'a> Model<'a> {
         span.end == group.start || span.start == group.end
     }
 
-    /// Babel's `processComment` and `finalizeComment` for comments inside of an import.
+    /// Babel's `processComment` and `finalizeComment` for comments inside an import.
     fn attach_in_declaration(&mut self, index: u32, group: Group) {
         self.has_comments_in_imports = true;
         let declaration = self.declarations[index as usize];
@@ -663,7 +660,7 @@ impl<'a> Model<'a> {
         let is_in = |span: Span| span.start < group.start && group.end < span.end;
         let mut is_attached = false;
 
-        // At first, specifiers are in the order of the source.
+        // Specifiers start out in source order.
         let (first, count) = (
             self.orders[declaration.specifiers.0 as usize..]
                 .first()

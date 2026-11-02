@@ -306,6 +306,14 @@ describe("Web Streams [nodejs.util.inspect.custom]", () => {
     expect(rs[customSymbol](-1, {})).toBe(rs);
   });
 
+  // util.inspect passes unknown user options through to the hooks unchanged.
+  test("accepts a user option whose key is an array index", () => {
+    expect(util.inspect(new ReadableStream(), { 0: 1 })).toBe(
+      "ReadableStream { locked: false, state: 'readable', supportsBYOB: false }",
+    );
+    expect(util.inspect(new URLSearchParams("a=1&b=2"), { 0: 1 })).toBe("URLSearchParams { 'a' => '1', 'b' => '2' }");
+  });
+
   test("wrong receiver returns the receiver (no infinite recursion)", () => {
     const o = {};
     expect(ReadableStream.prototype[customSymbol].call(o, 2, {})).toBe(o);

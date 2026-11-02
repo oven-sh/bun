@@ -1,7 +1,7 @@
-//! The tokens and the comments of a file as arrays of numbers.
+//! A file's tokens and comments as arrays of numbers.
 //!
-//! A list of tokens is its length, then where each starts, then where each ends, then the
-//! [`TokenKind`] of each, a byte for each, and zeros up to a multiple of 4 bytes.
+//! A token list is its length, then every start offset, then every end offset, then every [`TokenKind`] as one byte,
+//! padded with zeros to a multiple of 4 bytes.
 
 use super::wire;
 use crate::ast::{File, jsx_text_value_of};
@@ -24,11 +24,11 @@ fn write_list(tokens: Tokens, offsets: &Utf16OffsetTable, out: &mut Vec<u8>) {
     out.resize(out.len() + (4 - count % 4) % 4, 0);
 }
 
-/// Appends the `value` of each token where it isn't a part of the text, because espree decodes it. That's how many there are,
-/// `[index of the token, start, end]` for each, then the UTF-16 code units that `start` and `end` count, and zeros up to a
-/// multiple of 4 bytes.
+/// Appends the `value` of each token whose value isn't a slice of the source, because espree decodes it. The layout is
+/// the count, `[token index, start, end]` for each, then the UTF-16 code units that `start` and `end` index into,
+/// padded with zeros to a multiple of 4 bytes.
 fn write_decoded_values<'a>(file: &'a File<'a>, out: &mut Vec<u8>) {
-    // oxlint decodes names as espree does.
+    // oxlint decodes names the way espree does.
     let can_have_any = (Dialect::of(file) == Dialect::Espree || file.language().is_oxlint)
         && strings::index_of_any(file.text(), b"\\&\r").is_some();
     if !can_have_any {
@@ -40,7 +40,7 @@ fn write_decoded_values<'a>(file: &'a File<'a>, out: &mut Vec<u8>) {
     for (index, token) in file.tokens().enumerate() {
         let is_attribute = core::mem::replace(&mut is_after_equals, token.is_punctuator("="));
         let value = match token.kind() {
-            // The string of an attribute stays as it's written. For oxlint all text does.
+            // An attribute's string keeps its source text. With oxlint, all JSX text does.
             TokenKind::JsxText if is_attribute || file.language().is_oxlint => continue,
             TokenKind::JsxText => jsx_text_value_of(token.text(), true),
             _ => token.decoded_value(),

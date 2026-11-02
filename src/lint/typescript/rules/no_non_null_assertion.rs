@@ -4,8 +4,8 @@ use bun_lint::utils::ts_utils::is_assignee;
 /// Disallow non-null assertions using the `!` postfix operator.
 pub struct NoNonNullAssertion;
 
-const NO_NON_NULL: Message = Message::new("noNonNull", "Forbidden non-null assertion.");
-const SUGGEST_OPTIONAL_CHAIN: Message = Message::new(
+const NO_NON_NULL: &Message = &Message::new("noNonNull", "Forbidden non-null assertion.");
+const SUGGEST_OPTIONAL_CHAIN: &Message = &Message::new(
     "suggestOptionalChain",
     "Consider using the optional chain operator `?.` instead. This operator includes runtime checks, so it is safer than the compile-only non-null assertion operator.",
 );
@@ -46,7 +46,7 @@ impl Rule for NoNonNullAssertion {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        // All but the last `!` of `x!!!`. What is around each is an assertion: nothing to suggest.
+        // All but the last `!` of `x!!!`. Each one's parent is another assertion, so there's nothing to suggest.
         for inner in e.inner_non_null_spans() {
             cx.report(inner, NO_NON_NULL);
         }

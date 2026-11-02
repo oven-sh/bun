@@ -84,6 +84,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCheckPrimeSync, (JSC::JSGlobalObject * lexicalGlobalO
     auto candidateView = getArrayBufferOrView2(lexicalGlobalObject, scope, candidateValue, "candidate"_s, jsUndefined());
     RETURN_IF_EXCEPTION(scope, {});
 
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     ncrypto::BignumPointer candidate = ncrypto::BignumPointer(candidateView->data(), candidateView->size());
     if (!candidate) {
         throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "BignumPointer"_s);
@@ -129,6 +130,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCheckPrime, (JSC::JSGlobalObject * lexicalGlobalObjec
     auto candidateView = getArrayBufferOrView2(lexicalGlobalObject, scope, candidateValue, "candidate"_s, jsUndefined());
     RETURN_IF_EXCEPTION(scope, {});
 
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     ncrypto::BignumPointer candidate = ncrypto::BignumPointer(candidateView->data(), candidateView->size());
     if (!candidate) {
         throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "BignumPointer"_s);
@@ -187,7 +189,17 @@ extern "C" void Bun__GeneratePrimeJobCtx__runTask(GeneratePrimeJobCtx* ctx, JSGl
 }
 void GeneratePrimeJobCtx::runTask(JSGlobalObject* lexicalGlobalObject)
 {
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     m_failed = !m_prime.generate({ .bits = m_size, .safe = m_safe, .add = m_add, .rem = m_rem }, whileScriptAllowed(lexicalGlobalObject));
+    if (m_failed)
+        m_opensslError = ERR_get_error();
+}
+
+static JSValue createGeneratePrimeError(JSGlobalObject* globalObject, ThrowScope& scope, uint32_t opensslError)
+{
+    if (!opensslError)
+        return createError(globalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "could not generate prime"_s);
+    return createCryptoError(globalObject, scope, opensslError, nullptr);
 }
 
 extern "C" void Bun__GeneratePrimeJobCtx__runFromJS(GeneratePrimeJobCtx* ctx, JSGlobalObject* lexicalGlobalObject, JSCallbackArgs* out)
@@ -199,8 +211,11 @@ JSCallbackArgs GeneratePrimeJobCtx::runFromJS(JSGlobalObject* globalObject)
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (m_failed) [[unlikely]]
-        return { createError(globalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "could not generate prime"_s) };
+    if (m_failed) [[unlikely]] {
+        JSValue error = createGeneratePrimeError(globalObject, scope, m_opensslError);
+        RETURN_IF_EXCEPTION(scope, {});
+        return { error };
+    }
     JSValue result = GeneratePrimeJob::result(globalObject, scope, m_prime, m_bigint);
     if (auto* exception = scope.exception()) [[unlikely]] {
         // A stopped worker's termination (which a trap can raise anywhere in result(), even with a
@@ -242,7 +257,7 @@ JSValue GeneratePrimeJob::result(JSGlobalObject* globalObject, JSC::ThrowScope& 
             return {};
         }
 
-        JSValue result = JSBigInt::parseInt(globalObject, vm, primeHex.span(), 16, JSBigInt::ErrorParseMode::IgnoreExceptions, JSBigInt::ParseIntSign::Unsigned);
+        JSValue result = JSBigInt::parseInt(globalObject, vm, byteCast<Latin1Character>(primeHex.span()), 16, JSBigInt::ErrorParseMode::IgnoreExceptions, JSBigInt::ParseIntSign::Unsigned);
         RETURN_IF_EXCEPTION(scope, {});
         if (result.isEmpty()) {
             ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "could not generate prime"_s);
@@ -468,8 +483,12 @@ JSC_DEFINE_HOST_FUNCTION(jsGeneratePrimeSync, (JSC::JSGlobalObject * lexicalGlob
         return ERR::CRYPTO_OPERATION_FAILED(scope, lexicalGlobalObject, "could not generate prime"_s);
     }
 
-    if (!prime.generate({ .bits = size, .safe = safe, .add = add, .rem = rem }, whileScriptAllowed(lexicalGlobalObject))) [[unlikely]]
-        return ERR::CRYPTO_OPERATION_FAILED(scope, lexicalGlobalObject, "could not generate prime"_s);
+    if (!prime.generate({ .bits = size, .safe = safe, .add = add, .rem = rem }, whileScriptAllowed(lexicalGlobalObject))) [[unlikely]] {
+        JSValue error = createGeneratePrimeError(lexicalGlobalObject, scope, ERR_get_error());
+        RETURN_IF_EXCEPTION(scope, {});
+        throwException(lexicalGlobalObject, scope, error);
+        return {};
+    }
 
     RELEASE_AND_RETURN(scope, JSValue::encode(GeneratePrimeJob::result(lexicalGlobalObject, scope, prime, bigint)));
 }

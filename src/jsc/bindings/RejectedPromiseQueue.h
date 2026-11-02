@@ -21,6 +21,10 @@ public:
     bool didHandle(JSC::JSCell* owner, JSC::JSPromise*);
     // Move every entry that still has no handler out (index-aligned; jsNull() owner for the global object's) and clear.
     void drainTo(JSC::JSCell* owner, JSC::MarkedArgumentBuffer& promises, JSC::MarkedArgumentBuffer& rejectionOwners);
+    // Sets every entry aside, so that a drain before release() sees only what is rejected from now on. Calls can nest.
+    size_t hold(JSC::JSCell* owner);
+    // Puts back, as the oldest entries, what the hold() that returned `mark` set aside and still has no handler.
+    void release(JSC::JSCell* owner, size_t mark);
     // Right before a drained promise is reported as unhandled.
     void markReported(JSC::JSGlobalObject* owner, JSC::JSPromise*);
     template<typename Visitor> void visit(JSC::JSCell* owner, Visitor&);
@@ -37,6 +41,7 @@ private:
 
     // In rejection order. A handled promise stays until it is at the end, makeRoom() runs, or the drain.
     WTF::Vector<Entry> m_entries;
+    WTF::Vector<Entry> m_held;
     // Promises reported as unhandled. Weak: a reported promise that dies leaves it.
     JSC::WriteBarrier<JSC::JSWeakSet> m_reported;
 };

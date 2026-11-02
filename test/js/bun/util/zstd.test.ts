@@ -581,14 +581,14 @@ describe("sync compression argument handling", () => {
     expect(zstdDecompressSync(compressed).byteLength).toBe(0);
   });
 
-  it("zstdCompressSync evaluates the options object before validating the input", () => {
+  it("zstdCompressSync refuses an input that is not bytes before it evaluates the options object", () => {
     expect(() =>
       zstdCompressSync(42 as any, {
         get level(): never {
           throw new Error("level option was read");
         },
       }),
-    ).toThrow("level option was read");
+    ).toThrow("data must be a string, ArrayBuffer or ArrayBufferView");
   });
 
   it("gzipSync evaluates the options object before capturing the input", () => {
@@ -613,24 +613,117 @@ describe("sync compression argument handling", () => {
     expect(inflateSync(compressed).byteLength).toBe(0);
   });
 
-  it("gunzipSync evaluates the options object before validating the input", () => {
+  it("gunzipSync refuses an input that is not bytes before it evaluates the options object", () => {
     expect(() =>
       gunzipSync(42 as any, {
         get windowBits(): never {
           throw new Error("windowBits option was read");
         },
       }),
-    ).toThrow("windowBits option was read");
+    ).toThrow("data must be a string, ArrayBuffer or ArrayBufferView");
   });
 
-  it("inflateSync evaluates the options object before validating the input", () => {
+  it("inflateSync refuses an input that is not bytes before it evaluates the options object", () => {
     expect(() =>
       inflateSync(42 as any, {
         get windowBits(): never {
           throw new Error("windowBits option was read");
         },
       }),
-    ).toThrow("windowBits option was read");
+    ).toThrow("data must be a string, ArrayBuffer or ArrayBufferView");
+  });
+
+  it("a numeric option is converted to a number, and then treated as that number is", () => {
+    const input = "hello hello hello";
+    const beyond32Bits = [
+      2 ** 32 + 1,
+      "4294967297",
+      4294967297n,
+      2n ** 64n + 1n,
+      { valueOf: () => 2 ** 32 + 1 },
+      "Infinity",
+    ];
+    for (const [compress, outOfRange] of [
+      [gzipSync, "Zlib error: Invalid argument"],
+      [deflateSync, "Zlib error: Invalid argument"],
+      [zstdCompressSync, "Compression level must be between 1 and 22"],
+    ] as [(data: string, options: any) => Uint8Array, string][]) {
+      const expected = compress(input, { level: 1 });
+      for (const level of ["1", 1n, Object(1n), [1], { valueOf: () => 1 }, { valueOf: () => 1n }]) {
+        expect(compress(input, { level })).toEqual(expected);
+      }
+      for (const level of beyond32Bits) expect(() => compress(input, { level })).toThrow(outOfRange);
+    }
+    for (const [decompress, compressed, bits] of [
+      [gunzipSync, gzipSync(input), 31],
+      [inflateSync, deflateSync(input), -15],
+    ] as [(data: Uint8Array, options: any) => Uint8Array, Uint8Array, number][]) {
+      for (const windowBits of [bits, String(bits), BigInt(bits), { valueOf: () => bits }]) {
+        expect(new TextDecoder().decode(decompress(compressed, { windowBits }))).toBe(input);
+      }
+      for (const windowBits of beyond32Bits) {
+        expect(() => decompress(compressed, { windowBits })).toThrow("Zlib error: Invalid argument");
+      }
+    }
+  });
+
+  it("zstdCompress and zstdCompressSync take the same levels", async () => {
+    const input = "hello hello hello";
+    for (const level of [undefined, 1, 22, "1", 1n, Object(1n), { valueOf: () => 1 }]) {
+      expect(await zstdCompress(input, { level } as any)).toEqual(zstdCompressSync(input, { level } as any));
+    }
+    for (const level of [0, 23, NaN, 2 ** 32 + 1, "4294967297", 4294967297n, { valueOf: () => 2 ** 32 + 1 }]) {
+      for (const compress of [zstdCompress, zstdCompressSync]) {
+        expect(() => compress(input, { level } as any)).toThrow("Compression level must be between 1 and 22");
+      }
+    }
+  });
+
+  it("zstdDecompress and zstdDecompressSync take no options", async () => {
+    const compressed = zstdCompressSync("hello");
+    for (const ignored of [undefined, null, 5, "x", {}, { level: 99 }]) {
+      expect(
+        (
+          await (zstdDecompress as (data: Uint8Array, ignored: unknown) => Promise<Buffer>)(compressed, ignored)
+        ).toString(),
+      ).toBe("hello");
+      expect(
+        (zstdDecompressSync as (data: Uint8Array, ignored: unknown) => Buffer)(compressed, ignored).toString(),
+      ).toBe("hello");
+    }
+  });
+
+  it("takes the bytes of every kind of buffer, and a string as UTF-8", () => {
+    const text = "h\u00e9llo w\u00f6rld, \u65e5\u672c\u8a9e!";
+    const bytes = new TextEncoder().encode(text);
+    const shared = new Uint8Array(new SharedArrayBuffer(bytes.length));
+    shared.set(bytes);
+    const padded = new Uint8Array(bytes.length + 8);
+    padded.set(bytes, 4);
+    const inputs = [
+      text,
+      new String(text),
+      bytes,
+      bytes.buffer,
+      Buffer.from(bytes),
+      new DataView(bytes.buffer),
+      padded.subarray(4, 4 + bytes.length),
+      shared,
+      shared.buffer,
+    ];
+    for (const [compress, decompress] of [
+      [gzipSync, gunzipSync],
+      [deflateSync, inflateSync],
+      [zstdCompressSync, zstdDecompressSync],
+    ] as ((data: any) => Uint8Array)[][]) {
+      const expected = compress(text);
+      for (const input of inputs) expect(compress(input)).toEqual(expected);
+      const sharedCompressed = new Uint8Array(new SharedArrayBuffer(expected.length));
+      sharedCompressed.set(expected);
+      for (const compressed of [expected, sharedCompressed, new DataView(expected.slice().buffer)]) {
+        expect(new TextDecoder().decode(decompress(compressed))).toBe(text);
+      }
+    }
   });
 
   // An empty result must not register a GC-time deallocator: the backing Vec is

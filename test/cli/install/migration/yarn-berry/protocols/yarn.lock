@@ -16,7 +16,6 @@ __metadata:
   resolution: "berry-protocols@workspace:."
   dependencies:
     local-file: "file:./local-file"
-    local-link: "link:local-link"
     local-portal: "portal:./local-portal"
   languageName: unknown
   linkType: soft
@@ -29,12 +28,6 @@ __metadata:
   checksum: 10c0/0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f9
   languageName: node
   linkType: hard
-
-"local-link@link:local-link::locator=berry-protocols%40workspace%3A.":
-  version: 0.0.0-use.local
-  resolution: "local-link@link:local-link::locator=berry-protocols%40workspace%3A."
-  languageName: node
-  linkType: soft
 
 "local-portal@portal:./local-portal::locator=berry-protocols%40workspace%3A.":
   version: 0.0.0-use.local

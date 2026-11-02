@@ -1,5 +1,5 @@
-// Generates `es_syntax_data.rs`: the features that `n/no-unsupported-features/es-syntax` knows, since which version of Node.js each
-// is supported, and for those that eslint-plugin-es-x finds by the name of a global or of a method, these names.
+// Generates `es_syntax_data.rs`: the features that `n/no-unsupported-features/es-syntax` checks, the Node.js versions
+// that support each one, and the global and method names for the features that eslint-plugin-es-x detects by name.
 //
 //   ESLINT_PLUGIN_N_DIR=<checkout of eslint-plugin-n with node_modules> node generate-es-syntax.cjs
 
@@ -14,7 +14,7 @@ const { READ, CALL, CONSTRUCT, ReferenceTracker } = require(
 );
 const features = require(join(root, "lib/rules/no-unsupported-features/es-syntax.json"));
 
-// What a rule asks its helpers for is recorded.
+// Record what each rule passes to its helpers.
 let traceMaps = [];
 let prototypes = [];
 let usesRegExp = false;
@@ -39,7 +39,7 @@ const context = {
   filename: "a.js",
 };
 
-/** Whether everything in the map is `[READ]: true`. */
+/** True if everything in the map is `[READ]: true`. */
 const isOnlyRead = map => Object.values(map).every(it => !it[CALL] && !it[CONSTRUCT] && isOnlyRead(it));
 const table = new Table();
 const names = list => table.add(list.map(name => ({ name })));
@@ -90,7 +90,7 @@ writeFileSync(
 use super::es_syntax::Feature;
 use super::table::{Member, NONE, Part, Table};
 
-/// The positions in [\`FEATURES\`] of those that take more than a look at \`globals\` and \`prototype\`.
+/// The indices in [\`FEATURES\`] of the features that need more than a lookup in \`globals\` and \`prototype\`.
 ${byHand.map(([id, index]) => `pub(crate) const ${constant(id)}: usize = ${index};`).join("\n")}
 
 const fn p(first: u16, count: u8) -> Part {
@@ -110,7 +110,8 @@ ${rows
 
 ${table.statics("EsFeature", "The names in [`FEATURES`]. A global variable or a property that is a feature has 0 at `[READ]`.")}
 
-/// For each year from ${years[0]}: the values of \`Script\` and the binary properties that \`\\p{..}\` has had since then. Sorted.
+/// For each year from ${years[0]}: the \`Script\` values and binary properties that \`\\p{..}\` has supported since
+/// that year. Sorted.
 #[rustfmt::skip]
 pub(crate) static UNICODE_PROPERTIES: [(&[&str], &[&str]); ${years.length}] = [
 ${years.map(year => `    (${set(scValueSets, year)}, ${set(binPropertySets, year)}),`).join("\n")}

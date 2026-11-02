@@ -1,5 +1,5 @@
-//! Which of the things that the HIR stores a node of TypeScript's tree is, for the nodes that have
-//! a type or a symbol of their own: expressions, identifiers, names of declarations.
+//! Maps a node of TypeScript's tree to what the HIR stores for it. Covers the nodes that have their
+//! own type or symbol: expressions, identifiers and declaration names.
 
 use super::super::*;
 use crate::bind::{Decl, SymbolId};
@@ -10,32 +10,33 @@ use crate::node::{Kind, Node, NodeData, Part};
 pub(in crate::check) enum VisitedKind {
     /// A HIR expression, without the enclosing parentheses.
     Expression(ExprId),
-    /// A `ParenthesizedExpression` enclosing it, with its index counted from the outermost.
+    /// A `ParenthesizedExpression` around the expression, with its index counted from the
+    /// outermost.
     Parenthesized(ExprId, u32),
     /// The `b` of `a.b`, the `target` of `new.target`, the `meta` of `import.meta`.
     AccessName(ExprId),
-    /// An identifier in place of the required string of `import a = require("m")` or `export * from
-    /// "m"`, which is not in an expression context.
+    /// An identifier in place of the required string of `import a = require("m")` or
+    /// `export * from "m"`, which is not in an expression context.
     ModuleSpecifier(ExprId),
     /// The `defer` of `import.defer("m")`.
     ImportDeferName(ExprId),
     /// The `const` of `x as const` and of `<const>x`.
     ConstOfAsConst(ExprId),
-    /// The name of an intrinsic element in a tag of the JSX element, and the string the HIR stores
-    /// for it.
+    /// An intrinsic element's name in a tag of this JSX element, and the string the HIR stores for
+    /// it.
     JsxIntrinsicTagName(ExprId, ExprId),
     /// One of the two identifiers of a `JsxNamespacedName`.
     JsxNamespacedNamePart,
-    /// The name of a declaration, and the symbol of the declaration.
+    /// A declaration's name, with the declaration's symbol.
     DeclarationName(Decl, SymbolId),
     /// The `a` of `import { a as b }` and of `export { a as b }`, with the specifier and its symbol.
     SpecifierPropertyName(Decl, SymbolId),
-    /// Of a class, an interface or a type literal.
+    /// The name of a member of a class, interface or type literal.
     MemberName(MemberId),
-    /// The name of a property of an object literal, or of a JSX attribute.
+    /// The name of an object literal property or a JSX attribute.
     PropertyName(PropId),
     ImportAttributeName(PropId),
-    /// The name a variable, a parameter or a binding element declares.
+    /// The name a variable, parameter or binding element declares.
     BindingName(PatId),
     /// The `a` of `{ a: b }` in a binding pattern.
     BindingPropertyName(PatPropId),
@@ -52,12 +53,12 @@ pub(in crate::check) enum VisitedKind {
     LiteralType(TypeNodeId),
     /// The `1` of that `-1`.
     LiteralTypeOperand(TypeNodeId),
-    /// Of a labeled statement, a `break` or a `continue`.
+    /// The label of a labeled statement, a `break` or a `continue`.
     Label(StmtId),
     /// The identifier at an index in the `A.B.C` of a type reference.
     TypeReferenceName(TypeNodeId, u32),
     /// The identifier at an index in the `A.B.C` of `implements A.B.C`, or of the `extends A.B.C`
-    /// of an interface. The HIR stores a type reference there. It is an
+    /// of an interface. The HIR stores a type reference there, but in TypeScript's tree it's an
     /// `ExpressionWithTypeArguments` (`parseHeritageClause`).
     HeritageClauseName(TypeNodeId, u32),
     /// The property access in it that ends with the identifier at an index: `A.B`, `A.B.C`.
@@ -89,11 +90,11 @@ impl Checker<'_, '_> {
         symbols
     }
 
-    /// The HIR counterpart of the visited `node`. `None`: neither a type nor a symbol is printed
+    /// The HIR counterpart of the visited `node`. `None` if neither a type nor a symbol is printed
     /// for it.
     ///
-    /// `symbols`: `symbols_of_declarations`, which is asked for a declaration that its symbol has
-    /// rejected.
+    /// `symbols` looks a declaration up in `symbols_of_declarations`. It's called for a declaration
+    /// that its symbol rejected.
     pub(in crate::check) fn visited_kind(
         &self,
         file: FileId,
@@ -150,7 +151,7 @@ impl Checker<'_, '_> {
                 {
                     VisitedKind::JsxIntrinsicTagName(element, e)
                 }
-                // The one identifier of `{ a }` is its name.
+                // The only identifier in `{ a }` is its name.
                 (Kind::ShorthandPropertyAssignment, NodeData::Prop(p))
                     if hir.name(parent) == node =>
                 {
@@ -167,8 +168,8 @@ impl Checker<'_, '_> {
             },
             NodeData::Paren(p) => {
                 let e = hir.parens[p.idx()].0;
-                let around = hir.parens[p.idx() + 1..].iter().take_while(|p| p.0 == e);
-                VisitedKind::Parenthesized(e, around.count() as u32)
+                let outer_parens = hir.parens[p.idx() + 1..].iter().take_while(|p| p.0 == e);
+                VisitedKind::Parenthesized(e, outer_parens.count() as u32)
             }
             NodeData::Pat(pat) => match hir.data(parent) {
                 NodeData::Param(p) if hir[bound.param_fn[p.idx()]].this_param == p => {

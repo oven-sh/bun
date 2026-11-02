@@ -1,0 +1,14 @@
+{
+  "name": "aot-servers-effect",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@effect/platform-bun": "4.0.5",
+    "@effect/platform-node": "4.0.5",
+    "effect": "4.0.5"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.3",
+    "@types/node": "26.6.5"
+  }
+}

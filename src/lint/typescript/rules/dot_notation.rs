@@ -1,6 +1,6 @@
 use bun_lint::prelude::*;
 use bun_lint::types::tsutils::{CompilerOption, is_compiler_option_enabled};
-use bun_lint::types::{SyntaxKind, TypeFlags};
+use bun_lint::types::{ModifierFlags, SyntaxKind, TypeFlags};
 use bun_lint_eslint::rules::dot_notation::DotNotation as BaseRule;
 
 /// Enforce dot notation whenever possible.
@@ -11,8 +11,8 @@ pub struct DotNotation {
     allow_protected_class_property_access: bool,
 }
 
-/// `symbol.escapedName === value`, for a symbol that is named `name`: TypeScript puts one more `_`
-/// before a name that starts with two.
+/// `symbol.escapedName === value`, for a symbol named `name`. TypeScript adds one more `_` in front of a name that
+/// starts with two.
 fn escaped_name_is(name: &[u8], value: &[u8]) -> bool {
     match name.starts_with(b"__") {
         true => value.split_first() == Some((&b'_', name)),
@@ -20,67 +20,107 @@ fn escaped_name_is(name: &[u8], value: &[u8]) -> bool {
     }
 }
 
+/// tsgolint's `getStaticPropertyName`, for a string literal or a template without substitutions.
+fn get_static_property_name(index: Expr<'_>) -> Option<Name<'_>> {
+    match index.kind() {
+        ExprKind::Template(template) => template.as_static(),
+        _ => index.as_string(),
+    }
+}
+
 impl DotNotation {
-    /// Whether what the types say about `obj[index]`, which is `node`, allows the brackets.
+    /// True if the types allow the brackets in `obj[index]`, which is `node`.
     fn is_allowed_by_types<'a>(
         &self,
         (node, obj, index): (Expr<'a>, Expr<'a>, Expr<'a>),
         allow_index_signature_property_access: bool,
     ) -> bool {
-        let property_symbol = index.ts_symbol().or_else(|| {
-            let value = index.as_string()?;
-            let properties = obj.ty().get_non_nullable_type().get_properties();
-            properties.iter().find(|property| escaped_name_is(property.escaped_name(), value.bytes()))
-        });
-        // tsgolint finds nothing for what nothing declares: the `a` of a `Record<"a" | "b", T>`.
         let is_oxlint = obj.file().language().is_oxlint;
+        let property_symbol = index.ts_symbol().or_else(|| {
+            // tsgolint compares with the name as written, and also handles a template.
+            let value = if is_oxlint { get_static_property_name(index)? } else { index.as_string()? };
+            let properties = obj.ty().get_non_nullable_type().get_properties();
+            properties.iter().find(|property| match is_oxlint {
+                true => property.name() == value.bytes(),
+                false => escaped_name_is(property.escaped_name(), value.bytes()),
+            })
+        });
+        // tsgolint doesn't find a symbol that has no declaration, like the `a` of a `Record<"a" | "b", T>`.
         let property_symbol = property_symbol.filter(|it| !is_oxlint || it.declarations().next().is_some());
-        // Of a getter and a setter tsgolint asks the one that is used.
+        // Between a getter and a setter, tsgolint picks the one the access uses.
         let is_updated = matches!(node.parent(), Node::Expr(parent) if matches!(
             parent.kind(),
             ExprKind::Unary { op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec, .. }
         ));
-        let accessor = match is_updated || utils::is_assignment_target(node) {
-            true => SyntaxKind::SetAccessor,
-            false => SyntaxKind::GetAccessor,
+        // For TypeScript's `isWriteAccess` the operand of a spread is read.
+        let is_spread_operand = match node.parent() {
+            Node::Expr(parent) => parent.tag() == ExprTag::Spread,
+            Node::Prop(prop) => prop.kind() == PropKind::Spread,
+            _ => false,
         };
-        // The modifiers are the first children of a declaration.
-        let modifier_kind = property_symbol
-            .and_then(|symbol| {
-                let used = symbol.declarations().find(|it| is_oxlint && it.kind() == accessor);
-                used.or_else(|| symbol.declarations().next())
-            })
-            .and_then(|declaration| declaration.children().find(|child| child.kind() != SyntaxKind::Decorator))
-            .map(|modifier| modifier.kind());
-        if (self.allow_private_class_property_access && modifier_kind == Some(SyntaxKind::PrivateKeyword))
-            || (self.allow_protected_class_property_access && modifier_kind == Some(SyntaxKind::ProtectedKeyword))
+        let is_write_access = is_updated || (utils::is_assignment_target(node) && !is_spread_operand);
+        // tsgolint's `getRelevantDeclaration`
+        let declaration = property_symbol.and_then(|symbol| {
+            let accessor = |kind: SyntaxKind| symbol.declarations().find(|it| is_oxlint && it.kind() == kind);
+            let (getter, setter) = (accessor(SyntaxKind::GetAccessor), accessor(SyntaxKind::SetAccessor));
+            let used = if is_write_access { setter.or(getter) } else { getter.or(setter) };
+            used.or_else(|| symbol.declarations().next())
+        });
+        let (is_private, is_protected) = match declaration {
+            // tsgolint's `ast.HasModifier`, which finds the modifier at any position.
+            Some(declaration) if is_oxlint => (
+                declaration.has_modifier(ModifierFlags::PRIVATE),
+                declaration.has_modifier(ModifierFlags::PROTECTED),
+            ),
+            // The modifiers are the first children of a declaration.
+            Some(declaration) => {
+                let modifier_kind = declaration
+                    .children()
+                    .find(|child| child.kind() != SyntaxKind::Decorator)
+                    .map(|modifier| modifier.kind());
+                (
+                    modifier_kind == Some(SyntaxKind::PrivateKeyword),
+                    modifier_kind == Some(SyntaxKind::ProtectedKeyword),
+                )
+            }
+            None => (false, false),
+        };
+        if (self.allow_private_class_property_access && is_private)
+            || (self.allow_protected_class_property_access && is_protected)
         {
             return true;
         }
-        // With `noPropertyAccessFromIndexSignature` tsgolint 7.0 asks for no index signature: `(a as any)["b"]`.
+        // With `noPropertyAccessFromIndexSignature` tsgolint 7.0 doesn't require an index signature: `(a as any)["b"]`.
         let file = obj.file();
-        let needs_no_index_signature = || {
+        let skips_index_signature_check = || {
             let options = file.type_checker().compiler_options();
             file.language().is_oxlint
                 && is_compiler_option_enabled(options, CompilerOption::NoPropertyAccessFromIndexSignature)
         };
-        property_symbol.is_none()
-            && allow_index_signature_property_access
-            && (needs_no_index_signature()
-                || obj
-                    .ty()
-                    .get_non_nullable_type()
-                    .get_index_infos()
-                    .any(|info| info.key_type().has_flags(TypeFlags::STRING_LIKE)))
+        if property_symbol.is_some() || !allow_index_signature_property_access {
+            return false;
+        }
+        if skips_index_signature_check() {
+            return true;
+        }
+        let mut index_infos = obj.ty().get_non_nullable_type().get_index_infos();
+        if !is_oxlint {
+            return index_infos.any(|info| info.key_type().has_flags(TypeFlags::STRING_LIKE));
+        }
+        // tsgolint's `getIndexTypeOfType` with the argument's type, then with its base type. It only finds the index
+        // signature with exactly that key type.
+        let key_type = index.ty();
+        let base_key_type = key_type.get_base_type_of_literal_type();
+        index_infos.any(|info| info.key_type() == key_type || info.key_type() == base_key_type)
     }
 
     fn check_computed<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Index { obj, index, .. } = node.kind() else {
             return;
         };
-        // The base rule reports nothing else.
+        // The base rule doesn't report anything else.
         if !matches!(
-            index.tag(),
+            index.with_jsdoc_cast().tag(),
             ExprTag::String | ExprTag::Template | ExprTag::True | ExprTag::False | ExprTag::Null
         ) {
             return;
@@ -107,7 +147,7 @@ impl Rule for DotNotation {
         .exprs(&[ExprTag::Index, ExprTag::Dot])
         .stmts(&[StmtTag::Interface])
         .classes();
-    /// Whether an access that an index signature allows can be written with brackets.
+    /// True if an access that goes through an index signature may use brackets.
     type State<'a> = bool;
 
     fn new(options: &Options) -> Self {

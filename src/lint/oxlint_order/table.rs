@@ -3,7 +3,8 @@
 use crate::rule::Plugin;
 use crate::rule::When::{self, AtTheEnd, Entering, Last, Once};
 
-/// The kinds of node that some rule of oxlint is called with, as oxc calls them (`AstType`), sorted and separated by spaces.
+/// The node kinds that at least one oxlint rule is called with, under oxc's names (`AstType`), sorted and separated
+/// by spaces.
 #[rustfmt::skip]
 pub(super) static KINDS: &str = concat!(
     "AccessorProperty ArrayAssignmentTarget ArrayExpression ArrayPattern ArrowFunctionExpression ",
@@ -30,9 +31,10 @@ pub(super) static KINDS: &str = concat!(
     "YieldExpression",
 );
 
-/// The plugins in the order of oxlint. The rules of each by when they report: `run_once` ([`Once`]), `run` ([`Entering`]),
-/// `run_on_jest_node` ([`AtTheEnd`]) or tsgolint ([`Last`]). The names are separated by spaces. Before those of `run` are the
-/// kinds of node that they are called with (`NODE_TYPES`): places in [`KINDS`], separated by commas.
+/// The plugins in oxlint's order. Each plugin's rules are grouped by when they report: `run_once` ([`Once`]),
+/// `run` ([`Entering`]), `run_on_jest_node` ([`AtTheEnd`]) or tsgolint ([`Last`]). The names are separated by
+/// spaces. Before each group of `run` rules are the node kinds they're called with (`NODE_TYPES`), as
+/// comma-separated indices into [`KINDS`].
 #[rustfmt::skip]
 pub(super) static RULES: &[(Plugin, When, &str)] = &[
     (Plugin::Import, Once, concat!(

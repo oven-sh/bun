@@ -6,6 +6,7 @@ Small programs on which `bun fmt` once differed from Prettier, and which no test
 - `<name>.prettier.snap`: what Prettier prints, which is what `bun fmt` has to print.
 - `<name>.snap`: what oxfmt prints, which is what it has to print for whoever has an `.oxfmtrc.json`. Where it does not yet, the file is called `<name>.snap.todo` and is not compared.
 - `options.json`: the sets of options for the inputs of a directory. Each is run at `printWidth` 80 and 100 too.
+- `comment-owners.txt`: the node that Prettier attaches each comment of the JavaScript and TypeScript inputs to. `comment-owners.ts` writes it, and `../conformance.test.ts` compares it with `bun fmt --debug-comments`.
 
 To add one, write the input and run `sync.ts`, which asks both:
 

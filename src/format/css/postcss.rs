@@ -1,11 +1,10 @@
 //! `postcss` 8.5 (`lib/tokenize.js`, `lib/parser.js`), `postcss-scss` 4.0 (`lib/scss-tokenize.js`,
 //! `lib/scss-parser.js`) and `postcss-less` 6.0 (`lib/LessParser.js`, `lib/nodes/*.js`).
 //!
-//! Everything that `postcss` keeps as a string is made of tokens that follow each other, so here it
-//! is a range of the text.
+//! Every string that `postcss` stores is built from consecutive tokens, so here it's a range of the text.
 
 use super::Parser as Syntax;
-use crate::syntax_error::{Message, Refusal, Refused, SyntaxError};
+use crate::syntax_error::{Message, Rejected, Rejection, SyntaxError};
 use crate::text::{self, ByteSet};
 
 /// A range of the text.
@@ -30,21 +29,22 @@ impl Range {
     }
 }
 
-/// The text, and the strings that are not a part of it: `postcss-less` drops tokens and uses others
-/// twice. A range that starts behind the text is a range of those.
+/// The text, plus strings that aren't substrings of it. Those exist because `postcss-less` drops some tokens and uses
+/// others twice. A range that starts past the end of the text points into `extra`.
 struct Texts<'a> {
     css: &'a [u8],
     extra: Vec<u8>,
-    /// Tokens that follow each other in a list do so in the text: only `postcss-less` moves them.
+    /// Consecutive tokens in a list are also adjacent in the text. Only `postcss-less` moves tokens around.
     is_in_order: bool,
 }
 
-/// Where the ranges of `extra` start. There is a gap, for the end of the text not to touch them.
+/// The offset where `extra`'s ranges start. The gap of one keeps a range that ends at the end of the text from looking
+/// adjacent to one in `extra`.
 fn extra_start(css: &[u8]) -> usize {
     css.len() + 1
 }
 
-/// The text of `range`, which is a range of `css` or of `extra`.
+/// Returns the text of `range`, which points into `css` or `extra`.
 pub(crate) fn text_of_range<'a>(range: Range, css: &'a [u8], extra: &'a [u8]) -> &'a [u8] {
     match (range.start as usize).checked_sub(extra_start(css)) {
         Some(start) => extra
@@ -69,15 +69,15 @@ impl Texts<'_> {
         } else if a.end == b.start {
             Range::new(a.start, b.end)
         } else {
-            self.join_apart(a, b)
+            self.join_non_adjacent(a, b)
         }
     }
 
-    /// `a + b`, which do not touch and are not empty.
-    fn join_apart(&mut self, a: Range, b: Range) -> Range {
+    /// `a + b`, for non-empty ranges that aren't adjacent.
+    fn join_non_adjacent(&mut self, a: Range, b: Range) -> Range {
         {
             let offset = extra_start(self.css);
-            // What has been added last grows in place.
+            // If `a` is the last thing added to `extra`, extend it in place.
             let (start, parts) = match (a.start as usize).checked_sub(offset) {
                 Some(start) if a.end as usize - offset == self.extra.len() => (start, &[b][..]),
                 _ => (self.extra.len(), &[a, b][..]),
@@ -94,7 +94,7 @@ impl Texts<'_> {
         }
     }
 
-    /// The texts of `tokens`, one after the other.
+    /// Returns a range with the concatenated texts of `tokens`.
     fn range_of(&mut self, tokens: &[Token]) -> Range {
         match tokens {
             [first, .., last] if self.is_in_order => Range::new(first.range.start, last.range.end),
@@ -132,10 +132,10 @@ struct Token {
     kind: TokenKind,
     /// `token[1]`
     range: Range,
-    /// `token[2]`: where it starts. It is not `range.start` after `postcss-less` has started anew
-    /// with the rest of the text.
+    /// `token[2]`, the start offset. It differs from `range.start` once `postcss-less` has restarted its tokenizer on
+    /// the rest of the text.
     start: u32,
-    /// `token[3]`: where its last character is, more or less.
+    /// `token[3]`, roughly the offset of its last character.
     last: Option<u32>,
     /// `token[4] === "inline"`
     inline: bool,
@@ -162,17 +162,17 @@ impl Token {
 struct Tokenizer<'a> {
     css: &'a [u8],
     syntax: Syntax,
-    /// Why the tokenizer or the parser refuses the text.
-    refusal: Refusal,
+    /// Why the tokenizer or the parser rejected the text.
+    rejection: Rejection,
     pos: usize,
-    /// What is subtracted from a position to get what `postcss` takes for it.
+    /// Subtracted from an offset to get the offset that `postcss` reports.
     shift: usize,
-    /// The words that no `(` has taken yet.
+    /// Words that no `(` has consumed yet.
     buffer: Vec<Range>,
-    /// `None` is an `undefined` that has been given back.
+    /// Tokens pushed back with `back`. `None` is a pushed-back `undefined`.
     returned: Vec<Option<Token>>,
     last_bad_paren: Option<usize>,
-    /// Where the first `)` is behind the last `(` that was looked at, if that is known.
+    /// Cached offset of the first `)` after the last `(` examined. The outer `None` means it isn't known.
     next_close: Option<Option<usize>>,
 }
 
@@ -189,7 +189,7 @@ impl<'a> Tokenizer<'a> {
         self.returned.push(token);
     }
 
-    /// The position of the next `quote` or `)` after `from` that is not escaped.
+    /// Returns the offset of the next unescaped `byte`, a quote or a `)`, after `from`.
     fn find_unescaped(&self, byte: u8, from: usize) -> Option<usize> {
         let mut next = from;
         loop {
@@ -205,8 +205,8 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
-    /// `interpolation` of `postcss-scss`. `next`: where the `#` is. Returns where the `}` is.
-    fn interpolation(&self, mut next: usize) -> Result<usize, Refused> {
+    /// `interpolation` in `postcss-scss`. `next` is the offset of the `#`. Returns the offset of the `}`.
+    fn interpolation(&self, mut next: usize) -> Result<usize, Rejected> {
         let start = next as u32;
         let mut deep = 1;
         let mut string_quote = None;
@@ -216,7 +216,7 @@ impl<'a> Tokenizer<'a> {
             let &code = self
                 .css
                 .get(next)
-                .ok_or_else(|| self.refusal.note(Message::UnclosedInterpolation, start))?;
+                .ok_or_else(|| self.rejection.note(Message::UnclosedInterpolation, start))?;
             if let Some(quote) = string_quote {
                 if !string_escaped && code == quote {
                     string_quote = None;
@@ -237,7 +237,7 @@ impl<'a> Tokenizer<'a> {
     }
 
     #[inline]
-    fn next_token(&mut self, ignore_unclosed: bool) -> Result<Option<Token>, Refused> {
+    fn next_token(&mut self, ignore_unclosed: bool) -> Result<Option<Token>, Rejected> {
         if let Some(token) = self.returned.pop() {
             return Ok(token);
         }
@@ -245,7 +245,7 @@ impl<'a> Tokenizer<'a> {
         let Some(&code) = css.get(pos) else {
             return Ok(None);
         };
-        // Most tokens are blanks, punctuation and words.
+        // Most tokens are whitespace, punctuation or words, so those are handled here.
         let (kind, next) = match code {
             b'\n' | b' ' | b'\t' | b'\r' | 0x0C => {
                 let mut end = pos + 1;
@@ -263,7 +263,7 @@ impl<'a> Tokenizer<'a> {
         Ok(Some(self.token(kind, pos, next, false)))
     }
 
-    /// Where the word ends that starts at `pos`.
+    /// Returns the end of the word that starts at `pos`.
     #[inline]
     fn end_of_word(&mut self, pos: usize) -> usize {
         let css = self.css;
@@ -290,14 +290,14 @@ impl<'a> Tokenizer<'a> {
         end
     }
 
-    /// The token from `pos` to `next`, which is its last character. The next one starts behind it.
+    /// Makes the token from `pos` through `next`, its last character, and moves the tokenizer past it.
     #[inline]
     fn token(&mut self, kind: TokenKind, pos: usize, next: usize, inline: bool) -> Token {
         self.pos = next + 1;
         let start = (pos - self.shift) as u32;
         let last = match kind {
             TokenKind::Space | TokenKind::Control(_) => None,
-            // What `postcss-scss` says of a comma.
+            // `postcss-scss` reports this for a comma.
             TokenKind::Word if self.syntax == Syntax::Scss && self.css[pos] == b',' => {
                 Some(start + 1)
             }
@@ -312,11 +312,11 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
-    /// The token that starts with `code`, where `self.pos` is.
-    fn next_special_token(&mut self, code: u8, ignore_unclosed: bool) -> Result<Token, Refused> {
+    /// Reads the token at `self.pos`, which starts with `code`.
+    fn next_special_token(&mut self, code: u8, ignore_unclosed: bool) -> Result<Token, Rejected> {
         let (css, pos) = (self.css, self.pos);
         let is_scss = self.syntax == Syntax::Scss;
-        // The position of the last character of the token.
+        // Offset of the token's last character.
         let next;
         let kind;
         let mut inline = false;
@@ -347,7 +347,7 @@ impl<'a> Tokenizer<'a> {
                     let close = match self.find_unescaped(b')', pos) {
                         None if ignore_unclosed => pos,
                         close => close.ok_or_else(|| {
-                            self.refusal.note(Message::UnclosedBracket, pos as u32)
+                            self.rejection.note(Message::UnclosedBracket, pos as u32)
                         })?,
                     };
                     (kind, next) = (TokenKind::Brackets, close);
@@ -389,7 +389,7 @@ impl<'a> Tokenizer<'a> {
                     at += 1;
                     let &byte = css
                         .get(at)
-                        .ok_or_else(|| self.refusal.note(Message::UnclosedString, pos as u32))?;
+                        .ok_or_else(|| self.rejection.note(Message::UnclosedString, pos as u32))?;
                     if !escaped && byte == code {
                         break;
                     } else if byte == b'\\' {
@@ -406,7 +406,7 @@ impl<'a> Tokenizer<'a> {
                 let close = match self.find_unescaped(code, pos) {
                     None if ignore_unclosed => pos + 1,
                     close => close
-                        .ok_or_else(|| self.refusal.note(Message::UnclosedString, pos as u32))?,
+                        .ok_or_else(|| self.rejection.note(Message::UnclosedString, pos as u32))?,
                 };
                 (kind, next) = (TokenKind::String, close);
             }
@@ -447,7 +447,7 @@ impl<'a> Tokenizer<'a> {
                     None if ignore_unclosed => css.len(),
                     close => {
                         close.ok_or_else(|| {
-                            self.refusal.note(Message::UnclosedComment, pos as u32)
+                            self.rejection.note(Message::UnclosedComment, pos as u32)
                         })? + 1
                     }
                 };
@@ -477,14 +477,14 @@ pub(crate) enum Kind {
     AtRule,
 }
 
-/// A node, with the properties of all kinds of nodes. `raws.x` is `x`.
+/// A node, with the fields of every kind of node. `raws.x` is stored as `x`.
 #[derive(Debug, Default)]
 pub(crate) struct Node {
     pub(crate) kind: Kind,
     pub(crate) parent: NodeId,
-    /// Whether it has `nodes`: a `{ .. }`.
+    /// True if it has `nodes`, that is, a `{ .. }` block.
     pub(crate) has_block: bool,
-    /// The first and the last of `nodes`, and the node that follows in the `nodes` of the parent. 0: there is none.
+    /// The first and last of `nodes`, and the next node in the parent's `nodes`. 0 means none.
     pub(crate) first_child: NodeId,
     pub(crate) last_child: NodeId,
     pub(crate) next_sibling: NodeId,
@@ -496,54 +496,54 @@ pub(crate) struct Node {
     pub(crate) after: Range,
     pub(crate) between: Range,
     pub(crate) semicolon: bool,
-    /// Of a comment: what is between the delimiters, trimmed.
+    /// Comment: the text between the delimiters, trimmed.
     pub(crate) text: Range,
-    /// Of a comment: `inline` (Less).
+    /// Comment: `inline` (Less).
     pub(crate) inline: bool,
-    /// Of a comment: `raws.inline` (SCSS).
+    /// Comment: `raws.inline` (SCSS).
     pub(crate) raw_inline: bool,
-    /// Of a rule: `raws.selector.raw`, or `selector` if there is no such thing.
+    /// Rule: `raws.selector.raw`, or `selector` if that doesn't exist.
     pub(crate) selector: Range,
-    /// `selector`, if it is not the same as `raws.selector.raw`.
+    /// `selector`, if it differs from `raws.selector.raw`.
     pub(crate) clean_selector: Option<Box<[u8]>>,
     pub(crate) prop: Range,
-    /// Of a declaration: `raws.value.raw`, or `value`.
+    /// Declaration: `raws.value.raw`, or `value`.
     pub(crate) value: Range,
-    /// `value`, if it is not the same as `raws.value.raw`.
+    /// `value`, if it differs from `raws.value.raw`.
     pub(crate) clean_value: Option<Box<[u8]>>,
     pub(crate) important: bool,
     pub(crate) raw_important: Option<Range>,
-    /// Of a declaration of SCSS with a block.
+    /// Set for an SCSS declaration with a block.
     pub(crate) is_nested: bool,
-    /// Of an at-rule, without the `@`.
+    /// At-rule: the name without the `@`.
     pub(crate) name: Range,
     pub(crate) after_name: Range,
-    /// Of an at-rule: `raws.params.raw`, or `params`.
+    /// At-rule: `raws.params.raw`, or `params`.
     pub(crate) params: Range,
-    /// `params`, if it is not the same as `raws.params.raw`.
+    /// `params`, if it differs from `raws.params.raw`.
     pub(crate) clean_params: Option<Box<[u8]>>,
-    /// What `postcss-less` adds.
+    /// Flags added by `postcss-less`.
     pub(crate) extend: bool,
     pub(crate) mixin: bool,
     pub(crate) function: bool,
     pub(crate) variable: bool,
-    /// Of a variable whose parameters start with a colon: how much of them is not part of `value`.
+    /// Variable whose params start with a colon: how many leading bytes of the params aren't part of `value`.
     pub(crate) value_skips: u32,
     /// `raws.identifier`
     pub(crate) identifier: Range,
-    /// Whether there is a `raws.ownSemicolon`.
+    /// True if `raws.ownSemicolon` is set.
     own_semicolon: bool,
 }
 
 pub(crate) struct Tree {
-    /// The first is the root.
+    /// Index 0 is the root.
     pub(crate) nodes: Vec<Node>,
     /// See `text_of_range`.
     pub(crate) extra: Vec<u8>,
 }
 
 impl Tree {
-    /// The `nodes` of `node`.
+    /// Iterates over `node.nodes`.
     pub(crate) fn children(&self, node: &Node) -> impl Iterator<Item = NodeId> {
         std::iter::successors(Some(node.first_child), |&id| {
             Some(self.nodes[id as usize].next_sibling)
@@ -559,35 +559,36 @@ struct Parser<'a> {
     tokenizer: Tokenizer<'a>,
     nodes: Vec<Node>,
     current: NodeId,
-    /// `lastNode` of `postcss-less`
+    /// `lastNode` in `postcss-less`
     last_node: NodeId,
     spaces: Range,
     semicolon: bool,
-    /// The next word is not the name of a custom property, whatever it looks like.
+    /// The next word isn't a custom property's name, even if it starts with `--`.
     is_custom_property_set: bool,
-    /// For the tokens of a statement.
+    /// Reused buffer for a statement's tokens.
     token_buffer: Vec<Token>,
     placeholder: Placeholder,
 }
 
-/// What `@prettier-placeholder-1-id`, which stands for a `${}` in a template of JavaScript, is at the start of a statement.
+/// How to parse `@prettier-placeholder-1-id`, which replaces a `${}` of a JavaScript template, at the start of a
+/// statement.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Placeholder {
-    /// The name of an at-rule, which goes on to the next `;` or `{`, as for `postcss`.
+    /// As an at-rule's name, so the at-rule extends to the next `;` or `{`. This is what `postcss` does.
     AtRule,
-    /// A statement, with the others that are behind it on its line, as for oxfmt.
+    /// As a statement, together with any other placeholders after it on the same line. This is what oxfmt does.
     Statement,
 }
 
-/// Whether `name` is all of such a name, without the `@`.
+/// True if `name` is exactly a placeholder's name, without the `@`.
 fn is_placeholder(name: &[u8]) -> bool {
     name.strip_prefix(b"prettier-placeholder-")
         .and_then(|it| it.strip_suffix(b"-id"))
         .is_some_and(|number| !number.is_empty() && number.iter().all(u8::is_ascii_digit))
 }
 
-/// `raw`: the text of `tokens` without the comments that have a space next to them, or `None` if that
-/// is all of their text.
+/// `raw` in `postcss`. Returns the text of `tokens` without the comments that have a space next to them, or `None` if
+/// that's the same as their full text.
 fn clean(css: &[u8], tokens: &[Token], custom_property: bool) -> Option<Box<[u8]>> {
     let ends_with_space =
         !custom_property && tokens.last().is_some_and(|it| it.kind == TokenKind::Space);
@@ -633,7 +634,7 @@ fn has_extend(text: &[u8], prefix: &[u8]) -> bool {
     false
 }
 
-/// Where the first `(` or `[` of `tokens` is that nothing closes.
+/// Returns the offset of the first unclosed `(` or `[` in `tokens`.
 #[cold]
 fn unclosed_bracket(tokens: &[Token]) -> u32 {
     let mut open: Vec<(u8, Token)> = Vec::new();
@@ -656,14 +657,14 @@ fn unclosed_bracket(tokens: &[Token]) -> u32 {
 
 impl<'a> Parser<'a> {
     #[cold]
-    fn refuse(&self, message: Message, offset: u32) -> Refused {
-        self.tokenizer.refusal.note(message, offset)
+    fn reject(&self, message: Message, offset: u32) -> Rejected {
+        self.tokenizer.rejection.note(message, offset)
     }
 
-    /// A token is missing.
+    /// The text ended where a token was expected.
     #[cold]
-    fn at_end(&self) -> Refused {
-        self.refuse(Message::UnexpectedEnd, self.css.len() as u32)
+    fn at_end(&self) -> Rejected {
+        self.reject(Message::UnexpectedEnd, self.css.len() as u32)
     }
 
     fn node(&mut self, id: NodeId) -> &mut Node {
@@ -704,7 +705,7 @@ impl<'a> Parser<'a> {
         self.current = id;
     }
 
-    fn parse(&mut self) -> Result<(), Refused> {
+    fn parse(&mut self) -> Result<(), Rejected> {
         while !self.tokenizer.end_of_file() {
             let token = self
                 .tokenizer
@@ -729,7 +730,7 @@ impl<'a> Parser<'a> {
         }
         // `endFile`
         if self.current != 0 {
-            return Err(self.refuse(
+            return Err(self.reject(
                 Message::UnclosedBlock,
                 self.nodes[self.current as usize].start,
             ));
@@ -738,7 +739,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    /// What `end` and `endFile` have in common.
+    /// The shared part of `end` and `endFile`.
     fn close_current(&mut self) {
         let (current, semicolon, spaces) = (
             self.current,
@@ -753,10 +754,10 @@ impl<'a> Parser<'a> {
         self.semicolon = false;
     }
 
-    fn end(&mut self, token: Token) -> Result<(), Refused> {
+    fn end(&mut self, token: Token) -> Result<(), Rejected> {
         self.close_current();
         if self.current == 0 {
-            return Err(self.refuse(Message::UnexpectedClosingBrace, token.range.start));
+            return Err(self.reject(Message::UnexpectedClosingBrace, token.range.start));
         }
         let current = self.current;
         let node = self.node(current);
@@ -781,7 +782,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// The part of `inner` that is left when it is trimmed.
+    /// Returns `inner` with whitespace trimmed from both ends.
     fn trimmed(&self, inner: Range) -> Range {
         let content = inner.of(self.css);
         let trimmed = bun_core::strings::trim_js_whitespace(content);
@@ -805,7 +806,7 @@ impl<'a> Parser<'a> {
         node.raw_inline = token.inline;
     }
 
-    fn atrule(&mut self, token: Token) -> Result<(), Refused> {
+    fn atrule(&mut self, token: Token) -> Result<(), Rejected> {
         let name = Range::new(token.range.start + 1, token.range.end);
         match self.syntax {
             Syntax::Css => self.base_atrule(token.start, name),
@@ -833,10 +834,10 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// `atrule` of `postcss`. `start`: `token[2]`. `name`: `token[1].slice(1)`.
-    fn base_atrule(&mut self, start: u32, name: Range) -> Result<(), Refused> {
+    /// `atrule` in `postcss`. `start` is `token[2]` and `name` is `token[1].slice(1)`.
+    fn base_atrule(&mut self, start: u32, name: Range) -> Result<(), Rejected> {
         if name.is_empty() {
-            return Err(self.refuse(Message::AtRuleWithoutName, start));
+            return Err(self.reject(Message::AtRuleWithoutName, start));
         }
         let id = self.new_node(Kind::AtRule, start);
         self.node(id).name = name;
@@ -931,7 +932,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn other(&mut self, start: Token) -> Result<(), Refused> {
+    fn other(&mut self, start: Token) -> Result<(), Rejected> {
         let mut tokens = std::mem::take(&mut self.token_buffer);
         tokens.clear();
         let result = self.other_with(start, &mut tokens);
@@ -939,8 +940,8 @@ impl<'a> Parser<'a> {
         result
     }
 
-    /// `tokens` is empty.
-    fn other_with(&mut self, start: Token, tokens: &mut Vec<Token>) -> Result<(), Refused> {
+    /// `tokens` must be empty.
+    fn other_with(&mut self, start: Token, tokens: &mut Vec<Token>) -> Result<(), Rejected> {
         let mut end = false;
         let mut colon = false;
         let mut brackets: Vec<u8> = Vec::new();
@@ -957,9 +958,9 @@ impl<'a> Parser<'a> {
                 TokenKind::Control(control) if brackets.is_empty() => match control {
                     b';' if colon => return self.decl(tokens, custom_property),
                     b';' => break,
-                    // `postcss-less` starts the statement anew with the word that it has made of `@{a}`. It comes to the
-                    // same tokens and the same state, so here the statement goes on, which a selector with many of them
-                    // needs: starting anew takes time for all that is before.
+                    // `postcss-less` restarts the statement with the word it made from `@{a}`. That produces the same
+                    // tokens and the same state, so this just continues. Restarting rescans everything before the
+                    // interpolation, which is quadratic for a selector with many of them.
                     b'{' if self.syntax == Syntax::Less
                         && self.less_rule_interpolation(tokens)? =>
                     {
@@ -987,7 +988,7 @@ impl<'a> Parser<'a> {
             end = true;
         }
         if !brackets.is_empty() {
-            return Err(self.refuse(Message::UnclosedBracket, unclosed_bracket(tokens)));
+            return Err(self.reject(Message::UnclosedBracket, unclosed_bracket(tokens)));
         }
         if !(end && colon) {
             return self.unknown_word(tokens);
@@ -1001,7 +1002,7 @@ impl<'a> Parser<'a> {
         self.decl(tokens, custom_property)
     }
 
-    fn rule(&mut self, tokens: &mut Vec<Token>) -> Result<(), Refused> {
+    fn rule(&mut self, tokens: &mut Vec<Token>) -> Result<(), Rejected> {
         match self.syntax {
             Syntax::Css => self.base_rule(tokens),
             Syntax::Scss => self.scss_rule(tokens),
@@ -1009,7 +1010,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn base_rule(&mut self, tokens: &mut Vec<Token>) -> Result<(), Refused> {
+    fn base_rule(&mut self, tokens: &mut Vec<Token>) -> Result<(), Rejected> {
         tokens.pop();
         let start = tokens.first().map_or(0, |token| token.start);
         let id = self.new_node(Kind::Rule, start);
@@ -1024,8 +1025,8 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    /// `colon`: the index of the first `:` outside of parentheses. An error if nothing is before it.
-    fn colon(&self, tokens: &[Token]) -> Result<Option<usize>, Refused> {
+    /// `colon`: returns the index of the first `:` outside of parentheses. Fails if no token comes before it.
+    fn colon(&self, tokens: &[Token]) -> Result<Option<usize>, Rejected> {
         let mut brackets = 0i32;
         let mut prev: Option<Token> = None;
         for (index, &token) in tokens.iter().enumerate() {
@@ -1037,7 +1038,7 @@ impl<'a> Parser<'a> {
             }
             if brackets == 0 && token.is(b':') {
                 match prev {
-                    None => return Err(self.refuse(Message::UnexpectedColon, token.range.start)),
+                    None => return Err(self.reject(Message::UnexpectedColon, token.range.start)),
                     Some(prev)
                         if prev.kind == TokenKind::Word && self.text_of(prev) == b"progid" =>
                     {
@@ -1051,9 +1052,8 @@ impl<'a> Parser<'a> {
         Ok(None)
     }
 
-    /// Takes `!important` from the end of `tokens`, of which only those from `base` on are there for it.
-    /// `lowest`: the index of the first of them that is looked at. `any_case`: whether it can be written in upper
-    /// case.
+    /// Removes `!important` from the end of `tokens`. Only `tokens[base..]` can be part of it, and of those only the
+    /// ones from index `lowest` on are examined. `any_case` also accepts uppercase.
     fn take_important(
         &mut self,
         id: NodeId,
@@ -1122,7 +1122,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn decl(&mut self, tokens: &mut Vec<Token>, custom_property: bool) -> Result<(), Refused> {
+    fn decl(&mut self, tokens: &mut Vec<Token>, custom_property: bool) -> Result<(), Rejected> {
         let Some((&first, &last)) = tokens.first().zip(tokens.last()) else {
             return Err(self.at_end());
         };
@@ -1139,7 +1139,7 @@ impl<'a> Parser<'a> {
         let start = tokens
             .iter()
             .position(|token| token.kind == TokenKind::Word)
-            .ok_or_else(|| self.refuse(Message::PropertyWithoutName, first.range.start))?;
+            .ok_or_else(|| self.reject(Message::PropertyWithoutName, first.range.start))?;
         let before = self.texts.range_of(&tokens[..start]);
         let node = &mut self.nodes[id as usize];
         node.before = self.texts.join(node.before, before);
@@ -1164,7 +1164,7 @@ impl<'a> Parser<'a> {
                     .iter()
                     .any(|&b| bun_core::strings::is_regexp_word_byte(b))
             {
-                return Err(self.refuse(Message::ExpectedColon, token.range.start));
+                return Err(self.reject(Message::ExpectedColon, token.range.start));
             }
         }
         let mut between = self.texts.range_of(&tokens[between_start..at]);
@@ -1213,15 +1213,15 @@ impl<'a> Parser<'a> {
         node.extend = extend;
 
         if !custom_property && let Some(colon) = self.colon(tokens)? {
-            return Err(self.refuse(Message::UnexpectedColon, tokens[colon].range.start));
+            return Err(self.reject(Message::UnexpectedColon, tokens[colon].range.start));
         }
         Ok(())
     }
 
-    fn unknown_word(&mut self, tokens: &mut Vec<Token>) -> Result<(), Refused> {
+    fn unknown_word(&mut self, tokens: &mut Vec<Token>) -> Result<(), Rejected> {
         let (Syntax::Less, Some(&first)) = (self.syntax, tokens.first()) else {
             return Err(match tokens.first() {
-                Some(first) => self.refuse(Message::NeitherDeclarationNorRule, first.range.start),
+                Some(first) => self.reject(Message::NeitherDeclarationNorRule, first.range.start),
                 None => self.at_end(),
             });
         };
@@ -1229,7 +1229,7 @@ impl<'a> Parser<'a> {
         if symbol == b"each"
             && tokens
                 .get(1)
-                .ok_or_else(|| self.refuse(Message::NeitherDeclarationNorRule, first.range.start))?
+                .ok_or_else(|| self.reject(Message::NeitherDeclarationNorRule, first.range.start))?
                 .is(b'(')
         {
             return self.less_each(tokens);
@@ -1243,16 +1243,15 @@ impl<'a> Parser<'a> {
         if matches!(symbol.first(), Some(b'.' | b'#')) && !is_hash_color && !has_fraction {
             return self.less_mixin(tokens);
         }
-        Err(self.refuse(Message::NeitherDeclarationNorRule, first.range.start))
+        Err(self.reject(Message::NeitherDeclarationNorRule, first.range.start))
     }
 
     // ───────────────────────────── postcss-scss ─────────────────────────────
 
-    fn scss_rule(&mut self, tokens: &mut Vec<Token>) -> Result<(), Refused> {
+    fn scss_rule(&mut self, tokens: &mut Vec<Token>) -> Result<(), Rejected> {
         let mut with_colon = false;
         let mut brackets = 0;
-        // Of what is behind the colon, comments aside: the first character, and whether there is
-        // more to it than white space.
+        // The first character after the colon, ignoring comments, and whether everything after the colon is whitespace.
         let mut first_byte = None;
         let mut is_blank = true;
         for &token in tokens.iter() {
@@ -1299,7 +1298,7 @@ impl<'a> Parser<'a> {
             .iter()
             .position(|token| token.kind == TokenKind::Word)
             .ok_or_else(|| {
-                self.refuse(Message::PropertyWithoutName, self.nodes[id as usize].start)
+                self.reject(Message::PropertyWithoutName, self.nodes[id as usize].start)
             })?;
         let before = self.texts.range_of(&tokens[..start]);
         let node = &mut self.nodes[id as usize];
@@ -1344,7 +1343,7 @@ impl<'a> Parser<'a> {
         node.value = value;
         node.clean_value = clean_value;
         if let Some(colon) = self.colon(tokens)? {
-            return Err(self.refuse(Message::UnexpectedColon, tokens[colon].range.start));
+            return Err(self.reject(Message::UnexpectedColon, tokens[colon].range.start));
         }
         self.open(id);
         Ok(())
@@ -1352,8 +1351,8 @@ impl<'a> Parser<'a> {
 
     // ───────────────────────────── postcss-less ─────────────────────────────
 
-    /// `interpolation`: makes one word of `@{a}` and what is attached to it.
-    fn less_interpolation(&mut self, token: Token) -> Result<bool, Refused> {
+    /// `interpolation`: merges `@{a}` and whatever is attached to it into one word.
+    fn less_interpolation(&mut self, token: Token) -> Result<bool, Rejected> {
         let next = self.tokenizer.next_token(false)?;
         if token.range.end - token.range.start > 1 || !next.ok_or_else(|| self.at_end())?.is(b'{') {
             self.tokenizer.back(next);
@@ -1376,7 +1375,7 @@ impl<'a> Parser<'a> {
         Ok(true)
     }
 
-    fn less_atrule(&mut self, token: Token, name: Range) -> Result<(), Refused> {
+    fn less_atrule(&mut self, token: Token, name: Range) -> Result<(), Rejected> {
         if self.less_interpolation(token)? {
             return Ok(());
         }
@@ -1388,7 +1387,7 @@ impl<'a> Parser<'a> {
         if !name.ends_with(b":") {
             return Ok(());
         }
-        // `name.replace(":", "")` takes the first colon, which need not be the last.
+        // `name.replace(":", "")` removes the first colon, which isn't necessarily the last.
         let first_colon = bun_core::strings::index_of_char_usize(name, b':').unwrap_or(0) as u32;
         let last_colon = Range::new(node.name.end - 1, node.name.end);
         node.name = self.texts.join(
@@ -1410,7 +1409,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn less_each(&mut self, tokens: &mut Vec<Token>) -> Result<(), Refused> {
+    fn less_each(&mut self, tokens: &mut Vec<Token>) -> Result<(), Rejected> {
         let first_paren = tokens
             .iter()
             .position(|token| token.is(b'('))
@@ -1418,7 +1417,7 @@ impl<'a> Parser<'a> {
         let last_paren = tokens
             .iter()
             .rposition(|token| token.is(b')'))
-            .ok_or_else(|| self.refuse(Message::UnclosedBracket, unclosed_bracket(tokens)))?;
+            .ok_or_else(|| self.reject(Message::UnclosedBracket, unclosed_bracket(tokens)))?;
         let params = self
             .texts
             .range_of(&tokens[first_paren..(first_paren + last_paren).min(tokens.len())]);
@@ -1430,7 +1429,7 @@ impl<'a> Parser<'a> {
             .tokenizer
             .next_token(false)?
             .ok_or_else(|| self.at_end())?;
-        // A space has been put before the name, which the `@` is taken for.
+        // `postcss-less` prepends a space to the name, which `atrule` then strips instead of an `@`.
         self.less_atrule(first, first.range)?;
         let id = self.last_node;
         let node = self.node(id);
@@ -1440,7 +1439,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn less_mixin(&mut self, tokens: &mut Vec<Token>) -> Result<(), Refused> {
+    fn less_mixin(&mut self, tokens: &mut Vec<Token>) -> Result<(), Rejected> {
         let first = *tokens.first().ok_or_else(|| self.at_end())?;
         let identifier = Range::new(first.range.start, first.range.start + 1);
         let brackets_index = tokens
@@ -1455,9 +1454,9 @@ impl<'a> Parser<'a> {
             let last_paren = tokens
                 .iter()
                 .rposition(|token| token.is(b')'))
-                .ok_or_else(|| self.refuse(Message::UnclosedBracket, unclosed_bracket(tokens)))?;
-            // The end is what `postcss-less` takes, which is too far if there is more than the name
-            // before the parenthesis.
+                .ok_or_else(|| self.reject(Message::UnclosedBracket, unclosed_bracket(tokens)))?;
+            // This is the end that `postcss-less` computes. It overshoots if more than the name comes before the
+            // parenthesis.
             let contents = tokens
                 .get(first_paren..(last_paren + first_paren).min(tokens.len()))
                 .unwrap_or_default();
@@ -1531,9 +1530,9 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    /// The first half of `rule`: whether `tokens` end with the `@{` of an interpolation. These two are taken from them then,
-    /// and the next token is the interpolation.
-    fn less_rule_interpolation(&mut self, tokens: &mut Vec<Token>) -> Result<bool, Refused> {
+    /// The first half of `rule`. Returns true if `tokens` ends with the `@{` of an interpolation. In that case those
+    /// two tokens are removed, and the tokenizer's next token is the whole interpolation.
+    fn less_rule_interpolation(&mut self, tokens: &mut Vec<Token>) -> Result<bool, Rejected> {
         let [.., prev, last] = tokens[..] else {
             return Ok(false);
         };
@@ -1548,7 +1547,7 @@ impl<'a> Parser<'a> {
         Ok(is_interpolation)
     }
 
-    fn less_rule(&mut self, tokens: &mut Vec<Token>) -> Result<(), Refused> {
+    fn less_rule(&mut self, tokens: &mut Vec<Token>) -> Result<(), Rejected> {
         self.base_rule(tokens)?;
         let node = &mut self.nodes[self.last_node as usize];
         node.extend = has_extend(
@@ -1561,7 +1560,7 @@ impl<'a> Parser<'a> {
     }
 
     /// `isInlineComment`
-    fn less_inline_comment(&mut self, mut token: Token) -> Result<bool, Refused> {
+    fn less_inline_comment(&mut self, mut token: Token) -> Result<bool, Rejected> {
         let text = self.text_of(token);
         if token.kind == TokenKind::Word && text.starts_with(b"//") {
             let mut end = token.range.start;
@@ -1570,7 +1569,7 @@ impl<'a> Parser<'a> {
             while let Some(part) = current {
                 let text = self.text_of(part);
                 if let Some(line_break) = bun_core::strings::index_of_char_usize(text, b'\n') {
-                    // `/['"].*\r?\n/`: a string that goes on in the next line.
+                    // `/['"].*\r?\n/`: a string that continues on the next line.
                     let last_line_break =
                         bun_core::strings::last_index_of_char(text, b'\n').unwrap_or(line_break);
                     if bun_core::strings::index_of_any(&text[..last_line_break], b"'\"").is_some() {
@@ -1589,7 +1588,7 @@ impl<'a> Parser<'a> {
             let node = self.node(id);
             node.inline = true;
             node.text = text;
-            // From here on, `postcss-less` counts from the start of the rest of the text.
+            // From here on, `postcss-less` counts offsets from the start of the remaining text.
             if let Some(pos) = remaining_input {
                 self.tokenizer.pos = pos;
                 self.tokenizer.shift = pos;
@@ -1611,7 +1610,7 @@ impl<'a> Parser<'a> {
                 self.tokenizer.back(Some(next));
                 return self.less_inline_comment(token);
             }
-            // Otherwise the token is lost.
+            // Otherwise `next` is lost, as in `postcss-less`.
         }
         Ok(false)
     }
@@ -1625,8 +1624,8 @@ pub(crate) fn parse(
     parse_from(css, syntax, 0, false, placeholder)
 }
 
-/// Parses `--a: { .. }`, which starts at `start` and goes to the end of `css`, as if it were the rule
-/// `a: { .. }`. Prettier does it by replacing the name, and everything before it by blanks.
+/// Parses `--a: { .. }`, which spans from `start` to the end of `css`, as if it were the rule `a: { .. }`. Prettier
+/// does this by rewriting the name and replacing everything before it with spaces.
 pub(crate) fn parse_custom_property_set(
     css: &[u8],
     syntax: Syntax,
@@ -1642,7 +1641,7 @@ fn parse_from(
     is_custom_property_set: bool,
     placeholder: Placeholder,
 ) -> Result<Tree, SyntaxError> {
-    // Half of the numbers are for `Texts::extra`, which is no longer than the text.
+    // Half of the `u32` range is reserved for `Texts::extra`, which is never longer than the text.
     if css.len() >= (u32::MAX / 2) as usize {
         return Err(SyntaxError(Message::TooLarge, 0));
     }
@@ -1657,7 +1656,7 @@ fn parse_from(
         tokenizer: Tokenizer {
             css,
             syntax,
-            refusal: Refusal::default(),
+            rejection: Rejection::default(),
             pos,
             shift: 0,
             buffer: Vec::new(),
@@ -1680,7 +1679,7 @@ fn parse_from(
     });
     parser
         .parse()
-        .map_err(|_| parser.tokenizer.refusal.reason())?;
+        .map_err(|_| parser.tokenizer.rejection.reason())?;
     Ok(Tree {
         nodes: parser.nodes,
         extra: parser.texts.extra,

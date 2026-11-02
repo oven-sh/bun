@@ -1,4 +1,4 @@
-//! The names of tags, emphasis, capital letters, and types.
+//! Normalizes tag names, emphasis, capitalization and types.
 
 use super::text::{lines, parse_index, push_number};
 use crate::options::QuoteStyle;
@@ -9,7 +9,7 @@ use std::borrow::Cow;
 
 type Bytes<'a> = Cow<'a, [u8]>;
 
-/// The name that stands for all the names of a tag: `TAGS_SYNONYMS` of prettier-plugin-jsdoc.
+/// Returns the canonical name for a tag's synonyms: prettier-plugin-jsdoc's `TAGS_SYNONYMS`.
 pub(super) fn normalize_tag_kind(kind: &[u8]) -> &[u8] {
     match kind {
         b"return" => b"returns",
@@ -32,13 +32,13 @@ pub(super) fn normalize_tag_kind(kind: &[u8]) -> &[u8] {
     }
 }
 
-/// Where the `*` is that closes the emphasis that the `*` at `opener` opens.
+/// Returns the index of the `*` that closes the emphasis opened by the `*` at `opener`.
 fn find_emphasis_end(bytes: &[u8], opener: usize) -> Option<usize> {
     let len = bytes.len();
     let mut j = opener + 1;
     while j < len {
         if bytes[j] == b'`' {
-            // Code.
+            // Skip inline code.
             j += 1;
             while j < len && bytes[j] != b'`' {
                 j += 1;
@@ -97,7 +97,7 @@ pub(super) fn normalize_markdown_emphasis(text: &[u8]) -> Bytes<'_> {
             i += 2;
             continue;
         }
-        // It opens emphasis if something other than white space follows it.
+        // It opens emphasis if it's followed by something other than whitespace.
         if bytes
             .get(i + 1)
             .is_some_and(|next| !next.is_ascii_whitespace())
@@ -117,8 +117,8 @@ pub(super) fn normalize_markdown_emphasis(text: &[u8]) -> Bytes<'_> {
     }
 }
 
-/// Makes the first letter a capital one, if it is an ASCII letter. Not that of code or of a URL. What comes
-/// after any number of `- ` counts as the start.
+/// Capitalizes the first letter if it's an ASCII letter, except in code or a URL. Any number of leading `- ` is skipped
+/// first.
 pub(super) fn capitalize_first(text: &[u8]) -> Bytes<'_> {
     let starts_with = |prefix: &[u8]| {
         text.get(..prefix.len())
@@ -162,8 +162,8 @@ pub(super) fn append_trailing_dot(text: &[u8]) -> Bytes<'_> {
     }
 }
 
-/// A type over several lines, without the `*` at the start of each, with `separator` in the place of the
-/// line breaks.
+/// Joins a multiline type into one text: strips the `*` at the start of each line and replaces the line breaks with
+/// `separator`.
 fn strip_stars(text: &[u8], separator: u8) -> Vec<u8> {
     let mut result = Vec::with_capacity(text.len());
     for (index, line) in lines(text).enumerate() {
@@ -188,9 +188,8 @@ pub(super) fn strip_jsdoc_stars_preserve_newlines(text: &[u8]) -> Vec<u8> {
     }
 }
 
-/// `convertToModernType` of prettier-plugin-jsdoc: `?Type` and `Type?` become `Type | null`, `*` becomes
-/// `any`, `Array<T>` becomes `T[]`, `Foo.<T>` becomes `Foo<T>`, and the quotes in `import()` are those of
-/// `quote_style`.
+/// prettier-plugin-jsdoc's `convertToModernType`: `?Type` and `Type?` become `Type | null`, `*` becomes `any`,
+/// `Array<T>` becomes `T[]`, `Foo.<T>` becomes `Foo<T>`, and the quotes in `import()` follow `quote_style`.
 pub(super) fn normalize_type<'t>(
     type_str: &'t [u8],
     quote_style: QuoteStyle,
@@ -199,7 +198,7 @@ pub(super) fn normalize_type<'t>(
     normalize_type_impl(type_str, Some(quote_style), stack)
 }
 
-/// The same with the quotes as they are, for `@type`, `@typedef` and `@satisfies`.
+/// Same, but keeps the quotes, for `@type`, `@typedef` and `@satisfies`.
 pub(super) fn normalize_type_preserve_quotes<'t>(type_str: &'t [u8], stack: &Stack) -> Bytes<'t> {
     normalize_type_impl(type_str, None, stack)
 }
@@ -228,10 +227,10 @@ fn normalize_type_impl<'t>(
     Cow::Owned(fix_object_commas(&unquoted).into_owned())
 }
 
-/// `withoutStrings`: `transform` sees `String$N$` in the place of each string.
+/// `withoutStrings`: `transform` sees `String$N$` in place of each string.
 fn without_strings(type_str: &[u8], transform: impl FnOnce(&[u8]) -> Vec<u8>) -> Vec<u8> {
     if strings::index_of_any(type_str, b"'\"").is_none() {
-        // A template literal type is left alone.
+        // A template literal type is left as is.
         return match strings::contains_char(type_str, b'`') {
             true => type_str.to_vec(),
             false => transform(type_str),
@@ -270,7 +269,7 @@ fn without_strings(type_str: &[u8], transform: impl FnOnce(&[u8]) -> Vec<u8>) ->
     }
     let result = transform(&modified);
 
-    // The strings come back.
+    // Put the strings back.
     const PREFIX: &[u8] = b"String$";
     let mut restored = Vec::with_capacity(result.len());
     let mut rest = &result[..];
@@ -343,7 +342,7 @@ fn normalize_type_inner(type_str: &[u8], stack: &Stack) -> Vec<u8> {
     normalize_type_core(trimmed, stack)
 }
 
-/// Arrays, the dots before `<`, white space. Each member of a union by itself.
+/// Normalizes arrays, the dots before `<`, and whitespace. Each member of a union is handled separately.
 fn normalize_type_core(type_str: &[u8], stack: &Stack) -> Vec<u8> {
     let trimmed = strings::trim_unicode_whitespace(type_str);
     let parts = split_at_top_level_pipe(trimmed);
@@ -358,14 +357,14 @@ fn normalize_type_core(type_str: &[u8], stack: &Stack) -> Vec<u8> {
     while let Some(next) = replace_one_array_pattern(&converted, stack) {
         converted = next;
     }
-    // What is made of it is of no use.
+    // The result will be discarded anyway.
     if stack.ran_out() {
         return converted;
     }
     normalize_type_whitespace(&converted).into_owned()
 }
 
-/// Makes `T[]` of one `Array<T>` in `type_str`. `None` if there is none.
+/// Turns one `Array<T>` in `type_str` into `T[]`. Returns `None` if there is none.
 fn replace_one_array_pattern(type_str: &[u8], stack: &Stack) -> Option<Vec<u8>> {
     if stack.ran_out() {
         return None;
@@ -404,13 +403,13 @@ fn replace_one_array_pattern(type_str: &[u8], stack: &Stack) -> Option<Vec<u8>> 
     None
 }
 
-/// Where the `>` is that closes the `<` before `text`.
+/// Returns the index of the `>` that closes the `<` before `text`.
 fn find_matching_close_angle(text: &[u8]) -> Option<usize> {
     let mut depth = 1i32;
     for (i, &byte) in text.iter().enumerate() {
         match byte {
             b'<' => depth += 1,
-            // Not that of `=>`.
+            // Not the `>` of `=>`.
             b'>' if i == 0 || text[i - 1] != b'=' => {
                 depth -= 1;
                 if depth == 0 {
@@ -423,7 +422,7 @@ fn find_matching_close_angle(text: &[u8]) -> Option<usize> {
     None
 }
 
-/// The parts of `type_str` between the `|` that are not in brackets of any kind.
+/// Splits `type_str` at each `|` that isn't inside brackets of any kind.
 fn split_at_top_level_pipe(type_str: &[u8]) -> Vec<&[u8]> {
     let mut parts = Vec::new();
     let mut depth = 0i32;
@@ -444,7 +443,7 @@ fn split_at_top_level_pipe(type_str: &[u8]) -> Vec<&[u8]> {
     parts
 }
 
-/// Whether `trimmed` ends with the `=` of Closure's optional types.
+/// True if `trimmed` ends with the `=` of Closure's optional types.
 fn has_optional_suffix(trimmed: &[u8]) -> bool {
     trimmed.ends_with(b"=") && !contains_quotes(trimmed)
 }
@@ -463,7 +462,7 @@ pub(super) fn normalize_type_return<'t>(
     normalize_type(trimmed, quote_style, stack)
 }
 
-/// The type without the `=` at its end, and whether there is one.
+/// Returns the type without the `=` at its end, and whether it had one.
 pub(super) fn strip_optional_type_suffix(type_str: &[u8]) -> (&[u8], bool) {
     let trimmed = strings::trim_unicode_whitespace(type_str);
     if has_optional_suffix(trimmed) {
@@ -544,7 +543,7 @@ fn contains_quotes(text: &[u8]) -> bool {
     strings::index_of_any(text, b"\"'").is_some()
 }
 
-/// The quotes of the paths in `import()` become those of `quote_style`. No others do.
+/// Changes the quotes of the paths in `import()` to `quote_style`. Other quotes are kept.
 fn normalize_type_quotes(type_str: &[u8], quote_style: QuoteStyle) -> Bytes<'_> {
     let (source_quote, target_quote) = match quote_style {
         QuoteStyle::Double => (b'\'', b'"'),
@@ -646,7 +645,7 @@ fn unquote_object_property_names(type_str: &[u8]) -> Bytes<'_> {
     Cow::Owned(result)
 }
 
-/// `fixObjectCommas`: in the type of an object, `; x` becomes `, x`.
+/// `fixObjectCommas`: in an object type, `; x` becomes `, x`.
 fn fix_object_commas(type_str: &[u8]) -> Bytes<'_> {
     let trimmed = strings::trim_unicode_whitespace(type_str);
     if !trimmed.starts_with(b"{")
@@ -669,7 +668,7 @@ fn fix_object_commas(type_str: &[u8]) -> Bytes<'_> {
     Cow::Owned(result)
 }
 
-/// One space in the place of any white space, and spaces around `|`, `&` and `=>`.
+/// Collapses each run of whitespace into one space, and puts spaces around `|`, `&` and `=>`.
 pub(super) fn normalize_type_whitespace(type_str: &[u8]) -> Bytes<'_> {
     let trimmed = strings::trim_unicode_whitespace(type_str);
     let len = trimmed.len();
@@ -729,7 +728,7 @@ pub(super) fn normalize_type_whitespace(type_str: &[u8]) -> Bytes<'_> {
     }
 }
 
-/// Whether nothing in `text` is something that `normalize_type` changes.
+/// True if `text` contains nothing that `normalize_type` would change.
 fn is_already_normalized(text: &[u8]) -> bool {
     !text.is_empty()
         && strings::index_of_any(text, b"?'\"{}*=&|!\n").is_none()

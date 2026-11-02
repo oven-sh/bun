@@ -1,0 +1,19 @@
+# ({ valueOf: Bun.plugin }) & 1
+# The conversion of an operand finds `valueOf` by the name of its protocol and calls what lies there. Seen code names the function neither as a callee nor as an operand of a call.
+# It is applied for an operation of the program, so the event is raised, and the record names the built-in
+# RUN: valueflow-solve unseen
+# CHECK: unseen RunsUnseenCode BunPlugin
+# CHECK: unseen-code yes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Converted" fields=[{key="valueOf" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=BunPlugin
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = Integer integer=1
+    v4 = BitAnd v2, v3
+    Return
+}

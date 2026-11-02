@@ -4,14 +4,14 @@ use crate::ast::{Expr, ExprKind};
 use crate::span::Span;
 use bun_core::lexer::char_and_size;
 
-/// ESLint's `CodeUnit`. One UTF-16 code unit of the value of a string literal or of a template
-/// token, and the part of the source text that produces it.
+/// ESLint's `CodeUnit`. One UTF-16 code unit of a string literal's or template token's value, and
+/// the part of the source text that produces it.
 ///
-/// `start` and `end` are offsets **in bytes** from the start of the literal or the token, its
-/// delimiter included. Upstream's are in UTF-16 code units.
+/// `start` and `end` are offsets **in bytes** from the start of the literal or token, including its
+/// delimiter. Upstream's are in UTF-16 code units.
 ///
-/// The two halves of a surrogate pair that come from one character of the source or from one
-/// `\u{..}` have the same range, that of the character or of the escape sequence.
+/// The two halves of a surrogate pair that come from one source character or from one `\u{..}` have
+/// the same range: that character's or escape sequence's.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct CharInfo {
     pub code_unit: u16,
@@ -26,7 +26,7 @@ struct Reader<'t> {
 }
 
 impl<'t> Reader<'t> {
-    /// At the character after the opening delimiter.
+    /// Starts at the character after the opening delimiter.
     fn new(source: &'t [u8]) -> Self {
         Reader {
             source,
@@ -35,7 +35,7 @@ impl<'t> Reader<'t> {
         }
     }
 
-    /// Adds the code units of `c`, whose source is from `start` to the current position.
+    /// Adds the code units of `c`, whose source runs from `start` to the current position.
     fn push(&mut self, start: usize, c: u32) {
         let (start, end) = (start as u32, self.at as u32);
         let mut unit = |code_unit: u32| {
@@ -121,7 +121,7 @@ impl<'t> Reader<'t> {
         self.push(start, c);
     }
 
-    /// Reads a character that stands for itself.
+    /// Reads an unescaped character.
     fn character(&mut self) {
         let start = self.at;
         let (c, size) = char_and_size(self.source, start);
@@ -130,8 +130,8 @@ impl<'t> Reader<'t> {
     }
 }
 
-/// ESLint's `parseStringLiteral`. `source` is the literal with its quotes. The result has one
-/// element for each UTF-16 code unit of the value of the literal: for a pattern given to `RegExp`,
+/// ESLint's `parseStringLiteral`. `source` is the literal including its quotes. The result has one
+/// element for each UTF-16 code unit of the literal's value. For a pattern passed to `RegExp`,
 /// `regex::Node::utf16_start` and `utf16_end` are indices into it.
 pub fn parse_string_literal(source: &[u8]) -> Vec<CharInfo> {
     let mut reader = Reader::new(source);
@@ -147,8 +147,8 @@ pub fn parse_string_literal(source: &[u8]) -> Vec<CharInfo> {
     reader.units
 }
 
-/// ESLint's `parseTemplateToken`. `source` is a template token with its delimiters `` ` ``, `${`
-/// and `}`, or a template literal without substitutions. The result has one element for each
+/// ESLint's `parseTemplateToken`. `source` is a template token including its delimiters `` ` ``,
+/// `${` and `}`, or a template literal without substitutions. The result has one element for each
 /// UTF-16 code unit of the cooked value.
 pub fn parse_template_token(source: &[u8]) -> Vec<CharInfo> {
     let mut reader = Reader::new(source);
@@ -167,17 +167,17 @@ pub fn parse_template_token(source: &[u8]) -> Vec<CharInfo> {
     reader.units
 }
 
-/// Where the parts of the value of a string literal, or of a template without substitutions, are
-/// written: for a pattern that is given to `RegExp`.
-pub struct Written {
-    /// Where the literal starts.
+/// Maps parts of the value of a string literal, or of a template without substitutions, to their
+/// source spans. It's for a pattern passed to `RegExp`.
+pub struct LiteralSourceMap {
+    /// The literal's start offset.
     start: u32,
     units: Vec<CharInfo>,
 }
 
-impl Written {
+impl LiteralSourceMap {
     /// `None` for any other expression.
-    pub fn new(literal: Expr<'_>) -> Option<Written> {
+    pub fn new(literal: Expr<'_>) -> Option<LiteralSourceMap> {
         let units = match literal.kind() {
             ExprKind::String(_) => parse_string_literal(literal.text()),
             ExprKind::Template(template) if template.exprs().is_empty() => {
@@ -185,14 +185,14 @@ impl Written {
             }
             _ => return None,
         };
-        Some(Written {
+        Some(LiteralSourceMap {
             start: literal.span().start,
             units,
         })
     }
 
-    /// Where the UTF-16 code units of the value from `start` to `end` are written: for
-    /// `regex::Node::utf16_start` and `utf16_end`. `None` if there are none.
+    /// The source span of the value's UTF-16 code units from `start` to `end`, which come from
+    /// `regex::Node::utf16_start` and `utf16_end`. `None` if the range is empty.
     pub fn span(&self, start: u32, end: u32) -> Option<Span> {
         let first = self.units.get(start as usize)?;
         let last = self.units.get(end.checked_sub(1)? as usize)?;

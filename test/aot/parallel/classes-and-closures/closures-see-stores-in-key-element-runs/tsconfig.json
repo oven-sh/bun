@@ -1,0 +1,1 @@
+{ "compilerOptions": { "jsx": "react-jsx", "jsxImportSource": "stand-in", "paths": { "stand-in/jsx-runtime": ["./runtime.js"], "stand-in/jsx-dev-runtime": ["./runtime.js"], "stand-in": ["./runtime.js"] } } }

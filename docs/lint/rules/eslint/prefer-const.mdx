@@ -16,7 +16,7 @@ deprecated: false
 
 A variable that's declared without a value and assigned exactly once, in the same block, is reported too, because the declaration and the assignment can be one `const`.
 
-`--fix` changes `let` to `const` when every variable in the declaration has an initial value and can be `const`.
+`--fix` changes `let` to `const` when every variable in the declaration has an initial value and can be `const`. It leaves an `export let` inside a `namespace` alone, because any file can assign to it as `Config.verbose = true`. `--fix-dangerously` changes that one too.
 
 This rule is on by default in TypeScript files.
 

@@ -1098,6 +1098,298 @@ test.concurrent("server.reload() while an html route's first bundle is still in 
   });
 });
 
+// The dev server's HMR socket and the user's `websocket` handlers are separate
+// uWS websocket behaviors on the same app, each with its own context.
+test.concurrent("HMR clients never reach the user's websocket handlers, before or after server.reload()", async () => {
+  using dir = tempDir("bun-serve-html-hmr-and-user-websocket", {
+    "index.html": `<!DOCTYPE html><html><head><title>t</title></head><body><script type="module" src="./app.ts"></script></body></html>`,
+    "app.ts": `console.log("app");`,
+    "serve.ts": /*ts*/ `
+      import html from "./index.html";
+
+      const options = version => ({
+        port: 0,
+        development: true,
+        routes: { "/": html },
+        fetch(req, server) {
+          if (server.upgrade(req)) return;
+          return new Response("not a websocket", { status: 400 });
+        },
+        websocket: {
+          message(ws, message) {
+            ws.send("user v" + version + " got " + message);
+          },
+        },
+      });
+      const server = Bun.serve(options(1));
+
+      // The dev server replies to the HMR client's "set url" message ('n' + route
+      // pattern) with 'n' + the route bundle index as a u32.
+      async function hmrRouteBundleIndex() {
+        const url = new URL("/_bun/hmr", server.url);
+        url.protocol = "ws:";
+        const ws = new WebSocket(url);
+        ws.binaryType = "arraybuffer";
+        const { promise, resolve, reject } = Promise.withResolvers();
+        ws.onerror = reject;
+        ws.onclose = () => reject(new Error("hmr socket closed before replying"));
+        ws.onmessage = ({ data }) => {
+          if (typeof data === "string") return reject(new Error("hmr socket replied with text: " + data));
+          const view = new DataView(data);
+          if (view.getUint8(0) === "n".charCodeAt(0)) resolve(view.getUint32(1, true));
+        };
+        ws.onopen = () => ws.send(new TextEncoder().encode("n/"));
+        try {
+          return await promise;
+        } finally {
+          ws.onclose = null;
+          ws.close();
+        }
+      }
+
+      async function userEcho(message) {
+        const url = new URL("/ws", server.url);
+        url.protocol = "ws:";
+        const ws = new WebSocket(url);
+        const { promise, resolve, reject } = Promise.withResolvers();
+        ws.onerror = reject;
+        ws.onclose = () => reject(new Error("user socket closed before replying"));
+        ws.onmessage = ({ data }) => resolve(data);
+        ws.onopen = () => ws.send(message);
+        try {
+          return await promise;
+        } finally {
+          ws.onclose = null;
+          ws.close();
+        }
+      }
+
+      await fetch(server.url);
+      const before = { hmr: await hmrRouteBundleIndex(), user: await userEcho("hello") };
+      server.reload(options(2));
+      const after = { hmr: await hmrRouteBundleIndex(), user: await userEcho("hello") };
+      console.log(JSON.stringify({ before, after }));
+      server.stop(true);
+    `,
+  });
+  const { stdout, stderr, exitCode } = await runServeFixture(dir);
+  expect({ stdout, exitCode }, stderr).toEqual({
+    stdout: JSON.stringify({
+      before: { hmr: 0, user: "user v1 got hello" },
+      after: { hmr: 0, user: "user v2 got hello" },
+    }),
+    exitCode: 0,
+  });
+});
+
+// An in-flight bundle frees a file's code as soon as that file fails, but the route's state and
+// script generation don't change until the bundle ends.
+// The plugin pauses the bundle in onResolve. Imports resolve in order, so the import before
+// "./parked.ts" has already resolved or failed.
+describe("requests while a dev server bundle is in flight", () => {
+  const htmlPage = (...scripts: string[]) =>
+    `<!DOCTYPE html><html><head><title>t</title></head><body>${scripts
+      .map(src => `<script type="module" src="${src}"></script>`)
+      .join("")}</body></html>`;
+  const fixture = {
+    "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+    "index.html": htmlPage("./app.ts"),
+    "app.ts": `console.log("app");`,
+    "bare.html": htmlPage(),
+    "other.html": htmlPage("./other.ts"),
+    "other.ts": `import "./parked.ts";`,
+    "broken.html": htmlPage("./broken.ts"),
+    "broken.ts": `const = ;`,
+    "bad.ts": `let = ;`,
+    "parked.ts": `export {};`,
+    "plugin.ts": /*ts*/ `
+      import { join } from "node:path";
+      export default {
+        name: "park-bundle",
+        setup(build) {
+          build.onResolve({ filter: /parked\\.ts$/ }, async () => {
+            globalThis.bundleParked.resolve();
+            await globalThis.releaseBundle.promise;
+            return { path: join(import.meta.dir, "parked.ts") };
+          });
+        },
+      };
+    `,
+    "serve.ts": /*ts*/ `
+      import { writeFileSync } from "node:fs";
+      import index from "./index.html";
+      import bare from "./bare.html";
+      import other from "./other.html";
+      import broken from "./broken.html";
+
+      globalThis.bundleParked = Promise.withResolvers();
+      globalThis.releaseBundle = Promise.withResolvers();
+
+      using server = Bun.serve({
+        port: 0,
+        development: true,
+        routes: { "/": index, "/bare": bare, "/other": other, "/broken": broken },
+        fetch: () => new Response("barrier"),
+      });
+      const get = path => fetch(new URL(path, server.url));
+      const status = path => get(path).then(response => response.status);
+
+      // "route" is the page the tab loaded. "start" starts a bundle.
+      const scenarios = {
+        "rebuild that fails the script": {
+          route: "/",
+          start: () => writeFileSync("app.ts", 'import "./missing.ts";\\nimport "./parked.ts";\\n'),
+        },
+        "rebuild that fails the only module": {
+          route: "/bare",
+          start: () => writeFileSync("bare.html", ${JSON.stringify(htmlPage("./missing.ts", "./parked.ts"))}),
+        },
+        "first bundle of another route": {
+          route: "/",
+          start: () => status("/other"),
+        },
+        // "/broken" already failed. A request for it collects every failure reachable from it, but it must
+        // skip bad.ts's parse failure, which belongs to the in-flight bundle that fails "/".
+        "rebuild that fails to parse an import, and a request for a failed route": {
+          route: "/",
+          before: () => status("/broken"),
+          start: () => writeFileSync("app.ts", 'import "./bad.ts";\\nimport "./parked.ts";\\n'),
+          whileParked: () => status("/broken"),
+        },
+      };
+      const { route, before, start, whileParked } = scenarios[process.env.BUNDLE_IN_FLIGHT];
+
+      await before?.();
+      // The tab loaded the page but hasn't requested the script yet.
+      const page = await (await get(route)).text();
+      const scriptUrl = new URL(page.match(/src="(\\/_bun\\/client\\/[^"]+)"/)[1], server.url);
+
+      const started = start();
+      await globalThis.bundleParked.promise;
+      // Parse results arrive from another thread. The server has received them by the time it responds to this.
+      await get("/barrier");
+      const otherPage = whileParked?.();
+
+      const script = fetch(scriptUrl).then(response => response.text());
+      // The server has read both requests by the time it responds to this one.
+      await get("/barrier");
+      globalThis.releaseBundle.resolve();
+
+      const text = await script;
+      console.log(
+        JSON.stringify({
+          script: text.startsWith("try{location.reload()}")
+            ? "reloads the page"
+            : Array.from(text.matchAll(/^  "([^"]+)": \\[/gm), match => match[1]),
+          pageAfterwards: await status(route),
+          otherPage: (await started) ?? (await otherPage),
+        }),
+      );
+    `,
+  };
+
+  test.concurrent.each([
+    // The script reloads the page, which then shows the error page.
+    ["rebuild that fails the script", { script: "reloads the page", pageAfterwards: 500 }],
+    ["rebuild that fails the only module", { script: "reloads the page", pageAfterwards: 500 }],
+    // The bundle doesn't affect this route.
+    ["first bundle of another route", { script: ["index.html", "app.ts"], pageAfterwards: 200, otherPage: 200 }],
+    [
+      "rebuild that fails to parse an import, and a request for a failed route",
+      { script: "reloads the page", pageAfterwards: 500, otherPage: 500 },
+    ],
+  ])("%s", async (scenario, expected) => {
+    using dir = tempDir("bun-serve-html-script-during-bundle", fixture);
+    const { stdout, stderr, exitCode } = await runServeFixture(dir, { BUNDLE_IN_FLIGHT: scenario });
+    expect({ stdout, exitCode }, stderr).toEqual({ stdout: JSON.stringify(expected), exitCode: 0 });
+  });
+});
+
+// The rejection ends the bundle, and the next bundle reuses the memory that the first one freed.
+test.concurrent("starts the queued bundle after an onLoad plugin's rejection ends a dev server bundle", async () => {
+  const rounds = [0, 1, 2, 3, 4, 5];
+  const page = (script: string) =>
+    `<!DOCTYPE html><html><head><title>t</title></head><body><script type="module" src="./${script}"></script></body></html>`;
+  using dir = tempDir("bun-serve-html-onload-rejects-last", {
+    "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+    ...Object.fromEntries(
+      rounds.flatMap(i => [
+        [`rejected${i}.html`, page(`rejected${i}.ts`)],
+        [`rejected${i}.ts`, `console.log(${i});`],
+        [`queued${i}.html`, page(`queued${i}.ts`)],
+        [`queued${i}.ts`, `console.log(${i});`],
+      ]),
+    ),
+    "plugin.ts": /*ts*/ `
+      export default {
+        name: "reject-load",
+        setup(build) {
+          build.onLoad({ filter: /rejected\\d\\.ts$/ }, async () => {
+            globalThis.loadParked.resolve();
+            await globalThis.releaseLoad.promise;
+            throw new Error("onLoad rejects");
+          });
+        },
+      };
+    `,
+    "serve.ts": /*ts*/ `
+      const routes = {};
+      for (const i of ${JSON.stringify(rounds)}) {
+        routes["/rejected" + i] = (await import("./rejected" + i + ".html")).default;
+        routes["/queued" + i] = (await import("./queued" + i + ".html")).default;
+      }
+      using server = Bun.serve({ port: 0, development: true, routes, fetch: () => new Response("barrier") });
+      const status = path => fetch(new URL(path, server.url)).then(response => response.status);
+
+      const statuses = [];
+      for (const i of ${JSON.stringify(rounds)}) {
+        globalThis.loadParked = Promise.withResolvers();
+        globalThis.releaseLoad = Promise.withResolvers();
+        const rejected = status("/rejected" + i);
+        await globalThis.loadParked.promise;
+        const queued = status("/queued" + i);
+        // The server has read the request for the queued route by the time it responds to this one.
+        await status("/barrier");
+        globalThis.releaseLoad.resolve();
+        statuses.push(await rejected, await queued);
+      }
+      console.log(statuses.join(" "));
+    `,
+  });
+  const { stdout, stderr, exitCode } = await runServeFixture(dir);
+  expect({ stdout, exitCode }, stderr).toEqual({ stdout: rounds.map(() => "500 200").join(" "), exitCode: 0 });
+});
+
+test.concurrent("a route keeps failing when its broken module was imported through an onResolve plugin", async () => {
+  const page = (script: string) =>
+    `<!DOCTYPE html><html><head><title>t</title></head><body><script type="module" src="./${script}"></script></body></html>`;
+  using dir = tempDir("bun-serve-html-onresolve-failed-import", {
+    "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+    "broken.html": page("broken.ts"),
+    "broken.ts": `import "./missing.ts";`,
+    "fine.html": page("fine.ts"),
+    "fine.ts": `console.log("fine");`,
+    "plugin.ts": /*ts*/ `
+      export default {
+        name: "resolve-nothing",
+        setup(build) {
+          build.onResolve({ filter: /\\.ts$/ }, () => undefined);
+        },
+      };
+    `,
+    "serve.ts": /*ts*/ `
+      import broken from "./broken.html";
+      import fine from "./fine.html";
+
+      using server = Bun.serve({ port: 0, development: true, routes: { "/broken": broken, "/fine": fine } });
+      const status = path => fetch(new URL(path, server.url)).then(response => response.status);
+      console.log(await status("/broken"), await status("/fine"), await status("/broken"));
+    `,
+  });
+  const { stdout, stderr, exitCode } = await runServeFixture(dir);
+  expect({ stdout, exitCode }, stderr).toEqual({ stdout: "500 200 500", exitCode: 0 });
+});
+
 // process.chdir() leaves the cached top-level directory with a trailing slash,
 // which the dev server then used as its root. Reporting a bundle failure
 // relativizes the failing file against that root and hit a debug assertion
@@ -1120,6 +1412,111 @@ test.concurrent("dev server started after process.chdir() reports bundle failure
   expect(stderr).toContain(`Could not resolve: "./does-not-exist"`);
   expect(stdout, stderr).toBe(JSON.stringify({ status: 500 }));
   expect(exitCode).toBe(0);
+});
+
+// A file is marked stale as soon as one of its imports fails to resolve, before the rebuild ends.
+// The plugin pauses the rebuild in onResolve. Imports resolve in order, so "./missing.css" has already failed.
+test.concurrent("serves a page request during a rebuild that fails a linked stylesheet", async () => {
+  const page = (title: string) =>
+    `<!DOCTYPE html><html><head><title>${title}</title><link rel="stylesheet" href="./index.css"></head><body><script type="module" src="./app.ts"></script></body></html>`;
+  using dir = tempDir("bun-serve-html-page-during-css-rebuild", {
+    "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+    "index.html": page("one"),
+    "index.css": `@import "./child.css";\n.a { color: red; }\n`,
+    "child.css": `.c { color: blue; }\n`,
+    "parked.css": `.p { color: green; }\n`,
+    "app.ts": `console.log("app");`,
+    "plugin.ts": /*ts*/ `
+      import { join } from "node:path";
+      export default {
+        name: "park-bundle",
+        setup(build) {
+          build.onResolve({ filter: /parked\\.css$/ }, async () => {
+            globalThis.bundleParked.resolve();
+            await globalThis.releaseBundle.promise;
+            return { path: join(import.meta.dir, "parked.css") };
+          });
+        },
+      };
+    `,
+    "serve.ts": /*ts*/ `
+      import { writeFileSync } from "node:fs";
+      import index from "./index.html";
+
+      globalThis.bundleParked = Promise.withResolvers();
+      globalThis.releaseBundle = Promise.withResolvers();
+
+      using server = Bun.serve({ port: 0, development: true, routes: { "/": index } });
+      async function fetchPage() {
+        const response = await fetch(server.url);
+        const text = await response.text();
+        const links = text.match(/<link rel="stylesheet"[^>]*>/g) ?? [];
+        const stylesheets = [];
+        for (const link of links) {
+          const href = link.match(/href="([^"]*)"/)[1];
+          const css = await fetch(new URL(href, server.url));
+          stylesheets.push({ status: css.status, rules: (await css.text()).match(/\\.[a-z] \\{/g) });
+        }
+        return {
+          status: response.status,
+          title: text.match(/<title>(.*?)<\\/title>/)?.[1] ?? null,
+          stylesheets,
+        };
+      }
+
+      const first = await fetchPage();
+
+      // The HMR socket reports when a rebuild ends. 'u' is a hot update and 'e' is a list of errors.
+      const url = new URL("/_bun/hmr", server.url);
+      url.protocol = "ws:";
+      const ws = new WebSocket(url);
+      ws.binaryType = "arraybuffer";
+      let awaited = null;
+      ws.onmessage = ({ data }) => {
+        if (awaited?.kind === String.fromCharCode(new Uint8Array(data)[0])) awaited.resolve();
+      };
+      function nextMessage(kind) {
+        const { promise, resolve } = Promise.withResolvers();
+        awaited = { kind, resolve };
+        return promise;
+      }
+
+      // The server replies to "set url" ('n' + route) with 'n' after it has read the subscription ('s' + topics).
+      const subscribed = nextMessage("n");
+      ws.onopen = () => {
+        ws.send("she");
+        ws.send("n/");
+      };
+      await subscribed;
+
+      // This rebuild drops the rendered page, so the next request renders it again.
+      const htmlRebuilt = nextMessage("u");
+      writeFileSync("index.html", ${JSON.stringify(page("two"))});
+      await htmlRebuilt;
+
+      writeFileSync("index.css", '@import "./child.css";\\n@import "./missing.css";\\n@import "./parked.css";\\n.a { color: red; }\\n');
+      await globalThis.bundleParked.promise;
+      const duringRebuild = await fetchPage();
+
+      const cssRebuildFailed = nextMessage("e");
+      globalThis.releaseBundle.resolve();
+      await cssRebuildFailed;
+      const afterRebuild = await fetchPage();
+
+      ws.close();
+      console.log(JSON.stringify({ first, duringRebuild, afterRebuild }));
+    `,
+  });
+  const { stdout, stderr, exitCode } = await runServeFixture(dir);
+  expect({ stdout, exitCode }, stderr).toEqual({
+    stdout: JSON.stringify({
+      first: { status: 200, title: "one", stylesheets: [{ status: 200, rules: [".c {", ".a {"] }] },
+      duringRebuild: { status: 200, title: "two", stylesheets: [{ status: 200, rules: [".c {", ".a {"] }] },
+      afterRebuild: { status: 500, title: "Bun - Build Failed", stylesheets: [] },
+    }),
+    exitCode: 0,
+  });
+  expect(stderr).toContain(`Could not resolve: "./missing.css"`);
 });
 
 test("wildcard static routes", async () => {

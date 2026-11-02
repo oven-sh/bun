@@ -252,8 +252,8 @@ describe.concurrent("frames in the same read as the upgrade request", () => {
     expect(events).toEqual(["open", "message:early", "ping:p", "message:later"]);
   });
 
-  // server.upgrade() does not read a body that the upgrade request declares.
-  // The body is not frames either: it is dropped, and the WebSocket works.
+  // server.upgrade() does not read a body that the upgrade request declares. The rest of the read
+  // that holds the request is dropped, so a body in it is not frames either, and the WebSocket works.
   it.each([
     ["Content-Length", 'Content-Length: 17\r\n\r\n{"hello":"world"}'],
     ["chunked", 'Transfer-Encoding: chunked\r\n\r\n11\r\n{"hello":"world"}\r\n0\r\n\r\n'],

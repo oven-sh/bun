@@ -1,18 +1,17 @@
 //! `getTypeName.ts`
 
 use super::has_room_on_the_stack;
-use crate::types::{SyntaxKind, Type, TypeFlags};
-use smallvec::SmallVec;
+use crate::types::{IdSet, SyntaxKind, Type, TypeFlags};
 
-/// `getTypeName(typeChecker, type)`: `string` for what is a string, which is also a string literal
-/// type, a union of those, an intersection with one, and a type parameter that extends one.
-/// For any other type, [`Type::to_text`].
+/// `getTypeName(typeChecker, type)`: `string` for any string type, which includes a string literal type, a union of
+/// those, an intersection with one, and a type parameter that extends one. For any other type, [`Type::to_text`].
 pub fn get_type_name(ty: Type) -> Vec<u8> {
-    get_type_name_in(ty, &mut SmallVec::new())
+    get_type_name_in(ty, &mut IdSet::new())
 }
 
-/// `on_the_way`: the type parameters whose constraints `ty` is in. `<T extends U, U extends T>` has no end.
-fn get_type_name_in<'a>(ty: Type<'a>, on_the_way: &mut SmallVec<[Type<'a>; 4]>) -> Vec<u8> {
+/// `visiting` holds the type parameters whose constraints led to `ty`. Without it, `<T extends U, U extends T>` would
+/// never terminate.
+fn get_type_name_in<'a>(ty: Type<'a>, visiting: &mut IdSet<Type<'a>>) -> Vec<u8> {
     if !has_room_on_the_stack() {
         return ty.to_text();
     }
@@ -21,15 +20,15 @@ fn get_type_name_in<'a>(ty: Type<'a>, on_the_way: &mut SmallVec<[Type<'a>; 4]>) 
         return b"string".to_vec();
     }
     if flags.contains(TypeFlags::TYPE_PARAMETER)
-        && !on_the_way.contains(&ty)
+        && !visiting.contains(ty)
         && let Some(constraint) = declared_constraint(ty)
     {
-        on_the_way.push(ty);
-        let name = get_type_name_in(constraint, on_the_way);
-        on_the_way.pop();
+        visiting.insert(ty);
+        let name = get_type_name_in(constraint, visiting);
+        visiting.remove(ty);
         return name;
     }
-    let mut is_string = |value: Type<'a>| get_type_name_in(value, on_the_way) == b"string";
+    let mut is_string = |value: Type<'a>| get_type_name_in(value, visiting) == b"string";
     if flags.contains(TypeFlags::UNION) && ty.types().iter().all(&mut is_string) {
         return b"string".to_vec();
     }
@@ -39,7 +38,7 @@ fn get_type_name_in<'a>(ty: Type<'a>, on_the_way: &mut SmallVec<[Type<'a>; 4]>) 
     ty.to_text()
 }
 
-/// `getTypeFromTypeNode(declaration.constraint)` for the first declaration of the type parameter.
+/// `getTypeFromTypeNode(declaration.constraint)` for the type parameter's first declaration.
 fn declared_constraint(ty: Type<'_>) -> Option<Type<'_>> {
     let type_param_decl = ty.get_symbol()?.declarations().next()?;
     if type_param_decl.kind() != SyntaxKind::TypeParameter {

@@ -1,0 +1,3 @@
+// Flags: --aot-validate --aot-disable=InlineCalls
+// The same program where no call is replaced by the body of its callee, so that every parameter arrives in a register.
+import "./parameters-are-read-behind-slow-ways-that-take-arguments-in-their-registers.ts";

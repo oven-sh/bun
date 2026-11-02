@@ -1,4 +1,4 @@
-//! Questions about operators.
+//! Queries about operators.
 
 use bun_lint::ast::{BinOp, UnOp};
 

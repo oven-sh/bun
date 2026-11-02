@@ -3,16 +3,35 @@
 //! thread.
 
 mod binder;
+mod closed_module;
+pub mod decorator_metadata;
 mod lint;
 mod parents;
+mod runtime;
+pub mod static_referent;
 
+pub use closed_module::specifiers_of_closed_module;
 pub use parents::{bind_for_format_in, try_bind_for_format_in};
+pub use runtime::{
+    AnnexBFunction, Binding, BindingInitializer, BindingKind, BindingStability, CodeUnit,
+    CommonJsVariable, EarlyRedeclaration, EvalScope, FunctionFlags, ImplicitReference,
+    ImplicitReferenceKind, InitialState, ParameterVarCopy, PrivateMembers, PrivateName,
+    PrivateNameId, RuntimeBindOptions, RuntimeBindings, RuntimeBindingsIn, RuntimeTablesIn,
+    StoreKind, SymbolStore, has_mapped_arguments, has_simple_parameter_list, is_among_parameters,
+};
+pub use static_referent::{
+    LinkedBinding, LoadedValue, NamespaceReferent, ReferentCertainty, ReferentContext,
+    ResolvedReferent, StaticReferent, UnknownReferent, export_referent, static_referent,
+    symbol_referent,
+};
 
 use crate::atom::{Atom, known};
 use crate::hir::*;
-use crate::session::{Arena, ArenaHashMap, ArenaHashSet, ArenaVec, vec_from_iter_in};
-use crate::util::{FxBuild, FxHashMap, FxHashSet};
+use crate::session::{Arena, ArenaHashMap, ArenaVec, transfer_arena};
+use crate::util::{FxBuild, FxHashMap, SharedSort};
 use smallvec::SmallVec;
+use std::hint::cold_path;
+use std::ops::ControlFlow;
 
 define_id!(SymbolId, ScopeId, TableId, FlowId);
 
@@ -38,10 +57,10 @@ bitflags::bitflags! {
         const ASSIGNED = 1 << 13;
         const CONST = 1 << 14;
         const PARAMETER = 1 << 15;
-        /// `mergedSymbols` has it, or it is transient: see `Files::canonical`.
+        /// It's in `mergedSymbols` or it's transient. See `Files::canonical`.
         const MERGED = 1 << 16;
-        /// A name that other files import, which nothing in the file can refer to: `export { a as b
-        /// }`, `export default e`.
+        /// A name that other files can import but nothing in this file can refer to:
+        /// `export { a as b }`, `export default e`.
         const EXPORT_ONLY = 1 << 18;
         const CONST_ENUM = 1 << 19;
         /// `module` and `exports` in a CommonJS module.
@@ -49,9 +68,9 @@ bitflags::bitflags! {
         /// `SymbolFlagsTransient`: created by `cloneSymbol`, not by the binder.
         const TRANSIENT = 1 << 21;
         /// `SymbolFlagsExportValue`: the local symbol of an exported value (`declareModuleMember`).
-        /// It is not a value itself.
+        /// It isn't a value itself.
         const EXPORT_VALUE = 1 << 22;
-        /// `SymbolFlagsAssignment`: what `bindDeferredExpandoAssignment` declares.
+        /// `SymbolFlagsAssignment`: declared by `bindDeferredExpandoAssignment`.
         const ASSIGNMENT = 1 << 23;
         const OBJECT_LITERAL = 1 << 24;
         const TYPE_LITERAL = 1 << 17;
@@ -101,7 +120,7 @@ bitflags::bitflags! {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum Decl {
     /// An identifier bound by `var`, `let`, `const`, `using`, `catch`, or a loop.
     Var(PatId),
@@ -128,35 +147,36 @@ pub enum Decl {
     UmdGlobal(StmtId),
     /// The file itself, as a module.
     File,
-    /// `const a = require("m")`, `const { a } = require("m")`, `const [a] = require("m")` in
-    /// JavaScript: the name.
+    /// The name in `const a = require("m")`, `const { a } = require("m")` or
+    /// `const [a] = require("m")` in JavaScript.
     Require(PatId),
-    /// `module.exports = e` in JavaScript: the assignment.
+    /// The assignment `module.exports = e` in JavaScript.
     ModuleExports(ExprId),
-    /// `exports.a = e`, `module.exports.a = e` in JavaScript: the assignment. `Object.defineProperty(exports, "a", descriptor)`: the call.
+    /// The assignment `exports.a = e` or `module.exports.a = e` in JavaScript, or the call
+    /// `Object.defineProperty(exports, "a", descriptor)`.
     ExportsProperty(ExprId),
-    /// `f.a = e`, `f["a"] = e`, `f[key] = e`, where `getInitializerSymbol` finds a symbol for `f`,
-    /// which may be of the form `a.f`: the assignment. In JavaScript `Object.defineProperty(f, "a",
-    /// descriptor)` too: the call.
+    /// The assignment `f.a = e`, `f["a"] = e` or `f[key] = e`, where `getInitializerSymbol` finds a
+    /// symbol for `f`. `f` may have the form `a.f`. In JavaScript, also the call
+    /// `Object.defineProperty(f, "a", descriptor)`.
     Expando(ExprId),
     /// `{}`, for the symbol that such assignments add to in JavaScript.
     ObjectLiteral(ExprId),
     /// `module` and `exports` in a CommonJS module.
     CommonJsVariable,
-    /// A member of a class, an interface or a type literal.
+    /// A class, interface or type literal member.
     Member(MemberId),
     /// `IsParameterPropertyDeclaration`: the property.
     ParameterProperty(ParamId),
-    /// `this.name = value` in a member of a class, or in a method or an accessor of an object
-    /// literal, in JavaScript: the assignment.
+    /// The assignment `this.name = value` in a class member, or in an object literal's method or
+    /// accessor, in JavaScript.
     ThisProperty(ExprId),
-    /// A member of an object literal or an attribute of a JSX element.
+    /// An object literal member or a JSX attribute.
     Property(PropId),
     TypeLiteral(TypeNodeId),
 }
 
 impl Decl {
-    /// `node.Members()` of a class or an interface. `None`: it is neither.
+    /// `node.Members()` of a class or an interface, or `None` if it's neither.
     #[inline]
     pub fn members_of_class_or_interface(self, hir: &File) -> Option<Span<MemberId>> {
         match self {
@@ -166,7 +186,7 @@ impl Decl {
         }
     }
 
-    /// `node.TypeParameters()` of a class or an interface. `None`: it is neither.
+    /// `node.TypeParameters()` of a class or an interface, or `None` if it's neither.
     #[inline]
     pub fn type_params_of_class_or_interface(self, hir: &File) -> Option<Span<TypeParamId>> {
         match self {
@@ -176,7 +196,7 @@ impl Decl {
         }
     }
 
-    /// The position of the name of a class or an interface. `None`: it is neither.
+    /// The position of a class's or an interface's name, or `None` if it's neither.
     #[inline]
     pub fn name_pos_of_class_or_interface(self, hir: &File) -> Option<u32> {
         match self {
@@ -191,7 +211,7 @@ impl Decl {
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum JsDeclarationKind {
     None,
-    /// `module.exports = e`, but for `module.exports = exports`
+    /// `module.exports = e`, except `module.exports = exports`
     ModuleExports,
     /// `exports.name = e`, `module.exports.name = e`. The name is `NONE` for a numeric key, whose
     /// text requires an interner.
@@ -224,9 +244,9 @@ pub fn is_module_exports(hir: &File, e: ExprId) -> bool {
     !is_parenthesized(hir, e) && is_module_exports_inside_parentheses(hir, e)
 }
 
-/// The same for `e` without the parentheses around it.
+/// Same, but ignores the parentheses around `e`.
 pub fn is_module_exports_inside_parentheses(hir: &File, e: ExprId) -> bool {
-    let (obj, name) = match hir[e].kind {
+    let (obj, name) = match hir.checked_kind(e) {
         ExprKind::Dot { obj, name, .. } => (obj, name),
         ExprKind::Index { obj, index, .. } => (obj, string_literal_text(hir, index)),
         _ => return false,
@@ -264,13 +284,11 @@ pub fn assignment_declaration_kind(hir: &File, e: ExprId) -> JsDeclarationKind {
         return JsDeclarationKind::ModuleExports;
     }
     // `GetElementOrPropertyAccessName`
-    let (obj, name) = match hir[target].kind {
-        ExprKind::Dot {
+    let (obj, name) = match hir.checked_kind(target) {
+        ExprKind::Dot { obj, name, .. } => (
             obj,
-            name,
-            name_pos,
-            ..
-        } => (obj, (!is_private_name_at(hir, name_pos)).then_some(name)),
+            (!is_private_name_at(hir, hir.name_pos(target))).then_some(name),
+        ),
         ExprKind::Index { obj, index, .. } => match hir[index].kind {
             ExprKind::Number(_) => (obj, Some(Atom::NONE)),
             _ => (
@@ -295,10 +313,10 @@ pub fn assignment_declaration_kind(hir: &File, e: ExprId) -> JsDeclarationKind {
 /// `IsBindableStaticNameExpression` with `excludeThisKeyword`: `a`, `a.b`, `a["b"]`, `a[0]`.
 fn is_bindable_static_name(hir: &File, e: ExprId) -> bool {
     !is_parenthesized(hir, e)
-        && match hir[e].kind {
+        && match hir.checked_kind(e) {
             ExprKind::Ident(_) => true,
-            ExprKind::Dot { obj, name_pos, .. } => {
-                !is_private_name_at(hir, name_pos) && is_bindable_static_name(hir, obj)
+            ExprKind::Dot { obj, .. } => {
+                !is_private_name_at(hir, hir.name_pos(e)) && is_bindable_static_name(hir, obj)
             }
             ExprKind::Index { obj, index, .. } => {
                 is_string_or_numeric_literal_like(hir, index) && is_bindable_static_name(hir, obj)
@@ -307,8 +325,9 @@ fn is_bindable_static_name(hir: &File, e: ExprId) -> bool {
         }
 }
 
-/// `IsBindableObjectDefinePropertyCall`: the object and the key of `Object.defineProperty(object, key, descriptor)`. The key is a
-/// string, a template without substitutions or a number. An optional chain makes no difference.
+/// `IsBindableObjectDefinePropertyCall`: returns the object and the key of
+/// `Object.defineProperty(object, key, descriptor)`. The key is a string, a template without
+/// substitutions or a number. Optional chaining doesn't matter.
 pub fn define_property_call(hir: &File, e: ExprId) -> Option<(ExprId, ExprId)> {
     let ExprKind::Call(c) = hir[e].kind else {
         return None;
@@ -321,7 +340,7 @@ pub fn define_property_call(hir: &File, e: ExprId) -> Option<(ExprId, ExprId)> {
         obj,
         name: known::defineProperty,
         ..
-    } = hir[call.callee].kind
+    } = hir.checked_kind(call.callee)
     else {
         return None;
     };
@@ -333,7 +352,7 @@ pub fn define_property_call(hir: &File, e: ExprId) -> Option<(ExprId, ExprId)> {
     .then_some((object, key))
 }
 
-/// `IsRequireCall`: the argument, if `e` is `require(x)`.
+/// `IsRequireCall`: returns the argument if `e` is `require(x)`.
 pub fn require_argument(hir: &File, e: ExprId) -> Option<ExprId> {
     let ExprKind::Call(c) = hir[e].kind else {
         return None;
@@ -345,28 +364,30 @@ pub fn require_argument(hir: &File, e: ExprId) -> Option<ExprId> {
         .then(|| hir.id_at(call.args, 0))
 }
 
-/// The same with `requireStringLiteralLikeArgument`: the argument of `require("m")`, and its text.
+/// Same with `requireStringLiteralLikeArgument`: returns the argument of `require("m")` and its
+/// text.
 pub fn require_call_argument(hir: &File, e: ExprId) -> Option<(ExprId, Atom)> {
     let argument = require_argument(hir, e)?;
     is_string_literal_like(hir, argument).then(|| (argument, string_literal_text(hir, argument)))
 }
 
-/// The text alone.
+/// Returns only the text.
 pub fn required_specifier(hir: &File, e: ExprId) -> Option<Atom> {
     Some(require_call_argument(hir, e)?.1)
 }
 
-pub struct SymbolIn<S: Storage> {
+/// Read-only view of one symbol of a file.
+#[derive(Copy, Clone)]
+pub struct Symbol<'a> {
     pub name: Atom,
     pub flags: SymFlags,
     /// `Declarations`, in the order they are bound.
-    pub decls: DeclsIn<S>,
-    /// `ValueDeclaration`: an index into `Declarations`, which for a symbol merged by `mergeSymbol`
-    /// are the declarations of all its parts. `u32::MAX`: none.
+    pub decls: &'a [Decl],
+    /// `ValueDeclaration`, as an index into `Declarations`. For a symbol merged by `mergeSymbol`,
+    /// those are the declarations of all its parts. `u32::MAX` means none.
     pub value_declaration: u32,
-    /// `Parent`, as `declareSymbolEx` sets it: the module, namespace or enum among whose exports it
-    /// is declared, even if the declaration conflicts there.
-    /// `NONE` for a local.
+    /// `Parent`, as `declareSymbolEx` sets it: the module, namespace or enum whose exports declare
+    /// it, even if the declaration conflicts there. `NONE` for a local.
     pub parent: SymbolId,
     /// The exports of a module, namespace or enum, and the static side of a class.
     pub exports: TableId,
@@ -375,17 +396,68 @@ pub struct SymbolIn<S: Storage> {
     pub export_symbol: SymbolId,
 }
 
-/// A symbol of a file that has been loaded.
-pub type Symbol<'s> = SymbolIn<InArena<'s>>;
+/// A symbol while the binder is still adding to it.
+pub struct GrowingSymbol {
+    pub name: Atom,
+    pub flags: SymFlags,
+    pub decls: GrowingDecls,
+    pub value_declaration: u32,
+    pub parent: SymbolId,
+    pub exports: TableId,
+    pub members: TableId,
+    pub export_symbol: SymbolId,
+}
 
-const _: () = assert!(size_of::<Symbol<'static>>() <= 48);
+/// A symbol's declarations. Almost every symbol has exactly one, so that case is stored inline.
+#[derive(Default)]
+pub enum GrowingDecls {
+    #[default]
+    None,
+    One(Decl),
+    Many(Vec<Decl>),
+}
 
-impl SymbolIn<Growable> {
-    fn into_arena(self, arena: &Arena) -> Symbol<'_> {
-        SymbolIn {
+impl GrowingDecls {
+    fn push(&mut self, decl: Decl) {
+        match self {
+            GrowingDecls::None => *self = GrowingDecls::One(decl),
+            GrowingDecls::One(first) => *self = GrowingDecls::Many(vec![*first, decl]),
+            GrowingDecls::Many(all) => all.push(decl),
+        }
+    }
+}
+
+impl std::ops::Deref for GrowingDecls {
+    type Target = [Decl];
+    #[inline]
+    fn deref(&self) -> &[Decl] {
+        match self {
+            GrowingDecls::None => &[],
+            GrowingDecls::One(decl) => std::slice::from_ref(decl),
+            GrowingDecls::Many(decls) => &decls[..],
+        }
+    }
+}
+
+/// Read access to a file's symbols in either storage. See [`Storage::Symbols`].
+pub trait SymbolList {
+    fn get(&self, index: usize) -> Option<Symbol<'_>>;
+}
+
+impl SymbolList for Vec<GrowingSymbol> {
+    #[inline]
+    fn get(&self, index: usize) -> Option<Symbol<'_>> {
+        self[..].get(index).map(GrowingSymbol::get)
+    }
+}
+
+impl GrowingSymbol {
+    #[inline]
+    fn get(&self) -> Symbol<'_> {
+        Symbol {
             name: self.name,
             flags: self.flags,
-            decls: self.decls.into_arena(arena),
+            decls: &self.decls,
             value_declaration: self.value_declaration,
             parent: self.parent,
             exports: self.exports,
@@ -395,62 +467,240 @@ impl SymbolIn<Growable> {
     }
 }
 
-/// The declarations of a symbol. Nearly every symbol has one, which needs no separate allocation.
-#[derive(Default)]
-pub enum DeclsIn<S: Storage> {
-    #[default]
+/// The fields every symbol needs. The rarely set ones are in [`RestOfSymbol`].
+#[derive(Copy, Clone)]
+struct StoredSymbol {
+    name: Atom,
+    flags: SymFlags,
+    decls: StoredDecls,
+    parent: SymbolId,
+    /// Index into `Symbols::rest`, or `FIRST_IS_VALUE` / `NO_VALUE` if the symbol has no entry there.
+    rest: u32,
+}
+
+/// `StoredSymbol::rest` for a symbol with no tables and no `export_symbol` whose `value_declaration` is 0.
+const FIRST_IS_VALUE: u32 = u32::MAX;
+/// Like `FIRST_IS_VALUE`, but the symbol has no `value_declaration`.
+const NO_VALUE: u32 = u32::MAX - 1;
+
+#[derive(Copy, Clone)]
+enum StoredDecls {
     None,
     One(Decl),
-    Many(S::Few<Decl>),
+    /// Index into `Symbols::many`.
+    Many(u32),
 }
 
-/// Those of a symbol of a file that has been loaded.
-pub type Decls<'s> = DeclsIn<InArena<'s>>;
+const _: () = assert!(size_of::<StoredSymbol>() == 24);
 
-impl<S: Storage> DeclsIn<S> {
+/// Fields that most symbols leave at their defaults.
+#[derive(Copy, Clone)]
+struct RestOfSymbol {
+    value_declaration: u32,
+    exports: TableId,
+    members: TableId,
+    export_symbol: SymbolId,
+}
+
+/// A loaded file's symbols, stored compactly. Merging and linking append transient symbols.
+pub struct Symbols<'s> {
+    list: ArenaVec<'s, StoredSymbol>,
+    rest: ArenaVec<'s, RestOfSymbol>,
+    many: ArenaVec<'s, &'s [Decl]>,
+}
+
+impl SymbolList for Symbols<'_> {
     #[inline]
-    pub fn as_slice(&self) -> &[Decl] {
-        match self {
-            DeclsIn::None => &[],
-            DeclsIn::One(decl) => std::slice::from_ref(decl),
-            DeclsIn::Many(decls) => &decls[..],
+    fn get(&self, index: usize) -> Option<Symbol<'_>> {
+        self.get(index)
+    }
+}
+
+impl<'s> Symbols<'s> {
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.list.len()
+    }
+
+    /// Returns the symbol at `index`. Only the first lookup can fail and nothing here can panic, so once this is inlined
+    /// the compiler drops the work for fields the caller never reads.
+    #[inline]
+    pub fn get(&self, index: usize) -> Option<Symbol<'_>> {
+        Some(self.decode(self.list.get(index)?))
+    }
+
+    #[inline]
+    fn decode<'a>(&'a self, symbol: &'a StoredSymbol) -> Symbol<'a> {
+        // `FIRST_IS_VALUE` and `NO_VALUE` are always out of range, so they fall back to the defaults.
+        let rest = match self.rest.get(symbol.rest as usize) {
+            // Only a symbol with a table, an export symbol or a later value declaration has one.
+            Some(&rest) => {
+                cold_path();
+                rest
+            }
+            None => RestOfSymbol {
+                value_declaration: if symbol.rest == NO_VALUE { u32::MAX } else { 0 },
+                exports: TableId::NONE,
+                members: TableId::NONE,
+                export_symbol: SymbolId::NONE,
+            },
+        };
+        Symbol {
+            name: symbol.name,
+            flags: symbol.flags,
+            decls: match &symbol.decls {
+                StoredDecls::None => &[],
+                StoredDecls::One(decl) => std::slice::from_ref(decl),
+                StoredDecls::Many(at) => self.many.get(*at as usize).copied().unwrap_or_default(),
+            },
+            value_declaration: rest.value_declaration,
+            parent: symbol.parent,
+            exports: rest.exports,
+            members: rest.members,
+            export_symbol: rest.export_symbol,
+        }
+    }
+
+    /// Converts the binder's symbols. Each list is allocated at its exact final size, with space for the symbol that
+    /// the merge adds for each `import * as ns`. Without that space the merge, which is single-threaded, would have to
+    /// copy the lists.
+    fn of(symbols: &[GrowingSymbol], arena: &'s Arena) -> Symbols<'s> {
+        let is_plain = |it: &&GrowingSymbol| {
+            it.exports.is_none()
+                && it.members.is_none()
+                && it.export_symbol.is_none()
+                && matches!(it.value_declaration, 0 | u32::MAX)
+        };
+        let plain = symbols.iter().filter(is_plain).count();
+        let many = symbols.iter().filter(|it| it.decls.len() > 1).count();
+        let is_namespace = |decl: &Decl| matches!(decl, Decl::ImportNamespace(_));
+        let namespaces = symbols
+            .iter()
+            .filter(|it| it.decls.iter().any(is_namespace));
+        let namespaces = namespaces.count();
+        let mut all = Symbols {
+            list: ArenaVec::new_in(arena),
+            rest: ArenaVec::new_in(arena),
+            many: ArenaVec::new_in(arena),
+        };
+        all.list.reserve_exact(symbols.len() + namespaces);
+        all.rest.reserve_exact(symbols.len() - plain + namespaces);
+        all.many.reserve_exact(many);
+        for symbol in symbols {
+            all.push(symbol.get(), arena);
+        }
+        all
+    }
+
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = Symbol<'_>> {
+        (0..self.list.len()).map(|at| self.at(at))
+    }
+
+    /// Returns the symbols that have all of `flags`. It tests the stored flags before decoding, so skipping a symbol
+    /// costs three instructions. `iter().filter(..)` decodes every symbol first, which costs about seventeen.
+    pub fn with_flags(&self, flags: SymFlags) -> impl Iterator<Item = Symbol<'_>> {
+        let matching = self.list.iter().filter(move |it| it.flags.contains(flags));
+        matching.map(|it| self.decode(it))
+    }
+
+    #[inline]
+    fn at(&self, index: usize) -> Symbol<'_> {
+        self.get(index).expect("the symbol belongs to this file")
+    }
+
+    pub fn reserve_exact(&mut self, additional: usize) {
+        self.list.reserve_exact(additional);
+    }
+
+    /// Appends `symbol`. Two or more declarations are copied into `arena`.
+    pub fn push(&mut self, symbol: Symbol<'_>, arena: &'s Arena) {
+        let decls = match *symbol.decls {
+            [] => StoredDecls::None,
+            [decl] => StoredDecls::One(decl),
+            ref all => {
+                self.many.push(arena.alloc_slice_copy(all));
+                StoredDecls::Many(self.many.len() as u32 - 1)
+            }
+        };
+        self.list.push(StoredSymbol {
+            name: symbol.name,
+            flags: symbol.flags,
+            decls,
+            parent: symbol.parent,
+            rest: NO_VALUE,
+        });
+        self.set_rest(
+            self.list.len() - 1,
+            RestOfSymbol {
+                value_declaration: symbol.value_declaration,
+                exports: symbol.exports,
+                members: symbol.members,
+                export_symbol: symbol.export_symbol,
+            },
+        );
+    }
+
+    fn set_rest(&mut self, index: usize, rest: RestOfSymbol) {
+        let slot = &mut self.list[index].rest;
+        let is_plain =
+            rest.exports.is_none() && rest.members.is_none() && rest.export_symbol.is_none();
+        match (*slot, rest.value_declaration) {
+            (FIRST_IS_VALUE | NO_VALUE, 0) if is_plain => *slot = FIRST_IS_VALUE,
+            (FIRST_IS_VALUE | NO_VALUE, u32::MAX) if is_plain => *slot = NO_VALUE,
+            (FIRST_IS_VALUE | NO_VALUE, _) => {
+                *slot = self.rest.len() as u32;
+                self.rest.push(rest);
+            }
+            (at, _) => self.rest[at as usize] = rest,
+        }
+    }
+
+    #[inline]
+    pub fn flags_mut(&mut self, id: SymbolId) -> &mut SymFlags {
+        &mut self.list[id.idx()].flags
+    }
+
+    pub fn set_parent(&mut self, id: SymbolId, parent: SymbolId) {
+        self.list[id.idx()].parent = parent;
+    }
+
+    pub fn set_value_declaration(&mut self, id: SymbolId, value_declaration: u32) {
+        let symbol = self.at(id.idx());
+        let rest = RestOfSymbol {
+            value_declaration,
+            exports: symbol.exports,
+            members: symbol.members,
+            export_symbol: symbol.export_symbol,
+        };
+        self.set_rest(id.idx(), rest);
+    }
+
+    /// Moves the lists to `arena` so that the thread that owns it can append to them.
+    pub fn transfer_to(&mut self, arena: &'s Arena) {
+        transfer_arena(&mut self.list, arena);
+        transfer_arena(&mut self.rest, arena);
+        transfer_arena(&mut self.many, arena);
+    }
+
+    /// Copies the lists into `arena`, for a program that shares the file with other programs.
+    fn copy_in<'a>(&'a self, arena: &'a Arena) -> Symbols<'a> {
+        fn copy_of<'a, T: Copy>(list: &[T], arena: &'a Arena) -> ArenaVec<'a, T> {
+            let mut copy = ArenaVec::with_capacity_in(list.len(), arena);
+            copy.extend_from_slice(list);
+            copy
+        }
+        Symbols {
+            list: copy_of(&self.list, arena),
+            rest: copy_of(&self.rest, arena),
+            many: copy_of(&self.many, arena),
         }
     }
 }
 
-impl DeclsIn<Growable> {
-    fn push(&mut self, decl: Decl) {
-        match self {
-            DeclsIn::None => *self = DeclsIn::One(decl),
-            DeclsIn::One(first) => *self = DeclsIn::Many(vec![*first, decl]),
-            DeclsIn::Many(all) => all.push(decl),
-        }
-    }
-
-    fn into_arena(self, arena: &Arena) -> Decls<'_> {
-        match self {
-            DeclsIn::None => DeclsIn::None,
-            DeclsIn::One(decl) => DeclsIn::One(decl),
-            DeclsIn::Many(all) => DeclsIn::Many(few_to_arena(all, arena)),
-        }
-    }
-}
-
-impl Decls<'_> {
-    /// `arena`: of any session.
-    pub fn clone_in<'s>(&self, arena: &'s Arena) -> Decls<'s> {
-        match self {
-            DeclsIn::None => DeclsIn::None,
-            DeclsIn::One(decl) => DeclsIn::One(*decl),
-            DeclsIn::Many(all) => DeclsIn::Many(ArenaFew::from_iter_in(all.iter().copied(), arena)),
-        }
-    }
-}
-
-/// `SetValueDeclaration`: whether `node` replaces `value_declaration`. "Non-assignment declarations
-/// take precedence over assignment declarations and non-namespace declarations take precedence over
-/// namespace declarations."
-pub fn takes_over_as_value_declaration(value_declaration: Option<Decl>, node: Decl) -> bool {
+/// `SetValueDeclaration`: returns true if `node` replaces `value_declaration`. "Non-assignment
+/// declarations take precedence over assignment declarations and non-namespace declarations take
+/// precedence over namespace declarations."
+pub fn replaces_value_declaration(value_declaration: Option<Decl>, node: Decl) -> bool {
     // `isAssignmentDeclaration`
     let is_assignment = |decl: Decl| {
         matches!(
@@ -467,23 +717,6 @@ pub fn takes_over_as_value_declaration(value_declaration: Option<Decl>, node: De
     })
 }
 
-impl<S: Storage> std::ops::Deref for DeclsIn<S> {
-    type Target = [Decl];
-    #[inline]
-    fn deref(&self) -> &[Decl] {
-        self.as_slice()
-    }
-}
-
-impl<'a, S: Storage> IntoIterator for &'a DeclsIn<S> {
-    type Item = &'a Decl;
-    type IntoIter = std::slice::Iter<'a, Decl>;
-    #[inline]
-    fn into_iter(self) -> Self::IntoIter {
-        self.as_slice().iter()
-    }
-}
-
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum ScopeKind {
     File,
@@ -497,39 +730,46 @@ pub enum ScopeKind {
     /// The key of a mapped type, or the `infer` type parameters of a conditional type.
     TypeParams,
     Enum(EnumId),
-    /// Encloses the constraints and defaults of the type parameters of a function. It declares
-    /// nothing: it is nested in the scope of the function and identifies the part of the function
-    /// that contains a name. `Bound::is_seen_from`
+    /// Encloses the constraints and defaults of a function's type parameters. It declares nothing.
+    /// It's nested in the function's scope and only identifies which part of the function contains
+    /// a name. See `Bound::is_visible_from`.
     TypeParamList(FnId),
-    /// The same for the parameters: their types, patterns and defaults. Only a function with a block for a body has one.
+    /// Same for the parameters: their types, patterns and defaults. Only a function with a block
+    /// body has one.
     Param(FnId),
-    /// The same for the return type.
+    /// Same for the return type.
     ReturnType(FnId),
-    /// Encloses the `extends` type of a conditional type. It declares nothing: the `infer` type
-    /// parameters are declared in the parent scope, which also encloses the true branch, and cannot
-    /// be referenced from here. `Bound::is_seen_from`
+    /// Encloses a conditional type's `extends` type. It declares nothing. The `infer` type
+    /// parameters are declared in the parent scope, which also encloses the true branch, and can't
+    /// be referenced from here. See `Bound::is_visible_from`.
     Extends,
     /// Encloses the constraint of an `infer T extends ..`. It declares `T` again, which can be
     /// referenced from here.
     InferConstraint,
-    /// Encloses a static member of a class, including its decorators but not a computed name. It
-    /// declares nothing: it is nested in the scope of the class, whose type parameters cannot be
-    /// referenced from here. `Bound::type_parameter_out_of_reach`
+    /// Encloses a static class member, including its decorators but not a computed name. It
+    /// declares nothing. It's nested in the class's scope, whose type parameters can't be
+    /// referenced from here. See `Bound::type_parameter_out_of_reach`.
     StaticMember,
-    /// The same for the computed name of a member of a class or an interface.
+    /// Same for the computed name of a class or interface member.
     ComputedName,
-    /// The same for the `extends` expression of a class, without its type arguments.
+    /// Same for a class's `extends` expression, without its type arguments.
     BaseExpression,
     /// Encloses the computed name of a method or an accessor, which is a child of that function. It
-    /// declares nothing: from here `arguments` is that of the function.
+    /// declares nothing. From here, `arguments` is that function's.
     FunctionName(FnId),
-    /// Encloses the computed name and the initializer of a non-static class property, if the class
-    /// has a constructor with a body, which is stored here, and class fields are not emitted
-    /// unchanged. It declares nothing: the constructor's declarations cannot be referenced from
-    /// here, nor the names they shadow. `Bound::property_with_invalid_initializer`
+    /// Encloses the computed name and the initializer of a non-static class property, if class
+    /// fields aren't emitted unchanged and the class has a constructor with a body. That
+    /// constructor is stored here. It declares nothing. Neither the constructor's declarations nor
+    /// the names they shadow can be referenced from here. See
+    /// `Bound::property_with_invalid_initializer`.
     PropertyDeclaration(MemberId, FnId),
-    /// The same for the type of the property.
+    /// Same for the property's type.
     PropertyType(MemberId, FnId),
+    /// `With`, `FieldInitializer`, `ClassDecorators` and `ImplicitBlock` declare nothing and exist only with `BindOptions::runtime`.
+    With(StmtId),
+    FieldInitializer(MemberId),
+    ClassDecorators(ClassId),
+    ImplicitBlock(FnId),
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -537,24 +777,25 @@ pub struct Scope {
     pub parent: ScopeId,
     pub kind: ScopeKind,
     pub locals: TableId,
-    /// For a module, namespace or enum: its symbol, whose exports are in scope wherever they were declared.
+    /// A module's, namespace's or enum's symbol, whose exports are in scope wherever they were
+    /// declared.
     pub symbol: SymbolId,
     /// `NodeFlagsExportContext`
     pub is_export_context: bool,
 }
 
-/// What `GetAssignmentTarget` finds.
+/// The result of `GetAssignmentTarget`.
 #[derive(Copy, Clone)]
 pub enum AssignmentTarget {
     /// The left side of `=`, or of a compound assignment operator.
     Assign(Option<BinOp>),
     /// The operand of `++` or `--`.
     Unary,
-    /// The target that the head of a `for`-`in` or a `for`-`of` assigns to.
+    /// The target that the head of a `for`-`in` or `for`-`of` assigns to.
     ForInOrOf,
 }
 
-/// `ModuleInstanceState`, in the same order: comparisons use the numeric value.
+/// `ModuleInstanceState`, in the same order, because comparisons use the numeric value.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum ModuleInstanceState {
     NonInstantiated,
@@ -578,41 +819,126 @@ pub enum AssignmentKind {
     Compound,
 }
 
-/// The direct parent of an expression or a statement.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum Parent {
-    None,
-    Expr(ExprId),
-    Stmt(StmtId),
-    VarInit(VarDeclId),
-    ParamDefault(ParamId),
-    PatPropDefault(PatPropId),
-    PatElemDefault(PatElemId),
-    /// The value of a property of an object literal or of a JSX attribute.
-    Prop(PropId),
-    /// The computed name of a property of the object literal that is neither a method nor an
-    /// accessor.
-    PropKey(ExprId, PropId),
-    /// The computed name of a binding element.
-    PatKey(PatPropId),
-    /// The computed name of a member of a class, an interface or a type literal: for control flow,
-    /// it is inside the member.
-    MemberKey(MemberId),
-    /// The computed name of a method or an accessor of an object literal: the same.
-    MethodKey(PropId),
-    /// The initializer of a member. Also the operand of a `typeof` in the type or the initializer of a property of a class, if
-    /// there is no function in between.
-    MemberInit(MemberId),
-    /// The expression body of an arrow function, or a statement of a body.
-    FnBody(FnId),
-    EnumInit(EnumMemberId),
-    Case(CaseId),
-    ClassExtends(ClassId),
-    /// A decorator of the class, of one of its members or of a parameter of a member: evaluated at
-    /// the position of the class.
-    Decorator(ClassId, DecoratorOwner),
-    Module(ModuleId),
-    File,
+/// Declares an enum whose variants carry one id or nothing, plus a 32-bit packed form of it. The first variant packs to 0.
+///
+/// The tag uses 5 bits and the id 27. That's enough because a file has fewer than 2^26 nodes (`File::node_bases`).
+/// `NONE` survives the round trip.
+macro_rules! packed {
+    (
+        $(#[$doc:meta])* $name:ident, $(#[$packed_doc:meta])* $packed:ident {
+            $none:ident,
+            $($(#[$unit_doc:meta])* $unit:ident,)*
+            ;
+            $($(#[$variant_doc:meta])* $variant:ident($id:ident),)*
+        }
+    ) => {
+        $(#[$doc])*
+        #[derive(Copy, Clone, PartialEq, Eq, Debug)]
+        pub enum $name {
+            $none,
+            $($(#[$unit_doc])* $unit,)*
+            $($(#[$variant_doc])* $variant($id),)*
+        }
+
+        $(#[$packed_doc])*
+        #[derive(Copy, Clone, PartialEq, Eq, Default)]
+        pub struct $packed(u32);
+
+        const _: () = {
+            #[repr(u32)]
+            enum Tag { $none, $($unit,)* $($variant,)* }
+            const TAG_BITS: u32 = 5;
+            const _: () = assert!([Tag::$none, $(Tag::$unit,)* $(Tag::$variant,)*].len() <= 1 << TAG_BITS);
+
+            impl From<$name> for $packed {
+                #[inline]
+                fn from(it: $name) -> $packed {
+                    match it {
+                        $name::$none => $packed(Tag::$none as u32),
+                        $($name::$unit => $packed(Tag::$unit as u32),)*
+                        $($name::$variant(id) => $packed(id.0 << TAG_BITS | Tag::$variant as u32),)*
+                    }
+                }
+            }
+
+            impl $packed {
+                #[inline]
+                pub fn get(self) -> $name {
+                    let tag = self.0 & ((1 << TAG_BITS) - 1);
+                    // The arithmetic shift sign-extends, so a packed `NONE` unpacks to `u32::MAX`.
+                    let id = (self.0.cast_signed() >> TAG_BITS).cast_unsigned();
+                    $(if tag == Tag::$variant as u32 {
+                        return $name::$variant($id(id));
+                    })*
+                    $(if tag == Tag::$unit as u32 {
+                        return $name::$unit;
+                    })*
+                    $name::$none
+                }
+            }
+        };
+
+        impl std::fmt::Debug for $packed {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                self.get().fmt(f)
+            }
+        }
+    };
+}
+
+packed! {
+    /// The direct parent of an expression or a statement.
+    Parent,
+    /// A `Parent` packed into 32 bits, which is how the lists store it.
+    PackedParent {
+        None,
+        File,
+        ;
+        Expr(ExprId),
+        Stmt(StmtId),
+        VarInit(VarDeclId),
+        ParamDefault(ParamId),
+        PatPropDefault(PatPropId),
+        PatElemDefault(PatElemId),
+        /// The value of an object literal property or a JSX attribute.
+        Prop(PropId),
+        /// The computed name of an object literal property that isn't a method or an accessor.
+        PropKey(PropId),
+        /// The computed name of a binding element.
+        PatKey(PatPropId),
+        /// The computed name of a class, interface or type literal member. Control flow treats it as
+        /// part of the member.
+        MemberKey(MemberId),
+        /// The computed name of an object literal method or accessor. Control flow treats it as part of
+        /// the method.
+        MethodKey(PropId),
+        /// A member's initializer. Also the operand of a `typeof` in a class property's type or initializer, unless a
+        /// function is in between.
+        MemberInit(MemberId),
+        /// An arrow function's expression body, or a statement in a function body.
+        FnBody(FnId),
+        EnumInit(EnumMemberId),
+        Case(CaseId),
+        ClassExtends(ClassId),
+        /// A class decorator. This and the next two are evaluated at the class's position.
+        ClassDecorator(ClassId),
+        /// A class member's decorator.
+        MemberDecorator(MemberId),
+        /// A decorator on a parameter of a class member.
+        ParamDecorator(ParamId),
+        Module(ModuleId),
+    }
+}
+
+impl From<DecoratorOwner> for Parent {
+    #[inline]
+    fn from(decorated: DecoratorOwner) -> Parent {
+        match decorated {
+            DecoratorOwner::Class(c) => Parent::ClassDecorator(c),
+            DecoratorOwner::Member(m) => Parent::MemberDecorator(m),
+            DecoratorOwner::Param(p) => Parent::ParamDecorator(p),
+        }
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -632,7 +958,7 @@ pub enum MemberOwner {
     TypeLiteral(TypeNodeId),
 }
 
-/// `bind`: `includes` and `excludes` of a member of an object literal or an attribute of a JSX element.
+/// `bind`: returns `includes` and `excludes` for an object literal member or a JSX attribute.
 pub fn flags_of_property(kind: PropKind) -> Option<(SymFlags, SymFlags)> {
     Some(match kind {
         PropKind::Init | PropKind::Shorthand => (SymFlags::PROPERTY, SymFlags::PROPERTY_EXCLUDES),
@@ -644,7 +970,8 @@ pub fn flags_of_property(kind: PropKind) -> Option<(SymFlags, SymFlags)> {
     })
 }
 
-/// `bind`, `bindPropertyWorker`: `includes` and `excludes` of a member of a class, an interface or a type literal.
+/// `bind`, `bindPropertyWorker`: returns `includes` and `excludes` for a class, interface or type
+/// literal member.
 pub fn flags_of_member(member: &Member) -> Option<(SymFlags, SymFlags)> {
     Some(match member.kind {
         MemberKind::Property if member.flags.contains(Flags::ACCESSOR) => {
@@ -684,7 +1011,7 @@ impl PatParent {
         }
     }
 
-    /// Whether the variable declaration or the parameter has a type annotation.
+    /// True if the variable declaration or the parameter has a type annotation.
     #[inline]
     pub fn has_type_annotation(self, hir: &File) -> bool {
         match self {
@@ -712,7 +1039,7 @@ pub enum ClassOwner {
 }
 
 impl ClassOwner {
-    /// The class expression or declaration, as the parent of what is directly inside the class.
+    /// The class expression or declaration, as the `Parent` of the nodes directly inside the class.
     #[inline]
     pub fn to_parent(self) -> Parent {
         match self {
@@ -721,7 +1048,7 @@ impl ClassOwner {
         }
     }
 
-    /// `node.End()` of the class. 0: the binder did not reach it.
+    /// `node.End()` of the class, or 0 if the binder didn't reach it.
     #[inline]
     pub fn end(self, hir: &File) -> u32 {
         match self {
@@ -744,18 +1071,18 @@ pub enum FlowTarget {
 #[derive(Copy, Clone, Debug)]
 pub enum Flow {
     Unreachable,
-    /// The start of a function, of a property with an initializer, of the body of a namespace or of
-    /// the file. That of a method, an accessor or a property is before its decorators and its
-    /// computed name. `outer` is the flow node at which the function expression, the arrow
-    /// function, or the method or accessor of an object literal or a class expression is evaluated.
-    /// `arrow`: it is an arrow function, which has no `this` of its own.
+    /// The start of a function, a property with an initializer, a namespace body or the file. For a
+    /// method, an accessor or a property, it comes before the decorators and the computed name.
+    /// `outer` is the flow node where the function expression, the arrow function, or the method or
+    /// accessor of an object literal or class expression is evaluated. `arrow` is set for an arrow
+    /// function, which doesn't have its own `this`.
     Start {
         outer: FlowId,
         arrow: bool,
     },
-    /// The start of an immediately invoked `async` function or generator: outer narrowings hold, as
-    /// in `getControlFlowContainer`. An immediately invoked function that is neither, like a static
-    /// block, starts no new flow. The enclosing control flow continues through it
+    /// The start of an immediately invoked `async` function or generator. Outer narrowings still
+    /// apply, as in `getControlFlowContainer`. An immediately invoked function that's neither, like
+    /// a static block, doesn't start a new flow. The enclosing control flow continues through it
     /// (`bindContainer`).
     StartInvoked {
         outer: FlowId,
@@ -779,21 +1106,19 @@ pub enum Flow {
         expr: ExprId,
         sense: bool,
     },
-    /// The clauses `from..to` of the `switch` were entered.
+    /// The `switch` was entered at clause `from` (see `entered_clauses`), or at none if that's `NO_CLAUSE`.
     Switch {
         before: FlowId,
         stmt: StmtId,
-        from: u16,
-        to: u16,
+        from: u32,
     },
     /// A call that may assert something or never return.
     Call {
         before: FlowId,
         call: ExprId,
     },
-    /// After a `finally` block. Walking back through the block from here, only some of its
-    /// antecedents apply: those of `instead`, not all those of `label`, which is the start of the
-    /// block.
+    /// After a `finally` block. A walk back through the block from here only follows `instead`'s
+    /// antecedents, not all the antecedents of `label`, which is the start of the block.
     Reduce {
         before: FlowId,
         label: FlowId,
@@ -806,23 +1131,313 @@ pub enum Flow {
     },
 }
 
+impl Flow {
+    /// `Switch::from` on the path that enters no clause.
+    pub const NO_CLAUSE: u32 = u32::MAX;
+
+    #[inline]
+    pub fn enters_no_clause(self) -> bool {
+        matches!(self, Flow::Switch { from, .. } if from == Flow::NO_CLAUSE)
+    }
+
+    /// Returns a range of `edges` (`BoundIn::flow_edges`) or a single node.
+    pub fn antecedents<'a>(&'a self, edges: &'a [FlowId]) -> &'a [FlowId] {
+        match self {
+            Flow::Unreachable => &[],
+            &Flow::Label { start, len } | &Flow::Loop { start, len } => {
+                &edges[start as usize..(start + len) as usize]
+            }
+            Flow::Start { outer: before, .. }
+            | Flow::StartInvoked { outer: before, .. }
+            | Flow::Reduce { before, .. }
+            | Flow::ArrayMutation { before, .. }
+            | Flow::Cond { before, .. }
+            | Flow::Switch { before, .. }
+            | Flow::Assign { before, .. }
+            | Flow::Call { before, .. } => std::slice::from_ref(before),
+        }
+    }
+}
+
+/// Returns `ClauseStart` and `ClauseEnd` of a `Flow::Switch` with `from`. As in `bindCaseBlock`, clauses without
+/// statements share a node with the first clause after them that has statements.
+pub fn entered_clauses(hir: &File, cases: Span<CaseId>, from: u32) -> (usize, usize) {
+    if from == Flow::NO_CLAUSE {
+        return (0, 0);
+    }
+    let mut last = from as usize;
+    while last + 1 < cases.len() && hir[cases.at(last)].body.is_empty() {
+        last += 1;
+    }
+    (from as usize, last + 1)
+}
+
+/// TypeScript's limit on nested `getTypeAtFlowNode` calls. At this depth it gives up and reports TS2563.
+pub const MAX_FLOW_DEPTH: u32 = 2000;
+
+/// One `Flow::Loop` node, as `measure_flow` sees it.
+struct Loop {
+    label: u32,
+    /// The last node of the loop body.
+    end: u32,
+    /// Length of the longest path through the loop body.
+    body: u32,
+    /// The most depth that a loop nested in this one can add.
+    nested: u32,
+}
+
+/// Computes `BoundIn::flow_depth` and `BoundIn::has_loop_types_that_depend_on_order`.
+///
+/// A flow walk goes backward through the graph. At a loop label it also follows the back edge, which walks the loop body
+/// again while the first pass over that body is still on the stack. Nested loops stack up the same way, so a node inside
+/// three loops can be on the stack four times. The bound is the longest path without back edges, plus one body length
+/// for each level of loop nesting.
+fn measure_flow(flow: &[Flow], edges: &[FlowId], shared: &[u64]) -> (u32, bool) {
+    // Longest backward path from each node, ignoring back edges. A back edge points to a higher index, and so does `NONE`.
+    let mut below = vec![0u32; flow.len()];
+    let (mut loops, mut reduced): (Vec<Loop>, Vec<(u32, u32)>) = (Vec::new(), Vec::new());
+    let mut longest = 0;
+    for (i, node) in flow.iter().enumerate() {
+        let before = node.antecedents(edges).iter();
+        let before = before.filter(|it| it.idx() < i);
+        below[i] = 1 + before.map(|it| below[it.idx()]).max().unwrap_or(0);
+        longest = longest.max(below[i]);
+        match *node {
+            Flow::Loop { .. } => loops.push(Loop {
+                label: i as u32,
+                end: i as u32,
+                body: 0,
+                nested: 0,
+            }),
+            Flow::Reduce { label, .. } => reduced.push((label.0, i as u32)),
+            _ => {}
+        }
+    }
+    if loops.is_empty() {
+        return (longest, false);
+    }
+    for it in &mut loops {
+        let back = flow[it.label as usize].antecedents(edges).iter();
+        for back in back.filter(|back| back.is_some() && back.0 > it.label) {
+            it.end = it.end.max(back.0);
+            it.body = (it.body).max(below[back.idx()].saturating_sub(below[it.label as usize]));
+        }
+    }
+    let depends_on_order =
+        has_loop_types_that_depend_on_order(flow, edges, shared, &loops, reduced);
+    // For each loop label, the most depth that following its back edge can add.
+    let mut deeper_from: Vec<(u32, u32)> = Vec::new();
+    let mut open: Vec<Loop> = Vec::new();
+    let mut close = |open: &mut Vec<Loop>| {
+        let Some(it) = open.pop() else { return };
+        // The walk visits the label once more before it notices that the loop is already in progress.
+        let deeper = it.body.saturating_add(it.nested.max(1));
+        deeper_from.push((it.label, deeper));
+        if let Some(outer) = open.last_mut() {
+            outer.nested = outer.nested.max(deeper);
+        }
+    };
+    for it in loops {
+        while open.last().is_some_and(|outer| outer.end < it.label) {
+            close(&mut open);
+        }
+        open.push(it);
+    }
+    while !open.is_empty() {
+        close(&mut open);
+    }
+    let deepest = deeper_from.iter().map(|it| it.1).max().unwrap_or(0);
+    if longest.saturating_add(deepest) < MAX_FLOW_DEPTH {
+        return (longest + deepest, depends_on_order);
+    }
+    // The longest path and the deepest loop may be in different functions, which makes that sum too high. It only matters
+    // near the limit, so only then pair each loop with the longest path that really leads to its label.
+    // `above[i]`: the longest path from any node back to `i`, not counting `i`.
+    let mut above = vec![0u32; flow.len()];
+    for (i, node) in flow.iter().enumerate().rev() {
+        for before in node.antecedents(edges).iter().filter(|it| it.idx() < i) {
+            above[before.idx()] = above[before.idx()].max(above[i] + 1);
+        }
+    }
+    let through_loops = deeper_from
+        .iter()
+        .map(|it| it.1.saturating_add(above[it.0 as usize] + 1));
+    let deepest = longest.max(through_loops.max().unwrap_or(0));
+    (deepest, depends_on_order)
+}
+
+/// One `finally` block that control can fall out of, as `has_loop_types_that_depend_on_order` sees it.
+struct FinallyBlock {
+    /// The label at the start of the block. It counts as part of the block.
+    label: u32,
+    /// The first node after the block.
+    first_after: u32,
+    /// Index + 1 of the `finally` block around this one, or 0.
+    parent: u32,
+    /// How many `Flow::Reduce` nodes the block has: one for each of leaving it normally, by `return` and by an exception.
+    reduces: u32,
+    /// The lowest and highest node outside the block that follows a node inside it without going through a `Reduce`.
+    left_for: Option<(u32, u32)>,
+    is_in_loop: bool,
+    /// Some node in the block has several successors, so a walk caches its type.
+    has_shared_node: bool,
+}
+
+/// Computes `BoundIn::has_loop_types_that_depend_on_order`. `loops` is sorted by label. `reduced` holds the label and the
+/// index of each `Flow::Reduce`.
+///
+/// What a walk sees inside a `finally` block depends on how it got there. Each `Reduce` node limits the block's
+/// antecedents in its own way, and a jump out of the block doesn't limit them at all. That view can end up in the type
+/// cached for a loop in three ways:
+/// 1. The loop is inside the block.
+/// 2. The block is inside the loop and something leaves it without a `Reduce`. A walk that came through a `Reduce` follows
+///    the back edge into the block again, and the limit is still on.
+/// 3. The block has two ways out and a node whose type the walk caches. The walk enters the block one way, caches the
+///    type, and reuses it when it enters the other way, on behalf of a loop that comes after the block or is around it.
+fn has_loop_types_that_depend_on_order(
+    flow: &[Flow],
+    edges: &[FlowId],
+    shared: &[u64],
+    loops: &[Loop],
+    mut reduced: Vec<(u32, u32)>,
+) -> bool {
+    if reduced.is_empty() {
+        return false;
+    }
+    reduced.shared_sort_unstable();
+    let mut blocks: Vec<FinallyBlock> = Vec::new();
+    for (label, reduce) in reduced {
+        match blocks.last_mut() {
+            Some(last) if last.label == label => last.reduces += 1,
+            _ => blocks.push(FinallyBlock {
+                label,
+                first_after: reduce,
+                parent: 0,
+                reduces: 1,
+                left_for: None,
+                is_in_loop: false,
+                has_shared_node: false,
+            }),
+        }
+    }
+    let mut next = blocks.iter_mut().peekable();
+    let (mut end_of_loops, mut end_of_blocks) = (0, 0);
+    for it in loops {
+        while let Some(block) = next.next_if(|block| block.label < it.label) {
+            block.is_in_loop = block.label <= end_of_loops;
+            end_of_blocks = end_of_blocks.max(block.first_after);
+        }
+        if it.label < end_of_blocks {
+            return true;
+        }
+        end_of_loops = end_of_loops.max(it.end);
+    }
+    for block in next {
+        block.is_in_loop = block.label <= end_of_loops;
+    }
+    // `block_of[i]`: index + 1 of the innermost block that contains node `i`, or 0.
+    let mut block_of = vec![0u32; flow.len()];
+    let (mut open, mut next): (Vec<u32>, u32) = (Vec::new(), 0);
+    for (i, block) in (0..).zip(&mut block_of) {
+        while (open.last()).is_some_and(|&it| blocks[it as usize].first_after <= i) {
+            open.pop();
+        }
+        if let Some(it) = blocks.get_mut(next as usize)
+            && it.label == i
+        {
+            it.parent = open.last().map_or(0, |it| it + 1);
+            open.push(next);
+            next += 1;
+        }
+        if let Some(&it) = open.last() {
+            *block = it + 1;
+            let word = shared.get(i as usize / 64).copied().unwrap_or(0);
+            blocks[it as usize].has_shared_node |= word >> (i % 64) & 1 != 0;
+        }
+    }
+    // Look at every kind of node, not only labels. The binder drops a label that has a single antecedent, so after
+    // `for (;;) { try {} finally { if (a) break; } }` the next statement follows a node inside the block directly.
+    for (node, i) in flow.iter().zip(0..) {
+        for from in node.antecedents(edges) {
+            let Some(block) = block_of.get(from.idx()).filter(|&&block| block != 0) else {
+                continue;
+            };
+            let block = &mut blocks[*block as usize - 1];
+            if (block.label..block.first_after).contains(&i)
+                || matches!(node, Flow::Reduce { label, .. } if label.0 == block.label)
+            {
+                continue;
+            }
+            let (lowest, highest) = block.left_for.unwrap_or((i, i));
+            block.left_for = Some((lowest.min(i), highest.max(i)));
+        }
+    }
+    // Inner blocks come after the blocks around them. What leaves an inner block may leave the outer one too.
+    for i in (0..blocks.len()).rev() {
+        let (parent, left_for, has_shared_node) = (
+            blocks[i].parent,
+            blocks[i].left_for,
+            blocks[i].has_shared_node,
+        );
+        if left_for.is_some() && blocks[i].is_in_loop {
+            return true;
+        }
+        let Some(parent) = blocks.get_mut((parent as usize).wrapping_sub(1)) else {
+            continue;
+        };
+        parent.has_shared_node |= has_shared_node;
+        for to in left_for.into_iter().flat_map(|it| [it.0, it.1]) {
+            if to <= parent.label || parent.first_after <= to {
+                let (lowest, highest) = parent.left_for.unwrap_or((to, to));
+                parent.left_for = Some((lowest.min(to), highest.max(to)));
+            }
+        }
+    }
+    // `is_mixed[i]`: a walk can enter block `i`, or a block around it, in two ways and reuse a cached type there.
+    let mut is_mixed = vec![false; blocks.len()];
+    for i in 0..blocks.len() {
+        let it = &blocks[i];
+        let ways_out = it.reduces + u32::from(it.left_for.is_some());
+        is_mixed[i] = ways_out > 1 && it.has_shared_node;
+        if is_mixed[i] && it.is_in_loop {
+            return true;
+        }
+        is_mixed[i] |= it.parent != 0 && is_mixed[it.parent as usize - 1];
+    }
+    let Some(first) = is_mixed.iter().position(|&it| it) else {
+        return false;
+    };
+    // Is there a loop from which a walk gets back to such a block?
+    let first = blocks[first].label as usize;
+    let mut leads_to_block = vec![false; flow.len() - first];
+    for (i, node) in flow.iter().enumerate().skip(first) {
+        let mut before = node.antecedents(edges).iter();
+        leads_to_block[i - first] = (block_of[i] != 0 && is_mixed[block_of[i] as usize - 1])
+            || before.any(|it| (first..i).contains(&it.idx()) && leads_to_block[it.idx() - first]);
+        if leads_to_block[i - first] && matches!(node, Flow::Loop { .. }) {
+            return true;
+        }
+    }
+    false
+}
+
 #[derive(Copy, Clone, Debug)]
 pub struct FnInfo {
     pub owner: FnOwner,
     pub scope: ScopeId,
     /// The enclosing function-like.
     pub enclosing: FnId,
-    /// The `return` statements, `Bound::ids`.
+    /// The `return` statements, as a range of `Bound::ids`.
     pub returns: IdList<StmtId>,
     /// The yield expressions `forEachYieldExpression` finds, including those in the static blocks
     /// of classes nested in it. A static block itself has none.
     pub yields: IdList<ExprId>,
-    /// `Unreachable` if control cannot fall off the end.
+    /// `Unreachable` if control can't fall off the end.
     pub end: FlowId,
-    /// For a constructor, a static block or a function that the enclosing control flow continues
-    /// through: its exit, reached by a `return` or by reaching the end. `ReturnFlowNode`
+    /// `ReturnFlowNode`: the exit of a constructor, a static block or a function that the enclosing
+    /// control flow continues through. A `return` or falling off the end leads here.
     pub exit: FlowId,
-    /// `NodeFlagsContainsThis`: it contains a `this`, expression or type, possibly inside arrow
+    /// `NodeFlagsContainsThis`: it contains a `this` expression or type, possibly inside arrow
     /// functions, function types or signatures.
     pub contains_this: bool,
 }
@@ -831,7 +1446,7 @@ pub struct FnInfo {
 /// handles.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum InferPosition {
-    /// `Ref<.., infer T, ..>`: the type reference and the argument index.
+    /// `Ref<.., infer T, ..>`, with the type reference and the argument index.
     TypeArgument(TypeNodeId, u32),
     /// `[...infer T]`, `(...args: infer T) => void`
     Rest,
@@ -839,27 +1454,85 @@ pub enum InferPosition {
     Template,
     /// `{ [K in infer T]: .. }`
     MappedKey,
-    /// `{ [K in X]: E } extends { [_ in Y]: infer T } ? ..`: the mapped type that is checked.
+    /// `{ [K in X]: E } extends { [_ in Y]: infer T } ? ..`, with the mapped type that's checked.
     MappedTemplate(MappedId),
 }
 
-/// `declareSymbolEx`, where `symbol.Flags&excludes != 0`: `symbol` refused `decl`.
+/// `declareSymbolEx`, where `symbol.Flags&excludes != 0`: `decl` conflicts with `symbol`.
 #[derive(Copy, Clone, Debug)]
 pub struct Redeclaration {
     pub symbol: SymbolId,
-    /// `len(symbol.Declarations)` by then.
+    /// `len(symbol.Declarations)` at that point.
     pub count: u32,
     pub decl: Decl,
     /// The error code reported at each of those declarations and at `decl`.
     pub code: u32,
 }
 
+/// The `S::List`s of a `BoundIn`.
+macro_rules! long_lists {
+    ($each:ident) => {
+        $each!(
+            scopes,
+            tables,
+            entries,
+            nested_names,
+            ids,
+            specifiers,
+            expr_parent,
+            stmt_parent,
+            type_scope,
+            type_by_alias,
+            pat_parent,
+            pat_symbol,
+            prop_owner,
+            member_symbol,
+            member_owner,
+            member_scope,
+            param_fn,
+            type_param_symbol,
+            type_param_scope,
+            fns,
+            requires_scope_change,
+            fn_symbol,
+            class_symbol,
+            class_owner,
+            class_scope,
+            interface_symbol,
+            interface_scope,
+            interface_contains_this,
+            alias_symbol,
+            alias_scope,
+            var_stmt,
+            assignments,
+            case_stmt,
+            case_fallthrough,
+            import_scope,
+            export_scope,
+            free_idents,
+            alias_idents,
+            flow,
+            flow_edges,
+            flow_shared,
+            expr_kinds,
+            expr_kind_counts,
+            kind_counts
+        );
+    };
+}
+
 /// Side tables parallel to the vectors of a [`File`].
 #[derive(Default)]
 pub struct BoundIn<S: Storage> {
+    /// Holds the long lists of side tables that own them.
+    pub block: S::Block,
     /// The HIR was too deep to bind. No other field is filled in.
     pub ran_out_of_stack: bool,
-    pub symbols: S::Growing<SymbolIn<S>>,
+    /// `Bound::unbound_in`
+    pub is_unbound: bool,
+    /// These are the side tables of `Host::read_part_seen_by_every_file`.
+    pub is_bound_in_part: bool,
+    pub symbols: S::Symbols,
     pub scopes: S::List<Scope>,
     /// Each table is a contiguous range of `entries`, in symbol creation order.
     pub tables: S::List<(u32, u32)>,
@@ -867,8 +1540,8 @@ pub struct BoundIn<S: Storage> {
     /// The index in `entries` of each name of a table with more than `SCANNED` names.
     pub large_tables: S::Map<(TableId, Atom), u32>,
     /// A Bloom filter with one hash function over the names in the `locals` of the scopes that have
-    /// no `symbol` and are not the file scope. Its length is a power of two of words, or zero if
-    /// those scopes declare nothing. `scope_to_resolve_from`
+    /// no `symbol` and aren't the file scope. Its length in words is a power of two, or zero if
+    /// those scopes declare nothing. See `scope_to_resolve_from`.
     pub nested_names: S::List<u64>,
     pub ids: S::List<u32>,
 
@@ -878,15 +1551,15 @@ pub struct BoundIn<S: Storage> {
     /// that contains it.
     pub export_stars: S::Few<(SymbolId, StmtId)>,
     /// `declare module "name"` whose container is the file, or an ambient module at the top level
-    /// of a script. One entry for each symbol, which the declarations of a name in one container
-    /// share. The flag: it is a local of a file without module syntax, where it declares the
-    /// module. Any other is merged by `mergeModuleAugmentation` or not at all.
+    /// of a script. One entry per symbol, which all declarations of a name in one container share.
+    /// The flag is set for a local of a file without module syntax, where it declares the module.
+    /// Any other is merged by `mergeModuleAugmentation` or not at all.
     pub ambient_modules: S::Few<(Atom, SymbolId, bool)>,
     /// `file.PatternAmbientModules`: a module whose name has exactly one `*` and that augments
     /// nothing, wherever it is declared. One entry for each declaration.
     pub pattern_ambient_modules: S::Few<(Atom, SymbolId)>,
     /// `declare global { }` at the top level of a module, or directly inside an ambient module at
-    /// the top level of a script: symbols whose exports are global.
+    /// the top level of a script. The exports of these symbols are global.
     pub global_augmentations: S::Few<SymbolId>,
     pub redeclarations: S::Few<Redeclaration>,
     /// `export as namespace N`
@@ -899,57 +1572,59 @@ pub struct BoundIn<S: Storage> {
     /// imports. Resolved after `specifiers`.
     pub module_augmentations: S::Few<Atom>,
     /// The specifiers of the import and export statements directly inside the ambient modules a
-    /// script declares, and the names of the modules augmented there: resolved unless relative.
+    /// script declares, and the names of the modules augmented there. They're resolved unless
+    /// relative.
     pub ambient_specifiers: S::Few<Atom>,
     /// `CommonJSModuleIndicator`: the expression that marks the file as a CommonJS module.
     pub commonjs_indicator: Option<ExprId>,
-    /// `declareCommonJSVariable`: `module.Members["exports"]`. `NONE`: there is no such `module`.
+    /// `declareCommonJSVariable`: `module.Members["exports"]`, or `NONE` if there's no such
+    /// `module`.
     pub module_exports_property: SymbolId,
 
-    /// `getResolvedSymbol` of an identifier. `NONE`: nothing in this file declares it.
-    /// `node.Symbol` of a `Decl::Expando` and of an object literal, where `NONE` means that it has
-    /// not been created: see `symbol_of_expando_initializer`.
-    pub expr_symbol: S::List<SymbolId>,
-    pub expr_parent: S::List<Parent>,
+    /// `getResolvedSymbol` of an identifier, or `NONE` if nothing in this file declares it. Also
+    /// `node.Symbol` of a `Decl::Expando` and of an object literal, where `NONE` means it hasn't
+    /// been created yet. See `symbol_of_expando_initializer`.
+    pub expr_symbol: S::Ids<SymbolId>,
+    pub expr_parent: S::List<PackedParent>,
     /// The flow node at a name, a `this`, a `super`, and a narrowable `a.b` or `a[b]`
     /// (`isNarrowableReference`).
     /// `UNREACHABLE` for everything else.
-    pub expr_flow: S::List<FlowId>,
-    pub stmt_parent: S::List<Parent>,
+    pub expr_flow: S::Ids<FlowId>,
+    pub stmt_parent: S::List<PackedParent>,
     /// The enclosing scope of a statement.
-    pub stmt_scope: S::List<ScopeId>,
+    pub stmt_scope: S::Ids<ScopeId>,
     /// The enclosing scope of a type.
     pub type_scope: S::List<ScopeId>,
     /// `isResolvedByTypeAlias`: between the type node and a type alias there are only nodes that
     /// resolve their parts eagerly.
     pub type_by_alias: S::List<bool>,
     /// The `this` types inside a type literal, where they are invalid. `getThisType`
-    pub this_in_type_literal: S::Set<TypeNodeId>,
-    /// `None`: the binder did not reach the node. The parser can leave unreferenced nodes (a
-    /// construct dropped during error recovery, an annotation in a parenthesized list that is not
-    /// an arrow function, `<T>(x)` parsed as a cast). They have no symbol, scope or owner, so a
-    /// pass over a whole vector has to skip them. The same holds for `member_owner`,
-    /// `fns[..].owner` and `type_param_scope`.
+    pub this_in_type_literal: S::FewSet<TypeNodeId>,
+    /// `None` if the binder didn't reach the node. The parser can leave unreferenced nodes (a
+    /// construct dropped during error recovery, an annotation in a parenthesized list that isn't an
+    /// arrow function, `<T>(x)` parsed as a cast). They have no symbol, scope or owner, so a pass
+    /// over a whole vector has to skip them. The same goes for `member_owner`, `fns[..].owner` and
+    /// `type_param_scope`.
     pub pat_parent: S::List<PatParent>,
     pub pat_symbol: S::List<SymbolId>,
     pub prop_owner: S::List<ExprId>,
     pub member_symbol: S::List<SymbolId>,
     /// `node.Symbol` for a parameter property and for a member of an object literal that has
     /// symbols.
-    pub property_symbol: S::Map<Decl, SymbolId>,
+    pub property_symbol: S::FewMap<Decl, SymbolId>,
     pub member_owner: S::List<MemberOwner>,
-    /// The enclosing scope of the type, the function and the initializer of a member.
+    /// The scope that encloses a member's type, function and initializer.
     pub member_scope: S::List<ScopeId>,
     pub param_fn: S::List<FnId>,
     pub type_param_symbol: S::List<SymbolId>,
-    /// The scope a type parameter is declared in: that of its class, interface, function, alias..
+    /// The scope that declares a type parameter (its class, interface, function, alias, ...).
     pub type_param_scope: S::List<ScopeId>,
     pub fns: S::List<FnInfo>,
-    /// `requiresScopeChange` is true for some parameter, indexed by function: names in its parameters then
-    /// resolve to variables of its body.
+    /// Indexed by function. True if `requiresScopeChange` is true for some parameter, in which case
+    /// names in its parameters resolve to variables of its body.
     pub requires_scope_change: S::List<bool>,
-    /// `node.Symbol`. For an unnamed function expression and for an arrow function `NONE` means
-    /// that it has not been created: see `symbol_of_expando_initializer`.
+    /// `node.Symbol`. For an unnamed function expression and for an arrow function, `NONE` means it
+    /// hasn't been created yet. See `symbol_of_expando_initializer`.
     pub fn_symbol: S::List<SymbolId>,
     pub class_symbol: S::List<SymbolId>,
     pub class_owner: S::List<ClassOwner>,
@@ -973,10 +1648,6 @@ pub struct BoundIn<S: Storage> {
     pub var_stmt: S::List<StmtId>,
     /// The identifiers that are assigned to, keyed by the variable they resolve to.
     pub assignments: S::List<(SymbolId, ExprId)>,
-    /// The identifiers that are assigned to, or whose property is, that nothing in this file
-    /// declares, and that `checkDestructuringAssignment` does not get to: it returns at a rest
-    /// element that is not the last (2462) or that has an initializer (1186).
-    pub unchecked_assignment_targets: S::Few<ExprId>,
     /// The expressions that are (part of) the operand of a `typeof` in a type. Sorted.
     pub type_query_operands: S::Few<ExprId>,
     /// The expressions at or under a node that is in tsgo's AST but that `checkSourceFile` never
@@ -990,111 +1661,117 @@ pub struct BoundIn<S: Storage> {
     pub infer_positions: S::Few<(TypeParamId, InferPosition)>,
     /// The assignments and calls that `bindDeferredExpandoAssignment` gives a symbol. Sorted.
     pub expando_declarations: S::Few<ExprId>,
-    /// The symbol of each `this[k] = v` with a dynamic name, and the table it is declared in, in
-    /// the order they are bound. See `computed_symbol_in_table`.
+    /// The symbol of each `this[k] = v` with a dynamic name, and the table that declares it, in
+    /// binding order. See `computed_symbol_in_table`.
     pub computed_symbols: S::Few<(TableId, SymbolId)>,
     pub case_stmt: S::List<StmtId>,
     /// The flow node at the start of each statement.
-    pub stmt_flow: S::List<FlowId>,
+    pub stmt_flow: S::Ids<FlowId>,
     /// The flow node at the end of a `case` that is followed by another, if that end is reachable.
     /// `NONE` otherwise.
     pub case_fallthrough: S::List<FlowId>,
-    /// Each `var` declared in a block, from which it is hoisted, or directly in a static block,
-    /// and its enclosing scope.
+    /// Each `var` declared in a block, which it's hoisted out of, or directly in a static block,
+    /// with its enclosing scope.
     pub hoisted_vars: S::Few<(PatId, ScopeId)>,
-    /// The decorators of nodes that cannot be decorated: no further errors are reported inside
-    /// them.
-    pub refused_decorators: S::Few<ExprId>,
+    /// Decorators on nodes that can't be decorated. No further errors are reported inside them.
+    pub rejected_decorators: S::Few<ExprId>,
     /// The labeled statements that no `break` or `continue` refers to.
     pub unused_labels: S::Few<StmtId>,
     pub import_scope: S::List<ScopeId>,
     pub import_equals_scope: S::Few<ScopeId>,
     pub export_scope: S::List<ScopeId>,
-    /// The enclosing scope of an expression that creates no scope, for the few that need it.
-    pub expr_scope: S::Map<ExprId, ScopeId>,
-    /// `a.#x`, and the `#x` of `#x in a` (its left operand): the innermost enclosing class that
-    /// declares an `#x`.
-    /// `lookupSymbolForPrivateIdentifierDeclaration`. No entry: no enclosing class does.
-    pub private_class: S::Map<ExprId, ClassId>,
-    /// The members of interfaces, type literals and object literals that are named `#x`, with
-    /// `GetContainingClass`: `getDeclarationName` names them like an `#x` of that class.
+    /// The enclosing scope of an expression that doesn't create a scope, for the few that need it.
+    pub expr_scope: S::FewMap<ExprId, ScopeId>,
+    /// `lookupSymbolForPrivateIdentifierDeclaration`: maps `a.#x`, and the `#x` of `#x in a` (its
+    /// left operand), to the innermost enclosing class that declares an `#x`. There's no entry if
+    /// no enclosing class does.
+    pub private_class: S::FewMap<ExprId, ClassId>,
+    /// The members of interfaces, type literals and object literals that are named `#x`, each with
+    /// its `GetContainingClass`. `getDeclarationName` names them like an `#x` of that class.
     pub private_names_outside_class_bodies: S::Few<(Decl, ClassId)>,
-    /// The classes for whose symbols `GetSymbolNameForPrivateIdentifier` asks `GetSymbolId`, in the
-    /// order of the first call for each.
+    /// The classes whose symbols `GetSymbolNameForPrivateIdentifier` passes to `GetSymbolId`,
+    /// ordered by the first call for each.
     pub classes_of_private_names: S::Few<ClassId>,
     /// The identifiers that resolve to nothing declared in the file, each with its enclosing scope:
     /// globals, members that another file merges into an enclosing namespace or enum, or errors.
     /// Sorted by expression.
     pub free_idents: S::List<(ExprId, ScopeId)>,
     /// The identifiers that resolve only to an import or another alias, each with its enclosing
-    /// scope: whether the alias is a value can only be determined with the whole program. Sorted by
+    /// scope. It takes the whole program to tell whether the alias is a value. Sorted by
     /// expression.
     pub alias_idents: S::List<(ExprId, ScopeId)>,
     /// The `arguments` identifiers that refer to the arguments of an enclosing function. Sorted.
     pub arguments_objects: S::Few<ExprId>,
-    /// The identifiers that have an `associatedDeclarationForContainingInitializerOrBindingName` and are not `withinDeferredContext`:
-    /// with its name, and the function whose parameter it is or is part of.
-    pub identifiers_in_parameters: S::Few<(ExprId, PatId, FnId)>,
+    /// The identifiers that have an `associatedDeclarationForContainingInitializerOrBindingName`
+    /// and aren't `withinDeferredContext`. Each comes with that declaration's name.
+    pub identifiers_in_parameters: S::Few<(ExprId, PatId)>,
     /// `checkUnmatchedJSDocParameters`: the `@param` tags that match no parameter, as start and code.
     pub jsdoc_param_errors: S::Few<u32>,
-    /// The identifiers named `arguments` that are not expressions and that
+    /// The identifiers named `arguments` that aren't expressions and that
     /// `containsArgumentsReference` passes to `getResolvedSymbol`, unless the result is
-    /// `argumentsSymbol`: with the enclosing scope, and the result. `NONE`: nothing in this file
-    /// declares it.
+    /// `argumentsSymbol`. Each comes with its enclosing scope and the result, which is `NONE` if
+    /// nothing in this file declares it.
     pub names_resolved_for_arguments: S::Few<(Node, ScopeId, SymbolId)>,
 
     pub flow: S::List<Flow>,
     pub flow_edges: S::List<FlowId>,
-    /// `FlowFlagsShared`, a bit for each node of `flow`: it is the antecedent of more than one
-    /// node.
+    /// `FlowFlagsShared`, one bit per node of `flow`. Set if the node is the antecedent of more
+    /// than one node.
     pub flow_shared: S::List<u64>,
-    /// Number of flow nodes the binder encountered. `flow` omits the labels that nothing follows,
-    /// and has a single start node for all the functions without a body.
-    pub flow_places: u32,
-    /// From here on: only from [`bind_for_lint_in`], empty otherwise.
+    /// Upper bound on how deep `getTypeAtFlowNode` calls can nest in a walk of `flow`. See
+    /// [`can_reach_flow_depth_limit`](Self::can_reach_flow_depth_limit).
+    pub flow_depth: u32,
+    /// TypeScript caches the type of a reference at a loop label, from whichever walk gets there first. A walk that starts
+    /// after a `finally` block sees fewer antecedents for that block than other walks do. If such a walk can fill the cache,
+    /// the cached type depends on which reference was checked first. `has_loop_types_that_depend_on_order`, the function,
+    /// lists the ways that can happen.
+    pub has_loop_types_that_depend_on_order: bool,
+    /// Only [`bind_for_lint_in`] fills in this field and the ones after it. Otherwise they're
+    /// empty.
     ///
-    /// For each expression `2 * ExprTag + 1` if it is a `Dot`, an `Index` or a `Call` whose `Chain` is
-    /// not `No`, `2 * ExprTag` if it is anything else. [`NOT_REACHED`] if the binder does not get to
-    /// it, as where `expr_parent` is `Parent::None`, or if it is `ExprKind::Missing`.
+    /// For each expression: `2 * ExprTag + 1` if it's a `Dot`, an `Index` or a `Call` whose `Chain`
+    /// isn't `No`, and `2 * ExprTag` otherwise. [`NOT_REACHED`] if the binder doesn't reach it
+    /// (`expr_parent` is `Parent::None`) or if it's `ExprKind::Missing`.
     pub expr_kinds: S::List<u8>,
     /// How many of `expr_kinds` are 0, 1, 2 and so on, up to `2 * ExprTag::COUNT`.
     pub expr_kind_counts: S::List<u32>,
-    /// How many statements, types and patterns are of each kind, whether anything gets to them or
-    /// not, and a few other numbers: see [`kind_counts`]. Where it is not empty every statement has
-    /// a `stmt_parent` and every type a `type_scope`.
+    /// How many statements, types and patterns there are of each kind, reached or not, and a few
+    /// other counts. See [`kind_counts`]. If it isn't empty, every statement has a `stmt_parent`
+    /// and every type has a `type_scope`.
     pub kind_counts: S::List<u32>,
+    pub runtime: RuntimeBindingsIn<S>,
 }
 
-/// What is where in [`BoundIn::kind_counts`].
+/// The layout of [`BoundIn::kind_counts`].
 pub mod kind_counts {
     use crate::hir::{PatTag, StmtTag, TypeTag};
 
-    /// From here on by `StmtTag`.
+    /// Start of the counts indexed by `StmtTag`.
     pub const STMTS: usize = 0;
-    /// From here on by `TypeTag`.
+    /// Start of the counts indexed by `TypeTag`.
     pub const TYPES: usize = STMTS + StmtTag::COUNT;
-    /// From here on by `PatTag`.
+    /// Start of the counts indexed by `PatTag`.
     pub const PATS: usize = TYPES + TypeTag::COUNT;
-    /// The `init` of a `For` and the `left` of a `ForIn` or a `ForOf` that are a `StmtKind::Expr`.
-    pub const HEADS_THAT_ARE_EXPRESSIONS: usize = PATS + PatTag::COUNT;
-    /// The patterns whose `pat_parent` is `PatParent::None`.
-    pub const PATS_WITHOUT_PARENT: usize = HEADS_THAT_ARE_EXPRESSIONS + 1;
+    /// Counts each `init` of a `For` and each `left` of a `ForIn` or `ForOf` that's a
+    /// `StmtKind::Expr`.
+    pub const EXPRESSION_LOOP_HEADS: usize = PATS + PatTag::COUNT;
+    /// Counts the patterns whose `pat_parent` is `PatParent::None`.
+    pub const PATS_WITHOUT_PARENT: usize = EXPRESSION_LOOP_HEADS + 1;
     pub const LEN: usize = PATS_WITHOUT_PARENT + 1;
 }
 
 /// See [`BoundIn::expr_kinds`].
 pub const NOT_REACHED: u8 = u8::MAX;
 
-/// The side tables of a file that has been loaded.
+/// A loaded file's side tables.
 pub type Bound<'s> = BoundIn<InArena<'s>>;
-/// The side tables of a file that is being bound.
+/// The side tables of a file that's being bound.
 pub type BoundBuilder = BoundIn<Growable>;
 
 pub const UNREACHABLE: FlowId = FlowId(0);
 
-/// What the binder also calls while it binds.
-/// The text of `PropertyNameOrName()` of the binding element whose name is `pat`. `NONE` if that is
-/// neither an identifier nor a string literal.
+/// The text of `PropertyNameOrName()` of the binding element whose name is `pat`, or `NONE` if
+/// that's neither an identifier nor a string literal.
 fn property_name_or_name(hir: &File, pat: PatId, property_name: Option<&PatProp>) -> Atom {
     match property_name.map(|p| (p.key, p.name_kind, p.key_pos)) {
         None | Some((PropKey::None, ..)) => match hir[pat].kind {
@@ -1137,7 +1814,76 @@ impl<S: Storage> BoundIn<S> {
         }
     }
 
-    /// The nearest scope that is more than a block: `container`, where `scope` is `blockScopeContainer`.
+    /// Whether the declaration makes the object of a namespace, or adds to it, when it runs.
+    pub fn makes_namespace_object(&self, f: &File, m: ModuleId) -> bool {
+        matches!(f[m].name, ModuleName::Ident(_))
+            && !f[m].is_erased
+            && self.module_instance_state[m.idx()] != ModuleInstanceState::NonInstantiated
+    }
+
+    #[inline]
+    pub fn symbol(&self, id: SymbolId) -> Symbol<'_> {
+        let symbol = self.symbols.get(id.idx());
+        symbol.expect("the symbol belongs to this file")
+    }
+
+    /// Returns the parent of `e`, or `Parent::None` if `e` isn't an expression of this file.
+    #[inline]
+    pub fn parent_of_expr(&self, e: ExprId) -> Parent {
+        let parent = self.expr_parent.get(e.idx()).copied();
+        parent.unwrap_or_default().get()
+    }
+
+    /// Returns the parent of `s`, or `Parent::None` if `s` isn't a statement of this file.
+    #[inline]
+    pub fn parent_of_stmt(&self, s: StmtId) -> Parent {
+        let parent = self.stmt_parent.get(s.idx()).copied();
+        parent.unwrap_or_default().get()
+    }
+
+    /// Returns `expr_symbol` for `e`, or `NONE` if `e` isn't an expression of this file.
+    #[inline]
+    pub fn symbol_of_expr(&self, e: ExprId) -> SymbolId {
+        self.expr_symbol.id_at(e.idx()).unwrap_or_default()
+    }
+
+    /// Returns `expr_flow` for `e`, or `UNREACHABLE` if `e` isn't an expression of this file.
+    #[inline]
+    pub fn flow_of_expr(&self, e: ExprId) -> FlowId {
+        self.expr_flow.id_at(e.idx()).unwrap_or(UNREACHABLE)
+    }
+
+    /// Returns `stmt_flow` for `s`, or `UNREACHABLE` if `s` isn't a statement of this file.
+    #[inline]
+    pub fn flow_of_stmt(&self, s: StmtId) -> FlowId {
+        self.stmt_flow.id_at(s.idx()).unwrap_or(UNREACHABLE)
+    }
+
+    /// Returns the scope that encloses `s`, or `NONE` if `s` isn't a statement of this file.
+    #[inline]
+    pub fn scope_of_stmt(&self, s: StmtId) -> ScopeId {
+        self.stmt_scope.id_at(s.idx()).unwrap_or_default()
+    }
+
+    /// Returns the class at whose position a decorator with this `parent` is evaluated.
+    pub fn class_of_decorator(&self, parent: Parent) -> ClassId {
+        let member = match parent {
+            Parent::ClassDecorator(class) => return class,
+            Parent::MemberDecorator(member) => member,
+            Parent::ParamDecorator(p) => match self.fns[self.param_fn[p.idx()].idx()].owner {
+                FnOwner::Member(member) => member,
+                _ => return ClassId::NONE,
+            },
+            _ => return ClassId::NONE,
+        };
+        match self.member_owner[member.idx()] {
+            MemberOwner::Class(class) => class,
+            _ => ClassId::NONE,
+        }
+    }
+
+    /// The nearest scope that isn't just a block. It's the binder's `container` when `scope` is its
+    /// `blockScopeContainer`.
     pub fn container_scope(&self, mut scope: ScopeId) -> ScopeId {
         loop {
             let s = &self.scopes[scope.idx()];
@@ -1157,17 +1903,17 @@ impl<S: Storage> BoundIn<S> {
         }
     }
 
-    /// `GetAssignmentTarget`: the node that assigns to `e`, if `e` is its target or part of a
-    /// pattern that is its target.
+    /// `GetAssignmentTarget`: returns the node that assigns to `e`, if `e` is its target or part of
+    /// a pattern that's its target.
     #[inline]
     pub fn get_assignment_target(&self, hir: &File, e: ExprId) -> Option<AssignmentTarget> {
         self.assignment_target(hir, e, true)
     }
 
-    /// Whether the assignment `e` is what `{ name = value }` is stored as: a
+    /// True if the assignment `e` is how `{ name = value }` is stored: a
     /// `ShorthandPropertyAssignment` with an `ObjectAssignmentInitializer`.
     pub fn is_shorthand_property_assignment(&self, hir: &File, e: ExprId) -> bool {
-        matches!(self.expr_parent[e.idx()], Parent::Prop(p) if hir[p].kind == PropKind::Shorthand)
+        matches!(self.parent_of_expr(e), Parent::Prop(p) if hir[p].kind == PropKind::Shorthand)
     }
 
     /// `GetAssignmentTarget` and `accessKind` walk up the parents the same way, except that the
@@ -1179,53 +1925,77 @@ impl<S: Storage> BoundIn<S> {
         sees_through_spread: bool,
     ) -> Option<AssignmentTarget> {
         loop {
-            match self.expr_parent[e.idx()] {
-                Parent::Expr(parent) if parent.is_some() => match hir[parent].kind {
-                    ExprKind::Assign { target, .. } if target != e => return None,
-                    // `{ name = value }` is a `ShorthandPropertyAssignment`.
-                    ExprKind::Assign { .. }
-                        if self.is_shorthand_property_assignment(hir, parent) =>
-                    {
-                        e = parent;
-                    }
-                    ExprKind::Assign { op, .. } => return Some(AssignmentTarget::Assign(op)),
-                    ExprKind::Unary {
-                        op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
-                        ..
-                    } => return Some(AssignmentTarget::Unary),
-                    ExprKind::Array(_) => e = parent,
-                    ExprKind::Spread(_) | ExprKind::NonNull(_) if sees_through_spread => e = parent,
-                    _ => return None,
-                },
-                // The value of `name: value` and of `...value`, and the assignment that `{ name =
-                // value }` is stored as.
-                Parent::Prop(p) => {
-                    let owner = self.prop_owner[p.idx()];
-                    if owner.is_none()
-                        || !matches!(hir[owner].kind, ExprKind::Object(_))
-                        || hir[p].kind == PropKind::Spread && !sees_through_spread
-                        || !matches!(
-                            hir[p].kind,
-                            PropKind::Init | PropKind::Shorthand | PropKind::Spread
-                        )
-                    {
-                        return None;
-                    }
-                    e = owner;
-                }
-                Parent::Stmt(s) if s.is_some() => {
-                    return target_of_for_in_or_of(hir, &self.stmt_parent, s);
-                }
-                _ => return None,
-            }
+            e = match self.assignment_target_or_pattern_around(hir, e, sees_through_spread) {
+                ControlFlow::Continue(pattern) => pattern,
+                ControlFlow::Break(target) => return target,
+            };
         }
     }
 
+    /// One step of `GetAssignmentTarget`.
+    #[inline]
+    pub fn get_assignment_target_or_pattern_around(
+        &self,
+        hir: &File,
+        e: ExprId,
+    ) -> ControlFlow<Option<AssignmentTarget>, ExprId> {
+        self.assignment_target_or_pattern_around(hir, e, true)
+    }
+
+    #[inline]
+    fn assignment_target_or_pattern_around(
+        &self,
+        hir: &File,
+        e: ExprId,
+        sees_through_spread: bool,
+    ) -> ControlFlow<Option<AssignmentTarget>, ExprId> {
+        ControlFlow::Break(match self.parent_of_expr(e) {
+            Parent::Expr(parent) if parent.is_some() => match hir[parent].kind {
+                ExprKind::Assign { target, .. } if target != e => None,
+                // `{ name = value }` is a `ShorthandPropertyAssignment`.
+                ExprKind::Assign { .. } if self.is_shorthand_property_assignment(hir, parent) => {
+                    return ControlFlow::Continue(parent);
+                }
+                ExprKind::Assign { op, .. } => Some(AssignmentTarget::Assign(op)),
+                ExprKind::Unary {
+                    op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
+                    ..
+                } => Some(AssignmentTarget::Unary),
+                ExprKind::Array(_) => return ControlFlow::Continue(parent),
+                ExprKind::Spread(_) | ExprKind::NonNull(_) if sees_through_spread => {
+                    return ControlFlow::Continue(parent);
+                }
+                _ => None,
+            },
+            // The value of `name: value` and of `...value`, and the assignment that
+            // `{ name = value }` is stored as.
+            Parent::Prop(p) => {
+                let owner = self.prop_owner[p.idx()];
+                if owner.is_none()
+                    || !matches!(hir[owner].kind, ExprKind::Object(_))
+                    || hir[p].kind == PropKind::Spread && !sees_through_spread
+                    || !matches!(
+                        hir[p].kind,
+                        PropKind::Init | PropKind::Shorthand | PropKind::Spread
+                    )
+                {
+                    None
+                } else {
+                    return ControlFlow::Continue(owner);
+                }
+            }
+            Parent::Stmt(s) if s.is_some() => {
+                target_of_for_in_or_of(hir, self.parent_of_stmt(s), s)
+            }
+            _ => None,
+        })
+    }
+
     /// `IsVariableDeclarationInitializedToRequire` for the variable declaration or the binding
-    /// element whose name is `pat`: the module. For a binding element, of an object or an array
-    /// pattern, with `...` or not, also the export that `getExternalModuleMember` looks up: the
-    /// text of `PropertyNameOrName()`, `NONE` if that is neither an identifier nor a string
-    /// literal.
+    /// element whose name is `pat`. Returns the module. For a binding element (in an object or
+    /// array pattern, with or without `...`), also returns the export that
+    /// `getExternalModuleMember` looks up. That's the text of `PropertyNameOrName()`, or `NONE` if
+    /// it's neither an identifier nor a string literal.
     pub fn required_by(&self, hir: &File, pat: PatId) -> Option<(Atom, Option<Atom>)> {
         if !hir.is_js {
             return None;
@@ -1245,7 +2015,7 @@ impl<S: Storage> BoundIn<S> {
 
     /// `getExportSymbolOfValueSymbolIfExported`, before `getMergedSymbol`.
     pub fn export_symbol_of_value_symbol_if_exported(&self, symbol: SymbolId) -> SymbolId {
-        let local = &self.symbols[symbol.idx()];
+        let local = self.symbol(symbol);
         if local.flags.contains(SymFlags::EXPORT_VALUE) && local.export_symbol.is_some() {
             local.export_symbol
         } else {
@@ -1253,7 +2023,7 @@ impl<S: Storage> BoundIn<S> {
         }
     }
 
-    /// In symbol creation order.
+    /// The table's entries, in symbol creation order.
     pub fn table(&self, table: TableId) -> &[(Atom, SymbolId)] {
         if table.is_none() {
             return &[];
@@ -1269,12 +2039,12 @@ impl<S: Storage> BoundIn<S> {
         match self.scopes[scope.idx()].kind {
             ScopeKind::File => true,
             ScopeKind::Module(m) => {
-                let mut around = std::iter::successors(Some(scope), |&at| {
+                let mut enclosing_scopes = std::iter::successors(Some(scope), |&at| {
                     Some(self.scopes[at.idx()].parent).filter(|parent| parent.is_some())
                 });
                 !matches!(hir[m].name, ModuleName::Global)
                     && (hir.kind == FileKind::Declaration
-                        || around.any(|at| {
+                        || enclosing_scopes.any(|at| {
                             matches!(self.scopes[at.idx()].kind, ScopeKind::Module(it)
                                 if hir[it].flags.contains(Flags::AMBIENT))
                         }))
@@ -1283,7 +2053,7 @@ impl<S: Storage> BoundIn<S> {
         }
     }
 
-    /// `NameResolver.Resolve`: whether `func` has an `arguments` of its own.
+    /// `NameResolver.Resolve`: true if `func` has its own `arguments`.
     pub fn has_arguments(&self, hir: &File, func: FnId) -> bool {
         match hir[func].kind {
             FnKind::Decl | FnKind::Expr | FnKind::Getter | FnKind::Setter | FnKind::Constructor => {
@@ -1296,10 +2066,10 @@ impl<S: Storage> BoundIn<S> {
         }
     }
 
-    /// `NameResolver.Resolve`, the restrictions on the locals of a function and of a conditional
-    /// type: whether a local with `flags` is visible to a lookup for `meaning` that has just left a
-    /// scope of kind `from`.
-    pub fn is_seen_from(&self, from: ScopeKind, flags: SymFlags, meaning: SymFlags) -> bool {
+    /// `NameResolver.Resolve`'s restrictions on the locals of a function and of a conditional type.
+    /// Returns true if a local with `flags` is visible to a lookup for `meaning` that has just left
+    /// a scope of kind `from`.
+    pub fn is_visible_from(&self, from: ScopeKind, flags: SymFlags, meaning: SymFlags) -> bool {
         // Among the members of a class or an interface only the type parameters are in scope, as
         // types: `class C<T> { T = 1 }`.
         if flags.contains(SymFlags::TYPE_PARAMETER) && !meaning.intersects(SymFlags::TYPE) {
@@ -1313,7 +2083,7 @@ impl<S: Storage> BoundIn<S> {
             _ => return true,
         };
         let mut seen = true;
-        // Among the types only the type parameters are visible outside the body.
+        // Type parameters are the only types visible outside the body.
         if (meaning & flags).intersects(SymFlags::TYPE) {
             seen = flags.contains(SymFlags::TYPE_PARAMETER);
         }
@@ -1338,20 +2108,16 @@ impl<S: Storage> BoundIn<S> {
     }
 }
 
-/// The end of `GetAssignmentTarget`: `s`, an expression statement, is what the head of a `for`-`in`
-/// or a `for`-`of` assigns to.
-fn target_of_for_in_or_of(
-    hir: &File,
-    stmt_parent: &[Parent],
-    s: StmtId,
-) -> Option<AssignmentTarget> {
-    matches!(stmt_parent[s.idx()], Parent::Stmt(l) if l.is_some()
+/// The last step of `GetAssignmentTarget`. Returns `ForInOrOf` if `s`, an expression statement whose parent is
+/// `parent`, is the assignment target in the head of a `for`-`in` or `for`-`of`.
+fn target_of_for_in_or_of(hir: &File, parent: Parent, s: StmtId) -> Option<AssignmentTarget> {
+    matches!(parent, Parent::Stmt(l) if l.is_some()
         && matches!(hir[l].kind, StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } if left == s))
     .then_some(AssignmentTarget::ForInOrOf)
 }
 
 /// `isVariableDeclarationInitializedWithRequireHelper` in a JavaScript file, without
-/// `allowAccessedRequire`: the module that `d` is initialized to.
+/// `allowAccessedRequire`: returns the module that `d` is initialized to.
 fn module_required_by(hir: &File, d: VarDeclId) -> Option<Atom> {
     let init = hir[d].init;
     if init.is_none()
@@ -1364,8 +2130,8 @@ fn module_required_by(hir: &File, d: VarDeclId) -> Option<Atom> {
     required_specifier(hir, init)
 }
 
-/// `BoundIn::large_tables`
-pub(crate) fn large_table_places(
+/// Builds `BoundIn::large_tables`.
+pub(crate) fn large_table_entries(
     tables: &[(u32, u32)],
     entries: &[(Atom, SymbolId)],
 ) -> impl Iterator<Item = ((TableId, Atom), u32)> {
@@ -1376,11 +2142,11 @@ pub(crate) fn large_table_places(
         let names = &entries[start as usize..(start + len) as usize];
         (start..)
             .zip(names)
-            .map(move |(place, entry)| ((TableId(id), entry.0), place))
+            .map(move |(entry_index, entry)| ((TableId(id), entry.0), entry_index))
     })
 }
 
-/// `BoundIn::nested_names`, at 8 bits per name.
+/// Builds `BoundIn::nested_names`, at 8 bits per name.
 pub(crate) fn nested_names_of(
     scopes: &[Scope],
     tables: &[(u32, u32)],
@@ -1408,18 +2174,18 @@ pub(crate) fn nested_names_of(
 
 /// The word index and the bit for `name` in a `nested_names` of `words` words.
 fn bit_of_nested_name(words: usize, name: Atom) -> (usize, u64) {
-    // Atoms are numbered sequentially: Fibonacci hashing spreads them.
+    // Atoms are numbered sequentially, so Fibonacci hashing spreads them out.
     let hash = u64::from(name.0).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 32;
     ((hash >> 6) as usize & (words - 1), 1 << (hash & 63))
 }
 
 impl Bound<'_> {
-    /// `symbol.Declarations` of the symbol of `p`, a member of an object literal or a JSX attribute.
+    /// `symbol.Declarations` of `p`'s symbol. `p` is an object literal member or a JSX attribute.
     pub fn declarations_of_literal_member(&self, p: PropId) -> SmallVec<[PropId; 2]> {
         let Some(symbol) = self.property_symbol.get(&Decl::Property(p)) else {
             return smallvec::smallvec![p];
         };
-        let declarations = self.symbols[symbol.idx()].decls.iter();
+        let declarations = self.symbol(*symbol).decls.iter();
         declarations
             .filter_map(|declaration| match *declaration {
                 Decl::Property(p) => Some(p),
@@ -1428,12 +2194,13 @@ impl Bound<'_> {
             .collect()
     }
 
-    /// Whether `m`, which has a name, has a symbol that is not the one its container has under that name.
-    pub fn is_member_in_no_table(&self, m: MemberId) -> bool {
+    /// True if `m`, which has a name, has a symbol other than the one its container has under that
+    /// name.
+    pub fn is_member_not_in_table(&self, m: MemberId) -> bool {
         let Some(symbol) = self.symbols.get(self.member_symbol[m.idx()].idx()) else {
             return false;
         };
-        let container = &self.symbols[symbol.parent.idx()];
+        let container = self.symbol(symbol.parent);
         symbol.name != known::computed
             && [container.members, container.exports]
                 .iter()
@@ -1479,8 +2246,8 @@ impl Bound<'_> {
         &self.assignments[from..from + len]
     }
 
-    /// `GetImmediatelyInvokedFunctionExpression`: the call, if the function expression or arrow
-    /// function `f` is immediately invoked.
+    /// `GetImmediatelyInvokedFunctionExpression`: returns the call if the function expression or
+    /// arrow function `f` is immediately invoked.
     pub fn get_immediately_invoked_function_expression(
         &self,
         hir: &File,
@@ -1488,7 +2255,7 @@ impl Bound<'_> {
     ) -> Option<CallId> {
         if let FnOwner::Expr(e) = self.fns[f.idx()].owner
             && matches!(hir[f].kind, FnKind::Expr | FnKind::Arrow)
-            && let Parent::Expr(parent) = self.expr_parent[e.idx()]
+            && let Parent::Expr(parent) = self.parent_of_expr(e)
             && parent.is_some()
             && let ExprKind::Call(call) = hir[parent].kind
             && hir[call].callee == e
@@ -1498,13 +2265,13 @@ impl Bound<'_> {
         None
     }
 
-    /// `GetAssignedName`: the position of the name of the target that `e` is directly assigned to.
+    /// `GetAssignedName`: returns the name position of the target that `e` is directly assigned to.
     pub fn get_assigned_name(&self, hir: &File, e: ExprId) -> Option<u32> {
         if is_parenthesized(hir, e) {
             return None;
         }
-        match self.expr_parent[e.idx()] {
-            // Not the attribute of a JSX element.
+        match self.parent_of_expr(e) {
+            // Not a JSX attribute.
             Parent::Prop(p) if hir[p].kind == PropKind::Init => {
                 let owner = self.prop_owner[p.idx()];
                 (owner.is_some() && matches!(hir[owner].kind, ExprKind::Object(_)))
@@ -1527,9 +2294,9 @@ impl Bound<'_> {
                 {
                     return None;
                 }
-                match hir[left].kind {
+                match hir.checked_kind(left) {
                     ExprKind::Ident(_) => Some(hir[left].pos),
-                    ExprKind::Dot { name_pos, .. } => Some(name_pos),
+                    ExprKind::Dot { .. } => Some(hir.name_pos(left)),
                     // `IsStringOrNumericLiteralLike(SkipParentheses(argument))`
                     ExprKind::Index { index, .. } => match hir[index].kind {
                         ExprKind::String(_) | ExprKind::Number(_) => Some(hir[index].pos),
@@ -1545,17 +2312,17 @@ impl Bound<'_> {
         }
     }
 
-    /// Whether `checkSourceFile` never reaches the expression: it is unreferenced, or it is one of
-    /// `unchecked_exprs`. A pass over all expressions of a file must skip it.
+    /// True if `checkSourceFile` never reaches the expression, because it's unreferenced or it's
+    /// one of `unchecked_exprs`. A pass over all of a file's expressions must skip it.
     pub fn is_unchecked(&self, e: usize) -> bool {
-        matches!(self.expr_parent[e], Parent::None)
+        matches!(self.parent_of_expr(ExprId(e as u32)), Parent::None)
             || self
                 .unchecked_exprs
                 .binary_search(&ExprId(e as u32))
                 .is_ok()
     }
 
-    /// The same for a type node.
+    /// Same for a type node.
     pub fn is_unchecked_type(&self, node: usize) -> bool {
         self.type_scope[node].is_none()
             || self
@@ -1573,25 +2340,31 @@ impl Bound<'_> {
         }
     }
 
-    /// `IsInTypeQuery`: the type of `e` is queried, but `e` is not read.
+    /// True if the file has a `typeof x` type.
+    pub(crate) fn has_type_queries(&self) -> bool {
+        !self.type_query_operands.is_empty()
+    }
+
+    /// `IsInTypeQuery`: the type of `e` is queried, but `e` isn't read.
     pub fn is_in_type_query(&self, e: ExprId) -> bool {
         self.type_query_operands.binary_search(&e).is_ok()
     }
 
-    /// Whether `e` is `arguments`, meaning the arguments object.
+    /// True if `e` is `arguments` and refers to the arguments object.
     pub fn is_arguments_object(&self, e: ExprId) -> bool {
         self.arguments_objects.binary_search(&e).is_ok()
     }
 
-    /// Whether the binder treated `e` as the declaration of a property of a function, a class or an
-    /// object literal (`node.Symbol != nil`). That includes a key that names no property, as in
+    /// True if the binder treated `e` as declaring a property of a function, a class or an object
+    /// literal (`node.Symbol != nil`). That includes a key that isn't a property name, as in
     /// `f[a + b] = value`.
     pub fn is_expando_declaration(&self, e: ExprId) -> bool {
         self.expando_declarations.binary_search(&e).is_ok()
     }
 
-    /// `symbolTable["__computed"]`, which every `this[k] = v` of one table declares, so that its
-    /// `ValueDeclaration` is the first of them. Here each has its own `symbol`: that of the first.
+    /// `symbolTable["__computed"]`, which every `this[k] = v` of one table declares, so its
+    /// `ValueDeclaration` is the first of them. Here each one has its own symbol, so this maps
+    /// `symbol` to the first one's.
     pub fn computed_symbol_in_table(&self, symbol: SymbolId) -> SymbolId {
         let Some(&(table, _)) = self.computed_symbols.iter().find(|it| it.1 == symbol) else {
             return symbol;
@@ -1600,7 +2373,7 @@ impl Bound<'_> {
         first.map_or(symbol, |it| it.1)
     }
 
-    /// `node.Symbol`. `NONE`: it is not stored for a declaration of that kind, none of which has a
+    /// `node.Symbol`, or `NONE` for the declaration kinds it isn't stored for. None of those has a
     /// local symbol.
     pub fn symbol_of_declaration(&self, decl: Decl) -> SymbolId {
         match decl {
@@ -1614,7 +2387,7 @@ impl Bound<'_> {
             Decl::Module(it) => self.module_symbol[it.idx()],
             Decl::TypeParam(it) => self.type_param_symbol[it.idx()],
             Decl::Expando(it) | Decl::ObjectLiteral(it) | Decl::ThisProperty(it) => {
-                self.expr_symbol[it.idx()]
+                self.symbol_of_expr(it)
             }
             Decl::Member(it) => self.member_symbol[it.idx()],
             Decl::ParameterProperty(_) | Decl::Property(_) => {
@@ -1634,19 +2407,15 @@ impl Bound<'_> {
         })
     }
 
-    /// The scope at which `FindAncestor` from `decl` starts: the scope that a file, a module or a
-    /// namespace creates, and the enclosing scope of any other declaration. `NONE`: the binder did
-    /// not reach it, or it is an assignment.
+    /// The scope where `FindAncestor` from `decl` starts: the scope that a file, a module or a
+    /// namespace creates, or the enclosing scope of any other declaration. `NONE` if the binder
+    /// didn't reach it or it's an assignment.
     pub fn scope_of_declaration(&self, hir: &File, decl: Decl) -> ScopeId {
-        let around = |created: ScopeId| {
+        let parent_of = |created: ScopeId| {
             let created = self.scopes.get(created.idx());
             created.map_or(ScopeId::NONE, |scope| scope.parent)
         };
-        let of_statement = |it: StmtId| {
-            self.stmt_scope
-                .get(it.idx())
-                .map_or(ScopeId::NONE, |&it| it)
-        };
+        let scope_of_statement = |it: StmtId| self.scope_of_stmt(it);
         match decl {
             Decl::File | Decl::CommonJsVariable => ScopeId(0),
             Decl::Module(it) => self.module_scope[it.idx()],
@@ -1655,7 +2424,7 @@ impl Bound<'_> {
                 loop {
                     match self.pat_parent[root.idx()] {
                         PatParent::Prop(outer, _) | PatParent::Elem(outer, _) => root = outer,
-                        PatParent::Var(it) => return of_statement(self.var_stmt[it.idx()]),
+                        PatParent::Var(it) => return scope_of_statement(self.var_stmt[it.idx()]),
                         PatParent::Param(it) => {
                             let function = self.fns.get(self.param_fn[it.idx()].idx());
                             return function.map_or(ScopeId::NONE, |function| function.scope);
@@ -1664,11 +2433,11 @@ impl Bound<'_> {
                     }
                 }
             }
-            Decl::Fn(it) => around(self.fns[it.idx()].scope),
-            Decl::Class(it) => around(self.class_scope[it.idx()]),
-            Decl::Interface(it) => around(self.interface_scope[it.idx()]),
-            Decl::Alias(it) => around(self.alias_scope[it.idx()]),
-            Decl::Enum(it) => around(self.enum_scope[it.idx()]),
+            Decl::Fn(it) => parent_of(self.fns[it.idx()].scope),
+            Decl::Class(it) => parent_of(self.class_scope[it.idx()]),
+            Decl::Interface(it) => parent_of(self.interface_scope[it.idx()]),
+            Decl::Alias(it) => parent_of(self.alias_scope[it.idx()]),
+            Decl::Enum(it) => parent_of(self.enum_scope[it.idx()]),
             Decl::EnumMember(it) => {
                 let owner = self.enum_scope.get(self.enum_member_owner[it.idx()].idx());
                 owner.map_or(ScopeId::NONE, |&it| it)
@@ -1678,7 +2447,9 @@ impl Bound<'_> {
             Decl::ImportSpec(it) => self.import_scope[hir[it].import.idx()],
             Decl::ImportEquals(it) => self.import_equals_scope[it.idx()],
             Decl::ExportSpec(it) => self.export_scope[hir[it].export.idx()],
-            Decl::ExportStarAs(it) | Decl::ExportExpr(it) | Decl::UmdGlobal(it) => of_statement(it),
+            Decl::ExportStarAs(it) | Decl::ExportExpr(it) | Decl::UmdGlobal(it) => {
+                scope_of_statement(it)
+            }
             Decl::ModuleExports(_)
             | Decl::ExportsProperty(_)
             | Decl::Expando(_)
@@ -1694,7 +2465,7 @@ impl Bound<'_> {
     /// `ExportSymbol` of the local symbol named `name` in `scope`.
     pub fn export_symbol_of_local(&self, scope: ScopeId, name: Atom) -> SymbolId {
         match self.lookup(self.scopes[scope.idx()].locals, name) {
-            Some(local) => self.symbols[local.idx()].export_symbol,
+            Some(local) => self.symbol(local).export_symbol,
             None => SymbolId::NONE,
         }
     }
@@ -1704,8 +2475,8 @@ impl Bound<'_> {
         if entries.len() <= Self::SCANNED {
             return entries.iter().find(|e| e.0 == name).map(|e| e.1);
         }
-        let place = *self.large_tables.get(&(table, name))?;
-        Some(self.entries[place as usize].1)
+        let entry_index = *self.large_tables.get(&(table, name))?;
+        Some(self.entries[entry_index as usize].1)
     }
 
     #[inline]
@@ -1725,9 +2496,20 @@ impl Bound<'_> {
         &self.flow_edges[start as usize..(start + len) as usize]
     }
 
-    /// The scope at which `NameResolver.Resolve` can start its lookup of `name` from `scope`. If no
-    /// scope in between declares the name, that is the nearest enclosing scope whose symbol has
-    /// exports, which may come from elsewhere, or the file scope. Valid for a `lookup` that is
+    /// True if a walk of `flow` can hit `MAX_FLOW_DEPTH`. `>=` allows for the one extra condition node that
+    /// `checkIfExpressionRefinesParameter` makes up.
+    pub fn can_reach_flow_depth_limit(&self) -> bool {
+        self.flow_depth >= MAX_FLOW_DEPTH
+    }
+
+    /// True if a reference's type can depend on which references were checked before it.
+    pub fn has_types_that_depend_on_order(&self) -> bool {
+        self.can_reach_flow_depth_limit() || self.has_loop_types_that_depend_on_order
+    }
+
+    /// The scope where `NameResolver.Resolve` can start its lookup of `name` from `scope`. If no
+    /// scope in between declares the name, that's the nearest enclosing scope whose symbol has
+    /// exports (which may come from other files), or the file scope. Only valid when `lookup` is
     /// `getSymbol`.
     #[inline]
     pub fn scope_to_resolve_from(&self, mut scope: ScopeId, name: Atom) -> ScopeId {
@@ -1747,11 +2529,11 @@ impl Bound<'_> {
         scope
     }
 
-    /// `NameResolver.Resolve`, at a class or an interface reached from a static member
+    /// `NameResolver.Resolve` at a class or an interface reached from a static member
     /// (`IsStatic(lastLocation)`), at `KindComputedPropertyName` and at
-    /// `KindExpressionWithTypeArguments`: the error with which a search that has reached `scope`
-    /// ends, if `r.lookup` finds a type parameter among the locals of the scope returned with it,
-    /// that of the enclosing class or interface.
+    /// `KindExpressionWithTypeArguments`. Returns an error code and the scope of the enclosing
+    /// class or interface. A search that has reached `scope` ends with that error if `r.lookup`
+    /// finds a type parameter among the returned scope's locals.
     pub fn type_parameter_out_of_reach(&self, scope: ScopeId) -> Option<(u32, ScopeId)> {
         let s = &self.scopes[scope.idx()];
         let code = match s.kind {
@@ -1763,10 +2545,11 @@ impl Bound<'_> {
         Some((code, s.parent))
     }
 
-    /// `NameResolver.Resolve`, `case KindPropertyDeclaration`: `propertyWithInvalidInitializer`, if
-    /// a lookup for `meaning` that has reached `scope` must record one there, with the error
-    /// `checkAndReportErrorForInvalidInitializer` reports for it. The lookup continues, and returns
-    /// nil at the end if it has a `nameNotFoundMessage`.
+    /// `NameResolver.Resolve`, `case KindPropertyDeclaration`: returns
+    /// `propertyWithInvalidInitializer` if a lookup for `meaning` that has reached `scope` must
+    /// record one there, along with the error that `checkAndReportErrorForInvalidInitializer`
+    /// reports for it. The lookup continues, and returns nil at the end if it has a
+    /// `nameNotFoundMessage`.
     pub fn property_with_invalid_initializer(
         &self,
         scope: ScopeId,
@@ -1780,13 +2563,13 @@ impl Bound<'_> {
         };
         let locals = self.scopes[self.fns[constructor.idx()].scope.idx()].locals;
         let local = self.lookup(locals, name)?;
-        (meaning & self.symbols[local.idx()].flags)
+        (meaning & self.symbol(local).flags)
             .intersects(SymFlags::VALUE)
             .then_some((code, property))
     }
 
-    /// `NameResolver.Resolve`: whether a lookup of the variable `arguments` from `scope` that finds
-    /// no declaration ends at `argumentsSymbol`, which is in no table.
+    /// `NameResolver.Resolve`: true if a lookup of the variable `arguments` from `scope` that finds
+    /// no declaration ends at `argumentsSymbol`, which isn't in any table.
     pub fn is_in_function_with_arguments(&self, hir: &File, mut scope: ScopeId) -> bool {
         while scope.is_some() {
             let s = &self.scopes[scope.idx()];
@@ -1810,26 +2593,25 @@ fn map_to_arena<'s, K: Eq + std::hash::Hash, V>(
     exact
 }
 
-fn set_to_arena<'s, K: Eq + std::hash::Hash>(
-    set: FxHashSet<K>,
-    arena: &'s Arena,
-) -> ArenaHashSet<'s, K> {
-    let mut exact = ArenaHashSet::with_capacity_and_hasher_in(set.len(), FxBuild, arena);
-    exact.extend(set);
-    exact
+fn few_map_to_arena<K: Ord, V>(map: FxHashMap<K, V>, arena: &Arena) -> ArenaFewMap<'_, K, V> {
+    ArenaFewMap::from_iter_in(map.into_iter(), arena)
 }
 
 impl BoundBuilder {
-    /// The side tables with every list at its final size in `arena`.
+    /// Moves the side tables into `arena`, with every list at its final size.
+    #[cfg(test)]
     pub fn into_arena<'s>(mut self, arena: &'s Arena) -> Bound<'s> {
         self.move_to_arena(arena)
     }
 
-    /// Makes it what `BoundBuilder::default()` is, but for the room that its lists keep.
+    /// Resets it to `BoundBuilder::default()`, except that the lists keep their capacity.
     fn clear(&mut self) {
-        // Every field, so that one that is added cannot be left out.
+        // Destructures every field so that a newly added one can't be forgotten.
         let BoundIn {
+            block: (),
             ran_out_of_stack,
+            is_unbound,
+            is_bound_in_part,
             symbols,
             scopes,
             tables,
@@ -1887,7 +2669,6 @@ impl BoundBuilder {
             module_instance_state,
             var_stmt,
             assignments,
-            unchecked_assignment_targets,
             type_query_operands,
             unchecked_exprs,
             unchecked_types,
@@ -1898,7 +2679,7 @@ impl BoundBuilder {
             stmt_flow,
             case_fallthrough,
             hoisted_vars,
-            refused_decorators,
+            rejected_decorators,
             unused_labels,
             import_scope,
             import_equals_scope,
@@ -1916,12 +2697,16 @@ impl BoundBuilder {
             flow,
             flow_edges,
             flow_shared,
-            flow_places,
+            flow_depth,
+            has_loop_types_that_depend_on_order,
             expr_kinds,
             expr_kind_counts,
             kind_counts,
+            runtime,
         } = self;
         *ran_out_of_stack = Default::default();
+        *is_unbound = Default::default();
+        *is_bound_in_part = Default::default();
         symbols.clear();
         scopes.clear();
         tables.clear();
@@ -1979,7 +2764,6 @@ impl BoundBuilder {
         module_instance_state.clear();
         var_stmt.clear();
         assignments.clear();
-        unchecked_assignment_targets.clear();
         type_query_operands.clear();
         unchecked_exprs.clear();
         unchecked_types.clear();
@@ -1990,7 +2774,7 @@ impl BoundBuilder {
         stmt_flow.clear();
         case_fallthrough.clear();
         hoisted_vars.clear();
-        refused_decorators.clear();
+        rejected_decorators.clear();
         unused_labels.clear();
         import_scope.clear();
         import_equals_scope.clear();
@@ -2008,32 +2792,44 @@ impl BoundBuilder {
         flow.clear();
         flow_edges.clear();
         flow_shared.clear();
-        *flow_places = Default::default();
+        *flow_depth = Default::default();
+        *has_loop_types_that_depend_on_order = Default::default();
         expr_kinds.clear();
         expr_kind_counts.clear();
         kind_counts.clear();
+        runtime.clear();
     }
 
-    /// The same. What is left is empty, and the lists that are long in most files keep their room.
+    /// Moves the side tables into `arena`, with every list at its final size. Leaves `self` empty,
+    /// and the lists that are long in most files keep their capacity.
     fn move_to_arena<'s>(&mut self, arena: &'s Arena) -> Bound<'s> {
-        Bound {
+        let mut room = 0;
+        macro_rules! measure {
+            ($($list:ident),*) => { $(room += ListBlock::room_for(&self.$list);)* };
+        }
+        long_lists!(measure);
+        room += Narrow::room_for(&self.expr_symbol) + Narrow::room_for(&self.expr_flow);
+        room += Narrow::room_for(&self.stmt_scope) + Narrow::room_for(&self.stmt_flow);
+        let mut block = ListBlock::new_in(arena, room);
+        let mut bound = Bound {
+            block: ListBlock::default(),
             ran_out_of_stack: self.ran_out_of_stack,
+            is_unbound: self.is_unbound,
+            is_bound_in_part: self.is_bound_in_part,
             symbols: {
-                let mut exact = ArenaVec::new_in(arena);
-                exact.reserve_exact(self.symbols.len());
-                exact.extend(
-                    self.symbols
-                        .drain(..)
-                        .map(|symbol| symbol.into_arena(arena)),
-                );
+                let exact = Symbols::of(&self.symbols, arena);
+                self.symbols.clear();
                 exact
             },
-            scopes: copy_to_arena(&mut self.scopes, arena),
-            tables: copy_to_arena(&mut self.tables, arena),
-            entries: copy_to_arena(&mut self.entries, arena),
-            large_tables: map_to_arena(std::mem::take(&mut self.large_tables), arena),
-            nested_names: copy_to_arena(&mut self.nested_names, arena),
-            ids: copy_to_arena(&mut self.ids, arena),
+            scopes: block.take(&mut self.scopes, arena),
+            tables: block.take(&mut self.tables, arena),
+            entries: block.take(&mut self.entries, arena),
+            large_tables: FixedMap::Arena(map_to_arena(
+                std::mem::take(&mut self.large_tables),
+                arena,
+            )),
+            nested_names: block.take(&mut self.nested_names, arena),
+            ids: block.take(&mut self.ids, arena),
             file_symbol: self.file_symbol,
             export_stars: few_to_arena(std::mem::take(&mut self.export_stars), arena),
             ambient_modules: few_to_arena(std::mem::take(&mut self.ambient_modules), arena),
@@ -2047,7 +2843,7 @@ impl BoundBuilder {
             ),
             redeclarations: few_to_arena(std::mem::take(&mut self.redeclarations), arena),
             umd_globals: few_to_arena(std::mem::take(&mut self.umd_globals), arena),
-            specifiers: copy_to_arena(&mut self.specifiers, arena),
+            specifiers: block.take(&mut self.specifiers, arena),
             module_augmentations: few_to_arena(
                 std::mem::take(&mut self.module_augmentations),
                 arena,
@@ -2055,40 +2851,40 @@ impl BoundBuilder {
             ambient_specifiers: few_to_arena(std::mem::take(&mut self.ambient_specifiers), arena),
             commonjs_indicator: self.commonjs_indicator,
             module_exports_property: self.module_exports_property,
-            expr_symbol: copy_to_arena(&mut self.expr_symbol, arena),
-            expr_parent: copy_to_arena(&mut self.expr_parent, arena),
-            expr_flow: copy_to_arena(&mut self.expr_flow, arena),
-            stmt_parent: copy_to_arena(&mut self.stmt_parent, arena),
-            stmt_scope: copy_to_arena(&mut self.stmt_scope, arena),
-            type_scope: copy_to_arena(&mut self.type_scope, arena),
-            type_by_alias: copy_to_arena(&mut self.type_by_alias, arena),
-            this_in_type_literal: set_to_arena(
-                std::mem::take(&mut self.this_in_type_literal),
+            expr_symbol: Narrow::moved_into(&mut block, arena, &mut self.expr_symbol),
+            expr_parent: block.take(&mut self.expr_parent, arena),
+            expr_flow: Narrow::moved_into(&mut block, arena, &mut self.expr_flow),
+            stmt_parent: block.take(&mut self.stmt_parent, arena),
+            stmt_scope: Narrow::moved_into(&mut block, arena, &mut self.stmt_scope),
+            type_scope: block.take(&mut self.type_scope, arena),
+            type_by_alias: block.take(&mut self.type_by_alias, arena),
+            this_in_type_literal: ArenaFewMap::from_iter_in(
+                self.this_in_type_literal.drain().map(|node| (node, ())),
                 arena,
             ),
-            pat_parent: copy_to_arena(&mut self.pat_parent, arena),
-            pat_symbol: copy_to_arena(&mut self.pat_symbol, arena),
-            prop_owner: copy_to_arena(&mut self.prop_owner, arena),
-            member_symbol: copy_to_arena(&mut self.member_symbol, arena),
-            property_symbol: map_to_arena(std::mem::take(&mut self.property_symbol), arena),
-            member_owner: copy_to_arena(&mut self.member_owner, arena),
-            member_scope: copy_to_arena(&mut self.member_scope, arena),
-            param_fn: copy_to_arena(&mut self.param_fn, arena),
-            type_param_symbol: copy_to_arena(&mut self.type_param_symbol, arena),
-            type_param_scope: copy_to_arena(&mut self.type_param_scope, arena),
-            fns: copy_to_arena(&mut self.fns, arena),
-            requires_scope_change: copy_to_arena(&mut self.requires_scope_change, arena),
-            fn_symbol: copy_to_arena(&mut self.fn_symbol, arena),
-            class_symbol: copy_to_arena(&mut self.class_symbol, arena),
-            class_owner: copy_to_arena(&mut self.class_owner, arena),
-            class_scope: copy_to_arena(&mut self.class_scope, arena),
-            interface_symbol: copy_to_arena(&mut self.interface_symbol, arena),
-            interface_scope: copy_to_arena(&mut self.interface_scope, arena),
-            interface_contains_this: copy_to_arena(&mut self.interface_contains_this, arena),
+            pat_parent: block.take(&mut self.pat_parent, arena),
+            pat_symbol: block.take(&mut self.pat_symbol, arena),
+            prop_owner: block.take(&mut self.prop_owner, arena),
+            member_symbol: block.take(&mut self.member_symbol, arena),
+            property_symbol: few_map_to_arena(std::mem::take(&mut self.property_symbol), arena),
+            member_owner: block.take(&mut self.member_owner, arena),
+            member_scope: block.take(&mut self.member_scope, arena),
+            param_fn: block.take(&mut self.param_fn, arena),
+            type_param_symbol: block.take(&mut self.type_param_symbol, arena),
+            type_param_scope: block.take(&mut self.type_param_scope, arena),
+            fns: block.take(&mut self.fns, arena),
+            requires_scope_change: block.take(&mut self.requires_scope_change, arena),
+            fn_symbol: block.take(&mut self.fn_symbol, arena),
+            class_symbol: block.take(&mut self.class_symbol, arena),
+            class_owner: block.take(&mut self.class_owner, arena),
+            class_scope: block.take(&mut self.class_scope, arena),
+            interface_symbol: block.take(&mut self.interface_symbol, arena),
+            interface_scope: block.take(&mut self.interface_scope, arena),
+            interface_contains_this: block.take(&mut self.interface_contains_this, arena),
             enum_scope: few_to_arena(std::mem::take(&mut self.enum_scope), arena),
             module_scope: few_to_arena(std::mem::take(&mut self.module_scope), arena),
-            alias_symbol: copy_to_arena(&mut self.alias_symbol, arena),
-            alias_scope: copy_to_arena(&mut self.alias_scope, arena),
+            alias_symbol: block.take(&mut self.alias_symbol, arena),
+            alias_scope: block.take(&mut self.alias_scope, arena),
             enum_symbol: few_to_arena(std::mem::take(&mut self.enum_symbol), arena),
             enum_member_symbol: few_to_arena(std::mem::take(&mut self.enum_member_symbol), arena),
             enum_member_owner: few_to_arena(std::mem::take(&mut self.enum_member_owner), arena),
@@ -2097,12 +2893,8 @@ impl BoundBuilder {
                 std::mem::take(&mut self.module_instance_state),
                 arena,
             ),
-            var_stmt: copy_to_arena(&mut self.var_stmt, arena),
-            assignments: copy_to_arena(&mut self.assignments, arena),
-            unchecked_assignment_targets: few_to_arena(
-                std::mem::take(&mut self.unchecked_assignment_targets),
-                arena,
-            ),
+            var_stmt: block.take(&mut self.var_stmt, arena),
+            assignments: block.take(&mut self.assignments, arena),
             type_query_operands: few_to_arena(std::mem::take(&mut self.type_query_operands), arena),
             unchecked_exprs: few_to_arena(std::mem::take(&mut self.unchecked_exprs), arena),
             unchecked_types: few_to_arena(std::mem::take(&mut self.unchecked_types), arena),
@@ -2112,17 +2904,17 @@ impl BoundBuilder {
                 arena,
             ),
             computed_symbols: few_to_arena(std::mem::take(&mut self.computed_symbols), arena),
-            case_stmt: copy_to_arena(&mut self.case_stmt, arena),
-            stmt_flow: copy_to_arena(&mut self.stmt_flow, arena),
-            case_fallthrough: copy_to_arena(&mut self.case_fallthrough, arena),
+            case_stmt: block.take(&mut self.case_stmt, arena),
+            stmt_flow: Narrow::moved_into(&mut block, arena, &mut self.stmt_flow),
+            case_fallthrough: block.take(&mut self.case_fallthrough, arena),
             hoisted_vars: few_to_arena(std::mem::take(&mut self.hoisted_vars), arena),
-            refused_decorators: few_to_arena(std::mem::take(&mut self.refused_decorators), arena),
+            rejected_decorators: few_to_arena(std::mem::take(&mut self.rejected_decorators), arena),
             unused_labels: few_to_arena(std::mem::take(&mut self.unused_labels), arena),
-            import_scope: copy_to_arena(&mut self.import_scope, arena),
+            import_scope: block.take(&mut self.import_scope, arena),
             import_equals_scope: few_to_arena(std::mem::take(&mut self.import_equals_scope), arena),
-            export_scope: copy_to_arena(&mut self.export_scope, arena),
-            expr_scope: map_to_arena(std::mem::take(&mut self.expr_scope), arena),
-            private_class: map_to_arena(std::mem::take(&mut self.private_class), arena),
+            export_scope: block.take(&mut self.export_scope, arena),
+            expr_scope: few_map_to_arena(std::mem::take(&mut self.expr_scope), arena),
+            private_class: few_map_to_arena(std::mem::take(&mut self.private_class), arena),
             private_names_outside_class_bodies: few_to_arena(
                 std::mem::take(&mut self.private_names_outside_class_bodies),
                 arena,
@@ -2131,8 +2923,8 @@ impl BoundBuilder {
                 std::mem::take(&mut self.classes_of_private_names),
                 arena,
             ),
-            free_idents: copy_to_arena(&mut self.free_idents, arena),
-            alias_idents: copy_to_arena(&mut self.alias_idents, arena),
+            free_idents: block.take(&mut self.free_idents, arena),
+            alias_idents: block.take(&mut self.alias_idents, arena),
             arguments_objects: few_to_arena(std::mem::take(&mut self.arguments_objects), arena),
             identifiers_in_parameters: few_to_arena(
                 std::mem::take(&mut self.identifiers_in_parameters),
@@ -2143,40 +2935,35 @@ impl BoundBuilder {
                 std::mem::take(&mut self.names_resolved_for_arguments),
                 arena,
             ),
-            flow: copy_to_arena(&mut self.flow, arena),
-            flow_edges: copy_to_arena(&mut self.flow_edges, arena),
-            flow_shared: copy_to_arena(&mut self.flow_shared, arena),
-            flow_places: self.flow_places,
-            expr_kinds: copy_to_arena(&mut self.expr_kinds, arena),
-            expr_kind_counts: copy_to_arena(&mut self.expr_kind_counts, arena),
-            kind_counts: copy_to_arena(&mut self.kind_counts, arena),
-        }
+            flow: block.take(&mut self.flow, arena),
+            flow_edges: block.take(&mut self.flow_edges, arena),
+            flow_shared: block.take(&mut self.flow_shared, arena),
+            flow_depth: self.flow_depth,
+            has_loop_types_that_depend_on_order: self.has_loop_types_that_depend_on_order,
+            expr_kinds: block.take(&mut self.expr_kinds, arena),
+            expr_kind_counts: block.take(&mut self.expr_kind_counts, arena),
+            kind_counts: block.take(&mut self.kind_counts, arena),
+            runtime: self.runtime.move_to_arena(arena),
+        };
+        bound.block = block;
+        bound
     }
 }
 
 impl Bound<'_> {
-    /// The same for a program that has the file in common with others. The long lists stay where they are. The program
-    /// writes into the symbols: they are copied, like what else there is, to `arena`.
+    /// Returns the same side tables for a program that shares the file with other programs. The long lists are shared,
+    /// not copied. The program writes to the symbols, so they're copied to `arena`, like everything else.
     pub fn share<'s>(&'s self, arena: &'s Arena) -> Bound<'s> {
         Bound {
+            block: ListBlock::default(),
             ran_out_of_stack: self.ran_out_of_stack,
-            symbols: {
-                let copy = |symbol: &Symbol<'_>| Symbol {
-                    name: symbol.name,
-                    flags: symbol.flags,
-                    decls: symbol.decls.clone_in(arena),
-                    value_declaration: symbol.value_declaration,
-                    parent: symbol.parent,
-                    exports: symbol.exports,
-                    members: symbol.members,
-                    export_symbol: symbol.export_symbol,
-                };
-                vec_from_iter_in(self.symbols.iter().map(copy), arena)
-            },
+            is_unbound: self.is_unbound,
+            is_bound_in_part: self.is_bound_in_part,
+            symbols: self.symbols.copy_in(arena),
             scopes: Fixed::shared(&self.scopes),
             tables: Fixed::shared(&self.tables),
             entries: Fixed::shared(&self.entries),
-            large_tables: copy_of_map(&self.large_tables, arena),
+            large_tables: FixedMap::Shared(&self.large_tables),
             nested_names: Fixed::shared(&self.nested_names),
             ids: Fixed::shared(&self.ids),
             file_symbol: self.file_symbol,
@@ -2203,19 +2990,19 @@ impl Bound<'_> {
             ),
             commonjs_indicator: self.commonjs_indicator,
             module_exports_property: self.module_exports_property,
-            expr_symbol: Fixed::shared(&self.expr_symbol),
+            expr_symbol: self.expr_symbol.shared(),
             expr_parent: Fixed::shared(&self.expr_parent),
-            expr_flow: Fixed::shared(&self.expr_flow),
+            expr_flow: self.expr_flow.shared(),
             stmt_parent: Fixed::shared(&self.stmt_parent),
-            stmt_scope: Fixed::shared(&self.stmt_scope),
+            stmt_scope: self.stmt_scope.shared(),
             type_scope: Fixed::shared(&self.type_scope),
             type_by_alias: Fixed::shared(&self.type_by_alias),
-            this_in_type_literal: copy_of_set(&self.this_in_type_literal, arena),
+            this_in_type_literal: copy_of_few_map(&self.this_in_type_literal, arena),
             pat_parent: Fixed::shared(&self.pat_parent),
             pat_symbol: Fixed::shared(&self.pat_symbol),
             prop_owner: Fixed::shared(&self.prop_owner),
             member_symbol: Fixed::shared(&self.member_symbol),
-            property_symbol: copy_of_map(&self.property_symbol, arena),
+            property_symbol: copy_of_few_map(&self.property_symbol, arena),
             member_owner: Fixed::shared(&self.member_owner),
             member_scope: Fixed::shared(&self.member_scope),
             param_fn: Fixed::shared(&self.param_fn),
@@ -2250,10 +3037,6 @@ impl Bound<'_> {
             ),
             var_stmt: Fixed::shared(&self.var_stmt),
             assignments: Fixed::shared(&self.assignments),
-            unchecked_assignment_targets: ArenaFew::from_iter_in(
-                self.unchecked_assignment_targets.iter().cloned(),
-                arena,
-            ),
             type_query_operands: ArenaFew::from_iter_in(
                 self.type_query_operands.iter().cloned(),
                 arena,
@@ -2267,11 +3050,11 @@ impl Bound<'_> {
             ),
             computed_symbols: ArenaFew::from_iter_in(self.computed_symbols.iter().cloned(), arena),
             case_stmt: Fixed::shared(&self.case_stmt),
-            stmt_flow: Fixed::shared(&self.stmt_flow),
+            stmt_flow: self.stmt_flow.shared(),
             case_fallthrough: Fixed::shared(&self.case_fallthrough),
             hoisted_vars: ArenaFew::from_iter_in(self.hoisted_vars.iter().cloned(), arena),
-            refused_decorators: ArenaFew::from_iter_in(
-                self.refused_decorators.iter().cloned(),
+            rejected_decorators: ArenaFew::from_iter_in(
+                self.rejected_decorators.iter().cloned(),
                 arena,
             ),
             unused_labels: ArenaFew::from_iter_in(self.unused_labels.iter().cloned(), arena),
@@ -2281,8 +3064,8 @@ impl Bound<'_> {
                 arena,
             ),
             export_scope: Fixed::shared(&self.export_scope),
-            expr_scope: copy_of_map(&self.expr_scope, arena),
-            private_class: copy_of_map(&self.private_class, arena),
+            expr_scope: copy_of_few_map(&self.expr_scope, arena),
+            private_class: copy_of_few_map(&self.private_class, arena),
             private_names_outside_class_bodies: ArenaFew::from_iter_in(
                 self.private_names_outside_class_bodies.iter().cloned(),
                 arena,
@@ -2312,36 +3095,58 @@ impl Bound<'_> {
             flow: Fixed::shared(&self.flow),
             flow_edges: Fixed::shared(&self.flow_edges),
             flow_shared: Fixed::shared(&self.flow_shared),
-            flow_places: self.flow_places,
+            flow_depth: self.flow_depth,
+            has_loop_types_that_depend_on_order: self.has_loop_types_that_depend_on_order,
             expr_kinds: Fixed::shared(&self.expr_kinds),
             expr_kind_counts: Fixed::shared(&self.expr_kind_counts),
             kind_counts: Fixed::shared(&self.kind_counts),
+            runtime: self.runtime.share(),
         }
     }
 }
 
-fn copy_of_map<'s, K: Copy + Eq + std::hash::Hash, V: Copy>(
-    map: &ArenaHashMap<'_, K, V>,
+fn copy_of_few_map<'s, K: Copy + Ord, V: Copy>(
+    map: &ArenaFewMap<'_, K, V>,
     arena: &'s Arena,
-) -> ArenaHashMap<'s, K, V> {
-    let mut exact = ArenaHashMap::with_capacity_and_hasher_in(map.len(), FxBuild, arena);
-    exact.extend(map.iter().map(|(&key, &value)| (key, value)));
-    exact
-}
-
-fn copy_of_set<'s, K: Copy + Eq + std::hash::Hash>(
-    set: &ArenaHashSet<'_, K>,
-    arena: &'s Arena,
-) -> ArenaHashSet<'s, K> {
-    let mut exact = ArenaHashSet::with_capacity_and_hasher_in(set.len(), FxBuild, arena);
-    exact.extend(set.iter().copied());
-    exact
+) -> ArenaFewMap<'s, K, V> {
+    ArenaFewMap::from_iter_in(map.iter().map(|(&key, &value)| (key, value)), arena)
 }
 
 impl<'s> Bound<'s> {
+    pub(crate) fn for_each_long_list(&mut self, each: &mut dyn FnMut(&mut dyn LongList)) {
+        macro_rules! lists {
+            ($($list:ident),*) => { $(each(&mut self.$list);)* };
+        }
+        long_lists!(lists);
+        self.expr_symbol.for_each_long_list(each);
+        self.expr_flow.for_each_long_list(each);
+        self.stmt_scope.for_each_long_list(each);
+        self.stmt_flow.for_each_long_list(each);
+    }
+
+    /// Frees the long lists, which is most of the tables, and leaves them empty.
+    pub(crate) fn free_long_lists(&mut self) {
+        macro_rules! empty {
+            ($($list:ident),*) => { $(self.$list = Default::default();)* };
+        }
+        long_lists!(empty);
+        empty!(expr_symbol, expr_flow, stmt_scope, stmt_flow);
+        self.block = ListBlock::default();
+    }
+
     /// The side tables of a file without nodes.
     pub fn empty_in(arena: &'s Arena) -> Bound<'s> {
-        BoundBuilder::default().into_arena(arena)
+        BoundBuilder::default().move_to_arena(arena)
+    }
+
+    /// In place of the side tables of a module that is bound once a file that is read refers to it.
+    pub fn unbound_in(arena: &'s Arena, specifiers: Vec<Atom>) -> Bound<'s> {
+        let mut unbound = BoundBuilder {
+            is_unbound: true,
+            specifiers,
+            ..Default::default()
+        };
+        unbound.move_to_arena(arena)
     }
 }
 
@@ -2350,9 +3155,10 @@ impl<'s> Bound<'s> {
 pub struct BindOptions {
     /// `GetEmitStandardClassFields`
     pub emit_standard_class_fields: bool,
-    /// `GetEmitScriptTarget` is older than that.
+    /// `GetEmitScriptTarget` is older than ES2020.
     pub before_es2020: bool,
     pub before_es2017: bool,
+    pub runtime: Option<RuntimeBindOptions>,
 }
 
 /// `bindSourceFile`
@@ -2362,58 +3168,134 @@ pub fn bind<'s>(
     atoms: &dyn crate::atom::Intern,
     arena: &'s Arena,
 ) -> Bound<'s> {
-    binder::Binder::run(file, options, atoms).into_arena(arena)
+    let mut buffers = binder::take_buffers();
+    let mut built = binder::Binder::run_in(file, options, atoms, &mut buffers);
+    let bound = built.move_to_arena(arena);
+    buffers.b = built;
+    binder::return_buffers(buffers);
+    bound
 }
 
-/// The lists of the last file that was bound on this thread, for the next one to use their room. They
-/// go back to the thread when this is dropped.
-pub struct Recycled(Option<Box<binder::Room>>);
+/// The lists that one `bind` call leaves for the next one on the thread. A pool thread outlives a check, so the check
+/// owns them, and a thread holds them only while it works for that check.
+#[derive(Default)]
+pub struct ThreadCaches(Option<Box<binder::Buffers>>);
 
-impl Recycled {
-    pub fn of_this_thread() -> Recycled {
-        Recycled(Some(binder::take_room()))
+impl ThreadCaches {
+    /// Takes the caches from the calling thread.
+    pub fn take() -> ThreadCaches {
+        ThreadCaches::default().install()
     }
 
-    fn room(&mut self) -> &mut binder::Room {
+    /// Installs the caches on the calling thread. Returns the previous ones.
+    pub fn install(self) -> ThreadCaches {
+        ThreadCaches(binder::replace_buffers(self.0))
+    }
+}
+
+/// The lists of the last file bound on this thread, so that the next file can reuse their capacity.
+/// They're returned to the thread when this is dropped.
+pub struct Recycled(Option<Box<binder::Buffers>>);
+
+impl Recycled {
+    pub fn for_current_thread() -> Recycled {
+        Recycled(Some(binder::take_buffers()))
+    }
+
+    fn buffers(&mut self) -> &mut binder::Buffers {
         self.0.get_or_insert_default()
     }
 }
 
 impl Drop for Recycled {
     fn drop(&mut self) {
-        if let Some(room) = self.0.take() {
-            binder::leave_room(room);
+        if let Some(buffers) = self.0.take() {
+            binder::return_buffers(buffers);
         }
     }
 }
 
-/// [`bind`] for a linter that has no checker: what each node is part of and where each function
-/// returns and yields. Nothing is declared and nothing is resolved. The result is in `recycled`, where
-/// it is until the next file is bound there: little is allocated after the first few files.
+/// [`bind`] for a linter that has no checker. It computes each node's parent and where each
+/// function returns and yields. Nothing is declared or resolved. The result lives in `recycled`
+/// until the next file is bound there, so little is allocated after the first few files.
 ///
-/// As in the result of `bind`: what [`bind_for_format`] lists, with the same exception, and of `fns`
-/// also `enclosing`, `returns` and, in another order, `yields`. Only here: `expr_kinds`,
-/// `expr_kind_counts`, `kind_counts`. Of the few files that are left to the binder it is the result of `bind`.
+/// Fills in everything [`bind_for_format_in`] does, plus `enclosing`, `returns` and `yields` in
+/// `fns` (`yields` in a different order than `bind`'s), and `expr_kinds`, `expr_kind_counts` and
+/// `kind_counts`, which only this function fills in. The few files that need the binder get the
+/// full result of `bind`.
 pub fn bind_for_lint_in<'r>(
     file: &File,
     options: BindOptions,
     atoms: &dyn crate::atom::Intern,
     recycled: &'r mut Recycled,
 ) -> &'r BoundBuilder {
-    match lint::fill_in(file, &mut recycled.room().b) {
-        true => &recycled.room().b,
-        false => leave_to_binder(file, options, atoms, recycled),
+    match lint::fill_in(file, &mut recycled.buffers().b) {
+        true => &recycled.buffers().b,
+        false => fall_back_to_binder(file, options, atoms, recycled),
     }
 }
 
-/// The result of [`bind`], in `recycled`.
-fn leave_to_binder<'r>(
+/// Runs [`bind`] and stores the result in `recycled`.
+fn fall_back_to_binder<'r>(
     file: &File,
     options: BindOptions,
     atoms: &dyn crate::atom::Intern,
     recycled: &'r mut Recycled,
 ) -> &'r BoundBuilder {
-    let room = recycled.room();
-    room.b = binder::Binder::run(file, options, atoms);
-    &room.b
+    let buffers = recycled.buffers();
+    buffers.b = binder::Binder::run(file, options, atoms);
+    &buffers.b
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::session::Session;
+
+    #[test]
+    fn with_flags_returns_the_same_symbols_as_filtering_iter() {
+        let symbol =
+            |name: u32, flags: SymFlags, decls: GrowingDecls, exports: TableId| GrowingSymbol {
+                name: Atom(name),
+                flags,
+                decls,
+                value_declaration: 0,
+                parent: SymbolId::NONE,
+                exports,
+                members: TableId::NONE,
+                export_symbol: SymbolId::NONE,
+            };
+        let (alias, exported) = (SymFlags::ALIAS, SymFlags::ALIAS | SymFlags::EXPORT_VALUE);
+        let two = vec![
+            Decl::ImportNamespace(ImportId(1)),
+            Decl::ImportNamespace(ImportId(2)),
+        ];
+        let growing = [
+            symbol(
+                1,
+                SymFlags::FUNCTION,
+                GrowingDecls::One(Decl::File),
+                TableId::NONE,
+            ),
+            symbol(
+                2,
+                alias,
+                GrowingDecls::One(Decl::ImportNamespace(ImportId(0))),
+                TableId::NONE,
+            ),
+            symbol(3, SymFlags::CLASS, GrowingDecls::None, TableId(4)),
+            symbol(4, exported, GrowingDecls::Many(two), TableId(7)),
+            symbol(5, alias, GrowingDecls::None, TableId::NONE),
+        ];
+        let session = Session::new();
+        let symbols = Symbols::of(&growing, session.arena());
+        let fields = |it: Symbol<'_>| (it.name.0, it.flags, it.decls.to_vec(), it.exports);
+        for flags in [alias, exported, SymFlags::CLASS, SymFlags::ENUM_MEMBER] {
+            let expected = symbols.iter().filter(|it| it.flags.contains(flags));
+            let expected: Vec<_> = expected.map(fields).collect();
+            let found: Vec<_> = symbols.with_flags(flags).map(fields).collect();
+            assert_eq!(found, expected);
+        }
+        assert_eq!(symbols.with_flags(alias).count(), 3);
+    }
 }

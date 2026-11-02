@@ -1,7 +1,17 @@
+FAIL oxlint/unicorn/no-useless-undefined#80 output differs
+FAIL oxlint/unicorn/no-useless-undefined#81 output differs
+FAIL oxlint/unicorn/prefer-string-raw#47 output differs
+FAIL oxlint/unicorn/prefer-string-raw#65 output differs
+FAIL oxlint/unicorn/require-module-specifiers#25 output differs
+FAIL oxlint/unicorn/require-module-specifiers#26 output differs
+FAIL oxlint/unicorn/require-module-specifiers#37 output differs
+FAIL oxlint/vitest/prefer-importing-vitest-globals#15 messages differ
 
-1 messages lack the help that oxlint has
+3 messages lack the help that oxlint has
 
-2 cases have their messages in another order
+0 cases have their messages in another order
 
-504 rules, 504 without failures, 0 not implemented
-27702 cases passed, 0 failed, 63 skipped
+432 cases have a fix that --fix holds back
+
+504 rules, 500 without failures, 0 not implemented
+27694 cases passed, 8 failed, 63 skipped

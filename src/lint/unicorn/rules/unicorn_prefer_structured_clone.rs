@@ -10,8 +10,8 @@ pub struct PreferStructuredClone {
     functions: Vec<(String, Option<String>)>,
 }
 
-const PREFER_STRUCTURED_CLONE: Message = Message::new("", "Use `structuredClone(…)` to create a deep clone.");
-const SWITCH_TO_STRUCTURED_CLONE: Message = Message::new("", "Switch to `structuredClone(…)`.");
+const PREFER_STRUCTURED_CLONE: &Message = &Message::new("", "Use `structuredClone(…)` to create a deep clone.");
+const SWITCH_TO_STRUCTURED_CLONE: &Message = &Message::new("", "Switch to `structuredClone(…)`.");
 
 fn report<'a>(e: Expr<'a>, first_argument: Expr<'a>, cx: &Cx<'a, PreferStructuredClone>) {
     cx.report(e, PREFER_STRUCTURED_CLONE).suggest(SWITCH_TO_STRUCTURED_CLONE, |fixer| {
@@ -23,7 +23,7 @@ fn report<'a>(e: Expr<'a>, first_argument: Expr<'a>, cx: &Cx<'a, PreferStructure
     });
 }
 
-/// The only argument of `call`, which is not `...a`.
+/// `call`'s only argument, unless it's `...a`.
 fn only_argument(call: Call<'_>) -> Option<Expr<'_>> {
     call.args().first().filter(|it| call.args().len() == 1 && !call.is_optional() && it.tag() != ExprTag::Spread)
 }

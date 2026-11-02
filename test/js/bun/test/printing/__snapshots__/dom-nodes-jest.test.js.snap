@@ -1,0 +1,1520 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`happy-dom 12 attributes 1`] = `
+NamedNodeMap {
+  "a0": "",
+  "a1": "",
+  "a10": "",
+  "a11": "",
+  "a2": "",
+  "a3": "",
+  "a4": "",
+  "a5": "",
+  "a6": "",
+  "a7": "",
+  "a8": "",
+  "a9": "",
+}
+`;
+
+exports[`happy-dom 12 attributes 2`] = `"{"a0": "", "a1": "", "a10": "", "a11": "", "a2": "", "a3": "", "a4": "", "a5": "", "a6": "", "a7": "", "a8": "", "a9": ""}"`;
+
+exports[`happy-dom 12 items 1`] = `
+NodeList [
+  <i />,
+  <i />,
+  <i />,
+  <i />,
+  <i />,
+  <i />,
+  <i />,
+  <i />,
+  <i />,
+  <i />,
+  <i />,
+  <i />,
+]
+`;
+
+exports[`happy-dom 12 items 2`] = `"[<i />, <i />, <i />, <i />, <i />, <i />, <i />, <i />, <i />, <i />, …]"`;
+
+exports[`happy-dom 40 levels 1`] = `
+<section>
+  t0
+  <div>
+    t1
+    <span>
+      t2
+      <div>
+        t3
+        <span>
+          t4
+          <div>
+            t5
+            <span>
+              t6
+              <div>
+                t7
+                <span>
+                  t8
+                  <div>
+                    t9
+                    <span>
+                      t10
+                      <div>
+                        t11
+                        <span>
+                          t12
+                          <div>
+                            t13
+                            <span>
+                              t14
+                              <div>
+                                t15
+                                <span>
+                                  t16
+                                  <div>
+                                    t17
+                                    <span>
+                                      t18
+                                      <div>
+                                        t19
+                                        <span>
+                                          t20
+                                          <div>
+                                            t21
+                                            <span>
+                                              t22
+                                              <div>
+                                                t23
+                                                <span>
+                                                  t24
+                                                  <div>
+                                                    t25
+                                                    <span>
+                                                      t26
+                                                      <div>
+                                                        t27
+                                                        <span>
+                                                          t28
+                                                          <div>
+                                                            t29
+                                                            <span>
+                                                              t30
+                                                              <div>
+                                                                t31
+                                                                <span>
+                                                                  t32
+                                                                  <div>
+                                                                    t33
+                                                                    <span>
+                                                                      t34
+                                                                      <div>
+                                                                        t35
+                                                                        <span>
+                                                                          t36
+                                                                          <div>
+                                                                            t37
+                                                                            <span>
+                                                                              t38
+                                                                              <div>
+                                                                                t39
+                                                                                <span>
+                                                                                  leaf
+                                                                                </span>
+                                                                              </div>
+                                                                            </span>
+                                                                          </div>
+                                                                        </span>
+                                                                      </div>
+                                                                    </span>
+                                                                  </div>
+                                                                </span>
+                                                              </div>
+                                                            </span>
+                                                          </div>
+                                                        </span>
+                                                      </div>
+                                                    </span>
+                                                  </div>
+                                                </span>
+                                              </div>
+                                            </span>
+                                          </div>
+                                        </span>
+                                      </div>
+                                    </span>
+                                  </div>
+                                </span>
+                              </div>
+                            </span>
+                          </div>
+                        </span>
+                      </div>
+                    </span>
+                  </div>
+                </span>
+              </div>
+            </span>
+          </div>
+        </span>
+      </div>
+    </span>
+  </div>
+</section>
+`;
+
+exports[`happy-dom 40 levels 2`] = `"<section>t0<div>t1<span>t2<div>t3<span>t4<div>t5<span>t6<div>t7<span>t8<div>t9<span … /></div></span></div></span></div></span></div></span></div></section>"`;
+
+exports[`happy-dom DOMTokenList 1`] = `
+DOMTokenList {
+  "0": "b",
+  "1": "a",
+  "2": "c",
+}
+`;
+
+exports[`happy-dom DOMTokenList 2`] = `"{"0": "b", "1": "a", "2": "c"}"`;
+
+exports[`happy-dom HTMLCollection 1`] = `
+HTMLCollection [
+  <span>
+    1
+  </span>,
+  <i>
+    2
+  </i>,
+]
+`;
+
+exports[`happy-dom HTMLCollection 2`] = `"[<span>1</span>, <i>2</i>]"`;
+
+exports[`happy-dom HTMLFormControlsCollection 1`] = `
+HTMLFormControlsCollection [
+  <input
+    name="n"
+  />,
+  <button>
+    b
+  </button>,
+]
+`;
+
+exports[`happy-dom HTMLFormControlsCollection 2`] = `"[<input name="n" />, <button>b</button>]"`;
+
+exports[`happy-dom HTMLOptionsCollection 1`] = `
+HTMLOptionsCollection [
+  <option>
+    a
+  </option>,
+  <option>
+    b
+  </option>,
+]
+`;
+
+exports[`happy-dom HTMLOptionsCollection 2`] = `"[<option>a</option>, <option>b</option>]"`;
+
+exports[`happy-dom NamedNodeMap 1`] = `
+NamedNodeMap {
+  "class": "b a  c",
+  "data-a": "2",
+  "data-foo-bar": "1",
+  "id": "host",
+}
+`;
+
+exports[`happy-dom NamedNodeMap 2`] = `"{"class": "b a  c", "data-a": "2", "data-foo-bar": "1", "id": "host"}"`;
+
+exports[`happy-dom NodeList of childNodes 1`] = `
+NodeList [
+  <span>
+    1
+  </span>,
+  text,
+  <!--c-->,
+  <i>
+    2
+  </i>,
+]
+`;
+
+exports[`happy-dom NodeList of childNodes 2`] = `"[<span>1</span>, text, <!--c-->, <i>2</i>]"`;
+
+exports[`happy-dom NodeList of querySelectorAll 1`] = `
+NodeList [
+  <span>
+    1
+  </span>,
+  <i>
+    2
+  </i>,
+]
+`;
+
+exports[`happy-dom NodeList of querySelectorAll 2`] = `"[<span>1</span>, <i>2</i>]"`;
+
+exports[`happy-dom attribute escapes 1`] = `
+<a
+  title="q"q 's' \\ < > & \` \${x}"
+/>
+`;
+
+exports[`happy-dom attribute escapes 2`] = `"<a title="q\\"q 's' \\\\ < > & \` \${x}" />"`;
+
+exports[`happy-dom attribute line ends 1`] = `
+<a
+  title="l1
+l2
+l3
+l4	t"
+/>
+`;
+
+exports[`happy-dom attribute line ends 2`] = `
+"<a title="l1
+l2
+l3
+l4	t" />"
+`;
+
+exports[`happy-dom attribute name order 1`] = `
+<p
+  _x=""
+  a=""
+  a-b=""
+  a.b=""
+  a1=""
+  b=""
+  z=""
+/>
+`;
+
+exports[`happy-dom attribute name order 2`] = `"<p _x="" a="" a-b="" a.b="" a1="" b="" z="" />"`;
+
+exports[`happy-dom attributes and text 1`] = `
+<button
+  class="b a"
+  id="x"
+>
+  go
+</button>
+`;
+
+exports[`happy-dom attributes and text 2`] = `"<button class="b a" id="x">go</button>"`;
+
+exports[`happy-dom beyond ASCII 1`] = `
+<p
+  title="café 日本語 😀  "
+>
+  café 日本語 😀  
+</p>
+`;
+
+exports[`happy-dom beyond ASCII 2`] = `"<p title="café 日本語 😀  ">café 日本語 😀  </p>"`;
+
+exports[`happy-dom collections in an object 1`] = `
+{
+  "attrs": NamedNodeMap {
+    "class": "b a  c",
+    "data-a": "2",
+    "data-foo-bar": "1",
+    "id": "host",
+  },
+  "list": HTMLCollection [
+    <span>
+      1
+    </span>,
+    <i>
+      2
+    </i>,
+  ],
+}
+`;
+
+exports[`happy-dom comment child 1`] = `
+<div>
+  <!-- a comment -->
+  <span />
+</div>
+`;
+
+exports[`happy-dom comment child 2`] = `"<div><!-- a comment --><span /></div>"`;
+
+exports[`happy-dom comment node 1`] = `<!-- &lt;b&gt; & "q" -->`;
+
+exports[`happy-dom comment node 2`] = `"<!-- &lt;b&gt; & "q" -->"`;
+
+exports[`happy-dom custom element 1`] = `
+<x-named
+  a="1"
+>
+  <i>
+    x
+  </i>
+</x-named>
+`;
+
+exports[`happy-dom custom element 2`] = `"<x-named a="1"><i>x</i></x-named>"`;
+
+exports[`happy-dom custom element of a class without a name 1`] = `
+<div>
+  <x-anonymous
+    a="1"
+  >
+    <i>
+      x
+    </i>
+  </x-anonymous>
+</div>
+`;
+
+exports[`happy-dom custom element of a class without a name 2`] = `"<div><x-anonymous a="1"><i>x</i></x-anonymous></div>"`;
+
+exports[`happy-dom custom element that is not defined 1`] = `
+<x-undefined
+  a="1"
+>
+  x
+</x-undefined>
+`;
+
+exports[`happy-dom custom element that is not defined 2`] = `"<x-undefined a="1">x</x-undefined>"`;
+
+exports[`happy-dom deep in objects and arrays 1`] = `
+{
+  "a": {
+    "b": [
+      {
+        "c": <button
+          class="b a"
+          id="x"
+        >
+          go
+        </button>,
+      },
+    ],
+  },
+}
+`;
+
+exports[`happy-dom element text escapes 1`] = `
+<p>
+  a &lt; b &gt; c & d "e" 'f' \\ \` \${x}
+</p>
+`;
+
+exports[`happy-dom element text escapes 2`] = `"<p>a &lt; b &gt; c & d "e" 'f' \\ \` \${x}</p>"`;
+
+exports[`happy-dom empty DOMTokenList 1`] = `DOMTokenList {}`;
+
+exports[`happy-dom empty DOMTokenList 2`] = `"{}"`;
+
+exports[`happy-dom empty HTMLCollection 1`] = `HTMLCollection []`;
+
+exports[`happy-dom empty HTMLCollection 2`] = `"[]"`;
+
+exports[`happy-dom empty NamedNodeMap 1`] = `NamedNodeMap {}`;
+
+exports[`happy-dom empty NamedNodeMap 2`] = `"{}"`;
+
+exports[`happy-dom empty NodeList 1`] = `NodeList []`;
+
+exports[`happy-dom empty NodeList 2`] = `"[]"`;
+
+exports[`happy-dom empty attribute values 1`] = `
+<input
+  disabled=""
+  type="text"
+  value=""
+/>
+`;
+
+exports[`happy-dom empty attribute values 2`] = `"<input disabled="" type="text" value="" />"`;
+
+exports[`happy-dom empty element 1`] = `<div />`;
+
+exports[`happy-dom empty element 2`] = `"<div />"`;
+
+exports[`happy-dom empty fragment 1`] = `<DocumentFragment />`;
+
+exports[`happy-dom empty fragment 2`] = `"<DocumentFragment />"`;
+
+exports[`happy-dom empty text child 1`] = `
+<p>
+  
+</p>
+`;
+
+exports[`happy-dom empty text child 2`] = `"<p />"`;
+
+exports[`happy-dom empty text node 1`] = ``;
+
+exports[`happy-dom empty text node 2`] = `""`;
+
+exports[`happy-dom form 1`] = `
+<form
+  action="/a"
+>
+  <input
+    name="n"
+    value="v"
+  />
+  <select
+    name="s"
+  >
+    <option
+      selected=""
+      value="1"
+    >
+      one
+    </option>
+    <option>
+      two
+    </option>
+  </select>
+  <textarea>
+    t
+  </textarea>
+</form>
+`;
+
+exports[`happy-dom form 2`] = `"<form action="/a"><input name="n" value="v" /><select name="s"><option selected="" value="1">one</option><option>two</option></select><textarea>t</textarea></form>"`;
+
+exports[`happy-dom fragment 1`] = `
+<DocumentFragment>
+  <b>
+    x
+  </b>
+  t
+</DocumentFragment>
+`;
+
+exports[`happy-dom fragment 2`] = `"<DocumentFragment><b>x</b>t</DocumentFragment>"`;
+
+exports[`happy-dom in a Map 1`] = `
+Map {
+  "k" => <button
+    class="b a"
+    id="x"
+  >
+    go
+  </button>,
+}
+`;
+
+exports[`happy-dom in a Set 1`] = `
+Set {
+  <button
+    class="b a"
+    id="x"
+  >
+    go
+  </button>,
+}
+`;
+
+exports[`happy-dom in an array 1`] = `
+[
+  <button
+    class="b a"
+    id="x"
+  >
+    go
+  </button>,
+  <i />,
+  "s",
+]
+`;
+
+exports[`happy-dom in an object 1`] = `
+{
+  "el": <button
+    class="b a"
+    id="x"
+  >
+    go
+  </button>,
+  "n": 1,
+}
+`;
+
+exports[`happy-dom is attribute 1`] = `
+<button
+  is="fancy-button"
+>
+  x
+</button>
+`;
+
+exports[`happy-dom is attribute 2`] = `"<button is="fancy-button">x</button>"`;
+
+exports[`happy-dom message: 12 levels 1`] = `"<section>t0<div>t1<span>t2<div>t3<span>t4<div>t5<span>t6<div>t7<span>t8<div>t9<span … /></div></span></div></span></div></span></div></span></div></section>"`;
+
+exports[`happy-dom message: too long at 2 levels 1`] = `"<ul><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /></ul>"`;
+
+exports[`happy-dom message: too long at 10 and 5 levels 1`] = `"<ul><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li></ul>"`;
+
+exports[`happy-dom message: too long at any depth 1`] = `"<p>012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789</p>"`;
+
+exports[`happy-dom message: too long with 10 and 5 items 1`] = `"[<!--xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-->, <!--xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-->, …]"`;
+
+exports[`happy-dom nested 1`] = `
+<ul
+  class="l"
+>
+  <li>
+    one
+  </li>
+  <li
+    class="x"
+  >
+    two
+    <b>
+      bold
+    </b>
+    tail
+  </li>
+  <li />
+</ul>
+`;
+
+exports[`happy-dom nested 2`] = `"<ul class="l"><li>one</li><li class="x">two<b>bold</b>tail</li><li /></ul>"`;
+
+exports[`happy-dom one attribute 1`] = `
+<div
+  id="a"
+/>
+`;
+
+exports[`happy-dom one attribute 2`] = `"<div id="a" />"`;
+
+exports[`happy-dom script and style 1`] = `
+<div>
+  <script>
+    if (a &lt; b && c &gt; d) {}
+  </script>
+  <style>
+    a &gt; b { color: red }
+  </style>
+</div>
+`;
+
+exports[`happy-dom script and style 2`] = `"<div><script>if (a &lt; b && c &gt; d) {}</script><style>a &gt; b { color: red }</style></div>"`;
+
+exports[`happy-dom select 1`] = `
+<select
+  multiple=""
+>
+  <optgroup
+    label="g"
+  >
+    <option>
+      a
+    </option>
+  </optgroup>
+</select>
+`;
+
+exports[`happy-dom select 2`] = `"<select multiple=""><optgroup label="g"><option>a</option></optgroup></select>"`;
+
+exports[`happy-dom sorted attributes 1`] = `
+<div
+  aria-label="l"
+  class="c"
+  data-a="2"
+  data-z="1"
+  id="i"
+  title="t"
+/>
+`;
+
+exports[`happy-dom sorted attributes 2`] = `"<div aria-label="l" class="c" data-a="2" data-z="1" id="i" title="t" />"`;
+
+exports[`happy-dom svg 1`] = `
+<svg
+  viewBox="0 0 1 1"
+>
+  <lineargradient
+    id="g"
+  >
+    <stop
+      offset="0"
+    />
+  </lineargradient>
+  <a
+    xlink:href="#x"
+  />
+  <foreignobject>
+    <div>
+      h
+    </div>
+  </foreignobject>
+</svg>
+`;
+
+exports[`happy-dom svg 2`] = `"<svg viewBox="0 0 1 1"><lineargradient id="g"><stop offset="0" /></lineargradient><a xlink:href="#x" /><foreignobject><div>h</div></foreignobject></svg>"`;
+
+exports[`happy-dom table 1`] = `
+<table>
+  <thead>
+    <tr>
+      <th>
+        h
+      </th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td
+        colspan="2"
+      >
+        d
+      </td>
+    </tr>
+  </tbody>
+</table>
+`;
+
+exports[`happy-dom table 2`] = `"<table><thead><tr><th>h</th></tr></thead><tbody><tr><td colspan="2">d</td></tr></tbody></table>"`;
+
+exports[`happy-dom template 1`] = `<template />`;
+
+exports[`happy-dom template 2`] = `"<template />"`;
+
+exports[`happy-dom text child 1`] = `
+<button>
+  go
+</button>
+`;
+
+exports[`happy-dom text child 2`] = `"<button>go</button>"`;
+
+exports[`happy-dom text escapes 1`] = `a &lt; b &gt; c & d "e" 'f' \\ \` \${x}`;
+
+exports[`happy-dom text escapes 2`] = `"a &lt; b &gt; c & d "e" 'f' \\ \` \${x}"`;
+
+exports[`happy-dom text line ends 1`] = `
+l1
+l2
+l3
+l4	t
+`;
+
+exports[`happy-dom text line ends 2`] = `
+"l1
+l2
+l3
+l4	t"
+`;
+
+exports[`happy-dom text node 1`] = `just text`;
+
+exports[`happy-dom text node 2`] = `"just text"`;
+
+exports[`happy-dom unknown element 1`] = `
+<blink>
+  x
+</blink>
+`;
+
+exports[`happy-dom unknown element 2`] = `"<blink>x</blink>"`;
+
+exports[`happy-dom void elements 1`] = `
+<p>
+  <br />
+  <img
+    alt=""
+    src="a.png"
+  />
+</p>
+`;
+
+exports[`happy-dom void elements 2`] = `"<p><br /><img alt="" src="a.png" /></p>"`;
+
+exports[`happy-dom whitespace text 1`] = `
+<div>
+  
+  
+  <span>
+     a 
+  </span>
+  
+  
+
+</div>
+`;
+
+exports[`happy-dom whitespace text 2`] = `
+"<div>
+  <span> a </span>
+  
+</div>"
+`;
+
+exports[`jsdom 12 attributes 1`] = `
+NamedNodeMap {
+  "a0": "",
+  "a1": "",
+  "a10": "",
+  "a11": "",
+  "a2": "",
+  "a3": "",
+  "a4": "",
+  "a5": "",
+  "a6": "",
+  "a7": "",
+  "a8": "",
+  "a9": "",
+}
+`;
+
+exports[`jsdom 12 attributes 2`] = `"{"a0": "", "a1": "", "a10": "", "a11": "", "a2": "", "a3": "", "a4": "", "a5": "", "a6": "", "a7": "", "a8": "", "a9": ""}"`;
+
+exports[`jsdom 12 items 1`] = `
+NodeList [
+  <i />,
+  <i />,
+  <i />,
+  <i />,
+  <i />,
+  <i />,
+  <i />,
+  <i />,
+  <i />,
+  <i />,
+  <i />,
+  <i />,
+]
+`;
+
+exports[`jsdom 12 items 2`] = `"[<i />, <i />, <i />, <i />, <i />, <i />, <i />, <i />, <i />, <i />, …]"`;
+
+exports[`jsdom 40 levels 1`] = `
+<section>
+  t0
+  <div>
+    t1
+    <span>
+      t2
+      <div>
+        t3
+        <span>
+          t4
+          <div>
+            t5
+            <span>
+              t6
+              <div>
+                t7
+                <span>
+                  t8
+                  <div>
+                    t9
+                    <span>
+                      t10
+                      <div>
+                        t11
+                        <span>
+                          t12
+                          <div>
+                            t13
+                            <span>
+                              t14
+                              <div>
+                                t15
+                                <span>
+                                  t16
+                                  <div>
+                                    t17
+                                    <span>
+                                      t18
+                                      <div>
+                                        t19
+                                        <span>
+                                          t20
+                                          <div>
+                                            t21
+                                            <span>
+                                              t22
+                                              <div>
+                                                t23
+                                                <span>
+                                                  t24
+                                                  <div>
+                                                    t25
+                                                    <span>
+                                                      t26
+                                                      <div>
+                                                        t27
+                                                        <span>
+                                                          t28
+                                                          <div>
+                                                            t29
+                                                            <span>
+                                                              t30
+                                                              <div>
+                                                                t31
+                                                                <span>
+                                                                  t32
+                                                                  <div>
+                                                                    t33
+                                                                    <span>
+                                                                      t34
+                                                                      <div>
+                                                                        t35
+                                                                        <span>
+                                                                          t36
+                                                                          <div>
+                                                                            t37
+                                                                            <span>
+                                                                              t38
+                                                                              <div>
+                                                                                t39
+                                                                                <span>
+                                                                                  leaf
+                                                                                </span>
+                                                                              </div>
+                                                                            </span>
+                                                                          </div>
+                                                                        </span>
+                                                                      </div>
+                                                                    </span>
+                                                                  </div>
+                                                                </span>
+                                                              </div>
+                                                            </span>
+                                                          </div>
+                                                        </span>
+                                                      </div>
+                                                    </span>
+                                                  </div>
+                                                </span>
+                                              </div>
+                                            </span>
+                                          </div>
+                                        </span>
+                                      </div>
+                                    </span>
+                                  </div>
+                                </span>
+                              </div>
+                            </span>
+                          </div>
+                        </span>
+                      </div>
+                    </span>
+                  </div>
+                </span>
+              </div>
+            </span>
+          </div>
+        </span>
+      </div>
+    </span>
+  </div>
+</section>
+`;
+
+exports[`jsdom 40 levels 2`] = `"<section>t0<div>t1<span>t2<div>t3<span>t4<div>t5<span>t6<div>t7<span>t8<div>t9<span … /></div></span></div></span></div></span></div></span></div></section>"`;
+
+exports[`jsdom DOMTokenList 1`] = `
+DOMTokenList {
+  "0": "b",
+  "1": "a",
+  "2": "c",
+}
+`;
+
+exports[`jsdom DOMTokenList 2`] = `"{"0": "b", "1": "a", "2": "c"}"`;
+
+exports[`jsdom HTMLCollection 1`] = `
+HTMLCollection [
+  <span>
+    1
+  </span>,
+  <i>
+    2
+  </i>,
+]
+`;
+
+exports[`jsdom HTMLCollection 2`] = `"[<span>1</span>, <i>2</i>]"`;
+
+exports[`jsdom HTMLFormControlsCollection 1`] = `
+HTMLFormControlsCollection [
+  <input
+    name="n"
+  />,
+  <button>
+    b
+  </button>,
+]
+`;
+
+exports[`jsdom HTMLFormControlsCollection 2`] = `"[<input name="n" />, <button>b</button>]"`;
+
+exports[`jsdom HTMLOptionsCollection 1`] = `
+HTMLOptionsCollection [
+  <option>
+    a
+  </option>,
+  <option>
+    b
+  </option>,
+]
+`;
+
+exports[`jsdom HTMLOptionsCollection 2`] = `"[<option>a</option>, <option>b</option>]"`;
+
+exports[`jsdom NamedNodeMap 1`] = `
+NamedNodeMap {
+  "class": "b a  c",
+  "data-a": "2",
+  "data-foo-bar": "1",
+  "id": "host",
+}
+`;
+
+exports[`jsdom NamedNodeMap 2`] = `"{"class": "b a  c", "data-a": "2", "data-foo-bar": "1", "id": "host"}"`;
+
+exports[`jsdom NodeList of childNodes 1`] = `
+NodeList [
+  <span>
+    1
+  </span>,
+  text,
+  <!--c-->,
+  <i>
+    2
+  </i>,
+]
+`;
+
+exports[`jsdom NodeList of childNodes 2`] = `"[<span>1</span>, text, <!--c-->, <i>2</i>]"`;
+
+exports[`jsdom NodeList of querySelectorAll 1`] = `
+NodeList [
+  <span>
+    1
+  </span>,
+  <i>
+    2
+  </i>,
+]
+`;
+
+exports[`jsdom NodeList of querySelectorAll 2`] = `"[<span>1</span>, <i>2</i>]"`;
+
+exports[`jsdom attribute escapes 1`] = `
+<a
+  title="q"q 's' \\ < > & \` \${x}"
+/>
+`;
+
+exports[`jsdom attribute escapes 2`] = `"<a title="q\\"q 's' \\\\ < > & \` \${x}" />"`;
+
+exports[`jsdom attribute line ends 1`] = `
+<a
+  title="l1
+l2
+l3
+l4	t"
+/>
+`;
+
+exports[`jsdom attribute line ends 2`] = `
+"<a title="l1
+l2
+l3
+l4	t" />"
+`;
+
+exports[`jsdom attribute name order 1`] = `
+<p
+  _x=""
+  a=""
+  a-b=""
+  a.b=""
+  a1=""
+  b=""
+  z=""
+  é=""
+/>
+`;
+
+exports[`jsdom attribute name order 2`] = `"<p _x="" a="" a-b="" a.b="" a1="" b="" z="" é="" />"`;
+
+exports[`jsdom attributes and text 1`] = `
+<button
+  class="b a"
+  id="x"
+>
+  go
+</button>
+`;
+
+exports[`jsdom attributes and text 2`] = `"<button class="b a" id="x">go</button>"`;
+
+exports[`jsdom beyond ASCII 1`] = `
+<p
+  title="café 日本語 😀  "
+>
+  café 日本語 😀  
+</p>
+`;
+
+exports[`jsdom beyond ASCII 2`] = `"<p title="café 日本語 😀  ">café 日本語 😀  </p>"`;
+
+exports[`jsdom collections in an object 1`] = `
+{
+  "attrs": NamedNodeMap {
+    "class": "b a  c",
+    "data-a": "2",
+    "data-foo-bar": "1",
+    "id": "host",
+  },
+  "list": HTMLCollection [
+    <span>
+      1
+    </span>,
+    <i>
+      2
+    </i>,
+  ],
+}
+`;
+
+exports[`jsdom comment child 1`] = `
+<div>
+  <!-- a comment -->
+  <span />
+</div>
+`;
+
+exports[`jsdom comment child 2`] = `"<div><!-- a comment --><span /></div>"`;
+
+exports[`jsdom comment node 1`] = `<!-- &lt;b&gt; & "q" -->`;
+
+exports[`jsdom comment node 2`] = `"<!-- &lt;b&gt; & "q" -->"`;
+
+exports[`jsdom custom element 1`] = `
+<x-named
+  a="1"
+>
+  <i>
+    x
+  </i>
+</x-named>
+`;
+
+exports[`jsdom custom element 2`] = `"<x-named a="1"><i>x</i></x-named>"`;
+
+exports[`jsdom custom element of a class without a name 1`] = `
+<div>
+  <x-anonymous
+    a="1"
+  >
+    <i>
+      x
+    </i>
+  </x-anonymous>
+</div>
+`;
+
+exports[`jsdom custom element of a class without a name 2`] = `"<div><x-anonymous a="1"><i>x</i></x-anonymous></div>"`;
+
+exports[`jsdom custom element that is not defined 1`] = `
+<x-undefined
+  a="1"
+>
+  x
+</x-undefined>
+`;
+
+exports[`jsdom custom element that is not defined 2`] = `"<x-undefined a="1">x</x-undefined>"`;
+
+exports[`jsdom deep in objects and arrays 1`] = `
+{
+  "a": {
+    "b": [
+      {
+        "c": <button
+          class="b a"
+          id="x"
+        >
+          go
+        </button>,
+      },
+    ],
+  },
+}
+`;
+
+exports[`jsdom element text escapes 1`] = `
+<p>
+  a &lt; b &gt; c & d "e" 'f' \\ \` \${x}
+</p>
+`;
+
+exports[`jsdom element text escapes 2`] = `"<p>a &lt; b &gt; c & d "e" 'f' \\ \` \${x}</p>"`;
+
+exports[`jsdom empty DOMTokenList 1`] = `DOMTokenList {}`;
+
+exports[`jsdom empty DOMTokenList 2`] = `"{}"`;
+
+exports[`jsdom empty HTMLCollection 1`] = `HTMLCollection []`;
+
+exports[`jsdom empty HTMLCollection 2`] = `"[]"`;
+
+exports[`jsdom empty NamedNodeMap 1`] = `NamedNodeMap {}`;
+
+exports[`jsdom empty NamedNodeMap 2`] = `"{}"`;
+
+exports[`jsdom empty NodeList 1`] = `NodeList []`;
+
+exports[`jsdom empty NodeList 2`] = `"[]"`;
+
+exports[`jsdom empty attribute values 1`] = `
+<input
+  disabled=""
+  type="text"
+  value=""
+/>
+`;
+
+exports[`jsdom empty attribute values 2`] = `"<input disabled="" type="text" value="" />"`;
+
+exports[`jsdom empty element 1`] = `<div />`;
+
+exports[`jsdom empty element 2`] = `"<div />"`;
+
+exports[`jsdom empty fragment 1`] = `<DocumentFragment />`;
+
+exports[`jsdom empty fragment 2`] = `"<DocumentFragment />"`;
+
+exports[`jsdom empty text child 1`] = `
+<p>
+  
+</p>
+`;
+
+exports[`jsdom empty text child 2`] = `"<p />"`;
+
+exports[`jsdom empty text node 1`] = ``;
+
+exports[`jsdom empty text node 2`] = `""`;
+
+exports[`jsdom form 1`] = `
+<form
+  action="/a"
+>
+  <input
+    name="n"
+    value="v"
+  />
+  <select
+    name="s"
+  >
+    <option
+      selected=""
+      value="1"
+    >
+      one
+    </option>
+    <option>
+      two
+    </option>
+  </select>
+  <textarea>
+    t
+  </textarea>
+</form>
+`;
+
+exports[`jsdom form 2`] = `"<form action="/a"><input name="n" value="v" /><select name="s"><option selected="" value="1">one</option><option>two</option></select><textarea>t</textarea></form>"`;
+
+exports[`jsdom fragment 1`] = `
+<DocumentFragment>
+  <b>
+    x
+  </b>
+  t
+</DocumentFragment>
+`;
+
+exports[`jsdom fragment 2`] = `"<DocumentFragment><b>x</b>t</DocumentFragment>"`;
+
+exports[`jsdom in a Map 1`] = `
+Map {
+  "k" => <button
+    class="b a"
+    id="x"
+  >
+    go
+  </button>,
+}
+`;
+
+exports[`jsdom in a Set 1`] = `
+Set {
+  <button
+    class="b a"
+    id="x"
+  >
+    go
+  </button>,
+}
+`;
+
+exports[`jsdom in an array 1`] = `
+[
+  <button
+    class="b a"
+    id="x"
+  >
+    go
+  </button>,
+  <i />,
+  "s",
+]
+`;
+
+exports[`jsdom in an object 1`] = `
+{
+  "el": <button
+    class="b a"
+    id="x"
+  >
+    go
+  </button>,
+  "n": 1,
+}
+`;
+
+exports[`jsdom is attribute 1`] = `
+<button
+  is="fancy-button"
+>
+  x
+</button>
+`;
+
+exports[`jsdom is attribute 2`] = `"<button is="fancy-button">x</button>"`;
+
+exports[`jsdom message: 12 levels 1`] = `"<section>t0<div>t1<span>t2<div>t3<span>t4<div>t5<span>t6<div>t7<span>t8<div>t9<span … /></div></span></div></span></div></span></div></span></div></section>"`;
+
+exports[`jsdom message: too long at 2 levels 1`] = `"<ul><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /><li … /></ul>"`;
+
+exports[`jsdom message: too long at 10 and 5 levels 1`] = `"<ul><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li><li><a … /></li></ul>"`;
+
+exports[`jsdom message: too long at any depth 1`] = `"<p>012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789</p>"`;
+
+exports[`jsdom message: too long with 10 and 5 items 1`] = `"[<!--xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-->, <!--xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-->, …]"`;
+
+exports[`jsdom nested 1`] = `
+<ul
+  class="l"
+>
+  <li>
+    one
+  </li>
+  <li
+    class="x"
+  >
+    two
+    <b>
+      bold
+    </b>
+    tail
+  </li>
+  <li />
+</ul>
+`;
+
+exports[`jsdom nested 2`] = `"<ul class="l"><li>one</li><li class="x">two<b>bold</b>tail</li><li /></ul>"`;
+
+exports[`jsdom one attribute 1`] = `
+<div
+  id="a"
+/>
+`;
+
+exports[`jsdom one attribute 2`] = `"<div id="a" />"`;
+
+exports[`jsdom script and style 1`] = `
+<div>
+  <script>
+    if (a &lt; b && c &gt; d) {}
+  </script>
+  <style>
+    a &gt; b { color: red }
+  </style>
+</div>
+`;
+
+exports[`jsdom script and style 2`] = `"<div><script>if (a &lt; b && c &gt; d) {}</script><style>a &gt; b { color: red }</style></div>"`;
+
+exports[`jsdom select 1`] = `
+<select
+  multiple=""
+>
+  <optgroup
+    label="g"
+  >
+    <option>
+      a
+    </option>
+  </optgroup>
+</select>
+`;
+
+exports[`jsdom select 2`] = `"<select multiple=""><optgroup label="g"><option>a</option></optgroup></select>"`;
+
+exports[`jsdom sorted attributes 1`] = `
+<div
+  aria-label="l"
+  class="c"
+  data-a="2"
+  data-z="1"
+  id="i"
+  title="t"
+/>
+`;
+
+exports[`jsdom sorted attributes 2`] = `"<div aria-label="l" class="c" data-a="2" data-z="1" id="i" title="t" />"`;
+
+exports[`jsdom svg 1`] = `
+<svg
+  viewBox="0 0 1 1"
+>
+  <lineargradient
+    id="g"
+  >
+    <stop
+      offset="0"
+    />
+  </lineargradient>
+  <a
+    xlink:href="#x"
+  />
+  <foreignobject>
+    <div>
+      h
+    </div>
+  </foreignobject>
+</svg>
+`;
+
+exports[`jsdom svg 2`] = `"<svg viewBox="0 0 1 1"><lineargradient id="g"><stop offset="0" /></lineargradient><a xlink:href="#x" /><foreignobject><div>h</div></foreignobject></svg>"`;
+
+exports[`jsdom table 1`] = `
+<table>
+  <thead>
+    <tr>
+      <th>
+        h
+      </th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td
+        colspan="2"
+      >
+        d
+      </td>
+    </tr>
+  </tbody>
+</table>
+`;
+
+exports[`jsdom table 2`] = `"<table><thead><tr><th>h</th></tr></thead><tbody><tr><td colspan="2">d</td></tr></tbody></table>"`;
+
+exports[`jsdom template 1`] = `<template />`;
+
+exports[`jsdom template 2`] = `"<template />"`;
+
+exports[`jsdom text child 1`] = `
+<button>
+  go
+</button>
+`;
+
+exports[`jsdom text child 2`] = `"<button>go</button>"`;
+
+exports[`jsdom text escapes 1`] = `a &lt; b &gt; c & d "e" 'f' \\ \` \${x}`;
+
+exports[`jsdom text escapes 2`] = `"a &lt; b &gt; c & d "e" 'f' \\ \` \${x}"`;
+
+exports[`jsdom text line ends 1`] = `
+l1
+l2
+l3
+l4	t
+`;
+
+exports[`jsdom text line ends 2`] = `
+"l1
+l2
+l3
+l4	t"
+`;
+
+exports[`jsdom text node 1`] = `just text`;
+
+exports[`jsdom text node 2`] = `"just text"`;
+
+exports[`jsdom unknown element 1`] = `
+<blink>
+  x
+</blink>
+`;
+
+exports[`jsdom unknown element 2`] = `"<blink>x</blink>"`;
+
+exports[`jsdom void elements 1`] = `
+<p>
+  <br />
+  <img
+    alt=""
+    src="a.png"
+  />
+</p>
+`;
+
+exports[`jsdom void elements 2`] = `"<p><br /><img alt="" src="a.png" /></p>"`;
+
+exports[`jsdom whitespace text 1`] = `
+<div>
+  
+  
+  <span>
+     a 
+  </span>
+  
+  
+
+</div>
+`;
+
+exports[`jsdom whitespace text 2`] = `
+"<div>
+  <span> a </span>
+  
+</div>"
+`;
+
+exports[`jsdom: DOMStringMap 1`] = `
+DOMStringMap {
+  "a": "2",
+  "fooBar": "1",
+  "z": "",
+}
+`;
+
+exports[`jsdom: DOMStringMap 2`] = `"{"a": "2", "fooBar": "1", "z": ""}"`;
+
+exports[`jsdom: DOMStringMap 3`] = `DOMStringMap {}`;
+
+exports[`jsdom: DOMStringMap 4`] = `"{}"`;

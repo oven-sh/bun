@@ -1,16 +1,16 @@
-//! What the printer for style sheets writes to: the parts of a document, one after the other.
+//! The CSS printer's output sink. It receives the parts of a document in order.
 //!
-//! Most of a style sheet needs no document. Where no group is around them, lines are line breaks. And if a line
-//! fits as a whole with every group in it on one line, that is how Prettier prints it: a group is measured with what
-//! follows it up to the next possible line break. So at first everything is written straight to the output that
-//! way. If a line with a group in it turns out too long, or if there is something in a group that is more than its
-//! content on one line, `Sink::end_unit` says so. Then what has been written of the unit is taken back and it is
-//! written again, this time to a document, which is printed in its place.
+//! Most of a style sheet doesn't need a document. Outside of any group, a `line` is simply a line break. And if a whole
+//! line fits with every group on it flat, that's how Prettier prints it, because a group is measured together with what
+//! follows it up to the next possible line break. So everything is first written straight to the output that way. If a
+//! line with a group on it turns out too long, or a group contains something that can't simply be written flat,
+//! `Sink::end_unit` reports it. The unit's output is then rolled back, and the unit is written again, this time into a
+//! document, which is printed in its place.
 
 use super::doc::{self, Doc, Elements, Group, IndentCommand, Line};
 use crate::FormatError;
 
-/// What is between two items of a `fill`.
+/// The separator between two items of a `fill`.
 #[derive(Copy, Clone)]
 pub(crate) enum Separator {
     Line,
@@ -22,7 +22,7 @@ pub(crate) enum Separator {
     DedentedHardLine,
 }
 
-/// Where a unit starts.
+/// The sink's state at the start of a unit.
 pub(crate) struct Mark {
     len: usize,
     line_start: usize,
@@ -32,31 +32,31 @@ pub(crate) struct Mark {
 }
 
 pub(crate) struct Sink<'o> {
-    /// `None`: all that is wanted is the document.
+    /// `None` if the caller only wants the document.
     printer: Option<doc::Printer<'o>>,
 
-    /// Whether what is written goes to `elements`, not straight to the output.
+    /// True if writes go to `elements` instead of straight to the output.
     is_document: bool,
     elements: Elements,
-    /// Where what `removeLines` is applied to starts.
+    /// Start positions of the open `removeLines` regions.
     without_lines: Vec<usize>,
 
     indent: u32,
-    /// What `indent` is set back to.
+    /// Saved values of `indent`, restored by `end_indent`.
     outer_indents: Vec<u32>,
-    /// How many groups are open that are written on one line.
+    /// The number of open groups that are being written flat.
     flat_groups: u32,
-    /// Where the line starts behind its indentation, or behind what the printer has written of it, and the column
-    /// there.
+    /// The output offset just after the current line's indentation, or after the part of the line that the doc printer
+    /// wrote, and the column at that offset.
     line_start: usize,
     line_start_column: usize,
-    /// Whether a group has been written on one line in this line.
+    /// True if a group has been written flat on the current line.
     has_group_in_line: bool,
-    /// How many times something else than a text has gone to the output.
+    /// How many times something other than text has gone to the output.
     line_breaks: u32,
-    /// The unit takes a document.
-    has_failed: bool,
-    /// The style sheet is in HTML, where Prettier calls `cleanDoc` with its document.
+    /// The unit needs a document.
+    needs_document: bool,
+    /// The style sheet is embedded in HTML, where Prettier runs `cleanDoc` on its document.
     is_cleaned: bool,
 }
 
@@ -75,7 +75,7 @@ impl<'o> Sink<'o> {
             line_start_column: 0,
             has_group_in_line: false,
             line_breaks: 0,
-            has_failed: false,
+            needs_document: false,
         }
     }
 
@@ -93,23 +93,23 @@ impl<'o> Sink<'o> {
             line_start_column: 0,
             has_group_in_line: false,
             line_breaks: 0,
-            has_failed: false,
+            needs_document: false,
         }
     }
 
-    /// Everything that has been written to `Sink::to_document()`.
+    /// Returns everything written to a `Sink::to_document()`.
     pub(crate) fn into_document(self) -> Result<Doc<'static>, FormatError> {
         self.elements.to_tree()
     }
 
-    /// Not all has been written, so nothing more is printed.
+    /// Not everything could be written, so the output is unusable.
     pub(crate) fn fail(&mut self, failure: FormatError) {
         if let Some(printer) = &mut self.printer {
             printer.fail(failure);
         }
     }
 
-    /// Whether what has gone to the output is what has been written.
+    /// Returns the failure, if any, that made the output unusable.
     pub(crate) fn result(&self) -> Result<(), FormatError> {
         match &self.printer {
             Some(printer) => printer.result(),
@@ -119,11 +119,12 @@ impl<'o> Sink<'o> {
 
     // ───────────────────────────── units ─────────────────────────────
 
-    /// Starts a unit: something that no group is around and that a line break follows. `None`: it is part of
-    /// something that is written again as a whole if need be, or that is written to a document.
+    /// Starts a unit: output that isn't inside a group and is followed by a line break. Returns `None` if it's already
+    /// going to a document, or if it's part of something larger that would be rewritten as a whole.
     pub(crate) fn start_unit(&mut self) -> Option<Mark> {
         let printer = self.printer.as_ref()?;
-        if self.is_document || self.has_group_in_line || self.has_failed || self.flat_groups > 0 {
+        if self.is_document || self.has_group_in_line || self.needs_document || self.flat_groups > 0
+        {
             return None;
         }
         Some(Mark {
@@ -135,16 +136,14 @@ impl<'o> Sink<'o> {
         })
     }
 
-    /// Ends a unit. If it returns `false`, the unit has to be written once more, between `start_document` and
-    /// `end_document`.
+    /// Ends a unit. If it returns `false`, the unit must be written again between `start_document` and `end_document`.
     pub(crate) fn end_unit(&mut self) -> bool {
         self.check_line();
         self.has_group_in_line = false;
-        !std::mem::take(&mut self.has_failed)
+        !std::mem::take(&mut self.needs_document)
     }
 
-    /// Takes back what has been written of the unit that started at `mark`. What is written from now on goes to a
-    /// document.
+    /// Rolls back the output of the unit that started at `mark`. From now on, writes go to a document.
     pub(crate) fn start_document(&mut self, mark: &Mark) {
         if let Some(printer) = &mut self.printer {
             printer.out.truncate(mark.len);
@@ -158,14 +157,14 @@ impl<'o> Sink<'o> {
         self.is_document = true;
     }
 
-    /// Whether a text of `len` characters fits on the line.
+    /// True if a text of `len` characters fits on the line.
     pub(crate) fn has_room_for(&self, len: usize) -> bool {
         self.printer.as_ref().is_none_or(|printer| {
             self.line_start_column + (printer.out.len() - self.line_start) + len <= printer.width
         })
     }
 
-    /// Prints the document that the unit has been written to.
+    /// Prints the document that the unit was written to.
     pub(crate) fn end_document(&mut self) {
         self.is_document = false;
         self.line_breaks += 1;
@@ -176,9 +175,9 @@ impl<'o> Sink<'o> {
         }
     }
 
-    /// Writes `document`, which no group is around and which ends with a line break.
+    /// Writes `document`, which isn't inside a group and ends with a line break.
     pub(crate) fn document(&mut self, document: &Doc<'_>) {
-        if !self.is_straight() {
+        if !self.writes_directly() {
             return self.elements.document(document);
         }
         self.elements.clear();
@@ -187,15 +186,15 @@ impl<'o> Sink<'o> {
     }
 
     fn column(&self) -> usize {
-        let written = self
+        let line_so_far = self
             .printer
             .as_ref()
             .and_then(|printer| printer.out.get(self.line_start..))
             .unwrap_or_default();
-        self.line_start_column + crate::ir::width::string_width(written) as usize
+        self.line_start_column + crate::ir::width::string_width(line_so_far) as usize
     }
 
-    /// The line is complete.
+    /// Called when the current line is complete. The unit fails if the line has a flat group on it and is too long.
     fn check_line(&mut self) {
         if self.has_group_in_line
             && self
@@ -203,38 +202,38 @@ impl<'o> Sink<'o> {
                 .as_ref()
                 .is_some_and(|printer| self.column() > printer.width)
         {
-            self.has_failed = true;
+            self.needs_document = true;
         }
     }
 
-    // ───────────────────────────── what is written again ─────────────────────────────
+    // ───────────────────────────── replaying cached output ─────────────────────────────
 
-    /// Where the output is, if that is what is written to, for `written_since`.
+    /// Returns the current output position for `written_since`, or `None` unless writes go straight to the output.
     pub(crate) fn position(&self) -> Option<(usize, u32)> {
         let printer = self
             .printer
             .as_ref()
-            .filter(|_| self.is_straight() && !self.has_failed)?;
+            .filter(|_| self.writes_directly() && !self.needs_document)?;
         Some((printer.out.len(), self.line_breaks))
     }
 
-    /// What has been written since `position`, if that is a part of a line, and whether there is a group in the line.
+    /// Returns the output since `position` if it's all on one line, and whether that line has a group on it.
     pub(crate) fn written_since(&self, (len, line_breaks): (usize, u32)) -> Option<(&[u8], bool)> {
         let printer = self.printer.as_ref().filter(|_| {
-            self.is_straight() && !self.has_failed && self.line_breaks == line_breaks
+            self.writes_directly() && !self.needs_document && self.line_breaks == line_breaks
         })?;
         Some((printer.out.get(len..)?, self.has_group_in_line))
     }
 
-    /// Writes what `written_since` has returned.
-    pub(crate) fn write_again(&mut self, text: &[u8], has_group: bool) {
+    /// Writes output that `written_since` returned earlier.
+    pub(crate) fn replay_output(&mut self, text: &[u8], has_group: bool) {
         self.text(text);
         self.has_group_in_line |= has_group;
     }
 
     // ───────────────────────────── the parts of a document ─────────────────────────────
 
-    fn is_straight(&self) -> bool {
+    fn writes_directly(&self) -> bool {
         !self.is_document
     }
 
@@ -259,7 +258,7 @@ impl<'o> Sink<'o> {
         }
     }
 
-    /// A line break where no group is written on one line.
+    /// Writes a line break outside of any flat group.
     fn write_line_break(&mut self) {
         self.check_line();
         self.has_group_in_line = false;
@@ -292,7 +291,7 @@ impl<'o> Sink<'o> {
         if self.is_document {
             self.elements.hard_line();
         } else if self.flat_groups > 0 {
-            self.has_failed = true;
+            self.needs_document = true;
         } else {
             self.write_line_break();
         }
@@ -302,7 +301,7 @@ impl<'o> Sink<'o> {
     pub(crate) fn literal_line(&mut self) {
         match self.is_document {
             true => self.elements.line(Line::Literal),
-            false => self.has_failed = true,
+            false => self.needs_document = true,
         }
     }
 
@@ -310,12 +309,12 @@ impl<'o> Sink<'o> {
         if self.is_document {
             self.elements.break_parent();
         } else if self.flat_groups > 0 {
-            self.has_failed = true;
+            self.needs_document = true;
         }
     }
 
     pub(crate) fn line_suffix_boundary(&mut self) {
-        // Straight to the output, there is never a line suffix.
+        // There's never a line suffix when writing straight to the output.
         if self.is_document {
             self.elements.line_suffix_boundary();
         }
@@ -340,7 +339,7 @@ impl<'o> Sink<'o> {
                 ..Group::default()
             });
         } else if self.flat_groups > 0 {
-            self.has_failed |= should_break;
+            self.needs_document |= should_break;
             self.flat_groups += 1;
         } else if !should_break {
             self.flat_groups = 1;
@@ -392,18 +391,18 @@ impl<'o> Sink<'o> {
             self.elements.start_fill();
             self.elements.start_item();
         } else if self.flat_groups == 0 {
-            // How much of it fits on each line is for the printer to find out.
-            self.has_failed = true;
+            // Only the doc printer can work out how much fits on each line.
+            self.needs_document = true;
         }
     }
 
-    /// Ends an item, and starts the next one behind `separator`.
+    /// Ends an item, writes `separator` and starts the next item.
     pub(crate) fn fill_separator(&mut self, separator: Separator) {
         if !self.is_document {
             return match separator {
                 Separator::Line | Separator::DedentedLine => self.token(" "),
                 Separator::SoftLine => {}
-                Separator::HardLine | Separator::DedentedHardLine => self.has_failed = true,
+                Separator::HardLine | Separator::DedentedHardLine => self.needs_document = true,
             };
         }
         let elements = &mut self.elements;
@@ -428,14 +427,14 @@ impl<'o> Sink<'o> {
         elements.start_item();
     }
 
-    /// Makes a `fill` of its own of what the `fill` has so far, which starts the only item that there is then.
+    /// See `Elements::nest_fill`.
     pub(crate) fn nest_fill(&mut self) {
         if self.is_document {
             self.elements.nest_fill();
         }
     }
 
-    /// Puts an empty item and a `hardline` before the items of the `fill`.
+    /// Inserts an empty item and a `hardline` separator before the `fill`'s items.
     pub(crate) fn start_fill_with_hard_line(&mut self) {
         if self.is_document {
             self.elements.start_fill_with_hard_line();
@@ -452,7 +451,7 @@ impl<'o> Sink<'o> {
         }
     }
 
-    /// Ends a `fill` that is to be an array of its items after all.
+    /// Ends a `fill`, but turns it into a plain array of its items.
     pub(crate) fn end_fill_as_array(&mut self) {
         if self.is_document {
             self.elements.end_item();
@@ -463,7 +462,7 @@ impl<'o> Sink<'o> {
     pub(crate) fn start_line_suffix(&mut self) {
         match self.is_document {
             true => self.elements.start_line_suffix(),
-            false => self.has_failed = true,
+            false => self.needs_document = true,
         }
     }
 
@@ -473,11 +472,11 @@ impl<'o> Sink<'o> {
         }
     }
 
-    /// Starts what `removeLines` is applied to.
+    /// Starts a region that `removeLines` is applied to.
     pub(crate) fn start_without_lines(&mut self) {
         match self.is_document {
             true => self.without_lines.push(self.elements.position()),
-            false => self.has_failed = true,
+            false => self.needs_document = true,
         }
     }
 

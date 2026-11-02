@@ -14,12 +14,12 @@ pub(crate) const PROMISE_STATIC_METHODS: [&str; 8] = [
     "withResolvers",
 ];
 
-/// The calls for which [`is_promise`] can hold.
+/// The calls for which [`is_promise`] can return `Some`.
 pub(crate) const PROMISE_CALLS: On = On::new()
     .method_calls(&["then", "catch", "finally"])
     .method_calls(&PROMISE_STATIC_METHODS);
 
-/// The name of the method, if `hello.then()`, `hello.catch()`, `hello.finally()` or a static method of `Promise` is called.
+/// The method's name, if the call is `hello.then()`, `hello.catch()`, `hello.finally()` or a static `Promise` method.
 pub(crate) fn is_promise(call_expr: Call<'_>) -> Option<Name<'_>> {
     let member_expr = get_member_expr(call_expr.callee())?;
     let prop_name = static_property_name(member_expr)?;
@@ -32,7 +32,7 @@ pub(crate) fn is_promise(call_expr: Call<'_>) -> Option<Name<'_>> {
     is_promise.then_some(prop_name)
 }
 
-/// Like [`is_promise`], but not for a receiver that is known to be no promise.
+/// Like [`is_promise`], but returns `None` if the receiver is known not to be a promise.
 pub(crate) fn is_promise_with_context(call_expr: Call<'_>) -> Option<Name<'_>> {
     let prop_name = is_promise(call_expr)?;
     if !prop_name.is_any(&["then", "catch", "finally"]) {
@@ -45,7 +45,7 @@ pub(crate) fn is_promise_with_context(call_expr: Call<'_>) -> Option<Name<'_>> {
 /// `classify_receiver(..) == ReceiverKind::NotPromise`
 fn is_not_promise(receiver: Expr) -> bool {
     let mut at = receiver;
-    // `const a = b, b = a` goes in a circle.
+    // `const a = b, b = a` is a cycle.
     let mut seen = rustc_hash::FxHashSet::default();
     while seen.insert(at) {
         at = get_inner_expression(at);

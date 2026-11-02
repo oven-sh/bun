@@ -1,5 +1,4 @@
 use crate::Error;
-use bun_bundler::bundle_v2::{DependenciesScanner, DependenciesScannerResult};
 use bun_core::{Global, Output};
 use bun_install::package_manager_real::{
     CommandLineArguments, PackageManager, ROOT_PACKAGE_JSON_PATH, Subcommand, install_with_manager,
@@ -7,22 +6,17 @@ use bun_install::package_manager_real::{
 };
 
 use crate::Cli;
-use crate::build_command::BuildCommand;
+use crate::cli::pm_update_package_json::analyze_dependencies_and_install;
 use crate::command::ContextData;
 
 pub(crate) struct InstallCommand;
 
 impl InstallCommand {
     pub(crate) fn exec(ctx: &mut ContextData) -> Result<(), Error> {
-        match install(ctx) {
-            Ok(()) => Ok(()),
-            Err(e) => Self::handle_error(e),
-        }
+        install(ctx).or_else(Self::handle_error)
     }
 
-    /// Cold, out-of-line error path so the hot `bun install` dispatch in `exec`
-    /// stays small and contiguous in `.text` (the "no changes" fast path never
-    /// touches this code, and demand-paging it in pollutes the startup window).
+    /// Out of line, so that the hot `bun install` dispatch in `exec` stays small in `.text`.
     #[cold]
     #[inline(never)]
     pub(crate) fn handle_error(e: Error) -> Result<(), Error> {
@@ -32,9 +26,7 @@ impl InstallCommand {
                 bun_install::Error::InstallFailed | bun_install::Error::InvalidPackageJSON
             )
         ) {
-            // SAFETY: `Cli::LOG_` is initialised once during single-threaded
-            // startup in `Cli::start()` before any command (including this
-            // one) is dispatched; no other `&mut` to it is live here.
+            // SAFETY: `Cli::start()` initialised `Cli::LOG_`; no other `&mut` to it is live here.
             let log = unsafe { (*Cli::LOG_.get()).assume_init_mut() };
             let _ = log.print(std::ptr::from_mut(Output::error_writer()));
             Global::exit(1);
@@ -43,113 +35,20 @@ impl InstallCommand {
     }
 }
 
-// Kept out-of-line (not inlined into the `exec` dispatcher) so it survives as a
-// distinct symbol the release link's symbol-ordering file can cluster next to the
-// rest of the `bun install` startup path (PackageManager::init, lockfile diff,
-// resolver/transpiler setup) — otherwise these live on unrelated 4 KB pages of
-// the ~84 MB binary and get faulted in one page at a time.
+// A symbol of its own, which the link's symbol-ordering file puts next to the rest of the startup path.
 #[inline(never)]
 fn install(ctx: &mut ContextData) -> Result<(), Error> {
     let mut cli = CommandLineArguments::parse(Subcommand::Install)?;
 
-    // The way this works:
-    // 1. Run the bundler on source files
-    // 2. Rewrite positional arguments to act identically to the developer
-    //    typing in the dependency names
-    // 3. Run the install command
     if cli.analyze {
-        // `ctx` is stored as a raw `*mut ContextData`; the `on_fetch` callback
-        // re-enters the install path while `BuildCommand::exec` still holds the
-        // global `Context`, so a `&mut` here would be aliased UB.
-        struct Analyzer {
-            ctx: *mut ContextData,
-            cli: *mut CommandLineArguments,
-        }
-        impl bun_bundler::bundle_v2::OnDependenciesAnalyze for Analyzer {
-            fn on_analyze(
-                &mut self,
-                result: &mut DependenciesScannerResult<'_, '_>,
-            ) -> Result<(), bun_bundler::Error> {
-                let this = self;
-                // TODO: add separate argument that makes it so positionals[1..] is not done     and instead the positionals are passed
-                //
-                // Process-lifetime storage for the rewritten positionals —
-                // `Global::exit(0)` follows immediately.
-                // `OnceLock` (not leaking) per PORTING.md §Forbidden.
-                static OWNED_KEYS: std::sync::OnceLock<Vec<Box<[u8]>>> = std::sync::OnceLock::new();
-                static POSITIONALS: std::sync::OnceLock<Vec<&'static [u8]>> =
-                    std::sync::OnceLock::new();
-
-                let owned = OWNED_KEYS.get_or_init(|| {
-                    result
-                        .dependencies
-                        .keys()
-                        .iter()
-                        .map(|k| Box::<[u8]>::from(&**k))
-                        .collect()
-                });
-                let positionals = POSITIONALS.get_or_init(|| {
-                    let mut v: Vec<&'static [u8]> = Vec::with_capacity(owned.len() + 1);
-                    v.push(b"install");
-                    for k in owned {
-                        v.push(&**k);
-                    }
-                    v
-                });
-
-                // SAFETY: `this.cli` / `this.ctx` were set from live stack
-                // locals in `install()` whose scope encloses the entire
-                // `BuildCommand::exec` call (and hence this callback). The
-                // bundler does not touch the global `ContextData` between
-                // dependency-scan completion and `on_fetch` invocation, so
-                // forming a fresh `&mut` here is exclusive for the duration of
-                // `install_with_cli`.
-                let cli = unsafe { &mut *this.cli };
-                cli.positionals = positionals.as_slice();
-                // SAFETY: see above — same invariant covers `this.ctx`.
-                let ctx = unsafe { &mut *this.ctx };
-
-                install_with_cli(ctx, cli.clone()).map_err(bun_bundler::Error::from)?;
-
-                Global::exit(0);
-            }
-        }
-
-        // `DependenciesScanner.entry_points` is `Box<[Box<[u8]>]>`. Clone the
-        // argv slices into an owned buffer (small one-shot list — no perf
-        // concern). Captured *before*
-        // raw-ptr aliasing of `cli` below so the access goes through the live
-        // `&mut cli` borrow.
-        let entry_points: Box<[Box<[u8]>]> = cli.positionals[1..]
-            .iter()
-            .map(|s| Box::<[u8]>::from(*s))
-            .collect();
-
-        // Derive raw pointers from the existing `&mut` borrows; all subsequent
-        // access to `ctx` / `cli` in this branch goes through these.
-        let ctx_ptr: *mut ContextData = ctx;
-        let mut analyzer = Analyzer {
-            ctx: ctx_ptr,
-            cli: &raw mut cli,
-        };
-
-        let fetcher = DependenciesScanner::new(&mut analyzer, entry_points);
-
-        // `Command.get()` resolves to the same `*ContextData` already held in
-        // `ctx`; reborrow through `ctx_ptr` rather than minting a fresh
-        // `&'static mut` from the global static (which would alias the
-        // still-live `ctx` parameter under stacked borrows).
-        // SAFETY: `ctx_ptr` was just derived from the live `ctx: &mut
-        // ContextData` parameter; `ctx` is not accessed again in this branch.
-        BuildCommand::exec(unsafe { &mut *ctx_ptr }, Some(&fetcher))?;
-        return Ok(());
+        return analyze_dependencies_and_install(ctx, &mut cli, b"install", &mut install_with_cli);
     }
 
-    install_with_cli(ctx, cli)
+    install_with_cli(ctx, &cli)
 }
 
 #[inline(never)]
-fn install_with_cli(ctx: &mut ContextData, cli: CommandLineArguments) -> Result<(), Error> {
+fn install_with_cli(ctx: &mut ContextData, cli: &CommandLineArguments) -> Result<(), Error> {
     let subcommand: Subcommand = if cli.positionals.len() > 1 {
         Subcommand::Add
     } else {
@@ -182,8 +81,7 @@ fn install_with_cli(ctx: &mut ContextData, cli: CommandLineArguments) -> Result<
         Output::flush();
     }
 
-    // SAFETY: `ROOT_PACKAGE_JSON_PATH` is written exactly once inside
-    // `PackageManager::init` (above) on this thread; only read thereafter.
+    // SAFETY: written once, inside `PackageManager::init` (above) on this thread; only read thereafter.
     let root_package_json_path = unsafe { ROOT_PACKAGE_JSON_PATH.read() };
     install_with_manager(manager, &mut *ctx, root_package_json_path, &original_cwd)?;
 

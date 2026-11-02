@@ -218,10 +218,10 @@ static inline EncodedJSValue jsPerformanceServerTimingPrototypeFunction_toJSONBo
     result->putDirect(vm, vm.propertyNames->name, nameValue);
     auto durationValue = toJS<IDLDouble>(*lexicalGlobalObject, throwScope, impl.duration());
     RETURN_IF_EXCEPTION(throwScope, {});
-    result->putDirect(vm, Identifier::fromString(vm, "duration"_s), durationValue);
+    Bun::putDirectNamed(vm, result, "duration"_s, durationValue);
     auto descriptionValue = toJS<IDLDOMString>(*lexicalGlobalObject, throwScope, impl.description());
     RETURN_IF_EXCEPTION(throwScope, {});
-    result->putDirect(vm, Identifier::fromString(vm, "description"_s), descriptionValue);
+    Bun::putDirectNamed(vm, result, "description"_s, descriptionValue);
     return JSValue::encode(result);
 }
 

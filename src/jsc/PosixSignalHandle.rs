@@ -177,6 +177,13 @@ pub fn enable_watch_mode_signals(kill_signal: bun_core::SignalCode) {
     WATCH_MODE_KILL_SIGNAL.store(kill_signal as u8, Ordering::Relaxed);
 }
 
+/// Records the signal whose JS handlers `emit_watch_kill_signal_before_reload` runs before a
+/// restart, without the watch-mode SIGINT handler: for a process that reloads in place and only
+/// sometimes starts again (`bun bake`).
+pub fn set_watch_kill_signal(kill_signal: bun_core::SignalCode) {
+    WATCH_MODE_KILL_SIGNAL.store(kill_signal as u8, Ordering::Relaxed);
+}
+
 pub fn is_emitting_watch_kill_signal() -> bool {
     IS_EMITTING_WATCH_KILL_SIGNAL.load(Ordering::Relaxed)
 }

@@ -6977,7 +6977,11 @@ impl<'p, 's> Checker<'p, 's> {
                     ),
                 }
             };
-        let hd = self.data(holder);
+        let hd = if holder == target {
+            td
+        } else {
+            self.data(holder)
+        };
         let (source_sigs, target_sigs) = (list(self, source, sd, &sm), list(self, holder, hd, &tm));
         if r.relation == Relation::Identity {
             let mut result = Ternary::TRUE;

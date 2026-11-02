@@ -353,15 +353,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.react_compiler_candidate_name = Some(id.r#ref);
                     self.react_compiler_in_react_hoc = in_hoc;
                 }
+                // `const { a } = x` reads `x.a` and drops `x`.
+                let is_object_pattern = matches!(decl.binding.data, BData::BObject(_));
                 self.visit_expr_in_out(
                     &mut val,
                     ExprIn {
                         is_immediately_assigned_to_decl: true,
-                        // `const { a } = x` reads `x.a` and drops `x`.
-                        is_property_access_target: matches!(decl.binding.data, BData::BObject(_)),
+                        is_property_access_target: is_object_pattern,
                         ..Default::default()
                     },
                 );
+                // The pattern takes the members itself, out of a copy of the define value.
+                if is_object_pattern && let Some(define) = self.define_member_target.take() {
+                    val = self.copy_of_define_value(val.loc, define);
+                }
                 self.react_compiler_candidate_name = None;
                 self.react_compiler_in_react_hoc = false;
                 decl.value = Some(val);

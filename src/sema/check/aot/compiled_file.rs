@@ -171,6 +171,18 @@ impl<'s> Checker<'_, 's> {
             .is_some_and(|compiled| compiled.analysis.decisions.is_dead_expr(expression))
     }
 
+    /// The object or the key of a read that a member of a define value replaces: an error there is about the read.
+    #[inline]
+    pub(in crate::check) fn is_part_of_define_member_read(
+        &self,
+        file: FileId,
+        expression: ExprId,
+    ) -> bool {
+        self.files.compiled(file).is_some_and(|compiled| {
+            (compiled.analysis.decisions).is_part_of_define_member_read(expression)
+        })
+    }
+
     #[inline]
     pub(in crate::check) fn is_short_circuited_link(&self, file: FileId, link: ExprId) -> bool {
         self.files

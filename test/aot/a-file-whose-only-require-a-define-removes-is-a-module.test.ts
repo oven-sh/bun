@@ -15,7 +15,14 @@ const flags = [
   `--define=NAME="a"`,
   `--define=CONFIG={"a":1}`,
   "--define=LIST=[1,0]",
+  `--define=SETTINGS={"debug":false,"level":3,"nested":{"on":true},"list":[0,1],"\\u00e9":false,"0":false}`,
   "--define=settings.debug=false",
+  `--define=app.config={"debug":false,"level":3,"nested":{"on":true},"list":[0,1]}`,
+  `--define=process.env={"DEBUG":false,"LEVEL":3}`,
+  `--define=both={"on":false,"other":1}`,
+  "--define=both.on=true",
+  `--define=import.meta.env={"DEV":false,"MODE":"m","nested":{"on":true}}`,
+  `--define=import.meta={"flag":false,"level":3,"o":{"x":false,"y":1}}`,
   `--define=process.platform="plan9"`,
   "--define=RUNTIME=Bun",
 ];
@@ -69,6 +76,36 @@ const modules = [
   `CONFIG || require("node:path");`,
   `CONFIG ?? require("node:path");`,
   `if (!LIST) { require("node:path"); }`,
+  // A read of one member of an object or of an array has that member in its place.
+  `if (CONFIG.a !== 1) { require("node:path"); }`,
+  `if (!LIST[0]) { require("node:path"); }`,
+  `if (LIST.length !== 2) { require("node:path"); }`,
+  `if (SETTINGS.debug) { require("node:path"); }`,
+  `if (SETTINGS["debug"]) { require("node:path"); }`,
+  `if (!SETTINGS.nested.on) { require("node:path"); }`,
+  `if (SETTINGS.list[0]) { require("node:path"); }`,
+  `SETTINGS.level ?? require("node:path");`,
+  `SETTINGS.nested ?? require("node:path");`,
+  `SETTINGS.nested || require("node:path");`,
+  `const level = SETTINGS.level; if (level !== 3) { require("node:path"); }`,
+  `SETTINGS.debug && module.exports;`,
+  `if (SETTINGS.\u00e9) { require("node:path"); }`,
+  `if (SETTINGS["0"]) { require("node:path"); }`,
+  // The define is of a path with a dot, of import.meta, or of a path below it.
+  `if (app.config.debug) { require("node:path"); }`,
+  `if (app.config["debug"]) { require("node:path"); }`,
+  `if (!app.config.nested.on) { require("node:path"); }`,
+  `if (app.config.list[0]) { require("node:path"); }`,
+  `app.config.nested ?? require("node:path");`,
+  `if (process.env.DEBUG) { require("node:path"); }`,
+  `if (process.env["DEBUG"]) { require("node:path"); }`,
+  `if (import.meta.env.DEV) { require("node:path"); }`,
+  `if (import.meta.env["DEV"]) { require("node:path"); }`,
+  `if (import.meta.env.MODE !== "m") { require("node:path"); }`,
+  `if (!import.meta.env.nested.on) { require("node:path"); }`,
+  `if (import.meta.flag) { require("node:path"); }`,
+  `if (import.meta["flag"]) { require("node:path"); }`,
+  `if (import.meta.o.x) { require("node:path"); }`,
 ];
 
 const scripts = [
@@ -86,6 +123,38 @@ const scripts = [
   `if (typeof settings === "undefined") { require("node:path"); }`,
   `if (typeof RUNTIME === "undefined") { require("node:path"); }`,
   `if (!RUNTIME) { require("node:path"); }`,
+  `if (SETTINGS.level) { require("node:path"); }`,
+  `if (SETTINGS.missing) { require("node:path"); }`,
+  `if (SETTINGS?.debug) { require("node:path"); }`,
+  // The value stays around a key that is computed.
+  `if (SETTINGS["de" + "bug"]) { require("node:path"); }`,
+  `const KEY = "debug"; if (SETTINGS[KEY]) { require("node:path"); }`,
+  `if (SETTINGS[(0, "debug")]) { require("node:path"); }`,
+  `if (SETTINGS[\`de\${"bug"}\`]) { require("node:path"); }`,
+  `if (app.config.level) { require("node:path"); }`,
+  `if (app.config.missing) { require("node:path"); }`,
+  `if (app.config?.debug) { require("node:path"); }`,
+  `if (process.env.LEVEL) { require("node:path"); }`,
+  `if (process.env.MISSING) { require("node:path"); }`,
+  `if (process.env?.DEBUG) { require("node:path"); }`,
+  `if (process?.env.DEBUG) { require("node:path"); }`,
+  `if (globalThis.process.env.DEBUG) { require("node:path"); }`,
+  `if (import.meta.env.missing) { require("node:path"); }`,
+  `if (import.meta.env?.DEV) { require("node:path"); }`,
+  `if (import.meta.level) { require("node:path"); }`,
+  `if (import.meta?.flag) { require("node:path"); }`,
+  `if (import.meta.o.y) { require("node:path"); }`,
+  // The value stays under a chain that ends in a read that takes no member.
+  `if (SETTINGS.nested.missing) { require("node:path"); }`,
+  `if (SETTINGS.list[1 - 1]) { require("node:path"); }`,
+  `if (SETTINGS.list?.[0]) { require("node:path"); }`,
+  // The value stays around a key in brackets that is not ASCII, and around a number where it is an object.
+  `if (SETTINGS["\u00e9"]) { require("node:path"); }`,
+  `if (SETTINGS[0]) { require("node:path"); }`,
+  // `bun run` has `both["on"]` as `both.on`, which has a define of its own.
+  `if (both["on"]) { require("node:path"); }`,
+  `if (both.on) { require("node:path"); }`,
+  `SETTINGS.debug = false; if (SETTINGS.debug) { require("node:path"); } else { require("node:fs"); }`,
   // What a build knows by itself. `bun run` does not look at it.
   `if (process.env.BUN_ENV === "nowhere") { require("node:path"); }`,
   `if (process.arch === "nothing") { require("node:path"); }`,
@@ -151,4 +220,54 @@ test.skipIf(unsupported)(
     expect(await spawned([executable], cwd, env)).toMatchObject(printed);
   },
   240_000,
+);
+
+// A build has the member in place of the read. It still checks the read, its object and its key against what the source declares.
+test.skipIf(unsupported)("a type error at a read of a member of a define is reported", async () => {
+  using dir = tempDir("aot-type-error-at-a-member-of-a-define", {
+    "main.ts": [
+      `declare const SETTINGS: { name: string; nested: { name: string } };`,
+      `declare const LIST: [number];`,
+      `function takesNumber(n: number) { return n; }`,
+      `console.log(takesNumber(SETTINGS.name));`,
+      `console.log(takesNumber(SETTINGS.nested.name));`,
+      `console.log(takesNumber((SETTINGS as { name: string }).name));`,
+      `console.log(takesNumber(SETTINGS!.nested!.name));`,
+      `console.log(LIST[1]);`,
+    ].join("\n"),
+  });
+  const cwd = String(dir);
+  const executable = join(cwd, "main" + (isWindows ? ".exe" : ""));
+  const defines = [`--define=SETTINGS={"name":"abc","nested":{"name":"n"}}`, "--define=LIST=[1,2]"];
+  const build = [bunExe(), "build", "--compile", "--aot", ...defines, "main.ts", "--outfile", executable];
+  const { stderr, exitCode } = await spawned(build, cwd, bunEnv);
+  const errors = [...stderr.matchAll(/error: (TS\d+):.*\n\s+at .*main\.ts:(\d+):/g)];
+  expect({ errors: errors.map(([, code, line]) => `${code} in line ${line}`), exitCode }).toEqual({
+    errors: ["TS2345 in line 4", "TS2345 in line 5", "TS2345 in line 6", "TS2345 in line 7", "TS2493 in line 8"],
+    exitCode: 1,
+  });
+});
+
+// Such a read in an arm that another define rules out is code that never runs, and is not checked.
+test.skipIf(unsupported)(
+  "a type error at a read of a member of a define in an arm that never runs is not reported",
+  async () => {
+    using dir = tempDir("aot-type-error-at-a-member-of-a-define-in-a-dead-arm", {
+      "main.ts": [
+        `declare const DEBUG: boolean;`,
+        `declare const SETTINGS: { name: string };`,
+        `console.log(DEBUG && SETTINGS.missing, DEBUG ? SETTINGS.nested.name : 1, !DEBUG || UNDECLARED.list[0], SETTINGS.name);`,
+      ].join("\n"),
+    });
+    const cwd = String(dir);
+    const executable = join(cwd, "main" + (isWindows ? ".exe" : ""));
+    const defines = ["--define=DEBUG=false", `--define=SETTINGS={"name":"abc"}`, `--define=UNDECLARED={"list":[1]}`];
+    const build = [bunExe(), "build", "--compile", "--aot", ...defines, "main.ts", "--outfile", executable];
+    const built = await spawned(build, cwd, bunEnv);
+    expect({ errors: built.stderr.includes("error:") ? built.stderr : "", exitCode: built.exitCode }).toEqual({
+      errors: "",
+      exitCode: 0,
+    });
+    expect(await spawned([executable], cwd, bunEnv)).toMatchObject({ stdout: "false 1 true abc\n", exitCode: 0 });
+  },
 );

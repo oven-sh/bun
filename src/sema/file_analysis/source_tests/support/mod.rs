@@ -2,7 +2,7 @@
 
 pub(crate) use bun_sema::atom::{Atom, Interner, known};
 pub(crate) use bun_sema::bind::*;
-pub(crate) use bun_sema::erasure::find_type_ranges;
+pub(crate) use bun_sema::erasure::{ReplacedText, find_type_ranges, find_type_ranges_beside};
 pub(crate) use bun_sema::file_analysis::{FileAnalysis, FileInputs, analyze_file};
 pub(crate) use bun_sema::fold::{
     Constant, Decision, Decisions, Define, DefinePath, DefineRoot, DefineValue, FoldError,

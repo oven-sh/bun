@@ -43,6 +43,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     pub(crate) fn visit_expr_in_out(&mut self, e: &mut Expr, in_: ExprIn) {
+        debug_assert!(
+            self.define_member_target.is_none(),
+            "a member read takes the define that the visit of its target leaves"
+        );
         if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
             // The caller assumes `e` was visited, so replace it. Don't mutate it on a revisit
             // because it can be part of a shared `define` value.
@@ -155,8 +159,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     continue;
                 }
                 // Substitute user-specified defines
-                *e =
-                    p.value_for_define(expr.loc, in_.assign_target, is_delete_target, &define.data);
+                if !p.leave_define_to_member_read(in_, &define.data.value) {
+                    *e = p.value_for_define(
+                        expr.loc,
+                        in_.assign_target,
+                        is_delete_target,
+                        &define.data,
+                    );
+                }
                 return;
             }
         }
@@ -282,6 +292,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let defines = p.define;
             if let Some(def) = defines.for_identifier(name) {
                 if !def.valueless() {
+                    if p.leave_define_to_member_read(in_, &def.value) {
+                        p.ignore_usage(e_.ref_);
+                        return;
+                    }
                     let newvalue: Expr =
                         p.value_for_define(expr.loc, in_.assign_target, is_delete_target, def);
 
@@ -980,6 +994,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ..Default::default()
             },
         );
+        if p.define_member_target.is_some() && p.read_member_of_define(e, in_) {
+            return;
+        }
 
         match e_.index.data {
             Data::EPrivateIdentifier(mut private) => {
@@ -1432,12 +1449,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if in_.assign_target == js_ast::AssignTarget::None {
                         // Substitute user-specified defines
                         if !define.data.valueless() {
-                            *e = p.value_for_define(
-                                expr.loc,
-                                in_.assign_target,
-                                is_delete_target,
-                                &define.data,
-                            );
+                            if !p.leave_define_to_member_read(in_, &define.data.value) {
+                                *e = p.value_for_define(
+                                    expr.loc,
+                                    in_.assign_target,
+                                    is_delete_target,
+                                    &define.data,
+                                );
+                            }
                             return;
                         }
 
@@ -1500,6 +1519,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ..Default::default()
             },
         );
+        if p.define_member_target.is_some() && p.read_member_of_define(e, in_) {
+            return;
+        }
 
         // 'require.resolve' -> .e_require_resolve_call_target
         if matches!(e_.target.data, Data::ERequireCallTarget) && e_.name == b"resolve" {

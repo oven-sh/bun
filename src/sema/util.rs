@@ -183,6 +183,11 @@ impl PositionSet {
     }
 
     #[inline]
+    pub(crate) fn remove(&mut self, position: usize) {
+        self.0[position / 64] &= !(1 << (position % 64));
+    }
+
+    #[inline]
     pub(crate) fn contains(&self, position: usize) -> bool {
         self.0[position / 64] >> (position % 64) & 1 != 0
     }

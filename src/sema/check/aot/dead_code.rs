@@ -24,7 +24,8 @@ impl Checker<'_, '_> {
             return self.is_dead_statement(file, statement);
         }
         if let NodeData::Expr(expression) = data {
-            return self.is_dead_expression(file, expression);
+            return self.is_dead_expression(file, expression)
+                && !self.is_part_of_define_member_read(file, expression);
         }
         false
     }
@@ -80,7 +81,7 @@ impl Checker<'_, '_> {
         }
         for id in (0..hir.exprs.len() as u32).map(ExprId) {
             let is_never_evaluated = self.is_short_circuited_link(file, id)
-                || self.is_dead_expression(file, id)
+                || self.is_dead_node(file, hir.node(id))
                     && self.is_outermost_dead_node(file, hir.node(id));
             if is_never_evaluated {
                 dead_code.push((self.start_of(file, id), self.end_of_expr(file, id)));

@@ -183,6 +183,7 @@ pub fn find_type_ranges_beside(file: &File<'_>, replaced: Vec<ReplacedText>) -> 
     };
     if !file.is_js {
         finder.run();
+        forget_types_in_replaced_parts(&mut finder.found, &replaced);
     }
     for part in &replaced {
         finder.add(part.start + part.text.len() as u32, part.end);
@@ -237,6 +238,23 @@ pub fn find_type_ranges_beside(file: &File<'_>, replaced: Vec<ReplacedText>) -> 
         .map(|part| (ranges.map_offset(part.start), part.text));
     ranges.written_over = written_over.collect();
     ranges
+}
+
+// `(CONFIG as any).a` with `1` in its place: the text stands for all of the part, ` as any` too.
+fn forget_types_in_replaced_parts(found: &mut Vec<(u32, u32)>, replaced: &[ReplacedText]) {
+    let with_text = replaced.iter().filter(|part| !part.text.is_empty());
+    let mut parts: Vec<(u32, u32)> = with_text.map(|part| (part.start, part.end)).collect();
+    parts.sort_unstable();
+    // Each part gets the last end of the parts that start no later.
+    let mut last_end = 0;
+    for part in &mut parts {
+        last_end = last_end.max(part.1);
+        part.1 = last_end;
+    }
+    found.retain(|&(start, end)| {
+        let started = parts.partition_point(|part| part.0 <= start);
+        started == 0 || parts[started - 1].1 < end
+    });
 }
 
 struct Finder<'a, 's> {

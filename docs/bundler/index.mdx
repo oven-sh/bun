@@ -1198,6 +1198,8 @@ A map of global identifiers to be replaced at build time. Keys of this object ar
   </Tab>
 </Tabs>
 
+A value can be a JSON object or array. Bun puts a new copy of the value at each use of the identifier. Bun replaces a read of a key that the value has with the value of that key. `CONFIG.apiUrl`, `CONFIG["apiUrl"]` and `LIST[0]` are such reads. A string in brackets must be ASCII, and an index of an array must be a number. A string that replaces a read is a string literal to the bundler, so Bun bundles the file that `require(CONFIG.driver)` or `import(CONFIG.driver)` names. Use [`external`](#external) to leave such a specifier for run time.
+
 ### loader
 
 A map of file extensions to built-in loader names. Use this to customize how certain files are loaded.

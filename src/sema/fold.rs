@@ -1,6 +1,7 @@
 mod children;
 mod data_literals;
 mod dead_code;
+mod define_members;
 mod define_trie;
 mod evaluate;
 mod feature_flags;
@@ -141,6 +142,7 @@ pub struct Decisions<'s> {
     dead_exprs: NodeBits<'s>,
     dead_stmts: NodeBits<'s>,
     dead_functions: NodeBits<'s>,
+    parts_of_define_member_reads: NodeBits<'s>,
     dead_exprs_in_bun_run: NodeBits<'s>,
     dead_stmts_in_bun_run: NodeBits<'s>,
     short_circuited_links: NodeBits<'s>,
@@ -209,6 +211,12 @@ impl<'s> Decisions<'s> {
     #[inline]
     pub fn is_dead_stmt(&self, stmt: StmtId) -> bool {
         self.dead_stmts.has(stmt.idx())
+    }
+
+    /// The object or the key of a live read that a member of a define value replaces: `CONFIG` in `CONFIG.a`.
+    #[inline]
+    pub fn is_part_of_define_member_read(&self, expr: ExprId) -> bool {
+        self.parts_of_define_member_reads.has(expr.idx())
     }
 
     /// Whether both remove the same code and know the same specifiers. Whoever looks for the import sites of a file, for its format and

@@ -247,6 +247,37 @@ fn offsets_follow_removed_ranges() {
     });
 }
 
+// A build has the value of a define in place of a read. What it writes over has no type left to remove.
+#[test]
+fn type_in_a_replaced_part_goes_with_the_part() {
+    let text =
+        "const f = () => (CONFIG as any).name; g(CONFIG!.name as string, LIST[1 as number]);";
+    let part = |written: &str, printed: &str| {
+        let start = text.find(written).unwrap() as u32;
+        ReplacedText {
+            start,
+            end: start + written.len() as u32,
+            text: printed.as_bytes().into(),
+        }
+    };
+    with_workspace(|w| {
+        let typed = parse_typescript(w, "a.ts", text.as_bytes());
+        let replaced = vec![
+            part("(CONFIG as any).name", "\"a long name\""),
+            part("CONFIG!.name", "\"a name\""),
+            part("LIST[1 as number]", "[2, 3, 4]"),
+        ];
+        let ranges = find_type_ranges_beside(&typed, replaced);
+        let kept = ranges.remove_from(text.as_bytes());
+        assert_eq!(
+            String::from_utf8_lossy(&kept),
+            "const f = () => \"a long name\"; g(\"a name\", [2, 3, 4]);"
+        );
+        let map = |part: &str| ranges.map_offset(text.find(part).unwrap() as u32) as usize;
+        assert_eq!(&kept[map("() =>")..map("; g(")], b"() => \"a long name\"");
+    });
+}
+
 #[test]
 fn javascript_has_no_type_ranges() {
     with_workspace(|w| {

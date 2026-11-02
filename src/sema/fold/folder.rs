@@ -1,4 +1,5 @@
 use super::dead_code::{DeadRoots, mark_nodes_below};
+use super::define_members::DefineMember;
 use super::evaluate::{Evaluator, Value};
 use super::feature_flags::find_feature_import;
 use super::folder_commonjs::LoaderNames;
@@ -74,6 +75,8 @@ pub(super) struct Folder<'a, 's> {
     pub(super) values: Vec<Value>,
     pub(super) effects: Vec<Effects>,
     pub(super) path_states: FxHashMap<ExprId, PathState>,
+    pub(super) define_members: FxHashMap<ExprId, DefineMember<'s>>,
+    pub(super) reads_of_define_members: Vec<ExprId>,
     pub(super) data_literals: PositionSet,
     pub(super) decided: Vec<(ExprId, Decision<'s>)>,
     pub(super) specifiers: Vec<(ExprId, ImportSpecifier)>,
@@ -119,6 +122,8 @@ pub(super) fn run<'s>(
         values: vec![Value::Unknown; hir.exprs.len()],
         effects: vec![Effects::Unknown; hir.exprs.len()],
         path_states: FxHashMap::default(),
+        define_members: FxHashMap::default(),
+        reads_of_define_members: Vec::new(),
         data_literals: PositionSet::new(hir.exprs.len()),
         decided: Vec::new(),
         specifiers: Vec::new(),
@@ -301,6 +306,7 @@ impl<'s> Folder<'_, 's> {
         );
         let (dead_exprs_in_bun_run, dead_stmts_in_bun_run) =
             dead_in_bun_run.unwrap_or((dead_exprs, dead_stmts));
+        let parts_of_define_member_reads = self.find_parts_of_define_member_reads(&dead);
         let decisions = Decisions {
             decided: slice_in(&self.decided, arena),
             constants: slice_in(&self.collect_constants(&dead), arena),
@@ -313,6 +319,7 @@ impl<'s> Folder<'_, 's> {
             dead_exprs_in_bun_run,
             dead_stmts_in_bun_run,
             dead_functions: NodeBits::freeze(&dead.functions, arena),
+            parts_of_define_member_reads: NodeBits::freeze(&parts_of_define_member_reads, arena),
             short_circuited_links: NodeBits::freeze(&self.short_circuited_links, arena),
             truthy_without_effects: NodeBits::freeze(&self.collect_truthy_without_effects(), arena),
             member_reads: NodeBits::freeze(&self.collect_member_reads(), arena),

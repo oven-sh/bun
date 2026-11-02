@@ -730,6 +730,51 @@ pub mod defines {
         }
         true
     }
+
+    /// The own member of the define value `value` that `read` names, with a name, a string or a number.
+    #[inline(never)]
+    pub fn own_member_of_read(value: ExprData, read: ExprData) -> Option<ExprData> {
+        match read {
+            ExprData::EDot(dot) => own_member(value, dot.name.slice()),
+            ExprData::EIndex(index) => match index.index.data {
+                ExprData::EString(name) if name.is_utf8() => own_member(value, name.data.slice()),
+                ExprData::ENumber(number) => own_item(value, number.value()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// `None` when the key is missing (the prototype has `toString`), or it is `__proto__`.
+    fn own_member(value: ExprData, name: &[u8]) -> Option<ExprData> {
+        match value {
+            ExprData::EObject(object) if name != b"__proto__" => object
+                .properties
+                .iter()
+                .rev()
+                .find(|property| {
+                    matches!(
+                        property.key.map(|key| key.data),
+                        Some(ExprData::EString(key)) if key.is_utf8() && key.data == name
+                    )
+                })
+                .and_then(|property| property.value)
+                .map(|member| member.data),
+            ExprData::EArray(array) if name == b"length" => {
+                Some(ExprData::ENumber(E::Number::new(array.items.len() as f64)))
+            }
+            _ => None,
+        }
+    }
+
+    /// `own_member` for `value[index]`.
+    fn own_item(value: ExprData, index: f64) -> Option<ExprData> {
+        let ExprData::EArray(array) = value else {
+            return None;
+        };
+        let is_in_range = index >= 0.0 && index < array.items.len() as f64;
+        (is_in_range && index % 1.0 == 0.0).then(|| array.items[index as usize].data)
+    }
 }
 pub use defines::{Define, DefineData};
 

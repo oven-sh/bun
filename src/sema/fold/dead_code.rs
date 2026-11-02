@@ -50,6 +50,20 @@ impl<'s> Folder<'_, 's> {
         roots
     }
 
+    /// The object and the key of each read that a member of a define value replaces and that is not dead itself.
+    pub(super) fn find_parts_of_define_member_reads(&self, dead: &MarkedNodes) -> PositionSet {
+        let mut parts = Vec::new();
+        for &read in &self.reads_of_define_members {
+            if !dead.exprs.contains(read.idx()) {
+                push_children(self.hir, TreeNode::Expr(read), &mut parts);
+            }
+        }
+        match parts.is_empty() {
+            true => PositionSet::default(),
+            false => mark_nodes_below(self.hir, parts).exprs,
+        }
+    }
+
     // `/** @import {Promise<Array<string>>} p */`: the parser reads a JSX element there. A comment is no code.
     fn push_expressions_in_comments(&self, roots: &mut DeadRoots) {
         if self.hir.jsdoc_comments.is_empty() {

@@ -92,8 +92,7 @@ fn generate_compile_result_for_css_chunk_impl(
         .input_files
         .items_unique_key_for_additional_file();
 
-    let Ok(blocks) =
-        shared_block_edges(c, css_content, imports_in_chunk_index as usize, arena)
+    let Ok(blocks) = shared_block_edges(c, css_content, imports_in_chunk_index as usize, arena)
     else {
         return CompileResult::Css {
             result: Err(crate::Error::PrintError),
@@ -282,9 +281,10 @@ fn shared_block_edges<'a>(
         }
     } else {
         let first_brace = strings::index_of_char_usize(close, b'}').unwrap_or(0);
-        let line =
-            strings::last_index_of_char(&close[..first_brace], b'\n').map_or(0, |at| at + 1);
-        edges.close.extend_from_slice(close[line..].trim_ascii_end());
+        let line = strings::last_index_of_char(&close[..first_brace], b'\n').map_or(0, |at| at + 1);
+        edges
+            .close
+            .extend_from_slice(close[line..].trim_ascii_end());
         if !minify {
             edges.close.push(b'\n');
         }

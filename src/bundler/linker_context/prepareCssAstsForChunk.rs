@@ -515,7 +515,6 @@ fn wrap_rules_with_conditions(
     conditions: &[ImportConditions],
 ) {
     for item in conditions.iter().rev() {
-
         // Generate "@layer" wrappers. Note that empty "@layer" rules still have
         // a side effect (they set the layer order) so they cannot be removed.
         if let Some(l) = &item.layer {

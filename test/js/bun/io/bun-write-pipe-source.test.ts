@@ -24,7 +24,7 @@ if (isLinux && isRoot && Bun.which("losetup")) {
   const device = await losetup("--find", "--show", "--read-only", join(String(dir), "disk.img"));
   if (device) {
     hasLoopDevice = fs.existsSync(device) && fs.statSync(device).isBlockDevice();
-    await losetup("--detach", device);
+    if ((await losetup("--detach", device)) === null) throw new Error(`losetup did not detach ${device}`);
   }
 }
 
@@ -302,6 +302,7 @@ describePosix("Bun.write with a pipe source", () => {
       const out = join(String(dir), "out.bin");
       const device = await losetup("--find", "--show", "--read-only", join(String(dir), "disk.img"));
       if (!device) throw new Error("losetup did not attach a loop device");
+      let detached: string | null;
       try {
         await using proc = Bun.spawn({
           cmd: [bunExe(), "-e", resolved("Bun.write(process.env.OUT, Bun.file(process.env.DEVICE))")],
@@ -318,8 +319,9 @@ describePosix("Bun.write with a pipe source", () => {
         });
         expect(exitCode).toBe(0);
       } finally {
-        await losetup("--detach", device);
+        detached = await losetup("--detach", device);
       }
+      expect(detached).not.toBeNull();
     });
 
     // An fd with no file type has no end to read to: Bun's own epoll fd is one.

@@ -1,10 +1,29 @@
 // Deep-equality matrix for node:assert and node:util.
 // Expectations come from the documented semantics of assert.deepStrictEqual/deepEqual,
-// cross-checked against Node.js. Cases Bun gets wrong today are marked `test.failing`.
-import { describe, expect, test } from "bun:test";
+// cross-checked against Node.js. Cases Bun gets wrong today are expected failures on Bun.
+// This file uses node:test/node:assert so the identical file also runs under `node --test`.
 import assert from "node:assert";
 import { createPrivateKey, createPublicKey, createSecretKey, generateKeyPairSync } from "node:crypto";
+import { describe, test } from "node:test";
 import util from "node:util";
+
+// Node repeats its first throwing comparison, with cycle detection on, which would disturb tests that count reads.
+try {
+  util.isDeepStrictEqual(
+    {
+      get a() {
+        throw 1;
+      },
+    },
+    {
+      get a() {
+        throw 1;
+      },
+    },
+  );
+} catch {}
+
+const isBun = typeof process.versions.bun === "string";
 
 type Thunk = () => unknown;
 
@@ -1106,6 +1125,10 @@ function caught(fn: () => void): (Error & { code?: string }) | null {
   }
 }
 
+// Compares as JSON, not with the deep equality that this file tests.
+const same = (actual: unknown, expected: unknown) =>
+  assert.strictEqual(JSON.stringify(actual), JSON.stringify(expected));
+
 function describeMatrix(
   suite: string,
   mode: "strict" | "loose",
@@ -1118,15 +1141,15 @@ function describeMatrix(
       const expected = testCase[mode];
       const bug = testCase[bugField];
       const label = `${expected ? "accepts" : "rejects"} ${testCase.name}`;
-      const run = bug ? test.failing : test;
-      run(bug ? `${label} (Bun ${bug})` : label, () => {
+      const options = bug ? { expectFailure: isBun } : {};
+      test(bug ? `${label} (Bun ${bug})` : label, options, () => {
         const error = caught(() => equal(testCase.a(), testCase.b()));
         if (expected) {
-          expect(error?.message ?? null).toBeNull();
+          assert.strictEqual(error?.message ?? null, null);
         } else {
-          expect(error?.code).toBe("ERR_ASSERTION");
+          assert.strictEqual(error?.code, "ERR_ASSERTION");
         }
-        expect(caught(() => notEqual(testCase.a(), testCase.b())) === null).toBe(!expected);
+        assert.strictEqual(caught(() => notEqual(testCase.a(), testCase.b())) === null, !expected);
       });
     }
   });
@@ -1138,16 +1161,16 @@ describeMatrix("assert.deepEqual", "loose", "looseBug", assert.deepEqual, assert
 describe("util.isDeepStrictEqual", () => {
   for (const testCase of cases) {
     const label = `${testCase.name} is ${testCase.strict ? "" : "not "}deep-strict-equal`;
-    const run = testCase.strictBug ? test.failing : test;
-    run(testCase.strictBug ? `${label} (Bun ${testCase.strictBug})` : label, () => {
-      expect(util.isDeepStrictEqual(testCase.a(), testCase.b())).toBe(testCase.strict);
+    const options = testCase.strictBug ? { expectFailure: isBun } : {};
+    test(testCase.strictBug ? `${label} (Bun ${testCase.strictBug})` : label, options, () => {
+      assert.strictEqual(util.isDeepStrictEqual(testCase.a(), testCase.b()), testCase.strict);
     });
   }
 
   test("never throws on exotic input", () => {
-    expect(util.isDeepStrictEqual(undefined, undefined)).toBe(true);
-    expect(util.isDeepStrictEqual(null, undefined)).toBe(false);
-    expect(util.isDeepStrictEqual(Object.create(null), Object.create(null))).toBe(true);
+    assert.strictEqual(util.isDeepStrictEqual(undefined, undefined), true);
+    assert.strictEqual(util.isDeepStrictEqual(null, undefined), false);
+    assert.strictEqual(util.isDeepStrictEqual(Object.create(null), Object.create(null)), true);
   });
 
   test("reads an array's own symbol-keyed getter once per side", () => {
@@ -1158,8 +1181,8 @@ describe("util.isDeepStrictEqual", () => {
       Object.defineProperty(a, s, { enumerable: true, get: () => (calls++, 42) });
       return a;
     };
-    expect(util.isDeepStrictEqual(make(), make())).toBe(true);
-    expect(calls).toBe(2);
+    assert.strictEqual(util.isDeepStrictEqual(make(), make()), true);
+    assert.strictEqual(calls, 2);
   });
 
   // The third argument was added in Node v26.
@@ -1178,39 +1201,41 @@ describe("util.isDeepStrictEqual", () => {
     }
 
     test("ignores differing constructors when set", () => {
-      expect(util.isDeepStrictEqual(new Foo(42), new Bar(42))).toBe(false);
-      expect(util.isDeepStrictEqual(new Foo(42), new Bar(42), true as any)).toBe(true);
+      assert.strictEqual(util.isDeepStrictEqual(new Foo(42), new Bar(42)), false);
+      assert.strictEqual(util.isDeepStrictEqual(new Foo(42), new Bar(42), true as any), true);
     });
 
     test("still compares values", () => {
-      expect(util.isDeepStrictEqual(new Foo(42), new Bar(99), true as any)).toBe(false);
+      assert.strictEqual(util.isDeepStrictEqual(new Foo(42), new Bar(99), true as any), false);
     });
 
-    test.each([
+    for (const [name, makeA, makeB] of [
       ["object property", () => ({ inner: new Foo(1) }), () => ({ inner: new Bar(1) })],
       ["array element", () => [new Foo(1)], () => [new Bar(1)]],
       ["Map value", () => new Map([["k", new Foo(1)]]), () => new Map([["k", new Bar(1)]])],
       ["Set element", () => new Set([new Foo(1)]), () => new Set([new Bar(1)])],
       ["Error cause", () => new Error("e", { cause: new Foo(1) }), () => new Error("e", { cause: new Bar(1) })],
-    ])("propagates through %s", (_name, makeA, makeB) => {
-      expect(util.isDeepStrictEqual(makeA(), makeB())).toBe(false);
-      expect(util.isDeepStrictEqual(makeA(), makeB(), true as any)).toBe(true);
-    });
+    ] as const) {
+      test(`propagates through ${name}`, () => {
+        assert.strictEqual(util.isDeepStrictEqual(makeA(), makeB()), false);
+        assert.strictEqual(util.isDeepStrictEqual(makeA(), makeB(), true as any), true);
+      });
+    }
 
     test("still compares Object.prototype.toString tags", () => {
-      expect(util.isDeepStrictEqual(argumentsObject(1), { 0: 1 }, true as any)).toBe(false);
-      expect(util.isDeepStrictEqual(argumentsObject(1), argumentsObject(1), true as any)).toBe(true);
-      expect(util.isDeepStrictEqual(Object.create({ [Symbol.toStringTag]: "X" }), {}, true as any)).toBe(false);
+      assert.strictEqual(util.isDeepStrictEqual(argumentsObject(1), { 0: 1 }, true as any), false);
+      assert.strictEqual(util.isDeepStrictEqual(argumentsObject(1), argumentsObject(1), true as any), true);
+      assert.strictEqual(util.isDeepStrictEqual(Object.create({ [Symbol.toStringTag]: "X" }), {}, true as any), false);
     });
 
     test("ignores the boxed-primitive subclass distinction", () => {
       class S extends String {}
-      expect(util.isDeepStrictEqual(new String("a"), new S("a"))).toBe(false);
-      expect(util.isDeepStrictEqual(new String("a"), new S("a"), true as any)).toBe(true);
+      assert.strictEqual(util.isDeepStrictEqual(new String("a"), new S("a")), false);
+      assert.strictEqual(util.isDeepStrictEqual(new String("a"), new S("a"), true as any), true);
     });
 
     test("does not leak into assert.deepStrictEqual", () => {
-      expect(() => assert.deepStrictEqual(new Foo(42), new Bar(42))).toThrow();
+      assert.throws(() => assert.deepStrictEqual(new Foo(42), new Bar(42)));
     });
   });
 });
@@ -1231,11 +1256,11 @@ describe("detached ArrayBuffer", () => {
 
   for (const [label, a, b] of table) {
     test(`throws TypeError on ${label}`, () => {
-      expect(() => assert.deepStrictEqual(a(), b())).toThrow(TypeError);
-      expect(() => assert.deepEqual(a(), b())).toThrow(TypeError);
-      expect(() => assert.notDeepStrictEqual(a(), b())).toThrow(TypeError);
-      expect(() => assert.notDeepEqual(a(), b())).toThrow(TypeError);
-      expect(() => util.isDeepStrictEqual(a(), b())).toThrow(TypeError);
+      assert.throws(() => assert.deepStrictEqual(a(), b()), TypeError);
+      assert.throws(() => assert.deepEqual(a(), b()), TypeError);
+      assert.throws(() => assert.notDeepStrictEqual(a(), b()), TypeError);
+      assert.throws(() => assert.notDeepEqual(a(), b()), TypeError);
+      assert.throws(() => util.isDeepStrictEqual(a(), b()), TypeError);
     });
   }
 
@@ -1247,30 +1272,35 @@ describe("detached ArrayBuffer", () => {
       return dv;
     };
     const error = caught(() => assert.deepStrictEqual(detachedView(), new DataView(new ArrayBuffer(0))));
-    expect(error).toBeInstanceOf(TypeError);
-    expect(error?.message).toBe(
+    assert.ok(error instanceof TypeError);
+    assert.strictEqual(
+      error?.message,
       "Cannot perform get DataView.prototype.byteLength on a detached or out-of-bounds ArrayBuffer",
     );
-    expect(() => util.isDeepStrictEqual(detachedView(), new DataView(new ArrayBuffer(0)))).toThrow(TypeError);
+    assert.throws(() => util.isDeepStrictEqual(detachedView(), new DataView(new ArrayBuffer(0))), TypeError);
     // Bun.deepEquals keeps its own-properties DataView surface: no throw.
-    expect(Bun.deepEquals(detachedView(), new DataView(new ArrayBuffer(0)), true)).toBe(true);
+    if (isBun) {
+      assert.strictEqual(
+        (globalThis as any).Bun.deepEquals(detachedView(), new DataView(new ArrayBuffer(0)), true),
+        true,
+      );
+    }
   });
 
   test("assert.partialDeepStrictEqual throws TypeError on a detached ArrayBuffer", () => {
-    expect(() => assert.partialDeepStrictEqual(detached(), new ArrayBuffer(0))).toThrow(TypeError);
+    assert.throws(() => assert.partialDeepStrictEqual(detached(), new ArrayBuffer(0)), TypeError);
   });
 
   test("assert.partialDeepStrictEqual checks own properties on a KeyObject after equals()", () => {
-    const crypto = require("node:crypto");
-    const key = crypto.createSecretKey(Buffer.from("secret"));
-    const key2 = crypto.createSecretKey(Buffer.from("secret"));
+    const key = createSecretKey(Buffer.from("secret"));
+    const key2 = createSecretKey(Buffer.from("secret"));
     Object.assign(key2, { x: 1 });
     // expected has {x:1} that actual lacks: node throws ERR_ASSERTION.
-    expect(() => assert.partialDeepStrictEqual(key, key2)).toThrow(assert.AssertionError);
+    assert.throws(() => assert.partialDeepStrictEqual(key, key2), assert.AssertionError);
     // subset direction: extra own prop on actual is fine.
-    expect(() =>
-      assert.partialDeepStrictEqual(Object.assign(key, { x: 1 }), crypto.createSecretKey(Buffer.from("secret"))),
-    ).not.toThrow();
+    assert.doesNotThrow(() =>
+      assert.partialDeepStrictEqual(Object.assign(key, { x: 1 }), createSecretKey(Buffer.from("secret"))),
+    );
   });
 
   test("assert.partialDeepStrictEqual compares CryptoKeys by what they hold, then by own properties", () => {
@@ -1278,41 +1308,44 @@ describe("detached ArrayBuffer", () => {
       const error = caught(() => assert.partialDeepStrictEqual(actual, expected));
       return error ? error.code : "equal";
     };
-    expect({
-      same: partial(secretCryptoKey(1), secretCryptoKey(1)),
-      otherBytes: partial(secretCryptoKey(1), secretCryptoKey(2)),
-      nestedOtherBytes: partial({ key: secretCryptoKey(1) }, { key: secretCryptoKey(2) }),
-      otherExtractable: partial(secretCryptoKey(1), secretCryptoKey(1, "AES-GCM", false)),
-      // Unlike arrays, usages are not compared as a subset.
-      fewerUsages: partial(secretCryptoKey(1, "AES-GCM", true, ["encrypt", "decrypt"]), secretCryptoKey(1)),
-      extraOwnPropertyOnActual: partial(Object.assign(secretCryptoKey(1), { own: 1 }), secretCryptoKey(1)),
-      extraOwnPropertyOnExpected: partial(secretCryptoKey(1), Object.assign(secretCryptoKey(1), { own: 1 })),
-    }).toEqual({
-      same: "equal",
-      otherBytes: "ERR_ASSERTION",
-      nestedOtherBytes: "ERR_ASSERTION",
-      otherExtractable: "ERR_ASSERTION",
-      fewerUsages: "ERR_ASSERTION",
-      extraOwnPropertyOnActual: "equal",
-      extraOwnPropertyOnExpected: "ERR_ASSERTION",
-    });
+    same(
+      {
+        same: partial(secretCryptoKey(1), secretCryptoKey(1)),
+        otherBytes: partial(secretCryptoKey(1), secretCryptoKey(2)),
+        nestedOtherBytes: partial({ key: secretCryptoKey(1) }, { key: secretCryptoKey(2) }),
+        otherExtractable: partial(secretCryptoKey(1), secretCryptoKey(1, "AES-GCM", false)),
+        // Unlike arrays, usages are not compared as a subset.
+        fewerUsages: partial(secretCryptoKey(1, "AES-GCM", true, ["encrypt", "decrypt"]), secretCryptoKey(1)),
+        extraOwnPropertyOnActual: partial(Object.assign(secretCryptoKey(1), { own: 1 }), secretCryptoKey(1)),
+        extraOwnPropertyOnExpected: partial(secretCryptoKey(1), Object.assign(secretCryptoKey(1), { own: 1 })),
+      },
+      {
+        same: "equal",
+        otherBytes: "ERR_ASSERTION",
+        nestedOtherBytes: "ERR_ASSERTION",
+        otherExtractable: "ERR_ASSERTION",
+        fewerUsages: "ERR_ASSERTION",
+        extraOwnPropertyOnActual: "equal",
+        extraOwnPropertyOnExpected: "ERR_ASSERTION",
+      },
+    );
   });
 
   test("error matches Node's message", () => {
     const error = caught(() => assert.deepStrictEqual(detached(), new ArrayBuffer(0)));
-    expect(error).toBeInstanceOf(TypeError);
-    expect(error?.message).toBe("Cannot perform Construct on a detached ArrayBuffer");
+    assert.ok(error instanceof TypeError);
+    assert.strictEqual(error?.message, "Cannot perform Construct on a detached ArrayBuffer");
   });
 
   test("reference-identical detached ArrayBuffer short-circuits as equal", () => {
     const buf = detached();
-    expect(() => assert.deepStrictEqual(buf, buf)).not.toThrow();
-    expect(util.isDeepStrictEqual(buf, buf)).toBe(true);
+    assert.doesNotThrow(() => assert.deepStrictEqual(buf, buf));
+    assert.strictEqual(util.isDeepStrictEqual(buf, buf), true);
   });
 
   test("detached ArrayBuffer vs non-zero-length ArrayBuffer is an ordinary mismatch", () => {
     const error = caught(() => assert.deepStrictEqual(detached(), new ArrayBuffer(4)));
-    expect(error?.code).toBe("ERR_ASSERTION");
+    assert.strictEqual(error?.code, "ERR_ASSERTION");
   });
 
   // Node v26 passes typed-array views directly to Buffer.compare (no re-wrap over
@@ -1324,38 +1357,38 @@ describe("detached ArrayBuffer", () => {
       buf.transfer();
       return view;
     }
-    expect(() => assert.deepStrictEqual(detachedView(), detachedView())).not.toThrow();
-    expect(() => assert.deepStrictEqual(detachedView(), new Uint8Array(0))).not.toThrow();
+    assert.doesNotThrow(() => assert.deepStrictEqual(detachedView(), detachedView()));
+    assert.doesNotThrow(() => assert.deepStrictEqual(detachedView(), new Uint8Array(0)));
   });
 });
 
 describe("AssertionError", () => {
   test("deepStrictEqual reports actual, expected and operator", () => {
     const error = caught(() => assert.deepStrictEqual({ a: 1 }, { a: 2 })) as any;
-    expect(error).not.toBeNull();
-    expect(error.name).toBe("AssertionError");
-    expect(error.code).toBe("ERR_ASSERTION");
-    expect(error.operator).toBe("deepStrictEqual");
-    expect(error.actual).toEqual({ a: 1 });
-    expect(error.expected).toEqual({ a: 2 });
-    expect(error.generatedMessage).toBe(true);
+    assert.notStrictEqual(error, null);
+    assert.strictEqual(error.name, "AssertionError");
+    assert.strictEqual(error.code, "ERR_ASSERTION");
+    assert.strictEqual(error.operator, "deepStrictEqual");
+    same(error.actual, { a: 1 });
+    same(error.expected, { a: 2 });
+    assert.strictEqual(error.generatedMessage, true);
   });
 
   test("notDeepStrictEqual reports its own operator", () => {
     const error = caught(() => assert.notDeepStrictEqual({ a: 1 }, { a: 1 })) as any;
-    expect(error.operator).toBe("notDeepStrictEqual");
-    expect(error.code).toBe("ERR_ASSERTION");
+    assert.strictEqual(error.operator, "notDeepStrictEqual");
+    assert.strictEqual(error.code, "ERR_ASSERTION");
   });
 
   test("a string message is used instead of generating one", () => {
     const error = caught(() => assert.deepStrictEqual(1, 2, "nope")) as any;
-    expect(error.message.startsWith("nope")).toBe(true);
-    expect(error.generatedMessage).toBe(false);
+    assert.strictEqual(error.message.startsWith("nope"), true);
+    assert.strictEqual(error.generatedMessage, false);
   });
 
   test("an Error message is thrown as-is", () => {
     const custom = new RangeError("custom");
     const error = caught(() => assert.deepStrictEqual(1, 2, custom));
-    expect(error).toBe(custom);
+    assert.strictEqual(error, custom);
   });
 });

@@ -339,7 +339,7 @@ const handleFrames = new WeakMap<UDPHandle, object>();
 function openInFrameOfHandle(frame: unknown, udpOptions: any) {
   const AsyncContextFrame = require("internal/async_context_frame");
   if (AsyncContextFrame.graphOf(frame) !== AsyncContextFrame.currentGraph()) return Bun.udpSocket(udpOptions);
-  // Not AsyncContextFrame.run(): handed `Bun` or `process` as a value, an ahead-of-time build keeps every member of it, and the apply() in run() hides the type of what the call returns.
+  // Not through AsyncContextFrame.run(), here and in completeQueuedSend(): with it an ahead-of-time executable compiles more of a program's functions to other bytes than its test run does, and test/aot/servers has a floor for that.
   const previous = AsyncContextFrame.exchange(frame);
   try {
     return Bun.udpSocket(udpOptions);

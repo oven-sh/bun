@@ -1,5 +1,6 @@
 // Bun.ModuleGraph — a graph has a context of its own
 // for timers and I/O: what its code opens belongs to it, and dispose() closes all of it.
+import { exposedInternals } from "bun:internal-for-testing";
 import { afterAll, describe, expect, test } from "bun:test";
 import fs, { rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir, tls } from "harness";
@@ -12,6 +13,7 @@ import { promisify } from "node:util";
 import zlib from "node:zlib";
 import { join } from "path";
 
+const { kStateSymbol } = exposedInternals["internal/dgram"];
 const fixtureDirs: string[] = [];
 function fixture(files: Record<string, string>): string {
   const dir = String(tempDir("module-graph-io-", files));
@@ -642,7 +644,6 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
   // Bun.udpSocket() takes the owner from the async context. So when another graph made the socket, or the host,
   // bind() opens it in its own context: those rows read "bind()", as they did before.
   test("a node:dgram socket is of the graph that binds it, not of the one that made it", async () => {
-    const { kStateSymbol } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
     const storage = new AsyncLocalStorage<string>();
     type Where = "A" | "B" | "the host";
     async function layout(madeIn: Where, boundIn: Where, { disposeMakerFirst = false } = {}) {
@@ -716,7 +717,6 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
   // runs where that send() was made: in the caller's graph and store, as the callback of a ws send() does. With a
   // queue, every send() waits behind it, which is what backpressure does.
   test("a queued send() on a node:dgram socket completes in the graph and the store of its own call", async () => {
-    const { kStateSymbol } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
     const storage = new AsyncLocalStorage<string>();
     type Who = "the graph" | "the host";
     async function completions(socketOf: Who, completedBy: "the drain" | "close()") {
@@ -781,7 +781,6 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
   // As for anything a disposed graph left behind: the callback is still called, once, inside the disposed graph,
   // and what it starts there does not start.
   test("a queued send() of a graph that is disposed before a node:dgram socket of the host's drains", async () => {
-    const { kStateSymbol } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
     const storage = new AsyncLocalStorage<string>();
     const socket = dgram.createSocket("udp4");
     socket.bind(0, "127.0.0.1");

@@ -113,7 +113,9 @@ describe.concurrent("bun test --isolate", () => {
       scale: "60000",
     },
   ])("file teardown errors: $label", ({ label, mode, owner, observer, scale }) => {
-    test.each(["throw", "handled"] as const)("%s during cleanup retains file ownership", async outcome => {
+    test.each(["throw", "handled"] as const)("%s during cleanup follows the file's isolation mode", async outcome => {
+      // Disposed module graphs close resources without calling their script again.
+      const callbacksRun = !mode.includes("--isolate=modules");
       using dir = tempDir("isolate-teardown-error", {
         [owner]: `
           import { test } from "bun:test";
@@ -167,7 +169,7 @@ describe.concurrent("bun test --isolate", () => {
         .readFileSync(join(String(dir), "events.txt"), "utf8")
         .trim()
         .split("\n");
-      expect(events.filter(event => event.startsWith("close owner "))).toHaveLength(1);
+      expect(events.filter(event => event.startsWith("close owner "))).toHaveLength(callbacksRun ? 1 : 0);
       expect(stderr).toContain("2 pass");
       expect(stderr).toContain("0 fail");
       if (mode.startsWith("--parallel")) {
@@ -187,7 +189,7 @@ describe.concurrent("bun test --isolate", () => {
       const failures = ownerSuite.testcase.filter(testcase => testcase.failure);
       expect(observerSuite.$.failures).toBe("0");
       expect(ownerSuite.testcase.find(testcase => testcase.$.name === "owner passes").failure).toBeUndefined();
-      if (outcome === "throw") {
+      if (outcome === "throw" && callbacksRun) {
         expect(exitCode).toBe(1);
         expect(stderr).toContain("1 error");
         expect(ownerSuite.$.failures).toBe("1");
@@ -200,13 +202,14 @@ describe.concurrent("bun test --isolate", () => {
         expect(stderr).not.toContain("Unhandled error");
         expect(ownerSuite.$.failures).toBe("0");
         expect(failures).toEqual([]);
-        expect(events.filter(event => event === "handled socket true")).toHaveLength(1);
-        expect(events.filter(event => event === "caught rejection true")).toHaveLength(1);
+        expect(events.filter(event => event === "handled socket true")).toHaveLength(callbacksRun ? 1 : 0);
+        expect(events.filter(event => event === "caught rejection true")).toHaveLength(callbacksRun ? 1 : 0);
       }
     });
   });
 
   test.each(["--isolate", "--isolate=modules", "--parallel=2", "--parallel=2 --isolate=modules"])("%s retains ownership after a failed file load", async mode => {
+    const callbacksRun = !mode.includes("--isolate=modules");
     using dir = tempDir("isolate-failed-load-teardown", {
       "preload.ts": `
         import { beforeAll, afterAll } from "bun:test";
@@ -256,14 +259,15 @@ describe.concurrent("bun test --isolate", () => {
     expect(exitCode).toBe(1);
     if (mode.startsWith("--parallel")) expect(stdout).toContain("PARALLEL");
     expect(stderr).toContain("module load sentinel");
-    expect(stderr).toContain("failed-load teardown sentinel");
+    if (callbacksRun) expect(stderr).toContain("failed-load teardown sentinel");
+    else expect(stderr).not.toContain("failed-load teardown sentinel");
     const events = fs
       .readFileSync(join(String(dir), "events.txt"), "utf8")
       .trim()
       .split("\n");
     expect(events.filter(event => event === "beforeAll owner")).toHaveLength(1);
-    expect(events.filter(event => event === "close owner")).toHaveLength(1);
-    expect(events.indexOf("beforeAll owner")).toBeLessThan(events.indexOf("close owner"));
+    expect(events.filter(event => event === "close owner")).toHaveLength(callbacksRun ? 1 : 0);
+    if (callbacksRun) expect(events.indexOf("beforeAll owner")).toBeLessThan(events.indexOf("close owner"));
     expect(events.filter(event => event === "observer")).toHaveLength(1);
     expect(events.filter(event => event === "afterAll observer")).toHaveLength(1);
     expect(events.filter(event => event === "afterAll owner")).toHaveLength(1);
@@ -275,12 +279,11 @@ describe.concurrent("bun test --isolate", () => {
     const observerSuite = report.testsuites.testsuite.find(suite => suite.$.file === "b-observer.test.ts");
     expect(observerSuite.$.failures).toBe("0");
     const failures = ownerSuite.testcase.filter(testcase => testcase.failure);
-    expect(ownerSuite.$.failures).toBe("2");
-    expect(failures).toHaveLength(2);
-    expect(failures.map(testcase => testcase.failure[0].$.message).sort()).toEqual([
-      "failed-load teardown sentinel",
-      "module load sentinel",
-    ]);
+    expect(ownerSuite.$.failures).toBe(callbacksRun ? "2" : "1");
+    expect(failures).toHaveLength(callbacksRun ? 2 : 1);
+    expect(failures.map(testcase => testcase.failure[0].$.message).sort()).toEqual(
+      callbacksRun ? ["failed-load teardown sentinel", "module load sentinel"] : ["module load sentinel"],
+    );
     for (const failure of failures) {
       expect(failure.$).toMatchObject({ name: "(unhandled error)", file: "a-owner.test.ts" });
     }

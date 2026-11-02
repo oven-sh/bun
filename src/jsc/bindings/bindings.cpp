@@ -760,9 +760,7 @@ static NEVER_INLINE std::optional<bool> matchUserAsymmetricMatcher(JSGlobalObjec
     return matched.toBoolean(globalObject);
 }
 
-// Applies `pattern` to `value`, or `value` to `pattern`, if one of the two is an asymmetric matcher.
-// A value that only has the type of a built-in matcher, such as a Response, does not hide a matcher
-// on the other side. `patternWasMatcher` is set if the result comes from `pattern`.
+// Applies whichever of `value` and `pattern` is an asymmetric matcher. A Response or a URL has the type of one and is none.
 static ALWAYS_INLINE AsymmetricMatcherResult matchEitherAsymmetricMatcher(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, JSValue pattern, bool* patternWasMatcher = nullptr)
 {
     if (mayBeAsymmetricMatcher(pattern)) {
@@ -2460,9 +2458,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
 // only reached from `Bun.deepEquals(a, b, true, true)` in BunObject.cpp.
 template bool Bun__deepEquals<true, false, false, true>(JSC::JSGlobalObject*, JSValue, JSValue, MarkedArgumentBuffer&, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>&, ThrowScope&, bool);
 
-// One (value, pattern) pair inside the two values of Bun__deepMatch. `name` says which property of
-// `holder` and `patternHolder` the pair is. It is null when the pair is not a property: a member of
-// a Set, or a key or a value of a Map.
+// One (value, pattern) pair of Bun__deepMatch. `name` is null if the pair is not a property: a member of a Set, a key or a value of a Map.
 template<bool enableAsymmetricMatchers>
 static ALWAYS_INLINE bool subsetPairMatches(JSGlobalObject* globalObject, ThrowScope& scope, Bun::DeepMatchState& state, JSValue value, JSValue pattern, bool isMatchingObjectContaining, JSObject* holder, JSObject* patternHolder, const Identifier* name)
 {
@@ -2481,9 +2477,7 @@ static ALWAYS_INLINE bool subsetPairMatches(JSGlobalObject* globalObject, ThrowS
     }
 
     if (pattern.isObject() && value.isObject()) {
-        // if this is called from inside an objectContaining asymmetric matcher, it should behave slightly differently:
-        // in such case, it expects exhaustive matching of any nested object properties, not just a subset,
-        // and the user would need to opt-in to subset matching by using another nested objectContaining matcher
+        // Inside expect.objectContaining() a nested object has to be equal. A subset there needs its own objectContaining().
         if (enableAsymmetricMatchers && isMatchingObjectContaining) {
             Vector<std::pair<JSValue, JSValue>, 16> stack;
             MarkedArgumentBuffer gcBuffer;
@@ -2515,8 +2509,7 @@ static bool subsetValueMatches(JSGlobalObject* globalObject, ThrowScope& scope, 
 
 using SubsetValueMatches = bool (*)(JSGlobalObject*, ThrowScope&, Bun::DeepMatchState&, JSValue, JSValue);
 
-// Like Jest's iterableEquality: the two Sets have the same size, and every received member is
-// a member of the expected Set or matches one of its members as a subset.
+// Jest's iterableEquality: the same size, and each received member is in the expected Set or matches one of its members.
 static bool subsetSetMatches(JSGlobalObject* globalObject, ThrowScope& scope, Bun::DeepMatchState& state, JSSet* received, JSSet* expected, SubsetValueMatches valueMatches)
 {
     if (received->size() != expected->size()) {
@@ -2549,8 +2542,7 @@ static bool subsetSetMatches(JSGlobalObject* globalObject, ThrowScope& scope, Bu
     return true;
 }
 
-// Like Jest's iterableEquality: the two Maps have the same size, and every received entry matches
-// the expected entry under the same key, or an expected entry whose key and value both match.
+// Jest's iterableEquality: the same size, and each received entry matches the expected entry of its key, or one whose key and value match.
 static bool subsetMapMatches(JSGlobalObject* globalObject, ThrowScope& scope, Bun::DeepMatchState& state, JSMap* received, JSMap* expected, SubsetValueMatches valueMatches)
 {
     if (received->size() != expected->size()) {
@@ -2594,10 +2586,7 @@ static bool subsetMapMatches(JSGlobalObject* globalObject, ThrowScope& scope, Bu
     return true;
 }
 
-// The enumerable properties of a Date, an Error, a Set and a Map do not say what the object holds,
-// so the key walk of Bun__deepMatch accepts any object in their place. Like Jest, an expected Date
-// needs a Date with the same time value, an expected Error needs an Error with the same message,
-// and an expected Set or Map needs one of the same size whose members match.
+// A Date, an Error, a Set and a Map keep what they hold out of their enumerable properties, so the key walk accepts any object for them.
 static NEVER_INLINE bool subsetSpecialObjectMatches(JSGlobalObject* globalObject, ThrowScope& scope, Bun::DeepMatchState& state, JSObject* obj, JSObject* subsetObj, SubsetValueMatches valueMatches)
 {
     switch (subsetObj->type()) {

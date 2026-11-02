@@ -471,8 +471,7 @@ struct DeepMatchState {
         recordedNames.append(name);
     }
 
-    // False if this (value, pattern) pair already matched, or is still being compared (a cycle).
-    // The caller has put both in `gcBuffer`.
+    // False if this (value, pattern) pair already matched or is still being compared (a cycle). Both are in `gcBuffer` already.
     bool markSeen(JSC::JSValue value, JSC::JSValue pattern)
     {
         std::pair<JSC::EncodedJSValue, JSC::EncodedJSValue> pair { JSC::JSValue::encode(value), JSC::JSValue::encode(pattern) };
@@ -483,9 +482,7 @@ struct DeepMatchState {
         return true;
     }
 
-    // A member of a Set or an entry of a Map is tried against one candidate after another. The
-    // pairs that enter `seen` during a trial are listed in `seenInTrials`. A candidate that does
-    // not match then leaves nothing behind in `seen`, `gcBuffer` and the records.
+    // One try of a Set member or a Map entry against a candidate. A try that fails takes back what it put in `seen`, `gcBuffer` and the records.
     unsigned openTrials { 0 };
     WTF::Vector<std::pair<JSC::EncodedJSValue, JSC::EncodedJSValue>> seenInTrials;
 

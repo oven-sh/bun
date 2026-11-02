@@ -15,13 +15,22 @@ BASE below is the tree without the fix: `origin/main` after #46528 merged
 
 #46528 merged main (3f3a9ff87c: the WebKit upgrade, the AOT change, the bun test rework of #44833,
 the libspng removal) and its head moved from 001958b155 to edb9ce8f7a. None of the 8 files of the
-cut changed in that range. The cut is rebased: 9f090eea57 and 4f0e5ee46a on edb9ce8f7a, with the
-same patch-ids as 7749f49591 and 524abcc7e3.
+cut changed in that range.
 
-Run again on edb9ce8f7a (debug build): quic-stream.test.ts 128 pass in 3 of 3 runs, and 114 pass /
-14 fail (the same 14, no timeout) with the base's src/ and packages/. test/js/node/quic/ 194 pass,
-serve-http3.test.ts 117 pass, fetch-http3-client.test.ts 107 pass and 1 skip. The titles of the
-test.each rows and describe.concurrent are as before under the new runner.
+The cut on edb9ce8f7a is cbdf3fbf60 + 1689b23582 (8 files, +693/-67). Its code is that of
+7749f49591 + 524abcc7e3. Three comments changed on 2026-11-02: the doc of may_hold_queued_block is
+one line, the SendHeaders enum has no doc line of its own, and the comment on the empty Retry arm
+of send_headers says "joins the queue below".
+
+Run on edb9ce8f7a (debug build): quic-stream.test.ts 128 pass (3 of 3 runs at 4f0e5ee46a, and once
+more at 1689b23582), and 114 pass / 14 fail (the same 14, no timeout) with the base's src/ and
+packages/. test/js/node/quic/ 194 pass, serve-http3.test.ts 117 pass, fetch-http3-client.test.ts
+107 pass and 1 skip. The titles of the test.each rows and describe.concurrent are as before under
+the new runner.
+
+Checks of section 1b at 1689b23582: clippy exit 0 with no warning, source lints 195 pass, prettier
+and rustfmt clean, tsc of both scripts projects with 0 errors, 0 comment groups for Comment Cop.
+`cargo check --workspace --all-targets` had no warning at 4f0e5ee46a (same code).
 
 NOT run again on edb9ce8f7a: the probes of section 2, the vendored files, the release builds and
 the gdb counts of section 3. Their numbers below are of 2026-10-30 on 001958b155. Section 1 to 3
@@ -59,6 +68,43 @@ Red run (what the gate does):
 
 The 3 vendored files that fail on both: test-quic-h3-stream-idle-timeout.mjs,
 test-quic-session-initial-rtt.mjs, test-quic-stream-idle-timeout.mjs.
+
+## 1b. The GitHub Actions checks of the PR (not Buildkite)
+
+The harness's CI wake names a Buildkite build, so do not rely on it for these jobs: look at them
+yourself after the PR is open (`gh pr checks <n>`). Run the local ones on the main-based cut first.
+
+- Rust lints / `cargo clippy` (the PR touches src/**/*.rs and scripts/build/**). After a `bun bd`
+  (it needs build/debug/codegen):
+
+      export BUN_CODEGEN_DIR=$PWD/build/debug/codegen CARGO_TARGET_DIR=$PWD/build/clippy-target
+      cargo clippy --workspace --no-deps --keep-going          # exit 0, no warning, 2 min
+      cargo check --workspace --all-targets --keep-going       # exit 0, no warning, 2 min
+      rm -rf build/clippy-target                               # 3 to 9 GB
+
+  `bun_runtime` shows as "Compiling bun_runtime" in the log (it has a build script), not "Checking".
+- Rust lints / `cargo miri test`: its crate list (scripts/rust-miri.ts) has neither bun_runtime nor
+  bun_lsquic_sys, so the diff cannot change it.
+- Rust lints / `mordant`: advisory (`continue-on-error`). A lint pack with a per-crate baseline
+  (mordant-baseline.toml), which has no entry for any quic file and no bun_lsquic_sys section. Not
+  run locally: it needs nightly-2026-09-01 with rustc-dev and a `cargo install --git` of the tool.
+  If the job names stream.rs or lsquic_sys/lib.rs on the PR, fix that finding.
+- source-lints: `bun test test/internal/source-lints/` with the system bun, as the job does
+  (195 pass, 30 s).
+- autofix.ci (format.yml): `bunx prettier --check` on the 3 TS files of the cut, and
+  `rustfmt --edition 2024 --check` on the 2 Rust files. clang-format does nothing under
+  packages/bun-usockets (`DisableFormat: true` in its .clang-format), and the .c files are not in
+  its file set.
+- Lint JavaScript: `bun lint` covers src/js only (bunfig.toml), which the cut does not touch. It
+  also runs `bunx tsc --noEmit -p scripts/build/tsconfig.json` and `-p scripts/tsconfig.json`
+  (0 errors).
+- Comment Cop: a PR by robobun gets the label `claude` (auto-label-claude-prs.yml), and then every
+  group of 2 or more consecutive ADDED comment lines in a file under src/ gets a review comment
+  that asks to delete it (`SAFETY:` groups excepted). Keep every added comment under src/ to one
+  line. packages/, scripts/ and test/ are not scanned. `python3 /tmp/probes/comment-cop-scan.py
+  origin/main` runs the same scan on the cut (exit 0 and "groups ... : 0" is the pass).
+- Packages CI: runs for any packages/** change, but only lints and tests packages/bun-plugin-svelte.
+- on-slop.yml closes a PR when a maintainer adds a label. Nothing to check.
 
 ## 2. Probes (debug binaries, `export BUN_DEBUG_QUIET_LOGS=1`, run from /tmp/probes)
 
@@ -136,8 +182,14 @@ Numbers of 2026-10-30 (base 001958b155 / cut 92d12d2992, same code as 524abcc7e3
   sections 1 to 3 (replace the numbers of 2026-10-30 when they differ). The self-review counts (32
   raised, 26 addressed) are final unless the cut changes. Visible part at
   most 250 words (`python3 -c "print(len(open('/tmp/pr-body.md').read().split('<details>')[0].split()))"`).
+- Before the PR, on the main-based cut: the local checks of section 1b (clippy, cargo check, source
+  lints, prettier, rustfmt, tsc, `comment-cop-scan.py origin/main`). The body's Tests paragraph
+  names clippy and cargo check, so both have to be run on that cut.
 - Dedupe: `gh pr list -A robobun --state open --search 'queue a header block in:title,body'`.
 - `gh pr create --base main --title 'node:quic: queue a header block while lsquic still sends the previous one' --body-file /tmp/pr-body.md`
 - Status comment on the PR (how it was reproduced, the PR link). No comment on #33082: #46528 closes
   it, and #46881 is the record for lsquic's write check.
+- `gh pr checks <n>` a few minutes later, and again on the next wake: the GitHub Actions jobs of
+  section 1b. A red `cargo clippy`, `source-lints` or autofix job that names a file of the cut is
+  mine to fix at once. A Comment Cop review comment means an added comment under src/ has 2 lines.
 - send_update with the PR link, then end the turn.

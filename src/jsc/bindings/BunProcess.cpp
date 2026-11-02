@@ -465,6 +465,7 @@ extern "C" void* CrashHandler__beginDlOpenAction(const char* path);
 extern "C" void CrashHandler__endDlOpenAction(void* guard);
 extern "C" bool Bun__VM__allowAddons(void* vm);
 extern "C" int32_t Bun__addonNeedsGlibcOnMusl(const char* path, size_t len, char* soname_out, size_t soname_cap);
+extern "C" int32_t Bun__addonUnresolvedImport(const void* initializer, void* handle, char* name_out, size_t name_cap);
 
 // Drops only this load's reference. A library that registered modules on an earlier load is still referenced by that load.
 static void closeDLHandle(Bun::DLHandleMap::DLHandle handle)
@@ -756,24 +757,42 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
 #define dlsym GetProcAddress
 #endif
 
-    // TODO(@190n) look for node_register_module_vXYZ according to BuildOptions.reported_nodejs_version
-    // and the table at https://github.com/nodejs/node/blob/main/doc/abi_version_registry.json
     auto napi_register_module_v1 = reinterpret_cast<napi_value (*)(napi_env, napi_value)>(dlsym(handle, "napi_register_module_v1"));
+
+    // Node prefers node_register_module_v<ABI> to napi_register_module_v1. Here an addon with both keeps using Node-API.
+    if (!napi_register_module_v1) {
+#if OS(LINUX) || OS(FREEBSD)
+        // macOS and Windows also bind an import at its first call, and there Bun cannot check the imports yet, so the addon gets the error below.
+        if (auto initializer = reinterpret_cast<node::addon_initializer_func>(dlsym(handle, "node_register_module_v" STRINGIZE_VALUE_OF(REPORTED_NODEJS_ABI_VERSION)))) {
+#if !OS(ANDROID)
+            // The addon is opened with RTLD_LAZY, so a call of an import that nothing defines would end the process. bionic binds every import in dlopen().
+            char symbol[512] = { 0 };
+            if (int32_t result = Bun__addonUnresolvedImport(reinterpret_cast<void*>(initializer), handle, symbol, sizeof(symbol))) {
+                closeDLHandle(handle);
+                if (result < 0)
+                    return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED, makeString("Cannot load native addon "_s, filename, ": Bun cannot read its import tables"_s));
+                return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED, makeString("Cannot load native addon "_s, filename, ": it imports '"_s, WTF::String::fromUTF8ReplacingInvalidSequences(byteCast<uint8_t>(unsafeSpan(symbol))), "', which Bun does not provide"_s));
+            }
+#endif
+            node::executeV8Initializer(globalObject, initializer, strongModule.get());
+            RETURN_IF_EXCEPTION(scope, {});
+            return JSValue::encode(jsUndefined());
+        }
+#endif
+
+        closeDLHandle(handle);
+
+        if (!scope.exception()) [[likely]] {
+            throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED, makeString("Module did not self-register: '"_s, filename, "'."_s));
+        }
+        return {};
+    }
 
     auto node_api_module_get_api_version_v1 = reinterpret_cast<int32_t (*)()>(dlsym(handle, "node_api_module_get_api_version_v1"));
 
 #if OS(WINDOWS)
 #undef dlsym
 #endif
-
-    if (!napi_register_module_v1) {
-        closeDLHandle(handle);
-
-        if (!scope.exception()) [[likely]] {
-            JSC::throwTypeError(globalObject, scope, "symbol 'napi_register_module_v1' not found in native module. Is this a Node API (napi) module?"_s);
-        }
-        return {};
-    }
 
     // TODO(@heimskr): get the API version without node_api_module_get_api_version_v1 a different way
     int module_version = 8;

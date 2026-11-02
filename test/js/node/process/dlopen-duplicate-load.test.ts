@@ -1,10 +1,10 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, test } from "bun:test";
-import { copyFileSync } from "fs";
-import { bunEnv, bunExe, canBuildNodeAddons, isWindows, tempDirWithFiles } from "harness";
+import { copyFileSync, readFileSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, canBuildNodeAddons, isLinux, isMacOS, isMusl, isWindows, tempDirWithFiles } from "harness";
 import { join } from "path";
 
-// These tests share one node-gyp build of two V8 addons (the compile
+// These tests share one node-gyp build of their addons (the compile
 // dominates the wall time). They cover:
 // - duplicate loads: the second dlopen of the same module used to fail with
 //   "symbol 'napi_register_module_v1' not found" because static constructors
@@ -17,6 +17,8 @@ import { join } from "path";
 //   from an init function, must not steal the outer call's registration
 // - static constructor order: the init function must run after dlopen() returns,
 //   once the static constructors after the module registration have run
+// - the entry of an addon: a registration, the symbol napi_register_module_v1, or
+//   the symbol node_register_module_v<ABI> where Bun can check the addon's imports
 
 describe.skipIf(!canBuildNodeAddons())("process.dlopen native addon", () => {
   let addonPath: string;
@@ -158,7 +160,62 @@ NODE_MODULE(non_context_aware, demo::Initialize)
     {
       "target_name": "non_context_aware",
       "sources": [ "non_context_aware.cpp" ]
+    },
+    {
+      "target_name": "initializer_only",
+      "sources": [ "initializer_only.cpp" ]
+    },
+    {
+      "target_name": "both_entries",
+      "sources": [ "both_entries.cpp" ]
+    },
+    {
+      "target_name": "no_registration",
+      "sources": [ "no_registration.cpp" ]
     }
+  ],
+  "conditions": [
+    # Loaded only on Linux, where Bun checks the imports. An import that nothing defines does not link on Windows,
+    # and it opens only with lazy binding, which is not the default of every compiler.
+    ["OS=='linux'", {
+      "targets": [
+        {
+          "target_name": "initializer_missing_import",
+          "sources": [ "initializer_missing_import.cpp" ],
+          "defines": [ "MISSING_FUNCTION=bun_test_symbol_that_nothing_defines" ],
+          "ldflags": [ "-Wl,-z,lazy" ]
+        },
+        {
+          "target_name": "initializer_zlib_import",
+          "sources": [ "initializer_missing_import.cpp" ],
+          "defines": [ "MISSING_FUNCTION=deflateInit_" ],
+          "ldflags": [ "-Wl,-z,lazy" ]
+        },
+        {
+          "target_name": "initializer_weak_import",
+          "sources": [ "initializer_weak_import.cpp" ]
+        },
+        {
+          "target_name": "dependency",
+          "type": "shared_library",
+          "sources": [ "dependency.c" ]
+        },
+        {
+          "target_name": "initializer_dependency_import",
+          "sources": [ "initializer_dependency_import.cpp" ],
+          "dependencies": [ "dependency" ]
+        },
+        {
+          "target_name": "initializer_stub_import",
+          "sources": [ "initializer_stub_import.cpp" ]
+        },
+        {
+          "target_name": "registered_missing_import",
+          "sources": [ "registered_missing_import.cpp" ],
+          "ldflags": [ "-Wl,-z,lazy" ]
+        }
+      ]
+    }]
   ]
 }
 `;
@@ -228,6 +285,7 @@ if (!isMainThread) {
     const dir = tempDirWithFiles("dlopen-duplicate-test", {
       "addon.cpp": addonSource,
       "non_context_aware.cpp": nonContextAwareSource,
+      ...entryFixtureSources(),
       "worker-fixture.js": workerFixture,
       "binding.gyp": bindingGyp,
       "package.json": JSON.stringify({
@@ -628,4 +686,293 @@ if (!isMainThread) {
       });
     });
   });
+
+  // https://github.com/oven-sh/bun/issues/9785
+  describe.concurrent("process.dlopen and the symbol node_register_module_v<ABI>", () => {
+    // Bun calls this symbol only where it can check the addon's imports before. macOS and Windows also bind an
+    // import at its first call, and a call of one that nothing defines ends the process.
+    const callsTheSymbol = !isMacOS && !isWindows;
+    const built = (addon: string) => join(addonPath, "..", addon);
+
+    async function run(args: string[], addon: string) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        env: { ...bunEnv, ADDON_PATH: built(addon) },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim(), stderr, exitCode };
+    }
+
+    // Prints the exports of the addon, or the error of process.dlopen() once the script has caught it.
+    const load = (addon: string) =>
+      run(
+        [
+          "-e",
+          `
+            try {
+              const loaded = { exports: {} };
+              process.dlopen(loaded, process.env.ADDON_PATH);
+              console.log(JSON.stringify({ exports: loaded.exports }));
+            } catch (e) {
+              console.log(JSON.stringify({ code: e.code, message: e.message }));
+            }
+          `,
+        ],
+        addon,
+      );
+    const loaded = (exports: object) => ({ stdout: JSON.stringify({ exports }), stderr: "", exitCode: 0 });
+    const refused = (message: string) => ({
+      stdout: JSON.stringify({ code: "ERR_DLOPEN_FAILED", message }),
+      stderr: "",
+      exitCode: 0,
+    });
+
+    test.skipIf(!callsTheSymbol)(
+      "an addon with only this entry loads with require() and process.dlopen(), and each load calls it",
+      async () => {
+        const script = `
+          const describeExports = exports => ({ hello: exports.hello(), initCount: exports.initCount() });
+          const required = describeExports(require(process.env.ADDON_PATH));
+          const loaded = { exports: {} };
+          process.dlopen(loaded, process.env.ADDON_PATH);
+          console.log(JSON.stringify({ required, loaded: describeExports(loaded.exports) }));
+        `;
+        expect(await run(["-e", script], "initializer_only.node")).toEqual({
+          stdout: JSON.stringify({
+            required: { hello: "world", initCount: 1 },
+            loaded: { hello: "world", initCount: 2 },
+          }),
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+    );
+
+    test.skipIf(!callsTheSymbol)("an addon with only this entry loads in a Worker, which calls it again", async () => {
+      expect(await run([workerFixturePath], "initializer_only.node")).toEqual({
+        stdout: JSON.stringify({
+          main: { loaded: true, hello: "world", initCount: 1 },
+          worker: { loaded: true, hello: "world", initCount: 2 },
+          workerExitCode: 0,
+          mainExportsAfterWorkerExit: { hello: "world", initCount: 2 },
+        }),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test.skipIf(callsTheSymbol)(
+      "an addon with only this entry did not self-register on macOS and Windows",
+      async () => {
+        expect(await load("initializer_only.node")).toEqual(
+          refused(`Module did not self-register: '${built("initializer_only.node")}'.`),
+        );
+      },
+    );
+
+    test.skipIf(!isLinux).each([
+      ["initializer_missing_import.node", "bun_test_symbol_that_nothing_defines"],
+      // Node's executable exports zlib, and Bun's does not.
+      ["initializer_zlib_import.node", "deflateInit_"],
+    ])("%s is refused, because nothing defines its import %s", async (addon, symbol) => {
+      const message = `Cannot load native addon ${built(addon)}: it imports '${symbol}', which Bun does not provide`;
+      expect(await load(addon)).toEqual({
+        ...refused(message),
+        // musl's dlopen() can refuse the addon first, with its own text.
+        ...(isMusl && {
+          stdout: expect.stringMatching(
+            new RegExp(`^\\{"code":"ERR_DLOPEN_FAILED","message":".*\\b${symbol}\\b.*"\\}$`),
+          ),
+        }),
+      });
+    });
+
+    test.skipIf(!isLinux).each([
+      ["a weak import that nothing defines", "initializer_weak_import.node", { loaded: "initializer_weak_import" }],
+      [
+        "an import that only the library that it links defines",
+        "initializer_dependency_import.node",
+        { dependency: "defined by the dependency library" },
+      ],
+      [
+        "an import that Bun defines as a function that ends the process",
+        "initializer_stub_import.node",
+        { loaded: "initializer_stub_import" },
+      ],
+    ])("an addon with only this entry loads with %s", async (_, addon, exports) => {
+      expect(await load(addon)).toEqual(loaded(exports));
+    });
+
+    test.skipIf(!isLinux)("an addon with only this entry is refused when Bun cannot read its imports", async () => {
+      // In this copy the string table has no size. The loader does not read the size, and Bun reads no name outside it.
+      const image = readFileSync(built("initializer_only.node"));
+      const view = new DataView(image.buffer, image.byteOffset, image.length);
+      const [PT_DYNAMIC, DT_STRSZ] = [2, 10n];
+      let stringTableSizes = 0;
+      for (let i = 0; i < view.getUint16(0x38, true); i++) {
+        const header = Number(view.getBigUint64(0x20, true)) + i * view.getUint16(0x36, true);
+        if (view.getUint32(header, true) !== PT_DYNAMIC) continue;
+        const dynamic = Number(view.getBigUint64(header + 8, true));
+        for (let entry = dynamic; entry < dynamic + Number(view.getBigUint64(header + 32, true)); entry += 16) {
+          if (view.getBigInt64(entry, true) !== DT_STRSZ) continue;
+          view.setBigUint64(entry + 8, 0n, true);
+          stringTableSizes++;
+        }
+      }
+      expect(stringTableSizes).toBe(1);
+      writeFileSync(built("initializer_unreadable.node"), image);
+
+      expect(await load("initializer_unreadable.node")).toEqual(
+        refused(`Cannot load native addon ${built("initializer_unreadable.node")}: Bun cannot read its import tables`),
+      );
+    });
+
+    // @datadog/pprof is such an addon: it has an import that nothing defines, and never calls it.
+    test.skipIf(!isLinux)(
+      "an addon that also registers itself loads through its registration, and its imports are not checked",
+      async () => {
+        expect(await load("registered_missing_import.node")).toEqual(loaded({ loaded: "registered_missing_import" }));
+      },
+    );
+
+    // Node calls node_register_module_v<ABI> for this addon.
+    test("an addon that also exports napi_register_module_v1 loads through Node-API", async () => {
+      expect(await load("both_entries.node")).toEqual(loaded({ via: "napi_register_module_v1" }));
+    });
+
+    test("an addon without an entry did not self-register", async () => {
+      expect(await load("no_registration.node")).toEqual(
+        refused(`Module did not self-register: '${built("no_registration.node")}'.`),
+      );
+    });
+  });
 });
+
+// The addons of "process.dlopen and the symbol node_register_module_v<ABI>".
+function entryFixtureSources() {
+  const initializer = `extern "C" NODE_MODULE_EXPORT void NODE_MODULE_INITIALIZER(v8::Local<v8::Object> exports,
+                                                           v8::Local<v8::Value> module,
+                                                           v8::Local<v8::Context> context)`;
+  return {
+    "exports.h": `
+#include <node.h>
+
+// exports[name] = value
+static inline void SetExport(v8::Local<v8::Object> exports, v8::Local<v8::Context> context, const char* name, const char* value) {
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
+  exports->Set(context,
+               v8::String::NewFromUtf8(isolate, name).ToLocalChecked(),
+               v8::String::NewFromUtf8(isolate, value).ToLocalChecked()).Check();
+}
+`,
+
+    // As in uWebSockets.js, the only entry is the symbol.
+    "initializer_only.cpp": `
+#include <node.h>
+
+static int init_count = 0;
+
+static void Hello(const v8::FunctionCallbackInfo<v8::Value>& args) {
+  args.GetReturnValue().Set(v8::String::NewFromUtf8(args.GetIsolate(), "world").ToLocalChecked());
+}
+
+static void InitCount(const v8::FunctionCallbackInfo<v8::Value>& args) {
+  args.GetReturnValue().Set(v8::Number::New(args.GetIsolate(), init_count));
+}
+
+${initializer} {
+  init_count++;
+  NODE_SET_METHOD(exports, "hello", Hello);
+  NODE_SET_METHOD(exports, "initCount", InitCount);
+}
+`,
+
+    // The loader must refuse this addon: the call in its initializer would end the process.
+    "initializer_missing_import.cpp": `
+#include <node.h>
+
+#include <cstdio>
+
+extern "C" void MISSING_FUNCTION();
+
+${initializer} {
+  puts("the initializer ran");
+  fflush(stdout);
+  MISSING_FUNCTION();
+}
+`,
+
+    // As the _ITM_* functions in uWebSockets.js: the import is in the PLT and is never called.
+    "initializer_weak_import.cpp": `
+#include "exports.h"
+
+extern "C" void bun_test_weak_function_that_nothing_defines() __attribute__((weak));
+extern "C" NODE_MODULE_EXPORT void never_called() { bun_test_weak_function_that_nothing_defines(); }
+
+${initializer} {
+  SetExport(exports, context, "loaded", "initializer_weak_import");
+}
+`,
+
+    // The library is not in the global scope: only a lookup in the addon finds the function.
+    "dependency.c": `
+const char* bun_test_dependency_function(void) { return "defined by the dependency library"; }
+`,
+    "initializer_dependency_import.cpp": `
+#include "exports.h"
+
+extern "C" const char* bun_test_dependency_function();
+
+${initializer} {
+  SetExport(exports, context, "dependency", bun_test_dependency_function());
+}
+`,
+
+    // Bun defines uv_loop_new only as a function that ends the process. It is in the PLT and is never called.
+    "initializer_stub_import.cpp": `
+#include "exports.h"
+
+extern "C" void* uv_loop_new();
+extern "C" NODE_MODULE_EXPORT void never_called() { uv_loop_new(); }
+
+${initializer} {
+  SetExport(exports, context, "loaded", "initializer_stub_import");
+}
+`,
+
+    // NODE_MODULE_INIT() registers the module in a static constructor, and also exports the symbol.
+    "registered_missing_import.cpp": `
+#include "exports.h"
+
+extern "C" void bun_test_symbol_that_nothing_defines();
+extern "C" NODE_MODULE_EXPORT void never_called() { bun_test_symbol_that_nothing_defines(); }
+
+NODE_MODULE_INIT() {
+  SetExport(exports, context, "loaded", "registered_missing_import");
+}
+`,
+
+    "both_entries.cpp": `
+#include "exports.h"
+#include <node_api.h>
+
+${initializer} {
+  SetExport(exports, context, "via", "node_register_module_v");
+}
+
+extern "C" NODE_MODULE_EXPORT napi_value napi_register_module_v1(napi_env env, napi_value exports) {
+  napi_value via;
+  napi_create_string_utf8(env, "napi_register_module_v1", NAPI_AUTO_LENGTH, &via);
+  napi_set_named_property(env, exports, "via", via);
+  return exports;
+}
+`,
+
+    "no_registration.cpp": `
+// Registers no module and exports no entry point.
+int no_registration;
+`,
+  };
+}

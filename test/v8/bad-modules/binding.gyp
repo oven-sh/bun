@@ -7,6 +7,10 @@
     {
       "target_name": "no_entrypoint",
       "sources": ["no_entrypoint.cpp"],
+    },
+    {
+      "target_name": "initializer_only",
+      "sources": ["initializer_only.cpp"],
     }
   ]
 }

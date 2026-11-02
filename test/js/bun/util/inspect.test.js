@@ -9,7 +9,6 @@ import {
   tmpdirSync,
   withoutAggressiveGC,
 } from "harness";
-import { constants, createContext, runInContext, runInNewContext } from "node:vm";
 import { join } from "path";
 import util from "util";
 import vm from "vm";
@@ -1067,9 +1066,9 @@ it("CustomEvent", () => {
 });
 
 describe("printing the global of a node:vm context", () => {
+  const { constants, createContext, runInContext, runInNewContext } = vm;
   // The class name in front of the braces is not under test.
   const withoutClassName = text => text.replace(/^\w+ (?=\{)/gm, "");
-  const print = value => withoutClassName(Bun.inspect(value));
 
   function counter() {
     let calls = 0;
@@ -1115,7 +1114,7 @@ describe("printing the global of a node:vm context", () => {
     const context = createContext(sandbox);
     const contextGlobal = runInContext("globalThis", context);
 
-    expect(print(contextGlobal)).toBe(
+    expect(withoutClassName(Bun.inspect(contextGlobal))).toBe(
       "{\n" +
         '  "7": [Getter],\n' +
         "  data: 1,\n" +
@@ -1129,12 +1128,23 @@ describe("printing the global of a node:vm context", () => {
         "  [Symbol(symbol)]: [Getter],\n" +
         "}",
     );
+    // `sorted` changes the order of the lines and nothing else.
+    expect(withoutClassName(Bun.inspect(contextGlobal, { sorted: true }))).toBe(
+      "{\n" +
+        '  "7": [Getter],\n' +
+        "  data: 1,\n" +
+        "  getter: [Getter],\n" +
+        "  lazy: [Getter],\n" +
+        "  none: undefined,\n" +
+        "  pair: [Getter/Setter],\n" +
+        "  self: [Global Object],\n" +
+        "  setter: [Setter],\n" +
+        "  [Symbol(symbol)]: [Getter],\n" +
+        "  throws: [Getter],\n" +
+        "}",
+    );
     expect(calls).toEqual([]);
     expect(Object.getOwnPropertyDescriptor(sandbox, "lazy").get).toBeFunction();
-
-    // The sorted print uses another walk. It lists no name of a context global.
-    Bun.inspect(contextGlobal, { sorted: true });
-    expect(calls).toEqual([]);
 
     // A read is not a print: it calls the getter.
     expect([
@@ -1146,152 +1156,240 @@ describe("printing the global of a node:vm context", () => {
     expect(calls).toEqual(["getter", "getter", "getter", "getter"]);
   });
 
-  it("a print between two reads leaves the count of getter calls alone", () => {
-    const { descriptor, calls } = counter();
-    const context = createContext(Object.defineProperty({}, "other", descriptor));
-    const contextGlobal = runInContext("globalThis", context);
+  describe.each([
+    ["Bun.inspect(value)", undefined],
+    ["Bun.inspect(value, { sorted: true })", { sorted: true }],
+  ])("%s", (_, options) => {
+    const print = value => withoutClassName(Bun.inspect(value, options));
 
-    const seen = [];
-    print(contextGlobal);
-    seen.push(calls());
-    print(contextGlobal);
-    seen.push(calls());
-    seen.push(contextGlobal.other, runInContext("other", context));
-    expect(seen).toEqual([0, 0, 1, 2]);
-  });
-
-  it("a read of a getter that returns the sandbox gives the global", () => {
-    const sandbox = {
-      get me() {
-        return sandbox;
-      },
-    };
-    const context = createContext(sandbox);
-    const contextGlobal = runInContext("globalThis", context);
-    expect(print(contextGlobal)).toBe("{\n  me: [Getter],\n}");
-    expect([runInContext("me === globalThis", context), contextGlobal.me === contextGlobal]).toEqual([true, true]);
-  });
-
-  // This passes without the own-slot lookup too. It pins that a property that holds the sandbox still prints as the global.
-  it("a sandbox that inherits from globalThis and holds itself does not print the host's globals", () => {
-    const sandbox = Object.create(globalThis);
-    sandbox.global = sandbox;
-    expect(print(runInContext("this", createContext(sandbox)))).toBe("{\n  global: [Global Object],\n}");
-  });
-
-  // This passes without the own-slot lookup too. The walk can list the non-enumerable slot or omit it. It must not print the sandbox.
-  it("a non-enumerable property that holds the sandbox does not print the host's globals", () => {
-    const sandbox = Object.create(globalThis);
-    sandbox.data = 1;
-    Object.defineProperty(sandbox, "global", { value: sandbox, writable: true, configurable: true });
-    const context = createContext(sandbox);
-    runInContext("var global;", context);
-    const lines = print(runInContext("this", context)).split("\n");
-    expect(lines.filter(line => line !== "  global: [Global Object],")).toEqual(["{", "  data: 1,", "}"]);
-  });
-
-  it.each([
-    [
-      "on the sandbox before createContext()",
-      descriptor => runInContext("globalThis", createContext(Object.defineProperty({}, "other", descriptor))),
-    ],
-    [
-      "on the sandbox after createContext()",
-      descriptor => {
-        const sandbox = createContext({});
-        Object.defineProperty(sandbox, "other", descriptor);
-        return runInContext("globalThis", sandbox);
-      },
-    ],
-    [
-      "on globalThis by a script in the context",
-      descriptor => {
-        const context = createContext({ descriptor });
-        return runInContext(
-          "Object.defineProperty(globalThis, 'other', descriptor); delete globalThis.descriptor; globalThis",
-          context,
-        );
-      },
-    ],
-    [
-      "on the global from outside the context",
-      descriptor => Object.defineProperty(runInContext("globalThis", createContext({})), "other", descriptor),
-    ],
-    [
-      "on the sandbox of runInNewContext()",
-      descriptor => runInNewContext("this", Object.defineProperty({}, "other", descriptor)),
-    ],
-    [
-      "on the object that createContext() makes",
-      descriptor => runInContext("globalThis", Object.defineProperty(createContext(), "other", descriptor)),
-    ],
-    // This context has no sandbox. Its print was right before, and must stay right.
-    [
-      "on a context made with DONT_CONTEXTIFY",
-      descriptor => Object.defineProperty(createContext(constants.DONT_CONTEXTIFY), "other", descriptor),
-    ],
-  ])("an accessor defined %s", (_, globalWith) => {
-    const { descriptor, calls } = counter();
-    expect(print(globalWith(descriptor))).toBe("{\n  other: [Getter],\n}");
-    expect(calls()).toBe(0);
-  });
-
-  it("a name that a script declares and the sandbox only inherits prints the global's own value", () => {
-    const { descriptor, calls } = counter();
-    const context = createContext(Object.create(Object.defineProperty({}, "other", descriptor)));
-    runInContext("var other;", context);
-    expect(print(runInContext("globalThis", context))).toBe("{\n  other: undefined,\n}");
-    expect(calls()).toBe(0);
-  });
-
-  it("a property that changes between two prints", () => {
-    const { descriptor, calls } = counter();
-    const sandbox = Object.defineProperty({}, "other", descriptor);
-    const contextGlobal = runInContext("globalThis", createContext(sandbox));
-    const printed = [print(contextGlobal)];
-    Object.defineProperty(sandbox, "other", { get: () => 2, set() {}, enumerable: true, configurable: true });
-    printed.push(print(contextGlobal));
-    Object.defineProperty(sandbox, "other", { value: 3, enumerable: true, configurable: true });
-    printed.push(print(contextGlobal));
-    delete sandbox.other;
-    printed.push(print(contextGlobal));
-    expect(printed).toEqual(["{\n  other: [Getter],\n}", "{\n  other: [Getter/Setter],\n}", "{\n  other: 3,\n}", "{}"]);
-    expect(calls()).toBe(0);
-  });
-
-  // `var x` puts the name on the global, so that the print lists it. The Proxy answers for its value.
-  describe("when the sandbox is a Proxy", () => {
-    const contextGlobalOf = (target, handler) => {
-      const context = createContext(new Proxy(target, handler));
-      runInContext("var x;", context);
-      return runInContext("this", context);
-    };
-
-    it("an accessor of the target is listed and not called", () => {
+    it.each([
+      ["the global", contextGlobal => contextGlobal],
+      ["a Proxy of the global", contextGlobal => new Proxy(contextGlobal, {})],
+      ["the result of an inspect.custom function", contextGlobal => ({ [Bun.inspect.custom]: () => contextGlobal })],
+    ])("%s", (_, wrap) => {
       const { descriptor, calls } = counter();
-      expect(print(contextGlobalOf(Object.defineProperty({}, "x", descriptor), {}))).toBe("{\n  x: [Getter],\n}");
+      const sandbox = Object.defineProperty({ a: 1 }, "other", descriptor);
+      expect(print(wrap(runInContext("globalThis", createContext(sandbox))))).toBe("{\n  a: 1,\n  other: [Getter],\n}");
+      expect(calls()).toBe(0);
+    });
+
+    it("a cell of Bun.inspect.table()", () => {
+      const { descriptor, calls } = counter();
+      const sandbox = Object.defineProperty({ a: 1 }, "other", descriptor);
+      const table = Bun.inspect.table([{ cell: runInContext("globalThis", createContext(sandbox)) }], options);
+      expect(table).toContain("{ a: 1, other: [Getter] }");
+      expect(calls()).toBe(0);
+    });
+
+    it("a print between two reads leaves the count of getter calls alone", () => {
+      const { descriptor, calls } = counter();
+      const context = createContext(Object.defineProperty({}, "other", descriptor));
+      const contextGlobal = runInContext("globalThis", context);
+
+      const seen = [];
+      print(contextGlobal);
+      seen.push(calls());
+      print(contextGlobal);
+      seen.push(calls());
+      seen.push(contextGlobal.other, runInContext("other", context));
+      expect(seen).toEqual([0, 0, 1, 2]);
+    });
+
+    it("a read of a getter that returns the sandbox gives the global", () => {
+      const sandbox = {
+        get me() {
+          return sandbox;
+        },
+      };
+      const context = createContext(sandbox);
+      const contextGlobal = runInContext("globalThis", context);
+      expect(print(contextGlobal)).toBe("{\n  me: [Getter],\n}");
+      expect([runInContext("me === globalThis", context), contextGlobal.me === contextGlobal]).toEqual([true, true]);
+    });
+
+    // A read of a property that holds the sandbox gives the global, and so does the print.
+    it("a sandbox that inherits from globalThis and holds itself does not print the host's globals", () => {
+      const sandbox = Object.create(globalThis);
+      sandbox.global = sandbox;
+      expect(print(runInContext("this", createContext(sandbox)))).toBe("{\n  global: [Global Object],\n}");
+    });
+
+    it.each([
+      ["a plain object", () => ({ data: 1 }), "{\n  data: 1,\n  me: [Global Object],\n}"],
+      ["an object that inherits from globalThis", () => Object.create(globalThis), "{\n  me: [Global Object],\n}"],
+    ])("a sandbox that is the global of another context, whose sandbox is %s and holds itself", (_, make, printed) => {
+      const innerSandbox = make();
+      innerSandbox.me = innerSandbox;
+      const innerGlobal = runInContext("this", createContext(innerSandbox));
+      expect(print(runInContext("this", createContext(innerGlobal)))).toBe(printed);
+    });
+
+    // `var` puts an enumerable name on the global. The sandbox answers for its value from a slot that is not enumerable.
+    it("a name that a script declares and the sandbox holds in a non-enumerable slot", () => {
+      const { descriptor, calls } = counter();
+      const sandbox = Object.create(globalThis);
+      Object.defineProperties(sandbox, {
+        accessor: { ...descriptor, enumerable: false },
+        global: { value: sandbox, writable: true, configurable: true },
+        value: { value: 5, writable: true, configurable: true },
+      });
+      const context = createContext(sandbox);
+      runInContext("var accessor, global, value;", context);
+      expect(print(runInContext("this", context))).toBe(
+        "{\n  accessor: [Getter],\n  global: [Global Object],\n  value: 5,\n}",
+      );
       expect(calls()).toBe(0);
     });
 
     it.each([
-      ["an accessor", target => Object.defineProperty(target, "x", counter().descriptor), "[Getter]"],
-      ["a value", target => Object.assign(target, { x: 1 }), "1"],
-    ])("the getOwnPropertyDescriptor trap answers for %s, not the get trap", (_, define, printed) => {
-      const traps = [];
-      const contextGlobal = contextGlobalOf(define({}), {
-        get(target, key) {
-          traps.push(`get ${String(key)}`);
-          return key === "x" ? "from the get trap" : undefined;
+      [
+        "on the sandbox before createContext()",
+        descriptor => runInContext("globalThis", createContext(Object.defineProperty({}, "other", descriptor))),
+      ],
+      [
+        "on the sandbox after createContext()",
+        descriptor => {
+          const sandbox = createContext({});
+          Object.defineProperty(sandbox, "other", descriptor);
+          return runInContext("globalThis", sandbox);
         },
-        getOwnPropertyDescriptor(target, key) {
-          traps.push(`getOwnPropertyDescriptor ${String(key)}`);
-          return Reflect.getOwnPropertyDescriptor(target, key);
+      ],
+      [
+        "on globalThis by a script in the context",
+        descriptor => {
+          const context = createContext({ descriptor });
+          return runInContext(
+            "Object.defineProperty(globalThis, 'other', descriptor); delete globalThis.descriptor; globalThis",
+            context,
+          );
         },
+      ],
+      [
+        "on the global from outside the context",
+        descriptor => Object.defineProperty(runInContext("globalThis", createContext({})), "other", descriptor),
+      ],
+      [
+        "on the sandbox of runInNewContext()",
+        descriptor => runInNewContext("this", Object.defineProperty({}, "other", descriptor)),
+      ],
+      [
+        "on the object that createContext() makes",
+        descriptor => runInContext("globalThis", Object.defineProperty(createContext(), "other", descriptor)),
+      ],
+      // This context has no sandbox.
+      [
+        "on a context made with DONT_CONTEXTIFY",
+        descriptor => Object.defineProperty(createContext(constants.DONT_CONTEXTIFY), "other", descriptor),
+      ],
+    ])("an accessor defined %s", (_, globalWith) => {
+      const { descriptor, calls } = counter();
+      expect(print(globalWith(descriptor))).toBe("{\n  other: [Getter],\n}");
+      expect(calls()).toBe(0);
+    });
+
+    it("an accessor under an index key of a context made with DONT_CONTEXTIFY", () => {
+      const { descriptor, calls } = counter();
+      const contextGlobal = Object.defineProperty(createContext(constants.DONT_CONTEXTIFY), 7, descriptor);
+      expect(print(contextGlobal)).toBe('{\n  "7": [Getter],\n}');
+      expect(calls()).toBe(0);
+    });
+
+    it("a name that a script declares and the sandbox only inherits prints the global's own value", () => {
+      const { descriptor, calls } = counter();
+      const context = createContext(Object.create(Object.defineProperty({}, "other", descriptor)));
+      runInContext("var other;", context);
+      expect(print(runInContext("globalThis", context))).toBe("{\n  other: undefined,\n}");
+      expect(calls()).toBe(0);
+    });
+
+    it("a property that changes between two prints", () => {
+      const { descriptor, calls } = counter();
+      const sandbox = Object.defineProperty({}, "other", descriptor);
+      const contextGlobal = runInContext("globalThis", createContext(sandbox));
+      const printed = [print(contextGlobal)];
+      Object.defineProperty(sandbox, "other", { get: () => 2, set() {}, enumerable: true, configurable: true });
+      printed.push(print(contextGlobal));
+      Object.defineProperty(sandbox, "other", { value: 3, enumerable: true, configurable: true });
+      printed.push(print(contextGlobal));
+      delete sandbox.other;
+      printed.push(print(contextGlobal));
+      expect(printed).toEqual([
+        "{\n  other: [Getter],\n}",
+        "{\n  other: [Getter/Setter],\n}",
+        "{\n  other: 3,\n}",
+        "{}",
+      ]);
+      expect(calls()).toBe(0);
+    });
+
+    it("a property that the print of an earlier property changes", () => {
+      const { descriptor, calls } = counter();
+      const sandbox = {
+        a: {
+          [Bun.inspect.custom]() {
+            Object.defineProperty(sandbox, "b", descriptor);
+            delete sandbox.c;
+            return "changes b and c";
+          },
+        },
+        b: 1,
+        c: 2,
+      };
+      expect(print(runInContext("this", createContext(sandbox)))).toBe("{\n  a: changes b and c,\n  b: [Getter],\n}");
+      expect(calls()).toBe(0);
+    });
+
+    // `var x` puts the name on the global, so that the print lists it. The Proxy answers for its value.
+    describe("when the sandbox is a Proxy", () => {
+      const contextGlobalOf = (target, handler) => {
+        const context = createContext(new Proxy(target, handler));
+        runInContext("var x;", context);
+        return runInContext("this", context);
+      };
+
+      it("an accessor of the target is listed and not called", () => {
+        const { descriptor, calls } = counter();
+        expect(print(contextGlobalOf(Object.defineProperty({}, "x", descriptor), {}))).toBe("{\n  x: [Getter],\n}");
+        expect(calls()).toBe(0);
       });
-      traps.length = 0;
-      expect(print(contextGlobal)).toBe(`{\n  x: ${printed},\n}`);
-      expect(traps).toContain("getOwnPropertyDescriptor x");
-      expect(traps).not.toContain("get x");
+
+      it.each([
+        ["an accessor", target => Object.defineProperty(target, "x", counter().descriptor), "[Getter]"],
+        ["a value", target => Object.assign(target, { x: 1 }), "1"],
+      ])("the getOwnPropertyDescriptor trap answers for %s, not the get trap", (_, define, printed) => {
+        const traps = [];
+        const contextGlobal = contextGlobalOf(define({}), {
+          get(target, key) {
+            traps.push(`get ${String(key)}`);
+            return key === "x" ? "from the get trap" : undefined;
+          },
+          getOwnPropertyDescriptor(target, key) {
+            traps.push(`getOwnPropertyDescriptor ${String(key)}`);
+            return Reflect.getOwnPropertyDescriptor(target, key);
+          },
+        });
+        traps.length = 0;
+        expect(print(contextGlobal)).toBe(`{\n  x: ${printed},\n}`);
+        expect(traps).toContain("getOwnPropertyDescriptor x");
+        expect(traps).not.toContain("get x");
+      });
+
+      // The print asks the trap for a name two times: to list the name, then to look it up.
+      it("a getOwnPropertyDescriptor trap that throws at the lookup leaves the name out", () => {
+        let asked = 0;
+        const contextGlobal = contextGlobalOf(
+          { x: 1 },
+          {
+            getOwnPropertyDescriptor(target, key) {
+              if (key === "x" && ++asked === 2) throw new Error("the trap threw");
+              return Reflect.getOwnPropertyDescriptor(target, key);
+            },
+          },
+        );
+        asked = 0;
+        expect(print(contextGlobal)).toBe("{}");
+        expect(asked).toBe(2);
+      });
     });
   });
 

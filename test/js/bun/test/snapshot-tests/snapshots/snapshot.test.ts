@@ -2,6 +2,7 @@ import { $ } from "bun";
 import { describe, expect, it, test } from "bun:test";
 import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, DirectoryTree, isDebug, isWindows, MAX_PATH_BYTES, tempDir, tempDirWithFiles } from "harness";
+import vm from "node:vm";
 import { join } from "path";
 
 const isolationFlags: [string[]][] = [[[]], [["--isolate"]], [["--isolate=modules"]]];
@@ -634,6 +635,70 @@ Received: Instance {
     expect(messageOf(() => expect(1).toBe<unknown>(throws()))).toBe(
       `expect(received).toBe(expected)\n\nExpected: ${printed}\nReceived: 1\n`,
     );
+  });
+
+  // A read of a property of this global asks the sandbox, and the sandbox is the receiver of its getter.
+  describe("of the global of a node:vm context", () => {
+    test("a getter that throws leaves the accessor", () => {
+      const sandbox = {
+        data: 1,
+        get receiver() {
+          return this === sandbox ? "the sandbox" : "another object";
+        },
+        get throws() {
+          throw new Error("from the getter");
+        },
+      };
+      const contextGlobal = vm.runInContext("this", vm.createContext(sandbox));
+      expect(contextGlobal).toMatchInlineSnapshot(`
+        JSGlobalProxy {
+          "data": 1,
+          "receiver": "the sandbox",
+          "throws": [native code],
+        }
+      `);
+      expect(messageOf(() => expect(contextGlobal).toEqual({}))).toBe(
+        'expect(received).toEqual(expected)\n\n- {}\n+ JSGlobalProxy {\n+   "data": 1,\n+   "receiver": "the sandbox",\n+   "throws": [native code],\n+ }\n\n- Expected  - 1\n+ Received  + 5\n',
+      );
+      expect(messageOf(() => expect(contextGlobal).toBeNull())).toBe(
+        'expect(received).toBeNull()\n\nReceived: {\n  data: 1,\n  receiver: "the sandbox",\n  throws: [Getter],\n}\n',
+      );
+    });
+
+    test.each([
+      [
+        "a name that a script declares and the sandbox only inherits",
+        () => {
+          const inherited = {
+            get other() {
+              return "from the inherited getter";
+            },
+          };
+          const context = vm.createContext(Object.create(inherited));
+          vm.runInContext("var other;", context);
+          return context;
+        },
+        "from the inherited getter",
+      ],
+      [
+        "the get trap of a sandbox that is a Proxy",
+        () => {
+          const get = (target: object, key: PropertyKey, receiver: unknown) =>
+            key === "other" ? "from the get trap" : Reflect.get(target, key, receiver);
+          return vm.createContext(new Proxy({ other: "of the target" }, { get }));
+        },
+        "from the get trap",
+      ],
+    ])("prints what a read gives: %s", (_, makeContext, read) => {
+      const contextGlobal = vm.runInContext("this", makeContext());
+      expect(contextGlobal.other).toBe(read);
+      expect(messageOf(() => expect(contextGlobal).toEqual({}))).toBe(
+        `expect(received).toEqual(expected)\n\n- {}\n+ JSGlobalProxy {\n+   "other": "${read}",\n+ }\n\n- Expected  - 1\n+ Received  + 3\n`,
+      );
+      expect(messageOf(() => expect(contextGlobal).toBeNull())).toBe(
+        `expect(received).toBeNull()\n\nReceived: {\n  other: "${read}",\n}\n`,
+      );
+    });
   });
 
   test("console.log() and Bun.inspect() do not call it", () => {

@@ -493,3 +493,16 @@ pub(crate) fn read(only: Option<&Files>, path: &[u8]) -> bun_sys::Result<Vec<u8>
         None => fs::read(path),
     }
 }
+
+/// [`read`] for what was a regular file of `size` bytes on disk when it was found. Replaces what is in `text`.
+pub(crate) fn read_file_of_size(
+    only: Option<&Files>,
+    path: &[u8],
+    size: u64,
+    text: &mut Vec<u8>,
+) -> bun_sys::Result<()> {
+    match only.is_some_and(|it| it.staged_text(path).is_some()) {
+        true => read(only, path).map(|staged| *text = staged),
+        false => fs::read_file_of_size(path, size, text),
+    }
+}

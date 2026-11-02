@@ -488,6 +488,9 @@ fn decide(chain: &Chain, path: &[u8], is_directory: bool, is_in_search: bool) ->
 
 /// True if the directory at `path` or any directory above it is ignored.
 pub(crate) fn is_directory_ignored_anywhere(chain: &Chain, path: &[u8]) -> bool {
+    if chain.is_none() {
+        return false;
+    }
     let directories: Vec<&[u8]> = paths::ancestors(path).collect();
     directories
         .iter()

@@ -60,12 +60,14 @@ test("the files run as they were compiled", async () => {
 
 type Ran = Awaited<ReturnType<typeof run>>;
 
-// One file of a bundle stands where --aot has the importer's own name. What an executable advises about code that isn't in it is left out.
+// One file of a bundle stands where --aot has the importer's own name. What an executable advises about code that isn't in it is left out. A path has `/` on every platform.
 const linesIn = (stdout: string, kind?: string) =>
   stdout
-    .split("\n")
+    .split(/\r?\n/)
     .filter(line => (kind ? line.startsWith(kind + " ") : line !== ""))
-    .map(line => line.replace(/ imported from .*| from '.*|(?<=: it isn't in this executable).*/, ""));
+    .map(line =>
+      line.replace(/ imported from .*| from '.*|(?<=: it isn't in this executable).*/, "").replaceAll("\\", "/"),
+    );
 
 /** The lines that a program printed, all of them or those of one kind, and how it ended. */
 const told = (ran: Ran, kind?: string) => ({
@@ -91,7 +93,7 @@ const specsOfNoPackage = [
 const specsNotInTheExecutable = (dir: string) =>
   ["a", "deep/b"].map(
     name =>
-      `SPEC ${name} | THROWS Cannot load '${join(dir, "node_modules/specs/build", `${name}.js`)}': it isn't in this executable`,
+      `SPEC ${name} | THROWS Cannot load '${join(dir, "node_modules/specs/build", `${name}.js`).replaceAll("\\", "/")}': it isn't in this executable`,
   );
 
 /** What a command reports with a code: the level and the code of each, and its file and line in the project where it names a place. */
@@ -119,7 +121,7 @@ async function build(dir: string, name: string, flags: string[], reports: string
 const toldOfTests = (ran: Ran, dir: string) => ({
   printed: ran.stdout
     .replaceAll(dir, "")
-    .split("\n")
+    .split(/\r?\n/)
     .filter(line => line !== "" && !line.startsWith("bun test ")),
   reports: reportsIn(ran.stderr, dir),
   tests: [...ran.stderr.matchAll(/^\((pass|fail|skip|todo)\) (.*?)(?: \[[\d.]+m?s\])?$/gm)]

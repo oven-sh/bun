@@ -1930,7 +1930,9 @@ impl Run<'_> {
         let formatting = started.elapsed();
 
         let (mut different, mut unchanged, mut failed) = (0usize, 0usize, 0usize);
-        let (mut written_paths, mut partly_staged) = (Vec::new(), Vec::new());
+        let mut partly_staged = Vec::new();
+        // An error that Prettier stops at. Its files were written before it was seen, so they're staged all the same.
+        let mut stopped = None;
         let mut warnings = std::mem::take(warnings.get_mut());
         sort_slice_by(&mut warnings[..], |a, b| a.0.cmp(&b.0));
         let mut warnings = warnings.into_iter().peekable();
@@ -1956,6 +1958,16 @@ impl Run<'_> {
                 }
             }
         }
+        let written_paths: Vec<Vec<u8>> = (expanded.iter().zip(&results))
+            .filter_map(|(it, done)| match (it, done) {
+                (Expanded::File(target), Some(Done::Different(_)))
+                    if !is_read_only && only.is_some() =>
+                {
+                    Some(target.path.clone())
+                }
+                _ => None,
+            })
+            .collect();
         for (index, (it, done)) in expanded.iter().zip(results).enumerate() {
             let target = match it {
                 Expanded::Error(error) => {
@@ -1986,14 +1998,12 @@ impl Run<'_> {
                 }
                 // Prettier stops at this error.
                 Some(Done::Stopped(error)) => {
-                    self.error(&error);
-                    self.out.exit_code = 1;
-                    return self.out;
+                    stopped = Some(error);
+                    break;
                 }
                 Some(Done::Failed(error)) if config::is_invalid_value(&error) => {
-                    self.error(&error);
-                    self.out.exit_code = 1;
-                    return self.out;
+                    stopped = Some(error);
+                    break;
                 }
                 Some(Done::Failed(error)) => {
                     failed += 1;
@@ -2010,9 +2020,6 @@ impl Run<'_> {
                 }
                 Some(Done::Different(took)) => {
                     different += 1;
-                    if !is_read_only && only.is_some() {
-                        written_paths.push(target.path.clone());
-                    }
                     match (is_oxfmt, options.check) {
                         (true, true) => self.log_with_time(&display_name, took),
                         // oxfmt doesn't list the files it writes.
@@ -2040,6 +2047,11 @@ impl Run<'_> {
             if let Err(Fatal(error)) = only.stage(&written_paths) {
                 self.error(&error);
             }
+        }
+        if let Some(error) = stopped {
+            self.error(&error);
+            self.out.exit_code = 1;
+            return self.out;
         }
         for warning in std::mem::take(&mut *configs.warnings.lock()) {
             self.warn(&warning);

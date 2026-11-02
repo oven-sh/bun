@@ -2481,14 +2481,14 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
   });
 
   // Bun 1.3.13, 1.4.2, 1.4.3 and 1.4.4 wrote this text: null for an accessor under an index key. Never update it with a newer Bun.
-  // 4294967294 is the last index key, "01" is a named key, and 9 is not enumerable.
+  // 4294967294 is the last index key. "01" and Symbol("5") are not index keys, and 9 is not enumerable.
   const olderBunIndexAccessors = `{
   "0": null,
   "01": [native code],
   "4294967294": null,
   "4294967295": [native code],
+  [Symbol(5)]: [native code],
   "7": null,
-  [Symbol(7)]: [native code],
   "8": null,
   "9": null,
   "a": 1,
@@ -2504,7 +2504,7 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
       Object.defineProperty(o, 4294967294, { get() { return 1; }, enumerable: true });
       Object.defineProperty(o, 4294967295, { get() { return 1; }, enumerable: true });
       Object.defineProperty(o, "01", { get() { return 1; }, enumerable: true });
-      Object.defineProperty(o, Symbol("7"), { get() { return 1; }, enumerable: true });
+      Object.defineProperty(o, Symbol("5"), { get() { return 1; }, enumerable: true });
       return o;
     };
   `;
@@ -2517,7 +2517,7 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
           test("inline", () => { expect(value()).toMatchInlineSnapshot(\`\n${olderBunIndexAccessors}\n\`); });
           test("but for one line", () => {
             const accessor = ${JSON.stringify(olderBunIndexAccessors.replace('"7": null', '"7": [native code]'))};
-            expect(() => expect(value()).toMatchInlineSnapshot("\\n" + accessor + "\\n")).toThrow();
+            expect(() => expect(value()).toMatchInlineSnapshot("\\n" + accessor + "\\n")).toThrow("expect(received).toMatchInlineSnapshot(expected)");
           });
         `,
       "__snapshots__/a.test.js.snap": headers.bun + `\nexports[\`in a file 1\`] = \`\n${olderBunIndexAccessors}\n\`;\n`,
@@ -2547,8 +2547,8 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
   "01": 1,
   "4294967294": 1,
   "4294967295": 1,
+  [Symbol(5)]: 1,
   "7": "seven",
-  [Symbol(7)]: 1,
   "8": undefined,
   "a": 1,
   "named": 1,

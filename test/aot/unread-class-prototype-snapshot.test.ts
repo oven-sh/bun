@@ -89,7 +89,16 @@ const indexAccessorFiles = {
       Object.defineProperty(o, 8, { set(v) {}, enumerable: true });
       return o;
     };
-    test("sorted keys", () => { console.log(Bun.inspect(value(), { sorted: true })); });
+    const declared = () => ({ a: 1, get 0() { return "zero"; }, set 8(v) {}, get named() { return 1; } });
+    class Instance {
+      a = 1;
+      constructor() {
+        Object.defineProperty(this, 0, { get() { return "zero"; }, enumerable: true });
+      }
+    }
+    test("sorted keys", () => {
+      for (const object of [value(), declared(), new Instance()]) console.log(Bun.inspect(object, { sorted: true }));
+    });
     test("what an older Bun wrote", () => { expect(value()).toMatchSnapshot(); });
     test("a getter that throws", () => {
       expect(value()).toMatchInlineSnapshot(\`
@@ -128,12 +137,17 @@ test("bun test --debug-aot prints an accessor under an index key as bun test doe
     runIn(String(compiledDir), ["--debug-aot"]),
   ]);
 
+  const object = (...lines: string[]) => `{\n${lines.map(line => `  ${line},\n`).join("")}}\n`;
   expect(plain).toEqual({
-    printed: '{\n  "0": [Getter],\n  "7": [Getter],\n  "8": [Setter],\n  a: 1,\n  named: [Getter],\n}\n',
+    printed:
+      object(`"0": [Getter]`, `"7": [Getter]`, `"8": [Setter]`, `a: 1`, `named: [Getter]`) +
+      object(`"0": [Getter]`, `"8": [Setter]`, `a: 1`, `named: [Getter]`) +
+      "Instance " +
+      object(`"0": [Getter]`, `a: 1`),
     failed: [],
     snapshots: olderBun,
     usedImage: false,
     exitCode: 0,
   });
   expect(compiled).toEqual({ ...plain, usedImage: true });
-}, 120_000);
+});

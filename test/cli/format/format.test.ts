@@ -4389,6 +4389,29 @@ exports.format = async (text, options) => {
       timeout,
     );
 
+    // A git hook has no extension. An override's `parser` is what makes it the plugin's language.
+    test(
+      "a file with no extension, whose parser an override sets to the plugin's, goes to Prettier too",
+      async () => {
+        const config = `{\n  "plugins": ["prettier-plugin-astro"],\n  "overrides": [{ "files": "hooks/*", "options": { "parser": "astro" } }]\n}\n`;
+        const project = { ...files, ".prettierrc": config, "hooks/pre-commit": "<p   >hook</p>\n" };
+        const reads = ["a.astro", "b.js", "hooks/pre-commit", "node_modules/prettier/calls.txt"];
+        const result = await format(project, [], { reads });
+        expect(result.files["a.astro"]).toBe("<p >a</p>\n");
+        expect(result.files["b.js"]).toBe("b;\n");
+        expect(result.files["hooks/pre-commit"]).toBe("<p >hook</p>\n");
+        const calls = result.files[reads[3]]!.trim().split("\n");
+        const sent = calls.map(it => basename(JSON.parse(it).filepath)).sort();
+        expect(sent).toEqual(["a.astro", "pre-commit"]);
+        expect(result.stderr).toContain("Used your installed Prettier for 2 files in a language that needs a plugin");
+        expect(result.exitCode).toBe(0);
+        expect((await different(project, [])).sort()).toEqual(["a.astro", "b.js", "hooks/pre-commit"]);
+        const piped = await format(project, ["--stdin-filepath", "hooks/pre-push"], { stdin: "<p   >c</p>\n" });
+        expect(piped).toMatchObject({ raw: "<p >c</p>\n", stderr: "", exitCode: 0 });
+      },
+      timeout,
+    );
+
     test(
       "--parser with the plugin's parser: piped code goes to Prettier without a file name",
       async () => {

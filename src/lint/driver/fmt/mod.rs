@@ -1085,12 +1085,18 @@ struct Run<'r> {
 
 /// Classifies the file at `path`, in `scope`, the way the tool this run emulates would.
 fn language_of(configs: &Configs, scope: &config::Scope, path: &[u8]) -> Language {
-    // The `parser` option decides. A parser that Prettier doesn't have belongs to a plugin.
+    // The `parser` option decides. A parser that Prettier doesn't have belongs to a plugin, whatever the file is named,
+    // so `hooks/pre-commit` with `parser: "sh"` goes where `a.sh` goes.
     match configs.parser_for(scope, path) {
         Some(parser) if &*parser == b"svelte" && !configs.formats_svelte(scope, Some(path)) => {
             Language::Other
         }
-        Some(parser) if Kind::from_parser(&parser).is_none() => Language::Other,
+        Some(parser) if Kind::from_parser(&parser).is_none() => {
+            match configs.lists_unknown_plugins(scope, Some(path)) {
+                true => Language::Plugin,
+                false => Language::Other,
+            }
+        }
         Some(_) => Language::Supported,
         None if configs.is_oxfmt_for(scope) => {
             files::language_for_oxfmt(path, configs.formats_svelte(scope, Some(path)))
@@ -1101,7 +1107,7 @@ fn language_of(configs: &Configs, scope: &config::Scope, path: &[u8]) -> Languag
             {
                 Language::Supported
             }
-            Language::Unknown if configs.is_formatted_by_plugin(scope, path) => Language::Other,
+            Language::Unknown if configs.is_formatted_by_plugin(scope, path) => Language::Plugin,
             Language::Unknown if files::is_toml(path) && configs.is_native_in(scope) => {
                 Language::Supported
             }
@@ -1333,16 +1339,11 @@ impl Run<'_> {
         };
         let language = language_of(configs, &scope, &path);
         let is_ignored = ignored.ignores_file(&path, configs.config_ignores(&scope));
-        let is_plugin_language = configs.is_formatted_by_plugin(&scope, &path);
-        let not_installed = match language == Language::Other && is_plugin_language {
+        let not_installed = match language == Language::Plugin {
             true => self.not_installed(configs, &scope, Some(&path)),
             false => Vec::new(),
         };
-        if language == Language::Other
-            && !is_ignored
-            && is_plugin_language
-            && not_installed.is_empty()
-        {
+        if language == Language::Plugin && !is_ignored && not_installed.is_empty() {
             let config = configs.config_file_path(&scope);
             return self.format_stdin_with_prettier((Some(&path), config), (name, &text));
         }
@@ -1360,7 +1361,7 @@ impl Run<'_> {
         }
         // Same as for a file. A caller that gets the text back with exit code 0 would assume it's formatted.
         let allows = self.options.allow_unsupported;
-        if language == Language::Other {
+        if matches!(language, Language::Plugin | Language::Other) {
             self.report_unsupported(&mut [(extension_or_name(&path), 1)], &not_installed);
             if allows && !is_read_only {
                 self.out.stdout = text;
@@ -1715,17 +1716,16 @@ impl Run<'_> {
                     }
                 }
                 Language::Supported => work.push((index, target)),
-                Language::Other
-                    if configs.is_formatted_by_plugin(&target.scope, &target.path)
-                        && [&b"prettier"[..]]
-                            .into_iter()
-                            .chain(configs.plugin_packages(&target.scope, Some(&target.path)))
-                            .all(&mut has_package) =>
+                Language::Plugin
+                    if [&b"prettier"[..]]
+                        .into_iter()
+                        .chain(configs.plugin_packages(&target.scope, Some(&target.path)))
+                        .all(&mut has_package) =>
                 {
                     handed_over.push((index, target));
                 }
-                Language::Other => {
-                    if configs.is_formatted_by_plugin(&target.scope, &target.path) {
+                language @ (Language::Plugin | Language::Other) => {
+                    if language == Language::Plugin {
                         for package in [&b"prettier"[..]]
                             .into_iter()
                             .chain(configs.plugin_packages(&target.scope, Some(&target.path)))

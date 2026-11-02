@@ -1709,7 +1709,7 @@ impl<'c> Configs<'c> {
             .copied()
     }
 
-    /// True if Prettier formats the file at `path` in `scope` with a plugin that adds a language.
+    /// True if the file at `path` in `scope` is named like the files of a plugin that adds a language.
     pub(crate) fn is_formatted_by_plugin(&self, scope: &Scope, path: &[u8]) -> bool {
         (self.all_plugin_endings(scope, Some(path))).any(|ending| path.ends_with(ending))
     }

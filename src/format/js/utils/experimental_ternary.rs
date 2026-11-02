@@ -9,7 +9,7 @@
 //! ```
 
 use super::assignment_like::is_short_argument;
-use super::conditional::{ConditionalLike, Operand, should_extra_indent};
+use super::conditional::{AfterColon, ConditionalLike, Operand, should_extra_indent};
 use super::typecast::{comments_of_expression, is_chain_expression_without_comments};
 use crate::js::parentheses;
 use crate::js::print::binary_like_expression::is_angular_pipe;
@@ -401,6 +401,8 @@ pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Format
         );
     });
 
+    // This printer writes no parentheses around the operands of a conditional with an element in it.
+    let outer = AfterColon::enter(conditional, false, f);
     if is_on_same_line_as_return {
         write!(f, group(&indent(&format_parts)));
     } else if should_extra_indent || (is_ts_conditional && is_in_test) {
@@ -416,6 +418,7 @@ pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Format
     } else {
         write!(f, format_parts);
     }
+    AfterColon::leave(outer, f);
 }
 
 /// The parent of the outermost conditional that has `e` as a consequent or alternate, directly or nested.

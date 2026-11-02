@@ -2217,10 +2217,16 @@ function formatPrimitive(fn: Stylize, value: string | number | bigint | boolean 
 function formatNamespaceObject(keys: Key[], ctx: Context, value, recurseTimes: number) {
   const output = new Array<string>(keys.length);
   for (let i = 0; i < keys.length; i++) {
+    let described = false;
     try {
-      output[i] = formatProperty(ctx, value, recurseTimes, keys[i], kObjectType);
+      const desc = ObjectGetOwnPropertyDescriptor(value, keys[i]);
+      described = true;
+      output[i] = formatProperty(ctx, value, recurseTimes, keys[i], kObjectType, desc);
     } catch (err) {
-      assert(isNativeError(err) && err.name === "ReferenceError");
+      const uninitialized = isNativeError(err) && err.name === "ReferenceError";
+      // Node.js asserts a ReferenceError for every error. In Bun, describing an export of a mocked module reads it, and
+      // a getter of the object the mock's factory returned can throw anything.
+      assert(uninitialized || !described);
       // Use the existing functionality. This makes sure the indentation and
       // line breaks are always correct. Otherwise it is very difficult to keep
       // this aligned, even though this is a hacky way of dealing with this.
@@ -2229,7 +2235,12 @@ function formatNamespaceObject(keys: Key[], ctx: Context, value, recurseTimes: n
       const pos = StringPrototypeLastIndexOf.$call(output[i], " ");
       // We have to find the last whitespace and have to replace that value as
       // it will be visualized as a regular string.
-      output[i] = StringPrototypeSlice.$call(output[i], 0, pos + 1) + ctx.stylize("<uninitialized>", "special");
+      output[i] =
+        StringPrototypeSlice.$call(output[i], 0, pos + 1) +
+        ctx.stylize(
+          uninitialized ? "<uninitialized>" : `<Inspection threw (${(err as Error | undefined)?.message})>`,
+          "special",
+        );
     }
   }
   // Reset the keys to an empty array. This prevents duplicated inspection.
@@ -2964,8 +2975,16 @@ function previewEntries(val, isIterator = false) {
 }
 function internalGetConstructorName(val): string {
   if (!val || typeof val !== "object") throw new Error("Invalid object");
-  const ctorName = val.constructor?.name;
-  if (ctorName) return ctorName;
+  // Node.js asks the engine, which runs no code of the value. Here the read can throw: `constructor` of a module
+  // namespace object is an export. One that is uninitialized throws, and so does one that the factory of a mocked
+  // module did not return. An export is also not the constructor of the namespace object.
+  let ctorName;
+  try {
+    ctorName = val.constructor?.name;
+  } catch {
+    // Name the value by its tag.
+  }
+  if (ctorName && !isModuleNamespaceObject(val)) return ctorName;
   const str = ObjectPrototypeToString.$call(val);
   const m = StringPrototypeMatch.$call(str, /^\[object ([^\]]+)\]/); // e.g. [object Boolean]
   return m ? m[1] : "Object";

@@ -34,10 +34,6 @@ impl InstallCompletionsCommand {
         {
             return Ok(());
         }
-        // As `bunx`, a file with an embedded program runs that program unless BUN_BE_BUN is set.
-        if bun_standalone_graph::Graph::image_has_program() {
-            return Ok(());
-        }
 
         // first try installing the symlink into the same directory as the bun executable
         let exe = bun_core::self_exe_path()?;
@@ -88,11 +84,6 @@ impl InstallCompletionsCommand {
     fn install_bunx_symlink(_cwd: &[u8]) -> Result<(), crate::Error> {
         use bun_core::{WStr, w};
         use bun_sys::windows;
-
-        // As `bunx`, a file with an embedded program runs that program unless BUN_BE_BUN is set.
-        if bun_standalone_graph::Graph::image_has_program() {
-            return Ok(());
-        }
 
         // Symlinks aren't always allowed, so `bunx.exe` is a hard link to `bun.exe` that's
         // recreated every time.
@@ -145,11 +136,6 @@ impl InstallCompletionsCommand {
     fn install_uninstaller_windows() -> Result<(), crate::Error> {
         use bun_core::w;
         use bun_sys::windows;
-
-        // `install.ps1` installs bun, never a file with an embedded program.
-        if bun_standalone_graph::Graph::image_has_program() {
-            return Ok(());
-        }
 
         // Only for an exe at `bun\bin\<whatever>.exe`, which `install.ps1` has probably installed.
         let image_path: &[u16] = windows::exe_path_w();
@@ -223,11 +209,15 @@ impl InstallCompletionsCommand {
         };
         let cwd: &[u8] = &cwd_buf[..cwd_len];
 
-        let _ = Self::install_bunx_symlink(cwd);
+        // A file with a program is not a Bun install: it is `bunx` only while BUN_BE_BUN is set.
+        if !bun_standalone_graph::Graph::image_has_program() {
+            let _ = Self::install_bunx_symlink(cwd);
+            #[cfg(windows)]
+            let _ = Self::install_uninstaller_windows();
+        }
 
         #[cfg(windows)]
         {
-            let _ = Self::install_uninstaller_windows();
             Self::print_powershell_completions_unsupported();
             return Ok(());
         }

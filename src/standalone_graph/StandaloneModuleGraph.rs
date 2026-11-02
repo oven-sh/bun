@@ -690,6 +690,12 @@ mod elf {
         pub(super) safe fn Bun__getStandaloneModuleGraphELFVaddr() -> *mut u64; // align(1)
     }
 
+    /// Whether `bun build --compile` appended data. It reads none of it: `get_data` exits if the end is cut off.
+    pub(super) fn has_data() -> bool {
+        // SAFETY: it returns the address of a static.
+        unsafe { core::ptr::read_unaligned(Bun__getStandaloneModuleGraphELFVaddr()) != 0 }
+    }
+
     /// Returns `(base, len)` for the embedded ELF segment data. Kept as a raw
     /// `*mut u8` so write-provenance is preserved end-to-end — collapsing to
     /// `&[u8]` here would freeze it to read-only and make the later
@@ -3464,10 +3470,17 @@ impl StandaloneModuleGraph {
         data
     }
 
-    /// Whether this executable file has a program. `get()` is `None` after a start with `BUN_BE_BUN`.
+    /// Whether this executable file has a program, also a truncated one. `get()` is `None` after a start with `BUN_BE_BUN`.
     pub fn image_has_program() -> bool {
         static HAS_PROGRAM: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        *HAS_PROGRAM.get_or_init(|| Self::payload_of_executable().is_some())
+        *HAS_PROGRAM.get_or_init(|| {
+            // ELF: the header alone, because `elf::get_data` exits if the end of the program is cut off.
+            #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+            let has_program = elf::has_data();
+            #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd")))]
+            let has_program = Self::payload_of_executable().is_some();
+            has_program
+        })
     }
 
     /// For an executable that can run nothing but its embedded program, and found none.

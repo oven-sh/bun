@@ -6,6 +6,7 @@ import {
   openSync,
   readFileSync,
   readSync,
+  readdirSync,
   realpathSync,
   rmSync,
   truncateSync,
@@ -243,6 +244,49 @@ test.if(reportsTruncation)(
       });
       rmSync(cut);
     }
+  },
+  TIMEOUT,
+);
+
+// With BUN_BE_BUN=1 the start does not load the program, so a truncated executable runs as the `bun` CLI. It still
+// is no installed bun: `bun completions` prints its script, and links no `bunx` to the file.
+test.if(reportsTruncation)(
+  "a truncated standalone executable that runs as bun prints the completions and gets no bunx link",
+  async () => {
+    using dir = tempDir("compile-truncated-as-bun", {
+      "big.txt": Buffer.alloc(1024 * 1024, "x").toString(),
+      "app.js": `import big from "./big.txt" with { type: "text" }; console.log("intact-" + big.length);`,
+      "empty-path": {},
+      "home": {},
+    });
+    const exe = await compileApp(String(dir));
+
+    const fd = openSync(exe, "r");
+    const { fileOffset } = elfFindBunSection(fd);
+    closeSync(fd);
+    // Keeps the length header's page but drops the trailer.
+    const cut = corruptedCopy(exe, "cut", path => truncateSync(path, fileOffset + 64 * 1024));
+    // At exit, LeakSanitizer would scan mapped pages that are past the end of the file.
+    const ASAN_OPTIONS = [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":");
+    expect(await run(cut, [], { ASAN_OPTIONS })).toEqual({
+      stdout: "",
+      stderr: expect.stringContaining("is truncated. Part of its embedded program is missing."),
+      exitCode: 1,
+    });
+
+    // No bunx is on PATH, so an installed bun would link bunx beside itself. stdout is a pipe, so the script is printed.
+    const { stdout, exitCode } = await run(cut, ["completions"], {
+      ASAN_OPTIONS,
+      BUN_BE_BUN: "1",
+      SHELL: "/bin/bash",
+      PATH: join(String(dir), "empty-path"),
+      HOME: join(String(dir), "home"),
+    });
+    expect({
+      printsTheScript: stdout.includes("complete -F _bun_completions bun"),
+      exitCode,
+      bunx: readdirSync(String(dir)).filter(name => name.startsWith("bunx")),
+    }).toEqual({ printsTheScript: true, exitCode: 0, bunx: [] });
   },
   TIMEOUT,
 );

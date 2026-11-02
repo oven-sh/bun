@@ -611,7 +611,7 @@ impl StatWatcher {
 
     /// Stops file watching but does not free the instance.
     ///
-    /// Always runs on the JS thread (`do_close`, its context stopping,
+    /// Always runs on the JS thread (`close`, its context stopping,
     /// `shutdown_for_exit`), so this is where the watcher leaves its context —
     /// `deinit` can fire on the work-pool thread.
     pub(crate) fn close(&self) {
@@ -789,8 +789,6 @@ impl StatWatcher {
             slice = &slice[b"file://".len()..];
         }
 
-        // SAFETY: `FileSystem::instance()` is initialized at process start
-        // (`FileSystem::init` runs before any JS module loads).
         let top_level_dir = fs::FileSystem::get().top_level_dir();
         let parts: [&[u8]; 1] = [slice];
         let file_path =

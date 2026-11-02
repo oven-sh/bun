@@ -277,13 +277,35 @@ describe.concurrent("bunshell cp src/dest validation", () => {
     expect(list(dir, "d/sub")).toEqual(["e"]);
   });
 
-  test("cp -R dir . fails when it would copy dir onto itself", async () => {
-    using dir = tempDir("cp-self", tree);
-    expect(await cp(String(dir), "cp -R d .")).toEqual({
-      stderr: `cp: d and .${sep}d are identical (not copied)\n`,
-      exitCode: 1,
-    });
-    expect(list(dir, "d")).toEqual(["f", "sub"]);
+  test.each(["cp -R d .", "cp -Rn d .", "cp d/f d", "cp -n d/f d", "cp -n d/f d/f"])(
+    "%s copies nothing and exits 0",
+    async command => {
+      using dir = tempDir("cp-self", tree);
+      expect(await cp(String(dir), command)).toEqual({ stderr: "", exitCode: 0 });
+      expect(list(dir, "d")).toEqual(["f", "sub"]);
+      expect(readFileSync(join(String(dir), "d", "f"), "utf8")).toBe("hi");
+    },
+  );
+
+  test("-n does not overwrite an existing destination", async () => {
+    using dir = tempDir("cp-n", { ...tree, old: "old", out: { d: { f: "old" }, old: {} } });
+    const read = (...path: string[]) => readFileSync(join(String(dir), ...path), "utf8");
+    const silent = { stderr: "", exitCode: 0 };
+
+    expect(await cp(String(dir), "cp -n d/f old")).toEqual(silent);
+    expect(read("old")).toBe("old");
+    // `out/old` is a directory.
+    expect(await cp(String(dir), "cp -n old out")).toEqual(silent);
+    expect(list(dir, "out/old")).toEqual([]);
+
+    // `out/d/f` exists, `out/d/sub` and `out/e` do not.
+    expect(await cp(String(dir), "cp -Rn d e out")).toEqual(silent);
+    expect(read("out", "d", "f")).toBe("old");
+    expect(list(dir, "out/d")).toEqual(["f", "sub"]);
+    expect(read("out", "e", "g")).toBe("there");
+
+    expect(await cp(String(dir), "cp -n d/f fresh")).toEqual(silent);
+    expect(read("fresh")).toBe("hi");
   });
 
   // Directory symlinks need extra privileges on Windows.

@@ -1,13 +1,10 @@
 use bun_jsc::JSValue;
 use bun_jsc::virtual_machine::VirtualMachine;
 
-use super::{Kind, TimerObjectInternals};
+use super::{Clock, Kind, TimerObjectInternals};
 
-// `Immediate`, declared in `Timer.bind.ts`. Struct + `RefCounted`/`Default` impls + the
-// forwarder host-fns (`to_primitive`/`do_ref`/`do_unref`/`has_ref`/
-// `get_destroyed`/`dispose`/`constructor`/`finalize`/`ref_`/`deref`/`deinit`/
-// `init_with`) — see `impl_timer_object!` in `super` (timer/mod.rs).
-super::impl_timer_object!(ImmediateObject, ImmediateObject, "Immediate");
+// `Immediate`, declared in `Timer.bind.ts`.
+super::impl_timer_object!(ImmediateObject);
 
 impl ImmediateObject {
     pub(crate) fn init(
@@ -15,8 +12,9 @@ impl ImmediateObject {
         id: u64,
         callback: JSValue,
         arguments: JSValue,
+        clock: Clock,
     ) -> JSValue {
-        Self::init_with(cx, id, Kind::SetImmediate, 0, callback, arguments)
+        Self::init_with(cx, id, Kind::SetImmediate, 0, callback, arguments, clock)
     }
 
     /// Thin forwarder to

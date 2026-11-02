@@ -13,7 +13,7 @@ pub struct NoRelativePackages {
     visitor: Visitor,
 }
 
-const RELATIVE_PACKAGE: Message = Message::new(
+const RELATIVE_PACKAGE: &Message = &Message::new(
     "",
     "Relative import from another package is not allowed. Use `{{properImport}}` instead of `{{importPath}}`",
 );

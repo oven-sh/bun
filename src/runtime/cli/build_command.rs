@@ -82,6 +82,17 @@ impl BuildCommand {
             ctx.bundler_options.compile = false;
         }
 
+        if ctx.bundler_options.library {
+            super::compile_command::configure_library(ctx);
+        }
+
+        if ctx.bundler_options.compile && ctx.bundler_options.aot.is_some() {
+            if !user_requested_browser_target {
+                return super::compile_command::CompileCommand::exec(ctx);
+            }
+            ctx.bundler_options.aot = None;
+        }
+
         let compile_target = &ctx.bundler_options.compile_target;
 
         if ctx.bundler_options.compile {
@@ -140,6 +151,16 @@ impl BuildCommand {
             this_transpiler.options.ignore_module_resolution_errors = true;
         }
 
+        if ctx.bundler_options.dts
+            && (ctx.bundler_options.outdir.is_empty() || ctx.bundler_options.compile)
+        {
+            Output::err_generic(
+                "--dts requires --outdir, and cannot be used with --compile",
+                (),
+            );
+            Global::exit(1);
+        }
+
         // Note: clone the first entry point so `outfile` can borrow owned
         // storage instead of `this_transpiler.options.entry_points[0]`, which
         // would otherwise hold an immutable borrow of `this_transpiler` across
@@ -150,32 +171,74 @@ impl BuildCommand {
             .first()
             .cloned()
             .unwrap_or_default();
+        // The .aot.ts file is the bundle with the types of its sources put back, by way of its source map.
+        let has_typescript_entry_point =
+            (this_transpiler.options.entry_points.iter()).any(|path| {
+                !matches!(
+                    bun_paths::extension(path),
+                    b".js" | b".mjs" | b".cjs" | b".jsx"
+                )
+            });
+        let skips_typed_files_for = {
+            let options = &ctx.bundler_options;
+            let unsupported = [
+                (options.minify_identifiers, "--minify-identifiers"),
+                (
+                    options.output_format != options::Format::Esm,
+                    "--format other than esm",
+                ),
+                (options.transform_only, "--no-bundle"),
+                (
+                    ctx.args.source_map == Some(api::SourceMapMode::Inline),
+                    "--sourcemap=inline",
+                ),
+            ];
+            let is_asked_for = options.dts && has_typescript_entry_point;
+            let mut unsupported = unsupported.iter().filter(|it| it.0 && is_asked_for);
+            unsupported.next().map(|it| it.1)
+        };
+        let writes_typed_files = ctx.bundler_options.dts
+            && has_typescript_entry_point
+            && skips_typed_files_for.is_none();
+        let type_check: Option<options::TypeCheck> = if ctx.bundler_options.dts {
+            Some(crate::cli::check_command::check_and_emit_declarations)
+        } else if ctx.bundler_options.check {
+            Some(crate::cli::check_command::check_for_build_command)
+        } else {
+            None
+        };
 
-        if ctx.bundler_options.check && ctx.bundler_options.transform_only {
+        if let Some(type_check) = type_check
+            && ctx.bundler_options.transform_only
+        {
             // Nothing is bundled, so nothing has been resolved or read.
             let entry_points = this_transpiler.options.entry_points.iter();
             let checked = options::TypeChecked {
-                cwd: bun_resolver::fs::FileSystem::instance().top_level_dir(),
+                cwd: bun_resolver::fs::FileSystem::get().top_level_dir(),
                 tsconfig: ctx.args.tsconfig_override.as_deref(),
                 conditions: &ctx.args.conditions,
                 loaders: &this_transpiler.options.loaders,
                 entry_points: &mut entry_points.map(|path| &**path),
                 sources: &mut core::iter::empty(),
             };
-            if !crate::cli::check_command::check_for_build_command(checked, log_ref) {
+            if !type_check(checked, log_ref) {
                 log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
                     Output::error_writer(),
                 ))?;
                 Output::flush();
                 exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
             }
-        } else if ctx.bundler_options.check {
-            this_transpiler.options.type_check =
-                Some(crate::cli::check_command::check_for_build_command);
+        } else {
+            this_transpiler.options.type_check = type_check;
         }
 
         this_transpiler.options.source_map =
             options::SourceMapOption::from_api(ctx.args.source_map);
+        let drops_source_maps = writes_typed_files
+            && this_transpiler.options.source_map == options::SourceMapOption::None;
+        if drops_source_maps {
+            this_transpiler.options.source_map = options::SourceMapOption::External;
+        }
 
         this_transpiler.options.compile_mode = if ctx.bundler_options.compile {
             options::CompileMode::Executable
@@ -232,6 +295,7 @@ impl BuildCommand {
         this_transpiler.options.code_splitting = ctx.bundler_options.code_splitting;
         this_transpiler.options.split_require = ctx.bundler_options.split_require;
         this_transpiler.options.minify_syntax = ctx.bundler_options.minify_syntax;
+        this_transpiler.options.is_library = ctx.bundler_options.dts;
         this_transpiler.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
         this_transpiler.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
         this_transpiler.options.keep_names = ctx.bundler_options.keep_names;
@@ -526,7 +590,7 @@ impl BuildCommand {
         this_transpiler.resolver.env_loader = core::ptr::NonNull::new(this_transpiler.env);
 
         // Allow tsconfig.json overriding, but always set it to false if --production is passed.
-        if ctx.bundler_options.production {
+        if ctx.bundler_options.production || ctx.bundler_options.library {
             this_transpiler.options.jsx.development = false;
             this_transpiler.resolver.opts.jsx.development = false;
         }
@@ -565,6 +629,8 @@ impl BuildCommand {
         // `this_transpiler` for the rest of its life. Snapshot every options
         // field read after that point so the borrow checker is satisfied.
         let opt_output_dir: Box<[u8]> = this_transpiler.options.output_dir.clone();
+        let opt_loaders =
+            bun_core::UnwrapOrOom::unwrap_or_oom(this_transpiler.options.loaders.clone());
         let opt_minify_identifiers = this_transpiler.options.minify_identifiers;
         let opt_minify_whitespace = this_transpiler.options.minify_whitespace;
         let opt_minify_syntax = this_transpiler.options.minify_syntax;
@@ -737,6 +803,48 @@ impl BuildCommand {
             }
         }
 
+        if ctx.bundler_options.dts {
+            if let Err(error) = super::compile_command::add_declaration_files(
+                crate::cli::check_command::take_declaration_files(),
+                src_root_dir,
+                !ctx.bundler_options.transform_only,
+                &mut output_files,
+            ) {
+                let mut message = Vec::new();
+                error.write_message(&mut message);
+                Output::err_generic("{}", (bstr::BStr::new(&message),));
+                exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
+            }
+            if let Some(option) = skips_typed_files_for {
+                crate::cli::check_command::warn_about_skipped_typed_files(option, log_ref);
+            }
+        }
+
+        let mut compiler_options = Vec::new();
+        if writes_typed_files {
+            let request = super::compile_command::TypedOutputs {
+                working_directory: bun_resolver::fs::FileSystem::get().top_level_dir(),
+                outdir: &ctx.bundler_options.outdir,
+                tsconfig: ctx.args.tsconfig_override.as_deref(),
+                conditions: &ctx.args.conditions,
+                loaders: &opt_loaders,
+                drops_source_maps,
+                writes_package_json: ctx.bundler_options.library,
+            };
+            compiler_options =
+                super::compile_command::add_typed_files(&request, log_ref, &mut output_files);
+        }
+
+        if ctx.bundler_options.library {
+            super::compile_command::add_package_files(
+                ctx,
+                src_root_dir,
+                &compiler_options,
+                log_ref,
+                &mut output_files,
+            );
+        }
+
         let output_files: &mut [options::OutputFile] = &mut output_files;
         let bundled_end = bun_core::time::nano_timestamp();
 
@@ -812,6 +920,9 @@ impl BuildCommand {
             for f in output_files.iter() {
                 max_path_len =
                     max_path_len.max(from_path.len().max(f.dest_path.len()) + 2 - from_path.len());
+                // A file that is listed beside the bundle's own may lack the prefix that those share.
+                max_path_len =
+                    max_path_len.max(strings::trim_prefix(&f.dest_path, b"./").len() + 2);
                 size_padding = size_padding.max(bun_fmt::count(format_args!(
                     "{}",
                     bun_fmt::size(f.size, Default::default())
@@ -855,6 +966,50 @@ impl BuildCommand {
                     }
                 }
 
+                let flags = {
+                    use bun_standalone_module_graph::StandaloneModuleGraph::Flags;
+                    let mut flags = Flags::default();
+                    if !ctx.bundler_options.compile_autoload_dotenv {
+                        flags |= Flags::DISABLE_DEFAULT_ENV_FILES;
+                    }
+                    if !ctx.bundler_options.compile_autoload_bunfig {
+                        flags |= Flags::DISABLE_AUTOLOAD_BUNFIG;
+                    }
+                    if !ctx.bundler_options.compile_autoload_tsconfig {
+                        flags |= Flags::DISABLE_AUTOLOAD_TSCONFIG;
+                    }
+                    if !ctx.bundler_options.compile_autoload_package_json {
+                        flags |= Flags::DISABLE_AUTOLOAD_PACKAGE_JSON;
+                    }
+                    flags
+                };
+                let trim_plan = match plan_bundle_trimming(
+                    compile_target,
+                    output_files,
+                    // SAFETY: `env` is a process-lifetime singleton.
+                    unsafe { &mut *env_ptr },
+                    ctx.bundler_options.compile_executable_path.as_deref(),
+                    ctx.bundler_options
+                        .compile_exec_argv
+                        .as_deref()
+                        .unwrap_or(b""),
+                    flags,
+                    &ctx.bundler_options.trim,
+                ) {
+                    Ok(plan) => plan,
+                    Err(failure) => super::compile_command::exit_with_failure(
+                        log_ref,
+                        super::compile_command::RequestOrigin::BuildFlag,
+                        compile_target,
+                        &failure,
+                    ),
+                };
+                let mut additions =
+                    bun_standalone_module_graph::executable_request::ExecutableAdditions {
+                        trim: trim_plan.as_ref(),
+                        ..Default::default()
+                    };
+
                 let result = match bun_standalone_module_graph::StandaloneModuleGraph::to_executable(
                     compile_target,
                     output_files,
@@ -870,26 +1025,11 @@ impl BuildCommand {
                         .as_deref()
                         .unwrap_or(b""),
                     ctx.bundler_options.compile_executable_path.as_deref(),
-                    {
-                        use bun_standalone_module_graph::StandaloneModuleGraph::Flags;
-                        let mut flags = Flags::default();
-                        if !ctx.bundler_options.compile_autoload_dotenv {
-                            flags |= Flags::DISABLE_DEFAULT_ENV_FILES;
-                        }
-                        if !ctx.bundler_options.compile_autoload_bunfig {
-                            flags |= Flags::DISABLE_AUTOLOAD_BUNFIG;
-                        }
-                        if !ctx.bundler_options.compile_autoload_tsconfig {
-                            flags |= Flags::DISABLE_AUTOLOAD_TSCONFIG;
-                        }
-                        if !ctx.bundler_options.compile_autoload_package_json {
-                            flags |= Flags::DISABLE_AUTOLOAD_PACKAGE_JSON;
-                        }
-                        flags
-                    },
+                    flags,
                     bun_standalone_module_graph::StandaloneModuleGraph::RuntimeOptions {
                         jit_policy: ctx.bundler_options.compile_jit_policy,
                     },
+                    &mut additions,
                 ) {
                     Ok(r) => r,
                     Err(err) => {
@@ -991,8 +1131,10 @@ impl BuildCommand {
 
                 Output::print_elapsed_stdout_trim(compiled_elapsed as f64);
 
+                let mut trimmed_size = Vec::new();
+                super::compile_command::write_trimmed_size(&additions.details, &mut trimmed_size);
                 bun_core::pretty!(
-                    " <green>compile<r>  <b><blue>{}{}<r>",
+                    " <green>compile<r>  <b><blue>{}{}<r>{}",
                     bstr::BStr::new(outfile),
                     if compile_target.os == OperatingSystem::Windows
                         && !strings::has_suffix_comptime(outfile, b".exe")
@@ -1000,7 +1142,8 @@ impl BuildCommand {
                         ".exe"
                     } else {
                         ""
-                    }
+                    },
+                    bstr::BStr::new(&trimmed_size),
                 );
 
                 if is_cross_compile {
@@ -1009,6 +1152,10 @@ impl BuildCommand {
                     bun_core::pretty!("\n");
                 }
 
+                Output::flush();
+                for line in collect_trim_log_lines(&additions.details, &ctx.bundler_options.trim) {
+                    Output::print_errorln(format_args!("{}", bstr::BStr::new(&line)));
+                }
                 Output::flush();
                 break 'dump;
             }
@@ -1063,6 +1210,14 @@ impl BuildCommand {
                     writer.write_all(&Output::pretty_fmt::<true>(match f.output_kind {
                         options::OutputKind::EntryPoint => "<blue>",
                         options::OutputKind::Chunk => "<cyan>",
+                        options::OutputKind::Asset
+                            if super::compile_command::is_declaration_file(f) =>
+                        {
+                            "<d>"
+                        }
+                        options::OutputKind::Asset if super::compile_command::is_typed_file(f) => {
+                            "<d>"
+                        }
                         options::OutputKind::Asset => "<magenta>",
                         options::OutputKind::Sourcemap => "<d>",
                         options::OutputKind::Bytecode => "<d>",
@@ -1113,6 +1268,14 @@ impl BuildCommand {
                     match f.output_kind {
                         options::OutputKind::EntryPoint => "entry point",
                         options::OutputKind::Chunk => "chunk",
+                        options::OutputKind::Asset
+                            if super::compile_command::is_declaration_file(f) =>
+                        {
+                            "declaration"
+                        }
+                        options::OutputKind::Asset if super::compile_command::is_typed_file(f) => {
+                            "aot source"
+                        }
                         options::OutputKind::Asset => "asset",
                         options::OutputKind::Sourcemap => "source map",
                         options::OutputKind::Bytecode => "bytecode",
@@ -1146,7 +1309,7 @@ impl BuildCommand {
     }
 }
 
-fn compile_outfile(outfile: &[u8]) -> &[u8] {
+pub(crate) fn compile_outfile(outfile: &[u8]) -> &[u8] {
     if outfile.is_empty() || outfile == b"." || outfile == b".." || outfile == b"../" {
         b"index"
     } else {
@@ -1232,6 +1395,11 @@ fn print_summary(
     bun_core::prettyln!("  <green>bundle<r>  {} modules", reachable_file_count);
 }
 
+/// Names are stored as valid UTF-8, so two names that differ only in invalid bytes collide.
+pub(crate) fn to_embedded_name(name: &[u8]) -> Vec<u8> {
+    bstr::BStr::new(name).to_string().into_bytes()
+}
+
 pub(crate) fn collect_compile_assets(
     assets: &[Box<[u8]>],
     outfile: &[u8],
@@ -1259,8 +1427,7 @@ pub(crate) fn collect_compile_assets(
     }
     let mut push =
         |out: &mut Vec<options::OutputFile>, asset: &[u8], dest: Vec<u8>, bytes: Vec<u8>| {
-            // Names are stored as valid UTF-8, so two names that differ only in invalid bytes collide.
-            let dest = bstr::BStr::new(&dest).to_string().into_bytes();
+            let dest = to_embedded_name(&dest);
             if seen.contains_key(&dest) {
                 return Err(format!(
                     "asset {} collides with another embedded file at {}",
@@ -1397,4 +1564,45 @@ pub(crate) fn collect_compile_assets(
         }
     }
     Ok(())
+}
+
+/// What `--trim` removes from an executable whose program is bundled and not compiled.
+pub(crate) fn plan_bundle_trimming(
+    target: &bun_options_types::compile_target::CompileTarget,
+    output_files: &[options::OutputFile],
+    env: &mut bun_dotenv::Loader,
+    executable_path: Option<&[u8]>,
+    exec_argv: &[u8],
+    flags: bun_standalone_module_graph::StandaloneModuleGraph::Flags,
+    trim: &bun_options_types::trim::TrimRequest,
+) -> Result<Option<bun_trim::TrimPlan>, super::compile_command::CompileFailure> {
+    use super::compile_command::{CompileFailure, plan_trimming, trim_settings_of};
+    use bun_standalone_module_graph::StandaloneModuleGraph::target_executable;
+
+    if !trim.is_enabled() {
+        return Ok(None);
+    }
+    let embeds_source_maps = output_files
+        .iter()
+        .any(|file| file.output_kind == options::OutputKind::Sourcemap);
+    let settings = trim_settings_of(flags, exec_argv, embeds_source_maps);
+    let used = bun_trim::UsedFeatures::with_cause(bun_trim::UnseenCodeCause::ProgramNotCompiled);
+    let template =
+        target_executable(target, env, executable_path).map_err(CompileFailure::Executable)?;
+    plan_trimming(&used, &settings, trim, &template)
+}
+
+pub(crate) fn collect_trim_log_lines(
+    executable: &bun_standalone_module_graph::StandaloneModuleGraph::ExecutableDetails,
+    trim: &bun_options_types::trim::TrimRequest,
+) -> Vec<Vec<u8>> {
+    let mut lines = Vec::new();
+    if let Some(summary) = &executable.trim_summary {
+        let write_lines = match trim.logs {
+            true => bun_trim::write_log_lines,
+            false => bun_trim::write_warning_lines,
+        };
+        write_lines(summary, &mut lines);
+    }
+    lines
 }

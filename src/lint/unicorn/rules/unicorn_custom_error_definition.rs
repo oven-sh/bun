@@ -5,12 +5,12 @@ use bun_lint::rule::Plugin;
 /// Enforce correct `Error` subclassing.
 pub struct CustomErrorDefinition;
 
-const INVALID_CLASS_NAME: Message = Message::new("", "Invalid class name, use `{{expected}}`.");
-const MISSING_SUPER_CALL: Message = Message::new("", "Missing call to `super()` in constructor.");
-const INVALID_NAME_PROPERTY: Message = Message::new("", "The `name` property should be set to `{{name}}`.");
-const PASS_MESSAGE_TO_SUPER: Message =
-    Message::new("", "Pass the error message to `super()` instead of setting `this.message`.");
-const INVALID_EXPORT: Message = Message::new("", "Exported error name should match error class");
+const INVALID_CLASS_NAME: &Message = &Message::new("", "Invalid class name, use `{{expected}}`.");
+const MISSING_SUPER_CALL: &Message = &Message::new("", "Missing call to `super()` in constructor.");
+const INVALID_NAME_PROPERTY: &Message = &Message::new("", "The `name` property should be set to `{{name}}`.");
+const PASS_MESSAGE_TO_SUPER: &Message =
+    &Message::new("", "Pass the error message to `super()` instead of setting `this.message`.");
+const INVALID_EXPORT: &Message = &Message::new("", "Exported error name should match error class");
 
 /// `Error`, `TypeError`, `Http2Error`: capitalized words, the last of which is `Error`.
 fn is_valid_super_class_name(name: &[u8]) -> bool {

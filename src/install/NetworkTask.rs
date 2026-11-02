@@ -33,7 +33,7 @@ impl strings::Appender for FilenameStoreAppender<'_> {
 pub(crate) fn stored_string(bytes: &[u8]) -> strings::StringOrTinyString {
     strings::StringOrTinyString::init_append_if_needed(
         bytes,
-        &mut FilenameStoreAppender(FileSystem::instance().filename_store()),
+        &mut FilenameStoreAppender(FileSystem::get().filename_store()),
     )
     .expect("unreachable")
 }
@@ -72,7 +72,7 @@ pub struct NetworkTask {
     pub(crate) next: bun_threading::Link<NetworkTask>,
 
     /// Producer/consumer buffer that feeds tarball bytes from the HTTP thread
-    /// to a worker running libarchive. `None` when streaming extraction is
+    /// to a worker that extracts them. `None` when streaming extraction is
     /// disabled or this task is not a tarball download.
     pub(crate) tarball_stream: Option<Box<TarballStream>>,
     /// Extract `Task` pre-created on the main thread so the HTTP thread can
@@ -325,7 +325,7 @@ impl NetworkTask {
         }
 
         // Stash this callback's body bytes into our own accumulation buffer
-        // before `detach_lifetime` clears `result.body` to `&[]`. Covers the
+        // before `without_borrowed_body` drops `result.body`. Covers the
         // non-streaming manifest path and the tarball fall-through above.
         if result.metadata.is_some() {
             // First callback of a fresh attempt on the non-streaming path —
@@ -361,14 +361,12 @@ impl NetworkTask {
         }
         // SAFETY: the HTTP thread is the sole writer for this call; nothing
         // exclusive to `*this` outlives this block, which ends before the
-        // cross-thread push below. `detach_lifetime` erases the callback-scoped
-        // `'_` to `'static` and clears `body` to `&[]`; the body bytes were
-        // stashed into `(*this).response_buffer` above.
+        // cross-thread push below.
         unsafe {
             // Preserve metadata captured on an earlier streaming callback; the
             // final `result` won't have it.
             let saved_metadata = (*this).response.metadata.take();
-            (*this).response = result.detach_lifetime();
+            (*this).response = result.without_borrowed_body();
             if (*this).response.metadata.is_none() {
                 (*this).response.metadata = saved_metadata;
             }
@@ -590,8 +588,8 @@ impl NetworkTask {
             // The join would read bytes that are not UTF-8 as U+FFFD, which is another name.
             let tmp = if strings::is_valid_utf8(encoded_name) {
                 bun_url::join(
-                    &bun_core::String::borrow_utf8(base),
-                    &bun_core::String::borrow_utf8(encoded_name),
+                    &bun_core::StringView::borrow_utf8(base),
+                    &bun_core::StringView::borrow_utf8(encoded_name),
                 )
             } else {
                 bun_core::String::DEAD
@@ -657,7 +655,7 @@ impl NetworkTask {
         let mut last_modified: &[u8] = b"";
         let mut etag: &[u8] = b"";
         if let Some(manifest) = loaded_manifest {
-            if (needs_extended && manifest.pkg.has_extended_manifest) || !needs_extended {
+            if (needs_extended && manifest.pkg.has_extended_manifest()) || !needs_extended {
                 last_modified = manifest.pkg.last_modified.slice(&manifest.string_buf);
                 etag = manifest.pkg.etag.slice(&manifest.string_buf);
             }
@@ -949,10 +947,10 @@ impl NetworkTask {
             // Tell the HTTP client to invoke `notify` for every body chunk
             // instead of buffering the whole response. `notify` pushes each
             // chunk into `tarball_stream`, which schedules a drain task on
-            // `thread_pool`; the drain task calls into libarchive until it
-            // reports ARCHIVE_RETRY (out of input), then returns so the
+            // `thread_pool`; the drain task runs the decoder until it is
+            // out of input, then returns so the
             // worker can be reused for other install work. The next chunk
-            // reschedules it and libarchive — whose state lives on the heap
+            // reschedules it and the decoder — whose state lives on the heap
             // — resumes exactly where it stopped.
             //
             // The stream itself is created by the caller (see

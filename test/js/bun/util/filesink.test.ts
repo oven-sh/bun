@@ -515,9 +515,8 @@ it.skipIf(!isPosix)("does not leak native FileSink when a pending write fails (E
   expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
 });
 
-// The generated ${name}__doClose detached m_sinkPtr and then called __close,
-// so the wrapper's destructor skipped __finalize and the wrapper's +1 on the
-// native FileSink was never released.
+// close() takes the sink from the JS object, whose destructor then has none to
+// finalize, so close() itself has to release the object's +1 on the native FileSink.
 it("close() does not leak the native FileSink", async () => {
   const dir = tmpdirSync();
   const baseline = fileSinkInternals.liveCount();
@@ -1423,7 +1422,7 @@ it.skipIf(isWindows)("throws on invalid writer options instead of crashing", asy
     if (fileSinkInternals.liveCount() <= baseline) break;
     await Bun.sleep(10);
   }
-  // Each early return in get_writer must release the sink's +1 ref; a missing
+  // Each early return in Blob::writer must release the sink's +1 ref; a missing
   // deref leaks one native FileSink per failed call.
   expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
 });

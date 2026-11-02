@@ -8,13 +8,13 @@ use std::cmp::Ordering;
 /// Checks for redundant or logically impossible comparisons.
 pub struct ConstComparisons;
 
-const REDUNDANT_LEFT_HAND_SIDE: Message = Message::new("", "Left-hand side of `&&` operator has no effect.");
-const REDUNDANT_RIGHT_HAND_SIDE: Message = Message::new("", "Right-hand side of `&&` operator has no effect.");
-const IMPOSSIBLE: Message = Message::new("", "Unexpected constant comparison");
-const CONSTANT_COMPARISON: Message = Message::new("", "This comparison will always evaluate to {{evaluates_to}}");
-const IDENTICAL_EXPRESSIONS_LOGICAL_OPERATOR: Message = Message::new("", "Both sides of the logical operator are the same");
-const EQUIVALENT_EXPRESSIONS_LOGICAL_OPERATOR: Message = Message::new("", "Both sides of the logical operator are equivalent");
-const COMPLEMENTARY_EXPRESSIONS_LOGICAL_OPERATOR: Message = Message::new("", "Unexpected constant comparison");
+const REDUNDANT_LEFT_HAND_SIDE: &Message = &Message::new("", "Left-hand side of `&&` operator has no effect.");
+const REDUNDANT_RIGHT_HAND_SIDE: &Message = &Message::new("", "Right-hand side of `&&` operator has no effect.");
+const IMPOSSIBLE: &Message = &Message::new("", "Unexpected constant comparison");
+const CONSTANT_COMPARISON: &Message = &Message::new("", "This comparison will always evaluate to {{evaluates_to}}");
+const IDENTICAL_EXPRESSIONS_LOGICAL_OPERATOR: &Message = &Message::new("", "Both sides of the logical operator are the same");
+const EQUIVALENT_EXPRESSIONS_LOGICAL_OPERATOR: &Message = &Message::new("", "Both sides of the logical operator are equivalent");
+const COMPLEMENTARY_EXPRESSIONS_LOGICAL_OPERATOR: &Message = &Message::new("", "Unexpected constant comparison");
 
 impl Rule for ConstComparisons {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "const-comparisons", Kind::Problem);

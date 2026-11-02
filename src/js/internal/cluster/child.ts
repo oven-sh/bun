@@ -5,8 +5,11 @@ const Worker = require("internal/cluster/Worker");
 const path = require("node:path");
 const { kClusterOwner: owner_symbol, kInternalSendOptions } = require("internal/shared");
 
-const onInternalMessage = $bindgen("node_cluster_binding.bind.ts", "onInternalMessageChild");
-const closeRawHandle = $bindgen("node_cluster_binding.bind.ts", "clusterCloseHandle");
+const onInternalMessage: (
+  worker: ClusterWorker,
+  callback: (this: ClusterWorker, message, handle: unknown) => void,
+) => void = $bindgen("node_cluster_binding.bind.ts", "onInternalMessageChild");
+const closeRawHandle: (fd: number) => void = $bindgen("node_cluster_binding.bind.ts", "clusterCloseHandle");
 
 const FunctionPrototype = Function.prototype;
 const ArrayPrototypeJoin = Array.prototype.join;
@@ -19,31 +22,53 @@ interface ChildCluster extends InstanceType<typeof EventEmitter> {
   worker: ClusterWorker | null;
   Worker: typeof Worker;
   _setupWorker(): void;
-  _getServer(obj, options, cb): void;
+  _getServer(obj: ListeningObject, options, cb: GetServerCallback): void;
+}
+
+/** A `net.Server` or a `dgram.Socket`. */
+interface ListeningObject extends $Node.EventEmitter {
+  address(): { port?: number } | string | null;
+  _getServerData?(): unknown;
+  _setServerData?(data: unknown): void;
+}
+
+type ConnectionHandle = ReturnType<typeof makeConnectionHandle>;
+type SharedHandle = ReturnType<typeof makeSharedHandle>;
+/** `handle`: a SharedHandle, a RoundRobinFauxHandle, or null with an error. `node:dgram` only ever gets the first. */
+type GetServerCallback = (errno: number, handle, reply) => void;
+type ReplyCallback = (this: ClusterWorker | undefined, message, handle: number | null | undefined) => void;
+/** The object that listens on a handle, which it stores under `kClusterOwner`. */
+interface HandleOwner {
+  maxConnections?: number | null;
+  _connections: number;
+  dropMaxConnection?: boolean;
+  close(callback?: () => void): unknown;
 }
 
 interface RoundRobinFauxHandle {
-  close(): void;
-  listen(backlog): number;
+  close(callback?: () => void): void;
+  listen(backlog: number): number;
   ref(): void;
   unref(): void;
-  getsockname?(out): number;
+  getsockname?(out: object): number;
+  /** `node:net` sets it. */
+  onconnection?(err: number, handle: ConnectionHandle): void;
 }
 
 const cluster = new EventEmitter() as ChildCluster;
-const handles = new Map();
-const indexes = new Map();
+const handles = new Map<string, SharedHandle | RoundRobinFauxHandle>();
+const indexes = new Map<string, { nextIndex: number; set: Set<number> }>();
 const noop = FunctionPrototype as () => void;
 const TIMEOUT_MAX = 2 ** 31 - 1;
 const kNoFailure = 0;
 let seq = 0;
-const callbacks = new Map();
+const callbacks = new Map<number, ReplyCallback>();
 
-function makeConnectionHandle(fd) {
+function makeConnectionHandle(fd: number) {
   let closed = false;
   return {
     fd,
-    close(cb?) {
+    close(cb?: () => void) {
       if (!closed) {
         closed = true;
         closeRawHandle(fd);
@@ -62,7 +87,7 @@ cluster.worker = null;
 cluster.Worker = Worker;
 
 cluster._setupWorker = function () {
-  const worker = new Worker({
+  const worker: ClusterWorker = new Worker({
     id: +process.env.NODE_UNIQUE_ID! | 0,
     process: process,
     state: "online",
@@ -72,7 +97,7 @@ cluster._setupWorker = function () {
 
   // make sure the process.once("disconnect") doesn't count as a ref
   // before calling, check if the channel is refd. if it isn't, then unref it after calling process.once();
-  $bindgen("node_cluster_binding.bind.ts", "channelIgnoreOneDisconnectEventListener")();
+  ($bindgen("node_cluster_binding.bind.ts", "channelIgnoreOneDisconnectEventListener") as () => void)();
   process.once("disconnect", () => {
     (process as { channel: unknown }).channel = null;
     worker.emit("disconnect");
@@ -87,7 +112,7 @@ cluster._setupWorker = function () {
   onInternalMessage(worker, onmessage);
   send({ act: "online" });
 
-  function onmessage(message, handle) {
+  function onmessage(this: ClusterWorker, message, handle) {
     const ack = message.ack;
     if (ack !== undefined) {
       const callback = callbacks.$get(ack);
@@ -110,7 +135,7 @@ cluster._setupWorker = function () {
     if (message.act === "newconn") {
       onconnection(message, handle);
     } else if (message.act === "disconnect") {
-      worker._disconnect(true);
+      worker._disconnect!(true);
     }
   }
 };
@@ -146,7 +171,7 @@ cluster._getServer = function (obj, options, cb) {
   if (obj._getServerData) message.data = obj._getServerData();
 
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/child.js#L105-L115
-  send(message, (reply, handle) => {
+  send(message, (reply, handle: number | SharedHandle | null | undefined) => {
     if (typeof obj._setServerData === "function") obj._setServerData(reply.data);
 
     if (typeof handle === "number" && handle >= 0) {
@@ -155,7 +180,7 @@ cluster._getServer = function (obj, options, cb) {
 
     if (handle) {
       // Shared listen socket
-      shared(reply, { handle, indexesKey, index }, cb);
+      shared(reply, { handle: handle as SharedHandle, indexesKey, index }, cb);
     } else {
       // Round-robin.
       rr(reply, { indexesKey, index }, cb);
@@ -170,12 +195,12 @@ cluster._getServer = function (obj, options, cb) {
     cluster.worker!.state = "listening";
     const address = obj.address();
     message.act = "listening";
-    message.port = (address && address.port) || options.port;
+    message.port = (address && (address as { port?: number }).port) || options.port;
     send(message);
   });
 };
 
-function removeIndexesKey(indexesKey, index) {
+function removeIndexesKey(indexesKey: string, index: number) {
   const indexSet = indexes.get(indexesKey);
   if (!indexSet) {
     return;
@@ -187,12 +212,12 @@ function removeIndexesKey(indexesKey, index) {
   }
 }
 
-function makeSharedHandle(fd) {
+function makeSharedHandle(fd: number) {
   let fdOpen = true;
   const handle = {
     sharedFd: fd,
     adopted: false,
-    close(cb?) {
+    close(cb?: () => void) {
       // A close() that ran while `adopted` was set leaves the fd to the adopter; a later release (adopted cleared) still closes it.
       if (fdOpen && !handle.adopted) {
         fdOpen = false;
@@ -205,7 +230,11 @@ function makeSharedHandle(fd) {
 }
 
 // Shared listen socket.
-function shared(message, { handle, indexesKey, index }, cb) {
+function shared(
+  message,
+  { handle, indexesKey, index }: { handle: SharedHandle; indexesKey: string; index: number },
+  cb: GetServerCallback,
+) {
   const key = message.key;
   // Monkey-patch the close() method so we can keep track of when it's
   // closed. Avoids resource leaks when the handle is short-lived.
@@ -219,7 +248,7 @@ function shared(message, { handle, indexesKey, index }, cb) {
       handles.delete(key);
       removeIndexesKey(indexesKey, index);
     }
-    return close.$apply(handle, arguments);
+    return close.$apply(handle, arguments as unknown as [cb?: () => void]);
   };
   $assert(handles.has(key) === false);
   handles.set(key, handle);
@@ -227,7 +256,7 @@ function shared(message, { handle, indexesKey, index }, cb) {
 }
 
 // Round-robin. Master distributes handles across workers.
-function rr(message, { indexesKey, index }, cb) {
+function rr(message, { indexesKey, index }: { indexesKey: string; index: number }, cb: GetServerCallback) {
   const errno = message.errno;
   if (errno) return cb(errno, null, message);
 
@@ -248,7 +277,7 @@ function rr(message, { indexesKey, index }, cb) {
     }
   }
 
-  function listen(_backlog) {
+  function listen(_backlog: number) {
     // TODO(bnoordhuis) Send a message to the primary that tells it to
     // update the backlog size. The actual backlog should probably be
     // the largest requested size by any worker.
@@ -273,7 +302,7 @@ function rr(message, { indexesKey, index }, cb) {
     key = undefined;
   }
 
-  function getsockname(out) {
+  function getsockname(out: object) {
     if (key) ObjectAssign(out, message.sockname);
 
     return 0;
@@ -293,13 +322,13 @@ function rr(message, { indexesKey, index }, cb) {
 }
 
 // Round-robin connection.
-function onconnection(message, handle) {
+function onconnection(message, handle: ConnectionHandle) {
   const key = message.key;
   const server = handles.get(key);
   let accepted = server !== undefined;
 
-  if (accepted && server[owner_symbol]) {
-    const self = server[owner_symbol];
+  if (accepted && server![owner_symbol]) {
+    const self: HandleOwner = server![owner_symbol];
     if (self.maxConnections != null && self._connections >= self.maxConnections && !self.dropMaxConnection) {
       accepted = false;
     }
@@ -307,11 +336,11 @@ function onconnection(message, handle) {
 
   send({ ack: message.seq, accepted });
 
-  if (accepted) server.onconnection(0, handle);
+  if (accepted) (server as RoundRobinFauxHandle).onconnection!(0, handle);
   else handle.close();
 }
 
-function send(message, cb?) {
+function send(message: object, cb?: ReplyCallback) {
   if (!process.connected) return false;
   const wire = { __proto__: null, cmd: "NODE_CLUSTER", ...message, seq };
   if (typeof cb === "function") callbacks.$set(seq, cb);
@@ -320,10 +349,10 @@ function send(message, cb?) {
 }
 
 // Extend generic Worker with methods specific to worker processes.
-Worker.prototype.disconnect = function () {
+Worker.prototype.disconnect = function (this: ClusterWorker) {
   if (this.state !== "disconnecting" && this.state !== "destroying") {
     this.state = "disconnecting";
-    this._disconnect();
+    this._disconnect!();
   }
 
   return this;
@@ -354,7 +383,7 @@ Worker.prototype._disconnect = function (this: ClusterWorker, primaryInitiated?)
   handles.forEach(handle => {
     waitingCount++;
 
-    if (handle[owner_symbol]) handle[owner_symbol].close(checkWaitingCount);
+    if (handle[owner_symbol]) (handle[owner_symbol] as HandleOwner).close(checkWaitingCount);
     else handle.close(checkWaitingCount);
   });
 
@@ -362,7 +391,7 @@ Worker.prototype._disconnect = function (this: ClusterWorker, primaryInitiated?)
   checkWaitingCount();
 };
 
-Worker.prototype.destroy = function () {
+Worker.prototype.destroy = function (this: ClusterWorker) {
   if (this.state === "destroying") return;
 
   this.exitedAfterDisconnect = true;

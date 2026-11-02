@@ -12,7 +12,7 @@ pub struct NoCwdDependentPath {
     functions: Box<[Box<[u8]>]>,
 }
 
-const WORKING_DIRECTORY: Message = Message::new(
+const WORKING_DIRECTORY: &Message = &Message::new(
     "workingDirectory",
     "{{path}} is relative to the working directory of the process. Resolve it from `import.meta.dirname`.",
 );

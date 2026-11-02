@@ -242,7 +242,7 @@ pub enum FixOrSuggest {
 pub fn get_fix_or_suggest<'a, F: IntoFix>(
     report: Report<'a>,
     fix_or_suggest: FixOrSuggest,
-    message: Message,
+    message: &'static Message,
     fix: impl FnOnce(Fixer<'a>) -> F,
 ) -> Report<'a> {
     get_fix_or_suggest_with(report, fix_or_suggest, message, &[], fix)
@@ -252,7 +252,7 @@ pub fn get_fix_or_suggest<'a, F: IntoFix>(
 pub fn get_fix_or_suggest_with<'a, F: IntoFix>(
     report: Report<'a>,
     fix_or_suggest: FixOrSuggest,
-    message: Message,
+    message: &'static Message,
     data: &[(&'static str, &[u8])],
     fix: impl FnOnce(Fixer<'a>) -> F,
 ) -> Report<'a> {
@@ -265,7 +265,7 @@ pub fn get_fix_or_suggest_with<'a, F: IntoFix>(
 
 /// `context.report({ loc: { start: { line: 0, column: 0 }, end: { line: 0, column: 0 } }, messageId })`. tsgolint
 /// reports the start of the file.
-pub fn report_at_line_zero<R: Rule>(cx: &Cx<'_, R>, message: Message) {
+pub fn report_at_line_zero<R: Rule>(cx: &Cx<'_, R>, message: &'static Message) {
     let report = cx.report(Span::empty(0), message);
     if !cx.language().is_oxlint {
         let line_zero = Position { line: 0, column: 0 };

@@ -344,7 +344,7 @@ impl Checker<'_, '_> {
             if p.0 + 1 < all_properties.start + all_properties.len() as u32 {
                 let start =
                     start_of_dots_before(self, file, property.value).unwrap_or(property.pos);
-                self.error_at((file, start, self.end_of_prop(file, p)), 2462, &[]);
+                self.early_error_at((file, start, self.end_of_prop(file, p)), 2462, &[]);
                 return;
             }
             // A name that isn't numeric omits only the property of that name. Any other name omits by its type.
@@ -369,11 +369,11 @@ impl Checker<'_, '_> {
                 self.rest_of_object(object_literal_type, &names, keys, None, assigned_symbol);
             // `checkGrammarForDisallowedTrailingComma`
             let end = self.end_of_prop(file, p);
-            self.grammar_error_on_token_after(file, end, b',', 1013);
+            self.early_grammar_error_on_token_after(file, end, b',', 1013);
             return self.check_destructuring_assignment(file, property.value, rest);
         }
         if !matches!(property.kind, PropKind::Init | PropKind::Shorthand) {
-            self.error(file, p, 1136, &[]);
+            self.early_error_on_node(file, p, 1136, &[]);
             // Nothing in it is checked, unless `checkObjectLiteral` reaches the pattern, for the right side's
             // contextual type. That defers every method and accessor.
             if self.task.file == Some(file) && !self.is_deferred_node.contains(&property.value) {
@@ -457,7 +457,7 @@ impl Checker<'_, '_> {
             .unwrap_or(TypeId::ERROR)
         };
         // `IterationUsePossiblyOutOfBounds`
-        let possibly_out_of_bounds_type = if self.p.files.options.no_unchecked_indexed_access {
+        let possibly_out_of_bounds_type = if self.module_options(file).no_unchecked_indexed_access {
             self.optional(in_bounds_type)
         } else {
             in_bounds_type
@@ -491,7 +491,7 @@ impl Checker<'_, '_> {
         match hir[element].kind {
             ExprKind::Missing => {}
             ExprKind::Spread(_) if !is_last => {
-                self.error_at(
+                self.early_error_at(
                     (file, hir[element].pos, self.end_of_expr(file, element)),
                     2462,
                     &[],
@@ -504,13 +504,13 @@ impl Checker<'_, '_> {
                     && !is_parenthesized(hir, rest_expression)
                 {
                     if let Some(start) = start_of_equals_before(self, file, value) {
-                        self.error_at((file, start, start + 1), 1186, &[]);
+                        self.early_error_at((file, start, start + 1), 1186, &[]);
                     }
                     return;
                 }
                 // `checkGrammarForDisallowedTrailingComma`
                 let end = self.end_of_expr(file, element);
-                self.grammar_error_on_token_after(file, end, b',', 1013);
+                self.early_grammar_error_on_token_after(file, end, b',', 1013);
                 let ty = if self.every_type(source_type, |c, t| c.is_tuple(t)) {
                     self.element_of_destructured(source_type, element_index, true, None)
                 } else {
@@ -644,7 +644,7 @@ impl Checker<'_, '_> {
         }
         let (start, end) = self.get_error_range_for_node(file, node);
         let error_node = (file, start, end);
-        let strict = self.p.files.options.strict_null_checks;
+        let strict = self.reports_null_checks(file);
         if strict && initializer.is_some() {
             let initializer_type = self.type_of_expr(file, initializer);
             self.check_non_null_non_void_type(initializer_type, error_node);

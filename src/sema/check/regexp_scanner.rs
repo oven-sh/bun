@@ -9,6 +9,7 @@
 //!
 //! tsgo always enables Annex B, so its `anyUnicodeModeOrNonAnnexB` is `anyUnicodeMode`.
 
+use super::errors_operators::language_version;
 use super::explain::NOWHERE;
 use super::sink::held;
 use super::*;
@@ -23,11 +24,7 @@ impl Checker<'_, '_> {
         if has_parse_diagnostics(hir) {
             return;
         }
-        // `GetEmitScriptTarget`
-        let target = match self.p.files.options.target {
-            ScriptTarget::None => ScriptTarget::ES2025,
-            target => target,
-        };
+        let target = language_version(self);
         let mut scan_errors: Vec<RegExpError> = Vec::new();
         check_regular_expression_literal(&hir.text, hir[e].pos as usize, target, &mut scan_errors);
         for (start, end, code, args) in scan_errors {
@@ -37,7 +34,8 @@ impl Checker<'_, '_> {
                     last.add_related_info(Reported::new(NOWHERE, code, held(args)));
                 }
                 _ => {
-                    self.add_diagnostic(Reported::new((file, start, end), code, held(args)));
+                    let diagnostic = Reported::new((file, start, end), code, held(args));
+                    self.add_diagnostic(diagnostic.with_class(DiagnosticClass::TypeScriptGrammar));
                 }
             }
         }
@@ -1572,6 +1570,55 @@ fn decode_rune(text: &[u8]) -> (u32, usize) {
     (ch, size)
 }
 
+#[inline(never)]
+fn runes_of(text: &[u8]) -> Vec<char> {
+    let invalid = |chunk: &std::str::Utf8Chunk| !chunk.invalid().is_empty();
+    text.utf8_chunks()
+        .flat_map(|c| c.valid().chars().chain(invalid(&c).then_some('\u{FFFD}')))
+        .collect()
+}
+
+/// How far `candidate_name` is from `name`, unless it's farther away than `best_distance` or isn't compared at all.
+#[inline(never)]
+fn distance_of_candidate(
+    (name, name_runes): (&[u8], &[char]),
+    candidate_name: &[u8],
+    best_distance: f64,
+) -> Option<f64> {
+    let maximum_length_difference = 2.max((name_runes.len() as f64 * 0.34) as usize);
+    if candidate_name.is_empty()
+        || candidate_name.len().abs_diff(name_runes.len()) > maximum_length_difference
+        || candidate_name == name
+    {
+        return None;
+    }
+    // FOR SPEED: a character that only one of the two names holds, whatever its case, is inserted or deleted on the way from
+    // one to the other, which costs 1. Most names of a like length hold too many of them.
+    let characters_of = |name: &[u8]| {
+        let bit_of = |byte: &u8| 1u64 << (byte.to_ascii_lowercase() & 63);
+        name.iter().map(bit_of).fold(0, |set, bit| set | bit)
+    };
+    if name.is_ascii()
+        && candidate_name.is_ascii()
+        && f64::from((characters_of(name) ^ characters_of(candidate_name)).count_ones())
+            > best_distance
+    {
+        return None;
+    }
+    let candidate_runes = runes_of(candidate_name);
+    // Two-letter names are easy to distinguish, unless they differ only by case.
+    let lower = |runes: &[char]| {
+        runes
+            .iter()
+            .flat_map(|c| c.to_lowercase())
+            .collect::<Vec<_>>()
+    };
+    if candidate_name.len() < 3 && lower(&candidate_runes) != lower(name_runes) {
+        return None;
+    }
+    levenshtein_with_max(name_runes, &candidate_runes, best_distance)
+}
+
 /// `GetSpellingSuggestion`
 pub fn get_spelling_suggestion<'c, T: Copy>(
     name: &[u8],
@@ -1579,37 +1626,13 @@ pub fn get_spelling_suggestion<'c, T: Copy>(
     get_name: impl Fn(T) -> &'c [u8],
     compare: impl Fn(T, T) -> std::cmp::Ordering,
 ) -> Option<T> {
-    let runes = |text: &[u8]| -> Vec<char> {
-        let invalid = |chunk: &std::str::Utf8Chunk| !chunk.invalid().is_empty();
-        text.utf8_chunks()
-            .flat_map(|c| c.valid().chars().chain(invalid(&c).then_some('\u{FFFD}')))
-            .collect()
-    };
-    let name_runes = runes(name);
-    let maximum_length_difference = 2.max((name_runes.len() as f64 * 0.34) as usize);
+    let name_runes = runes_of(name);
     // Candidates farther away than this aren't suggested.
     let mut best_distance = (name_runes.len() as f64 * 0.4).floor() + 0.9;
     let mut best: Option<T> = None;
     for candidate in candidates {
-        let candidate_name = get_name(candidate);
-        if candidate_name.is_empty()
-            || candidate_name.len().abs_diff(name_runes.len()) > maximum_length_difference
-            || candidate_name == name
-        {
-            continue;
-        }
-        let candidate_runes = runes(candidate_name);
-        // Two-letter names are easy to distinguish, unless they differ only by case.
-        let lower = |runes: &[char]| {
-            runes
-                .iter()
-                .flat_map(|c| c.to_lowercase())
-                .collect::<Vec<_>>()
-        };
-        if candidate_name.len() < 3 && lower(&candidate_runes) != lower(&name_runes) {
-            continue;
-        }
-        let Some(distance) = levenshtein_with_max(&name_runes, &candidate_runes, best_distance)
+        let named = (name, &name_runes[..]);
+        let Some(distance) = distance_of_candidate(named, get_name(candidate), best_distance)
         else {
             continue;
         };
@@ -1761,4 +1784,70 @@ bun_core::comptime_string_set! {
         "Warang_Citi", "Wcho", "Wancho", "Xpeo", "Old_Persian", "Xsux", "Cuneiform", "Yezi", "Yezidi", "Yiii", "Yi", "Zanb",
         "Zanabazar_Square", "Zinh", "Inherited", "Qaai", "Zyyy", "Common", "Zzzz", "Unknown",
     };
+}
+
+#[cfg(test)]
+mod spelling_tests {
+    use super::{distance_of_candidate, levenshtein_with_max, runes_of};
+
+    fn names() -> Vec<Vec<u8>> {
+        let written: [&[u8]; 12] = [
+            b"parseInt",
+            b"parseFloat",
+            b"queueMicrotask",
+            b"Promise",
+            b"promises",
+            b"total_sum",
+            b"$total",
+            b"ab",
+            b"Ab",
+            b"x1",
+            b"lastIndexOf",
+            "na\u{ef}ve".as_bytes(),
+        ];
+        let mut names: Vec<Vec<u8>> = written.iter().map(|name| name.to_vec()).collect();
+        let mut state = 1u32;
+        for name in written.iter().filter(|name| name.is_ascii()) {
+            for _ in 0..24 {
+                let mut changed = name.to_vec();
+                for _ in 0..1 + state % 3 {
+                    state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                    let at = (state >> 8) as usize % changed.len();
+                    match state >> 28 {
+                        0..=4 => changed.insert(at, b'a' + (state >> 16) as u8 % 26),
+                        5..=8 if changed.len() > 1 => drop(changed.remove(at)),
+                        9..=12 => changed[at] = b'A' + (state >> 16) as u8 % 26,
+                        _ => changed[at] ^= 0x20 * u8::from(changed[at].is_ascii_alphabetic()),
+                    }
+                }
+                names.push(changed);
+            }
+        }
+        names
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "no unsafe code, 76,000 pairs of names five times")]
+    fn characters_refuse_only_names_that_are_too_far_apart() {
+        let names = names();
+        let mut accepted = 0;
+        for name in &names {
+            let runes = runes_of(name);
+            let most = 2.max((runes.len() as f64 * 0.34) as usize);
+            for candidate in &names {
+                let is_compared = candidate.len().abs_diff(runes.len()) <= most
+                    && candidate != name
+                    && (candidate.len() >= 3 || candidate.eq_ignore_ascii_case(name));
+                for best_distance in [0.9, 1.9, 2.9, 4.9, 6.9] {
+                    let distance =
+                        || levenshtein_with_max(&runes, &runes_of(candidate), best_distance);
+                    let expected = is_compared.then(distance).flatten();
+                    let found = distance_of_candidate((name, &runes), candidate, best_distance);
+                    assert_eq!(found, expected, "{name:?} {candidate:?} {best_distance}");
+                    accepted += usize::from(found.is_some());
+                }
+            }
+        }
+        assert!(accepted > 1000);
+    }
 }

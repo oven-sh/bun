@@ -13,37 +13,65 @@ use crate::bun_json::Expr;
 // `bun_js_printer::PrintJsonOptions` see no mismatch.
 use bun_ast::Indentation;
 use bun_ast::{Log, Source};
+use bun_js_printer as js_printer;
 use bun_paths::is_absolute;
 
 use crate::bun_json as json;
 use crate::initialize_store;
+use std::borrow::Cow;
 
 pub struct MapEntry {
     /// The nodes are allocated in the process heap and never freed, because a mimalloc heap per
     /// entry would cost 30 KB.
     pub root: Expr,
-    pub source: Source,
+    pub source: Source<'static>,
     pub indentation: Indentation,
     indentation_guessed: bool,
     /// Owns the path bytes that `source.path.{text,pretty,name.*}` borrow,
     /// so the source's path slices stay valid for the entry's lifetime.
     /// `StringHashMap` boxes its own key, so keep the duped copy alive here.
     _path_storage: bun_core::ZBox,
-    /// Superseded `source.contents` buffers, pinned so cached `root` slices
-    /// stay valid; freed when the entry drops.
-    pub stale_contents: Vec<std::borrow::Cow<'static, [u8]>>,
+    /// Superseded `source.contents` buffers: slices of an earlier `root` point into them.
+    stale_contents: Vec<Cow<'static, [u8]>>,
 }
 
 impl MapEntry {
-    /// Re-parse `self.source.contents` into `self.root`.
-    ///
-    /// `updatePackageJSONAndInstall` edits a copy of `root`, prints it, and
-    /// writes the printed JSON back into `source.contents`. The caller then
-    /// invokes this to restore the invariant `root == parse(source)`.
-    pub(crate) fn reparse_root(&mut self, log: &mut Log) -> Result<(), Error> {
+    /// `root` as the text of a package.json, in the entry's indentation.
+    pub(crate) fn print(&self, root: Expr) -> Result<Vec<u8>, js_printer::Error> {
+        let mut buffer_writer = js_printer::BufferWriter::init();
+        buffer_writer
+            .buffer
+            .list
+            .reserve(self.source.contents.len() + 1);
+        buffer_writer.append_newline = self.source.contents.last() == Some(&b'\n');
+        let mut writer = js_printer::BufferPrinter::init(buffer_writer);
+        js_printer::print_json(
+            &mut writer,
+            root,
+            &self.source,
+            js_printer::PrintJsonOptions {
+                indent: self.indentation,
+                mangled_props: None,
+                ..Default::default()
+            },
+        )?;
+        Ok(writer.ctx.written_without_trailing_zero().to_vec())
+    }
+
+    /// Replaces the text and the tree together: prints `root`, then parses what it printed.
+    pub fn save(&mut self, root: Expr, log: &mut Log) -> Result<(), Error> {
+        let printed = Source {
+            path: self.source.path,
+            contents: Cow::Owned(self.print(root)?),
+            ..Default::default()
+        };
         let heap = bun_alloc::Arena::borrowing_default();
-        let parsed = parse_package_json(&self.source, log, &heap, false)?;
-        self.root = json::clone_out_of_store(&parsed.root, &self.source, log, &heap)?;
+        let parsed = parse_package_json(&printed, log, &heap, false)?;
+        let root = json::clone_out_of_store(&parsed.root, &printed, log, &heap)?;
+        // Moving the `Vec` keeps its buffer, which `root` points into.
+        let old = core::mem::replace(&mut self.source.contents, printed.contents);
+        self.stale_contents.push(old);
+        self.root = root;
         Ok(())
     }
 }
@@ -209,11 +237,11 @@ impl WorkspacePackageJSONCache {
 
         let value = MapEntry {
             root,
-            source,
+            // SAFETY: `source.path` borrows `key`, which the entry keeps beside it.
+            // The heap address is stable across the move into the map.
+            source: unsafe { source.into_static() },
             indentation: parsed.indentation,
             indentation_guessed: opts.guess_indentation,
-            // `source.path` borrows this allocation; the `Box<[u8]>` heap
-            // address is stable across the move into the map.
             _path_storage: key,
             stale_contents: Vec::new(),
         };

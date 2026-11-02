@@ -12,6 +12,7 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
+  statSync,
 } from "fs";
 import { cp, exists, lstat, mkdir, readlink, rename, rm, symlink, writeFile } from "fs/promises";
 import {
@@ -5843,6 +5844,72 @@ describe.concurrent("binaries", () => {
         expect(err).not.toContain("error:");
         expect(join(packageDir, bin)).toBeValidBin(wins);
         expect({ run, exitCode }).toEqual({ run, exitCode: 0 });
+      }
+    });
+
+    // `bunx <package>` starts the file of the package itself when another package has the name. So the file gets
+    // what a linked bin gets: the mode, and a `#!` line without a carriage return.
+    const claimWithCRLF = (dir: string, name: string) => ({
+      ...claim(dir, name),
+      [`${dir}/claim.js`]: "#!/usr/bin/env node\r\n",
+    });
+    test
+      .skipIf(isWindows)
+      .each<[title: string, linker: string, files: Record<string, object | string>, loser: string]>([
+        [
+          "a workspace package",
+          "hoisted",
+          {
+            "package.json": { name: "foo", workspaces: ["packages/*"], dependencies: direct },
+            ...claimWithCRLF("packages/aaa", "aaa"),
+          },
+          "packages/aaa/claim.js",
+        ],
+        [
+          "a file: directory",
+          "hoisted",
+          {
+            "package.json": { name: "foo", dependencies: { ...direct, aaa: "file:./aaa" } },
+            ...claimWithCRLF("aaa", "aaa"),
+          },
+          "node_modules/aaa/claim.js",
+        ],
+        [
+          "a workspace package in a member's .bin",
+          "isolated",
+          {
+            "package.json": { name: "foo", workspaces: ["packages/*"] },
+            "packages/app/package.json": { name: "app", dependencies: { ...direct, aaa: "workspace:*" } },
+            ...claimWithCRLF("packages/aaa", "aaa"),
+          },
+          "packages/aaa/claim.js",
+        ],
+      ])("the file of %s that does not get it is made executable (%s)", async (_, linker, files, loser) => {
+      const { packageDir, env } = await setupTest();
+      await Promise.all(
+        Object.entries(files).map(([path, content]) =>
+          write(join(packageDir, path), typeof content === "string" ? content : JSON.stringify(content)),
+        ),
+      );
+
+      // The second run finds a tree in which the file is not executable, as an earlier version left it.
+      for (const run of ["fresh", "again"]) {
+        await using proc = spawn({
+          cmd: [bunExe(), "install", "--linker", linker],
+          cwd: packageDir,
+          env,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(err).not.toContain("error:");
+        expect({
+          run,
+          ownerExecute: statSync(join(packageDir, loser)).mode & 0o100,
+          file: readFileSync(join(packageDir, loser), "utf8"),
+          exitCode,
+        }).toEqual({ run, ownerExecute: 0o100, file: "#!/usr/bin/env node\n", exitCode: 0 });
+        chmodSync(join(packageDir, loser), 0o644);
       }
     });
 

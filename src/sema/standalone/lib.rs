@@ -4,17 +4,48 @@
 #![feature(linkage)]
 
 pub mod native;
+pub mod native_libraries;
+#[cfg(any(test, feature = "test_support"))]
+#[path = "../../runtime/cli/typescript_libs.rs"]
+mod typescript_libs;
 
-#[cfg(unix)]
-use core::mem::MaybeUninit;
+/// TypeScript's `lib.*.d.ts` files as Bun ships them.
+#[cfg(any(test, feature = "test_support"))]
+pub const TYPESCRIPT_LIBS: bun_sema_driver::host::BundledLibs = typescript_libs::BUNDLED;
+
+/// Runs `work(i)` for every `i` below `count` on `threads` threads, which have the stack of a thread of `bun check`.
+#[cfg(any(test, feature = "test_support"))]
+pub fn for_each_parallel(threads: usize, count: usize, work: impl Fn(usize) + Sync) {
+    let checked = bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize;
+    // What a test does with a tree checks no stack, and a frame is many times as large without optimization.
+    let stack = checked * if cfg!(debug_assertions) { 16 } else { 1 };
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    std::thread::scope(|scope| {
+        for _ in 0..threads.max(1) {
+            std::thread::Builder::new()
+                .stack_size(stack)
+                .spawn_scoped(scope, || {
+                    native::set_stack_size(checked - (256 << 10));
+                    loop {
+                        let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if i >= count {
+                            break;
+                        }
+                        work(i);
+                    }
+                })
+                .unwrap();
+        }
+    });
+}
 
 /// Returns the column count of the terminal attached to standard output, or 0 if it isn't a terminal.
 pub fn terminal_width() -> usize {
     #[cfg(unix)]
-    // SAFETY: all zeros is a valid `winsize`, which the call fills in.
-    unsafe {
-        let mut size: libc::winsize = MaybeUninit::zeroed().assume_init();
-        if libc::ioctl(1, libc::TIOCGWINSZ, &raw mut size) == 0 {
+    {
+        let mut size: libc::winsize = bun_core::ffi::zeroed();
+        // SAFETY: the call fills in `size`.
+        if unsafe { libc::ioctl(1, libc::TIOCGWINSZ, &raw mut size) } == 0 {
             return usize::from(size.ws_col);
         }
     }
@@ -26,8 +57,7 @@ pub fn terminal_width() -> usize {
 pub fn peak_memory() -> u64 {
     #[cfg(target_os = "macos")]
     {
-        // SAFETY: all zeros is a valid `rusage_info_v4`.
-        let mut info: libc::rusage_info_v4 = unsafe { MaybeUninit::zeroed().assume_init() };
+        let mut info: libc::rusage_info_v4 = bun_core::ffi::zeroed();
         // SAFETY: `info` has the type that `RUSAGE_INFO_V4` fills in, and it outlives the call.
         let failed = unsafe {
             libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast())

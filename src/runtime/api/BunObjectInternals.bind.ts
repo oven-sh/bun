@@ -7,5 +7,4 @@ export const registerMacro = b.fn({
   args: { id: b.f64, callback: b.any },
   capability: "heap",
   throws: true,
-  length: 1,
 });

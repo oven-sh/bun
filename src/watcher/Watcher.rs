@@ -48,7 +48,7 @@ pub const WATCH_OPEN_FLAGS: i32 = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC;
 pub type Event = WatchEvent;
 pub type WatchList = MultiArrayList<WatchItem>;
 pub type HashType = u32;
-pub type WatchItemIndex = u16;
+pub type WatchItemIndex = u32;
 pub const MAX_EVICTION_COUNT: usize = 8096;
 
 const NO_WATCH_ITEM: WatchItemIndex = WatchItemIndex::MAX;
@@ -396,7 +396,7 @@ impl Watcher {
         // handed out for reads: a reader that copied the number before this
         // ran would hit `EBADF`/`EISDIR` after (see `snapshot_package_json`).
         //
-        // We do NOT lock here: the only callers are deferred from
+        // We do NOT lock here: the only callers run inside
         // `WatcherContext::on_file_update`, which is itself invoked from
         // `dispatch_file_updates` while `self.mutex` is already held.
         // `bun_threading::Mutex` is non-recursive — re-locking here is

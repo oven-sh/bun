@@ -3,14 +3,10 @@ use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 
 use crate::generated_bindgen::timer::js_Timeout as js;
 
-use super::Kind;
+use super::{Clock, Kind};
 
-// Struct + `RefCounted`/`Default` impls + the forwarder host-fns
-// (`to_primitive`/`do_ref`/`do_unref`/`has_ref`/`get_destroyed`/`dispose`/
-// `constructor`/`finalize`/`ref_`/`deref`/`deinit`/`init_with`) — see
-// `impl_timer_object!` in `super` (timer/mod.rs).
 // `Timeout`, declared in `Timer.bind.ts`.
-super::impl_timer_object!(TimeoutObject, TimeoutObject, "Timeout");
+super::impl_timer_object!(TimeoutObject);
 
 impl TimeoutObject {
     pub(crate) fn init(
@@ -20,11 +16,12 @@ impl TimeoutObject {
         interval: u32,
         callback: JSValue,
         arguments: JSValue,
+        clock: Clock,
     ) -> JSValue {
-        Self::init_with(cx, id, kind, interval, callback, arguments)
+        Self::init_with(cx, id, kind, interval, callback, arguments, clock)
     }
 
-    pub(crate) fn do_refresh(
+    pub(crate) fn refresh(
         this: &Self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
@@ -39,6 +36,21 @@ impl TimeoutObject {
     ) -> JsWrapper<'a, Self> {
         this.internals.cancel(cx.global().bun_vm_ptr());
         this_value
+    }
+
+    pub(crate) fn get_on_timeout(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
+        js::callback_get_cached(this_value.to_js())
+            .unwrap()
+            .without_async_context()
+    }
+
+    pub(crate) fn set_on_timeout(
+        _this: &Self,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        value: JsLocal<'_>,
+    ) {
+        js::callback_set_cached(this_value.to_js(), cx.global(), value.to_js());
     }
 
     pub(crate) fn get_idle_start(&self, this_value: JsWrapper<'_, Self>) -> JSValue {

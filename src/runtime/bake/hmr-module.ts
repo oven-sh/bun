@@ -14,6 +14,7 @@ import {
   __legacyMetadataTS,
   __MEMO_CACHE_SENTINEL,
   __name,
+  __rawTemplate,
   __using,
 } from "../../runtime.bun";
 // This import is different based on client vs server side.
@@ -768,7 +769,14 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
     mod.selfAccept = null;
     mod.depAccepts = null;
 
-    const modOrPromise = loadModuleAsync(mod.id, false, null);
+    let modOrPromise: HMRModule | Promise<HMRModule>;
+    try {
+      modOrPromise = loadModuleAsync(mod.id, false, null);
+    } catch (e) {
+      // The rest of the update still loads, or those modules would keep their old code.
+      promises.push(Promise.reject(e));
+      continue;
+    }
     if (modOrPromise === mod) {
       if (selfAccept) {
         selfAccept(getEsmExports(mod));
@@ -963,6 +971,7 @@ registerSynthetic("bun:wrap", {
   __legacyMetadataTS,
   __using,
   __callDispose,
+  __rawTemplate,
   __MEMO_CACHE_SENTINEL,
   __EARLY_RETURN_SENTINEL,
 });

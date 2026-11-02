@@ -1,0 +1,11 @@
+exports.known = 1;
+new Function("target", "target.fromText = 2; target.known += 10; delete target.gone;")(exports);
+exports.gone = 3;
+(0, eval)("(function (target) { target.fromEval = 4; Object.defineProperty(target, 'gone', { value: 'fixed', enumerable: true }); })")(exports);
+new Function("target", "delete target.known; target.early = 'from text';")(exports);
+exports.known = "created again";
+exports.early = "from the body";
+exports.last = 5;
+new Function("target", "Object.preventExtensions(target);")(exports);
+exports.tooLate = 6;
+exports.last = "still writable";

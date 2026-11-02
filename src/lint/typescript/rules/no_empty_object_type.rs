@@ -14,24 +14,24 @@ enum AllowInterfaces {
     WithSingleExtends,
 }
 
-const NO_EMPTY_INTERFACE: Message = Message::new(
+const NO_EMPTY_INTERFACE: &Message = &Message::new(
     "noEmptyInterface",
     "An empty interface declaration allows any non-nullish value, including literals like `0` and `\"\"`.\n- If that's what you want, disable this lint rule with an inline comment or configure the '{{ option }}' rule option.\n- If you want a type meaning \"any object\", you probably want `object` instead.\n- If you want a type meaning \"any value\", you probably want `unknown` instead.",
 );
-const NO_EMPTY_INTERFACE_WITH_SUPER: Message = Message::new(
+const NO_EMPTY_INTERFACE_WITH_SUPER: &Message = &Message::new(
     "noEmptyInterfaceWithSuper",
     "An interface declaring no members is equivalent to its supertype.",
 );
-const NO_EMPTY_OBJECT: Message = Message::new(
+const NO_EMPTY_OBJECT: &Message = &Message::new(
     "noEmptyObject",
     "The `{}` (\"empty object\") type allows any non-nullish value, including literals like `0` and `\"\"`.\n- If that's what you want, disable this lint rule with an inline comment or configure the '{{ option }}' rule option.\n- If you want a type meaning \"any object\", you probably want `object` instead.\n- If you want a type meaning \"any value\", you probably want `unknown` instead.",
 );
-const REPLACE_EMPTY_INTERFACE: Message =
-    Message::new("replaceEmptyInterface", "Replace empty interface with `{{replacement}}`.");
-const REPLACE_EMPTY_INTERFACE_WITH_SUPER: Message =
-    Message::new("replaceEmptyInterfaceWithSuper", "Replace empty interface with a type alias.");
-const REPLACE_EMPTY_OBJECT_TYPE: Message =
-    Message::new("replaceEmptyObjectType", "Replace `{}` with `{{replacement}}`.");
+const REPLACE_EMPTY_INTERFACE: &Message =
+    &Message::new("replaceEmptyInterface", "Replace empty interface with `{{replacement}}`.");
+const REPLACE_EMPTY_INTERFACE_WITH_SUPER: &Message =
+    &Message::new("replaceEmptyInterfaceWithSuper", "Replace empty interface with a type alias.");
+const REPLACE_EMPTY_OBJECT_TYPE: &Message =
+    &Message::new("replaceEmptyObjectType", "Replace `{}` with `{{replacement}}`.");
 
 const REPLACEMENTS: [&str; 2] = ["object", "unknown"];
 

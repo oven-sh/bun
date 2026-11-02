@@ -1,6 +1,6 @@
 use bun_glob::BunGlobWalker as GlobWalker;
 use bun_glob::walk;
-use bun_jsc::bindgen::{self, IntoError, JsHeap, JsLocal, JsScope, JsWrapper};
+use bun_jsc::bindgen::{self, IntoError, JsHeap, JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     JSGlobalObject, JSPromiseStrong, JSValue, Job, JobContext, JsResult, JsThread, SysErrorJsc as _,
@@ -76,7 +76,13 @@ impl ScanOpts {
         }
 
         let mut path_buf2 = [0u8; MAX_PATH_BYTES * 2];
-        let cwd_str: Box<[u8]> = if !absolute {
+        let in_executable = bun_core::working_directory_in_executable();
+        let cwd_str: Box<[u8]> = if let Some(directory) = in_executable {
+            Box::from(join_string_buf::<platform::Auto>(
+                &mut path_buf2,
+                &[directory, cwd],
+            ))
+        } else if !absolute {
             Box::from(join_string_buf::<platform::Auto>(&mut path_buf2, &[cwd]))
         } else {
             let mut path_buf = bun_paths::path_buffer_pool::get();
@@ -108,7 +114,8 @@ impl ScanOpts {
             cwd: match options.cwd {
                 Some(cwd) => Self::parse_cwd(cwd, options.absolute, fn_name)?,
                 None => None,
-            },
+            }
+            .or_else(|| bun_core::working_directory_in_executable().map(Box::from)),
             dot: options.dot,
             absolute: options.absolute,
             only_files: options.only_files,
@@ -240,7 +247,11 @@ pub(crate) mod standalone_accessor {
             let mut buf = bun_paths::path_buffer_pool::get();
             let resolved = resolve(handle, path.as_bytes(), &mut buf);
             Graph::get_ref()
-                .and_then(|graph| graph.stat(resolved))
+                .and_then(|graph| {
+                    graph
+                        .stat(resolved)
+                        .or_else(|| graph.source_path_stat(resolved))
+                })
                 .ok_or_else(|| SysError::from_code(E::ENOENT, Tag::fstatat))
         }
 
@@ -398,18 +409,29 @@ impl Glob {
 
         // Match the walker's root choice (`Iterator::init`): an absolute
         // pattern roots at its literal prefix and ignores the cwd, a relative
-        // pattern roots at the cwd. A `/$bunfs/` root walks the graph.
+        // pattern roots at the cwd. A `/$bunfs/` root walks the graph, as does an embedded directory that is not on disk.
         let pattern_is_absolute = resolve_path::is_absolute(self.pattern.slice())
             || (cfg!(windows) && resolve_path::is_absolute_posix(self.pattern.slice()));
-        let in_standalone_graph = bun_standalone_graph::Graph::get_ref().is_some()
-            && if pattern_is_absolute {
-                bun_standalone_graph::is_bun_standalone_file_path(self.pattern.slice())
+        let in_standalone_graph = bun_standalone_graph::Graph::get_ref().is_some_and(|graph| {
+            if pattern_is_absolute {
+                let pattern = self.pattern.slice();
+                let literal = pattern
+                    .iter()
+                    .position(|c| b"*?[{".contains(c))
+                    .unwrap_or(pattern.len());
+                let folder = pattern[..literal]
+                    .iter()
+                    .rposition(|&c| resolve_path::is_sep_any(c))
+                    .unwrap_or(0);
+                bun_standalone_graph::is_bun_standalone_file_path(pattern)
+                    || graph.owns_directory(&pattern[..folder])
             } else {
                 match_opts
                     .cwd
                     .as_deref()
-                    .is_some_and(bun_standalone_graph::is_bun_standalone_file_path)
-            };
+                    .is_some_and(|cwd| graph.owns_directory(cwd))
+            }
+        });
 
         if in_standalone_graph {
             return Ok(AnyGlobWalker::Standalone(
@@ -442,11 +464,11 @@ impl Glob {
     }
 
     pub(crate) fn scan<'a>(
-        this: JsWrapper<'a, Self>,
+        &self,
         cx: &mut JsScope<'a>,
         options: Option<GlobScanArgument<'a>>,
     ) -> Result<JsLocal<'a>, ScanError<'a>> {
-        let walker = this.with(&cx.payloads, |glob| glob.make_glob_walker(options, "scan"))?;
+        let walker = self.make_glob_walker(options, "scan")?;
         let promise = JSPromiseStrong::init(cx.global());
         let value = promise.value();
         Job::<WalkTask>::schedule(

@@ -19,12 +19,12 @@ const contentOp = (returns: b.Type) =>
   }) as const;
 
 /** `b.any`: an accessor has one type, and the getter gives a string or nothing where the setter takes `ToString` of any value. */
-const assignable = { getter: b.any, setter: true, capability: "js", throws: true } as const;
+const assignable = (nothing: "null" | "undefined") =>
+  ({ getter: b.any.returning("string", nothing), setter: true, capability: "js", throws: true }) as const;
 
 export const TextChunk = b.class({
   rustPath: "crate::api::html_rewriter::TextChunk",
   refCounted: true,
-  configurable: false,
   proto: {
     after: contentOp(b.self.optional),
     before: contentOp(b.self.optional),
@@ -37,12 +37,16 @@ export const TextChunk = b.class({
 });
 
 /** `b.any`: a string, `null` if the doctype has none, `undefined` after the handler returns. */
-const doctypeField = { getter: b.any, cache: true, capability: "js", throws: true } as const;
+const doctypeField = {
+  getter: b.any.returning("string", "null", "undefined"),
+  cache: true,
+  capability: "js",
+  throws: true,
+} as const;
 
 export const DocType = b.class({
   rustPath: "crate::api::html_rewriter::DocType",
   refCounted: true,
-  configurable: false,
   proto: {
     name: doctypeField,
     publicId: doctypeField,
@@ -55,7 +59,6 @@ export const DocType = b.class({
 export const DocEnd = b.class({
   rustPath: "crate::api::html_rewriter::DocEnd",
   refCounted: true,
-  configurable: false,
   proto: {
     append: contentOp(b.self.nullable),
   },
@@ -64,25 +67,23 @@ export const DocEnd = b.class({
 export const Comment = b.class({
   rustPath: "crate::api::html_rewriter::Comment",
   refCounted: true,
-  configurable: false,
   proto: {
     after: contentOp(b.self.nullable),
     before: contentOp(b.self.nullable),
     remove: chainable(b.self.nullable),
     removed: { getter: b.bool.optional },
     replace: contentOp(b.self.nullable),
-    text: assignable,
+    text: assignable("null"),
   },
 });
 
 export const EndTag = b.class({
   rustPath: "crate::api::html_rewriter::EndTag",
   refCounted: true,
-  configurable: false,
   proto: {
     after: contentOp(b.self.nullable),
     before: contentOp(b.self.nullable),
-    name: assignable,
+    name: assignable("undefined"),
     remove: chainable(b.self.optional),
   },
 });
@@ -94,10 +95,10 @@ export const AttributeIterator = b.class({
   rustPath: "crate::api::html_rewriter::AttributeIterator",
   refCounted: true,
   finalize: true,
-  configurable: false,
   proto: {
-    next: { returns: AttributeIteratorResult, capability: "heap", throws: true },
-    "@@iterator": { ...chainable(b.self), rustName: "get_this" },
+    /** Neither keeps the receiver. */
+    next: { returns: AttributeIteratorResult, capability: "heap", throws: true, uses: { this: [] } },
+    "@@iterator": { ...chainable(b.self), rustName: "get_this", uses: { this: [{ use: "Returns" }] } },
   },
 });
 
@@ -106,7 +107,6 @@ const named = { args: { name: text }, expected: { name: "Expected string" } } as
 export const Element = b.class({
   rustPath: "crate::api::html_rewriter::Element",
   refCounted: true,
-  configurable: false,
   proto: {
     after: contentOp(b.self.optional),
     append: contentOp(b.self.optional),
@@ -138,7 +138,25 @@ export const Element = b.class({
       throws: true,
     },
     setInnerContent: contentOp(b.self.optional),
-    tagName: assignable,
+    tagName: assignable("undefined"),
+  },
+});
+
+export const HTMLRewriter = b.class({
+  rustPath: "crate::api::html_rewriter::HTMLRewriter",
+  construct: {},
+  /** The `on()` / `onDocument()` callbacks: `HandlerList` in html_rewriter.rs. */
+  internalFields: ["handlers"],
+  proto: {
+    on: { ...chainable(b.self), args: { selector: b.any, handlers: b.any }, capability: "js", throws: true },
+    onDocument: { ...chainable(b.self), args: { handlers: b.any }, capability: "js", throws: true },
+    transform: {
+      args: { input: b.any },
+      returns: b.any.returning("string", "object"),
+      capability: "js",
+      throws: true,
+      passThis: true,
+    },
   },
 });
 

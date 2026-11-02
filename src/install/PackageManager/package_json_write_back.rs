@@ -11,7 +11,7 @@ use crate::lockfile::override_map::OverrideMap;
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{Lockfile, Package};
 use crate::resolution::Tag as ResolutionTag;
-use crate::{Features, PackageID, PackageNameHash, invalid_package_id};
+use crate::{DependencyID, Features, PackageID, PackageNameHash, invalid_package_id};
 
 use super::add_catalog;
 use super::add_remove_with_filter::{
@@ -19,7 +19,6 @@ use super::add_remove_with_filter::{
 };
 use super::options::Do;
 use super::package_json_editor::{self as PackageJSONEditor, Declared, EditOptions};
-use super::update_package_json_and_install::print_package_json_into_cache_entry;
 use super::workspace_manifests::same_row;
 use super::workspace_package_json_cache::{GetJSONOptions, GetResult, WorkspacePackageJSONCache};
 use super::{PackageManager, Subcommand, UpdateRequest};
@@ -97,7 +96,7 @@ pub fn write_migrated(manager: &mut PackageManager) {
         bun_core::pretty_errorln!(
             "<d>{} in <r><green>{}<r>",
             file.edits.join(", "),
-            bstr::BStr::new(FileSystem::instance().relative_to(&file.target.package_json_path)),
+            bstr::BStr::new(FileSystem::get().relative_to(&file.target.package_json_path)),
         );
     }
 }
@@ -288,7 +287,7 @@ fn edit_update_targets(
     edited: &mut Vec<EditedPackageJson>,
     exact: bool,
 ) -> crate::Result<()> {
-    let top_level = FileSystem::instance().top_level_dir();
+    let top_level = FileSystem::get().top_level_dir();
     let mut selected: Vec<WorkspaceTarget> = Vec::new();
     {
         let lockfile: &Lockfile = &manager.lockfile;
@@ -487,7 +486,7 @@ fn sync_lockfile(
     if overrides_changed && !manager.options.log_level.is_silent() {
         let _ = log.print(std::ptr::from_mut(Output::error_writer()));
     }
-    let mut links = false;
+    let mut rewritten: Vec<DependencyID> = Vec::new();
     for (i, pkg) in &parsed {
         let target_id = target_ids[*i];
         if target_id == invalid_package_id {
@@ -568,9 +567,7 @@ fn sync_lockfile(
             *lf.catalogs = scratch.catalogs.clone(known, sbuf, &mut builder)?;
         }
         builder.clamp();
-        for &(ti, _) in &changed {
-            links |= manager.lockfile.bind_workspace_link(row.off + ti as u32);
-        }
+        rewritten.extend(changed.iter().map(|&(ti, _)| row.off + ti as DependencyID));
     }
     // `steer_used_catalogs_to_latest` ran, also when the root is not edited.
     if manager.options.do_.contains(Do::UPDATE_TO_LATEST)
@@ -593,6 +590,12 @@ fn sync_lockfile(
         *lf.overrides = scratch.overrides.clone(known, sbuf, &mut builder)?;
         builder.clamp();
     }
+    // An override can decide a rewritten row, so the rows are bound once the overrides are synced.
+    let link_workspace_packages = manager.options.link_workspace_packages;
+    let mut links = false;
+    for row in rewritten {
+        links |= (manager.lockfile).bind_workspace_link(row, link_workspace_packages);
+    }
     Ok(Synced { links })
 }
 
@@ -614,9 +617,9 @@ fn unchanged_on_disk(manager: &mut PackageManager, target: &WorkspaceTarget) -> 
     }
     // Printing the file unchanged can already give different bytes. That alone isn't a reason to
     // write it.
-    let root = on_disk.root;
-    print_package_json_into_cache_entry(on_disk, root);
-    *on_disk.source.contents == *printed
+    on_disk
+        .print(on_disk.root)
+        .is_ok_and(|reprinted| *reprinted == *printed)
 }
 
 /// Phase 2 (after bun.lock is saved): add `trustedDependencies` learned during the install and write every edited entry whose bytes differ from disk.

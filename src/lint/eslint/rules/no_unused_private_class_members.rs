@@ -7,11 +7,11 @@ use rustc_hash::FxHashMap;
 /// Disallow unused private class members.
 pub struct NoUnusedPrivateClassMembers;
 
-const UNUSED_PRIVATE_CLASS_MEMBER: Message = Message::new(
+const UNUSED_PRIVATE_CLASS_MEMBER: &Message = &Message::new(
     "unusedPrivateClassMember",
     "'{{classMemberName}}' is defined but never used.",
 );
-const REMOVE_UNUSED_PRIVATE_CLASS_MEMBER: Message = Message::new(
+const REMOVE_UNUSED_PRIVATE_CLASS_MEMBER: &Message = &Message::new(
     "removeUnusedPrivateClassMember",
     "Remove unused private class member '{{classMemberName}}'.",
 );

@@ -1,16 +1,18 @@
 import * as b from "../../codegen/bindgen-lib.ts";
+import * as table from "../../codegen/builtins/lib.ts";
 
 export const MySQLConnection = b.class({
   rustPath: "crate::mysql::js_my_sql_connection::JSMySQLConnection",
   refCounted: true,
   finalize: true,
-  configurable: false,
+  /** src/js/private.d.ts declares PostgresSQLConnection as an extension of this interface. Neither class extends the other. */
+  types: [table.viewType("$Bindgen.MySQLConnection")],
   internalFields: ["onconnect", "onclose", "onretire", "checkServerIdentity", "columnTransform"],
   proto: {
-    close: { rustName: "do_close", capability: "js" },
-    flush: { rustName: "do_flush" },
-    hold: { rustName: "do_hold" },
+    close: { capability: "js" },
+    flush: {},
+    hold: {},
     inTransaction: { getter: b.bool },
-    unhold: { rustName: "do_unhold", capability: "js" },
+    unhold: { capability: "js" },
   },
 });

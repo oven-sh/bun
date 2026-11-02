@@ -1,0 +1,22 @@
+# process.emitWarning(eval)
+# The program hands the evaluator itself to a built-in that keeps its operand. A built-in that has come into unknown hands is a value like any other: a mention, and no call.
+# The run time refuses an evaluator in an image whose build saw no application of one
+# RUN: valueflow-solve unseen
+# CHECK-NOT: unseen EvaluatesText
+# CHECK: unseen-code no
+# RUN(CALLS): valueflow-solve calls
+# CALLS: f0 v3 -> {{*}}ProcessEmitWarning
+# RUN(WHY): valueflow-why escaped-builtin=Eval
+# WHY: escaped-builtin=Eval
+# WHY-NEXT: n0 escaped
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Eval
+    v1 = Builtin builtin=Process
+    v2 = PropGet v1 key="emitWarning"
+    v3 = Call v2, v1, v0 calleeKey="emitWarning"
+    Return
+}

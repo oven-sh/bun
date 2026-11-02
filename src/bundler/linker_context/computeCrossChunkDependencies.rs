@@ -10,9 +10,9 @@ use crate::{
     RefImportData, ResolvedExports, StableRef, WrapKind, chunk,
 };
 
-pub(crate) fn compute_cross_chunk_dependencies(
-    c: &mut LinkerContext,
-    chunks: &mut [Chunk],
+pub(crate) fn compute_cross_chunk_dependencies<'a>(
+    c: &mut LinkerContext<'a>,
+    chunks: &mut [Chunk<'a>],
 ) -> Result<(), bun_alloc::AllocError> {
     if !c.graph.code_splitting {
         // No need to compute cross-chunk dependencies if there can't be any
@@ -89,7 +89,7 @@ struct CrossChunkDependencies<'a, 'bump> {
     // the caller's sequential `walk` loop; `walk` only reads `chunks[other].unique_key`
     // (disjoint from the per-iteration `&mut Chunk`). The slice outlives the struct
     // (caller stack frame).
-    chunks: bun_ptr::BackRef<[Chunk]>,
+    chunks: bun_ptr::BackRef<[Chunk<'bump>]>,
     parts: &'a [bun_ast::PartList<'bump>],
     import_records: &'a mut [bun_ast::import_record::List<'bump>],
     flags: &'a [js_meta::Flags],

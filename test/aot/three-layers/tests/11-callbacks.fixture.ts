@@ -1,0 +1,17 @@
+import { check } from "../src/show";
+import { callTwice, compose, curry, once, argumentsOf, sortWith, mapValues, callMethod, Legacy } from "fake-shapes";
+import fallback from "fake-shapes";
+import { apply, eachPair, reduceNumbers, makeAdder, Vec2 } from "fake-typed";
+import { register, runAll, cached, hits, callbacks } from "../src/store";
+import { makeUser, Square } from "../src/models";
+const F = "11";
+check(F, "this", () => { const o = { who: "test", f(this: any) { return this?.who; } }; return [callTwice(o.f), callTwice(o.f.bind(o)), callTwice(function (this: any) { "use strict"; return this === undefined ? "undefined" : this.who; })]; });
+check(F, "compose, curry, once", () => { let calls = 0; const o = once((n: number) => { calls++; return n * 2; }); const c = curry((a: number, b: number, c: number) => a + b + c); return [compose((x: number) => x + 1, (x: number) => x * 2, makeAdder(3))(1), c(1)(2)(3), c(1, 2)(3), c(1)(2, 3), o(2), o(5), calls]; });
+check(F, "typed higher order", () => { const pairs: string[] = []; eachPair(["a", "b", "c"], (a, b, i) => pairs.push(a + b + i)); return [apply(2, n => n * 2), apply(new Vec2(1, 2), v => v.length), apply("s", s => s.length), pairs, reduceNumbers([1, 2, 3], (a, b) => a + b, 0), reduceNumbers([1.5, 2], Math.max, 0), reduceNumbers([], (a, b) => a + b, -0)]; });
+check(F, "stored and run later", () => { let total = 0; const n = register(v => (total += v)); register(makeAdder(10)); register(Math.abs); return [n > 0, runAll(-5).slice(-3), total, callbacks.length >= 3]; });
+check(F, "cache of the app", () => { const a = cached("k" + F, () => makeUser(1)), b = cached("k" + F, () => makeUser(2)); return [a === b, hits("k" + F), hits("none")]; });
+check(F, "sort with comparators", () => [sortWith([3, 1, 2]), sortWith([3, 1, 10, 2]), sortWith([3, 1, 10, 2], (a, b) => a - b), sortWith([1, 2, 3, 4].map(makeUser), (a, b) => b.roles.length - a.roles.length || b.id - a.id).map(u => u.id), sortWith(["b", "a", "C"], (a, b) => a.localeCompare(b))]);
+check(F, "arguments and lengths", () => [argumentsOf(1, "a", null), argumentsOf(), callTwice.length, compose.length, makeAdder.length, makeAdder(1).length, makeAdder(1).name, fallback(null), fallback(0), fallback.name]);
+check(F, "call, apply, bind of foreign functions", () => [Vec2.prototype.parts.call({ x: 1, y: 2 } as Vec2), Square.prototype.area.apply({ side: 3 } as Square), callMethod(new Square("s", 2), "area"), callMethod([3, 1], "sort"), callMethod("abc", "slice", 1), Vec2.prototype.add.bind(new Vec2(1, 1))(new Vec2(2, 2)).parts(), makeAdder.bind(null, 5)()(1)]);
+check(F, "old style constructors", () => [new (Legacy as any)("n").greet(), (Legacy as any)("called").greet(), Legacy.version, (Legacy as any)("x") instanceof (Legacy as any), Object.keys(new (Legacy as any)("k"))]);
+check(F, "callbacks of built-ins", () => [[1, 2, 3].map(makeAdder(1)), ["1", "2", "3"].map(Number), [makeUser(1), makeUser(2)].find(u => u.id === 2)?.name, mapValues({ a: 1 }, makeAdder(1)), "a-b".replace(/-/, () => fallback(null) as string), Array.from({ length: 2 }, (_, i) => makeAdder(i)(1)), JSON.stringify([3, 4].flatMap(n => [n, makeAdder(n)(n)]))]);

@@ -444,7 +444,7 @@ impl<'a> Installer<'a> {
         if let crate::patch_install::Callback::Apply(apply) = &mut patch_task.callback {
             if apply.logger.has_errors() {
                 let mut log = Log::init();
-                apply.logger.clone_to_with_recycled(&mut log, true);
+                apply.logger.append_to(&mut log);
                 return Err(TaskError::Patching(log));
             }
             let _ = apply
@@ -2829,9 +2829,9 @@ impl<'a> Installer<'a> {
     /// `check_link_entries` bounded the length. Normalized: a Windows junction resolves no `..`.
     fn link_target_path<'b>(&self, target: &[u8], buf: &'b mut paths::PathBuffer) -> &'b [u8] {
         let base: &[u8] = if crate::dependency::is_link_path(target) {
-            bun_fs::FileSystem::instance().top_level_dir()
+            bun_fs::FileSystem::get().top_level_dir()
         } else {
-            &self.manager().global_link_dir_path
+            self.manager().global_link_dir_path
         };
         debug_assert!(!base.is_empty());
         let len = paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(
@@ -2950,7 +2950,7 @@ fn append_workspace_path(buf: &mut impl PathLike, workspace_path: &[u8]) -> sys:
     }
     let mut join_buf = paths::path_buffer_pool::get();
     let absolute = paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(
-        bun_fs::FileSystem::instance().top_level_dir(),
+        bun_fs::FileSystem::get().top_level_dir(),
         &mut join_buf[..],
         &[workspace_path],
     );
@@ -3016,12 +3016,15 @@ pub(crate) fn remove_link(path: &ZStr) -> sys::Result<()> {
     sys::unlink(path)
 }
 
-/// EACCES/EPERM: FUSE (e.g. Android SDCARD) does not support hardlinks
+/// EACCES/EPERM: FUSE (e.g. Android SDCARD) does not support hardlinks.
+/// Only the link itself can say that. A `mkdir` or the walk of the package fails with the same
+/// errnos, and a copy does not avoid those.
 fn needs_copy(hardlink_err: &sys::Error) -> bool {
-    matches!(
-        hardlink_err.get_errno(),
-        sys::Errno::EXDEV | sys::Errno::EACCES | sys::Errno::EPERM
-    )
+    hardlink_err.syscall == sys::Tag::link
+        && matches!(
+            hardlink_err.get_errno(),
+            sys::Errno::EXDEV | sys::Errno::EACCES | sys::Errno::EPERM
+        )
 }
 
 fn os_path(path: &[paths::OSPathChar]) -> bun_core::fmt::FormatOSPath<'_> {

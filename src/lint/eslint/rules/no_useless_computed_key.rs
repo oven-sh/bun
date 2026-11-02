@@ -5,7 +5,7 @@ pub struct NoUselessComputedKey {
     enforces_for_class_members: bool,
 }
 
-const UNNECESSARILY_COMPUTED_PROPERTY: Message = Message::new(
+const UNNECESSARILY_COMPUTED_PROPERTY: &Message = &Message::new(
     "unnecessarilyComputedProperty",
     "Unnecessarily computed property [{{property}}] found.",
 );

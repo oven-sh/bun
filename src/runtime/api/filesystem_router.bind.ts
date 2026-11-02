@@ -1,4 +1,5 @@
 import * as b from "../../codegen/bindgen-lib.ts";
+import { Request, Response } from "../webcore/response.bind.ts";
 
 export const FileSystemRouterOptions = b.dictionary(
   {
@@ -12,13 +13,12 @@ export const FileSystemRouterOptions = b.dictionary(
 );
 
 const text = { getter: b.string.utf8, cache: true } as const;
-const queryObject = { getter: b.any, cache: true, capability: "heap", throws: true } as const;
+const queryObject = { getter: b.any.returning("object"), cache: true, capability: "heap", throws: true } as const;
 
 export const RouteKind = b.enumeration(["exact", "catch-all", "optional-catch-all", "dynamic"]);
 
 export const MatchedRoute = b.class({
   rustPath: "crate::api::filesystem_router::MatchedRoute",
-  configurable: false,
   proto: {
     filePath: text,
     kind: { getter: RouteKind, cache: true },
@@ -34,15 +34,14 @@ export const MatchedRoute = b.class({
 
 export const Routable = b.union({
   path: b.string.allowStringObject,
-  request: b.classRef("Request"),
-  response: b.classRef("Response"),
+  request: Request,
+  response: Response,
 });
 
 export const RouterStyle = b.enumeration(["nextjs"]);
 
 export const FileSystemRouter = b.class({
   rustPath: "crate::api::filesystem_router::FileSystemRouter",
-  configurable: false,
   construct: {
     args: { options: FileSystemRouterOptions },
     expected: { options: "Expected object" },
@@ -60,8 +59,23 @@ export const FileSystemRouter = b.class({
       throws: true,
     },
     origin: { getter: b.string.utf8.nullable, cache: true },
-    reload: { returns: b.self, capability: "js", throws: true },
+    reload: { returns: b.self, capability: "js", throws: true, passThis: true },
     routes: { getter: b.record(b.string.utf8), cache: true },
     style: { getter: RouterStyle, cache: true },
+  },
+});
+
+/** `frameworkRouterInternals.FrameworkRouter` of `bun:internal-for-testing`. */
+export const FrameworkFileSystemRouter = b.class({
+  rustPath: "crate::bake::router::JSFrameworkRouter",
+  construct: { args: { options: b.any }, capability: "js", throws: true, length: 0 },
+  proto: {
+    match: {
+      args: { path: b.string.loose.utf8 },
+      returns: b.any.returning("object", "null"),
+      capability: "js",
+      throws: true,
+    },
+    toJSON: { returns: b.any.returning("object"), capability: "js", throws: true },
   },
 });

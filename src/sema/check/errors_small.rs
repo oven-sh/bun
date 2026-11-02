@@ -56,7 +56,7 @@ impl<'p> Checker<'p, '_> {
             // `namesShareScope`: in the body of a function, a module or a file.
             while scope.is_some()
                 && match bound.scopes[scope.idx()].kind {
-                    ScopeKind::Block => true,
+                    ScopeKind::Block | ScopeKind::With(_) => true,
                     // A `ClassStaticBlockDeclaration` isn't function-like.
                     ScopeKind::Fn(f) => hir[f].kind == FnKind::StaticBlock,
                     _ => false,
@@ -87,7 +87,7 @@ impl<'p> Checker<'p, '_> {
                         });
                     if is_lexical {
                         let name = Arg::Atom(name);
-                        self.error_at((file, hir[pat].pos, 0), 2481, &[name, name]);
+                        self.early_error_at((file, hir[pat].pos, 0), 2481, &[name, name]);
                     }
                     break;
                 }
@@ -107,7 +107,7 @@ impl<'p> Checker<'p, '_> {
         cond_expr: ExprId,
         body: Parent,
     ) {
-        if self.p.files.options.strict_null_checks {
+        if self.reports_null_checks(file) {
             let body = match body {
                 Parent::Expr(e) => self.hir(file).child(e),
                 body => self.hir(file).node(body),
@@ -124,12 +124,17 @@ impl<'p> Checker<'p, '_> {
         is_and: bool,
         left: ExprId,
     ) {
-        if !self.p.files.options.strict_null_checks {
+        if !self.reports_null_checks(file) {
             return;
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
-        // Walks up out of the chain it's part of.
+        // Walks up out of the chain it's part of. FOR SPEED, as in `parent_of_whole_expression`: a
+        // long walk notes where it ends for every `LONG`th node it passes. Without this, the n
+        // operands of a chain take n * n steps.
+        const LONG: u32 = 32;
         let mut parent = bound.parent_of_expr(e);
+        let mut steps = 0;
+        let mut passed = smallvec::SmallVec::<[ExprId; 4]>::new();
         while let Parent::Expr(p) = parent
             && matches!(
                 hir[p].kind,
@@ -139,7 +144,21 @@ impl<'p> Checker<'p, '_> {
                 }
             )
         {
+            steps += 1;
+            if steps >= LONG {
+                let known = &self.flow_memo.parents_of_logical_chains;
+                if let Some(&above) = known.get(&(file, p)) {
+                    parent = above;
+                    break;
+                }
+                if steps % LONG == 0 {
+                    passed.push(p);
+                }
+            }
             parent = bound.parent_of_expr(p);
+        }
+        for below in passed {
+            (self.flow_memo.parents_of_logical_chains).insert((file, below), parent);
         }
         let body = match parent {
             Parent::Stmt(s) if s.is_some() => match hir[s].kind {
@@ -212,7 +231,7 @@ impl<'p> Checker<'p, '_> {
         let start = self.start_inside_parentheses(file, location);
         // An enum member has a constant value.
         if let (TypeData::EnumLit { value, .. }, ExprKind::Dot { obj, .. }) =
-            (self.data(ty), hir[location].kind)
+            (self.data(ty), hir.checked_kind(location))
             && self.is_resolved_to_an_enum(file, obj)
         {
             // `evaluator.IsTruthy`
@@ -232,7 +251,7 @@ impl<'p> Checker<'p, '_> {
             return;
         }
         // `isPropertyExpressionCast`
-        if matches!(hir[location].kind, ExprKind::Dot { obj, .. } if matches!(hir[obj].kind, ExprKind::As { .. } | ExprKind::AsConst(_)))
+        if matches!(hir.checked_kind(location), ExprKind::Dot { obj, .. } if matches!(hir[obj].kind, ExprKind::As { .. } | ExprKind::AsConst(_)))
             || !self.can_be_truthy(ty)
         {
             return;
@@ -279,7 +298,7 @@ impl<'p> Checker<'p, '_> {
         if is_parenthesized(self.hir(file), e) {
             return false;
         }
-        match self.hir(file)[e].kind {
+        match self.hir(file).checked_kind(e) {
             ExprKind::Ident(name) => {
                 // `declareModuleMember`: where an exported declaration is in scope, its name resolves to a local
                 // symbol, which has `SymbolFlagsExportValue` and no other flag. `expr_symbol` has its `ExportSymbol`. A
@@ -638,7 +657,7 @@ impl<'p> Checker<'p, '_> {
     /// `links.resolvedSymbol` of the property access or the qualified name `e`, as
     /// `getSymbolOfNameOrPropertyAccessExpression` leaves it.
     fn symbol_at_name(&mut self, file: FileId, e: ExprId) -> Option<SymbolAtLocation<'p>> {
-        let ExprKind::Dot { obj, name, .. } = self.hir(file)[e].kind else {
+        let ExprKind::Dot { obj, name, .. } = self.hir(file).checked_kind(e) else {
             return None;
         };
         let receiver = self.type_of_expr(file, obj);

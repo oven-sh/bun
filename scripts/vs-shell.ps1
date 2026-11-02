@@ -39,7 +39,19 @@ if($env:VSINSTALLDIR -eq $null) {
     $vsShell = (Join-Path -Path $vsDir -ChildPath "Common7\Tools\Launch-VsDevShell.ps1")
     # -HostArch only accepts "x86" or "amd64" — even on native ARM64, use "amd64"
     $hostArch = if ($script:VsArch -eq "arm64") { "amd64" } else { $script:VsArch }
-    . $vsShell -Arch $script:VsArch -HostArch $hostArch
+    # Launch-VsDevShell.ps1 reads the new environment back one line at a time, as NAME=VALUE. A value of several
+    # lines (BUILDKITE_MESSAGE is the commit message) reads as several variables, some with names that cannot be set.
+    $multilineVariables = @(Get-ChildItem Env: | Where-Object { $_.Value -match "[\r\n]" })
+    foreach ($variable in $multilineVariables) {
+      Remove-Item -LiteralPath "Env:$($variable.Name)"
+    }
+    try {
+      . $vsShell -Arch $script:VsArch -HostArch $hostArch
+    } finally {
+      foreach ($variable in $multilineVariables) {
+        Set-Item -LiteralPath "Env:$($variable.Name)" -Value $variable.Value
+      }
+    }
 
     # VS dev shell with -HostArch amd64 sets PROCESSOR_ARCHITECTURE=AMD64,
     # which causes CMake to misdetect the system as x64. Restore it on ARM64.
@@ -48,6 +60,11 @@ if($env:VSINSTALLDIR -eq $null) {
     }
   } finally {
     Pop-Location
+  }
+
+  # Launch-VsDevShell.ps1 only prints a message when it fails.
+  if ($env:VSINSTALLDIR -eq $null) {
+    throw "Launch-VsDevShell.ps1 did not load the Visual Studio environment."
   }
 }
 

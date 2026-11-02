@@ -1,0 +1,131 @@
+# interface Point { x: number; y: number; label: string }
+# const texts: Record<string, string> = {
+#   "ends with the value": '{"x":1,"y":2,"label":"a"}',
+#   "white space at the end": '{"x":1,"y":2,"label":"a"}\n',
+#   "16-bit": '{"x":1,"y":2,"label":"\u65e5"}',
+# };
+# function sumOf(text: string, rounds: number): number {
+#   let sum = 0;
+#   for (let round = 0; round < rounds; round++) {
+#     const point = JSON.parse(text) as Point;
+#     sum += point.x + point.y + point.label.length;
+#   }
+#   return sum;
+# }
+# report(sumOf(texts[argv[2]!]!, Number(argv[3])));
+# FORM: AsRead
+# RUN(ENDS): run-in-shell --aotCountsPath=/dev/null globalThis.argv = ["", "", "ends with the value", "1000"]; globalThis.report = (...values) => { let text = ""; for (let i = 0; i < values.length; i++) text += (i ? " " : "") + values[i]; print(text); print(aotOperationCount("operationAOTJSONSourceClose"), "closed by the run time"); };
+# RUN(SPACE): run-in-shell --aotCountsPath=/dev/null globalThis.argv = ["", "", "white space at the end", "1000"]; globalThis.report = (...values) => { let text = ""; for (let i = 0; i < values.length; i++) text += (i ? " " : "") + values[i]; print(text); print(aotOperationCount("operationAOTJSONSourceClose"), "closed by the run time"); };
+# RUN(WIDE): run-in-shell --aotCountsPath=/dev/null globalThis.argv = ["", "", "16-bit", "1000"]; globalThis.report = (...values) => { let text = ""; for (let i = 0; i < values.length; i++) text += (i ? " " : "") + values[i]; print(text); print(aotOperationCount("operationAOTJSONSourceClose"), "closed by the run time"); };
+# JSON.parse into a declared type. Compiled code closes a text that ends with the value. The run time closes a text that goes on behind the value, and one whose characters it had to copy.
+# ENDS: 4000
+# ENDS-NEXT: 0 closed by the run time
+# ENDS-NEXT: exited with 0
+# SPACE: 4000
+# SPACE-NEXT: 1000 closed by the run time
+# SPACE-NEXT: exited with 0
+# WIDE: 4000
+# WIDE-NEXT: 1000 closed by the run time
+# WIDE-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" flags=[KeepsError] body=f0 namespaceLayout=L(m0)
+entry module=m0
+typesite w0 module=m0 position=199 kind=Variable
+typesite w1 module=m0 position=410 kind=Parameter function=f1
+typesite w2 module=m0 position=424 kind=Parameter function=f1
+typesite w3 module=m0 position=395 kind=Result
+typesite w4 module=m0 position=231 kind=Element
+typesite w5 module=m0 position=649 kind=Element
+typesite w6 module=m0 position=643 kind=Element
+typesite w7 module=m0 position=668 kind=Element
+typesite w8 module=m0 position=661 kind=CallResult
+typesite w9 module=m0 position=637 kind=CallResult
+typesite w10 module=m0 position=456 kind=Variable
+typesite w11 module=m0 position=476 kind=Variable
+typesite w12 module=m0 position=552 kind=Assertion
+typesite w13 module=m0 position=590 kind=PropertyRead
+layout L0 module=m0 fields=[{key="16-bit" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="ends with the value" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="white space at the end" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}] flags=[IsWrittenUnderDictionaryType] declaredOrder=[1, 2, 0] ownFieldCount=3
+layout L1 name="Point" module=m0 fields=[{key="label" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}] declaredOrder=[1, 2, 0] ownFieldCount=3
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewObject layout=L0
+    v3 = String string="{\"x\":1,\"y\":2,\"label\":\"a\"}"
+    v4 = Convert v3 declared={type=undefined|null|string site=w4 flags=[OmitsNull, OmitsUndefined]}
+    PropDefine v2, v4 key="ends with the value"
+    v6 = String string="{\"x\":1,\"y\":2,\"label\":\"a\"}\n"
+    v7 = Convert v6 declared={type=undefined|null|string site=w4 flags=[OmitsNull, OmitsUndefined]}
+    PropDefine v2, v7 key="white space at the end"
+    v9 = String string="{\"x\":1,\"y\":2,\"label\":\"\u{65e5}\"}"
+    v10 = Convert v9 declared={type=undefined|null|string site=w4 flags=[OmitsNull, OmitsUndefined]}
+    PropDefine v2, v10 key="16-bit"
+    v12 = FinishObject v2
+    v13 = Convert v12 declared={type=undefined|null|object site=w0 flags=[OmitsNull, OmitsUndefined]}
+    v14 = Builtin builtin=GlobalThis
+    v15 = PropGet v14 key="report" [isFreeName]
+    v16 = Builtin builtin=GlobalThis
+    v17 = PropGet v16 key="argv" [isFreeName]
+    v18 = Integer integer=2
+    v19 = ElemGet v17, v18
+    v20 = Convert v19 declared={type=undefined|null|string site=w5 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v21 = ElemGet v13, v20
+    v22 = Convert v21 declared={type=undefined|null|string site=w6 flags=[OmitsNull]} illTypedCause=FromLooseType
+    v23 = Builtin builtin=Number
+    v24 = Builtin builtin=GlobalThis
+    v25 = PropGet v24 key="argv" [isFreeName]
+    v26 = Integer integer=3
+    v27 = ElemGet v25, v26
+    v28 = Convert v27 declared={type=undefined|null|string site=w7 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v29 = Call v23, -, v28 calleeName="Number"
+    v30 = Convert v29 declared={type=number site=w8} illTypedCause=DeclarationWithoutBody
+    v31 = Call v1, -, v22, v30 calleeName="sumOf"
+    v32 = Convert v31 declared={type=number site=w9}
+    v33 = Call v15, -, v32 calleeName="report"
+    v34 = Undefined
+    Return v34
+}
+function f1 name="sumOf" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string site=w1 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w2}] results=[{type=number site=w3}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: number):
+    Jump -> next b1()
+  b1():
+    v2 = Integer
+    v3 = Convert v2 declared={type=number site=w10}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number site=w11}
+    Jump -> next b2(v3, v5)
+  b2(v6: number, v7: number):
+    LoopHint
+    v9 = Less v7, v1
+    Branch v9 -> taken b3(| 0, 1), notTaken b6(| 0, 1)
+  b3(v10, v11):
+    Jump -> next b4()
+  b4():
+    v12 = Builtin builtin=JSON
+    v13 = PropGet v12 key="parse"
+    v14 = Convert v13 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v15 = Call v14, v12, v0 calleeKey="parse" calleeName="JSON.parse"
+    v16 = Convert v15 declared={type=undefined|null|L1 flags=[IsExpected]}
+    v17 = Convert v16 declared={type=undefined|null|L1 site=w12 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v18 = PropGet v17 key="x"
+    v19 = PropGet v17 key="y"
+    v20 = Add v18, v19
+    v21 = PropGet v17 key="label"
+    v22 = PropGet v21 key="length"
+    v23 = Convert v22 declared={type=number site=w13} illTypedCause=Assertion
+    v24 = Add v20, v23
+    v25 = Add v6, v24
+    v26 = Convert v25 declared={type=number site=w10}
+    Jump -> next b5()
+  b5():
+    v27 = Increment v10
+    v28 = Convert v27 declared={type=number site=w11}
+    Jump -> next b2(v26, v28)
+  b6(v29, v30):
+    Jump -> next b7()
+  b7():
+    v31 = Convert v6 declared={type=number site=w3}
+    Return v31
+}

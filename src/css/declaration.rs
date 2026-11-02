@@ -46,6 +46,12 @@ impl<'bump> DeclarationBlock<'bump> {
         self.declarations.len() + self.important_declarations.len()
     }
 
+    pub(crate) fn append(&mut self, other: &mut Self) {
+        self.declarations.append(&mut other.declarations);
+        self.important_declarations
+            .append(&mut other.important_declarations);
+    }
+
     pub(crate) fn new_in(bump: &'bump Bump) -> Self {
         Self {
             important_declarations: DeclarationList::new_in(bump),
@@ -97,6 +103,8 @@ impl<'bump> DeclarationBlock<'bump> {
         handle(&mut self.declarations, context, handler, false);
 
         handler.finalize(context);
+        // A flush stages rules too.
+        context.is_important = true;
         important_handler.finalize(context);
         // The old bumpalo Vecs drop implicitly on overwrite (arena reclaims
         // on reset).
@@ -219,49 +227,11 @@ pub(crate) struct PropertyDeclarationParser<'a, 'bump> {
 impl<'a, 'bump> css::AtRuleParser for PropertyDeclarationParser<'a, 'bump> {
     type Prelude = ();
     type AtRule = ();
-
-    fn parse_prelude(
-        _this: &mut Self,
-        name: &[u8],
-        input: &mut css::Parser,
-    ) -> Result<Self::Prelude> {
-        Err(input.new_error(css::BasicParseErrorKind::at_rule_invalid(name)))
-    }
-
-    fn parse_block(
-        _this: &mut Self,
-        _: Self::Prelude,
-        _: &css::ParserState,
-        input: &mut css::Parser,
-    ) -> Result<Self::AtRule> {
-        Err(input.new_error(css::BasicParseErrorKind::at_rule_body_invalid))
-    }
-
-    fn rule_without_block(
-        _this: &mut Self,
-        _: Self::Prelude,
-        _: &css::ParserState,
-    ) -> css::Maybe<Self::AtRule, ()> {
-        Err(())
-    }
 }
 
 impl<'a, 'bump> css::QualifiedRuleParser for PropertyDeclarationParser<'a, 'bump> {
     type Prelude = ();
     type QualifiedRule = ();
-
-    fn parse_prelude(_this: &mut Self, input: &mut css::Parser) -> Result<Self::Prelude> {
-        Err(input.new_error(css::BasicParseErrorKind::qualified_rule_invalid))
-    }
-
-    fn parse_block(
-        _this: &mut Self,
-        _prelude: Self::Prelude,
-        _start: &css::ParserState,
-        input: &mut css::Parser,
-    ) -> Result<Self::QualifiedRule> {
-        Err(input.new_error(css::BasicParseErrorKind::qualified_rule_invalid))
-    }
 }
 
 impl<'a, 'bump> css::DeclarationParser for PropertyDeclarationParser<'a, 'bump> {
@@ -269,7 +239,7 @@ impl<'a, 'bump> css::DeclarationParser for PropertyDeclarationParser<'a, 'bump> 
 
     fn parse_value(
         this: &mut Self,
-        name: &[u8],
+        name: &'static [u8],
         input: &mut css::Parser,
     ) -> Result<Self::Declaration> {
         parse_declaration(
@@ -311,10 +281,39 @@ pub(crate) fn parse_declaration<'bump>(
     )
 }
 
-// Composes handling dispatches through the `ComposesCtx`
-// trait (defined in `css_parser.rs`); `NoComposesCtx` returns
-// `DisallowEntirely` so the no-tracking fast-path collapses into the match's
-// no-op arm.
+/// The class a `composes` declaration composes into. Warns and returns `None` where it is not allowed.
+fn composing_class_or_warn(
+    state: css::ComposesState,
+    source_location: css::SourceLocation,
+    options: &css::ParserOptions,
+) -> Option<bun_ast::Ref> {
+    match state {
+        css::ComposesState::Allow { class, .. } => return Some(class),
+        css::ComposesState::DisallowEntirely => options.warn_fmt(
+            format_args!("\"composes\" is not valid here"),
+            source_location.line,
+            source_location.column,
+        ),
+        css::ComposesState::DisallowNested(info) => options.warn_fmt(
+            format_args!("\"composes\" is not allowed inside nested selectors"),
+            info.line,
+            info.column,
+        ),
+        css::ComposesState::DisallowNotSingleClass(info) => options.warn_fmt_with_notes(
+            format_args!("\"composes\" only works inside single class selectors"),
+            source_location.line,
+            source_location.column,
+            Box::new([bun_ast::Data {
+                text: b"The parent selector is not a single class selector because of the syntax here:"
+                    .as_slice()
+                    .into(),
+                location: Some(info.to_logger_location(options.filename)),
+            }]),
+        ),
+    }
+    None
+}
+
 pub(crate) fn parse_declaration_impl<'bump, C>(
     name: &[u8],
     input: &mut css::Parser,
@@ -335,8 +334,20 @@ where
     ) {
         delimiters |= css::Delimiters::CURLY_BRACKET;
     }
-    let source_location = input.current_source_location();
-    let mut property = input.parse_until_before(delimiters, |input2: &mut css::Parser| {
+    let mut composing_class = None;
+    if input.flags.css_modules() && matches!(property_id, css::PropertyId::Composes) {
+        composing_class = composing_class_or_warn(
+            composes_ctx.composes_state(),
+            input.current_source_location(),
+            options,
+        );
+        if composing_class.is_none() {
+            // Dropped unread: its `from "<file>"` must not import the file.
+            while input.next().is_ok() {}
+            return Ok(());
+        }
+    }
+    let property = input.parse_until_before(delimiters, |input2: &mut css::Parser| {
         css::Property::parse(property_id, input2, options)
     })?;
     let important = input
@@ -347,35 +358,8 @@ where
         .is_ok();
     input.expect_exhausted()?;
 
-    if input.flags.css_modules() {
-        if let css::Property::Composes(composes) = &mut property {
-            match composes_ctx.composes_state() {
-                css::ComposesState::DisallowEntirely => {}
-                css::ComposesState::Allow(_) => {
-                    composes_ctx.record_composes(composes);
-                }
-                css::ComposesState::DisallowNested(info) => {
-                    options.warn_fmt(
-                        format_args!("\"composes\" is not allowed inside nested selectors"),
-                        info.line,
-                        info.column,
-                    );
-                }
-                css::ComposesState::DisallowNotSingleClass(info) => {
-                    options.warn_fmt_with_notes(
-                        format_args!("\"composes\" only works inside single class selectors"),
-                        source_location.line,
-                        source_location.column,
-                        Box::new([bun_ast::Data {
-                            text: b"The parent selector is not a single class selector because of the syntax here:"
-                                .as_slice()
-                                .into(),
-                            location: Some(info.to_logger_location(options.filename)),
-                        }]),
-                    );
-                }
-            }
-        }
+    if let (Some(class), css::Property::Composes(composes)) = (composing_class, &property) {
+        composes_ctx.record_composes(class, composes);
     }
     if important {
         important_declarations.push(property);

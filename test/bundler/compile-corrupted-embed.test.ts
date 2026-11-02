@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import {
   closeSync,
   copyFileSync,
@@ -176,12 +176,10 @@ test.skipIf(isMacOS)(
 );
 
 // The graph ends with `Offsets`, then the trailer. `Offsets` is byte_count u64, modules_ptr { offset u32, length u32 },
-// entry_point_id u32, compile_exec_argv_ptr { offset u32, length u32 }, flags u32. A module record starts with
-// { offset u32, length u32 } pointers to its name and contents. The module table is followed by a u32 source hash per
-// module, then the builtin bytecode table's u32 count.
+// entry_point_id u32, compile_exec_argv_ptr { offset u32, length u32 }, flags u32.
 // macOS is skipped because a patched Mach-O needs a new signature. Every platform uses the same reader.
 test.skipIf(isMacOS)(
-  "reports an out-of-range module graph field at startup",
+  "reports an out-of-range entry point ID at startup",
   async () => {
     using dir = tempDir("compile-corrupted-graph", {
       "app.js": `console.log("should not run");`,
@@ -190,37 +188,25 @@ test.skipIf(isMacOS)(
 
     const bytes = readFileSync(exe);
     const offsetsAt = bytes.lastIndexOf("\n---- Bun! ----\n") - 32;
-    const modulesAt = offsetsAt - Number(bytes.readBigUInt64LE(offsetsAt)) + bytes.readUInt32LE(offsetsAt + 8);
-    const modulesLength = bytes.readUInt32LE(offsetsAt + 12);
     // There's one 52-byte module, so entry point ID 1 is one past the end.
-    expect(modulesLength).toBe(52);
+    expect(bytes.readUInt32LE(offsetsAt + 12)).toBe(52);
 
-    const cases: [field: string, position: number, value: number][] = [
-      ["byte count is", offsetsAt, 0x7ffffff0],
-      ["module list is", offsetsAt + 12, 0x7ffffff0],
-      ["entry point ID is", offsetsAt + 16, 1],
-      ["module name is", modulesAt, 0xfffffff0],
-      ["module contents are", modulesAt + 12, 0x7fffffff],
-      ["builtin bytecode table is", modulesAt + modulesLength + 4, 0xfffffff0],
-    ];
-    for (const [field, position, value] of cases) {
-      const corrupted = corruptedCopy(exe, "field", path => {
-        const fd = openSync(path, "r+");
-        try {
-          const u32 = Buffer.alloc(4);
-          u32.writeUInt32LE(value);
-          writeSync(fd, u32, 0, 4, position);
-        } finally {
-          closeSync(fd);
-        }
-      });
-      expect(await run(corrupted)).toEqual({
-        stdout: "",
-        stderr: expect.stringContaining(`Corrupted module graph: ${field} out of range`),
-        exitCode: 1,
-      });
-      rmSync(corrupted);
-    }
+    const corrupted = corruptedCopy(exe, "field", path => {
+      const fd = openSync(path, "r+");
+      try {
+        const u32 = Buffer.alloc(4);
+        u32.writeUInt32LE(1);
+        writeSync(fd, u32, 0, 4, offsetsAt + 16);
+      } finally {
+        closeSync(fd);
+      }
+    });
+    expect(await run(corrupted)).toEqual({
+      stdout: "",
+      stderr: expect.stringContaining("Corrupted module graph: entry point ID is greater than module list count"),
+      exitCode: 1,
+    });
+    rmSync(corrupted);
   },
   TIMEOUT,
 );
@@ -228,7 +214,8 @@ test.skipIf(isMacOS)(
 // The kernel maps the payload's segment without checking the file's length, so a truncated executable still starts.
 // The check needs MADV_POPULATE_READ (Linux 5.14).
 const [kernelMajor, kernelMinor] = release().split(".").map(Number);
-test.if(isLinux && (kernelMajor > 5 || (kernelMajor === 5 && kernelMinor >= 14)))(
+const reportsTruncation = isLinux && (kernelMajor > 5 || (kernelMajor === 5 && kernelMinor >= 14));
+test.if(reportsTruncation)(
   "exits with an error when a standalone executable is truncated",
   async () => {
     using dir = tempDir("compile-truncated", {
@@ -256,6 +243,78 @@ test.if(isLinux && (kernelMajor > 5 || (kernelMajor === 5 && kernelMinor >= 14))
       });
       rmSync(cut);
     }
+  },
+  TIMEOUT,
+);
+
+function pageSize(): number {
+  // Pairs of u64: a type, then its value.
+  const auxiliaryVector = readFileSync("/proc/self/auxv");
+  const AT_PAGESZ = 6n;
+  for (let at = 0; at + 16 <= auxiliaryVector.length; at += 16) {
+    if (auxiliaryVector.readBigUInt64LE(at) === AT_PAGESZ) return Number(auxiliaryVector.readBigUInt64LE(at + 8));
+  }
+  throw new Error("no AT_PAGESZ");
+}
+
+test.if(reportsTruncation)(
+  "a truncated standalone executable says so unless part of the payload's last page is left",
+  async () => {
+    using dir = tempDir("compile-truncated-lengths", {
+      "big.txt": Buffer.alloc(1024 * 1024, "x").toString(),
+      "app.js": `import big from "./big.txt" with { type: "text" }; console.log("intact-" + big.length);`,
+    });
+    const exe = await compileApp(String(dir));
+
+    const fd = openSync(exe, "r");
+    const { fileOffset } = elfFindBunSection(fd);
+    const payloadLength = Number(readAt(fd, fileOffset, 8).readBigUInt64LE());
+    closeSync(fd);
+    const end = fileOffset + 8 + payloadLength;
+    const lastPage = end - 1 - ((end - 1) % pageSize());
+
+    const lengths = [
+      end,
+      end - 1,
+      // Inside the trailer.
+      end - 8,
+      // Inside `Offsets`.
+      end - 32,
+      lastPage + 1,
+      lastPage,
+      fileOffset + 8 + Math.floor(payloadLength / 2),
+      fileOffset + pageSize(),
+      fileOffset + 8,
+      // Inside the length header. What is left of it still holds every nonzero byte.
+      fileOffset + 4,
+    ].sort((a, b) => b - a);
+
+    // Every length is shorter than the one before it, so one copy is enough.
+    const cut = corruptedCopy(exe, "cut", () => {});
+    const ASAN_OPTIONS = [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":");
+    for (const length of lengths) {
+      truncateSync(cut, length);
+      const payloadBytesLeft = length - fileOffset;
+      expect({
+        payloadBytesLeft,
+        ...(await run(cut, ["-e", "console.log('fallback-ok')"], { ASAN_OPTIONS })),
+      }).toEqual({
+        payloadBytesLeft,
+        ...(length >= end
+          ? { stdout: "intact-1048576\n", stderr: "", exitCode: 0 }
+          : length > lastPage
+            ? // The rest of the page reads as zeros, so there's no trailer.
+              { stdout: "fallback-ok\n", stderr: isDebug ? expect.any(String) : "", exitCode: 0 }
+            : {
+                stdout: "",
+                stderr:
+                  `error: "${realpathSync(cut)}" is truncated. Part of its embedded program is missing.\n` +
+                  "note: The download or copy was probably interrupted. Download or install it again.\n",
+                exitCode: 1,
+              }),
+      });
+    }
+    rmSync(cut);
   },
   TIMEOUT,
 );

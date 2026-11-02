@@ -36,7 +36,7 @@ unsafe fn bitwise_copy<T>(src: &T) -> T {
 /// Bitwise move of arena-backed entries from `wip` back into `order`'s
 /// buffer (which always has `cap >= wip.len`).
 #[inline]
-fn memcpy_and_reset(order: &mut Vec<CssImportOrder>, wip: &mut Vec<CssImportOrder>) {
+fn memcpy_and_reset<'a>(order: &mut Vec<CssImportOrder<'a>>, wip: &mut Vec<CssImportOrder<'a>>) {
     debug_assert!(order.capacity() >= wip.len());
     // Do not Drop `order`'s prior entries — they were already
     // bitwise-copied into `wip` (see `bitwise_copy` callers above), so dropping
@@ -78,29 +78,22 @@ fn memcpy_and_reset(order: &mut Vec<CssImportOrder>, wip: &mut Vec<CssImportOrde
 /// The traversal recurses once per `@import`. Returns `Err` if the import chain
 /// is too deep for the thread's stack, and the caller reports it.
 pub(crate) fn find_imported_files_in_css_order<'a>(
-    this: &'a mut LinkerContext,
-    temp_arena: &'a Arena,
+    this: &LinkerContext<'a>,
+    temp_arena: &Arena,
     entry_points: &[Index],
-) -> Result<Vec<CssImportOrder>, CssImportChainTooDeep> {
+) -> Result<Vec<CssImportOrder<'a>>, CssImportChainTooDeep> {
     let _ = temp_arena;
 
-    struct Visitor<'a> {
-        arena: &'a Arena,
+    struct Visitor<'v, 'a> {
+        arena: &'v Arena,
         // `BundledAst.css` SoA column.
-        css_asts: &'a [crate::bundled_ast::CssCol],
-        all_import_records: &'a [bun_ast::import_record::List<'a>],
-
-        // No `graph` field — `visit()` never reads it, and holding one would
-        // create an aliasing `&mut this.graph` borrow against
-        // `arena`/`css_asts` (which already borrow `this.graph`).
-        // `BackRef` (not `&'a Graph`) so the visitor's `'a` borrow stays
-        // disjoint from `LinkerContext` (constructed from the raw `parse_graph`
-        // backref, valid for the link step).
-        parse_graph: bun_ptr::BackRef<Graph<'a>>,
+        css_asts: &'v [crate::bundled_ast::CssCol],
+        all_import_records: &'v [bun_ast::import_record::List<'a>],
+        parse_graph: &'v Graph<'a>,
 
         has_external_import: bool,
         visited: Vec<Index>,
-        order: Vec<CssImportOrder>,
+        order: Vec<CssImportOrder<'a>>,
 
         stack_check: StackCheck,
         /// Set when the stack is nearly exhausted. The traversal then unwinds
@@ -108,7 +101,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
         too_deep: Option<CssImportChainTooDeep>,
     }
 
-    impl<'a> Visitor<'a> {
+    impl<'v, 'a> Visitor<'v, 'a> {
         #[inline]
         fn input_file_pretty(&self, source_index: Index) -> &BStr {
             let sources = self.parse_graph.input_files.items_source();
@@ -119,9 +112,9 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
         fn visit_import(
             &mut self,
             importer: Index,
-            record: &ImportRecord,
+            record: &ImportRecord<'a>,
             wrapping_conditions: &mut Vec<ImportConditions>,
-            wrapping_import_records: &mut Vec<ImportRecord>,
+            wrapping_import_records: &mut Vec<ImportRecord<'a>>,
         ) -> bool {
             if !self.stack_check.is_safe_to_recurse() {
                 self.too_deep = Some(CssImportChainTooDeep {
@@ -143,7 +136,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
             &mut self,
             source_index: Index,
             wrapping_conditions: &mut Vec<ImportConditions>,
-            wrapping_import_records: &mut Vec<ImportRecord>,
+            wrapping_import_records: &mut Vec<ImportRecord<'a>>,
         ) {
             debug!(
                 "Visit file: {}={}",
@@ -217,7 +210,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                             // Append these import conditions to the state
                             // SAFETY: never dropped (see the note at `bitwise_copy`).
                             nested_conditions.append_assume_capacity(unsafe {
-                                bitwise_copy(import_rule.conditions())
+                                bitwise_copy(&import_rule.conditions)
                             });
                             let followed = self.visit_import(
                                 source_index,
@@ -256,7 +249,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                             let all_import_records = shallow_clone_records(wrapping_import_records);
                             // SAFETY: never dropped (see the note at `bitwise_copy`).
                             all_conditions.append_assume_capacity(unsafe {
-                                bitwise_copy(import_rule.conditions())
+                                bitwise_copy(&import_rule.conditions)
                             });
                             self.order.push(CssImportOrder {
                                 kind: CssImportOrderKind::ExternalPath(record.path),
@@ -332,16 +325,13 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
         }
     }
 
-    // Read MultiArrayList columns before constructing the visitor (borrowck).
     let css_asts_slice: &[crate::bundled_ast::CssCol] = this.graph.ast.items_css();
     let all_import_records_slice = this.graph.ast.items_import_records();
     let arena = this.graph.arena();
 
     let mut visitor = Visitor {
         arena,
-        parse_graph: bun_ptr::BackRef::from(
-            core::ptr::NonNull::new(this.parse_graph).expect("parse_graph set in load()"),
-        ),
+        parse_graph: this.parse_graph(),
         visited: Vec::<Index>::init_capacity(16),
         css_asts: css_asts_slice,
         all_import_records: all_import_records_slice,
@@ -835,10 +825,10 @@ fn fork_conditions(list: &Vec<ImportConditions>, arena: &Arena) -> Vec<ImportCon
 
 /// Shallow copy of `ImportRecord` values into a fresh allocation.
 #[inline]
-fn shallow_clone_records(list: &Vec<ImportRecord>) -> Vec<ImportRecord> {
+fn shallow_clone_records<'a>(list: &Vec<ImportRecord<'a>>) -> Vec<ImportRecord<'a>> {
     let mut out = Vec::<ImportRecord>::init_capacity(list.len() as usize);
     for r in list.slice_const() {
-        // `ImportRecord` is plain-old-data; its `Path<'static>` slices borrow
+        // `ImportRecord` is plain-old-data; its `Path` slices borrow
         // resolver storage.
         // SAFETY: `ImportRecord` is POD (borrowed slices, no owning `Drop`); a
         // bitwise duplicate aliasing the same resolver storage is sound and
@@ -1014,15 +1004,9 @@ fn debug_css_order_impl(
     let arena = bun_alloc::Arena::new();
     let parse_graph = this.parse_graph();
     let ast_urls_for_css = parse_graph.ast.items_url_for_css();
-    // SAFETY: read-only fan-out of `&[Box<[u8]>]` as `&[&[u8]]`; relies on
-    // fat-pointer field-order equivalence (see `boxed_slices_as_borrowed`).
-    let unique_keys: &[&[u8]] = unsafe {
-        bun_ptr::boxed_slices_as_borrowed(
-            parse_graph
-                .input_files
-                .items_unique_key_for_additional_file(),
-        )
-    };
+    let unique_keys = parse_graph
+        .input_files
+        .items_unique_key_for_additional_file();
     // `LocalsResultsMap` is the same `ArrayHashMap<Ref, Box<[u8]>>` alias as
     // `bun_js_printer::MangledProps`; no cast needed.
     let local_names: &LocalsResultsMap = &this.mangled_props;

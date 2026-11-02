@@ -10,9 +10,12 @@ import {
   pgBindComplete,
   pgCommandComplete,
   pgCString,
+  pgDataRow,
   pgDecodeBind,
   pgDescribe,
   pgExecute,
+  pgHold,
+  pgInt32,
   pgMockServer,
   pgParameterDescription,
   pgParse,
@@ -369,5 +372,88 @@ describe("prepare: false", () => {
         pgSync(),
       ]),
     );
+  });
+});
+
+// A statement without parameters is prepared at its ParseComplete, so the same query can be bound again before the
+// RowDescription says which columns can be binary.
+describe("a Bind that is written before the RowDescription of its statement", () => {
+  /** Like PostgreSQL, sends the column in the format that the Bind asked for. */
+  async function int4Server(holdAfterParseComplete: boolean) {
+    const resultFormats: number[][] = [];
+    const server = await pgMockServer((type, body) => {
+      switch (type) {
+        case "P":
+          return holdAfterParseComplete ? [pgParseComplete(), pgHold] : pgParseComplete();
+        case "D":
+          return [pgParameterDescription([]), pgRowDescription([{ name: "n", typeOid: OID.int4 }])];
+        case "B":
+          resultFormats.push(pgDecodeBind(body).resultFormats);
+          return pgBindComplete();
+        case "E":
+          return [
+            pgDataRow([resultFormats.at(-1)![0] === 1 ? pgInt32(1234) : Buffer.from("1234")]),
+            pgCommandComplete("SELECT 1"),
+          ];
+        case "S":
+          return pgReadyForQuery();
+      }
+    });
+    return { ...server, resultFormats };
+  }
+
+  // execute() sends a query at once.
+  test.each([
+    ["objects", (query: SQL.Query<any>) => query.execute(), [{ n: 1234 }]],
+    ["values()", (query: SQL.Query<any>) => query.values().execute(), [[1234]]],
+    // The Bind is written for raw(). The mode is read again at each row.
+    ["raw(), then values()", (query: SQL.Query<any>) => query.raw().execute().values(), [[1234]]],
+  ])("asks for text and reads text: %s", async (_, start, rows) => {
+    const server = await int4Server(true);
+    try {
+      await using sql = new SQL({ url: `postgres://u@127.0.0.1:${server.port}/db`, max: 1 });
+      const run = () => start(sql`select 1234 as n`);
+      const first = run();
+      await server.held();
+      const second = run();
+      server.release();
+
+      expect({
+        rows: [...(await Promise.all([first, second])), await run()],
+        resultFormats: server.resultFormats,
+      }).toEqual({
+        rows: [rows, rows, rows],
+        // The third one knows the column.
+        resultFormats: [[], [], [1]],
+      });
+    } finally {
+      server.server.close();
+    }
+  });
+
+  test("asks for text and reads text: started by the column transform", async () => {
+    const server = await int4Server(false);
+    try {
+      let nested: PromiseLike<unknown> | undefined;
+      await using sql: SQL = new SQL({
+        url: `postgres://u@127.0.0.1:${server.port}/db`,
+        max: 1,
+        transform: {
+          // Runs while the RowDescription is read.
+          column: name => {
+            nested ??= run();
+            return name;
+          },
+        },
+      });
+      const run = () => sql`select 1234 as n`.execute();
+
+      expect({ rows: [await run(), await nested], resultFormats: server.resultFormats }).toEqual({
+        rows: [[{ n: 1234 }], [{ n: 1234 }]],
+        resultFormats: [[], []],
+      });
+    } finally {
+      server.server.close();
+    }
   });
 });

@@ -22,6 +22,8 @@
         }                                                                                                          \
     } while (false)
 
+JSC_DECLARE_HOST_FUNCTION(NodeError_proto_toString);
+
 namespace Bun {
 
 // For a message that embeds text from JS: past `String::MaxLength` it records the overflow where a default `StringBuilder` calls `CRASH()`.
@@ -105,6 +107,9 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, Messa
 // Appends the value the way Node's `%s` error-message substitution renders it: primitives
 // stringified, everything else through util.inspect. `quotesLikeInspect` quotes strings.
 void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, MessageBuilder& builder, JSC::JSValue arg, bool quotesLikeInspect);
+
+// bun:internal-for-testing: from here on this process describes a rejected value without running code of the program.
+void describeRejectedValuesWithoutScriptForTesting();
 
 enum Bound {
     LOWER,

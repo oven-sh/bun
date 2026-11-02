@@ -1,0 +1,19 @@
+# new Blob(); publish(handedIn[someName])
+# An object nobody knows may be a Blob, and a key nobody knows may spell `image`. That names no member of the host: the code behind one is in the image for a program that takes it from a holder it knows.
+# RUN: valueflow-solve used
+# CHECK-NOT: run BlobPrototypeImage
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="someName" [isFreeName]
+    v2 = Builtin builtin=Blob
+    v3 = Construct v2, -
+    v4 = PropGet v0 key="handedIn" [isFreeName]
+    v5 = ElemGet v4, v1
+    v6 = PropGet v0 key="publish" [isFreeName]
+    v7 = Call v6, -, v5
+    Return
+}

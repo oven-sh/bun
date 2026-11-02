@@ -460,6 +460,23 @@ describe("DatabaseSync", () => {
     db.close();
   });
 
+  test.each([
+    ["a Proxy", () => new Proxy({ first: "one", second: "two" }, {})],
+    ["import.meta.env", () => import.meta.env as Record<string, string>],
+  ])("binds the named parameters of an object that lists its properties itself: %s", (_, object) => {
+    const env = process.env;
+    process.env = { first: "one", second: "two" };
+    const db = new DatabaseSync(":memory:");
+    try {
+      const statement = db.prepare("SELECT $first AS first, $second AS second");
+      statement.setAllowUnknownNamedParameters(true);
+      expect({ ...statement.get(object()) }).toEqual({ first: "one", second: "two" });
+    } finally {
+      db.close();
+      process.env = env;
+    }
+  });
+
   test("named parameters come from the object's own [[OwnPropertyKeys]] (Proxy, String object)", () => {
     const db = new DatabaseSync(":memory:");
     const stmt = db.prepare("SELECT $a AS a, $b AS b");
@@ -2662,8 +2679,8 @@ describe("GC lifetime", () => {
   // The write commits when the statement finishes. An FTS5 index writes to its shadow tables at commit, which
   // calls the authorizer.
   describe("a write statement that iterate() stopped after its first row", () => {
-    const open = (file: string) => {
-      const db = new DatabaseSync(file);
+    const open = (file: string, options = {}) => {
+      const db = new DatabaseSync(file, options);
       db.exec("CREATE VIRTUAL TABLE ft USING fts5(x)");
       db.prepare("INSERT INTO ft VALUES ('a') RETURNING 1").iterate().next();
       return db;
@@ -2678,6 +2695,21 @@ describe("GC lifetime", () => {
       db.exec("SELECT 1");
       expect(asked).toContain("ft_data");
       db.close();
+    });
+
+    test.each([
+      ["serialize", "database is not open"],
+      ...(sqliteHasLoadExtension ? [["loadExtension", "database is not open"]] : []),
+      ["exec", "database is not open"],
+      ["prepare", "database is not open"],
+      ["all", "statement has been finalized"],
+    ])("%s() throws if the authorizer closes the database", (method, message) => {
+      const db = open(":memory:", { allowExtension: sqliteHasLoadExtension });
+      const target = method === "all" ? db.prepare("SELECT 1") : db;
+      db.setAuthorizer(() => (db[Symbol.dispose](), constants.SQLITE_OK));
+      Bun.gc(true);
+      expect(() => target[method]("SELECT 1")).toThrow(message);
+      expect(db.isOpen).toBe(false);
     });
 
     test("is rolled back when it's collected along with a database that has an authorizer", () => {
@@ -2722,6 +2754,37 @@ describe("GC lifetime", () => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: expect.any(String), exitCode: 0 });
+    });
+
+    test.concurrent.each([
+      ["a user function", `db.function("lower2", text => text.toLowerCase())`],
+      ["an authorizer that allowed a write before", `db.setAuthorizer(() => 0), db.exec("INSERT INTO ft VALUES (1)")`],
+    ])("is committed at process exit on a connection with %s", async (_, setup) => {
+      using dir = tempDir("node-sqlite-exit-write", {});
+      const file = path.join(String(dir), "db.sqlite");
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const { DatabaseSync } = require("node:sqlite");
+            const db = new DatabaseSync(process.argv[1]);
+            db.exec("CREATE VIRTUAL TABLE ft USING fts5(x)");
+            ${setup};
+            db.prepare("INSERT INTO ft VALUES ('a'), ('b') RETURNING 1").iterate().next();
+            console.log(db.prepare("INSERT INTO ft VALUES ('c')").run().changes);
+          `,
+          file,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "1\n", stderr: expect.any(String), exitCode: 0 });
+      const db = new DatabaseSync(file);
+      expect(db.prepare("SELECT count(*) AS n FROM ft WHERE ft MATCH 'a OR b OR c'").get()!.n).toBe(3);
+      db.close();
     });
   });
 

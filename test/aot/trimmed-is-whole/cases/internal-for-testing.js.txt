@@ -1,0 +1,19 @@
+// Modules that are not public.
+//// bun-wrap
+try { console.log(Object.keys(await import("bun:wrap")).sort().join()); } catch (error) { console.log(error.name, error.message); }
+//// bun-main
+//@ todo the two executables word the refusal of `import("bun:main")` differently: ENOENT reading "bun:main" | Cannot load 'bun:main': it isn't in this executable
+try { console.log(Object.keys(await import("bun:main")).sort().join()); } catch (error) { console.log(error.name, error.message); }
+//// bun-app
+try { console.log(Object.keys(await import("bun:app")).sort().join()); } catch (error) { console.log(error.name, error.message); }
+//// bun-jsc
+import { heapSize, serialize, deserialize } from "bun:jsc";
+console.log(typeof heapSize(), deserialize(serialize({ a: new Float32Array([1.5]), b: 10n, c: new Date(0) })));
+//// bun-test-outside
+try { const { expect } = await import("bun:test"); expect(1).toBe(1); console.log("passed"); } catch (error) { console.log(error.name, error.message); }
+//// node-test
+import test from "node:test";
+console.log(typeof test);
+//// bun-ffi-names
+import * as ffi from "bun:ffi";
+console.log(Object.keys(ffi).sort().join());

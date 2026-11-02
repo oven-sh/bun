@@ -1662,7 +1662,7 @@ impl EString {
         // as `*const u8` for storage only) and `data.len` deliberately stores the
         // **u16 element count**, not a byte count — so the backing allocation is
         // `2 * data.len` bytes and reading `data.len` u16s is in-bounds. Can't be
-        // `bytemuck::cast_slice(self.data.slice())` because that would yield
+        // `bun_core::cast_slice(self.data.slice())` because that would yield
         // `len/2` u16s; the lying-length encoding is load-bearing for `len()`/
         // `javascript_length()` and changing it is a cross-crate refactor (see
         // TODO above).
@@ -1718,7 +1718,7 @@ impl EString {
         // pointer/length pair as the old raw-slice construction, without an
         // `unsafe` block. Consumers must check `is_utf16` and re-slice via
         // `slice16`.
-        let bytes = &bytemuck::cast_slice::<u16, u8>(data)[..data.len()];
+        let bytes = &bun_core::slice_as_bytes(data)[..data.len()];
         Self {
             data: Str::new(bytes),
             is_utf16: true,
@@ -1880,7 +1880,7 @@ impl EString {
         if self.is_utf8() {
             bun_wyhash::hash(&self.data)
         } else {
-            bun_wyhash::hash(bytemuck::cast_slice::<u16, u8>(self.slice16()))
+            bun_wyhash::hash(bun_core::slice_as_bytes(self.slice16()))
         }
     }
 }

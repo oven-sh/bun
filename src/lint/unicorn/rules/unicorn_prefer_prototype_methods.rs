@@ -6,8 +6,8 @@ use bun_lint::rule::Plugin;
 /// This rule prefers borrowing methods from the prototype instead of the instance.
 pub struct PreferPrototypeMethods;
 
-const KNOWN_METHOD: Message = Message::new("", "Prefer using `{{obj_name}}.prototype.{{method_name}}`.");
-const UNKNOWN_METHOD: Message = Message::new("", "Prefer using method from `{{obj_name}}.prototype`.");
+const KNOWN_METHOD: &Message = &Message::new("", "Prefer using `{{obj_name}}.prototype.{{method_name}}`.");
+const UNKNOWN_METHOD: &Message = &Message::new("", "Prefer using method from `{{obj_name}}.prototype`.");
 
 impl Rule for PreferPrototypeMethods {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-prototype-methods", Kind::Suggestion).fixable(Fixable::Code);

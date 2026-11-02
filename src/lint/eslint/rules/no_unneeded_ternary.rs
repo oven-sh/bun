@@ -6,11 +6,11 @@ pub struct NoUnneededTernary {
     allows_default_assignment: bool,
 }
 
-const UNNECESSARY_CONDITIONAL_EXPRESSION: Message = Message::new(
+const UNNECESSARY_CONDITIONAL_EXPRESSION: &Message = &Message::new(
     "unnecessaryConditionalExpression",
     "Unnecessary use of boolean literals in conditional expression.",
 );
-const UNNECESSARY_CONDITIONAL_ASSIGNMENT: Message = Message::new(
+const UNNECESSARY_CONDITIONAL_ASSIGNMENT: &Message = &Message::new(
     "unnecessaryConditionalAssignment",
     "Unnecessary use of conditional expression for default assignment.",
 );

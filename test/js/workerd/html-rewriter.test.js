@@ -600,8 +600,8 @@ describe("HTMLRewriter", () => {
     });
 
     // A `type: 'direct'` source whose `pull()` throws synchronously leaves the
-    // JS controller's `m_sinkPtr` set after `readDirectStream` returns with an
-    // exception; `end_from_stream` must null it (via `JSSink::detach`) before
+    // JS controller attached to the pipe after `readDirectStream` returns with an
+    // exception; `end_from_stream` must detach it (via `SourceHandle::detach`) before
     // the pipe can be freed so the controller's destructor doesn't dispatch
     // into freed memory.
     it("a direct ReadableStream whose pull() throws synchronously rejects the body", async () => {
@@ -1843,6 +1843,19 @@ describe("HTMLRewriter", () => {
       rw.on("p", { comments });
       return rw;
     }));
+
+  it("rejects a selector that is nested too deeply", async () => {
+    const nested = (open, depth) => open.repeat(depth) + "b" + ")".repeat(depth);
+    for (const open of [":not(", ":not(/*)*/", ":not(.a\\)", `:not([a=")"]`, `:not([a='\\')']`]) {
+      expect(() => new HTMLRewriter().on(nested(open, 10_000), {})).toThrow("Selector is nested too deeply.");
+    }
+    expect(() => new HTMLRewriter().on(nested(":not(", 32), {})).not.toThrow();
+    const selector = `b:not(p:nth-child(2)), ${Array(100).fill("p:nth-child(1)").join(", ")}, [a="${"(".repeat(100)}"]`;
+    const res = new HTMLRewriter()
+      .on(selector, { element: e => void e.remove() })
+      .transform(new Response("<b></b><i></i>"));
+    expect(await res.text()).toBe("<i></i>");
+  });
 
   it("selector tests", async () => {
     const checkSelector = async (selector, input, expected) => {

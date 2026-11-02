@@ -46,9 +46,7 @@ pub(crate) type Value = TaggedPtrUnion<ValueTypes>;
 /// checker rejects from this crate. Tags are `1024 - i`.
 pub(crate) struct ValueTypes;
 
-impl bun_ptr::tagged_pointer::TypeList for ValueTypes {
-    const MIN_TAG: TagType = 1024 - 2;
-}
+impl bun_ptr::tagged_pointer::TypeList for ValueTypes {}
 impl bun_ptr::tagged_pointer::UnionMember<ValueTypes> for ParsedSourceMap {
     const TAG: TagType = 1024;
 }

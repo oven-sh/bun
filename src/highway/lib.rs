@@ -95,6 +95,18 @@ unsafe extern "C" {
         chars_len: usize,
     ) -> usize;
 
+    fn highway_index_of_untidy_slash(path: *const u8, len: usize) -> usize;
+
+    fn highway_index_of_untidy_slash_or_non_ascii(path: *const u8, len: usize) -> usize;
+
+    fn highway_last_index_of_slash(path: *const u8, len: usize) -> usize;
+
+    fn highway_last_index_of_slash_or_dot(path: *const u8, len: usize) -> usize;
+
+    fn highway_common_prefix_length(a: *const u8, b: *const u8, len: usize) -> usize;
+
+    fn highway_count_slashes(path: *const u8, len: usize) -> usize;
+
     fn highway_fill_with_skip_mask(
         mask: *const u8,
         mask_len: usize,
@@ -164,6 +176,25 @@ unsafe extern "C" {
         out_indices: *mut u32,
         inout_state: *mut u64,
     ) -> usize;
+
+    fn highway_png_unfilter(
+        filter_type: u8,
+        bpp: usize,
+        row: *mut u8,
+        above: *const u8,
+        len: usize,
+    );
+
+    fn highway_png_filter_rgba(
+        row: *const u8,
+        above: *const u8,
+        len: usize,
+        sub: *mut u8,
+        up: *mut u8,
+        average: *mut u8,
+        paeth: *mut u8,
+        sums: *mut u64,
+    );
 }
 
 // NOTE: every public wrapper below is `#[inline(always)]`. They are thin
@@ -239,6 +270,16 @@ pub fn index_of_char(haystack: &[u8], needle: u8) -> Option<usize> {
     let found = found_at(result, haystack.len());
     debug_assert!(found.is_none_or(|i| haystack[i] == needle));
     found
+}
+
+/// [`index_of_char`] of bytes that another thread may be writing. The byte found can have changed by the time this returns.
+///
+/// # Safety
+/// `len` bytes at `haystack` are readable.
+#[inline(always)]
+pub unsafe fn index_of_char_raw(haystack: *const u8, len: usize, needle: u8) -> Option<usize> {
+    // SAFETY: the caller's.
+    found_at(unsafe { highway_index_of_char(haystack, len, needle) }, len)
 }
 
 #[inline(always)]
@@ -757,6 +798,102 @@ pub fn last_index_of_any_char(haystack: &[u8], chars: &[u8]) -> Option<usize> {
     found
 }
 
+/// Index of the first `/` of `path` in front of a part that is empty, `.` or `..`. A part ends in front of a `/` or
+/// where `path` ends.
+#[inline(always)]
+pub fn index_of_untidy_slash(path: &[u8]) -> Option<usize> {
+    if cfg!(miri) {
+        return (1..path.len())
+            .find(|&at| {
+                path[at - 1] == b'/'
+                    && matches!(
+                        &path[at..],
+                        [b'/', ..]
+                            | [b'.']
+                            | [b'.', b'/', ..]
+                            | [b'.', b'.']
+                            | [b'.', b'.', b'/', ..]
+                    )
+            })
+            .map(|at| at - 1);
+    }
+    // SAFETY: path.ptr/len are a valid readable range.
+    let result = unsafe { highway_index_of_untidy_slash(path.as_ptr(), path.len()) };
+    let found = found_at(result, path.len());
+    debug_assert!(found.is_none_or(|i| path[i] == b'/' && matches!(path[i + 1], b'/' | b'.')));
+    found
+}
+
+/// Index of the first byte of `path` that is not ASCII or is what [`index_of_untidy_slash`] looks for.
+#[inline(always)]
+pub fn index_of_untidy_slash_or_non_ascii(path: &[u8]) -> Option<usize> {
+    if cfg!(miri) {
+        return (0..path.len())
+            .find(|&at| !path[at].is_ascii() || index_of_untidy_slash(&path[at..]) == Some(0));
+    }
+    // SAFETY: path.ptr/len are a valid readable range.
+    let result = unsafe { highway_index_of_untidy_slash_or_non_ascii(path.as_ptr(), path.len()) };
+    let found = found_at(result, path.len());
+    debug_assert!(found.is_none_or(|i| {
+        !path[i].is_ascii() || (path[i] == b'/' && matches!(path[i + 1], b'/' | b'.'))
+    }));
+    found
+}
+
+/// Index of the last `/` of a path, which is expected within a few dozen bytes of the end. [`last_index_of_char`] is for
+/// a byte that can be anywhere in a long text.
+#[inline(always)]
+pub fn last_index_of_slash(path: &[u8]) -> Option<usize> {
+    if cfg!(miri) {
+        return (0..path.len()).rev().find(|&at| path[at] == b'/');
+    }
+    // SAFETY: path.ptr/len are a valid readable range.
+    let result = unsafe { highway_last_index_of_slash(path.as_ptr(), path.len()) };
+    let found = found_at(result, path.len());
+    debug_assert!(found.is_none_or(|i| path[i] == b'/'));
+    found
+}
+
+/// [`last_index_of_slash`] for a `/` or a `.`, whichever is last.
+#[inline(always)]
+pub fn last_index_of_slash_or_dot(path: &[u8]) -> Option<usize> {
+    if cfg!(miri) {
+        return (0..path.len())
+            .rev()
+            .find(|&at| matches!(path[at], b'/' | b'.'));
+    }
+    // SAFETY: path.ptr/len are a valid readable range.
+    let result = unsafe { highway_last_index_of_slash_or_dot(path.as_ptr(), path.len()) };
+    let found = found_at(result, path.len());
+    debug_assert!(found.is_none_or(|i| matches!(path[i], b'/' | b'.')));
+    found
+}
+
+/// How many bytes `a` and `b` start with in common.
+#[inline(always)]
+pub fn common_prefix_length(a: &[u8], b: &[u8]) -> usize {
+    let shorter = a.len().min(b.len());
+    if cfg!(miri) {
+        return (0..shorter).find(|&at| a[at] != b[at]).unwrap_or(shorter);
+    }
+    // SAFETY: both have `shorter` readable bytes.
+    let result = unsafe { highway_common_prefix_length(a.as_ptr(), b.as_ptr(), shorter) };
+    debug_assert!(result <= shorter && a[..result] == b[..result]);
+    result
+}
+
+/// [`count_char`] of `/` for a path of a few dozen bytes.
+#[inline(always)]
+pub fn count_slashes(path: &[u8]) -> usize {
+    if cfg!(miri) {
+        return (0..path.len())
+            .map(|at| usize::from(path[at] == b'/'))
+            .sum();
+    }
+    // SAFETY: path.ptr/len are a valid readable range.
+    unsafe { highway_count_slashes(path.as_ptr(), path.len()) }
+}
+
 // `&[u16]` requires
 // 2-byte alignment. Callers with unaligned data must go through the raw extern.
 #[inline(always)]
@@ -1112,6 +1249,49 @@ pub fn xml_structural_index16_chunk(
             state.as_mut_ptr(),
         )
     }
+}
+
+/// Undoes PNG's filter type 1 (Sub), 2 (Up), 3 (Average) or 4 (Paeth) on `row`, whose pixels have 1, 2, 4, 6 or 8 bytes.
+/// `above` is the row before it, with its filter undone, or zeros. Another filter type or pixel size leaves `row` as it is.
+#[inline(always)]
+pub fn png_unfilter(filter_type: u8, bytes_per_pixel: usize, row: &mut [u8], above: &[u8]) {
+    assert_eq!(row.len(), above.len());
+    // SAFETY: the kernel reads and writes `row.len()` bytes of `row` and reads as many of `above` (asserted above).
+    unsafe {
+        highway_png_unfilter(
+            filter_type,
+            bytes_per_pixel,
+            row.as_mut_ptr(),
+            above.as_ptr(),
+            row.len(),
+        );
+    }
+}
+
+/// Applies PNG's filter types 1 to 4 to `row`, whose pixels have 4 bytes: `filtered[t - 1]` is for type `t`.
+/// `above` is the row before it, or zeros. Returns, for types 0 to 4, how far the filtered bytes are from zero, taken
+/// as signed and added up.
+#[inline(always)]
+pub fn png_filter_rgba(row: &[u8], above: &[u8], filtered: [&mut [u8]; 4]) -> [u64; 5] {
+    assert_eq!(row.len(), above.len());
+    assert!(filtered.iter().all(|line| line.len() == row.len()));
+    let [sub, up, average, paeth] = filtered;
+    let mut sums = [0; 5];
+    // SAFETY: the kernel reads `row.len()` bytes of `row` and `above`, writes as many to each of the four (asserted
+    // above), and writes 5 sums.
+    unsafe {
+        highway_png_filter_rgba(
+            row.as_ptr(),
+            above.as_ptr(),
+            row.len(),
+            sub.as_mut_ptr(),
+            up.as_mut_ptr(),
+            average.as_mut_ptr(),
+            paeth.as_mut_ptr(),
+            sums.as_mut_ptr(),
+        );
+    }
+    sums
 }
 
 /// Raw output column pointers for [`parse_mappings`]. Each points to `cap`

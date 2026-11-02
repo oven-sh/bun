@@ -1,13 +1,13 @@
-//! esquery selectors, which the options of `no-restricted-syntax` are written in.
+//! esquery selectors, the language of `no-restricted-syntax`'s options.
 //!
-//! A selector is compiled once, when the configuration is loaded, into a matcher on the handles of [`crate::ast`]. No ESTree is
-//! built: the names of ESTree's types and fields in the selector are bound to the accessors in the table of `crate::estree`.
+//! A selector is compiled once, when the config is loaded, into a matcher on [`crate::ast`]'s handles. No ESTree is
+//! built: the ESTree type and field names in the selector are bound to the accessors in `crate::estree`'s table.
 //!
 //! ```ignore
 //! // In `Rule::new`:
 //! let selector = Selector::parse(b"CallExpression[callee.name='foo']")?;
 //! const ON: On = On::new().nodes(NodeTags::ALL);
-//! // Only the kinds of nodes that a match can be made of.
+//! // Only listen to the node kinds that can produce a match.
 //! fn narrow<'a>(&self, _: &'a File<'a>) -> On {
 //!     On::new().nodes(self.selector.listens_to())
 //! }
@@ -20,19 +20,20 @@
 //! }
 //! ```
 //!
-//! That is in no particular order: [`sort_as_called`]. `enter` and `exit` work as well.
+//! Those calls come in no particular order, so see [`sort_as_called`]. `enter` and `exit` work as well.
 //!
-//! The grammar is that of esquery 1.7, and what matches is what ESLint calls a listener with: see [`Selector::parse`]. The nodes are
-//! those of the parser that `languageOptions.parser` says, so with ESLint's own there is no `[optional]` in an `Identifier`.
+//! The grammar is esquery 1.7's, and a selector matches the nodes that ESLint would call a listener with: see
+//! [`Selector::parse`]. The nodes are those of the parser set in `languageOptions.parser`, so with ESLint's own parser
+//! an `Identifier` has no `[optional]`.
 //!
-//! What a path in `[a.b.c]` can go through: the fields of nodes, `type`, `parent`, `range`, `loc`, with ESLint's own parser `start`
-//! and `end`, the `length` and the elements of lists and strings, the properties of a `RegExp`. Not `tokens` and `comments` of the
-//! `Program`.
+//! A path in `[a.b.c]` can go through node fields, `type`, `parent`, `range`, `loc`, `start` and `end` with ESLint's
+//! own parser, the `length` and elements of lists and strings, and the properties of a `RegExp`. It can't go through
+//! the `Program`'s `tokens` and `comments`.
 //!
-//! The cost of a node that is listened for: finding the ESTree nodes that are made of it, and a test of a bit for the type of each.
-//! Only for those of a type that can match is anything else looked at, upwards from the node. `:has()` goes through the descendants,
-//! `~`, `+` and `:nth-child()` through the list that the node is in, each until the answer is known. Nothing is allocated, unless a
-//! list or a `RegExp` is compared with a string.
+//! The cost for a node that's listened for is finding the ESTree nodes it produces, plus one bit test on each one's
+//! type. Only nodes whose type can match are examined further, going upwards from the node. `:has()` searches the
+//! descendants, and `~`, `+` and `:nth-child()` search the list that contains the node, each until the answer is known.
+//! Nothing is allocated, unless a list or a `RegExp` is compared with a string.
 
 mod compile;
 mod listen;
@@ -52,7 +53,7 @@ use program::{Id, Op, Program, TypeSet};
 use std::cell::Cell;
 use std::cmp::Ordering;
 
-/// Why a selector cannot be used.
+/// Why a selector can't be used.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Error {
     message: Box<[u8]>,
@@ -65,12 +66,12 @@ impl Error {
         }
     }
 
-    /// The `RangeError` of `esquery`, at a depth that depends on the machine there as well.
+    /// `esquery`'s `RangeError`. There too, the depth at which it's thrown depends on the machine.
     fn too_deep() -> Error {
         Error::new(b"Maximum call stack size exceeded".to_vec())
     }
 
-    /// `esquery.parse` returns `undefined`, which ESLint does not expect.
+    /// `esquery.parse` returns `undefined`, which ESLint doesn't expect.
     fn empty() -> Error {
         Error::new(b"Cannot read properties of undefined (reading 'type')".to_vec())
     }
@@ -79,7 +80,7 @@ impl Error {
         Error::new([b"Unknown class name: ", name].concat())
     }
 
-    /// The message of what ESLint throws.
+    /// The message of the error that ESLint throws.
     #[inline]
     pub fn message(&self) -> &[u8] {
         &self.message
@@ -94,12 +95,12 @@ impl std::fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
-/// A node of the ESTree that ESLint's parser would make of the file. There is no such tree: this is a node of [`crate::ast`] and
-/// which part of it is meant.
+/// A node of the ESTree that ESLint's parser would produce for the file. No such tree exists: this is a [`crate::ast`]
+/// node plus which part of it is meant.
 #[derive(Copy, Clone, Debug)]
 pub struct EsNode<'a> {
     node: VNode<'a>,
-    // What follows from `node`, to compute it once.
+    // Derived from `node`, and stored so that it's computed once.
     node_type: NodeType,
     dialect: Dialect,
 }
@@ -119,7 +120,7 @@ impl std::hash::Hash for EsNode<'_> {
 }
 
 impl<'a> EsNode<'a> {
-    /// `node_type`: that of `node`.
+    /// `node_type` must be `node`'s type.
     #[inline]
     pub(crate) fn of(node: VNode<'a>, node_type: NodeType) -> EsNode<'a> {
         EsNode {
@@ -135,8 +136,8 @@ impl<'a> EsNode<'a> {
         self.node.span()
     }
 
-    /// Calls `visit` with each node of the ESTree that is made of `node`, an outer one before what is in it. Over all the nodes
-    /// of a file, these are all the nodes of the ESTree, each once.
+    /// Calls `visit` with each ESTree node that `node` produces, outer nodes before the ones inside them. Over all of a
+    /// file's nodes, that covers every ESTree node exactly once.
     pub fn for_each_at(node: Node<'a>, mut visit: impl FnMut(EsNode<'a>)) {
         let dialect = Dialect::of(node.file());
         VNode::for_each_with_type_at(node, &mut |node, node_type| {
@@ -162,24 +163,24 @@ pub struct Selector {
     is_exit: bool,
     program: Program,
     root: Id,
-    /// The types of the nodes that can match. `None`: any.
+    /// The types of nodes that can match. `None` means any.
     types: Option<TypeSet>,
     tags: NodeTags,
-    /// Every node of one of `types` matches.
+    /// True if every node with one of `types` matches.
     always_matches: bool,
     attribute_count: u32,
     identifier_count: u32,
 }
 
 impl Selector {
-    /// Compiles what is the name of a listener in a rule of ESLint: a selector of esquery, and `:exit` after it for a listener that
-    /// is called on leaving the node.
+    /// Compiles a listener name from an ESLint rule: an esquery selector, followed by `:exit` for a listener that's
+    /// called on leaving the node.
     ///
-    /// As in ESLint, the name of a type that decides which nodes can match at all has to be written like the type: `identifier`
-    /// matches nothing, while `:not(identifier)` leaves out every `Identifier`.
+    /// As in ESLint, a type name that determines which nodes can match at all has to be spelled exactly like the type:
+    /// `identifier` matches nothing, while `:not(identifier)` excludes every `Identifier`.
     ///
-    /// The error has the message of what ESLint throws. One difference: a class that does not exist, like `:foo`, is an error here.
-    /// ESLint throws when it first has to decide whether a node is of that class.
+    /// The error has the message that ESLint throws. One difference: a class that doesn't exist, like `:foo`, is an
+    /// error here. ESLint only throws when it first has to decide whether a node is of that class.
     pub fn parse(source: &[u8]) -> Result<Selector, Error> {
         let (mut program, root) = parse::parse(source.strip_suffix(b":exit").unwrap_or(source))?;
         let unknown_class = program.ops.iter().find_map(|it| match it {
@@ -217,19 +218,19 @@ impl Selector {
         })
     }
 
-    /// As it was given to [`Selector::parse`].
+    /// The text that was passed to [`Selector::parse`].
     #[inline]
     pub fn source(&self) -> &[u8] {
         &self.source
     }
 
-    /// It ends with `:exit`.
+    /// True if it ends with `:exit`.
     #[inline]
     pub fn is_exit(&self) -> bool {
         self.is_exit
     }
 
-    /// The kinds of nodes of [`crate::ast`] that a node which matches can be made of: what to listen for.
+    /// The [`crate::ast`] node kinds that can produce a matching node, i.e. what to listen for.
     #[inline]
     pub fn listens_to(&self) -> NodeTags {
         self.tags
@@ -247,7 +248,7 @@ impl Selector {
         self.identifier_count
     }
 
-    /// ESLint's `compare`: `Less` if the listener of this selector is called before that of `other` for the same node. The less
+    /// ESLint's `compare`: `Less` if this selector's listener is called before `other`'s for the same node. The less
     /// specific one comes first.
     pub fn compare(&self, other: &Selector) -> Ordering {
         (self.attribute_count.cmp(&other.attribute_count))
@@ -255,7 +256,7 @@ impl Selector {
             .then_with(|| bun_core::strings::order_utf16(&self.source, &other.source))
     }
 
-    /// Whether ESLint calls the listener with `node`. `Err`: what is left of the stack here does not hold the selector.
+    /// True if ESLint calls the listener with `node`. `Err` if there isn't enough stack left to evaluate the selector.
     #[inline]
     pub fn test(&self, node: EsNode<'_>) -> Result<bool, Error> {
         if !self.types.is_none_or(|it| it.contains(node.node_type)) {
@@ -267,7 +268,7 @@ impl Selector {
         self.matches_slowly(node)
     }
 
-    /// [`Selector::test`], where an error is `false`.
+    /// [`Selector::test`], with an error treated as `false`.
     #[inline]
     pub fn matches(&self, node: EsNode<'_>) -> bool {
         self.test(node).unwrap_or(false)

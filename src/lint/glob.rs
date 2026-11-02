@@ -156,24 +156,25 @@ fn without_groups(pattern: &[u8]) -> Vec<u8> {
 }
 
 impl Minimatch {
-    pub fn with(written: &[u8], options: MinimatchOptions) -> Minimatch {
-        let mut written = match options.is_version_3 {
-            true => paths::from_native(strings::trim_js_whitespace(written)),
-            false => written.to_vec(),
+    pub fn with(source: &[u8], options: MinimatchOptions) -> Minimatch {
+        let mut source = match options.is_version_3 {
+            true => paths::from_native(strings::trim_js_whitespace(source)),
+            false => source.to_vec(),
         };
         if options.nocase {
-            written.make_ascii_lowercase();
+            source.make_ascii_lowercase();
         }
         let bangs = match options.nonegate {
             true => 0,
-            false => written.iter().take_while(|it| **it == b'!').count(),
+            false => source.iter().take_while(|it| **it == b'!').count(),
         };
-        let mut text = from_minimatch(&written[bangs..]);
+        let mut text = from_minimatch(&source[bangs..]);
         if options.noext {
             text = without_groups(&text);
         }
-        // Only `nonegate` leaves a `!` here. It's a plain character then.
-        if text.starts_with(b"!") {
+        // A leading `!` is only still here with `nonegate`. It's then a literal character, unless it starts an extglob
+        // like `!(a)`.
+        if text.starts_with(b"!") && text.get(1) != Some(&b'(') {
             text.insert(0, b'\\');
         }
         let parse = |text: &[u8]| match options.dot {
@@ -183,10 +184,10 @@ impl Minimatch {
         let is_negated = bangs % 2 == 1 && !options.flip_negate;
         let ends = segment_ends(&text).into_iter().filter(|_| is_negated);
         Minimatch {
-            pattern: (options.nocomment || !written.starts_with(b"#")).then(|| parse(&text)),
+            pattern: (options.nocomment || !source.starts_with(b"#")).then(|| parse(&text)),
             is_negated,
             prefixes: ends.map(|end| parse(&text[..end])).collect(),
-            matches_file_name: options.match_base && !strings::contains_char(&written, b'/'),
+            matches_file_name: options.match_base && !strings::contains_char(&source, b'/'),
             folds_case: options.nocase,
         }
     }
@@ -237,22 +238,22 @@ impl Minimatch {
 /// Converts `1..3` from inside braces the way picomatch does. It builds the regex class `[1-3]` from the sorted parts.
 /// If that class is invalid, the text matches literally, without the braces.
 /// Returns `None` unless the parts are letters, digits and `-`.
-fn picomatch_range(written: &[u8]) -> Option<Vec<u8>> {
-    let mut parts: Vec<&[u8]> = strings::split(written, b"..").collect();
+fn picomatch_range(range_text: &[u8]) -> Option<Vec<u8>> {
+    let mut parts: Vec<&[u8]> = strings::split(range_text, b"..").collect();
     let is_part = |it: &&[u8]| {
         !it.is_empty() && (it.iter()).all(|byte| byte.is_ascii_alphanumeric() || *byte == b'-')
     };
     if parts.len() < 2 || !parts.iter().all(is_part) {
         return None;
     }
-    let as_written = parts.join(&b".."[..]);
+    let literal_text = parts.join(&b".."[..]);
     bun_collections::index_sort::sort_slice(&mut parts[..]);
     let class = parts.join(&b'-');
     // `b-a` is a syntax error in a regex class.
     let mut at = 0;
     while at < class.len() {
         match class.get(at + 1..at + 3) {
-            Some([b'-', to]) if class[at] > *to => return Some(as_written),
+            Some([b'-', to]) if class[at] > *to => return Some(literal_text),
             Some([b'-', _]) => at += 3,
             _ => at += 1,
         }
@@ -277,23 +278,23 @@ pub enum Picomatch {
 /// - `a/**` also matches `a` itself.
 pub fn from_picomatch(pattern: &[u8], how: Picomatch) -> Vec<u8> {
     let pattern = pattern.strip_prefix(b"./").unwrap_or(pattern);
-    let (written, is_deep) = match pattern.strip_suffix(b"/**") {
+    let (body, is_deep) = match pattern.strip_suffix(b"/**") {
         Some(before) if !before.is_empty() && before != b"*" => (before, true),
         _ => (pattern, false),
     };
     let mut grouped = Vec::with_capacity(pattern.len() + 8);
     let mut at = 0;
-    while let Some(&byte) = written.get(at) {
+    while let Some(&byte) = body.get(at) {
         let len = match byte {
             b'\\' => 2,
-            b'[' => class_end(written, at).map_or(1, |end| end - at),
+            b'[' => class_end(body, at).map_or(1, |end| end - at),
             _ => 1,
         };
         if byte == b'{'
             && how == Picomatch::Micromatch
-            && let Some(close) = strings::index_of_any(&written[at + 1..], b"{},")
-            && written[at + 1 + close] == b'}'
-            && let Some(range) = picomatch_range(&written[at + 1..at + 1 + close])
+            && let Some(close) = strings::index_of_any(&body[at + 1..], b"{},")
+            && body[at + 1 + close] == b'}'
+            && let Some(range) = picomatch_range(&body[at + 1..at + 1 + close])
         {
             grouped.extend_from_slice(&range);
             at += close + 2;
@@ -301,7 +302,7 @@ pub fn from_picomatch(pattern: &[u8], how: Picomatch) -> Vec<u8> {
         }
         if byte == b'['
             && len > 2
-            && let inside = &written[at + 1..at + len - 1]
+            && let inside = &body[at + 1..at + len - 1]
             && !(how == Picomatch::FastGlob && inside.starts_with(b"!"))
         {
             let is_also_literal = strings::index_of_any(inside, b"-*+?.^${}(|)[]\\/").is_none();
@@ -333,11 +334,11 @@ pub fn from_picomatch(pattern: &[u8], how: Picomatch) -> Vec<u8> {
         }
         if byte == b'('
             && !matches!(grouped.last(), Some(b'?' | b'*' | b'+' | b'@' | b'!'))
-            && strings::contains_char(&written[at..], b')')
+            && strings::contains_char(&body[at..], b')')
         {
             grouped.push(b'@');
         }
-        grouped.extend_from_slice(&written[at..(at + len).min(written.len())]);
+        grouped.extend_from_slice(&body[at..(at + len).min(body.len())]);
         at += len;
     }
     let mut out = Vec::with_capacity(grouped.len() + 8);
@@ -348,7 +349,7 @@ pub fn from_picomatch(pattern: &[u8], how: Picomatch) -> Vec<u8> {
     out
 }
 
-/// Appends `c` to a class, escaped if it means something there.
+/// Appends `c` to a class, escaped if it's special there.
 fn push_class_member(pattern: &mut Vec<u8>, c: &[u8]) {
     if matches!(c, b"\\" | b"]" | b"[" | b"-" | b"^" | b"!") {
         pattern.push(b'\\');
@@ -356,18 +357,18 @@ fn push_class_member(pattern: &mut Vec<u8>, c: &[u8]) {
     pattern.extend_from_slice(c);
 }
 
-/// globset's `parse_class` for the class that starts at `open`. It has no escapes, and a `]` or `-` right after the `[` is a member.
-/// Appends the class to `pattern` and returns the index after the `]`. `Ok(None)` means the class isn't closed, `Err` means
-/// it has a reversed range like `z-a`.
+/// globset's `parse_class` for the class that starts at `open`. It has no escapes, and a `]` or `-` right after the `[`
+/// is a member. Appends the class to `pattern` and returns the index after the `]`. `Ok(None)` means the class isn't
+/// closed, and `Err` means it has a reversed range like `z-a`.
 pub fn from_globset_class(
-    written: &[u8],
+    globset_pattern: &[u8],
     open: usize,
     has_literal_separator: bool,
     pattern: &mut Vec<u8>,
 ) -> Result<Option<usize>, ()> {
     let mut class = vec![b'['];
     let mut at = open + 1;
-    if matches!(written.get(at), Some(b'!' | b'^')) {
+    if matches!(globset_pattern.get(at), Some(b'!' | b'^')) {
         class.push(b'!');
         // With `literal_separator`, a class never matches `/`.
         if has_literal_separator {
@@ -378,11 +379,12 @@ pub fn from_globset_class(
     let (mut is_first, mut is_in_range) = (true, false);
     let mut last: &[u8] = b"";
     loop {
-        let Some(&byte) = written.get(at) else {
+        let Some(&byte) = globset_pattern.get(at) else {
             return Ok(None);
         };
-        let len = usize::from(strings::wtf8_byte_sequence_length(byte)).min(written.len() - at);
-        let c = &written[at..at + len];
+        let len =
+            usize::from(strings::wtf8_byte_sequence_length(byte)).min(globset_pattern.len() - at);
+        let c = &globset_pattern[at..at + len];
         at += len;
         match c {
             b"]" if !is_first => break,

@@ -97,11 +97,16 @@ test("dns.resolveSrv (_test._tcp.invalid.localhost)", () => {
   return promise;
 });
 
-// RFC 2782 says SRV targets must not be compressed, but a lot of deployed
-// resolvers (dnsmasq, mDNSResponder, older BIND, various corporate forwarders)
-// still compress them. c-ares 1.34.8 started rejecting these responses with
-// EBADRESP; make sure we keep accepting them.
-test.skipIf(isWindows)("dns.resolveSrv accepts compressed target in RDATA", async () => {
+// RFC 2782 (SRV) and RFC 3403 (NAPTR) say the names in RDATA must not be
+// compressed, but a lot of deployed resolvers (dnsmasq, mDNSResponder, older
+// BIND, various corporate forwarders) still compress them. c-ares 1.34.8
+// rejected these responses with EBADRESP. c-ares 1.34.9 accepts them again
+// (RFC 3597 section 4); make sure it stays that way.
+//
+// Serves one answer of the given type for every query. The answer's RDATA is
+// built by `rdata`, which receives a compression pointer to QNAME so the name
+// it emits decompresses to <label>.<query-name>.
+async function withCompressedAnswerServer(type, rdata, fn) {
   const socket = dgram.createSocket("udp4");
   try {
     socket.on("message", (query, rinfo) => {
@@ -119,27 +124,11 @@ test.skipIf(isWindows)("dns.resolveSrv accepts compressed target in RDATA", asyn
       header[5] = 1; // QDCOUNT
       header[7] = 1; // ANCOUNT
 
-      // RDATA: priority=10, weight=50, port=80, target = "srv" + pointer to
-      // QNAME at offset 12. After decompression the target is
-      // srv.<query-name>.
-      const rdata = Buffer.from([
-        0x00,
-        0x0a, // priority
-        0x00,
-        0x32, // weight
-        0x00,
-        0x50, // port
-        0x03,
-        0x73,
-        0x72,
-        0x76, // "srv"
-        0xc0,
-        0x0c, // compression pointer -> offset 12
-      ]);
+      const body = rdata(Buffer.from([0xc0, 0x0c])); // pointer -> QNAME at offset 12
       const answer = Buffer.concat([
-        Buffer.from([0xc0, 0x0c, 0x00, 0x21, 0x00, 0x01, 0x00, 0x00, 0x00, 0x3c]),
-        Buffer.from([rdata.length >> 8, rdata.length & 0xff]),
-        rdata,
+        Buffer.from([0xc0, 0x0c, 0x00, type, 0x00, 0x01, 0x00, 0x00, 0x00, 0x3c]),
+        Buffer.from([body.length >> 8, body.length & 0xff]),
+        body,
       ]);
       socket.send(Buffer.concat([header, question, answer]), rinfo.port, rinfo.address);
     });
@@ -149,13 +138,44 @@ test.skipIf(isWindows)("dns.resolveSrv accepts compressed target in RDATA", asyn
 
     const resolver = new dns.Resolver({ timeout: 1000, tries: 1 });
     resolver.setServers(["127.0.0.1:" + port]);
-    const { promise, resolve, reject } = Promise.withResolvers();
-    resolver.resolveSrv("_test._tcp.example.test", (err, records) => (err ? reject(err) : resolve(records)));
-    const records = await promise;
-    expect(records).toEqual([{ name: "srv._test._tcp.example.test", priority: 10, weight: 50, port: 80 }]);
+    return await fn(resolver);
   } finally {
     socket.close();
   }
+}
+
+test.skipIf(isWindows)("dns.resolveSrv accepts compressed target in RDATA", async () => {
+  // priority=10, weight=50, port=80, target = "srv" + pointer to QNAME.
+  // After decompression the target is srv.<query-name>.
+  const rdata = ptr => Buffer.concat([Buffer.from([0x00, 0x0a, 0x00, 0x32, 0x00, 0x50, 0x03, 0x73, 0x72, 0x76]), ptr]);
+  const records = await withCompressedAnswerServer(0x21, rdata, resolver => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    resolver.resolveSrv("_test._tcp.example.test", (err, records) => (err ? reject(err) : resolve(records)));
+    return promise;
+  });
+  expect(records).toEqual([{ name: "srv._test._tcp.example.test", priority: 10, weight: 50, port: 80 }]);
+});
+
+test.skipIf(isWindows)("dns.resolveNaptr accepts compressed replacement in RDATA", async () => {
+  // order=100, preference=10, flags="s", service="SIP+D2T", regexp="",
+  // replacement = "sip" + pointer to QNAME.
+  const rdata = ptr =>
+    Buffer.concat([
+      Buffer.from([0x00, 0x64, 0x00, 0x0a]),
+      Buffer.from([0x01, 0x73]), // "s"
+      Buffer.from([0x07, 0x53, 0x49, 0x50, 0x2b, 0x44, 0x32, 0x54]), // "SIP+D2T"
+      Buffer.from([0x00]), // ""
+      Buffer.from([0x03, 0x73, 0x69, 0x70]), // "sip"
+      ptr,
+    ]);
+  const records = await withCompressedAnswerServer(0x23, rdata, resolver => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    resolver.resolveNaptr("naptr.example.test", (err, records) => (err ? reject(err) : resolve(records)));
+    return promise;
+  });
+  expect(records).toEqual([
+    { flags: "s", service: "SIP+D2T", regexp: "", replacement: "sip.naptr.example.test", order: 100, preference: 10 },
+  ]);
 });
 
 test("dns.resolveTxt (txt.socketify.dev)", () => {
@@ -490,6 +510,79 @@ test.skipIf(!isLinux)("dns.lookup uses getaddrinfo, not the c-ares resolver", as
     fromCallback: { address: "127.0.0.1", family: 4 },
   });
   expect(exitCode).toBe(0);
+});
+
+// On Windows, c-ares closes the UDP socket from inside its uv_poll_t's poll callback. A nested uv_run
+// must not run the close callback that frees the handle while libuv is still dispatching to it.
+test("dns.Resolver: a query's promise reaction can re-enter the event loop", async () => {
+  const rounds = 20;
+  const fixture = `
+    const dns = require("node:dns");
+    // Echoes the question back with one A record.
+    function answer(query) {
+      let off = 12;
+      while (off < query.length && query[off] !== 0) off += query[off] + 1;
+      off += 1 + 2 + 2;
+      const header = Buffer.alloc(12);
+      header[0] = query[0];
+      header[1] = query[1];
+      header[2] = 0x81; // QR=1, RD=1
+      header[3] = 0x80; // RA=1
+      header[5] = 1; // QDCOUNT
+      header[7] = 1; // ANCOUNT
+      const record = Buffer.from([
+        0xc0, 0x0c, // NAME: pointer to the question name
+        0x00, 0x01, // TYPE A
+        0x00, 0x01, // CLASS IN
+        0x00, 0x00, 0x00, 0x3c, // TTL 60
+        0x00, 0x04, // RDLENGTH
+        127, 0, 0, 1,
+      ]);
+      return Buffer.concat([header, query.subarray(12, off), record]);
+    }
+    const server = await Bun.udpSocket({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: { data(sock, buf, port, addr) { sock.send(answer(Buffer.from(buf)), port, addr); } },
+    });
+    const resolver = new dns.promises.Resolver({ timeout: 5000, tries: 1 });
+    resolver.setServers(["127.0.0.1:" + server.port]);
+
+    // Bun.build() spins the event loop until the promise returned by a plugin's setup() settles.
+    let reentries = 0;
+    const builds = [];
+    function reenterEventLoop() {
+      const before = reentries;
+      builds.push(Bun.build({
+        entrypoints: ["/entry.js"],
+        files: { "/entry.js": "" },
+        plugins: [{
+          name: "spin",
+          setup: () => new Promise(resolve => setImmediate(() => { reentries++; resolve(); })),
+        }],
+      }));
+      if (reentries !== before + 1) throw new Error("Bun.build() returned without spinning the event loop");
+    }
+
+    // Each round uses a new name, because c-ares answers a repeated name from its cache without opening a socket.
+    for (let i = 0; i < ${rounds}; i++) {
+      const addresses = await resolver.resolve4("round" + i + ".example.test").then(addresses => {
+        reenterEventLoop();
+        return addresses;
+      });
+      if (addresses[0] !== "127.0.0.1") throw new Error("unexpected answer: " + addresses);
+    }
+    await Promise.all(builds);
+    server.close();
+    console.log("reentries=" + reentries);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: `reentries=${rounds}\n`, stderr: "", exitCode: 0 });
 });
 
 test("dns.getServers", () => {

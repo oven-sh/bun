@@ -1,5 +1,5 @@
-//! The value of `*directive`, and the parameters of a block: `parseTemplateBindings` of `@angular/compiler`, and
-//! `transformTemplateBindings` of `angular-estree-parser`.
+//! The value of `*directive` and the parameters of a block: `parseTemplateBindings` in `@angular/compiler` and
+//! `transformTemplateBindings` in `angular-estree-parser`.
 
 use super::lexer::Kind;
 use super::parser::{Expression, Failed, Parsed, Parser};
@@ -62,7 +62,7 @@ fn with_first_in_case(name: &[u8], is_upper: bool) -> Vec<u8> {
     let Some(first) = bstr::ByteSlice::chars(name).next() else {
         return Vec::new();
     };
-    // Half of a surrogate pair has no other case.
+    // A lone surrogate has no other case.
     if first.len_utf16() > 1 || first == char::REPLACEMENT_CHARACTER {
         return name.to_vec();
     }
@@ -77,7 +77,7 @@ fn with_first_in_case(name: &[u8], is_upper: bool) -> Vec<u8> {
 }
 
 impl Parser<'_> {
-    /// What the string at `token` stands for.
+    /// Appends the decoded value of the string at `token`.
     fn string_value(&self, token: super::lexer::Token, out: &mut Vec<u8>) -> Parsed<()> {
         let [_, content @ .., _] = self.text_of(token) else {
             return Err(Failed);
@@ -100,7 +100,7 @@ impl Parser<'_> {
                         .get(..4)
                         .and_then(|hex| std::str::from_utf8(hex).ok())
                         .ok_or(Failed)?;
-                    // Half of a surrogate pair is nothing that can be written.
+                    // A lone surrogate can't be written as UTF-8.
                     let character = u32::from_str_radix(hex, 16)
                         .ok()
                         .and_then(char::from_u32)
@@ -217,7 +217,7 @@ impl Parser<'_> {
         Ok(bindings)
     }
 
-    /// The `body` of the `NGMicrosyntax` that `angular-estree-parser` makes of the text.
+    /// Returns the `body` of the `NGMicrosyntax` that `angular-estree-parser` builds from the text.
     pub(crate) fn parse_microsyntax(&mut self) -> Parsed<Vec<Part>> {
         let mut bindings = self.parse_template_bindings()?.into_iter().peekable();
         if let Some(Binding::Expression { end, .. }) = bindings.peek()
@@ -229,7 +229,7 @@ impl Parser<'_> {
             bindings.next();
         }
         let mut body: Vec<Part> = Vec::new();
-        // The `key.source` of the binding before, if that is an `ExpressionBinding`.
+        // The `key.source` of the previous binding, if that's an `ExpressionBinding`.
         let mut last_expression_key: Option<Vec<u8>> = None;
         for (index, binding) in bindings.enumerate() {
             match binding {

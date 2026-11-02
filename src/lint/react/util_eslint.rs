@@ -1,17 +1,18 @@
-//! `sourceCode.isSpaceBetweenTokens`, which ESLint 10 no longer has: eslint-plugin-react gets it
-//! from `fixupPluginRules` of @eslint/compat. And `markVariableAsUsed` of `lib/util/eslint.js`.
+//! `sourceCode.isSpaceBetweenTokens`, which ESLint 10 removed. eslint-plugin-react gets it from
+//! @eslint/compat's `fixupPluginRules`. Also `markVariableAsUsed` from `lib/util/eslint.js`.
 
 use bun_core::strings;
 use bun_lint::prelude::*;
 
-/// `nodesOrTokensOverlap`: two that touch overlap.
+/// `nodesOrTokensOverlap`. Two ranges that touch count as overlapping.
 fn nodes_or_tokens_overlap(first: Span, second: Span) -> bool {
     (first.start <= second.start && first.end >= second.start)
         || (second.start <= first.start && second.end >= first.start)
 }
 
-/// `isSpaceBetweenTokens`. Not [`File::is_space_between`]: white space in a `JSXText` between the
-/// two counts. It is looked for in the text as written: espree's `value` has `&nbsp;` decoded.
+/// `isSpaceBetweenTokens`. Unlike [`File::is_space_between`], whitespace inside a `JSXText` between
+/// the two counts. Known difference: this checks the raw text, while espree decodes the token's
+/// `value`, so with espree upstream also counts an `&nbsp;` as whitespace.
 pub(crate) fn is_space_between_tokens<'a>(file: &'a File<'a>, first: Span, second: Span) -> bool {
     if nodes_or_tokens_overlap(first, second) {
         return false;
@@ -44,12 +45,12 @@ pub(crate) fn is_space_between_tokens<'a>(file: &'a File<'a>, first: Span, secon
     false
 }
 
-/// `markVariableAsUsed`: ESLint's `sourceCode.markVariableAsUsed(name, node)`.
+/// `markVariableAsUsed`, which is ESLint's `sourceCode.markVariableAsUsed(name, node)`.
 pub(crate) fn mark_variable_as_used<'a>(name: Name<'a>, node: Node<'a>) {
     match node.scope().find_variable(name).map(Variable::kind) {
         Some(VariableKind::Declared(symbol)) => symbol.mark_used(),
-        // Nobody asks the variable that a class has for its name in its own scope.
-        Some(VariableKind::NameInClass { .. } | VariableKind::ArgumentsOfFile) => {}
+        // Nothing reads the used flag of the variable that a class declares for its name in its own scope.
+        Some(VariableKind::NameInClass { .. } | VariableKind::FileArguments) => {}
         Some(VariableKind::Global(_)) | None => {
             if node.file().global_in_comments(name.bytes()).is_some() {
                 node.file().mark_global_used(name.bytes());

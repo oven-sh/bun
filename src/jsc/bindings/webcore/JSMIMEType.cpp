@@ -18,6 +18,7 @@
 #include "ZigGlobalObject.h"
 #include "NodeValidator.h" // For Bun::V::
 #include "ErrorCode.h" // For Bun::ERR::
+#include "StringSizeLimit.h"
 #include "JavaScriptCore/JSMapInlines.h"
 
 namespace WebCore {
@@ -426,7 +427,11 @@ JSC_DEFINE_CUSTOM_GETTER(jsMIMETypeProtoGetterEssence, (JSGlobalObject * globalO
         return {};
     }
 
-    String essence = makeString(thisObject->type(), '/', thisObject->subtype());
+    String essence = tryMakeString(thisObject->type(), '/', thisObject->subtype());
+    if (essence.isNull() || Bun::exceedsStringLimit(essence.length())) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
     return JSValue::encode(jsString(vm, essence));
 }
 
@@ -465,13 +470,18 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMETypeProtoFuncToString, (JSGlobalObject * globalOb
     String paramsStr = paramsStrValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    StringBuilder builder;
+    StringBuilder builder { OverflowPolicy::RecordOverflow };
     builder.append(thisObject->type());
     builder.append('/');
     builder.append(thisObject->subtype());
     if (!paramsStr.isEmpty()) {
         builder.append(';');
         builder.append(paramsStr);
+    }
+
+    if (builder.hasOverflowed() || Bun::exceedsStringLimit(builder.length())) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
     }
 
     return JSValue::encode(jsString(vm, builder.toString()));

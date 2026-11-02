@@ -1,0 +1,25 @@
+# The host creates process.nextTick when it is first read, with code of the library. The constant that replaces the read follows an InitializeBuiltin, which has effects.
+# A member that the realm is created with gets none
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="createdAtFirstRead" results=[{type=anything}] {
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="nextTick"
+    Return v1
+}
+# CHECK-LABEL: function f0 name="createdAtFirstRead"
+# CHECK: = IsBuiltinLocationUnchanged member=ProcessNextTick
+# CHECK: InitializeBuiltin builtin=ProcessNextTick
+# CHECK-NEXT: v1: builtin(ProcessNextTick) = Builtin builtin=ProcessNextTick
+
+function f1 name="createdWithTheRealm" results=[{type=anything}] {
+    v0 = Builtin builtin=Math
+    v1 = PropGet v0 key="sign"
+    Return v1
+}
+# CHECK-LABEL: function f1 name="createdWithTheRealm"
+# CHECK-NOT: InitializeBuiltin
+# CHECK: v1: builtin(MathSign) = Builtin builtin=MathSign

@@ -6,11 +6,11 @@
 //! | `isCallExpression(node)` | `e.tag() == ExprTag::Call` |
 //! | `isFunctionLikeExpression`, `isFunction`, `isFunctionLike` | `func.kind()` |
 //! | `isClass(node)` | `Node::Class` |
-//! | `isTSAsExpression(node)` | [`unwrap_ts_as_expression`] returns something else |
+//! | `isTSAsExpression(node)` | [`unwrap_ts_as_expression`] returns a different node |
 //! | the other `isTS*` | `ty.kind()` |
 //!
-//! The whole of an optional chain is taken for the `MemberExpression`, not for the
-//! `ChainExpression` around it: who gets to it from above asks `is_chain_root()` first.
+//! A whole optional chain is treated as the `MemberExpression`, not as the `ChainExpression` around
+//! it. Callers that reach it from its parent have to check `is_chain_root()` first.
 
 use bun_core::strings;
 use bun_lint::prelude::*;
@@ -19,7 +19,7 @@ use smallvec::{SmallVec, smallvec};
 use std::borrow::Cow;
 use std::ops::ControlFlow;
 
-/// What the `enter` of a visitor does: nothing, `this.skip()`, `this.break()`.
+/// The action that a visitor's `enter` requests: nothing, `this.skip()` or `this.break()`.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Enter {
     Children,
@@ -27,11 +27,11 @@ pub(crate) enum Enter {
     Break,
 }
 
-/// The nodes that are still to be entered. The next one is the last.
+/// The nodes still to be entered, as a stack: the next one is the last.
 type Worklist<'a> = SmallVec<[Node<'a>; 8]>;
 
-/// `traverse`, for a visitor with an `enter`. Only what a visitor of the plugin goes into has
-/// children: the statements below, a `SwitchCase`, a `ConditionalExpression`.
+/// `traverse`, for a visitor with an `enter`. It only descends into the nodes that the plugin's
+/// visitors descend into: the statements below, a `SwitchCase` and a `ConditionalExpression`.
 pub(crate) fn traverse<'a>(node: Node<'a>, enter: &mut dyn FnMut(Node<'a>) -> Enter) {
     traverse_all(smallvec![node], enter);
 }
@@ -108,8 +108,8 @@ fn loop_nodes<'a>(mut nodes: List<'a, Stmt<'a>>) -> Option<Stmt<'a>> {
     }
 }
 
-/// `findReturnStatement`, for a function, a `Member` or a `Prop`: the last `return` directly in the
-/// body, or what this finds in the last case of a `switch` that comes after it.
+/// `findReturnStatement`, for a function, a `Member` or a `Prop`. Scans the body backwards for a
+/// `return`. A `switch` that's found first moves the search into its last case.
 pub(crate) fn find_return_statement(node: Node<'_>) -> Option<Stmt<'_>> {
     let func = match normalize(node) {
         Node::Func(func) => Some(func).filter(|it| ast_utils::is_function_with_body(*it)),
@@ -120,8 +120,9 @@ pub(crate) fn find_return_statement(node: Node<'_>) -> Option<Stmt<'_>> {
     loop_nodes(func?.body_statements()?)
 }
 
-/// `traverseReturns`, for a `return` statement or a function. It looks into blocks, `if`, `for`,
-/// `while` and `switch` only. A `MethodDefinition` has no `body`: nothing is called for a `Member`.
+/// `traverseReturns`, for a `return` statement or a function. It only looks into blocks, `if`,
+/// `for`, `while` and `switch`. A `MethodDefinition` has no `body`, so nothing is called for a
+/// `Member`.
 pub(crate) fn traverse_returns<'a>(
     node: Node<'a>,
     on_return: &mut dyn FnMut(Option<Expr<'a>>) -> ControlFlow<()>,
@@ -163,12 +164,12 @@ pub(crate) fn traverse_returns<'a>(
     });
 }
 
-/// `name` without the `#` of a private name, which is not in the `name` of a `PrivateIdentifier`.
+/// `name` without a private name's `#`, which a `PrivateIdentifier`'s `name` doesn't include.
 fn without_hash(name: &[u8]) -> &[u8] {
     name.strip_prefix(b"#").unwrap_or(name)
 }
 
-/// `key.name`: of an `Identifier`, in brackets or not, and of a `PrivateIdentifier`.
+/// `key.name`, for an `Identifier` (computed or not) and a `PrivateIdentifier`.
 pub(crate) fn name_of_key(key: Key<'_>) -> Option<&[u8]> {
     match key.kind() {
         KeyKind::Ident(name) => Some(name.bytes()),
@@ -178,13 +179,13 @@ pub(crate) fn name_of_key(key: Key<'_>) -> Option<&[u8]> {
     }
 }
 
-/// What `getPropertyNameNode` returns, and the `key` of `getKeyValue`.
+/// The result of `getPropertyNameNode`, and the `key` in `getKeyValue`.
 #[derive(Copy, Clone)]
 enum NameNode<'a> {
     Key(Key<'a>),
-    /// The `constructor` of a constructor, the `b` of `a.b`.
+    /// A constructor's `constructor` keyword, or the `b` in `a.b`.
     Ident(Ident<'a>),
-    /// The `b` of `a[b]`, the `a` of `...a`.
+    /// The `b` in `a[b]`, or the `a` in `...a`.
     Expr(Expr<'a>),
 }
 
@@ -258,7 +259,7 @@ impl<'a> NameNode<'a> {
     }
 }
 
-/// `getPropertyNameNode`, for a `Member`, a `Prop`, a `PatProp`, a `Dot` or an `Index`: its range.
+/// The range of `getPropertyNameNode`'s result, for a `Member`, `Prop`, `PatProp`, `Dot` or `Index`.
 pub(crate) fn get_property_name_node(node: Node<'_>) -> Option<Span> {
     Some(NameNode::of(node)?.span(node.file()))
 }
@@ -268,7 +269,7 @@ pub(crate) fn get_property_name(node: Node<'_>) -> Option<&[u8]> {
     NameNode::of(node)?.name()
 }
 
-/// An element of what `getComponentProperties` returns.
+/// An element of `getComponentProperties`'s result.
 #[derive(Copy, Clone)]
 pub(crate) enum Property<'a> {
     Member(Member<'a>),
@@ -283,7 +284,7 @@ impl<'a> Property<'a> {
         }
     }
 
-    /// `None` also for a constructor: see [`Member::constructor_keyword`].
+    /// Also `None` for a constructor. See [`Member::constructor_keyword`].
     pub(crate) fn key(self) -> Option<Key<'a>> {
         match self {
             Property::Member(it) => it.key(),
@@ -296,7 +297,7 @@ impl<'a> Property<'a> {
         get_property_name(self.node())
     }
 
-    /// `property.value`. That of a method of a class is no expression: it has only [`Self::func`].
+    /// `property.value`. A class method's value isn't an expression, so it only has [`Self::func`].
     pub(crate) fn value(self) -> Option<Expr<'a>> {
         match self {
             Property::Member(it) => it.init(),
@@ -305,7 +306,7 @@ impl<'a> Property<'a> {
         }
     }
 
-    /// `property.value`, if that is a `FunctionExpression` or an `ArrowFunctionExpression`.
+    /// `property.value`, if it's a `FunctionExpression` or an `ArrowFunctionExpression`.
     pub(crate) fn func(self) -> Option<Func<'a>> {
         let func = match self {
             Property::Member(it) => match it.kind() {
@@ -343,8 +344,8 @@ pub(crate) fn get_component_properties(node: Node<'_>) -> SmallVec<[Property<'_>
     }
 }
 
-/// `token.value` of a `JSXText`. espree has what `&nbsp;` and the like stand for in the text
-/// between tags, typescript-estree has it as it is written.
+/// `token.value` of a `JSXText`. espree decodes `&nbsp;` and the like in the text between tags,
+/// typescript-estree keeps the raw text.
 fn value_of_jsx_text<'a>(file: &'a File<'a>, token: Token<'a>) -> Cow<'a, [u8]> {
     let is_decoded = strings::contains_char(token.text(), b'&')
         && file.is_javascript()
@@ -356,8 +357,8 @@ fn value_of_jsx_text<'a>(file: &'a File<'a>, token: Token<'a>) -> Cow<'a, [u8]> 
     decoded.unwrap_or_else(|| Cow::Borrowed(token.text()))
 }
 
-/// `getFirstNodeInLine`: the token before `node` and before the text of JSX whose last line is
-/// blank. `None` where upstream throws: there is none.
+/// `getFirstNodeInLine`. Returns the token before `node`, skipping JSX text whose last line is
+/// blank. `None` if there's no such token, where upstream throws.
 pub(crate) fn get_first_node_in_line<'a>(file: &'a File<'a>, node: Span) -> Option<Token<'a>> {
     file.tokens_before(node).find(|token| {
         if token.kind() != TokenKind::JsxText {
@@ -381,8 +382,8 @@ pub(crate) fn in_constructor(node: Node<'_>) -> bool {
     })
 }
 
-/// `getKeyValue`, for a `Member`, a `Prop` or a `PatProp`. What is no string comes as
-/// `String(value)`: upstream's callers take the keys `0` and `0n` for none.
+/// `getKeyValue`, for a `Member`, a `Prop` or a `PatProp`. A value that isn't a string is returned
+/// as `String(value)`. Upstream's callers treat the keys `0` and `0n` as missing.
 pub(crate) fn get_key_value(node: Node<'_>) -> Option<Cow<'_, [u8]>> {
     let argument = || match node {
         Node::Prop(prop) if prop.kind() == PropKind::Spread => prop.value(),
@@ -406,7 +407,7 @@ pub(crate) fn is_assignment_lhs(e: Expr<'_>) -> bool {
         && !parent.is_assignment_target())
 }
 
-/// `unwrapTSAsExpression`: one `as`, not a `<T>e`.
+/// `unwrapTSAsExpression`. Unwraps one `as`, but not a `<T>e`.
 pub(crate) fn unwrap_ts_as_expression(e: Expr<'_>) -> Expr<'_> {
     match e.kind() {
         ExprKind::As { expr, .. } | ExprKind::AsConst(expr) if !e.is_angle_bracket_assertion() => {

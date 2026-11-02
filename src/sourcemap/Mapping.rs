@@ -324,20 +324,18 @@ impl Lookup {
 
         let name: &[u8] = &source_map.external_source_names[source_idx];
 
-        if source_map.is_standalone_module_graph {
-            return Some(bun_core::String::clone_utf8(name));
-        }
-
-        if bun_paths::is_absolute(base_filename) {
+        let display = if !source_map.is_standalone_module_graph
+            && bun_paths::is_absolute(base_filename)
+        {
             // `platform::Auto` is a cfg-selected
             // type alias (Posix on unix, Windows on windows).
             let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(base_filename);
-            return Some(bun_core::String::clone_utf8(
-                bun_paths::resolve_path::join_abs::<bun_paths::platform::Auto>(dir, name),
-            ));
-        }
+            bun_paths::resolve_path::join_abs::<bun_paths::platform::Auto>(dir, name)
+        } else {
+            name
+        };
 
-        Some(bun_core::String::borrow_utf8(name))
+        Some(bun_core::String::clone_utf8(display))
     }
 
     /// Only valid if `lookup.source_map.is_external()`
@@ -395,10 +393,11 @@ impl Lookup {
             // `platform::Auto` is
             // cfg-selected (Posix on unix, Windows on windows).
             let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(base_filename);
-            let normalized = bun_paths::resolve_path::join_abs_string_buf_z::<
+            // `name` comes from the source map and can be any length. A path too long for `buf` is too long to open.
+            let path = bun_paths::resolve_path::join_abs_string_buf_checked::<
                 bun_paths::platform::Loose,
-            >(dir, &mut buf, &[name]);
-            match bun_sys::File::read_from(bun_sys::Fd::cwd(), normalized) {
+            >(dir, &mut buf[..], &[name])?;
+            match bun_sys::File::read_from(bun_sys::Fd::cwd(), path) {
                 Ok(r) => break 'bytes r,
                 Err(_) => return None,
             }
@@ -439,7 +438,6 @@ pub fn parse(
     bytes: &[u8],
     estimated_mapping_count: Option<usize>,
     sources_count: i32,
-    input_line_count: usize,
     options: ParseOptions,
 ) -> ParseResult {
     scoped_log!(SourceMap, "parse mappings ({} bytes)", bytes.len());
@@ -725,7 +723,6 @@ pub fn parse(
 
     let mut psm = ParsedSourceMap::default();
     psm.mappings = mapping;
-    psm.input_line_count = input_line_count;
     Ok(psm)
 }
 

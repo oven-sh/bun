@@ -3,6 +3,7 @@
 import { JSON5 } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
 
 describe("escape sequences", () => {
   test("\\v vertical tab", () => {
@@ -520,6 +521,13 @@ describe("error messages", () => {
     expect(() => JSON5.parse("{a: hello}")).toThrow("Unexpected token");
   });
 
+  test("a NUL character doesn't end the input", () => {
+    const nul = String.fromCharCode(0);
+    expect(() => JSON5.parse(`1${nul}`)).toThrow("Unexpected character");
+    expect(() => JSON5.parse(`[1${nul}, @`)).toThrow("Unexpected character");
+    expect(JSON5.parse(`"a${nul}b"`)).toBe(`a${nul}b`);
+  });
+
   // -- Unterminated multi-line comment --
   test("unterminated multi-line comment", () => {
     expect(() => JSON5.parse("/* unterminated")).toThrow("Unterminated multi-line comment");
@@ -622,6 +630,11 @@ describe("error messages", () => {
   test("invalid identifier start character in key", () => {
     expect(() => JSON5.parse("{: 1}")).toThrow("Invalid identifier start character");
     expect(() => JSON5.parse("{@key: 1}")).toThrow("Unexpected character");
+  });
+
+  test("escape in a key that isn't an identifier character", () => {
+    expect(() => JSON5.parse("{a\\u002d: 1}")).toThrow("Invalid identifier start character");
+    expect(JSON5.parse("{a\\u0062: 1}")).toEqual({ ab: 1 });
   });
 
   // -- Expected 'u' after '\\' in identifier --
@@ -1352,6 +1365,18 @@ describe("input types", () => {
     const parsed = JSON5.parse(input);
     const expected: any = [1, 2, 3];
     expect(parsed).toEqual(expected);
+  });
+
+  test("an asset of Bun.build() parses as its bytes, and one written to outdir is refused", async () => {
+    using dir = tempDir("json5-build-output", {
+      "entry.js": `import doc from "./doc.json5" with { type: "file" };\nconsole.log(doc);`,
+      "doc.json5": "{a: 1, b: [1, 2,],}",
+    });
+    const entrypoints = [join(String(dir), "entry.js")];
+    const assetOf = (build: Bun.BuildOutput) => build.outputs.find(output => output.kind === "asset")!;
+    expect(JSON5.parse(assetOf(await Bun.build({ entrypoints })) as any)).toEqual({ a: 1, b: [1, 2] });
+    const written = assetOf(await Bun.build({ entrypoints, outdir: join(String(dir), "out") }));
+    expect(() => JSON5.parse(written as any)).toThrow("File blob cannot be used here");
   });
 
   test("throws on no arguments", () => {

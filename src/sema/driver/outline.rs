@@ -1,23 +1,19 @@
-//! What the options of a project say about the globals of its files, without a file of the project being read: which
-//! libraries it has, which packages of types, and whether it checks its JavaScript.
+//! Derives what determines the globals in a project's files from its options, without reading any of those files: its
+//! libraries, its type packages, and whether it checks its JavaScript.
 //!
-//! The project of a file is the one that `Projects::owner_of` finds under
-//! `PlanOptions::only_in_a_project_that_includes`. It is found otherwise: the configuration files by asking for them,
-//! directory by directory, or of who has listed the directories; what a project includes by its patterns.
+//! A file's project is the one that `Projects::owner_of` finds under `PlanOptions::requires_including_project`.
+//! It's found differently here. Configuration files are found by probing directory by directory, or taken from a caller
+//! that has already listed the directories. What a project includes is decided from its patterns.
 
-use crate::host::{Asking, from_native};
-use crate::{
-    Graph, Listed, installed_typescript, lacks_its_packages, major_of_typescript_at,
-    project_that_checks,
-};
+use crate::host::{UncachedDisk, from_native};
+use crate::{Listed, has_no_installed_dependencies, installed_typescript, major_of_typescript_at, project_that_checks};
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
-use bun_sema::config::{self, Asked, Roots};
+use bun_sema::config::{self, Roots, SplitFilePath};
 use bun_sema::json::Json;
 use bun_sema::program::libs_referenced_by;
 use bun_sema::resolve::{
-    Host, Kept, Options, ancestors, contains_path, inside, is_same_path, join,
-    output_declaration_file_name,
+    CachedConfig, Host, Options, ancestors, contains_path, inside, is_same_path, join, output_declaration_file_name,
 };
 use bun_sema::session::Session;
 use bun_sema::util::{FxHashMap, FxHashSet};
@@ -27,63 +23,60 @@ use std::sync::{Arc, OnceLock, Weak};
 pub struct Outline {
     /// In the checker's format.
     pub config_path: Vec<u8>,
-    /// `lib`, or else what `target` stands for: the `N` of each `lib.N.d.ts`. What these refer to is not among them.
+    /// `lib`, or by default the libraries that `target` implies, as the `N` of each `lib.N.d.ts`. The libraries these
+    /// refer to aren't included.
     pub libs: Vec<Vec<u8>>,
-    /// The entries of `types`, with the packages that a `*` stands for, each with where it is.
+    /// The entries of `types`, with `*` expanded to the packages it matches, each with its location.
     pub types: Vec<(Vec<u8>, Vec<u8>)>,
     /// `checkJs`
     pub checks_javascript: bool,
 }
 
 struct Project {
-    parsed: Arc<config::Project>,
     roots: Roots,
-    /// The configuration files.
+    /// The referenced projects' configuration files.
     references: Vec<Vec<u8>>,
-    /// Made when a file of the project asks. `None`: what it depends on is not installed, so what its files can use is
-    /// not known.
+    options: Options,
+    /// Built the first time a file of the project needs it. `None`: the project's dependencies aren't installed, so the
+    /// globals its files can use are unknown.
     outline: OnceLock<Option<Arc<Outline>>>,
-    /// `Outlines::reached_from`. `Outlines::projects` keeps them.
-    reached: OnceLock<Reached>,
+    /// `Outlines::reached_from`. `Outlines::projects` keeps them alive.
+    reached: OnceLock<Vec<Weak<Project>>>,
 }
 
-struct Reached {
-    /// The same reference graph validator used by checking, including permitted circular edges.
-    is_valid: bool,
-    projects: Vec<Weak<Project>>,
-}
+/// The slot a project is read into by the first thread that needs it. `None`: it can't be read.
+type ProjectSlot = Arc<OnceLock<Option<Arc<Project>>>>;
 
-/// Where a project is read into, by the first that asks for it. `None`: it cannot be read.
-type Place = Arc<OnceLock<Option<Arc<Project>>>>;
-
-/// The outlines of the projects of a run. Each is made when a file of it is first asked about.
+/// The outlines of a run's projects. Each is built the first time one of its files is queried.
 pub struct Outlines {
-    host: Asking<'static>,
+    host: UncachedDisk<'static>,
     /// `Host::extended_config`
-    extended: Guarded<FxHashMap<Vec<u8>, Kept>>,
-    /// By the directory of an installed TypeScript: `major_of_typescript_at`.
+    extended: Guarded<FxHashMap<Vec<u8>, CachedConfig>>,
+    /// `major_of_typescript_at`, by the directory of an installed TypeScript.
     majors: Guarded<FxHashMap<Vec<u8>, Option<(Vec<u8>, Json)>>>,
     cwd: Vec<u8>,
-    /// Every directory below one of these in which a file is asked about has been listed, and the directories between.
+    /// The caller has listed every directory below one of these that contains a queried file, and the directories in
+    /// between.
     listed_below: Vec<Vec<u8>>,
-    /// The configuration files that were there.
+    /// The configuration files found in those listings.
     listed: FxHashSet<Vec<u8>>,
     /// By directory.
     nearest: Guarded<FxHashMap<Vec<u8>, Option<Vec<u8>>>>,
     /// By directory: `Outlines::above`.
-    above: Guarded<FxHashMap<Vec<u8>, Arc<Vec<(Vec<u8>, Place)>>>>,
+    above: Guarded<FxHashMap<Vec<u8>, Arc<Vec<(Vec<u8>, ProjectSlot)>>>>,
     /// By configuration file.
-    projects: Guarded<FxHashMap<Vec<u8>, Place>>,
+    projects: Guarded<FxHashMap<Vec<u8>, ProjectSlot>>,
 }
 
 impl Outlines {
-    /// All are native paths. `listed_below`, `listed`: who has searched these directories for the files that are asked
-    /// about says which `tsconfig.json` and `jsconfig.json` it has come by, and the system is not asked for them again.
+    /// All paths are native. `listed_below`, `listed`: a caller that has already searched these directories for the
+    /// files it queries passes the `tsconfig.json` and `jsconfig.json` files it saw, so the system isn't queried for
+    /// them again.
     pub fn new(cwd: &[u8], listed_below: &[Vec<u8>], listed: &[Vec<u8>]) -> Outlines {
         let cwd = from_native(cwd);
-        let host = Asking::new(&cwd);
-        // Where the case of a name does not count, `Tsconfig.json` is one.
-        let as_it_is_asked_for = |path: &Vec<u8>| {
+        let host = UncachedDisk::new(&cwd);
+        // On a case-insensitive file system, `Tsconfig.json` counts too.
+        let normalized_config_path = |path: &Vec<u8>| {
             let mut path = from_native(path);
             let name = path.len().saturating_sub(b"tsconfig.json".len());
             if !host.is_case_sensitive {
@@ -97,58 +90,46 @@ impl Outlines {
             majors: Default::default(),
             cwd,
             listed_below: listed_below.iter().map(|it| from_native(it)).collect(),
-            listed: listed.iter().map(as_it_is_asked_for).collect(),
+            listed: listed.iter().map(normalized_config_path).collect(),
             nearest: Default::default(),
             above: Default::default(),
             projects: Default::default(),
         }
     }
 
-    /// Of the project that includes the file at `path`, a native path. `None`: there is none, or `Project::outline`.
+    /// Returns the outline of the project that includes the file at `path`, a native path. `None`: there's no such
+    /// project, or see `Project::outline`.
     pub fn of(&self, path: &[u8]) -> Option<Arc<Outline>> {
         let path = from_native(path);
-        let host = self.asking(false);
-        let file = Asked::new(&path);
-        let has_it = |it: &Arc<Project>| it.roots.has(&file, &|path| host.is_file(path));
+        let host = self.uncached_host(false);
+        let file = SplitFilePath::new(&path);
+        let includes_file = |it: &Arc<Project>| it.roots.has(&file, &|path| host.is_file(path));
         for (config, _) in self.above(dirname::<Posix>(&path)).iter() {
             let owner = project_that_checks(config, host.is_case_sensitive(), |config| {
-                let place = self.place_of(config);
-                let project = self.read_into(&place, config)?;
-                let listed = has_it(project).then(|| {
-                    // Declarations are read by both projects. A source that a reference includes
-                    // is read through its declaration output in this project.
+                let slot = self.project_slot_of(config);
+                let project = self.read_into(&slot, config)?;
+                let listed = includes_file(project).then(|| {
                     let reached = project.reached.get_or_init(|| self.reached_from(project));
-                    let redirects = reached.is_valid
-                        && output_declaration_file_name(&path, None).is_some()
-                        && reached
-                            .projects
-                            .iter()
-                            .filter_map(Weak::upgrade)
-                            .any(|it| has_it(&it));
+                    // Globals read sources, so build-order cycles do not invalidate their owner.
+                    let redirects = output_declaration_file_name(&path, None).is_some()
+                        && reached.iter().filter_map(Weak::upgrade).any(|it| includes_file(&it));
                     (Listed::AsConfigured, redirects)
                 });
                 Some((listed, project.references.clone()))
             });
             if let Some(owner) = owner {
-                let place = self.place_of(&owner);
-                let owner = self.read_into(&place, &owner)?;
-                if !owner
-                    .reached
-                    .get_or_init(|| self.reached_from(owner))
-                    .is_valid
-                {
-                    return None;
-                }
-                let outline = || self.outline(&owner.parsed.options);
+                let slot = self.project_slot_of(&owner);
+                let owner = self.read_into(&slot, &owner)?;
+                let outline = || self.outline(&owner.options);
                 return owner.outline.get_or_init(outline).clone();
             }
         }
         None
     }
 
-    /// The configuration files that are asked for a file in `directory`, in that order: the nearest, then
-    /// `getAncestorConfigFileName`. None is read for it.
-    fn above(&self, directory: &[u8]) -> Arc<Vec<(Vec<u8>, Place)>> {
+    /// Returns the configuration files to try for a file in `directory`, in order: the nearest, then
+    /// `getAncestorConfigFileName`. Doesn't read any of them.
+    fn above(&self, directory: &[u8]) -> Arc<Vec<(Vec<u8>, ProjectSlot)>> {
         if let Some(known) = self.above.lock().get(directory) {
             return Arc::clone(known);
         }
@@ -158,8 +139,8 @@ impl Outlines {
         while let Some(config) = next {
             let parent = ancestors(dirname::<Posix>(&config)).nth(1);
             next = parent.and_then(|it| self.nearest_to(it));
-            let place = self.place_of(&config);
-            all.push((config, place));
+            let project_slot = self.project_slot_of(&config);
+            all.push((config, project_slot));
         }
         let all = Arc::new(all);
         let mut above = self.above.lock();
@@ -167,13 +148,14 @@ impl Outlines {
         all
     }
 
-    /// The `N` of each `/// <reference lib="N" />` in the `index.d.ts` of the package at `path`, of `Outline::types`.
+    /// Returns the `N` of each `/// <reference lib="N" />` in the `index.d.ts` of the package at `path`, which comes
+    /// from `Outline::types`.
     pub fn libs_referenced_by(&self, path: &[u8]) -> Vec<Vec<u8>> {
         libs_referenced_by(&self.host, &inside(path, b"index.d.ts"))
     }
 
-    fn asking(&self, lists: bool) -> Asking<'_> {
-        Asking {
+    fn uncached_host(&self, lists: bool) -> UncachedDisk<'_> {
+        UncachedDisk {
             lists,
             extended: Some(&self.extended),
             ..self.host
@@ -182,15 +164,15 @@ impl Outlines {
 
     /// `config::find_config`
     fn nearest_to(&self, directory: &[u8]) -> Option<Vec<u8>> {
-        let host = self.asking(false);
-        let mut asked = Vec::new();
+        let host = self.uncached_host(false);
+        let mut visited = Vec::new();
         let mut found = None;
         for directory in ancestors(directory) {
             if let Some(known) = self.nearest.lock().get(directory) {
                 found.clone_from(known);
                 break;
             }
-            asked.push(directory);
+            visited.push(directory);
             let is_case_sensitive = host.is_case_sensitive();
             let mut above = self.listed_below.iter();
             let is_listed = above.any(|it| contains_path(it, directory, is_case_sensitive));
@@ -204,53 +186,38 @@ impl Outlines {
                 break;
             }
         }
-        if asked.is_empty() {
+        if visited.is_empty() {
             return found;
         }
         let mut nearest = self.nearest.lock();
-        for directory in asked {
+        for directory in visited {
             nearest.insert(directory.to_vec(), found.clone());
         }
         found
     }
 
-    /// The projects that `project` references, directly or not. This is a membership set:
-    /// `project_that_checks` owns the order in which a file's project is selected.
-    fn reached_from(&self, project: &Project) -> Reached {
-        let host = self.asking(false);
-        let mut load = |config: &[u8]| {
-            let place = self.place_of(config);
-            self.read_into(&place, config)
-                .map(|it| Arc::clone(&it.parsed))
-        };
-        // This host lists no sources. The graph is used only for reference validity and reachability;
-        // Roots::has supplies file membership without loading a program.
-        let mut graph = Graph::new(&host, &mut load);
-        graph.create_build_tasks(Arc::clone(&project.parsed));
-        graph.setup_build_tasks(&project.parsed.config_path);
-        let projects = graph
-            .projects
-            .iter()
-            .filter(|it| {
-                !is_same_path(
-                    &it.project.config_path,
-                    &project.parsed.config_path,
-                    host.is_case_sensitive(),
-                )
-            })
-            .filter_map(|it| {
-                let place = self.place_of(&it.project.config_path);
-                self.read_into(&place, &it.project.config_path)
-                    .map(Arc::downgrade)
-            })
-            .collect();
-        Reached {
-            is_valid: graph.errors.is_empty(),
-            projects,
+    /// Membership of the referenced projects. `project_that_checks` owns selection order.
+    fn reached_from(&self, project: &Project) -> Vec<Weak<Project>> {
+        let is_case_sensitive = self.host.is_case_sensitive();
+        let mut all = Vec::new();
+        let mut seen = vec![project.options.config_path.clone()];
+        // The configuration files still to visit, next one last.
+        let mut pending: Vec<Vec<u8>> = project.references.iter().rev().cloned().collect();
+        while let Some(config) = pending.pop() {
+            if (seen.iter()).any(|it| is_same_path(it, &config, is_case_sensitive)) {
+                continue;
+            }
+            let project_slot = self.project_slot_of(&config);
+            if let Some(project) = self.read_into(&project_slot, &config) {
+                pending.extend(project.references.iter().rev().cloned());
+                all.push(Arc::downgrade(project));
+            }
+            seen.push(config);
         }
+        all
     }
 
-    fn place_of(&self, config: &[u8]) -> Place {
+    fn project_slot_of(&self, config: &[u8]) -> ProjectSlot {
         let mut projects = self.projects.lock();
         match projects.get(config) {
             Some(known) => Arc::clone(known),
@@ -258,14 +225,18 @@ impl Outlines {
         }
     }
 
-    /// One thread reads it. The others wait: they have nothing to lint before they know.
-    fn read_into<'p>(&self, place: &'p Place, config: &[u8]) -> Option<&'p Arc<Project>> {
+    /// One thread reads it. The others wait, because they have nothing to lint until they know.
+    fn read_into<'p>(
+        &self,
+        project_slot: &'p ProjectSlot,
+        config: &[u8],
+    ) -> Option<&'p Arc<Project>> {
         let read = || self.read(config).map(Arc::new);
-        place.get_or_init(read).as_ref()
+        project_slot.get_or_init(read).as_ref()
     }
 
     fn read(&self, config: &[u8]) -> Option<Project> {
-        let host = self.asking(false);
+        let host = self.uncached_host(false);
         let major = installed_typescript(&host, config).and_then(|package| {
             if let Some(known) = self.majors.lock().get(&package) {
                 return known.clone();
@@ -274,21 +245,21 @@ impl Outlines {
             self.majors.lock().insert(package, major.clone());
             major
         });
-        let over = |_: bool| -> Vec<_> { major.clone().into_iter().collect() };
-        let project = config::load_overriding(&host, &Session::new(), config, &over).ok()?;
+        let overrides = |_: bool| -> Vec<_> { major.clone().into_iter().collect() };
+        let project = config::load_overriding(&host, &Session::new(), config, &overrides).ok()?;
         Some(Project {
             roots: project.roots(&host),
             references: (project.references.iter())
                 .map(|it| config::resolve_config_file_name_of_project_reference(&it.path))
                 .collect(),
-            parsed: Arc::new(project),
+            options: project.options,
             outline: OnceLock::new(),
             reached: OnceLock::new(),
         })
     }
 
     fn outline(&self, options: &Options) -> Option<Arc<Outline>> {
-        if lacks_its_packages(&self.asking(false), &options.config_path) {
+        if has_no_installed_dependencies(&self.uncached_host(false), &options.config_path) {
             return None;
         }
         Some(Arc::new(Outline {
@@ -299,17 +270,17 @@ impl Outlines {
         }))
     }
 
-    /// `Outline::types`. `None`: an entry of `types` is not installed (2688). Where `ResolveTypeReferenceDirective`
-    /// looks for it, there is a directory or a declaration file of its name: that is all that is asked. What is in it,
-    /// the program finds out if it is ever loaded.
+    /// `Outline::types`. Returns `None` if an entry of `types` isn't installed (2688). This only checks that a
+    /// directory or a declaration file with that name exists where `ResolveTypeReferenceDirective` looks for it. The
+    /// program finds out what's in it if it's ever loaded.
     fn types_of(&self, options: &Options) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
-        let host = self.asking(true);
+        let host = self.uncached_host(true);
         let names = options.types.as_deref().unwrap_or_default();
         let roots = match names.is_empty() {
             true => Vec::new(),
             false => options.effective_type_roots(),
         };
-        let is_there =
+        let is_installed =
             |path: &Vec<u8>| host.is_dir(path) || host.is_file(&[&path[..], b".d.ts"].concat());
         let mut all = Vec::new();
         for name in names {
@@ -329,10 +300,13 @@ impl Outlines {
                     join(&inside(&packages, b"@types"), name),
                 ]
             });
-            let beside = name
+            let relative_to_base = name
                 .starts_with(b".")
                 .then(|| join(&options.base_dir, name));
-            let found = in_roots.chain(beside).chain(installed).find(is_there)?;
+            let found = in_roots
+                .chain(relative_to_base)
+                .chain(installed)
+                .find(is_installed)?;
             all.push((name.clone(), found));
         }
         Some(all)

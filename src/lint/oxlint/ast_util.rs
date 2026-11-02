@@ -1,17 +1,18 @@
-//! What the rules of oxlint are written with, on the handles: its `ast_util.rs`, the methods of `oxc_ast` and of
-//! `LintContext` that they call most, and what the rules of more than one plugin take from its `utils`. Each function has
-//! the name that it has there.
+//! The helpers that oxlint's rules are written with, ported to our AST handles: its `ast_util.rs`, the `oxc_ast` and
+//! `LintContext` methods the rules call most, and the `utils` functions shared by more than one plugin. Each function
+//! keeps its oxlint name.
 //!
-//! Two kinds of node of oxc are not nodes here:
-//! - `ParenthesizedExpression`. `without_parentheses()` is nothing here. Where a rule of oxlint looks at the kind of an expression
-//!   and has not called it, nor `get_inner_expression()`, what is in parentheses does not match: `!e.is_parenthesized()`.
-//! - `ChainExpression`, which is around the whole of an optional chain: `e.is_chain_root()`.
+//! Two of oxc's node kinds aren't nodes in our tree:
+//! - `ParenthesizedExpression`. `without_parentheses()` is a no-op here. Where an oxlint rule matches on an
+//!   expression's kind without first calling it or `get_inner_expression()`, a parenthesized expression doesn't match,
+//!   so the port checks `!e.is_parenthesized()`.
+//! - `ChainExpression`, which wraps a whole optional chain. The port checks `e.is_chain_root()`.
 
 use bun_core::strings;
 use bun_lint::prelude::*;
 
-/// `Expression::get_inner_expression`: without the `as T`, `satisfies T`, `!`, `<T>` before and `<T>` after it. It does not look
-/// into a `ChainExpression`: `a?.b!` stays what it is.
+/// `Expression::get_inner_expression`: strips `as T`, `satisfies T`, `!`, a leading `<T>` and a trailing `<T>`. It
+/// doesn't look inside a `ChainExpression`, so `a?.b!` is returned unchanged.
 #[inline]
 pub fn get_inner_expression(e: Expr<'_>) -> Expr<'_> {
     match is_type_wrapper(e) {
@@ -44,32 +45,33 @@ fn without_type_wrappers(e: Expr<'_>) -> Expr<'_> {
     at
 }
 
-/// `e.get_inner_expression()`, if that is not a `ChainExpression`.
+/// `e.get_inner_expression()`, if that isn't a `ChainExpression`.
 #[inline]
 pub fn get_inner_expression_unless_chain(e: Expr<'_>) -> Option<Expr<'_>> {
     Some(get_inner_expression(e)).filter(|it| !it.is_chain_root())
 }
 
-/// Whether `e` is neither in parentheses nor the whole of an optional chain.
+/// True if `e` is neither parenthesized nor a whole optional chain.
 fn is_plain(e: Expr) -> bool {
     !e.is_parenthesized() && !e.is_chain_root()
 }
 
-/// `e`, if for oxlint it is of the kind that it is here: it is neither in parentheses nor the whole of an optional
-/// chain.
+/// Returns `e` if oxlint sees the same node kind that we do, which means it's neither parenthesized nor a whole
+/// optional chain.
 #[inline]
 pub fn plain(e: Expr<'_>) -> Option<Expr<'_>> {
     is_plain(e).then_some(e)
 }
 
-/// What oxc has around `e`, if that is a node here: not parentheses and not a `ChainExpression`.
+/// `e`'s parent in oxc's tree, if it's also a node in ours. `None` if it's a `ParenthesizedExpression` or a
+/// `ChainExpression`.
 #[inline]
 pub fn parent_node(e: Expr<'_>) -> Option<Node<'_>> {
     is_plain(e).then(|| e.parent())
 }
 
-/// `Expression::as_member_expression`: `e` if it is a `Dot` or an `Index`. What is in parentheses is not, nor is the
-/// whole of an optional chain.
+/// `Expression::as_member_expression`: `e` if it's a `Dot` or an `Index`, and neither parenthesized nor a whole
+/// optional chain.
 #[inline]
 pub fn as_member_expression(e: Expr<'_>) -> Option<Expr<'_>> {
     (matches!(e.tag(), ExprTag::Dot | ExprTag::Index) && is_plain(e)).then_some(e)
@@ -93,7 +95,7 @@ pub fn as_function_expression(e: Expr<'_>) -> Option<Func<'_>> {
     e.as_fn().filter(|_| !e.is_parenthesized())
 }
 
-/// `Expression::ObjectExpression`: the properties, if it is an object literal that is not in parentheses.
+/// `Expression::ObjectExpression`: the properties, if `e` is an object literal that isn't parenthesized.
 #[inline]
 pub fn as_object_expression(e: Expr<'_>) -> Option<List<'_, Prop<'_>>> {
     e.as_object().filter(|_| !e.is_parenthesized())
@@ -113,19 +115,19 @@ pub fn static_string(e: Expr<'_>) -> Option<Name<'_>> {
     }
 }
 
-/// `Expression::get_member_expr`: the `Dot` or the `Index` that it is, optional or not.
+/// `Expression::get_member_expr`: `e` if it's a `Dot` or an `Index`, optional or not.
 #[inline]
 pub fn get_member_expr(e: Expr<'_>) -> Option<Expr<'_>> {
     Some(get_inner_expression(e)).filter(|it| matches!(it.tag(), ExprTag::Dot | ExprTag::Index))
 }
 
-/// The `"b"` of `a["b"]` or the `` `b` `` of `` a[`b`] ``, and its value.
+/// The `"b"` in `a["b"]` or the `` `b` `` in `` a[`b`] ``, and its value.
 fn static_index(member: Expr<'_>) -> Option<(Expr<'_>, Name<'_>)> {
     let index = member.index().filter(|it| !it.is_parenthesized())?;
     Some((index, static_string(index)?))
 }
 
-/// `MemberExpression::static_property_info`: where the name of the property is written, and the name. Nothing for `a.#b`.
+/// `MemberExpression::static_property_info`: the property name's span and the name. `None` for `a.#b`.
 pub fn static_property_info(member: Expr<'_>) -> Option<(Span, Name<'_>)> {
     match member.member_name() {
         Some(name) => (!member.is_private_member()).then(|| (name.span(), name.name())),
@@ -142,8 +144,8 @@ pub fn static_property_name(member: Expr<'_>) -> Option<Name<'_>> {
     }
 }
 
-/// `MemberExpression::static_property_name` in full: the name of `a[/b/]` is `/b/`. For where names are compared with
-/// each other.
+/// The full `MemberExpression::static_property_name`, where the name of `a[/b/]` is `/b/`. Use it where names are
+/// compared with each other.
 pub fn static_property_name_or_regex(member: Expr<'_>) -> Option<&[u8]> {
     match member
         .index()
@@ -154,7 +156,7 @@ pub fn static_property_name_or_regex(member: Expr<'_>) -> Option<&[u8]> {
     }
 }
 
-/// `CallExpression::callee_name`: the `a` of `a()`, `b.a()` and `b["a"]()`
+/// `CallExpression::callee_name`: the `a` in `a()`, `b.a()` and `b["a"]()`
 pub fn callee_name(call: Call<'_>) -> Option<Name<'_>> {
     let callee = call.callee();
     match callee.as_ident() {
@@ -174,7 +176,7 @@ fn has_arg_count(call: Call, min_arg_count: Option<usize>, max_arg_count: Option
     min_arg_count.is_none_or(|min| count >= min) && max_arg_count.is_none_or(|max| count <= max)
 }
 
-/// `objects`: the identifiers that the method is called on. `None`: whatever.
+/// `objects` lists the identifiers the method may be called on. `None` allows any object.
 #[inline(always)]
 pub fn is_method_call(
     call: Call,
@@ -191,7 +193,7 @@ fn calls_method_of(call: Call, objects: Option<&[&str]>, methods: Option<&[&str]
     get_member_expr(call.callee()).is_some_and(|it| is_method_of(it, objects, methods))
 }
 
-/// Whether the `Dot` or the `Index` `member` is one of `methods` of one of `objects`.
+/// True if `member`, a `Dot` or an `Index`, accesses one of `methods` on one of `objects`.
 #[inline]
 fn is_method_of(member: Expr, objects: Option<&[&str]>, methods: Option<&[&str]>) -> bool {
     let is_on = |objects: &[&str]| {
@@ -206,7 +208,7 @@ fn is_method_of(member: Expr, objects: Option<&[&str]>, methods: Option<&[&str]>
             .is_none_or(|methods| static_property_name(member).is_some_and(|it| it.is_any(methods)))
 }
 
-/// `new_expr`: of a `New`.
+/// `new_expr` must come from a `New` expression.
 pub fn is_new_expression(
     new_expr: Call,
     names: &[&str],
@@ -220,10 +222,10 @@ pub fn is_new_expression(
             .is_some_and(|it| it.is_any(names))
 }
 
-/// Where the name of the method that is called is written, and the name.
+/// The called method's name span and name.
 pub fn call_expr_method_callee_info(call: Call<'_>) -> Option<(Span, Name<'_>)> {
     let callee = get_inner_expression(call.callee());
-    // A `ChainExpression` is not a member expression.
+    // A `ChainExpression` isn't a member expression.
     if callee.is_chain_root() {
         return None;
     }
@@ -235,8 +237,8 @@ pub fn is_global_reference(e: Expr) -> bool {
     e.tag() == ExprTag::Ident && symbol_of(e).is_none()
 }
 
-/// The variable that the identifier `ident`, which is a value, refers to. For oxc that is never what only declares a type: an
-/// interface, a type alias, what `import type` imports.
+/// The variable that `ident`, an identifier in value position, refers to. In oxc that's never a type-only declaration:
+/// an interface, a type alias or an `import type` binding.
 pub fn symbol_of(ident: Expr<'_>) -> Option<Symbol<'_>> {
     let is_type_only = |symbol: &Symbol| match symbol.declarations().next() {
         Some(Declaration::ImportDefault(import) | Declaration::ImportNamespace(import)) => {
@@ -250,13 +252,13 @@ pub fn symbol_of(ident: Expr<'_>) -> Option<Symbol<'_>> {
     ident.symbol().filter(|it| !is_type_only(it))
 }
 
-/// `Expression::is_global_reference_name`. What is in parentheses is not an identifier there.
+/// `Expression::is_global_reference_name`. A parenthesized identifier doesn't count as an identifier in oxc.
 pub fn is_global_reference_name(e: Expr, name: &str) -> bool {
     e.is_ident(name) && !e.is_parenthesized() && symbol_of(e).is_none()
 }
 
-/// `ctx.globals().get(name)`: what the configuration says about a global variable.
-fn global_of_configuration(file: &File, name: &[u8]) -> Option<Global> {
+/// `ctx.globals().get(name)`: the config's setting for a global variable.
+fn configured_global(file: &File, name: &[u8]) -> Option<Global> {
     let globals = &file.language().globals;
     globals
         .binary_search_by(|it| (*it.0).cmp(name))
@@ -265,23 +267,23 @@ fn global_of_configuration(file: &File, name: &[u8]) -> Option<Global> {
         .map(|it| it.1)
 }
 
-/// `ctx.globals().get(name) == Some(GlobalValue::Off)`: the configuration says that there is no such global variable.
+/// `ctx.globals().get(name) == Some(GlobalValue::Off)`: the config turns this global variable off.
 pub fn is_global_turned_off(file: &File, name: &str) -> bool {
-    global_of_configuration(file, name.as_bytes()) == Some(Global::Off)
+    configured_global(file, name.as_bytes()) == Some(Global::Off)
 }
 
-/// `ctx.globals().is_enabled(name)`: `globals` of the configuration has a variable of that name. What an `env` defines does not
-/// count.
+/// `ctx.globals().is_enabled(name)`: the config's `globals` has a variable with that name. Globals defined by an `env`
+/// don't count.
 pub fn is_enabled_global(file: &File, name: &[u8]) -> bool {
-    file.language().is_written_global(name)
+    file.language().is_enabled_own_global(name)
 }
 
-/// `LintContext::is_reference_to_global_variable`: nothing in the file declares it, and the configuration does not turn it off.
+/// `LintContext::is_reference_to_global_variable`: nothing in the file declares it, and the config doesn't turn it off.
 pub fn is_reference_to_global_variable(ident: Expr) -> bool {
     is_global_reference(ident)
         && ident
             .as_ident()
-            .and_then(|name| global_of_configuration(ident.file(), name.bytes()))
+            .and_then(|name| configured_global(ident.file(), name.bytes()))
             != Some(Global::Off)
 }
 
@@ -290,7 +292,7 @@ pub fn get_declaration_of_variable(ident: Expr<'_>) -> Option<Declaration<'_>> {
     symbol_of(ident)?.declarations().next()
 }
 
-/// What the `const` that the identifier `ident` refers to is initialized with.
+/// The initializer of the `const` that the identifier `ident` refers to.
 pub fn get_const_variable_initializer(ident: Expr<'_>) -> Option<Expr<'_>> {
     let Declaration::Var(pat) = get_declaration_of_variable(ident)? else {
         return None;
@@ -303,7 +305,8 @@ pub fn get_const_variable_initializer(ident: Expr<'_>) -> Option<Expr<'_>> {
         .filter(|_| declarator.var_kind() == VarKind::Const)
 }
 
-/// `iter_outer_expressions`: what it is part of, from the inside, without what [`get_inner_expression`] skips.
+/// `iter_outer_expressions`: `e`'s ancestors from the inside out, without the wrappers that [`get_inner_expression`]
+/// strips.
 pub fn iter_outer_expressions(e: Expr<'_>) -> impl Iterator<Item = Node<'_>> {
     Node::Expr(e).ancestors().filter(|it| {
         !matches!(it, Node::Expr(e) if matches!(
@@ -313,7 +316,8 @@ pub fn iter_outer_expressions(e: Expr<'_>) -> impl Iterator<Item = Node<'_>> {
     })
 }
 
-/// The `e` of `@e` before a class, a member of a class or a parameter. These come before all else that their parent has.
+/// True if `e` is the expression of a decorator `@e` on a class, a class member or a parameter. Decorators come before
+/// everything else in their parent.
 pub fn is_decorator_expression(e: Expr) -> bool {
     let modifiers = match e.parent() {
         Node::Class(class) => class.modifiers(),
@@ -326,12 +330,12 @@ pub fn is_decorator_expression(e: Expr) -> bool {
         .is_some_and(|last| e.span().start < last.span().end)
 }
 
-/// What makes the scope of `oxc_semantic` that `child` is in, if its parent `parent` does. A block makes one, and every
-/// `for`. For a walk to the innermost scope around a node.
-pub fn scope_made_by<'a>(child: Node<'a>, parent: Node<'a>) -> Option<Node<'a>> {
+/// If `parent` creates the `oxc_semantic` scope that its child `child` is in, returns the node that owns the scope.
+/// Every block and every `for` creates one. Use it to walk up to the innermost scope around a node.
+pub fn scope_owner<'a>(child: Node<'a>, parent: Node<'a>) -> Option<Node<'a>> {
     match parent {
         Node::Func(_) => Some(parent),
-        // The cases of a `switch` are in one scope, what is switched on is not in it.
+        // All cases of a `switch` share one scope. The discriminant is outside it.
         Node::Case(_) => Some(parent.parent()),
         Node::Class(_) => {
             (!matches!(child, Node::Expr(e) if is_decorator_expression(e))).then_some(parent)
@@ -350,14 +354,14 @@ pub fn scope_made_by<'a>(child: Node<'a>, parent: Node<'a>) -> Option<Node<'a>> 
     }
 }
 
-/// Whether the identifier `ident` refers to what `import { imported_name } from "module_name"` imports, under whatever
-/// name.
+/// True if the identifier `ident` refers to the binding of `import { imported_name } from "module_name"`, whatever its
+/// local name.
 pub fn is_import_symbol(ident: Expr, module_name: &str, imported_name: &str) -> bool {
     matches!(get_declaration_of_variable(ident), Some(Declaration::ImportSpec(specifier))
         if specifier.import().spec().is(module_name) && specifier.imported().name().is(imported_name))
 }
 
-/// Whether the identifier `ident` refers to something that is imported from `module_name`: a name, the default or the namespace.
+/// True if the identifier `ident` refers to anything imported from `module_name`: a named, default or namespace import.
 pub fn is_import_from_module(ident: Expr, module_name: &str) -> bool {
     if !ident.file().mentions(module_name) {
         return false;
@@ -370,8 +374,8 @@ pub fn is_import_from_module(ident: Expr, module_name: &str) -> bool {
     import.spec().is(module_name)
 }
 
-/// `PropertyKey::static_name`, for a comparison with the name of a property: that of `a`, `"a"`, `["a"]`, `` [`a`] ``,
-/// not of `#a`.
+/// `PropertyKey::static_name`, for comparing with a property name. Returns the name of `a`, `"a"`, `["a"]` and `` [`a`]
+/// ``, but not of `#a`.
 pub fn static_name(key: Key<'_>) -> Option<Name<'_>> {
     key.name().filter(|_| !key.is_private())
 }
@@ -448,12 +452,12 @@ pub fn get_identifier_name(jsx: Jsx<'_>) -> Option<Name<'_>> {
     }
 }
 
-/// A name that starts with a capital letter of ASCII.
+/// True if the name starts with an ASCII capital letter.
 pub fn is_react_component_name(name: &[u8]) -> bool {
     name.first().is_some_and(u8::is_ascii_uppercase)
 }
 
-/// `use`, or `use` and a capital letter or a digit.
+/// True for `use`, or `use` followed by a capital letter or a digit.
 fn is_react_hook_name(name: &[u8]) -> bool {
     name.strip_prefix(b"use")
         .is_some_and(|rest| match rest.first() {
@@ -483,8 +487,8 @@ pub fn is_react_hook(expr: Expr) -> bool {
     }
 }
 
-/// Whether text that starts with `[`, `(`, `/`, `+`, `-` or a backtick, in the place
-/// of `node`, would continue the statement before.
+/// True if replacing `node` with text that starts with `[`, `(`, `/`, `+`, `-` or a backtick would continue the
+/// previous statement.
 pub fn could_be_asi_hazard(node: Expr) -> bool {
     let start = node.span().start;
     let mut statement = None;
@@ -494,7 +498,7 @@ pub fn could_be_asi_hazard(node: Expr) -> bool {
                 statement = Some(stmt);
                 break;
             }
-            // What can start with the node.
+            // Expressions that can start with the node.
             Node::Expr(e) if e.outer_span().start == start => match e.tag() {
                 ExprTag::Call
                 | ExprTag::Index
@@ -562,8 +566,8 @@ pub const PRECEDENCE_MEMBER: u8 = 22;
 /// `Precedence::Exponentiation`
 pub const PRECEDENCE_EXPONENTIATION: u8 = 17;
 
-/// `get_precedence` of `utils/unicorn.rs`, with the numbers of `oxc_syntax::precedence::Precedence`. `None`: it never
-/// needs parentheses. What is in parentheses and the whole of an optional chain are among these.
+/// `get_precedence` in `utils/unicorn.rs`, with the numbers of `oxc_syntax::precedence::Precedence`. `None` means it
+/// never needs parentheses, which includes a parenthesized expression and a whole optional chain.
 pub fn get_precedence(expr: Expr) -> Option<u8> {
     get_precedence_without_parentheses(expr).filter(|_| !expr.is_parenthesized())
 }

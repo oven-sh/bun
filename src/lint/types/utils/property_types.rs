@@ -4,9 +4,8 @@ use crate::types::{SymbolFlags, TsSymbol, Type};
 
 /// `getTypeOfPropertyOfName(checker, type, name, escapedName)`: the type of the property `name`.
 ///
-/// As upstream, for an `escaped_name` that stands for a symbol or a private name (`__@iterator`,
-/// `__#1@#a`) it is `getDeclaredTypeOfSymbol` of the property, which for a property is the error
-/// type.
+/// As upstream, for an `escaped_name` that encodes a symbol or a private name (`__@iterator`, `__#1@#a`) it's the
+/// property's `getDeclaredTypeOfSymbol`, which for a property is the error type.
 pub fn get_type_of_property_of_name<'a>(
     ty: Type<'a>,
     name: &[u8],

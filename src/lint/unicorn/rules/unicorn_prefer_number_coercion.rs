@@ -6,8 +6,8 @@ use bun_lint::rule::Plugin;
 /// Prefer `Number()` over `parseFloat()` and base-10 `parseInt()`.
 pub struct PreferNumberCoercion;
 
-const PREFER_NUMBER_COERCION: Message = Message::new("", "Prefer `{{replacement}}`.");
-const REPLACE: Message = Message::new("", "Replace this call with `{{replacement}}`.");
+const PREFER_NUMBER_COERCION: &Message = &Message::new("", "Prefer `{{replacement}}`.");
+const REPLACE: &Message = &Message::new("", "Replace this call with `{{replacement}}`.");
 
 impl Rule for PreferNumberCoercion {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-number-coercion", Kind::Suggestion).has_suggestions();
@@ -55,7 +55,8 @@ impl Rule for PreferNumberCoercion {
     }
 }
 
-/// Whether `parseInt` is called, or else `parseFloat`: the global, or that of the global `Number`.
+/// Returns `true` for a call of `parseInt` and `false` for `parseFloat`, either the global function
+/// or the global `Number`'s method.
 fn parse_target(callee: Expr) -> Option<bool> {
     let (name, global) = match callee.kind() {
         ExprKind::Ident(name) => (name, callee),

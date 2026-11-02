@@ -1,0 +1,25 @@
+------------------
+{ printWidth: 80 }
+------------------
+a  (  b  ); // prettier-ignore
+[c].d;
+e  (  f  ) /* prettier-ignore */;
+[g].h;
+function i() {
+  return j  (  k  ); // prettier-ignore
+  [l].m;
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+a  (  b  ); // prettier-ignore
+[c].d;
+e  (  f  ) /* prettier-ignore */;
+[g].h;
+function i() {
+  return j  (  k  ); // prettier-ignore
+  [l].m;
+}
+
+===================== End =====================

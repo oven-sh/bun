@@ -3,8 +3,8 @@ use bun_lint::prelude::*;
 /// Require spread operators instead of `.apply()`.
 pub struct PreferSpread;
 
-const PREFER_SPREAD: Message =
-    Message::new("preferSpread", "Use the spread operator instead of '.apply()'.");
+const PREFER_SPREAD: &Message =
+    &Message::new("preferSpread", "Use the spread operator instead of '.apply()'.");
 
 impl Rule for PreferSpread {
     const META: Meta = Meta::eslint("prefer-spread", Kind::Suggestion);
@@ -39,10 +39,10 @@ impl Rule for PreferSpread {
         let Some(applied) = ast_utils::member_object(callee) else {
             return;
         };
-        // Whether `.apply()` leaves `this` as it is in a plain call.
+        // True if `.apply()` passes the same `this` as a plain call would.
         let is_valid_this_arg = match ast_utils::member_object(applied) {
             Some(expected_this) => ast_utils::equal_tokens(cx.file(), expected_this, this_arg),
-            // For oxlint only a name is called without a `this`.
+            // For oxlint, only calling an identifier has no `this`.
             None => {
                 ast_utils::is_null_or_undefined(this_arg) && (!cx.language().is_oxlint || applied.tag() == ExprTag::Ident)
             }

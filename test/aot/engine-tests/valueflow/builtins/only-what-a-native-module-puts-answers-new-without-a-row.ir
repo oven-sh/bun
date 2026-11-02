@@ -1,0 +1,30 @@
+# new (Math.max)(f)   new (require("node:util/types").isDate)(g)
+# A function of the table that no row lets be constructed refuses `new`: it throws, and what it was handed goes nowhere: f is never called.
+# A module that native code makes puts each of its functions as its own constructor, so `new isDate(g)` runs as a call does: native code that nothing describes gets g and may call it.
+# `class U extends <a value nobody knows> {}  new U(..)` constructs whatever has escaped, which is every built-in: were each of them taken to answer, a program of one line would keep hundreds of functions.
+# RUN: valueflow-solve unreached
+# CHECK: unreached f1
+# CHECK-NOT: unreached f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=MathMax
+    v1 = NewClosure function=f1
+    v2 = Construct v0, -, v1
+    v3 = Builtin builtin=NodeUtilTypesIsDate
+    v4 = NewClosure function=f2
+    v5 = Construct v3, -, v4
+    Return v5
+}
+function f1 name="handedToMathMax" results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 name="handedToIsDate" results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

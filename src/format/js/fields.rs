@@ -1,8 +1,8 @@
-//! The fields of ESTree nodes, as methods of the handles.
+//! ESTree node fields, as methods on the handles.
 //!
-//! `match e.kind()` is the way to take a node apart. These are for a question about one field of
-//! a node whose kind is known, mostly a parent: `parent.object() == Some(e)`. Each is `None`, or
-//! empty, for a node that has no such field.
+//! Use `match e.kind()` to destructure a node. These methods are for checking one field of a node whose kind is known,
+//! usually a parent: `parent.object() == Some(e)`. Each returns `None`, or an empty list, for a node without that
+//! field.
 
 use bun_lint::ast::{Call, Expr, ExprKind, Func, Stmt, StmtKind, TypeNode};
 use bun_sema::hir::ExprTag;
@@ -102,15 +102,10 @@ impl<'a> ExprFields<'a> for Expr<'a> {
 }
 
 pub(crate) trait StmtFields<'a>: Copy {
-    /// `ForInStatement.left`, `ForOfStatement.left`: a `Var` statement, or the wrapper of an
-    /// expression.
+    /// `ForInStatement.left`, `ForOfStatement.left`: a `Var` statement, or the statement that wraps an expression.
     fn for_left(self) -> Option<Stmt<'a>>;
     /// `ForStatement.init`
     fn for_init(self) -> Option<Stmt<'a>>;
-    /// `IfStatement.consequent`
-    fn consequent(self) -> Option<Stmt<'a>>;
-    /// `IfStatement.alternate`
-    fn alternate(self) -> Option<Stmt<'a>>;
     /// `TryStatement.finalizer`
     fn finalizer(self) -> Option<Stmt<'a>>;
     /// `for await`
@@ -128,20 +123,6 @@ impl<'a> StmtFields<'a> for Stmt<'a> {
     fn for_init(self) -> Option<Stmt<'a>> {
         match self.kind() {
             StmtKind::For { init, .. } => init,
-            _ => None,
-        }
-    }
-
-    fn consequent(self) -> Option<Stmt<'a>> {
-        match self.kind() {
-            StmtKind::If { yes, .. } => Some(yes),
-            _ => None,
-        }
-    }
-
-    fn alternate(self) -> Option<Stmt<'a>> {
-        match self.kind() {
-            StmtKind::If { no, .. } => no,
             _ => None,
         }
     }

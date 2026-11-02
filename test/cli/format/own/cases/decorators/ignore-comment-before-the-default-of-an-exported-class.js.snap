@@ -1,0 +1,17 @@
+------------------
+{ printWidth: 80 }
+------------------
+export default
+// prettier-ignore
+/** @type {T} */ @a
+class A {}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+export default
+// prettier-ignore
+/** @type {T} */ @a
+class A {}
+
+===================== End =====================

@@ -1,5 +1,5 @@
-//! The half of oxlint's `utils/react.rs` that is about the names and the attributes of JSX elements, on the handles. Each function
-//! has the name that it has there.
+//! The half of oxlint's `utils/react.rs` that deals with JSX element names and attributes, ported to this linter's AST
+//! handles. Each function keeps oxlint's name.
 //!
 //! | oxc | here |
 //! |---|---|
@@ -10,14 +10,15 @@
 //! | `JSXAttributeValue` | [`AttributeValue`], from [`get_prop_value`] |
 //! | `JSXChild` | [`Child`], from [`children`] |
 //!
-//! Text is bytes. The value of `a="b"` and the text between tags are as they are written: oxc does not replace `&amp;` in them.
+//! Text is bytes. The value of `a="b"` and the text between tags are kept as written, because oxc doesn't decode
+//! `&amp;` in them.
 
 use bun_lint::prelude::*;
 use smallvec::SmallVec;
 use std::borrow::Cow;
 
-/// The element that `e` is: what a rule of oxlint gets as `AstKind::JSXElement` or `AstKind::JSXOpeningElement`. `None` for
-/// `<>..</>` and for anything else.
+/// Returns `e` as an element: what an oxlint rule gets as `AstKind::JSXElement` or `AstKind::JSXOpeningElement`. `None`
+/// for `<>..</>` and anything else.
 pub(crate) fn as_jsx_element(e: Expr<'_>) -> Option<Jsx<'_>> {
     match e.kind() {
         ExprKind::Jsx(jsx) if !jsx.is_fragment() => Some(jsx),
@@ -25,12 +26,12 @@ pub(crate) fn as_jsx_element(e: Expr<'_>) -> Option<Jsx<'_>> {
     }
 }
 
-/// The `"b"` of `a="b"`.
+/// The `"b"` in `a="b"`.
 #[derive(Copy, Clone)]
 pub(crate) struct StringLiteral<'a> {
-    /// What is between the quotes, as it is written.
+    /// The text between the quotes, as written.
     pub(crate) value: &'a [u8],
-    /// With the quotes.
+    /// Includes the quotes.
     pub(crate) span: Span,
 }
 
@@ -39,8 +40,8 @@ pub(crate) struct StringLiteral<'a> {
 pub(crate) enum AttributeValue<'a> {
     /// `a="b"`
     StringLiteral(StringLiteral<'a>),
-    /// `a={b}`: the `b`, which can be in parentheses, where oxc has a `ParenthesizedExpression`. For `a={}`, where oxc has a
-    /// `JSXEmptyExpression`, it is `Missing`: see [`AttributeValue::as_expression`].
+    /// `a={b}`: the `b`, which can be parenthesized, where oxc has a `ParenthesizedExpression`. For `a={}`, where oxc
+    /// has a `JSXEmptyExpression`, it's `Missing`: see [`AttributeValue::as_expression`].
     ExpressionContainer(Expr<'a>),
     /// `a=<b />`
     Element(Expr<'a>),
@@ -57,7 +58,7 @@ impl<'a> AttributeValue<'a> {
         }
     }
 
-    /// The `container.expression.as_expression()` of an `ExpressionContainer`: the `b` of `a={b}`. `None` for `a={}`.
+    /// An `ExpressionContainer`'s `container.expression.as_expression()`: the `b` in `a={b}`. `None` for `a={}`.
     pub(crate) fn as_expression(self) -> Option<Expr<'a>> {
         match self {
             AttributeValue::ExpressionContainer(e) if !e.is_missing() => Some(e),
@@ -65,7 +66,7 @@ impl<'a> AttributeValue<'a> {
         }
     }
 
-    /// With the quotes or the braces.
+    /// Includes the quotes or the braces.
     pub(crate) fn span(self) -> Span {
         match self {
             AttributeValue::StringLiteral(literal) => literal.span,
@@ -80,11 +81,11 @@ impl<'a> AttributeValue<'a> {
 /// `JSXChild`
 #[derive(Copy, Clone)]
 pub(crate) enum Child<'a> {
-    /// The text as it is written, with all its whitespace. It is never empty.
+    /// The text as written, with all its whitespace. Never empty.
     Text(&'a [u8]),
     Element(Jsx<'a>),
     Fragment(Jsx<'a>),
-    /// `{e}`: the `e`, which can be in parentheses. It is `Missing` for `{}`.
+    /// `{e}`: the `e`, which can be parenthesized. It's `Missing` for `{}`.
     ExpressionContainer(Expr<'a>),
     /// `{...e}`
     Spread,
@@ -110,15 +111,15 @@ fn is_identifier(name: &[u8]) -> bool {
     !bun_core::strings::contains_char(name, b':')
 }
 
-/// The first attribute that is named `target_prop`. A name with a namespace (`a:b`) is never found.
+/// Returns the first attribute named `target_prop`. Never matches a namespaced name (`a:b`).
 pub(crate) fn has_jsx_prop<'a>(node: Jsx<'a>, target_prop: &str) -> Option<Prop<'a>> {
-    let is_it = |name: &[u8]| name == target_prop.as_bytes() && is_identifier(name);
+    let is_target = |name: &[u8]| name == target_prop.as_bytes() && is_identifier(name);
     node.attrs()
         .iter()
-        .find(|attr| get_jsx_attribute_name(*attr).is_some_and(is_it))
+        .find(|attr| get_jsx_attribute_name(*attr).is_some_and(is_target))
 }
 
-/// The same, where `onClick` is also `onclick`: ASCII letters compare without their case.
+/// Like [`has_jsx_prop`], but ASCII case-insensitive: `onClick` also matches `onclick`.
 pub(crate) fn has_jsx_prop_ignore_case<'a>(node: Jsx<'a>, target_prop: &str) -> Option<Prop<'a>> {
     has_jsx_prop_ignore_case_bytes(node, target_prop.as_bytes())
 }
@@ -129,14 +130,14 @@ fn has_jsx_prop_ignore_case_bytes<'a>(node: Jsx<'a>, target_prop: &[u8]) -> Opti
         .find(|attr| is_identifier_ignore_case(*attr, target_prop))
 }
 
-/// `JSXAttribute::is_identifier_ignore_case`: whether the attribute is named `name`, but for the case of ASCII letters. Never for
-/// `{...a}` and `a:b`.
+/// `JSXAttribute::is_identifier_ignore_case`: true if the attribute is named `name`, ignoring ASCII case. Never true
+/// for `{...a}` or `a:b`.
 pub(crate) fn is_identifier_ignore_case(attr: Prop, name: &[u8]) -> bool {
     get_jsx_attribute_name(attr)
         .is_some_and(|it| it.eq_ignore_ascii_case(name) && is_identifier(it))
 }
 
-/// What is after the `=` of an attribute. `None` for `a` alone and for `{...a}`.
+/// Returns what follows an attribute's `=`. `None` for a bare `a` and for `{...a}`.
 pub(crate) fn get_prop_value(item: Prop<'_>) -> Option<AttributeValue<'_>> {
     if item.kind() == PropKind::Spread {
         return None;
@@ -158,17 +159,17 @@ pub(crate) fn get_prop_value(item: Prop<'_>) -> Option<AttributeValue<'_>> {
     })
 }
 
-/// The name of an attribute: `a`, `a-b`, `a:b`, the last without blanks around the colon. `None` for `{...a}`.
+/// Returns an attribute's name: `a`, `a-b`, `a:b`, the last without whitespace around the colon. `None` for `{...a}`.
 pub(crate) fn get_jsx_attribute_name(attr: Prop<'_>) -> Option<&[u8]> {
     Some(attr.key()?.name()?.bytes())
 }
 
-/// The `b` of `a="b"`. `None` for `a={"b"}`.
+/// Returns the `b` in `a="b"`. `None` for `a={"b"}`.
 pub(crate) fn get_string_literal_prop_value(item: Prop<'_>) -> Option<&[u8]> {
     Some(get_prop_value(item)?.as_string_literal()?.value)
 }
 
-/// The name in the tag: `Foo`, `a-b`, `Foo.Bar.baz`, `this`, `this.Foo`, `a:b`. Empty for a fragment.
+/// Returns the tag name: `Foo`, `a-b`, `Foo.Bar.baz`, `this`, `this.Foo`, `a:b`. Empty for a fragment.
 pub(crate) fn get_jsx_element_name(node: Jsx<'_>) -> Cow<'_, [u8]> {
     let Some(tag) = node.tag() else {
         return Cow::Borrowed(b"".as_slice());
@@ -188,10 +189,10 @@ fn get_jsx_mem_expr_name(member: Expr<'_>) -> Cow<'_, [u8]> {
         at = obj;
     }
     parts.push(at.as_ident().map_or(b"this".as_slice(), Name::bytes));
-    // Nearly always it is written without blanks and comments.
-    let written = member.text();
-    if written.len() + 1 == parts.iter().map(|it| it.len() + 1).sum::<usize>() {
-        return Cow::Borrowed(written);
+    // Fast path: it's nearly always written without whitespace or comments.
+    let source_text = member.text();
+    if source_text.len() + 1 == parts.iter().map(|it| it.len() + 1).sum::<usize>() {
+        return Cow::Borrowed(source_text);
     }
     parts.reverse();
     Cow::Owned(parts.join(&b"."[..]))
@@ -202,8 +203,9 @@ fn jsx_a11y_settings<'a>(file: &'a File<'a>) -> Option<&'a Json> {
     file.settings().get(b"jsx-a11y")
 }
 
-/// `settings["jsx-a11y"].attributes[name]`: the names that the attribute `name` of the DOM goes by, which are strings.
-pub(crate) fn get_attribute_names_of_settings<'a>(
+/// `settings["jsx-a11y"].attributes[name]`: the names that stand for the DOM attribute `name`. Only strings are
+/// returned.
+pub(crate) fn get_attribute_names_from_settings<'a>(
     file: &'a File<'a>,
     name: &str,
 ) -> Option<&'a [Json]> {
@@ -213,9 +215,9 @@ pub(crate) fn get_attribute_names_of_settings<'a>(
         .as_array()
 }
 
-/// What kind of element it is for the rules of `jsx-a11y`. That is [its name](get_jsx_element_name), or if
-/// `settings["jsx-a11y"].polymorphicPropName` is `as`, the `b` of its `as="b"`; and if `settings["jsx-a11y"].components` has that as
-/// a key, what it has for it.
+/// Returns the element's type for the `jsx-a11y` rules. That's [its name](get_jsx_element_name), or, if
+/// `settings["jsx-a11y"].polymorphicPropName` is `as`, the `b` in its `as="b"`. If `settings["jsx-a11y"].components`
+/// has that as a key, the mapped value is used instead.
 pub(crate) fn get_element_type<'a>(file: &'a File<'a>, element: Jsx<'a>) -> Cow<'a, [u8]> {
     let Some(settings) = jsx_a11y_settings(file) else {
         return get_jsx_element_name(element);
@@ -233,8 +235,9 @@ pub(crate) fn get_element_type<'a>(file: &'a File<'a>, element: Jsx<'a>) -> Cow<
     }
 }
 
-/// The number that the value of an attribute is: `"1"`, `{1}`, `{-1}`, `{"1"}`, `` {`1`} ``, `{a ? 1 : 2}`, of which it is the `1`
-/// unless `a` is known to be falsy. A string is read as Rust's `str::parse::<f64>` reads it. `None` where oxlint has `Err(())`.
+/// Returns an attribute value as a number: `"1"`, `{1}`, `{-1}`, `{"1"}`, `` {`1`} ``, and `{a ? 1 : 2}`, which
+/// evaluates to the `1` unless `a` is known to be falsy. A string is parsed like Rust's `str::parse::<f64>`. `None`
+/// where oxlint has `Err(())`.
 pub(crate) fn parse_jsx_value(value: AttributeValue) -> Option<f64> {
     match value {
         AttributeValue::StringLiteral(literal) => parse_number(literal.value),
@@ -276,8 +279,8 @@ fn parse_expression(expression: Expr) -> Option<f64> {
     }
 }
 
-/// `oxc_ecmascript`'s `ToBoolean::to_boolean(&WithoutGlobalReferenceInformation {})`: whether a literal is truthy. `None` for
-/// everything else, also for `undefined`, `NaN`, and for what is in parentheses.
+/// `oxc_ecmascript`'s `ToBoolean::to_boolean(&WithoutGlobalReferenceInformation {})`: whether a literal is truthy.
+/// `None` for everything else, including `undefined`, `NaN` and anything parenthesized.
 pub(crate) fn to_boolean(e: Expr) -> Option<bool> {
     if e.is_parenthesized() {
         return None;
@@ -297,7 +300,7 @@ pub(crate) fn to_boolean(e: Expr) -> Option<bool> {
         ExprKind::Template(template) => template
             .as_static()
             .map(|cooked| !cooked.bytes().is_empty()),
-        // The last of a sequence is no sequence, unless it is in parentheses.
+        // The last operand of a sequence isn't itself a sequence unless it's parenthesized.
         ExprKind::Binary {
             op: BinOp::Comma,
             right,
@@ -307,7 +310,7 @@ pub(crate) fn to_boolean(e: Expr) -> Option<bool> {
     }
 }
 
-/// `raw`: a `BigInt` as it is written.
+/// `raw`: a `BigInt` literal as written.
 pub(crate) fn is_zero_bigint(raw: &[u8]) -> bool {
     let digits = match raw {
         [b'0', b'x' | b'X' | b'o' | b'O' | b'b' | b'B', rest @ ..] => rest,
@@ -316,7 +319,7 @@ pub(crate) fn is_zero_bigint(raw: &[u8]) -> bool {
     digits.iter().all(|b| matches!(b, b'0' | b'_' | b'n'))
 }
 
-/// `JSXExpression::is_undefined`, `Expression::is_undefined`: the identifier `undefined`, not in parentheses.
+/// `JSXExpression::is_undefined`, `Expression::is_undefined`: the identifier `undefined`, not parenthesized.
 pub(crate) fn is_undefined(e: Expr) -> bool {
     e.is_ident("undefined") && !e.is_parenthesized()
 }

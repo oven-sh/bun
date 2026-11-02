@@ -21,7 +21,7 @@ const dir = String(
   tempDir("module-graph-workers-", {
     "shared.mjs": String.raw`
       // Slots of the Int32Array every thread of a cell shares; the subject's start at 0, the bystander's at BYSTANDER.
-      export const S = { TICKS: 0, HEARD: 1, RECV: 2, DISPOSED: 3, TICKS_AT_DISPOSE: 4, HEARD_AT_DISPOSE: 5, RECV_AT_DISPOSE: 6, LEAF_TICKS: 7, LEAF_STATE: 8, RELEASE: 9, GO: 10, PID: 11, PEER_SEEN: 12, PEER_CLOSED: 13, SIBLING_TICKS: 14 };
+      export const S = { TICKS: 0, HEARD: 1, RECV: 2, DISPOSED: 3, TICKS_AT_DISPOSE: 4, HEARD_AT_DISPOSE: 5, RECV_AT_DISPOSE: 6, LEAF_TICKS: 7, LEAF_STATE: 8, RELEASE: 9, GO: 10, PID: 11, PEER_SEEN: 12, PEER_CLOSED: 13, SIBLING_TICKS: 14, DISPOSE_RETURNED: 15 };
       export const BYSTANDER = 16;
       export const LEAF = { ready: 1, inHandler: 2, blocked: 3, exiting: 4 };
       export const turn = () => new Promise(resolve => setImmediate(resolve));
@@ -71,7 +71,7 @@ const dir = String(
       export function perform(order) {
         control.performed++;
         if (order === "dispose") control.dispose();
-        else if (order === "dispose-inner") { control.snapshot(); held.inner.dispose(); }
+        else if (order === "dispose-inner") control.dispose(held.inner);
         else if (order === "terminate-leaf") Promise.resolve(held.worker.terminate()).then(() => control.hear("terminate resolved"));
         else if (order === "arm") setInterval(() => control.tick(), 1);
         else if (order === "exit") process.exit(3);
@@ -166,8 +166,7 @@ const dir = String(
           hear: name => { heard.push(name); Atomics.add(i32, base + S.HEARD, 1); },
           pid: pid => store(S.PID, pid),
           sendPort: port => parentPort.postMessage({ port }, [port]),
-          snapshot,
-          dispose: () => { snapshot(); graph.dispose(); },
+          dispose: (disposed = graph) => { snapshot(); disposed.dispose(); store(S.DISPOSE_RETURNED, 1); },
         };
         out.control = control;
         out.dispose = control.dispose;
@@ -356,6 +355,8 @@ const dir = String(
           return fds() - baseline;
         };
         const disposed = () => load(0, S.DISPOSED) === 1;
+        // terminate() can stop the worker after its snapshot and before its dispose() has killed anything.
+        const disposeReturned = () => load(0, S.DISPOSE_RETURNED) === 1;
         // What the subject's graph heard, ticked and received since it was disposed.
         const afterDispose = () => ({
           heard: disposed() ? load(0, S.HEARD) - load(0, S.HEARD_AT_DISPOSE) : 0,
@@ -368,7 +369,7 @@ const dir = String(
           for (const close of closers) close();
           fs.writeSync(1, JSON.stringify(result) + "\n");
         };
-        return { sab, i32, ports, result, load, fds, quiet, siblingTicks, stopped, peerClosed, pidGone, killChild, fdsAbove, disposed, afterDispose, names, finish, hostServer };
+        return { sab, i32, ports, result, load, fds, quiet, siblingTicks, stopped, peerClosed, pidGone, killChild, fdsAbove, disposed, disposeReturned, afterDispose, names, finish, hostServer };
       }
     `,
     "a.mjs": String.raw`
@@ -520,7 +521,7 @@ const dir = String(
       result.leafStopped = await main.stopped(S.LEAF_TICKS);
       result.graphStopped = await main.stopped(S.TICKS);
       result.peerStopped = await main.stopped(S.RECV);
-      if (kinds.includes('"child"')) { result.childGone = !main.disposed() || (await main.pidGone(cell.worker === "alive")); main.killChild(0); }
+      if (kinds.includes('"child"')) { result.childGone = !main.disposeReturned() || (await main.pidGone(cell.worker === "alive")); main.killChild(0); }
       if (/"(fetch|socket|connecting)"/.test(kinds)) result.peerClosed = await main.peerClosed(cell.racy);
       await main.quiet();
       result.afterDispose = main.afterDispose();

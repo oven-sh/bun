@@ -1,12 +1,12 @@
 use super::program::{FormatStatements, is_next_line_empty};
-use crate::js::format::write_declaration;
-use crate::js::trivia::{comments_stay_between_head_and_body, write_trailing_comments_before};
+use crate::js::trivia::comments_stay_between_head_and_body;
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
-use crate::js::utils::statement_body::FormatStatementBody;
-use crate::js::utils::suppressed::FormatSuppressedNode;
+use crate::js::utils::statement_body::{write_comments_before_token, write_space_before_body};
+use crate::js::utils::typecast::comments_of_expression;
 use crate::prelude::*;
 use crate::{format_args, write};
 
+#[inline(never)]
 pub(crate) fn write_switch_statement<'a>(
     statement: Stmt<'a>,
     discriminant: Expr<'a>,
@@ -29,12 +29,10 @@ pub(crate) fn write_switch_statement<'a>(
         ]
     );
     if cases.is_empty() {
-        match f.comments().has_comment_before(statement.span().end) {
-            true => write!(
-                f,
-                format_dangling_comments(statement.span()).with_block_indent()
-            ),
-            false => write!(f, hard_line_break()),
+        let node = AstNodes::SwitchStatement(statement);
+        match f.comments().of_node(node).dangling.is_empty() {
+            true => write!(f, hard_line_break()),
+            false => write!(f, dangling_comments(node).with_block_indent()),
         }
         return write!(f, "}");
     }
@@ -56,92 +54,78 @@ pub(crate) fn write_switch_statement<'a>(
 
 /// `case a: ..`, `default: ..`
 pub(crate) fn write_switch_case<'a>(case: Case<'a>, f: &mut Formatter<'a>) {
-    // `case 1: a(); // prettier-ignore`: the comment is not in the `case`, so it trails all of it.
-    if !f.is_quiet()
-        && f.comments()
-            .has_trailing_suppression_comment(case.span().end)
-    {
-        return write!(f, FormatSuppressedNode(case.span()));
-    }
     let consequent = case.body();
     let mut statements = consequent
         .iter()
         .filter(|it| !matches!(it.kind(), StmtKind::Empty));
-    if !f.is_quiet()
+    let first_statement = statements.next();
+    let only_block = first_statement
+        .filter(|it| matches!(it.kind(), StmtKind::Block(_)) && statements.next().is_none());
+    if let Some(block) = only_block
+        && !f.is_quiet()
         && comments_stay_between_head_and_body(f)
-        && let (Some(block), None) = (statements.clone().next(), statements.clone().nth(1))
-        && matches!(block.kind(), StmtKind::Block(_))
     {
-        match case.test() {
-            Some(test) => {
-                write!(
-                    f,
-                    ["case", space(), FormatNodeWithoutTrailingComments(&test)]
-                );
-                let follows_line_comment = write_trailing_comments_before(test.span().end, b':', f);
-                write!(f, [":", follows_line_comment.then_some(hard_line_break())]);
-            }
-            None => write!(f, ["default", ":"]),
-        }
-        return write!(f, FormatStatementBody::new(block));
+        return write_switch_case_with_comments_in_place(case, block, f);
     }
+
     match case.test() {
         Some(test) => write!(f, ["case", space(), test, ":"]),
-        None => write!(f, ["default", ":"]),
+        None => write!(f, "default:"),
     }
-
-    let Some(first_statement) = statements.next() else {
-        // `default /* comment */:`
-        if case.test().is_none() && f.comments().has_comment_before(case.span().end) {
-            write!(f, [space(), format_dangling_comments(case.span())]);
-        }
+    // `default: // comment`
+    let node = AstNodes::SwitchCase(case);
+    if !f.is_quiet() && !f.comments().of_node(node).dangling.is_empty() {
+        write!(f, [space(), dangling_comments(node)]);
+    }
+    if first_statement.is_none() {
         return;
-    };
-    // The `{` of a block that is all there is goes on the line of the `case`.
-    let is_single_block_statement =
-        matches!(first_statement.kind(), StmtKind::Block(_)) && statements.next().is_none();
-
-    // Prettier's `handleSwitchDefaultCaseComments`: the comments on the line of `default:` stay
-    // there, but for a line comment before a block, which is written in the block.
-    if case.test().is_none() && !f.is_quiet() && consequent.first() == Some(first_statement) {
-        let mut comments = f
-            .comments()
-            .end_of_line_comments_after(case.span().start + "default".len() as u32);
-        let mut is_comment_in_block = false;
-        if let [rest @ .., last] = comments
-            && last.is_line()
-            && matches!(first_statement.kind(), StmtKind::Block(_))
-        {
-            comments = rest;
-            is_comment_in_block = true;
-        }
-        if !comments.is_empty() {
-            write!(
-                f,
-                [
-                    space(),
-                    FormatDanglingComments::Comments {
-                        comments,
-                        indent: DanglingIndentMode::None
-                    },
-                ]
-            );
-        }
-        if is_comment_in_block && is_single_block_statement {
-            write!(f, space());
-            return write_declaration(first_statement, f);
-        }
     }
-
-    if is_single_block_statement {
-        write!(f, [space(), FormatStatements(consequent)]);
-    } else {
-        write!(
+    // If a block is the only statement, its `{` goes on the `case`'s line.
+    match only_block {
+        Some(_) => write!(f, [space(), FormatStatements(consequent)]),
+        None => write!(
             f,
             indent(&format_args!(
                 hard_line_break(),
                 FormatStatements(consequent)
             ))
-        );
+        ),
     }
+}
+
+/// See [`comments_stay_between_head_and_body`]: a `case` whose only statement is `block`. The comments before the `:` and
+/// before the `{` keep their lines.
+///
+/// ```js
+/// case a: // comment
+/// {
+/// }
+/// case b
+/// // comment
+/// : {
+/// }
+/// ```
+fn write_switch_case_with_comments_in_place<'a>(
+    case: Case<'a>,
+    block: Stmt<'a>,
+    f: &mut Formatter<'a>,
+) {
+    let mut follows_line_comment = false;
+    match case.test() {
+        Some(test) => {
+            write!(
+                f,
+                ["case", space(), FormatNodeWithoutTrailingComments(&test)]
+            );
+            follows_line_comment =
+                write_comments_before_token(comments_of_expression(test, f).trailing, f);
+            write!(f, ":");
+        }
+        None => write!(f, "default:"),
+    }
+    match follows_line_comment {
+        true => write!(f, hard_line_break()),
+        false => write_space_before_body(block.as_ast_nodes(), f),
+    }
+    write!(f, FormatStatements(case.body()));
 }

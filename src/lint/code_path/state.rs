@@ -1,18 +1,18 @@
-//! ESLint's `CodePathState`, `ForkContext` and the static methods of `CodePathSegment`: what
-//! builds the graph of one code path. The names are ESLint's, in snake case.
+//! ESLint's `CodePathState`, `ForkContext` and the static methods of `CodePathSegment`, which
+//! together build one code path's graph. The names are ESLint's, in snake case.
 
 use super::{CodePathData, Edges, Event, Segment, SegmentData, SegmentIds, Store};
 use crate::ast::{File, Node, StmtKind};
 use bun_sema::atom::Atom;
 use smallvec::SmallVec;
 
-/// What a step of the analysis works with.
+/// The context for one step of the analysis.
 pub(super) struct Cx<'e, 'a> {
     pub(super) file: &'a File<'a>,
     store: &'e Store,
     /// ESLint's `analyzer.currentNode`.
     pub(super) node: Node<'a>,
-    /// Whether an event is told with `node` even if that is a function expression.
+    /// True if events are emitted with `node` even when it's a function expression.
     pub(super) keeps_function_expression: bool,
     pub(super) emit: &'e mut dyn FnMut(Event<'a>),
 }
@@ -39,8 +39,8 @@ impl<'e, 'a> Cx<'e, 'a> {
         self.store
     }
 
-    /// The node that an event is told with: a function is a `Func`, whatever owns it.
-    pub(super) fn node_of_event(&self) -> Node<'a> {
+    /// The node to emit an event with. A function is always a `Func`, whatever owns it.
+    pub(super) fn event_node(&self) -> Node<'a> {
         match self.node {
             Node::Expr(e) if !self.keeps_function_expression => {
                 e.as_fn().map_or(self.node, Node::Func)
@@ -57,7 +57,7 @@ impl<'e, 'a> Cx<'e, 'a> {
 // ───────────────────────────── segments ─────────────────────────────
 
 impl Store {
-    /// `statements`: how many the file has, which is about how many segments it is going to have.
+    /// `statements` is the file's statement count, which is roughly how many segments it'll have.
     pub(super) fn clear(&self, statements: usize) {
         self.paths.borrow_mut().clear();
         let mut segments = self.segments.borrow_mut();
@@ -69,7 +69,7 @@ impl Store {
         self.segments.borrow().len()
     }
 
-    /// To be called when the graphs of the segments from `first` on are finished.
+    /// Call it once the graphs of the segments from `first` on are finished.
     pub(super) fn finish(&self, first: usize) {
         for segment in self.segments.borrow_mut().iter_mut().skip(first) {
             segment.looped_prev.sort_unstable();
@@ -85,7 +85,7 @@ impl Store {
         })
     }
 
-    /// Keeps `current_segments` up to date while the events are told to the rules.
+    /// Keeps `current_segments` up to date while the events are replayed to the rules.
     pub(super) fn follow(&self, event: Event) {
         let (segment, starts) = match event {
             Event::SegmentStart(segment, _) | Event::UnreachableSegmentStart(segment, _) => {
@@ -118,7 +118,7 @@ impl Store {
         id
     }
 
-    /// Takes `count` numbers for segments that nothing is ever going to refer to.
+    /// Reserves `count` segment numbers that nothing will ever refer to.
     fn skip_numbers(&self, path: u32, count: u32) {
         self.paths.borrow_mut()[path as usize].segment_count += count;
     }
@@ -188,8 +188,8 @@ impl Store {
         self.segments.borrow()[id as usize].is_reachable
     }
 
-    /// `list` with each segment that has never been current replaced by those before it, and
-    /// without duplicates.
+    /// `list` with each segment that has never been current replaced by its predecessors, and with
+    /// duplicates removed.
     fn flatten_unused_in(&self, segments: &mut [SegmentData], list: &[u32]) -> Edges {
         if let [id] = *list {
             let segment = &segments[id as usize];
@@ -270,8 +270,8 @@ fn mark_used(segments: &mut [SegmentData], id: u32) {
     }
 }
 
-/// `elements.splice(elements.indexOf(value), 1)`, which removes the last element if `value` is
-/// not among them.
+/// `elements.splice(elements.indexOf(value), 1)`, which removes the last element if `value` isn't
+/// found.
 fn remove_from_array(elements: &mut Edges, value: u32) {
     match elements.iter().position(|&it| it == value) {
         Some(at) => {
@@ -316,7 +316,7 @@ fn make_looped(cx: &mut Cx, from: &[u32], to: &[u32]) {
         };
         if are_reachable {
             let (from, to) = (Segment::new(cx.file, from), Segment::new(cx.file, to));
-            let node = cx.node_of_event();
+            let node = cx.event_node();
             (cx.emit)(Event::SegmentLoop(from, to, node));
         }
     }
@@ -331,8 +331,8 @@ enum Make {
     Disconnected,
 }
 
-/// A list of forking routes. Each entry has `count` segments, one for each parallel route, and
-/// `list` has one entry after the other.
+/// A list of forking routes. Each entry has `count` segments, one per parallel route, and `list`
+/// stores the entries back to back.
 #[derive(Clone, Debug)]
 struct ForkContext {
     path: u32,
@@ -367,8 +367,8 @@ impl ForkContext {
         self.head().iter().any(|&id| store.is_reachable(id))
     }
 
-    /// `createSegments`: a new segment for each parallel route, after those of the entries from
-    /// `start` to `end`. A negative index counts from the end.
+    /// `createSegments`: makes a new segment for each parallel route, following the segments of the
+    /// entries from `start` to `end`. A negative index counts from the end.
     fn make(&self, store: &Store, start: isize, end: isize, make: Make) -> SegmentIds {
         let count = self.count as usize;
         let len = (self.list.len() / count) as isize;
@@ -406,7 +406,7 @@ impl ForkContext {
         self.make(store, start, end, Make::Disconnected)
     }
 
-    /// `mergeExtraSegments`: joins the two halves of `segments` until there are `count`.
+    /// `mergeExtraSegments`: merges the two halves of `segments` until only `count` remain.
     fn merge_extra_segments(&self, store: &Store, segments: &[u32]) -> SegmentIds {
         let mut current = SegmentIds::from_slice(segments);
         while current.len() > self.count as usize {
@@ -447,8 +447,9 @@ impl ForkContext {
         }
     }
 
-    /// `add_all` of a context that is not needed any more. A chain of `&&` hands its routes from
-    /// each operator to the next, which has none of its own yet: that takes constant time.
+    /// `add_all` for a context that's no longer needed. A chain of `&&` passes its routes from each
+    /// operator to the next, which doesn't have any yet, so moving the list makes that constant
+    /// time.
     fn take_all(&mut self, other: ForkContext) {
         match self.list.is_empty() && other.count == self.count {
             true => self.list = other.list,
@@ -501,9 +502,9 @@ pub(super) enum LoopKind {
 struct LoopContext {
     kind: LoopKind,
     label: Option<Atom>,
-    /// Where in `State::breaks` its `brokenForkContext` is.
+    /// The index of its `brokenForkContext` in `State::breaks`.
     break_context: usize,
-    /// The value of the test, if it is a literal.
+    /// The value of the test, if it's a literal.
     test: Option<bool>,
     continue_dest_segments: SegmentIds,
     /// `do`-`while`
@@ -551,7 +552,7 @@ struct TryContext {
 /// ESLint's `CodePathState`. Each of its linked lists of contexts is a stack here.
 pub(super) struct State {
     pub(super) path: u32,
-    /// The segments that the rules have been told to have started and not ended.
+    /// The segments whose start has been emitted to the rules but whose end hasn't.
     pub(super) current_segments: SegmentIds,
     forks: Vec<ForkContext>,
     choices: Vec<ChoiceContext>,
@@ -578,7 +579,7 @@ impl State {
         }
     }
 
-    /// Makes it the state of the new code path `path`. The vectors keep their capacity.
+    /// Resets it for the new code path `path`. The vectors keep their capacity.
     pub(super) fn reset(&mut self, store: &Store, path: u32) {
         self.path = path;
         self.current_segments.clear();
@@ -876,8 +877,8 @@ impl State {
         });
     }
 
-    /// `getReturnContext`: the `try` statement whose `finally` block a `return` goes to. `None`
-    /// if it leaves the code path.
+    /// `getReturnContext`: the `try` statement whose `finally` block a `return` jumps to. `None` if
+    /// the `return` leaves the code path.
     fn return_context(&self) -> Option<usize> {
         self.tries
             .iter()
@@ -929,7 +930,7 @@ impl State {
         if let Some(fork) = self.forks.last_mut() {
             fork.replace_head(store, normal);
             if !context.last_of_try_is_reachable && !context.last_of_catch_is_reachable {
-                // ESLint makes unreachable segments here and drops them.
+                // ESLint creates unreachable segments here and drops them.
                 store.skip_numbers(self.path, fork.count);
             }
         }
@@ -1002,7 +1003,7 @@ impl State {
         !self.tries.is_empty()
     }
 
-    /// Whether `make_first_throwable_path_in_try_or_catch_block` would do anything.
+    /// True if `make_first_throwable_path_in_try_or_catch_block` would do anything.
     #[inline]
     pub(super) fn is_before_first_throwable(&self, store: &Store) -> bool {
         !self.tries.is_empty()
@@ -1302,7 +1303,7 @@ impl State {
         Some(context)
     }
 
-    /// `popBreakContext` of a labeled statement that is neither a loop nor a `switch`.
+    /// `popBreakContext` for a labeled statement that's neither a loop nor a `switch`.
     pub(super) fn pop_break_context_of_label(&mut self, store: &Store) {
         self.pop_break_context(store);
     }

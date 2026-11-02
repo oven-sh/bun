@@ -3,24 +3,25 @@ use crate::util_ast::name_of_key;
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use bun_lint::types::IdMap;
 use bun_lint_oxlint::ast_util::is_react_component_name;
 use rustc_hash::FxHashMap;
 use smallvec::{SmallVec, smallvec};
 
-/// What the configuration and each entry of `elementOverrides` have.
+/// The options that the config and each `elementOverrides` entry have in common.
 struct JsxNoLiteralsOptions {
     no_strings: bool,
-    /// As they are given: which blanks around them do not count is for the flavour to say.
+    /// As given. Which surrounding whitespace is trimmed depends on whether it's oxlint or ESLint.
     allowed_strings: Vec<Box<[u8]>>,
     ignore_props: bool,
     no_attribute_strings: bool,
-    /// Only oxlint has it.
+    /// oxlint only.
     restricted_attributes: Vec<Box<[u8]>>,
 }
 
 struct ElementOverrideOptions {
     element: Box<[u8]>,
-    /// `/^[A-Z][\w.]*$/`: upstream drops the entry of any other name.
+    /// `/^[A-Z][\w.]*$/`: upstream drops entries with any other name.
     is_overridable: bool,
     options: JsxNoLiteralsOptions,
     allow_element: bool,
@@ -30,52 +31,52 @@ struct ElementOverrideOptions {
 /// Disallow usage of string literals in JSX
 pub struct JsxNoLiterals {
     options: JsxNoLiteralsOptions,
-    /// The last for an element counts.
+    /// If an element is listed twice, the last entry counts.
     element_overrides: Vec<ElementOverrideOptions>,
 }
 
-// Each with what it is where an entry of `elementOverrides` holds.
-const INVALID_PROP_VALUE: [Message; 2] = [
-    Message::new("invalidPropValue", "Invalid prop value: \"{{text}}\""),
-    Message::new(
+// Each pair is [the plain message, the message when an `elementOverrides` entry applies].
+const INVALID_PROP_VALUE: [&Message; 2] = [
+    &Message::new("invalidPropValue", "Invalid prop value: \"{{text}}\""),
+    &Message::new(
         "invalidPropValueInElement",
         "Invalid prop value: \"{{text}}\" in {{element}}",
     ),
 ];
-const NO_STRINGS_IN_ATTRIBUTES: [Message; 2] = [
-    Message::new(
+const NO_STRINGS_IN_ATTRIBUTES: [&Message; 2] = [
+    &Message::new(
         "noStringsInAttributes",
         "Strings not allowed in attributes: \"{{text}}\"",
     ),
-    Message::new(
+    &Message::new(
         "noStringsInAttributesInElement",
         "Strings not allowed in attributes: \"{{text}}\" in {{element}}",
     ),
 ];
-const NO_STRINGS_IN_JSX: [Message; 2] = [
-    Message::new(
+const NO_STRINGS_IN_JSX: [&Message; 2] = [
+    &Message::new(
         "noStringsInJSX",
         "Strings not allowed in JSX files: \"{{text}}\"",
     ),
-    Message::new(
+    &Message::new(
         "noStringsInJSXInElement",
         "Strings not allowed in JSX files: \"{{text}}\" in {{element}}",
     ),
 ];
-const LITERAL_NOT_IN_JSX_EXPRESSION: [Message; 2] = [
-    Message::new(
+const LITERAL_NOT_IN_JSX_EXPRESSION: [&Message; 2] = [
+    &Message::new(
         "literalNotInJSXExpression",
         "Missing JSX expression container around literal string: \"{{text}}\"",
     ),
-    Message::new(
+    &Message::new(
         "literalNotInJSXExpressionInElement",
         "Missing JSX expression container around literal string: \"{{text}}\" in {{element}}",
     ),
 ];
-const LITERAL_TEXT: Message = Message::new("", "Disallow literal text as JSX children");
-const LITERAL_ATTRIBUTE: Message = Message::new("", "Disallow string literals in JSX attributes");
-const RESTRICTED_ATTRIBUTE: Message =
-    Message::new("", "Disallow string literals on restricted JSX attributes");
+const LITERAL_TEXT: &Message = &Message::new("", "Disallow literal text as JSX children");
+const LITERAL_ATTRIBUTE: &Message = &Message::new("", "Disallow string literals in JSX attributes");
+const RESTRICTED_ATTRIBUTE: &Message =
+    &Message::new("", "Disallow string literals on restricted JSX attributes");
 
 impl JsxNoLiteralsOptions {
     fn new(options: Object) -> Self {
@@ -98,14 +99,15 @@ impl JsxNoLiteralsOptions {
 
 #[derive(Default)]
 pub struct State<'a> {
-    /// For each element and fragment that it is in: which of the `elementOverrides` holds for the closest element, and
-    /// which for the elements in that.
+    /// For each enclosing element and fragment: the `elementOverrides` entry that applies to the closest element, and
+    /// the one that applies to the elements nested in it.
     scopes: Vec<(Option<usize>, Option<usize>)>,
-    /// The first of them.
+    /// The outermost of them.
     outermost: Option<Expr<'a>>,
-    /// oxlint: the name under which a variable is exported where it is from, if that is another.
-    exported_names: FxHashMap<Symbol<'a>, Option<&'a [u8]>>,
-    /// Upstream: the same by the name alone, of the declarations so far. `None`: it is exported under a string.
+    /// oxlint: the name a variable is exported under in its source module, if that differs.
+    exported_names: IdMap<Symbol<'a>, Option<&'a [u8]>>,
+    /// Upstream: the same, keyed only by name, for the declarations seen so far. `None` if it's exported under a
+    /// string.
     renamed_import_map: FxHashMap<&'a [u8], Option<&'a [u8]>>,
 }
 
@@ -113,8 +115,8 @@ const JSX: NodeTags = NodeTags::new().exprs(&[ExprTag::Jsx]);
 const JSX_AND_DECLARATIONS: NodeTags =
     JSX.union(NodeTags::new().stmts(&[StmtTag::Import, StmtTag::Var]));
 
-/// oxlint's rule is called with the element that is in no other.
-fn report_as_oxlint<'a>(at: impl Spanned, message: Message, cx: &Cx<'a, JsxNoLiterals>) {
+/// oxlint runs its rule on the outermost element.
+fn report_as_oxlint<'a>(at: impl Spanned, message: &'static Message, cx: &Cx<'a, JsxNoLiterals>) {
     match cx.state.outermost {
         Some(outermost) => drop(cx.report(at, message).called_with(outermost)),
         None => drop(cx.report(at, message)),
@@ -154,11 +156,11 @@ impl Rule for JsxNoLiterals {
     }
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
-        // oxlint goes through all that is in an element that is in no other, and reports in that order.
+        // oxlint walks everything inside an outermost element and reports in that order.
         if self.element_overrides.is_empty() && !file.language().is_oxlint {
             return On::new().exprs(&[ExprTag::Jsx]);
         }
-        // oxlint asks the variable where it is from.
+        // oxlint gets a variable's origin from its symbol, so it doesn't need the declarations.
         On::new()
             .enter(if file.language().is_oxlint {
                 JSX
@@ -178,7 +180,7 @@ impl Rule for JsxNoLiterals {
         }
     }
 
-    // An override holds for all that is in the element, in `{..}` and in attributes as well.
+    // An override applies to everything inside the element, including `{..}` and attributes.
     fn enter<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
         if let Node::Stmt(declaration) = node {
             cx.state.add_renamed_imports(declaration);
@@ -207,7 +209,7 @@ impl Rule for JsxNoLiterals {
                         .or(inherited_opts),
                 )
             }
-            // A fragment is part of the element that it is in.
+            // A fragment belongs to its enclosing element.
             Some(ExprKind::Jsx(fragment)) => {
                 self.check(fragment, current_element_opts, cx);
                 (current_element_opts, inherited_opts)
@@ -223,16 +225,16 @@ impl Rule for JsxNoLiterals {
 }
 
 impl JsxNoLiterals {
-    /// `element_override_opts`: which of the `elementOverrides` holds for the element or the fragment.
+    /// `element_override_opts`: the `elementOverrides` entry that applies to the element or fragment.
     fn check<'a>(&self, jsx: Jsx<'a>, element_override_opts: Option<usize>, cx: &Cx<'a, Self>) {
         let element_override = element_override_opts.and_then(|it| self.element_overrides.get(it));
         let config = ResolvedConfig {
             options: element_override.map_or(&self.options, |it| &it.options),
             element_override,
-            ignore_props_of_all: self.options.ignore_props,
+            top_level_ignore_props: self.options.ignore_props,
             is_oxlint: cx.language().is_oxlint,
         };
-        // oxlint looks at nothing of such an element.
+        // oxlint skips such an element entirely.
         if config.is_oxlint && config.should_allow_element() {
             return;
         }
@@ -240,7 +242,7 @@ impl JsxNoLiterals {
         config.inspect_element_attributes(jsx, cx);
     }
 
-    /// Which of the `elementOverrides` is for the element.
+    /// Returns the `elementOverrides` entry for the element.
     fn get_element_override_opts<'a>(
         &self,
         jsx: Jsx<'a>,
@@ -273,7 +275,7 @@ impl JsxNoLiterals {
                 });
                 names.reverse();
                 let resolved = names.join(&b"."[..]);
-                // For oxlint `a.B` is no component.
+                // For oxlint `a.B` isn't a component.
                 if is_oxlint && !is_react_component_name(&resolved) {
                     return None;
                 }
@@ -300,14 +302,14 @@ fn is_require_statement(expr: Expr) -> bool {
 }
 
 impl<'a> State<'a> {
-    /// The name under which what `id_ref` refers to is exported, if it is imported under another: `import { a as b }`,
-    /// `const { a: b } = require(..)`.
+    /// Returns the exported name of what `id_ref` refers to, if it's imported under a different name: `import { a as b
+    /// }`, `const { a: b } = require(..)`.
     fn resolve_element_name(&mut self, id_ref: Expr<'a>, is_oxlint: bool) -> &'a [u8] {
         let exported = if is_oxlint {
             let names = &mut self.exported_names;
             id_ref
                 .symbol()
-                .and_then(|symbol| *names.entry(symbol).or_insert_with(|| exported_name(symbol)))
+                .and_then(|symbol| *names.get_or_insert_with(symbol, || exported_name(symbol)))
         } else {
             self.renamed_import_map
                 .get(id_ref.text())
@@ -372,7 +374,7 @@ fn exported_name(symbol: Symbol<'_>) -> Option<&[u8]> {
     }
 }
 
-/// Where the braces around an expression are.
+/// The position of the braces around an expression.
 #[derive(Copy, Clone)]
 enum Container<'a> {
     ChildOfElement,
@@ -380,19 +382,19 @@ enum Container<'a> {
     Attribute(Prop<'a>),
 }
 
-/// What holds for an element or a fragment: upstream's `ResolvedConfig`.
+/// The options that apply to an element or fragment: upstream's `ResolvedConfig`.
 struct ResolvedConfig<'r> {
     options: &'r JsxNoLiteralsOptions,
-    /// The entry of `elementOverrides` that `options` is of.
+    /// The `elementOverrides` entry that `options` comes from.
     element_override: Option<&'r ElementOverrideOptions>,
-    /// `ignoreProps` of the configuration itself, which is what upstream asks about a string in an attribute.
-    ignore_props_of_all: bool,
+    /// The top-level `ignoreProps`, which is what upstream checks for a string in an attribute.
+    top_level_ignore_props: bool,
     is_oxlint: bool,
 }
 
 impl ResolvedConfig<'_> {
     fn trim<'t>(&self, bytes: &'t [u8]) -> &'t [u8] {
-        // oxlint goes by `White_Space` of Unicode.
+        // oxlint uses Unicode's `White_Space`.
         if self.is_oxlint {
             strings::trim_unicode_whitespace(bytes)
         } else {
@@ -412,7 +414,7 @@ impl ResolvedConfig<'_> {
         !self.options.allowed_strings.is_empty() && self.has_allowed_string(self.trim(str_literal))
     }
 
-    /// What upstream's `isViableTextNode` asks about the node itself.
+    /// The part of upstream's `isViableTextNode` that's about the node itself.
     fn is_viable_text(&self, raw: &[u8], value: &[u8]) -> bool {
         !self.is_allowed_string(raw)
             && !self.is_allowed_string(value)
@@ -424,7 +426,7 @@ impl ResolvedConfig<'_> {
     }
 
     /// Upstream's `defaultMessageId`
-    fn default_message_id(&self, ancestor_is_jsx_element: bool) -> &'static [Message; 2] {
+    fn default_message_id(&self, ancestor_is_jsx_element: bool) -> &'static [&'static Message; 2] {
         if self.options.no_attribute_strings && !ancestor_is_jsx_element {
             &NO_STRINGS_IN_ATTRIBUTES
         } else if self.options.no_strings {
@@ -435,7 +437,12 @@ impl ResolvedConfig<'_> {
     }
 
     /// Upstream's `reportLiteralNode`
-    fn report_literal_node(&self, at: Span, messages: &[Message; 2], cx: &Cx<'_, JsxNoLiterals>) {
+    fn report_literal_node(
+        &self,
+        at: Span,
+        messages: &[&'static Message; 2],
+        cx: &Cx<'_, JsxNoLiterals>,
+    ) {
         let [message, message_in_element] = *messages;
         let trimmed = strings::trim_js_whitespace(cx.file().slice(at));
         match self.element_override {
@@ -448,7 +455,7 @@ impl ResolvedConfig<'_> {
     }
 
     fn inspect_element_literals<'a>(&self, jsx: Jsx<'a>, cx: &Cx<'a, JsxNoLiterals>) {
-        // Upstream takes a fragment for an element in some places only.
+        // Upstream treats a fragment as an element only in some places.
         let is_fragment = !self.is_oxlint && jsx.is_fragment();
         for child in jsx.children() {
             if !child.is_jsx_text() {
@@ -463,7 +470,7 @@ impl ResolvedConfig<'_> {
                 continue;
             }
             let raw = child.text();
-            // oxlint reads `&nbsp;` as it is written.
+            // oxlint keeps `&nbsp;` as written.
             let value = if self.is_oxlint {
                 None
             } else {
@@ -482,7 +489,7 @@ impl ResolvedConfig<'_> {
         }
     }
 
-    /// With `noStrings`: one report for each string in `"a" + b + "c"`.
+    /// With `noStrings`, reports each string in `"a" + b + "c"` separately.
     fn inspect_jsx_expression<'a>(
         &self,
         expr: Expr<'a>,
@@ -495,11 +502,11 @@ impl ResolvedConfig<'_> {
         let ignore_props = if is_oxlint {
             options.ignore_props
         } else {
-            self.ignore_props_of_all
+            self.top_level_ignore_props
         };
         let mut pending: SmallVec<[Expr<'a>; 8]> = smallvec![expr];
         while let Some(expr) = pending.pop() {
-            // oxlint has a node for parentheses.
+            // oxlint's AST has a node for parentheses.
             if is_oxlint && expr.is_parenthesized() {
                 continue;
             }
@@ -512,7 +519,7 @@ impl ResolvedConfig<'_> {
                         && (is_in_attribute || !self.should_allow_element())
                 }
                 ExprKind::Template(_) => is_child_of_element || !options.ignore_props,
-                // oxlint looks into the value of an attribute only.
+                // oxlint only looks inside an attribute's value.
                 ExprKind::Binary { op, left, right }
                     if (is_in_attribute || !is_oxlint)
                         && !matches!(
@@ -536,7 +543,7 @@ impl ResolvedConfig<'_> {
                         cx,
                     );
                 }
-                // oxlint points at the attribute.
+                // oxlint reports the attribute.
                 Container::Attribute(attr) => report_as_oxlint(attr, LITERAL_ATTRIBUTE, cx),
                 _ => report_as_oxlint(expr, LITERAL_TEXT, cx),
             }
@@ -550,7 +557,7 @@ impl ResolvedConfig<'_> {
         } else {
             &[]
         };
-        let ignore_props = options.ignore_props && (is_oxlint || self.ignore_props_of_all);
+        let ignore_props = options.ignore_props && (is_oxlint || self.top_level_ignore_props);
         let looks_at_strings = !restricted_attributes.is_empty()
             || !ignore_props && (options.no_attribute_strings || options.no_strings);
         if !looks_at_strings {
@@ -565,7 +572,7 @@ impl ResolvedConfig<'_> {
                     if self.is_allowed_string(str_literal.value) {
                         continue;
                     }
-                    // Of `a:b` it is `b`.
+                    // For `a:b` it's `b`.
                     let name = attr
                         .key()
                         .and_then(Key::name)
@@ -591,7 +598,7 @@ impl ResolvedConfig<'_> {
         }
     }
 
-    /// What upstream's listeners for `JSXAttribute` and for `Literal` say about `a="b"`.
+    /// Reports what upstream's `JSXAttribute` and `Literal` listeners report for `a="b"`.
     fn inspect_string_attribute<'a>(
         &self,
         attr: Prop<'a>,
@@ -605,7 +612,7 @@ impl ResolvedConfig<'_> {
         if options.no_strings && !options.ignore_props && !self.has_allowed_string(value) {
             self.report_literal_node(attr.span(), &INVALID_PROP_VALUE, cx);
         }
-        let is_looked_at = options.no_attribute_strings && !self.ignore_props_of_all;
+        let is_looked_at = options.no_attribute_strings && !self.top_level_ignore_props;
         if is_looked_at && self.is_viable_text(cx.file().slice(literal), value) {
             self.report_literal_node(literal, self.default_message_id(false), cx);
         }

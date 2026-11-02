@@ -1,0 +1,482 @@
+//// await-a-kept-settled-promise
+const kept = Promise.resolve(7);
+async function turn(i: number): Promise<number> {
+  return (await kept) + (i & 1);
+}
+//// await-a-pending-promise
+async function turn(i: number): Promise<number> {
+  let settle!: (value: number) => void;
+  const pending = new Promise<number>(resolve => {
+    settle = resolve;
+  });
+  queueMicrotask(() => settle(i & 255));
+  return (await pending) + 1;
+}
+//// await-a-promise-that-two-wait-for
+async function reader(shared: Promise<number>) {
+  return (await shared) + 1;
+}
+async function turn(i: number): Promise<number> {
+  const { promise, resolve } = Promise.withResolvers<number>();
+  const first = reader(promise);
+  const second = reader(promise);
+  resolve(i & 255);
+  return (await first) + (await second);
+}
+//// await-undefined
+async function turn(i: number): Promise<number> {
+  await undefined;
+  return i & 255;
+}
+//// await-an-object-that-is-no-promise
+const plain = { value: 3 };
+async function turn(i: number): Promise<number> {
+  return (await plain).value + (i & 1);
+}
+//// await-a-thenable-of-a-class
+class Later {
+  constructor(readonly value: number) {}
+  then(done: (value: number) => void) {
+    done(this.value);
+  }
+}
+async function turn(i: number): Promise<number> {
+  return await new Later(i & 255);
+}
+//// await-an-heir-of-promise
+class Task<T> extends Promise<T> {}
+async function turn(i: number): Promise<number> {
+  return await Task.resolve(i & 255);
+}
+//// async-functions-two-deep
+async function a(i: number) {
+  await null;
+  return i + 1;
+}
+async function b(i: number) {
+  return (await a(i)) + 1;
+}
+async function turn(i: number): Promise<number> {
+  return await b(i & 255);
+}
+//// async-functions-five-deep
+async function a(i: number) {
+  await null;
+  return i + 1;
+}
+async function b(i: number) {
+  return (await a(i)) + 1;
+}
+async function c(i: number) {
+  return (await b(i)) + 1;
+}
+async function d(i: number) {
+  return (await c(i)) + 1;
+}
+async function e(i: number) {
+  return (await d(i)) + 1;
+}
+async function turn(i: number): Promise<number> {
+  return await e(i & 255);
+}
+//// async-functions-five-deep-that-return-the-promise
+async function a(i: number) {
+  await null;
+  return i + 1;
+}
+async function b(i: number) {
+  return a(i);
+}
+async function c(i: number) {
+  return b(i);
+}
+async function d(i: number) {
+  return c(i);
+}
+async function e(i: number) {
+  return d(i);
+}
+async function turn(i: number): Promise<number> {
+  return e(i & 255);
+}
+//// async-function-with-eight-live-variables
+async function step(n: number) {
+  return n + 1;
+}
+async function turn(i: number): Promise<number> {
+  const a = i & 1, b = i & 2, c = i & 4, d = i & 8, e = i & 16, f = i & 32, g = i & 64, h = i & 128;
+  const first = await step(a);
+  const second = await step(b + first);
+  return a + b + c + d + e + f + g + h + first + second;
+}
+//// async-function-started-and-not-awaited
+let done = 0;
+async function work(i: number) {
+  await null;
+  done = (done + i) & 255;
+}
+async function turn(i: number): Promise<number> {
+  void work(i);
+  void work(i + 1);
+  await null;
+  return done;
+}
+//// async-arrow-that-captures
+async function turn(i: number): Promise<number> {
+  const offset = i & 255;
+  const add = async (n: number) => {
+    await null;
+    return n + offset;
+  };
+  return (await add(1)) + (await add(2));
+}
+//// promise-all-of-ten
+const ten = Array.from({ length: 10 }, (_, k) => k);
+async function load(n: number) {
+  return n + 1;
+}
+async function turn(i: number): Promise<number> {
+  const loaded = await Promise.all(ten.map(id => load(id + (i & 1))));
+  return loaded[9]!;
+}
+//// promise-all-of-a-hundred
+const hundred = Array.from({ length: 100 }, (_, k) => k);
+async function load(n: number) {
+  return n + 1;
+}
+async function turn(i: number): Promise<number> {
+  const loaded = await Promise.all(hundred.map(id => load(id + (i & 1))));
+  return loaded[99]!;
+}
+//// promise-all-of-ten-that-wait
+const ten = Array.from({ length: 10 }, (_, k) => k);
+async function load(n: number) {
+  await null;
+  return n + 1;
+}
+async function turn(i: number): Promise<number> {
+  const loaded = await Promise.all(ten.map(id => load(id + (i & 1))));
+  return loaded[9]!;
+}
+//// promise-all-of-ten-values
+const ten = Array.from({ length: 10 }, (_, k) => k);
+async function turn(i: number): Promise<number> {
+  const loaded = await Promise.all(ten);
+  return loaded[9]! + (i & 1);
+}
+//// promise-race-of-ten
+const ten = Array.from({ length: 10 }, (_, k) => k);
+async function load(n: number) {
+  return n + 1;
+}
+async function turn(i: number): Promise<number> {
+  return await Promise.race(ten.map(id => load(id + (i & 1))));
+}
+//// promise-race-of-a-hundred
+const hundred = Array.from({ length: 100 }, (_, k) => k);
+async function load(n: number) {
+  return n + 1;
+}
+async function turn(i: number): Promise<number> {
+  return await Promise.race(hundred.map(id => load(id + (i & 1))));
+}
+//// promise-all-settled-of-ten
+const ten = Array.from({ length: 10 }, (_, k) => k);
+async function load(n: number) {
+  return n + 1;
+}
+async function turn(i: number): Promise<number> {
+  const results = await Promise.allSettled(ten.map(id => load(id + (i & 1))));
+  return results.length;
+}
+//// promise-all-settled-of-a-hundred
+const hundred = Array.from({ length: 100 }, (_, k) => k);
+async function load(n: number) {
+  return n + 1;
+}
+async function turn(i: number): Promise<number> {
+  const results = await Promise.allSettled(hundred.map(id => load(id + (i & 1))));
+  return results.length;
+}
+//// promise-any-of-ten
+const ten = Array.from({ length: 10 }, (_, k) => k);
+async function load(n: number) {
+  return n + 1;
+}
+async function turn(i: number): Promise<number> {
+  return await Promise.any(ten.map(id => load(id + (i & 1))));
+}
+//// then-chain-of-ten
+const add = (n: number) => n + 1;
+async function turn(i: number): Promise<number> {
+  return Promise.resolve(i & 255)
+    .then(add)
+    .then(add)
+    .then(add)
+    .then(add)
+    .then(add)
+    .then(add)
+    .then(add)
+    .then(add)
+    .then(add)
+    .then(add);
+}
+//// then-chain-of-closures
+async function turn(i: number): Promise<number> {
+  const offset = i & 255;
+  return Promise.resolve(1)
+    .then(n => n + offset)
+    .then(n => n * offset)
+    .then(n => n - offset)
+    .then(n => n & offset);
+}
+//// then-with-two-handlers
+async function turn(i: number): Promise<number> {
+  return Promise.resolve(i & 255).then(
+    n => n + 1,
+    () => 0,
+  );
+}
+//// then-that-returns-a-promise
+async function turn(i: number): Promise<number> {
+  return Promise.resolve(i & 255).then(n => Promise.resolve(n + 1));
+}
+//// then-on-a-pending-promise
+async function turn(i: number): Promise<number> {
+  const { promise, resolve } = Promise.withResolvers<number>();
+  const next = promise.then(n => n + 1);
+  resolve(i & 255);
+  return next;
+}
+//// finally-method
+let closed = 0;
+async function turn(i: number): Promise<number> {
+  return Promise.resolve(i & 255).finally(() => {
+    closed++;
+  });
+}
+//// then-whose-result-nobody-takes
+let seen = 0;
+async function turn(i: number): Promise<number> {
+  Promise.resolve(i & 255).then(n => {
+    seen = n;
+  });
+  await null;
+  return seen;
+}
+//// async-iterator-by-hand
+class Pages {
+  private next_ = 0;
+  constructor(private readonly count: number) {}
+  [Symbol.asyncIterator]() {
+    return this;
+  }
+  async next(): Promise<IteratorResult<number>> {
+    if (this.next_ >= this.count) return { done: true, value: undefined };
+    return { done: false, value: this.next_++ };
+  }
+}
+async function turn(i: number): Promise<number> {
+  let sum = i & 1;
+  for await (const page of new Pages(4)) sum += page;
+  return sum;
+}
+//// async-generator-of-ten
+async function* pages(n: number) {
+  for (let k = 0; k < n; k++) yield k;
+}
+async function turn(i: number): Promise<number> {
+  let sum = i & 1;
+  for await (const page of pages(10)) sum += page;
+  return sum;
+}
+//// async-generator-that-awaits
+async function load(n: number) {
+  return n + 1;
+}
+async function* pages(n: number) {
+  for (let k = 0; k < n; k++) yield await load(k);
+}
+async function turn(i: number): Promise<number> {
+  let sum = i & 1;
+  for await (const page of pages(4)) sum += page;
+  return sum;
+}
+//// async-generator-through-another
+async function* pages(n: number) {
+  for (let k = 0; k < n; k++) yield k;
+}
+async function* doubled(source: AsyncIterable<number>) {
+  for await (const value of source) yield value * 2;
+}
+async function turn(i: number): Promise<number> {
+  let sum = i & 1;
+  for await (const page of doubled(pages(4))) sum += page;
+  return sum;
+}
+//// async-generator-left-early
+async function* naturals() {
+  for (let k = 0; ; k++) yield k;
+}
+async function turn(i: number): Promise<number> {
+  let sum = 0;
+  for await (const value of naturals()) {
+    if (value > (i & 3)) break;
+    sum += value;
+  }
+  return sum;
+}
+//// queue-microtask-ten-times
+let count = 0;
+const bump = () => {
+  count = (count + 1) & 255;
+};
+async function turn(i: number): Promise<number> {
+  for (let k = 0; k < 10; k++) queueMicrotask(bump);
+  await null;
+  return count + (i & 1);
+}
+//// queue-microtask-from-a-microtask
+async function turn(i: number): Promise<number> {
+  let value = 0;
+  queueMicrotask(() => {
+    queueMicrotask(() => {
+      value = i & 255;
+    });
+  });
+  await null;
+  await null;
+  return value;
+}
+//// next-tick
+async function turn(i: number): Promise<number> {
+  return new Promise<number>(resolve => process.nextTick(resolve, i & 255));
+}
+//// store-around-an-await-of-a-value
+import { AsyncLocalStorage } from "node:async_hooks";
+const storage = new AsyncLocalStorage<number>();
+async function inner(i: number) {
+  return (await i) + 1;
+}
+async function turn(i: number): Promise<number> {
+  return storage.run(i & 255, inner, i & 255);
+}
+//// store-around-an-await-of-a-pending-promise
+import { AsyncLocalStorage } from "node:async_hooks";
+const storage = new AsyncLocalStorage<number>();
+async function inner(i: number) {
+  const { promise, resolve } = Promise.withResolvers<number>();
+  queueMicrotask(() => resolve(i));
+  return (await promise) + storage.getStore()!;
+}
+async function turn(i: number): Promise<number> {
+  return storage.run(i & 255, inner, i & 255);
+}
+//// store-around-async-functions-five-deep
+import { AsyncLocalStorage } from "node:async_hooks";
+const storage = new AsyncLocalStorage<number>();
+async function a(i: number) {
+  await null;
+  return i + storage.getStore()!;
+}
+async function b(i: number) {
+  return (await a(i)) + 1;
+}
+async function c(i: number) {
+  return (await b(i)) + 1;
+}
+async function d(i: number) {
+  return (await c(i)) + 1;
+}
+async function e(i: number) {
+  return (await d(i)) + 1;
+}
+async function turn(i: number): Promise<number> {
+  return storage.run(i & 255, e, i & 255);
+}
+//// store-around-promise-all-of-ten
+import { AsyncLocalStorage } from "node:async_hooks";
+const storage = new AsyncLocalStorage<number>();
+const ten = Array.from({ length: 10 }, (_, k) => k);
+async function load(n: number) {
+  return n + 1;
+}
+async function turn(i: number): Promise<number> {
+  const loaded = await storage.run(i & 255, () => Promise.all(ten.map(id => load(id + (i & 1)))));
+  return loaded[9]!;
+}
+//// store-around-a-then-chain
+import { AsyncLocalStorage } from "node:async_hooks";
+const storage = new AsyncLocalStorage<number>();
+const add = (n: number) => n + 1;
+async function turn(i: number): Promise<number> {
+  return storage.run(i & 255, () => Promise.resolve(i & 255).then(add).then(add).then(add).then(add));
+}
+//// store-around-queue-microtask
+import { AsyncLocalStorage } from "node:async_hooks";
+const storage = new AsyncLocalStorage<number>();
+async function turn(i: number): Promise<number> {
+  let value = 0;
+  storage.run(i & 255, () =>
+    queueMicrotask(() => {
+      value = storage.getStore()!;
+    }),
+  );
+  await null;
+  return value;
+}
+//// store-around-an-async-generator
+import { AsyncLocalStorage } from "node:async_hooks";
+const storage = new AsyncLocalStorage<number>();
+async function* pages(n: number) {
+  for (let k = 0; k < n; k++) yield k + storage.getStore()!;
+}
+async function sum(n: number) {
+  let total = 0;
+  for await (const page of pages(n)) total += page;
+  return total;
+}
+async function turn(i: number): Promise<number> {
+  return storage.run(i & 255, sum, 4);
+}
+//// two-stores-around-an-await
+import { AsyncLocalStorage } from "node:async_hooks";
+const outer = new AsyncLocalStorage<number>();
+const inner = new AsyncLocalStorage<number>();
+async function work() {
+  await null;
+  return outer.getStore()! + inner.getStore()!;
+}
+async function turn(i: number): Promise<number> {
+  return outer.run(i & 255, () => inner.run(1, work));
+}
+//// every-turn-under-a-store-set-once
+import { AsyncLocalStorage } from "node:async_hooks";
+const storage = new AsyncLocalStorage<number>();
+storage.enterWith(5);
+async function step(n: number) {
+  await null;
+  return n + 1;
+}
+async function turn(i: number): Promise<number> {
+  return (await step(i & 255)) + (await step(1));
+}
+//// async-resource-bind
+import { AsyncResource } from "node:async_hooks";
+async function turn(i: number): Promise<number> {
+  const bound = AsyncResource.bind((n: number) => n + 1);
+  return bound(i & 255);
+}
+//// async-local-storage-bind
+import { AsyncLocalStorage } from "node:async_hooks";
+async function turn(i: number): Promise<number> {
+  const bound = AsyncLocalStorage.bind((n: number) => n + 1);
+  return bound(i & 255);
+}
+//// async-local-storage-snapshot
+import { AsyncLocalStorage } from "node:async_hooks";
+const storage = new AsyncLocalStorage<number>();
+async function turn(i: number): Promise<number> {
+  const run = storage.run(i & 255, () => AsyncLocalStorage.snapshot());
+  return run(() => storage.getStore()!);
+}

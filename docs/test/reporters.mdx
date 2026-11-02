@@ -62,7 +62,17 @@ To generate a JUnit XML report, use the `--reporter=junit` flag along with `--re
 bun test --reporter=junit --reporter-outfile=./junit.xml
 ```
 
-Console output is unchanged; Bun writes the JUnit XML report to the specified path at the end of the test run.
+Console output is unchanged; Bun writes the JUnit XML report to the specified path at the end of the test run, and creates the folder if it doesn't exist.
+
+The report omits characters that XML 1.0 doesn't allow, such as most control characters and U+FFFE.
+
+Every test file that ran has a `<testsuite>`, even if it has no tests. Its `timestamp` is the time the file started, in the format of `Date.prototype.toISOString()`.
+
+An uncaught exception or unhandled rejection while a test is running fails that test, and its `<failure>`, `<flakyFailure>` or `<rerunFailure>` has `uncaught="true"`. Examples are an error thrown by a timer and a rejected promise that the test didn't await. The attribute is absent when the test function itself throws, returns a promise that rejects, or calls `done(error)`.
+
+An error outside of any test is reported as a failed `<testcase>` named `(unhandled error)` in that file's `<testsuite>`. Examples are a test file or a preload script that throws while it loads, has a syntax error, or imports a module that doesn't exist.
+
+With `--parallel`, a file whose worker crashed has a failed `<testcase>` named `(worker crashed)`. The files that the crash kept from finishing or from starting have one named `(aborted)`. After `SIGINT` or `SIGTERM`, a file that was running has one named `(interrupted)`, and a file that hadn't started has one named `(aborted)`.
 
 #### Configuring via bunfig.toml
 
@@ -71,6 +81,44 @@ You can also configure the JUnit reporter in `bunfig.toml`:
 ```toml title="bunfig.toml" icon="settings"
 [test.reporter]
 junit = "path/to/junit.xml"  # Output path for JUnit XML report
+```
+
+#### Describe Blocks in JUnit Reports
+
+By default, each `describe` block becomes a `<testsuite>` nested inside its file's `<testsuite>`. Some tools only read the `<testcase>` elements directly inside a file's `<testsuite>`. For those tools, use `--reporter-junit-suites=flat`:
+
+```sh terminal icon="terminal"
+bun test --reporter=junit --reporter-outfile=./junit.xml --reporter-junit-suites=flat
+```
+
+```toml title="bunfig.toml" icon="settings"
+[test.reporter]
+junit = "path/to/junit.xml"
+junitSuites = "flat"  # "nested" (default) or "flat"
+```
+
+The report then has one `<testsuite>` per file. Each test's name is prefixed with its `describe` block names, and `classname` is the file:
+
+```xml junit.xml icon="file-code"
+<testsuite name="math.test.ts" file="math.test.ts" tests="1" ...>
+  <testcase name="add &gt; negative numbers &gt; returns the sum" classname="math.test.ts" file="math.test.ts" line="5" ... />
+</testsuite>
+```
+
+#### Retried tests
+
+A test with [`retry`](/test/writing-tests#retries-and-repeats) is one `<testcase>`, with its final result. The attempts before the last one are in the elements that Maven Surefire uses, which CI tools read to find flaky tests:
+
+```xml junit.xml icon="file-code"
+<testcase name="passes on the third attempt" ...>
+  <flakyFailure type="Error" message="attempt 1">...</flakyFailure>
+  <flakyFailure type="Error" message="attempt 2">...</flakyFailure>
+</testcase>
+<testcase name="never passes" ...>
+  <failure type="Error" message="attempt 3">...</failure>
+  <rerunFailure type="Error" message="attempt 1">...</rerunFailure>
+  <rerunFailure type="Error" message="attempt 2">...</rerunFailure>
+</testcase>
 ```
 
 #### Environment Variables in JUnit Reports

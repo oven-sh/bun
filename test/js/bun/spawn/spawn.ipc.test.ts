@@ -1,7 +1,79 @@
 import { spawn } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, gcTick, isWindows } from "harness";
+import { bunEnv, bunExe, gcTick, isWindows, tempDir } from "harness";
 import path from "path";
+
+// The receiver rejects a JSON line that's longer than the UTF-8 encoding of a max-length string can be.
+// BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT lowers the max string length.
+const maxStringLength = 64 * 1024;
+const lowLimitEnv = { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(maxStringLength) };
+
+// Sender code that writes 1 MiB of "a" without a newline, which is over the lowered limit.
+// It exits with 1 if the receiver accepted all of it.
+const flood = `
+  const chunk = Buffer.alloc(65536, "a");
+  for (let i = 0; i < 16; i++) write(chunk);
+  process.exit(1);
+`;
+
+/**
+ * Runs `senderSource` as the child of a process that receives IPC messages under the lowered
+ * limit. The sender can call `write(bytes)` to put raw bytes on the channel and `send(message)`
+ * to send one JSON message. It exits with 42 once the receiver closes the channel.
+ */
+async function runReceiver(serialization: "json" | "advanced", senderSource: string, disconnectAfter = 0) {
+  using dir = tempDir("ipc-receive-limit", {
+    "receiver.js": `
+      let received = 0;
+      const sender = Bun.spawn({
+        cmd: [process.execPath, "sender.js"],
+        env: { ...process.env, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: undefined },
+        stdio: ["ignore", "inherit", "inherit"],
+        serialization: ${JSON.stringify(serialization)},
+        ipc(message, subprocess) {
+          console.log("MESSAGE", typeof message === "string" ? "string of " + message.length : JSON.stringify(message));
+          // The sender waits for the channel to close, so disconnect once every expected
+          // message has arrived.
+          if (++received === ${disconnectAfter}) subprocess.disconnect();
+        },
+      });
+      console.log("SENDER_EXIT", await sender.exited);
+    `,
+    "sender.js": `
+      const { writeSync } = require("fs");
+      const retry = new Int32Array(new SharedArrayBuffer(4));
+      // When the receiver closes the channel, an in-flight write fails with EPIPE, ECONNRESET
+      // or ENOTCONN (macOS checks the connection first).
+      const closed = new Set(["EPIPE", "ECONNRESET", "ENOTCONN"]);
+      function write(bytes) {
+        for (let offset = 0; offset < bytes.length; ) {
+          try {
+            offset += writeSync(3, bytes, offset);
+          } catch (e) {
+            if (closed.has(e.code)) process.exit(42);
+            if (e.code !== "EAGAIN") throw e;
+            Atomics.wait(retry, 0, 0, 1);
+          }
+        }
+      }
+      function send(message) {
+        process.send(message);
+      }
+      process.on("disconnect", () => process.exit(42));
+      ${senderSource}
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "receiver.js"],
+    env: lowLimitEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout: stdout.split("\n").filter(Boolean), stderr, exitCode };
+}
 
 describe.each(["advanced", "json"])("ipc mode %s", mode => {
   it("the subprocess should be defined and the child should send", done => {
@@ -156,6 +228,24 @@ describe("ipc mode json", () => {
     expect(stdout.trim()).toBe("CHILD_EXIT 42");
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
+  });
+
+  it.concurrent.skipIf(isWindows)("closes the channel when an unterminated line exceeds the length limit", async () => {
+    // The complete lines are delivered. The bytes after them are never terminated by a newline.
+    expect(await runReceiver("json", `write(Buffer.from('{"n":1}\\n{"n":2}\\n'));` + flood)).toEqual({
+      stdout: ['MESSAGE {"n":1}', 'MESSAGE {"n":2}', "SENDER_EXIT 42"],
+      stderr: "IPC message is too long.\n",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent("delivers a message as long as the max string length", async () => {
+    const sender = `send("\u4e2d".repeat(${maxStringLength - 2})); send({ after: true });`;
+    expect(await runReceiver("json", sender, 2)).toEqual({
+      stdout: [`MESSAGE string of ${maxStringLength - 2}`, 'MESSAGE {"after":true}', "SENDER_EXIT 42"],
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });
 
@@ -320,6 +410,18 @@ describe("ipc mode advanced", () => {
       expect(stdout.trim()).toBe("CHILD_EXIT 42");
       expect(stderr).not.toContain("UNEXPECTED_IPC_MESSAGE");
       expect(exitCode).toBe(0);
+    },
+  );
+
+  it.concurrent.skipIf(isWindows)(
+    "closes the channel as soon as a frame header declares a length that's too long to deserialize",
+    async () => {
+      const header = `write(Buffer.from([0x02, 0x01, 0x00, 0x01, 0x00]));`;
+      expect(await runReceiver("advanced", header + flood)).toEqual({
+        stdout: ["SENDER_EXIT 42"],
+        stderr: "",
+        exitCode: 0,
+      });
     },
   );
 });

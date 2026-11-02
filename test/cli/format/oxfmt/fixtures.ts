@@ -1,9 +1,9 @@
-// How oxc's test harness (`oxc_formatter_core/src/test_support/harness.rs`) reads and writes its fixtures.
+// Reads and writes fixtures the way oxc's test harness (`oxc_formatter_core/src/test_support/harness.rs`) does.
 import { dirname } from "node:path";
 
 export type Options = Record<string, unknown>;
 
-/** The sets of options that a fixture is formatted with: those of the nearest `options.json`, each at the widths 80 and 100. */
+/** Returns a fixture's option sets: those in the nearest `options.json`, each at widths 80 and 100. */
 export function rowsOf(name: string, files: Map<string, Uint8Array>): Options[] {
   let sets: Options[] = [{}];
   for (let directory = dirname(name); directory !== "."; directory = dirname(directory)) {
@@ -35,7 +35,7 @@ export function render(outputs: [Options, string][]) {
   return text + "===================== End =====================\n";
 }
 
-/** The outputs in a snapshot, by what `display` gives for their options. */
+/** Returns a snapshot's outputs, keyed by the `display` string of their options. */
 export function parse(text: string) {
   const outputs = new Map<string, string>();
   const title = "==================== Output ====================\n";

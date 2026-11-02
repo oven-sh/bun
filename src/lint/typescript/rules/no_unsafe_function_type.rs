@@ -4,7 +4,7 @@ use bun_lint::prelude::*;
 /// Disallow using the unsafe built-in Function type.
 pub struct NoUnsafeFunctionType;
 
-const BANNED_FUNCTION_TYPE: Message = Message::new(
+const BANNED_FUNCTION_TYPE: &Message = &Message::new(
     "bannedFunctionType",
     "The `Function` type accepts any function-like value.\nPrefer explicitly defining any function parameters and return type.",
 );
@@ -22,7 +22,7 @@ impl Rule for NoUnsafeFunctionType {
         file.mentions("Function").then(GlobalFunctions::default)
     }
 
-    // Also what a class implements and what an interface extends.
+    // Also called for a class's `implements` and an interface's `extends` entries.
     fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
         if let TypeKind::Ref { name, .. } = ty.kind()
             && let Some(name) = name.as_ident()

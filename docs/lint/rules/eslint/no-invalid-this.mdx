@@ -137,14 +137,14 @@ function describe() {
 
 {/* good */}
 ```js
-function User(name) {
+export function User(name) {
   this.name = name;
 }
 ```
 
 {/* bad {"options": [{"capIsConstructor": false}]} */}
 ```js
-function User(name) {
+export function User(name) {
   this.name = name;
 }
 ```

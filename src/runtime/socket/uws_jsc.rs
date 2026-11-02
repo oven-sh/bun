@@ -46,15 +46,16 @@ pub(crate) fn create_bun_socket_error_to_js(
     this: create_bun_socket_error_t,
     global_object: &JSGlobalObject,
 ) -> JSValue {
+    let queued = bun_boringssl_sys::ERR_get_error();
+    bun_boringssl_sys::ERR_clear_error();
     match this {
         // us_ssl_ctx_from_options only sets *err for the CA/cipher cases;
         // bad cert/key/DH return NULL with .none and the detail is on the
         // BoringSSL error queue. Surfacing it here keeps every
         // `createSSLContext(...) orelse return err.toJS()` site correct.
-        create_bun_socket_error_t::none => crate::crypto::boringssl_jsc::err_to_js(
-            global_object,
-            bun_boringssl_sys::ERR_get_error(),
-        ),
+        create_bun_socket_error_t::none => {
+            crate::crypto::boringssl_jsc::err_to_js(global_object, queued)
+        }
         create_bun_socket_error_t::load_ca_file => global_object
             .err(
                 bun_jsc::ErrorCode::BORINGSSL,

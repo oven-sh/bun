@@ -1,4 +1,4 @@
-//! What `str` does, for bytes that are UTF-8 or nearly so.
+//! `str` methods for byte slices that are UTF-8, or nearly so.
 
 use bun_core::strings;
 
@@ -31,7 +31,7 @@ pub(super) fn lines(text: &[u8]) -> impl Iterator<Item = &[u8]> + Clone {
         .take(count)
         .enumerate()
         .map(move |(index, line)| {
-            // A carriage return that no line feed follows is part of the line.
+            // A carriage return that isn't followed by a line feed is part of the line.
             match index + 1 < count || has_last_line_break {
                 true => line.strip_suffix(b"\r").unwrap_or(line),
                 false => line,
@@ -39,7 +39,6 @@ pub(super) fn lines(text: &[u8]) -> impl Iterator<Item = &[u8]> + Clone {
         })
 }
 
-/// The parts of `parts` with `separator` between them.
 pub(super) fn join<'a>(parts: impl Iterator<Item = &'a [u8]>, separator: &[u8]) -> Vec<u8> {
     let mut result = Vec::new();
     for (index, part) in parts.enumerate() {
@@ -51,12 +50,11 @@ pub(super) fn join<'a>(parts: impl Iterator<Item = &'a [u8]>, separator: &[u8]) 
     result
 }
 
-/// `n` spaces.
 pub(super) fn push_spaces(out: &mut Vec<u8>, n: usize) {
     out.resize(out.len() + n, b' ');
 }
 
-/// The number that the ASCII digits `digits` are.
+/// Parses the ASCII digits `digits` as a number.
 pub(super) fn parse_index(digits: &[u8]) -> Option<usize> {
     digits.iter().try_fold(0usize, |all, &digit| {
         all.checked_mul(10)?.checked_add(usize::from(digit - b'0'))

@@ -1,11 +1,12 @@
-// Compares `bun lint` with oxlint on small projects, for the rules of plugins whose port in oxlint differs from the plugin: with a
-// configuration of oxlint, oxlint is what counts.
+// Compares `bun lint` with oxlint on small projects, for plugin rules whose oxlint port behaves differently from the
+// plugin. With an oxlint config, `bun lint` follows oxlint.
 //
 //   BUN_LINT="bun lint" OXLINT_BIN=<oxlint 1.87> OXLINT_TSGOLINT_PATH=<tsgolint 7.0.2003> bun compare.ts [--record] [name..]
 //
-// Without OXLINT_BIN, what oxlint reports is read from expected.json, which `--record` writes: from oxlint 1.87.0 with tsgolint 7.0.2003.
-// A report is `file:line:column+length rule`, and is there as often as it is made: two reports can begin at one place.
-// labels.json has, in the same way, `file rule line:column+length "text" | ..` for each report for which oxlint marks more than one place or says something there.
+// Without OXLINT_BIN, oxlint's reports are read from expected.json, which `--record` writes. It was recorded with
+// oxlint 1.87.0 and tsgolint 7.0.2003. A report is `file:line:column+length rule`. Duplicates are kept, because two
+// reports can start at the same position. labels.json likewise has `file rule line:column+length "text" | ..` for each
+// report with more than one label or with label text.
 
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -19,13 +20,23 @@ const expectedPath = join(import.meta.dir, "expected.json");
 const labelsPath = join(import.meta.dir, "labels.json");
 const oxlint = process.env.OXLINT_BIN;
 const [ours, ...oursArgs] = (process.env.BUN_LINT ?? "bun lint").split(" ");
-// With names, `--record` leaves what is recorded for the other projects as it is.
-const expected: Record<string, string[]> = oxlint && names.length === 0 ? {} : JSON.parse(readFileSync(expectedPath, "utf8"));
-const expectedLabels: Record<string, string[]> = oxlint && names.length === 0 ? {} : JSON.parse(readFileSync(labelsPath, "utf8"));
+// With names, `--record` keeps the other projects' recordings.
+const expected: Record<string, string[]> =
+  oxlint && names.length === 0 ? {} : JSON.parse(readFileSync(expectedPath, "utf8"));
+const expectedLabels: Record<string, string[]> =
+  oxlint && names.length === 0 ? {} : JSON.parse(readFileSync(labelsPath, "utf8"));
 
-/** `file:line:column+length rule` of each diagnostic, at its first label, which is what oxlint prints; and all the labels of those that have more. */
+/**
+ * `reports` has `file:line:column+length rule` for each diagnostic, at its first label, which is where oxlint prints
+ * it. `labels` has all the labels of the diagnostics that `labelsOf` covers.
+ */
 function run(command: string, before: string[], cwd: string): { reports: string[]; labels: string[] } {
-  const { stdout, stderr, error } = spawnSync(command, [...before, "-f", "json", "."], { cwd, encoding: "utf8", timeout: 60_000, maxBuffer: 1 << 28 });
+  const { stdout, stderr, error } = spawnSync(command, [...before, "-f", "json", "."], {
+    cwd,
+    encoding: "utf8",
+    timeout: 60_000,
+    maxBuffer: 1 << 28,
+  });
   if (error) throw new Error(`${command} ${before.join(" ")}: ${error.message}`);
   let diagnostics;
   try {
@@ -33,19 +44,25 @@ function run(command: string, before: string[], cwd: string): { reports: string[
   } catch {
     throw new Error(`${command}: ${stderr || stdout}`);
   }
-  // A file that oxlint cannot read says nothing about a rule.
+  // A file that oxlint can't parse doesn't test any rule, so point it out.
   for (const it of diagnostics) {
-    // `TS(2391)` is an error of oxc's semantic analysis.
-    if (!/^[a-z]/.test(it.code ?? "") && command === oxlint && !cwd.includes("syntax-error")) console.log(`NOT READ by oxlint: ${cwd} ${it.filename}: ${it.message}`);
+    // `TS(2391)` is an error from oxc's semantic analysis.
+    if (!/^[a-z]/.test(it.code ?? "") && command === oxlint && !cwd.includes("syntax-error"))
+      console.log(`NOT READ by oxlint: ${cwd} ${it.filename}: ${it.message}`);
   }
   const found = diagnostics.filter((it: any) => it.code);
   return {
-    reports: found.map((it: any) => `${it.filename}:${it.labels[0].span.line}:${it.labels[0].span.column}+${it.labels[0].span.length} ${it.code}`).sort(),
+    reports: found
+      .map(
+        (it: any) =>
+          `${it.filename}:${it.labels[0].span.line}:${it.labels[0].span.column}+${it.labels[0].span.length} ${it.code}`,
+      )
+      .sort(),
     labels: found.flatMap((it: any) => (labelsOf(it) ? [`${it.filename} ${it.code} ${labelsOf(it)}`] : [])).sort(),
   };
 }
 
-/** What is in `some` more often than in `others`. */
+/** Returns the items that occur more often in `some` than in `others`. */
 function more(some: string[], others: string[]): string[] {
   const left = new Map<string, number>();
   for (const it of others) left.set(it, (left.get(it) ?? 0) + 1);
@@ -61,9 +78,19 @@ for (const project of projects) {
   if (names.length > 0 && !names.includes(project.name)) continue;
   const cwd = mkdtempSync(join(tmpdir(), `oxlint-${project.name.replaceAll("/", "-")}-`));
   try {
-    const tsconfig = project.typed ? { "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, target: "esnext", module: "esnext", lib: ["esnext", "dom"] } }) } : {};
+    const tsconfig = project.typed
+      ? {
+          "tsconfig.json": JSON.stringify({
+            compilerOptions: { strict: true, target: "esnext", module: "esnext", lib: ["esnext", "dom"] },
+          }),
+        }
+      : {};
     const typed = project.typed ? ["--type-aware"] : [];
-    for (const [path, text] of Object.entries({ ".oxlintrc.json": JSON.stringify(project.config), ...tsconfig, ...project.files })) {
+    for (const [path, text] of Object.entries({
+      ".oxlintrc.json": JSON.stringify(project.config),
+      ...tsconfig,
+      ...project.files,
+    })) {
       mkdirSync(dirname(join(cwd, path)), { recursive: true });
       writeFileSync(join(cwd, path), text);
     }
@@ -74,12 +101,12 @@ for (const project of projects) {
     if (oxlint) {
       const { reports, labels } = run(oxlint, typed, cwd);
       expected[project.name] = reports;
-      // Only the projects that have some are in the file.
+      // The file only lists projects that have labels.
       delete expectedLabels[project.name];
       if (labels.length > 0) expectedLabels[project.name] = labels;
     }
     const wanted = [...(expected[project.name] ?? []), ...(expectedLabels[project.name] ?? [])];
-    // With one thread, with fewer threads than files, and with as many as there are.
+    // One thread, fewer threads than files, and the default.
     for (const threads of project.name.startsWith("no-cycle/") ? ["--threads=1", "--threads=2", ""] : [""]) {
       const { reports, labels } = run(ours, [...oursArgs, ...typed, ...(threads ? [threads] : [])], cwd);
       const actual = [...reports, ...labels];

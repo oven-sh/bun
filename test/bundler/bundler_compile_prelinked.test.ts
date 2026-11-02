@@ -538,6 +538,38 @@ describe.concurrent("bundler", () => {
     // The class keeps its temporal dead zone; bundled top-level const/let are emitted as var.
     stdout: "ReferenceError,undefined,undefined K,42,L",
   });
+
+  // A `var` read before its initializer has run is undefined, whether JSC allocates it in the module environment
+  // (captured.ts: an exported function captures `v`) or on the stack (uncaptured.ts). A record decoded from bytecode
+  // initializes the `var` slots of its environment by scope offset, and that range must end where the lexical bindings
+  // start: the class is still in its temporal dead zone. It is a class because bundled top-level const/let are emitted
+  // as var. Both modules print the same lines, so the order in which +splitting evaluates their chunks does not matter.
+  bindingCase("VarReadBeforeStore", {
+    files: {
+      "/entry.ts": /* js */ `
+        import { read } from "./captured";
+        import "./uncaptured";
+        console.log(read());
+      `,
+      "/captured.ts": /* js */ `
+        console.log(typeof v + String(v));
+        try { console.log(typeof K + String(K)); } catch (e) { console.log((e as Error).constructor.name); }
+        var v = 1;
+        class K {}
+        export function read() { return [v, typeof K].join(); }
+      `,
+      "/uncaptured.ts": /* js */ `
+        console.log(typeof v + String(v));
+        try { console.log(typeof K + String(K)); } catch (e) { console.log((e as Error).constructor.name); }
+        var v = 1;
+        class K {}
+        export {};
+      `,
+    },
+    entries: ["/entry.ts", "/captured.ts", "/uncaptured.ts"],
+    stdout: "undefinedundefined\nReferenceError\nundefinedundefined\nReferenceError\n1,function",
+  });
+
   // Deleting a graph module's registry entry must not break (or free) what its importers already link against: a
   // function linked after the delete still resolves its imports to the original record, and a fresh import() of the
   // same key makes a new record.
@@ -870,5 +902,28 @@ describe.concurrent("bundler", () => {
     },
     entries: ["/entry.ts", "/state.ts"],
     stdout: "1 1,1,/,function\ntrue 2 1,2,/,function",
+  });
+
+  // The printer builds a chunk's module record, but it never sees the --banner and --footer text.
+  // These use the "api" backend because itBundled's "cli" backend wraps the text in quotes.
+  itBundled("compile/prelinked/BannerFooter/ImportMeta", {
+    backend: "api",
+    compile: true,
+    bytecode: true,
+    format: "esm",
+    banner: `console.log("banner", typeof import.meta.url);`,
+    footer: `console.log("footer", typeof import.meta.url);`,
+    files: { "/entry.ts": `console.log("entry");` },
+    run: eachMode(() => ({ stdout: "banner string\nentry\nfooter string", stderr: "" })),
+  });
+  itBundled("compile/prelinked/BannerFooter/TopLevelAwait", {
+    backend: "api",
+    compile: true,
+    bytecode: true,
+    format: "esm",
+    banner: `console.log("banner", await Promise.resolve("awaited"));`,
+    footer: `for await (const value of [Promise.resolve("awaited")]) console.log("footer", value);`,
+    files: { "/entry.ts": `console.log("entry");` },
+    run: eachMode(() => ({ stdout: "banner awaited\nentry\nfooter awaited", stderr: "" })),
   });
 });

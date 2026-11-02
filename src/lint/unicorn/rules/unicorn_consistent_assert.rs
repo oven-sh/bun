@@ -4,7 +4,7 @@ use bun_lint::rule::Plugin;
 /// Enforces consistent usage of the `assert` module.
 pub struct ConsistentAssert;
 
-const INCONSISTENT_ASSERT_USAGE: Message = Message::new("", "Inconsistent assert usage.");
+const INCONSISTENT_ASSERT_USAGE: &Message = &Message::new("", "Inconsistent assert usage.");
 
 impl Rule for ConsistentAssert {
     const META: Meta =
@@ -58,7 +58,7 @@ impl Rule for ConsistentAssert {
                 continue;
             }
             for reference in symbol.references().filter_map(Reference::expr) {
-                // oxlint reports the callee of the call that the reference is directly in: also the `foo` of
+                // oxlint reports the callee of the call that directly contains the reference, so also the `foo` in
                 // `foo(assert)`.
                 let ident = match reference.parent() {
                     _ if reference.is_parenthesized() => reference,

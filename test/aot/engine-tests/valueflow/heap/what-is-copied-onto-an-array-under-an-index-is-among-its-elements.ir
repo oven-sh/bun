@@ -1,0 +1,81 @@
+# `Object.assign(list, { 0: "text" })`: whoever walks an array reads its elements out of the array, without a lookup, so what the source holds under an index is written into the array.
+# What was copied onto the source before lies above the source and is copied with it. A list beside it, onto which nothing is copied, keeps its numbers.
+# FORM: AsRead
+# RUN: flow
+# CHECK: function f4 parameter 0 type=undefined|int|"text" proven
+# CHECK: function f5 parameter 0 type=undefined|int|"text" proven
+# CHECK: function f6 parameter 0 type=undefined|int proven
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f1
+    v1 = CallDirect function=f2
+    v2 = CallDirect function=f3
+    Return v0
+}
+function f1 name="direct" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewArray v0 contents=anything
+    v2 = NewDictionary
+    v3 = Integer integer=0
+    v4 = String string="text"
+    ElemSet v2, v3, v4 mode=Strict
+    v6 = Builtin builtin=Object
+    v7 = Builtin builtin=ObjectAssign
+    v8 = Call v7, v6, v1, v2
+    v9 = PropGet v1 key="map"
+    v10 = NewClosure function=f4
+    v11 = Call v9, v1, v10 calleeKey="map"
+    Return v11
+}
+function f2 name="throughAnother" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewArray v0 contents=anything
+    v2 = NewDictionary
+    v3 = Integer integer=0
+    v4 = String string="text"
+    ElemSet v2, v3, v4 mode=Strict
+    v6 = NewDictionary
+    v7 = Builtin builtin=Object
+    v8 = Builtin builtin=ObjectAssign
+    v9 = Call v8, v7, v6, v2
+    v10 = Call v8, v7, v1, v6
+    v11 = PropGet v1 key="map"
+    v12 = NewClosure function=f5
+    v13 = Call v11, v1, v12 calleeKey="map"
+    Return v13
+}
+function f3 name="besideIt" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewArray v0 contents=anything
+    v2 = NewArray v0 contents=anything
+    v3 = NewDictionary
+    v4 = Integer integer=0
+    v5 = String string="text"
+    ElemSet v3, v4, v5 mode=Strict
+    v7 = Builtin builtin=Object
+    v8 = Builtin builtin=ObjectAssign
+    v9 = Call v8, v7, v2, v3
+    v10 = PropGet v1 key="map"
+    v11 = NewClosure function=f6
+    v12 = Call v10, v1, v11 calleeKey="map"
+    Return v12
+}
+function f4 name="first" kind=Arrow length=1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f5 name="second" kind=Arrow length=1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f6 name="third" kind=Arrow length=1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

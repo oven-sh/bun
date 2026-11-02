@@ -35,31 +35,31 @@ impl Literals {
     }
 }
 
-const ANGLE_BRACKET: Message =
-    Message::new("angle-bracket", "Use '<{{cast}}>' instead of 'as {{cast}}'.");
-const AS: Message = Message::new("as", "Use 'as {{cast}}' instead of '<{{cast}}>'.");
-const NEVER: Message = Message::new("never", "Do not use any type assertions.");
-const REPLACE_ARRAY_TYPE_ASSERTION_WITH_ANNOTATION: Message = Message::new(
+const ANGLE_BRACKET: &Message =
+    &Message::new("angle-bracket", "Use '<{{cast}}>' instead of 'as {{cast}}'.");
+const AS: &Message = &Message::new("as", "Use 'as {{cast}}' instead of '<{{cast}}>'.");
+const NEVER: &Message = &Message::new("never", "Do not use any type assertions.");
+const REPLACE_ARRAY_TYPE_ASSERTION_WITH_ANNOTATION: &Message = &Message::new(
     "replaceArrayTypeAssertionWithAnnotation",
     "Use const x: {{cast}} = [ ... ] instead.",
 );
-const REPLACE_ARRAY_TYPE_ASSERTION_WITH_SATISFIES: Message = Message::new(
+const REPLACE_ARRAY_TYPE_ASSERTION_WITH_SATISFIES: &Message = &Message::new(
     "replaceArrayTypeAssertionWithSatisfies",
     "Use const x = [ ... ] satisfies {{cast}} instead.",
 );
-const REPLACE_OBJECT_TYPE_ASSERTION_WITH_ANNOTATION: Message = Message::new(
+const REPLACE_OBJECT_TYPE_ASSERTION_WITH_ANNOTATION: &Message = &Message::new(
     "replaceObjectTypeAssertionWithAnnotation",
     "Use const x: {{cast}} = { ... } instead.",
 );
-const REPLACE_OBJECT_TYPE_ASSERTION_WITH_SATISFIES: Message = Message::new(
+const REPLACE_OBJECT_TYPE_ASSERTION_WITH_SATISFIES: &Message = &Message::new(
     "replaceObjectTypeAssertionWithSatisfies",
     "Use const x = { ... } satisfies {{cast}} instead.",
 );
-const UNEXPECTED_ARRAY_TYPE_ASSERTION: Message = Message::new(
+const UNEXPECTED_ARRAY_TYPE_ASSERTION: &Message = &Message::new(
     "unexpectedArrayTypeAssertion",
     "Always prefer const x: T[] = [ ... ].",
 );
-const UNEXPECTED_OBJECT_TYPE_ASSERTION: Message = Message::new(
+const UNEXPECTED_OBJECT_TYPE_ASSERTION: &Message = &Message::new(
     "unexpectedObjectTypeAssertion",
     "Always prefer const x: T = { ... }.",
 );
@@ -86,7 +86,7 @@ fn is_as_parameter(node: Expr) -> bool {
     }
 }
 
-/// oxlint's `needs_parens_for_parent`, for a `node` that is not in parentheses.
+/// oxlint's `needs_parens_for_parent`, for a `node` that isn't parenthesized.
 fn needs_parens_for_parent(node: Expr) -> bool {
     match node.parent() {
         Node::Expr(parent) => match parent.kind() {
@@ -108,7 +108,7 @@ fn needs_parens_for_parent(node: Expr) -> bool {
     }
 }
 
-/// What oxlint makes of `<cast>expression`, which is `node`.
+/// oxlint's fix for `<cast>expression`, which is `node`.
 fn fix_as_oxlint<'a>(fixer: Fixer<'a>, node: Expr<'a>, expression: Expr<'a>, cast: &[u8]) -> Fix {
     let needs_parentheses = !node.is_parenthesized() && needs_parens_for_parent(node);
     let starts_a_statement = || match node.parent() {

@@ -1,36 +1,37 @@
-//! `getRelatedComponent` of `lib/util/Components.js` of eslint-plugin-react, without the list that
-//! it adds to: that is `Components::get_related_component`.
+//! `getRelatedComponent` from eslint-plugin-react's `lib/util/Components.js`, minus the part that
+//! adds to the list, which is `Components::get_related_component`.
 
 use crate::util_ast::name_of_key;
 use crate::util_variable::variable_from_context;
 use bun_lint::prelude::*;
+use bun_lint::types::IdMap;
 use bun_lint::utils::{estree_parent, estree_span};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
-/// The `componentPath`s of `getRelatedComponent`, so that many of one long `a.b.b.b` take no
-/// longer than one.
+/// Caches `getRelatedComponent`'s `componentPath`s, so that looking up every prefix of one long
+/// `a.b.b.b` costs no more than looking up the whole chain once.
 #[derive(Default)]
 struct ComponentPaths<'a> {
-    /// The names in each row of member accesses, from the innermost on.
+    /// The names in each chain of member accesses, innermost first.
     rows: Vec<Vec<Name<'a>>>,
-    /// In which row a member access is, and how many of the names of that row are its path.
-    places: FxHashMap<Expr<'a>, (usize, usize)>,
+    /// Which row a member access is in, and how many of that row's names make up its path.
+    positions: IdMap<Expr<'a>, (usize, usize)>,
 }
 
 impl<'a> ComponentPaths<'a> {
-    /// `componentPath`, reversed as upstream reverses it.
+    /// `componentPath`, reversed like upstream reverses it.
     fn of(&mut self, node: Expr<'a>) -> &[Name<'a>] {
         let mut unknown: SmallVec<[Expr<'a>; 4]> = SmallVec::new();
         let mut known = None;
         let mut node_temp = Some(node);
         while let Some(member) = node_temp {
-            known = self.places.get(&member).copied();
+            known = self.positions.get(member).copied();
             if known.is_some() {
                 break;
             }
             unknown.push(member);
-            // From above the whole of an optional chain is a `ChainExpression`.
+            // Seen from its parent, a whole optional chain is a `ChainExpression`.
             node_temp = member.object().filter(|it| {
                 matches!(it.tag(), ExprTag::Dot | ExprTag::Index) && !it.is_chain_root()
             });
@@ -56,7 +57,7 @@ impl<'a> ComponentPaths<'a> {
                 _ => None,
             });
             count = names.len();
-            self.places.insert(member, (row, count));
+            self.positions.insert(member, (row, count));
         }
         names.get(..count).unwrap_or_default()
     }
@@ -98,7 +99,7 @@ fn right_of_parent(ref_id: Expr<'_>) -> Option<Expr<'_>> {
     default.filter(|it| *it == ref_id)
 }
 
-/// Of a reference: the text of `refId`, and the `componentNode` that upstream takes from it.
+/// For a reference: `refId`'s text, and the `componentNode` that upstream takes from it.
 fn ref_id_of(reference: Reference<'_>) -> (&[u8], Option<Expr<'_>>) {
     let node = reference.node();
     let file = node.file();
@@ -109,7 +110,7 @@ fn ref_id_of(reference: Reference<'_>) -> (&[u8], Option<Expr<'_>>) {
             }
             _ => (file.slice(reference.span()), None),
         },
-        // The range of an `Identifier` has its type annotation.
+        // An `Identifier`'s range includes its type annotation.
         Node::Pat(identifier) => {
             let init = match identifier.parent() {
                 Node::VarDecl(declarator) => declarator.init(),
@@ -122,16 +123,16 @@ fn ref_id_of(reference: Reference<'_>) -> (&[u8], Option<Expr<'_>>) {
     }
 }
 
-/// By the text of `refId`: what the first reference with that text gives.
+/// Maps `refId`'s text to the `componentNode` of the first reference with that text.
 type ReferencesByText<'a> = FxHashMap<&'a [u8], Option<Expr<'a>>>;
 
-/// What `getRelatedComponent` finds, without the list.
+/// `getRelatedComponent`'s search, without the list.
 #[derive(Default)]
 pub(crate) struct Related<'a> {
     paths: ComponentPaths<'a>,
     references: FxHashMap<Variable<'a>, ReferencesByText<'a>>,
-    /// Of an object literal that is looked into: the first property of each name.
-    properties: FxHashMap<Expr<'a>, FxHashMap<&'a [u8], Prop<'a>>>,
+    /// For each object literal that's been searched: the first property with each name.
+    properties: IdMap<Expr<'a>, FxHashMap<&'a [u8], Prop<'a>>>,
 }
 
 impl<'a> Related<'a> {
@@ -182,7 +183,7 @@ impl<'a> Related<'a> {
             let ExprKind::Object(properties) = component_node.kind() else {
                 break;
             };
-            let by_name = self.properties.entry(component_node).or_insert_with(|| {
+            let by_name = self.properties.get_or_insert_with(component_node, || {
                 let mut by_name = FxHashMap::default();
                 for property in properties {
                     if let Some(name) = property.key().and_then(name_of_key) {

@@ -1,0 +1,88 @@
+# A built-in that reads members of an operand runs their getters and never what the members hold. A built-in that calls a member runs the method, and one that prints an object runs unknown code
+# FORM: Prepared
+# RUN: effects summaries f0 f1 f2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Target" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[ChangeIntegrity, ChangePrototype]}
+layout L1 name="ValueDescriptor" fields=[{key="value" declared={type=f6} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
+layout L2 kind=Instance name="ComputedDescriptor" constructor=f3 flow={baseState=None impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="value" kind=Getter function=f7 mutability=Fixed}]}
+layout L3 name="Options" fields=[{key="cause" declared={type=f6} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
+layout L4 kind=Instance name="Deferred" constructor=f4 flow={baseState=None impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="then" function=f8 mutability=Fixed}]}
+layout L5 kind=Instance name="Printable" constructor=f5 flow={baseState=None impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key=Symbol.for("nodejs.util.inspect.custom") function=f9 mutability=Fixed}]}
+layout L6 kind=Instance name="Unrelated" constructor=f10 flow={baseState=None impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="later" function=f11 mutability=Fixed}]}
+variable g0 name="count" declared={type=number} initialization=Undefined
+function f0 name="membersAreRead" parameters=[{type=L0}, {type=string}, {type=L1}, {type=L2}, {type=object}, {type=L3}] results=[{type=undefined}] {
+  b0(v0: L0, v1: string, v2: L1, v3: L2, v4: object, v5: L3):
+    v6 = CallBuiltin -, v0, v1, v2 overload=ObjectDefineProperty/0
+    v7 = CallBuiltin -, v0, v1, v3 overload=ObjectDefineProperty/0
+    v8 = CallBuiltin -, v0, v1, v4 overload=ObjectDefineProperty/0
+    v9 = CallBuiltin -, v1, v5 overload=Error/0
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: v6 CallBuiltin:
+# CHECK-NOT: ModuleVariables
+# CHECK-NOT: callsUnknownCode
+# CHECK: v7 CallBuiltin: {{*}}writes(ModuleVariables/1,
+# CHECK-NOT: callsUnknownCode
+# CHECK: v8 CallBuiltin: {{*}}callsUnknownCode
+# CHECK-NEXT: v9 CallBuiltin:
+# CHECK-NOT: ModuleVariables
+# CHECK-NOT: callsUnknownCode
+function f1 name="membersAreCalled" parameters=[{type=L4}, {type=L6}] results=[{type=undefined}] {
+  b0(v0: L4, v1: L6):
+    v2 = CallBuiltin v0 overload=PromisePrototypeCatch/2
+    v3 = CallBuiltin v1 overload=PromisePrototypeCatch/2
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: v2 CallBuiltin: {{*}}writes(ModuleVariables/1,
+# CHECK-NOT: callsUnknownCode
+# CHECK: v3 CallBuiltin:
+# CHECK-NOT: ModuleVariables
+# CHECK-NOT: callsUnknownCode
+function f2 name="printed" parameters=[{type=L5}, {type=string}] results=[{type=undefined}] {
+  b0(v0: L5, v1: string):
+    v2 = CallBuiltin -, v0 overload=ConsoleLog/1
+    v3 = CallBuiltin -, v1 overload=ConsoleLog/0
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: v2 CallBuiltin: {{*}}callsUnknownCode
+# CHECK-NEXT: v3 CallBuiltin:
+# CHECK-NOT: callsUnknownCode
+function f3 name="ComputedDescriptor" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L2
+function f4 name="Deferred" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L4
+function f5 name="Printable" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L5
+function f6 name="held" kind=Arrow results=[{type=undefined}] {
+  b0():
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g0
+    Return
+}
+function f7 name="value" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=number}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    PutModuleVariable v1 variable=g0
+    Return v1
+}
+function f8 name="then" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=number}] {
+  b0(v0: anything):
+    v1 = Integer integer=3
+    PutModuleVariable v1 variable=g0
+    Return v1
+}
+function f9 name="inspect" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=string}] {
+  b0(v0: anything):
+    v1 = Integer integer=4
+    PutModuleVariable v1 variable=g0
+    v3 = String string="printed"
+    Return v3
+}
+function f10 name="Unrelated" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L6
+function f11 name="later" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=number}] {
+  b0(v0: anything):
+    v1 = Integer integer=5
+    PutModuleVariable v1 variable=g0
+    Return v1
+}

@@ -67,7 +67,7 @@ struct us_poll_t *us_create_poll(struct us_loop_t *loop, int fallthrough, unsign
     if (!fallthrough) {
         loop->num_polls++;
     }
-    return CLEAR_POINTER_TAG(us_malloc(sizeof(struct us_poll_t) + ext_size));
+    return CLEAR_POINTER_TAG(us_xmalloc(sizeof(struct us_poll_t) + ext_size));
 }
 
 /* Todo: this one should be us_internal_poll_free */
@@ -220,7 +220,7 @@ static int bun_kevent64_wait(int kqfd, struct kevent64_s *eventlist, int nevents
 
 /* Loop */
 struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(struct us_loop_t *loop), void (*pre_cb)(struct us_loop_t *loop), void (*post_cb)(struct us_loop_t *loop), unsigned int ext_size) {
-    struct us_loop_t *loop = (struct us_loop_t *) us_calloc(1, sizeof(struct us_loop_t) + ext_size);
+    struct us_loop_t *loop = (struct us_loop_t *) us_xcalloc(1, sizeof(struct us_loop_t) + ext_size);
     loop->num_polls = 0;
     /* These could be accessed if we close a poll before starting the loop */
     loop->num_ready_polls = 0;
@@ -663,7 +663,7 @@ struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop, un
     unsigned int new_size = sizeof(struct us_poll_t) + ext_size;
     if(new_size <= old_size) return p;
 
-    struct us_poll_t *new_p = us_calloc(1, new_size);
+    struct us_poll_t *new_p = us_xcalloc(1, new_size);
     memcpy(new_p, p, old_size);
 
     /* Increment poll count for the new poll - the old poll will be freed separately
@@ -786,6 +786,10 @@ void us_poll_stop(struct us_poll_t *p, struct us_loop_t *loop) {
     us_internal_loop_update_pending_ready_polls(loop, p, 0, old_events, new_events);
 }
 
+void us_internal_poll_close_fd(struct us_poll_t *p) {
+    bsd_close_socket(us_poll_fd(p));
+}
+
 size_t us_internal_accept_poll_event(struct us_poll_t *p) {
 #ifdef LIBUS_USE_EPOLL
     int fd = us_poll_fd(p);
@@ -871,7 +875,7 @@ void us_internal_async_wakeup(struct us_internal_async *a) {
 #define MACHPORT_BUF_LEN 1024
 
 struct us_internal_async *us_internal_create_async(struct us_loop_t *loop, int fallthrough, unsigned int ext_size) {
-    struct us_internal_callback_t *cb = us_calloc(1, sizeof(struct us_internal_callback_t) + ext_size);
+    struct us_internal_callback_t *cb = us_xcalloc(1, sizeof(struct us_internal_callback_t) + ext_size);
     cb->loop = loop;
     cb->cb_expects_the_loop = 1;
     cb->leave_poll_ready = 0;
@@ -884,7 +888,7 @@ struct us_internal_async *us_internal_create_async(struct us_loop_t *loop, int f
         loop->num_polls++;
     }
 
-    cb->machport_buf = us_malloc(MACHPORT_BUF_LEN);
+    cb->machport_buf = us_xmalloc(MACHPORT_BUF_LEN);
     mach_port_t self = mach_task_self();
     kern_return_t kr = mach_port_allocate(self, MACH_PORT_RIGHT_RECEIVE, &cb->port);
 
@@ -1010,7 +1014,7 @@ void us_internal_async_wakeup(struct us_internal_async *a) {
 #else
 /* FreeBSD: kqueue async wakeup via EVFILT_USER + NOTE_TRIGGER. */
 struct us_internal_async *us_internal_create_async(struct us_loop_t *loop, int fallthrough, unsigned int ext_size) {
-    struct us_internal_callback_t *cb = us_calloc(1, sizeof(struct us_internal_callback_t) + ext_size);
+    struct us_internal_callback_t *cb = us_xcalloc(1, sizeof(struct us_internal_callback_t) + ext_size);
     cb->loop = loop;
     cb->cb_expects_the_loop = 1;
     cb->leave_poll_ready = 0;

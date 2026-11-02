@@ -14,6 +14,8 @@ use bun_event_loop::{Task, task_tag};
 pub struct DeferredBatchTask {
     /// Intrusive node for the trip back to the bundle thread's Mini loop.
     returned: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext,
+    /// Notified instead of the bundle's loop. `aot::plugins` sets it for each hop: its bundle ticks no loop.
+    pub(crate) waiter: Option<core::ptr::NonNull<crate::aot::plugins::PluginWaiter>>,
 }
 
 impl bun_event_loop::Taskable for DeferredBatchTask {
@@ -63,6 +65,11 @@ impl DeferredBatchTask {
 
     /// Plugins' (JS) thread → bundle thread: the hop's pending item is consumed there.
     fn come_back(&mut self) {
+        if let Some(waiter) = self.waiter.take() {
+            // SAFETY: `aot::plugins` frees the waiter only after it has waited for this answer.
+            unsafe { waiter.as_ref() }.answer_drained();
+            return;
+        }
         let this: *mut Self = self;
         let bv2 = self.get_bundle_v2();
         match bv2.any_loop_mut() {

@@ -6,9 +6,9 @@ use bun_lint::rule::Plugin;
 /// This rule checks for double comparisons in logical expressions.
 pub struct DoubleComparisons;
 
-const DOUBLE_COMPARISONS: Message = Message::new("", "Unexpected double comparisons.");
-const SIMPLIFY: Message =
-    Message::new("", "This logical expression can be simplified. Try using the `{{operator}}` operator instead.");
+const DOUBLE_COMPARISONS: &Message = &Message::new("", "Unexpected double comparisons.");
+const SIMPLIFY: &Message =
+    &Message::new("", "This logical expression can be simplified. Try using the `{{operator}}` operator instead.");
 
 impl Rule for DoubleComparisons {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "double-comparisons", Kind::Problem).has_suggestions();
@@ -26,7 +26,7 @@ impl Rule for DoubleComparisons {
         let Some((rkind, rlhs, rrhs)) = as_comparison(right) else {
             return;
         };
-        // In `a || b || c` what is before `c` is the `b`.
+        // In `a || b || c` the operand before `c` is `b`.
         let left_bin_expr = if left.binary_op() == Some(op) && !left.is_parenthesized() { left.right() } else { Some(left) };
         let Some(left_bin_expr) = left_bin_expr else {
             return;
@@ -62,7 +62,7 @@ impl Rule for DoubleComparisons {
     }
 }
 
-/// The operator and the operands, if it is one of the comparisons that the rule is about and is not in parentheses.
+/// Returns the operator and the operands if `e` is one of the comparisons the rule covers and isn't parenthesized.
 fn as_comparison(e: Expr<'_>) -> Option<(BinOp, Expr<'_>, Expr<'_>)> {
     e.as_binary().filter(|(op, ..)| {
         matches!(op, BinOp::EqEq | BinOp::EqEqEq | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge) && !e.is_parenthesized()

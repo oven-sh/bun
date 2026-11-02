@@ -4,7 +4,7 @@ use bun_lint::utils::ancestor_memo::AncestorMemo;
 /// Require `require()` calls to be placed at top-level module scope.
 pub struct GlobalRequire;
 
-const UNEXPECTED: Message = Message::new("unexpected", "Unexpected require().");
+const UNEXPECTED: &Message = &Message::new("unexpected", "Unexpected require().");
 
 /// ESLint's `ACCEPTABLE_PARENTS`.
 fn is_acceptable_parent(node: Node<'_>) -> bool {
@@ -32,7 +32,7 @@ fn is_shadowed(callee: Expr<'_>) -> bool {
 impl Rule for GlobalRequire {
     const META: Meta = Meta::eslint("global-require", Kind::Suggestion).deprecated();
     const ON: On = On::new().function_calls(&["require"]);
-    /// What has an ancestor that is not acceptable.
+    /// Caches the nodes that have an unacceptable ancestor.
     type State<'a> = AncestorMemo<'a, ()>;
 
     fn new(_: &Options) -> Self {

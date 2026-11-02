@@ -208,18 +208,21 @@ describe.skipIf(isWindows)("WebSocket over unix domain socket", () => {
     server.listen(unix);
     await once(server, "listening");
     try {
-      const codes: number[] = [];
-      // The harness certificate names localhost.
+      const errors: (string | undefined)[] = [];
+      // The harness certificate is for localhost. The server disconnects the client whose handshake succeeds.
       for (const [host, serverName] of [
         ["evil.test", "localhost"],
         ["localhost", "evil.test"],
       ]) {
         const ws = new WebSocket(`wss+unix://${host}${unix}`, { tls: { ca: tlsCert.cert, serverName } });
-        const { promise, resolve } = Promise.withResolvers<number>();
-        ws.onclose = event => resolve(event.code);
-        codes.push(await promise);
+        const { promise, resolve } = Promise.withResolvers<string | undefined>();
+        ws.onerror = event => resolve((event as ErrorEvent).error?.code);
+        errors.push(await promise);
       }
-      expect({ seen, codes }).toEqual({ seen: ["localhost", "evil.test"], codes: [1006, 1015] });
+      expect({ seen, errors }).toEqual({
+        seen: ["localhost", "evil.test"],
+        errors: ["ECONNRESET", "ERR_TLS_CERT_ALTNAME_INVALID"],
+      });
     } finally {
       server.close();
     }

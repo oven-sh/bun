@@ -1,18 +1,17 @@
 //! Tokens and comments.
 //!
-//! The HIR does not store tokens. Two ways to get at them:
-//! - [`skip_trivia`], [`skip_trivia_back`], [`token_len`] and [`next_token`] look at the text next
-//!   to a position that is known to be a token boundary, such as the end of a node. They cost
-//!   nothing up front. Each says where it cannot be used.
-//! - The methods of [`File`] below are those of ESLint's `SourceCode`, as iterators. The first
-//!   call scans the whole file, so a rule should decide from the syntax whether there is anything
-//!   to report, and look at tokens only then. After that a call is a binary search. The methods
-//!   that only return comments (`comments*`) need no scan: the parser lists the comments.
+//! The HIR doesn't store tokens. There are two ways to get them:
+//! - [`skip_trivia`], [`skip_trivia_back`], [`token_len`] and [`next_token`] scan the text next to a position that's
+//!   known to be a token boundary, such as the end of a node. They have no up-front cost. Each one documents where it
+//!   can't be used.
+//! - The [`File`] methods below are ESLint's `SourceCode` methods, as iterators. The first call scans the whole file,
+//!   so a rule should decide from the syntax whether there's anything to report and only then look at tokens. After
+//!   that, a call is a binary search. The methods that only return comments (`comments*`) don't need the scan, because
+//!   the parser already lists the comments.
 //!
-//! The tokens have the ranges and the types that ESLint's parser for the file gives them:
-//! typescript-estree for TypeScript and where `languageOptions.parser` says so, otherwise espree.
-//! Under a configuration of oxlint they are what oxlint hands to a plugin. See [`TokenKind`] for
-//! where they differ.
+//! Tokens have the ranges and types that ESLint's parser for the file gives them: typescript-estree for TypeScript
+//! files and when `languageOptions.parser` selects it, espree otherwise. With an oxlint config they're what oxlint
+//! passes to a plugin. See [`TokenKind`] for the differences.
 //!
 //! | ESLint | here |
 //! | --- | --- |
@@ -26,12 +25,12 @@
 //! | `getFirstToken(node, isCommaToken)` | `file.tokens_in(node).find(is_comma_token)` |
 //! | `getLastToken(node, isCommaToken)` | `file.tokens_in(node).rfind(is_comma_token)` |
 //! | `getFirstTokens(node, { count: 2 })` | `file.tokens_in(node).take(2)` |
-//! | `getLastTokens(node, { count: 2 })` | `file.tokens_in(node).rev().take(2)`, **the last first** |
+//! | `getLastTokens(node, { count: 2 })` | `file.tokens_in(node).rev().take(2)`, **last one first** |
 //! | `getTokensAfter(x)` | `file.tokens_after(x)` |
 //! | `getTokenAfter(x, { skip: 1 })` | `file.tokens_after(x).nth(1)` |
 //! | `getTokenAfter(x, isCommaToken)` | `file.tokens_after(x).find(is_comma_token)` |
 //! | `getTokensAfter(x, { count: 2 })` | `file.tokens_after(x).take(2)` |
-//! | `getTokensBefore(x)` | `file.tokens_before(x)`, **the nearest first** |
+//! | `getTokensBefore(x)` | `file.tokens_before(x)`, **nearest first** |
 //! | `getTokenBefore(x, { skip: 1 })` | `file.tokens_before(x).nth(1)` |
 //! | `getTokenBefore(x, isCommaToken)` | `file.tokens_before(x).find(is_comma_token)` |
 //! | `getTokensBetween(a, b)`, `getFirstTokensBetween(a, b)` | `file.tokens_between(a, b)` |
@@ -41,7 +40,7 @@
 //! | `{ includeComments: true }` | `.with_comments()` on any of the iterators, before anything else |
 //! | `getTokenBefore(x, { includeComments: true })` | `file.tokens_before(x).with_comments().next()` |
 //! | `getTokenByRangeStart(i)` | `file.token_at(i)` |
-//! | (what is at an index of the text) | `file.token_around(i)`, `file.comment_around(i)`, `file.token_or_comment_around(i)` |
+//! | (the token or comment at a text index) | `file.token_containing(i)`, `file.comment_containing(i)`, `file.token_or_comment_containing(i)` |
 //! | `ast.tokens` | `file.tokens()` |
 //! | `getAllComments()`, `ast.comments` | `file.comments()` |
 //! | `getCommentsBefore(x)` | `file.comments_before(x)` |
@@ -53,9 +52,9 @@
 //! | `a.value === b.value` | `a.has_same_value(b)`: espree decodes `\u0061` in a name |
 //! | `isCommaToken`, `isOpeningParenToken`, .. | `utils::ast_utils`, or `token.is_punctuator(",")` |
 //!
-//! `x`, `a`, `b` are anything with a [`Span`]: a node, a token, a comment, a span. As in ESLint,
-//! only its range counts, and the range should start and end where a token or a comment does.
-//! A token "in" a range is entirely inside it.
+//! `x`, `a` and `b` can be anything with a [`Span`]: a node, a token, a comment or a span. As in ESLint, only the range
+//! matters, and it should start and end where a token or comment does. A token is "in" a range if it's entirely inside
+//! it.
 
 mod scan;
 
@@ -65,34 +64,32 @@ use bun_sema::check::spans;
 use std::borrow::Cow;
 use std::cell::OnceCell;
 
-/// From `at`, past whitespace and comments: the start of the next token, or the end of the text.
+/// Skips whitespace and comments from `at`. Returns the start of the next token, or the end of the text.
 ///
-/// `at` has to be between tokens: the end of a node or of a token, or inside whitespace. It cannot
-/// be used among the children of a JSX element, where whitespace and `//` are text.
+/// `at` must be between tokens: at the end of a node or token, or inside whitespace. Don't use it among a JSX element's
+/// children, where whitespace and `//` are text.
 #[inline]
 pub fn skip_trivia(text: &[u8], at: u32) -> u32 {
     spans::skip_trivia(text, at as usize) as u32
 }
 
-/// From `at` back over whitespace and comments: the end of the previous token, or 0.
+/// Skips whitespace and comments backward from `at`. Returns the end of the previous token, or 0.
 ///
-/// `at` has to be between tokens, and not among the children of a JSX element. Going backwards, a
-/// `//` comment can only be recognized by looking at its line from the start, and only that line
-/// is looked at. So the result is wrong where the line before `at` has a `//` that is not a
-/// comment and is not in a string that starts on the same line: in a regular expression
-/// (`/\/\//`), or in a template that started on an earlier line. `file.token_before(..)` is always
-/// right.
+/// `at` must be between tokens and not among a JSX element's children. Going backward, a `//` comment can only be
+/// recognized by scanning its line from the start, and only that line is scanned. So the result is wrong if the line
+/// before `at` has a `//` that isn't a comment and isn't in a string that starts on the same line: in a regular
+/// expression (`/\/\//`), or in a template that started on an earlier line. `file.token_before(..)` is always right.
 #[inline]
 pub fn skip_trivia_back(text: &[u8], at: u32) -> u32 {
     spans::skip_trivia_back(text, at as usize) as u32
 }
 
-/// The length of the token that `text` starts with, which is 0 only if `text` is empty.
+/// Returns the length of the token at the start of `text`. It's 0 only if `text` is empty.
 ///
-/// It knows nothing of what is before:
+/// It has no context from the preceding text:
 /// - A `/` is a `/` or a `/=`, never a regular expression.
-/// - A `>` is always a token of its own: of `>=`, `>>` and `>>>=` it is the first character.
-/// - A `<<` is one token, also where it opens two lists of type parameters.
+/// - A `>` is always its own token, even as the first character of `>=`, `>>` or `>>>=`.
+/// - A `<<` is one token, even where it opens two type parameter lists.
 /// - A template ends after its first `${`. A `}` is a `}`, not the continuation of a template.
 /// - In a JSX tag, the name `a-b` ends at the `-`, and a `\` in a string skips a character.
 #[inline]
@@ -100,10 +97,10 @@ pub fn token_len(text: &[u8]) -> usize {
     spans::token_end(text, 0, false)
 }
 
-/// The token after `at`, past whitespace and comments. Empty at the end of the text.
+/// Returns the token after `at`, skipping whitespace and comments. Empty at the end of the text.
 ///
-/// For the punctuation and the keywords around a node: the `(` after a callee, the `=` after a
-/// pattern, the `,` after an element. The limits of [`skip_trivia`] and [`token_len`] apply.
+/// For the punctuation and keywords around a node: the `(` after a callee, the `=` after a pattern, the `,` after an
+/// element. The limits of [`skip_trivia`] and [`token_len`] apply.
 #[inline]
 pub fn next_token(text: &[u8], at: u32) -> Span {
     let start = skip_trivia(text, at);
@@ -113,30 +110,29 @@ pub fn next_token(text: &[u8], at: u32) -> Span {
 
 /// ESLint's `token.type`.
 ///
-/// The parsers that ESLint uses agree on where the tokens are, and on their types except for some
-/// words. A JavaScript file gets what espree says, unless `languageOptions.parser` is
-/// `@typescript-eslint/parser`. Every other file gets what typescript-estree says:
+/// ESLint's parsers agree on where the tokens are, and on their types except for a few words. A JavaScript file gets
+/// espree's types unless `languageOptions.parser` is `@typescript-eslint/parser`. Every other file gets
+/// typescript-estree's:
 ///
 /// | | espree | typescript-estree |
 /// | --- | --- | --- |
-/// | `let`, `static`, `yield` that are a name: `a.static`, `{ let: 1 }`, `var yield` | `Keyword` | `Identifier` |
+/// | `let`, `static`, `yield` used as a name: `a.static`, `{ let: 1 }`, `var yield` | `Keyword` | `Identifier` |
 /// | the same with `ecmaVersion` 3 or 5 | only `static` is a `Keyword` | |
-/// | `a` and `b` of the expression `a.b`, anywhere inside a JSX element: `<i>{a.b}</i>` | `Identifier` | `JsxIdentifier` |
-/// | `a` and `b` of `<a:b c:d="">` | `JsxIdentifier` | `Identifier` |
-/// | `this` of `<this.a>` | `JsxIdentifier` | `Keyword` |
+/// | `a` and `b` in the expression `a.b`, anywhere inside a JSX element: `<i>{a.b}</i>` | `Identifier` | `JsxIdentifier` |
+/// | `a` and `b` in `<a:b c:d="">` | `JsxIdentifier` | `Identifier` |
+/// | `this` in `<this.a>` | `JsxIdentifier` | `Keyword` |
 ///
-/// Under a configuration of oxlint every file gets the same, whatever its language: what espree says, but for the last row.
+/// With an oxlint config every file gets the same types, whatever its language: espree's, except for the last row.
 ///
-/// For both:
-/// - A reserved word that is a name is an `Identifier`: `a.if`, `{ default: 1 }`, `class { new() {} }`,
+/// In both parsers:
+/// - A reserved word used as a name is an `Identifier`: `a.if`, `{ default: 1 }`, `class { new() {} }`,
 ///   `export { a as default }`, `function (this: T) {}`, `a as const`.
-/// - A word that is a keyword only in some places is always an `Identifier`: `async`, `await`, `of`,
-///   `get`, `set`, `as`, `from`, `type`, `declare`, `readonly`, `abstract`, `namespace`, `any`, `string`, ..
-///   In TypeScript `implements`, `interface`, `private`, `protected`, `public` (and `let`, `static`,
-///   `yield`) are a `Keyword` where they act as one.
-/// - The string that is the value of a JSX attribute is a `JsxText`.
+/// - A contextual keyword is always an `Identifier`: `async`, `await`, `of`, `get`, `set`, `as`, `from`, `type`,
+///   `declare`, `readonly`, `abstract`, `namespace`, `any`, `string`, .. In TypeScript `implements`, `interface`,
+///   `private`, `protected`, `public` (and `let`, `static`, `yield`) are a `Keyword` where they act as one.
+/// - A JSX attribute's string value is a `JsxText`.
 /// - `` `a${ ``, `}b${` and `` }c` `` are one `Template` each.
-/// - `</` and `/>` are two tokens each. The `>>` that closes two lists of type arguments is two.
+/// - `</` and `/>` are two tokens each. The `>>` that closes two type argument lists is two tokens.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 #[repr(u8)]
 pub enum TokenKind {
@@ -147,14 +143,13 @@ pub enum TokenKind {
     Keyword,
     Null,
     Numeric,
-    /// `#a`, with the `#`
+    /// `#a`, including the `#`
     PrivateIdentifier,
     Punctuator,
     RegularExpression,
     String,
     Template,
-    /// `// ..`. For espree and for oxc, in a file that is not a module, also `<!-- ..` and, at the
-    /// start of a line, `--> ..`.
+    /// `// ..`. In a non-module file, espree and oxc also count `<!-- ..` and, at the start of a line, `--> ..`.
     Line,
     /// `/* .. */`
     Block,
@@ -186,7 +181,7 @@ impl RawToken {
     }
 }
 
-/// The tokens and the comments of a file, each in source order, each once it is asked for.
+/// A file's tokens and comments, each in source order and each computed on first use.
 #[derive(Default)]
 pub(crate) struct TokenStore {
     tokens: OnceCell<Vec<RawToken>>,
@@ -221,18 +216,18 @@ impl<'a> Token<'a> {
         self.raw.end
     }
 
-    /// As it is written. For a comment, with its delimiters.
+    /// The source text. A comment includes its delimiters.
     #[inline]
     pub fn text(self) -> &'a [u8] {
         self.file.slice(self.span())
     }
 
-    /// ESLint's `comment.value`: the text of a comment without its delimiters.
+    /// ESLint's `comment.value`: the comment's text without its delimiters.
     pub fn comment_value(self) -> &'a [u8] {
         self.file.slice(self.comment_value_span())
     }
 
-    /// Where [`Token::comment_value`] is: oxc's `Comment::content_span`.
+    /// The span of [`Token::comment_value`], like oxc's `Comment::content_span`.
     pub fn comment_value_span(self) -> Span {
         match self.raw.kind {
             TokenKind::Block => self.span().shrink(2, 2),
@@ -243,14 +238,14 @@ impl<'a> Token<'a> {
         }
     }
 
-    /// ESLint's `token.value`, except for what espree decodes: as it is written, but a comment
-    /// without its delimiters and a private identifier without its `#`.
+    /// ESLint's `token.value` minus espree's decoding: the source text, except that a comment loses its delimiters and
+    /// a private identifier its `#`.
     ///
-    /// espree, not typescript-estree, decodes two things, which stay as they are written here:
-    /// - The escape sequences of a name: the value of `a\u0062` is `ab`. So does oxlint.
-    ///   [`Token::decoded_value`] and [`Token::has_same_value`] do that.
-    /// - The text between JSX tags (not the string of an attribute): the value of `&amp;` is `&`, and
-    ///   that of a `\r\n` is `\n`. Nothing here does that.
+    /// espree (but not typescript-estree) decodes two things that stay verbatim here:
+    /// - Escape sequences in a name: the value of `a\u0062` is `ab`. oxlint does this too. Use
+    ///   [`Token::decoded_value`] or [`Token::has_same_value`] for that.
+    /// - Text between JSX tags (not an attribute's string): the value of `&amp;` is `&`, and a `\r\n` becomes `\n`.
+    ///   Nothing here does that.
     pub fn value(self) -> &'a [u8] {
         match self.raw.kind {
             TokenKind::PrivateIdentifier => self.file.slice(self.span().shrink(1, 0)),
@@ -258,8 +253,8 @@ impl<'a> Token<'a> {
         }
     }
 
-    /// Whether espree or oxlint decodes escape sequences in it: the file is one of theirs, this is a
-    /// name, and there is a `\` in it.
+    /// True if espree or oxlint would decode escape sequences in this token: the file uses one of those parsers, the
+    /// token is a name, and it contains a `\`.
     fn has_decoded_value(self) -> bool {
         use TokenKind::{Boolean, Identifier, Keyword, Null, PrivateIdentifier};
         matches!(
@@ -269,7 +264,7 @@ impl<'a> Token<'a> {
             && scan::decodes_names(self.file)
     }
 
-    /// [`Token::value`], and for espree and oxlint a name with what its `\u0061` and `\u{61}` stand for.
+    /// [`Token::value`], with `\u0061` and `\u{61}` in a name decoded where espree and oxlint decode them.
     pub fn decoded_value(self) -> Cow<'a, [u8]> {
         if !self.has_decoded_value() {
             return Cow::Borrowed(self.value());
@@ -290,19 +285,19 @@ impl<'a> Token<'a> {
         }
     }
 
-    /// Whether it is written `text`.
+    /// True if the source text is `text`.
     #[inline]
     pub fn is(self, text: &str) -> bool {
         self.text() == text.as_bytes()
     }
 
-    /// Whether it is the punctuator `text`.
+    /// True if this is the punctuator `text`.
     #[inline]
     pub fn is_punctuator(self, text: &str) -> bool {
         self.raw.kind == TokenKind::Punctuator && self.is(text)
     }
 
-    /// Whether it is the keyword `text`.
+    /// True if this is the keyword `text`.
     #[inline]
     pub fn is_keyword(self, text: &str) -> bool {
         self.raw.kind == TokenKind::Keyword && self.is(text)
@@ -333,22 +328,21 @@ impl Spanned for Token<'_> {
     }
 }
 
-/// Some consecutive tokens of a file. [`Tokens::with_comments`] adds the comments among them.
+/// A run of consecutive tokens in a file. [`Tokens::with_comments`] adds the comments among them.
 #[derive(Copy, Clone)]
 pub struct Tokens<'a> {
     file: &'a File<'a>,
     tokens: &'a [RawToken],
     /// Empty unless comments are included.
     comments: &'a [RawToken],
-    /// The range of the text that `tokens` was selected by, to select the comments by.
+    /// The text range `tokens` was selected by. `with_comments` selects the comments by it too.
     within: Span,
-    /// The nearest first: what `tokens_before` returns.
+    /// Nearest first, as `tokens_before` returns them.
     is_reversed: bool,
 }
 
 impl<'a> Tokens<'a> {
-    /// ESLint's `{ includeComments: true }`. To be called before anything is taken from the
-    /// iterator.
+    /// ESLint's `{ includeComments: true }`. Call it before taking anything from the iterator.
     pub fn with_comments(mut self) -> Self {
         self.comments = within(self.file.raw_comments(), self.within);
         self
@@ -415,14 +409,14 @@ impl DoubleEndedIterator for Tokens<'_> {
 
 impl ExactSizeIterator for Tokens<'_> {}
 
-/// Those of `all` that are entirely inside `span`.
+/// Returns the tokens of `all` that are entirely inside `span`.
 fn within(all: &[RawToken], span: Span) -> &[RawToken] {
     let first = all.partition_point(|token| token.start < span.start);
     let count = all[first..].partition_point(|token| token.end <= span.end);
     &all[first..first + count]
 }
 
-/// The code points of a name, with what its escape sequences stand for.
+/// Returns a name's code points, with escape sequences decoded.
 fn code_points(name: &[u8]) -> impl Iterator<Item = u32> {
     let mut at = 0;
     std::iter::from_fn(move || {
@@ -436,14 +430,14 @@ fn code_points(name: &[u8]) -> impl Iterator<Item = u32> {
     })
 }
 
-/// The one of `all` that `offset` is in.
-fn around(all: &[RawToken], offset: u32) -> Option<&RawToken> {
+/// Returns the token of `all` that contains `offset`.
+fn containing(all: &[RawToken], offset: u32) -> Option<&RawToken> {
     let after = all.partition_point(|token| token.start <= offset);
     all.get(after.checked_sub(1)?)
         .filter(|token| offset < token.end)
 }
 
-/// Whether there is nothing but whitespace in `text`, which is next to a comment.
+/// True if `text`, which is next to a comment, is all whitespace.
 fn is_whitespace(text: &[u8]) -> bool {
     let mut at = 0;
     while let Some(&byte) = text.get(at) {
@@ -462,7 +456,7 @@ impl<'a> File<'a> {
         let store = self.lazy.tokens.get_or_init(TokenStore::default);
         store.tokens.get_or_init(|| {
             let (tokens, comments) = scan::scan(self);
-            // Already there if the comments were asked for first.
+            // Already set if the comments were requested first.
             let _ = store.comments.set(comments);
             tokens
         })
@@ -495,7 +489,7 @@ impl<'a> File<'a> {
         }
     }
 
-    /// All the tokens of the file.
+    /// All tokens in the file.
     pub fn tokens(&'a self) -> Tokens<'a> {
         Tokens {
             file: self,
@@ -506,7 +500,7 @@ impl<'a> File<'a> {
         }
     }
 
-    /// The tokens of a node.
+    /// A node's tokens.
     pub fn tokens_in(&'a self, at: impl Spanned) -> Tokens<'a> {
         self.tokens_within(at.span(), false)
     }
@@ -516,7 +510,7 @@ impl<'a> File<'a> {
         self.tokens_within(Span::new(at.span().end, self.span().end), false)
     }
 
-    /// The tokens before a node, a token or a comment, **the nearest first**.
+    /// The tokens before a node, a token or a comment, **nearest first**.
     pub fn tokens_before(&'a self, at: impl Spanned) -> Tokens<'a> {
         self.tokens_within(Span::before(0, at.span()), true)
     }
@@ -526,14 +520,14 @@ impl<'a> File<'a> {
         self.tokens_within(a.span().between(b.span()), false)
     }
 
-    /// The first token of a node.
+    /// A node's first token.
     pub fn first_token(&'a self, at: impl Spanned) -> Option<Token<'a>> {
         let (tokens, span) = (self.raw_tokens(), at.span());
         let first = tokens.get(tokens.partition_point(|token| token.start < span.start));
         self.token(first.filter(|token| token.end <= span.end))
     }
 
-    /// The last token of a node.
+    /// A node's last token.
     pub fn last_token(&'a self, at: impl Spanned) -> Option<Token<'a>> {
         let (tokens, span) = (self.raw_tokens(), at.span());
         let after = tokens.partition_point(|token| token.end <= span.end);
@@ -563,20 +557,20 @@ impl<'a> File<'a> {
         self.token(tokens.get(at))
     }
 
-    /// The token that `offset` is in: `start <= offset < end`. `None` between tokens.
-    pub fn token_around(&'a self, offset: u32) -> Option<Token<'a>> {
-        self.token(around(self.raw_tokens(), offset))
+    /// The token that contains `offset` (`start <= offset < end`). `None` between tokens.
+    pub fn token_containing(&'a self, offset: u32) -> Option<Token<'a>> {
+        self.token(containing(self.raw_tokens(), offset))
     }
 
-    /// The comment that `offset` is in.
-    pub fn comment_around(&'a self, offset: u32) -> Option<Token<'a>> {
-        self.token(around(self.raw_comments(), offset))
+    /// The comment that contains `offset`.
+    pub fn comment_containing(&'a self, offset: u32) -> Option<Token<'a>> {
+        self.token(containing(self.raw_comments(), offset))
     }
 
-    /// The token or the comment that `offset` is in. `None` in whitespace.
-    pub fn token_or_comment_around(&'a self, offset: u32) -> Option<Token<'a>> {
-        self.comment_around(offset)
-            .or_else(|| self.token_around(offset))
+    /// The token or comment that contains `offset`. `None` in whitespace.
+    pub fn token_or_comment_containing(&'a self, offset: u32) -> Option<Token<'a>> {
+        self.comment_containing(offset)
+            .or_else(|| self.token_containing(offset))
     }
 
     fn comments_within(&'a self, span: Span) -> Tokens<'a> {
@@ -589,7 +583,7 @@ impl<'a> File<'a> {
         }
     }
 
-    /// All the comments of the file. A `#!` line is the first of them.
+    /// All comments in the file. A `#!` line comes first.
     pub fn comments(&'a self) -> Tokens<'a> {
         self.comments_within(self.span())
     }
@@ -604,20 +598,19 @@ impl<'a> File<'a> {
         self.comments_within(a.span().between(b.span()))
     }
 
-    /// Whether there is a comment between the end of `a` and the start of `b`.
+    /// True if there's a comment between the end of `a` and the start of `b`.
     pub fn comments_exist_between(&'a self, a: impl Spanned, b: impl Spanned) -> bool {
         let (comments, between) = (self.raw_comments(), a.span().between(b.span()));
         let first = comments.get(comments.partition_point(|comment| comment.start < between.start));
         first.is_some_and(|comment| comment.end <= between.end)
     }
 
-    /// The comments directly before a node, a token or a comment: after the token that precedes
-    /// it. In source order.
+    /// The comments directly before a node, a token or a comment, that is, after the preceding token. In source order.
     pub fn comments_before(&'a self, at: impl Spanned) -> Tokens<'a> {
-        self.comments_that_end_before(at.span().start)
+        self.comments_ending_before(at.span().start)
     }
 
-    fn comments_that_end_before(&'a self, end: u32) -> Tokens<'a> {
+    fn comments_ending_before(&'a self, end: u32) -> Tokens<'a> {
         let comments = self.raw_comments();
         let after = comments.partition_point(|comment| comment.end <= end);
         let (mut first, mut start) = (after, end);
@@ -635,12 +628,12 @@ impl<'a> File<'a> {
         }
     }
 
-    /// The comments directly after a node, a token or a comment: before the token that follows it.
+    /// The comments directly after a node, a token or a comment, that is, before the next token.
     pub fn comments_after(&'a self, at: impl Spanned) -> Tokens<'a> {
-        self.comments_that_start_after(at.span().end)
+        self.comments_starting_after(at.span().end)
     }
 
-    fn comments_that_start_after(&'a self, start: u32) -> Tokens<'a> {
+    fn comments_starting_after(&'a self, start: u32) -> Tokens<'a> {
         let comments = self.raw_comments();
         let first = comments.partition_point(|comment| comment.start < start);
         let (mut after, mut end) = (first, start);
@@ -658,9 +651,8 @@ impl<'a> File<'a> {
         }
     }
 
-    /// ESLint's `isSpaceBetween`: whether there is whitespace between `a` and `b`, in either order,
-    /// outside of tokens and comments. Whitespace in a `JsxText` does not count. False if they
-    /// overlap.
+    /// ESLint's `isSpaceBetween`: true if there's whitespace between `a` and `b`, in either order, outside tokens and
+    /// comments. Whitespace in a `JsxText` doesn't count. False if they overlap.
     pub fn is_space_between(&'a self, a: impl Spanned, b: impl Spanned) -> bool {
         let (a, b) = (a.span(), b.span());
         let (first, second) = if a.end <= b.start { (a, b) } else { (b, a) };

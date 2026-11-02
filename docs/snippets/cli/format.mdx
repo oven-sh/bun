@@ -26,6 +26,10 @@ bun fmt [flags] [files, directories, or globs]
   Show what Bun does with your Prettier or oxfmt config, and which packages you can remove
 </ParamField>
 
+<ParamField path="--no-script" type="boolean">
+  Run the formatter even if the project has a <code>fmt</code> script
+</ParamField>
+
 ### Files
 
 <ParamField path="--staged" type="boolean">
@@ -80,6 +84,14 @@ bun fmt [flags] [files, directories, or globs]
 
 <ParamField path="--jsdoc" type="boolean">
   Format JSDoc comments
+</ParamField>
+
+<ParamField path="--svelte" type="boolean">
+  Format Svelte components. This is the default without a Prettier or oxfmt config
+</ParamField>
+
+<ParamField path="--no-svelte" type="boolean">
+  Do not format Svelte components
 </ParamField>
 
 <ParamField path="--no-editorconfig" type="boolean">

@@ -119,8 +119,6 @@ public:
     inline auto rbegin() const noexcept { return errors_.rbegin(); }
     inline auto rend() const noexcept { return errors_.rend(); }
 
-    std::optional<WTF::String> pop_back();
-
 private:
     std::list<WTF::String> errors_;
 };
@@ -637,7 +635,6 @@ public:
 
     bool isGcmMode() const;
     bool isCcmMode() const;
-    bool isWrapMode() const;
     bool isChaCha20Poly1305() const;
 
     bool update(const Buffer<const unsigned char>& in,

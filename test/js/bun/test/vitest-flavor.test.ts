@@ -2805,20 +2805,23 @@ describe.concurrent("a value that a test returns", () => {
         describe("block", () => act("describe"));
         test("a thenable", () => { onTestFinished(() => act("onTestFinished")); return act("test"); });
         const order = [];
+        const turns = () => void Promise.resolve().then(() => order.push("turn 1")).then(() => order.push("turn 2"));
+        test("the turn of then() of a thenable", () => { turns(); return { then(resolve) { order.push("then()"); resolve(); } }; });
         class Sub extends Promise {
           static get [Symbol.species]() { return Promise; }
           then(onFulfilled, onRejected) { order.push("then()"); return super.then(onFulfilled, onRejected); }
         }
-        test("a Promise subclass", () => {
-          Promise.resolve().then(() => order.push("turn 1")).then(() => order.push("turn 2"));
-          return Sub.resolve();
-        });
+        test("the turn of then() of a Promise subclass", () => { turns(); return Sub.resolve(); });
         afterAll(() => console.log(order.join(", ")));
       `,
     });
     expect({ log, results, exitCode }).toEqual({
-      log: ["turn 1, then(), turn 2"],
-      results: ["(pass) a thenable", "(pass) a Promise subclass"],
+      log: ["turn 1, then(), turn 2, turn 1, then(), turn 2"],
+      results: [
+        "(pass) a thenable",
+        "(pass) the turn of then() of a thenable",
+        "(pass) the turn of then() of a Promise subclass",
+      ],
       exitCode: 0,
     });
   });

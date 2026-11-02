@@ -199,26 +199,23 @@ extern "C" void JSC_JSModuleRecord__addImportEntryNamespaceDefer(JSModuleRecord*
 
 extern "C" JSModuleRecord* Bun__createPrelinkedModuleRecordForPipeline(Zig::GlobalObject*, JSModuleLoader*, const Identifier& key, const SourceCode&);
 
-static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, JSModuleLoader*, const Identifier& moduleKey, const SourceCode& sourceCode, JSPromise* promise, JSModuleRecord* resultValue = nullptr);
-extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObject, JSModuleLoader* moduleLoader, const Identifier& moduleKey, const SourceCode& sourceCode, JSPromise* promise)
+static void fallbackParse(JSGlobalObject* globalObject, JSModuleLoader*, const Identifier& moduleKey, const SourceCode& sourceCode, JSPromise* promise, JSModuleRecord* resultValue = nullptr);
+
+// Settles `promise`, or leaves it pending with a termination as the pending exception.
+static void analyzeTranspiledModule(JSGlobalObject* globalObject, JSModuleLoader* moduleLoader, const Identifier& moduleKey, const SourceCode& sourceCode, JSPromise* promise)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto rejectWithError = [&](JSValue error) {
-        promise->reject(vm, error);
-        return promise;
-    };
 
     auto provider = static_cast<Zig::SourceProvider*>(sourceCode.provider());
 
     if (provider->m_moduleInfo == nullptr) {
         // A module of the executable's pre-resolved graph carries no module_info of its own: the graph is its record.
         JSModuleRecord* prelinked = Bun__createPrelinkedModuleRecordForPipeline(uncheckedDowncast<Zig::GlobalObject>(globalObject), moduleLoader, moduleKey, sourceCode);
-        RETURN_IF_EXCEPTION(scope, JSValue::encode(promise->rejectWithCaughtException(vm, scope)));
+        RETURN_IF_EXCEPTION(scope, void(promise->rejectWithCaughtException(vm, scope)));
         if (prelinked) {
             promise->resolve(globalObject, vm, prelinked);
-            RELEASE_AND_RETURN(scope, JSValue::encode(promise));
+            RELEASE_AND_RETURN(scope, void());
         }
         // Neither: analyze the source text.
         RELEASE_AND_RETURN(scope, fallbackParse(globalObject, moduleLoader, moduleKey, sourceCode, promise));
@@ -234,40 +231,36 @@ extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObj
         provider->m_moduleInfo = nullptr;
     }
     if (moduleRecord == nullptr) {
-        RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(createError(globalObject, WTF::String::fromLatin1("parseFromSourceCode failed")))));
+        RELEASE_AND_RETURN(scope, promise->reject(vm, createError(globalObject, WTF::String::fromLatin1("parseFromSourceCode failed"))));
     }
 
 #if BUN_DEBUG
     RELEASE_AND_RETURN(scope, fallbackParse(globalObject, moduleLoader, moduleKey, sourceCode, promise, moduleRecord));
 #else
     promise->resolve(globalObject, vm, moduleRecord);
-    RELEASE_AND_RETURN(scope, JSValue::encode(promise));
+    RELEASE_AND_RETURN(scope, void());
 #endif
 }
-static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, JSModuleLoader* moduleLoader, const Identifier& moduleKey, const SourceCode& sourceCode, JSPromise* promise, JSModuleRecord* resultValue)
+static void fallbackParse(JSGlobalObject* globalObject, JSModuleLoader* moduleLoader, const Identifier& moduleKey, const SourceCode& sourceCode, JSPromise* promise, JSModuleRecord* resultValue)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto rejectWithError = [&](JSValue error) {
-        promise->reject(vm, error);
-        return promise;
-    };
 
     ParserError error;
     std::unique_ptr<ModuleProgramNode> moduleProgramNode = parseRootNode<ModuleProgramNode>(
         vm, sourceCode, ImplementationVisibility::Public, JSParserBuiltinMode::NotBuiltin,
         StrictModeLexicallyScopedFeature, JSParserScriptMode::Module, SourceParseMode::ModuleAnalyzeMode, error);
     if (error.isValid())
-        RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(error.toErrorObject(globalObject, sourceCode))));
+        RELEASE_AND_RETURN(scope, promise->reject(vm, error.toErrorObject(globalObject, sourceCode)));
     ASSERT(moduleProgramNode);
 
     ModuleAnalyzer moduleAnalyzer(globalObject, moduleLoader, moduleKey, sourceCode, moduleProgramNode->features());
-    RETURN_IF_EXCEPTION(scope, JSValue::encode(promise->rejectWithCaughtException(vm, scope)));
+    RETURN_IF_EXCEPTION(scope, void(promise->rejectWithCaughtException(vm, scope)));
 
     auto result = moduleAnalyzer.analyze(*moduleProgramNode);
     if (!result) {
         auto [errorType, message] = std::move(result.error());
-        RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(createError(globalObject, errorType, message))));
+        RELEASE_AND_RETURN(scope, promise->reject(vm, createError(globalObject, errorType, message)));
     }
 
     JSModuleRecord* moduleRecord = result.value();
@@ -286,12 +279,18 @@ static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, JSModuleLoader
             auto actualBytes = byteCast<char>(actualUTF8.span());
             zig__renderDiff(expectedBytes.data(), expectedBytes.size(), actualBytes.data(), actualBytes.size());
 
-            RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(createError(globalObject, WTF::String::fromLatin1("Imports different between parseFromSourceCode and fallbackParse")))));
+            RELEASE_AND_RETURN(scope, promise->reject(vm, createError(globalObject, WTF::String::fromLatin1("Imports different between parseFromSourceCode and fallbackParse"))));
         }
     }
 
     scope.release();
     promise->resolve(globalObject, vm, resultValue == nullptr ? moduleRecord : resultValue);
+}
+
+extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObject, JSModuleLoader* moduleLoader, const Identifier& moduleKey, const SourceCode& sourceCode, JSPromise* promise)
+{
+    analyzeTranspiledModule(globalObject, moduleLoader, moduleKey, sourceCode, promise);
+    // JSModuleLoader::makeModule downcasts this value to the promise before it checks for an exception.
     return JSValue::encode(promise);
 }
 

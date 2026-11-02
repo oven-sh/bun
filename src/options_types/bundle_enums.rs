@@ -47,6 +47,15 @@ impl Format {
         self == Format::Esm
     }
 
+    /// Whether `import.meta.main` of an entry point parsed for `target` is printed as written.
+    pub fn keeps_import_meta_main(self, target: Target) -> bool {
+        match self {
+            Format::Esm => !target.is_node(),
+            Format::Iife => target.is_bun(), // Bun loads its `// @bun` output as an ES module.
+            Format::Cjs | Format::InternalBakeDev => false,
+        }
+    }
+
     pub const MAP: __ComptimeStringMap_FORMAT_MAP = __ComptimeStringMap_FORMAT_MAP(());
 
     // `to_js`/`from_js` live as extension-trait methods in the `*_jsc` crate.

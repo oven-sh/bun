@@ -2625,8 +2625,8 @@ pub mod parse_worker {
         // in which we inline `true`.
         if topts.inline_entrypoint_import_meta_main || !task.is_entry_point {
             opts.import_meta_main_value = Some(task.is_entry_point && !topts.has_dev_server());
-        } else if target == options::Target::Node {
-            opts.lower_import_meta_main_for_node_js = true;
+        } else {
+            opts.lower_import_meta_main = !output_format.keeps_import_meta_main(target);
         }
 
         opts.tree_shaking = if task.source_index.is_runtime() {

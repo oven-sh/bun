@@ -6084,7 +6084,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         //
         // The printer can handle this for us, but we need to reference
         // a handle to the `__require` function.
-        if self.options.lower_import_meta_main_for_node_js {
+        if self.options.lower_import_meta_main {
             self.record_usage_of_runtime_require();
         }
         Expr {

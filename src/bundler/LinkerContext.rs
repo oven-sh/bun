@@ -2426,7 +2426,8 @@ impl<'a> LinkerContext<'a> {
             line_offset_tables: Some(
                 &self.graph.files.items_line_offset_table()[source_index.get() as usize],
             ),
-            target: self.options.target,
+            // A `#!/usr/bin/env bun` entry point can be parsed for a target other than the bundle's.
+            target: ast.target,
 
             hmr_ref: if self.options.output_format == Format::InternalBakeDev {
                 ast.wrapper_ref

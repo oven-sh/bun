@@ -3286,11 +3286,11 @@ pub(crate) mod __gated_printer {
                     }
                 }
                 ExprData::EImportMetaMain(data) => {
-                    if self.options.module_type == bundle_opts::Format::Esm
-                        && self.options.target != bun_ast::Target::Node
+                    if self
+                        .options
+                        .module_type
+                        .keeps_import_meta_main(self.options.target)
                     {
-                        // Node.js doesn't support import.meta.main
-                        // Most of the time, leave it in there
                         let wrap = data.inverted && level.gte(Level::Prefix);
                         if wrap {
                             self.print(b"(");

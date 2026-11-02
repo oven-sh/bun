@@ -84,6 +84,8 @@ impl<'x, 's> Context<'x, 's> {
             holders_without_value: collect_holders_without_value(input),
         };
         let has_module_variables = match input.modules.kind(input.file) {
+            // A variable of the program is there once. What a closure of an earlier run names is what that run declared.
+            ModuleKind::SourceText if input.modules.runs_again(input.file) => false,
             ModuleKind::SourceText | ModuleKind::Data | ModuleKind::RuntimeSource => true,
             ModuleKind::CommonJs | ModuleKind::Runtime | ModuleKind::External => false,
         };

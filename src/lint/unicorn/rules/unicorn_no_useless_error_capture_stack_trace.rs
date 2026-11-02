@@ -9,9 +9,9 @@ use bun_lint::utils::ancestor_memo::AncestorMemo;
 /// Disallows unnecessary `Error.captureStackTrace(…)` in error constructors.
 pub struct NoUselessErrorCaptureStackTrace;
 
-const NO_USELESS_ERROR_CAPTURE_STACK_TRACE: Message =
-    Message::new("", "Do not use `Error.captureStackTrace(…)` in the constructor of an Error subclass");
-const ALREADY_CALLED: Message = Message::new(
+const NO_USELESS_ERROR_CAPTURE_STACK_TRACE: &Message =
+    &Message::new("", "Do not use `Error.captureStackTrace(…)` in the constructor of an Error subclass");
+const ALREADY_CALLED: &Message = &Message::new(
     "",
     "The Error constructor already calls `captureStackTrace` internally, so calling it again is unnecessary.",
 );

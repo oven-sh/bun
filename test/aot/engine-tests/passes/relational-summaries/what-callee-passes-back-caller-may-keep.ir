@@ -395,32 +395,13 @@ function f48 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # -- generated: f0 wrap wrapTwice thunk f12 f24
 # CHECK-LABEL: function f0 module=
 # CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f12 callPosition=4294967295 module=m0}, {callee=f7 callPosition=4294967295 module=m0}, {callee=f4 callPosition=4294967295 module=m0}, {callee=f50 callPosition=779 parent=3 module=m0}, {callee=f51 callPosition=968 parent=2 module=m0}] {
-# CHECK-NEXT: b0():
+# CHECK-NEXT: b0() frequency=Rare:
 # CHECK-NEXT: v0: Array<L0, Contiguous> = NewArray contents=L0 allocationSite=1 arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: v1: Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v0 provenType=Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: PutModuleVariable v1 variable=g9
 # CHECK-NEXT: v3: 0 = Integer
-# CHECK-NEXT: Jump -> next b1(v3)
-# CHECK-NEXT: b1(v4: int[0, 270]):
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v6: 270 = Integer integer=270
-# CHECK-NEXT: v7: boolean = Less v4, v6
-# CHECK-NEXT: Branch v7 -> taken b2(| 0), notTaken b3()
-# CHECK-NEXT: b2(v8: int[0, 269]):
-# CHECK-NEXT: v9: number = CallDirect v8 function=f10 accessSite=0
-# CHECK-NEXT: v10: int[1, 270] = Increment v8
-# CHECK-NEXT: Jump -> next b1(v10)
-# CHECK-NEXT: b3():
-# CHECK-NEXT: v11: f6 = GetModuleVariable variable=g5
-# CHECK-NEXT: Jump -> next b4()
-# CHECK-NEXT: b4():
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v13: L1 = NewObject layout=L1 allocationSite=3 allocationClass=1
-# CHECK-NEXT: v14: L1 = FinishObject v13
-# CHECK-NEXT: v15: L1 = NewObject layout=L1 allocationSite=4 allocationClass=1
-# CHECK-NEXT: v16: L1 = FinishObject v15
-# CHECK-NEXT: v17: undefined|null|Array = Call v11, -, v14, v16 calleeName="pairUp" accessSite=2 callees=[f6]
-# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: v4: number = CallDirect v3 function=f10 accessSite=0
+# CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="wrap"
 # CHECK: module=m0 position=779 role=ResultWrapper flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0|L1|f20|f21}] results=[{type=L0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f50 layout=L0}

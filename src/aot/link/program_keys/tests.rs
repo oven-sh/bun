@@ -101,6 +101,7 @@ fn external_keeps_its_importers_project() {
         let external = ModuleRef::External {
             importer,
             specifier,
+            type_attribute: None,
         };
         for context in contexts(projects) {
             let importer = ProgramFile {
@@ -110,6 +111,7 @@ fn external_keeps_its_importers_project() {
             let module = ProgramModule::External {
                 importer,
                 specifier,
+                type_attribute: None,
             };
             assert_eq!(context.module(external), module);
         }
@@ -129,6 +131,7 @@ fn modules_order_by_variant_project_file() {
     let external = |importer, specifier| ProgramModule::External {
         importer,
         specifier,
+        type_attribute: None,
     };
     let (first, second) = (RuntimeModule::NodeBuffer, RuntimeModule::NodePath);
     let (application, runtime) = (ProjectId::Application, ProjectId::Runtime);
@@ -158,4 +161,42 @@ fn modules_order_by_variant_project_file() {
             assert_eq!(order, left_index.cmp(&right_index), "{left:?} {right:?}");
         }
     }
+}
+
+#[test]
+fn function_keys_come_back_out_of_numbers() {
+    let file = FileId(7);
+    let function = FunctionRef {
+        file,
+        function: FnId(9),
+    };
+    let class = ClassRef {
+        file,
+        class: ClassId(9),
+    };
+    let member = MemberId(9);
+    let keys = [
+        FunctionKey::ModuleBody(file),
+        FunctionKey::WrappedModuleBody(file),
+        FunctionKey::FaceBody(file),
+        FunctionKey::CheckBody(file),
+        FunctionKey::Source(function),
+        FunctionKey::Signature(function),
+        FunctionKey::ClassSignature(class),
+        FunctionKey::ImplicitConstructor(class),
+        FunctionKey::InstanceInitializer(class),
+        FunctionKey::StaticInitializer(class),
+        FunctionKey::AccessorGetter { file, member },
+        FunctionKey::AccessorSetter { file, member },
+        FunctionKey::PrivateNameTest { file, member },
+    ];
+    let mut all = std::collections::BTreeSet::new();
+    for project in ProjectId::ALL {
+        for key in keys {
+            let key = InProject { project, key };
+            assert_eq!(ProgramFunctionKey::from_numbers(key.to_numbers()), key);
+            all.insert(key.to_numbers());
+        }
+    }
+    assert_eq!(all.len(), ProjectId::COUNT * keys.len());
 }

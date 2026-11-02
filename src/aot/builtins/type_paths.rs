@@ -4,6 +4,7 @@ use bun_sema::check::aot::{
     BuiltinValuePath, Denotation,
 };
 use smallvec::SmallVec;
+use std::sync::OnceLock;
 
 #[cfg(test)]
 mod tests;
@@ -119,7 +120,20 @@ fn find_published_path(id: BuiltinId) -> Option<PublishedPath> {
     }
 }
 
+const SETS_OF_PLATFORMS: usize = 1 << Platforms::all().bits().count_ones();
+
+// The table is the same for every build of the process.
+static PATHS: [OnceLock<BuiltinValuePaths>; SETS_OF_PLATFORMS] =
+    [const { OnceLock::new() }; SETS_OF_PLATFORMS];
+static LISTS: [OnceLock<Vec<BuiltinValuePath<'static>>>; SETS_OF_PLATFORMS] =
+    [const { OnceLock::new() }; SETS_OF_PLATFORMS];
+
 impl BuiltinValuePaths {
+    pub fn list_of(platform: Platforms) -> &'static [BuiltinValuePath<'static>] {
+        let at = usize::from(platform.bits());
+        LISTS[at].get_or_init(|| PATHS[at].get_or_init(|| Self::collect(platform)).paths())
+    }
+
     pub fn collect(platform: Platforms) -> BuiltinValuePaths {
         let mut paths = BuiltinValuePaths {
             names: Vec::new(),

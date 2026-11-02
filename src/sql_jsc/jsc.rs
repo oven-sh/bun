@@ -82,6 +82,8 @@ pub use bun_jsc::system_error::verify_error_to_js;
 /// code `BORINGSSL`. Body mirrors `bun_runtime::crypto::boringssl_jsc::err_to_js`
 /// (unreachable from here without a cycle).
 fn boringssl_err_to_js(global: &JSGlobalObject, err_code: u32) -> JSValue {
+    bun_boringssl_sys::ERR_clear_error();
+
     const PREFIX: &[u8] = b"BoringSSL ";
     let mut outbuf = [0u8; 128 + 1 + PREFIX.len()];
     outbuf[..PREFIX.len()].copy_from_slice(PREFIX);
@@ -116,12 +118,14 @@ pub(crate) fn create_bun_socket_error_to_js(
     global: &JSGlobalObject,
 ) -> JSValue {
     use bun_uws::create_bun_socket_error_t as E;
+    let queued = bun_boringssl_sys::ERR_get_error();
+    bun_boringssl_sys::ERR_clear_error();
     match err {
         // `us_ssl_ctx_from_options` only sets *err for the CA/cipher cases;
         // bad cert/key/DH return NULL with `.none` and the detail is on the
         // BoringSSL error queue. Surfacing it here keeps every
         // `getOrCreateOpts(...) orelse return err.toJS()` site correct.
-        E::none => boringssl_err_to_js(global, bun_boringssl_sys::ERR_get_error()),
+        E::none => boringssl_err_to_js(global, queued),
         E::load_ca_file => global
             .err(ErrorCode::BORINGSSL, format_args!("Failed to load CA file"))
             .to_js(),
@@ -225,6 +229,15 @@ fn hooks() -> &'static SqlRuntimeHooks {
 pub struct RareData {
     pub mysql_context: crate::mysql::MySQLContext,
     pub postgresql_context: crate::postgres::PostgresSQLContext,
+}
+
+impl RareData {
+    /// The functions that the `bun:sql` of a realm handed over are functions of that realm, and
+    /// keep it alive. The next realm that loads `bun:sql` hands over its own.
+    pub fn forget_callbacks(&mut self) {
+        self.mysql_context = Default::default();
+        self.postgresql_context = Default::default();
+    }
 }
 
 /// SQL-specific accessors on [VirtualMachine] for state owned by the

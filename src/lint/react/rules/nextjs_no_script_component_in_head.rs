@@ -10,9 +10,9 @@ pub struct NoElementInHead<const TITLE: bool = false>;
 /// [rule name, module, element]
 const TEXTS: [[&str; 3]; 2] =
     [["no-script-component-in-head", "next/head", "Script"], ["no-title-in-document-head", "next/document", "title"]];
-const MESSAGES: [Message; 2] = [
-    Message::new("", "Prevent usage of `next/script` in `next/head` component."),
-    Message::new("", "Prevent usage of `<title>` with `Head` component from `next/document`."),
+const MESSAGES: [&Message; 2] = [
+    &Message::new("", "Prevent usage of `next/script` in `next/head` component."),
+    &Message::new("", "Prevent usage of `<title>` with `Head` component from `next/document`."),
 ];
 
 impl<const TITLE: bool> Rule for NoElementInHead<TITLE> {

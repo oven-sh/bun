@@ -137,7 +137,6 @@ fn blocker_codes_do_not_follow_enumerator_names() {
             "no-aot",
             "no-report",
             "analysis-disabled",
-            "limit-reached",
             "eval",
             "external-import",
             "dynamic-import",
@@ -298,6 +297,38 @@ fn program_with_every_api_visible_has_one_cause_line() {
 }
 
 #[test]
+fn worker_of_unseen_code_has_a_cause_line() {
+    let mut fixture = ReportFixture::new(ResultRecords::default());
+    fixture.used_features.starts_workers_from_unseen_code = true;
+    let lines_of = |fixture: &ReportFixture<'_>| {
+        let mut entries = Vec::new();
+        with_positions(fixture, |input, positions| {
+            cause_lines(input, &[], positions, &mut entries)
+        });
+        lines_and_positions(&entries)
+    };
+    assert_eq!(
+        lines_of(&fixture),
+        [line(
+            "the compiler can see every API this program uses",
+            None
+        )]
+    );
+    fixture.used_features.features = vec![UsedFeature {
+        feature: Feature::WorkerConstructor,
+        witness: None,
+        is_named: true,
+    }];
+    assert_eq!(
+        lines_of(&fixture),
+        [line(
+            "blocked by dynamic-import: the program starts a Worker from code that isn't in the executable",
+            None
+        )]
+    );
+}
+
+#[test]
 fn cause_line_has_builtin_and_position() {
     let records = [
         unseen_record(
@@ -315,7 +346,7 @@ fn cause_line_has_builtin_and_position() {
         unseen(UnseenCodeCause::EvaluatesText, Some(0)),
         unseen(UnseenCodeCause::RunsUnseenCode, Some(1)),
         unseen(UnseenCodeCause::LoadsModuleByName, Some(2)),
-        unseen(UnseenCodeCause::FlowGaveUp, Some(3)),
+        unseen(UnseenCodeCause::FlowResultDisabled, Some(3)),
         unseen(UnseenCodeCause::ReportMissing, None),
     ];
     let mut entries = Vec::new();
@@ -338,7 +369,7 @@ fn cause_line_has_builtin_and_position() {
                 None,
             ),
             line(
-                "blocked by limit-reached: the analysis hit a compiler limit",
+                "blocked by analysis-disabled: a developer option turned the analysis off",
                 None
             ),
             line(
@@ -367,6 +398,25 @@ fn locale_line_lists_requested_tags_alone() {
     assert_eq!(locale_text(&fixture), line(text, None));
     fixture.options.trim.locales = Some(Vec::new());
     let text = "locales: none: listed in compile.trim.locales";
+    assert_eq!(locale_text(&fixture), line(text, None));
+}
+
+#[test]
+fn locale_line_says_all_where_unseen_code_can_run() {
+    let mut fixture = ReportFixture::new(ResultRecords::default());
+    fixture.used_features.locales = UsedLocales::Listed(vec![LocaleTag((&b"fr"[..]).into())]);
+    for cause in UnseenCodeCause::ALL {
+        fixture.used_features.causes = vec![unseen(cause, None)];
+        let text = match cause.lets_unseen_code_run() {
+            true => "locales: all, because code loaded at run time could use any",
+            false => "locales: fr",
+        };
+        assert_eq!(locale_text(&fixture), line(text, None), "{cause:?}");
+    }
+    fixture.used_features.locales = UsedLocales::Unknown(None);
+    assert_eq!(locale_text(&fixture), line("locales: all", None));
+    fixture.options.trim.locales = Some(vec![(&b"de"[..]).into()]);
+    let text = "locales: de: listed in compile.trim.locales";
     assert_eq!(locale_text(&fixture), line(text, None));
 }
 

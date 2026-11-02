@@ -1215,6 +1215,10 @@ extern "C" fn Bun__StackCheck__initialize() {
 extern "C" fn WTF__numberOfProcessorCores() -> c_int {
     std::thread::available_parallelism().map_or(4, |n| n.get() as c_int)
 }
+#[unsafe(no_mangle)]
+extern "C" fn Bun__ramSize() -> usize {
+    8 << 30
+}
 #[cfg(not(bun_sema_mimalloc))]
 #[unsafe(no_mangle)]
 extern "C" fn mi_thread_set_in_threadpool() {}

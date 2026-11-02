@@ -95,6 +95,5 @@ function f1 name="guardedEntry" module=m0 position=784 flags=[HasExplicitName] l
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: LoopHint
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: }

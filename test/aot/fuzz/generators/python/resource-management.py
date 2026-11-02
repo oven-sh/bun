@@ -1,11 +1,7 @@
 #!/usr/bin/env python3
-"""resource-management.py <seed>: `using` and `await using` declarations in random blocks, left in every way.
-
-Resources are opened in nested blocks, loops, `for (using ..)` heads, generators, async functions and closures. A block is left by running to its end, by
-return, throw, break, continue, a labeled jump, by closing a generator early. A resource may be null or undefined, may throw when it is
-closed, may lack a dispose method, may have only the synchronous one under `await using`. DisposableStack and AsyncDisposableStack are used,
-moved and disposed twice. What is printed: the order in which everything is opened and closed, what comes back, and the whole
-chain of a SuppressedError. As plain Bun, line by line."""
+"""resource-management.py <seed>: `using` and `await using` declarations in random blocks, exited in every way.
+Resources are opened in nested blocks, loops, `for (using ..)` heads, generators, async functions and closures.
+"""
 import random, sys
 
 seed = int(sys.argv[1]) if len(sys.argv) > 1 else 1

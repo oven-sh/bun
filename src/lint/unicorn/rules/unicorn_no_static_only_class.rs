@@ -6,7 +6,7 @@ use bun_lint::rule::Plugin;
 /// Disallow `class` declarations that exclusively contain `static` members.
 pub struct NoStaticOnlyClass;
 
-const NO_STATIC_ONLY_CLASS: Message = Message::new("", "Use an object instead of a `class` with only `static` members.");
+const NO_STATIC_ONLY_CLASS: &Message = &Message::new("", "Use an object instead of a `class` with only `static` members.");
 
 impl Rule for NoStaticOnlyClass {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-static-only-class", Kind::Suggestion).fixable(Fixable::Code);

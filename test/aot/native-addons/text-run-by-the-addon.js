@@ -28,7 +28,7 @@ function row(label, text, use = value => value) {
   let said;
   try {
     const value = typeof text === "function" ? text() : attack.runScript(text);
-    said = typeof value === "string" && value.startsWith("threw ") ? value.replace(/:.*/, "") : use(value);
+    said = typeof value === "string" && value.startsWith("threw ") ? value.replace(/:.*/s, "") : use(value);
   } catch (error) {
     said = "threw " + error.constructor.name + " in the program";
   }

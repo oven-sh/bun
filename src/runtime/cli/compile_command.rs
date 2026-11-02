@@ -19,7 +19,7 @@ use bun_bundler::options::OutputFile;
 use bun_bundler::transpiler::Transpiler;
 use bun_exe_format::identity::IdentityError;
 use bun_options_types::WindowsOptions;
-use bun_options_types::aot_options::AotOptions;
+use bun_options_types::aot_options::{AotOptions, ReplacedByTests};
 use bun_options_types::compile_target::CompileTarget;
 use bun_standalone_graph::StandaloneModuleGraph::{
     CompileError, ExecutableDetails, Flags, RuntimeOptions,
@@ -108,6 +108,10 @@ pub(crate) struct CompileOutcome {
     pub(crate) executable: Option<ExecutableDetails>,
     pub(crate) untyped_note: Vec<u8>,
     pub(crate) module_count: u32,
+    /// `Compilation::imports_file_with_query`
+    pub(crate) imports_file_with_query: bool,
+    /// `Compilation::replaced_builtins`
+    pub(crate) replaced_builtins: ReplacedByTests,
     pub(crate) engine_time: Duration,
     pub(crate) executable_time: Duration,
 }

@@ -701,10 +701,10 @@ function f20 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} re
 # CHECK-NEXT: Jump -> next b3(v16, v18)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="ofAnything"
-# CHECK: module=m0 position=751 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|number|string|bigint|L0}, {type=undefined|number|string}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: undefined|null|number|string|bigint|L0, v1: undefined|number|string):
-# CHECK-NEXT: v2: undefined|null|number|string|bigint|L0 ~ number = Upcast v0 castType=anything
-# CHECK-NEXT: v3: undefined|number|string ~ number = Upcast v1 castType=anything
+# CHECK: module=m0 position=751 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|number|bigint|"7"|L0}, {type=undefined|number|"3"}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: undefined|null|number|bigint|"7"|L0, v1: undefined|number|"3"):
+# CHECK-NEXT: v2: undefined|null|number|bigint|"7"|L0 ~ number = Upcast v0 castType=anything
+# CHECK-NEXT: v3: undefined|number|"3" ~ number = Upcast v1 castType=anything
 # CHECK-NEXT: v4: boolean ~ true = TypeTest v2 testedType=number
 # CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b3()
 # CHECK-NEXT: b1(v5: number):

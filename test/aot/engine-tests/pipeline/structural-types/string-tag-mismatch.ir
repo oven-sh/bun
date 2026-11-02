@@ -107,7 +107,7 @@ function f53 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # -- generated: f0 describe
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 37, patchpoints: 16
+# CHECK-NEXT: instructions: 31, patchpoints: 12, rare instructions: 10
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="describe"
 # CHECK: role=Source

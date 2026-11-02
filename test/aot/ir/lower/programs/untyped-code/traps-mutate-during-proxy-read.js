@@ -151,7 +151,7 @@ say("scene | frozen array targets by index", function s57() { const r = []; for 
 // CHECK-NEXT: Return v2
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.toPrimitive]"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsNamedByComputedKey] captures=[{type=undefined|null|Array flags=[IsExpected]}] thisType={type=anything} results=[{type=undefined|null|symbol flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsNamedByComputedKey] captures=[{type=undefined|null|Array flags=[IsExpected] variableName="seen"}] thisType={type=anything} results=[{type=undefined|null|symbol flags=[IsExpected]}] {
 // CHECK-NEXT: b0(v0: undefined|null|Array):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

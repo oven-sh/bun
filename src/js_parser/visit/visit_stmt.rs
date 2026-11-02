@@ -474,12 +474,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 {
                     p.decorator_class_name = Some(js_ast::ClauseItem::DEFAULT_ALIAS);
                 }
-                if p.react_compiler.is_some()
-                    && let Some(in_hoc) = p.react_compiler_candidate_expr(expr)
-                {
-                    p.react_compiler_candidate_name = Some(js_ast::Ref::NONE);
-                    p.react_compiler_in_react_hoc = in_hoc;
-                }
                 // `--minify-syntax` drops an unused name. The value would then be named after the generated binding.
                 let expr_name = match expr.data {
                     js_ast::ExprData::EFunction(func) => func.func.name,
@@ -497,8 +491,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     _ => {}
                 }
-                p.react_compiler_candidate_name = None;
-                p.react_compiler_in_react_hoc = false;
                 p.decorator_class_name = prev_decorator_class_name;
 
                 if p.is_control_flow_dead {
@@ -673,13 +665,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             Some(core::ptr::NonNull::from(&mut react_hook_data));
 
                         if p.react_compiler.is_some() {
-                            p.react_compiler_candidate_name = Some(
-                                func.func
-                                    .name
-                                    .filter(|_| name != js_ast::ClauseItem::DEFAULT_ALIAS)
-                                    .map(|n| n.ref_)
-                                    .unwrap_or(js_ast::Ref::NONE),
-                            );
+                            p.react_compiler_candidate_name = func
+                                .func
+                                .name
+                                .filter(|_| name != js_ast::ClauseItem::DEFAULT_ALIAS)
+                                .map(|n| n.ref_);
                         }
                         let open_parens_loc = func.func.open_parens_loc;
                         func.func =
@@ -987,7 +977,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let prev_hook_storage = p.react_refresh.hook_ctx_storage;
         p.react_refresh.hook_ctx_storage = Some(core::ptr::NonNull::from(&mut react_hook_data));
 
-        if p.react_compiler.is_some() && p.current_scope == p.module_scope {
+        if p.react_compiler.is_some() {
             p.react_compiler_candidate_name = data.func.name.map(|n| n.ref_);
         }
         let open_parens_loc = data.func.open_parens_loc;
@@ -1480,17 +1470,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             };
         }
 
-        if is_top_level
-            && p.react_compiler.is_some()
-            && let Some(in_hoc) = p.react_compiler_candidate_expr(&data.value)
-        {
-            p.react_compiler_candidate_name = Some(js_ast::Ref::NONE);
-            p.react_compiler_in_react_hoc = in_hoc;
-        }
         let this_expr_count_before = p.this_expr_count;
         p.visit_expr(&mut data.value);
-        p.react_compiler_candidate_name = None;
-        p.react_compiler_in_react_hoc = false;
 
         // `import(x);` / `await import(x);` / `[await] import(x).catch(..);` /
         // `require(x);` / `await require(x);` as a statement: the namespace is
@@ -1710,6 +1691,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     data.value = None;
                 }
             }
+        }
+
+        if let Some(returned) = data.value.as_mut()
+            && let Some(call) = p.keep_frame_for_returned_call(returned)
+        {
+            stmts.push(call);
         }
 
         stmts.push(*stmt);

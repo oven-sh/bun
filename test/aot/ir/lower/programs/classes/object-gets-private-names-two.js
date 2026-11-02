@@ -130,7 +130,7 @@ console.log(sum);
 // CHECK-NEXT: Return v8
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Stamper"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] captures=[{type=number flags=[IsExpected]}, {type=classtoken flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_1]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] captures=[{type=number flags=[IsExpected] variableName="id"}, {type=classtoken flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_1]]] {
 // CHECK-NEXT: b0(v0: number, v1: classtoken, v2: function, v3: anything, v4: Array):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

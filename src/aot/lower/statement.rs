@@ -1,4 +1,5 @@
 mod declarations;
+mod inlined_constants;
 mod loops;
 mod substitution;
 
@@ -21,6 +22,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         for index in 0..statements.len {
             let statement = hir.id_at(statements, index as usize);
             if self.file.decisions().is_dead_stmt(statement) {
+                self.count_statement(statement);
                 self.hold_names_of_removed_statement(statement);
                 continue;
             }
@@ -32,12 +34,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             let earlier = IdList::new(statements.start, index);
             self.joined_declarations_end =
                 self.file.find_joined_declarations_end(earlier, statement);
+            self.file.queries.note_idle_between_statements();
             self.lower_statement(statement);
         }
     }
 
     pub(crate) fn lower_file_statements(&mut self) {
         let hir = self.file.hir;
+        self.count_file_body();
         for statement in hir.ids(hir.body) {
             if module::is_moved_to_file_start(self.file, statement)
                 && !self.file.decisions().is_dead_stmt(statement)
@@ -71,13 +75,30 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
+    // The graph of modules has taken all there is from `Object.defineProperty(exports, "__esModule", { value: true })`. `bun run` makes the call, and reads its callee off `Object` first.
+    fn lower_read_of_erased_callee(&mut self, statement: StmtId) {
+        let hir = self.file.hir;
+        if let StmtKind::Expr(expression) = hir[statement].kind
+            && let ExprKind::Call(site) = hir[self.file.skip_type_syntax(expression)].kind
+        {
+            self.set_position(hir[statement].start);
+            self.lower_read_of_locked_path(self.file.skip_type_syntax(hir[site].callee));
+        }
+    }
+
     fn lower_statement_in_place(&mut self, statement: StmtId) {
+        // What the parser makes out of a JSDoc comment says something about types. A comment is no code.
+        if self.file.hir.is_in_jsdoc(self.file.hir[statement].start) {
+            return;
+        }
+        self.count_statement(statement);
+        if commonjs::is_erased(self.file, statement) {
+            self.lower_read_of_erased_callee(statement);
+            return;
+        }
         let left_out = self.file.inputs.library_functions.left_out_declarations();
         if left_out.is_statement_left_out(self.file.file, statement) {
             self.lower_checks_of_left_out_store(statement);
-            return;
-        }
-        if commonjs::is_erased(self.file, statement) {
             return;
         }
         let stmt = self.file.hir[statement];
@@ -195,6 +216,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     fn lower_if(&mut self, test: ExprId, yes: StmtId, no: StmtId) {
+        // `if (Reflect.has) {}`: Bun's transpiler drops the statement where it drops `Reflect.has;`.
+        if self.file.holds_no_statement(yes)
+            && (no.is_none() || self.file.holds_no_statement(no))
+            && self.file.is_read_left_out_by_bun_run(test)
+        {
+            return;
+        }
         let decisions = self.file.decisions();
         let has_live_else = no.is_some() && !decisions.is_dead_stmt(no);
         if decisions.is_dead_stmt(yes) {
@@ -264,6 +292,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 }
 
 impl FileLowering<'_, '_, '_, '_> {
+    fn holds_no_statement(&self, statement: StmtId) -> bool {
+        match self.hir[statement].kind {
+            StmtKind::Empty => true,
+            StmtKind::Block(statements) => statements.len == 0,
+            _ => false,
+        }
+    }
+
     fn is_left_by_transpiler(&self, statement: StmtId) -> bool {
         let position = self.hir[statement].start;
         let transpiled = self.transpiled.as_ref();

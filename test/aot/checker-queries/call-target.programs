@@ -1388,7 +1388,7 @@ export const seven: number = 7;
 absent: main.ts:2 diagnostic TS18060 = Semantic StopsBuild
 absent: main.ts:3 diagnostic TS18060 = Semantic StopsBuild
 main.ts:5 type `later.seven` = number
-main.ts:3 diagnostic TS2440 = EarlyError StopsBuild
+main.ts:3 diagnostic TS2440 = Semantic StopsBuild
 //// diagnostic-class/deferred-import-under-an-older-module/main.ts
 // Which `module` takes `import defer` is a rule about what tsc writes. Bun runs it, and the rest of the import is checked.
 import defer * as later from "./later.ts";
@@ -2836,8 +2836,6 @@ class C extends Object { constructor() { function f() { super(); } } }
 class C { m() { function f() { super.a; } } }
 () => super.a;
 class C extends Object { [super.a]() {} }
-//// early-errors/test262-known-failures.txt
-# Paths under $TEST262_DIR that the run over test262 still gets wrong. Sorted. Empty at first: bring-up fills it, and each fix removes a line.
 //// early-errors/update-targets.accepted.js
 // Names and member accesses as the operand of ++ or --.
 var a; a++;

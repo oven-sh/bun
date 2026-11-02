@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""for-in-loops.py <seed>: random strict TypeScript programs about for-in loops and what their bodies do with the key: o[key] read once, twice, late, in a branch, in nested loops of every kind (written there or inlined from a
-callee), behind hasOwn | in | hasOwnProperty guards, stored back, deleted, with keys added or removed while the loop runs, with the object replaced, with inherited and shadowed and hidden keys, index keys, over records, dictionaries, untyped objects,
-instances, arrays, strings, null; nested for-in loops over the same and other objects; left by break | continue | labels | return | throw; values alive after the loop. RUN IT BOTH WITH AND WITHOUT VALIDATION: a user's build does not validate."""
+"""for-in-loops.py <seed>: Random strict TypeScript programs about for-in loops and what their bodies do with the key:
+o[key] read once, twice, late, in a branch, in nested loops, after a call or a mutation.
+"""
 import random, sys, os
 
 HEAD = r'''const G: any = globalThis;

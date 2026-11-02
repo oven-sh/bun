@@ -5,7 +5,7 @@ use super::ResultSection as Section;
 use super::{
     AccessCountRecord, AccessRecord, AllocationRemarkRecord, BuiltinUseRecord, BunAOTBytes,
     DeclineRecord, EngineResult, FeatureUseRecord, LimitId, LocaleUseRecord, ObfuscatedSiteRecord,
-    RemainingCheckRecord, ResultRecord, UnseenCodeRecord,
+    OtherOriginsRecord, RemainingCheckRecord, ResultRecord, UnseenCodeRecord,
 };
 use crate::ir::generated::StatisticId;
 
@@ -82,6 +82,7 @@ pub(crate) struct ResultRecords<'a> {
     pub locales_used: &'a [LocaleUseRecord],
     pub access_counts: &'a [AccessCountRecord],
     pub accesses: &'a [AccessRecord],
+    pub other_origins: &'a [OtherOriginsRecord],
     pub remaining_checks: &'a [RemainingCheckRecord],
     pub declines: &'a [DeclineRecord],
     pub allocation_remarks: &'a [AllocationRemarkRecord],
@@ -104,6 +105,7 @@ impl ResultRecords<'_> {
             .with_records(self.locales_used)
             .with_records(self.access_counts)
             .with_records(self.accesses)
+            .with_records(self.other_origins)
             .with_records(self.remaining_checks)
             .with_records(self.declines)
             .with_records(self.allocation_remarks)

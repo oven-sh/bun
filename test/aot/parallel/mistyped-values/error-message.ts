@@ -28,10 +28,10 @@ export {};
 /* Output:
 1
 1
-TypeError: undefined is not an object (evaluating 'undefined.v')
-TypeError: undefined is not an object (evaluating 'undefined.length')
-TypeError: undefined is not an object (evaluating 'undefined.v')
-TypeError: undefined is not an object (evaluating 'undefined.length')
-TypeError: undefined is not an object (evaluating 'undefined.v')
-TypeError: undefined is not an object (evaluating 'undefined.length')
+TypeError: undefined is not an object (evaluating 'x[i].v')
+TypeError: undefined is not an object (evaluating 'x[i].length')
+TypeError: undefined is not an object (evaluating 'x[i].v')
+TypeError: undefined is not an object (evaluating 'x[i].length')
+TypeError: undefined is not an object (evaluating 'x[i].v')
+TypeError: undefined is not an object (evaluating 'x[i].length')
 */

@@ -14,7 +14,7 @@ import { BuildError } from "../error.ts";
 import { fixedName, readAt } from "./binary-reader.ts";
 import type { SectionGraph } from "./graph.ts";
 import { createSectionOrder, groupOfNode, writeTableIntoSection, type FileRange } from "./linker-common.ts";
-import type { LinkArguments, Linker, LinkerFormat, SectionOrder } from "./linker.ts";
+import type { LinkArguments, Linker, LinkerFormat, OrderGroup, SectionOrder } from "./linker.ts";
 import { isOneUnitOfAssembly, readMachOGraph } from "./macho-graph.ts";
 import { LC_SEGMENT_64, MH_MAGIC_64 } from "./macho-objects.ts";
 import type { Partition } from "./partition.ts";
@@ -34,6 +34,10 @@ const isMovable = (output: string) =>
   ["__TEXT,__text", "__TEXT,__const", "__TEXT,__bun_builtins", "__TEXT,__cstring", "__DATA_CONST,__const"].includes(
     output,
   ) || isOneUnitOfAssembly(output);
+
+// ld64.lld places a symbol by its name without these endings, and reads a line of an order file the same way.
+const stem = (name: string) => name.split(".llvm.")[0]!.split(".__uniq.")[0]!;
+const stemOfLine = (line: string) => stem(line.slice(line.indexOf(":") + 1));
 
 function findMachOSection(fd: number, name: string): FileRange | undefined {
   if (fstatSync(fd).size < 32) return undefined;
@@ -65,7 +69,6 @@ function orderOf(graph: SectionGraph, partition: Partition): SectionOrder {
   const groupOf = (node: number) => groupOfNode(graph, partition, isMovable, node);
   const isMoved = (node: number) => groupOf(node) >= 0;
   const base = (path: string) => path.slice(path.lastIndexOf("/") + 1);
-  const stem = (name: string) => name.split(".llvm.")[0]!.split(".__uniq.")[0]!;
   const spell = (object: string, name: string) => (graph.externalNames.has(name) ? name : `${base(object)}:${name}`);
   const namesOf = (node: number): [string, string][] => [
     [graph.object[node]!, graph.section[node]!],
@@ -73,21 +76,34 @@ function orderOf(graph: SectionGraph, partition: Partition): SectionOrder {
   ];
   const namesOfUnmovedNodes = new Set<string>();
   const stemsOfUnmovedNodes = new Set<string>();
+  // ld64.lld looks up each name of functions it folded into one under the file of the copy it kept, and the two links
+  // keep different copies. So any of the names may be looked up under any of the files.
+  const filesOfFoldedUnmovedNodes = new Map<string, Set<string>[]>();
   for (let node = 0; node < graph.count; node++) {
     if (isMoved(node)) continue;
-    for (const [object, name] of namesOf(node)) {
+    const names = namesOf(node);
+    const files = new Set(names.map(([object]) => base(object)));
+    for (const [object, name] of names) {
       namesOfUnmovedNodes.add(base(graph.object[node]!) + "\0" + stem(name));
       namesOfUnmovedNodes.add(base(object) + "\0" + stem(name));
       stemsOfUnmovedNodes.add(stem(name));
       if (graph.externalNames.has(name)) namesOfUnmovedNodes.add("\0" + stem(name));
+      if (files.size === 1) continue;
+      const known = filesOfFoldedUnmovedNodes.get(stem(name));
+      if (known === undefined) filesOfFoldedUnmovedNodes.set(stem(name), [files]);
+      else if (known.at(-1) !== files) known.push(files);
     }
   }
+  const namesFoldedUnmovedNode = (file: string, name: string) =>
+    filesOfFoldedUnmovedNodes.get(stem(name))?.some(files => files.has(file)) ?? false;
   const namesOnlyMovedNodes = (node: number, object: string, name: string) =>
     graph.externalNames.has(name)
       ? !stemsOfUnmovedNodes.has(stem(name))
       : !namesOfUnmovedNodes.has(base(graph.object[node]!) + "\0" + stem(name)) &&
         !namesOfUnmovedNodes.has(base(object) + "\0" + stem(name)) &&
-        !namesOfUnmovedNodes.has("\0" + stem(name));
+        !namesOfUnmovedNodes.has("\0" + stem(name)) &&
+        !namesFoldedUnmovedNode(base(graph.object[node]!), name) &&
+        !namesFoldedUnmovedNode(base(object), name);
   const retainedStringHashes = new Set<number>();
   for (const [node, hash] of graph.stringHash) if (!isMoved(node)) retainedStringHashes.add(hash);
   const order = createSectionOrder(partition);
@@ -160,7 +176,6 @@ export function machO(linker: Linker): LinkerFormat {
     return { last: [headerPadFlag, flag], replaced: new Map() };
   };
   return {
-    relinksSameInputs: false,
     firstInputs: linker.inputs.filter(path => hasMachOSection(path, "__bun_builtins")),
     builtinModulesOutput: "__TEXT,__bun_builtins",
     isMovable,
@@ -169,7 +184,9 @@ export function machO(linker: Linker): LinkerFormat {
     isCode: output => output === "__TEXT,__text" || isOneUnitOfAssembly(output),
     supportObjects: room => [linker.assemble("room.s", roomSource(room))],
     prepareInput: path => path,
-    prepareCompiledObjects: () => false,
+    prepareCompiledObjects: () => undefined,
+    withoutBitcode: path => path,
+    relinksSameInputs: () => false,
     compiledObjects: listCompiledObjects,
     firstLinkArguments: () => createLinkArguments(compiled),
     secondLinkArguments(order) {
@@ -177,11 +194,27 @@ export function machO(linker: Linker): LinkerFormat {
         ...order.retainedFirst,
         ...[...order.groups].reverse().flatMap(group => group.afterRetained),
       ];
-      writeFileSync(
-        orderFile,
-        [...order.groups.flatMap(group => group.names), ...linesAfterGroupNames].join("\n") + "\n" + commandOrder,
-        "latin1",
-      );
+      // What the command's file lists lies together where that splits nothing that is cut: of no group, then of the
+      // groups that are removed together, from the last to the first, then the rest of those from the first to the
+      // last. Each later group stays one piece, with what is listed at the end that meets the listed end of a neighbor.
+      // ld64.lld places a name by its first line.
+      const commandLines = commandOrder.split("\n").filter(line => line !== "");
+      const listed = new Set(commandLines.map(stemOfLine));
+      const isListed = (line: string) => listed.has(stemOfLine(line));
+      const grouped = new Set(order.groups.flatMap(group => [...group.names, ...group.afterRetained].map(stemOfLine)));
+      const listedOf = ({ names }: OrderGroup) => names.filter(isListed);
+      const unlistedOf = ({ names }: OrderGroup) => names.filter(line => !isListed(line));
+      const removedTogether = order.groups.slice(0, order.groupsOutsidePrograms);
+      const listedEndsMeet = (group: OrderGroup, index: number) =>
+        index % 2 === 0 ? [...unlistedOf(group), ...listedOf(group)] : [...listedOf(group), ...unlistedOf(group)];
+      const lines = [
+        ...commandLines.filter(line => !grouped.has(stemOfLine(line))),
+        ...[...removedTogether].reverse().flatMap(listedOf),
+        ...removedTogether.flatMap(unlistedOf),
+        ...order.groups.slice(order.groupsOutsidePrograms).flatMap(listedEndsMeet),
+        ...linesAfterGroupNames,
+      ];
+      writeFileSync(orderFile, lines.join("\n") + "\n", "latin1");
       const result = createLinkArguments(unused);
       if (orderAt >= 0) result.replaced.set(orderAt, orderFlag + orderFile);
       else result.last.push(orderFlag + orderFile);

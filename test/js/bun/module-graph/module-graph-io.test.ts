@@ -648,7 +648,11 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
     // What the host is in when it enters the graph that binds.
     const request = new AsyncLocalStorage<string>();
     type Where = "A" | "B" | "the host";
-    async function layout(madeIn: Where, boundIn: Where, { disposeMakerFirst = false, createInStore = true } = {}) {
+    async function layout(
+      madeIn: Where,
+      boundIn: Where,
+      { disposeMakerFirst = false, createInStore = true, bindInStores = true } = {},
+    ) {
       const graphs = { A: new Bun.ModuleGraph(), B: new Bun.ModuleGraph() };
       const enter = <T>(where: Where, fn: () => T): T => (where === "the host" ? fn() : graphs[where].run(fn));
       const nameOf = (graph: unknown) => (graph === graphs.A ? "A" : graph === graphs.B ? "B" : "the host");
@@ -657,9 +661,11 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
       const sender = dgram.createSocket("udp4");
       try {
         if (disposeMakerFirst) graphs.A.dispose();
-        request.run("the request", () =>
-          enter(boundIn, () => storage.run("bind()", () => socket.bind(0, "127.0.0.1"))),
-        );
+        if (bindInStores) {
+          request.run("the request", () =>
+            enter(boundIn, () => storage.run("bind()", () => socket.bind(0, "127.0.0.1"))),
+          );
+        } else enter(boundIn, () => socket.bind(0, "127.0.0.1"));
         await once(socket, "listening");
         const message = Promise.withResolvers<{ stores: string; graph: string }>();
         socket.on("error", message.reject);
@@ -691,6 +697,7 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
       "made and bound in one graph": await layout("A", "A"),
       "made in one graph, bound in another": await layout("A", "B"),
       "made in a graph, bound by the host": await layout("A", "the host"),
+      "made in a graph, bound by the host in no store": await layout("A", "the host", { bindInStores: false }),
       "made by the host, bound in a graph": await layout("the host", "A"),
       "made by the host in no store, bound in a graph": await layout("the host", "A", { createInStore: false }),
     }).toEqual({
@@ -705,6 +712,11 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
         "closed by the dispose() of": "B",
       },
       "made in a graph, bound by the host": {
+        "'message' reads": ofCreateSocket,
+        "'message' runs in": "the host",
+        "closed by the dispose() of": "nobody",
+      },
+      "made in a graph, bound by the host in no store": {
         "'message' reads": ofCreateSocket,
         "'message' runs in": "the host",
         "closed by the dispose() of": "nobody",

@@ -13,8 +13,8 @@
 const moduleGraphOfFrame = $newCppFunction("ModuleGraph.cpp", "jsFunctionModuleGraphOfFrame", 1);
 const moduleGraphFrameOfFrame = $newCppFunction("ModuleGraph.cpp", "jsFunctionModuleGraphFrameOfFrame", 1);
 // Bound at the first call: most programs that load this module call neither.
-let asyncContextWithoutModuleGraphs: ((frame: unknown) => object | undefined) | undefined;
-let asyncContextInCurrentModuleGraph: ((stores: unknown) => object | undefined) | undefined;
+let keepAsyncContextWithoutModuleGraphs: ((owner: object, frame: unknown) => boolean) | undefined;
+let enterAsyncContextInCurrentModuleGraph: ((owner: object, frame: unknown) => void) | undefined;
 
 const AsyncContextFrame = {
   enabled: true,
@@ -38,29 +38,34 @@ const AsyncContextFrame = {
     return moduleGraphOfFrame(frame);
   },
   /**
-   * `frame` without the frames of Bun.ModuleGraphs. What something long-lived keeps when its later work must read
-   * the AsyncLocalStorage stores of `frame` and must not keep a graph alive through the frame that entered it.
-   * A store value, and the frame of a module mock's factory, stay in it and are kept with it.
+   * For something long-lived (`owner`) whose later work must read the AsyncLocalStorage stores of `frame` and must
+   * not keep a Bun.ModuleGraph alive through the frame that entered it. Where `frame` has a frame of a graph in it,
+   * native code keeps the stores for `owner` and the answer is true. Elsewhere the answer is false: keep `frame`.
+   * A store value, and the frame of a module mock's factory, are kept with the stores.
    */
-  withoutModuleGraphs(frame) {
-    asyncContextWithoutModuleGraphs ??= $newCppFunction(
+  keepWithoutModuleGraphs(owner, frame) {
+    keepAsyncContextWithoutModuleGraphs ??= $newCppFunction(
       "ModuleGraph.cpp",
-      "jsFunctionAsyncContextWithoutModuleGraphs",
-      1,
+      "jsFunctionKeepAsyncContextWithoutModuleGraphs",
+      2,
     );
-    return asyncContextWithoutModuleGraphs!(frame);
+    return keepAsyncContextWithoutModuleGraphs!(owner, frame);
   },
   /**
-   * The frame that enters the Bun.ModuleGraph of the running script over `stores` (a withoutModuleGraphs() of
-   * earlier): `stores` when the running script is inside no graph.
+   * Makes current the frame that enters the Bun.ModuleGraph of the running script over the stores that
+   * keepWithoutModuleGraphs() kept for `owner`, or over `frame` where it kept none. Returns the frame to
+   * exchange() back. Native code installs the frame: where built-in JS holds a frame that native code has made, an
+   * ahead-of-time build loses the types of the program's stores.
    */
-  inCurrentModuleGraph(stores) {
-    asyncContextInCurrentModuleGraph ??= $newCppFunction(
+  enterCurrentModuleGraphOver(owner, frame) {
+    enterAsyncContextInCurrentModuleGraph ??= $newCppFunction(
       "ModuleGraph.cpp",
-      "jsFunctionAsyncContextInCurrentModuleGraph",
-      1,
+      "jsFunctionEnterAsyncContextInCurrentModuleGraph",
+      2,
     );
-    return asyncContextInCurrentModuleGraph!(stores);
+    const previous = $getInternalField($asyncContext, 0);
+    enterAsyncContextInCurrentModuleGraph!(owner, frame);
+    return previous;
   },
   /** Install `frame` as the active async-context frame; returns the previous one. */
   exchange(frame) {

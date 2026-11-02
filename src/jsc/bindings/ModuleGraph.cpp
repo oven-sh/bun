@@ -32,6 +32,7 @@
 #include <JavaScriptCore/SymbolTable.h>
 #include <wtf/Scope.h>
 #include <JavaScriptCore/WeakGCMapInlines.h>
+#include <JavaScriptCore/WeakMapImplInlines.h>
 #include <wtf/text/StringBuilder.h>
 
 namespace Bun {
@@ -480,19 +481,38 @@ static JSValue makeContextCurrent(Zig::GlobalObject* globalObject, JSModuleGraph
     return previous;
 }
 
-// For built-ins that keep the AsyncLocalStorage stores something was made in and not its graph (the handle of a node:dgram socket): asyncContextWithoutModuleGraphs() of `frame`.
-JSC_DEFINE_HOST_FUNCTION(jsFunctionAsyncContextWithoutModuleGraphs, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    return JSValue::encode(asyncContextWithoutModuleGraphs(defaultGlobalObject(globalObject), callFrame->argument(0)));
-}
-
-// The frame such a built-in `run()`s its later work in: `stores` (an answer of the function above) inside the graph that the running script is in, so that what opens there is that graph's.
-JSC_DEFINE_HOST_FUNCTION(jsFunctionAsyncContextInCurrentModuleGraph, (JSGlobalObject * globalObject, CallFrame* callFrame))
+// For built-ins that keep the AsyncLocalStorage stores something was made in and not its graph (the handle of a node:dgram socket). Keeps asyncContextWithoutModuleGraphs() of `frame` for `owner` and answers true, or answers false where that is `frame` itself: built-in JS then keeps `frame`. Kept here and not there, because an ahead-of-time build loses the types of a program's stores where built-in JS holds a frame that native code has made.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionKeepAsyncContextWithoutModuleGraphs, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto* global = defaultGlobalObject(globalObject);
-    JSValue stores = callFrame->argument(0);
+    JSValue owner = callFrame->argument(0);
+    JSValue frame = callFrame->argument(1);
+    JSValue stores = asyncContextWithoutModuleGraphs(global, frame);
+    if (stores == frame)
+        return JSValue::encode(jsBoolean(false));
+    if (stores.isObject() && owner.isObject()) {
+        VM& vm = global->vm();
+        auto& kept = global->m_moduleGraphs->asyncContextsOfOwners;
+        if (!kept)
+            kept.set(vm, JSWeakMap::create(vm, global->weakMapStructure()));
+        kept->add(vm, asObject(owner), stores);
+    }
+    return JSValue::encode(jsBoolean(true));
+}
+
+// Makes current the async context that such a built-in does its later work in: the stores kept for `owner` (`frame` where built-in JS kept it) inside the graph that the running script is in, so that what opens there is that graph's. Built-in JS puts back what was current.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionEnterAsyncContextInCurrentModuleGraph, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto* global = defaultGlobalObject(globalObject);
+    JSValue owner = callFrame->argument(0);
+    JSValue stores = callFrame->argument(1);
+    if (auto* state = global->m_moduleGraphs.get(); state && state->asyncContextsOfOwners && owner.isObject()) {
+        if (JSValue kept = state->asyncContextsOfOwners->get(asObject(owner)); kept.isObject())
+            stores = kept;
+    }
     JSModuleGraph* graph = currentModuleGraph(global);
-    return JSValue::encode(graph ? frameEntering(global, graph, stores) : stores);
+    global->m_asyncContextData.get()->putInternalField(global->vm(), 0, graph ? frameEntering(global, graph, stores) : stores);
+    return JSValue::encode(jsUndefined());
 }
 
 // VirtualMachine::entered_context: makes `context` the one native code entered (0: none) and

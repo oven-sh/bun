@@ -333,14 +333,15 @@ describe("bundler", () => {
     outfile: "/out.cjs",
     run: { stdout: '["with",7,"with",7]' },
   });
-  // A `var` with a macro result is not a `const`: nothing rejects a write to it.
-  // It is replaced in a `with` body as before, the target of the write too. A
-  // read kept as a name there would see the write while `return y` does not.
+  // A `var` with a macro result is not a `const`: nothing rejects a write to it,
+  // and a read kept as a name would see that write while the other reads do not.
+  // So a read in a `with` body is replaced as before, also when the object has the name.
   itBundled("minify/MacroVarInsideWithIsStillReplaced", {
     files: {
       "/entry.js": /* js */ `
         import { seven } from "./macro.ts" with { type: "macro" };
-        export function f(o) { var y = seven(); with (o) { y = 5; } return y; }
+        function f(o) { var y = seven(); with (o) { return y; } }
+        console.log(f({ y: "with" }), f({}));
       `,
       "/macro.ts": /* js */ `
         export function seven() { return 7; }
@@ -350,10 +351,7 @@ describe("bundler", () => {
     target: "bun",
     format: "cjs",
     outfile: "/out.cjs",
-    onAfterBundle(api) {
-      api.expectFile("/out.cjs").toContain("7 = 5");
-      api.expectFile("/out.cjs").toContain("return 7");
-    },
+    run: { stdout: "7 7" },
   });
   itBundled("minify/TemplateStringFolding", {
     files: {

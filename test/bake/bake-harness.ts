@@ -141,6 +141,7 @@ export interface DevServerTest {
   only?: boolean;
   /**
    * Extra environment variables for the spawned dev-server process.
+   * On Linux the harness sets `BUN_WATCHER_TRACE` itself: see `Dev.watcherTrace`.
    */
   env?: Record<string, string>;
 }
@@ -342,6 +343,7 @@ export class Dev extends EventEmitter {
         // fence of the next round, which has the other name.
         const name = `.bake-harness-fence-${this.#fenceEpoch}-${round}`;
         let fenced = 0;
+        let written = 0;
         let fenceNextAt = 0;
         let reported: string | undefined;
         while (true) {
@@ -352,8 +354,10 @@ export class Dev extends EventEmitter {
             for (const folder of folders.slice(fenced, end)) {
               try {
                 fs.appendFileSync(path.join(folder, name), "\n");
-              } catch {
+                written++;
+              } catch (err: any) {
                 // The folder is gone or is read-only. Another folder can report the fence.
+                if (!["ENOENT", "ENOTDIR", "EACCES", "EROFS"].includes(err.code)) throw err;
               }
             }
             fenced = end;
@@ -374,10 +378,16 @@ export class Dev extends EventEmitter {
           }
           if (reported !== undefined) break;
           if (this.panicked) return false;
-          if (Date.now() > deadline) {
+          const noFence = fenced === folders.length && written === 0;
+          if (noFence || Date.now() > deadline) {
             if (wantsHmrEvent) {
               console.warn(
-                "\x1b[33mWARN: The watcher of the dev server reported no change in: " + folders.join(", ") + "\x1b[0m",
+                "\x1b[33mWARN: " +
+                  (noFence
+                    ? "No folder took a fence file: "
+                    : "The watcher of the dev server reported no change in: ") +
+                  folders.join(", ") +
+                  "\x1b[0m",
               );
             }
             return false;
@@ -1712,7 +1722,7 @@ if (!fs.existsSync(reactCacheDir)) {
 // folder (`BUN_WATCHER_TRACE`). The folder holds nothing else, so no dev server
 // watches it. A dev server that watched the folder of its log would log each
 // line of the log as a change, without end.
-const watcherTraceDir = path.join(tempDir, ".watcher-trace");
+const watcherTraceDir = path.resolve(tempDir, ".watcher-trace");
 
 function cleanTestDir(dir: string) {
   if (!fs.existsSync(dir)) return;
@@ -2211,35 +2221,34 @@ function testImpl<T extends DevServerTest>(
     };
 
     // Linux: the dev server logs its watcher events for `Dev.batchChanges`.
-    const tracesWatcher = isLinux && NODE_ENV === "development";
-    const env = mergeWindowEnvs([
-      bunEnv,
-      {
-        FORCE_COLOR: "1",
-        BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
-        BUN_DEV_SERVER_TEST_RUNNER: "1",
-        BUN_DUMP_STATE_ON_CRASH: "1",
-        NODE_ENV,
-        // BUN_DEBUG_QUIET_LOGS: "0",
-        // BUN_DEBUG_DEVSERVER: isDebugBuild && interactive ? "1" : undefined,
-        // BUN_DEBUG_INCREMENTALGRAPH: isDebugBuild && interactive ? "1" : undefined,
-        // BUN_DEBUG_WATCHER: isDebugBuild && interactive ? "1" : undefined,
-        BUN_ASSUME_PERFECT_INCREMENTAL: "0",
-        BUN_WATCHER_TRACE: tracesWatcher ? path.join(watcherTraceDir, basename + count + ".jsonl") : undefined,
-        ...options.env,
-      },
-    ]);
-    // `Dev` reads the file that the dev server writes, also when the test names the file.
-    const watcherTrace = tracesWatcher ? env.BUN_WATCHER_TRACE : undefined;
+    const watcherTrace =
+      isLinux && NODE_ENV === "development" ? path.join(watcherTraceDir, basename + count + ".jsonl") : undefined;
     if (watcherTrace) {
-      fs.mkdirSync(path.dirname(watcherTrace), { recursive: true });
+      fs.mkdirSync(watcherTraceDir, { recursive: true });
       fs.writeFileSync(watcherTrace, "");
     }
 
     await using devProcess = Bun.spawn({
       cwd: path.join(root, options.cwd ?? "."),
       cmd: [process.execPath, path.join(root, "harness_start.ts")],
-      env,
+      env: mergeWindowEnvs([
+        bunEnv,
+        {
+          FORCE_COLOR: "1",
+          BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
+          BUN_DEV_SERVER_TEST_RUNNER: "1",
+          BUN_DUMP_STATE_ON_CRASH: "1",
+          NODE_ENV,
+          // BUN_DEBUG_QUIET_LOGS: "0",
+          // BUN_DEBUG_DEVSERVER: isDebugBuild && interactive ? "1" : undefined,
+          // BUN_DEBUG_INCREMENTALGRAPH: isDebugBuild && interactive ? "1" : undefined,
+          // BUN_DEBUG_WATCHER: isDebugBuild && interactive ? "1" : undefined,
+          BUN_ASSUME_PERFECT_INCREMENTAL: "0",
+          ...options.env,
+        },
+        // After `options.env`: `Dev` reads this file, so a test cannot move it.
+        { BUN_WATCHER_TRACE: watcherTrace },
+      ]),
       stdio: ["pipe", "pipe", "pipe"],
       onExit: (subprocess, exitCode, signalCode, error) => {
         danglingProcesses.delete(subprocess);

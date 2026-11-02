@@ -104,7 +104,8 @@ devTest("the files of a batch reach the page in one hot update", {
     // A second name for `b.ts`, in a folder that the dev server does not
     // watch. A write through this name is one inotify event, not two. Two
     // events can reach the watcher thread one by one, and then it does not
-    // keep them.
+    // keep them. The dev server watches nothing before the first request, so
+    // this setup makes no watcher event.
     mkdirSync(dev.join("link"));
     linkSync(dev.join("b.ts"), dev.join("link/b.ts"));
 

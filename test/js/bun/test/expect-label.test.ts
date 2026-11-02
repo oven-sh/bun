@@ -28,6 +28,41 @@ test("expect-label toEqual", () => {
   expect(stripAnsiColors(err.message)).toContain("lol!\n\nExpected");
 });
 
+test("expect-label toBe of deep-equal values", () => {
+  const message = (fails: () => void) => {
+    try {
+      fails();
+    } catch (e) {
+      return stripAnsiColors((e as Error).message);
+    }
+    expect.unreachable();
+  };
+
+  // The label takes the place of the signature line only.
+  expect(message(() => expect({ a: 1 }, "lol!").toBe({ a: 1 }))).toMatchInlineSnapshot(`
+    "lol!
+
+    If this test should pass, replace "toBe" with "toStrictEqual"
+
+    Expected: {
+      a: 1,
+    }
+    Received: serializes to the same string
+    "
+  `);
+  expect(message(() => expect({ a: undefined }, "lol!").toBe<unknown>({}))).toMatchInlineSnapshot(`
+    "lol!
+
+    If this test should pass, replace "toBe" with "toEqual"
+
+    Expected: {}
+    Received: {
+      a: undefined,
+    }
+    "
+  `);
+});
+
 test("non-strings do not crash", () => {
   try {
     expect("a", undefined).toEqual("b");

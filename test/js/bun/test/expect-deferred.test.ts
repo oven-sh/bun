@@ -166,6 +166,7 @@ describe.concurrent(".resolves and .rejects", () => {
           () => expect(Promise.resolve(1)).resolves.toBe(1),
           () => expect(Promise.resolve(1)).resolves.toBe(2),
           () => expect(Promise.reject(1)).rejects.toBe(2),
+          () => expect(Promise.resolve({ a: undefined })).resolves.toBe({}),
           () => expect(Promise.reject(1)).resolves.toBe(1),
           () => expect(1).resolves.toBe(1),
         ]) {
@@ -181,6 +182,7 @@ describe.concurrent(".resolves and .rejects", () => {
       "returned Promise { <resolved> }",
       "threw expect(received).toBe(expected)  Expected: 2 Received: 1 ",
       "threw expect(received).toBe(expected)  Expected: 2 Received: 1 ",
+      'threw expect(received).toBe(expected)  If this test should pass, replace "toBe" with "toEqual"  Expected: {} Received: {   a: undefined, } ',
       "threw expect(received).resolves.toBe(expected)  Expected promise that resolves Received promise that rejected: Promise { <rejected> } ",
       "threw expect(received).resolves.toBe(expected)  Expected promise Received: 1 ",
     ]);

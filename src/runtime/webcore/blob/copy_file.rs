@@ -863,7 +863,7 @@ impl CopyFile {
         {
             // fcopyfile rewrites dest from offset 0 and the slice trim is
             // ftruncate; both are only safe for a dest Bun opened O_TRUNC.
-            // fcopyfile also refuses a source that is not a regular file.
+            // fcopyfile copies data from a regular file only.
             if matches!(
                 self.destination_file_store.pathlike,
                 PathOrFileDescriptor::Path(_)

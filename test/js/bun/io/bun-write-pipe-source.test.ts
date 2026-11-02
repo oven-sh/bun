@@ -1,16 +1,37 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isFreeBSD, isLinux, isRoot, isWindows, tempDir } from "harness";
 import fs from "node:fs";
 import { join } from "node:path";
 
 // https://github.com/oven-sh/bun/issues/14054
 // Not in bun-write.test.js: that file is at the 5 s test limit on debug builds without these.
-(isWindows ? describe.skip : describe.concurrent)("Bun.write with a pipe source", () => {
-  const resolved = (expr: string) => `process.stderr.write(String(await ${expr}))`;
-  const outcome = (expr: string) =>
-    `try { process.stderr.write(JSON.stringify({ resolved: await ${expr} })); } catch (e) { process.stderr.write(JSON.stringify({ code: e.code, syscall: e.syscall })); }`;
-  const contentOf = (file: string) => (fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null);
 
+const resolved = (expr: string) => `process.stderr.write(String(await ${expr}))`;
+const outcome = (expr: string) =>
+  `try { process.stderr.write(JSON.stringify({ resolved: await ${expr} })); } catch (e) { process.stderr.write(JSON.stringify({ code: e.code, syscall: e.syscall })); }`;
+const contentOf = (file: string) => (fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null);
+
+async function losetup(...args: string[]) {
+  await using proc = Bun.spawn({ cmd: ["losetup", ...args], stdout: "pipe", stderr: "ignore" });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  return exitCode === 0 ? stdout.trim() : null;
+}
+
+// A loop device needs root and a kernel that hands one out. The CI lanes have neither.
+let hasLoopDevice = false;
+if (isLinux && isRoot && Bun.which("losetup")) {
+  using dir = tempDir("bun-write-loop-probe", { "disk.img": Buffer.alloc(4096) });
+  const device = await losetup("--find", "--show", "--read-only", join(String(dir), "disk.img"));
+  if (device) {
+    hasLoopDevice = fs.existsSync(device) && fs.statSync(device).isBlockDevice();
+    await losetup("--detach", device);
+  }
+}
+
+// Not on Windows: CopyFileWindows is a separate loop that the fix does not change.
+const describePosix = isWindows ? describe.skip : describe.concurrent;
+
+describePosix("Bun.write with a pipe source", () => {
   // sh gives the child a kernel pipe on fd 0. Bun.spawn's "pipe" is a socketpair.
   async function sh(command: string, script: string, env: Record<string, string>) {
     await using proc = Bun.spawn({
@@ -215,7 +236,8 @@ import { join } from "node:path";
     expect(exitCode).toBe(0);
   });
 
-  it("rejects with the read error and does not apply the mode option", async () => {
+  // A FreeBSD pipe goes both ways, so a read from its write end waits.
+  it.skipIf(isFreeBSD)("rejects with the read error and does not apply the mode option", async () => {
     using dir = tempDir("bun-write-pipe-read-error", { "out.txt": "existing" });
     const out = join(String(dir), "out.txt");
     fs.chmodSync(out, 0o644);
@@ -273,6 +295,32 @@ import { join } from "node:path";
       expect(exitCode).toBe(0);
     });
 
+    it.skipIf(!hasLoopDevice)("copies a block device to EOF", async () => {
+      // Two full reads of 64 KiB and a short one.
+      const bytes = Buffer.alloc(128 * 1024 + 4096, Buffer.from(Array.from({ length: 251 }, (_, i) => i)));
+      using dir = tempDir("bun-write-block-source", { "disk.img": bytes });
+      const out = join(String(dir), "out.bin");
+      const device = await losetup("--find", "--show", "--read-only", join(String(dir), "disk.img"));
+      try {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", resolved("Bun.write(process.env.OUT, Bun.file(process.env.DEVICE))")],
+          env: { ...bunEnv, OUT: out, DEVICE: device! },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        expect({ stdout, stderr, same: fs.existsSync(out) && fs.readFileSync(out).equals(bytes) }).toEqual({
+          stdout: "",
+          stderr: String(bytes.length),
+          same: true,
+        });
+        expect(exitCode).toBe(0);
+      } finally {
+        if (device) await losetup("--detach", device);
+      }
+    });
+
     // An fd with no file type has no end to read to: Bun's own epoll fd is one.
     it("still refuses a source with no file type", async () => {
       using dir = tempDir("bun-write-typeless-source", {});
@@ -303,5 +351,58 @@ import { join } from "node:path";
       expect({ stdout, stderr }).toEqual({ stdout: "", stderr: '{"errno":95,"syscall":"fstat"}' });
       expect(exitCode).toBe(0);
     });
+  });
+});
+
+// The stdin "pipe" of Bun.spawn is a socketpair. Linux passes these without the fix: sendfile falls back to the
+// read/write loop, whose cap the new branch takes. macOS passes only the slice test without the fix.
+describePosix("Bun.write with a socket source", () => {
+  async function piped(script: string, env: Record<string, string>) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, ...env },
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const output = Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    proc.stdin.write("hello world\n");
+    await proc.stdin.end();
+    const [stdout, stderr, exitCode] = await output;
+    return { stdout, stderr, exitCode };
+  }
+
+  it.each([
+    ["to EOF into a path", "const file = Bun.file(process.env.OUT)", null, "12", "hello world\n"],
+    [
+      "to EOF after exists() on a missing file",
+      "const file = Bun.file(process.env.OUT); await file.exists()",
+      null,
+      "12",
+      "hello world\n",
+    ],
+    [
+      "to EOF into an fd whose cached size is 0",
+      'const file = Bun.file(require("node:fs").openSync(process.env.OUT, "r+")); file.size',
+      "",
+      "12",
+      "hello world\n",
+    ],
+    [
+      "to the end of a slice of a destination fd",
+      'const file = Bun.file(require("node:fs").openSync(process.env.OUT, "r+")).slice(0, 5)',
+      "0123456789",
+      "5",
+      "hello56789",
+    ],
+  ])("copies %s", async (_, file, before, count, after) => {
+    using dir = tempDir("bun-write-socket-source", before === null ? {} : { "out.txt": before });
+    const out = join(String(dir), "out.txt");
+    const { stdout, stderr, exitCode } = await piped(`${file}; ${resolved("Bun.write(file, Bun.stdin)")}`, {
+      OUT: out,
+    });
+
+    expect({ stdout, stderr, content: contentOf(out) }).toEqual({ stdout: "", stderr: count, content: after });
+    expect(exitCode).toBe(0);
   });
 });

@@ -7264,19 +7264,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             && !is_this_read(self.call_target)
             && !is_this_read(self.template_tag);
         // The index is not visited yet, so a string or a number there is a literal in the source.
-        let member = match e.data {
-            _ if !is_plain_read => None,
-            js_ast::ExprData::EDot(dot) => crate::defines::own_member(define, dot.name.slice()),
-            js_ast::ExprData::EIndex(index) => match index.index.data {
-                js_ast::ExprData::EString(name) if name.is_utf8() => {
-                    crate::defines::own_member(define, name.data.slice())
-                }
-                js_ast::ExprData::ENumber(number) => {
-                    crate::defines::own_item(define, number.value())
-                }
-                _ => None,
-            },
-            _ => None,
+        let member = match is_plain_read {
+            true => crate::defines::own_member_of_read(define, e.data),
+            false => None,
         };
         if let Some(member) = member {
             if self.leave_define_to_member_read(in_, &member) {

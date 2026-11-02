@@ -731,10 +731,24 @@ pub mod defines {
         true
     }
 
-    /// What a read of `name` gives on a fresh copy of `value`, the value of an object or array
-    /// define or a value inside one. `None` when the own properties do not decide the read:
-    /// the key is missing (the prototype has `toString`), or it is `__proto__`.
-    pub fn own_member(value: ExprData, name: &[u8]) -> Option<ExprData> {
+    /// What the member read `read` gives on a fresh copy of `value`, the value of an object or
+    /// array define or a value inside one: `value.name`, or `value[key]` with a key that is a
+    /// string or a number. `None` when the own properties do not decide the read.
+    #[inline(never)]
+    pub fn own_member_of_read(value: ExprData, read: ExprData) -> Option<ExprData> {
+        match read {
+            ExprData::EDot(dot) => own_member(value, dot.name.slice()),
+            ExprData::EIndex(index) => match index.index.data {
+                ExprData::EString(name) if name.is_utf8() => own_member(value, name.data.slice()),
+                ExprData::ENumber(number) => own_item(value, number.value()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// `None` when the key is missing (the prototype has `toString`), or it is `__proto__`.
+    fn own_member(value: ExprData, name: &[u8]) -> Option<ExprData> {
         match value {
             ExprData::EObject(object) if name != b"__proto__" => object
                 .properties
@@ -756,7 +770,7 @@ pub mod defines {
     }
 
     /// `own_member` for `value[index]`.
-    pub fn own_item(value: ExprData, index: f64) -> Option<ExprData> {
+    fn own_item(value: ExprData, index: f64) -> Option<ExprData> {
         let ExprData::EArray(array) = value else {
             return None;
         };

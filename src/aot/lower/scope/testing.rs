@@ -7,7 +7,9 @@ use bun_sema::program::FileId;
 use super::lexical_owners::compute_lexical_owners;
 use super::walk::{ScopeWalk, walk_file};
 use super::{ScopeAnalysis, ScopeInput, analyze_scopes};
-use crate::builtins::{ImportTargets, ResolveInput, SourceDialect, resolve_file};
+use crate::builtins::{
+    ImportTargets, ReplacedMembersSought, ResolveInput, SourceDialect, resolve_file,
+};
 use crate::compile::testing::with_lowering_inputs;
 use crate::ir::FunctionKey;
 use crate::ir::generated::LimitId;
@@ -28,6 +30,7 @@ pub(in crate::lower) fn with_scope_input<R>(
             transpiled: None,
             modules: inputs.modules,
             builtins: file_inputs.expect("the entry point is lowered").builtins,
+            holds_registry: &|_| false,
             max_captures: max_captures(),
             max_handler_arguments: LimitId::MaxHandlerArguments.value_on_x86_64() as usize,
             max_handler_arguments_per_block: LimitId::MaxHandlerArgumentsPerBlock.value_on_x86_64()
@@ -52,6 +55,8 @@ pub(in crate::lower) fn with_runtime_dialect_input<R>(
             names: inputs.builtin_names,
             platform: inputs.options.platform,
             dialect: SourceDialect::Runtime,
+            replaced: &[],
+            replaced_members_sought: ReplacedMembersSought::None,
         });
         test(&ScopeInput {
             file,
@@ -61,6 +66,7 @@ pub(in crate::lower) fn with_runtime_dialect_input<R>(
             transpiled: None,
             modules: inputs.modules,
             builtins: &builtins,
+            holds_registry: &|_| false,
             max_captures: max_captures(),
             max_handler_arguments: LimitId::MaxHandlerArguments.value_on_x86_64() as usize,
             max_handler_arguments_per_block: LimitId::MaxHandlerArgumentsPerBlock.value_on_x86_64()

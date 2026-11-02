@@ -13,15 +13,15 @@ pub struct JsxFragments {
     prefers_element: bool,
 }
 
-const FRAGMENTS_NOT_SUPPORTED: Message = Message::new(
+const FRAGMENTS_NOT_SUPPORTED: &Message = &Message::new(
     "fragmentsNotSupported",
     "Fragments are only supported starting from React v16.2. Please disable the `react/jsx-fragments` rule in `eslint` settings or upgrade your version of React.",
 );
-const PREFER_PRAGMA: Message = Message::new("preferPragma", "Prefer {{react}}.{{fragment}} over fragment shorthand");
-const PREFER_FRAGMENT: Message =
-    Message::new("preferFragment", "Prefer fragment shorthand over {{react}}.{{fragment}}");
-const OXLINT_PREFER_ELEMENT: Message = Message::new("", "Standard form for React fragments is preferred.");
-const OXLINT_PREFER_SYNTAX: Message = Message::new("", "Shorthand form for React fragments is preferred.");
+const PREFER_PRAGMA: &Message = &Message::new("preferPragma", "Prefer {{react}}.{{fragment}} over fragment shorthand");
+const PREFER_FRAGMENT: &Message =
+    &Message::new("preferFragment", "Prefer fragment shorthand over {{react}}.{{fragment}}");
+const OXLINT_PREFER_ELEMENT: &Message = &Message::new("", "Standard form for React fragments is preferred.");
+const OXLINT_PREFER_SYNTAX: &Message = &Message::new("", "Shorthand form for React fragments is preferred.");
 
 pub struct Names<'a> {
     react_pragma: &'a [u8],

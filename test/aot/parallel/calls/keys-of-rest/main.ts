@@ -1,11 +1,14 @@
 // Reads of a rest parameter or of `arguments` with keys that are not valid indices.
 // IR= 0 byBoolean CreateRest
 // IR= 1 byBoolean GetMyArgumentByVal
-// IR= 1 byInteger GetMyArgumentByVal
+// IR= 0 byInteger CreateRest
 // IR= 1 typedInteger GetMyArgumentByVal
 // IR= 0 typedInteger CreateRest
-// IR= 1 typedNumber GetMyArgumentByVal
-// IR= 1 typedString GetMyArgumentByVal
+// IR= 0 typedNumber CreateRest
+// IR= 2 typedNumber GetMyArgumentByVal
+// IR= 0 typedString CreateRest
+// IR= 2 typedString GetMyArgumentByVal
+// IR= 0 typedAny CreateRest
 // @ts-ignore
 import untyped from "./untyped.js";
 declare const console: any;

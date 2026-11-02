@@ -45,7 +45,8 @@ console.log(when.toLocaleString("de", { timeZone: "UTC", dateStyle: "full", time
 console.log(new Intl.DateTimeFormat("de", { timeZone: "Europe/Berlin", weekday: "long", month: "long", timeZoneName: "long" }).format(when));
 console.log(new Intl.NumberFormat("de").format(1234.5), new Intl.PluralRules("de").select(1), ["z", "ä"].sort(new Intl.Collator("de").compare).join());
 console.log(new Intl.RelativeTimeFormat("de").format(-1, "day"), new Intl.ListFormat("de").format(["a", "b"]));`,
-  "removed.ts": `console.log(new Date(0).toLocaleDateString("fr", { timeZone: "UTC" }));`,
+  // The locale comes with the command line: of a locale that the build can read, --aot makes the pattern itself, and the program asks for no data.
+  "removed.ts": `console.log(new Date(0).toLocaleDateString(process.argv[2], { timeZone: "UTC" }));`,
 };
 
 (canTrim ? describe.concurrent : describe.skip)("--trim-locales", () => {
@@ -111,7 +112,7 @@ console.log(new Intl.RelativeTimeFormat("de").format(-1, "day"), new Intl.ListFo
         for (const host of ["C", "fr_FR.UTF-8", "de_DE.UTF-8"]) {
           expect({
             host,
-            ...(await run([join(folder, "removed")], folder, { ...bunEnv, LANG: host, LC_ALL: host })),
+            ...(await run([join(folder, "removed"), "fr"], folder, { ...bunEnv, LANG: host, LC_ALL: host })),
           }).toEqual({
             host,
             stdout: "",

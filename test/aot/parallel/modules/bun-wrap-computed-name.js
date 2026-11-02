@@ -19,5 +19,5 @@ one helper: true true
 one state: true true
 what they are: [object Module] sealed [object Module] sealed [object Module] sealed
 the same names: true true true
-in require.cache: 
+in require.cache: bun:wrap
 */

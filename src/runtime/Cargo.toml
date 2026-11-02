@@ -68,6 +68,7 @@ bun_js_parser_jsc.workspace = true
 bun_sema.workspace = true
 bun_sema_driver.workspace = true
 bun_aot = { package = "bun_aot_interface", path = "../aot/interface" }
+bun_lint.workspace = true
 bun_lint_driver.workspace = true
 bun_format_conformance.workspace = true
 bun_sema_baselines.workspace = true
@@ -86,6 +87,7 @@ bun_spawn.workspace = true
 bun_sql_jsc.workspace = true
 bun_paths.workspace = true
 bun_picohttp.workspace = true
+bun_png.workspace = true
 bun_ptr.workspace = true
 bun_removable_features.workspace = true
 bun_resolve_builtins.workspace = true

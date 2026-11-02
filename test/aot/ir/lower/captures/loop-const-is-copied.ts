@@ -6,7 +6,7 @@
 // CHECK: = NewClosure [[x]] function=
 // CHECK-NOT: NewObject
 // CHECK-LABEL: function {{*}}kind=Arrow
-// CHECK: captures=[{type=anything}] thisType
+// CHECK: captures=[{type=anything variableName="x"}] thisType
 // CHECK-NOT: GetEnvironmentField
 
 export function f(xs: unknown[], cb: (read: () => unknown) => void) {

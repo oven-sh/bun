@@ -1570,6 +1570,7 @@ interface $BunModules {
   "internal/util/deprecate": $ModuleValue<typeof import("./internal/util/deprecate")>;
   "internal/util/inspect": $ModuleValue<typeof import("./internal/util/inspect")>;
   "internal/util/mime": $ModuleValue<typeof import("./internal/util/mime")>;
+  "internal/validate_function": $ModuleValue<typeof import("./internal/validate_function")>;
   "internal/validators": $ModuleValue<typeof import("./internal/validators")>;
   "internal/webstreams_adapters": $ModuleValue<typeof import("./internal/webstreams_adapters")>;
   "internal/worker/messaging": $ModuleValue<typeof import("./internal/worker/messaging")>;

@@ -246,6 +246,39 @@ fn internal_error_prefers_position_to_module_of_function() {
     );
 }
 
+fn paths_after(records: &[InternalErrorRecord]) -> Option<Vec<String>> {
+    let (names, texts) = (names(), texts());
+    let mut locator = ModuleLocator::new(&texts);
+    let mut diagnostics = Diagnostics::new();
+    for record in records {
+        diagnostics.add_internal_error_record(record, b"x", &names, &mut locator);
+    }
+    let paths = diagnostics.paths_of_errors()?;
+    Some(paths.into_iter().map(text).collect())
+}
+
+#[test]
+fn internal_error_is_about_the_file_of_its_position_or_of_its_function() {
+    let located = internal_error(0, ABSENT_WORD, at(DEPENDENCY, 0));
+    let in_function = internal_error(0, ABSENT_WORD, NO_LOCATION);
+    assert_eq!(
+        paths_after(&[located, in_function]),
+        Some(vec![
+            "/p/node_modules/b/b.js".to_owned(),
+            "/p/a.ts".to_owned()
+        ])
+    );
+}
+
+#[test]
+fn internal_error_that_names_no_file_may_be_about_any() {
+    let located = internal_error(0, ABSENT_WORD, at(PROGRAM, 0));
+    let nowhere = internal_error(ABSENT_WORD, ABSENT_WORD, NO_LOCATION);
+    let created_by_engine = internal_error(40, ABSENT_WORD, NO_LOCATION);
+    assert_eq!(paths_after(&[located, nowhere]), None);
+    assert_eq!(paths_after(&[created_by_engine]), None);
+}
+
 #[test]
 fn unnamed_function_and_layout_print_ids() {
     let record = internal_error(1, 1, NO_LOCATION);

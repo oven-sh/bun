@@ -1,6 +1,8 @@
 // Keep in sync with src/runtime.js (__legacyDecorateClassTS through __decorateElement). The functions of `context.access` are anonymous there, so they are assigned to members: an object literal would name them.
+// Plain Bun has these functions in bun:wrap, and programs look for its frames above a decorator: the first statement of each says so.
 
 export function decorateClass(decorators: any, target: any): any {
+  ("frames are of bun:wrap");
   if (typeof Reflect === "object" && typeof (Reflect as any).decorate === "function") {
     return (Reflect as any).decorate(decorators, target, undefined, undefined);
   }
@@ -27,18 +29,25 @@ function decorateMember(decorators: any, target: any, key: any, descriptor: any)
 }
 
 export function decorateMethod(decorators: any, target: any, key: any): any {
-  return decorateMember(decorators, target, key, Object.getOwnPropertyDescriptor(target, key));
+  ("frames are of bun:wrap");
+  // Not a tail call: a decorator finds one frame of a helper above itself, as in plain Bun.
+  const result = decorateMember(decorators, target, key, Object.getOwnPropertyDescriptor(target, key));
+  return result;
 }
 
 export function decorateProperty(decorators: any, target: any, key: any): any {
-  return decorateMember(decorators, target, key, undefined);
+  ("frames are of bun:wrap");
+  const result = decorateMember(decorators, target, key, undefined);
+  return result;
 }
 
 export function decorateParameter(index: number, decorator: any): any {
+  ("frames are of bun:wrap");
   return (target: any, key: any) => decorator(target, key, index);
 }
 
 export function defineMetadata(key: any, value: any): any {
+  ("frames are of bun:wrap");
   if (typeof Reflect === "object" && typeof (Reflect as any).metadata === "function")
     return (Reflect as any).metadata(key, value);
 }
@@ -67,18 +76,22 @@ function expectFunction(value: any): any {
 }
 
 export function createDecoratorMetadata(base: any): any {
+  ("frames are of bun:wrap");
   return Object.create(base?.[metadataSymbol()] ?? null);
 }
 
 export function setDecoratorMetadata(target: any, metadata: any): any {
+  ("frames are of bun:wrap");
   return defineNormalProperty(target, metadataSymbol(), metadata);
 }
 
 export function createElement(kind: any, name: any, isStatic: any, isPrivate: any): any {
+  ("frames are of bun:wrap");
   return { kind, name, isStatic, isPrivate };
 }
 
 export function createPrivateStorage(test: any, get: any, set: any): any {
+  ("frames are of bun:wrap");
   return { test, get, set };
 }
 
@@ -142,6 +155,7 @@ function takeAccessorResult(result: any, descriptor: any, valueInitializers: any
 }
 
 export function applyClassDecorators(decorators: any, target: any, name: any, metadata: any, initializers: any): any {
+  ("frames are of bun:wrap");
   setFunctionName(target, name);
   for (let i = decorators.length - 1; i >= 0; i--) {
     const done: any = {};
@@ -160,6 +174,7 @@ export function applyMethodDecorators(
   metadata: any,
   initializers: any,
 ): void {
+  ("frames are of bun:wrap");
   const kind = element.kind,
     name = element.name;
   const key = kind === "method" ? "value" : kind === "getter" ? "get" : "set";
@@ -185,6 +200,7 @@ export function applyPrivateMethodDecorators(
   metadata: any,
   initializers: any,
 ): any {
+  ("frames are of bun:wrap");
   const kind = element.kind;
   setFunctionName(value, (kind === "setter" ? "set " : kind === "getter" ? "get " : "") + element.name);
   for (let i = decorators.length - 1; i >= 0; i--) {
@@ -215,6 +231,7 @@ export function applyFieldDecorators(
   valueInitializers: any,
   extraInitializers: any,
 ): void {
+  ("frames are of bun:wrap");
   const name = element.name;
   for (let i = decorators.length - 1; i >= 0; i--) {
     const done: any = {};
@@ -233,6 +250,7 @@ export function applyPrivateFieldDecorators(
   valueInitializers: any,
   extraInitializers: any,
 ): void {
+  ("frames are of bun:wrap");
   for (let i = decorators.length - 1; i >= 0; i--) {
     const done: any = {};
     const access = createPrivateAccess(storage.test, storage);
@@ -250,6 +268,7 @@ export function applyAccessorDecorators(
   valueInitializers: any,
   extraInitializers: any,
 ): void {
+  ("frames are of bun:wrap");
   const name = element.name;
   const own: any = Object.getOwnPropertyDescriptor(holder, name);
   const descriptor: any = { get: own.get, set: own.set, enumerable: true, configurable: true };
@@ -271,6 +290,7 @@ export function applyPrivateAccessorDecorators(
   valueInitializers: any,
   extraInitializers: any,
 ): any {
+  ("frames are of bun:wrap");
   const descriptor: any = { get: storage.get, set: storage.set };
   for (let i = decorators.length - 1; i >= 0; i--) {
     const done: any = {};
@@ -289,10 +309,12 @@ export function applyPrivateAccessorDecorators(
 }
 
 export function runInitializers(initializers: any, receiver: any): void {
+  ("frames are of bun:wrap");
   for (let i = 0, count = initializers.length; i < count; i++) initializers[i].call(receiver);
 }
 
 export function runValueInitializers(initializers: any, receiver: any, value: any): any {
+  ("frames are of bun:wrap");
   for (let i = 0, count = initializers.length; i < count; i++) value = initializers[i].call(receiver, value);
   return value;
 }

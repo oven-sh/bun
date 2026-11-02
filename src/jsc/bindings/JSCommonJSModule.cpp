@@ -75,6 +75,8 @@
 #include "ModuleGraph.h"
 #include <JavaScriptCore/JSBoundFunction.h>
 #include <JavaScriptCore/JSLexicalEnvironment.h>
+#include <JavaScriptCore/FunctionCodeBlock.h>
+#include <JavaScriptCore/WeakGCMapInlines.h>
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
 #include <JavaScriptCore/JSSourceCode.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
@@ -190,6 +192,7 @@ public:
 
     unsigned hash() const final { return m_source->hash() ^ m_overlayShape; }
     StringView source() const final { return m_source->source(); }
+    bool hasTextOf(JSC::SourceProvider& other) const { return m_source.ptr() == &other || (m_source->hash() == other.hash() && m_source->source() == other.source()); }
 
 private:
     GraphCommonJSSourceProvider(Ref<JSC::SourceProvider>&& source, unsigned overlayShape)
@@ -207,10 +210,25 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     SourceCode code = WTF::move(moduleObject->sourceCode);
+    // JSC's code cache has the unlinked code of a source it has seen. Optimized JIT code belongs to a linked
+    // CodeBlock, and evaluating the source again links another wrapper. So a graph calls the wrapper that
+    // an earlier graph of its shape linked, if the text is still the same.
+    String sharedWrapperKey;
+    FunctionExecutable* sharedWrapper = nullptr;
     if (JSModuleGraph* graph = moduleObject->moduleGraph(); graph && code.provider()) {
-        RefPtr<JSC::SourceProvider> provider = GraphCommonJSSourceProvider::create(*code.provider(), graph->overlayShape());
-        Zig::addCodeCoverageSourceID(vm, *provider);
-        code = SourceCode(WTF::move(provider), code.startOffset(), code.endOffset());
+        sharedWrapperKey = makeString(graph->overlayShape(), ':', code.provider()->sourceURL());
+        if (CodeBlock* linked = globalObject->m_moduleGraphs->commonJSWrappers.get(sharedWrapperKey)) {
+            auto* executable = uncheckedDowncast<FunctionExecutable>(linked->ownerExecutable());
+            if (static_cast<GraphCommonJSSourceProvider*>(executable->source().provider())->hasTextOf(*code.provider())) {
+                sharedWrapper = executable;
+                graph->keepCommonJSWrapper(vm, linked);
+            }
+        }
+        if (!sharedWrapper) {
+            RefPtr<JSC::SourceProvider> provider = GraphCommonJSSourceProvider::create(*code.provider(), graph->overlayShape());
+            Zig::addCodeCoverageSourceID(vm, *provider);
+            code = SourceCode(WTF::move(provider), code.startOffset(), code.endOffset());
+        }
     }
 
     // If an exception occurred somewhere else, we might have cleared the source code.
@@ -290,7 +308,7 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     // overload would swallow the exception, leaving the misleading
     // "function wrapper" TypeError below instead of the real error.
     WTF::NakedPtr<JSC::Exception> wrapperException;
-    JSValue fnValue = JSC::evaluate(globalObject, code, jsUndefined(), wrapperException);
+    JSValue fnValue = sharedWrapper ? JSValue(JSFunction::create(vm, globalObject, sharedWrapper, moduleObject->moduleGraph()->overlay())) : JSC::evaluate(globalObject, code, jsUndefined(), wrapperException);
     if (wrapperException) [[unlikely]] {
         scope.throwException(globalObject, wrapperException.get());
         return false;
@@ -348,6 +366,14 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     //
     JSC::profiledCall(globalObject, ProfilingReason::API, fn, callData, moduleObject, args);
     RETURN_IF_EXCEPTION(scope, false);
+
+    if (auto* wrapper = graph && !sharedWrapper ? dynamicDowncast<JSFunction>(fn) : nullptr; wrapper && !wrapper->isHostFunction() && wrapper->scope() == graph->overlay()) {
+        if (CodeBlock* linked = wrapper->jsExecutable()->codeBlockForCall()) {
+            linked = linked->baselineAlternative();
+            globalObject->m_moduleGraphs->commonJSWrappers.set(sharedWrapperKey, linked);
+            graph->keepCommonJSWrapper(vm, linked);
+        }
+    }
     return true;
 }
 
@@ -373,7 +399,7 @@ bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject)
         // On error, remove the module from the require map
         // so that it can be re-evaluated on the next require.
         // The entry can already be gone: `delete require.cache[__filename]; throw ...`, or a graph's dispose().
-        requireMapOf(globalObject, moduleGraph())->remove(globalObject, this->filename());
+        JSC__JSMap__remove(requireMapOf(globalObject, moduleGraph()), globalObject, JSValue::encode(this->filename()));
         RETURN_IF_EXCEPTION(scope, false);
 
         scope.throwException(globalObject, exception);
@@ -462,24 +488,23 @@ JSC_DEFINE_HOST_FUNCTION(requireResolvePathsFunction, (JSGlobalObject * globalOb
 
 JSC_DEFINE_CUSTOM_GETTER(jsRequireCacheGetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
+    auto* requirer = requirerOf(JSValue::decode(thisValue));
     // The FTL passes the inlined code's realm, which can be a node:vm context. Contexts don't have a require cache.
-    Zig::GlobalObject* thisObject = defaultGlobalObject(globalObject);
+    return JSValue::encode(requireCacheOf(defaultGlobalObject(globalObject), requirer ? requirer->moduleGraph() : nullptr, requirer));
+}
+
+JSValue requireCacheOf(Zig::GlobalObject* globalObject, JSModuleGraph* graph, JSCommonJSModule* owner)
+{
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* requirer = requirerOf(JSValue::decode(thisValue));
-    JSModuleGraph* graph = requirer ? requirer->moduleGraph() : nullptr;
-    if (!graph) {
-        JSObject* cache = thisObject->lazyRequireCacheObject();
-        RETURN_IF_EXCEPTION(scope, {});
-        return JSValue::encode(cache);
-    }
-    // A require() that belongs to a Bun.ModuleGraph: a view of that graph's cache.
+    if (!graph)
+        RELEASE_AND_RETURN(scope, globalObject->lazyRequireCacheObject());
     if (JSValue existing = graph->requireCache())
-        return JSValue::encode(existing);
-    JSValue cache = createRequireCacheObject(thisObject, graph->requireMap(), requirer);
+        return existing;
+    JSValue cache = createRequireCacheObject(globalObject, graph->requireMap(), owner);
     RETURN_IF_EXCEPTION(scope, {});
     graph->setRequireCache(vm, cache);
-    return JSValue::encode(cache);
+    return cache;
 }
 
 JSValue createRequireCacheObject(JSC::JSGlobalObject* globalObject, JSC::JSMap* requireMap, JSCommonJSModule* owner)
@@ -580,6 +605,12 @@ JSC_DEFINE_CUSTOM_GETTER(jsRequireMainOfExecutableGetter, (JSC::JSGlobalObject *
     return JSValue::encode(Bun::mainModuleOfExecutable(uncheckedDowncast<Zig::GlobalObject>(globalObject)));
 }
 
+// The property is read-only, so no store gets here. What describes it holds a function under `set`, as it does where the accessor is made of a function of the library.
+JSC_DEFINE_CUSTOM_SETTER(jsRequireMainOfExecutableSetter, (JSC::JSGlobalObject*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::PropertyName))
+{
+    return true;
+}
+
 void RequireFunctionPrototype::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
@@ -588,7 +619,7 @@ void RequireFunctionPrototype::finishCreation(JSC::VM& vm)
 
     Bun::reifyStaticPropertyTable(vm, info(), RequireFunctionPrototypeValues, *this);
     if (Bun::hasCompiledModules()) {
-        this->putDirectCustomAccessor(vm, WebCore::builtinNames(vm).mainPublicName(), JSC::CustomGetterSetter::create(vm, jsRequireMainOfExecutableGetter, nullptr), JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly);
+        this->putDirectCustomAccessor(vm, WebCore::builtinNames(vm).mainPublicName(), JSC::CustomGetterSetter::create(vm, jsRequireMainOfExecutableGetter, jsRequireMainOfExecutableSetter), JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly);
         return;
     }
     JSC::JSFunction* requireDotMainFunction = JSFunction::create(
@@ -649,7 +680,7 @@ JSC_DEFINE_CUSTOM_GETTER(getterParent, (JSC::JSGlobalObject * globalObject, JSC:
         return JSValue::encode(parent);
     }
 
-    auto* parentOfCompiledModule = Bun::parentOfCompiledModule(thisObject);
+    auto* parentOfCompiledModule = thisObject->m_isParentStored ? nullptr : Bun::parentOfCompiledModule(thisObject);
     RETURN_IF_EXCEPTION(scope, {});
     if (parentOfCompiledModule) {
         thisObject->m_parent = JSC::Weak<JSCommonJSModule>(parentOfCompiledModule);
@@ -842,12 +873,16 @@ JSC_DEFINE_CUSTOM_SETTER(setterParent,
         return false;
 
     JSValue decodedValue = JSValue::decode(value);
+    thisObject->m_isParentStored = true;
 
     if (auto* parent = dynamicDowncast<JSCommonJSModule>(decodedValue)) {
         thisObject->m_parent = parent;
         thisObject->m_overriddenParent.clear();
     } else {
         thisObject->m_parent = {};
+        bool keepsFormerParentAlive = thisObject->m_overriddenParent && dynamicDowncast<JSCommonJSModule>(thisObject->m_overriddenParent.get());
+        if (keepsFormerParentAlive)
+            thisObject->m_overriddenParent.clear();
     }
 
     return true;
@@ -1427,7 +1462,7 @@ const JSC::ClassInfo JSCommonJSModule::s_info = { "Module"_s, &Base::s_info, nul
 const JSC::ClassInfo RequireResolveFunctionPrototype::s_info = { "resolve"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(RequireResolveFunctionPrototype) };
 const JSC::ClassInfo RequireFunctionPrototype::s_info = { "require"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(RequireFunctionPrototype) };
 
-ALWAYS_INLINE EncodedJSValue finishRequireWithError(Zig::GlobalObject* globalObject, JSCommonJSModule* child, JSC::ThrowScope& throwScope, JSC::JSValue specifierValue)
+NEVER_INLINE EncodedJSValue finishRequireWithError(Zig::GlobalObject* globalObject, JSCommonJSModule* child, JSC::ThrowScope& throwScope, JSC::JSValue specifierValue)
 {
     auto& vm = JSC::getVM(globalObject);
     JSC::JSValue exception = throwScope.exception();
@@ -1441,7 +1476,7 @@ ALWAYS_INLINE EncodedJSValue finishRequireWithError(Zig::GlobalObject* globalObj
     // On error, remove the module from the require map
     // so that it can be re-evaluated on the next require.
     // The entry can already be gone: `delete require.cache[__filename]; throw ...`, or a graph's dispose().
-    requireMapOf(globalObject, child->moduleGraph())->remove(globalObject, specifierValue);
+    JSC__JSMap__remove(requireMapOf(globalObject, child->moduleGraph()), globalObject, JSValue::encode(specifierValue));
     RETURN_IF_EXCEPTION(throwScope, {});
 
     throwScope.throwException(globalObject, exception);
@@ -1762,7 +1797,7 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
 
                                 // On error, remove the module from the require map
                                 // so that it can be re-evaluated on the next require.
-                                requireMap->remove(globalObject, moduleObject->filename());
+                                JSC__JSMap__remove(requireMap, globalObject, JSValue::encode(moduleObject->filename()));
                                 RETURN_IF_EXCEPTION(scope, void());
 
                                 scope.throwException(globalObject, exception);

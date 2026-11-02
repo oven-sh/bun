@@ -6,7 +6,7 @@ use bun_lint::utils::ancestor_memo::AncestorMemo;
 /// readable.
 pub struct NoConditionalTests<const RUNNER: u8 = { jest::VITEST }>;
 
-const NO_CONDITIONAL_TESTS: Message = Message::new("", "Avoid having conditionals in tests");
+const NO_CONDITIONAL_TESTS: &Message = &Message::new("", "Avoid having conditionals in tests");
 
 impl<const RUNNER: u8> Rule for NoConditionalTests<RUNNER> {
     const META: Meta = jest::meta(RUNNER, "no-conditional-tests", Kind::Problem);

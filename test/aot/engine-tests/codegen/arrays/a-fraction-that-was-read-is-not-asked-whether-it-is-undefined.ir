@@ -1,0 +1,105 @@
+# `list[i & 7] ?? 100` in a loop over a list of fractions that may have holes. The read gives `undefined` for a hole and past the end, on rare edges. An element that
+# is no hole equals itself, so it is not the NaN that stands for `undefined` either: the way from the read goes past that test, and the loop looks at the bits of no number.
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: lower-to-b3 optimized loops entry-modules
+# REQUIRES: unsanitized-code
+# -- source: main.ts
+# function total(list: number[], turns: number): number {
+#   let sum = 0;
+#   for (let i = 0; i < turns; i++) sum += list[i & 7] ?? 100;
+#   return sum;
+# }
+# declare const input: any;
+# const list: number[] = JSON.parse(input);
+# (globalThis as any).answer = total(list, +input);
+# -- end of source
+# CHECK-LABEL: name="total" role=Source
+# CHECK: Reads:indexedDoubleProperties
+# CHECK-NOT: BitwiseCast
+# CHECK-LABEL: end of function
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+typesite w0 module=m0 position=180 kind=Variable
+typesite w1 module=m0 position=15 kind=Parameter
+typesite w2 module=m0 position=31 kind=Parameter
+typesite w3 module=m0 kind=Result
+typesite w4 module=m0 position=245 kind=CallResult
+typesite w5 module=m0 position=62 kind=Variable
+typesite w6 module=m0 position=82 kind=Variable
+typesite w7 module=m0 position=112 kind=Element
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = Builtin builtin=JSON @197
+    v3 = PropGet v2 key="parse" @197
+    v4 = Convert v3 declared={type=builtin(JSONParse) flags=[IsExpected]} @197
+    v5 = Builtin builtin=GlobalThis @213
+    v6 = PropGet v5 key="input" [isFreeName] @213
+    v7 = Convert v6 declared={type=undefined|null|string flags=[IsExpected]} @213
+    v8 = Call v4, v2, v7 calleeKey="parse" calleeName="JSON.parse" @202
+    v9 = Convert v8 declared={type=undefined|null|Array<number> flags=[IsExpected]} @197
+    v10 = Convert v9 declared={type=undefined|null|Array<number> site=w0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @197
+    v11 = Builtin builtin=GlobalThis @217
+    v12 = PropGet v11 key="globalThis" [isFreeName] @217
+    v13 = Convert v12 declared={type=builtin(GlobalThis) flags=[IsExpected]} @217
+    v14 = Convert v13 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @217
+    v15 = Builtin builtin=GlobalThis @263
+    v16 = PropGet v15 key="input" [isFreeName] @263
+    v17 = Convert v16 declared={type=number flags=[IsExpected]} @263
+    v18 = ToNumber v17 @257
+    v19 = Call v1, -, v10, v18 calleeName="total" @245
+    v20 = Convert v19 declared={type=number site=w4} @245
+    PropSet v14, v20 key="answer" @217
+    v22 = Undefined @217
+    Return v22 @217
+}
+function f1 name="total" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=w1 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w2}] results=[{type=number site=w3}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>, v1: number):
+    Jump -> next b1() @0
+  b1():
+    v2 = Integer @68
+    v3 = Convert v2 declared={type=number site=w5} @68
+    v4 = Integer @86
+    v5 = Convert v4 declared={type=number site=w6} @86
+    Jump -> next b2(v3, v5) @82
+  b2(v6: number, v7: number):
+    LoopHint @82
+    v9 = Convert v7 declared={type=i32 flags=[IsExpected]} @89
+    v10 = Less v9, v1 @89
+    Branch v10 -> taken b3(| 0, 1), notTaken b10(| 0, 1) @89
+  b3(v11, v12):
+    Jump -> next b4() @89
+  b4():
+    v13 = Convert v11 declared={type=i32 flags=[IsExpected]} @117
+    v14 = Integer integer=7 @121
+    v15 = BitAnd v13, v14 @117
+    v16 = ElemGet v0, v15 @112
+    v17 = Convert v16 declared={type=number site=w7} illTypedCause=ContainerWriterUnseen @112
+    v18 = TypeTest v17 testedType=undefined|null @112
+    Branch v18 -> taken b5(| 0), notTaken b7(| 0) @112
+  b5(v19):
+    Jump -> next b6() @112
+  b6():
+    v20 = Integer integer=100 @127
+    Jump -> next b8(v20) @127
+  b7(v21):
+    Jump -> next b8(v21) @112
+  b8(v22):
+    v23 = Add v6, v22 @112
+    v24 = Convert v23 declared={type=number site=w5} @105
+    Jump -> next b9() @105
+  b9():
+    v25 = Increment v13 @112
+    v26 = Convert v25 declared={type=number site=w6} @100
+    Jump -> next b2(v24, v26) @100
+  b10(v27, v28):
+    Jump -> next b11() @89
+  b11():
+    v29 = Convert v6 declared={type=number site=w3} @141
+    Return v29 @141
+}

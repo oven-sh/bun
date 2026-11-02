@@ -71,7 +71,7 @@ impl Assigns {
                         interp.as_assigns_mut(this).state = AssignsState::Done;
                         continue;
                     }
-                    let atom: *const ast::Atom = &raw const assigns[idx as usize].value;
+                    let atom = &assigns[idx as usize].value;
                     let child = Expansion::init(interp, shell, atom, this, true);
                     return Expansion::start(interp, child);
                 }

@@ -6,8 +6,8 @@ use bun_lint_oxlint::import::has_module_syntax;
 /// Forbid potentially ambiguous parse goal (`script` vs. `module`).
 pub struct Unambiguous;
 
-const AMBIGUOUS: Message = Message::new("", "This module could be parsed as a valid script.");
-const OXLINT: Message = Message::new("", "This module could be mistakenly parsed as script instead of module");
+const AMBIGUOUS: &Message = &Message::new("", "This module could be parsed as a valid script.");
+const OXLINT: &Message = &Message::new("", "This module could be mistakenly parsed as script instead of module");
 
 impl Rule for Unambiguous {
     const META: Meta = Meta::plugin(Plugin::Import, "unambiguous", Kind::Suggestion);

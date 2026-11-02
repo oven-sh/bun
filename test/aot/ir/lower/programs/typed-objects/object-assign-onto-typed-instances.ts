@@ -350,7 +350,7 @@ console.log(lines.join("\n"));
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="run"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|[[L_17]] site=[[w_18]] flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=undefined|null|Array site=[[w_19]] flags=[OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_20]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|[[L_17]] site=[[w_18]] flags=[OmitsNull, OmitsUndefined] variableName="source"}] thisType={type=anything} results=[{type=undefined|null|Array site=[[w_19]] flags=[OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_20]]] {
 // CHECK-NEXT: b0(v0: undefined|null|[[L_17]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():

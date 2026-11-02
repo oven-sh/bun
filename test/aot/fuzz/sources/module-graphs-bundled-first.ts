@@ -1,19 +1,16 @@
-// Module graphs of both kinds (../generators/module-graphs-of-both-kinds.ts), each written into one file by `bun build --target=bun` first. The bundle wraps files in `__commonJS(..)` and
-// `__esm(..)` functions that run them at the first call. The bundle built with --aot has to print what the bundle prints under `bun run`.
-//
-//   the bundle   in the ES module format or the CommonJS format, minified or not, as one file or split into chunks (`--splitting`)
-//
-// The Bun that runs the fuzzer writes the bundle. A graph that the bundler rejects is no program.
+// Mixed module graphs (../generators/mixed-module-graphs.ts), each bundled into one file by `bun build --target=bun`
+// first. The bundle wraps files in lazy `__commonJS(..)` and `__esm(..)` functions. The bundle built with --aot must
+// print what it prints under `bun run`.
 import { spawnSync } from "bun";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { asProgram, type Drawn } from "../family";
-import { program } from "../generators/module-graphs-of-both-kinds";
+import { program } from "../generators/mixed-module-graphs";
 import { Random } from "../random";
 
-const drawn: Drawn = (seed, bed) => {
-  if (bed.name !== "product") return;
+const drawn: Drawn = (seed, runner) => {
+  if (runner.name !== "product") return;
   const random = new Random(seed);
   const graph = program(seed, 7);
   if (graph.importsBesideTheRest) return;
@@ -40,10 +37,10 @@ const drawn: Drawn = (seed, bed) => {
     const { [file]: text, ...chunks } = Object.fromEntries(
       readdirSync(join(folder, "bundle")).map(name => [name, readFileSync(join(folder, "bundle", name), "utf8")]),
     );
-    // `import.meta` in the CommonJS format is no valid program.
+    // `import.meta` is invalid in the CommonJS format.
     if (text === undefined || (format === "cjs" && text.includes("import.meta"))) return;
     const made = asProgram({ file, text, files: chunks });
-    return made && { seed, ...made, notes: `format ${format} ${shape.join(" ")}`, group: format, standsAlone: true };
+    return made && { seed, ...made, notes: `format ${format} ${shape.join(" ")}`, group: format, needsOwnBuild: true };
   } finally {
     rmSync(folder, { recursive: true, force: true });
   }

@@ -7,7 +7,6 @@
 // nothing under `unseenCode` only if every one of them stays closed.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
-import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { readBuildReport } from "./harness/build-report";
 import { built, slot, spawned } from "./harness/commands";
@@ -209,30 +208,6 @@ async function compileAndRun(programs: Programs) {
   }
   return readBuildReport(reportPath);
 }
-
-// The analysis takes a store under one of these names through a receiver it has lost for a store into the module loader
-// (`Module.wrap = ..`, `module.require = ..`), but not in Bun's own library, which stores under them only into objects it has
-// made itself. Whoever adds such a store to src/js looks at its receiver first, and then adds it here.
-const namesOfLoaderLocations = ["wrap", "wrapper", "require", "cache", "_cache", "_load", "_resolveFilename"];
-const storesOfTheLibrary = [
-  "eval/fuzzilli-reprl.ts: globalThis.require =",
-  "eval/node-repl.ts: global_.require =",
-  "internal/streams/readable.ts: Readable.prototype.wrap =",
-  "internal/streams/readable.ts: Readable.wrap =",
-];
-
-test("the library stores under a name of the module loader only into its own objects", () => {
-  const root = join(import.meta.dir, "../../src/js");
-  const store = new RegExp(String.raw`[\w$.\]\[]+\.(?:${namesOfLoaderLocations.join("|")})\s*=(?!=)`, "g");
-  const found = new Set<string>();
-  for (const file of readdirSync(root, { recursive: true, encoding: "utf8" })) {
-    if (!/\.[jt]s$/.test(file) || file.endsWith(".d.ts") || file.includes("node_modules")) continue;
-    const name = file.replaceAll("\\", "/");
-    for (const [text] of readFileSync(join(root, file), "utf8").matchAll(store))
-      found.add(`${name}: ${text.replace(/\s*=$/, " =")}`);
-  }
-  expect([...found].sort()).toEqual(storesOfTheLibrary);
-});
 
 describe.concurrent("compile/aot/small programs stay closed", () => {
   test(

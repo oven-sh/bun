@@ -622,14 +622,14 @@ function f123 module=m0 role=Signature thisType={type=anything} results=[{type=a
 # CHECK-NEXT: v72: L1 = NewObject layout=L1 allocationSite=65 allocationClass=0
 # CHECK-NEXT: v73: 1 = Integer integer=1
 # CHECK-NEXT: v74: 1500 = Integer integer=1500
-# CHECK-NEXT: v75: undefined = CallDirect v72, v73, v74 function=f189 accessSite=0
+# CHECK-NEXT: v75: undefined = CallDirect v72, v73, v74 function=f190 accessSite=0
 # CHECK-NEXT: v76: -1 = Integer integer=-1
 # CHECK-NEXT: v77: -1 = Integer integer=-1
 # CHECK-NEXT: v78: -1 = Integer integer=-1
 # CHECK-NEXT: v79: L1 = NewObject -, v76, v77, v78 layout=L1 fields=[17, 13, 11] allocationSite=66 allocationClass=0
 # CHECK-NEXT: v80: 2 = Integer integer=2
 # CHECK-NEXT: v81: 0 = Integer
-# CHECK-NEXT: v82: undefined = CallDirect v79, v80, v81 function=f189 accessSite=1
+# CHECK-NEXT: v82: undefined = CallDirect v79, v80, v81 function=f190 accessSite=1
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: LoopHint

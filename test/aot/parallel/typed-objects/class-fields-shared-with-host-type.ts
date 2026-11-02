@@ -1,8 +1,8 @@
 // A class without methods whose fields a type of the host also has (`x` and `y`: DOMPoint; `width` and `height`: an image) is laid out and read like any other class: nobody hands a constructor its `this`, so nothing but what `new` makes is ever held to the class by its declaration alone.
-// IR- ^layout (L\d+) .*name="(Point|Size|Named)" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
-// IR= 1 twice PropGet v[0-9]+ name="x"(?!.* isFallback)
-// IR= 1 area PropGet v[0-9]+ name="width"(?!.* isFallback)
-// IR+ ^layout (L\d+) .*name="Opened" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
+// IR- ^layout (L\d+) .*name="(Point|Size|Named)" [\s\S]* receivers=\[[^\]\n]*\b\1\b[^\]\n]*\.\.\]
+// IR= 1 twice GetSlot v[0-9]+ key="x" receivers=\[L[0-9]+\] level=Proven
+// IR= 1 area GetSlot v[0-9]+ key="width" receivers=\[L[0-9]+\] level=Proven
+// IR= 1 sum  = PropGet v\d+ key="left" 
 class Point { constructor(public x: number, public y: number) {} }
 class Size { width = 2; height = 3 }
 class Named { name = "n"; message = "m" }

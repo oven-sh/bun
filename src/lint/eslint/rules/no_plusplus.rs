@@ -7,8 +7,8 @@ pub struct NoPlusplus {
     allow_for_loop_afterthoughts: bool,
 }
 
-const UNEXPECTED_UNARY_OP: Message =
-    Message::new("unexpectedUnaryOp", "Unary operator '{{operator}}' used.");
+const UNEXPECTED_UNARY_OP: &Message =
+    &Message::new("unexpectedUnaryOp", "Unary operator '{{operator}}' used.");
 
 /// ESLint's `isForLoopAfterthought`: `e` is a `for` loop's update, or an operand of a comma expression that is.
 fn is_for_loop_afterthought<'a>(e: Expr<'a>, known: &mut AncestorMemo<'a, bool>) -> bool {

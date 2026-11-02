@@ -440,7 +440,7 @@ function f49 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} re
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="write"
-# CHECK: module=m0 position=325 kind=Method flags=[IsSloppy, HasExplicitName] thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f27] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: module=m0 position=325 kind=Method flags=[IsSloppy, HasExplicitName] thisType={type=anything} results=[{type=undefined|number}] functionTypes=[f27] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: builtin(ArrayPrototype) = Builtin builtin=ArrayPrototype
 # CHECK-NEXT: v1: 3 = Integer integer=3
@@ -563,7 +563,7 @@ function f49 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} re
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="write"
-# CHECK: module=m0 position=2048 kind=Method flags=[IsSloppy, HasExplicitName] thisType={type=anything} results=[{type=string}] functionTypes=[f41] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: module=m0 position=2048 kind=Method flags=[IsSloppy, HasExplicitName] thisType={type=anything} results=[{type="ignored"}] functionTypes=[f41] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: builtin(MapPrototype) = Builtin builtin=MapPrototype
 # CHECK-NEXT: v1: 1 = Integer integer=1
@@ -572,7 +572,7 @@ function f49 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} re
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="write"
-# CHECK: module=m0 position=2140 kind=Method flags=[IsSloppy, HasExplicitName] thisType={type=anything} results=[{type=string}] functionTypes=[f42] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: module=m0 position=2140 kind=Method flags=[IsSloppy, HasExplicitName] thisType={type=anything} results=[{type="ignored"}] functionTypes=[f42] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: f1 = GetModuleVariable variable=g1
 # CHECK-NEXT: v1: builtin(FunctionPrototype) = Builtin builtin=FunctionPrototype
@@ -594,7 +594,7 @@ function f49 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} re
 # CHECK-LABEL: function {{*}}name="write"
 # CHECK: module=m0 position=2455 kind=Method flags=[IsSloppy, HasExplicitName] thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes=[f45] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="write"
-# CHECK: module=m0 position=2550 kind=Method flags=[IsSloppy, HasExplicitName] thisType={type=anything} results=[{type=string}] functionTypes=[f46] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: module=m0 position=2550 kind=Method flags=[IsSloppy, HasExplicitName] thisType={type=anything} results=[{type="stored"}] functionTypes=[f46] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: builtin(ArrayPrototype) = Builtin builtin=ArrayPrototype
 # CHECK-NEXT: v1: builtin(ArrayPrototypePush) = Builtin builtin=ArrayPrototypePush
@@ -638,7 +638,7 @@ function f49 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} re
 # CHECK-LABEL: function {{*}}name="write"
 # CHECK: module=m0 position=325 kind=Method role=GenericEntrypoint flags=[HasThis] captures=[{type=f4}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f4} creator=Entrypoint{target=f4 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f4, v1: anything):
-# CHECK-NEXT: v2: anything ~ number = CallDirect function=f4
+# CHECK-NEXT: v2: undefined|number ~ number = CallDirect function=f4
 # CHECK-NEXT: ReturnCall v2 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="write"
@@ -722,13 +722,13 @@ function f49 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} re
 # CHECK-LABEL: function {{*}}name="write"
 # CHECK: module=m0 position=2048 kind=Method role=GenericEntrypoint flags=[HasThis] captures=[{type=f18}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f18} creator=Entrypoint{target=f18 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f18, v1: anything):
-# CHECK-NEXT: v2: string = CallDirect function=f18
+# CHECK-NEXT: v2: "ignored" = CallDirect function=f18
 # CHECK-NEXT: ReturnCall v2 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="write"
 # CHECK: module=m0 position=2140 kind=Method role=GenericEntrypoint flags=[HasThis] captures=[{type=f19}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f19} creator=Entrypoint{target=f19 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f19, v1: anything):
-# CHECK-NEXT: v2: string = CallDirect function=f19
+# CHECK-NEXT: v2: "ignored" = CallDirect function=f19
 # CHECK-NEXT: ReturnCall v2 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="write"
@@ -752,6 +752,6 @@ function f49 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} re
 # CHECK-LABEL: function {{*}}name="write"
 # CHECK: module=m0 position=2550 kind=Method role=GenericEntrypoint flags=[HasThis] captures=[{type=f23}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f23} creator=Entrypoint{target=f23 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f23, v1: anything):
-# CHECK-NEXT: v2: string = CallDirect function=f23
+# CHECK-NEXT: v2: "stored" = CallDirect function=f23
 # CHECK-NEXT: ReturnCall v2 requirement=Allowed
 # CHECK-NEXT: }

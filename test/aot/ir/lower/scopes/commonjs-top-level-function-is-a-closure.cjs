@@ -4,7 +4,7 @@
 // CHECK-NEXT: [[b]] = Convert [[closure]] declared={type=f{{*}} flags=[IsFromCompiler]}
 // CHECK: = NewClosure [[b]] function=
 // CHECK: PropSet {{*}}key="a"
-// CHECK-LABEL: function {{*}}captures=[{type=f{{*}} flags=[IsFromCompiler]}] thisType
+// CHECK-LABEL: function {{*}}captures=[{type=f{{*}} flags=[IsFromCompiler] variableName="b"}] thisType
 // CHECK-NOT: GetEnvironmentField
 // CHECK-NOT: GlobalThis
 // CHECK: = Call {{*}}calleeName="b"

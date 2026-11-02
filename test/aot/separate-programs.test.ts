@@ -59,6 +59,26 @@ test.skipIf(!isCanary)("BUN_AOT_START_AT starts any entry point of one program t
   expect(await startAt("none.ts")).toEqual({ stdout: "", exitCode: 1 });
 });
 
+test("a program and its Worker that hold much of the same modules of Bun's library are one program", async () => {
+  using dir = tempDir("programs-that-share-library-modules", {
+    "main.js": `import { inspect } from "node:util";
+new Worker(new URL("./worker.js", import.meta.url)).onmessage = event => console.log(inspect({ main: [1] }), event.data);
+`,
+    "worker.js": `import { inspect } from "node:util";\npostMessage(inspect({ worker: new Map([[1, 2]]) }));\n`,
+  });
+  const cwd = String(dir);
+  const executable = join(cwd, isWindows ? "all.exe" : "all");
+  const flags = ["--aot-report=report.json", "--aot-report-detail=summary"];
+  const built = await run(
+    [bunExe(), "build", "--compile", "--aot", ...flags, "./main.js", "./worker.js", "--outfile", executable],
+    cwd,
+  );
+  expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  expect(JSON.parse(readFileSync(join(cwd, "report.json"), "utf8")).statistics.EngineRuns).toBe(1);
+  const { stdout, exitCode } = await run([executable], cwd, bunEnv);
+  expect({ stdout, exitCode }).toEqual({ stdout: "{ main: [ 1 ] } { worker: Map(1) { 1 => 2 } }\n", exitCode: 0 });
+});
+
 test("each program of an executable holds the module of Bun's library that it imports", async () => {
   using dir = tempDir("separate-programs-each-its-own-module", {
     "main.mjs": `import found from "node:punycode";

@@ -1,10 +1,11 @@
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{BindingKind, InitialState, SymbolId};
 use bun_sema::check::aot::ClassRef;
+use bun_sema::program::Sym;
 
 use super::{BindingRef, ScopeSlot};
 use crate::ir::generated::{Variable, VariableFlags, VariableInitialization};
-use crate::ir::{ClassSlot, DeclaredType, VariableId, VariableKey};
+use crate::ir::{ClassSlot, DeclaredType, TypeTable, VariableId, VariableKey};
 use crate::lower::{FileLowering, class, function};
 use crate::modules::ModuleRef;
 
@@ -27,6 +28,15 @@ impl FileLowering<'_, '_, '_, '_> {
             }
             VariableKey::PrivateState { part, .. } => self.create_private_state_variable(part),
             VariableKey::ModuleExports(_) => self.create_untyped_variable(known::exports),
+            VariableKey::RequiredAnswer(_) => {
+                let mut declared = DeclaredType::untyped();
+                declared.ty = self.fragment.types.union(declared.ty, TypeTable::ABSENT);
+                Variable {
+                    declared,
+                    initialization: VariableInitialization::Uninitialized,
+                    ..self.create_untyped_variable(known::default)
+                }
+            }
             VariableKey::InnerModuleExports(callback) => {
                 let module = self.fragment.declare_module(ModuleRef::Inner {
                     file: callback.file,
@@ -62,7 +72,7 @@ impl FileLowering<'_, '_, '_, '_> {
     fn create_symbol_variable(&mut self, symbol: SymbolId) -> Variable {
         let bound = self.bound;
         let binding = BindingRef::Symbol(symbol);
-        let name = self.intern_atom(bound.symbol(symbol).name);
+        let name = self.intern_variable_name(symbol);
         let declared = self.location_position(binding);
         let (initialization, function) = match self.scopes.initial_function(symbol) {
             Some(source) => {
@@ -110,9 +120,17 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     fn compute_flags(&self, binding: BindingRef) -> VariableFlags {
-        match self.scopes.placement(binding) {
-            Some(placement) if placement.is_immutable => VariableFlags::IS_IMMUTABLE,
-            Some(_) | None => VariableFlags::default(),
+        match (self.scopes.placement(binding), binding) {
+            (Some(placement), _) if placement.is_immutable => VariableFlags::IS_IMMUTABLE,
+            (_, BindingRef::Symbol(symbol)) if self.is_replaceable(symbol) => {
+                VariableFlags::IS_REPLACEABLE
+            }
+            _ => VariableFlags::default(),
         }
+    }
+
+    pub(super) fn is_replaceable(&self, id: SymbolId) -> bool {
+        let file = self.file;
+        self.inputs.modules.is_replaceable(Sym { file, id })
     }
 }

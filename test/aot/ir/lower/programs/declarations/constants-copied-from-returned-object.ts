@@ -494,126 +494,125 @@ console.log("push", String(readPush()));
 // CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|[[L_2]] site=[[w_29]] flags=[OmitsNull, OmitsUndefined]}
 // CHECK-NEXT: v3 = Data data=[[d_30]]
 // CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|[[L_2]] site=[[w_31]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_32]]
-// CHECK-NEXT: v6 = CheckInitialized v5 name="KEY"
-// CHECK-NEXT: v7 = ToPropertyKey v6
-// CHECK-NEXT: v8 = NewObject layout=[[L_8]]
-// CHECK-NEXT: ElemDefine v8, v7, v2
-// CHECK-NEXT: v10 = FinishObject v8
-// CHECK-NEXT: PropSet v2, v10 key="k0"
+// CHECK-NEXT: v5 = String string="back"
+// CHECK-NEXT: v6 = ToPropertyKey v5
+// CHECK-NEXT: v7 = NewObject layout=[[L_8]]
+// CHECK-NEXT: ElemDefine v7, v6, v2
+// CHECK-NEXT: v9 = FinishObject v7
+// CHECK-NEXT: PropSet v2, v9 key="k0"
 // CHECK-NEXT: Return v2
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="makeAProxyTarget"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean site=[[w_33]]}] results=[{type=undefined|null|[[L_2]] site=[[w_34]] flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean site=[[w_32]]}] results=[{type=undefined|null|[[L_2]] site=[[w_33]] flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: boolean):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Data data=[[d_35]]
-// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|[[L_2]] site=[[w_36]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v3 = Data data=[[d_37]]
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|[[L_2]] site=[[w_38]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v1 = Data data=[[d_34]]
+// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|[[L_2]] site=[[w_35]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v3 = Data data=[[d_36]]
+// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|[[L_2]] site=[[w_37]] flags=[OmitsNull, OmitsUndefined]}
 // CHECK-NEXT: v5 = Builtin builtin=Proxy
-// CHECK-NEXT: v6 = Data data=[[d_39]]
+// CHECK-NEXT: v6 = Data data=[[d_38]]
 // CHECK-NEXT: v7 = Construct v5, -, v2, v6 calleeName="Proxy"
-// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|[[L_2]] site=[[w_40]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|[[L_2]] site=[[w_39]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
 // CHECK-NEXT: PropSet v2, v8 key="k0"
 // CHECK-NEXT: Return v2
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="makeAFunctionDeclaration"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean site=[[w_41]]}] results=[{type=undefined|null|[[L_2]] site=[[w_42]] flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean site=[[w_40]]}] results=[{type=undefined|null|[[L_2]] site=[[w_41]] flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: boolean):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = NewObject layout=[[L_43]]
-// CHECK-NEXT: v2 = Data data=[[d_44]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|[[L_2]] site=[[w_45]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: PutEnvironmentField v1, v3 layout=[[L_43]]
-// CHECK-NEXT: v5 = Data data=[[d_46]]
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|[[L_2]] site=[[w_47]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v7 = NewClosure v1 function=[[f_48]]
-// CHECK-NEXT: v8 = Convert v7 declared={type=[[f_48]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v1 = NewObject layout=[[L_42]]
+// CHECK-NEXT: v2 = Data data=[[d_43]]
+// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|[[L_2]] site=[[w_44]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: PutEnvironmentField v1, v3 layout=[[L_42]]
+// CHECK-NEXT: v5 = Data data=[[d_45]]
+// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|[[L_2]] site=[[w_46]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v7 = NewClosure v1 function=[[f_47]]
+// CHECK-NEXT: v8 = Convert v7 declared={type=[[f_47]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
 // CHECK-NEXT: PropSet v3, v8 key="k0"
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="makeASetter"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean site=[[w_49]]}] results=[{type=undefined|null|[[L_2]] site=[[w_50]] flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean site=[[w_48]]}] results=[{type=undefined|null|[[L_2]] site=[[w_49]] flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: boolean):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Data data=[[d_51]]
-// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|[[L_2]] site=[[w_52]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v3 = Data data=[[d_53]]
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|[[L_2]] site=[[w_54]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v5 = NewObject layout=[[L_55]]
-// CHECK-NEXT: v6 = NewClosure v2 function=[[f_56]]
+// CHECK-NEXT: v1 = Data data=[[d_50]]
+// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|[[L_2]] site=[[w_51]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v3 = Data data=[[d_52]]
+// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|[[L_2]] site=[[w_53]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v5 = NewObject layout=[[L_54]]
+// CHECK-NEXT: v6 = NewClosure v2 function=[[f_55]]
 // CHECK-NEXT: DefineSetter v5, v6 key="n"
 // CHECK-NEXT: v8 = FinishObject v5
 // CHECK-NEXT: PropSet v2, v8 key="k0"
 // CHECK-NEXT: Return v2
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="makeASet"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean site=[[w_57]]}] results=[{type=undefined|null|[[L_2]] site=[[w_58]] flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean site=[[w_56]]}] results=[{type=undefined|null|[[L_2]] site=[[w_57]] flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: boolean):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Data data=[[d_59]]
-// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|[[L_2]] site=[[w_60]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v3 = Data data=[[d_61]]
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|[[L_2]] site=[[w_62]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v1 = Data data=[[d_58]]
+// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|[[L_2]] site=[[w_59]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v3 = Data data=[[d_60]]
+// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|[[L_2]] site=[[w_61]] flags=[OmitsNull, OmitsUndefined]}
 // CHECK-NEXT: v5 = Undefined
 // CHECK-NEXT: v6 = Builtin builtin=Set
 // CHECK-NEXT: v7 = Construct v6 calleeName="Set"
 // CHECK-NEXT: v8 = Builtin builtin=SetPrototypeAdd [isNotReadFromHolder]
 // CHECK-NEXT: v9 = Call v8, v7, v2
-// CHECK-NEXT: v10 = Convert v7 declared={type=undefined|null|Set<undefined|null|[[L_2]]> site=[[w_63]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+// CHECK-NEXT: v10 = Convert v7 declared={type=undefined|null|Set<undefined|null|[[L_2]]> site=[[w_62]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
 // CHECK-NEXT: PropSet v2, v10 key="k0"
 // CHECK-NEXT: Return v2
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="makeAGetter"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean site=[[w_64]]}] results=[{type=undefined|null|[[L_2]] site=[[w_65]] flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean site=[[w_63]]}] results=[{type=undefined|null|[[L_2]] site=[[w_64]] flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: boolean):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Data data=[[d_66]]
-// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|[[L_2]] site=[[w_67]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v3 = Data data=[[d_68]]
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|[[L_2]] site=[[w_69]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v5 = NewObject layout=[[L_70]]
-// CHECK-NEXT: v6 = NewClosure v2 function=[[f_71]]
+// CHECK-NEXT: v1 = Data data=[[d_65]]
+// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|[[L_2]] site=[[w_66]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v3 = Data data=[[d_67]]
+// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|[[L_2]] site=[[w_68]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v5 = NewObject layout=[[L_69]]
+// CHECK-NEXT: v6 = NewClosure v2 function=[[f_70]]
 // CHECK-NEXT: DefineGetter v5, v6 key="back"
 // CHECK-NEXT: v8 = FinishObject v5
 // CHECK-NEXT: PropSet v2, v8 key="k0"
 // CHECK-NEXT: Return v2
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="makeAssign"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean site=[[w_72]]}] results=[{type=undefined|null|[[L_2]] site=[[w_73]] flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean site=[[w_71]]}] results=[{type=undefined|null|[[L_2]] site=[[w_72]] flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: boolean):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Data data=[[d_74]]
-// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|[[L_2]] site=[[w_75]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v3 = Data data=[[d_76]]
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|[[L_2]] site=[[w_77]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v1 = Data data=[[d_73]]
+// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|[[L_2]] site=[[w_74]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v3 = Data data=[[d_75]]
+// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|[[L_2]] site=[[w_76]] flags=[OmitsNull, OmitsUndefined]}
 // CHECK-NEXT: v5 = Builtin builtin=Object
 // CHECK-NEXT: v6 = Builtin builtin=ObjectAssign
-// CHECK-NEXT: v7 = Data data=[[d_78]]
+// CHECK-NEXT: v7 = Data data=[[d_77]]
 // CHECK-NEXT: v8 = Convert v2 declared={type=undefined|null|false|[[L_2]] flags=[OmitsUndefined]}
 // CHECK-NEXT: v9 = NewObject -, v8 layout=[[L_8]] fields=[0]
 // CHECK-NEXT: v10 = FinishObject v9
 // CHECK-NEXT: v11 = Call v6, v5, v7, v10 calleeName="Object.assign"
-// CHECK-NEXT: v12 = Convert v11 declared={type=undefined|null|[[L_8]] site=[[w_79]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+// CHECK-NEXT: v12 = Convert v11 declared={type=undefined|null|[[L_8]] site=[[w_78]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
 // CHECK-NEXT: PropSet v2, v12 key="k0"
 // CHECK-NEXT: Return v2
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Holder"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_2]] site=[[w_80]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=object flags=[IsFromCompiler]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_2]] site=[[w_79]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=object flags=[IsFromCompiler]}] {
 // CHECK-NEXT: b0(v0: anything, v1: undefined|null|[[L_2]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = GetConstructPrototype v0 layout=[[L_81]]
-// CHECK-NEXT: v3 = NewObject v2 layout=[[L_81]]
-// CHECK-NEXT: v4 = Convert v3 declared={type=[[L_81]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: v5 = CallDirect v4 function=[[f_82]]
+// CHECK-NEXT: v2 = GetConstructPrototype v0 layout=[[L_80]]
+// CHECK-NEXT: v3 = NewObject v2 layout=[[L_80]]
+// CHECK-NEXT: v4 = Convert v3 declared={type=[[L_80]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v5 = CallDirect v4 function=[[f_81]]
 // CHECK-NEXT: PropSet v4, v1 key="back"
 // CHECK-NEXT: v7 = Undefined
 // CHECK-NEXT: v8 = TypeTest v7 testedType=object
@@ -626,46 +625,46 @@ console.log("push", String(readPush()));
 // CHECK-NEXT: Return v11
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] captures=[{type=undefined|null|[[L_2]] site=[[w_83]] flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=undefined|null|[[L_2]] site=[[w_84]] flags=[OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_85]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] captures=[{type=undefined|null|[[L_2]] site=[[w_82]] flags=[OmitsNull, OmitsUndefined] variableName="it"}] thisType={type=anything} results=[{type=undefined|null|[[L_2]] site=[[w_83]] flags=[OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_84]]] {
 // CHECK-NEXT: b0(v0: undefined|null|[[L_2]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[L_2]] site=[[w_84]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[L_2]] site=[[w_83]] flags=[OmitsNull, OmitsUndefined]}
 // CHECK-NEXT: Return v1
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] captures=[{type=env [[L_43]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=undefined|null|[[L_2]] site=[[w_86]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: env [[L_43]]):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked] captures=[{type=env [[L_42]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=undefined|null|[[L_2]] site=[[w_85]] flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK-NEXT: b0(v0: env [[L_42]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetEnvironmentField v0 layout=[[L_43]]
+// CHECK-NEXT: v1 = GetEnvironmentField v0 layout=[[L_42]]
 // CHECK-NEXT: v2 = CheckInitialized v1 name="made"
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|[[L_2]] site=[[w_86]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|[[L_2]] site=[[w_85]] flags=[OmitsNull, OmitsUndefined]}
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="n"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Setter flags=[IsChecked, HasExplicitName] length=1 captures=[{type=undefined|null|[[L_2]] site=[[w_52]] flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} parameters=[{type=number site=[[w_87]]}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Setter flags=[IsChecked, HasExplicitName] length=1 captures=[{type=undefined|null|[[L_2]] site=[[w_51]] flags=[OmitsNull, OmitsUndefined] variableName="made"}] thisType={type=anything} parameters=[{type=number site=[[w_86]]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|[[L_2]], v1: number):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = Convert v1 declared={type=number site=[[w_88]]}
+// CHECK-NEXT: v2 = Convert v1 declared={type=number site=[[w_87]]}
 // CHECK-NEXT: PropSet v0, v2 key="n"
 // CHECK-NEXT: v4 = Undefined
 // CHECK-NEXT: Return v4
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] captures=[{type=undefined|null|[[L_2]] site=[[w_89]] flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=undefined|null|[[L_2]] site=[[w_90]] flags=[OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_91]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] captures=[{type=undefined|null|[[L_2]] site=[[w_88]] flags=[OmitsNull, OmitsUndefined] variableName="made"}] thisType={type=anything} results=[{type=undefined|null|[[L_2]] site=[[w_89]] flags=[OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_90]]] {
 // CHECK-NEXT: b0(v0: undefined|null|[[L_2]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[L_2]] site=[[w_90]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[L_2]] site=[[w_89]] flags=[OmitsNull, OmitsUndefined]}
 // CHECK-NEXT: Return v1
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="back"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[IsChecked, HasExplicitName] captures=[{type=undefined|null|[[L_2]] site=[[w_67]] flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=undefined|null|[[L_2]] site=[[w_92]] flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[IsChecked, HasExplicitName] captures=[{type=undefined|null|[[L_2]] site=[[w_66]] flags=[OmitsNull, OmitsUndefined] variableName="made"}] thisType={type=anything} results=[{type=undefined|null|[[L_2]] site=[[w_91]] flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: undefined|null|[[L_2]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[L_2]] site=[[w_92]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[L_2]] site=[[w_91]] flags=[OmitsNull, OmitsUndefined]}
 // CHECK-NEXT: Return v1
 // CHECK-NEXT: }

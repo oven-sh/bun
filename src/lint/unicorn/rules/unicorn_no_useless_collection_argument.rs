@@ -6,7 +6,7 @@ use bun_lint::rule::Plugin;
 /// Disallow useless values or fallbacks in `Set`, `Map`, `WeakSet`, or `WeakMap`.
 pub struct NoUselessCollectionArgument;
 
-const NO_USELESS_COLLECTION_ARGUMENT: Message = Message::new("", "The {{expr_type}} is useless");
+const NO_USELESS_COLLECTION_ARGUMENT: &Message = &Message::new("", "The {{expr_type}} is useless");
 
 impl Rule for NoUselessCollectionArgument {
     const META: Meta =

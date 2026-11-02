@@ -1,14 +1,8 @@
-// Programs about one question: the object a base constructor allocates belongs to new.target's class, which need not be the class of the constructor.
-// The table is a cross product: how another new.target arises x what the base constructor does with `this` x how often and where the construction runs x what is observed afterwards.
-//
-// The origins with "laundered" and "outside" use launder, constructIt and constructFor, which whoever runs the program defines outside the compiled program.
-// constructFor constructs a function for another new.target, which native code never does: the two origins outside-constructs-for-.. are for a build that admits unknown JavaScript.
-//
-// The origins marked usesLibraryFunctions, the look "copied" and the forms over a class of the host need built-ins that are written in JavaScript or the host itself.
+// The object a base constructor allocates belongs to new.target's class, which need not be the constructor's class. A
+// cross product: how a different new.target arises x what the base constructor does with `this` x how often and where
+// the construction runs.
 //
 //   bun new-targets.ts <folder> [--print=print|console.log] [--filter=<regex over names>] [--contexts=once,shared,..] [--looks=direct,generic,..]
-//
-// writes <folder>/<name>.js. The whole product has millions of programs: pass a filter. `pickCombination` draws one of them for another driver.
 import { mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
 
@@ -23,7 +17,7 @@ interface Member {
 
 interface Action {
   name: string;
-  /** Statements in front of everything. */
+  /** Statements before everything else. */
   before?: string;
   /** Class fields of the base: only a class can have them. */
   baseFields?: string[];
@@ -38,7 +32,7 @@ interface Action {
   patch?: (P: string, T: string) => string;
   /** Expressions that are printed; `$` is the constructed object. */
   look: string[];
-  /** Expressions that are printed after everything, also when the construction threw. */
+  /** Expressions that are printed at the end, even if the construction threw. */
   lookAfter?: string[];
   /** `new A()` throws. */
   refusesBaseItself?: boolean;
@@ -854,7 +848,7 @@ const actions: Action[] = [
     before: `const log = [];`,
     body: `this.tag = p;`,
     baseMembers: [],
-    // The setter stands on an object of the program's own: Object.prototype cannot be written in a compiled executable.
+    // The setter is on one of the program's own objects: Object.prototype is read-only in a compiled executable.
     patch: P =>
       `if ((Object.getPrototypeOf(${P}) ?? Object.prototype) === Object.prototype) Object.setPrototypeOf(${P}, Object.create(Object.getPrototypeOf(${P})));\n` +
       `Object.defineProperty(Object.getPrototypeOf(${P}), "tag", { set(x) { log.push("setter " + x); }, configurable: true });\nObject.defineProperty(${P}, "tag", { value: 0, writable: true, configurable: true });`,
@@ -949,9 +943,9 @@ function onPrototype(holder: string, members: Member[] = []): string {
 }
 
 interface Parent {
-  /** The expression behind `extends`. */
+  /** The expression after `extends`. */
   name: string;
-  /** Statements in front of the class. */
+  /** Statements before the class. */
   before?: string;
   /** The arguments of the super call. */
   arguments?: string;
@@ -997,7 +991,7 @@ function baseText(action: Action, form: BaseForm): string {
 
 interface Origin {
   name: string;
-  /** The text that defines `B`, the expression that constructs, and the expression of the prototype object new.target gives. */
+  /** The text that defines `B`, the constructing expression, and the expression for new.target's prototype object. */
   define(action: Action): { text: string; make: string; prototype?: string; target?: string };
   /** The members of the other class are written in an object literal. */
   usesLiteral?: boolean;
@@ -1005,7 +999,7 @@ interface Origin {
   needsFunctionBase?: boolean;
   /** The constructor of the other class does not run, so its fields are never defined. */
   skipsOtherConstructor?: boolean;
-  /** Uses launder, constructIt or constructFor, which somebody has to define outside the compiled program. */
+  /** Uses launder, constructIt or constructFor, which must be defined outside the compiled program. */
   needsOutsideHelpers?: boolean;
   /** Calls built-ins that are written in JavaScript, or a module of the host. */
   usesLibraryFunctions?: boolean;
@@ -1017,7 +1011,8 @@ interface Origin {
 
 const classBody = (action: Action, constructor = "") => `${(action.otherFields ?? []).map(field => `  ${field};\n`).join("")}${constructor}${inClass(action.otherMembers)}`;
 
-// What a class becomes when a transpiler writes it for an engine without classes. The helpers are written as such tools write them.
+// What a class becomes when a transpiler targets an engine without classes. The helpers are written as such tools emit
+// them.
 const callSuperHelpers = `function _getPrototypeOf(o) { return Object.getPrototypeOf(o); }
 function _isNativeReflectConstruct() { try { var t = !Boolean.prototype.valueOf.call(Reflect.construct(Boolean, [], function () {})); } catch (t) {} return (_isNativeReflectConstruct = function () { return !!t; })(); }
 function _assertThisInitialized(e) { if (void 0 === e) throw new ReferenceError("this hasn't been initialised - super() hasn't been called"); return e; }
@@ -1179,7 +1174,7 @@ const allContexts: Context[] = ["once", "base-first", "base-last", "loop", "func
 /** Contexts that call built-ins written in JavaScript. */
 const contextsUsingLibraryFunctions: Context[] = ["in-for-each", "in-every", "in-map"];
 const allLooks: Look[] = ["direct", "generic", "local", "copied"];
-/** Looks that call built-ins written in JavaScript. */
+/** Inspections that call built-ins written in JavaScript. */
 const looksUsingLibraryFunctions: Look[] = ["copied"];
 
 const helpers = `function str(v) {
@@ -1190,7 +1185,7 @@ const helpers = `function str(v) {
   return "" + v;
 }
 `;
-// What an Error object records about the place of its creation depends on the frames above it.
+// What an Error object records about its creation site depends on the frames above it.
 const positionHelper = `function saysWhereAnErrorWasMade(name) {
   return name === "line" || name === "column" || name === "sourceURL" || name === "stack" || name === "originalLine" || name === "originalColumn";
 }
@@ -1214,7 +1209,7 @@ function lookAt(action: Action, variable: string, look: Look, label: string, ind
   const titled = (title: string) => (label.startsWith("=") ? `${label.slice(1)} + ${JSON.stringify(` ${title}: `)}` : JSON.stringify(`${label} ${title}: `));
   const lines = action.look.map(expression => `${indent}print(${titled(expression)} + str(${expression.replace(/\$(?!\{)/g, () => variable)}));\n`);
   lines.push(`${indent}print(${titled("instanceof A")} + (${variable} instanceof A));\n`);
-  // No built-in is handed the object, so that it need not exist.
+  // The object is passed to no built-in, so its allocation could be removed.
   if (look === "local") return lines.join("");
   lines.push(`${indent}print(${titled("has the prototype of A")} + (Object.getPrototypeOf(${variable}) === A.prototype));\n`);
   if (look === "copied") {
@@ -1312,7 +1307,10 @@ export function combinations(contexts: Context[] = allContexts, looks: Look[] = 
   return result;
 }
 
-/** One program for each form of the base and each origin: every action in the given contexts, each combination in a function of its own. */
+/**
+ * One program for each form of the base and each origin: every action in the given contexts, each combination in its
+ * own function.
+ */
 export function programsByOrigin(contexts: Context[], looks: Look[]): { name: string; text: string }[] {
   const groups = Map.groupBy(
     combinations(contexts, looks).filter(combination => !combination.origin.needsOutsideHelpers),
@@ -1327,7 +1325,10 @@ ${textOf(combination, "console.log")}})();
   }));
 }
 
-/** One combination, drawn with `pick`. `hasLibrary`: built-ins written in JavaScript and the modules of the host are there. `hasOutsideHelpers`: launder, constructIt and constructFor are defined. */
+/**
+ * One random combination, picked with `pick`. `hasLibrary`: built-ins written in JavaScript and host modules are
+ * available. `hasOutsideHelpers`: launder, constructIt and constructFor are defined.
+ */
 export function pickCombination(pick: <T>(items: readonly T[]) => T, { hasLibrary, hasOutsideHelpers }: { hasLibrary: boolean; hasOutsideHelpers: boolean }): Combination {
   for (;;) {
     const combination = { form: pick(allForms), origin: pick(origins), action: pick(actions), context: pick(allContexts), look: pick(allLooks) };

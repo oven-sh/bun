@@ -1,4 +1,5 @@
 // Thirty-two Workers spin in loops that call nothing, loops that call, recursion, and loops in try blocks and finally blocks; all are terminated in one go, several rounds.
+// Runs by itself: thirty-two threads that never wait
 function plain(end: number): number {
   let sum = 0;
   for (let i = 0; i !== end; i = (i + 1) | 0) sum = (sum + i) | 0;
@@ -67,10 +68,15 @@ if (Bun.isMainThread) {
   const heard: string[] = [];
   for (let round = 0; round < rounds; round++) {
     const workers = Array.from({ length: 32 }, () => new Worker(new URL(import.meta.url)));
-    await Promise.all(workers.map((worker, index) => new Promise<void>(resolve => {
-      worker.onmessage = event => (event.data === "spins" ? resolve() : heard.push(event.data));
-      worker.postMessage(index % spins.length);
-    })));
+    const allSay = (word: string) =>
+      Promise.all(workers.map(worker => new Promise<void>(resolve => {
+        worker.onmessage = event => (event.data === word ? resolve() : heard.push(event.data));
+      })));
+    // None spins before all have started: a thread that starts waits for others now and then, and gets no processor back while more threads spin than there are processors.
+    await allSay("started");
+    const allSpin = allSay("spins");
+    workers.forEach((worker, index) => worker.postMessage(index % spins.length));
+    await allSpin;
     await new Promise(resolve => setTimeout(resolve, round * 5));
     const closed = workers.map(worker => new Promise<void>(resolve => worker.addEventListener("close", () => resolve())));
     for (const worker of workers) worker.terminate();
@@ -80,7 +86,8 @@ if (Bun.isMainThread) {
 } else {
   addEventListener("message", (event: MessageEvent<number>) => {
     postMessage("spins");
-    // A loop of four thousand million rounds ends within seconds, and a slow machine takes longer than that to start thirty-two Workers.
+    // A loop of four thousand million rounds ends within seconds, and on a slow machine it takes longer than that until the last of thirty-two Workers has a processor.
     for (;;) spins[event.data](-1);
   });
+  postMessage("started");
 }

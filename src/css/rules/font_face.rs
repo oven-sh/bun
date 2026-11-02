@@ -194,7 +194,7 @@ impl UnicodeRange {
         // This deviates from the spec in case there are CSS comments
         // between tokens in the middle of one <unicode-range>,
         // but oh well…
-        let concatenated_tokens = input.slice_from_cloned(after_u);
+        let concatenated_tokens = input.slice_from(after_u);
 
         let range = if let Some(range) = Self::parse_concatenated(concatenated_tokens) {
             range
@@ -408,7 +408,7 @@ pub enum FontFormat {
 
 impl FontFormat {
     fn parse(input: &mut css::Parser) -> css::Result<FontFormat> {
-        let s = input.expect_ident_or_string_cloned()?;
+        let s = input.expect_ident_or_string()?;
         Ok(crate::match_ignore_ascii_case! { s, {
             b"woff" => FontFormat::Woff,
             b"woff2" => FontFormat::Woff2,
@@ -685,7 +685,7 @@ const _: () = {
 
         fn parse_value(
             _this: &mut Self,
-            name: &[u8],
+            name: &'static [u8],
             input: &mut Parser,
         ) -> Result<Self::Declaration> {
             let state = input.state();

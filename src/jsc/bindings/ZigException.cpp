@@ -800,9 +800,7 @@ void exceptionFromString(ZigException& except, JSC::JSValue value, JSC::JSGlobal
             }
             if (line) {
                 if (line.isNumber()) {
-                    // The position is what the object says. It has no column, so a source map that is already parsed does not map it again.
-                    // It is not marked as remapped, even with an `originalLine`: Error.captureStackTrace() puts one on any object, and a
-                    // DOMException keeps a `line` from before the source map. The printer also reads the file that a remapped frame names.
+                    // Not marked as remapped, even with an `originalLine`: Error.captureStackTrace() puts one on any object.
                     except.stack.frames_ptr[0].position.line_zero_based = OrdinalNumber::fromOneBasedInt(JSC::toInt32(line.asNumber())).zeroBasedInt();
                     except.stack.frames_len = 1;
                 }

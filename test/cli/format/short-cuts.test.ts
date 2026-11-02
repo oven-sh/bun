@@ -1109,3 +1109,156 @@ c */ someMethodName(someParameterName: SomeParameterType, another: AnotherParame
     expect(different).toEqual([]);
   });
 });
+
+/** Formats `files` with `options`, with and without short cuts. Returns what is written and said each way. */
+async function bothWays(files: Record<string, string>, options: string[]) {
+  using dir = tempDir("fmt-short-cuts", {
+    short: files,
+    long: files,
+  });
+  const run = async (name: string, flags: string[]) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "fmt",
+        "--write",
+        "--no-config",
+        "--no-editorconfig",
+        "--log-level=warn",
+        ...options,
+        ...flags,
+        ".",
+      ],
+      env: bunEnv,
+      cwd: join(String(dir), name),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const written = Object.fromEntries(
+      Object.keys(files).map(file => [file, readFileSync(join(String(dir), name, file), "utf8")]),
+    );
+    return { written, stdout, stderr, exitCode };
+  };
+  const [short, long] = await Promise.all([run("short", []), run("long", ["--no-short-cuts"])]);
+  return { short, long };
+}
+
+describe("HTML", () => {
+  const line = (indentation: number, text: string) => " ".repeat(indentation) + text + "\n";
+  const words = "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore";
+  const attributes = 'class="one two three" id="an-identifier" data-something="a value with words" hidden';
+  // Children on lines of their own are read from the bytes.
+  const inputs: string[] = [
+    "<div>\n  <p>a</p>\n  <p>b</p>\n</div>\n",
+    // Another indentation, blank lines, tabs, white space at the ends of lines.
+    "<div>\n<p>a</p>\n      <p>b</p>\n\n\n\t<p>c</p>  \n\n</div>\n",
+    " a\n",
+    "\na\n<b></b>\n",
+    "a\n<b></b>\n",
+    "<b></b>\n<i>a</i> b\n",
+    "<b></b>\n<i>a</i>\n<u>b</u> c\n",
+    // Start tags.
+    `<div ${attributes}>\n  <p ${attributes}>a</p>\n  <img ${attributes}>\n  <img ${attributes}/>\n  <p ${attributes}></p>\n</div>\n`,
+    `<div\n  ${attributes.replaceAll(" ", "\n  ")}\n>\n  <br>\n  <br/>\n  <br />\n</div>\n`,
+    '<p A="b" CLASS="c  d" tabIndex="1" onClick="a()" onclick="a( )" [a b]="c" [a="b" a:b="c" :a="b" a:>x</p>\n',
+    '<div>\n  <p class=" a"></p>\n  <p class="a  b"></p>\n  <p class=""></p>\n  <p class=" "></p>\n  <p class="{{a}}  b"></p>\n</div>\n',
+    '<div>\n  <p style="a:b"></p>\n  <img srcset="a 1x,b 2x">\n  <p srcset="a 1x,b 2x"></p>\n  <iframe allow="a;b"></iframe>\n</div>\n',
+    '<div>\n  <p a=\'b\'></p>\n  <p a=b></p>\n  <p a = "b"></p>\n  <p a="b"c></p>\n  <p a="b\nc"></p>\n  <p a="\tb"></p>\n</div>\n',
+    '<div>\n  <p a="&amp;"></p>\n  <p a="&quot;"></p>\n  <p a="&apos;"></p>\n  <p a="b&c"></p>\n  <p a="é日本"></p>\n  <p a="{{ b \\" }}"></p>\n</div>\n',
+    // `/>` on a line of its own, unless the parent prints the end of its last child.
+    `<span>\n<img ${attributes}>\n<b></b></span>\n`,
+    `<span>\n<img ${attributes}>\n<b></b>\n</span>\n`,
+    // Texts.
+    `<div>\n  ${words} ${words}\n  <p>${words} ${words}</p>\n  <span>${words} ${words}</span>\n  <span> ${words} ${words}</span>\n  <span>${words} ${words} </span>\n</div>\n`,
+    `<div>\n  <span ${attributes}>${words}</span>\n  <span ${attributes}> ${words} </span>\n  <p ${attributes}>${words}</p>\n</div>\n`,
+    "<div>\n  a\n</div>\n",
+    `<div>\n  ${words}\n</div>\n`,
+    "<div>\n  a\n  <b></b>\n</div>\n",
+    "<p>\n  a\n  <p>b</p>\n",
+    "<ul>\n  <li>\n    a\n  <li>b\n</ul>\n",
+    "<div>\n  a &amp; b &nbsp; &#65; &#x41; &c d\n  <b></b>\n</div>\n",
+    "<div>\n  é 日本 語 👍 é   a\n  <b></b>\n</div>\n",
+    "<div>\n  {{ a }} {{ b \\\n  <b></b>\n</div>\n",
+    "<div>\n  {{ a }} &bogus;\n  <b></b>\n</div>\n",
+    "<div>\n  a < b\n  <a: b\n  <b></b>\n</div>\n",
+    "<![CDATA[a]]>\nb\n<c></c>\n",
+    "<div>\n  a\n  <![CDATA[b]]>\n</div>\n",
+    // What is in an element on one line.
+    '<div>\n  <p>a <b>b</b> c <i class="d">e</i>, <img src="f"> g</p>\n  <li><a href="#">a</a></li>\n  <p><b><i>a</i></b></p>\n  <p>a<br>b</p>\n  <a><div>b</div></a>\n  <a><div>b</div> c</a>\n</div>\n',
+    "<div>\n  <span> <b> a </b> </span>\n  <p> <b> a </b> </p>\n  <p><button> a </button></p>\n  <p><b> </b></p>\n  <p><select></select></p>\n</div>\n",
+    // Elements that are not like the others.
+    "<div>\n  <pre></pre>\n  <pre>\n</pre>\n  <textarea></textarea>\n  <textarea> </textarea>\n  <title>a</title>\n  <span> </span>\n  <div> </div>\n  <button> </button>\n</div>\n",
+    "<table>\n  <tr>a</tr>\n  <tr>\n    <td>a</td>\n  </tr>\n</table>\n<ul>a</ul>\n<select>a</select>\n",
+    '<svg>\n  <path d="M0 0"/>\n  <linearGradient id="a"></linearGradient>\n  <text>\n    <tspan>a</tspan>\n  </text>\n  <foreignObject>\n    <p>a</p>\n  </foreignObject>\n  <title>a</title>\n  <g>\n    <use xlink:href="#a"/>\n  </g>\n</svg>\n',
+    '<p>\n  <svg class="a"><use xlink:href="#b" /></svg>\n  <svg><g/><g/></svg>\n</p>\n',
+    "<DIV>\n  <p>a</p>\n</DIV>\n<div>\n  <P>a</P>\n</div>\n",
+    // Comments.
+    "<div>\n  <!-- a -->\n  <!--\n    b\n  -->\n  <!--\n    c\n-->\n</div>\n",
+    "<div>\n  <p></p>\n  <!--\n    c\n-->\n</div>\n",
+    "<div>\n  <!-- prettier-ignore -->\n  <p   a></p>\n  <!-- display: block -->\n  <span>a</span>\n  <!-- prettier-ignore-attribute -->\n  <p   a   b></p>\n  <!--[if IE]><p>a</p><![endif]-->\n</div>\n",
+    // The end of the parent.
+    "<span>\n  <b></b>\n</span>a\n",
+    "<span>\n  <b></b>\n</span\n>\n",
+    "<div>\n  <b></b>\n",
+    "<div>\n  <b></b>\n</p>\n",
+    "<div>\n  <p>a</p\n  >\n</div\n>\n",
+    "---\na: b\n---\n\n<div>\n  <p>a</p>\n</div>\n",
+    "﻿<div>\n  <p>a</p>\n</div>\n",
+    "<div>\r\n  <p>a</p>\r\n</div>\r\n",
+    "<div>\n  <p>a</p>\n</div>",
+    "<div>\n  \0<p>a</p>\n</div>\n",
+    // Deep.
+    Array.from({ length: 40 }, (_, depth) => line(depth, "<div>")).join("") +
+      line(40, "<p>a b c</p>") +
+      Array.from({ length: 40 }, (_, depth) => line(39 - depth, "</div>")).join(""),
+  ];
+  const files = Object.fromEntries(inputs.map((input, index) => [`${index}.html`, input]));
+
+  test.concurrent.each([
+    [],
+    ["--print-width=40"],
+    ["--print-width=20", "--tab-width=4"],
+    ["--print-width=1"],
+    ["--print-width=100000", "--tab-width=0"],
+    ["--tab-width=5000"],
+    ["--use-tabs"],
+    ["--html-whitespace-sensitivity=strict"],
+    ["--html-whitespace-sensitivity=ignore", "--print-width=60"],
+    ["--bracket-same-line"],
+    ["--single-attribute-per-line"],
+    ["--embedded-language-formatting=off"],
+    ["--end-of-line=crlf"],
+  ])("the same with and without short cuts: %j", async (...options: string[]) => {
+    const { short, long } = await bothWays(files, options);
+    expect(short).toEqual(long);
+  });
+
+  test("what is read from the bytes is formatted", async () => {
+    const { short } = await bothWays(
+      {
+        "a.html": `<div   class="a">\n<p>b   c</p>\n\n\n      <img src="d">\n<span  ${attributes}>${words}</span>\n  <!-- e -->\n f\n g\n</div  >\n`,
+      },
+      [],
+    );
+    expect(short.written["a.html"]).toMatchInlineSnapshot(`
+      "<div class="a">
+        <p>b c</p>
+
+        <img src="d" />
+        <span
+          class="one two three"
+          id="an-identifier"
+          data-something="a value with words"
+          hidden
+          >Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod
+          tempor incididunt ut labore</span
+        >
+        <!-- e -->
+        f g
+      </div>
+      "
+    `);
+    expect(short.exitCode).toBe(0);
+  });
+});

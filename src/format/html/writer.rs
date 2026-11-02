@@ -236,6 +236,20 @@ impl<'w, 'f> Writer<'w, 'f> {
         self.f.write_text(text, None);
     }
 
+    /// True if a line break comes first, given that the groups around the current place are broken.
+    pub(crate) fn is_at_start_of_line(&self) -> bool {
+        self.pending_line.is_some()
+            || matches!(self.empty_line, EmptyLine::Yes | EmptyLine::IfGroupBreaks)
+    }
+
+    /// Like [`Writer::text`], for whole lines between two forced line breaks, so nobody asks how wide they are.
+    pub(crate) fn lines(&mut self, text: &[u8]) {
+        self.flush();
+        self.empty_line = EmptyLine::No;
+        let width = (strings::contains_char(text, b'\n')).then_some(TextWidth::multiline(0));
+        self.f.write_text(text, width);
+    }
+
     /// A string that Prettier prints as is, so a line break in it is just a zero-width character.
     pub(crate) fn string(&mut self, text: &[u8]) {
         if text.is_empty() {

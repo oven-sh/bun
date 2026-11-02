@@ -22,6 +22,8 @@ pub(crate) struct Printer<'t, 'a, 'o, 'w, 'f> {
     pub(crate) ancestors: usize,
     pub(crate) stack_check: bun_core::StackCheck,
     pub(crate) is_nested_too_deeply: bool,
+    /// What has been written is of no use: the text has to be formatted without short cuts.
+    pub(crate) has_wrong_short_cut: bool,
     /// Cached `isVueSfcWithTypescriptScript`.
     pub(crate) has_typescript_script: Option<bool>,
     /// Cached `hasTsxScriptBlock` from oxfmt.
@@ -231,7 +233,29 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
             }
             // It has been merged into a text.
             Kind::Cdata => {}
+            Kind::Ready => self.print_ready(id),
         }
+    }
+
+    /// Writes the text of a run, which has been read for one indentation and to be printed between two line breaks.
+    fn print_ready(&mut self, id: Id) {
+        let node = &self.tree[id];
+        let parent_prints_end_of_last_child = || {
+            (self.tree.parent(id)).is_some_and(|parent| {
+                self.tags()
+                    .needs_to_borrow_last_child_closing_tag_end_marker(parent)
+            })
+        };
+        if self.out.indent_level() != Some(node.attrs.0)
+            || !self.out.is_at_start_of_line()
+            || (node.has(Flags::HAS_BROKEN_VOID_TAG) && parent_prints_end_of_last_child())
+        {
+            self.has_wrong_short_cut = true;
+            return;
+        }
+        // The children are on lines of their own, so everything around them is broken.
+        self.out.break_parent();
+        self.out.lines(node.name_span.of(&self.tree.printed));
     }
 
     pub(crate) fn with_ancestor<R>(&mut self, print: impl FnOnce(&mut Self) -> R) -> R {
@@ -475,7 +499,11 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
                     leading_line = Some(is_text_like(&tree[prev]));
                 }
             }
-            self.out.start_group();
+            // There is nothing in the groups around a run that could break.
+            let is_ready = tree[child].kind == Kind::Ready;
+            if !is_ready {
+                self.out.start_group();
+            }
             match leading_line {
                 Some(true) => self.write_between_line(prev_line),
                 Some(false) => {
@@ -497,13 +525,17 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
                 }
                 _ => None,
             };
-            self.out.start_group_with(false, prev_group_id);
+            if !is_ready {
+                self.out.start_group_with(false, prev_group_id);
+            }
             self.print_child(child);
             if is_trailing_line {
                 self.write_between_line(next_line);
             }
-            self.out.end_group();
-            self.out.end_group();
+            if !is_ready {
+                self.out.end_group();
+                self.out.end_group();
+            }
             if next.is_some_and(|next| is_text_like(&tree[next])) {
                 if forces_next_empty_line {
                     self.out.hardline();

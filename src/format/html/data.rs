@@ -67,28 +67,70 @@ const fn key(name: &[u8]) -> u128 {
         bytes.split_at_mut(name.len()).0.copy_from_slice(name);
         bytes[15] = name.len() as u8;
     }
-    u128::from_be_bytes(bytes)
+    u128::from_le_bytes(bytes)
 }
 
-/// True if the keys of `table` are strictly increasing and none is 0.
-const fn is_sorted<T>(table: &[(u128, T)]) -> bool {
-    let (mut at, mut previous) = (0, 0);
-    while at < table.len() {
-        if table[at].0 <= previous {
-            return false;
+/// The same without a copy of unknown length, which would be a call.
+#[inline]
+fn key_of(name: &[u8]) -> u128 {
+    let len = name.len();
+    let low = |bytes: &[u8]| -> u64 {
+        // Two reads that overlap, the second one moved to where its bytes belong.
+        if let (Some(first), Some(last)) = (bytes.first_chunk::<4>(), bytes.last_chunk::<4>()) {
+            let (first, last) = (u32::from_le_bytes(*first), u32::from_le_bytes(*last));
+            return u64::from(first) | u64::from(last) << (8 * (bytes.len() - 4));
         }
-        previous = table[at].0;
+        let mut packed = 0;
+        for (index, byte) in bytes.iter().enumerate() {
+            packed |= u64::from(*byte) << (8 * index);
+        }
+        packed
+    };
+    let packed = match name.split_first_chunk::<8>() {
+        Some(_) if len > 15 => return 0,
+        Some((first, rest)) => u128::from(u64::from_le_bytes(*first)) | u128::from(low(rest)) << 64,
+        None => u128::from(low(name)),
+    };
+    packed | (len as u128) << 120
+}
+
+const SLOTS: usize = 512;
+
+const fn slot_of(key: u128) -> usize {
+    let mixed = ((key as u64) ^ ((key >> 64) as u64)).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    (mixed >> 55) as usize
+}
+
+/// For each slot the index in `table`, plus one, of the entry whose key is looked for from there on. 0 ends a search.
+const fn index_of<T>(table: &[(u128, T)]) -> [u8; SLOTS] {
+    assert!(table.len() < 200);
+    let mut index = [0; SLOTS];
+    let mut at = 0;
+    while at < table.len() {
+        assert!(table[at].0 != 0);
+        let mut slot = slot_of(table[at].0);
+        while index[slot] != 0 {
+            assert!(table[index[slot] as usize - 1].0 != table[at].0);
+            slot = (slot + 1) % SLOTS;
+        }
+        index[slot] = at as u8 + 1;
         at += 1;
     }
-    true
+    index
 }
 
-/// Looks up `name` in `table`, which must be sorted.
-fn lookup<T: Copy>(table: &[(u128, T)], name: &[u8]) -> Option<T> {
-    let at = table
-        .binary_search_by_key(&key(name), |entry| entry.0)
-        .ok()?;
-    table.get(at).map(|entry| entry.1)
+/// Looks up `name` in `table`, whose index is `index`.
+#[inline]
+fn lookup<T: Copy>(table: &[(u128, T)], index: &[u8; SLOTS], name: &[u8]) -> Option<T> {
+    let key = key_of(name);
+    let mut slot = slot_of(key);
+    loop {
+        let entry = table.get((index[slot] as usize).checked_sub(1)?)?;
+        if entry.0 == key {
+            return Some(entry.1);
+        }
+        slot = (slot + 1) % SLOTS;
+    }
 }
 
 /// For an element that's in Angular's schema but doesn't have its own definition.
@@ -188,7 +230,7 @@ const RAW: TagDefinition = content(ContentType::RawText, false);
 const TITLE: TagDefinition = content(ContentType::EscapableRawText, false);
 const TEXTAREA: TagDefinition = content(ContentType::EscapableRawText, true);
 
-/// The entries of `getHtmlTagDefinition`, sorted by key.
+/// The entries of `getHtmlTagDefinition`.
 const TAG_DEFINITIONS: &[(u128, &TagDefinition)] = &[
     (key(b"[element]"), &KNOWN),
     (key(b"[htmlelement]"), &KNOWN),
@@ -324,11 +366,11 @@ const TAG_DEFINITIONS: &[(u128, &TagDefinition)] = &[
     (key(b"video"), &KNOWN),
     (key(b"wbr"), &VOID),
 ];
-const _: () = assert!(is_sorted(TAG_DEFINITIONS));
+static TAG_DEFINITION_INDEX: [u8; SLOTS] = index_of(TAG_DEFINITIONS);
 
 /// `getHtmlTagDefinition`
 pub(crate) fn tag_definition(name: &[u8]) -> &'static TagDefinition {
-    lookup(TAG_DEFINITIONS, name).unwrap_or(&DEFAULT_TAG_DEFINITION)
+    lookup(TAG_DEFINITIONS, &TAG_DEFINITION_INDEX, name).unwrap_or(&DEFAULT_TAG_DEFINITION)
 }
 
 /// `HTML_TAGS.has(name)`
@@ -350,7 +392,7 @@ pub(crate) fn is_attribute_of_element(element: &[u8], attribute: &[u8]) -> bool 
     })
 }
 
-/// `CSS_DISPLAY_TAGS`, sorted by key.
+/// `CSS_DISPLAY_TAGS`
 const CSS_DISPLAY_TAGS: &[(u128, Display)] = &[
     (key(b"address"), Display::Block),
     (key(b"area"), Display::None),
@@ -437,11 +479,11 @@ const CSS_DISPLAY_TAGS: &[(u128, Display)] = &[
     (key(b"video"), Display::InlineBlock),
     (key(b"xmp"), Display::Block),
 ];
-const _: () = assert!(is_sorted(CSS_DISPLAY_TAGS));
+static CSS_DISPLAY_INDEX: [u8; SLOTS] = index_of(CSS_DISPLAY_TAGS);
 
 /// `CSS_DISPLAY_TAGS[name]`
 pub(crate) fn css_display_of_tag(name: &[u8]) -> Option<Display> {
-    lookup(CSS_DISPLAY_TAGS, name)
+    lookup(CSS_DISPLAY_TAGS, &CSS_DISPLAY_INDEX, name)
 }
 
 /// True if `CSS_WHITE_SPACE_TAGS[name]` starts with `pre`.

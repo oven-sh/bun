@@ -28,6 +28,8 @@ pub(crate) enum Kind {
     AngularLetDeclaration,
     AngularIcuExpression,
     AngularIcuCase,
+    /// Children in a row whose printed text is known. See `runs.rs`.
+    Ready,
 }
 
 pub(crate) type Id = u32;
@@ -59,6 +61,10 @@ bitflags::bitflags! {
         const PRESERVES_CONTENT = 1 << 15;
         /// Set on an element in a Vue file that has `v-pre` or an ancestor with `v-pre`.
         const IS_IN_V_PRE = 1 << 16;
+        /// `Kind::Ready`: the last descendant of the last child is a text or a comment.
+        const ENDS_IN_TEXT = 1 << 17;
+        /// `Kind::Ready`: what is printed is right only if the parent does not print the end of its last child.
+        const HAS_BROKEN_VOID_TAG = 1 << 18;
     }
 }
 
@@ -79,9 +85,9 @@ pub(crate) struct Node<'a> {
     pub(crate) span: Span,
     pub(crate) start_span: Span,
     pub(crate) end_span: Span,
-    /// Declaration: the span of the value.
+    /// Declaration: the span of the value. `Kind::Ready`: a range of `Tree::printed`.
     pub(crate) name_span: Span,
-    /// A range of `Tree::attrs`.
+    /// A range of `Tree::attrs`. `Kind::Ready`: the number of `indent`s that it has been read for, and 0.
     pub(crate) attrs: (u32, u32),
     /// A range of `Tree::start_tag_comments`.
     pub(crate) start_tag_comments: (u32, u32),
@@ -253,6 +259,8 @@ pub(crate) struct Tree<'a> {
     pub(crate) nodes: Vec<Node<'a>>,
     pub(crate) attrs: Vec<Attribute<'a>>,
     pub(crate) start_tag_comments: Vec<StartTagComment<'a>>,
+    /// What is printed for the nodes of `Kind::Ready`.
+    pub(crate) printed: Vec<u8>,
     pub(crate) root: Id,
 }
 

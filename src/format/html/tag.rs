@@ -173,7 +173,7 @@ impl<'o> Tags<'_, '_, 'o> {
             self.tree[last].flags
                 & (Flags::IS_TRAILING_SPACE_SENSITIVE | Flags::HAS_TRAILING_SPACES)
                 == Flags::IS_TRAILING_SPACE_SENSITIVE
-                && !is_text_like(&self.tree[self.tree.last_descendant(last)])
+                && !self.tree.ends_in_text(last)
                 && !is_pre_like(&self.tree[id])
         })
     }
@@ -188,7 +188,7 @@ impl<'o> Tags<'_, '_, 'o> {
             && self.tree[id].flags
                 & (Flags::IS_TRAILING_SPACE_SENSITIVE | Flags::HAS_TRAILING_SPACES)
                 == Flags::IS_TRAILING_SPACE_SENSITIVE
-            && is_text_like(&self.tree[self.tree.last_descendant(id)])
+            && self.tree.ends_in_text(id)
     }
 
     /// ```html

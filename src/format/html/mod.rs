@@ -24,6 +24,7 @@ mod parse;
 mod parser;
 pub(crate) mod preprocess;
 mod printer;
+mod runs;
 mod tag;
 mod tailwind;
 mod utilities;
@@ -318,6 +319,8 @@ struct DocumentSummary {
     region: Option<Region>,
     /// The number of top-level nodes.
     top_level_count: usize,
+    /// The document is of no use: the text has to be formatted without short cuts.
+    has_wrong_short_cut: bool,
 }
 
 /// Writes the document for `text`, where every line break is `\n`. Returns the number of top-level nodes.
@@ -363,10 +366,15 @@ fn write_document_with_cursor(
 ) -> Result<DocumentSummary, FormatError> {
     let (content, front_matter_len) = without_front_matter(text);
     let mut tree = ast::Tree::default();
-    parse::parse(&content, front_matter_len, parser, &mut tree).map_err(|error| match error {
-        parse::ParseError::Syntax(_) => FormatError::SyntaxError,
-        parse::ParseError::NestedTooDeeply => FormatError::NestedTooDeeply,
-    })?;
+    // Only where lines start at a known column, and nobody asks where a node has gone.
+    let reads_runs = !is_embedded && indent_level == Some(0) && cursor_offset.is_none();
+    let runs = runs::Settings::new(parser, options).filter(|_| reads_runs);
+    parse::parse_with_runs(&content, front_matter_len, parser, runs, &mut tree).map_err(
+        |error| match error {
+            parse::ParseError::Syntax(_) => FormatError::SyntaxError,
+            parse::ParseError::NestedTooDeeply => FormatError::NestedTooDeeply,
+        },
+    )?;
     let cursor = cursor_offset.map_or(Cursor::Nowhere, |offset| cursor::locate(&tree, offset));
     let options = Options {
         parser,
@@ -389,6 +397,7 @@ fn write_document_with_cursor(
         ancestors: 0,
         stack_check: bun_core::StackCheck::init(),
         is_nested_too_deeply: false,
+        has_wrong_short_cut: false,
         has_typescript_script: None,
         has_tsx_script: None,
         cursor,
@@ -396,12 +405,14 @@ fn write_document_with_cursor(
     };
     printer.print_root(!is_embedded);
     let is_nested_too_deeply = printer.is_nested_too_deeply;
+    let has_wrong_short_cut = printer.has_wrong_short_cut;
     printer.out.finish();
     match is_nested_too_deeply {
         true => Err(FormatError::NestedTooDeeply),
         false => Ok(DocumentSummary {
             region: cursor.region(&tree),
             top_level_count: tree.children(tree.root).count(),
+            has_wrong_short_cut,
         }),
     }
 }
@@ -452,6 +463,7 @@ fn format_angular_expression(
             ancestors: 0,
             stack_check: bun_core::StackCheck::init(),
             is_nested_too_deeply: false,
+            has_wrong_short_cut: false,
             has_typescript_script: None,
             has_tsx_script: None,
             cursor: Cursor::Nowhere,
@@ -566,31 +578,40 @@ pub fn format_with(
         true => options.flavor,
         false => Flavor::Prettier,
     };
-    let options = FormatOptions {
+    let mut options = FormatOptions {
         line_ending: options.line_ending.resolve(original),
         is_in_html_file: path.ends_with(b".html") || path.ends_with(b".htm"),
         filepath: Some(options.filepath.clone().unwrap_or_else(|| path.into())),
         ..options_of_host(options, parser)
     };
     let path = Some(path).filter(|path| !path.is_empty());
-    let mut result = Ok(None);
-    let mut context =
-        JsFormatContext::without_file(options.clone(), &crate::js::comments::NO_COMMENTS);
-    context.parse_javascript = parse_javascript;
-    let root = crate::ir::run::write_with(context, &text, &mut scratch.document, |f| {
-        result = write_document_with_cursor(
-            &text,
-            parser,
-            path,
-            &options,
-            false,
-            Some(0),
-            cursor_offset,
-            script_flavor,
-            f,
-        )
-        .map(|summary| summary.region);
-    });
+    let (result, root) = loop {
+        let (mut result, mut has_wrong_short_cut) = (Ok(None), false);
+        let mut context =
+            JsFormatContext::without_file(options.clone(), &crate::js::comments::NO_COMMENTS);
+        context.parse_javascript = parse_javascript;
+        let root = crate::ir::run::write_with(context, &text, &mut scratch.document, |f| {
+            result = write_document_with_cursor(
+                &text,
+                parser,
+                path,
+                &options,
+                false,
+                Some(0),
+                cursor_offset,
+                script_flavor,
+                f,
+            )
+            .map(|summary| {
+                has_wrong_short_cut = summary.has_wrong_short_cut;
+                summary.region
+            });
+        });
+        if !has_wrong_short_cut || options.no_short_cuts {
+            break (result, root);
+        }
+        options.no_short_cuts = true;
+    };
     let printed_from = out.len();
     let region = result
         .and_then(|region| root.map(|root| (region, root)))

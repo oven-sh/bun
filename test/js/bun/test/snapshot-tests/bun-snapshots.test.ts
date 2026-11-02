@@ -55,6 +55,10 @@ test("property matchers leave out the private fields of a class", () => {
     }
   `,
   );
+  // the other properties of the instance are still compared
+  expect(() => {
+    expect({ k: new Counter(1) }).toMatchSnapshot({ k: Object.assign(new Counter(1), { name: "x" }) });
+  }).toThrow("to match properties from received object");
 });
 
 describe("toMatchSnapshot errors", () => {

@@ -2672,8 +2672,6 @@ bool Bun__deepMatch(
         }
     }
 
-    // Private names are left out, as in Bun__deepEquals: the fields of a class (#field) and the
-    // builtins that Array.prototype keeps under private names.
     PropertyNameArrayBuilder subsetProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     subsetObj->getPropertyNames(globalObject, subsetProps, DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(throwScope, false);

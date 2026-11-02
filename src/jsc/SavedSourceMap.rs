@@ -175,17 +175,7 @@ impl OwnSourceMap {
             };
             return SourceMap::parse_url(&bun_alloc::Arena::new(), &self.url, hint, policy).ok();
         }
-        if bun_url::whatwg::Parsed::from_utf8(&self.url).is_some() {
-            return None;
-        }
-        let map_url = bun_url::join(&module_url, &StringView::from_bytes(&self.url));
-        if !map_url.starts_with_ascii(b"file:") {
-            return None;
-        }
-        let map_path = bun_url::path_from_file_url(&map_url);
-        if map_path.is_dead() || map_path.is_empty() {
-            return None;
-        }
+        let (map_url, map_path) = file_of_url(&module_url, &self.url)?;
         let json = SourceMap::read_file_that_a_map_names(map_path.to_utf8().slice())?;
         // A relative `sources` entry is beside the map file.
         let resolve_source = |source: &[u8]| shown_source_name(&map_url, source);
@@ -291,6 +281,30 @@ impl ChainedSourceMap {
                 })
             })
     }
+}
+
+/// The file that `url` names beside the module at `module_url`, as its URL and its path. `None`: `url` has a scheme, as a `data:` or an `http:` URL has.
+fn file_of_url(
+    module_url: &bun_core::String,
+    url: &[u8],
+) -> Option<(bun_core::String, bun_core::String)> {
+    if bun_url::whatwg::Parsed::from_utf8(url).is_some() {
+        return None;
+    }
+    let map_url = bun_url::join(module_url, &StringView::from_bytes(url));
+    if !map_url.starts_with_ascii(b"file:") {
+        return None;
+    }
+    let map_path = bun_url::path_from_file_url(&map_url);
+    (!map_path.is_dead() && !map_path.is_empty()).then_some((map_url, map_path))
+}
+
+/// The path of the file that the `sourceMappingURL` comment at `url` in `source` names. `None`: the comment has a `data:` URL, or names no file.
+pub fn own_source_map_file(source: &bun_ast::Source, url: bun_ast::Range) -> Option<Box<[u8]>> {
+    let url = url_of_comment(source.contents(), url)?;
+    let module_url = bun_url::file_url_from_string(&StringView::from_bytes(source.path.text));
+    let (_, path) = file_of_url(&module_url, url)?;
+    Some(Box::from(path.to_utf8().slice()))
 }
 
 /// The name Node.js shows for `source`, a `sources` entry after its `sourceRoot`, in a map at the URL `base`: a path for what resolves to a file, and the URL for anything else.

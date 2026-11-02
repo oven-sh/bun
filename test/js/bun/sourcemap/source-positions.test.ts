@@ -1433,6 +1433,42 @@ describe.concurrent("a loaded file with its own source map", () => {
     });
   });
 
+  // A tool that builds `lib.js` writes the source map after it. `--hot` loads `lib.js` at once, and a stack read then
+  // has the map of the build before. The write of the map loads the module again.
+  test("--hot loads a module again when the file of its source map changes", async () => {
+    const changed = withMap("lib.js", "cjs", "second.ts", "exports.changed = true;\n");
+    using dir = tempDir("own-source-map-hot-map-file", {
+      ...withMap("lib.js", "cjs", "first.ts"),
+      "main.cjs": `
+        ${firstFrame}
+        const fs = require("node:fs");
+        const lib = require("./lib.js");
+        // --hot can load a file while it is empty, between the two steps of a write. It then loads it again.
+        if (lib.boom) {
+          const frame = firstFrame(lib.boom);
+          console.log(frame);
+          if (frame.includes("second.ts")) process.exit(0);
+          if (!lib.changed) fs.writeFileSync("./lib.js", ${JSON.stringify(changed["lib.js"])});
+          else fs.writeFileSync("./lib.js.map", ${JSON.stringify(changed["lib.js.map"])});
+        }
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), ["--hot", "--enable-source-maps", "main.cjs"]);
+    const frames = stdout.split("\n").filter(Boolean);
+    expect({
+      first: frames[0],
+      last: frames.at(-1),
+      // A debug build says when it loads again.
+      stderr: stderr.split("\n").filter(line => line && !line.startsWith("DEBUG: ")),
+      exitCode,
+    }).toEqual({
+      first: `at boom (<dir>/first.ts:${inOriginal.boom})`,
+      last: `at boom (<dir>/second.ts:${inOriginal.boom})`,
+      stderr: [],
+      exitCode: 0,
+    });
+  });
+
   // What node v26.13.0 reads: a `data:` URL that says `application/json` and ends its parameters with `base64`, and a
   // path, which is a URL relative to the module. It does not read a URL with any other scheme. The comment is a `//`
   // comment that starts with `//# sourceMappingURL=` or `//@ sourceMappingURL=`, and only white space is after the

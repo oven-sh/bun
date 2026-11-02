@@ -1038,14 +1038,23 @@ impl TranspilerJob {
                 None
             };
 
+            let own_source_map = crate::saved_source_map::own_source_map_binding(
+                &parse_result.source,
+                entry.metadata.source_mapping_url,
+                self.source_maps_support,
+            );
+            if let Some(iw) = import_watcher {
+                // SAFETY: BACKREF to the process-lifetime watcher, as for `add_file` above.
+                unsafe { iw.assume_mut() }.watch_own_source_map(
+                    &parse_result.source,
+                    entry.metadata.source_mapping_url,
+                    own_source_map,
+                );
+            }
             self.resolved_source = ResolvedSource {
                 source_code: core::mem::take(&mut entry.output_code),
                 is_commonjs_module: entry.metadata.module_type == CacheModuleType::Cjs,
-                own_source_map: crate::saved_source_map::own_source_map_binding(
-                    &parse_result.source,
-                    entry.metadata.source_mapping_url,
-                    self.source_maps_support,
-                ),
+                own_source_map,
                 module_info,
                 tag: this_tag,
                 ..Default::default()
@@ -1122,14 +1131,20 @@ impl TranspilerJob {
             );
         }
 
-        let printed_ast = PrintedAst::new(
-            &parse_result.ast,
-            crate::saved_source_map::own_source_map_binding(
+        let own_source_map = crate::saved_source_map::own_source_map_binding(
+            &parse_result.source,
+            parse_result.ast.source_mapping_url,
+            self.source_maps_support,
+        );
+        if let Some(iw) = import_watcher {
+            // SAFETY: BACKREF to the process-lifetime watcher, as for `add_file` above.
+            unsafe { iw.assume_mut() }.watch_own_source_map(
                 &parse_result.source,
                 parse_result.ast.source_mapping_url,
-                self.source_maps_support,
-            ),
-        );
+                own_source_map,
+            );
+        }
+        let printed_ast = PrintedAst::new(&parse_result.ast, own_source_map);
         let is_commonjs_module = printed_ast.is_commonjs_module;
         let mut module_info: Option<Box<analyze_transpiled_module::ModuleInfo>> =
             if use_isolation_source_provider_cache

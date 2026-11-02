@@ -3022,6 +3022,12 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                         entry.metadata.source_mapping_url,
                         source_maps_support,
                     );
+                    watch_own_source_map(
+                        jsc_vm,
+                        source,
+                        entry.metadata.source_mapping_url,
+                        own_source_map,
+                    );
                     let _ = source_mappings.put_mappings(
                         source,
                         bun_core::MutableString {
@@ -3193,15 +3199,20 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     return Err(crate::Error::AsyncModule);
                 }
 
-                let printed_ast = bun_jsc::resolved_source::PrintedAst::new(
-                    &parse_result.ast,
-                    bun_jsc::saved_source_map::own_source_map_binding(
-                        &parse_result.source,
-                        parse_result.ast.source_mapping_url,
-                        // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM. The printer's handler reads the same switch below.
-                        unsafe { (*jsc_vm).source_mappings.source_maps_support() },
-                    ),
+                let own_source_map = bun_jsc::saved_source_map::own_source_map_binding(
+                    &parse_result.source,
+                    parse_result.ast.source_mapping_url,
+                    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM. The printer's handler reads the same switch below.
+                    unsafe { (*jsc_vm).source_mappings.source_maps_support() },
                 );
+                watch_own_source_map(
+                    jsc_vm,
+                    &parse_result.source,
+                    parse_result.ast.source_mapping_url,
+                    own_source_map,
+                );
+                let printed_ast =
+                    bun_jsc::resolved_source::PrintedAst::new(&parse_result.ast, own_source_map);
                 let is_commonjs_module = printed_ast.is_commonjs_module;
                 // Collect the ESM record while printing, for the isolation
                 // source-provider cache (same shape as `RuntimeTranspilerStore`).
@@ -3682,6 +3693,22 @@ fn maybe_watch_file(
     ) {
         *should_close_input_file_fd = false;
     }
+}
+
+/// Gives the file of a module's own source map to the watcher of `--hot` and `--watch`, see `ImportWatcher::watch_own_source_map`.
+fn watch_own_source_map(
+    jsc_vm: *mut VirtualMachine,
+    source: &bun_ast::Source,
+    url: bun_ast::Range,
+    own_source_map: bun_jsc::resolved_source::OwnSourceMapBinding,
+) {
+    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+    if !unsafe { &*jsc_vm }.is_watcher_enabled() {
+        return;
+    }
+    // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set when `is_watcher_enabled()`; cast recovers the concrete type.
+    let watcher = unsafe { &mut *(*jsc_vm).bun_watcher.cast::<bun_jsc::ImportWatcher>() };
+    watcher.watch_own_source_map(source, url, own_source_map);
 }
 
 /// Like `maybe_watch_file`, for a file the transpiler didn't open itself.

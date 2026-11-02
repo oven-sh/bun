@@ -54,6 +54,26 @@ impl ImportWatcher {
             .items::<"package_json", Option<&'static bun_watcher::PackageJSON>>()[index as usize]
     }
 
+    /// Watches the file of a module's own source map. The map is read once for each load of the module, so a change of that file has to load the module again.
+    pub fn watch_own_source_map(
+        &mut self,
+        source: &bun_ast::Source,
+        url: bun_ast::Range,
+        own_source_map: crate::resolved_source::OwnSourceMapBinding,
+    ) {
+        if own_source_map != crate::resolved_source::OwnSourceMapBinding::Kept
+            || matches!(self, ImportWatcher::None)
+        {
+            return;
+        }
+        let Some(path) = crate::saved_source_map::own_source_map_file(source, url) else {
+            return;
+        };
+        if bun_paths::is_absolute(&path) && !bun_core::strings::contains(&path, b"node_modules") {
+            self.add_file_by_path_slow(&path);
+        }
+    }
+
     #[inline]
     pub fn add_file_by_path_slow(&mut self, file_path: &[u8]) -> bool {
         match self {

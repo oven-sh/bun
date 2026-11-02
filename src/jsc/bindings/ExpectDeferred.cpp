@@ -6,7 +6,9 @@
 #include "headers-handwritten.h"
 #include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/Exception.h>
+#include <JavaScriptCore/GlobalObjectMethodTable.h>
 #include <JavaScriptCore/JSPromise.h>
+#include <JavaScriptCore/JSPromiseReaction.h>
 #include <JavaScriptCore/StackFrame.h>
 
 using namespace JSC;
@@ -58,6 +60,101 @@ extern "C" void ExpectDeferred__setCauseIfNone(JSGlobalObject* globalObject, Enc
 extern "C" bool ExpectDeferred__isHandled(EncodedJSValue promise)
 {
     return uncheckedDowncast<JSPromise>(JSValue::decode(promise))->isHandled();
+}
+
+// The promise that a reaction rejects with the reason it got, if the reaction has no function for a rejection.
+static JSPromise* passesRejectionOnTo(InternalMicrotask task, JSValue cell, JSValue context)
+{
+    switch (task) {
+    // `.finally(f)`. The context has the promise that it returned.
+    case InternalMicrotask::PromiseFinallyReactionJob:
+        if (auto* finally = dynamicDowncast<JSSlimPromiseReaction>(context))
+            return dynamicDowncast<JSPromise>(finally->promise());
+        return nullptr;
+    // `.then()` with no function, a promise that was resolved with this one, and `.finally(() => thisOne)`.
+    case InternalMicrotask::PromiseResolveWithoutHandlerJob:
+    case InternalMicrotask::PromiseFinallyAwaitJob:
+        return dynamicDowncast<JSPromise>(cell);
+    default:
+        return nullptr;
+    }
+}
+
+// Whether nothing can handle a rejection of `promise`: each reaction on it only passes the rejection on, to a promise
+// for which the same is true. `end` gets the promises with no reaction, which is where the rejection ends up.
+template<typename Functor>
+static bool onlyPassesRejectionOn(JSPromise* promise, const Functor& end, unsigned depth = 0)
+{
+    if (promise->status() != JSPromise::Status::Pending || depth > 32)
+        return false;
+    JSPromise* next = nullptr;
+    switch (promise->inlineReactionKind()) {
+    case JSPromise::InlineReactionKind::FulfillHandler:
+        return onlyPassesRejectionOn(promise->inlineHandlerResultPromise(), end, depth + 1);
+    case JSPromise::InlineReactionKind::RejectHandler:
+        return false;
+    case JSPromise::InlineReactionKind::InternalMicrotask:
+        promise->forEachPendingReaction([&](InternalMicrotask task, JSValue cell, JSValue context) {
+            next = passesRejectionOnTo(task, cell, context);
+            return false;
+        });
+        return next && onlyPassesRejectionOn(next, end, depth + 1);
+    case JSPromise::InlineReactionKind::None:
+        break;
+    }
+    auto* reaction = uncheckedDowncast<JSPromiseReaction>(promise->payloadCell());
+    if (!reaction) {
+        // Marked as handled with no reaction: whoever marked it takes the rejection, such as a matcher that got this promise.
+        if (promise->isHandled())
+            return false;
+        end(promise);
+        return true;
+    }
+    for (; reaction; reaction = reaction->next()) {
+        // As JSPromise::triggerPromiseReactions() reads them for a rejection.
+        if (auto* full = dynamicDowncast<JSFullPromiseReaction>(reaction))
+            next = full->onRejected().isUndefined() ? dynamicDowncast<JSPromise>(full->promise()) : nullptr;
+        else if (auto* slim = uncheckedDowncast<JSSlimPromiseReaction>(reaction); slim->internalMicrotask() == InternalMicrotask::None)
+            next = slim->isFulfillHandler() ? dynamicDowncast<JSPromise>(slim->promise()) : nullptr;
+        else
+            next = passesRejectionOnTo(slim->internalMicrotask(), slim->promiseSlotIsAsyncContext() ? jsUndefined() : slim->promise(), slim->handlerOrContext());
+        if (!next || !onlyPassesRejectionOn(next, end, depth + 1))
+            return false;
+    }
+    return true;
+}
+
+extern "C" bool ExpectDeferred__onlyPassesRejectionOn(EncodedJSValue promise)
+{
+    return onlyPassesRejectionOn(uncheckedDowncast<JSPromise>(JSValue::decode(promise)), [](JSPromise*) {});
+}
+
+// For a promise that only passes its rejection on: `onCopy(value, end)` runs when `end`, a promise that the rejection
+// ends up at, settles. This reaction does not count as a handler. A rejection of `end` stays unhandled until a reaction
+// of user code or ExpectDeferred__markHandled() takes it.
+extern "C" void ExpectDeferred__watchCopies(JSGlobalObject* globalObject, EncodedJSValue promise, EncodedJSValue onCopy)
+{
+    auto& vm = getVM(globalObject);
+    MarkedArgumentBuffer ends;
+    onlyPassesRejectionOn(uncheckedDowncast<JSPromise>(JSValue::decode(promise)), [&](JSPromise* end) { ends.append(end); });
+    RELEASE_ASSERT(!ends.hasOverflowed());
+    for (size_t i = 0; i < ends.size(); i++) {
+        auto* end = uncheckedDowncast<JSPromise>(ends.at(i));
+        // `onCopy` for a fulfilment too: without a function, JSC passes the value on to a promise, and there is none.
+        end->performPromiseThenWithContext(vm, globalObject, JSValue::decode(onCopy), JSValue::decode(onCopy), jsUndefined(), end);
+        end->setFlags(end->flags() & ~JSPromise::isHandledFlag);
+    }
+}
+
+// What a reaction that user code adds to a rejected promise does to it.
+extern "C" void ExpectDeferred__markHandled(EncodedJSValue encodedPromise)
+{
+    auto* promise = uncheckedDowncast<JSPromise>(JSValue::decode(encodedPromise));
+    if (promise->status() != JSPromise::Status::Rejected || promise->isHandled())
+        return;
+    auto* globalObject = promise->realm();
+    globalObject->globalObjectMethodTable()->promiseRejectionTracker(globalObject, promise, JSPromiseRejectionOperation::Handle);
+    promise->markAsHandled();
 }
 
 // A JSC::Exception, because unlike an Error it keeps its stack frames' code alive.

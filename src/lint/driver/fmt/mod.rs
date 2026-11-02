@@ -1085,8 +1085,7 @@ struct Run<'r> {
 
 /// Classifies the file at `path`, in `scope`, the way the tool this run emulates would.
 fn language_of(configs: &Configs, scope: &config::Scope, path: &[u8]) -> Language {
-    // The `parser` option decides. A parser that Prettier doesn't have belongs to a plugin, whatever the file is named,
-    // so `hooks/pre-commit` with `parser: "sh"` goes where `a.sh` goes.
+    // The `parser` option decides. A parser that Prettier doesn't have belongs to a plugin, whatever the file is named.
     match configs.parser_for(scope, path) {
         Some(parser) if &*parser == b"svelte" && !configs.formats_svelte(scope, Some(path)) => {
             Language::Other

@@ -1731,8 +1731,7 @@ impl<'c> Configs<'c> {
         (self.config_of(scope).ok().flatten()).map(|config| &config.path[..])
     }
 
-    /// The options of Prettier's that the `[[fmt.overrides]]` set for the file at `path`, in the order they apply.
-    /// They're flags to Prettier, like `[fmt]` and the command line, so they take the same precedence.
+    /// The `[[fmt.overrides]]` options for the file at `path` that Prettier has, in the order they apply.
     pub(crate) fn bunfig_overrides_for(&self, path: &[u8]) -> Vec<(&[u8], &[u8])> {
         if self.overrides.is_empty() {
             return Vec::new();

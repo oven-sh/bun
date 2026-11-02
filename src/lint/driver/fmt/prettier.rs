@@ -27,8 +27,7 @@ pub(crate) struct Prettier<'e> {
     cwd: Vec<u8>,
     /// The settings shared by all files, in the shape that `formatWithPrettier` in `worker/prettier.js` reads.
     run: Vec<(Vec<u8>, Json)>,
-    /// `flags` of the same: the options that the command line and `[fmt]` set. A file's `[[fmt.overrides]]` come after
-    /// them.
+    /// `flags` of the same: what the command line and `[fmt]` set. A file's `[[fmt.overrides]]` are added per file.
     flags: Vec<(Vec<u8>, Json)>,
     written_files: fs::WrittenFiles,
 }
@@ -83,8 +82,8 @@ impl<'e> Prettier<'e> {
         self.host.for_each(count, is_heavy, work);
     }
 
-    /// Formats the file at `path`. `overrides` are its `[[fmt.overrides]]` options. With `writes`, the file is written
-    /// if it changes. Returns whether it changed. `Err` is the message to print.
+    /// Formats the file at `path` with its `overrides`. With `writes`, the file is written if it changes. Returns
+    /// whether it changed. `Err` is the message to print.
     pub(crate) fn format_file(
         &self,
         (path, display_name): (&[u8], &[u8]),

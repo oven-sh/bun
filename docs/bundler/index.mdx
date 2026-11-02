@@ -1620,7 +1620,7 @@ interface BuildMetafile {
         [path: string]: { bytesInOutput: number };
       };
       imports: Array<{ path: string; kind: ImportKind }>;
-      exports: string[];
+      exports: string[]; // Exported names of a JS output, empty for a CSS or HTML output
       entryPoint?: string;
       cssBundle?: string; // Associated CSS file for JS entry points
     };

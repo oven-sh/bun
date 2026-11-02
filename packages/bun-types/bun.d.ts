@@ -4809,7 +4809,7 @@ declare module "bun" {
           /** Type of import */
           kind: ImportKind;
         }>;
-        /** List of exported names from this output */
+        /** List of exported names from this output. Empty for a CSS or HTML output. */
         exports: string[];
         /** Entrypoint path, if this output is an entrypoint */
         entryPoint?: string;

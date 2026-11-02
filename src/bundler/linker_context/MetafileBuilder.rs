@@ -35,7 +35,7 @@ use std::io::Write;
 use bstr::BStr;
 use bun_collections::VecExt;
 use bun_collections::index_sort;
-use bun_collections::{DynamicBitSet, StringHashMap};
+use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
 use bun_core::fmt as bfmt;
 use bun_core::string_joiner::StringJoiner;
 use bun_core::strings;
@@ -46,11 +46,41 @@ use bun_ast::ImportRecordFlags;
 
 use crate::chunk::{Content as ChunkContent, ReferencePathStyle, SourceMapShiftTracking};
 use crate::options::Loader;
-use crate::{Chunk, Index, LinkerContext};
+use crate::{Chunk, Index, IndexInt, LinkerContext};
 
 #[inline]
 fn fmt_size(bytes: u64) -> bfmt::SizeFormatter {
     bfmt::size(bytes as usize, Default::default())
+}
+
+/// The inputs of the output of `chunk`, each with its "bytesInOutput", in the order of the record.
+fn chunk_inputs(chunk: &Chunk) -> crate::Result<Vec<(IndexInt, usize)>> {
+    match &chunk.content {
+        ChunkContent::Javascript(_) => {
+            let counted = chunk.files_with_parts_in_chunk.iter();
+            let load = |bytes: &core::sync::atomic::AtomicUsize| {
+                // The codegen workers that add to the counters are joined before any output is emitted.
+                bytes.load(core::sync::atomic::Ordering::Relaxed)
+            };
+            Ok(counted.map(|(&file, bytes)| (file, load(bytes))).collect())
+        }
+        ChunkContent::Css(_) => {
+            // One input for each stylesheet, also when the chunk prints it under two import conditions.
+            let mut printed: ArrayHashMap<IndexInt, usize> = ArrayHashMap::new();
+            for result in chunk.compile_results_for_chunk.iter() {
+                // A layer rule and an external import have no source.
+                if Index::init(result.source_index()).is_valid() {
+                    *printed.get_or_put(result.source_index())?.value_ptr += result.code().len();
+                }
+            }
+            Ok(printed
+                .iter()
+                .map(|(&file, &bytes)| (file, bytes))
+                .collect())
+        }
+        // An HTML output lists no inputs. esbuild, which defines the format, has no HTML output.
+        ChunkContent::Html => Ok(Vec::new()),
+    }
 }
 
 /// Generates the JSON fragment for a single output chunk.
@@ -59,6 +89,7 @@ fn generate_chunk_json(
     c: &LinkerContext,
     chunk: &Chunk,
     chunks: &[Chunk],
+    inputs: &[(IndexInt, usize)],
 ) -> crate::Result<Box<[u8]>> {
     let mut json: Vec<u8> = Vec::new();
     // errdefer json.deinit() — handled by Drop on early return
@@ -72,18 +103,10 @@ fn generate_chunk_json(
 
     write!(json, "\n      \"bytes\": {}", chunk.final_output_size)?;
 
-    // Write inputs for this output (bytesInOutput is pre-computed during chunk generation)
+    // Write inputs for this output
     json.extend_from_slice(b",\n      \"inputs\": {");
     let mut first_chunk_input = true;
-    let chunk_keys = chunk.files_with_parts_in_chunk.keys();
-    let chunk_values = chunk.files_with_parts_in_chunk.values();
-    for (file_source_index, bytes_in_output) in chunk_keys.iter().zip(chunk_values.iter()) {
-        let file_source_index = *file_source_index;
-        // Counters are `AtomicUsize` because they're populated by the parallel
-        // codegen workers; metafile emission runs strictly after the
-        // `group.wait()` join in `generate_chunks_in_parallel`, so a relaxed
-        // load observes the final value.
-        let bytes_in_output = bytes_in_output.load(core::sync::atomic::Ordering::Relaxed);
+    for &(file_source_index, bytes_in_output) in inputs {
         if file_source_index as usize >= sources.len() {
             continue;
         }
@@ -141,7 +164,12 @@ fn generate_chunk_json(
     // Write exports and entry point if applicable
     // Use sorted_and_filtered_export_aliases for deterministic output and to exclude internal exports
     json.extend_from_slice(b",\n      \"exports\": [");
-    if chunk.entry_point.is_entry_point() {
+    let has_exports = match &chunk.content {
+        ChunkContent::Javascript(_) => chunk.entry_point.is_entry_point(),
+        // A CSS or HTML file exports nothing. The exports of the entry point of its chunk are for JS.
+        ChunkContent::Css(_) | ChunkContent::Html => false,
+    };
+    if has_exports {
         let entry_source_index = chunk.entry_point.source_index();
         // Use sources.len as the authoritative bounds check
         if (entry_source_index as usize) < sources.len() {
@@ -218,12 +246,15 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
     let mut seen_sources = DynamicBitSet::init_empty(sources.len())?;
 
     // Mark all files that appear in chunks
+    let mut inputs_of_chunk: Vec<Vec<(IndexInt, usize)>> = Vec::with_capacity(chunks.len());
     for chunk in chunks.iter() {
-        for &source_index in chunk.files_with_parts_in_chunk.keys() {
+        let inputs = chunk_inputs(chunk)?;
+        for &(source_index, _) in &inputs {
             if (source_index as usize) < sources.len() {
                 seen_sources.set(source_index as usize);
             }
         }
+        inputs_of_chunk.push(inputs);
     }
     // ...and live files that contribute no code to any chunk (every part
     // tree-shaken), which esbuild lists too.
@@ -424,7 +455,7 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
     j.push_static(b"\n  },\n  \"outputs\": {");
 
     let mut first_output = true;
-    for chunk in chunks.iter() {
+    for (chunk, inputs) in chunks.iter().zip(&inputs_of_chunk) {
         if chunk.final_rel_path.is_empty() {
             continue;
         }
@@ -435,7 +466,7 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
         first_output = false;
 
         j.push_static(b"\n    ");
-        j.push_owned(generate_chunk_json(c, chunk, chunks)?);
+        j.push_owned(generate_chunk_json(c, chunk, chunks, inputs)?);
     }
 
     j.push_static(b"\n  }\n}\n");

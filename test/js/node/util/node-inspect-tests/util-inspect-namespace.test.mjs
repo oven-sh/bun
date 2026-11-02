@@ -11,6 +11,7 @@ import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { format, inspect } from "node:util";
 import { SourceTextModule } from "node:vm";
+import { thrown as thrownForUninitializedToString } from "./namespace-with-uninitialized-toString-fixture.mjs";
 
 const throwsReferenceError = `{ [Symbol.for("nodejs.util.inspect.custom")]() { throw new ReferenceError("from the custom inspect function"); } }`;
 const importSource = source => import("data:text/javascript," + encodeURIComponent(source));
@@ -38,6 +39,16 @@ test("format() with %s calls an export named toString, and prints a namespace ob
   assert.strictEqual(format("%s", withToString), "from the export");
   const without = await importSource(`export const y = 1;`);
   assert.match(format("%s", without), /\{ y: 1 \}$/);
+});
+
+test("format() with %s throws the error of a toString that it cannot read", () => {
+  const value = {
+    get toString() {
+      throw new Error("from the toString getter");
+    },
+  };
+  assert.throws(() => format("%s", value), { name: "Error", message: "from the toString getter" });
+  assert.strictEqual(thrownForUninitializedToString?.name, "ReferenceError");
 });
 
 test("a constructor getter that throws does not make inspect throw", () => {

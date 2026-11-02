@@ -625,7 +625,8 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
             ...(cfg.release ? [] : ["SHELL32.dll", "dbghelp.dll"]),
           ],
           exact: true,
-          allowed: sanitizerLibs,
+          // A failed assertion prints a stack trace.
+          allowed: [...sanitizerLibs, ...(cfg.assertions ? ["SHELL32.dll", "dbghelp.dll"] : [])],
         },
         minOSVersion: "6.0",
         forbiddenImports: forbiddenImports(cfg),

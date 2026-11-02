@@ -8,6 +8,7 @@ use super::cli::{Options, Precedence};
 use super::config::is_prettier_option;
 use crate::run::Environment;
 use crate::{fs, git, paths};
+use bun_core::strings;
 use bun_lint::js_plugin::{Host, Unformatted};
 use bun_lint::linter::write_json;
 use bun_lint::options::Json;
@@ -82,20 +83,26 @@ impl<'e> Prettier<'e> {
         self.host.for_each(count, is_heavy, work);
     }
 
-    /// Formats the file at `path` with its `overrides`. Writes it if `writes` and it changed. `Err` is the message.
+    /// Formats the file at `path` with its `overrides`. Writes it if `writes` and it changed.
     pub(crate) fn format_file(
         &self,
         (path, display_name): (&[u8], &[u8]),
         (config, overrides): (Option<&[u8]>, &[(&[u8], &[u8])]),
         writes: bool,
         only: Option<&git::Files>,
-    ) -> Result<bool, Vec<u8>> {
-        let fail =
-            |what: &[u8], why: &[u8]| [what, b" file \"", display_name, b"\":\n", why].concat();
+    ) -> Result<bool, Problem> {
+        let fail = |what: &[u8], why: &[u8]| {
+            Problem::Failed([what, b" file \"", display_name, b"\":\n", why].concat())
+        };
         let text = git::read(only, path)
             .map_err(|error| fail(b"Unable to read", &fs::describe(&error)))?;
-        let formatted = (self.format((Some(path), overrides), config, &text))
-            .map_err(|why| [display_name, b": ", &describe(why)].concat())?;
+        let formatted =
+            (self.format((Some(path), overrides), config, &text)).map_err(
+                |why| match config_error(&why) {
+                    Some(message) => Problem::Stops(message.to_vec()),
+                    None => Problem::Failed([display_name, b": ", &describe(why)].concat()),
+                },
+            )?;
         if formatted == text {
             return Ok(false);
         }
@@ -140,6 +147,25 @@ fn flag_value(text: &[u8]) -> Json {
         Some(value @ (Json::Bool(_) | Json::Number(_))) => value,
         _ => Json::String(text.to_vec()),
     }
+}
+
+/// Why a file wasn't formatted.
+pub(crate) enum Problem {
+    /// A message to print. The run goes on.
+    Failed(Vec<u8>),
+    /// Prettier's `handleError` stops at this error, with only this message, and exits with 1.
+    Stops(Vec<u8>),
+}
+
+/// The message of a `ConfigError` that Prettier threw, such as for a parser that no plugin provides, without the
+/// stack.
+pub(crate) fn config_error(why: &Unformatted) -> Option<&[u8]> {
+    let Unformatted::Thrown(why) = why else {
+        return None;
+    };
+    let message = why.strip_prefix(b"ConfigError: ")?;
+    let end = strings::index_of(message, b"\n    at ").unwrap_or(message.len());
+    Some(&message[..end])
 }
 
 /// The message to print after the file name.

@@ -1066,6 +1066,8 @@ enum Done {
     Deferred,
     /// A message to print. The exit code is 2.
     Failed(Vec<u8>),
+    /// A message to print, and the run stops. The exit code is 1.
+    Stopped(Vec<u8>),
     /// Also exits with 2.
     NotFormatted(Failure),
 }
@@ -1504,12 +1506,8 @@ impl Run<'_> {
                 self.error(&message);
                 self.out.exit_code = 0;
             }
-            // For a `ConfigError`, such as a parser that no plugin provides, Prettier's `handleError` prints only
-            // `error.message`.
-            Err(Unformatted::Thrown(why)) if why.starts_with(b"ConfigError: ") => {
-                let message = &why[b"ConfigError: ".len()..];
-                let end = strings::index_of(message, b"\n    at ").unwrap_or(message.len());
-                self.error(&message[..end]);
+            Err(ref why) if let Some(message) = prettier::config_error(why) => {
+                self.error(message);
                 self.out.exit_code = 1;
             }
             Err(why) => self.error(&[display_name, b": ", &prettier::describe(why)].concat()),
@@ -1924,7 +1922,8 @@ impl Run<'_> {
                     Ok(true) if !is_read_only && !writes => Done::PartlyStaged,
                     Ok(true) => Done::Different(began.elapsed()),
                     Ok(false) => Done::Unchanged,
-                    Err(error) => Done::Failed(error),
+                    Err(prettier::Problem::Failed(error)) => Done::Failed(error),
+                    Err(prettier::Problem::Stops(error)) => Done::Stopped(error),
                 });
             });
         }
@@ -1986,6 +1985,11 @@ impl Run<'_> {
                     self.report(&display_name, &failure);
                 }
                 // Prettier stops at this error.
+                Some(Done::Stopped(error)) => {
+                    self.error(&error);
+                    self.out.exit_code = 1;
+                    return self.out;
+                }
                 Some(Done::Failed(error)) if config::is_invalid_value(&error) => {
                     self.error(&error);
                     self.out.exit_code = 1;

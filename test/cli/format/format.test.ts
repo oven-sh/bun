@@ -4442,7 +4442,7 @@ exports.format = async (text, options) => {
       timeout,
     );
 
-    // Same as Prettier with the plugin: the file goes to it, and it reports the parser.
+    // Same as Prettier with the plugin: the file goes to it, and Prettier's `handleError` stops at a `ConfigError`.
     test(
       "a parser that no plugin has, while the config lists a plugin: Prettier's error for the file",
       async () => {
@@ -4464,8 +4464,10 @@ exports.format = async (text, { parser }) => {
         };
         const result = await format(project, ["b.foo"], { reads: ["b.foo"] });
         expect(result.files["b.foo"]).toBe("b\n");
-        expect(result.stderr).toContain(`error: b.foo: ConfigError: Couldn't resolve parser "nonsense".`);
-        expect(result.exitCode).toBe(2);
+        expect(result.stderr).toBe(`error: Couldn't resolve parser "nonsense".`);
+        expect(result.exitCode).toBe(1);
+        const piped = await format(project, ["--stdin-filepath", "c.foo"], { stdin: "c\n" });
+        expect(piped).toMatchObject({ raw: "", stderr: `error: Couldn't resolve parser "nonsense".`, exitCode: 1 });
       },
       timeout,
     );
@@ -4513,6 +4515,7 @@ exports.format = async (text, { parser }) => {
         ).toEqual([{ ...options, filepath: expect.stringMatching(/[\\/]a\.astro$/) }]);
         expect(result.exitCode).toBe(0);
       },
+      timeout,
     );
 
     test(

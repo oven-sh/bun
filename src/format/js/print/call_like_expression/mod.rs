@@ -83,7 +83,11 @@ pub(crate) fn is_printed_as_member_chain<'a>(
     is_link_of_member_chain(call.callee(), f) && !keeps_arguments_on_one_line(e, call, f)
 }
 
-fn keeps_arguments_on_one_line<'a>(e: Expr<'a>, call: Call<'a>, f: &Formatter<'a>) -> bool {
+pub(crate) fn keeps_arguments_on_one_line<'a>(
+    e: Expr<'a>,
+    call: Call<'a>,
+    f: &Formatter<'a>,
+) -> bool {
     // Each check below requires one of a few callee names, or a string or template as the first argument.
     let Some(first) = call.args().first() else {
         return false;

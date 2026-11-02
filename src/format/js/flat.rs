@@ -1,35 +1,39 @@
-//! The short cut for what is printed on one line.
+//! The short cut for what starts a line: statements, members of classes, properties of broken objects.
 //!
-//! Most statements, class members and properties fit on their line. For those, everything that the printers in `print/`
-//! do (groups, indentation, possible line breaks, several layouts to choose from) and everything that the printer of
-//! `ir/` does with it comes to the same as writing the tokens one after the other. [`Line`] does that, straight from the
-//! tree to one text.
+//! Most of them fit on their line. For those, everything that the printers in `print/` do (groups, indentation, possible
+//! line breaks, several layouts to choose from) and everything that the printer of `ir/` does with it comes to the same
+//! as writing the tokens one after the other. [`Line`] does that, straight from the tree to one text.
 //!
 //! What makes it right:
 //!
-//! 1. The text starts a line of the output and a forced line break follows it: a statement of a list, a member of a
-//!    class, the head of a statement up to its `{`.
+//! 1. The text starts a line of the output and a forced line break follows it.
 //! 2. A document without a forced line break, whose possible line breaks are all in groups, is printed on one line if
 //!    that fits. Whether it fits depends on the indentation. [`ShortCuts::depth`] counts the lists that are open. Where
 //!    only statements are between the file and the line, that's the indentation. In a function that's part of an
 //!    expression it's a lower bound, the indentation in the source is a guess, and the printer checks: a text that's
 //!    too wide after all makes it give up, and the file is formatted again with [`Mode::Certain`].
-//! 3. Everything here is an "or else". What isn't known to be printed on one line in exactly this way is [`Refused`],
-//!    and the printers in `print/` write it: comments, text that isn't plain ASCII, syntax that's missing below, and
-//!    whatever breaks whether it fits or not (an object whose first key is on a new line, an array of objects, a chain
-//!    of three calls with a function among the arguments, two functions as arguments).
+//! 3. Where nothing but closing brackets follows, the line can end with the opening bracket of something that's certain
+//!    to break: the body of a function, a block, an object whose first key is on a new line. The printers in `print/`
+//!    write that ([`Part`]), and what follows it is the next line.
+//! 4. What is too wide is written once more ([`Line::breaks`]), with the line breaks that are certain then: the outermost
+//!    group breaks first.
+//! 5. Everything here is an "or else". What isn't known to be printed in exactly this way is [`Refused`], and the
+//!    printers in `print/` write it: comments, text that isn't plain ASCII, syntax that's missing below, and whatever
+//!    breaks whether it fits or not (an array of objects, a chain of three calls with a function among the arguments,
+//!    two functions as arguments).
 //!
 //! `bun fmt --no-short-cuts` turns it off, and the tests compare.
 
 use super::parentheses::expression::{chain_expression_needs_parentheses, needs_parentheses};
 use super::print::binary_like_expression::should_flatten;
 use super::print::block_statement::is_empty_block;
+use super::print::call_like_expression::keeps_arguments_on_one_line;
 use super::print::class::write_class_body_after_head;
 use super::print::function::FormatFunctionBody;
 use super::print::parameters::can_avoid_parentheses;
 use super::utils::member_chain::simple_argument::SimpleArgument;
 use super::utils::number::format_trimmed_number;
-use crate::ir::element::{FormatElement, Text, TextWidth};
+use crate::ir::element::{FormatElement, LineMode, Tag, Text, TextWidth, Token};
 use crate::prelude::*;
 use crate::write;
 use bun_core::strings;
@@ -79,7 +83,9 @@ impl ShortCuts {
             && options.sort_imports.is_none()
             && options.tailwind.is_none()
             && options.debug_comments == DebugComments::Off
-            && !file.is_flow();
+            && !file.is_flow()
+            // Every check for a line break below looks for `\n`.
+            && !strings::contains_char(file.text(), b'\r');
         ShortCuts {
             mode: if is_plain_run { Mode::All } else { Mode::Off },
             depth: 0,
@@ -116,7 +122,7 @@ impl<'a, C: Format<'a>> Format<'a> for CertainIf<'_, C> {
     }
 }
 
-/// It isn't certain that the node is printed on one line, or how.
+/// It isn't certain how the node is printed.
 pub(crate) struct Refused;
 
 type Written = Result<(), Refused>;
@@ -128,41 +134,64 @@ const MAX_NESTING: u32 = 48;
 /// What a [`Line`] has written.
 #[derive(Copy, Clone)]
 enum Part<'a> {
-    /// A range of the text buffer, and the width of what follows it on its line.
-    Text { start: u32, len: u32, after: u32 },
+    /// A range of the text buffer, and the width of what follows it on its line. `None` if the text is printed like this
+    /// however wide it is.
+    Text {
+        start: u32,
+        len: u32,
+        after: Option<u32>,
+    },
+    /// A line break, after which the indentation is this many levels deeper.
+    Break(i8),
     /// The `{ .. }` of a function, with statements in it.
     Body(Func<'a>),
     /// A block.
     Block(Stmt<'a>),
-    /// An object that's certain to break.
-    Object(Expr<'a>),
+    /// An object or an array that's certain to break.
+    Broken(Expr<'a>),
+    /// Any expression, on a line of its own.
+    Expr(Expr<'a>),
     /// The `{ .. }` of a class, with members in it.
     ClassBody(Class<'a>),
 }
 
-/// Writes nodes on one line, to the end of the formatter's text buffer.
-///
-/// Where nothing but closing brackets follows, the line can end with the `{` of something that's certain to break. That
-/// is a part of its own, which the printers in `print/` write, and what follows it is the next line.
+/// Where an expression is, as far as parentheses go.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Place {
+    /// An argument, an element, an initializer, the value of a property, between brackets. Only a sequence needs
+    /// parentheses there.
+    Free,
+    /// The object of a member access or the callee of a call. A name, a member access or a call needs none, unless it
+    /// ends an optional chain.
+    Object,
+    Other,
+}
+
+/// Writes nodes to the end of the formatter's text buffer.
 struct Line<'f, 'a> {
     f: &'f mut Formatter<'a>,
     source: &'a [u8],
     /// How many columns there are between the indentation and the end of the line.
     room: usize,
+    indent_width: usize,
     /// Where the text of the current line starts in the text buffer.
     start: usize,
-    /// The length of the text buffer at which the line is full.
+    /// Where the text buffer ends. The vector is longer, so that a short text can be copied as a block.
+    len: usize,
+    /// The `len` at which the line is full.
     limit: usize,
     /// The width of what a part has written on the current line before the text: its closing bracket.
     taken: usize,
-    /// The source of what's written has a line break in it.
-    is_multiline: bool,
+    /// The text went past `limit`.
+    is_too_wide: bool,
+    /// On one line it's too wide, so the outermost group breaks.
+    breaks: bool,
     /// There's no comment anywhere in the source of what's written.
     is_quiet: bool,
     /// Up to here the source is known to be plain and without comments.
     checked_to: u32,
     nesting: u32,
-    parts: SmallVec<[Part<'a>; 4]>,
+    parts: SmallVec<[Part<'a>; 6]>,
 }
 
 /// True if `text` has a line with nothing but white space on it.
@@ -181,15 +210,18 @@ fn has_empty_line(text: &[u8]) -> bool {
     false
 }
 
+/// By how much the text buffer is longer than what's written to it while a [`Line`] writes.
+const SLACK: usize = 256;
+
 impl<'a> Formatter<'a> {
-    /// Calls `write` with a [`Line`] that starts a line of the output, for the node at `span`, which has no comments.
-    /// `after` is the width of what the caller writes behind it on the same line. Returns false, with nothing written,
-    /// if the short cut isn't taken.
+    /// Calls `write` with a [`Line`] that starts a line of the output, for the node at `span`. `after` is the width of
+    /// what the caller writes behind it on the same line. Returns false, with nothing written, if the short cut isn't
+    /// taken.
     fn write_line(
         &mut self,
         span: Span,
         after: u32,
-        write: impl FnOnce(&mut Line<'_, 'a>) -> Written,
+        write: impl Fn(&mut Line<'_, 'a>) -> Written,
     ) -> bool {
         let state = self.context().short_cuts;
         if state.mode == Mode::Off {
@@ -211,58 +243,81 @@ impl<'a> Formatter<'a> {
             return false;
         };
         let source = self.source_text().as_bytes();
-        let Some(text) = source.get(span.range()) else {
-            return false;
-        };
-        let is_multiline = strings::index_of_any(text, b"\r\n").is_some();
-        // What's printed is rarely much shorter than the source.
-        if !is_multiline
-            && (text.len() > room + 16
-                || !self.is_plain_source(span)
-                || !(self.is_quiet() || !self.comments().has_comment_or_owner_in(span)))
-        {
+        // A block comment after it is printed on its line.
+        let mut rest = source.get(span.end as usize..).unwrap_or_default();
+        while let [b' ' | b'\t' | b',' | b';', tail @ ..] = rest {
+            rest = tail;
+        }
+        if rest.starts_with(b"/*") {
             return false;
         }
         let start = self.storage.text.len();
+        self.storage.text.resize(start + SLACK, 0);
         let mut line = Line {
             room,
+            indent_width,
             start,
+            len: start,
             limit: start + room,
             taken: 0,
+            is_too_wide: false,
+            breaks: false,
             is_quiet: self.is_quiet(),
             f: self,
             source,
-            is_multiline,
             checked_to: span.start,
             nesting: 0,
             parts: SmallVec::new(),
         };
-        let written = write(&mut line)
-            .and_then(|()| line.check_source_up_to(span.end))
-            .and_then(|()| line.end_text(after));
-        let parts = line.parts;
+        let mut written = line.finish(&write, span.end, after);
+        // That it's too wide is only certain if the indentation is.
+        if written.is_err() && line.is_too_wide && state.is_certain {
+            line.parts.clear();
+            (line.room, line.start, line.len, line.limit) = (room, start, start, start + room);
+            (line.taken, line.checked_to, line.nesting) = (0, span.start, 0);
+            line.breaks = true;
+            written = line.finish(&write, span.end, after);
+        }
+        let (parts, len) = (line.parts, line.len);
         if written.is_err() {
             self.storage.text.truncate(start);
             return false;
         }
+        self.storage.text.truncate(len);
         for part in parts {
             match part {
                 Part::Text { start, len, after } => {
                     self.write_element(FormatElement::OwnedText(Text {
                         start,
                         len,
-                        width: TextWidth::short_cut(len, after),
+                        width: match after {
+                            Some(after) => TextWidth::short_cut(len, after),
+                            None => TextWidth::single(len),
+                        },
                     }));
+                }
+                Part::Break(0) => self.write_element(FormatElement::Line(LineMode::Hard)),
+                Part::Break(1..) => {
+                    self.context_mut().short_cuts.depth += 1;
+                    self.write_element(FormatElement::Tag(Tag::StartIndentWithLine(
+                        LineMode::Hard,
+                    )));
+                }
+                Part::Break(_) => {
+                    self.context_mut().short_cuts.depth -= 1;
+                    self.write_element(FormatElement::Tag(Tag::EndIndentWithLine(LineMode::Hard)));
                 }
                 Part::Body(func) => {
                     self.context_mut().short_cuts.follows_line = true;
                     FormatFunctionBody(func).fmt(self);
                 }
                 Part::Block(block) => write!(self, [space(), block]),
-                Part::Object(object) => {
+                Part::Broken(e) => {
                     self.context_mut().short_cuts.follows_line = true;
-                    object.fmt(self);
+                    e.fmt(self);
+                    self.context_mut().short_cuts.follows_line = false;
                 }
+                Part::Expr(e) => CertainIf(false, &e).fmt(self),
                 Part::ClassBody(class) => write_class_body_after_head(class, self),
             }
         }
@@ -288,32 +343,9 @@ impl<'a> Formatter<'a> {
     }
 }
 
-/// Writes `statement`, which a list of statements is about to write on a line of its own and which has no comments in
-/// it. Returns false if it has to go the long way.
+/// Writes `statement`, which a list of statements is about to write on a line of its own. Returns false if it has to go
+/// the long way.
 pub(crate) fn write_statement<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) -> bool {
-    if !matches!(
-        statement.tag(),
-        StmtTag::Expr
-            | StmtTag::Var
-            | StmtTag::Return
-            | StmtTag::Throw
-            | StmtTag::Break
-            | StmtTag::Continue
-            | StmtTag::Debugger
-            | StmtTag::Import
-            | StmtTag::ExportNamed
-            | StmtTag::ExportDefault
-            | StmtTag::TypeAlias
-            | StmtTag::Fn
-            | StmtTag::Class
-            | StmtTag::If
-            | StmtTag::While
-            | StmtTag::ForOf
-            | StmtTag::ForIn
-            | StmtTag::Try
-    ) {
-        return false;
-    }
     f.write_line(statement.span(), 0, |line| line.statement(statement))
 }
 
@@ -328,31 +360,96 @@ pub(crate) fn write_class_member<'a>(member: Member<'a>, f: &mut Formatter<'a>) 
 }
 
 impl<'a> Line<'_, 'a> {
+    fn finish(&mut self, write: &impl Fn(&mut Self) -> Written, end: u32, after: u32) -> Written {
+        write(self)?;
+        self.check_source_up_to(end)?;
+        self.end_text(Some(after))
+    }
+
+    // ───────────────────────────── text ─────────────────────────────
+
+    /// Writes the first `len` bytes of `block`.
     #[inline(always)]
-    fn bytes(&mut self, text: &[u8]) -> Written {
-        let out = &mut self.f.storage.text;
-        out.extend_from_slice(text);
-        match out.len() > self.limit {
-            true => Err(Refused),
-            false => Ok(()),
+    fn chunk<const N: usize>(&mut self, block: &[u8; N], len: usize) -> Written {
+        let end = self.len + len;
+        if end > self.limit {
+            self.is_too_wide = true;
+            return Err(Refused);
+        }
+        loop {
+            if let Some(next) = (self.f.storage.text)
+                .get_mut(self.len..)
+                .and_then(|rest| rest.first_chunk_mut())
+            {
+                *next = *block;
+                self.len = end;
+                return Ok(());
+            }
+            self.grow();
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn grow(&mut self) {
+        let len = self.f.storage.text.len();
+        self.f.storage.text.resize(len + 4 * SLACK, 0);
+    }
+
+    #[inline(never)]
+    fn long_bytes(&mut self, text: &[u8]) -> Written {
+        let end = self.len + text.len();
+        if end > self.limit {
+            self.is_too_wide = true;
+            return Err(Refused);
+        }
+        if self.f.storage.text.len() < end + SLACK {
+            self.f.storage.text.resize(end + SLACK, 0);
+        }
+        if let Some(next) = self.f.storage.text.get_mut(self.len..end) {
+            next.copy_from_slice(text);
+        }
+        self.len = end;
+        Ok(())
+    }
+
+    /// A keyword or a punctuator.
+    #[inline(always)]
+    fn token(&mut self, text: &'static str) -> Written {
+        match Token::new(text) {
+            Some(token) => self.chunk(token.padded(), token.len()),
+            None => self.long_bytes(text.as_bytes()),
         }
     }
 
     #[inline(always)]
-    fn token(&mut self, text: &'static str) -> Written {
-        self.bytes(text.as_bytes())
+    fn byte(&mut self, byte: u8) -> Written {
+        self.chunk(&[byte], 1)
     }
 
-    /// A token of the source: a name, a keyword.
+    /// The source at `span`: a name, a keyword, a literal.
     #[inline(always)]
     fn source(&mut self, span: Span) -> Written {
         let source = self.source;
-        self.bytes(source.get(span.range()).ok_or(Refused)?)
+        if span.len() <= 16
+            && let Some(block) = source
+                .get(span.start as usize..)
+                .and_then(|rest| rest.first_chunk::<16>())
+        {
+            return self.chunk(block, span.len() as usize);
+        }
+        self.long_bytes(source.get(span.range()).ok_or(Refused)?)
     }
 
     #[inline]
     fn text_of(&self, span: Span) -> &'a [u8] {
         self.source.get(span.range()).unwrap_or_default()
+    }
+
+    /// True if the source has a line break in `span`, which is short.
+    #[inline]
+    fn has_line_break_in(&self, span: Span) -> bool {
+        strings::contains_char(self.text_of(span), b'\n')
     }
 
     /// Refuses if the source from where the last check ended up to `end` has a comment in it, a character that isn't as
@@ -363,10 +460,7 @@ impl<'a> Line<'_, 'a> {
         self.checked_to = span.end;
         let is_fine = self.f.is_plain_source(span)
             && (self.is_quiet || !self.f.comments().has_comment_or_owner_in(span))
-            && !(self.is_multiline && {
-                let text = self.text_of(span);
-                strings::contains_char(text, b'\r') || has_empty_line(text)
-            });
+            && !has_empty_line(self.text_of(span));
         match is_fine {
             true => Ok(()),
             false => Err(Refused),
@@ -374,9 +468,13 @@ impl<'a> Line<'_, 'a> {
     }
 
     /// Ends the text of the current line, which `after` more columns follow.
-    fn end_text(&mut self, after: u32) -> Written {
-        let len = self.f.storage.text.len() - self.start;
-        if len + self.taken + after as usize > self.room {
+    fn end_text(&mut self, after: Option<u32>) -> Written {
+        let len = self.len - self.start;
+        let after = after.filter(|_| self.limit != usize::MAX);
+        if let Some(after) = after
+            && len + self.taken + after as usize > self.room
+        {
+            self.is_too_wide = true;
             return Err(Refused);
         }
         if len > 0 {
@@ -386,26 +484,39 @@ impl<'a> Line<'_, 'a> {
                 after,
             });
         }
+        self.start = self.len;
         Ok(())
+    }
+
+    /// Starts a line after a part, of which `taken` columns are on it.
+    fn start_line(&mut self, taken: usize) {
+        self.taken = taken;
+        self.start = self.len;
+        self.limit = self.start + self.room.saturating_sub(taken);
     }
 
     /// Ends the line with `part`, whose source is at `span` and which starts with `after` columns of text on this line.
-    /// What's written next follows its last line, which starts where this line starts.
+    /// What's written next follows its closing bracket, on a line that starts where this line starts.
     fn end_line_with(&mut self, part: Part<'a>, span: Span, after: u32) -> Written {
         self.check_source_up_to(span.start)?;
-        self.end_text(after)?;
+        self.end_text(Some(after))?;
         self.parts.push(part);
         self.checked_to = span.end;
-        self.start = self.f.storage.text.len();
-        self.taken = 1;
-        self.limit = self.start + self.room.saturating_sub(1);
+        self.start_line(1);
         Ok(())
     }
 
-    /// True if the source has a line break in `span`.
-    #[inline]
-    fn has_line_break_in(&self, span: Span) -> bool {
-        self.is_multiline && strings::contains_char(self.text_of(span), b'\n')
+    /// A line break, after which the indentation is `levels` deeper.
+    fn break_line(&mut self, levels: i8) -> Written {
+        self.end_text(Some(0))?;
+        self.parts.push(Part::Break(levels));
+        self.room = match levels {
+            0 => self.room,
+            1.. => self.room.checked_sub(self.indent_width).ok_or(Refused)?,
+            _ => self.room + self.indent_width,
+        };
+        self.start_line(0);
+        Ok(())
     }
 
     #[inline]
@@ -420,6 +531,7 @@ impl<'a> Line<'_, 'a> {
     }
 
     /// `items`, with `, ` between them.
+    #[inline]
     fn list<T>(
         &mut self,
         items: impl Iterator<Item = T>,
@@ -434,32 +546,83 @@ impl<'a> Line<'_, 'a> {
         Ok(())
     }
 
+    /// `items`, each on a line of its own, indented, with a comma after each. The last one has it if `has_last_comma`.
+    fn lines<T>(
+        &mut self,
+        count: usize,
+        items: impl Iterator<Item = T>,
+        has_last_comma: bool,
+        mut write: impl FnMut(&mut Self, T) -> Written,
+    ) -> Written {
+        self.break_line(1)?;
+        for (index, item) in items.enumerate() {
+            if index > 0 {
+                self.break_line(0)?;
+            }
+            write(self, item)?;
+            if index + 1 < count || has_last_comma {
+                self.byte(b',')?;
+            }
+        }
+        self.break_line(-1)
+    }
+
+    /// Writes `e` on a line of its own, before a comma: on one line if that fits, else the long way.
+    fn expr_on_own_line(&mut self, e: Expr<'a>) -> Written {
+        let span = e.outer_span();
+        self.check_source_up_to(span.start)?;
+        let (len, parts) = (self.len, self.parts.len());
+        let (breaks, limit) = (self.breaks, self.limit);
+        (self.breaks, self.limit) = (false, limit.saturating_sub(1));
+        let written = self
+            .expr(e, Place::Free)
+            .and_then(|()| self.check_source_up_to(span.end));
+        (self.breaks, self.limit) = (breaks, limit);
+        if written.is_ok() {
+            return Ok(());
+        }
+        // Nothing of it has been handed to a part.
+        if self.parts.len() != parts {
+            return Err(Refused);
+        }
+        self.len = len;
+        self.end_text(None)?;
+        self.parts.push(Part::Expr(e));
+        self.checked_to = span.end;
+        // How wide its last line is isn't known, and nothing but a comma follows.
+        self.start_line(0);
+        self.limit = usize::MAX;
+        Ok(())
+    }
+
+    fn has_trailing_comma(&self, in_arguments: bool) -> bool {
+        match self.f.options().trailing_commas {
+            TrailingCommas::All => true,
+            TrailingCommas::Es5 => !in_arguments,
+            TrailingCommas::None => false,
+        }
+    }
+
     // ───────────────────────────── statements ─────────────────────────────
 
     fn statement(&mut self, statement: Stmt<'a>) -> Written {
-        let modifiers = statement.modifiers();
         match statement.kind() {
             StmtKind::Expr(expression) => {
                 // A directive, or a string in parentheses that would be one without them.
                 if expression.tag() == ExprTag::String {
                     return Err(Refused);
                 }
-                self.last_expr(expression)?;
+                self.last_expr(expression, Place::Other)?;
             }
             StmtKind::Var(declarations) => {
                 let (Some(declarator), 1) = (declarations.first(), declarations.len()) else {
                     return Err(Refused);
                 };
-                self.declaration_modifiers(modifiers)?;
-                self.token(match declarator.var_kind() {
-                    VarKind::Var => "var ",
-                    VarKind::Let => "let ",
-                    VarKind::Const => "const ",
-                    VarKind::Using | VarKind::AwaitUsing => return Err(Refused),
-                })?;
+                self.declaration_modifiers(statement)?;
+                self.var_kind(declarator)?;
                 self.pattern(declarator.pat())?;
                 if declarator.is_definite() {
-                    self.token("!")?;
+                    self.byte(b'!')?;
                 }
                 self.type_annotation(declarator.ty())?;
                 if let Some(init) = declarator.init() {
@@ -474,13 +637,13 @@ impl<'a> Line<'_, 'a> {
             StmtKind::Return(argument) => {
                 self.token("return")?;
                 if let Some(argument) = argument {
-                    self.token(" ")?;
-                    self.last_expr(argument)?;
+                    self.byte(b' ')?;
+                    self.last_expr(argument, Place::Other)?;
                 }
             }
             StmtKind::Throw(argument) => {
                 self.token("throw ")?;
-                self.expr(argument)?;
+                self.last_expr(argument, Place::Other)?;
             }
             StmtKind::Break(_) | StmtKind::Continue(_) => {
                 self.token(match statement.tag() {
@@ -488,28 +651,27 @@ impl<'a> Line<'_, 'a> {
                     _ => "continue",
                 })?;
                 if let Some(label) = statement.label() {
-                    self.token(" ")?;
+                    self.byte(b' ')?;
                     self.source(label.span())?;
                 }
             }
             StmtKind::Debugger => self.token("debugger")?,
             StmtKind::Fn(func) => {
-                self.declaration_modifiers(modifiers)?;
+                self.declaration_modifiers(statement)?;
                 self.function(func, true)?;
-                match func.has_body() {
-                    true => return Ok(()),
-                    false => {}
+                if func.has_body() {
+                    return Ok(());
                 }
             }
             StmtKind::Class(class) => {
-                self.declaration_modifiers(modifiers)?;
+                self.declaration_modifiers(statement)?;
                 return self.class(class);
             }
             StmtKind::If { .. } => return self.if_statement(statement),
             StmtKind::While { test, body } => {
                 self.token("while (")?;
-                self.expr(test)?;
-                self.token(")")?;
+                self.expr(test, Place::Other)?;
+                self.byte(b')')?;
                 return self.block(body);
             }
             StmtKind::ForOf {
@@ -524,16 +686,16 @@ impl<'a> Line<'_, 'a> {
                 })?;
                 self.for_binding(left)?;
                 self.token(" of ")?;
-                self.expr(expr)?;
-                self.token(")")?;
+                self.expr(expr, Place::Other)?;
+                self.byte(b')')?;
                 return self.block(body);
             }
             StmtKind::ForIn { left, expr, body } => {
                 self.token("for (")?;
                 self.for_binding(left)?;
                 self.token(" in ")?;
-                self.expr(expr)?;
-                self.token(")")?;
+                self.expr(expr, Place::Other)?;
+                self.byte(b')')?;
                 return self.block(body);
             }
             StmtKind::Try {
@@ -550,7 +712,7 @@ impl<'a> Line<'_, 'a> {
                         self.token(" (")?;
                         self.pattern(param.pat())?;
                         self.type_annotation(param.ty())?;
-                        self.token(")")?;
+                        self.byte(b')')?;
                     }
                     self.block(handler)?;
                 }
@@ -568,10 +730,10 @@ impl<'a> Line<'_, 'a> {
                     return Err(Refused);
                 }
                 self.token("export default ")?;
-                self.last_expr(expression)?;
+                self.last_expr(expression, Place::Other)?;
             }
             StmtKind::TypeAlias(alias) => {
-                self.declaration_modifiers(modifiers)?;
+                self.declaration_modifiers(statement)?;
                 self.token("type ")?;
                 self.source(alias.name().span())?;
                 self.type_parameters(alias.type_params())?;
@@ -580,13 +742,22 @@ impl<'a> Line<'_, 'a> {
             }
             _ => return Err(Refused),
         }
-        self.token(";")
+        self.byte(b';')
+    }
+
+    fn var_kind(&mut self, declarator: VarDecl<'a>) -> Written {
+        self.token(match declarator.var_kind() {
+            VarKind::Var => "var ",
+            VarKind::Let => "let ",
+            VarKind::Const => "const ",
+            VarKind::Using | VarKind::AwaitUsing => return Err(Refused),
+        })
     }
 
     /// `export default declare abstract `, in this order.
-    fn declaration_modifiers(&mut self, modifiers: List<'a, Modifier<'a>>) -> Written {
+    fn declaration_modifiers(&mut self, statement: Stmt<'a>) -> Written {
         let mut rank = 0;
-        for modifier in modifiers {
+        for modifier in statement.modifiers() {
             let flag = modifier.flag();
             let (next, keyword) = if flag == Flags::EXPORT {
                 (1, "export ")
@@ -602,7 +773,7 @@ impl<'a> Line<'_, 'a> {
             } else {
                 return Err(Refused);
             };
-            if next <= rank {
+            if next <= rank || modifier.decorator().is_some() {
                 return Err(Refused);
             }
             rank = next;
@@ -623,12 +794,12 @@ impl<'a> Line<'_, 'a> {
 
     fn if_statement(&mut self, mut statement: Stmt<'a>) -> Written {
         loop {
-            let StmtKind::If { test, yes, no } = statement.kind() else {
+            let Some((test, yes, no)) = statement.as_if() else {
                 return Err(Refused);
             };
             self.token("if (")?;
-            self.expr(test)?;
-            self.token(")")?;
+            self.expr(test, Place::Other)?;
+            self.byte(b')')?;
             self.block(yes)?;
             let Some(no) = no else {
                 return Ok(());
@@ -637,7 +808,7 @@ impl<'a> Line<'_, 'a> {
             if no.tag() != StmtTag::If {
                 return self.block(no);
             }
-            self.token(" ")?;
+            self.byte(b' ')?;
             statement = no;
         }
     }
@@ -651,26 +822,157 @@ impl<'a> Line<'_, 'a> {
         if declarator.init().is_some() || declarator.ty().is_some() {
             return Err(Refused);
         }
-        self.token(match declarator.var_kind() {
-            VarKind::Var => "var ",
-            VarKind::Let => "let ",
-            VarKind::Const => "const ",
-            VarKind::Using | VarKind::AwaitUsing => return Err(Refused),
-        })?;
+        self.var_kind(declarator)?;
         self.pattern(declarator.pat())
     }
+
+    /// `"a"`, where the string isn't an expression.
+    fn module_specifier(&mut self, statement: Stmt<'a>) -> Written {
+        if statement.import_attributes().is_some() {
+            return Err(Refused);
+        }
+        self.string(statement.module_specifier_span().ok_or(Refused)?)
+    }
+
+    fn open_brace(&mut self) -> Written {
+        self.token(match self.f.options().bracket_spacing.value() {
+            true => "{ ",
+            false => "{",
+        })
+    }
+
+    fn close_brace(&mut self) -> Written {
+        self.token(match self.f.options().bracket_spacing.value() {
+            true => " }",
+            false => "}",
+        })
+    }
+
+    fn module_export_name(&mut self, name: Ident<'a>) -> Written {
+        match name.is_string() {
+            true => self.string(name.span()),
+            false => self.source(name.span()),
+        }
+    }
+
+    /// `{ a, b }`, or each on a line if that's too wide.
+    fn specifiers<T>(
+        &mut self,
+        count: usize,
+        items: impl Iterator<Item = T>,
+        mut write: impl FnMut(&mut Self, T) -> Written,
+    ) -> Written {
+        if count == 0 {
+            return self.token("{}");
+        }
+        if self.breaks {
+            self.byte(b'{')?;
+            let has_last_comma = self.has_trailing_comma(false);
+            // Nothing in them can break.
+            self.lines(count, items, has_last_comma, |line, item| {
+                line.limit = usize::MAX;
+                write(line, item)
+            })?;
+            self.limit = usize::MAX;
+            return self.byte(b'}');
+        }
+        self.open_brace()?;
+        self.list(items, write)?;
+        self.close_brace()
+    }
+
+    fn import(&mut self, statement: Stmt<'a>, import: Import<'a>) -> Written {
+        if import.phase().is_some() {
+            return Err(Refused);
+        }
+        self.token(match import.is_type_only() {
+            true => "import type ",
+            false => "import ",
+        })?;
+        if import.is_side_effect() {
+            self.limit = usize::MAX;
+            return self.module_specifier(statement);
+        }
+        let named = import.named();
+        let has_braces = import.has_named_imports()
+            && !(named.is_empty() && (import.default().is_some() || import.namespace().is_some()));
+        let mut is_first = true;
+        if let Some(default) = import.default() {
+            self.source(default.span())?;
+            is_first = false;
+        }
+        if let Some(namespace) = import.namespace() {
+            if !is_first {
+                self.token(", ")?;
+            }
+            self.token("* as ")?;
+            self.source(namespace.span())?;
+            is_first = false;
+        }
+        // Without a list of several names there's nowhere to break.
+        if !has_braces || named.is_empty() || (named.len() == 1 && is_first) {
+            self.limit = usize::MAX;
+            self.breaks = false;
+        }
+        if has_braces {
+            if !is_first {
+                self.token(", ")?;
+            }
+            self.specifiers(named.len(), named.iter(), |line, specifier| {
+                if specifier.is_type_only() {
+                    line.token("type ")?;
+                }
+                if specifier.is_renamed() {
+                    line.module_export_name(specifier.imported())?;
+                    line.token(" as ")?;
+                }
+                line.source(specifier.local().span())
+            })?;
+        }
+        self.token(" from ")?;
+        self.module_specifier(statement)
+    }
+
+    fn export_named(&mut self, statement: Stmt<'a>, export: Export<'a>) -> Written {
+        self.token(match export.is_type_only() {
+            true => "export type ",
+            false => "export ",
+        })?;
+        let items = export.items();
+        if items.len() <= 1 {
+            (self.limit, self.breaks) = (usize::MAX, false);
+        }
+        self.specifiers(items.len(), items.iter(), |line, specifier| {
+            if specifier.is_type_only() {
+                line.token("type ")?;
+            }
+            line.module_export_name(specifier.local())?;
+            if specifier.is_renamed() {
+                line.token(" as ")?;
+                line.module_export_name(specifier.exported())?;
+            }
+            Ok(())
+        })?;
+        if export.has_from() {
+            self.token(" from ")?;
+            self.module_specifier(statement)?;
+        }
+        Ok(())
+    }
+
+    // ───────────────────────────── classes ─────────────────────────────
 
     /// A class declaration without decorators, which the modifiers have been written of.
     fn class(&mut self, class: Class<'a>) -> Written {
         self.token("class")?;
         if let Some(name) = class.name() {
-            self.token(" ")?;
+            self.byte(b' ')?;
             self.source(name.span())?;
         }
         self.type_parameters(class.type_params())?;
         if let Some(extends) = class.extends() {
             self.token(" extends ")?;
-            self.expr(extends)?;
+            self.expr(extends, Place::Other)?;
             self.type_arguments(class.extends_args())?;
         }
         if !class.implements().is_empty() {
@@ -742,10 +1044,10 @@ impl<'a> Line<'_, 'a> {
                 self.member_key(member.key())?;
                 let flags = member.flags();
                 if flags.contains(Flags::OPTIONAL) {
-                    self.token("?")?;
+                    self.byte(b'?')?;
                 }
                 if flags.contains(Flags::DEFINITE) {
-                    self.token("!")?;
+                    self.byte(b'!')?;
                 }
                 self.type_annotation(member.ty())?;
                 match member.init() {
@@ -771,7 +1073,7 @@ impl<'a> Line<'_, 'a> {
                     self.token("async ")?;
                 }
                 if func.is_generator() {
-                    self.token("*")?;
+                    self.byte(b'*')?;
                 }
                 match member.constructor_keyword() {
                     Some(keyword) if self.text_of(keyword.span()) == b"constructor" => {
@@ -781,11 +1083,9 @@ impl<'a> Line<'_, 'a> {
                     None => self.member_key(member.key())?,
                 }
                 if member.flags().contains(Flags::OPTIONAL) {
-                    self.token("?")?;
+                    self.byte(b'?')?;
                 }
-                self.type_parameters(func.type_params())?;
-                self.parameters(func)?;
-                self.type_annotation(func.return_type())?;
+                self.signature(func)?;
                 self.body(func, true)
             }
             _ => Err(Refused),
@@ -804,117 +1104,6 @@ impl<'a> Line<'_, 'a> {
         self.source(span)
     }
 
-    /// `"a"`, where the string isn't an expression.
-    fn module_specifier(&mut self, statement: Stmt<'a>) -> Written {
-        if statement.import_attributes().is_some() {
-            return Err(Refused);
-        }
-        self.string(statement.module_specifier_span().ok_or(Refused)?)
-    }
-
-    fn open_brace(&mut self) -> Written {
-        self.token(match self.f.options().bracket_spacing.value() {
-            true => "{ ",
-            false => "{",
-        })
-    }
-
-    fn close_brace(&mut self) -> Written {
-        self.token(match self.f.options().bracket_spacing.value() {
-            true => " }",
-            false => "}",
-        })
-    }
-
-    fn module_export_name(&mut self, name: Ident<'a>) -> Written {
-        match name.is_string() {
-            true => self.string(name.span()),
-            false => self.source(name.span()),
-        }
-    }
-
-    fn import(&mut self, statement: Stmt<'a>, import: Import<'a>) -> Written {
-        if import.phase().is_some() {
-            return Err(Refused);
-        }
-        self.token(match import.is_type_only() {
-            true => "import type ",
-            false => "import ",
-        })?;
-        if import.is_side_effect() {
-            return self.module_specifier(statement);
-        }
-        let named = import.named();
-        let has_braces = import.has_named_imports()
-            && !(named.is_empty() && (import.default().is_some() || import.namespace().is_some()));
-        let mut is_first = true;
-        if let Some(default) = import.default() {
-            self.source(default.span())?;
-            is_first = false;
-        }
-        if let Some(namespace) = import.namespace() {
-            if !is_first {
-                self.token(", ")?;
-            }
-            self.token("* as ")?;
-            self.source(namespace.span())?;
-            is_first = false;
-        }
-        if has_braces {
-            if !is_first {
-                self.token(", ")?;
-            }
-            if named.is_empty() {
-                self.token("{}")?;
-            } else {
-                self.open_brace()?;
-                self.list(named.iter(), |line, specifier| {
-                    if specifier.is_type_only() {
-                        line.token("type ")?;
-                    }
-                    if specifier.is_renamed() {
-                        line.module_export_name(specifier.imported())?;
-                        line.token(" as ")?;
-                    }
-                    line.source(specifier.local().span())
-                })?;
-                self.close_brace()?;
-            }
-        }
-        self.token(" from ")?;
-        self.module_specifier(statement)
-    }
-
-    fn export_named(&mut self, statement: Stmt<'a>, export: Export<'a>) -> Written {
-        self.token(match export.is_type_only() {
-            true => "export type ",
-            false => "export ",
-        })?;
-        let items = export.items();
-        if items.is_empty() {
-            self.token("{}")?;
-        } else {
-            self.open_brace()?;
-            self.list(items.iter(), |line, specifier| {
-                if specifier.is_type_only() {
-                    line.token("type ")?;
-                }
-                line.module_export_name(specifier.local())?;
-                if specifier.is_renamed() {
-                    line.token(" as ")?;
-                    line.module_export_name(specifier.exported())?;
-                }
-                Ok(())
-            })?;
-            self.close_brace()?;
-        }
-        if export.has_from() {
-            self.token(" from ")?;
-            self.module_specifier(statement)?;
-        }
-        Ok(())
-    }
-
     // ───────────────────────────── expressions ─────────────────────────────
 
     /// The right side of `=` or `:`.
@@ -923,106 +1112,131 @@ impl<'a> Line<'_, 'a> {
         if value.tag() == ExprTag::Assign {
             return Err(Refused);
         }
-        self.expr(value)
+        self.expr(value, Place::Free)
     }
 
     /// The right side of `=` or `:`, with nothing but closing brackets after it.
     fn last_assigned(&mut self, value: Expr<'a>) -> Written {
-        if value.tag() == ExprTag::Assign {
-            return Err(Refused);
+        match value.tag() {
+            ExprTag::Assign => Err(Refused),
+            // Where a call that's too wide breaks depends on what it's assigned to.
+            ExprTag::Call | ExprTag::New | ExprTag::Await if self.breaks => Err(Refused),
+            _ => self.last_expr(value, Place::Free),
         }
-        self.last_expr(value)
     }
 
     /// An expression with nothing but closing brackets after it, so that it can end the line.
-    fn last_expr(&mut self, e: Expr<'a>) -> Written {
-        match e.tag() {
+    fn last_expr(&mut self, e: Expr<'a>, place: Place) -> Written {
+        let tag = e.tag();
+        if !matches!(
+            tag,
             ExprTag::Fn
-            | ExprTag::Object
-            | ExprTag::Call
-            | ExprTag::New
-            | ExprTag::Await
-            | ExprTag::Assign
-                if !needs_parentheses(e, self.f) => {}
-            _ => return self.expr(e),
+                | ExprTag::Object
+                | ExprTag::Array
+                | ExprTag::Call
+                | ExprTag::New
+                | ExprTag::Await
+                | ExprTag::Assign
+        ) || (place != Place::Free && needs_parentheses(e, self.f))
+            || (tag == ExprTag::Call && e.is_chain_root())
+        {
+            return self.expr(e, place);
         }
-        if e.tag() == ExprTag::Call && e.is_chain_root() {
-            return self.expr(e);
-        }
-        self.nested(|line| match e.kind() {
-            ExprKind::Fn(func) => line.function(func, true),
-            ExprKind::Object(props) => line.object(e, props, true),
-            ExprKind::Call(call) => line.call(e, call, true),
-            ExprKind::New(call) => {
-                line.token("new ")?;
-                line.expr(call.callee())?;
-                line.type_arguments(call.type_args())?;
-                line.arguments(call.args(), true)
-            }
-            ExprKind::Await(argument) => {
+        self.nested(|line| match tag {
+            ExprTag::Fn => line.function(e.as_fn().ok_or(Refused)?, true),
+            ExprTag::Object => line.object(e, true),
+            ExprTag::Array => line.array(e, true),
+            ExprTag::Call => line.call(e, true),
+            ExprTag::New => line.new_expression(e, true),
+            ExprTag::Await => {
                 line.token("await ")?;
-                line.last_expr(argument)
+                line.last_expr(e.operand().ok_or(Refused)?, Place::Other)
             }
-            ExprKind::Assign { .. } => line.assignment(e, true),
-            _ => Err(Refused),
+            _ => line.assignment(e, true),
         })
     }
 
-    fn call(&mut self, e: Expr<'a>, call: Call<'a>, is_last: bool) -> Written {
-        self.check_member_chain(e, call)?;
+    fn new_expression(&mut self, e: Expr<'a>, is_last: bool) -> Written {
+        let call = e.as_new().ok_or(Refused)?;
+        self.token("new ")?;
+        self.expr(call.callee(), Place::Other)?;
+        self.type_arguments(call.type_args())?;
+        self.arguments(call.args(), is_last, false)
+    }
+
+    fn call(&mut self, e: Expr<'a>, is_last: bool) -> Written {
+        let call = e.as_call().ok_or(Refused)?;
         let callee = call.callee();
-        self.expr(callee)?;
+        let mut is_plain_callee = true;
+        if matches!(callee.tag(), ExprTag::Dot | ExprTag::Index) {
+            is_plain_callee = self.check_member_chain(e)?;
+        } else if callee.tag() == ExprTag::Ident {
+            // `graphql(schema, `..`)` has another language in it.
+            if callee.span().len() == 7 && self.text_of(callee.span()) == b"graphql" {
+                return Err(Refused);
+            }
+        } else {
+            is_plain_callee = false;
+        }
+        // The arguments of a test, of `require` and the like stay on one line however long they are.
+        if self.breaks && keeps_arguments_on_one_line(e, call, self.f) {
+            // Only where nothing in them can break either: `it("name", (done) => {`
+            let args = call.args();
+            let is_unbreakable = is_last
+                && callee.tag() == ExprTag::Ident
+                && args.len() == 2
+                && args.first().is_some_and(|it| it.tag() == ExprTag::String)
+                && (args.last().filter(|it| self.ends_line(*it)))
+                    .and_then(Expr::as_fn)
+                    .is_some_and(|func| {
+                        func.return_type().is_none()
+                            && func.type_params().is_empty()
+                            && func.params().iter().all(|param| {
+                                param.pat().tag() == PatTag::Ident
+                                    && param.ty().is_none()
+                                    && param.default().is_none()
+                            })
+                    });
+            if !is_unbreakable {
+                return Err(Refused);
+            }
+            (self.limit, self.breaks) = (usize::MAX, false);
+        }
+        self.expr(callee, Place::Object)?;
         if call.is_optional() {
             self.token("?.")?;
         }
         self.type_arguments(call.type_args())?;
-        // `a(b)(() => { .. })` has a layout of its own. A chain breaks if its last call does and an earlier one has a
-        // function among its arguments.
-        let is_last = is_last && callee.tag() != ExprTag::Call && {
-            let mut link = callee;
-            loop {
-                link = match link.kind() {
-                    ExprKind::Call(call)
-                        if call.args().iter().any(|it| it.tag() == ExprTag::Fn) =>
-                    {
-                        break false;
-                    }
-                    ExprKind::Call(call) => call.callee(),
-                    ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj,
-                    ExprKind::NonNull(inner) => inner,
-                    _ => break true,
-                };
-            }
-        };
-        self.arguments(call.args(), is_last)
+        self.arguments(call.args(), is_last && is_plain_callee, is_plain_callee)
     }
 
     fn assignment(&mut self, e: Expr<'a>, is_last: bool) -> Written {
-        let ExprKind::Assign { op, target, value } = e.kind() else {
-            return Err(Refused);
-        };
+        let (op, target, value) = e.as_assign().ok_or(Refused)?;
         if matches!(target.tag(), ExprTag::Object | ExprTag::Array)
             || !matches!(e.as_chain_element(), AstNodes::AssignmentExpression(_))
         {
             return Err(Refused);
         }
-        self.expr(target)?;
-        self.token(" ")?;
+        self.expr(target, Place::Other)?;
+        self.byte(b' ')?;
         self.token(assign_op_text(op))?;
-        self.token(" ")?;
+        self.byte(b' ')?;
         match is_last {
             true => self.last_assigned(value),
             false => self.assigned(value),
         }
     }
 
-    fn expr(&mut self, e: Expr<'a>) -> Written {
+    fn expr(&mut self, e: Expr<'a>, place: Place) -> Written {
         let tag = e.tag();
         match tag {
             ExprTag::Ident => {
                 let span = e.span();
-                // The names that can need parentheses: `let`, `async`, `await`, ..
-                if (3..=9).contains(&span.len()) && needs_parentheses(e, self.f) {
+                // `let`, `async`, `await` and the like can need parentheses.
+                if place != Place::Free
+                    && (3..=9).contains(&span.len())
+                    && needs_parentheses(e, self.f)
+                {
                     return Err(Refused);
                 }
                 return self.source(span);
@@ -1035,68 +1249,81 @@ impl<'a> Line<'_, 'a> {
             ExprTag::String => return self.string(e.span()),
             _ => {}
         }
-        let is_chain_root = matches!(
+        let is_link = matches!(
             tag,
             ExprTag::Dot | ExprTag::Index | ExprTag::Call | ExprTag::NonNull
-        ) && e.is_chain_root();
-        let has_parentheses = needs_parentheses(e, self.f);
-        if is_chain_root && (has_parentheses || chain_expression_needs_parentheses(e, self.f)) {
-            return Err(Refused);
-        }
+        );
+        let has_parentheses = match place {
+            Place::Free => tag == ExprTag::Assign && needs_parentheses(e, self.f),
+            Place::Object if is_link => {
+                if e.is_chain_root() {
+                    return Err(Refused);
+                }
+                false
+            }
+            _ => {
+                let has_parentheses = needs_parentheses(e, self.f);
+                if is_link
+                    && e.is_chain_root()
+                    && (has_parentheses || chain_expression_needs_parentheses(e, self.f))
+                {
+                    return Err(Refused);
+                }
+                has_parentheses
+            }
+        };
         if has_parentheses {
-            self.token("(")?;
+            self.byte(b'(')?;
         }
-        self.nested(|line| line.expr_without_parentheses(e))?;
+        self.nested(|line| line.expr_of(tag, e))?;
         if has_parentheses {
-            self.token(")")?;
+            self.byte(b')')?;
         }
         Ok(())
     }
 
-    fn expr_without_parentheses(&mut self, e: Expr<'a>) -> Written {
-        match e.kind() {
-            ExprKind::Number(_) => {
-                let printed = format_trimmed_number(self.text_of(e.span()));
-                self.bytes(&printed)
-            }
-            ExprKind::Dot { obj, name, chain } => {
-                self.expr(obj)?;
+    /// `e`, whose tag is `tag`, without parentheses.
+    fn expr_of(&mut self, tag: ExprTag, e: Expr<'a>) -> Written {
+        match tag {
+            ExprTag::Dot => {
+                let (obj, name, chain) = e.as_dot().ok_or(Refused)?;
+                self.expr(obj, Place::Object)?;
                 self.token(match chain {
                     Chain::Start => "?.",
                     _ => ".",
                 })?;
                 self.source(name.span())
             }
-            ExprKind::Index { obj, index, chain } => {
-                self.expr(obj)?;
+            ExprTag::Call => self.call(e, false),
+            ExprTag::Number => {
+                let printed = format_trimmed_number(self.text_of(e.span()));
+                self.long_bytes(&printed)
+            }
+            ExprTag::Index => {
+                let (obj, index, chain) = e.as_index().ok_or(Refused)?;
+                self.expr(obj, Place::Object)?;
                 self.token(match chain {
                     Chain::Start => "?.[",
                     _ => "[",
                 })?;
-                self.expr(index)?;
-                self.token("]")
+                self.expr(index, Place::Free)?;
+                self.byte(b']')
             }
-            ExprKind::Call(call) => self.call(e, call, false),
-            ExprKind::New(call) => {
-                self.token("new ")?;
-                self.expr(call.callee())?;
-                self.type_arguments(call.type_args())?;
-                self.arguments(call.args(), false)
+            ExprTag::New => self.new_expression(e, false),
+            ExprTag::Unary => {
+                let (op, operand) = e.as_unary().ok_or(Refused)?;
+                if op.is_update() && !op.is_prefix() {
+                    self.expr(operand, Place::Other)?;
+                    return self.token(op.as_str());
+                }
+                self.token(op.as_str())?;
+                if op.is_keyword() {
+                    self.byte(b' ')?;
+                }
+                self.expr(operand, Place::Other)
             }
-            ExprKind::Unary { op, operand } => match op.is_update() && !op.is_prefix() {
-                true => {
-                    self.expr(operand)?;
-                    self.token(op.as_str())
-                }
-                false => {
-                    self.token(op.as_str())?;
-                    if op.is_keyword() {
-                        self.token(" ")?;
-                    }
-                    self.expr(operand)
-                }
-            },
-            ExprKind::Binary { op, left, right } => {
+            ExprTag::Binary => {
+                let (op, left, right) = e.as_binary().ok_or(Refused)?;
                 // `a && (b && c)` loses its parentheses.
                 if op == BinOp::Comma || right.binary_op() == Some(op) {
                     return Err(Refused);
@@ -1104,49 +1331,58 @@ impl<'a> Line<'_, 'a> {
                 match left.binary_op() {
                     // One chain, without the parentheses that `(a | b) | c` would get otherwise.
                     Some(left_op) if left_op != BinOp::Comma && should_flatten(op, left_op) => {
-                        self.nested(|line| line.expr_without_parentheses(left))?
+                        self.nested(|line| line.expr_of(ExprTag::Binary, left))?
                     }
-                    _ => self.expr(left)?,
+                    _ => self.expr(left, Place::Other)?,
                 }
-                self.token(" ")?;
+                self.byte(b' ')?;
                 self.token(bin_op_text(op))?;
-                self.token(" ")?;
-                self.expr(right)
+                self.byte(b' ')?;
+                self.expr(right, Place::Other)
             }
-            ExprKind::Assign { .. } => self.assignment(e, false),
-            ExprKind::Cond { test, yes, no } => {
-                self.expr(test)?;
+            ExprTag::Assign => self.assignment(e, false),
+            ExprTag::Cond => {
+                let (test, yes, no) = e.as_cond().ok_or(Refused)?;
+                self.expr(test, Place::Other)?;
                 self.token(" ? ")?;
                 match yes.tag() {
                     ExprTag::Cond => {
-                        self.token("(")?;
-                        self.expr(yes)?;
-                        self.token(")")?;
+                        self.byte(b'(')?;
+                        self.expr(yes, Place::Other)?;
+                        self.byte(b')')?;
                     }
-                    _ => self.expr(yes)?,
+                    _ => self.expr(yes, Place::Other)?,
                 }
                 self.token(" : ")?;
-                self.expr(no)
+                self.expr(no, Place::Other)
             }
-            ExprKind::Array(elements) => self.array(e, elements),
-            ExprKind::Object(props) => self.object(e, props, false),
-            ExprKind::Fn(func) => self.function(func, false),
+            ExprTag::Array => self.array(e, false),
+            ExprTag::Object => self.object(e, false),
+            ExprTag::Fn => self.function(e.as_fn().ok_or(Refused)?, false),
+            ExprTag::Template => self.template(e),
+            _ => self.less_common_expr(e),
+        }
+    }
+
+    #[inline(never)]
+    fn less_common_expr(&mut self, e: Expr<'a>) -> Written {
+        match e.kind() {
             ExprKind::Spread(argument) => {
                 if e.jsx_container_span().is_some() {
                     return Err(Refused);
                 }
                 self.token("...")?;
-                self.expr(argument)
+                self.expr(argument, Place::Other)
             }
             ExprKind::Await(argument) => {
                 self.token("await ")?;
-                self.expr(argument)
+                self.expr(argument, Place::Other)
             }
             ExprKind::As { expr, ty } | ExprKind::Satisfies { expr, ty } => {
                 if e.is_angle_bracket_assertion() {
                     return Err(Refused);
                 }
-                self.expr(expr)?;
+                self.expr(expr, Place::Other)?;
                 self.token(match e.tag() {
                     ExprTag::Satisfies => " satisfies ",
                     _ => " as ",
@@ -1157,15 +1393,22 @@ impl<'a> Line<'_, 'a> {
                 if e.is_angle_bracket_assertion() {
                     return Err(Refused);
                 }
-                self.expr(expr)?;
+                self.expr(expr, Place::Other)?;
                 self.token(" as const")
             }
             ExprKind::NonNull(expr) => {
                 if e.non_null_count() != 1 {
                     return Err(Refused);
                 }
-                self.expr(expr)?;
-                self.token("!")
+                self.expr(expr, Place::Object)?;
+                self.byte(b'!')
+            }
+            ExprKind::Regex(regex) if regex.flags().is_sorted() => {
+                let text = self.text_of(e.span());
+                match text.iter().all(|byte| *byte >= b' ') {
+                    true => self.long_bytes(text),
+                    false => Err(Refused),
+                }
             }
             _ => Err(Refused),
         }
@@ -1182,136 +1425,198 @@ impl<'a> Line<'_, 'a> {
         }
         let preferred = self.f.options().quote_style.as_byte();
         // A tab has no width. A string with the preferred quote in it keeps the other one.
-        let stop = strings::index_of_any(content, &[b'\t', b'\n', preferred]);
-        match stop.map(|at| content[at]) {
-            None if *first == preferred => self.bytes(text),
-            None => {
-                self.bytes(&[preferred])?;
-                self.bytes(content)?;
-                self.bytes(&[preferred])
-            }
-            Some(b'\t' | b'\n') => Err(Refused),
-            Some(_) if strings::index_of_any(content, b"\t\n").is_some() => Err(Refused),
-            Some(_) => self.bytes(text),
+        let (mut has_preferred, mut has_odd) = (false, false);
+        for &byte in content {
+            has_preferred |= byte == preferred;
+            has_odd |= byte < b' ';
         }
+        if has_odd {
+            return Err(Refused);
+        }
+        if *first == preferred || has_preferred {
+            return self.source(span);
+        }
+        self.byte(preferred)?;
+        self.source(span.shrink(1, 1))?;
+        self.byte(preferred)
     }
 
-    /// A chain with more than two calls breaks if an argument isn't simple, whether it fits or not.
-    fn check_member_chain(&mut self, e: Expr<'a>, call: Call<'a>) -> Written {
-        if !matches!(call.callee().tag(), ExprTag::Dot | ExprTag::Index) {
-            return Ok(());
+    /// A template on one line that's in no other language: not a property's value, an element or tagged.
+    fn template(&mut self, e: Expr<'a>) -> Written {
+        let template = e.as_template().ok_or(Refused)?;
+        if !self.text_of(e.span()).iter().all(|byte| *byte >= b' ') {
+            return Err(Refused);
         }
+        let expressions = template.exprs();
+        self.byte(b'`')?;
+        for i in 0..template.quasi_count() {
+            self.long_bytes(template.raw(i))?;
+            if let Some(expression) = expressions.get(i) {
+                self.token("${")?;
+                self.expr(expression, Place::Other)?;
+                self.byte(b'}')?;
+            }
+        }
+        self.byte(b'`')
+    }
+
+    /// Looks at the chain that the call `e`, whose callee is a member access, ends. A chain with more than two calls
+    /// breaks if an argument isn't simple, whether it fits or not. Returns true if the last call can end the line.
+    fn check_member_chain(&mut self, e: Expr<'a>) -> Result<bool, Refused> {
         let mut calls = 0;
+        let mut has_function = false;
         let mut link = e;
         loop {
-            link = match link.kind() {
-                ExprKind::Call(call) => {
+            link = match link.tag() {
+                ExprTag::Call => {
+                    let call = link.as_call().ok_or(Refused)?;
+                    if calls > 0 {
+                        has_function |= call.args().iter().any(|it| it.tag() == ExprTag::Fn);
+                    }
                     calls += 1;
                     call.callee()
                 }
-                ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj,
-                ExprKind::NonNull(inner) => inner,
+                ExprTag::Dot | ExprTag::Index => link.object().ok_or(Refused)?,
+                ExprTag::NonNull => link.operand().ok_or(Refused)?,
                 _ => break,
             };
         }
         if calls <= 2 {
-            return Ok(());
+            // A chain breaks if its last call does and an earlier one has a function among its arguments. Where a chain
+            // that's too wide breaks is another matter, unless all that's before the last `(` is names.
+            return Ok(match self.breaks {
+                true => calls == 1 && matches!(link.tag(), ExprTag::Ident | ExprTag::This),
+                false => calls == 1 || !has_function,
+            });
         }
         let mut link = e;
         loop {
-            link = match link.kind() {
-                ExprKind::Call(call) => {
+            link = match link.tag() {
+                ExprTag::Call => {
+                    let call = link.as_call().ok_or(Refused)?;
                     let f = &*self.f;
                     if !(call.args().iter()).all(|it| SimpleArgument::new(it, f).is_simple()) {
                         return Err(Refused);
                     }
                     call.callee()
                 }
-                ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj,
-                ExprKind::NonNull(inner) => inner,
-                _ => return Ok(()),
+                ExprTag::Dot | ExprTag::Index => link.object().ok_or(Refused)?,
+                ExprTag::NonNull => link.operand().ok_or(Refused)?,
+                _ => return Ok(false),
             };
         }
     }
 
     /// True if `argument` is certain to break, and is hugged as the last argument of a call.
     fn ends_line(&self, argument: Expr<'a>) -> bool {
-        match argument.kind() {
-            ExprKind::Fn(func) => {
-                (func.body_statements()).is_some_and(|statements| !is_empty_block(statements))
-            }
-            ExprKind::Object(props) => self.is_broken_object(argument, props),
+        match argument.tag() {
+            ExprTag::Fn => (argument.as_fn())
+                .and_then(Func::body_statements)
+                .is_some_and(|statements| !is_empty_block(statements)),
+            ExprTag::Object => self.is_broken_object(argument),
             _ => false,
         }
     }
 
-    /// True if the first key of the object `e` is on a new line, which keeps it broken.
-    fn is_broken_object(&self, e: Expr<'a>, props: List<'a, Prop<'a>>) -> bool {
-        self.f.options().expand == Expand::Auto
-            && (props.first()).is_some_and(|first| {
-                self.has_line_break_in(Span::new(e.span().start, first.span().start))
-            })
+    /// True if the object `e` is certain to break: its first key is on a new line, or all of this is too wide.
+    fn is_broken_object(&self, e: Expr<'a>) -> bool {
+        (e.as_object().and_then(List::first)).is_some_and(|first| {
+            self.breaks
+                || (self.f.options().expand == Expand::Auto
+                    && self.has_line_break_in(Span::new(e.span().start, first.span().start)))
+        })
     }
 
-    fn arguments(&mut self, args: List<'a, Expr<'a>>, is_last: bool) -> Written {
-        self.token("(")?;
-        if is_last
-            && let Some(last) = args.last()
-            && self.ends_line(last)
-        {
-            let count = args.len();
-            // Two arguments of the same kind aren't hugged.
-            if count > 1
-                && (args.get(count - 2)).is_some_and(|it| {
-                    it.tag() == last.tag() || it.tag() == ExprTag::Fn || it.tag() == ExprTag::Cond
+    /// `is_last`: nothing but closing brackets follows. `can_break`: nothing before the `(` can break.
+    fn arguments(&mut self, args: List<'a, Expr<'a>>, is_last: bool, can_break: bool) -> Written {
+        self.byte(b'(')?;
+        let count = args.len();
+        if count > 1 {
+            self.check_composition(args)?;
+        }
+        if is_last && let Some(last) = args.last() {
+            if self.ends_line(last) {
+                // Two arguments of the same kind aren't hugged.
+                if count > 1
+                    && (args.get(count - 2)).is_some_and(|it| {
+                        it.tag() == last.tag() || matches!(it.tag(), ExprTag::Fn | ExprTag::Cond)
+                    })
+                {
+                    return Err(Refused);
+                }
+                for argument in args.iter().take(count - 1) {
+                    self.expr(argument, Place::Free)?;
+                    self.token(", ")?;
+                }
+                self.last_expr(last, Place::Free)?;
+                return self.byte(b')');
+            }
+            // Too wide, and no argument is hugged: each is on a line.
+            if self.breaks
+                && can_break
+                && !args.iter().any(|it| {
+                    matches!(
+                        it.tag(),
+                        ExprTag::Fn
+                            | ExprTag::Object
+                            | ExprTag::Array
+                            | ExprTag::As
+                            | ExprTag::AsConst
+                            | ExprTag::Satisfies
+                            | ExprTag::Template
+                            | ExprTag::TaggedTemplate
+                            | ExprTag::Spread
+                            | ExprTag::Jsx
+                    )
                 })
             {
-                return Err(Refused);
+                let has_last_comma = self.has_trailing_comma(true);
+                self.lines(count, args.iter(), has_last_comma, |line, argument| {
+                    line.expr_on_own_line(argument)
+                })?;
+                return self.byte(b')');
             }
-            self.check_composition(args)?;
-            for argument in args.iter().take(count - 1) {
-                self.expr(argument)?;
-                self.token(", ")?;
-            }
-            self.last_expr(last)?;
-            return self.token(")");
         }
-        self.check_composition(args)?;
-        self.list(args.iter(), |line, argument| line.expr(argument))?;
-        self.token(")")
+        self.list(args.iter(), |line, argument| {
+            line.expr(argument, Place::Free)
+        })?;
+        self.byte(b')')
     }
 
+    /// Several functions among the arguments, or in the arguments of an argument, are each on a line.
     fn check_composition(&mut self, args: List<'a, Expr<'a>>) -> Written {
-        // Several functions among the arguments, or in the arguments of an argument, are each on a line.
-        if args.len() > 1 {
-            let mut functions = 0;
-            for argument in args {
-                match argument.tag() {
-                    ExprTag::Fn => functions += 1,
-                    ExprTag::Call | ExprTag::NonNull => {
-                        let mut inner = argument;
-                        while let ExprKind::NonNull(it) = inner.kind() {
-                            inner = it;
-                        }
-                        if inner.as_call().is_some_and(|call| {
-                            call.args().iter().any(|it| it.tag() == ExprTag::Fn)
-                        }) {
-                            return Err(Refused);
-                        }
+        let mut functions = 0;
+        for argument in args {
+            match argument.tag() {
+                ExprTag::Fn => functions += 1,
+                ExprTag::Call | ExprTag::NonNull => {
+                    let mut inner = argument;
+                    while inner.tag() == ExprTag::NonNull {
+                        inner = inner.operand().ok_or(Refused)?;
                     }
-                    _ => {}
+                    if inner
+                        .as_call()
+                        .is_some_and(|call| call.args().iter().any(|it| it.tag() == ExprTag::Fn))
+                    {
+                        return Err(Refused);
+                    }
                 }
-            }
-            if functions > 1 {
-                return Err(Refused);
+                _ => {}
             }
         }
-        Ok(())
+        match functions > 1 {
+            true => Err(Refused),
+            false => Ok(()),
+        }
     }
 
-    fn array(&mut self, e: Expr<'a>, elements: List<'a, Expr<'a>>) -> Written {
+    fn array(&mut self, e: Expr<'a>, is_last: bool) -> Written {
+        let elements = e.as_array().ok_or(Refused)?;
         if e.is_assignment_target() {
             return Err(Refused);
+        }
+        if is_last && self.breaks && !elements.is_empty() {
+            return self.end_line_with(Part::Broken(e), e.span(), 1);
         }
         // Several objects, or several arrays, are each on a line.
         if elements.len() > 1
@@ -1321,24 +1626,25 @@ impl<'a> Line<'_, 'a> {
         {
             return Err(Refused);
         }
-        self.token("[")?;
+        self.byte(b'[')?;
         self.list(elements.iter(), |line, element| match element.tag() {
-            ExprTag::Missing => Err(Refused),
-            _ => line.expr(element),
+            ExprTag::Missing | ExprTag::Template => Err(Refused),
+            _ => line.expr(element, Place::Free),
         })?;
-        self.token("]")
+        self.byte(b']')
     }
 
-    fn object(&mut self, e: Expr<'a>, props: List<'a, Prop<'a>>, is_last: bool) -> Written {
+    fn object(&mut self, e: Expr<'a>, is_last: bool) -> Written {
+        let props = e.as_object().ok_or(Refused)?;
         if e.is_assignment_target() {
             return Err(Refused);
         }
         if props.is_empty() {
             return self.token("{}");
         }
-        if self.is_broken_object(e, props) {
+        if self.is_broken_object(e) {
             return match is_last {
-                true => self.end_line_with(Part::Object(e), e.span(), 1),
+                true => self.end_line_with(Part::Broken(e), e.span(), 1),
                 false => Err(Refused),
             };
         }
@@ -1368,9 +1674,11 @@ impl<'a> Line<'_, 'a> {
                 self.key(prop.key())?;
                 self.token(": ")?;
                 let value = prop.value().ok_or(Refused)?;
-                match is_last {
-                    true => self.last_assigned(value),
-                    false => self.assigned(value),
+                match (value.tag(), is_last) {
+                    // It can be in another language.
+                    (ExprTag::Template, _) => Err(Refused),
+                    (_, true) => self.last_assigned(value),
+                    (_, false) => self.assigned(value),
                 }
             }
             PropKind::Shorthand => match prop.value() {
@@ -1379,7 +1687,7 @@ impl<'a> Line<'_, 'a> {
             },
             PropKind::Spread => {
                 self.token("...")?;
-                self.expr(prop.value().ok_or(Refused)?)
+                self.expr(prop.value().ok_or(Refused)?, Place::Other)
             }
             kind @ (PropKind::Method | PropKind::Getter | PropKind::Setter) => {
                 let func = prop.func().ok_or(Refused)?;
@@ -1395,18 +1703,24 @@ impl<'a> Line<'_, 'a> {
                     self.token("async ")?;
                 }
                 if func.is_generator() {
-                    self.token("*")?;
+                    self.byte(b'*')?;
                 }
                 self.key(prop.key())?;
-                self.type_parameters(func.type_params())?;
-                self.parameters(func)?;
-                self.type_annotation(func.return_type())?;
+                self.signature(func)?;
                 self.body(func, is_last)
             }
         }
     }
 
-    /// An arrow function whose body is an expression or empty, or a function expression with an empty body.
+    /// `<T>(a: A): B`
+    fn signature(&mut self, func: Func<'a>) -> Written {
+        self.type_parameters(func.type_params())?;
+        self.parameters(func)?;
+        self.type_annotation(func.return_type())
+    }
+
+    /// A function. Unless `is_last`, the body of an arrow function is an expression or empty, and that of any other
+    /// function is empty.
     fn function(&mut self, func: Func<'a>, is_last: bool) -> Written {
         if func.is_async() {
             self.token("async ")?;
@@ -1416,14 +1730,10 @@ impl<'a> Line<'_, 'a> {
                 true => "function* ",
                 false => "function ",
             })?;
-            match func.name() {
-                Some(name) => self.source(name.span())?,
-                // `function ()`, `function* ()`
-                None => {}
+            if let Some(name) = func.name() {
+                self.source(name.span())?;
             }
-            self.type_parameters(func.type_params())?;
-            self.parameters(func)?;
-            self.type_annotation(func.return_type())?;
+            self.signature(func)?;
             return match func.has_body() {
                 true => self.body(func, is_last),
                 false => Ok(()),
@@ -1441,19 +1751,19 @@ impl<'a> Line<'_, 'a> {
         let FnBody::Expr(body) = func.body() else {
             return self.body(func, is_last);
         };
-        self.token(" ")?;
+        self.byte(b' ')?;
         match body.tag() {
             // A chain of arrow functions has a layout of its own.
             ExprTag::Fn => Err(Refused),
-            ExprTag::Binary if is_sequence(body) => Err(Refused),
+            ExprTag::Binary if body.binary_op() == Some(BinOp::Comma) => Err(Refused),
             // In parentheses, unless it breaks or starts with an object.
             ExprTag::Cond if matches!(self.text_of(body.span()), [b'(' | b'{', ..]) => Err(Refused),
             ExprTag::Cond => {
-                self.token("(")?;
-                self.expr(body)?;
-                self.token(")")
+                self.byte(b'(')?;
+                self.expr(body, Place::Other)?;
+                self.byte(b')')
             }
-            _ => self.expr(body),
+            _ => self.expr(body, Place::Other),
         }
     }
 
@@ -1478,6 +1788,16 @@ impl<'a> Line<'_, 'a> {
     }
 
     // ───────────────────────────── patterns and parameters ─────────────────────────────
+
+    fn default_value(&mut self, default: Option<Expr<'a>>) -> Written {
+        match default {
+            Some(default) => {
+                self.token(" = ")?;
+                self.expr(default, Place::Other)
+            }
+            None => Ok(()),
+        }
+    }
 
     fn pattern(&mut self, pattern: Pat<'a>) -> Written {
         match pattern.kind() {
@@ -1506,19 +1826,13 @@ impl<'a> Line<'_, 'a> {
                             line.token(": ")?;
                         }
                         line.source(prop.value().span())?;
-                        match prop.default() {
-                            Some(default) => {
-                                line.token(" = ")?;
-                                line.expr(default)
-                            }
-                            None => Ok(()),
-                        }
+                        line.default_value(prop.default())
                     })
                 })?;
                 self.close_brace()
             }
             PatKind::Array(elements) => {
-                self.token("[")?;
+                self.byte(b'[')?;
                 self.nested(|line| {
                     line.list(elements.iter(), |line, element| {
                         let pattern = element.pat().ok_or(Refused)?;
@@ -1526,16 +1840,10 @@ impl<'a> Line<'_, 'a> {
                             line.token("...")?;
                         }
                         line.pattern(pattern)?;
-                        match element.default() {
-                            Some(default) => {
-                                line.token(" = ")?;
-                                line.expr(default)
-                            }
-                            None => Ok(()),
-                        }
+                        line.default_value(element.default())
                     })
                 })?;
-                self.token("]")
+                self.byte(b']')
             }
             PatKind::Missing => Err(Refused),
         }
@@ -1546,7 +1854,7 @@ impl<'a> Line<'_, 'a> {
         if func.this_param().is_some() {
             return Err(Refused);
         }
-        self.token("(")?;
+        self.byte(b'(')?;
         self.list(func.params().iter(), |line, param| {
             // A decorator, or an accessibility modifier, which puts each parameter on a line.
             if !param.modifiers().is_empty() {
@@ -1557,23 +1865,18 @@ impl<'a> Line<'_, 'a> {
             }
             line.pattern(param.pat())?;
             if param.is_optional() {
-                line.token("?")?;
+                line.byte(b'?')?;
             }
             line.type_annotation(param.ty())?;
-            match param.default() {
-                Some(default) => {
-                    line.token(" = ")?;
-                    line.expr(default)
-                }
-                None => Ok(()),
-            }
+            line.default_value(param.default())
         })?;
-        self.token(")")
+        self.byte(b')')
     }
 
     // ───────────────────────────── types ─────────────────────────────
 
     /// `: T`
+    #[inline]
     fn type_annotation(&mut self, ty: Option<TypeNode<'a>>) -> Written {
         match ty {
             Some(ty) => {
@@ -1585,21 +1888,23 @@ impl<'a> Line<'_, 'a> {
     }
 
     /// `<A, B>`
+    #[inline]
     fn type_arguments(&mut self, args: List<'a, TypeNode<'a>>) -> Written {
         if args.is_empty() {
             return Ok(());
         }
-        self.token("<")?;
+        self.byte(b'<')?;
         self.list(args.iter(), |line, ty| line.ty(ty))?;
-        self.token(">")
+        self.byte(b'>')
     }
 
     /// `<A, B extends C = D>`
+    #[inline]
     fn type_parameters(&mut self, params: List<'a, TypeParam<'a>>) -> Written {
         if params.is_empty() {
             return Ok(());
         }
-        self.token("<")?;
+        self.byte(b'<')?;
         self.list(params.iter(), |line, param| {
             // `const`, `in`, `out`
             if param.span().start != param.name().span().start {
@@ -1616,7 +1921,7 @@ impl<'a> Line<'_, 'a> {
             }
             Ok(())
         })?;
-        self.token(">")
+        self.byte(b'>')
     }
 
     fn ty(&mut self, ty: TypeNode<'a>) -> Written {
@@ -1625,9 +1930,9 @@ impl<'a> Line<'_, 'a> {
             TypeTag::Union | TypeTag::Keyof | TypeTag::Readonly | TypeTag::Typeof | TypeTag::Fn
                 if super::parentheses::ts_type::needs_parentheses(ty, self.f) =>
             {
-                self.token("(")?;
+                self.byte(b'(')?;
                 self.nested(|line| line.type_without_parentheses(ty))?;
-                return self.token(")");
+                return self.byte(b')');
             }
             _ => {}
         }
@@ -1639,7 +1944,7 @@ impl<'a> Line<'_, 'a> {
             TypeKind::Ref { name, args } => {
                 for (index, part) in name.parts().enumerate() {
                     if index > 0 {
-                        self.token(".")?;
+                        self.byte(b'.')?;
                     }
                     self.source(part.span())?;
                 }
@@ -1669,9 +1974,9 @@ impl<'a> Line<'_, 'a> {
             }
             TypeKind::IndexedAccess { obj, index } => {
                 self.ty(obj)?;
-                self.token("[")?;
+                self.byte(b'[')?;
                 self.ty(index)?;
-                self.token("]")
+                self.byte(b']')
             }
             TypeKind::Fn(func) if func.kind() == FnKind::FunctionType => {
                 self.type_parameters(func.type_params())?;
@@ -1682,8 +1987,4 @@ impl<'a> Line<'_, 'a> {
             _ => Err(Refused),
         }
     }
-}
-
-fn is_sequence(e: Expr<'_>) -> bool {
-    e.binary_op() == Some(BinOp::Comma)
 }

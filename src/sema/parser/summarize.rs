@@ -603,7 +603,7 @@ pub fn with_summary<R>(
 ) -> R {
     with_summary_in_place(
         dialect,
-        (arena, session),
+        session,
         path,
         script_kind,
         text,
@@ -627,9 +627,10 @@ pub fn with_summary<R>(
 }
 
 /// [`with_summary`] for a caller that can read the file from the parser's buffers, which saves copying its lists.
+/// Only a JSON file asks `session` for the calling thread's arena, and `atoms` for anything.
 pub fn with_summary_in_place<'s, R>(
     dialect: Dialect,
-    memory: (&'s Arena, &'s Session),
+    session: &'s Session,
     path: &[u8],
     script_kind: Option<ScriptKind>,
     text: &[u8],
@@ -657,6 +658,7 @@ pub fn with_summary_in_place<'s, R>(
     let mut scratch = take_scratch();
     // JSON is validated once it's in the arena.
     if is_json(path, script_kind) {
+        let memory = (session.arena(), session);
         let file = parse_into_arena(&mut scratch, how, memory, text, atoms);
         return_scratch(scratch);
         return then(Summary::InArena(Box::new(file)), atoms);

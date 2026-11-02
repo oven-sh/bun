@@ -48,6 +48,7 @@ use files::{Expanded, Ignored, Kind, Language, Target};
 pub use for_rules::ForRules;
 use std::borrow::Cow;
 use std::io::Write;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
@@ -305,13 +306,17 @@ struct How<'h> {
 
 impl How<'_> {
     /// Returns the language, dialect and parse options for the file.
-    fn language_and_dialect(&self) -> (LanguageOptions, Dialect, ParseOptions) {
+    fn language_and_dialect(&self) -> (&'static LanguageOptions, Dialect, ParseOptions) {
+        static LANGUAGES: [OnceLock<LanguageOptions>; 8] = [const { OnceLock::new() }; 8];
         let path = self.path;
         let is_typescript = [&b".ts"[..], b".tsx", b".mts", b".cts"]
             .iter()
             .any(|it| ends_in(path, it));
         let is_oxfmt = self.resolved.options.flavor.is_oxfmt();
-        let language = LanguageOptions {
+        let which = usize::from(is_typescript)
+            | usize::from(self.is_script) << 1
+            | usize::from(is_oxfmt) << 2;
+        let language = LANGUAGES[which].get_or_init(|| LanguageOptions {
             // oxfmt uses oxc's parser, like oxlint.
             rejects_what_parser_rejects: !is_oxfmt,
             parser: if is_typescript {
@@ -325,7 +330,7 @@ impl How<'_> {
                 SourceType::Module
             },
             ..LanguageOptions::default()
-        };
+        });
         let options = language.parse_options(path);
         let dialect = match self.is_flow {
             true if bun_format::flow::is_parsed_by_babel_flow(&self.resolved.options, path) => {
@@ -348,16 +353,16 @@ fn with_tree<'h, R>(
     let (language, dialect, options) = how.language_and_dialect();
     bun_sema_parser::with_summary_in_place(
         dialect,
-        (how.memory.arena(), how.memory),
+        how.memory,
         how.path,
         options.script_kind,
         text,
-        how.atoms.for_current_thread(),
+        how.atoms,
         options.experimental_decorators,
         options.every_file_is_a_module,
         true,
         // These atoms are local to the file and mean nothing in another file.
-        |summary, atoms| then(summary, atoms, &language),
+        |summary, atoms| then(summary, atoms, language),
     )
 }
 
@@ -368,7 +373,6 @@ fn with_file<R>(
     then: impl for<'a> FnOnce(&'a File<'a>, Option<&Program<'a>>, ParseErrors<'a>) -> R,
 ) -> R {
     let (path, session) = (how.path, how.memory);
-    let arena = session.arena();
     with_tree(how, text, |mut summary, atoms, language| {
         // Telling which imports are used needs symbols.
         let needs_symbols = how
@@ -394,6 +398,7 @@ fn with_file<R>(
                 },
             );
         }
+        let arena = session.arena();
         let mut hir = summary.into_arena((arena, session));
         hir.text = Cow::Borrowed(text);
         let bind_options = BindOptions {
@@ -481,8 +486,8 @@ fn without_final_newline(out: &mut Vec<u8>) {
 /// Formats a code block in Markdown. Appends `code`, formatted as if it were the file at `path`. Returns `false` if it
 /// can't be formatted, so the block stays unchanged.
 fn format_block(path: &[u8], code: &[u8], options: &FormatOptions, out: &mut Vec<u8>) -> bool {
-    let names = Session::new();
-    let names = (&Interner::new_in(&names) as &dyn Intern, &names);
+    let names = [Session::new()];
+    let names = (&InternerPerThread::new_in(&names) as &dyn Intern, &names[0]);
     format_block_in(path, code, options, out, names, &mut Scratches::default())
 }
 
@@ -511,8 +516,8 @@ fn format_block_in(
 
 /// Parses scripts and expressions in HTML.
 fn parse_javascript(code: Code<'_>, then: Then<'_>) {
-    let names = Session::new();
-    let names = (&Interner::new_in(&names) as &dyn Intern, &names);
+    let names = [Session::new()];
+    let names = (&InternerPerThread::new_in(&names) as &dyn Intern, &names[0]);
     parse_code(code, &Resolved::default(), names, then);
 }
 
@@ -536,8 +541,8 @@ fn parse_code(
 
 /// Parses the expressions in a Svelte component.
 fn parse_parts(text: &[u8], then: &mut dyn FnMut(ParsePart<'_>)) {
-    let names = Session::new();
-    let (atoms, plain) = (Interner::new_in(&names), Resolved::default());
+    let names = [Session::new()];
+    let (atoms, plain) = (InternerPerThread::new_in(&names), Resolved::default());
     let how = |path| How {
         path,
         is_script: false,
@@ -545,7 +550,7 @@ fn parse_parts(text: &[u8], then: &mut dyn FnMut(ParsePart<'_>)) {
         resolved: &plain,
         verifies: false,
         atoms: &atoms,
-        memory: &names,
+        memory: &names[0],
     };
     let [javascript, typescript] =
         [&b"dummy.js"[..], b"dummy.ts"].map(|path| (path, how(path).language_and_dialect()));

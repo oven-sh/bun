@@ -1569,7 +1569,11 @@ describe.concurrent("the text that a code frame is cut from", () => {
       Buffer.concat([Buffer.from("// caf"), Buffer.from([0xe9]), Buffer.from(" is not UTF-8\n" + padding(6) + fail)]),
       ["4 | // line 3", "5 | // line 4", "6 | // line 5", "7 | // line 6", ...thrownOnLine(9)],
     ],
-    ["a file that ends without a line break", Buffer.from((padding(2) + fail).trimEnd()), ["1 | // line 1", "2 | // line 2", ...thrownOnLine(4)]],
+    [
+      "a file that ends without a line break",
+      Buffer.from((padding(2) + fail).trimEnd()),
+      ["1 | // line 1", "2 | // line 2", ...thrownOnLine(4)],
+    ],
   ])("%s", async (_, mod, frame) => {
     const { stdout, stderr, exitCode } = await run({ "mod.js": mod, "main.js": main });
     expect({ stdout: frameOf(stdout), stderr: frameOf(stderr.toString()), exitCode }).toEqual({
@@ -1645,7 +1649,8 @@ describe.concurrent("the text that a code frame is cut from", () => {
     const line = "// " + Buffer.alloc(60, "f").toString() + "\n";
     const lines = Math.floor((size - last.length) / line.length) - 1;
     const rest = size - last.length - lines * line.length;
-    const mod = Buffer.alloc(lines * line.length, line).toString() + "//" + Buffer.alloc(rest - 3, "g").toString() + "\n" + last;
+    const mod =
+      Buffer.alloc(lines * line.length, line).toString() + "//" + Buffer.alloc(rest - 3, "g").toString() + "\n" + last;
     expect(mod.length).toBe(size);
     const { stdout, exitCode } = await run({ "mod.js": mod, "main.js": main });
     expect({ stdout: frameOf(stdout).slice(-3), exitCode }).toEqual({
@@ -1674,7 +1679,11 @@ describe.concurrent("the text that a code frame is cut from", () => {
       `,
     });
     const frame = frameOf(stdout);
-    expect({ message: frame.at(-1), fromDisk: frame.some(line => line.includes("only on the disk")), exitCode }).toEqual({
+    expect({
+      message: frame.at(-1),
+      fromDisk: frame.some(line => line.includes("only on the disk")),
+      exitCode,
+    }).toEqual({
       message: "error: thrown",
       fromDisk: false,
       exitCode: 0,
@@ -1721,8 +1730,14 @@ describe.concurrent("the text that a code frame is cut from", () => {
     expect({ message: frameOf(stdout).at(-1), exitCode }).toEqual({ message: "error: thrown", exitCode: 0 });
   });
 
-  const script = 'function fail() {\n  throw new Error("thrown");\n}\ntry {\n  fail();\n} catch (error) {\n  process.stdout.write(Bun.inspect(error));\n}\n';
-  const scriptFrame = ["1 | function fail() {", '2 |   throw new Error("thrown");', "                ^", "error: thrown"];
+  const script =
+    'function fail() {\n  throw new Error("thrown");\n}\ntry {\n  fail();\n} catch (error) {\n  process.stdout.write(Bun.inspect(error));\n}\n';
+  const scriptFrame = [
+    "1 | function fail() {",
+    '2 |   throw new Error("thrown");',
+    "                ^",
+    "error: thrown",
+  ];
 
   test("the script of bun -e", async () => {
     const { stdout, exitCode } = await run({}, ["-e", script]);
@@ -1754,15 +1769,17 @@ describe.concurrent("the text that a code frame is cut from", () => {
         }
       `,
     });
-    expect({ stdout: frameOf(stdout).map(line => line.replace(/"[^"]*worker\.js"/, '"worker.js"')), exitCode }).toEqual({
-      stdout: [
-        "1 | export default function WorkerWrapper(options) {",
-        '2 |   return new SharedWorker("worker.js", { type: "module", name: options?.name });',
-        "             ^",
-        "TypeError: undefined is not a constructor (evaluating 'new SharedWorker(\"worker.js\", { type: \"module\", name: options?.name })')",
-      ],
-      exitCode: 0,
-    });
+    expect({ stdout: frameOf(stdout).map(line => line.replace(/"[^"]*worker\.js"/, '"worker.js"')), exitCode }).toEqual(
+      {
+        stdout: [
+          "1 | export default function WorkerWrapper(options) {",
+          '2 |   return new SharedWorker("worker.js", { type: "module", name: options?.name });',
+          "             ^",
+          'TypeError: undefined is not a constructor (evaluating \'new SharedWorker("worker.js", { type: "module", name: options?.name })\')',
+        ],
+        exitCode: 0,
+      },
+    );
   });
 
   test("a node fallback module", async () => {
@@ -1807,7 +1824,8 @@ describe.concurrent("the text that a code frame is cut from", () => {
       return { frame: frameOf(stdout), stderr: stderr.toString(), exitCode };
     }
     const caret = "                     ^";
-    const numbered = (from, to) => Array.from({ length: to - from + 1 }, (_, i) => `${from + i} | named line ${from + i}`);
+    const numbered = (from, to) =>
+      Array.from({ length: to - from + 1 }, (_, i) => `${from + i} | named line ${from + i}`);
     const named = "named line 1\nnamed line 2\nnamed line 3\nnamed line 4\n";
 
     test.each([
@@ -1834,7 +1852,10 @@ describe.concurrent("the text that a code frame is cut from", () => {
     ])("%s", async (_, bytes) => {
       const rest = Array.from({ length: 8 }, (_, i) => `named line ${i + 2}\n`).join("");
       const content = Buffer.concat([Buffer.from("caf"), Buffer.from(bytes), Buffer.from("\n" + rest)]);
-      const [inFrame, above] = await Promise.all([vmFrameOf("notes.txt", content, 4), vmFrameOf("notes.txt", content, 9)]);
+      const [inFrame, above] = await Promise.all([
+        vmFrameOf("notes.txt", content, 4),
+        vmFrameOf("notes.txt", content, 9),
+      ]);
       expect({ inFrame, above }).toEqual({
         inFrame: { frame: ["1 | caf\uFFFD", ...numbered(2, 4), caret, "error: thrown"], stderr: "", exitCode: 0 },
         above: { frame: [...numbered(4, 9), caret, "error: thrown"], stderr: "", exitCode: 0 },
@@ -1842,7 +1863,10 @@ describe.concurrent("the text that a code frame is cut from", () => {
     });
 
     test("a cut-off character at the end of the file", async () => {
-      const content = Buffer.concat([Buffer.from("named line 1\nnamed line 2\nnamed line 3\ncaf"), Buffer.from([0xe2, 0x82])]);
+      const content = Buffer.concat([
+        Buffer.from("named line 1\nnamed line 2\nnamed line 3\ncaf"),
+        Buffer.from([0xe2, 0x82]),
+      ]);
       expect(await vmFrameOf("notes.txt", content, 4)).toEqual({
         frame: [...numbered(1, 3), "4 | caf\uFFFD", caret, "error: thrown"],
         stderr: "",
@@ -1915,7 +1939,10 @@ describe.concurrent("the text that a code frame is cut from", () => {
   ])("a print makes no allocator heap and no second copy of a file that is %s", async (_, char) => {
     const size = 1024 * 1024;
     const line = Buffer.from("// " + char.repeat(30) + "\n");
-    const mod = Buffer.concat([Buffer.from(fail), Buffer.alloc(size - fail.length - ((size - fail.length) % line.length), line)]);
+    const mod = Buffer.concat([
+      Buffer.from(fail),
+      Buffer.alloc(size - fail.length - ((size - fail.length) % line.length), line),
+    ]);
     const { stdout, stderr, exitCode } = await run({
       "mod.js": mod,
       "main.js": `
@@ -1955,7 +1982,12 @@ describe.concurrent("the text that a code frame is cut from", () => {
     });
     expect(stderr.toString()).toBe("");
     const { frame, loads, heaps, requested } = JSON.parse(stdout);
-    expect({ frame, loads, heaps, exitCode }).toEqual({ frame: thrownOnLine(2), loads: [50, 50, 50], heaps: 0, exitCode: 0 });
+    expect({ frame, loads, heaps, exitCode }).toEqual({
+      frame: thrownOnLine(2),
+      loads: [50, 50, 50],
+      heaps: 0,
+      exitCode: 0,
+    });
     // The file in one buffer of the allocator, or in none where another allocator gives it.
     expect(requested).toBeLessThan(mod.length * 1.5);
   });
@@ -1991,7 +2023,12 @@ describe.concurrent("the text that a code frame is cut from", () => {
       `,
     });
     expect(stderr.toString()).toBe("");
-    expect({ ...JSON.parse(stdout), exitCode }).toEqual({ frame: thrownOnLine(2), loads: 1001, opened: 0, exitCode: 0 });
+    expect({ ...JSON.parse(stdout), exitCode }).toEqual({
+      frame: thrownOnLine(2),
+      loads: 1001,
+      opened: 0,
+      exitCode: 0,
+    });
   });
 });
 
